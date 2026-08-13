@@ -1,0 +1,388 @@
+plan_id: 2026-08-12-tdtb-project-extraction
+objective: Extract the TDTB application and project boundary out of the Claudius repository
+  and into the canonical TDTB repository.
+created_at: '2026-08-13T00:00:00Z'
+created_by: gem-planner
+status: approved
+tldr: Execute the extraction of the TDTB application from the sibling Claudius repository
+  into this canonical TDTB repository, preserving dirty state and rewiring consumers.
+baseline:
+  objective: Extract the TDTB application and project boundary out of the Claudius
+    repository and into the canonical TDTB repository.
+  acceptance_criteria:
+  - The TDTB application and project boundary are successfully extracted into the
+    canonical TDTB repository.
+  - Current dirty work is preserved during extraction.
+  - Claudius consumers are correctly rewired to point to the new repository.
+  - The extraction is independently verified against the dirty-state receipt.
+  - A safe closeout and cutover handoff is produced.
+  captured_at: '2026-08-13T00:00:00Z'
+plan_lineage:
+  root_plan_id: 2026-08-12-tdtb-project-extraction
+  revision: 2
+  replan_count: 1
+  max_replans: 2
+  parent_revision: 1
+  reason: scope_change
+plan_metrics:
+  wave_1_task_count: 1
+  total_dependencies: 10
+  risk_score: medium
+quality_warnings: []
+context_version: 1
+context_updated_at: '2026-08-13T00:00:00Z'
+context_fields_changed: []
+tech_stack: []
+conventions: []
+constraints:
+  hard:
+  - Do not delete the source plan unless clearly required by repository convention.
+  - The canonical repo is the current working directory. The previous source repo
+    is expected to be a sibling Claudius repository; determine exact paths only through
+    bounded repository inspection.
+  soft: []
+  compatibility: []
+  security_requirements: []
+architecture_snapshot: {}
+research_digest: {}
+prior_decisions:
+- decision: Retain the old document-migration objective and criteria as historical
+    provenance only.
+  context: The prior migration wrapper incorrectly made the document-migration objective
+    and no-code-change criteria authoritative. The user confirmed the scope is to
+    execute the actual extraction.
+- historical_objective: Migrate the existing plan file `2026-08-12-tdtb-project-extraction.md`
+    in the repository into a durable, high-quality implementation plan format that
+    gem-team would expect to see.
+  historical_acceptance_criteria:
+  - A durable migrated plan exists in the repository in the expected plan location.
+  - The migrated plan is actionable, internally consistent, and has explicit tasks,
+    dependencies, acceptance criteria, risks, and verification steps.
+  - The original objective and acceptance criteria are preserved or explicitly mapped
+    without weakening them.
+  - No application source code is changed.
+reuse_notes: []
+open_questions: []
+assumptions:
+- The expected durable plan location is docs/plan/{plan_id}/plan.yaml.
+- The source plan should be preserved as it is not clearly required to be deleted.
+tasks:
+- id: T1
+  title: Targeted read-only inventory with no claim
+  description: Run the bounded pre-extraction path/ownership inventory. This is read-only
+    and asserts NO app-path claim; it does not prepare any target. Record each match
+    as move, remain/update, historical, or unresolved.
+  wave: 1
+  agent: gem-implementer
+  status: pending
+  covers: []
+  depends_on: []
+  conflicts_with: []
+  context_files: []
+  flags:
+    requires_design_validation: false
+    retries_used: 0
+    revision_reason: ''
+  acceptance_criteria:
+  - Targeted pre-extraction inventory is complete.
+  handoff:
+    known_context:
+    - The canonical repo is the current working directory. The source repo is a sibling
+      Claudius repository.
+    target_files: []
+    constraints: []
+  requires_review: false
+  review_depth: standard
+  review_security_sensitive: false
+- id: T2
+  title: Freeze active UI plan and capture immutable dirty-state receipt
+  description: Set the active UI/reliability plan to a frozen state and capture an
+    immutable receipt of its current dirty owned paths.
+  wave: 2
+  agent: gem-implementer
+  status: pending
+  covers: []
+  depends_on:
+  - T1
+  conflicts_with: []
+  context_files: []
+  flags:
+    requires_design_validation: false
+    retries_used: 0
+    revision_reason: ''
+  acceptance_criteria:
+  - Immutable dirty-state receipt is captured.
+  handoff:
+    known_context:
+    - The canonical repo is the current working directory. The source repo is a sibling
+      Claudius repository.
+    target_files: []
+    constraints: []
+  requires_review: false
+  review_depth: standard
+  review_security_sensitive: false
+- id: T3
+  title: Formally supersede/re-home the active plan and accept the receipt
+  description: Record the supersede/re-home of the active UI/reliability plan and
+    accept the T2 receipt as the canonical evidence of its dirty T1 state.
+  wave: 3
+  agent: gem-implementer
+  status: pending
+  covers: []
+  depends_on:
+  - T2
+  conflicts_with: []
+  context_files: []
+  flags:
+    requires_design_validation: false
+    retries_used: 0
+    revision_reason: ''
+  acceptance_criteria:
+  - Ownership is superseded/transferred (exclusive) before extraction.
+  handoff:
+    known_context:
+    - The canonical repo is the current working directory. The source repo is a sibling
+      Claudius repository.
+    target_files: []
+    constraints: []
+  requires_review: false
+  review_depth: standard
+  review_security_sensitive: false
+- id: T4
+  title: Acquire exclusive app claims only after T3
+  description: Amend this plan's manifest with EXCLUSIVE (non-shared) app-path and
+    target-root claims.
+  wave: 4
+  agent: gem-implementer
+  status: pending
+  covers: []
+  depends_on:
+  - T3
+  conflicts_with: []
+  context_files: []
+  flags:
+    requires_design_validation: false
+    retries_used: 0
+    revision_reason: ''
+  acceptance_criteria:
+  - Exclusive app claims acquired.
+  handoff:
+    known_context:
+    - The canonical repo is the current working directory. The source repo is a sibling
+      Claudius repository.
+    target_files: []
+    constraints: []
+  requires_review: false
+  review_depth: standard
+  review_security_sensitive: false
+- id: T5
+  title: Stage target/copy and independently verify against the receipt
+  description: Prepare the sibling target repository and copy the app/project content,
+    then compare the source receipt (T2) with the copied target state.
+  wave: 5
+  agent: gem-implementer
+  status: pending
+  covers: []
+  depends_on:
+  - T4
+  conflicts_with: []
+  context_files: []
+  flags:
+    requires_design_validation: false
+    retries_used: 0
+    revision_reason: ''
+  acceptance_criteria:
+  - Standalone repository is complete and independently testable.
+  handoff:
+    known_context:
+    - The canonical repo is the current working directory. The source repo is a sibling
+      Claudius repository.
+    target_files: []
+    constraints: []
+  requires_review: false
+  review_depth: standard
+  review_security_sensitive: false
+- id: T6
+  title: Logical extraction
+  description: Transfer ownership of the app/project boundary to the standalone layout,
+    preserving current dirty work.
+  wave: 6
+  agent: gem-implementer
+  status: pending
+  covers: []
+  depends_on:
+  - T5
+  conflicts_with: []
+  context_files: []
+  flags:
+    requires_design_validation: false
+    retries_used: 0
+    revision_reason: ''
+  acceptance_criteria:
+  - Logical extraction complete.
+  handoff:
+    known_context:
+    - The canonical repo is the current working directory. The source repo is a sibling
+      Claudius repository.
+    target_files: []
+    constraints: []
+  requires_review: false
+  review_depth: standard
+  review_security_sensitive: false
+- id: T7
+  title: Rewire Claudius consumers
+  description: Update shared skills, bootstrap, launchd template references, scratch
+    launch config, integration tests, structure-audit registration, bundle checks,
+    docs, and cross-repository path resolution.
+  wave: 7
+  agent: gem-implementer
+  status: pending
+  covers: []
+  depends_on:
+  - T6
+  conflicts_with: []
+  context_files: []
+  flags:
+    requires_design_validation: false
+    retries_used: 0
+    revision_reason: ''
+  acceptance_criteria:
+  - Claudius consumers are correctly rewired.
+  handoff:
+    known_context:
+    - The canonical repo is the current working directory. The source repo is a sibling
+      Claudius repository.
+    target_files: []
+    constraints: []
+  requires_review: false
+  review_depth: standard
+  review_security_sensitive: false
+- id: T8
+  title: Broad post-extraction sweep
+  description: Run the broad `tdtb` sweep over remaining Claudius and triage every
+    result as intentional, historical/archive, or broken/orphaned.
+  wave: 8
+  agent: gem-implementer
+  status: pending
+  covers: []
+  depends_on:
+  - T7
+  conflicts_with: []
+  context_files: []
+  flags:
+    requires_design_validation: false
+    retries_used: 0
+    revision_reason: ''
+  acceptance_criteria:
+  - Broad post-extraction sweep is fully triaged.
+  handoff:
+    known_context:
+    - The canonical repo is the current working directory. The source repo is a sibling
+      Claudius repository.
+    target_files: []
+    constraints: []
+  requires_review: false
+  review_depth: standard
+  review_security_sensitive: false
+- id: T9
+  title: Verify both repositories
+  description: Run standalone app tests/builds and Claudius instruction, boundary,
+    hygiene, and diff checks with no live action.
+  wave: 9
+  agent: gem-implementer
+  status: pending
+  covers: []
+  depends_on:
+  - T8
+  conflicts_with: []
+  context_files: []
+  flags:
+    requires_design_validation: false
+    retries_used: 0
+    revision_reason: ''
+  acceptance_criteria:
+  - Both repositories pass non-live verification.
+  handoff:
+    known_context:
+    - The canonical repo is the current working directory. The source repo is a sibling
+      Claudius repository.
+    target_files: []
+    constraints: []
+  requires_review: false
+  review_depth: standard
+  review_security_sensitive: false
+- id: T10
+  title: Attended cutover-wait handoff
+  description: Produce the separate attended checklist for staging the new plist,
+    restarting `com.walle.tdtb`, and GET-only health/version proof.
+  wave: 10
+  agent: gem-implementer
+  status: pending
+  covers: []
+  depends_on:
+  - T9
+  conflicts_with: []
+  context_files: []
+  flags:
+    requires_design_validation: false
+    retries_used: 0
+    revision_reason: ''
+  acceptance_criteria:
+  - Attended cutover-wait handoff produced.
+  handoff:
+    known_context:
+    - The canonical repo is the current working directory. The source repo is a sibling
+      Claudius repository.
+    target_files: []
+    constraints: []
+  requires_review: false
+  review_depth: standard
+  review_security_sensitive: false
+- id: T11
+  title: Post-cutover-removal receipt/handoff
+  description: Records the handoff only; it performs no removal.
+  wave: 11
+  agent: gem-implementer
+  status: pending
+  covers: []
+  depends_on:
+  - T10
+  conflicts_with: []
+  context_files: []
+  flags:
+    requires_design_validation: false
+    retries_used: 0
+    revision_reason: ''
+  acceptance_criteria:
+  - Post-cutover-removal receipt/handoff recorded.
+  handoff:
+    known_context:
+    - The canonical repo is the current working directory. The source repo is a sibling
+      Claudius repository.
+    target_files: []
+    constraints: []
+  requires_review: false
+  review_depth: standard
+  review_security_sensitive: false
+replan:
+  reason: Revise the imported TDTB extraction plan so it is authoritative and executable
+    in the canonical TDTB repository.
+  changed_tasks:
+  - T1
+  - T2
+  - T3
+  - T4
+  - T5
+  - T6
+  - T7
+  - T8
+  - T9
+  - T10
+  - T11
+  added_tasks: []
+  removed_tasks: []
+  preserved_acceptance_criteria: []
+  new_risks:
+  - Path resolution between the canonical TDTB repository (CWD) and the sibling Claudius
+    repository.
+  progress_signal: Plan revised for execution.
