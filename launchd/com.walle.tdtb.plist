@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.walle.tdtb</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>__WALLE_HOME__/Repos/Projects/TDTB/app/.venv/bin/python</string>
+    <string>main.py</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>__WALLE_HOME__/Repos/Projects/TDTB/app</string>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <!-- Judgment model (2026-07-27): deepseek/deepseek-v4-flash timed out
+         twice in one evening (120s, then 300s). OpenAI equivalent per Adam;
+         gpt-5.6-luna verified live with the strict json_schema +
+         require_parameters payload. NOTE: judgment.py must omit temperature
+         for openai/* models or routing 404s. -->
+    <key>TDTB_JUDGMENT_MODEL</key>
+    <string>openai/gpt-5.6-luna</string>
+    <key>TDTB_VAULT_ROOT</key>
+    <string>__TDTB_VAULT_ROOT__</string>
+    <!-- launchd children get a bare PATH; the judgment layer's Agent SDK
+         needs node (homebrew) + the claude CLI (~/.local/bin) or /sequence
+         hangs to the 120s timeout (2026-07-17 incident). -->
+    <key>PATH</key>
+    <string>__WALLE_HOME__/.local/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+  </dict>
+
+  <key>RunAtLoad</key>
+  <true/>
+
+  <!-- Respawn after an attended operator restart. Automated sessions must not
+       stop, kill, or restart the live :8746 service. -->
+  <key>KeepAlive</key>
+  <true/>
+
+  <!-- Don't respawn-storm if the port is taken or the venv is broken. -->
+  <key>ThrottleInterval</key>
+  <integer>10</integer>
+
+  <key>StandardOutPath</key>
+  <string>__WALLE_HOME__/Library/Logs/tdtb-server.log</string>
+  <key>StandardErrorPath</key>
+  <string>__WALLE_HOME__/Library/Logs/tdtb-server.log</string>
+</dict>
+</plist>
