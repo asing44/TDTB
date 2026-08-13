@@ -6,8 +6,8 @@ disable-model-invocation: false
 user-invocable: false
 mode: subagent
 hidden: true
-model: openai/gpt-5.6-luna
-variant: max
+model: openai/gpt-5.6-sol
+variant: xhigh
 ---
 
 # PLANNER: DAG execution plans: task decomposition, wave scheduling, risk analysis.
