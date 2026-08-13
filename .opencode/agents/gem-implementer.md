@@ -6,7 +6,7 @@ disable-model-invocation: false
 user-invocable: false
 mode: subagent
 hidden: true
-model: openrouter/tencent/hy3
+model: deepseek/deepseek-v4-flash
 variant: high
 ---
 
