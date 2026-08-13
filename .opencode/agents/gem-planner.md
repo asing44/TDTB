@@ -6,12 +6,8 @@ disable-model-invocation: false
 user-invocable: false
 mode: subagent
 hidden: true
-model: openrouter/google/gemini-3.1-pro-preview
-variant: medium
-temperature: 0.1
-steps: 8
-permission:
-  task: deny
+model: openai/gpt-5.6-luna
+variant: max
 ---
 
 # PLANNER: DAG execution plans: task decomposition, wave scheduling, risk analysis.
