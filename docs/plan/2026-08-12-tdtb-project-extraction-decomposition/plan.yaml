@@ -1,0 +1,387 @@
+plan_id: 2026-08-12-tdtb-project-extraction-decomposition
+objective: >-
+  Split the over-coupled TDTB extraction work into four independently executable
+  workstreams: canonical repository migration, Claudius consumer rewiring,
+  outstanding implementation, and optional attended live cutover.
+created_at: '2026-08-13T00:00:00Z'
+created_by: gem-planner
+status: pending
+tldr: >-
+  Preserve the exhausted combined plan as history and execute migration,
+  rewiring, implementation, and cutover as separate gated plans.
+workstream_type: governing_decomposition
+parent_plan: docs/plan/2026-08-12-tdtb-project-extraction/plan.yaml
+child_plans:
+  - id: 2026-08-12-tdtb-project-extraction-migration
+    path: docs/plan/2026-08-12-tdtb-project-extraction-migration/plan.yaml
+    gate: MIG-07
+    purpose: Copy and verify approved material in the canonical TDTB repository.
+  - id: 2026-08-12-tdtb-project-extraction-claudius-rewiring
+    path: docs/plan/2026-08-12-tdtb-project-extraction-claudius-rewiring/plan.yaml
+    gate: RW-06
+    purpose: Rewire non-live Claudius consumers after migration is green.
+  - id: 2026-08-12-tdtb-project-extraction-implementation
+    path: docs/plan/2026-08-12-tdtb-project-extraction-implementation/plan.yaml
+    gate: IMP-11
+    purpose: Complete outstanding TDTB implementation in the canonical repository.
+  - id: 2026-08-12-tdtb-project-extraction-attended-cutover
+    path: docs/plan/2026-08-12-tdtb-project-extraction-attended-cutover/plan.yaml
+    gate: CUT-06
+    purpose: Optionally switch the attended live runtime to the canonical repository.
+baseline:
+  objective: >-
+    Split the TDTB extraction into independently executable migration, rewiring,
+    implementation, and optional attended cutover workstreams.
+  acceptance_criteria:
+    - Four durable child plans exist with unique IDs and explicit boundaries.
+    - Migration has no PRD, DESIGN, consumer-rewiring, or live-cutover dependency.
+    - Rewiring starts only after the migration handoff is green.
+    - Implementation starts only after migration and rewiring handoffs are green.
+    - Cutover is optional, approval-gated, and isolated from repository work.
+    - The exhausted combined plan and M1 evidence remain preserved as provenance.
+    - No application, consumer, live runtime, or existing evidence file is changed now.
+  captured_at: '2026-08-13T00:00:00Z'
+plan_lineage:
+  root_plan_id: 2026-08-12-tdtb-project-extraction
+  revision: 0
+  replan_count: 0
+  max_replans: 2
+  parent_revision: 6
+  reason: scope_change
+plan_metrics:
+  wave_1_task_count: 1
+  total_dependencies: 3
+  risk_score: high
+  quality_warnings:
+    - The original combined plan has replan_count 2 of max_replans 2.
+    - The source checkout has unrelated dirty paths that must remain untouched.
+    - Destination AGENTS.md, README.md, .gitignore, and .DS_Store need explicit handling.
+    - docs/PRD.yaml and a current DESIGN.md are absent and belong only to implementation input.
+    - The source live process remains outside migration and rewiring scope.
+context_version: 1
+context_updated_at: '2026-08-13T00:00:00Z'
+context_fields_changed:
+  - decomposition_boundary
+  - workstream_dependencies
+  - handoff_artifacts
+  - historical_plan_disposition
+  - optional_cutover_boundary
+tech_stack:
+  - name: Python 3.12
+    role: TDTB backend and migration verification
+    evidence: /Users/walle-mini/Repos/Claudius/Tasks/tdtb-app-pilot/app
+  - name: Preact and TypeScript
+    role: TDTB frontend and implementation verification
+    evidence: /Users/walle-mini/Repos/Claudius/Tasks/tdtb-app-pilot/frontend
+  - name: Git
+    role: Repository identity, dirty-state, manifests, and hashes
+    evidence: /Users/walle-mini/Repos/Claudius/.git
+  - name: launchd
+    role: Optional attended runtime cutover only
+    evidence: /Users/walle-mini/Repos/Claudius/Tasks/tdtb-app-pilot/launchd/com.walle.tdtb.plist
+conventions:
+  - The canonical TDTB repository is /Users/walle-mini/Repos/Projects/TDTB.
+  - Claudius remains the shared skill, ritual, plan, report, and integration host.
+  - Child plans communicate through named receipts and handoff artifacts.
+  - Migration and rewiring use path-scoped changes and preserve unrelated dirty work.
+  - No live action is inferred from a repository or test pass.
+  - Historical references are classified, not erased.
+constraints:
+  hard:
+    - Do not edit the existing combined plan or its evidence during decomposition.
+    - Do not migrate, rewire, implement, restart, cut over, or commit in this task.
+    - Migration must not depend on docs/PRD.yaml, current DESIGN.md, or live cutover.
+    - Rewiring must not change the loaded launchd job or running process.
+    - Implementation must target only the canonical TDTB repository after both upstream gates.
+    - Cutover is the only workstream allowed to change live launchd or process state.
+    - Do not copy source .git directories or claim that Claudius history was imported.
+    - Do not read or copy credentials, provider tokens, vault data, or machine-local state.
+  soft:
+    - Keep the old source app tree as a clearly marked fallback until cutover succeeds.
+    - Regenerate generated UI output in the canonical repository after source verification.
+  compatibility:
+    - Preserve the existing FastAPI, Preact, TypeScript, Vite, Vitest, uv, and npm contracts.
+    - Preserve shared TDTB skills and rituals in Claudius.
+  security_requirements:
+    - Use bounded manifests and hashes for all migration material.
+    - Use fake, synthetic, or scratch data for implementation verification.
+    - Require attended approval before any production runtime mutation.
+architecture_snapshot:
+  source:
+    root: /Users/walle-mini/Repos/Claudius
+    resolved_root: /Users/walle-mini/Development/Claudius
+    owns: shared skills, rituals, plans, reports, references, and consumer governance
+  destination:
+    root: /Users/walle-mini/Repos/Projects/TDTB
+    owns: TDTB backend, frontend, tests, project policy, and app-specific artifacts
+  boundaries:
+    migration: source material to destination; no consumer or live changes
+    rewiring: Claudius non-live consumers to canonical destination; no app behavior
+    implementation: canonical app behavior only; no source consumer changes
+    cutover: attended runtime state only; no repository migration or implementation
+dependency_graph:
+  nodes:
+    - id: MIGRATION
+      plan: 2026-08-12-tdtb-project-extraction-migration
+      gate: MIG-07
+    - id: REWIRING
+      plan: 2026-08-12-tdtb-project-extraction-claudius-rewiring
+      gate: RW-06
+    - id: IMPLEMENTATION
+      plan: 2026-08-12-tdtb-project-extraction-implementation
+      gate: IMP-11
+    - id: CUTOVER
+      plan: 2026-08-12-tdtb-project-extraction-attended-cutover
+      gate: CUT-06
+      optional: true
+  edges:
+    - from: MIGRATION
+      to: REWIRING
+      artifact: docs/plan/2026-08-12-tdtb-project-extraction-migration/evidence/migration-handoff.json
+    - from: REWIRING
+      to: IMPLEMENTATION
+      artifact: docs/plan/2026-08-12-tdtb-project-extraction-claudius-rewiring/evidence/rewiring-handoff.json
+    - from: IMPLEMENTATION
+      to: CUTOVER
+      artifact: docs/plan/2026-08-12-tdtb-project-extraction-implementation/evidence/implementation-handoff.json
+historical_plan_disposition:
+  path: docs/plan/2026-08-12-tdtb-project-extraction/plan.yaml
+  original_revision: 6
+  replan_count: 2
+  max_replans: 2
+  state: historical_superseded
+  superseded_by: docs/plan/2026-08-12-tdtb-project-extraction-decomposition/plan.yaml
+  reason: >-
+    The combined plan is over-coupled, repeatedly blocked, and has exhausted its
+    bounded replan budget. Its task history is evidence, not an active execution path.
+  preservation_rule: >-
+    Preserve the file, all task history, revision metadata, and referenced evidence.
+    Record this disposition only in the new decomposition plan; do not rewrite history.
+  preserved_evidence:
+    - docs/plan/2026-08-12-tdtb-project-extraction/evidence/source-inventory.json
+    - /Users/walle-mini/Repos/Claudius/Plans Link/2026-08-12-tdtb-project-extraction/evidence/transfer-receipt.json
+    - /Users/walle-mini/Repos/Claudius/Plans Link/2026-08-12-tdtb-project-extraction.md
+replan:
+  reason: >-
+    Decompose the exhausted combined plan after repeated coupling between migration,
+    consumer rewiring, implementation inputs, and attended live operations.
+  changed_tasks:
+    - M2-M11 migration tasks are moved to the migration child plan boundary.
+    - M8-M9 consumer tasks are moved to the rewiring child plan boundary.
+    - I1-I9 implementation tasks are moved to the implementation child plan boundary.
+    - M12-M13 operational tasks are moved to the optional cutover child plan boundary.
+  added_tasks:
+    - D-MIGRATION
+    - D-REWIRING
+    - D-IMPLEMENTATION
+    - D-CUTOVER
+  removed_tasks: []
+  preserved_acceptance_criteria:
+    - The TDTB application lives in the canonical TDTB repository.
+    - Current dirty work and historical provenance remain preserved.
+    - Claudius consumers resolve to the canonical repository after rewiring.
+    - Outstanding implementation follows verified migration and rewiring.
+    - Live cutover requires attended approval and operational verification.
+  new_risks:
+    - A child plan could bypass its upstream handoff if cross-plan receipts are not checked.
+    - Missing PRD or DESIGN inputs could be hidden inside implementation tasks.
+    - Optional cutover could be mistaken for migration or implementation completion.
+    - Historical plan status could be changed instead of preserved as provenance.
+  progress_signal: >-
+    One governing plan and four unique child plan paths define boundaries, gates,
+    dependencies, exact handoff artifacts, and the exhausted-plan disposition.
+open_questions:
+  - question: Which user-approved PRD input or waiver will implementation use?
+    context: docs/PRD.yaml is absent; migration and rewiring must not wait for it.
+    type: decision_blocker
+    affects: [IMPLEMENTATION]
+  - question: Which current design input will authorize UI implementation?
+    context: Current DESIGN.md is absent; the archived design file is provenance only.
+    type: decision_blocker
+    affects: [IMPLEMENTATION]
+assumptions:
+  - The source and destination paths in M1 evidence remain the intended repositories.
+  - The existing M1 inventory remains readable and unchanged.
+  - Child plan handoff receipts are immutable inputs once a workstream is accepted.
+  - Migration can fail closed on source drift without pausing or changing live runtime state.
+  - The attended cutover may be skipped without invalidating migration or implementation.
+pre_mortem:
+  overall_risk_level: high
+  critical_failure_modes:
+    - scenario: Migration copies an unapproved collision or generated file.
+      likelihood: medium
+      impact: critical
+      mitigation: Require a sealed map, collision manifest, generated exclusions, and hashes.
+    - scenario: Rewiring changes a live consumer while updating Claudius references.
+      likelihood: medium
+      impact: critical
+      mitigation: Limit rewiring to non-live files and defer loaded runtime changes to CUTOVER.
+    - scenario: Implementation starts without migration or rewiring proof.
+      likelihood: medium
+      impact: critical
+      mitigation: Require both named handoff artifacts before IMP-01 can pass.
+    - scenario: Missing PRD or DESIGN is silently replaced by historical material.
+      likelihood: high
+      impact: high
+      mitigation: Make input resolution a visible implementation task with approval or waiver.
+    - scenario: A failed cutover claims success without verified rollback or resume.
+      likelihood: medium
+      impact: critical
+      mitigation: Use a preimage, pause gate, recovery barrier, and GET-only operational proof.
+coordination_notes:
+  - Execute child plans in dependency order: migration, rewiring, implementation, then cutover.
+  - Migration output must explicitly state that PRD, DESIGN, and cutover were not required.
+  - Rewiring output must classify the source live consumer as pre-cutover, not broken.
+  - Implementation output must include its PRD/DESIGN decision record and no live-write proof.
+  - Cutover output must be optional and must never be a prerequisite for the first three gates.
+tasks:
+  - id: D-MIGRATION
+    title: Establish the migration-only workstream contract
+    description: >-
+      Accept the child plan that copies approved application and project material
+      into the canonical repository and independently verifies its destination state.
+    wave: 1
+    agent: gem-reviewer
+    status: pending
+    covers: [migration boundary, collision policy, generated exclusions, migration handoff]
+    depends_on: []
+    conflicts_with: []
+    context_files:
+      - path: docs/plan/2026-08-12-tdtb-project-extraction-migration/plan.yaml
+        description: Migration-only child DAG.
+      - path: docs/plan/2026-08-12-tdtb-project-extraction/evidence/source-inventory.json
+        description: Preserved M1 inventory input.
+    flags:
+      requires_design_validation: false
+      retries_used: 0
+      revision_reason: ''
+    acceptance_criteria:
+      - The migration child plan has no PRD, DESIGN, consumer, or live-cutover prerequisite.
+      - It names collision, manifest, hash, generated-exclusion, and destination gates.
+      - It emits migration-handoff.json as the only downstream acceptance input.
+    handoff:
+      known_context: [The combined plan is historical and must not be edited by this task.]
+      target_files: [docs/plan/2026-08-12-tdtb-project-extraction-migration/plan.yaml]
+      constraints: [Review the boundary only; do not migrate files or change evidence.]
+    requires_review: false
+    review_depth: full
+    review_security_sensitive: false
+
+  - id: D-REWIRING
+    title: Establish the Claudius consumer rewiring contract
+    description: >-
+      Accept the child plan that rewires non-live Claudius consumers only after
+      migration verification and preserves shared ownership and live fallback state.
+    wave: 2
+    agent: gem-reviewer
+    status: pending
+    covers: [consumer inventory, non-live rewiring, boundary sweep, rewiring handoff]
+    depends_on: [D-MIGRATION]
+    conflicts_with: []
+    context_files:
+      - path: docs/plan/2026-08-12-tdtb-project-extraction-claudius-rewiring/plan.yaml
+        description: Consumer rewiring child DAG.
+      - path: docs/plan/2026-08-12-tdtb-project-extraction-migration/evidence/migration-handoff.json
+        description: Required migration gate output.
+    flags:
+      requires_design_validation: false
+      retries_used: 0
+      revision_reason: ''
+    acceptance_criteria:
+      - The rewiring child plan depends on migration-handoff.json and no earlier artifact.
+      - It excludes live launchd/process mutation and application implementation.
+      - It emits rewiring-handoff.json with a complete consumer disposition.
+    handoff:
+      known_context: [Shared skills remain in Claudius; app path consumers move to the canonical root.]
+      target_files: [docs/plan/2026-08-12-tdtb-project-extraction-claudius-rewiring/plan.yaml]
+      constraints: [Review the boundary only; do not edit Claudius consumers now.]
+    requires_review: false
+    review_depth: full
+    review_security_sensitive: false
+
+  - id: D-IMPLEMENTATION
+    title: Establish the downstream implementation contract
+    description: >-
+      Accept the child plan that implements the outstanding TDTB backlog only
+      after both repository migration and Claudius rewiring are independently green.
+    wave: 3
+    agent: gem-reviewer
+    status: pending
+    covers: [upstream gates, explicit PRD/DESIGN inputs, backend, frontend, verification]
+    depends_on: [D-REWIRING]
+    conflicts_with: []
+    context_files:
+      - path: docs/plan/2026-08-12-tdtb-project-extraction-implementation/plan.yaml
+        description: Canonical implementation child DAG.
+      - path: docs/plan/2026-08-12-tdtb-project-extraction-claudius-rewiring/evidence/rewiring-handoff.json
+        description: Required consumer gate output.
+    flags:
+      requires_design_validation: false
+      retries_used: 0
+      revision_reason: ''
+    acceptance_criteria:
+      - The implementation child plan requires both upstream handoff artifacts.
+      - Missing PRD and DESIGN inputs are visible scoped gates, not migration blockers.
+      - It excludes Claudius consumer edits and live runtime changes.
+      - It emits implementation-handoff.json for optional cutover only.
+    handoff:
+      known_context: [Implementation target is the canonical TDTB repository only.]
+      target_files: [docs/plan/2026-08-12-tdtb-project-extraction-implementation/plan.yaml]
+      constraints: [Review the boundary only; do not implement or resolve missing inputs now.]
+    requires_review: false
+    review_depth: full
+    review_security_sensitive: false
+
+  - id: D-CUTOVER
+    title: Establish the optional attended cutover contract
+    description: >-
+      Accept the isolated child plan for an attended runtime switch with explicit
+      approval, pause, rollback, resume, and operational verification gates.
+    wave: 4
+    agent: gem-reviewer
+    status: pending
+    covers: [optional cutover, approval gate, rollback, resume, operational proof]
+    depends_on: [D-IMPLEMENTATION]
+    conflicts_with: []
+    context_files:
+      - path: docs/plan/2026-08-12-tdtb-project-extraction-attended-cutover/plan.yaml
+        description: Optional cutover child DAG.
+      - path: docs/plan/2026-08-12-tdtb-project-extraction-implementation/evidence/implementation-handoff.json
+        description: Required implementation gate output.
+    flags:
+      requires_design_validation: false
+      retries_used: 0
+      revision_reason: ''
+    acceptance_criteria:
+      - Cutover is marked optional and is not required for migration or implementation acceptance.
+      - The child plan requires attended approval before any live mutation.
+      - Pause, preimage, rollback, resume, and GET-only operational checks are explicit.
+      - Failed or unverifiable rollback emits escalation_required and no success claim.
+    handoff:
+      known_context: [No live action is authorized by this decomposition task.]
+      target_files: [docs/plan/2026-08-12-tdtb-project-extraction-attended-cutover/plan.yaml]
+      constraints: [Review the boundary only; do not inspect or change live runtime state now.]
+    requires_review: false
+    review_depth: full
+    review_security_sensitive: false
+verification_performed:
+  - Read the current combined plan and confirmed revision 6, replan_count 2, max_replans 2.
+  - Read M1 source inventory and preserved its path as a downstream migration input.
+  - Confirmed the source and destination roots and the known collision and dirty-path risks.
+  - Confirmed docs/PRD.yaml and current DESIGN.md are absent from the destination repository.
+  - Confirmed the archived DESIGN.md path is historical evidence only.
+  - Confirmed the decomposition writes no application, consumer, live, or existing evidence file.
+  - Confirmed the child dependency graph is migration -> rewiring -> implementation -> optional cutover.
+outputs_required:
+  decomposition_paths:
+    - docs/plan/2026-08-12-tdtb-project-extraction-decomposition/plan.yaml
+    - docs/plan/2026-08-12-tdtb-project-extraction-migration/plan.yaml
+    - docs/plan/2026-08-12-tdtb-project-extraction-claudius-rewiring/plan.yaml
+    - docs/plan/2026-08-12-tdtb-project-extraction-implementation/plan.yaml
+    - docs/plan/2026-08-12-tdtb-project-extraction-attended-cutover/plan.yaml
+  dependency_graph: migration -> rewiring -> implementation -> optional cutover
+  migration_acceptance_criteria: MIG-07 in the migration child plan
+  rewiring_acceptance_criteria: RW-06 in the rewiring child plan
+  implementation_acceptance_criteria: IMP-11 in the implementation child plan
+  cutover_acceptance_criteria: CUT-06 in the attended cutover child plan
+  historical_plan_disposition: historical_superseded with original task history preserved

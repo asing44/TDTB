@@ -1,0 +1,136 @@
+{
+  "artifact": "recovery-verification",
+  "plan_id": "2026-08-12-tdtb-project-extraction-attended-cutover",
+  "task_id": "CUT-05",
+  "title": "Verify canonical resume and rollback readiness",
+  "recorded_at_utc": "2026-08-13T23:30:00+00:00",
+  "verdict": "VERIFIED_READY_NO_ROLLBACK",
+  "rollback_invoked": false,
+  "rollback_required": false,
+  "reason_no_rollback": "CUT-04 cutover succeeded and all CUT-05 acceptance checks pass; rollback authority remains available but unused.",
+
+  "canonical_health": {
+    "process_pid": 32002,
+    "process_ppid": 1,
+    "process_state": "running (daemon, parent init)",
+    "process_started_local": "Thu Aug 13 16:07:09 2026",
+    "canonical_executable": "/Users/walle-mini/Repos/Projects/TDTB/app/.venv/bin/python",
+    "resolved_executable": "/opt/homebrew/Cellar/python@3.12/3.12.13_4/Frameworks/Python.framework/Versions/3.12/Resources/Python.app/Contents/MacOS/Python",
+    "process_cwd": "/Users/walle-mini/Repos/Projects/TDTB/app",
+    "open_files_source_refs": 0,
+    "open_files_canonical_refs": 9,
+    "launchctl_state": "running",
+    "launchctl_program": "/Users/walle-mini/Repos/Projects/TDTB/app/.venv/bin/python",
+    "launchctl_working_directory": "/Users/walle-mini/Repos/Projects/TDTB/app",
+    "port_8746": "127.0.0.1:8746 LISTEN (localhost-only, PID 32002)",
+    "health_endpoint": "GET http://127.0.0.1:8746/health",
+    "health_http_status": 200,
+    "health_response": {"status": "ok", "judgment_model": "openai/gpt-5.6-luna"},
+    "health_model_matches_source_preimage": true,
+    "version_endpoint": "GET /version -> 404 (route not implemented; not a failure)",
+    "billed_endpoints_called": 0,
+    "vault_accessed": false,
+    "provider_writes": 0
+  },
+
+  "rollback_readiness": {
+    "available": true,
+    "preimage_byte_exact": true,
+    "preimage_preserved_path": "/Users/walle-mini/Repos/Projects/TDTB/docs/plan/2026-08-12-tdtb-project-extraction-attended-cutover/evidence/pause-preimage.launchagent.plist.bak",
+    "preimage_sha256_observed": "65f8443a17dc9c3bb43bbf26e9591d9a38eac34644390a9033d487577d37a45b",
+    "preimage_sha256_expected": "65f8443a17dc9c3bb43bbf26e9591d9a38eac34644390a9033d487577d37a45b",
+    "preimage_match": true,
+    "preimage_plutil_lint": "OK",
+    "source_fallback_available": true,
+    "source_fallback_note": "Byte-exact source plist preserved as .bak; restore path yields source contract at /Users/walle-mini/Development/Claudius/Tasks/tdtb-app-pilot/app (resolved via Repos/Claudius -> Development/Claudius symlink, identical runtime root).",
+    "installed_plist_sha256_current": "b70361e47a14e4540ba75f929f15b3518726321966a77ac6786ad229ea9819c2 (CANONICAL contract; differs from source 65f8443a... by design)",
+    "rollback_authorized": true,
+    "rollback_commands": [
+      "cp -p /Users/walle-mini/Repos/Projects/TDTB/docs/plan/2026-08-12-tdtb-project-extraction-attended-cutover/evidence/pause-preimage.launchagent.plist.bak /Users/walle-mini/Library/LaunchAgents/com.walle.tdtb.plist",
+      "launchctl bootout gui/501/com.walle.tdtb 2>/dev/null || true",
+      "launchctl bootstrap gui/501 /Users/walle-mini/Library/LaunchAgents/com.walle.tdtb.plist",
+      "curl -sf -m 3 http://127.0.0.1:8746/health"
+    ],
+    "expected_rollback_health": {"status": "ok", "judgment_model": "openai/gpt-5.6-luna"}
+  },
+
+  "verification_checks": [
+    {"id": "R1", "check": "canonical process active + canonical executable + cwd", "observed": "PID 32002 ppid 1 running; launchctl program=Repos/Projects/TDTB/app/.venv/bin/python; cwd=Repos/Projects/TDTB/app; 9 canonical open files, 0 source refs", "pass": true},
+    {"id": "R2", "check": "GET-only health check success", "observed": "GET /health -> 200 {status:ok, judgment_model:openai/gpt-5.6-luna}; same model as source preimage; billed_calls=0", "pass": true},
+    {"id": "R3", "check": "rollback preimage byte-exact", "observed": "pause-preimage.launchagent.plist.bak sha256=65f8443a... equals expected source 65f8443a...; plutil -lint OK", "pass": true},
+    {"id": "R4", "check": "source fallback available", "observed": ".bak preserved and byte-identical; restore path resolves to identical source runtime root", "pass": true},
+    {"id": "R5", "check": "no duplicate source writer", "observed": "pgrep tdtb-app-pilot -> exit 1 (none); pgrep Claudius.*main.py -> exit 1 (none); only PID 32002 on :8746", "pass": true},
+    {"id": "R6", "check": "no unexpected launch agent", "observed": "launchctl list shows only com.walle.tdtb (PID 32002); ~/Library/LaunchAgents contains only com.walle.tdtb.plist", "pass": true},
+    {"id": "R7", "check": "no unnecessary live mutation / external write / billed call / commit", "observed": "all ops read-only; only deliverable receipt written; no restart, no vault/provider/todoist/calendar access, no commit", "pass": true}
+  ],
+
+  "resume_recovery_state": {
+    "canonical_runtime_resumed": true,
+    "canonical_runtime_stable": true,
+    "single_writer_invariant_preserved": true,
+    "resume_evidence": "PID 32002 bound 127.0.0.1:8746, health 200, cwd canonical; no stray writers; rollback preimage intact and restorable.",
+    "recovery_point_explicit": true,
+    "recovery_note": "If canonical health or preimage integrity fails at any later time, the approved rollback authority (CUT-04 rollback_status.rollback_authorized=true) may be invoked using rollback_commands above without re-approval per CUT-04 receipt."
+  },
+
+  "guards_observed": {
+    "mutation_performed": false,
+    "source_restart_performed": false,
+    "other_launch_agents_touched": false,
+    "other_processes_touched": false,
+    "billed_calls": 0,
+    "provider_writes": 0,
+    "todoist_accessed": false,
+    "calendar_accessed": false,
+    "vault_accessed": false,
+    "vault_write": false,
+    "external_writes": 0,
+    "credentials_recorded": false,
+    "provider_payloads_recorded": false,
+    "session_token_recorded": false,
+    "restart_live_sh_used": false,
+    "commit_created": false,
+    "git_staged_or_committed": false,
+    "source_fallback_modified": false,
+    "writes_performed": [
+      "/Users/walle-mini/Repos/Projects/TDTB/docs/plan/2026-08-12-tdtb-project-extraction-attended-cutover/evidence/recovery-verification.json"
+    ],
+    "read_only_operations": [
+      "ps -ww -o pid,ppid,user,command,lstart -p 32002",
+      "lsof -a -p 32002 -d cwd",
+      "lsof -p 32002 (open file source/canonical ref counts)",
+      "shasum -a 256 (installed plist + .bak preimage)",
+      "plutil -lint (preimage .bak)",
+      "launchctl print gui/501/com.walle.tdtb",
+      "launchctl list | grep tdtb",
+      "pgrep -fl 'tdtb-app-pilot' / 'Claudius.*main.py'",
+      "lsof -nP -iTCP:8746 -sTCP:LISTEN",
+      "curl -s -m 3 http://127.0.0.1:8746/health (tokenless read)",
+      "ls ~/Library/LaunchAgents | grep tdtb"
+    ]
+  },
+
+  "outstanding_upstream_conditions": [
+    {
+      "code": "REWIRING_CONDITION_UNRESOLVED",
+      "severity": "HIGH",
+      "status": "OPEN",
+      "affected_by_this_task": false,
+      "pass_invented": false,
+      "detail": "Authorized vault-gated LiveSourceContract pass against the real vault is not recorded (rewiring handoff ACCEPTED_CONDITIONAL). CUT-05 performed read-only verification and did NOT access the vault; this condition remains OPEN and is carried forward unchanged. Do not claim all upstream gates are green."
+    }
+  ],
+
+  "blockers": [],
+
+  "acceptance_criteria": [
+    {"criterion": "Canonical process remains active with canonical executable and working directory.", "met": true, "evidence": "R1: PID 32002 running, launchctl program/cwd = Repos/Projects/TDTB/app, 9 canonical open files, 0 source."},
+    {"criterion": "GET-only health/version checks remain successful.", "met": true, "evidence": "R2: GET /health 200 {status:ok, judgment_model:openai/gpt-5.6-luna}; /version 404 (not implemented). No billed calls."},
+    {"criterion": "Rollback preimage remains byte-exact and source fallback is available.", "met": true, "evidence": "R3/R4: .bak sha256=65f8443a... equals expected; plutil OK; restore path yields identical source runtime."},
+    {"criterion": "No duplicate source writer or unexpected launch agent exists.", "met": true, "evidence": "R5/R6: pgrep source writers exit 1; launchctl list shows only com.walle.tdtb; single port listener."},
+    {"criterion": "Recovery/rollback readiness receipt written with no credentials/provider payloads.", "met": true, "evidence": "this artifact; guards_observed.credentials_recorded=false, provider_payloads_recorded=false, session_token_recorded=false."},
+    {"criterion": "No unnecessary live mutation, external write, billed call, or commit.", "met": true, "evidence": "R7: all ops read-only; only this receipt written; no restart/commit/vault/provider access."}
+  ],
+
+  "artifact_path": "/Users/walle-mini/Repos/Projects/TDTB/docs/plan/2026-08-12-tdtb-project-extraction-attended-cutover/evidence/recovery-verification.json"
+}

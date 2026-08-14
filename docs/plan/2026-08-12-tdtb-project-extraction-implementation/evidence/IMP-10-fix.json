@@ -1,0 +1,115 @@
+{
+  "artifact": "IMP-10-fix",
+  "plan_id": "2026-08-12-tdtb-project-extraction-implementation",
+  "task_id": "IMP-10-FIX",
+  "captured_at": "2026-08-13",
+  "status": "passed",
+  "nature": "Bounded responsive CSS fix for the IMP-10 F-1 narrow-viewport horizontal overflow, with a focused CSS regression suite, rebuilt bundles (read back), and a re-run of the full 32-step scratch browser qualification against the fixture mockup bundle. Zero live calls, zero consumer changes, zero dependency upgrades, zero commits.",
+  "no_commit": true,
+
+  "root_cause": {
+    "reported": "IMP-10 attributed the 375px overflow to .calendar-impact__row (fixed grid tracks 116px minmax(160px,1fr) 64px 70px 92px 124px auto).",
+    "corrected_finding": "The measured document scrollWidth 799px could not come from calendar-impact alone (its min-content is ~674px). Re-measurement pinned the dominant overflow to the allocator table grid .queue__cols/.qrow (tracks 3px minmax(0,1fr) 128px 256px minmax(348px,auto) ≈ 783px min + gaps = 799px), with .band header flex rows spilling ~24px past the viewport. All three are the same defect class: fixed-wide grid/flex tracks with no @media (max-width:767px) treatment.",
+    "evidence": [
+      "Before fix: scrollWidth 799 vs clientWidth 375 at 375x812 (#sequenced); .qrow__actions right edge 799.",
+      "After fix: scrollWidth 375 == clientWidth 375; zero elements wider than the viewport (probe wideCount 0)."
+    ]
+  },
+
+  "css_change": {
+    "file": "frontend/src/app.css",
+    "location": "inside the existing @media (max-width: 767px) block (after .execution__cards, before .main), the same breakpoint the rail/execution/dock narrow rules use",
+    "desktop_impact": "none — no base rules touched; desktop-untouched guards assert the base .calendar-impact__row (7 tracks) and .queue__cols/.qrow (5 tracks) declarations are unchanged",
+    "added_rules": [
+      ".calendar-impact { padding: 12px 14px; }",
+      ".calendar-impact__head { flex-direction: column; align-items: flex-start; gap: 6px; }",
+      ".calendar-impact__work { white-space: normal; }",
+      ".calendar-impact__row { grid-template-columns: 116px minmax(0, 1fr); gap: 4px 8px; padding: 6px 0; }",
+      ".calendar-impact__class { justify-self: start; }",
+      ".calendar-impact__attend { grid-column: 1 / -1; justify-self: stretch; }",
+      ".queue__cols { display: none; }",
+      ".queue__cols, .qrow { grid-template-columns: 3px minmax(0, 1fr); gap: 4px 10px; }",
+      ".qrow__due, .qrow__time { grid-column: 2; }",
+      ".qrow__actions { grid-column: 1 / -1; flex-wrap: wrap; justify-content: flex-end; }",
+      ".band__note, .band__bar, .band__share, .band__over { display: none; }"
+    ]
+  },
+
+  "test_added": {
+    "file": "frontend/src/responsive.test.ts (new)",
+    "convention": "jsdom does no real style resolution and vitest stubs CSS imports, so the a11y suite reads CSS text off disk (a11y.test.tsx precedent); responsive.test.ts does the same for app.css",
+    "tests": 10,
+    "coverage": [
+      "narrow media rule exists",
+      "calendar-impact row re-templated to 116px minmax(0, 1fr)",
+      "attend control spans full row width",
+      "work envelope summary wraps (white-space: normal)",
+      "allocator rows re-templated to 3px minmax(0, 1fr)",
+      "aligned column header hidden (queue__cols display:none)",
+      "row actions span full width and wrap",
+      "secondary band readouts hidden (band__over display:none)",
+      "desktop calendar-impact grid untouched (7 tracks + auto)",
+      "desktop allocator grid untouched (5 tracks)"
+    ]
+  },
+
+  "verification": {
+    "frontend_vitest": {
+      "command": "npm test",
+      "cwd": "/Users/walle-mini/Repos/Projects/TDTB/frontend",
+      "result": "pass",
+      "output": "Test Files 34 passed | 1 skipped (35); Tests 498 passed | 6 skipped (504) — includes 10 new responsive.test.ts assertions"
+    },
+    "frontend_typecheck": {
+      "command": "npm run typecheck",
+      "cwd": "/Users/walle-mini/Repos/Projects/TDTB/frontend",
+      "result": "pass",
+      "output": "tsc --noEmit completed with no diagnostics"
+    },
+    "build_mockup": {
+      "command": "npm run build:mockup",
+      "cwd": "/Users/walle-mini/Repos/Projects/TDTB/frontend",
+      "result": "pass",
+      "output": "index.html 0.45 kB; index-_TUHoK0S.css 30.76 kB; index-yAfczYmx.js 123.03 kB"
+    },
+    "build_prod": {
+      "command": "npm run build:prod",
+      "cwd": "/Users/walle-mini/Repos/Projects/TDTB/frontend",
+      "result": "pass",
+      "output": "index.html 0.45 kB; index-_TUHoK0S.css 30.76 kB; index-B2Db4l1G.js 124.35 kB"
+    },
+    "built_css_read_back": {
+      "mockup_assets/index-_TUHoK0S.css": "narrow .calendar-impact__row minmax(0,1fr) present; narrow .qrow 3px minmax(0,1fr) present; .queue__cols display:none present; .band__note,.band__bar,.band__share,.band__over display:none present (merged with .main by esbuild); .calendar-impact__work white-space:normal present",
+      "same_css_hash_both_builds": true
+    },
+    "browser_qualification": {
+      "harness": "/var/folders/gw/5_33ynbd5vv5884_v5h7vmg80000gn/T/opencode/tdtb-scratch/browser_walkthrough.cjs",
+      "mode": "Playwright chromium (headless) against the freshly rebuilt fixture mockup bundle on scratch http://127.0.0.1:8791; no live :8746 access",
+      "steps_total": 32,
+      "steps_passed": 32,
+      "steps_failed": 0,
+      "console_errors": 0,
+      "page_errors": 0,
+      "network_failures": 0,
+      "narrow_no_horizontal_scroll": "overflow=0px (was 424px before the fix)",
+      "result_file": "/var/folders/gw/5_33ynbd5vv5884_v5h7vmg80000gn/T/opencode/tdtb-scratch/browser-result.json"
+    },
+    "probe_375": {
+      "after_fix": "scrollWidth 375 == clientWidth 375; .calendar-impact__row computed grid '116px 223px'; wideCount 0",
+      "before_fix": "scrollWidth 799; .qrow__actions right edge 799; .band__chevron right edge 399"
+    }
+  },
+
+  "safety": {
+    "billed_calls": 0,
+    "real_source_writes": 0,
+    "live_8746_access": false,
+    "consumer_changes": 0,
+    "dependency_upgrades": 0,
+    "commit_created": false,
+    "git_diff_check": "clean",
+    "scratch_server": "node static server on 127.0.0.1:8791 serving mockups/cockpit; favicon requests answered 204 to mirror the IMP-10 server behavior (the browser's implicit /favicon.ico fetch is a scratch-server artifact, not an app request — verified zero app 404s)"
+  },
+
+  "gate_verdict": "PASSED — F-1 resolved and re-qualified; IMP-11 no longer blocked on the responsive contract"
+}

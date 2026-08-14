@@ -1,0 +1,167 @@
+{
+  "artifact": "cutover-receipt",
+  "plan_id": "2026-08-12-tdtb-project-extraction-attended-cutover",
+  "task_id": "CUT-04",
+  "title": "Switch live consumer to canonical TDTB runtime",
+  "recorded_at_utc": "2026-08-13T23:09:00+00:00",
+  "attended": true,
+  "verdict": "CUTOVER_COMPLETE_VERIFIED",
+  "consumer_switched": true,
+  "canonical_runtime_started": true,
+  "rollback_available": true,
+  "rewiring_condition_status": "OPEN (carried forward; NOT resolved or invented by this task)",
+
+  "authorization": {
+    "approval_receipt": "/Users/walle-mini/Repos/Projects/TDTB/docs/plan/2026-08-12-tdtb-project-extraction-attended-cutover/evidence/approval-receipt.json",
+    "approval_verdict": "APPROVED_ATTENDED_LIVE_CUTOVER",
+    "approval_present": true,
+    "rollback_authorized_by": "Attending approving user (approver of record)",
+    "preimage_gate": "CUT-03 captured preimage and verified source pause (port :8746 down before mutation)"
+  },
+
+  "target": {
+    "label": "com.walle.tdtb",
+    "domain": "gui/501",
+    "canonical_runtime_root": "/Users/walle-mini/Repos/Projects/TDTB",
+    "canonical_launch_contract_path": "/Users/walle-mini/Repos/Projects/TDTB/launchd/com.walle.tdtb.plist",
+    "canonical_template_sha256": "230fcf109a5c9ae2c683ae7b3e53b4493705e4d665e1484cee8fe01fd9940202",
+    "canonical_branch": "Development/tdtb-canonical-cutover",
+    "canonical_head": "bcc0ee0fe58fd13a8ee99faf4441f14047c1a1cf",
+    "canonical_template_matches_committed_blob": true
+  },
+
+  "before_identity": {
+    "timestamp_utc": "2026-08-13T19:59:15Z (CUT-03 capture; service was paused for the cutover window)",
+    "loaded_plist_path": "/Users/walle-mini/Library/LaunchAgents/com.walle.tdtb.plist",
+    "loaded_plist_sha256": "65f8443a17dc9c3bb43bbf26e9591d9a38eac34644390a9033d487577d37a45b (SOURCE contract)",
+    "service_state": "absent (bootout performed in CUT-03)",
+    "process_pid": "none (paused)",
+    "port_8746": "free",
+    "program": "/Users/walle-mini/Development/Claudius/Tasks/tdtb-app-pilot/app/.venv/bin/python (per preimage; Repos/Claudius -> Development/Claudius symlink, identical runtime root)",
+    "working_directory": "/Users/walle-mini/Development/Claudius/Tasks/tdtb-app-pilot/app",
+    "tdtb_vault_root": "/Users/walle-mini/Obsidian/WALL⋅E-THNK"
+  },
+
+  "after_identity": {
+    "timestamp_utc": "2026-08-13T23:08:49Z (bootstrap); health verified 2026-08-13T23:08:50Z",
+    "loaded_plist_path": "/Users/walle-mini/Library/LaunchAgents/com.walle.tdtb.plist",
+    "loaded_plist_sha256": "b70361e47a14e4540ba75f929f15b3518726321966a77ac6786ad229ea9819c2 (CANONICAL contract; rendered from template 230fcf10...)",
+    "service_state": "running",
+    "service_pid": 32002,
+    "port_8746": "127.0.0.1:8746 LISTEN (bound localhost-only)",
+    "program": "/Users/walle-mini/Repos/Projects/TDTB/app/.venv/bin/python",
+    "program_resolves_to": "/opt/homebrew/Cellar/python@3.12/3.12.13_4/Frameworks/Python.framework/Versions/3.12/Resources/Python.app/Contents/MacOS/Python",
+    "working_directory": "/Users/walle-mini/Repos/Projects/TDTB/app",
+    "process_cwd": "/Users/walle-mini/Repos/Projects/TDTB/app",
+    "tdtb_vault_root": "/Users/walle-mini/Obsidian/WALL⋅E-THNK",
+    "tdtb_judgment_model": "openai/gpt-5.6-luna",
+    "open_files_canonical_refs": 9,
+    "open_files_source_refs": 0,
+    "venv_site_packages_in_use": "/Users/walle-mini/Repos/Projects/TDTB/app/.venv/lib/python3.12/site-packages/*",
+    "label_unique_in_launchctl": true
+  },
+
+  "mutation_steps": [
+    {"step": 1, "action": "render canonical template -> temp plist", "detail": "substitute __WALLE_HOME__ -> /Users/walle-mini and __TDTB_VAULT_ROOT__ -> /Users/walle-mini/Obsidian/WALL⋅E-THNK (byte-exact from CUT-03 backup); plutil -lint OK; diff vs source backup shows ONLY program path + working directory changed", "exit": 0},
+    {"step": 2, "action": "install plist", "detail": "cp rendered -> /Users/walle-mini/Library/LaunchAgents/com.walle.tdtb.plist", "exit": 0},
+    {"step": 3, "action": "bootstrap runtime", "detail": "launchctl bootstrap gui/501 /Users/walle-mini/Library/LaunchAgents/com.walle.tdtb.plist", "exit": 0},
+    {"step": 4, "action": "verify", "detail": "GET /health 200; process identity canonical; port bound", "exit": 0}
+  ],
+
+  "health_version_state": {
+    "method": "GET http://127.0.0.1:8746/health",
+    "endpoint_classification": "tokenless read-only route; no provider call, no vault write, no billed spend",
+    "http_status": 200,
+    "response": {"status": "ok", "judgment_model": "openai/gpt-5.6-luna"},
+    "billed_endpoints_called": 0,
+    "provider_writes": 0,
+    "vault_accessed": false,
+    "log_startup": "Started server process [32002] -> Application startup complete -> Uvicorn running on http://127.0.0.1:8746 -> GET /health 200 OK",
+    "error_traceback_in_startup_log": false
+  },
+
+  "verification_signals": [
+    {"id": "A1", "check": "launchctl print gui/501/com.walle.tdtb", "observed": "state=running, program=Repos/Projects/TDTB/app/.venv/bin/python, working directory=Repos/Projects/TDTB/app", "pass": true},
+    {"id": "A2", "check": "loaded plist sha256", "observed": "b70361e4... (rendered canonical; differs from source 65f8443a... by design)", "pass": true},
+    {"id": "A3", "check": "ps -o pid,ppid,command -p 32002", "observed": "PID 32002 ppid 1, 'Python main.py', cwd /Users/walle-mini/Repos/Projects/TDTB/app", "pass": true},
+    {"id": "A4", "check": "open files source refs", "observed": "0 references to tdtb-app-pilot / Development/Claudius", "pass": true},
+    {"id": "A5", "check": "open files canonical refs", "observed": "9 references to Repos/Projects/TDTB; uses canonical .venv site-packages", "pass": true},
+    {"id": "A6", "check": "lsof port 8746 LISTEN", "observed": "PID 32002, 127.0.0.1:8746 (localhost-only)", "pass": true},
+    {"id": "A7", "check": "GET /health", "observed": "200 {status:ok, judgment_model:openai/gpt-5.6-luna}", "pass": true},
+    {"id": "A8", "check": "launchctl list (no stray labels)", "observed": "only com.walle.tdtb (PID 32002)", "pass": true},
+    {"id": "A9", "check": "pgrep Claudius main.py", "observed": "none (exit 1)", "pass": true}
+  ],
+
+  "rollback_status": {
+    "available": true,
+    "source_contract_preserved": true,
+    "preserved_backup_path": "/Users/walle-mini/Repos/Projects/TDTB/docs/plan/2026-08-12-tdtb-project-extraction-attended-cutover/evidence/pause-preimage.launchagent.plist.bak",
+    "preserved_backup_sha256": "65f8443a17dc9c3bb43bbf26e9591d9a38eac34644390a9033d487577d37a45b (unchanged, byte-identical to source installed plist)",
+    "rollback_commands": [
+      "cp -p /Users/walle-mini/Repos/Projects/TDTB/docs/plan/2026-08-12-tdtb-project-extraction-attended-cutover/evidence/pause-preimage.launchagent.plist.bak /Users/walle-mini/Library/LaunchAgents/com.walle.tdtb.plist",
+      "launchctl bootout gui/501/com.walle.tdtb 2>/dev/null || true",
+      "launchctl bootstrap gui/501 /Users/walle-mini/Library/LaunchAgents/com.walle.tdtb.plist",
+      "curl -sf -m 3 http://127.0.0.1:8746/health"
+    ],
+    "rollback_authorized": true,
+    "rollback_requires_attended_approval": false
+  },
+
+  "guards_observed": {
+    "launchd_mutation_scope": "single named label com.walle.tdtb in gui/501",
+    "other_launch_agents_touched": false,
+    "other_processes_touched": false,
+    "billed_calls": 0,
+    "provider_writes": 0,
+    "todoist_accessed": false,
+    "calendar_accessed": false,
+    "vault_accessed": false,
+    "vault_write": false,
+    "external_writes": 0,
+    "credentials_recorded": false,
+    "provider_payloads_recorded": false,
+    "session_token_recorded": false,
+    "restart_live_sh_used": false,
+    "commit_created": false,
+    "git_staged_or_committed": false,
+    "source_fallback_modified": false,
+    "writes_performed": [
+      "/Users/walle-mini/Library/LaunchAgents/com.walle.tdtb.plist (rendered canonical contract)",
+      "/Users/walle-mini/Repos/Projects/TDTB/docs/plan/2026-08-12-tdtb-project-extraction-attended-cutover/evidence/cutover-receipt.json"
+    ],
+    "read_only_operations": [
+      "launchctl print gui/501/com.walle.tdtb (before + after)",
+      "launchctl list",
+      "lsof -nP -iTCP:8746 -sTCP:LISTEN",
+      "pgrep -fl 'tdtb.*main.py' / 'Claudius.*main.py'",
+      "ps -o pid,ppid,uid,lstart,etime,stat,command -p <pid>",
+      "lsof -p <pid> (open files + cwd)",
+      "shasum -a 256 (template, backup, installed)",
+      "plutil -lint",
+      "git rev-parse / ls-files / log / diff (canonical repo, read-only)",
+      "curl -sf -m 3 http://127.0.0.1:8746/health (tokenless read)",
+      "tail/wc of ~/Library/Logs/tdtb-server.log (token lines filtered)"
+    ]
+  },
+
+  "acceptance_criteria": [
+    {"criterion": "Only the named com.walle.tdtb launch agent is changed.", "met": true, "evidence": "guards_observed.launchd_mutation_scope = single label gui/501; launchctl list shows only com.walle.tdtb; no other agents/processes touched."},
+    {"criterion": "Loaded launch configuration resolves to canonical /Users/walle-mini/Repos/Projects/TDTB/app.", "met": true, "evidence": "launchctl print: program=Repos/Projects/TDTB/app/.venv/bin/python, working directory=Repos/Projects/TDTB/app; loaded plist sha256 b70361e4... (rendered from template 230fcf10...)."},
+    {"criterion": "Active process executable and working directory resolve to canonical TDTB.", "met": true, "evidence": "ps PID 32002 cwd=/Users/walle-mini/Repos/Projects/TDTB/app; 9 open files reference Repos/Projects/TDTB, 0 reference source; uses canonical .venv site-packages."},
+    {"criterion": "Bounded GET-only health/version checks pass.", "met": true, "evidence": "GET /health -> 200 {status:ok, judgment_model:openai/gpt-5.6-luna}; same model as source preimage; port bound localhost-only; billed_calls=0, vault_accessed=false."},
+    {"criterion": "No billed calls, provider writes, Todoist/Calendar/vault writes, or unrelated process changes.", "met": true, "evidence": "guards_observed: billed_calls=0, provider_writes=0, todoist_accessed=false, calendar_accessed=false, vault_accessed=false, vault_write=false, external_writes=0, other_processes_touched=false."},
+    {"criterion": "CUT-04 writes a cutover receipt with exact before/after identity and verification; no commit required.", "met": true, "evidence": "this artifact; commit_created=false, git_staged_or_committed=false."}
+  ],
+
+  "outstanding_upstream_conditions": [
+    {
+      "code": "REWIRING_CONDITION_UNRESOLVED",
+      "severity": "HIGH",
+      "status": "OPEN",
+      "detail": "Authorized vault-gated LiveSourceContract pass against the real vault is not recorded (rewiring handoff ACCEPTED_CONDITIONAL). This cutover did NOT access the vault and therefore neither resolved nor advanced this condition. It remains OPEN; do not claim all upstream gates are green.",
+      "pass_invented": false
+    }
+  ],
+
+  "artifact_path": "/Users/walle-mini/Repos/Projects/TDTB/docs/plan/2026-08-12-tdtb-project-extraction-attended-cutover/evidence/cutover-receipt.json"
+}

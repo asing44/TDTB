@@ -1,0 +1,161 @@
+{
+  "artifact": "scratch-verification",
+  "plan_id": "2026-08-12-tdtb-project-extraction-implementation",
+  "task_id": "IMP-10",
+  "captured_at": "2026-08-13",
+  "status": "passed",
+  "nature": "Full non-live automated + scratch verification re-run after IMP-10-FIX. Backend pytest, gather CLI pytest, frontend vitest, typecheck, both bundle builds (fresh rebuild, hash/size read-back vs current build evidence IMP-10-FIX), a 41-step backend scratch walkthrough (gather/sequence/shadow/action/cockpit flows) with fakes + synthetic tmp vault, and a 32-step Playwright chromium walkthrough of the freshly rebuilt fixture mockup bundle. Zero billed calls, zero real source writes, zero live :8746 access, no commits, no source edits.",
+  "no_commit": true,
+  "read_only": true,
+
+  "automated_suites": {
+    "backend_pytest": {
+      "command": "/Users/walle-mini/Repos/Projects/TDTB/app/.venv/bin/python -m pytest -q",
+      "cwd": "/Users/walle-mini/Repos/Projects/TDTB/app",
+      "result": "pass",
+      "output": "1261 passed, 1 warning (StarletteDeprecationWarning) in 6.94s",
+      "python": "3.12.13 (uv venv)"
+    },
+    "gather_cli_pytest": {
+      "command": "/Users/walle-mini/Repos/Projects/TDTB/app/.venv/bin/python -m pytest -q",
+      "cwd": "/Users/walle-mini/Repos/Projects/TDTB/app/gather",
+      "result": "pass",
+      "output": "88 passed in 0.05s"
+    },
+    "frontend_vitest": {
+      "command": "npm test",
+      "cwd": "/Users/walle-mini/Repos/Projects/TDTB/frontend",
+      "result": "pass",
+      "output": "Test Files 34 passed | 1 skipped (35); Tests 498 passed | 6 skipped (504); duration 65.88s"
+    },
+    "frontend_typecheck": {
+      "command": "npm run typecheck",
+      "cwd": "/Users/walle-mini/Repos/Projects/TDTB/frontend",
+      "result": "pass",
+      "output": "tsc --noEmit completed with no diagnostics"
+    },
+    "build_mockup": {
+      "command": "npm run build:mockup",
+      "cwd": "/Users/walle-mini/Repos/Projects/TDTB/frontend",
+      "result": "pass",
+      "output": "index.html 0.45 kB; index-_TUHoK0S.css 30.76 kB; index-yAfczYmx.js 123.03 kB; built in 48ms"
+    },
+    "build_prod": {
+      "command": "npm run build:prod",
+      "cwd": "/Users/walle-mini/Repos/Projects/TDTB/frontend",
+      "result": "pass",
+      "output": "index.html 0.45 kB; index-_TUHoK0S.css 30.76 kB; index-B2Db4l1G.js 124.35 kB; built in 34ms"
+    }
+  },
+
+  "bundle_hash_comparison": {
+    "method": "Fresh rebuilds from tested canonical source, then sha256 read-back. Current build evidence is IMP-10-FIX (app.css changed by the fix, so IMP-09 bundle-verification.json is superseded for css/index.html; JS hashes unchanged because JS source was untouched by the fix).",
+    "mockup": {
+      "index.html": {"sha256": "bce02a96db0cd6d938507ab8427c9c049e5bab67583cf0cb879739de9474bc89", "bytes": 453, "vs_imp10_fix_size": "match (0.45 kB)", "vs_imp09": "changed — css asset name now index-_TUHoK0S.css"},
+      "assets/index-_TUHoK0S.css": {"sha256": "8258113006d31bf8355a1fa77f9c281460ac28f47589f9f9e6c5dbf2c3b5b560", "bytes": 31498, "vs_imp10_fix_size": "match (30.76 kB)", "vs_imp09": "changed — IMP-10-FIX app.css narrow rules"},
+      "assets/index-yAfczYmx.js": {"sha256": "328e84b99c4d19abc81a6db544d42f33c655928b8ed916a5a2eddac2d931cc89", "bytes": 125983, "vs_imp10_fix_size": "match (123.03 kB)", "vs_imp09": "unchanged hash (was index-DB4wKhKw.js)"}
+    },
+    "production": {
+      "index.html": {"sha256": "ffd76d4d923a53b7007b539c3c731d00fa20704a7e0db89e02ffc02e0e8d9ee7", "bytes": 453, "vs_imp10_fix_size": "match (0.45 kB)", "vs_imp09": "changed — css asset name now index-_TUHoK0S.css"},
+      "assets/index-_TUHoK0S.css": {"sha256": "8258113006d31bf8355a1fa77f9c281460ac28f47589f9f9e6c5dbf2c3b5b560", "bytes": 31498, "vs_imp10_fix_size": "match (30.76 kB)", "vs_imp09": "changed — IMP-10-FIX app.css narrow rules"},
+      "assets/index-B2Db4l1G.js": {"sha256": "476045861aa796925d4773a6be54c7fc2a6e639938544f758b4b20b1a91c1b3b", "bytes": 127335, "vs_imp10_fix_size": "match (124.35 kB)", "vs_imp09": "unchanged hash (was index-CBKpmkAD.js)"}
+    },
+    "css_hash_same_in_both_builds": true,
+    "cmp_result": "IDENTICAL (mockups/cockpit/assets/index-_TUHoK0S.css == app/static/cockpit/assets/index-_TUHoK0S.css)",
+    "fixture_differentiation": {"mockup_scenario_markers": 11, "production_scenario_markers": 0, "bundle_names_differ": true},
+    "claudius_path_absent": true,
+    "stale_or_secret_material": "none (3 files per tree; .DS_Store/.map/.log/.env*/node_modules scan 0)",
+    "built_css_read_back": {
+      "mockups/cockpit/assets/index-_TUHoK0S.css": [
+        ".calendar-impact__row{grid-template-columns:116px minmax(0,1fr);gap:4px 8px;padding:6px 0}",
+        ".qrow{grid-template-columns:3px minmax(0,1fr);gap:4px 10px} (narrow; base 5-track rule also present)",
+        ".queue__cols{display:none}",
+        ".band__note,.band__bar,.band__share,.band__over,.main{display:none} (esbuild-merged with .main)",
+        ".calendar-impact__work{white-space:normal}",
+        ".calendar-impact{padding:12px 14px}"
+      ]
+    }
+  },
+
+  "backend_scratch_walkthrough": {
+    "harness": "/var/folders/gw/5_33ynbd5vv5884_v5h7vmg80000gn/T/opencode/tdtb-scratch/scratch_harness.py",
+    "mode": "TestClient in-process; synthetic tmp vault; FakeTodoist/FakeStore injected via app.state.build_read_clients + build_commit_clients; judgment.propose_sequence monkeypatched to deterministic placer; shadow.gather_live_state faked",
+    "steps_total": 41,
+    "steps_passed": 41,
+    "steps_failed": 0,
+    "result_file": "/var/folders/gw/5_33ynbd5vv5884_v5h7vmg80000gn/T/opencode/tdtb-scratch/scratch-harness-result.json",
+    "flows_covered": {
+      "gather": ["/plan-inputs 200", "vault assigned note present", "todoist assigned present", "future-dated vault excluded (contract 5)", "quick pool suggested present", "source_warnings empty", "duplicate events canonicalize to one (contract 16)", "all-day stays all-day non-timed (contract 18)", "unknown calendar quarantined (contract 17)", "dropped_today surface present"],
+      "sequence": ["/sequence 200 with every assigned placed", "warnings is a list", "past-time row soft warning ok (contract 4)", "mint direction permits before-session-start (contract 14)"],
+      "shadow": ["/commit?mode=shadow entries present"],
+      "actions": ["drop_from_plan staging + runstate-only + idempotent duplicate + digest filter + dropped_today + undo restores", "done closes current todoist occurrence + vault completed + TDTB block historical", "unassign recurring advances due without completing + counters unchanged + no close", "delete removes every linked target + undo restores from journal", "journal lists recorded actions"],
+      "cockpit_data": ["assigned rows carry duration blocks", "capacity-preview recomputes", "billed ledger spent == 0 (ledger spent=0 cap=4)", "micro_adventure payload present"]
+    }
+  },
+
+  "browser_scratch_walkthrough": {
+    "harness": "/var/folders/gw/5_33ynbd5vv5884_v5h7vmg80000gn/T/opencode/tdtb-scratch/browser_walkthrough.cjs",
+    "mode": "Playwright 1.62.1 chromium (headless, explicit chromium-1234 executablePath) against the freshly rebuilt fixture mockup bundle served on scratch http://127.0.0.1:8791 (node static server, favicon answered 204); scenarios selected by URL hash; NODE_PATH=career-ops/node_modules",
+    "steps_total": 32,
+    "steps_passed": 32,
+    "steps_failed": 0,
+    "console_errors": 0,
+    "page_errors": 0,
+    "network_failures": 0,
+    "a11y_audit": "skipped (config quality.a11y_audit_level: none)",
+    "visual_regression": "disabled (config quality.visual_regression_enabled: false)",
+    "result_file": "/var/folders/gw/5_33ynbd5vv5884_v5h7vmg80000gn/T/opencode/tdtb-scratch/browser-result.json",
+    "flows_covered": {
+      "all_scenarios_load": ["fresh", "ready", "sequenced", "conflict", "commit-preview", "verified — loaded, zero console/page/network errors"],
+      "desktop_hierarchy": ["Today's work surface renders", "'Queue' never user-visible", "no duplicate mobile surface ('Agenda' absent)", "no read-only placement review (.placement absent)"],
+      "bands": ["band headers are disclosure buttons", "aria-expanded exposed", "row count visible", "collapse hides rows", "expand restores rows", "Dropped today band renders"],
+      "row_actions": ["direct Done control per row", "direct Drop from plan control per row", "Defer never rendered", "More menu button per row", "More menu exposes Unassign", "More menu exposes Delete", "More menu aria-expanded true", "Escape closes More menu"],
+      "allocation_pie": ["slices render", "readout uses planned/capacity/over-remaining hierarchy (no 'planned / day')", "legend items focusable buttons", "inspection activates on click", "Clear restores full list"],
+      "themes": ["theme toggle flips data-theme", "theme cycles system/light/dark"],
+      "keyboard": ["keyboard reaches focusable controls", "no focus trap (Escape exits menus/drawers)"],
+      "responsive": ["narrow width (375x812) no horizontal scroll: overflow=0px (was 424px before IMP-10-FIX)", "narrow width no duplicate mobile surface", "narrow width Today's work still renders"]
+    }
+  },
+
+  "findings": [],
+
+  "safety": {
+    "billed_calls": 0,
+    "real_source_writes": 0,
+    "live_8746_access": false,
+    "vault_todoist_calendar_launchd_accessed": false,
+    "restart_performed": false,
+    "commit_created": false,
+    "source_edits": 0,
+    "git_diff_check": "clean (0 whitespace errors; no tracked-file changes made by this task)",
+    "evidence_of_zero_billed": ["/billed-ledger returned spent=0 cap=4", "judgment.propose_sequence monkeypatched to deterministic placer", "no SDK/network path exercised by either harness"],
+    "evidence_of_zero_live_writes": ["FakeTodoist/FakeStore injected for read and commit clients", "all writes confined to a synthetic tmp vault under the OS temp dir (tdtb-scratch-*/vault-root)", "no real Todoist token, EventKit grant, or vault path touched"]
+  },
+
+  "declared_limitations": {
+    "vault_gated_rewiring_handoff": "Rewiring handoff remains conditional due the vault-gated source contract; this task did not access the vault and cannot validate that contract locally — declared upstream limitation, not a failure.",
+    "browser_a11y_audit": "Skipped per plan config (a11y_audit_level: none). Keyboard/interaction checks were exercised as functional flows.",
+    "visual_regression": "Disabled per plan config; scratch browser walkthrough is the non-live visual gate.",
+    "shadow_commit": "Verified via /commit?mode=shadow with fakes; live mode (EventKit/Todoist tokens) is out of scope by constraint.",
+    "bundle_verification_imp09_superseded": "IMP-09 bundle-verification.json hashes for css/index.html are superseded by IMP-10-FIX (app.css changed); current hashes recorded here. JS bundle hashes unchanged from IMP-09.",
+    "playwright_resolution": "playwright package resolved via NODE_PATH to /Users/walle-mini/Repos/Projects/career-ops/node_modules (playwright 1.62.1); explicit chromium executablePath used, matching the pinned chromium-1234 build."
+  },
+
+  "verification_summary": {
+    "backend_suite": "pass (1261)",
+    "gather_cli_suite": "pass (88)",
+    "frontend_suite": "pass (498 passed | 6 skipped)",
+    "typecheck": "pass",
+    "mockup_build": "pass",
+    "production_build": "pass",
+    "bundle_sizes_match_imp10_fix": true,
+    "css_hash_same_in_both_builds": true,
+    "backend_scratch": "pass (41/41)",
+    "browser_scratch": "pass (32/32)",
+    "narrow_375_no_horizontal_overflow": true,
+    "zero_billed": true,
+    "zero_live_writes": true,
+    "no_false_green": true,
+    "gate_verdict": "PASSED — F-1 resolved and re-qualified; IMP-11 unblocked on the responsive contract"
+  }
+}

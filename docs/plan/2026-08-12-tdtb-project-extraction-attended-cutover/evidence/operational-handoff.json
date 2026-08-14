@@ -1,0 +1,171 @@
+{
+  "artifact": "operational-handoff",
+  "plan_id": "2026-08-12-tdtb-project-extraction-attended-cutover",
+  "task_id": "CUT-06",
+  "title": "Accept operational cutover closeout",
+  "recorded_at_utc": "2026-08-13",
+  "verdict": "ACCEPTED_CANONICAL_RUNTIME_OPERATIONAL",
+  "optional_workstream": true,
+  "cutover_result": "The attended cutover completed successfully. The live com.walle.tdtb consumer now runs from the canonical TDTB repository. Rollback was not invoked.",
+  "attended_approval": {
+    "present": true,
+    "receipt": "approval-receipt.json",
+    "verdict": "APPROVED_ATTENDED_LIVE_CUTOVER",
+    "recorded_at": "2026-08-13T19:49:53Z",
+    "target": "/Users/walle-mini/Repos/Projects/TDTB",
+    "rollback_authorized": true
+  },
+  "runtime_evidence": {
+    "verified_read_only_at_closeout": true,
+    "label": "com.walle.tdtb",
+    "launch_domain": "gui/501",
+    "launch_state": "running",
+    "pid": 32002,
+    "ppid": 1,
+    "program": "/Users/walle-mini/Repos/Projects/TDTB/app/.venv/bin/python",
+    "resolved_executable": "/opt/homebrew/Cellar/python@3.12/3.12.13_4/Frameworks/Python.framework/Versions/3.12/Resources/Python.app/Contents/MacOS/Python",
+    "working_directory": "/Users/walle-mini/Repos/Projects/TDTB/app",
+    "process_cwd": "/Users/walle-mini/Repos/Projects/TDTB/app",
+    "loaded_plist": "/Users/walle-mini/Library/LaunchAgents/com.walle.tdtb.plist",
+    "loaded_plist_sha256": "b70361e47a14e4540ba75f929f15b3518726321966a77ac6786ad229ea9819c2",
+    "canonical_template_sha256": "230fcf109a5c9ae2c683ae7b3e53b4493705e4d665e1484cee8fe01fd9940202",
+    "listener": "127.0.0.1:8746",
+    "health": {
+      "method": "GET http://127.0.0.1:8746/health",
+      "http_status": 200,
+      "response": {
+        "status": "ok",
+        "judgment_model": "openai/gpt-5.6-luna"
+      },
+      "read_only": true,
+      "billed_calls": 0,
+      "provider_writes": 0,
+      "vault_accessed": false
+    },
+    "source_writer_processes": 0,
+    "source_open_file_references": 0,
+    "single_writer_invariant": true
+  },
+  "rollback_status": {
+    "ready": true,
+    "invoked": false,
+    "source_fallback_preserved": true,
+    "preimage_path": "/Users/walle-mini/Repos/Projects/TDTB/docs/plan/2026-08-12-tdtb-project-extraction-attended-cutover/evidence/pause-preimage.launchagent.plist.bak",
+    "preimage_sha256": "65f8443a17dc9c3bb43bbf26e9591d9a38eac34644390a9033d487577d37a45b",
+    "preimage_byte_exact": true,
+    "preimage_plutil_lint": "OK",
+    "source_template_path": "/Users/walle-mini/Repos/Claudius/Tasks/tdtb-app-pilot/launchd/com.walle.tdtb.plist",
+    "source_template_sha256": "1e71a1a95482ad44c8ab9067d55579ac9a83934f7d8d89cd583eea88032401c6",
+    "rollback_authorized": true
+  },
+  "safety_closeout": {
+    "duplicate_source_writer": false,
+    "external_writes": 0,
+    "billed_calls": 0,
+    "provider_writes": 0,
+    "todoist_accessed": false,
+    "calendar_accessed": false,
+    "vault_read_only_access": true,
+    "vault_write": false,
+    "unrelated_process_changes": false,
+    "credentials_or_tokens_recorded": false,
+    "closeout_live_mutation": false,
+    "commit_created": false
+  },
+  "evidence_consistency": {
+    "cut_01_through_cut_05_consistent": true,
+    "approval_precedes_pause_and_cutover": true,
+    "source_paused_before_consumer_switch": true,
+    "cutover_and_recovery_runtime_identity_match": true,
+    "rollback_hash_matches_pause_preimage": true,
+    "health_result_matches_cut_04_and_cut_05": true,
+    "authorized_vault_verification_consistent": true,
+    "canonical_launch_contract_committed": true
+  },
+  "vault_verification": {
+    "task_id": "CUT-VAULT-01",
+    "authorized": true,
+    "mode": "bounded read-only",
+    "target": "real WALL-E-THNK vault (exact path retained in cutover-inputs.json)",
+    "contract": "Scripts/test_assignment_attention_contract.py::LiveSourceContract",
+    "result": "PASS",
+    "tests_run": 13,
+    "exit_code": 0,
+    "vault_writes": 0,
+    "blocker_removed": true
+  },
+  "residual_limitations": [
+    {
+      "code": "CANONICAL_SOURCE_MAP_STALE",
+      "severity": "MEDIUM",
+      "status": "OPEN",
+      "blocking_operational_cutover_closeout": false,
+      "detail": "README.md still describes Tasks/tdtb-app-pilot as the temporary active app, while live operational ownership is canonical.",
+      "required_claim_boundary": "Treat this handoff and live launch evidence as operational truth until source-map lifecycle prose is reconciled."
+    },
+    {
+      "code": "PREEXISTING_AUDIT_STATUS_DIRTY",
+      "severity": "LOW",
+      "status": "OPEN_NON_BLOCKING",
+      "blocking_operational_cutover_closeout": false,
+      "detail": "Reports/audit-status.md has a pre-existing worktree modification outside CUT-06 scope."
+    },
+    {
+      "code": "MOCKUP_OUTPUT_ABSENT",
+      "severity": "LOW",
+      "status": "OPEN_NON_BLOCKING",
+      "blocking_operational_cutover_closeout": false,
+      "detail": "Generated mockup output is absent until a frontend mockup build is requested."
+    },
+    {
+      "code": "A11Y_VISUAL_REGRESSION_DISABLED",
+      "severity": "LOW",
+      "status": "OPEN_NON_BLOCKING",
+      "blocking_operational_cutover_closeout": false,
+      "detail": "Accessibility and visual-regression checks remain disabled by configuration."
+    }
+  ],
+  "acceptance_criteria": [
+    {
+      "criterion": "CUT-01 through CUT-05 evidence plus authorized vault verification is internally consistent.",
+      "met": true
+    },
+    {
+      "criterion": "Active runtime executable, working directory, launch configuration, and health resolve to canonical TDTB.",
+      "met": true
+    },
+    {
+      "criterion": "Source fallback/preimage remains preserved and rollback-ready.",
+      "met": true
+    },
+    {
+      "criterion": "No duplicate source writer, external writes, billed calls, or unrelated process changes occurred.",
+      "met": true
+    },
+    {
+      "criterion": "Vault LiveSourceContract is recorded as an authorized read-only pass.",
+      "met": true
+    },
+    {
+      "criterion": "Closeout states attended approval, exact result, and residual limitations without a false green.",
+      "met": true
+    },
+    {
+      "criterion": "No false blocker remains for the committed canonical launch contract.",
+      "met": true
+    },
+    {
+      "criterion": "Operational handoff/closeout artifact is written.",
+      "met": true
+    }
+  ],
+  "evidence_inputs": [
+    "cutover-inputs.json",
+    "approval-receipt.json",
+    "pause-preimage.json",
+    "pause-preimage.launchagent.plist.bak",
+    "cutover-receipt.json",
+    "recovery-verification.json"
+  ],
+  "artifact_path": "/Users/walle-mini/Repos/Projects/TDTB/docs/plan/2026-08-12-tdtb-project-extraction-attended-cutover/evidence/operational-handoff.json"
+}

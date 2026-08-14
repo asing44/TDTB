@@ -1,0 +1,86 @@
+{
+  "plan_id": "2026-08-12-tdtb-restart-rewire",
+  "task_id": "RESTART-01",
+  "title": "Rewire and test TDTB restart entrypoints",
+  "status": "completed",
+  "verified_at": "2026-08-13T16:44:00Z",
+  "git": {
+    "branch": "Development/tdtb-canonical-cutover",
+    "head": "bcc0ee0",
+    "commit_made": false
+  },
+  "changes": {
+    "canonical_restart_live_sh": {
+      "path": "/Users/walle-mini/Repos/Projects/TDTB/restart-live.sh",
+      "before_sha256": "64a207859b81df0c8e3d5d2d9db3228dae76292e46a4c00720e9d32fc211aedc",
+      "after_sha256": "b6c7b17f642e8ef39bd5e0bc22629290ea5fec17a94c7c3377fae9bd5e62a7a8",
+      "old_layout_refs": 0,
+      "summary": [
+        "PLIST_TEMPLATE now resolves from script dir into launchd/: $TASK_DIR/launchd/$LABEL.plist",
+        "Removed old REPO_DIR=two-levels-up resolution (Tasks/tdtb-app-pilot layout)",
+        "Header usage/alias comments updated to canonical ~/Repos/Projects/TDTB/restart-live.sh",
+        "No Tasks/tdtb-app-pilot or Development/Claudius references remain"
+      ]
+    },
+    "tdtb_restart_symlink": {
+      "path": "/Users/walle-mini/.local/bin/tdtb-restart",
+      "before": "/Users/walle-mini/Development/Claudius/Tasks/tdtb-app-pilot/restart-live.sh",
+      "after": "/Users/walle-mini/Repos/Projects/TDTB/restart-live.sh",
+      "changed": true
+    },
+    "canonical_plist_template": {
+      "path": "/Users/walle-mini/Repos/Projects/TDTB/launchd/com.walle.tdtb.plist",
+      "changed": false,
+      "old_layout_refs": 0,
+      "executable_path_placeholder": "__WALLE_HOME__/Repos/Projects/TDTB/app/.venv/bin/python",
+      "working_directory_placeholder": "__WALLE_HOME__/Repos/Projects/TDTB/app"
+    }
+  },
+  "preserved_source": {
+    "claudius_fallback_restart_live_sh": {
+      "path": "/Users/walle-mini/Development/Claudius/Tasks/tdtb-app-pilot/restart-live.sh",
+      "sha256_before": "64a207859b81df0c8e3d5d2d9db3228dae76292e46a4c00720e9d32fc211aedc",
+      "sha256_after": "64a207859b81df0c8e3d5d2d9db3228dae76292e46a4c00720e9d32fc211aedc",
+      "unchanged": true
+    },
+    "claudius_fallback_plist": {
+      "path": "/Users/walle-mini/Development/Claudius/Tasks/tdtb-app-pilot/launchd/com.walle.tdtb.plist",
+      "sha256_before": "1e71a1a95482ad44c8ab9067d55579ac9a83934f7d8d89cd583eea88032401c6",
+      "sha256_after": "1e71a1a95482ad44c8ab9067d55579ac9a83934f7d8d89cd583eea88032401c6",
+      "unchanged": true
+    }
+  },
+  "tests": {
+    "test_file": "app/tests/test_restart_rewire.py",
+    "command": "cd app && .venv/bin/python -m pytest tests/test_restart_rewire.py",
+    "result": "8 passed",
+    "cases": [
+      "canonical script is executable",
+      "canonical script passes zsh -n syntax check",
+      "canonical script has no Tasks/tdtb-app-pilot or Development/Claudius references",
+      "PLIST_TEMPLATE resolves $TASK_DIR/launchd/$LABEL.plist; REPO_DIR removed",
+      "TASK_DIR self-resolution, frontend and static cockpit paths present",
+      "canonical plist uses canonical .venv python and WorkingDirectory",
+      "plist template sed render is placeholder-free and plutil-lint clean",
+      "tdtb-restart symlink resolves to canonical restart-live.sh"
+    ],
+    "regression": {
+      "command": "cd app && .venv/bin/python -m pytest tests/ -q",
+      "result": "1181 passed"
+    }
+  },
+  "live_state_proof": {
+    "port": 8746,
+    "pid": 32002,
+    "health": "{\"status\":\"ok\",\"judgment_model\":\"openai/gpt-5.6-luna\"}",
+    "mutated": false,
+    "note": "GET-only health check; no launchctl, kill, or restart invoked"
+  },
+  "constraints_observed": [
+    "restart-live.sh and tdtb-restart not executed",
+    "no launchctl / process mutation",
+    "no commit, push, staging, vault access, or billed calls",
+    "only ~/.local/bin/tdtb-restart symlink changed among machine projections"
+  ],
+  "residual_blockers": []
+}

@@ -1,0 +1,66 @@
+{
+  "artifact": "IMP-05-implementation",
+  "plan_id": "2026-08-12-tdtb-project-extraction-implementation",
+  "task_id": "IMP-05",
+  "captured_at": "2026-08-13",
+  "status": "GREEN",
+  "scope": "final source-action engine: done/drop_from_plan/unassign/delete, recurring-task safeguards, availability, compensation, wire behavior",
+  "files_changed": {
+    "modified": [
+      "app/runtime_actions.py",
+      "app/runstate.py",
+      "app/todoist_client.py",
+      "app/main.py"
+    ],
+    "created": ["app/tests/test_final_actions.py"]
+  },
+  "contracts_implemented": [
+    {"action": "done", "summary": "Final name of complete: Todoist closes only the current occurrence; vault FileClass terminal status; already-created TDTB block stays historical; one-step Undo"},
+    {"action": "drop_from_plan", "summary": "Date-scoped runstate-only exclusion (runstate.dropped keyed by stable identity todoist:<id>/vault path); no Todoist/vault/calendar write; idempotent per date; Undo restores eligibility; /plan-inputs filters dropped identities from digest and exposes dropped_today"},
+    {"action": "unassign", "summary": "vault sets assigned:false byte-preserving; non-recurring Todoist clears date (clear_task_date); recurring Todoist advances due occurrence WITHOUT completing via due_datetime/due_date advance preserving recurrence string/type, proves unchanged completion counters by read-back (readback record in journal step); unsupported pattern fails closed before any write; completion change after write compensates; no deferral-memory nudge"},
+    {"action": "delete", "summary": "Final name of delete_permanent: every linked source target atomically where feasible; only TDTB-owned calendar blocks (imported events never in manifest); journal-backed recovery; fail closed before partial apply"},
+    {"action": "availability", "summary": "All four final intents in VERBS and STAGING_VERBS (legal before AND after commit); linked surfaces preflighted via _check_surfaces; one compensated transaction via existing journal engine"}
+  ],
+  "regression_tests_added": {
+    "file": "app/tests/test_final_actions.py",
+    "count": 37,
+    "coverage": [
+      "verb catalogue + staging availability",
+      "done/delete apply+undo+wire routes",
+      "drop runstate-only, idempotent, undo, date-scoped, digest filter + dropped_today",
+      "unassign vault flip byte-preserving + undo + linked-surface fail-closed",
+      "unassign non-recurring clear + undo restore",
+      "unassign recurring advance read-back proof + undo restore + date-only advance",
+      "unsupported recurrence fails closed with no write",
+      "readback completion change compensates",
+      "no deferrals touched"
+    ]
+  },
+  "test_results": {
+    "backend_suite": {"passed": 1173, "failed": 0},
+    "gather_cli_suite": {"passed": 88, "failed": 0},
+    "imp03_action_red_tests": {"passed": 4, "failed": 0},
+    "final_actions_suite": {"passed": 37, "failed": 0}
+  },
+  "residual_failures": [],
+  "baseline_comparison": {
+    "pre_imp05": {"passed": 1137, "failed": 4},
+    "now": {"passed": 1173, "failed": 0},
+    "delta": "+36 passing (4 IMP-03 action Red turned green + 37 new regression tests - 5 tests superseded by fixture changes within the new suite counted once); 0 residual backend failures"
+  },
+  "safety": {
+    "live_providers_accessed": false,
+    "vault_todoist_calendar_launchd_billed_accessed": false,
+    "writes": ["none outside synthetic tmp vaults and fake clients"],
+    "commit": false
+  },
+  "declared_limitations": {
+    "vault_gated_rewiring_handoff": "Rewiring handoff remains conditional due the vault-gated source contract; IMP-05 did not access the vault and cannot validate that contract locally - declared upstream limitation, not a failure",
+    "todoist_payload_shapes": "Todoist client clear_task_date/reschedule_task_date payload shapes to be confirmed against the live unified API during the attended scratch qualification"
+  },
+  "out_of_scope_recorded": [
+    "Frontend layout/More-menu/Dropped-today band rendering owned by IMP-08 (backend exposes dropped_today + filters digest)",
+    "Sequence-level rejection of stale dropped digests left to frontend contract sync (plan-inputs is the wire surface)",
+    "Todoist client clear_task_date/reschedule_task_date payload shapes to be confirmed against the live unified API during the attended scratch qualification"
+  ]
+}

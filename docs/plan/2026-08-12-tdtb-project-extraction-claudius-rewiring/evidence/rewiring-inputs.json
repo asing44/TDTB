@@ -1,0 +1,139 @@
+{
+  "artifact": "rewiring-inputs",
+  "plan_id": "2026-08-12-tdtb-project-extraction-claudius-rewiring",
+  "task_id": "RW-06-FIX",
+  "captured_at": "2026-08-13",
+  "refreshed_at": "2026-08-13",
+  "status": "PASS",
+  "gate": "GREEN",
+  "canonical_destination": "/Users/walle-mini/Repos/Projects/TDTB",
+  "migration_handoff": {
+    "path": "/Users/walle-mini/Repos/Projects/TDTB/docs/plan/2026-08-12-tdtb-project-extraction-migration/evidence/migration-handoff.json",
+    "sha256": "5ea949508ecf027dcfb16222d0e2be9c701c95dc236eddb15de4e40bb115565f",
+    "status": "PASS",
+    "gate": "GREEN",
+    "verdict": "ACCEPTED",
+    "authorized": true,
+    "blockers": []
+  },
+  "destination_identity": {
+    "expected_head": "47932f52827be5b1584690438fe29c157040a55b",
+    "observed_head": "47932f52827be5b1584690438fe29c157040a55b",
+    "head_matches": true,
+    "agents_sha256": "b7f1775616304c335ca3e0fbe891ca8f89d9246f603b1ebd4063a40db1494818",
+    "readme_sha256": "73a371116cda5c8f715eab0e4d5b951a85bbe274d40a0ef12b149d6afb6d3e32",
+    "canonical_path_evidence": [
+      "transfer-manifest.json:15-20",
+      "destination-readiness.json:8-12"
+    ]
+  },
+  "required_evidence": {
+    "transfer": {
+      "path": "docs/plan/2026-08-12-tdtb-project-extraction-migration/evidence/transfer-manifest.json",
+      "sha256": "3abe3b74b8bcf8ab15a449f5c556734b76da0cdfc7621f58d9bf99394a6e2dc9",
+      "status": "sealed",
+      "evidence": "259 mapped items; 255 installable entries and 4 generated exclusions"
+    },
+    "collision": {
+      "path": "docs/plan/2026-08-12-tdtb-project-extraction-migration/evidence/collision-manifest.json",
+      "sha256": "0420cfc1379b9c9904444d62f47699d30f2fb84f5c85ad8a15972e1be3e2f662",
+      "status": "PASS",
+      "evidence": "Explicit root decisions; no unexpected collisions; no blockers"
+    },
+    "exclusion": {
+      "path": "docs/plan/2026-08-12-tdtb-project-extraction-migration/evidence/generated-exclusion-manifest.json",
+      "sha256": "b30955dd4da775e852e46c6e06dcc682fa840c4ccf2cb5c7065d32a33f580bc2",
+      "status": "PASS",
+      "evidence": "Generated, dependency, history, credential, and runtime exclusions are sealed"
+    },
+    "hash": {
+      "path": "docs/plan/2026-08-12-tdtb-project-extraction-migration/evidence/staged-verification.json",
+      "sha256": "baee6bcdfb5a06019258e3245ba3bf43e41304d70f751369439d3a96ede5b5c5",
+      "status": "PASS",
+      "evidence": "255 byte, content, mode, target, and disposition matches; zero mismatches"
+    },
+    "readiness": {
+      "path": "docs/plan/2026-08-12-tdtb-project-extraction-migration/evidence/destination-readiness.json",
+      "sha256": "741fcaf0428d78e0df14ca20aef2840844e5e46b2582b65182dd0095cf5642ca",
+      "status": "PASS",
+      "evidence": "Backend READY; frontend READY_CONDITIONAL on bounded npm ci"
+    }
+  },
+  "freshness": {
+    "rule": "Fail closed unless the accepted destination HEAD and canonical root hashes still match the pinned baseline.",
+    "baseline_version": "RW-06-FIX refreshed baseline (2026-08-13); supersedes the stale RW-01 baseline",
+    "head_matches": true,
+    "canonical_root_hashes_match": true,
+    "handoff_failed_or_blocked": false,
+    "stale": false
+  },
+  "refresh": {
+    "task_id": "RW-06-FIX",
+    "refreshed_at": "2026-08-13",
+    "reason": "RW-06 review found the RW-01-pinned AGENTS.md/README.md hashes stale after approved canonical doc changes in the destination working tree.",
+    "head": {
+      "expected_head": "47932f52827be5b1584690438fe29c157040a55b",
+      "observed_head": "47932f52827be5b1584690438fe29c157040a55b",
+      "unchanged": true
+    },
+    "hash_delta": [
+      {
+        "path": "AGENTS.md",
+        "rw01_baseline_sha256": "8d55c5094e453553479a4df7303f380848b50a710e5be5c9d7a860de1258c78a",
+        "current_sha256": "b7f1775616304c335ca3e0fbe891ca8f89d9246f603b1ebd4063a40db1494818",
+        "reason": "Approved canonical doc change: AGENTS.md authored from empty (blob e69de29) to the 93-line TDTB project-rules file covering required context, source ownership, safety envelope, verification, and concurrent work; includes the RW-04-FIX-2 legacy-path fix. Working-tree modification, uncommitted; HEAD unchanged."
+      },
+      {
+        "path": "README.md",
+        "rw01_baseline_sha256": "b861f8d9dce744b0e3baa6c523cef1b8f9892042163060ae11200c38cb0d2e52",
+        "current_sha256": "73a371116cda5c8f715eab0e4d5b951a85bbe274d40a0ef12b149d6afb6d3e32",
+        "reason": "Approved canonical doc change: README.md expanded from the one-line title (blob 58b4d09) to the 35-line canonical source map and lifecycle boundary, including the pre-cutover fallback row. Working-tree modification, uncommitted; HEAD unchanged."
+      }
+    ],
+    "verification": [
+      "git rev-parse HEAD == 47932f52827be5b1584690438fe29c157040a55b (unchanged)",
+      "shasum -a 256 AGENTS.md README.md == current hashes above",
+      "git diff --stat AGENTS.md README.md == +128/-1 across the two files"
+    ],
+    "effect_on_downstream": "destination identity and migration handoff remain green; RW-02..RW-05 already completed. This refresh supersedes the stale RW-01 baseline for later revalidation; no consumer or destination file was edited by RW-06-FIX."
+  },
+  "acceptance_criteria": [
+    {
+      "criterion": "migration-handoff.json exists, is green, and names the canonical destination.",
+      "met": true,
+      "evidence": "Handoff is PASS/GREEN/ACCEPTED; linked transfer and readiness artifacts name the canonical path."
+    },
+    {
+      "criterion": "Handoff contains transfer, collision, exclusion, hash, and readiness evidence.",
+      "met": true,
+      "evidence": "All five evidence artifacts exist, are hash-pinned here, and report no migration blocker."
+    },
+    {
+      "criterion": "No rewiring starts when handoff is missing, stale, or failed.",
+      "met": true,
+      "evidence": "RW-01 is review-only; HEAD and canonical hashes match; downstream authorization remains gated by this PASS artifact."
+    },
+    {
+      "criterion": "RW-06-FIX refresh pins current canonical document hashes and records why they changed.",
+      "met": true,
+      "evidence": "refresh block records the RW-01 baseline hashes, current b7f177.../73a371... working-tree hashes, the approved AGENTS.md/README.md doc changes as the cause, and the unchanged HEAD 47932f5...; freshness re-pins against the refreshed baseline."
+    }
+  ],
+  "constraints_observed": [
+    "No Claudius consumer was edited.",
+    "No canonical destination application or runtime file was edited.",
+    "No live runtime state was inspected or changed.",
+    "No commit was created.",
+    "RW-06-FIX evidence refresh only: rewiring-inputs.json hashes re-pinned to the current canonical AGENTS.md/README.md; no consumer scope, shared skill, historical plan, fallback tree, launchd, provider, or unrelated dirty path changed."
+  ],
+  "downstream": {
+    "rewiring_authorized": true,
+    "scope": "RW-02 may classify non-live Claudius consumers only.",
+    "guards": [
+      "Shared Claudius ownership remains unchanged.",
+      "Loaded launchd and running process state remain unchanged.",
+      "Revalidate this artifact and fail closed if the destination HEAD or pinned evidence changes."
+    ]
+  },
+  "artifact_path": "/Users/walle-mini/Repos/Projects/TDTB/docs/plan/2026-08-12-tdtb-project-extraction-claudius-rewiring/evidence/rewiring-inputs.json"
+}

@@ -1,0 +1,158 @@
+{
+  "artifact": "destination-readiness",
+  "plan_id": "2026-08-12-tdtb-project-extraction-migration",
+  "task_id": "MIG-06",
+  "status": "PASS",
+  "gate": "GREEN",
+  "blocks_mig_07": false,
+  "scope": {
+    "destination_path": "/Users/walle-mini/Repos/Projects/TDTB",
+    "backend_path": "/Users/walle-mini/Repos/Projects/TDTB/app",
+    "frontend_path": "/Users/walle-mini/Repos/Projects/TDTB/frontend",
+    "evidence_path": "docs/plan/2026-08-12-tdtb-project-extraction-migration/evidence/destination-readiness.json",
+    "scratch_root": "/var/folders/gw/5_33ynbd5vv5884_v5h7vmg80000gn/T/opencode/tdtb-mig06",
+    "scratch_venv_python": "CPython 3.12.13 (uv-managed, outside destination)",
+    "node_modules_installed": false,
+    "node_modules_install_policy": "intentionally excluded by migration; dry-run probe only",
+    "live_writes_performed": false,
+    "provider_calls_performed": false,
+    "commit_performed": false
+  },
+  "environment": {
+    "system_python": "Python 3.14.6 /opt/homebrew/bin/python3",
+    "uv_version": "0.12.0",
+    "scratch_venv_python_version": "3.12.13",
+    "node_version": "v26.5.0",
+    "npm_version": "11.17.0",
+    "requirements_pinned_python": "3.12 (uv-managed)",
+    "frontend_engine": "preact + vite + vitest + typescript (package.json scripts: dev, build:mockup, build:prod, test, typecheck)"
+  },
+  "backend_checks": {
+    "compile_sweep": {
+      "command": "python3 ast.parse sweep over app/**/*.py",
+      "status": "PASS",
+      "python_files_checked": 74,
+      "errors": 0,
+      "writes": "none (ast.parse only; PYTHONDONTWRITEBYTECODE honored)"
+    },
+    "test_suite": {
+      "command": "PYTHONDONTWRITEBYTECODE=1 <scratch-venv>/bin/python -m pytest -q -p no:cacheprovider --tb=short",
+      "workdir": "/Users/walle-mini/Repos/Projects/TDTB/app",
+      "status": "PASS",
+      "tests_passed": 1211,
+      "tests_failed": 0,
+      "warnings": 1,
+      "warning_detail": "StarletteDeprecationWarning: httpx with starlette.testclient is deprecated; install httpx2 instead (upstream non-blocking)",
+      "duration_seconds": 6.99,
+      "dependencies": "scratch venv installed from app/requirements.txt via uv (bounded install, completed)",
+      "writes": "none (no:cacheprovider, PYTHONDONTWRITEBYTECODE=1)"
+    },
+    "migration_vs_dependency_failures": "No migration failure and no missing-dependency failure observed; suite is green on pinned requirements with Python 3.12."
+  },
+  "frontend_checks": {
+    "static_import_resolution": {
+      "command": "frontend_readiness_static.py (bundler-style relative import resolution, no node_modules required)",
+      "status": "PASS",
+      "src_files_checked": 87,
+      "relative_imports_resolved": 332,
+      "unresolved_imports": 0
+    },
+    "package_and_config_consistency": {
+      "status": "PASS",
+      "package_lock_name_matches": true,
+      "package_lock_version_matches": true,
+      "lockfile_version": 3,
+      "tsconfig_include_missing": 0,
+      "script_definition_targets_exist": {
+        "dev": true,
+        "build:mockup": true,
+        "build:prod": true,
+        "test": true,
+        "typecheck": true
+      }
+    },
+    "lockfile_resolvability_probe": {
+      "command": "npm ci --dry-run --ignore-scripts --no-audit --no-fund",
+      "status": "PASS",
+      "packages_resolved": 232,
+      "duration": "301ms",
+      "node_modules_written": false,
+      "note": "Proves package-lock.json resolves; does not install generated content into destination."
+    },
+    "command_readiness_matrix": [
+      {
+        "command": "npm test",
+        "script": "vitest run",
+        "status": "BLOCKED_MISSING_DEPENDENCY",
+        "reason": "node_modules intentionally excluded by migration; not an unbounded install per MIG-06 constraints. Static import resolution and lockfile dry-run green; install is the only missing prerequisite."
+      },
+      {
+        "command": "npm run typecheck",
+        "script": "tsc --noEmit",
+        "status": "BLOCKED_MISSING_DEPENDENCY",
+        "reason": "typescript lives in devDependencies; node_modules absent by design. tsconfig include paths verified present; lockfile dry-run green."
+      },
+      {
+        "command": "npm run build:mockup",
+        "script": "vite build --mode mockup",
+        "status": "BLOCKED_MISSING_DEPENDENCY",
+        "reason": "vite absent without node_modules; lockfile dry-run green; outDir ../mockups/cockpit is creatable by vite on first real build."
+      },
+      {
+        "command": "npm run build:prod",
+        "script": "vite build --mode production",
+        "status": "BLOCKED_MISSING_DEPENDENCY",
+        "reason": "vite absent without node_modules; lockfile dry-run green; outDir ../app/static/cockpit parent exists."
+      }
+    ],
+    "migration_vs_dependency_failures": "No migration failure observed. All four npm commands are blocked solely by the intentionally excluded node_modules (a dependency-condition, not a content or config defect)."
+  },
+  "hygiene_verification": {
+    "destination_generated_content_written": false,
+    "__pycache___created": 0,
+    ".pytest_cache_created": 0,
+    "node_modules_created": false,
+    "scratch_artifacts_outside_destination": true,
+    "live_service_touched": false,
+    "source_consumers_touched": false
+  },
+  "readiness_verdict": {
+    "can_host_downstream_implementation_work": true,
+    "backend": "READY - 1211 tests pass on pinned requirements (Python 3.12 scratch venv); compile sweep clean.",
+    "frontend": "READY_CONDITIONAL - source, config, imports, and lockfile verified; requires a bounded `npm ci` to materialize node_modules before npm test/typecheck/build run.",
+    "exact_blockers": [
+      "frontend/node_modules is absent by migration design; downstream implementation must run bounded `npm ci` in frontend/ before npm test/typecheck/build:mockup/build:prod.",
+      "One upstream deprecation warning (fastapi TestClient/httpx) is non-blocking and outside migration scope."
+    ],
+    "known_outstanding_implementation_failures": "None observed in this baseline; readiness does not claim PRD/DESIGN implementation completion."
+  },
+  "acceptance_criteria": [
+    {
+      "criterion": "Destination baseline backend test/compile checks and frontend test/typecheck/build readiness commands are attempted and recorded.",
+      "met": true,
+      "detail": "Backend compile sweep and full pytest suite executed; frontend npm test/typecheck/build:mockup/build:prod attempted per readiness matrix (blocked by missing node_modules) plus static import/lockfile probes executed."
+    },
+    {
+      "criterion": "Results distinguish migration failures from missing dependencies or known outstanding implementation failures.",
+      "met": true,
+      "detail": "Backend green on scratch venv; frontend blocks are all dependency-condition (node_modules absent by design), not migration content/config failures."
+    },
+    {
+      "criterion": "Checks use fake, synthetic, or scratch inputs and perform no live writes/provider calls.",
+      "met": true,
+      "detail": "Scratch venv under temp dir; PYTHONDONTWRITEBYTECODE=1 and -p no:cacheprovider; npm ci --dry-run; no live service, Todoist, Calendar, vault, launchd, or billed endpoint calls; no commits."
+    },
+    {
+      "criterion": "The readiness record proves whether destination can host downstream implementation work, or records exact blockers.",
+      "met": true,
+      "detail": "readiness_verdict records backend READY and frontend READY_CONDITIONAL with the exact node_modules blocker."
+    },
+    {
+      "criterion": "No implementation behavior or UI design decision is changed.",
+      "met": true,
+      "detail": "Only docs/plan/2026-08-12-tdtb-project-extraction-migration/evidence/destination-readiness.json was written; no application or UI source modified."
+    }
+  ],
+  "blockers": [],
+  "next_gate": "MIG-07 may accept migration evidence; downstream implementation work must materialize frontend node_modules with a bounded npm ci before frontend test/typecheck/build gates."
+}

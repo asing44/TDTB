@@ -1,0 +1,408 @@
+{
+  "artifact": "consumer-disposition",
+  "plan_id": "2026-08-12-tdtb-project-extraction-claudius-rewiring",
+  "task_id": "RW-02",
+  "captured_at": "2026-08-13",
+  "status": "PASS",
+  "gate": "GREEN",
+  "canonical_destination": "/Users/walle-mini/Repos/Projects/TDTB",
+  "canonical_layout_note": "Migration re-rooted the app: old Tasks/tdtb-app-pilot/* maps to canonical repo root (app/, frontend/, launchd/, restart-live.sh, spec.md). Skill-era files sit at canonical root; there is no archive/ subtree. app/.venv is absent (generated exclusion), so .venv-bearing consumers have no byte-identical rewire target.",
+  "classification_scheme": {
+    "ownership": ["claudius_shared", "claudius_history", "claudius_tooling"],
+    "disposition": ["non_live_operational", "shared", "historical_archive", "intentional_fallback", "unresolved"],
+    "path_action": ["rewire", "keep", "keep_until_cutover"]
+  },
+  "pre_cutover_boundary": {
+    "live_source_tree": "/Users/walle-mini/Repos/Claudius/Tasks/tdtb-app-pilot",
+    "loaded_launchd_job": "com.walle.tdtb (machine-local ~/Library/LaunchAgents projection; not inspected per read-only constraint)",
+    "running_process": "not inspected per read-only constraint",
+    "classification": "intentional_fallback — live source tree, loaded launchd job, and running process keep pointing at the Claudius copy until the attended-cutover plan; RW-03 must not touch them."
+  },
+  "rw03_blocked_by_unresolved": false,
+  "consumers": {
+    "non_live_operational": [
+      {
+        "path": "Scripts/test_tdtb_project_boundary.py",
+        "ownership": "claudius_tooling",
+        "disposition": "non_live_operational",
+        "path_action": "rewire",
+        "reference": "TDTB = REPO / \"Projects\" / \"TDTB\" (line 28); archive assertion line 70-82; redirect assertion line 79-82",
+        "rewire_target": "/Users/walle-mini/Repos/Projects/TDTB (root); archive assertion adapts to canonical layout — skill-era files at canonical root, no archive/skill-era subtree; redirect assertion points at canonical tdtb-master-reference.md",
+        "rw03_candidate": true,
+        "evidence": "Default suite is filesystem-only; --live probe is env-gated and refuses billed routes. Boundary gate must verify the canonical destination post-migration."
+      },
+      {
+        "path": "Scripts/test_assignment_attention_contract.py",
+        "ownership": "claudius_tooling",
+        "disposition": "non_live_operational",
+        "path_action": "rewire",
+        "reference": "REPO_ROOT / \"Tasks/tdtb-app-pilot/app/gather/tdtb_gather.py\" (line 41)",
+        "rewire_target": "/Users/walle-mini/Repos/Projects/TDTB/app/gather/tdtb_gather.py (verified exists)",
+        "rw03_candidate": true,
+        "evidence": "Static contract-parity test between shared skill gather and app gather; canonical copy is byte-identical per RW-01 hash verification, so rewire is behavior-preserving."
+      },
+      {
+        "path": "Scripts/README.md",
+        "ownership": "claudius_tooling",
+        "disposition": "non_live_operational",
+        "path_action": "rewire",
+        "reference": "tdtb-app-pilot/app/inventory.py and tdtb-app-pilot/app/schema_guard.py (lines 245-246)",
+        "rewire_target": "/Users/walle-mini/Repos/Projects/TDTB/app/inventory.py; /Users/walle-mini/Repos/Projects/TDTB/app/schema_guard.py (both verified)",
+        "rw03_candidate": true,
+        "evidence": "Documentation of app contract mirrors; line 378 Vite TARGETS note follows the precommit hook and stays fallback until cutover."
+      },
+      {
+        "path": "CLAUDE.md",
+        "ownership": "claudius_shared",
+        "disposition": "non_live_operational",
+        "path_action": "rewire",
+        "reference": "`Tasks/tdtb-app-pilot/spec.md` (line 184)",
+        "rewire_target": "/Users/walle-mini/Repos/Projects/TDTB/spec.md (verified exists)",
+        "rw03_candidate": true,
+        "evidence": "Shared repo rules file is protected from relocation; only the operational app-path reference is rewired in place."
+      },
+      {
+        "path": ".claude/launch.json",
+        "ownership": "claudius_tooling",
+        "disposition": "non_live_operational",
+        "path_action": "rewire",
+        "reference": "cockpit-scratch runtimeExecutable /Users/adam/Development/Claudius/Tasks/tdtb-app-pilot/app/.venv/bin/python; cockpit-mockup directory /Users/adam/Development/Claudius/Tasks/tdtb-app-pilot/mockups/cockpit",
+        "rewire_target": "/Users/walle-mini/Repos/Projects/TDTB (scratch/mockup sources); approved contract needed for runtimeExecutable because canonical has no app/.venv (generated exclusion)",
+        "rw03_candidate": true,
+        "evidence": "Dev scratch (:8790) and mockup (:8791) launch configs are non-live; digest-mock config untouched. Paths use the adam seat (/Users/adam/...) and are inert on this seat; rewiring also removes the seat skew."
+      },
+      {
+        "path": "Configurations/gpt-stack/seat-bootstrap.sh",
+        "ownership": "claudius_shared",
+        "disposition": "non_live_operational",
+        "path_action": "rewire",
+        "reference": "link \"$REPO/Tasks/tdtb-app-pilot/restart-live.sh\" (line 425); tdtb_source=\"$REPO/Tasks/tdtb-app-pilot/launchd/com.walle.tdtb.plist\" (line 678)",
+        "rewire_target": "/Users/walle-mini/Repos/Projects/TDTB/restart-live.sh; /Users/walle-mini/Repos/Projects/TDTB/launchd/com.walle.tdtb.plist (both verified)",
+        "rw03_candidate": true,
+        "evidence": "Plan covers bootstrap paths; prepared launch references do not activate the live runtime. Staged plist and already-linked tdtb-restart remain machine-local projections; loaded job and running process untouched; attended-restart guard still governs invocation."
+      },
+      {
+        "path": "Scripts/test_seat_bootstrap_tdtb.py",
+        "ownership": "claudius_tooling",
+        "disposition": "non_live_operational",
+        "path_action": "rewire",
+        "reference": "self.repo / \"Tasks\" / \"tdtb-app-pilot\" / \"com.walle.tdtb.plist\" and restart-live.sh (lines 32-34, 53)",
+        "rewire_target": "/Users/walle-mini/Repos/Projects/TDTB/launchd/com.walle.tdtb.plist; /Users/walle-mini/Repos/Projects/TDTB/restart-live.sh",
+        "rw03_candidate": true,
+        "evidence": "Offline unit test of seat-bootstrap staging using a temp home and dry-run; coupled to the bootstrap consumer rewire. Never touches the real LaunchAgents dir."
+      },
+      {
+        "path": "References/tdtb-master-reference.md",
+        "ownership": "claudius_shared",
+        "disposition": "non_live_operational",
+        "path_action": "rewire",
+        "reference": "redirect target `Projects/TDTB/archive/skill-era/tdtb-master-reference.md`",
+        "rewire_target": "/Users/walle-mini/Repos/Projects/TDTB/tdtb-master-reference.md (verified exists)",
+        "rw03_candidate": true,
+        "evidence": "Redirect pointer consumer; file stays in Claudius References (protected), only the redirect target resolves to canonical."
+      }
+    ],
+    "intentional_fallback": [
+      {
+        "path": "Tasks/tdtb-app-pilot/ (entire live source tree)",
+        "ownership": "claudius_tooling",
+        "disposition": "intentional_fallback",
+        "path_action": "keep_until_cutover",
+        "reference": "all app paths within the tree",
+        "rw03_candidate": false,
+        "evidence": "The live source process runs from this tree until the attended-cutover plan; do not relocate, delete, or rewire."
+      },
+      {
+        "path": "Skills/user/tdtb-continue/SKILL.md",
+        "ownership": "claudius_shared",
+        "disposition": "intentional_fallback",
+        "path_action": "keep_until_cutover",
+        "reference": "Tasks/tdtb-app-pilot/ commit comparison, app/static/cockpit/index.html, launchctl com.walle.tdtb",
+        "rw03_candidate": false,
+        "evidence": "Shared live-ops skill: resumes cockpit effort, checks :8746, guards restart. Its app-path references must keep matching the live source until cutover."
+      },
+      {
+        "path": "Configurations/gpt-stack/skills/tdtb-continue/SKILL.md",
+        "ownership": "claudius_shared",
+        "disposition": "intentional_fallback",
+        "path_action": "keep_until_cutover",
+        "reference": "Tasks/tdtb-app-pilot/ commit, launchctl com.walle.tdtb, Plans Link/2026-07-17-tdtb-cockpit-overhaul.md",
+        "rw03_candidate": false,
+        "evidence": "GPT live-ops variant; same live-runtime semantics as the Claude variant; keep until cutover."
+      },
+      {
+        "path": "Configurations/gpt-stack/skills/plan-executor/SKILL.md",
+        "ownership": "claudius_shared",
+        "disposition": "intentional_fallback",
+        "path_action": "keep_until_cutover",
+        "reference": "TDTB intake rule: plan/handoff touches `Tasks/tdtb-app-pilot/` or port `:8746` (lines 162-165)",
+        "rw03_candidate": false,
+        "evidence": "Shared safety-envelope trigger must keep matching the live path and port pre-cutover; rewiring would weaken the live guard."
+      },
+      {
+        "path": "Configurations/gpt-stack/README.md",
+        "ownership": "claudius_shared",
+        "disposition": "intentional_fallback",
+        "path_action": "keep_until_cutover",
+        "reference": "~/.local/bin/tdtb-restart -> Tasks/tdtb-app-pilot/restart-live.sh (line 100); LaunchAgent staging (line 132)",
+        "rw03_candidate": false,
+        "evidence": "Documents live projection state; editing pre-cutover would misdescribe reality."
+      },
+      {
+        "path": "Configurations/gpt-stack/launchd/README.md",
+        "ownership": "claudius_shared",
+        "disposition": "intentional_fallback",
+        "path_action": "keep_until_cutover",
+        "reference": "launchd job documentation (only TDTB hit is nightly-tdtb-precompute zombie mention, line 97)",
+        "rw03_candidate": false,
+        "evidence": "Launchd documentation for the live job; keep until cutover."
+      },
+      {
+        "path": "Scripts/precommit-bundle-check.py",
+        "ownership": "claudius_tooling",
+        "disposition": "intentional_fallback",
+        "path_action": "keep_until_cutover",
+        "reference": "TARGETS tdtb-cockpit source_root Tasks/tdtb-app-pilot/frontend, bundle_root app/static/cockpit; tdtb-cockpit-mockup mockups/cockpit (lines 42-52)",
+        "rw03_candidate": false,
+        "evidence": "Bundle guard validates the live source's committed bundles on every Claudius commit; pre-cutover removal/rewire would drop safety on the live source. Post-cutover retirement of the tdtb targets is owned by the attended-cutover plan, not RW-03."
+      },
+      {
+        "path": "Scripts/test_precommit_bundle_check.py",
+        "ownership": "claudius_tooling",
+        "disposition": "intentional_fallback",
+        "path_action": "keep_until_cutover",
+        "reference": "tdtb-cockpit, tdtb-cockpit-mockup TARGETS assertions (lines 215-224)",
+        "rw03_candidate": false,
+        "evidence": "Unit test of the fallback precommit hook; keep until cutover."
+      },
+      {
+        "path": "Scripts/test_tdtb_restart.py",
+        "ownership": "claudius_tooling",
+        "disposition": "intentional_fallback",
+        "path_action": "keep_until_cutover",
+        "reference": "Tasks/tdtb-app-pilot/restart-live.sh (line 13); com.walle.tdtb plist staging assertions",
+        "rw03_candidate": false,
+        "evidence": "Offline test of the live restart wrapper; restart-live.sh is source-fallback machinery that RW-03 must not touch."
+      },
+      {
+        "path": "Scripts/test_tdtb_judgment_runner.py",
+        "ownership": "claudius_tooling",
+        "disposition": "intentional_fallback",
+        "path_action": "keep_until_cutover",
+        "reference": "Tasks/tdtb-app-pilot/app/tests/test_judgment.py and app/.venv/bin/python (lines 13, 17, 25)",
+        "rw03_candidate": false,
+        "evidence": "Runs the live app's judgment suite via its .venv; canonical has no .venv, so no coherent rewire target exists pre-cutover."
+      },
+      {
+        "path": "Scripts/test_tdtb_schema_guard_runner.py",
+        "ownership": "claudius_tooling",
+        "disposition": "intentional_fallback",
+        "path_action": "keep_until_cutover",
+        "reference": "Tasks/tdtb-app-pilot/app/tests/test_schema_guard.py and app/.venv (lines 9-10)",
+        "rw03_candidate": false,
+        "evidence": "Same runner pattern as judgment runner; tied to live source .venv."
+      }
+    ],
+    "shared": [
+      {
+        "path": "Skills/user/tdtb-bridger-vault/ (SKILL.md, artifact-day-setup.html, references/glossary.md, scripts/tdtb_gather.py, scripts/tests/*)",
+        "ownership": "claudius_shared",
+        "disposition": "shared",
+        "path_action": "keep",
+        "reference": "self-referential paths only (e.g. ~/Development/Claudius/Skills/user/tdtb-bridger-vault/scripts/tdtb_gather.py); no app-path references",
+        "rw03_candidate": false,
+        "evidence": "Canonical shared ritual skill; protected from relocation; self-contained."
+      },
+      {
+        "path": "Configurations/gpt-stack/skills/tdtb-bridger-vault/SKILL.md",
+        "ownership": "claudius_shared",
+        "disposition": "shared",
+        "path_action": "keep",
+        "reference": "self-referential canonical skill path (line 398); no app-path references",
+        "rw03_candidate": false,
+        "evidence": "GPT variant of the shared ritual skill; protected."
+      },
+      {
+        "path": "Skills/corrections/general.md",
+        "ownership": "claudius_shared",
+        "disposition": "shared",
+        "path_action": "keep",
+        "reference": "Tasks/tdtb-app-pilot/app/.venv/bin/pytest (lines 114-116); live bundle rebuild context (lines 314-316)",
+        "rw03_candidate": false,
+        "evidence": "Shared corrections records documenting live behavior; records are managed by correction-logger and superseded post-cutover, not rewired by RW-03."
+      },
+      {
+        "path": "Skills/corrections/tdtb-bridger-vault.md",
+        "ownership": "claudius_shared",
+        "disposition": "shared",
+        "path_action": "keep",
+        "reference": "Declared paths Tasks/tdtb-app-pilot/app/judgment.py, launchd/com.walle.tdtb.plist (line 65)",
+        "rw03_candidate": false,
+        "evidence": "Shared correction record about live judgment model; historical record, keep."
+      },
+      {
+        "path": "Configurations/scheduled-tasks/nightly-tdtb-precompute/SKILL.md",
+        "ownership": "claudius_shared",
+        "disposition": "shared",
+        "path_action": "keep",
+        "reference": "self-referential skill script paths only; no app-path references",
+        "rw03_candidate": false,
+        "evidence": "Scheduled-task config; retire verdict from weekly-skill-review-2026-08-03 is a separate review, not a path issue."
+      },
+      {
+        "path": "Scripts/structure-audit.py, Scripts/test_structure_audit.py",
+        "ownership": "claudius_tooling",
+        "disposition": "shared",
+        "path_action": "keep",
+        "reference": "SHOULD_BE_BACKED/GPT_ACTIVE_PROJECTS registry entries for TDTB; references the retained Claudius Projects/TDTB copy",
+        "rw03_candidate": false,
+        "evidence": "Claudius-internal project registry; no canonical-path reference. Unregistering TDTB from the Claudius registry is a Claudius policy decision, out of RW-03 scope."
+      },
+      {
+        "path": "Scripts/dark-item-audit.py, Scripts/test_dark_item_audit.py, Scripts/corrections-mirror-drift.py, Scripts/ecosystem-map.py, Scripts/zk_clusters.py, Scripts/output/zk-amnesty-*",
+        "ownership": "claudius_tooling",
+        "disposition": "shared",
+        "path_action": "keep",
+        "reference": "TDTB gate/ritual mentions; no app-path references",
+        "rw03_candidate": false,
+        "evidence": "Operational audit tooling referencing shared skill mirrors, not app paths."
+      },
+      {
+        "path": "hotCache.md, userPreferences.md, .gitignore, Core/adapters/cowork.md, cowork-global-instructions.md, .claude/agents/cowork-compat-reviewer.md, Skills/.review-state.json, Skills/.uploaded-state.json",
+        "ownership": "claudius_shared",
+        "disposition": "shared",
+        "path_action": "keep",
+        "reference": "mention-only TDTB references (ritual name, examples, artifact ignore entries)",
+        "rw03_candidate": false,
+        "evidence": "No app-path or canonical-path references; keep."
+      },
+      {
+        "path": "Configurations/gpt-stack/chatgpt-custom-instructions.md, Configurations/gpt-stack/automations/weekly-skill-review/SKILL.md, Configurations/gpt-stack/skills/hot-cache-sync/SKILL.md, Configurations/gpt-stack/skills/realign/SKILL.md, Configurations/gpt-stack/skills/schedule/SKILL.md, Configurations/gpt-stack/skills/semi-weekly-reflection-vault/SKILL.md, Configurations/gpt-stack/skills/shutdown-vault/SKILL.md, Configurations/gpt-stack/skills/travel-packer/SKILL.md, Configurations/gpt-stack/skills/weekplan-vault/SKILL.md, Configurations/gpt-stack/skills/PORT-SPEC.md",
+        "ownership": "claudius_shared",
+        "disposition": "shared",
+        "path_action": "keep",
+        "reference": "mention-only TDTB references in shared GPT-stack skills/configs",
+        "rw03_candidate": false,
+        "evidence": "Shared GPT-stack consumers; no app-path references; protected from relocation."
+      },
+      {
+        "path": "Skills/user/plan-executor/SKILL.md, Skills/user/weekplan-vault/*, Skills/user/travel-packer/SKILL.md, Skills/user/hot-cache-sync/SKILL.md, Skills/user/realign/SKILL.md, Skills/user/semi-weekly-reflection-vault/SKILL.md, Skills/user/shutdown-vault/SKILL.md, Skills/user/claude-handoff/SKILL.md, Skills/user/correction-logger/SKILL.md, Skills/user/heavy-buildout/SKILL.md, Skills/user/skill-editor/SKILL.md, Skills/user/inbox-parser-vault/SKILL.md, Skills/user/inbox-parser-vault/references/audit-log.md, Skills/user/writing-plans-claudius/SKILL.md",
+        "ownership": "claudius_shared",
+        "disposition": "shared",
+        "path_action": "keep",
+        "reference": "mention-only TDTB references (trigger text, do-not-trigger clauses)",
+        "rw03_candidate": false,
+        "evidence": "Shared Claude-stack skills; no app-path references; protected from relocation."
+      }
+    ],
+    "historical_archive": [
+      {
+        "path": "Plans Link/ (all TDTB plans including active 2026-07-17-tdtb-cockpit-overhaul.md and 2026-08-12 extraction evidence)",
+        "ownership": "claudius_history",
+        "disposition": "historical_archive",
+        "path_action": "keep",
+        "reference": "historical plan text containing old app paths",
+        "rw03_candidate": false,
+        "evidence": "Plans are protected historical evidence; rewiring would corrupt provenance."
+      },
+      {
+        "path": "Reports/ (boundary probe, legacy dispositions, weekly skill reviews, audits, m3 qualification)",
+        "ownership": "claudius_history",
+        "disposition": "historical_archive",
+        "path_action": "keep",
+        "reference": "historical report text containing old app paths",
+        "rw03_candidate": false,
+        "evidence": "Reports are protected historical evidence; keep."
+      },
+      {
+        "path": "References/archive/**, References/harness-spotcheck-tasks-2026-07-15.md, References/pa1-usage-audit-2026-07-15.md, References/pa5-normal-week-workload.md, References/pa7-wave1-keeper-review.md, References/pa8-parity-battery.md, References/claudius-repo-reference.md, References/tdtb-bridger-design-reference-2026-04-15.md",
+        "ownership": "claudius_history",
+        "disposition": "historical_archive",
+        "path_action": "keep",
+        "reference": "historical reference/handoff text containing old app paths",
+        "rw03_candidate": false,
+        "evidence": "Reference archives and handoffs are protected history; keep."
+      },
+      {
+        "path": "Configurations/memory-export/**",
+        "ownership": "claudius_history",
+        "disposition": "historical_archive",
+        "path_action": "keep",
+        "reference": "exported session/memory text mentioning app paths and plans",
+        "rw03_candidate": false,
+        "evidence": "Memory exports are immutable historical records; keep."
+      },
+      {
+        "path": "Projects/TDTB/ (old Claudius copy: AGENTS.md, README.md, archive/skill-era/*)",
+        "ownership": "claudius_history",
+        "disposition": "historical_archive",
+        "path_action": "keep",
+        "reference": "legacy project home now superseded by canonical destination",
+        "rw03_candidate": false,
+        "evidence": "Legacy leftover of the extracted project; keep untouched (also matches legacy-agents dispositions report). Canonical repo is authoritative."
+      },
+      {
+        "path": "Projects/Tune/**, Projects/Trinoor/**, Projects/Claudius/**, Projects/Artifacts/**",
+        "ownership": "claudius_history",
+        "disposition": "historical_archive",
+        "path_action": "keep",
+        "reference": "historical effort/artifact text mentioning TDTB",
+        "rw03_candidate": false,
+        "evidence": "Historical project content; keep."
+      },
+      {
+        "path": "Tasks/tdtb-bridger-redesign/spec.md, Tasks/tdtb-open-corrections-verify/checklist.md, Tasks/vault-workflow-audit/**, Tasks/workflow-audit/**, Tasks/workflow-fulfillment-audit/**, Tasks/opus-proofing/**, Tasks/tasknotes-integration/spec.md, Tasks/interval-audit-wipe/spec.md, Tasks/inbox-parser-skill-edits-2026-05-22/plan.md",
+        "ownership": "claudius_history",
+        "disposition": "historical_archive",
+        "path_action": "keep",
+        "reference": "historical task/audit records mentioning TDTB",
+        "rw03_candidate": false,
+        "evidence": "Historical task records; keep."
+      },
+      {
+        "path": "Skills/archive/retired/tdtb-bridger/SKILL.md, Skills/retired/*, Skills/corrections/archive/*, Skills/observations/archive/*, Scripts/archive/vault-lint.py",
+        "ownership": "claudius_history",
+        "disposition": "historical_archive",
+        "path_action": "keep",
+        "reference": "retired/archived skill and script content mentioning TDTB",
+        "rw03_candidate": false,
+        "evidence": "Retired/archived material; keep untouched."
+      }
+    ],
+    "unresolved": []
+  },
+  "acceptance_criteria": [
+    {
+      "criterion": "Every candidate consumer has exactly one ownership and path disposition.",
+      "met": true,
+      "evidence": "Every file from the bounded rg -l sweep over /Users/walle-mini/Repos/Claudius appears in exactly one disposition group with one ownership and one path_action."
+    },
+    {
+      "criterion": "Shared skills, rituals, plans, reports, and archives are protected from relocation.",
+      "met": true,
+      "evidence": "Shared ritual skills (tdtb-bridger-vault both variants, tdtb-continue), Plans Link, Reports, References archives, memory-export, and retired skills are classified shared or historical_archive with path_action keep; only in-place reference rewires are marked."
+    },
+    {
+      "criterion": "The live source process and loaded launchd job are explicitly classified as pre-cutover.",
+      "met": true,
+      "evidence": "pre_cutover_boundary records the live source tree, loaded launchd job, and running process as intentional_fallback; all launchd/restart/bundle/test-runner consumers are classified intentional_fallback and excluded from RW-03."
+    },
+    {
+      "criterion": "Unresolved non-live operational references block RW-03.",
+      "met": true,
+      "evidence": "consumers.unresolved is empty; every non-live operational reference has a verified canonical rewire target or approved-contract note, so RW-03 is not blocked (rw03_blocked_by_unresolved: false)."
+    }
+  ],
+  "constraints_observed": [
+    "No Claudius consumer, application file, live runtime, or existing evidence file was edited.",
+    "No live launchd job or running process state was inspected or changed.",
+    "Unrelated dirty source paths (e.g. Claudius Tasks/tdtb-app-pilot live tree, Claudius Projects/TDTB legacy copy) remain untouched.",
+    "No commit was created."
+  ],
+  "out_of_scope_notes": [
+    "precommit-bundle-check.py tdtb TARGETS retirement is owned by the attended-cutover plan, not RW-03.",
+    "structure-audit.py TDTB registry unregistration is a Claudius policy decision, out of RW-03 scope.",
+    "Canonical AGENTS.md/README.md still describe Tasks/tdtb-app-pilot/ while the canonical layout is root-level; canonical repo docs are not Claudius consumers and were not modified."
+  ],
+  "artifact_path": "/Users/walle-mini/Repos/Projects/TDTB/docs/plan/2026-08-12-tdtb-project-extraction-claudius-rewiring/evidence/consumer-disposition.json"
+}

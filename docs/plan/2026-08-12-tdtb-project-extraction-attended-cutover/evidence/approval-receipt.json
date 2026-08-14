@@ -1,0 +1,145 @@
+{
+  "artifact": "approval-receipt",
+  "plan_id": "2026-08-12-tdtb-project-extraction-attended-cutover",
+  "task_id": "CUT-02",
+  "title": "Record attended user approval for live mutation",
+  "recorded_at": "2026-08-13T19:49:53Z",
+  "supersedes_prior_receipt_state": "no-write / BLOCKED_AWAITING_EXPLICIT_APPROVAL (recorded_at 2026-08-13T19:31:35Z); this is an in-place update of the same artifact, not a duplicate.",
+  "receipt_type": "approval-recorded",
+  "verdict": "APPROVED_ATTENDED_LIVE_CUTOVER",
+  "approval_present": true,
+  "live_mutation_authorized": true,
+  "live_mutation_deferred": true,
+  "live_mutation_deferral_note": "Approval authorizes live launchd/process mutation, but NO mutation occurs in CUT-02. Mutation is deferred to a subsequent task and remains gated by the next preimage/pause verification step.",
+  "next_gate_authorized": true,
+  "next_gate": {
+    "name": "preimage/pause gate",
+    "authorized": true,
+    "authorization_basis": "Explicit attended user approval recorded in this receipt.",
+    "gate_still_required_before_mutation": true,
+    "gate_note": "The next task must capture the live pre-image and pause for verification before any launchctl/restart-live/process mutation; approval does not bypass that gate."
+  },
+  "approval_gate": {
+    "policy": "config_snapshot.orchestrator.devops.approval_required_for includes 'production'; live launchd/process mutation of the TDTB runtime is a production change and requires explicit attended user approval.",
+    "user_signal_observed": "I approve the live cutover to the canonical TDTB runtime now. I am attending. You may roll back to the Claudius runtime if needed.",
+    "user_signal_sufficient": true,
+    "reason_sufficient": "The statement explicitly (1) approves the live cutover to the canonical TDTB runtime, (2) asserts attended presence ('I am attending', 'now'), and (3) grants rollback authority to the Claudius runtime. All three required approval elements are present.",
+    "required_approval_fields": [
+      {
+        "field": "target",
+        "description": "Explicit named canonical runtime target to switch the live service to.",
+        "expected_value": "/Users/walle-mini/Repos/Projects/TDTB",
+        "provided": true,
+        "provided_value": "canonical TDTB runtime = /Users/walle-mini/Repos/Projects/TDTB"
+      },
+      {
+        "field": "attended_window",
+        "description": "Explicit attended time/window during which the operator is present for the mutation, pause, verification, and rollback if needed.",
+        "expected_value": "<operator-supplied start/end timestamp or window>",
+        "provided": true,
+        "provided_value": "now (attended); approval recorded at 2026-08-13T19:49:53Z; operator asserted 'I am attending'."
+      },
+      {
+        "field": "rollback_authority",
+        "description": "Named person/authority empowered to authorize rollback to the source fallback during the attended window.",
+        "expected_value": "<operator-supplied named authority>",
+        "provided": true,
+        "provided_value": "The attending approving user (approver of record); explicitly authorized rollback to the Claudius runtime /Users/walle-mini/Repos/Claudius/Tasks/tdtb-app-pilot if verification fails."
+      }
+    ],
+    "approval_statement_recorded": "I approve the live cutover to the canonical TDTB runtime now. I am attending. You may roll back to the Claudius runtime if needed.",
+    "approval_statement_template": "I, <rollback_authority>, explicitly approve switching the live TDTB runtime (label com.walle.tdtb, port :8746) to the canonical target /Users/walle-mini/Repos/Projects/TDTB during the attended window <attended_window>. Rollback to the source fallback /Users/walle-mini/Repos/Claudius/Tasks/tdtb-app-pilot is authorized under my authority if verification fails."
+  },
+  "canonical_target": {
+    "runtime_root": "/Users/walle-mini/Repos/Projects/TDTB",
+    "launch_contract_path": "/Users/walle-mini/Repos/Projects/TDTB/launchd/com.walle.tdtb.plist",
+    "launch_contract_sha256": "230fcf109a5c9ae2c683ae7b3e53b4493705e4d665e1484cee8fe01fd9940202",
+    "label": "com.walle.tdtb",
+    "program": "__WALLE_HOME__/Repos/Projects/TDTB/app/.venv/bin/python main.py",
+    "working_directory": "__WALLE_HOME__/Repos/Projects/TDTB/app",
+    "placeholder_contract": "__WALLE_HOME__ resolves to /Users/walle-mini; __TDTB_VAULT_ROOT__ operator-supplied at load time",
+    "branch": "Development/tdtb-canonical-cutover",
+    "head": "bcc0ee0fe58fd13a8ee99faf4441f14047c1a1cf",
+    "git_tracked": true,
+    "git_provenance": "committed in bcc0ee0 ('feat: Add launchd plist configuration for TDTB application'); tracked at HEAD (re-verified read-only in CUT-02: git ls-files --error-unmatch OK; grep -c Claudius = 0)",
+    "plutil_lint": "OK (per cutover-inputs.json)",
+    "targets_canonical_repository": true
+  },
+  "rollback_source": {
+    "runtime_root": "/Users/walle-mini/Repos/Claudius/Tasks/tdtb-app-pilot",
+    "launch_contract_path": "/Users/walle-mini/Repos/Claudius/Tasks/tdtb-app-pilot/launchd/com.walle.tdtb.plist",
+    "launch_contract_sha256": "1e71a1a95482ad44c8ab9067d55579ac9a83934f7d8d89cd583eea88032401c6",
+    "status": "UNCHANGED_ROLLBACK_PREIMAGE",
+    "git_tracked": true,
+    "rollback_authorized": true,
+    "rollback_authorized_by": "Attending approving user (approver of record).",
+    "role": "Verified rollback pre-image; the live runtime must be restorable to this contract by the rollback authority during the attended window. Not modified by CUT-02."
+  },
+  "outstanding_upstream_conditions": [
+    {
+      "code": "REWIRING_CONDITION_UNRESOLVED",
+      "severity": "HIGH",
+      "status": "OPEN",
+      "vault_gated": true,
+      "detail": "Authorized vault-gated LiveSourceContract pass against the real vault is not recorded (rewiring handoff ACCEPTED_CONDITIONAL). Classified as a policy/task constraint, not a technical blocker.",
+      "affects_approval": "This open condition is explicitly acknowledged. The attended approval authorizes the cutover and next gate but does NOT resolve or invent a pass for this condition; it remains OPEN and must be satisfied under explicit authorization before any claim that all upstream gates are green.",
+      "pass_invented": false
+    }
+  ],
+  "resolved_since_cut_01_resolve": [
+    {
+      "code": "CANONICAL_LAUNCH_CONTRACT_UNTRACKED",
+      "prior_status": "OPEN (untracked at 47932f5 in CUT-01-RESOLVE variant)",
+      "current_status": "RESOLVED_ON_BRANCH",
+      "evidence": "git ls-files --error-unmatch confirms launchd/com.walle.tdtb.plist is TRACKED; committed in bcc0ee0 on Development/tdtb-canonical-cutover (current HEAD); re-verified read-only in CUT-02."
+    }
+  ],
+  "requested_action_from_user": "None outstanding for approval. Approval is complete. Proceed to the next preimage/pause gate task, which must capture the live pre-image and pause for verification before any mutation.",
+  "guards_observed": {
+    "launchd_or_process_mutation": false,
+    "launchctl_invoked": false,
+    "restart_live_invoked": false,
+    "process_kill_or_restart": false,
+    "live_process_state_inspected": false,
+    "live_write_calls": 0,
+    "billed_calls": 0,
+    "todoist_calendar_or_vault_access": false,
+    "external_writes": 0,
+    "commit_created": false,
+    "source_fallback_modified": false,
+    "read_only_verification_performed": [
+      "git rev-parse --abbrev-ref HEAD (branch)",
+      "git rev-parse HEAD",
+      "git ls-files --error-unmatch launchd/com.walle.tdtb.plist",
+      "shasum -a 256 launchd/com.walle.tdtb.plist",
+      "grep -c Claudius launchd/com.walle.tdtb.plist",
+      "git log --oneline -1 -- launchd/com.walle.tdtb.plist"
+    ],
+    "writes_performed": [
+      "/Users/walle-mini/Repos/Projects/TDTB/docs/plan/2026-08-12-tdtb-project-extraction-attended-cutover/evidence/approval-receipt.json"
+    ]
+  },
+  "acceptance_criteria": [
+    {
+      "criterion": "Approval receipt names canonical target, attended approval, and rollback authority.",
+      "met": true,
+      "evidence": "canonical_target.runtime_root=/Users/walle-mini/Repos/Projects/TDTB; approval_gate.required_approval_fields all provided=true (target, attended_window, rollback_authority); rollback_source.rollback_authorized_by names the attending approving user."
+    },
+    {
+      "criterion": "Approval is recorded immediately before mutation path.",
+      "met": true,
+      "evidence": "receipt_type=approval-recorded; next_gate_authorized=true with gate_still_required_before_mutation=true; live_mutation_deferred=true. No mutation performed here; approval is the immediate precondition of the subsequent preimage/pause gate."
+    },
+    {
+      "criterion": "No launchd/process mutation occurs in this task.",
+      "met": true,
+      "evidence": "guards_observed.launchd_or_process_mutation=false; launchctl_invoked=false; restart_live_invoked=false; process_kill_or_restart=false; live_process_state_inspected=false."
+    },
+    {
+      "criterion": "No external writes, vault access, billed calls, or commit.",
+      "met": true,
+      "evidence": "guards_observed: external_writes=0 (only local receipt written), todoist_calendar_or_vault_access=false, billed_calls=0, commit_created=false, source_fallback_modified=false."
+    }
+  ],
+  "artifact_path": "/Users/walle-mini/Repos/Projects/TDTB/docs/plan/2026-08-12-tdtb-project-extraction-attended-cutover/evidence/approval-receipt.json"
+}

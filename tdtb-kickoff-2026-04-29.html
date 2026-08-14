@@ -1,0 +1,634 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TDTB Kickoff — Wed Apr 29, 2026</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  background: #0d1117;
+  color: #e6edf3;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+/* ── Header ── */
+.header {
+  background: #161b22;
+  border-bottom: 1px solid #30363d;
+  padding: 14px 20px;
+  display: flex;
+  align-items: baseline;
+  gap: 16px;
+}
+.header-title { font-size: 18px; font-weight: 700; color: #f0f6fc; }
+.header-sub { color: #8b949e; font-size: 12px; }
+.header-anchor {
+  margin-left: auto;
+  font-size: 11px;
+  color: #58a6ff;
+  background: #1c2d40;
+  padding: 3px 8px;
+  border-radius: 4px;
+}
+
+/* ── Layout ── */
+.main {
+  display: flex;
+  height: calc(100vh - 53px);
+  overflow: hidden;
+}
+.grid-wrap {
+  flex: 1;
+  overflow: auto;
+  padding: 16px;
+  min-width: 0;
+}
+.sidebar {
+  width: 260px;
+  flex-shrink: 0;
+  background: #161b22;
+  border-left: 1px solid #30363d;
+  overflow-y: auto;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+/* ── Week grid ── */
+.week-grid {
+  display: grid;
+  grid-template-columns: 44px repeat(7, minmax(110px, 1fr));
+  grid-template-rows: auto auto 1fr;
+  min-width: 830px;
+}
+
+/* Day headers */
+.day-header {
+  background: #161b22;
+  border: 1px solid #21262d;
+  border-bottom: none;
+  padding: 7px 8px;
+  text-align: center;
+  font-weight: 600;
+  font-size: 11px;
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+.day-header .dow { color: #8b949e; font-weight: 400; display: block; }
+.day-header .date { color: #f0f6fc; font-size: 14px; }
+.day-header.today { background: #1c2d40; border-color: #58a6ff; }
+.day-header.today .date { color: #58a6ff; }
+.time-header { background: #0d1117; border: none; }
+
+/* All-day strip */
+.allday-cell {
+  background: #161b22;
+  border: 1px solid #21262d;
+  border-bottom: 2px solid #30363d;
+  min-height: 26px;
+  padding: 3px 4px;
+  font-size: 10px;
+}
+.allday-cell.today { background: #1c2d40; }
+.allday-pill {
+  background: #f9c83a;
+  color: #1a1000;
+  border-radius: 3px;
+  padding: 1px 5px;
+  font-size: 10px;
+  font-weight: 500;
+  margin-bottom: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Time column */
+.time-col {
+  position: relative;
+}
+.time-label {
+  position: absolute;
+  right: 6px;
+  font-size: 9px;
+  color: #484f58;
+  transform: translateY(-50%);
+  white-space: nowrap;
+}
+
+/* Day columns */
+.day-col {
+  position: relative;
+  background: #0d1117;
+  border-right: 1px solid #21262d;
+  border-bottom: 1px solid #21262d;
+  height: 960px; /* 1px = 1 min, 7am–11pm */
+}
+.day-col.today { background: #0e1621; }
+
+/* Hour lines */
+.hour-line {
+  position: absolute;
+  left: 0; right: 0;
+  border-top: 1px solid #21262d;
+  pointer-events: none;
+}
+.hour-line.major { border-color: #30363d; }
+
+/* Current time indicator */
+.now-line {
+  position: absolute;
+  left: 0; right: 0;
+  border-top: 2px solid #f85149;
+  z-index: 5;
+  pointer-events: none;
+}
+.now-dot {
+  position: absolute;
+  left: -4px;
+  top: -4px;
+  width: 8px; height: 8px;
+  background: #f85149;
+  border-radius: 50%;
+}
+
+/* Events */
+.evt {
+  position: absolute;
+  left: 3px; right: 3px;
+  border-radius: 4px;
+  padding: 2px 5px;
+  font-size: 10px;
+  font-weight: 500;
+  overflow: hidden;
+  cursor: default;
+  line-height: 1.3;
+  z-index: 2;
+}
+.evt:hover { z-index: 20; filter: brightness(1.1); }
+.evt-name { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.evt-time { display: block; font-size: 9px; opacity: 0.75; white-space: nowrap; }
+
+.evt-work   { background: #4a3900; border-left: 3px solid #fbd75b; color: #fde68a; }
+.evt-shared { background: #3d2e00; border-left: 3px solid #f9c83a; color: #fde68a; }
+.evt-block  { background: #1f2937; border-left: 3px solid #6b7280; color: #9ca3af; }
+.evt-trinoor{ background: #0d3321; border-left: 3px solid #4ade80; color: #86efac; }
+.evt-inbox  { background: #1e1b4b; border-left: 3px solid #818cf8; color: #c7d2fe; }
+.evt.past   { opacity: 0.35; }
+
+/* ── Sidebar panels ── */
+.panel {
+  background: #0d1117;
+  border: 1px solid #30363d;
+  border-radius: 6px;
+  padding: 10px 12px;
+}
+.panel-title {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #58a6ff;
+  margin-bottom: 8px;
+}
+.panel-row {
+  display: flex;
+  gap: 6px;
+  align-items: flex-start;
+  margin-bottom: 5px;
+  font-size: 11px;
+  color: #c9d1d9;
+}
+.panel-row .badge {
+  font-size: 9px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-weight: 700;
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+.p1 { background: #f85149; color: #fff; }
+.p2 { background: #db6d28; color: #fff; }
+.p3 { background: #3fb950; color: #0d1117; }
+.p4 { background: #30363d; color: #8b949e; }
+.overdue { color: #f85149 !important; }
+
+.day-shape-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 4px;
+  font-size: 11px;
+}
+.dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+.dot-work { background: #fbd75b; }
+.dot-free { background: #3fb950; }
+.dot-social { background: #f9c83a; }
+.dot-block { background: #6b7280; }
+
+.week-day-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  margin-bottom: 5px;
+  padding-bottom: 5px;
+  border-bottom: 1px solid #21262d;
+  font-size: 11px;
+}
+.week-day-row:last-child { border-bottom: none; }
+.dow-badge {
+  font-size: 9px;
+  font-weight: 700;
+  width: 28px;
+  text-align: center;
+  padding: 2px 0;
+  border-radius: 3px;
+  background: #21262d;
+  color: #8b949e;
+  flex-shrink: 0;
+}
+.dow-badge.today { background: #1c2d40; color: #58a6ff; }
+.heavy { color: #f97316; }
+.light { color: #3fb950; }
+.normal { color: #c9d1d9; }
+.flag { font-size: 9px; margin-left: auto; flex-shrink: 0; }
+.flag-heavy { color: #f97316; }
+.flag-light { color: #3fb950; }
+
+.suggestion {
+  font-size: 11px;
+  color: #8b949e;
+  background: #161b22;
+  border-left: 3px solid #58a6ff;
+  padding: 5px 8px;
+  border-radius: 0 4px 4px 0;
+  margin-top: 4px;
+  line-height: 1.5;
+}
+</style>
+</head>
+<body>
+
+<div class="header">
+  <span class="header-title">📅 TDTB Kickoff</span>
+  <span class="header-sub">Wednesday, April 29, 2026</span>
+  <span class="header-anchor">⏱ Anchor: 3:36 PM ET</span>
+</div>
+
+<div class="main">
+
+  <!-- ═══════════════════════ WEEK GRID ═══════════════════════ -->
+  <div class="grid-wrap">
+    <div class="week-grid">
+
+      <!-- Day headers -->
+      <div class="day-header time-header"></div>
+      <div class="day-header today"><span class="dow">WED</span><span class="date">Apr 29</span></div>
+      <div class="day-header"><span class="dow">THU</span><span class="date">Apr 30</span></div>
+      <div class="day-header"><span class="dow">FRI</span><span class="date">May 1</span></div>
+      <div class="day-header"><span class="dow">SAT</span><span class="date">May 2</span></div>
+      <div class="day-header"><span class="dow">SUN</span><span class="date">May 3</span></div>
+      <div class="day-header"><span class="dow">MON</span><span class="date">May 4</span></div>
+      <div class="day-header"><span class="dow">TUE</span><span class="date">May 5</span></div>
+
+      <!-- All-day strip -->
+      <div class="allday-cell" style="background:#0d1117;border:1px solid #21262d;font-size:9px;color:#484f58;padding:5px 4px;">ALL DAY</div>
+      <div class="allday-cell today"></div>
+      <div class="allday-cell"></div>
+      <div class="allday-cell">
+        <div class="allday-pill" style="background:#e8b4fc;color:#1a0028;">🎵 Kacey Musgraves album!</div>
+      </div>
+      <div class="allday-cell">
+        <div class="allday-pill" style="background:#f9c83a;color:#1a1000;">🐄 Date day? Cow sanctuary</div>
+      </div>
+      <div class="allday-cell"></div>
+      <div class="allday-cell"></div>
+      <div class="allday-cell"></div>
+
+      <!-- TIME COLUMN + DAY COLUMNS -->
+      <!-- Time labels column -->
+      <div class="time-col" style="height:960px;border-right:1px solid #21262d;border-bottom:1px solid #21262d;background:#0d1117;">
+        <span class="time-label" style="top:0px;">7a</span>
+        <span class="time-label" style="top:60px;">8a</span>
+        <span class="time-label" style="top:120px;">9a</span>
+        <span class="time-label" style="top:180px;">10a</span>
+        <span class="time-label" style="top:240px;">11a</span>
+        <span class="time-label" style="top:300px;">12p</span>
+        <span class="time-label" style="top:360px;">1p</span>
+        <span class="time-label" style="top:420px;">2p</span>
+        <span class="time-label" style="top:480px;">3p</span>
+        <span class="time-label" style="top:540px;">4p</span>
+        <span class="time-label" style="top:600px;">5p</span>
+        <span class="time-label" style="top:660px;">6p</span>
+        <span class="time-label" style="top:720px;">7p</span>
+        <span class="time-label" style="top:780px;">8p</span>
+        <span class="time-label" style="top:840px;">9p</span>
+        <span class="time-label" style="top:900px;">10p</span>
+        <span class="time-label" style="top:960px;">11p</span>
+      </div>
+
+      <!-- ─── WED Apr 29 (TODAY) ─── -->
+      <div class="day-col today">
+        <!-- hour lines -->
+        <div class="hour-line" style="top:0px;"></div>
+        <div class="hour-line" style="top:60px;"></div>
+        <div class="hour-line major" style="top:120px;"></div>
+        <div class="hour-line" style="top:180px;"></div>
+        <div class="hour-line" style="top:240px;"></div>
+        <div class="hour-line major" style="top:300px;"></div>
+        <div class="hour-line" style="top:360px;"></div>
+        <div class="hour-line" style="top:420px;"></div>
+        <div class="hour-line major" style="top:480px;"></div>
+        <div class="hour-line" style="top:540px;"></div>
+        <div class="hour-line" style="top:600px;"></div>
+        <div class="hour-line major" style="top:660px;"></div>
+        <div class="hour-line" style="top:720px;"></div>
+        <div class="hour-line" style="top:780px;"></div>
+        <div class="hour-line major" style="top:840px;"></div>
+        <div class="hour-line" style="top:900px;"></div>
+
+        <!-- Minting block 1: 9am–12:30pm (past) -->
+        <div class="evt evt-work past" style="top:120px;height:210px;">
+          <span class="evt-name">🟡 Minting</span>
+          <span class="evt-time">9:00a – 12:30p</span>
+        </div>
+
+        <!-- Minting block 2: 1:30pm–5pm (active) -->
+        <div class="evt evt-work" style="top:390px;height:210px;">
+          <span class="evt-name">🟡 Minting</span>
+          <span class="evt-time">1:30p – 5:00p</span>
+        </div>
+
+        <!-- Current time line: 3:36 PM → 516px -->
+        <div class="now-line" style="top:516px;">
+          <div class="now-dot"></div>
+        </div>
+
+        <!-- Megan babysitting: 5:30pm–10pm -->
+        <div class="evt evt-shared" style="top:630px;height:270px;right:50px;">
+          <span class="evt-name">🍯 Megan babysitting</span>
+          <span class="evt-time">5:30p – 10:00p</span>
+        </div>
+
+        <!-- Sudsing: 5:30pm–6pm (showering) -->
+        <div class="evt evt-block" style="top:630px;height:30px;left:50%;">
+          <span class="evt-name">🚿 Sudsing</span>
+        </div>
+
+        <!-- Live: 6:30pm–7pm -->
+        <div class="evt evt-block" style="top:690px;height:30px;left:50%;">
+          <span class="evt-name">⬜ Live</span>
+        </div>
+
+        <!-- Foods: 7pm–8pm -->
+        <div class="evt evt-block" style="top:720px;height:60px;left:50%;">
+          <span class="evt-name">🍽 Foods</span>
+          <span class="evt-time">7p – 8p</span>
+        </div>
+      </div>
+
+      <!-- ─── THU Apr 30 ─── -->
+      <div class="day-col">
+        <div class="hour-line" style="top:0px;"></div>
+        <div class="hour-line major" style="top:120px;"></div>
+        <div class="hour-line major" style="top:300px;"></div>
+        <div class="hour-line major" style="top:480px;"></div>
+        <div class="hour-line major" style="top:660px;"></div>
+        <div class="hour-line major" style="top:840px;"></div>
+
+        <!-- Press: Lower 5:30pm–6:30pm -->
+        <div class="evt evt-inbox" style="top:630px;height:60px;right:40px;">
+          <span class="evt-name">🏋 Press: Lower</span>
+          <span class="evt-time">5:30p – 6:30p</span>
+        </div>
+
+        <!-- Walmart pickup 6pm–6:30pm -->
+        <div class="evt evt-shared" style="top:660px;height:30px;left:45%;">
+          <span class="evt-name">🛒 Walmart</span>
+          <span class="evt-time">6p – 6:30p</span>
+        </div>
+
+        <!-- Cooking 7pm (no duration, show as short marker) -->
+        <div class="evt evt-inbox" style="top:720px;height:24px;">
+          <span class="evt-name">🍳 Cooking</span>
+        </div>
+      </div>
+
+      <!-- ─── FRI May 1 ─── -->
+      <div class="day-col">
+        <div class="hour-line" style="top:0px;"></div>
+        <div class="hour-line major" style="top:120px;"></div>
+        <div class="hour-line major" style="top:300px;"></div>
+        <div class="hour-line major" style="top:480px;"></div>
+        <div class="hour-line major" style="top:660px;"></div>
+        <div class="hour-line major" style="top:840px;"></div>
+
+        <!-- Press: Cardio 5pm–5:45pm -->
+        <div class="evt evt-inbox" style="top:600px;height:45px;">
+          <span class="evt-name">🚴 Press: Cardio</span>
+          <span class="evt-time">5:00p – 5:45p</span>
+        </div>
+
+        <!-- Brenan & Emily 7pm–9pm -->
+        <div class="evt evt-shared" style="top:720px;height:120px;">
+          <span class="evt-name">🍻 Brenan + Emily</span>
+          <span class="evt-time">7:00p – 9:00p</span>
+        </div>
+      </div>
+
+      <!-- ─── SAT May 2 ─── -->
+      <div class="day-col">
+        <div class="hour-line" style="top:0px;"></div>
+        <div class="hour-line major" style="top:120px;"></div>
+        <div class="hour-line major" style="top:300px;"></div>
+        <div class="hour-line major" style="top:480px;"></div>
+        <div class="hour-line major" style="top:660px;"></div>
+        <div class="hour-line major" style="top:840px;"></div>
+        <!-- Potential date day — all-day shown in strip -->
+        <div style="position:absolute;top:0;left:0;right:0;bottom:0;background:repeating-linear-gradient(135deg,transparent,transparent 8px,#f9c83a08 8px,#f9c83a08 16px);pointer-events:none;"></div>
+      </div>
+
+      <!-- ─── SUN May 3 ─── -->
+      <div class="day-col">
+        <div class="hour-line" style="top:0px;"></div>
+        <div class="hour-line major" style="top:120px;"></div>
+        <div class="hour-line major" style="top:300px;"></div>
+        <div class="hour-line major" style="top:480px;"></div>
+        <div class="hour-line major" style="top:660px;"></div>
+        <div class="hour-line major" style="top:840px;"></div>
+        <!-- Empty — light day -->
+      </div>
+
+      <!-- ─── MON May 4 ─── -->
+      <div class="day-col">
+        <div class="hour-line" style="top:0px;"></div>
+        <div class="hour-line major" style="top:120px;"></div>
+        <div class="hour-line major" style="top:300px;"></div>
+        <div class="hour-line major" style="top:480px;"></div>
+        <div class="hour-line major" style="top:660px;"></div>
+        <div class="hour-line major" style="top:840px;"></div>
+
+        <!-- BP touchpoint 1pm–1:30pm ET -->
+        <div class="evt evt-trinoor" style="top:360px;height:30px;">
+          <span class="evt-name">📞 BP Touchpoint</span>
+          <span class="evt-time">1:00p – 1:30p</span>
+        </div>
+
+        <!-- Trash day 7pm (locked, ~10min) -->
+        <div class="evt evt-block" style="top:720px;height:14px;">
+          <span class="evt-name">🗑 Trash day</span>
+        </div>
+      </div>
+
+      <!-- ─── TUE May 5 ─── -->
+      <div class="day-col">
+        <div class="hour-line" style="top:0px;"></div>
+        <div class="hour-line major" style="top:120px;"></div>
+        <div class="hour-line major" style="top:300px;"></div>
+        <div class="hour-line major" style="top:480px;"></div>
+        <div class="hour-line major" style="top:660px;"></div>
+        <div class="hour-line major" style="top:840px;"></div>
+
+        <!-- Periodic CWEAN 5pm (no duration, marker) -->
+        <div class="evt evt-inbox" style="top:600px;height:24px;">
+          <span class="evt-name">🧹 Periodic CWEAN</span>
+        </div>
+      </div>
+
+    </div><!-- .week-grid -->
+
+    <!-- Legend -->
+    <div style="display:flex;gap:14px;margin-top:10px;flex-wrap:wrap;padding:0 4px;">
+      <span style="font-size:10px;color:#8b949e;">Legend:</span>
+      <span style="font-size:10px;color:#fde68a;">■ Work/Minting</span>
+      <span style="font-size:10px;color:#fde68a;opacity:.6;">■ Shared (Busy Bees)</span>
+      <span style="font-size:10px;color:#86efac;">■ Trinoor meeting</span>
+      <span style="font-size:10px;color:#9ca3af;">■ Blocks routine</span>
+      <span style="font-size:10px;color:#c7d2fe;">■ Inbox/personal</span>
+      <span style="font-size:10px;color:#f85149;">— Now (3:36 PM ET)</span>
+    </div>
+  </div><!-- .grid-wrap -->
+
+  <!-- ═══════════════════════ SIDEBAR ═══════════════════════ -->
+  <div class="sidebar">
+
+    <!-- Week at a glance -->
+    <div class="panel">
+      <div class="panel-title">📊 Week at a Glance</div>
+
+      <div class="week-day-row">
+        <span class="dow-badge today">WED</span>
+        <span style="color:#c9d1d9;">Structured work day · evening locked</span>
+        <span class="flag flag-heavy">🔴</span>
+      </div>
+      <div class="week-day-row">
+        <span class="dow-badge">THU</span>
+        <span class="light">Open morning · workout + errands pm</span>
+        <span class="flag">🟡</span>
+      </div>
+      <div class="week-day-row">
+        <span class="dow-badge">FRI</span>
+        <span class="light">Light day · social evening</span>
+        <span class="flag flag-light">🟢</span>
+      </div>
+      <div class="week-day-row">
+        <span class="dow-badge">SAT</span>
+        <span class="normal">Possible date day (Cow sanctuary)</span>
+        <span class="flag">🟡</span>
+      </div>
+      <div class="week-day-row">
+        <span class="dow-badge">SUN</span>
+        <span class="light">Empty — recovery / release hours</span>
+        <span class="flag flag-light">🟢</span>
+      </div>
+      <div class="week-day-row">
+        <span class="dow-badge">MON</span>
+        <span class="normal">Open · BP touchpoint 1 PM</span>
+        <span class="flag flag-light">🟢</span>
+      </div>
+      <div class="week-day-row">
+        <span class="dow-badge">TUE</span>
+        <span class="light">Light · CWEAN at 5p</span>
+        <span class="flag flag-light">🟢</span>
+      </div>
+    </div>
+
+    <!-- Week themes -->
+    <div class="panel">
+      <div class="panel-title">🧭 Week Themes</div>
+      <div class="day-shape-item"><div class="dot dot-work"></div><span>Heavy today — Minting + locked evening</span></div>
+      <div class="day-shape-item"><div class="dot dot-free"></div><span>Best deep-work day: <strong>Thursday</strong> (full morning open)</span></div>
+      <div class="day-shape-item"><div class="dot dot-social"></div><span>Social bookend: Fri evening (Brenan + Emily)</span></div>
+      <div class="day-shape-item"><div class="dot dot-social"></div><span>Potential all-day adventure: Saturday</span></div>
+      <div class="day-shape-item"><div class="dot" style="background:#4ade80;"></div><span>Only 1 work meeting all week (Mon BP)</span></div>
+    </div>
+
+    <!-- Today panel -->
+    <div class="panel">
+      <div class="panel-title">🎯 Today's Shape</div>
+      <div class="day-shape-item"><div class="dot dot-work"></div><span>Work block active → 5:00 PM</span></div>
+      <div class="day-shape-item"><div class="dot" style="background:#f85149;"></div><span><strong>~24 min free</strong> (5:00–5:30 PM)</span></div>
+      <div class="day-shape-item"><div class="dot dot-block"></div><span>Evening locked: Sudsing → Live → Foods</span></div>
+      <div class="day-shape-item"><div class="dot dot-social"></div><span>Megan babysitting 5:30 PM – 10 PM</span></div>
+      <div style="margin-top:8px;"></div>
+      <div class="suggestion">Only window left is the 24-min gap at 5–5:30 PM — enough for one 🚀10min task max. Today is effectively done for planning purposes.</div>
+    </div>
+
+    <!-- Overdue / Carryover -->
+    <div class="panel">
+      <div class="panel-title">⚠️ Overdue (2)</div>
+      <div class="panel-row">
+        <span class="badge p1">P1</span>
+        <span class="overdue">Make creamy</span>
+      </div>
+      <div class="panel-row">
+        <span class="badge p4">P4</span>
+        <span class="overdue">Cycle Holly's toys</span>
+      </div>
+    </div>
+
+    <!-- Due today (unstaged / no time) -->
+    <div class="panel">
+      <div class="panel-title">📌 Today — No Time Assigned</div>
+      <div class="panel-row"><span class="badge p1">P1</span><span>Call the Y re: pricing</span></div>
+      <div class="panel-row"><span class="badge p3">P3</span><span>Schedule haircut</span></div>
+      <div class="panel-row"><span class="badge p4">P4</span><span>Holly crate</span></div>
+      <div class="panel-row"><span class="badge p4">P4</span><span>BP Clearance Redo 🍅30min</span></div>
+      <div class="panel-row"><span class="badge p4">P4</span><span>Great Smoky Mtns Hike (1h)</span></div>
+      <div class="panel-row"><span class="badge p4">P4</span><span>Press 🐢 (1h30min)</span></div>
+      <div class="panel-row"><span class="badge p4">P4</span><span>Clicker Gratitude 🍅</span></div>
+      <div class="panel-row"><span class="badge p4">P4</span><span>QT 🍅</span></div>
+      <div style="margin-top:4px;font-size:10px;color:#484f58;">+ Nap, Use Pomodo, Consider (eBay), Meditation</div>
+    </div>
+
+    <!-- This week: needs staging -->
+    <div class="panel">
+      <div class="panel-title">📋 Due This Week — Needs Attention</div>
+      <div class="panel-row"><span class="badge p1">P1</span><span>Thu 5/1 — Medication refill</span></div>
+      <div class="panel-row"><span class="badge p2">P2</span><span>Sun 5/3 — Release hours</span></div>
+      <div class="panel-row"><span class="badge p3">P3</span><span>Fri 5/1 — FU DMV refunding 🚀</span></div>
+      <div class="panel-row"><span class="badge p4">P4</span><span>Thu — FU Grandma visit sched.</span></div>
+      <div class="panel-row"><span class="badge p4">P4</span><span>Sun — Consider Todoist annual</span></div>
+    </div>
+
+    <!-- Tomorrow preview -->
+    <div class="panel">
+      <div class="panel-title">👁 Tomorrow Preview (Thu Apr 30)</div>
+      <div class="day-shape-item"><div class="dot dot-free"></div><span><strong>Full morning open</strong> — best deep window of the week</span></div>
+      <div class="day-shape-item"><div class="dot dot-block"></div><span>Press: Lower @ 5:30 PM (1h)</span></div>
+      <div class="day-shape-item"><div class="dot dot-social"></div><span>Walmart pickup @ 6 PM (30min)</span></div>
+      <div class="day-shape-item"><div class="dot" style="background:#818cf8;"></div><span>Cooking @ 7 PM</span></div>
+      <div class="suggestion">Stage tomorrow's blocks tonight after Megan leaves (post 10 PM or morning). The open morning is prime for deep work — protect it.</div>
+    </div>
+
+  </div><!-- .sidebar -->
+
+</div><!-- .main -->
+
+</body>
+</html>

@@ -1,0 +1,155 @@
+{
+  "manifest": "generated-exclusion-manifest",
+  "plan_id": "2026-08-12-tdtb-project-extraction-migration",
+  "task_id": "MIG-02",
+  "sealed_at": "2026-08-13T14:43:09Z",
+  "status": "sealed",
+  "policy": "Exclude virtualenvs, node_modules, caches, bytecode, runtime schema state, built assets, empty generated dirs, macOS metadata, and any .git directory or history import. Tracked-but-regenerable items are excluded with reason recorded.",
+  "excluded_tracked_items": [
+    {
+      "path": "Tasks/tdtb-app-pilot/app/schema-hashes.json",
+      "kind": "runtime schema state",
+      "source_state": "tracked",
+      "reason": "regenerated at runtime; excluded per plan generated_exclusions"
+    },
+    {
+      "path": "Tasks/tdtb-app-pilot/mockups/cockpit/assets/index-C4W5O96u.js",
+      "kind": "built vite bundle asset",
+      "source_state": "tracked",
+      "reason": "regenerable from frontend; soft constraint says regenerate, do not copy stale bundles"
+    },
+    {
+      "path": "Tasks/tdtb-app-pilot/mockups/cockpit/assets/index-DGbVzjSj.css",
+      "kind": "built vite bundle asset",
+      "source_state": "tracked",
+      "reason": "regenerable from frontend"
+    },
+    {
+      "path": "Tasks/tdtb-app-pilot/mockups/cockpit/index.html",
+      "kind": "built vite bundle entry",
+      "source_state": "tracked",
+      "reason": "regenerable from frontend"
+    }
+  ],
+  "excluded_disk_items": [
+    {
+      "path": "Tasks/tdtb-app-pilot/.pytest_cache",
+      "kind": "on-disk generated dependency/cache",
+      "source_state": "untracked_ignored",
+      "exists": true,
+      "reason": "git-ignored dependency, virtualenv, or cache; excluded",
+      "ignore_origin": "source root/app/frontend .gitignore",
+      "transferred": false
+    },
+    {
+      "path": "Tasks/tdtb-app-pilot/app/.pytest_cache",
+      "kind": "on-disk generated dependency/cache",
+      "source_state": "untracked_ignored",
+      "exists": true,
+      "reason": "git-ignored dependency, virtualenv, or cache; excluded",
+      "ignore_origin": "source root/app/frontend .gitignore",
+      "transferred": false
+    },
+    {
+      "path": "Tasks/tdtb-app-pilot/app/.venv",
+      "kind": "on-disk generated dependency/cache",
+      "source_state": "untracked_ignored",
+      "exists": true,
+      "reason": "git-ignored dependency, virtualenv, or cache; excluded",
+      "ignore_origin": "source root/app/frontend .gitignore",
+      "transferred": false
+    },
+    {
+      "path": "Tasks/tdtb-app-pilot/app/__pycache__",
+      "kind": "on-disk generated dependency/cache",
+      "source_state": "untracked_ignored",
+      "exists": true,
+      "reason": "git-ignored dependency, virtualenv, or cache; excluded",
+      "ignore_origin": "source root/app/frontend .gitignore",
+      "transferred": false
+    },
+    {
+      "path": "Tasks/tdtb-app-pilot/app/gather/__pycache__",
+      "kind": "on-disk generated dependency/cache",
+      "source_state": "untracked_ignored",
+      "exists": true,
+      "reason": "git-ignored dependency, virtualenv, or cache; excluded",
+      "ignore_origin": "source root/app/frontend .gitignore",
+      "transferred": false
+    },
+    {
+      "path": "Tasks/tdtb-app-pilot/app/gather/tests/__pycache__",
+      "kind": "on-disk generated dependency/cache",
+      "source_state": "untracked_ignored",
+      "exists": true,
+      "reason": "git-ignored dependency, virtualenv, or cache; excluded",
+      "ignore_origin": "source root/app/frontend .gitignore",
+      "transferred": false
+    },
+    {
+      "path": "Tasks/tdtb-app-pilot/app/tests/__pycache__",
+      "kind": "on-disk generated dependency/cache",
+      "source_state": "untracked_ignored",
+      "exists": true,
+      "reason": "git-ignored dependency, virtualenv, or cache; excluded",
+      "ignore_origin": "source root/app/frontend .gitignore",
+      "transferred": false
+    },
+    {
+      "path": "Tasks/tdtb-app-pilot/frontend/node_modules",
+      "kind": "on-disk generated dependency/cache",
+      "source_state": "untracked_ignored",
+      "exists": true,
+      "reason": "git-ignored dependency, virtualenv, or cache; excluded",
+      "ignore_origin": "source root/app/frontend .gitignore",
+      "transferred": false
+    },
+    {
+      "path": "Tasks/tdtb-app-pilot/frontend/scripts/__pycache__",
+      "kind": "on-disk generated dependency/cache",
+      "source_state": "untracked_ignored",
+      "exists": true,
+      "reason": "git-ignored dependency, virtualenv, or cache; excluded",
+      "ignore_origin": "source root/app/frontend .gitignore",
+      "transferred": false
+    },
+    {
+      "path": "Tasks/tdtb-app-pilot/graphify-out/",
+      "kind": "empty generated output dir",
+      "source_state": "on_disk_empty",
+      "exists": true,
+      "reason": "ignored by Claudius root .gitignore:62; empty; excluded",
+      "ignore_origin": "Claudius repo-root .gitignore (line 62)",
+      "transferred": false
+    }
+  ],
+  "excluded_global": [
+    {
+      "item": "source .git directory / Git history import",
+      "reason": "provenance via manifests and SHA-256 only; history import forbidden"
+    },
+    {
+      "item": "credentials / provider tokens / vault data / machine-local runtime state",
+      "reason": "security requirement; allowlist is path-scoped and none present"
+    },
+    {
+      "item": "destination .history/ and .opencode/node_modules/",
+      "reason": "destination-generated planning/runtime state; outside transfer scope"
+    }
+  ],
+  "verification": {
+    "nested_git_directories_found": 0,
+    "ds_store_in_source_trees_found": 0,
+    "transferred_bytecode_or_venv": false
+  },
+  "seal": {
+    "validations": [
+      "all 4 tracked regenerable items excluded with recorded reason",
+      "all 9 git-ignored on-disk dependency/cache items excluded",
+      "graphify-out/ empty dir excluded",
+      "no source .git directory inside transfer scope; no history import"
+    ],
+    "blockers": [],
+    "status": "PASS"
+  }
+}

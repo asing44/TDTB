@@ -1,0 +1,105 @@
+{
+  "artifact": "bundle-verification",
+  "plan_id": "2026-08-12-tdtb-project-extraction-implementation",
+  "task_id": "IMP-09",
+  "captured_at": "2026-08-13",
+  "mode": "verify",
+  "nature": "Fresh builds of both frontend bundles from the tested canonical source; output paths, hashes, inputs, and hygiene recorded. No live calls and no commits.",
+  "no_commit": true,
+  "read_only": true,
+
+  "build_inputs": {
+    "frontend_source": "/Users/walle-mini/Repos/Projects/TDTB/frontend/src",
+    "frontend_build_config": "/Users/walle-mini/Repos/Projects/TDTB/frontend/vite.config.ts",
+    "node_modules": "/Users/walle-mini/Repos/Projects/TDTB/frontend/node_modules",
+    "claudius_app_path_used": false,
+    "claudius_path_scan": "grep -rl 'Claudius|tdtb-app-pilot' over both output trees returned no matches (exit=1)",
+    "modules_transformed": 52,
+    "fixture_mode_differentiation": {
+      "mechanism": "vite define __FIXTURE__ = JSON.stringify(mode !== 'production')",
+      "mockup": "scenario marker occurrences 11 in index-DB4wKhKw.js (fixture adapter compiled in)",
+      "production": "scenario marker occurrences 0 in index-CBKpmkAD.js (api adapter only, fixture tree-shaken)",
+      "bundle_names_differ": true
+    }
+  },
+
+  "commands": [
+    {
+      "name": "npm run typecheck",
+      "cwd": "/Users/walle-mini/Repos/Projects/TDTB/frontend",
+      "result": "pass",
+      "output": "tsc --noEmit completed with no diagnostics"
+    },
+    {
+      "name": "npm test",
+      "cwd": "/Users/walle-mini/Repos/Projects/TDTB/frontend",
+      "result": "pass",
+      "output": "Test Files 33 passed | 1 skipped (34); Tests 488 passed | 6 skipped (494)"
+    },
+    {
+      "name": "npm run build:mockup",
+      "cwd": "/Users/walle-mini/Repos/Projects/TDTB/frontend",
+      "result": "pass",
+      "output": "vite v8.1.5 mockup build; ../mockups/cockpit/index.html 0.45 kB, ../mockups/cockpit/assets/index-CtkCRSb6.css 30.16 kB, ../mockups/cockpit/assets/index-DB4wKhKw.js 123.03 kB; built in 79ms"
+    },
+    {
+      "name": "npm run build:prod",
+      "cwd": "/Users/walle-mini/Repos/Projects/TDTB/frontend",
+      "result": "pass",
+      "output": "vite v8.1.5 production build; ../app/static/cockpit/index.html 0.45 kB, ../app/static/cockpit/assets/index-CtkCRSb6.css 30.16 kB, ../app/static/cockpit/assets/index-CBKpmkAD.js 124.35 kB; built in 45ms"
+    }
+  ],
+
+  "output_contracts": {
+    "mockup": {
+      "contract_path": "/Users/walle-mini/Repos/Projects/TDTB/mockups/cockpit",
+      "resolved_from": "frontend/vite.config.ts build.outDir mode=mockup -> path.resolve(__dirname, '../mockups/cockpit')",
+      "usage": "explicit generated contract consumed by launch.json (scratch preview)",
+      "files": {
+        "index.html": {"sha256": "e472a5222346d79084cc8984e01ee6129b152f809fae502f641c9a722c91d279", "bytes": 453},
+        "assets/index-CtkCRSb6.css": {"sha256": "bf17c1498846dad8aa0fdefddf6cdbf4b288921ad933bb5b97de015cccbea520", "bytes": 30881},
+        "assets/index-DB4wKhKw.js": {"sha256": "328e84b99c4d19abc81a6db544d42f33c655928b8ed916a5a2eddac2d931cc89", "bytes": 125983}
+      }
+    },
+    "production": {
+      "contract_path": "/Users/walle-mini/Repos/Projects/TDTB/app/static/cockpit",
+      "resolved_from": "frontend/vite.config.ts build.outDir mode=production -> path.resolve(__dirname, '../app/static/cockpit')",
+      "usage": "FastAPI static bundle served by the canonical app",
+      "files": {
+        "index.html": {"sha256": "f645fc40d6fc03895d295c4c67f352cac86af1be3dc7dde6d2b479a3cfb9fbdd", "bytes": 453},
+        "assets/index-CtkCRSb6.css": {"sha256": "bf17c1498846dad8aa0fdefddf6cdbf4b288921ad933bb5b97de015cccbea520", "bytes": 30881},
+        "assets/index-CBKpmkAD.js": {"sha256": "476045861aa796925d4773a6be54c7fc2a6e639938544f758b4b20b1a91c1b3b", "bytes": 127335}
+      }
+    }
+  },
+
+  "hygiene": {
+    "output_file_counts": {"mockup": 3, "production": 3},
+    "stale_artifacts": "none; emptyOutDir=true wiped each destination before rebuild",
+    "secret_or_cache_material": "none found in either output tree (.DS_Store/.map/.log/.env*/node_modules scan returned 0)",
+    "source_maps": false,
+    "index_base": "./ (relative asset references; index.html references ./assets/*)",
+    "tracked_state": "mockups/cockpit, app/static/cockpit, frontend/ are untracked in the canonical git working tree (post-migration state); this task did not stage or commit"
+  },
+
+  "live_safety": {
+    "live_provider_calls": 0,
+    "billed_endpoint_calls": 0,
+    "commit_created": false,
+    "restart_performed": false,
+    "runtime_state_accessed": false,
+    "note": "Verification was filesystem- and local-build-only; no :8746, Todoist, Calendar, vault, or launchd access."
+  },
+
+  "verification_summary": {
+    "mockup_build": "pass",
+    "production_build": "pass",
+    "output_paths_match_contracts": true,
+    "current_hashes_recorded": true,
+    "canonical_source_only": true,
+    "claudius_path_absent": true,
+    "stale_or_secret_material_absent": true,
+    "typecheck_green": true,
+    "frontend_tests_green": true
+  }
+}

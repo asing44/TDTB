@@ -1,0 +1,186 @@
+{
+  "artifact": "rewiring-handoff",
+  "plan_id": "2026-08-12-tdtb-project-extraction-claudius-rewiring",
+  "task_id": "RW-06",
+  "captured_at": "2026-08-13",
+  "status": "PARTIAL",
+  "gate": "AMBER",
+  "verdict": "ACCEPTED",
+  "handoff_status": "ACCEPTED",
+  "canonical_destination": "/Users/walle-mini/Repos/Projects/TDTB",
+  "summary": "Claudius non-live consumer rewiring is accepted. Canonical and generated-output contracts pass, ownership and history are preserved, and live state remains pre-cutover. The previously vault-gated LiveSourceContract now passes against the authorized read-only real WALL-E-THNK vault (CUT-VAULT-01); the handoff stays amber only because a protected dirty path (Reports/audit-status.md) lacks a pre-task byte baseline.",
+  "migration_gate": {
+    "task_id": "MIG-07",
+    "artifact": "docs/plan/2026-08-12-tdtb-project-extraction-migration/evidence/migration-handoff.json",
+    "sha256": "5ea949508ecf027dcfb16222d0e2be9c701c95dc236eddb15de4e40bb115565f",
+    "status": "PASS",
+    "gate": "GREEN",
+    "verdict": "ACCEPTED",
+    "current_hash_matches": true
+  },
+  "canonical_freshness": {
+    "destination_head": "47932f52827be5b1584690438fe29c157040a55b",
+    "head_matches_refreshed_baseline": true,
+    "documents": [
+      {
+        "path": "AGENTS.md",
+        "sha256": "b7f1775616304c335ca3e0fbe891ca8f89d9246f603b1ebd4063a40db1494818",
+        "current_hash_matches": true
+      },
+      {
+        "path": "README.md",
+        "sha256": "73a371116cda5c8f715eab0e4d5b951a85bbe274d40a0ef12b149d6afb6d3e32",
+        "current_hash_matches": true
+      }
+    ],
+    "required_migration_artifact_hashes_match": "6/6"
+  },
+  "changed_paths": [
+    "/Users/walle-mini/Repos/Claudius/.claude/launch.json",
+    "/Users/walle-mini/Repos/Claudius/CLAUDE.md",
+    "/Users/walle-mini/Repos/Claudius/Configurations/gpt-stack/seat-bootstrap.sh",
+    "/Users/walle-mini/Repos/Claudius/References/tdtb-master-reference.md",
+    "/Users/walle-mini/Repos/Claudius/Scripts/README.md",
+    "/Users/walle-mini/Repos/Claudius/Scripts/test_assignment_attention_contract.py",
+    "/Users/walle-mini/Repos/Claudius/Scripts/test_seat_bootstrap_tdtb.py",
+    "/Users/walle-mini/Repos/Claudius/Scripts/test_tdtb_project_boundary.py"
+  ],
+  "evidence_paths": [
+    "/Users/walle-mini/Repos/Projects/TDTB/docs/plan/2026-08-12-tdtb-project-extraction-claudius-rewiring/evidence/rewiring-inputs.json",
+    "/Users/walle-mini/Repos/Projects/TDTB/docs/plan/2026-08-12-tdtb-project-extraction-claudius-rewiring/evidence/consumer-disposition.json",
+    "/Users/walle-mini/Repos/Projects/TDTB/docs/plan/2026-08-12-tdtb-project-extraction-claudius-rewiring/evidence/consumer-verification.json",
+    "/Users/walle-mini/Repos/Projects/TDTB/docs/plan/2026-08-12-tdtb-project-extraction-claudius-rewiring/evidence/post-rewire-sweep.json"
+  ],
+  "preserved_paths": {
+    "shared_claudius_ownership": [
+      "/Users/walle-mini/Repos/Claudius/Skills/user/tdtb-bridger-vault/",
+      "/Users/walle-mini/Repos/Claudius/Configurations/gpt-stack/skills/tdtb-bridger-vault/SKILL.md"
+    ],
+    "historical_evidence": [
+      "/Users/walle-mini/Repos/Claudius/Plans Link/",
+      "/Users/walle-mini/Repos/Claudius/Reports/",
+      "/Users/walle-mini/Repos/Claudius/Projects/TDTB/",
+      "/Users/walle-mini/Repos/Claudius/References/archive/",
+      "/Users/walle-mini/Repos/Claudius/Configurations/memory-export/"
+    ],
+    "pre_cutover_fallback": [
+      "/Users/walle-mini/Repos/Claudius/Tasks/tdtb-app-pilot/",
+      "/Users/walle-mini/Repos/Claudius/Skills/user/tdtb-continue/SKILL.md",
+      "/Users/walle-mini/Repos/Claudius/Configurations/gpt-stack/skills/tdtb-continue/SKILL.md",
+      "/Users/walle-mini/Repos/Claudius/Configurations/gpt-stack/skills/plan-executor/SKILL.md",
+      "/Users/walle-mini/Repos/Claudius/Scripts/precommit-bundle-check.py",
+      "/Users/walle-mini/Repos/Claudius/Scripts/test_precommit_bundle_check.py",
+      "/Users/walle-mini/Repos/Claudius/Scripts/test_tdtb_restart.py",
+      "/Users/walle-mini/Repos/Claudius/Scripts/test_tdtb_judgment_runner.py",
+      "/Users/walle-mini/Repos/Claudius/Scripts/test_tdtb_schema_guard_runner.py"
+    ]
+  },
+  "classified_paths": {
+    "operational_canonical": [
+      ".claude/launch.json",
+      "CLAUDE.md",
+      "Configurations/gpt-stack/seat-bootstrap.sh",
+      "References/tdtb-master-reference.md",
+      "Scripts/README.md",
+      "Scripts/test_assignment_attention_contract.py",
+      "Scripts/test_seat_bootstrap_tdtb.py",
+      "Scripts/test_tdtb_project_boundary.py"
+    ],
+    "shared_count": 68,
+    "historical_archive_count": 227,
+    "intentional_fallback_count": 120,
+    "false_positive_count": 2,
+    "broken_paths": [],
+    "unresolved_paths": [],
+    "classification_source": "post-rewire-sweep.json"
+  },
+  "generated_paths": [
+    {
+      "path": "/Users/walle-mini/Repos/Projects/TDTB/mockups/cockpit",
+      "status": "ABSENT_UNTIL_BUILD",
+      "contract": "frontend/package.json build:mockup invokes Vite; frontend/vite.config.ts writes ../mockups/cockpit",
+      "required_action": "Run npm run build:mockup in frontend before using the cockpit-mockup launch configuration."
+    }
+  ],
+  "limited_paths": [
+    {
+      "path": "/Users/walle-mini/Repos/Claudius/Scripts/test_assignment_attention_contract.py::LiveSourceContract",
+      "status": "RESOLVED_AUTHORIZED_PASS",
+      "evidence": "CUT-VAULT-01 ran the suite read-only against the real WALL-E-THNK vault (/Users/walle-mini/Obsidian/WALL⋅E-THNK); 13 tests OK (GatherMirrorContract 3 + LiveSourceContract 10). Vault-gated limitation RESOLVED; no vault write occurred.",
+      "dependency": "None; satisfied by CUT-VAULT-01 authorized read-only real-vault pass."
+    },
+    {
+      "path": "/Users/walle-mini/Repos/Claudius/Reports/audit-status.md",
+      "status": "PRE_EXISTING_DIRTY_NO_BASELINE",
+      "evidence": "The path remains modified; no pre-task byte hash exists, so untouched status is not byte-provable.",
+      "dependency": "Carry this limitation forward; do not claim protected-path byte identity from this handoff."
+    },
+    {
+      "path": "/Users/walle-mini/Repos/Projects/TDTB/mockups/cockpit",
+      "status": "GENERATED_OUTPUT_ABSENT",
+      "evidence": "The path does not exist before npm run build:mockup.",
+      "dependency": "Build and verify the mockup output before invoking its non-live launch configuration."
+    }
+  ],
+  "live_state": {
+    "status": "PRE_CUTOVER",
+    "source_tree": "/Users/walle-mini/Repos/Claudius/Tasks/tdtb-app-pilot",
+    "loaded_launchd_job": "com.walle.tdtb",
+    "loaded_job_inspected": false,
+    "running_process_inspected": false,
+    "live_mutation_occurred": false,
+    "vault_todoist_calendar_or_billed_write_occurred": false,
+    "cutover_authorized": false
+  },
+  "verification": {
+    "json_artifacts_parse": "4/4",
+    "canonical_targets_exist": "10/10",
+    "old_non_live_launch_paths_remaining": 0,
+    "boundary_tests": "5/5 passed",
+    "seat_bootstrap_tests": "4/4 passed",
+    "structure_audit_tests": "32/32 passed",
+    "instruction_build_check": "clean",
+    "precommit_bundle_unit_tests": "16/16 passed",
+    "assignment_attention": "13 tests passed (GatherMirrorContract 3 + LiveSourceContract 10) against the real WALL-E-THNK vault; vault-gated error RESOLVED",
+    "post_rewire_broken": 0,
+    "post_rewire_unresolved": 0
+  },
+  "acceptance_criteria": [
+    {
+      "criterion": "MIG-07 remains green and refreshed rewiring inputs match current canonical document hashes.",
+      "met": true
+    },
+    {
+      "criterion": "All non-live operational consumers resolve to canonical TDTB or an explicit generated-output contract.",
+      "met": true
+    },
+    {
+      "criterion": "Shared Claudius ownership and historical evidence remain preserved.",
+      "met": true
+    },
+    {
+      "criterion": "Live source state is explicitly pre-cutover and no live mutation occurred.",
+      "met": true
+    },
+    {
+      "criterion": "Rewiring handoff records exact changed, preserved, classified, generated, and limited paths.",
+      "met": true
+    },
+    {
+      "criterion": "Vault-gated verification passes against the authorized read-only real WALL-E-THNK vault (CUT-VAULT-01); the prior conditional dependency is satisfied; other limitations retained.",
+      "met": true
+    }
+  ],
+  "downstream_handoff": {
+    "implementation_authorized": true,
+    "authorization": "ACCEPTED",
+    "required_dependencies": [
+      "Preserve the pre-cutover live boundary; this handoff does not authorize restart, launchd activation, live writes, or cutover.",
+      "Vault-gated LiveSourceContract satisfied by CUT-VAULT-01 (authorized read-only real-vault pass); remaining: build:mockup and carry dirty path.",
+      "Run and verify frontend npm run build:mockup before using the cockpit-mockup launch configuration.",
+      "Carry Reports/audit-status.md as a protected dirty path without byte-identity proof."
+    ]
+  },
+  "no_commit": true,
+  "artifact_path": "/Users/walle-mini/Repos/Projects/TDTB/docs/plan/2026-08-12-tdtb-project-extraction-claudius-rewiring/evidence/rewiring-handoff.json"
+}

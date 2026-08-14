@@ -1,0 +1,353 @@
+{
+  "artifact": "pause-preimage",
+  "plan_id": "2026-08-12-tdtb-project-extraction-attended-cutover",
+  "task_id": "CUT-03",
+  "title": "Capture source pause and rollback preimage",
+  "recorded_at": "2026-08-13T19:59:15Z",
+  "receipt_type": "preimage-and-pause-verified",
+  "verdict": "PREIMAGE_CAPTURED_AND_SOURCE_PAUSE_VERIFIED",
+  "consumer_switched": false,
+  "canonical_runtime_started": false,
+  "safe_to_proceed_to_cut_04": true,
+
+  "authorization": {
+    "approval_receipt": "/Users/walle-mini/Repos/Projects/TDTB/docs/plan/2026-08-12-tdtb-project-extraction-attended-cutover/evidence/approval-receipt.json",
+    "approval_verdict": "APPROVED_ATTENDED_LIVE_CUTOVER",
+    "approval_present": true,
+    "attended": true,
+    "rollback_authorized": true,
+    "gate_satisfied_by_this_task": "preimage/pause gate (next_gate in CUT-02 receipt)"
+  },
+
+  "preimage": {
+    "captured_before_any_mutation": true,
+    "launchd_identity": {
+      "label": "com.walle.tdtb",
+      "domain": "gui/501",
+      "domain_asid": 103287,
+      "type": "LaunchAgent",
+      "loaded_plist_path": "/Users/walle-mini/Library/LaunchAgents/com.walle.tdtb.plist",
+      "loaded_plist_sha256": "65f8443a17dc9c3bb43bbf26e9591d9a38eac34644390a9033d487577d37a45b",
+      "loaded_plist_bytes": 1998,
+      "loaded_plist_mtime": "2026-08-03T20:37:00 (local, per stat)",
+      "state_before_pause": "running",
+      "active_count": 1,
+      "properties": "keepalive | runatload | inferred program | managed LWCR | has LWCR",
+      "keep_alive": true,
+      "run_at_load": true,
+      "throttle_interval_seconds": 10,
+      "exit_timeout_seconds": 5,
+      "runs": 1,
+      "last_exit_code": "(never exited)",
+      "spawn_type": "daemon (3)"
+    },
+    "process_identity": {
+      "pid": 99455,
+      "ppid": 1,
+      "uid": 501,
+      "started": "Thu Aug 13 11:01:59 2026 (local)",
+      "elapsed_at_capture": "04:53:11",
+      "state": "S",
+      "argv": "python main.py",
+      "resolved_executable": "/opt/homebrew/Cellar/python@3.12/3.12.13_4/Frameworks/Python.framework/Versions/3.12/Resources/Python.app/Contents/MacOS/Python",
+      "executable_note": "The plist program is the venv shim /Users/walle-mini/Development/Claudius/Tasks/tdtb-app-pilot/app/.venv/bin/python, which resolves to the homebrew python@3.12 framework binary shown above.",
+      "listener": "127.0.0.1:8746 (LISTEN), fd 6u, IPv4",
+      "bound_localhost_only": true
+    },
+    "launch_configuration": {
+      "program": "/Users/walle-mini/Development/Claudius/Tasks/tdtb-app-pilot/app/.venv/bin/python",
+      "program_arguments": [
+        "/Users/walle-mini/Development/Claudius/Tasks/tdtb-app-pilot/app/.venv/bin/python",
+        "main.py"
+      ],
+      "working_directory": "/Users/walle-mini/Development/Claudius/Tasks/tdtb-app-pilot/app",
+      "stdout_path": "/Users/walle-mini/Library/Logs/tdtb-server.log",
+      "stderr_path": "/Users/walle-mini/Library/Logs/tdtb-server.log",
+      "environment": {
+        "TDTB_JUDGMENT_MODEL": "openai/gpt-5.6-luna",
+        "TDTB_VAULT_ROOT": "/Users/walle-mini/Obsidian/WALL⋅E-THNK",
+        "PATH": "/Users/walle-mini/.local/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin",
+        "XPC_SERVICE_NAME": "com.walle.tdtb",
+        "OSLogRateLimit": 64
+      },
+      "environment_note": "Filesystem/model configuration only. No credentials, tokens, or API keys are present in the launch configuration."
+    },
+    "source_repo_provenance": {
+      "runtime_root_as_loaded": "/Users/walle-mini/Development/Claudius/Tasks/tdtb-app-pilot",
+      "runtime_root_per_handoff": "/Users/walle-mini/Repos/Claudius/Tasks/tdtb-app-pilot",
+      "paths_are_same_directory": true,
+      "path_reconciliation": "/Users/walle-mini/Repos/Claudius is a symlink -> /Users/walle-mini/Development/Claudius (verified via ls -ld). The loaded 'Development/...' program path and the handoff 'Repos/...' rollback path therefore resolve to the identical runtime root; this is NOT a divergence.",
+      "git_branch": "main",
+      "git_head": "93b9fe449c69b9fb5a3f7a5b42d967cd40cf42dc",
+      "last_commit_touching_task_dir": "f2092344 fix(tdtb): repair setup, prompt fallback, and routing",
+      "dirty_files_in_task_dir": 0,
+      "live_matched_committed_tree": true
+    },
+    "plist_hashes": {
+      "source_repo_template": {
+        "path": "/Users/walle-mini/Repos/Claudius/Tasks/tdtb-app-pilot/launchd/com.walle.tdtb.plist",
+        "sha256": "1e71a1a95482ad44c8ab9067d55579ac9a83934f7d8d89cd583eea88032401c6",
+        "matches_cut_02_receipt": true,
+        "form": "placeholder template (__WALLE_HOME__, __TDTB_VAULT_ROOT__)"
+      },
+      "installed_loaded_plist": {
+        "path": "/Users/walle-mini/Library/LaunchAgents/com.walle.tdtb.plist",
+        "sha256": "65f8443a17dc9c3bb43bbf26e9591d9a38eac34644390a9033d487577d37a45b",
+        "form": "materialized (placeholders rendered by restart-live.sh sed)",
+        "authoritative_for_rollback": true
+      },
+      "canonical_repo_template": {
+        "path": "/Users/walle-mini/Repos/Projects/TDTB/launchd/com.walle.tdtb.plist",
+        "sha256": "230fcf109a5c9ae2c683ae7b3e53b4493705e4d665e1484cee8fe01fd9940202",
+        "matches_cut_02_receipt": true,
+        "not_installed_by_this_task": true
+      }
+    },
+    "health_version_state": {
+      "method": "GET http://127.0.0.1:8746/health",
+      "endpoint_classification": "tokenless read-only route (main.py: '-- tokenless reads --'); returns a static status + configured model name; performs no provider call, no vault write, no billed spend",
+      "http_status": 200,
+      "response": {
+        "status": "ok",
+        "judgment_model": "openai/gpt-5.6-luna"
+      },
+      "billed_endpoints_called": 0,
+      "provider_writes": 0,
+      "vault_accessed": false
+    },
+    "log_preimage": {
+      "path": "/Users/walle-mini/Library/Logs/tdtb-server.log",
+      "lines_before_pause": 1149,
+      "bytes_before_pause": 271929,
+      "in_flight_write_check": "PASS — pre-pause tail contained only server startup lines and GET /health 200 entries; no /sequence, /digest, /adjust, or /commit activity in progress at pause time.",
+      "redaction": "The server log emits a per-session X-TDTB-Token line at startup. That value was observed but is deliberately NOT recorded in this receipt, and token-bearing lines were filtered out of all captured log excerpts."
+    },
+    "rollback_preimage": {
+      "strategy": "Restore the byte-exact installed LaunchAgent plist and re-bootstrap the label in the gui/501 domain.",
+      "preserved_copy": "/Users/walle-mini/Repos/Projects/TDTB/docs/plan/2026-08-12-tdtb-project-extraction-attended-cutover/evidence/pause-preimage.launchagent.plist.bak",
+      "preserved_copy_sha256": "65f8443a17dc9c3bb43bbf26e9591d9a38eac34644390a9033d487577d37a45b",
+      "byte_exact_verified": "cmp -s against /Users/walle-mini/Library/LaunchAgents/com.walle.tdtb.plist => IDENTICAL",
+      "preserved_before_mutation": true,
+      "rollback_reason_for_copy": "CUT-04 is expected to overwrite /Users/walle-mini/Library/LaunchAgents/com.walle.tdtb.plist with the rendered canonical template. This preserved copy guarantees the source contract is restorable even after that overwrite.",
+      "rollback_commands": [
+        "cp -p /Users/walle-mini/Repos/Projects/TDTB/docs/plan/2026-08-12-tdtb-project-extraction-attended-cutover/evidence/pause-preimage.launchagent.plist.bak /Users/walle-mini/Library/LaunchAgents/com.walle.tdtb.plist",
+        "launchctl bootout gui/501/com.walle.tdtb 2>/dev/null || true",
+        "launchctl bootstrap gui/501 /Users/walle-mini/Library/LaunchAgents/com.walle.tdtb.plist",
+        "curl -sf -m 3 http://127.0.0.1:8746/health"
+      ],
+      "expected_rollback_health": "{\"status\":\"ok\",\"judgment_model\":\"openai/gpt-5.6-luna\"}",
+      "source_tree_untouched": true,
+      "source_tree_dirty_after_pause": 0
+    }
+  },
+
+  "pause_operation": {
+    "performed": true,
+    "authorized_by": "CUT-02 attended approval (approval_receipt.verdict=APPROVED_ATTENDED_LIVE_CUTOVER)",
+    "mechanism": "launchctl bootout gui/501/com.walle.tdtb",
+    "mechanism_rationale": "bootout is the sanctioned unload path used by the project's own restart-live.sh (lines 139-146). 'launchctl stop' or 'kill' would be respawned because the job sets KeepAlive=true; bootout removes the job from the domain so the single-writer stays down for the cutover window.",
+    "graceful": true,
+    "graceful_evidence": "Log shows ordered uvicorn teardown: 'Shutting down' -> 'Waiting for application shutdown.' -> 'Application shutdown complete.' -> 'Finished server process [99455]'. No SIGKILL, no mid-write truncation.",
+    "exit_code": 0,
+    "single_writer_paused": true,
+    "port_released": "127.0.0.1:8746",
+    "commands_executed": [
+      "launchctl bootout gui/501/com.walle.tdtb"
+    ],
+    "scope_note": "Bounded to the single named label com.walle.tdtb in gui/501. No other launchd job, process, or domain was touched."
+  },
+
+  "pause_verification": {
+    "verified": true,
+    "independent_signal_count": 9,
+    "all_signals_agree": true,
+    "checks": [
+      {
+        "id": "V1",
+        "check": "launchctl print gui/501/com.walle.tdtb",
+        "expected": "service absent from domain",
+        "observed": "Could not find service \"com.walle.tdtb\" in domain for user gui: 501 (exit 113)",
+        "pass": true
+      },
+      {
+        "id": "V2",
+        "check": "launchctl list | grep tdtb",
+        "expected": "no matching label",
+        "observed": "no output (grep exit 1); pre-pause this returned '99455 0 com.walle.tdtb'",
+        "pass": true
+      },
+      {
+        "id": "V3",
+        "check": "ps -p 99455",
+        "expected": "original writer PID gone",
+        "observed": "no process row (exit 1)",
+        "pass": true
+      },
+      {
+        "id": "V4",
+        "check": "pgrep -fl 'tdtb-app-pilot.*main.py'",
+        "expected": "no surviving/duplicate writer",
+        "observed": "no match (exit 1)",
+        "pass": true
+      },
+      {
+        "id": "V5",
+        "check": "lsof -nP -iTCP:8746 -sTCP:LISTEN",
+        "expected": "port free",
+        "observed": "no listener (exit 1)",
+        "pass": true
+      },
+      {
+        "id": "V6",
+        "check": "curl -sf -m 3 http://127.0.0.1:8746/health",
+        "expected": "connection refused",
+        "observed": "curl exit 7 (connection refused), no response body",
+        "pass": true
+      },
+      {
+        "id": "V7",
+        "check": "Re-verify V1/V5/V4/V6 after sleeping 15s (> ThrottleInterval=10)",
+        "expected": "KeepAlive does not respawn the writer after the throttle window",
+        "observed": "still NOT loaded; port still free; no writer; health down",
+        "pass": true,
+        "significance": "Rules out a false-negative pause caused by reading state inside the 10s respawn throttle window."
+      },
+      {
+        "id": "V8",
+        "check": "Post-pause log tail (token lines filtered)",
+        "expected": "clean application shutdown of PID 99455",
+        "observed": "'Shutting down' / 'Waiting for application shutdown.' / 'Application shutdown complete.' / 'Finished server process [99455]'; log grew 1149 -> 1153 lines",
+        "pass": true
+      },
+      {
+        "id": "V9",
+        "check": "Rollback assets intact after pause",
+        "expected": "installed plist + preserved backup + source template all unchanged; source tree clean",
+        "observed": "installed plist sha256=65f8443a... unchanged; backup sha256=65f8443a... identical; source template sha256=1e71a1a9... unchanged; source task dir dirty count = 0",
+        "pass": true
+      }
+    ],
+    "pause_verified_independently": true,
+    "stop_condition_triggered": false,
+    "stop_condition_rule": "Acceptance criterion: if pause cannot be verified, stop and do not mutate the consumer. Pause WAS verified by 9 agreeing signals, so no stop was required; the consumer was nonetheless left unmutated per task scope."
+  },
+
+  "cut_04_readiness": {
+    "note": "Captured read-only because the live service is now DOWN; a missing canonical target would strand the runtime and force rollback.",
+    "canonical_venv_python": "PRESENT /Users/walle-mini/Repos/Projects/TDTB/app/.venv/bin/python",
+    "canonical_venv_python_version": "Python 3.12.13",
+    "version_matches_source_runtime": true,
+    "canonical_entrypoint": "PRESENT /Users/walle-mini/Repos/Projects/TDTB/app/main.py",
+    "canonical_plist_render_required": true,
+    "canonical_plist_render_contract": "__WALLE_HOME__ -> /Users/walle-mini ; __TDTB_VAULT_ROOT__ -> /Users/walle-mini/Obsidian/WALL⋅E-THNK (the value the paused source was actually running with, per preimage.launch_configuration.environment)",
+    "expected_cut_04_sequence": [
+      "render /Users/walle-mini/Repos/Projects/TDTB/launchd/com.walle.tdtb.plist -> /Users/walle-mini/Library/LaunchAgents/com.walle.tdtb.plist",
+      "plutil -lint the rendered plist",
+      "launchctl bootstrap gui/501 /Users/walle-mini/Library/LaunchAgents/com.walle.tdtb.plist",
+      "verify GET /health 200 and that the loaded program path points at Repos/Projects/TDTB"
+    ]
+  },
+
+  "guards_observed": {
+    "launchd_mutation_performed": true,
+    "launchd_mutation_scope": "single named label com.walle.tdtb in gui/501; pause (bootout) only",
+    "consumer_switched": false,
+    "canonical_runtime_started": false,
+    "canonical_plist_installed": false,
+    "process_killed_with_signal": false,
+    "source_fallback_modified": false,
+    "billed_calls": 0,
+    "provider_writes": 0,
+    "todoist_mutated": false,
+    "calendar_mutated": false,
+    "vault_accessed": false,
+    "credentials_recorded": false,
+    "provider_payloads_recorded": false,
+    "session_token_recorded": false,
+    "commit_created": false,
+    "git_staged_or_committed": false,
+    "writes_performed": [
+      "/Users/walle-mini/Repos/Projects/TDTB/docs/plan/2026-08-12-tdtb-project-extraction-attended-cutover/evidence/pause-preimage.json",
+      "/Users/walle-mini/Repos/Projects/TDTB/docs/plan/2026-08-12-tdtb-project-extraction-attended-cutover/evidence/pause-preimage.launchagent.plist.bak"
+    ],
+    "read_only_operations": [
+      "launchctl list | grep tdtb",
+      "launchctl print gui/501/com.walle.tdtb",
+      "ps -o pid,ppid,uid,lstart,etime,stat,command -p 99455",
+      "lsof -nP -iTCP:8746 -sTCP:LISTEN",
+      "shasum -a 256 (3 plists + backup)",
+      "cat/read of installed + repo plists",
+      "ls -ld symlink resolution of Repos/Claudius",
+      "git rev-parse / git log / git status --porcelain (source task dir, read-only)",
+      "curl -sf http://127.0.0.1:8746/health (tokenless read)",
+      "tail/wc of ~/Library/Logs/tdtb-server.log",
+      "existence + --version check of canonical venv python"
+    ]
+  },
+
+  "current_live_state": {
+    "service_loaded": false,
+    "writer_running": false,
+    "port_8746": "free",
+    "runtime_in_effect": "NONE — source paused, canonical not started",
+    "attended_window_open": true,
+    "operator_action_required": "Proceed to CUT-04 to install/bootstrap the canonical runtime, or invoke rollback_preimage.rollback_commands to restore the source runtime. The service is intentionally DOWN until one of these runs.",
+    "downtime_started_at": "2026-08-13T19:58:0xZ (approx, at bootout)",
+    "single_writer_invariant_preserved": true
+  },
+
+  "outstanding_upstream_conditions": [
+    {
+      "code": "REWIRING_CONDITION_UNRESOLVED",
+      "severity": "HIGH",
+      "status": "OPEN",
+      "carried_forward_from": "CUT-02 approval receipt",
+      "detail": "Authorized vault-gated LiveSourceContract pass against the real vault is not recorded (rewiring handoff ACCEPTED_CONDITIONAL).",
+      "affected_by_this_task": false,
+      "pass_invented": false,
+      "note": "CUT-03 did not access the vault and therefore neither resolved nor advanced this condition. It remains OPEN."
+    }
+  ],
+
+  "blockers": [],
+
+  "acceptance_criteria": [
+    {
+      "criterion": "Source process and launchd identity, executable, working directory, loaded state, and source plist hash are captured.",
+      "met": true,
+      "evidence": "preimage.launchd_identity (label/domain/type/loaded plist path+sha256/state=running/keepalive/throttle), preimage.process_identity (pid 99455, ppid 1, started, resolved executable, listener), preimage.launch_configuration (program, argv, working directory, env), preimage.plist_hashes (source template 1e71a1a9..., installed 65f8443a..., canonical 230fcf10...)."
+    },
+    {
+      "criterion": "Bounded read-only health/version state is captured without provider writes.",
+      "met": true,
+      "evidence": "preimage.health_version_state: single GET /health -> 200 {status:ok, judgment_model:openai/gpt-5.6-luna}; endpoint is a tokenless read-only route; billed_calls=0, provider_writes=0, vault_accessed=false."
+    },
+    {
+      "criterion": "Source writer is paused and pause is independently verified.",
+      "met": true,
+      "evidence": "pause_operation: launchctl bootout gui/501/com.walle.tdtb, exit 0, graceful uvicorn shutdown. pause_verification: 9 agreeing signals (launchctl print absent, launchctl list absent, PID gone, no stray writer, port free, health refused, stable past ThrottleInterval, clean shutdown in log, rollback assets intact)."
+    },
+    {
+      "criterion": "Preimage and pause receipt are written with no credentials or provider payloads.",
+      "met": true,
+      "evidence": "guards_observed.credentials_recorded=false, provider_payloads_recorded=false, session_token_recorded=false; the observed X-TDTB-Token was deliberately excluded and token-bearing log lines were filtered (log_preimage.redaction)."
+    },
+    {
+      "criterion": "If pause cannot be verified, stop and do not mutate the consumer.",
+      "met": true,
+      "evidence": "pause_verification.stop_condition_triggered=false (pause verified). Consumer left unmutated regardless: consumer_switched=false, canonical_runtime_started=false, canonical_plist_installed=false."
+    },
+    {
+      "criterion": "Do not switch consumer or start canonical runtime in this task.",
+      "met": true,
+      "evidence": "guards_observed.consumer_switched=false, canonical_runtime_started=false, canonical_plist_installed=false; installed plist sha256 still 65f8443a... (source contract, unchanged)."
+    },
+    {
+      "criterion": "Do not commit.",
+      "met": true,
+      "evidence": "guards_observed.commit_created=false, git_staged_or_committed=false; only two untracked evidence files were written."
+    }
+  ],
+
+  "artifact_path": "/Users/walle-mini/Repos/Projects/TDTB/docs/plan/2026-08-12-tdtb-project-extraction-attended-cutover/evidence/pause-preimage.json"
+}

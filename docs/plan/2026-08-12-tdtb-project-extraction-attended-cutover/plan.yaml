@@ -1,0 +1,416 @@
+plan_id: 2026-08-12-tdtb-project-extraction-attended-cutover
+objective: >-
+  Optionally switch the attended live TDTB runtime from the Claudius source app
+  to the verified canonical repository with explicit approval, pause, rollback,
+  resume, and operational verification.
+created_at: '2026-08-13T00:00:00Z'
+created_by: gem-planner
+status: pending
+tldr: >-
+  This is an optional production operations plan. It is isolated from migration,
+  rewiring, and implementation and may be skipped after their gates pass.
+workstream_type: optional_attended_live_cutover
+optional: true
+parent_plan: docs/plan/2026-08-12-tdtb-project-extraction-decomposition/plan.yaml
+upstream_dependencies:
+  - plan: 2026-08-12-tdtb-project-extraction-migration
+    gate: MIG-07
+    artifact: docs/plan/2026-08-12-tdtb-project-extraction-migration/evidence/migration-handoff.json
+  - plan: 2026-08-12-tdtb-project-extraction-claudius-rewiring
+    gate: RW-06
+    artifact: docs/plan/2026-08-12-tdtb-project-extraction-claudius-rewiring/evidence/rewiring-handoff.json
+  - plan: 2026-08-12-tdtb-project-extraction-implementation
+    gate: IMP-11
+    artifact: docs/plan/2026-08-12-tdtb-project-extraction-implementation/evidence/implementation-handoff.json
+downstream_handoffs: []
+baseline:
+  objective: >-
+    Move the live TDTB runtime to the canonical repository only with attended
+    approval and evidence-backed operational verification or verified rollback.
+  acceptance_criteria:
+    - The cutover is explicitly optional and not required for repository or implementation acceptance.
+    - User approval is recorded immediately before any live launchd/process mutation.
+    - Pre-cutover pause, consumer preimage, destination identity, and readiness are verified.
+    - Successful cutover proves process identity, executable, working directory, and health/read-only status.
+    - Failure pauses success claims, restores the source consumer when safe, and verifies rollback.
+    - Resume handling is explicit; unsafe or unverifiable recovery records escalation_required.
+  captured_at: '2026-08-13T00:00:00Z'
+plan_lineage:
+  root_plan_id: 2026-08-12-tdtb-project-extraction
+  revision: 0
+  replan_count: 0
+  max_replans: 2
+  parent_revision: 6
+  reason: scope_change
+plan_metrics:
+  wave_1_task_count: 1
+  total_dependencies: 5
+  risk_score: high
+  quality_warnings:
+    - This workstream can mutate production runtime state and requires attended approval.
+    - The source process is single-writer and must be paused before consumer mutation.
+    - A failed rollback must escalate and cannot be reported as successful cutover.
+    - Repository migration, consumer rewiring, and implementation are upstream only.
+context_version: 1
+context_updated_at: '2026-08-13T00:00:00Z'
+context_fields_changed: [optional_boundary, approval_gate, pause_resume, rollback_verification]
+tech_stack:
+  - name: launchd
+    role: TDTB live process consumer
+    evidence: /Users/walle-mini/Repos/Claudius/Tasks/tdtb-app-pilot/launchd/com.walle.tdtb.plist
+  - name: Python and FastAPI
+    role: Canonical runtime identity and read-only health verification
+    evidence: /Users/walle-mini/Repos/Projects/TDTB/app
+  - name: Git
+    role: Upstream provenance and destination identity checks
+    evidence: /Users/walle-mini/Repos/Projects/TDTB/.git
+conventions:
+  - Never infer approval from a plan or previous user decision.
+  - Capture a preimage before any live mutation.
+  - Pause, mutate, verify, then resume or rollback with evidence.
+  - Use read-only health/version proof after successful activation.
+  - Keep the source tree as fallback until successful operational verification.
+constraints:
+  hard:
+    - Do not execute without explicit attended user approval at the cutover gate.
+    - Do not start without green migration, rewiring, and implementation handoffs.
+    - Do not call billed endpoints or mutate Todoist, Calendar, vault, or other external data.
+    - Do not delete the source fallback before successful cutover verification.
+    - Do not claim success when rollback or resume is unsafe or unverifiable.
+    - Do not alter repository migration or application implementation in this workstream.
+  soft:
+    - Keep the source consumer ready for immediate rollback during the verification window.
+  compatibility:
+    - Preserve the launchd label, single-writer contract, and canonical runtime environment.
+  security_requirements:
+    - Record only bounded process, launch configuration, and health metadata.
+    - Never persist credentials, tokens, vault data, or provider payloads in evidence.
+architecture_snapshot:
+  pre_cutover:
+    source_consumer: /Users/walle-mini/Repos/Claudius/Tasks/tdtb-app-pilot
+    destination_consumer: prepared canonical TDTB launch template
+    state: source operational, destination verified but not active
+  cutover:
+    allowed_mutation: attended launchd/process consumer switch only
+    required_proof: active process identity, executable, working directory, launch config, read-only health
+  rollback:
+    preimage: source launchd/process identity and loaded state
+    trigger: any partial mutation failure, verification failure, pause/resume failure, or user stop
+    result: verified source restoration or escalation_required
+research_digest:
+  digest: >-
+    The combined plan isolates M12/M13 as an attended live gate after migration
+    and implementation. This child preserves that boundary and makes rollback,
+    pause, resume, approval, and operational proof explicit.
+  top_files:
+    - path: docs/plan/2026-08-12-tdtb-project-extraction-implementation/evidence/implementation-handoff.json
+      trust_level: required_upstream_gate
+    - path: /Users/walle-mini/Repos/Projects/TDTB/launchd/com.walle.tdtb.plist
+      trust_level: canonical_prepared_launch_contract
+    - path: /Users/walle-mini/Repos/Claudius/Tasks/tdtb-app-pilot/launchd/com.walle.tdtb.plist
+      trust_level: source_rollback_preimage_input
+    - path: /Users/walle-mini/Repos/Claudius/Tasks/tdtb-app-pilot/restart-live.sh
+      trust_level: source_runtime_control_surface
+    - path: docs/plan/2026-08-12-tdtb-project-extraction/evidence/source-inventory.json
+      trust_level: live_process_inventory
+prior_decisions:
+  - decision: Live cutover is separate from repository migration.
+    context: Migration acceptance may pass while the source runtime remains active.
+  - decision: Cutover is optional.
+    context: Migration, rewiring, and implementation can complete without activation.
+  - decision: Rollback must be evidence-backed.
+    context: A failed or partial mutation cannot be called safe without verification.
+reuse_notes:
+  - path: docs/plan/2026-08-12-tdtb-project-extraction/plan.yaml
+    trust_level: historical_cutover_boundary_only
+  - path: /Users/walle-mini/Repos/Claudius/Tasks/tdtb-app-pilot/launchd/com.walle.tdtb.plist
+    trust_level: current_source_runtime_input
+replan:
+  reason: >-
+    Isolate attended live operations from repository migration, consumer rewiring,
+    and implementation so it can be approved, paused, rolled back, or skipped independently.
+  changed_tasks: [M12-M13 become CUT-01 through CUT-06 and are no longer part of migration acceptance.]
+  added_tasks: [CUT-01, CUT-02, CUT-03, CUT-04, CUT-05, CUT-06]
+  removed_tasks: []
+  preserved_acceptance_criteria:
+    - Explicit attended approval is required for live mutation.
+    - Cutover must verify canonical process ownership.
+    - Partial failure requires rollback or escalation.
+  new_risks:
+    - User approval could be inferred from the existence of this plan.
+    - A pause could be incomplete while a writer continues changing state.
+    - A restored source consumer could differ from the captured preimage.
+    - Operational health could be inferred from process identity alone.
+  progress_signal: >-
+    Six gates isolate upstream validation, attended approval, pause/preimage, cutover,
+    rollback/resume, operational verification, and optional closeout.
+open_questions:
+  - question: When will the user attend and explicitly approve the live cutover?
+    context: No approval is granted by planning or by upstream handoff success.
+    type: decision_blocker
+    affects: [CUT-02, CUT-03]
+assumptions:
+  - The source single-writer process and launch label remain identifiable at execution time.
+  - The canonical launch template is prepared and verified by upstream plans.
+  - Read-only health/version proof is available without billed or mutating endpoints.
+  - User may skip this optional plan without reopening earlier gates.
+pre_mortem:
+  overall_risk_level: high
+  critical_failure_modes:
+    - scenario: Live mutation occurs without explicit attended approval.
+      likelihood: low
+      impact: critical
+      mitigation: CUT-02 has a no-write blocked result until approval is recorded.
+    - scenario: Source writer is not fully paused before the switch.
+      likelihood: medium
+      impact: critical
+      mitigation: Require process/writer pause proof and receipt stability before CUT-03.
+    - scenario: Destination process starts with wrong executable or working directory.
+      likelihood: medium
+      impact: critical
+      mitigation: Compare active identity and launch configuration against canonical preimage checks.
+    - scenario: Partial failure leaves neither source nor destination verified.
+      likelihood: medium
+      impact: critical
+      mitigation: Capture source preimage, attempt restoration, verify it, or emit escalation_required.
+    - scenario: Health check makes a live write or billed request.
+      likelihood: low
+      impact: high
+      mitigation: Restrict operational proof to bounded read-only checks.
+coordination_notes:
+  - CUT-01 validates all three upstream handoffs; it does not activate runtime.
+  - CUT-02 is the attended approval gate and must block with no writes if absent.
+  - CUT-03 captures pause and rollback preimage before mutation.
+  - CUT-04 performs the runtime switch only after CUT-02 and CUT-03 are green.
+  - CUT-05 owns rollback and resume for success, failure, blocked, or user-stop paths.
+  - CUT-06 accepts operational proof or records optional skipped/blocked disposition.
+tasks:
+  - id: CUT-01
+    title: Validate upstream readiness for optional cutover
+    description: >-
+      Confirm migration, rewiring, and implementation handoffs are green and
+      identify the exact canonical launch contract and source fallback.
+    wave: 1
+    agent: gem-reviewer
+    status: pending
+    covers: [upstream gates, canonical launch contract, source fallback, cutover readiness]
+    depends_on: []
+    conflicts_with: []
+    context_files:
+      - path: docs/plan/2026-08-12-tdtb-project-extraction-migration/evidence/migration-handoff.json
+        description: Migration acceptance.
+      - path: docs/plan/2026-08-12-tdtb-project-extraction-claudius-rewiring/evidence/rewiring-handoff.json
+        description: Rewiring acceptance.
+      - path: docs/plan/2026-08-12-tdtb-project-extraction-implementation/evidence/implementation-handoff.json
+        description: Implementation acceptance.
+      - path: /Users/walle-mini/Repos/Projects/TDTB/launchd/com.walle.tdtb.plist
+        description: Canonical prepared launch contract.
+    flags:
+      requires_design_validation: false
+      retries_used: 0
+      revision_reason: ''
+    acceptance_criteria:
+      - All three upstream handoffs exist, are green, and match current repository identities.
+      - Canonical launch contract and source fallback are explicitly named.
+      - Missing or stale upstream evidence blocks cutover without changing live state.
+    handoff:
+      known_context: [Cutover is optional and not needed for earlier workstream acceptance.]
+      target_files: [docs/plan/2026-08-12-tdtb-project-extraction-attended-cutover/evidence/cutover-inputs.json]
+      constraints: [Review-only; do not inspect or change live state beyond bounded read-only checks.]
+    requires_review: false
+    review_depth: full
+    review_security_sensitive: true
+    environment: production
+    requires_approval: true
+    devops_security_sensitive: true
+
+  - id: CUT-02
+    title: Record attended user approval for live mutation
+    description: >-
+      Establish the explicit attended approval gate for a specific cutover window,
+      target, and rollback authority; absence of approval produces a no-write block.
+    wave: 2
+    agent: gem-devops
+    status: pending
+    covers: [explicit approval, scope confirmation, no-write block, attendance]
+    depends_on: [CUT-01]
+    conflicts_with: []
+    context_files:
+      - path: docs/plan/2026-08-12-tdtb-project-extraction-attended-cutover/evidence/cutover-inputs.json
+        description: Validated upstream readiness.
+      - path: /Users/walle-mini/Repos/Projects/TDTB/launchd/com.walle.tdtb.plist
+        description: Approved target contract.
+    flags:
+      requires_design_validation: false
+      retries_used: 0
+      revision_reason: ''
+    acceptance_criteria:
+      - Explicit user approval names the target, attended window, and rollback authority before mutation.
+      - No approval results in a blocked, no-write receipt.
+      - Planner or prior plan approval is not treated as runtime approval.
+    handoff:
+      known_context: [This gate is the only approval authorization for CUT-04 mutation.]
+      target_files: [docs/plan/2026-08-12-tdtb-project-extraction-attended-cutover/evidence/approval-receipt.json]
+      constraints: [Do not mutate launchd/process state while approval is absent.]
+    requires_review: true
+    review_depth: full
+    review_security_sensitive: true
+    environment: production
+    requires_approval: true
+    devops_security_sensitive: true
+
+  - id: CUT-03
+    title: Capture pre-cutover pause and rollback preimage
+    description: >-
+      Pause or prove quiescence for the single-writer runtime and capture the
+      source launchd/process preimage before any consumer mutation.
+    wave: 3
+    agent: gem-devops
+    status: pending
+    covers: [writer pause, receipt stability, process preimage, rollback readiness]
+    depends_on: [CUT-02]
+    conflicts_with: []
+    context_files:
+      - path: docs/plan/2026-08-12-tdtb-project-extraction/evidence/source-inventory.json
+        description: Live process and source identity inventory.
+      - path: /Users/walle-mini/Repos/Claudius/Tasks/tdtb-app-pilot/launchd/com.walle.tdtb.plist
+        description: Source launch contract.
+      - path: /Users/walle-mini/Repos/Claudius/Tasks/tdtb-app-pilot/restart-live.sh
+        description: Source runtime control surface.
+      - path: docs/plan/2026-08-12-tdtb-project-extraction-attended-cutover/evidence/approval-receipt.json
+        description: Attended approval.
+    flags:
+      requires_design_validation: false
+      retries_used: 0
+      revision_reason: ''
+    acceptance_criteria:
+      - The writer is safely paused or proven quiescent and the state is recorded.
+      - Source launch label, executable, working directory, loaded state, process identity, and hashes are captured.
+      - Source receipt and destination handoff remain stable immediately before cutover.
+      - Any pause or preimage uncertainty blocks CUT-04 and preserves source operation when safe.
+    handoff:
+      known_context: [Rollback must restore this preimage, not an inferred or newly generated source state.]
+      target_files: [docs/plan/2026-08-12-tdtb-project-extraction-attended-cutover/evidence/pre-cutover-preimage.json]
+      constraints: [Fail closed on unknown writers or receipt drift; do not delete source fallback.]
+    requires_review: true
+    review_depth: full
+    review_security_sensitive: true
+    environment: production
+    requires_approval: true
+    devops_security_sensitive: true
+
+  - id: CUT-04
+    title: Perform the attended canonical runtime switch
+    description: >-
+      Switch the live consumer to the verified canonical runtime after approval,
+      pause, preimage, and immediate preflight checks pass.
+    wave: 4
+    agent: gem-devops
+    status: pending
+    covers: [launchd switch, canonical process activation, target verification]
+    depends_on: [CUT-03]
+    conflicts_with: []
+    context_files:
+      - path: docs/plan/2026-08-12-tdtb-project-extraction-attended-cutover/evidence/pre-cutover-preimage.json
+        description: Source rollback preimage and quiescence proof.
+      - path: /Users/walle-mini/Repos/Projects/TDTB/launchd/com.walle.tdtb.plist
+        description: Canonical launch contract.
+      - path: docs/plan/2026-08-12-tdtb-project-extraction-implementation/evidence/implementation-handoff.json
+        description: Implementation readiness.
+    flags:
+      requires_design_validation: false
+      retries_used: 0
+      revision_reason: ''
+    acceptance_criteria:
+      - Mutation occurs only after explicit attended approval and green pre-cutover evidence.
+      - Active process label, executable, working directory, launch configuration, and target hashes resolve to canonical TDTB.
+      - The source fallback remains available until post-switch verification is green.
+      - Any partial failure stops success claims and invokes CUT-05 recovery handling.
+    handoff:
+      known_context: [This is the only task allowed to change live launchd or process consumer state.]
+      target_files: [docs/plan/2026-08-12-tdtb-project-extraction-attended-cutover/evidence/cutover-receipt.json]
+      constraints: [No billed calls or external data mutation; keep rollback possible.]
+    requires_review: true
+    review_depth: full
+    review_security_sensitive: true
+    environment: production
+    requires_approval: true
+    devops_security_sensitive: true
+
+  - id: CUT-05
+    title: Verify rollback and resume handling for every terminal outcome
+    description: >-
+      Restore and verify the source consumer on failure, user stop, or unsafe
+      destination state, and verify safe resume after a successful or failed attempt.
+    wave: 5
+    agent: gem-devops
+    status: pending
+    covers: [rollback, process restoration, resume, escalation, failure closure]
+    depends_on: [CUT-04]
+    conflicts_with: []
+    context_files:
+      - path: docs/plan/2026-08-12-tdtb-project-extraction-attended-cutover/evidence/pre-cutover-preimage.json
+        description: Authoritative source preimage.
+      - path: docs/plan/2026-08-12-tdtb-project-extraction-attended-cutover/evidence/cutover-receipt.json
+        description: Mutation result.
+      - path: /Users/walle-mini/Repos/Claudius/Tasks/tdtb-app-pilot/launchd/com.walle.tdtb.plist
+        description: Source restoration contract.
+    flags:
+      requires_design_validation: false
+      retries_used: 0
+      revision_reason: ''
+    acceptance_criteria:
+      - Every failed, blocked, stopped, or partially verified attempt records its trigger and recovery path.
+      - Source restoration is green only when config, process identity, executable, working directory, and target match preimage.
+      - Paused writers are resumed only with independently verified expected state.
+      - Unsafe or unverifiable rollback/resume emits escalation_required and blocks CUT-06 success.
+      - A verified rollback does not claim successful cutover or invalidate upstream repository gates.
+    handoff:
+      known_context: [Recovery must run even when cutover mutation or verification fails.]
+      target_files: [docs/plan/2026-08-12-tdtb-project-extraction-attended-cutover/evidence/rollback-resume-receipt.json]
+      constraints: [Preserve all evidence; do not silently mark unsafe recovery complete.]
+    requires_review: true
+    review_depth: full
+    review_security_sensitive: true
+    environment: production
+    requires_approval: true
+    devops_security_sensitive: true
+
+  - id: CUT-06
+    title: Accept optional operational cutover or record skip
+    description: >-
+      Review read-only operational proof and recovery evidence, then classify the
+      optional workstream as successful, safely rolled back, skipped, or escalated.
+    wave: 6
+    agent: gem-reviewer
+    status: pending
+    covers: [operational verification, optional disposition, ownership proof, closeout]
+    depends_on: [CUT-05]
+    conflicts_with: []
+    context_files:
+      - path: docs/plan/2026-08-12-tdtb-project-extraction-attended-cutover/evidence
+        description: Complete cutover evidence set.
+      - path: /Users/walle-mini/Repos/Projects/TDTB
+        description: Canonical operational repository.
+      - path: /Users/walle-mini/Repos/Claudius
+        description: Source fallback and historical evidence.
+    flags:
+      requires_design_validation: false
+      retries_used: 0
+      revision_reason: ''
+    acceptance_criteria:
+      - Successful cutover proves canonical active process identity and read-only operational health/version.
+      - No known operational consumer remains on source after success; fallback is marked non-operational.
+      - A skipped cutover preserves source operation and clearly records that operational ownership did not change.
+      - A failed or unsafe recovery records escalation_required and does not claim success.
+      - CUT-06 status does not retroactively change migration, rewiring, or implementation gates.
+    handoff:
+      known_context: [This optional gate is not required for the first three workstream completions.]
+      target_files: [docs/plan/2026-08-12-tdtb-project-extraction-attended-cutover/evidence/cutover-handoff.json]
+      constraints: [Review-only; use read-only proof and preserve rollback evidence.]
+    requires_review: false
+    review_depth: full
+    review_security_sensitive: true
+    environment: production
+    requires_approval: true
+    devops_security_sensitive: true

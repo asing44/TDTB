@@ -1,0 +1,202 @@
+{
+  "artifact": "cutover-inputs",
+  "plan_id": "2026-08-12-tdtb-project-extraction-attended-cutover",
+  "task_id": "CUT-01-RESOLVE",
+  "captured_at": "2026-08-13",
+  "readiness_verdict": "CANONICAL_PREREQ_RESOLVED_VAULT_GATE_RESOLVED_LAUNCH_CONTRACT_COMMITTED",
+  "cutover_optional": true,
+  "live_mutation_authorized": false,
+  "live_state_inspected": false,
+  "repository_identities": {
+    "canonical_root": "/Users/walle-mini/Repos/Projects/TDTB",
+    "canonical_head": "bcc0ee0fe58fd13a8ee99faf4441f14047c1a1cf",
+    "migration_recorded_destination_head": "47932f52827be5b1584690438fe29c157040a55b",
+    "canonical_head_matches_migration": false,
+    "canonical_head_advance": "Expected approved launch-contract commit bcc0ee0; migration destination remains the recorded baseline.",
+    "source_root_resolved": "/Users/walle-mini/Repos/Claudius",
+    "source_requested_alias": "/Users/walle-mini/Repos/Claudius",
+    "source_head": "93b9fe449c69b9fb5a3f7a5b42d967cd40cf42dc",
+    "migration_recorded_source_head": "93b9fe449c69b9fb5a3f7a5b42d967cd40cf42dc",
+    "source_head_matches_migration": true,
+    "canonical_agents_sha256": "b7f1775616304c335ca3e0fbe891ca8f89d9246f603b1ebd4063a40db1494818",
+    "canonical_readme_sha256": "73a371116cda5c8f715eab0e4d5b951a85bbe274d40a0ef12b149d6afb6d3e32",
+    "canonical_document_hashes_match_rewiring": true
+  },
+  "upstream_handoffs": [
+    {
+      "name": "migration",
+      "path": "/Users/walle-mini/Repos/Projects/TDTB/docs/plan/2026-08-12-tdtb-project-extraction-migration/evidence/migration-handoff.json",
+      "sha256": "5ea949508ecf027dcfb16222d0e2be9c701c95dc236eddb15de4e40bb115565f",
+      "plan_id": "2026-08-12-tdtb-project-extraction-migration",
+      "task_id": "MIG-07",
+      "status": "PASS",
+      "gate": "GREEN",
+      "verdict": "ACCEPTED",
+      "identity_current": true
+    },
+    {
+      "name": "rewiring",
+      "path": "/Users/walle-mini/Repos/Projects/TDTB/docs/plan/2026-08-12-tdtb-project-extraction-claudius-rewiring/evidence/rewiring-handoff.json",
+      "sha256": "7b1941a51a568dba05356bf754a49ab0cbb7b4ab86de56cc70c3b05acc6302c5",
+      "plan_id": "2026-08-12-tdtb-project-extraction-claudius-rewiring",
+      "task_id": "RW-06",
+      "status": "PARTIAL",
+      "gate": "AMBER",
+      "verdict": "ACCEPTED",
+      "conditional_acceptance_allowed_by_implementation_handoff": true,
+      "identity_current": true,
+      "unresolved_condition": "None; authorized vault-gated LiveSourceContract pass recorded by CUT-VAULT-01 (read-only real WALL-E-THNK vault, 13 tests OK)."
+    },
+    {
+      "name": "implementation",
+      "path": "/Users/walle-mini/Repos/Projects/TDTB/docs/plan/2026-08-12-tdtb-project-extraction-implementation/evidence/implementation-handoff.json",
+      "sha256": "fcf5e9351d73feb394bfa34525bd926aad08972c33e1f2b2e4ee3b3e357ccb4e",
+      "plan_id": "2026-08-12-tdtb-project-extraction-implementation",
+      "task_id": "IMP-11",
+      "status": "PASS",
+      "gate": "GREEN",
+      "verdict": "ACCEPTED_WITH_DECLARED_LIMITATIONS",
+      "identity_current": true
+    }
+  ],
+  "launch_contract": {
+    "canonical_path": "/Users/walle-mini/Repos/Projects/TDTB/launchd/com.walle.tdtb.plist",
+    "sha256": "230fcf109a5c9ae2c683ae7b3e53b4493705e4d665e1484cee8fe01fd9940202",
+    "plist_valid": true,
+    "plist_lint": "plutil -lint: OK",
+    "git_tracked": true,
+    "git_provenance": "tracked and committed in bcc0ee0fe58fd13a8ee99faf4441f14047c1a1cf on Development/tdtb-canonical-cutover",
+    "label": "com.walle.tdtb",
+    "program": "__WALLE_HOME__/Repos/Projects/TDTB/app/.venv/bin/python",
+    "working_directory": "__WALLE_HOME__/Repos/Projects/TDTB/app",
+    "placeholder_contract": "__WALLE_HOME__ token (resolves to /Users/walle-mini); consistent with source fallback convention",
+    "targets_canonical_repository": true,
+    "app_dir_present": true,
+    "matches_source_fallback_sha256": false,
+    "resolved_by_task": "CUT-01-FIX (re-confirmed by CUT-01-RESOLVE; file unchanged since FIX)"
+  },
+  "source_fallback": {
+    "launch_contract": "/Users/walle-mini/Repos/Claudius/Tasks/tdtb-app-pilot/launchd/com.walle.tdtb.plist",
+    "runtime_root": "/Users/walle-mini/Repos/Claudius/Tasks/tdtb-app-pilot",
+    "sha256": "1e71a1a95482ad44c8ab9067d55579ac9a83934f7d8d89cd583eea88032401c6",
+    "plist_valid": true,
+    "git_tracked": true,
+    "loaded_runtime_claim_source": "task handoff known_context; not inspected by CUT-01",
+    "status": "UNCHANGED_ROLLBACK_PREIMAGE",
+    "modified_by_cut_01_fix": false,
+    "modified_by_cut_01_resolve": false
+  },
+  "canonical_prerequisite": {
+    "criterion": "Canonical launch contract targets the canonical TDTB app root (no Claudius source target).",
+    "resolved": true,
+    "evidence": "grep -c Claudius = 0; ProgramArguments/WorkingDirectory resolve to __WALLE_HOME__/Repos/Projects/TDTB/app; app dir present; plutil -lint OK",
+    "resolved_by": "CUT-01-FIX, re-verified by CUT-01-RESOLVE"
+  },
+  "vault_gated_limitation": {
+    "code": "REWIRING_CONDITION_RESOLVED_AUTHORIZED_PASS",
+    "status": "RESOLVED_AUTHORIZED_PASS",
+    "blocking_cutover": false,
+    "pass_invented": false,
+    "classification": "RESOLVED_BY_AUTHORIZED_READ_ONLY_VAULT_CHECK",
+    "classification_rationale": "CUT-VAULT-01 explicitly authorized option 1 (bounded read-only vault check). The real WALL-E-THNK vault (/Users/walle-mini/Obsidian/WALL⋅E-THNK) was read by Scripts/test_assignment_attention_contract.py::LiveSourceContract; all 13 tests OK, exit 0. The prior offline failure (FileNotFoundError on 00 - META/Home.md) is gone; connector, path, and permissions were present all along. No vault write occurred.",
+    "why_access_attempted": "User explicitly selected option 1 authorizing a bounded read-only vault check; the task handoff CUT-VAULT-01 permits read-only vault access under approved scope and forbids all writes/mutations.",
+    "policy_reference": "AGENTS.md safety envelope: 'Do not write the real vault, Todoist, Calendar, or other source state from a scratch walkthrough.' The authorized CUT-VAULT-01 check is read-only (.read_text() only) and does not write any source state; it satisfies the prior declared condition without violating the no-write rule.",
+    "prior_instruction": "CUT-01-FIX and the rewiring handoff were preparation-only/offline; CUT-VAULT-01 is the explicitly authorized attended read-only resolution.",
+    "evidence": "CUT-VAULT-01: python3 Scripts/test_assignment_attention_contract.py --vault /Users/walle-mini/Obsidian/WALL⋅E-THNK => Ran 13 tests, OK, EXIT 0. Required files present: 00 - META/Home.md, 00 - META/Bases/{assignment-pipeline,daily-assigned,daily-deadlines}.base. rewiring-handoff.json limited_paths[0] now RESOLVED_AUTHORIZED_PASS.",
+    "required_resolution": "Satisfied by CUT-VAULT-01. No further vault action required; cutover may proceed on its own authorization path."
+  },
+  "acceptance_criteria": [
+    {
+      "criterion": "All three upstream handoffs exist, are accepted or allowed conditional, and match repository identities.",
+      "met": true
+    },
+    {
+      "criterion": "Canonical launch contract and source fallback are explicitly named and the canonical prerequisite (canonical-target) is resolved.",
+      "met": true
+    },
+    {
+      "criterion": "Missing or stale upstream evidence blocks cutover without changing live state.",
+      "met": true
+    }
+  ],
+  "cut_01_resolve_verification": {
+    "task_id": "CUT-01-RESOLVE",
+    "criteria": [
+      {
+        "criterion": "Canonical plist present in canonical repo; current repository status/provenance recorded.",
+        "met": true,
+        "evidence": "file exists and is tracked; committed in bcc0ee0 on Development/tdtb-canonical-cutover; git ls-files succeeds"
+      },
+      {
+        "criterion": "Canonical plist points at canonical TDTB app via approved placeholder contract; passes syntax/path checks.",
+        "met": true,
+        "evidence": "plutil -lint OK; ProgramArguments/WorkingDirectory = __WALLE_HOME__/Repos/Projects/TDTB/app; app dir present; grep Claudius = 0"
+      },
+      {
+        "criterion": "Source fallback plist unchanged.",
+        "met": true,
+        "evidence": "fallback sha256 1e71a1a9... unchanged; status UNCHANGED_ROLLBACK_PREIMAGE"
+      },
+      {
+        "criterion": "Vault limitation diagnosed precisely: policy/task constraint vs missing connector/path/permission/error.",
+        "met": true,
+        "evidence": "classification=POLICY_OR_TASK_CONSTRAINT; connector/path/permissions present; withheld by guardrail + policy silence"
+      },
+      {
+        "criterion": "If safe read-only real-vault check possible, run narrow verification; else record exact blocker.",
+        "met": true,
+        "evidence": "CUT-VAULT-01 explicitly authorized the bounded read-only vault check; ran LiveSourceContract against the real WALL-E-THNK vault, 13 tests OK, EXIT 0; no write/mutation/commit."
+      },
+      {
+        "criterion": "cutover-inputs.json refreshed with current status; no false green.",
+        "met": true,
+        "evidence": "this artifact: canonical prerequisite and vault gate resolved; canonical launch contract committed in bcc0ee0"
+      },
+      {
+        "criterion": "No launchctl, restart, process kill/restart, external writes, billed calls, or commit.",
+        "met": true,
+        "evidence": "guards_observed block"
+      }
+    ]
+  },
+  "blockers": [
+    {
+      "severity": "CRITICAL",
+      "code": "CANONICAL_LAUNCH_CONTRACT_TARGETS_SOURCE",
+      "status": "RESOLVED_BY_CUT_01_FIX",
+      "evidence": "/Users/walle-mini/Repos/Projects/TDTB/launchd/com.walle.tdtb.plist:10,15 resolve to __WALLE_HOME__/Repos/Projects/TDTB/app; grep Claudius = 0; re-verified by CUT-01-RESOLVE",
+      "detail": "The prepared canonical plist formerly launched and worked from the Claudius fallback tree; now repointed to the canonical TDTB app and environment.",
+      "required_resolution": "Verified launch contract that targets the canonical TDTB app and environment."
+    },
+    {
+      "severity": "HIGH",
+      "code": "CANONICAL_LAUNCH_CONTRACT_UNTRACKED",
+      "status": "RESOLVED_BY_COMMIT_BCC0EE0",
+      "evidence": "git ls-files succeeds; git log records bcc0ee0fe58fd13a8ee99faf4441f14047c1a1cf for launchd/com.walle.tdtb.plist.",
+      "detail": "The destination launch identity is durable on Development/tdtb-canonical-cutover.",
+      "required_resolution": "Satisfied by bcc0ee0; no blocker remains."
+    },
+    {
+      "severity": "HIGH",
+      "code": "REWIRING_CONDITION_UNRESOLVED",
+      "status": "RESOLVED",
+      "vault_gated": true,
+      "classification": "RESOLVED_BY_AUTHORIZED_READ_ONLY_VAULT_CHECK",
+      "evidence": "CUT-VAULT-01 ran Scripts/test_assignment_attention_contract.py --vault /Users/walle-mini/Obsidian/WALL⋅E-THNK read-only; 13 tests OK, EXIT 0. Vault-gated LiveSourceContract pass now recorded; connector/path/permissions confirmed present.",
+      "detail": "The authorized vault-gated LiveSourceContract pass is now recorded. CUT-VAULT-01 explicitly authorized the bounded read-only vault check; the suite passes against the real WALL-E-THNK vault with no write. The limitation was a policy/task constraint, now lifted by explicit authorization.",
+      "required_resolution": "Satisfied by CUT-VAULT-01. No further vault action required."
+    }
+  ],
+  "guards_observed": {
+    "launchd_or_process_mutation": false,
+    "live_write_calls": 0,
+    "billed_calls": 0,
+    "todoist_calendar_or_vault_write": false,
+    "vault_read_only_access": true,
+    "vault_read_scope": "Scripts/test_assignment_attention_contract.py LiveSourceContract reads 00 - META/Home.md and 3 Bases/*.base; no write",
+    "commit_created": false,
+    "source_template_modified": false
+  },
+  "next_gate_authorized": false,
+  "artifact_path": "/Users/walle-mini/Repos/Projects/TDTB/docs/plan/2026-08-12-tdtb-project-extraction-attended-cutover/evidence/cutover-inputs.json"
+}

@@ -1,0 +1,74 @@
+{
+  "artifact": "migration-handoff",
+  "plan_id": "2026-08-12-tdtb-project-extraction-migration",
+  "task_id": "MIG-07",
+  "status": "PASS",
+  "gate": "GREEN",
+  "verdict": "ACCEPTED",
+  "scope": "canonical material migration only",
+  "baseline": {
+    "destination_head": "47932f52827be5b1584690438fe29c157040a55b",
+    "source_head": "93b9fe449c69b9fb5a3f7a5b42d967cd40cf42dc",
+    "installable_entries": 255,
+    "installed_entries_checked": 255,
+    "missing_entries": 0,
+    "hash_mismatches": 0,
+    "mode_mismatches": 0,
+    "manifest_contract_mismatches": 0
+  },
+  "acceptance_evidence": [
+    {
+      "criterion": "All prior migration evidence exists, is internally consistent, and has no fail-closed condition.",
+      "met": true,
+      "evidence": "Seven required prior artifacts exist. MIG-01 has no fail-closed reasons; MIG-02 seals are PASS; MIG-03 verification is PASS; MIG-04 and MIG-06 are GREEN with no blockers."
+    },
+    {
+      "criterion": "Canonical root ownership and installed hashes match the approved migration map.",
+      "met": true,
+      "evidence": "AGENTS.md and README.md match approved SHA-256 values. All 255 installed entries match transfer hashes and modes; no mapped path is missing."
+    },
+    {
+      "criterion": "Collision and generated-exclusion decisions are explicit and content-preserving.",
+      "met": true,
+      "evidence": "AGENTS.md, README.md, and .gitignore merge decisions are explicit. .DS_Store files are untracked and ignored. All declared generated and dependency paths are absent from the installed map."
+    },
+    {
+      "criterion": "Destination readiness is recorded without claiming implementation completion.",
+      "met": true,
+      "evidence": "MIG-06 records 1211 backend tests passed and frontend READY_CONDITIONAL. It states that readiness does not claim PRD or DESIGN implementation completion."
+    },
+    {
+      "criterion": "PRD, DESIGN, consumer rewiring, and live cutover are explicitly not required by this gate.",
+      "met": true,
+      "evidence": "MIG-01 scope excludes all four. MIG-04 records no consumer rewiring. MIG-06 records no live service or source-consumer touch."
+    },
+    {
+      "criterion": "migration-handoff.json is green only when every migration baseline criterion passes.",
+      "met": true,
+      "evidence": "All six MIG-07 criteria are met; no blocker, missing entry, hash mismatch, mode mismatch, or fail-closed condition remains."
+    }
+  ],
+  "readiness": {
+    "backend": "READY",
+    "backend_tests_passed": 1211,
+    "frontend": "READY_CONDITIONAL",
+    "frontend_dependency_gate": "Run bounded npm ci before npm test, typecheck, build:mockup, or build:prod.",
+    "implementation_completion_claimed": false
+  },
+  "out_of_scope": [
+    "PRD implementation",
+    "DESIGN implementation",
+    "consumer rewiring",
+    "live cutover"
+  ],
+  "blockers": [],
+  "downstream_handoff": {
+    "authorized": true,
+    "next_scope": "consumer rewiring may use this accepted migration baseline",
+    "guards": [
+      "This artifact does not authorize live cutover or live writes.",
+      "Material readiness does not establish implementation completion.",
+      "Frontend execution gates require bounded npm ci first."
+    ]
+  }
+}

@@ -1,0 +1,330 @@
+{
+  "artifact": "contract-test-gaps",
+  "plan_id": "2026-08-12-tdtb-project-extraction-implementation",
+  "task_id": "IMP-03",
+  "captured_at": "2026-08-13",
+  "status": "RED_ESTABLISHED",
+  "authority": {
+    "primary": {
+      "name": "Frozen reliability plan",
+      "path": "/Users/walle-mini/Repos/Claudius/Plans Link/2026-08-09-tdtb-planning-ui-reliability.md",
+      "trust_level": "frozen_contract_and_backlog",
+      "usage": "Locked product contract items 1-21 and final source-action semantics are the behavior authority for the Red tests below"
+    },
+    "waiver": {
+      "path": "docs/plan/2026-08-12-tdtb-project-extraction-implementation/evidence/implementation-inputs.json",
+      "status": "RESOLVED_BY_WAIVER",
+      "note": "IMP-02 user-approved scoped waiver authorizes implementation against the frozen plan and canonical source contracts"
+    },
+    "canonical_target": "/Users/walle-mini/Repos/Projects/TDTB"
+  },
+  "baseline_before_imp03": {
+    "backend": {"passed": 1123, "failed": 0},
+    "frontend": {"passed": 520, "failed": 0, "skipped": 6}
+  },
+  "baseline_after_imp03_red": {
+    "backend": {"passed": 1123, "failed": 13},
+    "frontend": {"passed": 520, "failed": 6, "skipped": 6}
+  },
+  "no_live_access": true,
+  "no_commit": true,
+  "contract_map": [
+    {
+      "item": 1,
+      "contract": "User-facing language is Today's work or Allocation, never Queue",
+      "status": "GAP",
+      "existing_coverage": "None: no test pins the surface label",
+      "current_source": "frontend/src/ui/Queue.tsx:383 section aria-label 'Assigned queue'; queue__cols-actions 'Actions' column header at Queue.tsx:432",
+      "red_test": "frontend/src/ui/locked-contract.test.tsx::locked contract: Today's work language -> names the cockpit list surface Today's work, never Queue",
+      "expected_failure_reason": "no region named 'Today's work' exists; label is 'Assigned queue'",
+      "implemented_by": "IMP-08"
+    },
+    {
+      "item": 2,
+      "contract": "Desktop primary composition; no duplicate mobile/desktop planning surface",
+      "status": "GAP",
+      "existing_coverage": "ui/a11y.test.tsx 'mobile agenda keyboard access' pins the duplicate MobileAgenda surface (will be removed in IMP-09)",
+      "current_source": "frontend/src/ui/App.tsx:77 mounts MobileAgenda unconditionally; MobileAgenda.tsx:69 renders aria-label 'Agenda'",
+      "red_test": "frontend/src/ui/locked-contract.test.tsx::locked contract: pruned surfaces -> mounts no duplicate mobile surface or read-only placement review",
+      "expected_failure_reason": "MobileAgenda renders in the mounted cockpit",
+      "implemented_by": "IMP-09"
+    },
+    {
+      "item": 3,
+      "contract": "Default row emphasizes task/due/duration/source/Done/Drop; persistent action column prohibited; More contains Unassign and Delete",
+      "status": "GAP",
+      "existing_coverage": "store/staging.test.ts pins verb catalogue complete/defer/delete_permanent; ui/components.test.tsx T20 pins direct Done/Defer/Delete row verbs",
+      "current_source": "frontend/src/ui/Queue.tsx:432 persistent 'Actions' column header; Queue.tsx:65-99 StagingVerbs render Done/Defer/Delete directly per row; model/staging.ts STAGING_VERBS = complete/delete_permanent/defer",
+      "red_test": "frontend/src/ui/locked-contract.test.tsx::locked contract: direct Done/Drop plus More -> rows show direct Done and Drop; Unassign and Delete live behind More; no Defer",
+      "expected_failure_reason": "persistent Actions column renders; Defer verb still exposed; no More control exists",
+      "implemented_by": "IMP-08"
+    },
+    {
+      "item": 4,
+      "contract": "Past-time rows stay visible with original time and a warning; no retime control",
+      "status": "COVERED_AT_SEAM",
+      "existing_coverage": "app/tests/test_sequence.py TestTimeFrameConstraints.test_row_before_anchor_is_soft_warning; TestPastWindowDefaults in test_shadow.py; shadow TestOutOfFrameAnchoredBlocks",
+      "red_test": null,
+      "notes": "Sequence-level soft warning and shadow survival seams are pinned; IMP-04 must verify an explicit past assigned row keeps its original time through manifest/commit planning (AC-003 gate)"
+    },
+    {
+      "item": 5,
+      "contract": "Future-dated work does not consume today's capacity or appear as today's work except explicit date-scoped override with visible provenance",
+      "status": "GAP",
+      "existing_coverage": "None for vault future-date exclusion; Todoist side excluded by ASSIGNED_QUERY_FALLBACK 'today | overdue' in external_sources.py:26",
+      "current_source": "gather/tdtb_gather.py is_assigned (line 406) checks only the assigned flag; empirically future-deadline note lands in today's digest",
+      "red_test": "app/tests/test_locked_contract_red.py::test_future_dated_vault_assigned_item_absent_from_today_plan_inputs",
+      "expected_failure_reason": "plan-inputs digest assigned contains the future-dated vault item (assertion failed: 'Future' in ['Future'])",
+      "implemented_by": "IMP-04"
+    },
+    {
+      "item": 6,
+      "contract": "Priority bands (Critical, High, Everything else) and Dropped today are keyboard-accessible, stateful collapsible sections with row counts",
+      "status": "GAP",
+      "existing_coverage": "model/bands.test.ts bandOf/trackFor; BandHeader count text exists (Queue.tsx:360)",
+      "current_source": "frontend/src/ui/Queue.tsx:352-378 BandHeader is a div, not a disclosure/button; no aria-expanded",
+      "red_test": "frontend/src/ui/locked-contract.test.tsx::locked contract: collapsible priority bands -> band headers are keyboard-accessible disclosures with expanded state",
+      "expected_failure_reason": "band header has no button/role=button ancestor and no aria-expanded",
+      "implemented_by": "IMP-08"
+    },
+    {
+      "item": 7,
+      "contract": "Capacity numbers and chart recompute immediately after duration/inclusion/action/Mint/calendar-review changes",
+      "status": "COVERED",
+      "existing_coverage": "frontend/src/store/controller.test.tsx T12 day-setup save refreshes capacity without billed call; store/store.test.ts override edits; model/refresh.test.ts; store/refreshLifecycle.test.ts",
+      "red_test": null
+    },
+    {
+      "item": 8,
+      "contract": "Clicking a pie segment filters/highlights its contributors; clearing inspection restores the full list; hover may preview but is not the only interaction",
+      "status": "GAP",
+      "existing_coverage": "model/pie.test.ts wedge geometry and source split; no interaction test",
+      "current_source": "frontend/src/ui/AllocationPie.tsx hover-only: onMouseEnter at lines 99/122; no onClick handler",
+      "red_test": "frontend/src/ui/locked-contract.test.tsx::locked contract: pie inspection -> clicking a segment filters/highlights contributors; clearing restores",
+      "expected_failure_reason": "clicking a slice leaves the readout at 'planned / day' (no inspection state changes)",
+      "implemented_by": "IMP-08"
+    },
+    {
+      "item": 9,
+      "contract": "Anchored gray hatch; Remaining solid green; selected work split Vault/Todoist; center readout compact hierarchy (planned blocks, capacity, over/remaining) not old '48 / 45 PLANNED / DAY' treatment",
+      "status": "PARTIAL_GAP",
+      "existing_coverage": "model/pie.test.ts colors are token-based, localSelected override, HATCHED keys; AllocationPie legend renders text values",
+      "current_source": "frontend/src/ui/AllocationPie.tsx:108-115 center readout shows '{allocated} / {cap.total} blk' with label 'planned / day' - lacks capacity/over-remaining hierarchy",
+      "red_test": "frontend/src/ui/locked-contract.test.tsx::locked contract: pie inspection -> center readout uses planned/capacity/over-remaining hierarchy, not the old PLANNED / DAY treatment",
+      "expected_failure_reason": "readout text is '29 / 31 blk planned / day' with no over/remaining state and retains the old treatment",
+      "implemented_by": "IMP-08"
+    },
+    {
+      "item": 10,
+      "contract": "Duration control is slider + -15/+15 + exact custom dialog; edits persist immediately in local state and write stable-ID memory only after a successful deliberate edit",
+      "status": "PARTIAL_GAP",
+      "existing_coverage": "ui/components.test.tsx T7 slider/steppers/exact editor; store/store.test.ts duration override resizes staged row",
+      "current_source": "UI controls exist; the stable-ID memory write path does not exist (no duration_memory.py)",
+      "red_test": "app/tests/test_duration_memory_contract.py (module seam Red)",
+      "expected_failure_reason": "ModuleNotFoundError: no module named 'duration_memory'",
+      "implemented_by": "IMP-05"
+    },
+    {
+      "item": 11,
+      "contract": "Duration precedence memory -> tag -> native/preset -> type -> default with source labels and visible same-precedence collisions; payload returns value and source",
+      "status": "GAP",
+      "existing_coverage": "app/tests/test_durations.py pins the OLD precedence (native beats preset, no memory/tag/source) - must be superseded in IMP-05",
+      "current_source": "app/main.py resolve_assigned_blocks (line 642): native -> preset -> type -> default; returns int only, no source label",
+      "red_test": "app/tests/test_duration_memory_contract.py::test_duration_precedence_memory_first_with_source_label and ::test_tag_collision_fails_visibly",
+      "expected_failure_reason": "ModuleNotFoundError: no module named 'duration_memory'",
+      "implemented_by": "IMP-05"
+    },
+    {
+      "item": 12,
+      "contract": "Duration memory keyed by canonical source identity (Todoist task id; normalized vault path), survives recurring occurrences, atomic writes, never rewrites source fields; name alone is not an identity",
+      "status": "GAP",
+      "existing_coverage": "None",
+      "current_source": "No memory store exists",
+      "red_test": "app/tests/test_duration_memory_contract.py::test_memory_keyed_by_stable_identity_not_name",
+      "expected_failure_reason": "ModuleNotFoundError: no module named 'duration_memory'",
+      "implemented_by": "IMP-05"
+    },
+    {
+      "item": 13,
+      "contract": "Day Setup keeps preset selector, Mint allotment slider, individual 30-minute session checkboxes, bidirectional sync, today-only deselection, exact session IDs/windows in payload",
+      "status": "COVERED",
+      "existing_coverage": "frontend/src/model/mint.test.ts sync/rebuild/partial selection; ui/components.test.tsx SetupDrawer Mint checkbox-slider synchronization (lines 459-517); app/tests/test_main_api.py TestDaySetup; test_sequence.py::test_selected_session_rows_are_exact_immutable_windows",
+      "red_test": null
+    },
+    {
+      "item": 14,
+      "contract": "Mint titles stay stable semantic labels; start/end in structured fields; selected Mint sessions admit associated assignment BEFORE session start (not after-start-only)",
+      "status": "GAP_ON_DIRECTION",
+      "existing_coverage": "Structured titles/times covered: test_shadow.py::test_mint_session_row_routes_to_mint, test_main_api.py::test_selected_mint_sessions_are_excluded_and_merged_at_exact_windows; direction not covered",
+      "current_source": "app/sequence.py:504 hard-rejects any row starting before the selected Mint session window",
+      "red_test": "app/tests/test_locked_contract_red.py::test_selected_mint_session_permits_assignment_before_session_start",
+      "expected_failure_reason": "validate_sequence returns ok=False with hard error 'outside its selected Mint session window' for a row starting before the session",
+      "implemented_by": "IMP-04"
+    },
+    {
+      "item": 15,
+      "contract": "Exact selected Live micro-adventure ID/idea carried from Day Setup through sequence/shadow/commit; refresh cannot silently substitute",
+      "status": "COVERED",
+      "existing_coverage": "app/tests/test_micro_adventure_routes.py pick id assertions (ma01/ma02), TestDaySetupOverride set/persist/clear, runstate override wins; main.py _ensure_micro_adventure (line 522) dated override wins over auto-pick; test_shadow.py::test_live_with_micro_adventure_routes_to_todoist_step_a",
+      "red_test": null
+    },
+    {
+      "item": 16,
+      "contract": "Duplicate source events canonicalize into one logical group; attendance applies once; capacity counts once; Keep both is explicit",
+      "status": "GAP",
+      "existing_coverage": "capacity-level union covered in app/tests/test_calendar_capacity.py (overlap union); row-level canonicalization not covered",
+      "current_source": "app/external_sources.py fetch_calendar_busy (line 226) emits one row per event with no canonical identity/group key; empirically 2 duplicate rows",
+      "red_test": "app/tests/test_locked_contract_red.py::test_duplicate_calendar_events_canonicalize_to_one_logical_group",
+      "expected_failure_reason": "fetch_calendar_busy returns 2 rows for 2 events sharing the same event identity (assert len(blocks) == 1)",
+      "implemented_by": "IMP-04"
+    },
+    {
+      "item": 17,
+      "contract": "Unknown/inactive calendars (incl. TicTick-shaped input) stay excluded from capacity and planning until explicitly reviewed; review classifies busy-counted or ignored",
+      "status": "GAP",
+      "existing_coverage": "test_external_sources.py::test_ignored_calendar_neither_pins_capacity_nor_counts_as_fixed covers configured ignored; unknown-title default not covered",
+      "current_source": "app/external_sources.py:240 title_classes.get(title, 'fixed') - unknown calendar defaults to fixed (counted); empirically 'capacity_class': 'fixed'",
+      "red_test": "app/tests/test_locked_contract_red.py::test_unknown_calendar_stays_quarantined_until_review",
+      "expected_failure_reason": "unknown calendar row is classified 'fixed' instead of quarantined",
+      "implemented_by": "IMP-04"
+    },
+    {
+      "item": 18,
+      "contract": "All-day source events remain all-day and non-timed; no ordinary planning/commit path converts them to timed blocks; timed inference requires explicit confirmation",
+      "status": "GAP",
+      "existing_coverage": "CONFLICT: app/tests/test_external_sources.py::test_all_day_event_skipped pins the current skip behavior and must be superseded in IMP-04",
+      "current_source": "app/external_sources.py:228-229 'if ev.get(\"all_day\"): continue' silently drops all-day calendar events; empirically blocks == []",
+      "red_test": "app/tests/test_locked_contract_red.py::test_all_day_source_event_stays_all_day_and_non_timed",
+      "expected_failure_reason": "all-day event is skipped (len(blocks) == 1 fails on empty list)",
+      "implemented_by": "IMP-04"
+    },
+    {
+      "item": 19,
+      "contract": "Soft rules apply by default (nested overlap, dinner companion merge, systems grouping) with named rule and today-only override; hard anchors remain non-overridable",
+      "status": "COVERED_AT_SEAM",
+      "existing_coverage": "app/tests/test_placement_rules.py; test_shadow.py TestApplyCalendarParticipation; frontend model/findings.test.ts + store/accept.test.ts (grant coverage, today-only acceptance); placement_context.py prompt wiring tests",
+      "red_test": null,
+      "notes": "Rule naming/override exposure in UI/API payloads to be verified during IMP-04/IMP-08; seam-level behavior is pinned"
+    },
+    {
+      "item": 20,
+      "contract": "Copy-prompt fallback and compact keyboard-shortcut help remain; Copy uses exact current state and never invokes a provider",
+      "status": "COVERED",
+      "existing_coverage": "frontend/src/store/exportPrompt.test.ts buildDayPrompt exact-state serialization; ui/components.test.tsx clipboard paths never invoke a provider",
+      "red_test": null
+    },
+    {
+      "item": 21,
+      "contract": "Remove Forgotten/unassigned candidate strip, Trim Assist, fixture-only Scenario panel, read-only placement/schedule review; no replacement pool browsing or manual timeline UI",
+      "status": "GAP",
+      "existing_coverage": "CONFLICT: ui/forgot.test.tsx (ForgotStrip), ui/placement.test.tsx (PlacementList), ui/components.test.tsx T20/canvas tests pin the retired surfaces and are removed in IMP-09",
+      "current_source": "frontend/src/ui/App.tsx:73 mounts PlacementList; App.tsx:77 mounts MobileAgenda; Rail.tsx:291-293 mounts TrimAssist + ForgotStrip; main.tsx:74 mounts ScenarioPanel",
+      "red_test": "frontend/src/ui/locked-contract.test.tsx::locked contract: pruned surfaces -> mounts no duplicate mobile surface or read-only placement review",
+      "expected_failure_reason": "MobileAgenda ('Agenda' aria-label) and PlacementList (.placement section) render in the mounted cockpit",
+      "implemented_by": "IMP-09"
+    }
+  ],
+  "action_semantics_map": [
+    {
+      "action": "Done",
+      "contract": "Todoist closes only the current occurrence (recurring advances normally); vault receives FileClass terminal completed status; already-created TDTB block stays historical",
+      "status": "COVERED",
+      "existing_coverage": "app/tests/test_runtime_actions.py TestComplete (close + vault flip, byte-preserving), test_staging_actions.py TestStagingVerbs.test_complete_*; FileClass enum values in TestCompletionStatusIsAFileClassValue",
+      "red_test": null
+    },
+    {
+      "action": "Drop from plan",
+      "contract": "No Todoist/vault mutation; date-scoped exclusion; removes from current planning only; no calendar/source write; shown under Dropped today; eligible again tomorrow; immediate Undo; idempotent per date",
+      "status": "GAP",
+      "existing_coverage": "None - current verbs are complete/skip_today/remove_from_today/defer/assign (runtime_actions.py:54-63)",
+      "red_test": "app/tests/test_locked_contract_red.py::test_final_action_verbs_exist, ::test_drop_from_plan_is_date_scoped_with_no_source_write, ::test_drop_and_unassign_are_legal_before_commit",
+      "expected_failure_reason": "'drop_from_plan' not in runtime_actions.VERBS; plan_steps raises RuntimeActionError unknown verb (or 'needs a committed plan item' pre-commit)",
+      "implemented_by": "IMP-07"
+    },
+    {
+      "action": "Unassign",
+      "contract": "Vault sets assigned:false; non-recurring Todoist clears its date; recurring Todoist advances the due occurrence WITHOUT completing, preserves recurrence string/type, proves unchanged completion counters by read-back; remove from current plan; no deferral-memory ranking nudge",
+      "status": "GAP",
+      "existing_coverage": "None - no unassign verb; current recurring skip writes no due (test_runtime_actions.py::test_recurring_task_skips_due_write_entirely pins old behavior)",
+      "red_test": "app/tests/test_locked_contract_red.py::test_final_action_verbs_exist, ::test_unassign_advances_recurring_without_completing, ::test_drop_and_unassign_are_legal_before_commit",
+      "expected_failure_reason": "'unassign' not in runtime_actions.VERBS; plan_steps raises RuntimeActionError unknown verb",
+      "implemented_by": "IMP-07"
+    },
+    {
+      "action": "Delete",
+      "contract": "Delete every linked source target atomically where feasible; delete only a TDTB-owned calendar block, never an imported event; journal-backed recovery; fail closed before partial apply",
+      "status": "COVERED",
+      "existing_coverage": "app/tests/test_runtime_actions.py TestDeletePermanent (todoist+vault+owned event, undo restores), test_staging_actions.py delete_permanent; imported events untouchable (manifest-only targets, test_shadow.py::test_calendar_sourced_spec_never_writes); fail-closed + compensation (TestFailures.test_mid_apply_failure_compensates_applied_steps, test_unavailable_surface_fails_closed_before_any_write)",
+      "red_test": null
+    },
+    {
+      "action": "Availability",
+      "contract": "All four actions available before and after commit; preflight every linked target; apply as one compensated transaction; refresh sources and capacity immediately",
+      "status": "PARTIAL_GAP",
+      "existing_coverage": "Journal/compensation/idempotency infrastructure covered (test_runtime_actions.py TestJournalCore, test_runtime_actions_routes.py); staging legality covered only for old verbs (STAGING_VERBS = complete/delete_permanent/defer/assign, runtime_actions.py:69)",
+      "red_test": "app/tests/test_locked_contract_red.py::test_drop_and_unassign_are_legal_before_commit",
+      "expected_failure_reason": "plan_steps refuses the new verbs against a staging-phase target",
+      "implemented_by": "IMP-07"
+    }
+  ],
+  "added_red_tests": [
+    {
+      "file": "app/tests/test_locked_contract_red.py",
+      "count": 9,
+      "tests": [
+        "test_duplicate_calendar_events_canonicalize_to_one_logical_group",
+        "test_unknown_calendar_stays_quarantined_until_review",
+        "test_all_day_source_event_stays_all_day_and_non_timed",
+        "test_future_dated_vault_assigned_item_absent_from_today_plan_inputs",
+        "test_selected_mint_session_permits_assignment_before_session_start",
+        "test_final_action_verbs_exist",
+        "test_drop_from_plan_is_date_scoped_with_no_source_write",
+        "test_unassign_advances_recurring_without_completing",
+        "test_drop_and_unassign_are_legal_before_commit"
+      ],
+      "expected_failures": ["assertion failures on locked behavior", "RuntimeActionError unknown verb", "plan-inputs future-date inclusion"]
+    },
+    {
+      "file": "app/tests/test_duration_memory_contract.py",
+      "count": 4,
+      "tests": [
+        "test_duration_memory_module_exists",
+        "test_memory_keyed_by_stable_identity_not_name",
+        "test_duration_precedence_memory_first_with_source_label",
+        "test_tag_collision_fails_visibly"
+      ],
+      "expected_failures": ["ModuleNotFoundError: no module named 'duration_memory' (PATH-016 seam created by IMP-05)"]
+    },
+    {
+      "file": "frontend/src/ui/locked-contract.test.tsx",
+      "count": 6,
+      "tests": [
+        "Today's work language: names the cockpit list surface Today's work, never Queue",
+        "direct Done/Drop plus More: rows show direct Done and Drop; Unassign and Delete live behind More; no Defer",
+        "collapsible priority bands: band headers are keyboard-accessible disclosures with expanded state",
+        "pie inspection: clicking a segment filters/highlights contributors; clearing restores",
+        "pie inspection: center readout uses planned/capacity/over-remaining hierarchy, not the old PLANNED / DAY treatment",
+        "pruned surfaces: mounts no duplicate mobile surface or read-only placement review"
+      ],
+      "expected_failures": ["no 'Today's work' region", "persistent Actions column + Defer + no More", "band header not a disclosure", "pie click no-op", "old 'planned / day' readout", "MobileAgenda/PlacementList still render"]
+    }
+  ],
+  "existing_tests_to_supersede": [
+    "app/tests/test_external_sources.py::test_all_day_event_skipped - pins the skip behavior contract 18 reverses",
+    "app/tests/test_durations.py - pins old duration precedence (native over preset, no memory/tag/source) contract 11 replaces",
+    "app/tests/test_runtime_actions.py::test_recurring_task_skips_due_write_entirely - pins old recurring skip; contract Unassign advances due without completing",
+    "frontend/src/store/staging.test.ts - pins verb catalogue complete/delete_permanent/defer/assign; final model is Done/Drop/Unassign/Delete",
+    "frontend/src/ui/forgot.test.tsx and ui/placement.test.tsx - pin retired surfaces removed by contract 21",
+    "frontend/src/ui/a11y.test.tsx 'mobile agenda keyboard access' - pins duplicate mobile surface removed by contract 2"
+  ],
+  "out_of_scope_recorded": [
+    "Bundles and scratch qualification: no failing test added here; existing builds pass and IMP-09/IMP-10 gates own bundle currency and scratch walkthrough",
+    "Contract items 4, 7, 13, 15, 19, 20 recorded as covered at the existing seam level with no new Red test"
+  ],
+  "safety": {
+    "live_providers_accessed": false,
+    "vault_todoist_calendar_launchd_billed_accessed": false,
+    "test_inputs": ["synthetic vault temp dirs", "FakeStore EventKit fakes", "fixture scenarios (frontend)", "no network, no EventKit, no Todoist"]
+  },
+  "artifact_path": "/Users/walle-mini/Repos/Projects/TDTB/docs/plan/2026-08-12-tdtb-project-extraction-implementation/evidence/contract-test-gaps.json"
+}

@@ -1,0 +1,119 @@
+{
+  "artifact": "implementation-inputs",
+  "plan_id": "2026-08-12-tdtb-project-extraction-implementation",
+  "task_id": "IMP-02",
+  "captured_at": "2026-08-13",
+  "status": "RESOLVED_BY_WAIVER",
+  "summary": "No current PRD and no current DESIGN are supplied. User approved a scoped waiver. Frozen reliability plan and existing canonical source contracts are the bounded implementation authority. Historical DESIGN remains historical only.",
+  "waiver": {
+    "decision": "USER_APPROVED_SCOPED_WAIVER",
+    "decision_date": "2026-08-13",
+    "context": "Plan open_questions listed both PRD and current-design as decision_blockers for IMP-02/IMP-06/IMP-11. User selected option 1: approve a scoped waiver for absent current PRD.yaml and current DESIGN.md.",
+    "granted_by": "Adam (user, 2026-08-12 extraction implementation planning session)",
+    "waives": [
+      "Supply of a current docs/PRD.yaml in canonical /Users/walle-mini/Repos/Projects/TDTB",
+      "Supply of a current DESIGN.md that authorizes current cockpit UI behavior"
+    ],
+    "authorizes": [
+      "Implementation against the frozen 2026-08-09 reliability plan as product/backlog authority",
+      "Implementation against existing canonical source contracts (app/, frontend/, spec.md)",
+      "Task acceptance criteria in this plan as the binding per-task contract"
+    ],
+    "limits": [
+      "No live writes, restart, launchd change, or cutover",
+      "No unrelated redesign, dependency upgrades, or scope expansion",
+      "No invented PRD or DESIGN document",
+      "No representation that missing inputs were supplied",
+      "Archived skill-era DESIGN.md never treated as current authority without explicit approval",
+      "UI implementation waits for designer validation (IMP-06)"
+    ]
+  },
+  "prd_input": {
+    "supplied": false,
+    "waived": true,
+    "path": null,
+    "verified_absent": "docs/PRD.yaml no match under canonical /Users/walle-mini/Repos/Projects/TDTB (glob 2026-08-13)",
+    "authority_substitute": "Frozen plan locked product contract items 1-21 and final source-action semantics",
+    "representation": "Explicitly absent; recorded as waived, not as supplied"
+  },
+  "design_input": {
+    "supplied": false,
+    "waived": true,
+    "path": null,
+    "verified_state": [
+      "No current DESIGN.md exists for the FastAPI/Preact cockpit application",
+      "Canonical root /Users/walle-mini/Repos/Projects/TDTB/DESIGN.md exists but is retired skill-era bridger-vault pipeline design (v6.0/v5.0, Coda/Make.com/Tana era, pre-cockpit); not current design authority",
+      "Archived /Users/walle-mini/Repos/Claudius/Projects/TDTB/archive/skill-era/DESIGN.md is historical evidence only"
+    ],
+    "authority_substitute": "Frozen plan locked UI composition (items 1-10, 13-21) and AC-001/AC-002/AC-009 plus designer validation in IMP-06",
+    "representation": "Explicitly absent as current authority; recorded as waived, not as supplied"
+  },
+  "authority": {
+    "primary": {
+      "name": "Frozen reliability plan",
+      "path": "/Users/walle-mini/Repos/Claudius/Plans Link/2026-08-09-tdtb-planning-ui-reliability.md",
+      "trust_level": "frozen_contract_and_backlog",
+      "state": "FROZEN for extraction T2; approval approved; execution blocked; superseded_by 2026-08-12-tdtb-project-extraction",
+      "provides": [
+        "Locked product contract items 1-21",
+        "Final source-action semantics table (Done, Drop from plan, Unassign, Delete)",
+        "Acceptance criteria AC-001..AC-009",
+        "Backlog T1-T7 and owned-path claims PATH-001..PATH-020",
+        "Verification policy: repo/scratch-only, no live writes"
+      ],
+      "usage_bound": "Scope and contract evidence only; not current repository ownership"
+    },
+    "supporting": [
+      {
+        "name": "Migration gate",
+        "path": "docs/plan/2026-08-12-tdtb-project-extraction-migration/evidence/migration-handoff.json",
+        "trust_level": "required_migration_gate",
+        "state": "PASS / GREEN / ACCEPTED",
+        "note": "Explicitly out of scope: PRD implementation, DESIGN implementation, consumer rewiring, live cutover"
+      },
+      {
+        "name": "Rewiring gate",
+        "path": "docs/plan/2026-08-12-tdtb-project-extraction-claudius-rewiring/evidence/rewiring-handoff.json",
+        "trust_level": "required_consumer_gate",
+        "state": "PARTIAL / AMBER / ACCEPTED_CONDITIONAL",
+        "note": "Implementation authorized conditional; vault-gated LiveSourceContract limitation carried forward; live state pre-cutover"
+      },
+      {
+        "name": "Canonical source contracts",
+        "path": "/Users/walle-mini/Repos/Projects/TDTB",
+        "trust_level": "canonical_implementation_target",
+        "note": "app/, frontend/, spec.md define existing behavior seams; parity checks cite source lines"
+      }
+    ],
+    "excluded": [
+      "Archived skill-era DESIGN.md is historical reference only, not current authority",
+      "Canonical root DESIGN.md is retired pipeline design, not cockpit authority",
+      "THNK feedback captures referenced by the frozen plan remain read-only evidence"
+    ]
+  },
+  "limitations": {
+    "missing_current_prd": true,
+    "missing_current_design": true,
+    "not_represented_as_supplied": true,
+    "historical_design_not_current_authority": true,
+    "waiver_does_not_authorize": [
+      "live writes",
+      "unrelated redesign",
+      "dependency upgrades",
+      "scope expansion",
+      "inventing or creating PRD/DESIGN documents",
+      "access to vault, Todoist, Calendar, launchd, or live process state"
+    ]
+  },
+  "downstream_consumers": {
+    "IMP-03": "Contract tests use frozen plan contract items and AC gates as behavior authority",
+    "IMP-06": "Design validation reads this waiver and the frozen UI contract; bounded ui-design-validation.md is the design handoff",
+    "IMP-08": "UI implementation proceeds only after IMP-06 design handoff",
+    "IMP-11": "Acceptance records PRD and design authority or approved waivers without hidden substitution"
+  },
+  "aliases": {
+    "input-decision.json": "plan.yaml IMP-02 target and IMP-06 context_file name; this implementation-inputs.json is the authoritative waiver record for that reference"
+  },
+  "no_commit": true,
+  "artifact_path": "/Users/walle-mini/Repos/Projects/TDTB/docs/plan/2026-08-12-tdtb-project-extraction-implementation/evidence/implementation-inputs.json"
+}

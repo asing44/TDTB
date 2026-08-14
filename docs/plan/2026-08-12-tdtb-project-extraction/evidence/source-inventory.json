@@ -1,0 +1,115 @@
+{
+  "task_id": "M1",
+  "title": "Inventory the source boundary and destination state",
+  "captured_at": "2026-08-13T02:05:00Z",
+  "method": "read-only git and filesystem inspection; no writes to source, consumer, live, or application files",
+  "source": {
+    "path": "/Users/walle-mini/Repos/Claudius",
+    "resolved_path": "/Users/walle-mini/Development/Claudius",
+    "path_note": "source path is a symlink to /Users/walle-mini/Development/Claudius; canonical working path is Development",
+    "git_remote": "https://github.com/asing44/Claudius.git",
+    "git_head": "93b9fe449c69b9fb5a3f7a5b42d967cd40cf42dc",
+    "git_branch": "main",
+    "dirty_paths": [
+      { "path": "Plans Link/2026-08-09-tdtb-planning-ui-reliability.md", "state": "M", "related": false },
+      { "path": "Plans Link/STATUS.md", "state": "M", "related": false },
+      { "path": "Projects/Trinoor/Skills/log-hours-time-off-tracker.json", "state": "M", "related": false },
+      { "path": "Reports/audit-status.md", "state": "M", "related": false },
+      { "path": "Scripts/actualbudget-mcp-stdio-preload.cjs", "state": "M", "related": false },
+      { "path": "Scripts/test_actualbudget_mcp_wrapper.py", "state": "M", "related": false },
+      { "path": "Skills/user/request-splitter/SKILL.md", "state": "M", "related": false },
+      { "path": "Plans Link/2026-08-12-tdtb-project-extraction/", "state": "??", "related": true, "note": "untracked historical evidence: evidence/transfer-receipt.sha256, evidence/transfer-receipt.json (prior freeze/transfer receipt referenced by plan.yaml; must be preserved, not deleted)" }
+    ],
+    "dirty_note": "No dirty path touches Tasks/tdtb-app-pilot or Projects/TDTB tracked trees; migration must preserve all 8 dirty paths untouched"
+  },
+  "destination": {
+    "path": "/Users/walle-mini/Repos/Projects/TDTB",
+    "resolved_path": "/Users/walle-mini/Repos/Projects/TDTB",
+    "git_remote": "https://github.com/asing44/TDTB.git",
+    "git_head": "4e7e5c05199b7b738a2776f085be8e898fc242d4",
+    "git_branch": "main",
+    "dirty_paths": [
+      { "path": "docs/plan/2026-08-12-tdtb-project-extraction/plan.yaml", "state": "M", "note": "plan.yaml uncommitted working-tree edit; do not commit (config gate has git_commit_on_gate_pass false)" }
+    ],
+    "untracked_ignored": [
+      ".history/ (opencode snapshots, e.g. .opencode/agents/gem-planner_*.md; ignored by dest .gitignore)",
+      ".opencode/node_modules/ (ignored by .opencode/.gitignore: node_modules, package.json, package-lock.json, bun.lock)"
+    ],
+    "planning_infrastructure": [
+      "docs/plan/2026-08-12-tdtb-project-extraction/plan.yaml",
+      "2026-08-12-tdtb-project-extraction.md",
+      "gem-team.yaml",
+      "opencode.json",
+      "update_plan.py",
+      ".opencode/agents/gem-*.md and .opencode/archive/"
+    ]
+  },
+  "inventory": {
+    "source_material_scope": [
+      { "path": "Tasks/tdtb-app-pilot", "classification": "application", "tracked_files": 252, "commits": 220, "note": "core TDTB application: Python app + TS frontend + deployment + specs" },
+      { "path": "Projects/TDTB", "classification": "project", "tracked_files": 7, "note": "canonical project identity (AGENTS.md, README.md) plus skill-era archive" }
+    ],
+    "classified_material": {
+      "application_shared": [
+        { "path": "Tasks/tdtb-app-pilot/app/", "note": "Python app: main.py, judgment.py, shadow.py, orchestrate.py, runtime_actions.py, sequence.py, config_reader.py, day_semantics.py, todoist_client.py, calendar_bridge.py, external_sources.py, runstate.py, placement_rules.py, time_engine.py, capacity.py, micro_adventure.py, deferrals.py, schema_guard.py, inventory.py, bake_in_*.py, commit*.py, build_commit_body.py, fixtures_dryrun.py, shadow_run.py, gather/tdtb_gather.py; 48 files under app/tests/; static/ serving cockpit.html, app.html, timeline.html, adjust.html, commit.html, digest.html, index.html, legacy.html, timeline_logic.js" },
+        { "path": "Tasks/tdtb-app-pilot/frontend/", "note": "Vite+TS frontend: 124 files under src/ and scripts/ (main.tsx, tokens.css, app.css, ui/, adapters/, model/, fixtures/, store/), index.html, package.json, package-lock.json, tsconfig.json, vite.config.ts" },
+        { "path": "Tasks/tdtb-app-pilot/.gitignore", "note": "app-pilot root ignore file" },
+        { "path": "Tasks/tdtb-app-pilot/app/.gitignore", "note": "ignores .venv/, __pycache__/" },
+        { "path": "Tasks/tdtb-app-pilot/frontend/.gitignore", "note": "ignores node_modules/" },
+        { "path": "Tasks/tdtb-app-pilot/spec.md", "note": "application spec" },
+        { "path": "Tasks/tdtb-app-pilot/issues.md", "note": "application issue backlog" },
+        { "path": "Tasks/tdtb-app-pilot/homepage-design-brief.md", "note": "design brief" },
+        { "path": "Tasks/tdtb-app-pilot/chatgpt-mockup-handoff.md", "note": "mockup handoff context" },
+        { "path": "Tasks/tdtb-app-pilot/t19-acceptance-checklist.md", "note": "acceptance checklist" }
+      ],
+      "project_shared": [
+        { "path": "Projects/TDTB/AGENTS.md", "size_bytes": 4367, "note": "project identity; collides with dest AGENTS.md (0 bytes)" },
+        { "path": "Projects/TDTB/README.md", "size_bytes": 1780, "note": "project readme; collides with dest README.md (7 bytes)" }
+      ],
+      "historical": [
+        { "path": "Projects/TDTB/archive/skill-era/", "note": "5 files: DESIGN.md, tdtb-2026-04-29.md, tdtb-bridger-v5.1.md, tdtb-kickoff-2026-04-29.html, tdtb-master-reference.md; skill-era archive, no longer live" },
+        { "path": "Tasks/tdtb-app-pilot/t12a_frame_filter_proof.py", "note": "proof-of-concept script" },
+        { "path": "Tasks/tdtb-app-pilot/t12c_morning_rehearsal.py", "note": "rehearsal/proof script" },
+        { "path": "Tasks/tdtb-app-pilot/t19_inject_failure.py", "note": "failure-injection test script" },
+        { "path": "Tasks/tdtb-app-pilot/bake-in-log.md", "note": "bake-in process log" },
+        { "path": "Tasks/tdtb-app-pilot/bake-in-protocol.md", "note": "bake-in protocol doc" },
+        { "path": "Plans Link/2026-08-12-tdtb-project-extraction/evidence/transfer-receipt.json", "note": "historical freeze/transfer receipt (source-side, untracked); must stay in source as historical evidence" },
+        { "path": "Plans Link/2026-08-12-tdtb-project-extraction/evidence/transfer-receipt.sha256", "note": "historical transfer receipt hash" }
+      ],
+      "generated": [
+        { "path": "Tasks/tdtb-app-pilot/frontend/node_modules/", "note": "npm deps, ignored by frontend/.gitignore" },
+        { "path": "Tasks/tdtb-app-pilot/app/.venv/", "note": "python venv, ignored" },
+        { "path": "Tasks/tdtb-app-pilot/app/__pycache__/", "note": "python bytecode, ignored" },
+        { "path": "Tasks/tdtb-app-pilot/app/.pytest_cache/", "note": "pytest cache" },
+        { "path": "Tasks/tdtb-app-pilot/app/schema-hashes.json", "note": "runtime schema state, tracked in source but regenerated at runtime" },
+        { "path": "Tasks/tdtb-app-pilot/graphify-out/", "note": "empty, ignored by source root .gitignore:62" },
+        { "path": "Tasks/tdtb-app-pilot/mockups/cockpit/", "note": "built vite bundle: index.html + assets/index-C4W5O96u.js + assets/index-DGbVzjSj.css; regenerable from frontend" },
+        { "path": "destination/.history/", "note": "opencode snapshots, dest-generated" },
+        { "path": "destination/.opencode/node_modules/", "note": "opencode runtime deps, dest-generated" },
+        { "path": "destination/.DS_Store", "note": "macOS metadata; note dest repo currently tracks it" }
+      ],
+      "consumer_only": [
+        { "path": "Tasks/tdtb-app-pilot/launchd/com.walle.tdtb.plist", "note": "LIVE consumer: launchd agent com.walle.tdtb currently running (PID 24339); ProgramArguments point at source __WALLE_HOME__/Development/Claudius/Tasks/tdtb-app-pilot/app/.venv/bin/python main.py with WorkingDirectory at source app/; must be rewired to destination after migration" },
+        { "path": "Tasks/tdtb-app-pilot/launchd/README.md", "note": "launchd setup instructions" },
+        { "path": "Tasks/tdtb-app-pilot/restart-live.sh", "note": "live-ops restart script for the bake-in service; rewiring required" }
+      ]
+    }
+  },
+  "collisions": [
+    { "path": "AGENTS.md", "destination": { "tracked": true, "size_bytes": 0 }, "source_candidates": [ { "path": "Projects/TDTB/AGENTS.md", "size_bytes": 4367 }, { "path": "AGENTS.md (source repo root)", "size_bytes": 4002 } ], "risk": "three-way identity collision; reconcile content, do not blindly overwrite" },
+    { "path": "README.md", "destination": { "tracked": true, "size_bytes": 7 }, "source_candidate": { "path": "Projects/TDTB/README.md", "size_bytes": 1780 }, "risk": "stub vs full readme; reconcile" },
+    { "path": ".gitignore", "destination": { "tracked": true, "size_bytes": 10, "content": ".history/" }, "source_candidates": [ "source root .gitignore (covers .venv, __pycache__, .history, graphify-out, node_modules)", "app/.gitignore", "frontend/.gitignore" ], "risk": "merge ignore rules on migration, keep dest .history/ rule" },
+    { "path": ".DS_Store", "destination": { "tracked": true }, "note": "generated macOS metadata currently tracked in dest; decide exclusion during migration" }
+  ],
+  "constraints_observed": [
+    "No source, destination application, consumer, or live files modified",
+    "No commits created",
+    "No ownership claims made; evidence file written only to sanctioned target docs/plan/2026-08-12-tdtb-project-extraction/evidence/source-inventory.json",
+    "Source dirty paths preserved (inspection only)",
+    "Bounded path inspection only; no broad repo-wide grep"
+  ],
+  "next_handoff": {
+    "task": "M2",
+    "recommendation": "Copy application/project material from source into destination with collision reconciliation: app/, frontend/ (src, scripts, configs, package*.json), specs, launchd, restart-live.sh, Projects/TDTB/AGENTS.md+README.md (merge with dest stubs), archive/skill-era as historical. Exclude generated: node_modules, .venv, __pycache__, .pytest_cache, graphify-out, mockups/cockpit built assets, schema-hashes.json (regenerate). Keep transfer-receipt evidence in source untouched. Rewire launchd plist + restart-live.sh consumers to destination paths after copy. Preserve all 8 source dirty paths."
+  }
+}

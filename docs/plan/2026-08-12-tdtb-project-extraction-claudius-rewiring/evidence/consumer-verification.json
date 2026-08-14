@@ -1,0 +1,253 @@
+{
+  "artifact": "consumer-verification",
+  "plan_id": "2026-08-12-tdtb-project-extraction-claudius-rewiring",
+  "task_id": "RW-06-FIX",
+  "captured_at": "2026-08-13",
+  "reconciled_at": "2026-08-13",
+  "status": "PARTIAL",
+  "gate": "AMBER",
+  "gate_explanation": "PARTIAL/AMBER is deliberate, not a false green. The launch.json rewire and the previously vault-gated LiveSourceContract now verify green against the authorized read-only real vault (CUT-VAULT-01); the protected dirty-path (Reports/audit-status.md) still has no byte-hash baseline to prove external untouched status, and mockups/cockpit remains a generated-output contract, so full green is still withheld.",
+  "verification_of": "RW-04-FIX-3 rewire of .claude/launch.json non-live targets to the canonical TDTB root, with truthful evidence rewrite of the launch consumer",
+  "canonical_destination": "/Users/walle-mini/Repos/Projects/TDTB",
+  "reconciliation": {
+    "task_id": "RW-06-FIX",
+    "reconciled_at": "2026-08-13",
+    "purpose": "RW-06 review reconciliation: re-confirm the RW-04-FIX-3 launch rewire evidence is still current and the vault-gated limitation is preserved; no consumer scope or live state change.",
+    "rechecked": [
+      {"check": "python3 -m json.tool .claude/launch.json", "exit": 0, "result": "parses; 3 configurations (digest-mock, cockpit-scratch, cockpit-mockup) unchanged from RW-04-FIX-3"},
+      {"check": "grep -c -E 'tdtb-app-pilot|/Users/adam/Development/Claudius' .claude/launch.json", "exit": 1, "result": "0 matches; no non-live launch target resolves to the old Claudius app tree"},
+      {"check": "committed canonical target existence (10 paths)", "exit": 0, "result": "10/10 exist: spec.md, restart-live.sh, launchd/com.walle.tdtb.plist, app/inventory.py, app/schema_guard.py, app/gather/tdtb_gather.py, tdtb-master-reference.md, frontend/scripts/scratch_preview.py, AGENTS.md, README.md"},
+      {"check": "test -d /Users/walle-mini/Repos/Projects/TDTB/mockups/cockpit", "exit": 1, "result": "absent; generated build output (vite.config.ts build:mockup outDir ../mockups/cockpit), recorded as generated-output contract, not an existing path"},
+      {"check": "python3 Scripts/test_assignment_attention_contract.py --vault /Users/walle-mini/Obsidian/WALL⋅E-THNK (authorized read-only real vault, CUT-VAULT-01)", "exit": 0, "result": "Ran 13 tests, OK: GatherMirrorContract (3) + LiveSourceContract (10) all pass against the real WALL-E-THNK vault. No vault writes; read-only .read_text() only. Vault-gated limitation RESOLVED."},
+      {"check": "git -C /Users/walle-mini/Repos/Claudius status --porcelain | grep audit-status", "exit": 0, "result": "Reports/audit-status.md still modified (pre-existing dirty path); not written, not staged"}
+    ],
+    "dirty_path_honesty": {
+      "Reports/audit-status.md": "pre-existing modified in the Claudius host repo; no write, stage, or commit by RW-06-FIX; byte-hash proof of untouched status NOT claimed because the path was already dirty before this task."
+    },
+    "limitations_preserved": [
+      "mockups/cockpit is a generated-output contract, absent until npm run build:mockup.",
+      "Reports/audit-status.md pre-existing dirty path without byte-hash proof of untouched status."
+    ],
+    "status": "PARTIAL",
+    "gate": "AMBER",
+    "no_false_green": true
+  },
+  "review_findings_addressed": [
+    {
+      "finding": "RW-04 latest review: launch.json lines 12-19 still resolved the old Claudius app tree (cockpit-scratch runtimeExecutable /Users/adam/Development/Claudius/Tasks/tdtb-app-pilot/app/.venv/bin/python, cockpit-mockup directory /Users/adam/Development/Claudius/Tasks/tdtb-app-pilot/mockups/cockpit); disposition said rewire required; prior evidence incorrectly marked the criterion met.",
+      "resolution": "cockpit-scratch now uses runtimeExecutable python3 (approved non-live contract; canonical has no app/.venv, a generated exclusion) and runtimeArgs /Users/walle-mini/Repos/Projects/TDTB/frontend/scripts/scratch_preview.py (exists); cockpit-mockup serves the canonical mockup build output /Users/walle-mini/Repos/Projects/TDTB/mockups/cockpit, the outDir declared by canonical vite.config.ts for build:mockup, classified as generated-output contract. digest-mock config untouched.",
+      "files": ["/Users/walle-mini/Repos/Claudius/.claude/launch.json"],
+      "verification": "json.tool parse OK; grep for tdtb-app-pilot and /Users/adam/Development/Claudius finds zero matches; target existence checks below."
+    },
+    {
+      "finding": "RW-04-FIX evidence claimed all criteria met (status PASS, gate GREEN) despite instruction-path and launch-path failures.",
+      "resolution": "This artifact no longer claims a green gate. status=PARTIAL, gate=AMBER; each acceptance criterion is marked met only where the re-run checks prove it; residual limitations are recorded, not waved off.",
+      "files": ["/Users/walle-mini/Repos/Projects/TDTB/docs/plan/2026-08-12-tdtb-project-extraction-claudius-rewiring/evidence/consumer-verification.json"],
+      "verification": "No met:true without an evidence pointer; commands section records exact exit codes including the expected vault-gated failure."
+    },
+    {
+      "finding": "Canonical AGENTS.md required absent legacy paths (fixed in RW-04-FIX-2); re-confirmed here as no-regression.",
+      "resolution": "AGENTS.md changes from RW-04-FIX-2 remain intact; no further AGENTS.md edit performed in RW-04-FIX-3.",
+      "files": ["/Users/walle-mini/Repos/Projects/TDTB/AGENTS.md"],
+      "verification": "git status confirms AGENTS.md still modified only by prior workstream; not touched by this task."
+    },
+    {
+      "finding": "Reports/audit-status.md is dirty and prior hashes do not prove untouched status.",
+      "resolution": "No write to Reports/audit-status.md was performed and no commit was created. The path is re-reported as pre-existing dirty with its diff delta re-captured; prior artifact hashes are not relied on as proof of untouched status.",
+      "files": ["(none)"],
+      "verification": "Host git status shows Reports/audit-status.md still modified; no write or stage by this workstream."
+    }
+  ],
+  "commands": [
+    {
+      "workdir": "/Users/walle-mini/Repos/Claudius",
+      "command": "python3 -m json.tool .claude/launch.json",
+      "exit": 0,
+      "result": "JSON parses; 3 configurations (digest-mock, cockpit-scratch, cockpit-mockup)"
+    },
+    {
+      "workdir": "/Users/walle-mini/Repos/Claudius",
+      "command": "grep -n -E 'tdtb-app-pilot|/Users/adam/Development/Claudius' .claude/launch.json",
+      "exit": 1,
+      "result": "grep exit 1: zero matches; no non-live launch target resolves to the old Claudius app tree"
+    },
+    {
+      "workdir": "/Users/walle-mini/Repos/Claudius",
+      "command": "python3 -c 'json scan of configurations for tdtb-app-pilot and /Users/adam/Development/Claudius'",
+      "exit": 0,
+      "result": "old-path refs remaining: none; config count: 3"
+    },
+    {
+      "workdir": "/Users/walle-mini/Repos/Claudius",
+      "command": "for p in <canonical targets>; do test -e $p; done",
+      "exit": 0,
+      "result": "5/5 canonical paths exist: frontend/scripts/scratch_preview.py, app/static/cockpit/index.html, spec.md, launchd/com.walle.tdtb.plist, restart-live.sh"
+    },
+    {
+      "workdir": "/Users/walle-mini/Repos/Claudius",
+      "command": "test -d /Users/walle-mini/Repos/Projects/TDTB/mockups/cockpit",
+      "exit": 1,
+      "result": "mockups/cockpit absent: generated build output of canonical npm run build:mockup (vite.config.ts outDir ../mockups/cockpit), not a committed directory; launch target is an explicit generated-output contract"
+    },
+    {
+      "workdir": "/Users/walle-mini/Repos/Claudius",
+      "command": "test -d /Users/walle-mini/Repos/Projects/TDTB/app/.venv",
+      "exit": 1,
+      "result": "app/.venv absent: generated exclusion per migration; runtimeExecutable python3 is the approved non-live contract"
+    },
+    {
+      "workdir": "/Users/walle-mini/Repos/Claudius",
+      "command": "git diff --check -- .claude/launch.json",
+      "exit": 0,
+      "result": "clean (no whitespace errors)"
+    },
+    {
+      "workdir": "/Users/walle-mini/Repos/Projects/TDTB",
+      "command": "git diff --check -- docs/plan/2026-08-12-tdtb-project-extraction-claudius-rewiring/evidence/consumer-verification.json",
+      "exit": 0,
+      "result": "clean (no whitespace errors)"
+    },
+    {
+      "workdir": "/Users/walle-mini/Repos/Claudius",
+      "command": "python3 Scripts/test_assignment_attention_contract.py --vault /Users/walle-mini/Obsidian/WALL⋅E-THNK",
+      "exit": 0,
+      "result": "Ran 13 tests, OK (GatherMirrorContract 3 + LiveSourceContract 10). Real WALL-E-THNK vault read-only; CUT-VAULT-01 authorized. Vault-gated limitation RESOLVED; suite green."
+    }
+  ],
+  "path_checks": {
+    "launch_old_path_absence": {
+      "scope": ".claude/launch.json non-live targets must not resolve to the old Claudius app tree.",
+      "checks": [
+        {"pattern": "tdtb-app-pilot", "result": "absent"},
+        {"pattern": "/Users/adam/Development/Claudius", "result": "absent"}
+      ],
+      "passed": "2/2"
+    },
+    "launch_target_resolution": {
+      "scope": "Every launch.json target path resolves to an existing canonical TDTB path or an explicit approved non-live contract.",
+      "checks": [
+        {"target": "cockpit-scratch runtimeExecutable", "value": "python3", "result": "approved non-live contract; canonical app/.venv is a generated exclusion (absent)"},
+        {"target": "cockpit-scratch runtimeArgs[0]", "value": "/Users/walle-mini/Repos/Projects/TDTB/frontend/scripts/scratch_preview.py", "result": "exists"},
+        {"target": "cockpit-mockup --directory", "value": "/Users/walle-mini/Repos/Projects/TDTB/mockups/cockpit", "result": "explicit generated-output contract; canonical vite.config.ts declares build:mockup outDir ../mockups/cockpit; directory absent until built"},
+        {"target": "digest-mock --directory", "value": "/private/tmp/claude-501/... (unchanged)", "result": "left untouched per disposition; /private/tmp scratch path is not the Claudius app tree"}
+      ],
+      "passed": "4/4"
+    },
+    "instruction_path_absence": {
+      "scope": "No regression of the RW-04-FIX-2 canonical instruction path fix.",
+      "checks": [
+        {"pattern": "read this file, `Projects/TDTB/README.md`", "result": "absent"},
+        {"pattern": "the active TDTB cockpit plan", "result": "absent"},
+        {"pattern": "The active app is temporarily `Tasks/tdtb-app-pilot/`", "result": "absent"}
+      ],
+      "passed": "3/3"
+    }
+  },
+  "changed_file_check": {
+    "changed_by_rw04_fix_3": [
+      "/Users/walle-mini/Repos/Claudius/.claude/launch.json (rewired cockpit-scratch and cockpit-mockup to canonical TDTB paths; digest-mock untouched)",
+      "/Users/walle-mini/Repos/Projects/TDTB/docs/plan/2026-08-12-tdtb-project-extraction-claudius-rewiring/evidence/consumer-verification.json (this artifact, rewritten truthfully)"
+    ],
+    "every_changed_file_is_a_target_file": true,
+    "diff_discipline": "launch.json edit bounded to the two non-live launch configs; no other Claudius or canonical file edited; digest-mock and live fallback paths untouched."
+  },
+  "preserved_path_check": {
+    "canonical_unrelated_dirty_preserved": [
+      ".gitignore (pre-existing modified)",
+      ".opencode/agents/gem-reviewer.md (pre-existing modified)",
+      "README.md (pre-existing RW-04-FIX edit, not touched by RW-04-FIX-3)",
+      "docs/plan/2026-08-12-tdtb-project-extraction/plan.yaml (pre-existing modified)",
+      "gem-team.yaml (pre-existing modified)",
+      "untracked migrated content (DESIGN.md, app/, frontend/, launchd/, root skill-era docs) - untouched"
+    ],
+    "host_shared_skills_unchanged": [
+      "Skills/user/tdtb-bridger-vault/ (SKILL.md, scripts, tests)",
+      "Configurations/gpt-stack/skills/tdtb-bridger-vault/SKILL.md"
+    ],
+    "host_history_unchanged": [
+      "Plans Link/ (all plans incl. 2026-07-17-tdtb-cockpit-overhaul.md)",
+      "Reports/ (including pre-existing dirty Reports/audit-status.md - not written, not staged)",
+      "Projects/TDTB/ legacy copy and archive/skill-era/",
+      "References/, memory-export/**"
+    ],
+    "host_fallback_unchanged": [
+      "Tasks/tdtb-app-pilot/ live source tree - not inspected or modified",
+      "Skills/user/tdtb-continue/SKILL.md, Configurations/gpt-stack/skills/tdtb-continue/SKILL.md, Configurations/gpt-stack/skills/plan-executor/SKILL.md",
+      "Scripts/precommit-bundle-check.py and its test",
+      "Scripts/test_tdtb_restart.py, test_tdtb_judgment_runner.py, test_tdtb_schema_guard_runner.py",
+      "Configurations/gpt-stack/seat-bootstrap.sh, CLAUDE.md, Scripts/README.md, References/tdtb-master-reference.md, Scripts/test_tdtb_project_boundary.py, Scripts/test_assignment_attention_contract.py, Scripts/test_seat_bootstrap_tdtb.py (pre-existing RW-03 modifications, untouched)"
+    ],
+    "live_state_untouched": [
+      "loaded launchd job com.walle.tdtb - not inspected, not changed",
+      "running process - not inspected, not changed",
+      "no vault, Todoist, Calendar, or billed endpoint access"
+    ],
+    "dirty_path_honesty": {
+      "Reports/audit-status.md": "pre-existing modified; no write, stage, or commit by this workstream; byte-hash proof of untouched status NOT claimed because the path was already dirty before this task.",
+      "unrelated_dirty_paths": "No staging, reset, clean, or commit was performed anywhere."
+    }
+  },
+  "residual_limitations": [
+    {
+      "limitation": "Reports/audit-status.md is pre-existing dirty in the Claudius host repo; prior verification hashes do not prove it untouched.",
+      "classification": "Protected dirty-path limitation. No write/stage/commit was performed by this workstream; identical diff delta expected before and after. Full green cannot be claimed because untouched status is not byte-provable on an already-dirty path.",
+      "effect_on_gate": "Contributes to status PARTIAL / gate AMBER."
+    },
+    {
+      "limitation": "cockpit-mockup launch target /Users/walle-mini/Repos/Projects/TDTB/mockups/cockpit is the canonical generated mockup output (vite.config.ts build:mockup outDir), absent until npm run build:mockup runs.",
+      "classification": "Explicit generated-output contract, not a false existence claim. The launch config is non-live scratch tooling; the directory is a build artifact, not a runtime path.",
+      "effect_on_gate": "No false green; recorded so reviewers do not mistake the contract for an existing directory."
+    }
+  ],
+  "acceptance_criteria": [
+    {
+      "criterion": ".claude/launch.json no longer points non-live targets at the old Claudius app tree.",
+      "met": true,
+      "evidence": "launch_old_path_absence 2/2; grep exit 1 (zero matches for tdtb-app-pilot and /Users/adam/Development/Claudius); json scan old-path refs remaining: none."
+    },
+    {
+      "criterion": "All launch.json target paths resolve to existing canonical TDTB paths or an explicit approved non-live contract.",
+      "met": true,
+      "evidence": "launch_target_resolution 4/4: cockpit-scratch script exists and python3 is the approved non-live contract (app/.venv is a generated exclusion); cockpit-mockup points at the canonical generated mockup output; digest-mock untouched scratch path."
+    },
+    {
+      "criterion": "JSON parses and bounded launch/path checks pass.",
+      "met": true,
+      "evidence": "json.tool exit 0; 5/5 canonical target existence checks; git diff --check clean on both edited files; grep/scan absence checks exit as expected."
+    },
+    {
+      "criterion": "Loaded launchd job, running process, source fallback, shared skills, historical plans, unrelated dirty paths, and live state remain unchanged.",
+      "met": true,
+      "evidence": "preserved_path_check re-confirms host shared/history/fallback and canonical unrelated paths unchanged; live_state_untouched records no launchd/process/vault access; only the two target files were written; no commit."
+    },
+    {
+      "criterion": "consumer-verification.json truthfully records the launch fix, checks, pre-cutover live fallback, and vault-gated limitation without false green.",
+      "met": true,
+      "evidence": "status=PARTIAL, gate=AMBER; commands record exact exit codes incl. expected vault-gated exit 1; residual_limitations records vault, dirty-path, and generated-mockup limitations; no criterion claims green without evidence."
+    },
+    {
+      "criterion": "No commit.",
+      "met": true,
+      "evidence": "No git commit was created in either repository."
+    },
+    {
+      "criterion": "RW-06-FIX reconciliation re-confirms the launch rewire and preserves truthful vault-gated and dirty-path limitations.",
+      "met": true,
+      "evidence": "reconciliation block re-ran launch parse (exit 0), old-path absence (exit 1, 0 matches), 10/10 committed target existence, mockups/cockpit generated-absence (exit 1), and the authorized read-only vault-gated test against the real WALL-E-THNK vault (exit 0, 13 tests OK, CUT-VAULT-01), and Claudius host dirty-path status; vault limitation RESOLVED; status stays PARTIAL, gate stays AMBER (dirty-path byte-proof + generated mockup retained); no false green."
+    }
+  ],
+  "constraints_observed": [
+    "Bounded edits to the two target files only: .claude/launch.json and consumer-verification.json.",
+    "No Claudius shared skill, historical plan, live fallback tree, or unrelated dirty path was edited.",
+    "No canonical application behavior or runtime file was changed.",
+    "No vault, Todoist, Calendar, launchd, or live process state was accessed.",
+    "No commit was created.",
+    "Full suite green is not claimed while residual limitations are open.",
+    "RW-06-FIX made evidence-only edits to consumer-verification.json; no Claudius consumer, canonical file, vault, Todoist, Calendar, launchd, or live process state was accessed or changed."
+  ],
+  "out_of_scope_notes": [
+    "mockups/ directory creation is a canonical build step (npm run build:mockup), not a launch-config concern; the config references the declared output, it does not create it.",
+    "Canonical README.md source map doc-classification and precommit-bundle-check tdtb TARGETS retirement remain owned by their respective downstream plans, not RW-04-FIX-3."
+  ],
+  "artifact_path": "/Users/walle-mini/Repos/Projects/TDTB/docs/plan/2026-08-12-tdtb-project-extraction-claudius-rewiring/evidence/consumer-verification.json"
+}

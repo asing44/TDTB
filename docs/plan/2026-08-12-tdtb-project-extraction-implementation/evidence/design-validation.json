@@ -1,0 +1,284 @@
+{
+  "artifact": "design-validation",
+  "plan_id": "2026-08-12-tdtb-project-extraction-implementation",
+  "task_id": "IMP-06",
+  "captured_at": "2026-08-13",
+  "mode": "validate",
+  "nature": "Bounded design validation derived solely from the frozen reliability contract and canonical source patterns. No UI implemented. No DESIGN.md invented.",
+  "no_commit": true,
+  "read_only": true,
+
+  "waiver_record": {
+    "represented_as_supplied": false,
+    "current_prd": {"supplied": false, "waived": true, "treated_as_authority": false},
+    "current_design": {"supplied": false, "waived": true, "treated_as_authority": false,
+      "note": "Canonical root DESIGN.md is retired skill-era pipeline design; archived skill-era DESIGN.md is historical evidence only. Neither authorizes cockpit UI."},
+    "authority": {
+      "primary": "Frozen reliability plan 2026-08-09 (locked product contract items 1-21 + final source-action semantics + AC-001..AC-009)",
+      "supporting": ["Canonical frontend source patterns (frontend/src)", "contract-test-gaps.json (IMP-03 RED gaps)"],
+      "excluded": ["PRD.yaml", "current DESIGN.md", "historical DESIGN only as non-authoritative context"]
+    },
+    "source": "docs/plan/2026-08-12-tdtb-project-extraction-implementation/evidence/implementation-inputs.json (IMP-02, RESOLVED_BY_WAIVER)"
+  },
+
+  "direction": {
+    "summary": "Compact, desktop-first daily planning cockpit. Explain capacity, let Adam choose today's work and duration, resolve source/calendar problems, generate the day, then get out of the way.",
+    "consistent_with_contract": [1, 2, 3, 6, 7, 8, 9, 21],
+    "primary_composition": "Two-column desktop grid: fixed 280px capacity Rail beside a banded Today's work list, sticky footer with ActionDock. Drawers overlay (SetupDrawer, ApprovalDrawer, BlockEditor, AnchoredEditor).",
+    "not_mobile_first": true,
+    "no_duplicate_surface": true,
+    "responsive_contract": "Desktop-first; narrow widths stack and stay usable; no separate mobile/desktop planning surface renders."
+  },
+
+  "design_tokens_reference": {
+    "file": "frontend/src/tokens.css",
+    "reuse_existing": true,
+    "new_palette": false,
+    "accent": "var(--t-accent) #1d9e75 light / #2fb98c dark",
+    "surface": "var(--t-surface) / var(--t-surface-2)",
+    "text": "var(--t-text) / var(--t-muted)",
+    "block_colors": {
+      "anchored": "var(--c-anchored) #a8a29e (gray)",
+      "free_remaining": "var(--c-free) #10b981 (green)",
+      "selected_vault": "var(--c-projects) #a78bfa (purple)",
+      "selected_todoist": "var(--c-tasks) #fca5a5 (red-ish)",
+      "overflow": "var(--c-overflow) #ef4444",
+      "buffer_unallocated_hatch": "var(--c-buffer) / var(--c-free)"
+    },
+    "focus": "2px solid var(--t-accent), offset 1px, never suppressed (:focus-visible)",
+    "reduced_motion": "prefers-reduced-motion: all durations 0.01ms (tokens.css already)",
+    "radius": "var(--radius) 8px / var(--radius-sm) 5px",
+    "font": "var(--font-sans) system stack, weight 400/500 only"
+  },
+
+  "ui_constraints": {
+    "surface_label": {
+      "contract_item": 1,
+      "rule": "User-facing language is 'Today's work' or 'Allocation', never 'Queue'.",
+      "current_gap": "Queue.tsx:387/422 section aria-label 'Assigned queue'",
+      "required": [
+        "Rename the list section aria-label from 'Assigned queue' to 'Today's work'.",
+        "All copy, headings, and ARIA labels use 'Today's work' for the allocator list; 'Allocation' only for the capacity/pie rail.",
+        "Remove the word 'Queue' from any user-visible string in the cockpit."
+      ],
+      "accepted_by": "IMP-08"
+    },
+
+    "queue_action_column": {
+      "contract_item": 3,
+      "rule": "No persistent action column. Default row shows direct Done and Drop; Unassign and Delete live behind More.",
+      "current_gap": "Queue.tsx:427-433 decorative queue__cols header labels a persistent 'Actions' column; per-row qrow__actions renders Done/Defer/Delete plus include/exclude toggles with no More control.",
+      "required": [
+        "Remove the persistent 'Actions' column header label from the decorative queue__cols header row.",
+        "Per row, render direct Done and Drop from plan as primary inline controls (accessible buttons, aria-label includes item name).",
+        "Render a single 'More' menu button per row exposing Unassign and Delete (keyboard-operable disclosure menu, aria-haspopup/aria-expanded/aria-controls).",
+        "Exclude/Include today remains a local planning toggle (not a source action, not 'Defer'); keep as a distinct inline control.",
+        "All row controls keep the 44x44px touch-target floor and visible focus ring."
+      ],
+      "accepted_by": "IMP-08"
+    },
+
+    "defer_verbs": {
+      "contract_item": 3,
+      "action_model": "Final four verbs: Done, Drop from plan, Unassign, Delete. 'Defer' is not a product verb.",
+      "current_gap": "model/staging.ts STAGING_VERBS = complete/delete_permanent/defer/assign; Queue.tsx StagingVerbs exposes Defer; ui/components.test.tsx T20 pins direct Done/Defer/Delete.",
+      "required": [
+        "Remove 'Defer' from any UI surface, menu, tooltip, or label.",
+        "Remove 'defer' and 'assign' from the staging/action verb catalogue; the UI verb set is Done, Drop from plan, Unassign, Delete.",
+        "Row label for Drop is 'Drop from plan' (not 'skip' / 'defer' / 'remove').",
+        "Backend verb enablement (Drop from plan, Unassign) is delivered by IMP-07; UI wiring waits for IMP-06 handoff + IMP-07 verbs."
+      ],
+      "accepted_by": "IMP-07 (backend verbs) + IMP-08 (UI)"
+    },
+
+    "priority_bands": {
+      "contract_reference": "AC phrase 'non-collapsible bands' resolved as: convert the CURRENT non-collapsible band headers into collapsible disclosures per locked contract item 6. If a truly non-collapsible intent was meant, that conflicts with the frozen contract and needs a new waiver.",
+      "contract_item": 6,
+      "rule": "Priority bands (Critical, High, Everything else) and Dropped today are keyboard-accessible, stateful collapsible sections with row counts.",
+      "current_gap": "Queue.tsx:352-378 BandHeader is a div, not a disclosure/button; no aria-expanded; no keyboard toggle.",
+      "required": [
+        "BandHeader becomes a <button> (or role=button) disclosure with aria-expanded and an owned collapsible region (aria-controls).",
+        "Each band header shows label, note, row count (e.g. 'N rows'), and share/over-share state.",
+        "Dropped today renders as its own collapsible section with a row count.",
+        "Collapse/expand state is persisted for the session (stateful) and toggled by click and Enter/Space.",
+        "Collapsed bands hide their rows but keep the header + count visible; capacity rail unaffected."
+      ],
+      "accepted_by": "IMP-08"
+    },
+
+    "allocation_pie": {
+      "contract_item": 8,
+      "rule": "Clicking a pie segment filters/highlights its contributors; clearing inspection restores the full list. Hover may preview but is not the only interaction.",
+      "current_gap": "AllocationPie.tsx:99/122 hover-only (onMouseEnter); no onClick handler; clicking a slice is a no-op.",
+      "required": [
+        "Add an onClick handler to each slice and legend item that sets an inspection state (selected slice key).",
+        "Inspection highlights the segment's contributing rows (filter or emphasized highlight) and dims others.",
+        "Provide an explicit Clear/restore control (or click-again toggle) that returns the list to the full unfiltered state.",
+        "Hover remains a preview affordance only; keyboard users reach the same inspection via the legend items (focusable buttons) and/or slice keyboard activation.",
+        "Inspection state is exposed to assistive tech (aria-pressed / live region announcing the active segment)."
+      ],
+      "accepted_by": "IMP-08"
+    },
+
+    "capacity_readout": {
+      "contract_item": 9,
+      "rule": "Center readout uses a compact hierarchy: planned blocks, capacity, and over/remaining state - not the old '48 / 45 PLANNED / DAY' treatment. Anchored gray hatching; Remaining solid green; selected split Vault/Todoist.",
+      "current_gap": "AllocationPie.tsx:108-115 center readout shows '{allocated} / {cap.total} blk' with label 'planned / day'; no over/remaining state; old treatment retained.",
+      "required": [
+        "Idle readout hierarchy: line 1 = planned blocks value; line 2 = capacity context (e.g. 'of N blk capacity'); line 3 = over/remaining state ('X over' or 'Y remaining').",
+        "Remove the literal 'planned / day' label.",
+        "Anchored slices render as gray diagonal hatching (existing pie-hatch pattern tokens).",
+        "Remaining/unallocated renders solid green (var(--c-free)).",
+        "Selected work is split into Vault assigned (var(--c-projects)) and Todoist assigned (var(--c-tasks)) slices.",
+        "Readout must be exposed to assistive tech (not aria-hidden); pair with an sr-only live region when inspection changes.",
+        "Capacity numbers and chart recompute immediately after duration/inclusion/action/Mint/calendar-review changes (contract item 7; already covered by store refresh)."
+      ],
+      "accepted_by": "IMP-08"
+    },
+
+    "retired_surfaces": {
+      "contract_items": [2, 21],
+      "rule": "Remove Forgotten/unassigned candidate strip, Trim Assist, fixture-only Scenario panel, read-only placement/schedule review, and the duplicate mobile agenda. No replacement pool browsing or manual timeline UI. Keep Copy-prompt fallback and compact keyboard-shortcut help.",
+      "current_gaps": [
+        "App.tsx:73 mounts PlacementList (read-only placement review)",
+        "App.tsx:77 mounts MobileAgenda (duplicate mobile surface, aria-label 'Agenda')",
+        "Rail.tsx:291-293 mounts TrimAssist + ForgotStrip",
+        "main.tsx:74 mounts ScenarioPanel",
+        "a11y.test.tsx pins 'mobile agenda keyboard access'; forgot.test.tsx / placement.test.tsx pin retired surfaces"
+      ],
+      "required": [
+        "Remove MobileAgenda from App composition (no duplicate planning surface).",
+        "Remove PlacementList read-only review from default cockpit (CalendarImpact compact alert opens review instead, per item 16).",
+        "Remove ForgotStrip and TrimAssist from Rail mounts and source.",
+        "Remove ScenarioPanel mount.",
+        "Preserve Copy-prompt export and compact shortcut help (contract item 20).",
+        "Delete associated tests (forgot.test.tsx, placement.test.tsx, a11y mobile-agenda test) and styles during IMP-09.",
+        "No new pool-browsing or timeline UI is introduced."
+      ],
+      "accepted_by": "IMP-09"
+    },
+
+    "composition": {
+      "rule": "Compact cockpit shell after pruning: Rail (capacity, trim, pie, keys) + main(Today's work) + sticky footer(ActionDock) + drawers.",
+      "required": [
+        "App.tsx mounts: Rail, CalendarImpact, Queue (renamed Today's work), ActionDock footer.",
+        "Drawers on open: SetupDrawer, ApprovalDrawer, BlockEditor, AnchoredEditor.",
+        "MobileAgenda, PlacementList, ForgotStrip, TrimAssist, ScenarioPanel are NOT mounted.",
+        "SetupDrawer Mint session-checkbox model is preserved (contract item 13)."
+      ],
+      "accepted_by": "IMP-08 + IMP-09"
+    },
+
+    "responsive": {
+      "contract_item": 2,
+      "rule": "Desktop-first; responsive stays usable; no duplicate surface. No horizontal scroll.",
+      "required": [
+        "Desktop (>=768px): two-column grid, Rail fixed 280px, main 1fr.",
+        "Narrow (<768px, matching existing App.tsx <=767px convention): single column, Rail stacks above main; both remain fully usable.",
+        "Spacing on 8pt grid (8/16/24px); radii from tokens.",
+        "All interactive targets min 44x44px on every breakpoint.",
+        "No horizontal clipping: containers use min-width:0 and overflow wrap; tables/lrids do not exceed viewport.",
+        "Responsive behavior is a layout decision, not a second planning surface."
+      ],
+      "open_decision_ref": "breakpoint value (design constant, anchored to existing 767px convention; not locked by contract)"
+    },
+
+    "accessibility": {
+      "standard": "WCAG 2.1 AA minimum",
+      "required": [
+        "Contrast 4.5:1 text, 3:1 large text; verify pie hatch + badge combos meet it in both themes.",
+        "Touch targets 44x44px minimum.",
+        "Visible focus indicator on every interactive element (tokens.css :focus-visible already).",
+        "prefers-reduced-motion honored (tokens.css already); no essential motion.",
+        "Semantic HTML: bands as disclosure buttons, lists as ul/li or role=list, pie as role=img with text alternative, More as menu pattern.",
+        "All icon buttons carry descriptive aria-label (include item name); no title-only affordances.",
+        "No keyboard trap in More menu, drawers, or editors; Escape closes; focus returns to trigger.",
+        "Capacity readout and pie inspection state exposed to AT (live region / aria-pressed).",
+        "Past-time rows remain visible with original time + warning (contract item 4); no retime control.",
+        "Future-dated work excluded from today's list (contract item 5; backend IMP-04)."
+      ]
+    }
+  },
+
+  "open_decisions": [
+    {
+      "id": "OD-1",
+      "topic": "Responsive breakpoint value",
+      "detail": "Contract requires desktop-first and no duplicate surface but does not pin a px breakpoint. Anchor to the existing App.tsx <=767px stack convention (stack below 768px). Value is a design constant, not a product decision.",
+      "locked": false,
+      "resolution": "Use 768px stack threshold; flag if Adam wants a different breakpoint."
+    },
+    {
+      "id": "OD-2",
+      "topic": "More menu affordance pattern",
+      "detail": "Contract requires Unassign/Delete behind 'More' but does not specify popover vs inline menu. Choose an accessible menu button + disclosed list (aria-haspopup=menu, aria-expanded, focus-managed).",
+      "locked": false,
+      "resolution": "Menu-button disclosure; implementation detail for IMP-08."
+    },
+    {
+      "id": "OD-3",
+      "topic": "Pie inspection = filter vs highlight",
+      "detail": "Contract item 8 says 'filters/highlights its contributors'. Specify highlight + optional list filter; clearing restores full list. Exact filter scope (within bands or across) is a minor UI choice.",
+      "locked": false,
+      "resolution": "Highlight contributors and dim others; Clear restores; confirm filter scope during IMP-08 if needed."
+    },
+    {
+      "id": "OD-4",
+      "topic": "Calendar review panel open style",
+      "detail": "Contract item 16 keeps CalendarImpact as compact alert that opens a review panel. Whether it opens inline or as a drawer is not pinned; keep the existing CalendarImpact component, route review through it.",
+      "locked": false,
+      "resolution": "Retain CalendarImpact; review opens from the compact alert (not a retired PlacementList)."
+    },
+    {
+      "id": "OD-5",
+      "topic": "Bands collapsible vs AC wording 'non-collapsible'",
+      "detail": "AC-003 lists 'non-collapsible bands' while locked contract item 6 requires collapsible bands. Resolved in favor of the frozen contract: bands become collapsible disclosures. If a truly non-collapsible intent was intended, it conflicts with the frozen contract and requires a new waiver.",
+      "locked": false,
+      "resolution": "Collapsible per contract item 6; current non-collapsible header is the gap to fix."
+    }
+  ],
+
+  "not_invented": [
+    "No new PRD or DESIGN.md document was created (waiver forbids it).",
+    "No product feature beyond locked contract items 1-21 was added.",
+    "No new color palette; only existing tokens.css custom properties are referenced.",
+    "No mobile-only planning surface, pool browser, or timeline editor was introduced.",
+    "No new source actions beyond Done/Drop from plan/Unassign/Delete.",
+    "No backend logic; IMP-06 is design-only."
+  ],
+
+  "downstream_consumers": {
+    "IMP-07": "Backend action engine must expose Done, Drop from plan, Unassign, Delete (no Defer/Assign); UI affordances in this validation call those verbs.",
+    "IMP-08": "Renders the cockpit per these constraints: surface label, row actions + More, collapsible bands, pie click inspection, capacity readout hierarchy, responsive, a11y.",
+    "IMP-09": "Prunes MobileAgenda, PlacementList, ForgotStrip, TrimAssist, ScenarioPanel; preserves Copy/shortcut help.",
+    "IMP-11": "Acceptance records design authority = frozen contract + this waiver; no hidden substitution."
+  },
+
+  "evidence_sources": [
+    "Frozen reliability plan 2026-08-09 (locked contract items 1-21, final source-action semantics, AC-001..AC-009)",
+    "implementation-inputs.json (IMP-02 waiver)",
+    "contract-test-gaps.json (IMP-03 RED gaps: items 1,2,3,6,8,9,21)",
+    "frontend/src/ui/Queue.tsx (current Assigned queue label, Actions column, Defer, non-collapsible BandHeader)",
+    "frontend/src/ui/AllocationPie.tsx (hover-only, 'planned / day' readout)",
+    "frontend/src/tokens.css (design tokens, focus, reduced-motion)",
+    "frontend/src/ui/App.tsx (composition, MobileAgenda/PlacementList mounts)"
+  ],
+
+  "verification": {
+    "design_self_check": {
+      "waiver_recorded": true,
+      "absent_prd_design_not_treated_as_supplied": true,
+      "direction_explicit_and_contract_consistent": true,
+      "all_required_constraints_present": true,
+      "no_invented_product_decisions": true,
+      "open_decisions_listed": true
+    },
+    "how_implemented_meets_design": [
+      "frontend/src/ui/locked-contract.test.tsx (IMP-03 RED) flips green after IMP-08: surface label, row actions + More, collapsible bands, pie inspection, capacity readout.",
+      "AC-001 cockpit composition gate (no retired surfaces, no action-column regression, keyboard a11y).",
+      "AC-002 capacity truthful (recompute, source split, duration controls, winning source).",
+      "AC-009 scratch :8790 walkthrough: both themes, no clipping, no duplicate mobile surface, focus trap none, console clean."
+    ],
+    "a11y_audit": "Design is WCAG 2.1 AA compliant by construction; runtime a11y audit deferred to IMP-08/IMP-09 gates (config a11y_audit_level: none in this plan)."
+  }
+}

@@ -1,0 +1,502 @@
+plan_id: 2026-08-12-tdtb-project-extraction-migration
+objective: >-
+  Copy and merge approved TDTB application and project material from Claudius
+  into /Users/walle-mini/Repos/Projects/TDTB, then verify collisions, manifests,
+  hashes, generated exclusions, and destination test/build readiness.
+created_at: '2026-08-13T00:00:00Z'
+created_by: gem-planner
+status: pending
+tldr: >-
+  Perform repository migration only. Do not require PRD, DESIGN, consumer rewiring,
+  live cutover, or implementation behavior changes.
+workstream_type: migration_only
+parent_plan: docs/plan/2026-08-12-tdtb-project-extraction-decomposition/plan.yaml
+upstream_dependencies: []
+downstream_handoffs:
+  - plan: 2026-08-12-tdtb-project-extraction-claudius-rewiring
+    gate: MIG-07
+    artifact: docs/plan/2026-08-12-tdtb-project-extraction-migration/evidence/migration-handoff.json
+baseline:
+  objective: >-
+    Establish the canonical TDTB repository as a verified copy of approved
+    application and project material without changing Claudius consumers or live state.
+  acceptance_criteria:
+    - Approved application and project material exists at the canonical TDTB root.
+    - Destination collisions are explicitly resolved without silent overwrite or deletion.
+    - Source manifests, modes, symlinks, and hashes match the staged and installed material.
+    - Generated, credential, cache, virtualenv, and source .git content is excluded.
+    - Destination tests/build readiness is recorded without implementation changes.
+    - No PRD, DESIGN, consumer rewiring, or live cutover is required.
+  captured_at: '2026-08-13T00:00:00Z'
+plan_lineage:
+  root_plan_id: 2026-08-12-tdtb-project-extraction
+  revision: 1
+  replan_count: 1
+  max_replans: 2
+  parent_revision: 0
+  reason: validation_failure
+plan_metrics:
+  wave_1_task_count: 1
+  total_dependencies: 6
+  risk_score: high
+  quality_warnings:
+    - Source is dirty in unrelated paths; all must remain unchanged.
+    - Destination AGENTS.md, README.md, .gitignore, and .DS_Store are collision candidates.
+    - Source live process may exist, but this plan does not pause or change it.
+    - Generated source material must be excluded and recorded, not copied opportunistically.
+    - Destination ancestry must be verified; a changed HEAD alone is not proof of safe advancement.
+context_version: 2
+context_updated_at: '2026-08-13T14:33:23Z'
+context_fields_changed: [destination_identity_rule, destination_baseline, migration_input_failure]
+tech_stack:
+  - name: Git
+    role: Source identity, dirty-state, path manifests, and content hashes
+    evidence: /Users/walle-mini/Repos/Claudius/.git
+  - name: Python 3.12
+    role: Destination backend readiness checks
+    evidence: /Users/walle-mini/Repos/Claudius/Tasks/tdtb-app-pilot/app
+  - name: Preact and TypeScript
+    role: Destination frontend/build readiness checks
+    evidence: /Users/walle-mini/Repos/Claudius/Tasks/tdtb-app-pilot/frontend
+conventions:
+  - Use /Users/walle-mini/Repos/Claudius as source and /Users/walle-mini/Repos/Projects/TDTB as destination.
+  - Consume M1 inventory as evidence only; do not reuse its copy recommendation blindly.
+  - Preserve the M1 destination HEAD as the ancestry anchor when refreshing the destination baseline.
+  - Stage before install and compare every approved entry by hash and metadata.
+  - Preserve destination planning infrastructure and source unrelated dirty paths.
+  - Record provenance without importing source Git history.
+constraints:
+  hard:
+    - Do not depend on docs/PRD.yaml, current DESIGN.md, consumer rewiring, or live cutover.
+    - Do not edit Claudius consumers, launchd state, the running process, or external providers.
+    - Do not edit the existing combined plan or existing M1 evidence in this workstream.
+    - Do not copy any source .git directory, virtualenv, node_modules, cache, credential, or token.
+    - Fail closed on missing, extra, changed, unclassified, or hash-mismatched entries.
+    - Require exact M1 source identity and unchanged protected source dirty paths.
+    - Reject destination HEADs when the M1 destination HEAD is not their verified ancestor.
+    - Preserve all unrelated source dirty paths exactly.
+    - Keep destination planning files and repository identity intact.
+  soft:
+    - Keep a source app fallback available until the separate cutover plan completes.
+    - Regenerate build output in the canonical repository rather than copying stale bundles.
+  compatibility:
+    - Preserve Python, uv, npm, Vite, Vitest, FastAPI, Preact, and TypeScript contracts.
+  security_requirements:
+    - Use path-scoped manifests and SHA-256 hashes.
+    - Exclude credentials, provider tokens, vault data, and machine-local runtime state.
+architecture_snapshot:
+  destination_identity:
+    m1_ancestry_anchor: 4e7e5c05199b7b738a2776f085be8e898fc242d4
+    failed_observed_head: 8a8486986b14954dace2edf617aca332583cf5a9
+    refreshed_plan_baseline: 47932f52827be5b1584690438fe29c157040a55b
+    safe_advancement_rule: >-
+      Accept the current HEAD only when path, remote, and branch match M1 and the
+      M1 ancestry anchor is a verified ancestor; record the accepted HEAD and status.
+    divergence_rule: >-
+      Reject a current HEAD when the M1 ancestry anchor is not its ancestor, or
+      when path, remote, branch, or protected state checks fail.
+  source_material:
+    - Tasks/tdtb-app-pilot application tree
+    - Projects/TDTB project policy and archive
+  destination_layout:
+    - app/
+    - frontend/
+    - launchd/
+    - archive/skill-era/
+    - root project policy and documentation
+  collision_policy:
+    - AGENTS.md preserves destination policy and records approved source policy merge.
+    - README.md preserves destination identity and records the approved source project map.
+    - .gitignore is a content-preserving union that retains the destination .history rule.
+    - Source .DS_Store and other generated metadata are excluded and recorded.
+  generated_exclusions:
+    - frontend/node_modules/
+    - app/.venv/
+    - app/__pycache__/
+    - app/.pytest_cache/
+    - app/schema-hashes.json
+    - mockups/cockpit built assets
+    - graphify-out/
+    - source .git directories
+research_digest:
+  digest: >-
+    M1 identifies 252 application files and 7 project files. MIG-01 then failed
+    because destination HEAD advanced from 4e7e5c0 to descendant 8a84869; the
+    current plan-time HEAD 47932f5 remains a verified descendant.
+  top_files:
+    - path: docs/plan/2026-08-12-tdtb-project-extraction-migration/evidence/migration-inputs.json
+      trust_level: failed_identity_validation_evidence
+    - path: docs/plan/2026-08-12-tdtb-project-extraction/evidence/source-inventory.json
+      trust_level: preserved_m1_boundary_evidence
+    - path: /Users/walle-mini/Repos/Claudius/Tasks/tdtb-app-pilot
+      trust_level: source_application_boundary
+    - path: /Users/walle-mini/Repos/Claudius/Projects/TDTB
+      trust_level: source_project_boundary
+    - path: /Users/walle-mini/Repos/Projects/TDTB/AGENTS.md
+      trust_level: destination_collision_candidate
+    - path: /Users/walle-mini/Repos/Projects/TDTB/README.md
+      trust_level: destination_collision_candidate
+    - path: /Users/walle-mini/Repos/Claudius/Tasks/tdtb-app-pilot/frontend/package.json
+      trust_level: frontend_readiness_input
+    - path: /Users/walle-mini/Repos/Claudius/Tasks/tdtb-app-pilot/app/requirements.txt
+      trust_level: backend_readiness_input
+prior_decisions:
+  - decision: Claudius is the source and TDTB is the destination.
+    context: The prior combined plan's ownership reversal is historical and not reused.
+  - decision: Migration is material-only and does not rewire consumers.
+    context: Consumer changes are isolated in the next child plan.
+  - decision: Full Claudius history import is out of scope.
+    context: Manifests and hashes prove content provenance only.
+  - decision: PRD and DESIGN are not migration inputs.
+    context: Missing implementation inputs are scoped to the implementation child plan.
+reuse_notes:
+  - path: docs/plan/2026-08-12-tdtb-project-extraction/evidence/source-inventory.json
+    trust_level: preserved_read_only_boundary_evidence
+  - path: docs/plan/2026-08-12-tdtb-project-extraction-migration/evidence/migration-inputs.json
+    trust_level: failed_mig_01_evidence_to_refresh
+  - path: /Users/walle-mini/Repos/Claudius/Plans Link/2026-08-12-tdtb-project-extraction/evidence/transfer-receipt.json
+    trust_level: immutable_historical_receipt_not_current
+  - path: /Users/walle-mini/Repos/Claudius/Projects/TDTB/archive/skill-era/DESIGN.md
+    trust_level: historical_only_not_migration_authority
+replan:
+  reason: >-
+    MIG-01 failed because the destination advanced from M1 HEAD 4e7e5c0 to its
+    descendant 8a84869. Refresh identity validation without weakening safeguards.
+  changed_tasks: [MIG-01]
+  added_tasks: []
+  removed_tasks: []
+  preserved_acceptance_criteria:
+    - Approved application and project material exists at the canonical TDTB root.
+    - Destination collisions are explicitly resolved without silent overwrite or deletion.
+    - Source manifests, modes, symlinks, and hashes match staged and installed material.
+    - Generated, credential, cache, virtualenv, and source .git content is excluded.
+    - Destination tests/build readiness is recorded without implementation changes.
+    - No PRD, DESIGN, consumer rewiring, or live cutover is required.
+  new_risks:
+    - An arbitrary divergent destination could be misclassified as normal advancement.
+    - The destination could advance again between plan refresh and MIG-01 validation.
+  progress_signal: >-
+    MIG-01 passes only after it records both M1 HEAD 4e7e5c0 and the accepted current
+    baseline, with a successful ancestry check and unchanged source safeguards.
+open_questions:
+  - question: What exact content-preserving merge is approved for AGENTS.md and README.md?
+    context: M1 records source and destination collisions; install must wait for a sealed map.
+    type: decision_blocker
+    affects: [MIG-02, MIG-05, MIG-07]
+assumptions:
+  - The M1 source Git identity remains unchanged at execution time.
+  - Destination HEAD 47932f5 is a normal descendant of M1 HEAD 4e7e5c0 at plan refresh.
+  - A current source receipt can be captured without pausing or changing the live process.
+  - Destination baseline checks can report readiness without implementing behavior.
+  - Existing destination planning infrastructure is outside the approved transfer map.
+pre_mortem:
+  overall_risk_level: high
+  critical_failure_modes:
+    - scenario: Source drift occurs after the receipt and before staging.
+      likelihood: medium
+      impact: critical
+      mitigation: Recompare the sealed receipt immediately before staging and fail closed on drift.
+    - scenario: A divergent destination is accepted because only HEAD inequality is checked.
+      likelihood: low
+      impact: critical
+      mitigation: Require the M1 HEAD to be an ancestor and retain exact path, remote, and branch checks.
+    - scenario: Root collision overwrites a destination planning file.
+      likelihood: medium
+      impact: critical
+      mitigation: Require explicit collision manifest entries and preserve destination bytes.
+    - scenario: Generated or secret material enters the canonical repository.
+      likelihood: medium
+      impact: critical
+      mitigation: Use an allowlist map plus a generated-exclusion manifest and secret scan.
+    - scenario: A shallow directory check misses lossy or extra content.
+      likelihood: medium
+      impact: high
+      mitigation: Compare every mapped file, mode, symlink target, and SHA-256 hash.
+    - scenario: Migration is mistaken for implementation readiness.
+      likelihood: medium
+      impact: high
+      mitigation: Separate destination readiness from the later implementation handoff.
+coordination_notes:
+  - MIG-01 preserves M1 HEAD 4e7e5c0 as provenance and records the accepted current baseline.
+  - MIG-01 may refresh only migration-inputs.json; it does not edit M1 evidence.
+  - MIG-02 must settle the transfer and collision maps before any staging or install.
+  - MIG-03 and MIG-04 operate outside the canonical destination until verification is green.
+  - MIG-05 installs only M4-approved and MIG-04-verified material.
+  - MIG-06 records baseline readiness; it does not fix application behavior.
+  - MIG-07 is the only migration gate that can produce migration-handoff.json.
+tasks:
+  - id: MIG-01
+    title: Validate exact source identity and refreshed destination baseline
+    description: >-
+      Preserve exact M1 source checks while accepting destination advancement only
+      through verified ancestry and recording the current destination as baseline.
+    wave: 1
+    agent: gem-reviewer
+    status: pending
+    covers: [source identity, destination identity, dirty-state protection, migration scope]
+    depends_on: []
+    conflicts_with: []
+    context_files:
+      - path: docs/plan/2026-08-12-tdtb-project-extraction/evidence/source-inventory.json
+        description: M1 inventory and collision evidence.
+      - path: docs/plan/2026-08-12-tdtb-project-extraction-migration/evidence/migration-inputs.json
+        description: Failed MIG-01 evidence with prior and observed destination identities.
+      - path: /Users/walle-mini/Repos/Claudius/.git
+        description: Source Git identity and current status.
+      - path: /Users/walle-mini/Repos/Projects/TDTB/.git
+        description: Destination Git identity and current status.
+    flags:
+      requires_design_validation: false
+      retries_used: 0
+      revision_reason: Destination advanced to a verified descendant of the M1 HEAD.
+    acceptance_criteria:
+      - Source path, remote, branch, and HEAD match M1 exactly; any mismatch fails closed.
+      - Protected source dirty paths retain their recorded states and remain outside the transfer map.
+      - Destination path, remote, and branch match M1 exactly; any mismatch fails closed.
+      - M1 destination HEAD 4e7e5c0 is a verified ancestor of the accepted current HEAD.
+      - The evidence retains M1 HEAD, failed observed HEAD, accepted HEAD, and current status.
+      - Missing ancestry is unexpected divergence and blocks every downstream migration task.
+      - The migration boundary includes application and project material only.
+      - PRD, DESIGN, consumer rewiring, and live cutover are recorded as out of scope.
+    handoff:
+      known_context:
+        - M1 destination HEAD is 4e7e5c0; failed MIG-01 observed descendant 8a84869.
+        - Plan refresh observed descendant 47932f5; execution records its accepted current HEAD.
+      target_files: [docs/plan/2026-08-12-tdtb-project-extraction-migration/evidence/migration-inputs.json]
+      constraints:
+        - Do not edit source, application, consumer, live, or M1 evidence files.
+        - Only migration-inputs.json may be refreshed by MIG-01 after read-only validation.
+    requires_review: false
+    review_depth: full
+    review_security_sensitive: false
+
+  - id: MIG-02
+    title: Seal the transfer, collision, and generated-exclusion manifests
+    description: >-
+      Produce the normalized allowlist and explicit root collision decisions for
+      the approved source material before staging or destination writes.
+    wave: 2
+    agent: gem-implementer
+    status: pending
+    covers: [allowlist, collision decisions, generated exclusions, provenance policy]
+    depends_on: [MIG-01]
+    conflicts_with: []
+    context_files:
+      - path: docs/plan/2026-08-12-tdtb-project-extraction-migration/evidence/migration-inputs.json
+        description: Validated source and destination boundary.
+      - path: docs/plan/2026-08-12-tdtb-project-extraction/evidence/source-inventory.json
+        description: Source material classifications and collision candidates.
+      - path: /Users/walle-mini/Repos/Projects/TDTB/AGENTS.md
+        description: Destination AGENTS.md collision candidate.
+      - path: /Users/walle-mini/Repos/Projects/TDTB/README.md
+        description: Destination README.md collision candidate.
+    flags:
+      requires_design_validation: false
+      retries_used: 0
+      revision_reason: ''
+    acceptance_criteria:
+      - Every source item has exactly one move, merge, retain, historical, generated, or exclude disposition.
+      - AGENTS.md, README.md, and .gitignore decisions preserve destination content and are explicit.
+      - Source .git, virtualenvs, node_modules, caches, schema state, built assets, and metadata are excluded.
+      - The map records source root, destination root, Git identity, modes, symlinks, and provenance policy.
+      - Any unclassified, duplicate, extra, or ambiguous entry blocks the map seal.
+    handoff:
+      known_context: [No destination write is permitted until all collision and exclusion decisions are sealed.]
+      target_files:
+        - docs/plan/2026-08-12-tdtb-project-extraction-migration/evidence/transfer-manifest.json
+        - docs/plan/2026-08-12-tdtb-project-extraction-migration/evidence/collision-manifest.json
+        - docs/plan/2026-08-12-tdtb-project-extraction-migration/evidence/generated-exclusion-manifest.json
+      constraints: [Do not silently overwrite, delete, or import source Git history.]
+    requires_review: true
+    review_depth: full
+    review_security_sensitive: false
+
+  - id: MIG-03
+    title: Stage the approved migration outside the destination
+    description: >-
+      Materialize the sealed transfer map in an isolated staging root while
+      leaving both repositories, consumers, and live state unchanged.
+    wave: 3
+    agent: gem-implementer
+    status: pending
+    covers: [isolated staging, path mapping, metadata preservation, source preservation]
+    depends_on: [MIG-02]
+    conflicts_with: []
+    context_files:
+      - path: docs/plan/2026-08-12-tdtb-project-extraction-migration/evidence/transfer-manifest.json
+        description: Sealed source-to-destination allowlist.
+      - path: docs/plan/2026-08-12-tdtb-project-extraction-migration/evidence/generated-exclusion-manifest.json
+        description: Explicit generated and sensitive exclusions.
+      - path: /Users/walle-mini/Repos/Claudius/Tasks/tdtb-app-pilot
+        description: Source application tree.
+      - path: /Users/walle-mini/Repos/Claudius/Projects/TDTB
+        description: Source project tree.
+    flags:
+      requires_design_validation: false
+      retries_used: 0
+      revision_reason: ''
+    acceptance_criteria:
+      - The isolated staging root contains every approved entry at its mapped destination path.
+      - File bytes, modes, symlink targets, and approved classifications are preserved.
+      - Staging contains no unapproved extra path, secret, cache, virtualenv, or generated output.
+      - Source and canonical destination application bytes remain unchanged by staging.
+      - A staged manifest records source and destination hashes without copying .git.
+    handoff:
+      known_context: [Staging is outside the canonical repository and precedes all install work.]
+      target_files: [docs/plan/2026-08-12-tdtb-project-extraction-migration/evidence/staged-manifest.json]
+      constraints: [Use only the sealed map; do not reclassify entries during staging.]
+    requires_review: true
+    review_depth: full
+    review_security_sensitive: false
+
+  - id: MIG-04
+    title: Verify staged content, hashes, and exclusions
+    description: >-
+      Independently compare staged content against the sealed transfer map and
+      source receipt, failing closed on missing, extra, changed, or lossy entries.
+    wave: 4
+    agent: gem-reviewer
+    status: pending
+    covers: [byte comparison, hash verification, extra/missing detection, exclusion verification]
+    depends_on: [MIG-03]
+    conflicts_with: []
+    context_files:
+      - path: docs/plan/2026-08-12-tdtb-project-extraction-migration/evidence/transfer-manifest.json
+        description: Approved transfer map.
+      - path: docs/plan/2026-08-12-tdtb-project-extraction-migration/evidence/staged-manifest.json
+        description: Staged tree manifest.
+      - path: docs/plan/2026-08-12-tdtb-project-extraction/evidence/source-dirty-state-receipt.json
+        description: Current source receipt if captured by execution.
+    flags:
+      requires_design_validation: false
+      retries_used: 0
+      revision_reason: ''
+    acceptance_criteria:
+      - Every mapped entry matches byte hash, text/binary hash, mode, symlink target, and disposition.
+      - No staged path is missing, extra, renamed unexpectedly, or outside the sealed map.
+      - Generated exclusions and source .git exclusions are independently checked.
+      - A green staged verification record exists before any destination install.
+      - Any mismatch leaves source and destination untouched and blocks MIG-05.
+    handoff:
+      known_context: [A shallow directory listing is not sufficient for this gate.]
+      target_files: [docs/plan/2026-08-12-tdtb-project-extraction-migration/evidence/staged-verification.json]
+      constraints: [Review-only comparison; do not install or rewire on failure.]
+    requires_review: false
+    review_depth: full
+    review_security_sensitive: false
+
+  - id: MIG-05
+    title: Install verified material in the canonical TDTB repository
+    description: >-
+      Promote only the verified staged tree into the canonical TDTB repository,
+      applying the approved collision decisions and preserving destination identity.
+    wave: 5
+    agent: gem-implementer
+    status: pending
+    covers: [canonical install, root layout, collision application, destination preservation]
+    depends_on: [MIG-04]
+    conflicts_with: []
+    context_files:
+      - path: docs/plan/2026-08-12-tdtb-project-extraction-migration/evidence/staged-verification.json
+        description: Green staged comparison.
+      - path: docs/plan/2026-08-12-tdtb-project-extraction-migration/evidence/collision-manifest.json
+        description: Approved collision decisions.
+      - path: /Users/walle-mini/Repos/Projects/TDTB
+        description: Canonical destination and planning infrastructure.
+    flags:
+      requires_design_validation: false
+      retries_used: 0
+      revision_reason: ''
+    acceptance_criteria:
+      - The destination contains approved app, frontend, tests, specs, launch docs, policy, and archive material.
+      - No nested Tasks/tdtb-app-pilot or Projects/TDTB application boundary is created.
+      - Existing destination planning files and non-collision files remain intact.
+      - Installed files match the staged verification record by bytes and metadata.
+      - No Claudius consumer, loaded launchd job, running process, or live data is changed.
+    handoff:
+      known_context: [Migration installs material only; rewiring is a separate child plan.]
+      target_files:
+        - /Users/walle-mini/Repos/Projects/TDTB/app/
+        - /Users/walle-mini/Repos/Projects/TDTB/frontend/
+        - /Users/walle-mini/Repos/Projects/TDTB/launchd/
+        - /Users/walle-mini/Repos/Projects/TDTB/archive/skill-era/
+        - /Users/walle-mini/Repos/Projects/TDTB/AGENTS.md
+        - /Users/walle-mini/Repos/Projects/TDTB/README.md
+      constraints: [Apply only MIG-02 decisions and MIG-04-verified material.]
+    requires_review: true
+    review_depth: full
+    review_security_sensitive: false
+
+  - id: MIG-06
+    title: Verify destination test and build readiness
+    description: >-
+      Run the migrated destination's baseline backend, frontend, type, and build
+      readiness checks without implementing outstanding behavior or touching live state.
+    wave: 6
+    agent: gem-implementer
+    status: pending
+    covers: [backend readiness, frontend readiness, typecheck, build readiness, migration hygiene]
+    depends_on: [MIG-05]
+    conflicts_with: []
+    context_files:
+      - path: /Users/walle-mini/Repos/Projects/TDTB/app/
+        description: Migrated backend and tests.
+      - path: /Users/walle-mini/Repos/Projects/TDTB/frontend/package.json
+        description: Migrated frontend commands.
+      - path: /Users/walle-mini/Repos/Projects/TDTB/AGENTS.md
+        description: Destination project policy after collision resolution.
+    flags:
+      requires_design_validation: false
+      retries_used: 0
+      revision_reason: ''
+    acceptance_criteria:
+      - Destination baseline test, typecheck, and build commands are run and recorded.
+      - Results distinguish migration failures from known outstanding implementation failures.
+      - Checks use fake, synthetic, or scratch inputs and perform no live writes or provider calls.
+      - The readiness record proves the destination can host downstream implementation work.
+      - No implementation behavior or UI design decision is changed in this task.
+    handoff:
+      known_context: [Readiness is not implementation acceptance and does not resolve PRD or DESIGN.]
+      target_files: [docs/plan/2026-08-12-tdtb-project-extraction-migration/evidence/destination-readiness.json]
+      constraints: [Do not fix application failures; report exact readiness results.]
+    requires_review: true
+    review_depth: full
+    review_security_sensitive: false
+
+  - id: MIG-07
+    title: Accept the verified canonical material migration
+    description: >-
+      Independently accept the migration evidence and emit a downstream handoff
+      only when the destination, manifests, hashes, exclusions, collisions, and
+      readiness checks agree.
+    wave: 7
+    agent: gem-reviewer
+    status: pending
+    covers: [migration acceptance, provenance, destination verification, downstream handoff]
+    depends_on: [MIG-06]
+    conflicts_with: []
+    context_files:
+      - path: docs/plan/2026-08-12-tdtb-project-extraction-migration/evidence
+        description: Complete migration evidence set.
+      - path: /Users/walle-mini/Repos/Projects/TDTB
+        description: Canonical destination.
+      - path: /Users/walle-mini/Repos/Claudius
+        description: Source repository and preserved historical evidence.
+    flags:
+      requires_design_validation: false
+      retries_used: 0
+      revision_reason: ''
+    acceptance_criteria:
+      - All prior migration evidence exists, is internally consistent, and has no fail-closed condition.
+      - Canonical root ownership and installed hashes match the approved migration map.
+      - Collision and generated-exclusion decisions are explicit and content-preserving.
+      - Destination readiness is recorded without claiming implementation completion.
+      - PRD, DESIGN, consumer rewiring, and live cutover are explicitly not required by this gate.
+      - migration-handoff.json is green only when every migration baseline criterion passes.
+    handoff:
+      known_context: [This is the sole upstream gate for consumer rewiring.]
+      target_files: [docs/plan/2026-08-12-tdtb-project-extraction-migration/evidence/migration-handoff.json]
+      constraints: [Review-only; do not edit source consumers, implementation, or live runtime.]
+    requires_review: false
+    review_depth: full
+    review_security_sensitive: false

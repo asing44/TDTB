@@ -1,0 +1,183 @@
+{
+  "task_id": "MIG-01",
+  "plan_id": "2026-08-12-tdtb-project-extraction-migration",
+  "captured_at": "2026-08-13T14:37:36Z",
+  "status": "completed",
+  "method": "read-only validation of preserved M1 evidence and current path-scoped Git identity, ancestry, and status",
+  "m1_evidence": {
+    "path": "docs/plan/2026-08-12-tdtb-project-extraction/evidence/source-inventory.json",
+    "sha256": "b69c6e2038f4ab19de916cd68ff6313add97c8e90935add5b058677f925a012f",
+    "preserved": true,
+    "copy_recommendation_is_executable_guidance": false
+  },
+  "source": {
+    "requested_path": "/Users/walle-mini/Repos/Claudius",
+    "resolved_path": "/Users/walle-mini/Development/Claudius",
+    "expected_remote": "https://github.com/asing44/Claudius.git",
+    "actual_remote": "https://github.com/asing44/Claudius.git",
+    "expected_branch": "main",
+    "actual_branch": "main",
+    "expected_head": "93b9fe449c69b9fb5a3f7a5b42d967cd40cf42dc",
+    "actual_head": "93b9fe449c69b9fb5a3f7a5b42d967cd40cf42dc",
+    "matches_m1_exactly": true
+  },
+  "destination": {
+    "requested_path": "/Users/walle-mini/Repos/Projects/TDTB",
+    "resolved_path": "/Users/walle-mini/Repos/Projects/TDTB",
+    "expected_remote": "https://github.com/asing44/TDTB.git",
+    "actual_remote": "https://github.com/asing44/TDTB.git",
+    "expected_branch": "main",
+    "actual_branch": "main",
+    "m1_head": "4e7e5c05199b7b738a2776f085be8e898fc242d4",
+    "failed_observed_head": "8a8486986b14954dace2edf617aca332583cf5a9",
+    "accepted_head": "47932f52827be5b1584690438fe29c157040a55b",
+    "refreshed_baseline_head": "47932f52827be5b1584690438fe29c157040a55b",
+    "m1_head_is_ancestor_of_accepted_head": true,
+    "failed_observed_head_is_ancestor_of_accepted_head": true,
+    "matches_revised_identity_rule": true,
+    "advancement_commits": [
+      "8a84869 feat: Update gem-planner model to use OpenAI GPT-5.6 Sol with xhigh variant",
+      "47932f5 feat: Remove variant specification from gem-planner model configuration"
+    ],
+    "refreshed_baseline_status": {
+      "tracked_changes": [
+        {
+          "path": "docs/plan/2026-08-12-tdtb-project-extraction/plan.yaml",
+          "state": "M"
+        }
+      ],
+      "untracked_files": [
+        "docs/plan/2026-08-12-tdtb-project-extraction-attended-cutover/plan.yaml",
+        "docs/plan/2026-08-12-tdtb-project-extraction-claudius-rewiring/plan.yaml",
+        "docs/plan/2026-08-12-tdtb-project-extraction-decomposition/plan.yaml",
+        "docs/plan/2026-08-12-tdtb-project-extraction-implementation/plan.yaml",
+        "docs/plan/2026-08-12-tdtb-project-extraction-migration/evidence/migration-inputs.json",
+        "docs/plan/2026-08-12-tdtb-project-extraction-migration/plan.yaml",
+        "docs/plan/2026-08-12-tdtb-project-extraction/evidence/source-inventory.json"
+      ]
+    }
+  },
+  "protected_dirty_paths": [
+    {
+      "path": "Plans Link/2026-08-09-tdtb-planning-ui-reliability.md",
+      "state": "M",
+      "related": false,
+      "outside_transfer_map": true,
+      "protected": true,
+      "sha256_observed": "110d1fecbf522b502d87568e165ca8f6531b3580e094b823d69fec0f80f834df"
+    },
+    {
+      "path": "Plans Link/STATUS.md",
+      "state": "M",
+      "related": false,
+      "outside_transfer_map": true,
+      "protected": true,
+      "sha256_observed": "acbb91e183a3b8a020a259f3b80dea3c80e8ed14788f1c80dce6243fcb3b3c8e"
+    },
+    {
+      "path": "Projects/Trinoor/Skills/log-hours-time-off-tracker.json",
+      "state": "M",
+      "related": false,
+      "outside_transfer_map": true,
+      "protected": true,
+      "sha256_observed": "5182ff7828fdbbaca8208f20d4684665e65679f68ffef7ef9475cd498c83175c"
+    },
+    {
+      "path": "Reports/audit-status.md",
+      "state": "M",
+      "related": false,
+      "outside_transfer_map": true,
+      "protected": true,
+      "sha256_observed": "47476b292858100305650703ba4213d7ab43f4455839f22dcac24f8e5329591f"
+    },
+    {
+      "path": "Scripts/actualbudget-mcp-stdio-preload.cjs",
+      "state": "M",
+      "related": false,
+      "outside_transfer_map": true,
+      "protected": true,
+      "sha256_observed": "eed9391761e15592cb026083b1be5bf44045b7e8433f49f566e75dde3094a716"
+    },
+    {
+      "path": "Scripts/test_actualbudget_mcp_wrapper.py",
+      "state": "M",
+      "related": false,
+      "outside_transfer_map": true,
+      "protected": true,
+      "sha256_observed": "b5ffdbb6e6d6e6318a16357b2ae575a9f668796e53b0cb77a17d3b27d7aeabb0"
+    },
+    {
+      "path": "Skills/user/request-splitter/SKILL.md",
+      "state": "M",
+      "related": false,
+      "outside_transfer_map": true,
+      "protected": true,
+      "sha256_observed": "dc4ec8bda4515916f5ed8e6776fb90c1441f7fdaa7ed598ca57753c39a45b78d"
+    }
+  ],
+  "preserved_source_evidence": [
+    {
+      "path": "Plans Link/2026-08-12-tdtb-project-extraction/evidence/transfer-receipt.json",
+      "state": "??",
+      "related": true,
+      "outside_transfer_map": true,
+      "protected": true,
+      "sha256": "6cd8bb4e3913d9151e394d602b686766fd1250471f72fa7fdde6369f8d06824d"
+    },
+    {
+      "path": "Plans Link/2026-08-12-tdtb-project-extraction/evidence/transfer-receipt.sha256",
+      "state": "??",
+      "related": true,
+      "outside_transfer_map": true,
+      "protected": true,
+      "sha256": "89c6b4a8b2c0b69df7b5626fb31ba08ae8c4dff546f6b54bb9f4f695d9f4e8a2"
+    }
+  ],
+  "scope_confirmation": {
+    "boundary": "application_and_project_material_only",
+    "included_source_roots": [
+      "Tasks/tdtb-app-pilot",
+      "Projects/TDTB"
+    ],
+    "out_of_scope": [
+      "PRD",
+      "DESIGN",
+      "consumer rewiring",
+      "live cutover",
+      "Claudius consumer changes",
+      "live state changes"
+    ],
+    "source_receipt_is_historical_evidence_only": true
+  },
+  "acceptance_criteria": [
+    {
+      "criterion": "Source and destination absolute paths and remotes match M1/current plan.",
+      "met": true,
+      "evidence": "Both requested paths, resolved paths, remotes, and branches match the preserved M1 identities."
+    },
+    {
+      "criterion": "Source identity remains exact and protected dirty paths remain unchanged and classified.",
+      "met": true,
+      "evidence": "Source HEAD is exact; seven unrelated modified paths and two receipt files retain their recorded states."
+    },
+    {
+      "criterion": "Destination advancement is a verified descendant, with current baseline and M1 provenance recorded.",
+      "met": true,
+      "evidence": "M1 HEAD 4e7e5c0 and failed HEAD 8a84869 are ancestors of accepted baseline 47932f5; status is recorded."
+    },
+    {
+      "criterion": "Migration is material-only; PRD, DESIGN, consumer rewiring, and live cutover remain out of scope.",
+      "met": true,
+      "evidence": "Only Tasks/tdtb-app-pilot and Projects/TDTB are included; all four exclusions are explicit."
+    }
+  ],
+  "fail_closed_reasons": [],
+  "constraints_observed": [
+    "No source file was edited.",
+    "No destination application, consumer, or live-state file was edited.",
+    "The preserved M1 inventory was not edited.",
+    "Only the sanctioned migration-inputs.json evidence artifact was refreshed.",
+    "No commit was created."
+  ],
+  "artifact_path": "/Users/walle-mini/Repos/Projects/TDTB/docs/plan/2026-08-12-tdtb-project-extraction-migration/evidence/migration-inputs.json"
+}

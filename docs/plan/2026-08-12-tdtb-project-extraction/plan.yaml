@@ -1,388 +1,1931 @@
 plan_id: 2026-08-12-tdtb-project-extraction
-objective: Extract the TDTB application and project boundary out of the Claudius repository
-  and into the canonical TDTB repository.
+objective: >-
+  Migrate all necessary TDTB application and project material from the source
+  Claudius repository into the current canonical repository
+  /Users/walle-mini/Repos/Projects/TDTB. Only after that migration is complete
+  and independently verified may the outstanding TDTB implementation work be
+  executed in the canonical repository.
+authoritative_objective: >-
+  The current canonical repository is /Users/walle-mini/Repos/Projects/TDTB.
+  Claudius is the source of missing TDTB application and project material; the
+  canonical TDTB repository is the destination and remains the working repo.
+  Migration and verification are a hard prerequisite for all outstanding
+  implementation work.
 created_at: '2026-08-13T00:00:00Z'
 created_by: gem-planner
-status: approved
-tldr: Execute the extraction of the TDTB application from the sibling Claudius repository
-  into this canonical TDTB repository, preserving dirty state and rewiring consumers.
+status: pending
+tldr: >-
+  Repair the final M0 findings with terminal writer recovery, explicit cutover
+  rollback verification, M11 migration gating, and implementation blocked behind M11.
+authoritative_acceptance_criteria:
+  - Necessary TDTB application and project material is migrated into the current canonical repository before implementation begins.
+  - Migration and implementation are separate phases, and every implementation task depends on verified migration completion.
+  - Claudius is the source and /Users/walle-mini/Repos/Projects/TDTB is the destination and working repository.
+  - The prior Claudius-side freeze and transfer receipt remain explicit historical evidence and are safely reconciled without silent deletion.
+  - Dirty state, collisions, missing files, extra files, content mismatches, and verification failures fail closed.
+  - The bounded replan increments revision and replan count without increasing max_replans.
+  - Replanning changes no application source code and creates no commit.
+  - M11 is the final material-migration acceptance gate before implementation; live launchd or process cutover requires explicit attended user approval, and operational cutover is not complete while an operational consumer points to source.
+  - A pre-staging quiescence gate covers the live app and all known active writers and fails closed on pause failure or receipt drift.
+  - Source provenance uses manifests and receipts; the Claudius .git directory is not copied and full history import is out of scope unless separately approved.
+  - M1 evidence remains at docs/plan/2026-08-12-tdtb-project-extraction/evidence/source-inventory.json and is consumed downstream.
+  - Implementation remains blocked until the independent M11 migration acceptance gate is green.
+  - Every terminal M5 or M6 path invokes M6R writer recovery; unsafe or unverifiable recovery records escalation_required and fails closed.
+  - Any partial M12 failure either restores and verifies the pre-cutover source consumer or records escalation_required without claiming success.
 baseline:
-  objective: Extract the TDTB application and project boundary out of the Claudius
-    repository and into the canonical TDTB repository.
+  objective: Extract the TDTB application and project boundary out of the Claudius repository and into the canonical TDTB repository.
   acceptance_criteria:
-  - The TDTB application and project boundary are successfully extracted into the
-    canonical TDTB repository.
-  - Current dirty work is preserved during extraction.
-  - Claudius consumers are correctly rewired to point to the new repository.
-  - The extraction is independently verified against the dirty-state receipt.
-  - A safe closeout and cutover handoff is produced.
+    - The TDTB application and project boundary are successfully extracted into the canonical TDTB repository.
+    - Current dirty work is preserved during extraction.
+    - Claudius consumers are correctly rewired to point to the new repository.
+    - The extraction is independently verified against the dirty-state receipt.
+    - A safe closeout and cutover handoff is produced.
   captured_at: '2026-08-13T00:00:00Z'
 plan_lineage:
   root_plan_id: 2026-08-12-tdtb-project-extraction
-  revision: 2
-  replan_count: 1
+  revision: 6
+  replan_count: 2
   max_replans: 2
-  parent_revision: 1
-  reason: scope_change
+  parent_revision: 5
+  reason: validation_failure
 plan_metrics:
-  wave_1_task_count: 1
-  total_dependencies: 10
-  risk_score: medium
-quality_warnings: []
-context_version: 1
+  wave_1_task_count: 2
+  total_dependencies: 40
+  risk_score: high
+quality_warnings:
+  - The selected Claudius checkout is dirty in unrelated paths; no cleanup or reset is permitted.
+  - The destination has existing root AGENTS.md and README.md files that require explicit collision decisions.
+  - Visual regression is disabled; the final UI gate requires bounded scratch qualification instead.
+  - This revision consumes the final allowed replan: replan_count is 2 of max_replans 2.
+  - No further lineage repair is allowed without explicit user authorization.
+  - docs/PRD.yaml is missing; later compliance must supply or waive it, never invent it.
+  - A current DESIGN.md is missing; the archived DESIGN.md is provenance only, not current authority.
+migration_phase_tasks:
+  - M0
+  - M1
+  - M2
+  - M3
+  - M4
+  - M3Q
+  - M5
+  - M6
+  - M6R
+  - M7
+  - M8
+  - M9
+  - M10
+  - M11
+implementation_phase_tasks:
+  - I1
+  - D1
+  - I2
+  - I3
+  - I4
+  - I5
+  - I6
+  - I7
+  - I8
+  - I9
+cutover_phase_tasks:
+  - M12
+migration_acceptance_tasks:
+  - M11
+final_acceptance_tasks:
+  - M13
+prior_side_effect_reconciliation:
+  historical_evidence:
+    - /Users/walle-mini/Repos/Claudius/Plans Link/2026-08-12-tdtb-project-extraction/evidence/transfer-receipt.json
+    - /Users/walle-mini/Repos/Claudius/Plans Link/2026-08-09-tdtb-planning-ui-reliability.md
+    - /Users/walle-mini/Repos/Claudius/Plans Link/STATUS.md
+  disposition: >-
+    Preserve and hash the prior Claudius-side freeze and receipt as historical
+    evidence. Do not use the old T2/T3 path as current ownership and do not
+    silently delete or rewrite evidence.
+  reconciliation_task: M10
+  fail_closed_condition: >-
+    If source lifecycle state, receipt bytes, competing claims, or unrelated
+    dirty paths drift, record the conflict and stop without cleanup writes.
+history_policy:
+  provenance: >-
+    Preserve source remote, resolved root, branch, HEAD, status, transfer map,
+    receipts, and per-entry hashes as the provenance record.
+  destination_git: >-
+    Do not copy /Users/walle-mini/Repos/Claudius/.git or any nested source .git
+    directory into TDTB; retain the destination repository identity.
+  full_history_import: >-
+    Full Claudius commit-history import is out of scope unless separately
+    approved in a new decision and plan.
+  claim_boundary: >-
+    Manifests and receipts prove content provenance only; they do not claim that
+    Claudius history was imported into the destination.
+risks_and_assumptions:
+  risks:
+    - Wrong Claudius checkout selected as source.
+    - Dirty source state changes during receipt or staging.
+    - The live app or another writer changes source bytes between receipt and copy.
+    - A paused writer cannot be safely resumed or its resumed state cannot be independently verified.
+    - A failed M5 or M6 path could suppress recovery unless the terminal recovery barrier is honored.
+    - Destination root collisions overwrite canonical planning artifacts.
+    - Missing docs/PRD.yaml or a current DESIGN.md causes later compliance ambiguity.
+    - Live cutover is inferred without explicit attended user approval.
+    - A partial M12 cutover may fail before the source consumer is restored and verified.
+    - Implementation starts before migration gate M11.
+    - History provenance is mistaken for imported Git history.
+  assumptions:
+    - /Users/walle-mini/Repos/Claudius is the source checkout tied to the prior receipt.
+    - /Users/walle-mini/Repos/Projects/TDTB is the canonical destination and working repo.
+    - Outstanding implementation scope is the frozen planning UI and reliability backlog.
+verification_performed:
+  - Parsed plan.yaml successfully with Python 3 YAML loader after the repair.
+  - Confirmed 26 unique task IDs and 40 canonical dependency edges.
+  - Confirmed every dependency references an existing task.
+  - Confirmed every dependency points to a lower wave.
+  - Confirmed plan text is ASCII-only and git diff check passes.
+  - Confirmed M1 evidence remains at docs/plan/2026-08-12-tdtb-project-extraction/evidence/source-inventory.json.
+  - Confirmed the retained M1 copy recommendation is marked superseded by plan annotation; evidence bytes remain unchanged and M3Q/M5 still gate copying.
+  - Confirmed M6R is an independent always-run recovery path for every terminal M5/M6 outcome and M7 requires M6 plus M6R.
+  - Confirmed M11 is the final material-migration gate and every implementation task depends on M11.
+  - Confirmed M12 rollback and post-rollback verification are explicit; M12/M13 failure routing does not retroactively undo completed work without evidence.
+  - Confirmed only plan.yaml was edited by this repair; no app source, live runtime, or commit changed.
+  - Confirmed every task wave is greater than all dependency waves and no circular dependency exists.
+context_version: 5
 context_updated_at: '2026-08-13T00:00:00Z'
-context_fields_changed: []
-tech_stack: []
-conventions: []
+context_fields_changed:
+  - objective
+  - authoritative_objective
+  - authoritative_acceptance_criteria
+  - source_destination_ownership
+  - migration_before_implementation_sequence
+  - prior_side_effect_reconciliation
+  - writer_quiescence_gate
+  - attended_live_cutover_gate
+  - history_provenance_policy
+  - task_graph
+  - risk_and_verification_model
+  - final_material_migration_gate
+  - quiescence_pause_copy_verify_resume
+  - post_migration_failure_routing
+  - missing_compliance_inputs
+  - terminal_writer_recovery_path
+  - cutover_rollback_verification
+  - superseded_m1_evidence_handoff
+  - final_replan_budget
+tech_stack:
+  - name: Python 3.12
+    role: FastAPI application and pytest verification
+    evidence: /Users/walle-mini/Repos/Claudius/Tasks/tdtb-app-pilot/app
+  - name: Preact and TypeScript
+    role: TDTB cockpit frontend, Vitest tests, and Vite bundles
+    evidence: /Users/walle-mini/Repos/Claudius/Tasks/tdtb-app-pilot/frontend
+  - name: Git
+    role: Source dirty-state, path ownership, and byte-level provenance
+    evidence: /Users/walle-mini/Repos/Claudius/.git
+  - name: uv and npm
+    role: Isolated dependency and build verification
+    evidence: /Users/walle-mini/Repos/Claudius/Tasks/tdtb-app-pilot/app/requirements.txt
+conventions:
+  - Treat /Users/walle-mini/Repos/Projects/TDTB as the only canonical TDTB working root.
+  - Use bounded path manifests before broad reference sweeps.
+  - Preserve source worktree state; never reset, clean, stash, rebase, or rewrite foreign work.
+  - Keep historical evidence separate from operational application ownership.
+  - Use synthetic, fake, or scratch verification; never use live source writers in plan execution.
+  - The M1 inventory path and its resolved symlink target must match the recorded Git identity; M1 does not authorize copying.
+  - M11 is the final material-migration acceptance and implementation gate; M12 is the only operational cutover gate.
 constraints:
   hard:
-  - Do not delete the source plan unless clearly required by repository convention.
-  - The canonical repo is the current working directory. The previous source repo
-    is expected to be a sibling Claudius repository; determine exact paths only through
-    bounded repository inspection.
-  soft: []
-  compatibility: []
-  security_requirements: []
-architecture_snapshot: {}
-research_digest: {}
+    - Claudius source entry is /Users/walle-mini/Repos/Claudius; resolve its symlink to /Users/walle-mini/Development/Claudius and verify the same Git identity, but do not substitute a different checkout.
+    - Destination and working repository is /Users/walle-mini/Repos/Projects/TDTB.
+    - No implementation task may start before M11 migration acceptance is completed.
+    - No source or destination mutation is performed by this replan; only plan.yaml is changed now.
+    - Do not reset, clean, stash, rebase, rewrite, or silently reassign any source dirty path.
+    - Do not delete the prior Claudius receipt, frozen plan, generated status evidence, or tracker evidence.
+    - Destination writes must be limited to the approved transfer map and explicit collision decisions.
+    - Missing, extra, colliding, changed, or byte-mismatched transfer entries fail closed.
+    - Do not restart launchd, access live :8746 writes, call billed endpoints, mutate Todoist, mutate Calendar, or mutate vault source data during replanning or non-approved tasks.
+    - M12 is the only live cutover task and requires explicit attended user approval before any launchd or process change.
+    - Do not copy /Users/walle-mini/Repos/Claudius/.git or any nested source .git directory into the destination.
+    - Full Claudius Git history import is out of scope unless separately approved in a new plan.
+    - If any known writer cannot be safely paused, or the source receipt can drift, M3Q fails closed and staging cannot start.
+    - Every terminal M5 or M6 outcome must route to M6R; M6R must run even when an upstream task fails or is blocked.
+    - M6R must verify writer recovery or record escalation_required and block M7 and all later migration gates.
+    - M12 must capture the pre-cutover source consumer and verify rollback after any partial cutover failure.
+  soft:
+    - Retain a clearly marked pre-cutover Claudius fallback until M12 proves the canonical runtime is safe; only then classify it as non-operational.
+    - Regenerate generated UI evidence in the canonical repository instead of copying stale Playwright output.
+  compatibility:
+    - Preserve Python 3.12, uv-managed backend dependencies, and the existing FastAPI contract.
+    - Preserve Preact, TypeScript, Vite, Vitest, and the existing mockup and production build split.
+    - Preserve the shared TDTB skill and ritual ownership in Claudius while changing app path consumers.
+  security_requirements:
+    - Do not read or copy credentials, provider tokens, live vault data, or machine-local launchd state into the repository.
+    - Use path-scoped manifests and hashes so an unintended file cannot enter the destination.
+architecture_snapshot:
+  source:
+    root: /Users/walle-mini/Repos/Claudius
+    owns:
+      - Shared TDTB skills and GPT-stack projections
+      - Plans, reports, references, and historical provenance
+      - Consumer wiring, boundary tests, audits, and repository instructions
+      - Source-side historical freeze and transfer evidence until reconciled
+  destination:
+    root: /Users/walle-mini/Repos/Projects/TDTB
+    owns:
+      - FastAPI backend under app/
+      - Preact frontend under frontend/
+      - App tests, fixtures, launch template, restart documentation, and project policy
+      - TDTB project archive material folded into the repository root
+  migration_map:
+    - source: Tasks/tdtb-app-pilot/
+      destination: ./
+      classification: application-and-project-artifacts
+    - source: Projects/TDTB/
+      destination: ./
+      classification: project-policy-and-historical-archive
+    - source: output/playwright/tdtb-*
+      destination: not-migrated
+      classification: regenerate-after-verification
+  source_fallback: >-
+    M11 is the final material-migration acceptance gate. Before M12, the old
+    Claudius app tree may remain as a clearly marked pre-cutover fallback and
+    may remain the currently running consumer. M11 does not change launchd or
+    process state. After explicit approval and successful M12 cutover, the
+    source tree is fallback only and no operational consumer may resolve to it.
+  consumer_contract: >-
+    Shared Claudius behavior remains in Claudius. Migration rewires repository
+    references and prepares canonical launch material, but the live launchd or
+    process consumer changes only at attended M12. Until M12, any source live
+    consumer is recorded as pre-cutover and blocks only an operational cutover
+    completion claim; it does not invalidate M11 material-migration acceptance.
+  implementation_gate: M11
+  live_cutover_gate: M12
+  migration_completion_gate: M11
+  operational_closeout_gate: M13
+recovery_paths:
+  - id: WRITER-RECOVERY-AFTER-M5-FAILURE
+    trigger_task: M5
+    trigger_statuses:
+      - failed
+      - blocked
+      - needs_revision
+      - needs_replan
+    recovery_task: M6R
+    scheduling: run_after_trigger_terminal
+    outcome: M6R must verify resume or emit escalation_required; M7 stays blocked.
+  - id: WRITER-RECOVERY-AFTER-M6-TERMINAL
+    trigger_task: M6
+    trigger_statuses:
+      - completed
+      - failed
+      - blocked
+      - needs_revision
+      - needs_replan
+    recovery_task: M6R
+    scheduling: run_after_trigger_terminal
+    outcome: M6R must verify resume or emit escalation_required; M7 stays blocked.
+  - id: WRITER-RECOVERY-SUCCESS-SEQUENCE
+    trigger_task: M5
+    trigger_statuses:
+      - completed
+    wait_for: M6
+    recovery_task: M6R
+    scheduling: run_after_M6_terminal
+    outcome: M6R is the only green closeout for the pause-copy-verify-resume sequence.
+evidence_annotations:
+  - path: docs/plan/2026-08-12-tdtb-project-extraction/evidence/source-inventory.json
+    task: M1
+    field: next_handoff.recommendation
+    disposition: superseded_historical_guidance
+    note: >-
+      The evidence recommendation that says to copy and rewire is retained as
+      historical M1 evidence but is superseded guidance. It is not an execution
+      instruction. The current DAG forbids M2 copy work and requires M3Q, M5,
+      M6, and M6R before M7 installation. Evidence bytes remain unchanged.
+    retained: true
+research_digest:
+  digest: >-
+    Bounded inspection confirmed the source application under Claudius
+    Tasks/tdtb-app-pilot, project policy and archive under Claudius
+    Projects/TDTB, a dirty Claudius main checkout, an existing historical
+    transfer receipt, and a nearly empty canonical destination. The old plan
+    treated ownership transfer in the wrong direction and must not be reused
+    as the execution DAG.
+  top_files:
+    - path: 2026-08-12-tdtb-project-extraction.md
+      trust_level: provenance-only-not-authoritative
+    - path: /Users/walle-mini/Repos/Claudius/Tasks/tdtb-app-pilot
+      trust_level: source-application-boundary
+    - path: /Users/walle-mini/Repos/Claudius/Projects/TDTB/AGENTS.md
+      trust_level: source-project-policy
+    - path: /Users/walle-mini/Repos/Claudius/Projects/TDTB/README.md
+      trust_level: source-project-map
+    - path: /Users/walle-mini/Repos/Claudius/Plans Link/2026-08-12-tdtb-project-extraction/evidence/transfer-receipt.json
+      trust_level: historical-side-effect-evidence
+    - path: /Users/walle-mini/Repos/Claudius/Plans Link/2026-08-09-tdtb-planning-ui-reliability.md
+      trust_level: outstanding-implementation-scope-and-freeze-history
+    - path: /Users/walle-mini/Repos/Claudius/Skills/user/tdtb-bridger-vault/SKILL.md
+      trust_level: shared-consumer-source
+    - path: /Users/walle-mini/Repos/Claudius/Configurations/gpt-stack/skills/tdtb-bridger-vault/SKILL.md
+      trust_level: shared-consumer-variant
+    - path: /Users/walle-mini/Repos/Claudius/Scripts/test_tdtb_project_boundary.py
+      trust_level: consumer-boundary-verification
+    - path: /Users/walle-mini/Repos/Claudius/.claude/launch.json
+      trust_level: launch-consumer-reference
 prior_decisions:
-- decision: Retain the old document-migration objective and criteria as historical
-    provenance only.
-  context: The prior migration wrapper incorrectly made the document-migration objective
-    and no-code-change criteria authoritative. The user confirmed the scope is to
-    execute the actual extraction.
-- historical_objective: Migrate the existing plan file `2026-08-12-tdtb-project-extraction.md`
-    in the repository into a durable, high-quality implementation plan format that
-    gem-team would expect to see.
-  historical_acceptance_criteria:
-  - A durable migrated plan exists in the repository in the expected plan location.
-  - The migrated plan is actionable, internally consistent, and has explicit tasks,
-    dependencies, acceptance criteria, risks, and verification steps.
-  - The original objective and acceptance criteria are preserved or explicitly mapped
-    without weakening them.
-  - No application source code is changed.
-reuse_notes: []
-open_questions: []
-assumptions:
-- The expected durable plan location is docs/plan/{plan_id}/plan.yaml.
-- The source plan should be preserved as it is not clearly required to be deleted.
-tasks:
-- id: T1
-  title: Targeted read-only inventory with no claim
-  description: Run the bounded pre-extraction path/ownership inventory. This is read-only
-    and asserts NO app-path claim; it does not prepare any target. Record each match
-    as move, remain/update, historical, or unresolved.
-  wave: 1
-  agent: gem-implementer
-  status: pending
-  covers: []
-  depends_on: []
-  conflicts_with: []
-  context_files: []
-  flags:
-    requires_design_validation: false
-    retries_used: 0
-    revision_reason: ''
-  acceptance_criteria:
-  - Targeted pre-extraction inventory is complete.
-  handoff:
-    known_context:
-    - The canonical repo is the current working directory. The source repo is a sibling
-      Claudius repository.
-    target_files: []
-    constraints: []
-  requires_review: false
-  review_depth: standard
-  review_security_sensitive: false
-- id: T2
-  title: Freeze active UI plan and capture immutable dirty-state receipt
-  description: Set the active UI/reliability plan to a frozen state and capture an
-    immutable receipt of its current dirty owned paths.
-  wave: 2
-  agent: gem-implementer
-  status: pending
-  covers: []
-  depends_on:
-  - T1
-  conflicts_with: []
-  context_files: []
-  flags:
-    requires_design_validation: false
-    retries_used: 0
-    revision_reason: ''
-  acceptance_criteria:
-  - Immutable dirty-state receipt is captured.
-  handoff:
-    known_context:
-    - The canonical repo is the current working directory. The source repo is a sibling
-      Claudius repository.
-    target_files: []
-    constraints: []
-  requires_review: false
-  review_depth: standard
-  review_security_sensitive: false
-- id: T3
-  title: Formally supersede/re-home the active plan and accept the receipt
-  description: Record the supersede/re-home of the active UI/reliability plan and
-    accept the T2 receipt as the canonical evidence of its dirty T1 state.
-  wave: 3
-  agent: gem-implementer
-  status: pending
-  covers: []
-  depends_on:
-  - T2
-  conflicts_with: []
-  context_files: []
-  flags:
-    requires_design_validation: false
-    retries_used: 0
-    revision_reason: ''
-  acceptance_criteria:
-  - Ownership is superseded/transferred (exclusive) before extraction.
-  handoff:
-    known_context:
-    - The canonical repo is the current working directory. The source repo is a sibling
-      Claudius repository.
-    target_files: []
-    constraints: []
-  requires_review: false
-  review_depth: standard
-  review_security_sensitive: false
-- id: T4
-  title: Acquire exclusive app claims only after T3
-  description: Amend this plan's manifest with EXCLUSIVE (non-shared) app-path and
-    target-root claims.
-  wave: 4
-  agent: gem-implementer
-  status: pending
-  covers: []
-  depends_on:
-  - T3
-  conflicts_with: []
-  context_files: []
-  flags:
-    requires_design_validation: false
-    retries_used: 0
-    revision_reason: ''
-  acceptance_criteria:
-  - Exclusive app claims acquired.
-  handoff:
-    known_context:
-    - The canonical repo is the current working directory. The source repo is a sibling
-      Claudius repository.
-    target_files: []
-    constraints: []
-  requires_review: false
-  review_depth: standard
-  review_security_sensitive: false
-- id: T5
-  title: Stage target/copy and independently verify against the receipt
-  description: Prepare the sibling target repository and copy the app/project content,
-    then compare the source receipt (T2) with the copied target state.
-  wave: 5
-  agent: gem-implementer
-  status: pending
-  covers: []
-  depends_on:
-  - T4
-  conflicts_with: []
-  context_files: []
-  flags:
-    requires_design_validation: false
-    retries_used: 0
-    revision_reason: ''
-  acceptance_criteria:
-  - Standalone repository is complete and independently testable.
-  handoff:
-    known_context:
-    - The canonical repo is the current working directory. The source repo is a sibling
-      Claudius repository.
-    target_files: []
-    constraints: []
-  requires_review: false
-  review_depth: standard
-  review_security_sensitive: false
-- id: T6
-  title: Logical extraction
-  description: Transfer ownership of the app/project boundary to the standalone layout,
-    preserving current dirty work.
-  wave: 6
-  agent: gem-implementer
-  status: pending
-  covers: []
-  depends_on:
-  - T5
-  conflicts_with: []
-  context_files: []
-  flags:
-    requires_design_validation: false
-    retries_used: 0
-    revision_reason: ''
-  acceptance_criteria:
-  - Logical extraction complete.
-  handoff:
-    known_context:
-    - The canonical repo is the current working directory. The source repo is a sibling
-      Claudius repository.
-    target_files: []
-    constraints: []
-  requires_review: false
-  review_depth: standard
-  review_security_sensitive: false
-- id: T7
-  title: Rewire Claudius consumers
-  description: Update shared skills, bootstrap, launchd template references, scratch
-    launch config, integration tests, structure-audit registration, bundle checks,
-    docs, and cross-repository path resolution.
-  wave: 7
-  agent: gem-implementer
-  status: pending
-  covers: []
-  depends_on:
-  - T6
-  conflicts_with: []
-  context_files: []
-  flags:
-    requires_design_validation: false
-    retries_used: 0
-    revision_reason: ''
-  acceptance_criteria:
-  - Claudius consumers are correctly rewired.
-  handoff:
-    known_context:
-    - The canonical repo is the current working directory. The source repo is a sibling
-      Claudius repository.
-    target_files: []
-    constraints: []
-  requires_review: false
-  review_depth: standard
-  review_security_sensitive: false
-- id: T8
-  title: Broad post-extraction sweep
-  description: Run the broad `tdtb` sweep over remaining Claudius and triage every
-    result as intentional, historical/archive, or broken/orphaned.
-  wave: 8
-  agent: gem-implementer
-  status: pending
-  covers: []
-  depends_on:
-  - T7
-  conflicts_with: []
-  context_files: []
-  flags:
-    requires_design_validation: false
-    retries_used: 0
-    revision_reason: ''
-  acceptance_criteria:
-  - Broad post-extraction sweep is fully triaged.
-  handoff:
-    known_context:
-    - The canonical repo is the current working directory. The source repo is a sibling
-      Claudius repository.
-    target_files: []
-    constraints: []
-  requires_review: false
-  review_depth: standard
-  review_security_sensitive: false
-- id: T9
-  title: Verify both repositories
-  description: Run standalone app tests/builds and Claudius instruction, boundary,
-    hygiene, and diff checks with no live action.
-  wave: 9
-  agent: gem-implementer
-  status: pending
-  covers: []
-  depends_on:
-  - T8
-  conflicts_with: []
-  context_files: []
-  flags:
-    requires_design_validation: false
-    retries_used: 0
-    revision_reason: ''
-  acceptance_criteria:
-  - Both repositories pass non-live verification.
-  handoff:
-    known_context:
-    - The canonical repo is the current working directory. The source repo is a sibling
-      Claudius repository.
-    target_files: []
-    constraints: []
-  requires_review: false
-  review_depth: standard
-  review_security_sensitive: false
-- id: T10
-  title: Attended cutover-wait handoff
-  description: Produce the separate attended checklist for staging the new plist,
-    restarting `com.walle.tdtb`, and GET-only health/version proof.
-  wave: 10
-  agent: gem-implementer
-  status: pending
-  covers: []
-  depends_on:
-  - T9
-  conflicts_with: []
-  context_files: []
-  flags:
-    requires_design_validation: false
-    retries_used: 0
-    revision_reason: ''
-  acceptance_criteria:
-  - Attended cutover-wait handoff produced.
-  handoff:
-    known_context:
-    - The canonical repo is the current working directory. The source repo is a sibling
-      Claudius repository.
-    target_files: []
-    constraints: []
-  requires_review: false
-  review_depth: standard
-  review_security_sensitive: false
-- id: T11
-  title: Post-cutover-removal receipt/handoff
-  description: Records the handoff only; it performs no removal.
-  wave: 11
-  agent: gem-implementer
-  status: pending
-  covers: []
-  depends_on:
-  - T10
-  conflicts_with: []
-  context_files: []
-  flags:
-    requires_design_validation: false
-    retries_used: 0
-    revision_reason: ''
-  acceptance_criteria:
-  - Post-cutover-removal receipt/handoff recorded.
-  handoff:
-    known_context:
-    - The canonical repo is the current working directory. The source repo is a sibling
-      Claudius repository.
-    target_files: []
-    constraints: []
-  requires_review: false
-  review_depth: standard
-  review_security_sensitive: false
+  - decision: Claudius is the source and the current TDTB repository is the destination.
+    context: The prior revision reversed ownership by treating the Claudius-side plan as the transfer destination.
+  - decision: The application and project artifacts move into the TDTB repository root.
+    context: Tasks/tdtb-app-pilot is flattened into app/, frontend/, and related root artifacts; Projects/TDTB policy and archive are merged into the same root.
+  - decision: The prior T2 freeze and receipt are historical evidence, not current ownership gates.
+    context: The old T2/T3 path is not continued; a new source receipt, collision map, staged copy, and post-migration reconciliation govern this plan.
+  - decision: Shared skills, rituals, plans, reports, references, and consumer governance remain in Claudius.
+    context: Only application/project material and the required operational path references cross the repository boundary.
+  - decision: Physical source deletion is deferred until an attended cutover.
+    context: A clearly marked pre-cutover fallback protects the running single-writer service until attended cutover.
+  - decision: User-approved bounded replan-lineage repair.
+    context: >-
+      On 2026-08-13 the user explicitly approved option 1: reset the invalid
+      active replan counter from 3 to 0 while preserving revision 4, parent
+      revision 3, max_replans 2, and all prior revision content. This is metadata
+      repair, not a substantive replan or scope change.
+    prior_state:
+      revision: 4
+      replan_count: 3
+      max_replans: 2
+    active_state:
+      revision: 4
+      replan_count: 0
+      max_replans: 2
+  - decision: The same-ID historical Markdown plan is provenance-only.
+    context: >-
+      2026-08-12-tdtb-project-extraction.md records historical scope and prior
+      decisions only; this plan.yaml is authoritative for the current DAG,
+      dependencies, acceptance criteria, and execution boundary.
+  - decision: M11 is the final material-migration completion gate.
+    context: >-
+      M12 and M13 are post-migration operational cutover and closeout gates;
+      their failures do not retroactively undo M11 or implementation tasks
+      without evidence that an earlier acceptance criterion no longer holds.
+  - decision: M6R is an always-run writer recovery barrier for M5 and M6.
+    context: >-
+      M6R runs after every terminal outcome of M5 and M6, including failure and
+      blocked outcomes. It verifies writer resume or records an explicit
+      escalation-required state and blocks all later migration work.
+  - decision: M12 requires evidence-backed rollback on partial cutover failure.
+    context: >-
+      M12 captures the pre-cutover source consumer, restores it when safe after
+      a failed mutation or verification, verifies restoration, and never claims
+      success when restoration is unsafe or unverifiable.
+reuse_notes:
+  - path: 2026-08-12-tdtb-project-extraction.md
+    trust_level: provenance-only-not-authoritative
+  - path: /Users/walle-mini/Repos/Claudius/Plans Link/2026-08-12-tdtb-project-extraction/evidence/transfer-receipt.json
+    trust_level: immutable-historical-evidence-not-current-receipt
+  - path: /Users/walle-mini/Repos/Claudius/Plans Link/2026-08-09-tdtb-planning-ui-reliability.md
+    trust_level: outstanding-backlog-and-prior-freeze-history
+  - path: /Users/walle-mini/Repos/Claudius/Projects/TDTB/AGENTS.md
+    trust_level: source-policy-to-be-migrated-after-collision-review
+  - path: /Users/walle-mini/Repos/Claudius/Projects/TDTB/README.md
+    trust_level: source-map-to-be-migrated-after-collision-review
 replan:
-  reason: Revise the imported TDTB extraction plan so it is authoritative and executable
-    in the canonical TDTB repository.
+  reason: >-
+    The latest M0 critique found no always-run writer recovery after M5 or M6,
+    no explicit M12 rollback verification, and stale M1 evidence handoff wording.
+    Preserve M0/M1 evidence and the immutable baseline while repairing only the
+    affected dependency paths, gate criteria, and plan wording.
   changed_tasks:
-  - T1
-  - T2
-  - T3
-  - T4
-  - T5
-  - T6
-  - T7
-  - T8
-  - T9
-  - T10
-  - T11
-  added_tasks: []
-  removed_tasks: []
-  preserved_acceptance_criteria: []
+    - M1
+    - M5
+    - M6
+    - M6R
+    - M7
+    - M11
+    - M12
+  changed_dependencies:
+    - M6R always runs after terminal M5 and M6 outcomes before M7 can proceed.
+    - M7 requires both M6 verification and M6R recovery verification.
+  added_tasks:
+    []
+  removed_tasks:
+    []
+  preserved_acceptance_criteria:
+    - The TDTB application and project boundary are successfully extracted into the canonical TDTB repository.
+    - Current dirty work is preserved during extraction.
+    - Claudius consumers are correctly rewired to point to the new repository.
+    - The extraction is independently verified against the dirty-state receipt.
+    - A safe closeout and cutover handoff is produced.
   new_risks:
-  - Path resolution between the canonical TDTB repository (CWD) and the sibling Claudius
-    repository.
-  progress_signal: Plan revised for execution.
+    - The live app or another active writer may alter mapped bytes between receipt and staging.
+    - A paused writer may not resume safely or resume verification may be incomplete.
+    - An orchestrator may skip a recovery barrier after an upstream failure.
+    - A pre-cutover source consumer may be mistaken for a completed migration unless M11 and M12 status are distinct.
+    - A partial M12 cutover may have an unsafe or unverifiable rollback state.
+    - A destination provenance manifest may be mistaken for imported Claudius Git history.
+    - A launchd or process cutover may be attempted without explicit attended user approval.
+    - Missing docs/PRD.yaml and current DESIGN.md may block later compliance and must not be invented.
+  progress_signal: >-
+    Revision 6 consumes replan 2 of 2, makes M6R terminal recovery mandatory
+    after M5/M6, adds M7's dual green gate, adds M12 rollback verification, and
+    marks stale M1 copy guidance superseded. Only plan.yaml changes.
+open_questions:
+  - question: Should a compliant docs/PRD.yaml be supplied or formally waived?
+    context: The repository has no docs/PRD.yaml; later compliance must resolve this without inventing requirements.
+    type: decision_blocker
+    affects: [M11, I1, I9, M13]
+  - question: What is the authoritative current design input for implementation?
+    context: No current DESIGN.md exists; archive/skill-era/DESIGN.md is provenance-only and not current authority.
+    type: decision_blocker
+    affects: [D1, I5, I8, I9]
+assumptions:
+  - /Users/walle-mini/Repos/Claudius is the intended source checkout because it contains the observed receipt and source trees.
+  - /Users/walle-mini/Repos/Projects/TDTB is the intended destination because it is the current working repository and canonical path.
+  - The current destination root files are placeholders or planning infrastructure until M4 makes explicit collision decisions.
+  - The existing source receipt remains readable and immutable; if it changes or disappears, M2 fails closed.
+  - Outstanding implementation scope is the uncompleted work represented by the frozen planning UI and reliability plan, translated into I1-I9.
+  - Generated Playwright evidence is reproducible and can be regenerated after destination verification.
+  - The live service remains protected by retaining a clearly marked pre-cutover source fallback until attended cutover.
+  - M6R can verify resume without changing application behavior or external provider state; otherwise it fails closed.
+  - The orchestrator honors M6R terminal recovery semantics after M5 or M6 success, failure, or blocked status.
+pre_mortem:
+  overall_risk_level: high
+  critical_failure_modes:
+    - scenario: A different Claudius checkout is selected as source.
+      likelihood: medium
+      impact: critical
+      mitigation: Require exact absolute roots, Git identity, branch, HEAD, and receipt-path agreement in M1 before any copy.
+    - scenario: Source bytes change after the current receipt and before staging.
+      likelihood: medium
+      impact: critical
+      mitigation: Seal a current source receipt, compare it immediately before staging, and recapture or abort on drift.
+    - scenario: A destination collision overwrites plan, policy, or repository files.
+      likelihood: medium
+      impact: high
+      mitigation: Produce a normalized collision manifest, preserve destination bytes, and allow only approved map entries.
+    - scenario: A partial or lossy copy passes a shallow directory check.
+      likelihood: medium
+      impact: critical
+      mitigation: Stage first and compare every mapped file's bytes, mode, symlink target, and text or binary hash.
+    - scenario: A stale Claudius consumer still launches or tests the old app after cutover preparation.
+      likelihood: high
+      impact: high
+      mitigation: Rewire non-live consumers, classify the active source process as pre-cutover, require M12 approval, and verify after cutover.
+    - scenario: A writer changes source bytes after receipt and before staging.
+      likelihood: medium
+      impact: critical
+      mitigation: Require M3Q to pause or prove quiescence for every known writer and abort on any receipt mismatch.
+    - scenario: A writer is paused but cannot be safely resumed or resume is not verified.
+      likelihood: medium
+      impact: critical
+      mitigation: M6R must verify resume for every paused writer after copy verification; any uncertainty fails closed.
+    - scenario: Live launchd or process cutover occurs without attended approval.
+      likelihood: low
+      impact: critical
+      mitigation: Make M12 a production devops task with requires_approval true and no other task allowed to change live state.
+    - scenario: Destination provenance is mistaken for imported Claudius history.
+      likelihood: medium
+      impact: high
+      mitigation: Exclude source .git, record remote/HEAD and per-entry hashes, and state full history import is out of scope.
+    - scenario: Prior freeze cleanup deletes evidence or unrelated dirty work.
+      likelihood: medium
+      impact: critical
+      mitigation: Keep the original receipt, hash all known side effects, use supported lifecycle operations, and fail closed on drift.
+    - scenario: Implementation begins before migration is complete.
+      likelihood: medium
+      impact: critical
+      mitigation: Make every I task depend on M11 and require M11 to assert the canonical target and consumer gates are green.
+coordination_notes:
+  - M0 and M1 may run in parallel; no migration mutation may start until their outputs are available.
+  - M2 and M3 may run in parallel after M1 because they write separate evidence and both precede the collision map.
+  - M4, M3Q, M5, M6, M6R, M7, M8, M9, M10, and M11 are serialized migration gates.
+  - M3Q performs pause and pre-copy verification; M6R performs post-copy resume verification.
+  - I1 and D1 may run in parallel after M11; D1 is read-only design validation and must finish before I5.
+  - I2 through I4 are serialized because they share backend seams and contract fixtures.
+  - I5 through I9 are serialized to keep UI, bundles, scratch qualification, and final review coherent.
+  - M11 is the final material-migration and implementation gate; I1-I9 run only after it. M12 is a separate attended cutover gate and follows I9.
+  - M12 failure blocks only operational cutover and routes to bounded retry or replan; M13 failure blocks final closeout and routes to replan without undoing prior gates absent evidence.
+  - No task may use the old T2/T3 path as an ownership claim or treat Claudius as the destination.
+tasks:
+  - id: M0
+    title: Critique the canonical source and destination boundary
+    description: >-
+      Independently challenge the revised ownership direction, migration
+      sequencing, fail-closed rules, prior-side-effect treatment, and the hard
+      implementation gate before execution starts.
+    wave: 1
+    agent: gem-critic
+    status: needs_revision
+    covers:
+      - source and destination ownership
+      - bounded migration DAG
+      - prior T2/T3 side-effect handling
+      - implementation gate integrity
+    depends_on: []
+    conflicts_with: []
+    context_files:
+      - path: docs/plan/2026-08-12-tdtb-project-extraction/plan.yaml
+        description: Revised high-risk migration and implementation DAG.
+      - path: 2026-08-12-tdtb-project-extraction.md
+        description: Historical source plan whose ownership direction is not authoritative.
+      - path: /Users/walle-mini/Repos/Claudius/Plans Link/2026-08-12-tdtb-project-extraction/evidence/transfer-receipt.json
+        description: Existing Claudius-side historical receipt to test against the new boundary.
+    flags:
+      requires_design_validation: false
+      retries_used: 0
+      revision_reason: ''
+    acceptance_criteria:
+      - Critique confirms Claudius as source and /Users/walle-mini/Repos/Projects/TDTB as destination.
+      - Critique records the fallback/cutover contradiction, active-writer drift risk, and Git history ambiguity.
+      - Critique requires explicit quiescence, attended cutover approval, and a manifest-based history policy.
+      - Any blocker is recorded as a concrete decision blocker rather than silently accepted.
+    handoff:
+      known_context:
+        - The user explicitly rejected the prior Claudius-as-destination path.
+        - The current destination is the working repository and must remain so.
+        - The same-ID Markdown plan is provenance-only; this plan.yaml is authoritative.
+        - docs/PRD.yaml and a current DESIGN.md are missing and must remain explicit open risks.
+      target_files: []
+      constraints:
+        - Read-only critique; do not edit application, consumer, source, or evidence files.
+    requires_review: false
+    review_depth: null
+    review_security_sensitive: false
+    result:
+      status: needs_revision
+      files_changed: []
+      output: >-
+        Blocking critique: fallback rules contradicted live cutover approval;
+        active writers could drift source bytes after receipt; Git history scope
+        did not state whether .git must be copied.
+      summary: >-
+        Replan required. Preserve the source fallback as pre-cutover only, add a
+        fail-closed writer gate, and preserve provenance without copying .git.
+
+  - id: M1
+    title: Inventory the source boundary and destination state
+    description: >-
+      Build the bounded source-to-destination inventory, ownership map, source
+      Git identity, current dirty-state classification, known consumer set, and
+      destination collision candidates without claiming or changing app paths.
+    wave: 1
+    agent: gem-implementer
+    status: completed
+    covers:
+      - bounded source inventory
+      - destination identity
+      - source dirty-state classification
+      - consumer reference inventory
+    depends_on: []
+    conflicts_with: []
+    context_files:
+      - path: /Users/walle-mini/Repos/Claudius/Tasks/tdtb-app-pilot
+        description: Source application tree to inventory.
+      - path: /Users/walle-mini/Repos/Claudius/Projects/TDTB
+        description: Source project policy and archive to inventory.
+      - path: /Users/walle-mini/Repos/Projects/TDTB
+        description: Current canonical destination to inspect for collisions.
+      - path: /Users/walle-mini/Repos/Claudius/Scripts/test_tdtb_project_boundary.py
+        description: Existing source-side boundary gate.
+    flags:
+      requires_design_validation: false
+      retries_used: 0
+      revision_reason: ''
+    acceptance_criteria:
+      - Inventory identifies /Users/walle-mini/Repos/Claudius as source and /Users/walle-mini/Repos/Projects/TDTB as destination using absolute paths and Git identity.
+      - Inventory maps all required application and project material and classifies shared, historical, generated, and consumer-only material.
+      - Inventory records current source dirty paths and destination files, including AGENTS.md and README.md collision candidates.
+      - Inventory records no app-path ownership claim and makes no source, destination, live, or consumer mutation.
+      - This plan marks the retained next_handoff recommendation in M1 evidence as superseded historical guidance; it cannot authorize M2 or pre-M3Q/M5 copying, and the evidence bytes are retained unchanged.
+    handoff:
+      known_context:
+        - The source contains Tasks/tdtb-app-pilot and Projects/TDTB.
+        - The destination currently contains planning infrastructure, a stub AGENTS.md, and a stub README.md.
+        - Inventory is evidence only; no copy or target preparation occurs before M3Q and M5.
+      target_files:
+        - docs/plan/2026-08-12-tdtb-project-extraction/evidence/source-inventory.json
+      constraints:
+        - Use bounded paths first; do not replace the inventory with an untriaged broad grep.
+        - Preserve every unrelated source dirty path exactly.
+    requires_review: true
+    review_depth: full
+    review_security_sensitive: false
+    result:
+      status: completed
+      files_changed:
+        - docs/plan/2026-08-12-tdtb-project-extraction/evidence/source-inventory.json
+      output: >-
+        M1 evidence identifies Claudius origin github.com/asing44/Claudius.git
+        at HEAD 93b9fe4, destination origin github.com/asing44/TDTB.git at HEAD
+        4e7e5c0, live com.walle.tdtb PID 24339 using source app/.venv/bin/python,
+        three-way AGENTS.md and README.md collisions, eight unrelated source
+        dirty paths, and generated content to exclude.
+      summary: >-
+        Source inventory is preserved at the required evidence path and is the
+        input to receipt, collision, quiescence, staging, and cutover gates.
+
+  - id: M2
+    title: Preserve and classify the prior freeze and transfer receipt
+    description: >-
+      Record the existing Claudius-side T2 freeze, receipt, generated status,
+      and tracker side effects as historical evidence. Do not continue their
+      reversed ownership flow and do not delete or silently rewrite evidence.
+    wave: 2
+    agent: gem-implementer
+    status: pending
+    covers:
+      - historical receipt preservation
+      - prior freeze classification
+      - side-effect ledger
+      - reversed ownership cleanup boundary
+    depends_on:
+      - M1
+    conflicts_with: []
+    context_files:
+      - path: /Users/walle-mini/Repos/Claudius/Plans Link/2026-08-12-tdtb-project-extraction/evidence/transfer-receipt.json
+        description: Existing immutable historical receipt.
+      - path: /Users/walle-mini/Repos/Claudius/Plans Link/2026-08-09-tdtb-planning-ui-reliability.md
+        description: Frozen source-side plan modified by the prior T2.
+      - path: /Users/walle-mini/Repos/Claudius/Plans Link/STATUS.md
+        description: Generated source-side lifecycle projection.
+      - path: "/Users/walle-mini/Obsidian/WALL\u22c5E-THNK/50 - Operations/Plans/TDTB Planning UI and Reliability Rework.md"
+        description: Prior tracker projection listed by the receipt.
+    flags:
+      requires_design_validation: false
+      retries_used: 0
+      revision_reason: ''
+    acceptance_criteria:
+      - The original receipt path, existence, SHA-256, immutable marker, and historical scope are recorded in a canonical evidence ledger.
+      - The frozen plan and every known T2-generated projection are recorded as historical side effects with before/after identity where available.
+      - The receipt is explicitly non-authoritative for current ownership and no T2/T3 task is used as a dependency or target claim.
+      - No historical receipt, plan, status projection, tracker record, or unrelated source dirty path is deleted or silently changed.
+    handoff:
+      known_context:
+        - The prior receipt reports zero dirty owned paths but detects a competing active claim.
+        - The prior freeze was a Claudius-side side effect, not a completed transfer.
+      target_files:
+        - docs/plan/2026-08-12-tdtb-project-extraction/evidence/prior-side-effect-ledger.json
+      constraints:
+        - Read and hash historical evidence; do not accept it as the current source receipt.
+        - Do not mutate the vault tracker during this historical classification task.
+    requires_review: true
+    review_depth: full
+    review_security_sensitive: false
+
+  - id: M3
+    title: Capture the current source dirty-state receipt
+    description: >-
+      Seal the current Claudius checkout state before staging or destination
+      preparation, including the source HEAD, status, tracked and untracked
+      bytes, transfer-map entries, modes, symlinks, and stable content hashes.
+    wave: 2
+    agent: gem-implementer
+    status: pending
+    covers:
+      - current source receipt
+      - dirty work preservation
+      - transfer entry hashes
+      - fail-closed drift detection
+    depends_on:
+      - M1
+    conflicts_with:
+      - M5
+      - M7
+      - M8
+    context_files:
+      - path: /Users/walle-mini/Repos/Claudius/.git
+        description: Source Git state and object identity.
+      - path: /Users/walle-mini/Repos/Claudius/Tasks/tdtb-app-pilot
+        description: Source application bytes and modes.
+      - path: /Users/walle-mini/Repos/Claudius/Projects/TDTB
+        description: Source project bytes and modes.
+      - path: docs/plan/2026-08-12-tdtb-project-extraction/evidence/source-inventory.json
+        description: Bounded manifest that defines the receipt scope.
+    flags:
+      requires_design_validation: false
+      retries_used: 0
+      revision_reason: ''
+    acceptance_criteria:
+      - Receipt records source root, branch, HEAD, full status porcelain, tracked changes, untracked files, deletions, renames, modes, symlinks, and stable hashes for the approved transfer scope.
+      - Receipt records unrelated dirty paths as protected and does not reset, clean, stash, rebase, rewrite, or reassign them.
+      - Receipt has a sealed normalized manifest hash and explicit abort rules for post-capture source drift.
+      - Receipt is captured before any staging, target preparation, consumer rewrite, or app implementation.
+    handoff:
+      known_context:
+        - The inspected source checkout is dirty in unrelated paths.
+        - The prior receipt is historical and cannot substitute for this current receipt.
+        - M1 inventory is an input only; copying begins only after M3Q completes its pause and verification gate.
+      target_files:
+        - docs/plan/2026-08-12-tdtb-project-extraction/evidence/source-dirty-state-receipt.json
+      constraints:
+        - Capture bytes without altering source state.
+        - Any source drift after sealing requires abort and recapture.
+    requires_review: true
+    review_depth: full
+    review_security_sensitive: false
+
+  - id: M3Q
+    title: Quiesce the live app and all known source writers
+    description: >-
+      Establish a pre-staging quiescence gate for the live com.walle.tdtb
+      process and every known writer identified by M1. Pause or prove quiescent
+      every writer, verify the paused or quiescent state, and immediately
+      revalidate the sealed source receipt before staging. Keep paused writers
+      paused through staging and staged verification; M6R owns the verified
+      resume after copy verification. Any uncertainty fails closed.
+    wave: 4
+    agent: gem-devops
+    status: pending
+    covers:
+      - active writer inventory
+      - live process quiescence
+      - receipt drift prevention
+      - pre-staging gate
+    depends_on:
+      - M3
+      - M4
+    conflicts_with:
+      - M5
+      - M7
+      - M8
+      - M12
+    context_files:
+      - path: docs/plan/2026-08-12-tdtb-project-extraction/evidence/source-inventory.json
+        description: M1 evidence naming the live launchd consumer and source identity.
+      - path: docs/plan/2026-08-12-tdtb-project-extraction/evidence/source-dirty-state-receipt.json
+        description: Sealed source receipt to revalidate after quiescence.
+      - path: /Users/walle-mini/Repos/Claudius/Tasks/tdtb-app-pilot/launchd/com.walle.tdtb.plist
+        description: Source launch template and known live writer contract.
+      - path: /Users/walle-mini/Repos/Claudius/Tasks/tdtb-app-pilot/restart-live.sh
+        description: Known live-ops writer or restart surface to classify.
+    flags:
+      requires_design_validation: false
+      retries_used: 0
+      revision_reason: M0 blocking critique identified active-writer drift after receipt.
+    acceptance_criteria:
+      - All known active writers and the live com.walle.tdtb process are enumerated from M1 and classified.
+      - Every writer is safely paused or independently proven quiescent before staging; no unknown writer is accepted, and the state is recorded.
+      - A post-pause receipt check matches source root, HEAD, status, manifest hash, and mapped bytes exactly before M5 starts.
+      - Paused writers remain paused through M5 and M6; no resume is inferred from staging or verification.
+      - Failure to pause, prove quiescence, or match the receipt blocks M5 onward and records the exact writer or drift.
+      - This gate does not silently restart launchd, change process paths, or claim live cutover.
+    handoff:
+      known_context:
+        - M1 records PID 24339 and a source launch path; the source may still be live.
+        - M3 seals content before the quiescence check, so drift must abort rather than be repaired in place.
+        - The required flow is pause, copy, verify, then resume; M6R must verify resume or fail closed.
+      target_files:
+        - docs/plan/2026-08-12-tdtb-project-extraction/evidence/quiescence-receipt.json
+      constraints:
+        - Fail closed if any known writer cannot be paused or verified quiescent.
+        - Do not use a live provider, vault, Todoist, Calendar, or billed endpoint.
+        - Do not perform live cutover; that requires M12 and explicit approval.
+    requires_review: true
+    review_depth: full
+    review_security_sensitive: true
+    environment: production
+    requires_approval: true
+    devops_security_sensitive: true
+
+  - id: M6R
+    title: Verify writer resume after staged migration verification
+    description: >-
+      Always run after the terminal outcome of M5 or M6, including success,
+      failure, blocked, needs_revision, or needs_replan. Resume every writer
+      paused by M3Q and independently verify the resumed process or writer state.
+      For a writer proven quiescent without pause, verify that its safe state
+      remains recorded. If any resume or verification is unsafe or ambiguous,
+      fail closed, preserve the evidence, emit escalation_required, and block
+      canonical installation and all later gates.
+    wave: 7
+    agent: gem-devops
+    status: pending
+    covers:
+      - verified writer resume
+      - quiescence lifecycle closure
+      - post-copy safety
+      - fail-closed resume handling
+    depends_on:
+      - M3Q
+    always_run: true
+    terminal_after:
+      - M5
+      - M6
+    run_after_statuses:
+      - completed
+      - failed
+      - blocked
+      - needs_revision
+      - needs_replan
+    green_requires:
+      - M6
+    conflicts_with:
+      - M7
+      - M12
+    context_files:
+      - path: docs/plan/2026-08-12-tdtb-project-extraction/evidence/quiescence-receipt.json
+        description: M3Q pause and pre-copy receipt evidence.
+      - path: docs/plan/2026-08-12-tdtb-project-extraction/evidence/staged-verification.json
+        description: M6 green staged byte and content comparison.
+      - path: /Users/walle-mini/Repos/Claudius/Tasks/tdtb-app-pilot/launchd/com.walle.tdtb.plist
+        description: Source launch contract for writer-state verification.
+    flags:
+      requires_design_validation: false
+      retries_used: 0
+      revision_reason: M0 blocking critique requires verified resume after copy and verification.
+    acceptance_criteria:
+      - M6R runs after every terminal M5 or M6 outcome, including failure and blocked outcomes; the recovery path is not skipped.
+      - Every writer paused by M3Q has a recorded resume action and independently verified expected resumed state.
+      - Every writer classified as already quiescent has a recorded post-copy state check; no unverified writer is accepted.
+      - On M5 or M6 failure, recovery uses the last safe writer state and records the triggering status before resuming or escalating.
+      - Resume verification occurs before M7 installs material; a green M6 is required for the success path, but never for recovery execution.
+      - Any resume failure, unexpected state, receipt drift, or ambiguous result emits escalation_required, fails closed, and blocks M7 onward.
+      - The task does not change application behavior, perform live cutover, or claim M11 migration acceptance.
+    handoff:
+      known_context:
+        - M3Q owns pause and pre-copy receipt verification; M5 and M6 run while paused writers remain held.
+        - M6R closes the pause-copy-verify-resume sequence before destination installation.
+      target_files:
+        - docs/plan/2026-08-12-tdtb-project-extraction/evidence/quiescence-resume-receipt.json
+      constraints:
+        - Fail closed if pause ownership, resume safety, or resumed-state verification is incomplete.
+        - Do not restart launchd through an unapproved path or change the live consumer to the destination.
+        - Do not use live providers, vault, Todoist, Calendar, or billed endpoints.
+    requires_review: true
+    review_depth: full
+    review_security_sensitive: true
+    environment: production
+    requires_approval: true
+    devops_security_sensitive: true
+
+  - id: M4
+    title: Resolve collisions and seal the transfer map
+    description: >-
+      Convert the inventory and current receipt into a normalized source-to-target
+      map with explicit move, merge, retain, historical, generated, and excluded
+      classifications. Resolve destination root collisions before staging.
+    wave: 3
+    agent: gem-implementer
+    status: pending
+    covers:
+      - source-to-target mapping
+      - root collision handling
+      - exclusion policy
+      - manifest sealing
+    depends_on:
+      - M2
+      - M3
+    conflicts_with: []
+    context_files:
+      - path: docs/plan/2026-08-12-tdtb-project-extraction/evidence/source-inventory.json
+        description: Bounded source and destination inventory.
+      - path: docs/plan/2026-08-12-tdtb-project-extraction/evidence/source-dirty-state-receipt.json
+        description: Current source receipt and protected dirty paths.
+      - path: /Users/walle-mini/Repos/Projects/TDTB/AGENTS.md
+        description: Destination collision candidate.
+      - path: /Users/walle-mini/Repos/Projects/TDTB/README.md
+        description: Destination collision candidate.
+    flags:
+      requires_design_validation: false
+      retries_used: 0
+      revision_reason: ''
+    acceptance_criteria:
+      - Every required source item has exactly one approved destination or an explicit retain, historical, generated, or excluded disposition.
+      - AGENTS.md and README.md collisions have an explicit content-preserving resolution and do not overwrite destination planning files.
+      - The map excludes .git, virtual environments, caches, credentials, and generated evidence unless explicitly classified as required artifacts.
+      - The map records provenance manifests and receipts without copying any source .git directory; full source history is explicitly out of scope.
+      - The normalized map is sealed and any unclassified, duplicate, extra, or ambiguous path blocks staging.
+    handoff:
+      known_context:
+        - Tasks/tdtb-app-pilot is flattened into the destination root.
+        - Projects/TDTB policy and archive are merged into the destination root.
+      target_files:
+        - docs/plan/2026-08-12-tdtb-project-extraction/evidence/transfer-map.json
+        - docs/plan/2026-08-12-tdtb-project-extraction/evidence/collision-manifest.json
+      constraints:
+        - Do not resolve a collision by silent overwrite or deletion.
+        - The map must be deterministic and consumable by staging and verification tasks.
+    requires_review: true
+    review_depth: full
+    review_security_sensitive: false
+
+  - id: M5
+    title: Stage the migration outside the canonical destination
+    description: >-
+      Materialize the approved map in an isolated staging root from the selected
+      Claudius source, preserving content, modes, symlink targets, and receipt
+      provenance without changing the source or canonical destination. This
+      task may start only after M3Q proves writer quiescence and receipt stability.
+    wave: 5
+    agent: gem-implementer
+    status: pending
+    covers:
+      - isolated staging
+      - source preservation
+      - path mapping
+      - mode and symlink preservation
+    depends_on:
+      - M4
+      - M3Q
+    recovery_task: M6R
+    recovery_trigger: terminal
+    conflicts_with: []
+    context_files:
+      - path: docs/plan/2026-08-12-tdtb-project-extraction/evidence/transfer-map.json
+        description: Sealed source-to-target map.
+      - path: docs/plan/2026-08-12-tdtb-project-extraction/evidence/source-dirty-state-receipt.json
+        description: Current source state to preserve.
+      - path: /Users/walle-mini/Repos/Claudius/Tasks/tdtb-app-pilot
+        description: Source application tree.
+      - path: /Users/walle-mini/Repos/Claudius/Projects/TDTB
+        description: Source project tree.
+    flags:
+      requires_design_validation: false
+      retries_used: 0
+      revision_reason: ''
+    acceptance_criteria:
+      - An isolated staging root contains every approved transfer entry at its mapped target path.
+      - Source bytes, file modes, symlink targets, and tracked or untracked classifications remain unchanged.
+      - Staging contains no unapproved extra path, credential, virtual environment, cache, or generated evidence.
+      - Canonical destination, Claudius consumers, live service, and source dirty state are unchanged by staging.
+      - Staging records source remote, resolved root, branch, HEAD, and per-entry hashes without copying source .git or claiming full history import.
+    handoff:
+      known_context:
+        - Staging must occur before any destination install or consumer rewiring.
+        - The source fallback remains available while staging and verification run.
+      target_files:
+        - docs/plan/2026-08-12-tdtb-project-extraction/evidence/staged-manifest.json
+      constraints:
+        - Use the sealed map and receipt; do not improvise source paths.
+        - Keep the staging root isolated from the canonical repository until M7.
+    requires_review: true
+    review_depth: full
+    review_security_sensitive: false
+
+  - id: M6
+    title: Verify staged bytes and content independently
+    description: >-
+      Compare the staged tree against the sealed source receipt and map with
+      fail-closed checks for missing, extra, changed, lossy, or mismatched files
+      before any install into the canonical repository.
+    wave: 6
+    agent: gem-implementer
+    status: pending
+    covers:
+      - byte and content verification
+      - missing and extra path checks
+      - receipt comparison
+      - staged gate
+    depends_on:
+      - M5
+    recovery_task: M6R
+    recovery_trigger: terminal
+    conflicts_with: []
+    context_files:
+      - path: docs/plan/2026-08-12-tdtb-project-extraction/evidence/source-dirty-state-receipt.json
+        description: Authoritative current source receipt for the transfer scope.
+      - path: docs/plan/2026-08-12-tdtb-project-extraction/evidence/transfer-map.json
+        description: Sealed map and collision decisions.
+      - path: docs/plan/2026-08-12-tdtb-project-extraction/evidence/staged-manifest.json
+        description: Staged content manifest.
+    flags:
+      requires_design_validation: false
+      retries_used: 0
+      revision_reason: ''
+    acceptance_criteria:
+      - Every mapped source entry is present in staging with matching byte hash, text or binary hash, mode, symlink target, and classification.
+      - No staged path is extra, missing, renamed unexpectedly, or outside the sealed map.
+      - The receipt seal and staged manifest validate independently and produce a green comparison record.
+      - Any mismatch leaves source and destination untouched and requires a new receipt or map rather than a manual exception.
+    handoff:
+      known_context:
+        - A prior receipt had source-side only verification and no target comparison.
+        - This task is the first target-side byte comparison and must not be skipped.
+      target_files:
+        - docs/plan/2026-08-12-tdtb-project-extraction/evidence/staged-verification.json
+      constraints:
+        - Treat missing, extra, or mismatched content as a hard failure.
+        - Do not install or rewire on a failed comparison.
+    requires_review: true
+    review_depth: full
+    review_security_sensitive: false
+
+  - id: M7
+    title: Install the verified material into the canonical TDTB repository
+    description: >-
+      Promote only the verified staged tree into /Users/walle-mini/Repos/Projects/TDTB,
+      applying the approved collision decisions and keeping the destination as
+      the active working repository.
+    wave: 8
+    agent: gem-implementer
+    status: pending
+    covers:
+      - canonical destination migration
+      - root layout
+      - collision application
+      - destination preservation
+    depends_on:
+      - M6
+      - M6R
+    conflicts_with: []
+    context_files:
+      - path: docs/plan/2026-08-12-tdtb-project-extraction/evidence/transfer-map.json
+        description: Approved map and collision resolutions.
+      - path: docs/plan/2026-08-12-tdtb-project-extraction/evidence/staged-verification.json
+        description: Green staged content verification.
+      - path: /Users/walle-mini/Repos/Projects/TDTB
+        description: Canonical destination and current working tree.
+    flags:
+      requires_design_validation: false
+      retries_used: 0
+      revision_reason: ''
+    acceptance_criteria:
+      - The destination root contains the migrated app, frontend, tests, fixtures, launch documentation, project policy, and approved archive material.
+      - The destination has no unintended nested Tasks/tdtb-app-pilot or Projects/TDTB application boundary.
+      - Existing destination planning infrastructure and approved non-collision files remain intact.
+      - Destination content is rechecked against the staged verification record before consumer rewiring.
+    handoff:
+      known_context:
+        - The destination root is the canonical TDTB repository and must remain the working repo.
+        - Application implementation is not authorized until the later M11 gate.
+      target_files:
+        - app/
+        - frontend/
+        - archive/skill-era/
+        - AGENTS.md
+        - README.md
+      constraints:
+        - Apply only M4 collision decisions and M6-verified content.
+        - Do not alter Claudius consumers or the live service in this task.
+    requires_review: true
+    review_depth: full
+    review_security_sensitive: false
+
+  - id: M8
+    title: Rewire Claudius consumers to the canonical TDTB root
+    description: >-
+      Update operational Claudius references so shared skills remain in Claudius
+      while bootstrap, launch templates, scratch configuration, tests, audits,
+      bundle checks, documentation, and path resolution use the canonical TDTB
+      repository. Prepare launch and restart references only; do not change the
+      currently loaded launchd or running process consumer.
+    wave: 9
+    agent: gem-implementer
+    status: pending
+    covers:
+      - shared skill consumers
+      - bootstrap and launch references
+      - boundary and runner tests
+      - documentation and path resolution
+    depends_on:
+      - M7
+    conflicts_with: []
+    context_files:
+      - path: /Users/walle-mini/Repos/Claudius/Skills/user/tdtb-bridger-vault
+        description: Canonical shared skill consumer surface.
+      - path: /Users/walle-mini/Repos/Claudius/Configurations/gpt-stack
+        description: GPT-compatible shared skill and bootstrap surface.
+      - path: /Users/walle-mini/Repos/Claudius/.claude/launch.json
+        description: Scratch launch configuration consumer.
+      - path: /Users/walle-mini/Repos/Claudius/Scripts/test_tdtb_project_boundary.py
+        description: Repository boundary verification.
+      - path: /Users/walle-mini/Repos/Claudius/CLAUDE.md
+        description: Repository-level path and instruction references.
+    flags:
+      requires_design_validation: false
+      retries_used: 0
+      revision_reason: ''
+    acceptance_criteria:
+      - Every non-live operational app, bundle, test, audit, and path-resolution consumer resolves to /Users/walle-mini/Repos/Projects/TDTB or an approved canonical-root contract.
+      - The live launchd/process consumer is recorded as pre-cutover source state and is not changed by M8.
+      - Shared TDTB skills, scheduled rituals, historical plans, reports, and references remain owned by Claudius.
+      - No consumer rewrite touches unrelated dirty files or activates a live launchd or service change.
+      - Boundary and consumer checks pass with the destination present and the old tree classified as pre-cutover fallback.
+    handoff:
+      known_context:
+        - Prior inventory names Skills, Configurations, Scripts, CLAUDE.md, launch configs, and tests as consumer surfaces.
+        - Physical source deletion and live launchd rewiring are deferred to attended M12.
+      target_files:
+        - /Users/walle-mini/Repos/Claudius/Skills/user/tdtb-bridger-vault/
+        - /Users/walle-mini/Repos/Claudius/Configurations/gpt-stack/
+        - /Users/walle-mini/Repos/Claudius/Configurations/gpt-stack/seat-bootstrap.sh
+        - /Users/walle-mini/Repos/Claudius/.claude/launch.json
+        - /Users/walle-mini/Repos/Claudius/Scripts/
+        - /Users/walle-mini/Repos/Claudius/CLAUDE.md
+      constraints:
+        - Keep shared behavior in Claudius; rewire references, do not relocate shared skills.
+        - Use path-scoped edits and preserve foreign dirty changes.
+        - Do not claim operational cutover completion while the live consumer still points to source; this does not invalidate M11 material-migration acceptance.
+    requires_review: true
+    review_depth: full
+    review_security_sensitive: false
+
+  - id: M9
+    title: Sweep and classify remaining Claudius TDTB references
+    description: >-
+      Run the broad post-migration TDTB reference sweep across the remaining
+      Claudius repository and classify every result as intentional operational
+      wiring, historical or archive evidence, intentional fallback, or broken.
+    wave: 10
+    agent: gem-implementer
+    status: pending
+    covers:
+      - broad reference sweep
+      - historical allowlist
+      - fallback classification
+      - orphan detection
+    depends_on:
+      - M8
+    conflicts_with: []
+    context_files:
+      - path: /Users/walle-mini/Repos/Claudius
+        description: Remaining source repository to sweep.
+      - path: docs/plan/2026-08-12-tdtb-project-extraction/evidence/transfer-map.json
+        description: Approved moved, retained, and historical paths.
+      - path: docs/plan/2026-08-12-tdtb-project-extraction/evidence/prior-side-effect-ledger.json
+        description: Historical side effects that must remain classified, not deleted.
+    flags:
+      requires_design_validation: false
+      retries_used: 0
+      revision_reason: ''
+    acceptance_criteria:
+      - Sweep covers runtime text, path literals, launch and bootstrap references, scripts, tests, docs, plans, reports, and archives in the remaining Claudius repository.
+      - Every match has one recorded disposition: intentional, historical/archive, fallback, or broken/orphaned.
+      - Zero unresolved broken or orphaned non-live operational references remain; the live source consumer is recorded as pre-cutover and blocks only operational cutover completion until M12.
+      - The prior receipt and freeze records are explicitly historical, and any retained app tree is explicitly pre-cutover fallback.
+    handoff:
+      known_context:
+        - A broad sweep is high signal only after the app boundary and consumers have moved.
+        - Historical references must be classified rather than erased.
+      target_files:
+        - docs/plan/2026-08-12-tdtb-project-extraction/evidence/post-migration-sweep.json
+      constraints:
+        - Do not rewrite historical plans merely to remove valid provenance references.
+        - Treat any unresolved non-live runtime reference as a hard migration failure; classify the live source reference for M12 instead of silently changing it.
+    requires_review: true
+    review_depth: full
+    review_security_sensitive: false
+
+  - id: M10
+    title: Safely reconcile the stale freeze and source-side ownership
+    description: >-
+      After the destination and consumers are verified, close the prior
+      Claudius-side freeze through an evidence-backed source lifecycle action,
+      preserve the original receipt, re-home the outstanding implementation
+      scope, and leave any source app tree explicitly pre-cutover fallback until
+      attended M12.
+    wave: 11
+    agent: gem-implementer
+    status: pending
+    covers:
+      - prior freeze cleanup
+      - source ownership release
+      - implementation backlog re-home
+      - fallback closeout
+    depends_on:
+      - M9
+    conflicts_with: []
+    context_files:
+      - path: /Users/walle-mini/Repos/Claudius/Plans Link/2026-08-09-tdtb-planning-ui-reliability.md
+        description: Source plan carrying the stale T2 freeze state and outstanding work.
+      - path: /Users/walle-mini/Repos/Claudius/Plans Link/2026-07-17-tdtb-cockpit-overhaul.md
+        description: Earlier plan whose app claim was reported as competing historical ownership.
+      - path: /Users/walle-mini/Repos/Claudius/Plans Link/2026-08-12-tdtb-project-extraction/evidence/transfer-receipt.json
+        description: Historical receipt that must remain intact.
+      - path: docs/plan/2026-08-12-tdtb-project-extraction/evidence/post-migration-sweep.json
+        description: Sweep proving the old source tree is not operationally referenced.
+      - path: docs/plan/2026-08-12-tdtb-project-extraction/evidence/source-dirty-state-receipt.json
+        description: Current source state and protected unrelated dirty paths.
+    flags:
+      requires_design_validation: false
+      retries_used: 0
+      revision_reason: ''
+    acceptance_criteria:
+      - The original Claudius receipt remains present and byte-identical, and its source hash is linked from canonical evidence.
+      - The stale T2 freeze is explicitly reconciled by a supported, reversible lifecycle action after preconditions pass; if state drift prevents safe reconciliation, no write occurs and a blocked handoff records the exact conflict.
+      - All prior app claims, including the 2026-07-17 and frozen 2026-08-09 plans, are explicitly released, re-homed, or recorded as non-operational historical claims; no old T3 ownership claim, target-root claim, or dual-writer state is created.
+      - The outstanding implementation scope is explicitly re-homed to I1-I9.
+      - Any retained Claudius app tree is labeled pre-cutover fallback, and unrelated dirty paths, vault data, and live service state are untouched.
+    handoff:
+      known_context:
+        - The prior receipt records a freeze but no accepted T3 handoff and detects a competing historical claim.
+        - This task is a new post-migration reconciliation, not continuation of the old T2/T3 path.
+      target_files:
+        - docs/plan/2026-08-12-tdtb-project-extraction/evidence/source-closeout-receipt.json
+        - /Users/walle-mini/Repos/Claudius/Plans Link/2026-08-09-tdtb-planning-ui-reliability.md
+      constraints:
+        - Never delete the original receipt or restore a stale hash over a newer source change.
+        - Use supported tracker transitions and stop on any concurrent source drift.
+        - Do not physically delete the old app tree or change the live consumer before attended M12.
+    requires_review: true
+    review_depth: full
+    review_security_sensitive: false
+
+  - id: M11
+    title: Independently accept final material migration before implementation
+    description: >-
+      Audit the migration evidence and both repository states as an independent
+      gate. Approve implementation only when the canonical target, receipt
+      comparison, collision handling, consumer rewiring, sweep, and source-side
+      reconciliation all agree. This is the final material-migration completion
+      gate and the sole migration prerequisite for implementation. It does not
+      claim operational live cutover or final post-cutover closeout.
+    wave: 12
+    agent: gem-reviewer
+    status: pending
+    covers:
+      - migration acceptance
+      - dual-repository verification
+      - implementation readiness
+      - fail-closed closeout
+    depends_on:
+      - M10
+    conflicts_with: []
+    context_files:
+      - path: docs/plan/2026-08-12-tdtb-project-extraction/plan.yaml
+        description: Authoritative DAG and acceptance contract.
+      - path: docs/plan/2026-08-12-tdtb-project-extraction/evidence
+        description: Migration evidence directory.
+      - path: /Users/walle-mini/Repos/Projects/TDTB
+        description: Canonical destination repository.
+      - path: /Users/walle-mini/Repos/Claudius
+        description: Rewired source repository and retained historical evidence.
+    flags:
+      requires_design_validation: false
+      retries_used: 0
+      revision_reason: ''
+    acceptance_criteria:
+      - M1 through M10, M3Q, and M6R evidence exists, is internally consistent, and has no unresolved fail-closed condition.
+      - M6R evidence proves the pause-copy-verify-resume sequence completed with verified resume, or records escalation_required and a fail-closed stop.
+      - Canonical TDTB contains the migrated application and project boundary at its root and passes the migration-specific destination checks.
+      - All non-live Claudius consumers resolve to the canonical target; the live source consumer is explicitly pre-cutover and M12 remains required.
+      - The prior freeze and receipt are explicitly historical and safely reconciled without evidence deletion.
+      - The reviewer records a green final material-migration acceptance gate; otherwise every implementation task remains blocked.
+    handoff:
+      known_context:
+        - M11 is the sole migration prerequisite for implementation and must not be skipped or inferred from a partial copy.
+        - The user requires migration verification before outstanding implementation work; live cutover remains a separate attended gate.
+      target_files: []
+      constraints:
+        - Review-only; do not implement application behavior or approve live actions.
+        - M12 is the separate attended cutover gate and must not be inferred from this review; M13 is final operational closeout.
+        - Return needs_revision or blocked on any missing evidence, drift, collision, or consumer failure.
+    requires_review: false
+    review_depth: null
+    review_security_sensitive: false
+
+  - id: M12
+    title: Execute the attended live runtime cutover gate
+    description: >-
+      Change the live launchd or process consumer from the Claudius source app
+      to the verified canonical TDTB runtime only after explicit attended user
+      approval. Capture the pre-cutover source consumer before mutation, then
+      revalidate quiescence and provenance at the gate. If any partial mutation
+      or post-cutover verification fails, restore that source consumer when safe,
+      verify the restored identity, and record escalation_required when safe
+      rollback or verification is not possible. Preserve the source tree as a
+      marked non-operational fallback only after a verified successful cutover.
+    wave: 22
+    agent: gem-devops
+    status: pending
+    covers:
+      - attended live cutover
+      - launchd consumer transition
+      - post-cutover process verification
+      - fallback deactivation
+    depends_on:
+      - I9
+      - M11
+    conflicts_with:
+      - M3Q
+    context_files:
+      - path: docs/plan/2026-08-12-tdtb-project-extraction/evidence/source-inventory.json
+        description: M1 evidence naming the source live consumer and destination identity.
+      - path: docs/plan/2026-08-12-tdtb-project-extraction/evidence/quiescence-receipt.json
+        description: M3Q proof that writers were paused and the receipt remained stable.
+      - path: docs/plan/2026-08-12-tdtb-project-extraction/evidence/post-migration-sweep.json
+        description: M9 classification of remaining source references and fallback state.
+      - path: /Users/walle-mini/Repos/Projects/TDTB/launchd/com.walle.tdtb.plist
+        description: Canonical launch template prepared by migration and consumer rewiring.
+      - path: /Users/walle-mini/Repos/Claudius/Tasks/tdtb-app-pilot/launchd/com.walle.tdtb.plist
+        description: Historical source launch template and pre-cutover consumer reference.
+    flags:
+      requires_design_validation: false
+      retries_used: 0
+      revision_reason: M0 blocking critique requires attended approval for live runtime changes.
+    rollback:
+      preimage: >-
+        Capture source launchd/process consumer identity, executable, working
+        directory, launch configuration, loaded state, and relevant hashes before
+        any live mutation.
+      trigger_statuses:
+        - failed
+        - blocked
+        - needs_revision
+        - needs_replan
+      action: >-
+        Restore the captured source consumer when the preimage is intact and the
+        restoration operation is safe; do not delete the source fallback first.
+      verification: >-
+        Verify the restored launch configuration, active process identity,
+        executable, working directory, and source consumer target against the
+        preimage. Record each comparison in cutover-receipt.json.
+      unsafe_result: >-
+        Set escalation_required, preserve all evidence, block M13, and do not
+        claim cutover success or silently mark rollback complete.
+    acceptance_criteria:
+      - Explicit user approval is recorded before any launchd or process mutation; absent approval causes a no-write blocked result.
+      - Source receipt, M3Q quiescence, destination manifest, canonical launch target, and the source rollback preimage are revalidated immediately before cutover.
+      - After cutover, the active process identity, executable, working directory, and launch configuration resolve to /Users/walle-mini/Repos/Projects/TDTB.
+      - On a verified successful cutover, no known operational consumer remains pointed at the source and the retained source tree is labeled non-operational fallback.
+      - Source dirty paths, historical receipts, M1 evidence, destination Git identity, and external provider data remain unchanged.
+      - Any partial cutover failure attempts restoration of the captured source consumer before success is reported.
+      - A rollback attempt is green only when the restored launch configuration, process identity, executable, working directory, and source target match the pre-cutover preimage.
+      - If rollback is unsafe or verification is incomplete, the receipt records escalation_required, M12 is not successful, and M13 operational closeout remains blocked.
+      - A verified rollback leaves the source consumer operational as before cutover, records the exact blocker, and blocks M13 or triggers bounded replan; it does not claim successful cutover or mark M11 or completed implementation tasks undone without evidence.
+    handoff:
+      known_context:
+        - M10 prepares the source-side closeout but does not change live runtime state.
+        - M12 is the only task allowed to perform live launchd or process cutover.
+      target_files:
+        - docs/plan/2026-08-12-tdtb-project-extraction/evidence/cutover-receipt.json
+      constraints:
+        - Requires explicit attended user approval; planner approval is not execution approval.
+        - Do not call billed endpoints or mutate Todoist, Calendar, vault data, or source dirty work.
+        - Do not copy source .git or import full Claudius history during cutover.
+    requires_review: true
+    review_depth: full
+    review_security_sensitive: true
+    environment: production
+    requires_approval: true
+    devops_security_sensitive: true
+
+  - id: M13
+    title: Independently accept post-cutover operational closeout
+    description: >-
+      Review the complete material migration, implementation, and attended
+      cutover evidence after M12. Confirm the canonical repository is the
+      operational owner, the source fallback is non-operational, provenance is
+      preserved without source Git history import, and final closeout is safe.
+    wave: 23
+    agent: gem-reviewer
+    status: pending
+    covers:
+      - post-cutover operational closeout
+      - operational ownership verification
+      - provenance and history boundary
+      - baseline closeout
+    depends_on:
+      - M12
+      - I9
+      - M11
+    conflicts_with: []
+    context_files:
+      - path: docs/plan/2026-08-12-tdtb-project-extraction/plan.yaml
+        description: Revised objective, baseline, cutover rules, and DAG.
+      - path: docs/plan/2026-08-12-tdtb-project-extraction/evidence
+        description: Complete migration, implementation, and cutover evidence.
+      - path: /Users/walle-mini/Repos/Projects/TDTB
+        description: Canonical destination and operational repository.
+      - path: /Users/walle-mini/Repos/Claudius
+        description: Source repository with historical evidence and non-operational fallback.
+    flags:
+      requires_design_validation: false
+      retries_used: 0
+      revision_reason: M0 critique requires a distinct post-cutover acceptance gate.
+    acceptance_criteria:
+      - M1 evidence remains present and all migration, implementation, and cutover evidence is internally consistent.
+      - Active launchd/process identity and all known operational consumers point to /Users/walle-mini/Repos/Projects/TDTB.
+      - The Claudius app tree is explicitly non-operational fallback, and no fallback or dual-writer ambiguity remains.
+      - Source dirty work, historical receipt bytes, destination Git identity, and external data remain preserved.
+      - Source remote, resolved root, branch, HEAD, transfer map, receipts, and per-entry hashes prove provenance; source .git was not copied and full history import remains out of scope.
+      - Every baseline acceptance criterion has a passing evidence reference; otherwise the plan remains blocked or needs revision.
+      - A post-cutover validation failure blocks only M13 closeout or triggers a bounded replan, and does not undo M11 or completed implementation tasks without evidence that their criteria failed.
+    handoff:
+      known_context:
+        - M11 is the final material-migration gate; I9 gates implementation; M12 gates live cutover.
+        - M13 is review-only and does not execute cleanup, history import, or further live changes.
+      target_files:
+        - docs/plan/2026-08-12-tdtb-project-extraction/evidence/post-cutover-acceptance.json
+      constraints:
+        - Review-only; do not mutate application, source, consumer, live, vault, or external provider state.
+        - Do not copy .git, import history, delete fallback, or claim success from a missing receipt.
+        - Do not retroactively mark earlier migration or implementation tasks incomplete without evidence tied to their acceptance criteria.
+    requires_review: false
+    review_depth: null
+    review_security_sensitive: false
+
+  - id: I1
+    title: Re-home the outstanding contract test and fixture work
+    description: >-
+      In the verified canonical repository, establish the failing-first contract
+      tests and fixture coverage for the outstanding TDTB planning UI and
+      reliability backlog without changing the migration boundary.
+    wave: 13
+    agent: gem-implementer
+    status: pending
+    covers:
+      - migrated test baseline
+      - backend and frontend contract fixtures
+      - locked behavior coverage
+      - outstanding backlog re-home
+    depends_on:
+      - M11
+    conflicts_with: []
+    context_files:
+      - path: /Users/walle-mini/Repos/Projects/TDTB/app
+        description: Migrated backend application and tests.
+      - path: /Users/walle-mini/Repos/Projects/TDTB/frontend
+        description: Migrated frontend and tests.
+      - path: /Users/walle-mini/Repos/Claudius/Plans Link/2026-08-09-tdtb-planning-ui-reliability.md
+        description: Outstanding implementation scope and locked contracts.
+    flags:
+      requires_design_validation: false
+      retries_used: 0
+      revision_reason: ''
+    acceptance_criteria:
+      - Canonical-repository tests cover calendar identity, all-day and date semantics, exact Live/Mint IDs, duration precedence, final actions, soft rules, UI composition, and pruned-surface removal.
+      - The test baseline demonstrates the current gaps before behavior implementation and records the migrated source scope it replaces.
+      - Tests and fixtures use fake, synthetic, or scratch inputs only and contain no live provider or source writes.
+      - No Claudius source app path is used as the implementation target.
+    handoff:
+      known_context:
+        - Migration is green at M11; the canonical repository is now the only implementation target.
+        - The old active plan is scope evidence, not a destination or app owner.
+      target_files:
+        - app/tests/
+        - frontend/src/
+        - frontend/src/adapters/contract-fixtures/
+      constraints:
+        - Preserve the migration evidence and consumer wiring.
+        - Follow the locked contracts from the re-homed source plan; do not expand into redesign unrelated to the backlog.
+    requires_review: true
+    review_depth: full
+    review_security_sensitive: false
+
+  - id: D1
+    title: Validate the compact cockpit design direction
+    description: >-
+      Review the migrated cockpit design evidence and produce an implementation-
+      ready validation for the desktop-first composition, responsive behavior,
+      interaction hierarchy, tokens, and accessibility constraints before UI
+      implementation.
+    wave: 13
+    agent: gem-designer
+    status: pending
+    covers:
+      - desktop-first composition
+      - responsive layout
+      - interaction hierarchy
+      - visual and accessibility constraints
+    depends_on:
+      - M11
+    conflicts_with: []
+    context_files:
+      - path: /Users/walle-mini/Repos/Projects/TDTB/frontend
+        description: Canonical migrated frontend source.
+      - path: /Users/walle-mini/Repos/Projects/TDTB/archive/skill-era/DESIGN.md
+        description: Historical design evidence to consult, not to treat as current behavior.
+      - path: /Users/walle-mini/Repos/Claudius/Plans Link/2026-08-09-tdtb-planning-ui-reliability.md
+        description: Locked UI composition and interaction contract.
+    flags:
+      requires_design_validation: false
+      retries_used: 0
+      revision_reason: ''
+    acceptance_criteria:
+      - Design validation confirms the locked compact desktop composition and identifies the implementation seams in the migrated frontend.
+      - Validation covers responsive no-clipping behavior, keyboard focus, semantic labels, reduced motion, both themes, and the absence of pruned surfaces.
+      - Validation produces a bounded handoff for I5 without modifying application source or historical design evidence.
+    handoff:
+      known_context:
+        - This is a validation handoff, not a request to copy the historical mockup HTML.
+        - Visual regression is disabled, so the implementer must preserve the explicit manual qualification contract.
+      target_files:
+        - docs/plan/2026-08-12-tdtb-project-extraction/evidence/ui-design-validation.md
+      constraints:
+        - Reference the migrated design evidence path; do not rewrite archive material.
+        - Do not add a new product surface outside the locked source-plan contract.
+    requires_review: true
+    review_depth: full
+    review_security_sensitive: false
+
+  - id: I2
+    title: Implement calendar, date, identity, and scheduling correctness
+    description: >-
+      Implement the locked backend and wire-contract corrections for calendar
+      identity, all-day preservation, date eligibility, exact Live and Mint
+      identities, structured event fields, and explained soft scheduling rules.
+    wave: 14
+    agent: gem-implementer
+    status: pending
+    covers:
+      - calendar canonicalization
+      - all-day and date semantics
+      - Live and Mint identity continuity
+      - soft scheduling rules
+    depends_on:
+      - I1
+      - M11
+    conflicts_with: []
+    context_files:
+      - path: /Users/walle-mini/Repos/Projects/TDTB/app/calendar_bridge.py
+        description: Canonical calendar input seam.
+      - path: /Users/walle-mini/Repos/Projects/TDTB/app/external_sources.py
+        description: Source identity and Mint input seam.
+      - path: /Users/walle-mini/Repos/Projects/TDTB/app/sequence.py
+        description: Scheduling and payload seam.
+      - path: /Users/walle-mini/Repos/Projects/TDTB/app/shadow.py
+        description: Shadow payload and event semantics.
+      - path: /Users/walle-mini/Repos/Projects/TDTB/app/commit.py
+        description: Commit planning boundary for structured times and all-day values.
+    flags:
+      requires_design_validation: false
+      retries_used: 0
+      revision_reason: ''
+    acceptance_criteria:
+      - Duplicate calendar events canonicalize deterministically, attendance applies once, and unknown calendars remain quarantined until reviewed.
+      - All-day values survive input, wire, sequence, shadow, and commit planning without implicit timed conversion; past rows remain visible and future work is excluded from today.
+      - Exact selected Live and Mint session identities survive setup through sequence, shadow, and commit planning.
+      - Mint direction, structured event times, semantic titles, soft-rule explanations, and today-only overrides match the locked contract.
+    handoff:
+      known_context:
+        - I1 supplies focused failing tests and fixtures.
+        - I3 and I4 follow and may depend on the corrected identity and payload seams.
+      target_files:
+        - app/calendar_bridge.py
+        - app/external_sources.py
+        - app/sequence.py
+        - app/shadow.py
+        - app/commit.py
+        - app/placement_rules.py
+        - app/judgment.py
+        - app/tests/
+      constraints:
+        - Use fake clients and fixtures; no live Todoist, Calendar, vault, billed judgment, or commit call.
+        - Preserve source boundaries and migration evidence.
+    requires_review: true
+    review_depth: full
+    review_security_sensitive: false
+
+  - id: I3
+    title: Implement deterministic duration resolution and memory
+    description: >-
+      Implement the stable-source duration resolver, precedence contract, source
+      labels, atomic memory persistence, collision handling, and safe undo behavior
+      in the canonical repository.
+    wave: 15
+    agent: gem-implementer
+    status: pending
+    covers:
+      - duration resolver
+      - stable source identity
+      - atomic memory
+      - precedence and collisions
+    depends_on:
+      - I2
+      - M11
+    conflicts_with: []
+    context_files:
+      - path: /Users/walle-mini/Repos/Projects/TDTB/app/main.py
+        description: Existing duration resolution seam.
+      - path: /Users/walle-mini/Repos/Projects/TDTB/app/config_reader.py
+        description: Duration configuration seam.
+      - path: /Users/walle-mini/Repos/Projects/TDTB/app/tests
+        description: Backend duration and source identity tests.
+      - path: /Users/walle-mini/Repos/Projects/TDTB/frontend/src/model
+        description: Frontend duration model and source presentation.
+    flags:
+      requires_design_validation: false
+      retries_used: 0
+      revision_reason: ''
+    acceptance_criteria:
+      - Duration resolution uses stable Todoist IDs or normalized vault identities and rejects name-only persistence.
+      - Precedence is saved memory, deterministic tag, native or named preset, type, then default, with visible collision failure.
+      - API and frontend wire data expose minutes and the winning source label.
+      - Deliberate edits persist atomically only after success, leave source fields untouched, and support safe same-date undo.
+    handoff:
+      known_context:
+        - I2 establishes date and source identity semantics used by the resolver.
+        - I4 consumes duration values in final action and planning flows.
+      target_files:
+        - app/main.py
+        - app/config_reader.py
+        - app/
+        - frontend/src/model/
+        - frontend/src/adapters/
+        - app/tests/
+        - frontend/src/
+      constraints:
+        - Use the existing cache discipline and atomic replacement pattern.
+        - Do not rewrite Todoist or vault source duration fields.
+    requires_review: true
+    review_depth: full
+    review_security_sensitive: false
+
+  - id: I4
+    title: Implement the final source-action engine
+    description: >-
+      Replace ambiguous staging verbs with the locked Done, Drop from plan,
+      Unassign, and Delete behavior across pre-commit and post-commit flows,
+      including linked-source preflight, compensation, journaling, idempotency,
+      and safe undo.
+    wave: 16
+    agent: gem-implementer
+    status: pending
+    covers:
+      - Done semantics
+      - date-scoped Drop
+      - non-completing recurring Unassign
+      - compensated Delete
+    depends_on:
+      - I3
+      - M11
+    conflicts_with: []
+    context_files:
+      - path: /Users/walle-mini/Repos/Projects/TDTB/app/runtime_actions.py
+        description: Runtime action seam.
+      - path: /Users/walle-mini/Repos/Projects/TDTB/app/todoist_client.py
+        description: Todoist source action seam.
+      - path: /Users/walle-mini/Repos/Projects/TDTB/app/runstate.py
+        description: Local date-scoped planning state.
+      - path: /Users/walle-mini/Repos/Projects/TDTB/app/tests
+        description: Action and compensation tests.
+      - path: /Users/walle-mini/Repos/Projects/TDTB/frontend/src/store
+        description: Frontend action and refresh state.
+    flags:
+      requires_design_validation: false
+      retries_used: 0
+      revision_reason: ''
+    acceptance_criteria:
+      - Done completes only the current source occurrence, Drop changes only date-scoped TDTB planning state, and Unassign preserves recurring completion history and recurrence contract.
+      - Delete targets only linked source items and TDTB-owned calendar blocks, never imported calendar events.
+      - Linked actions preflight every target, fail closed on unavailable targets, compensate partial application, journal evidence, and refresh capacity.
+      - Repeated actions are idempotent and Undo appears only when safe; no old deferral-memory nudge or misleading verb remains.
+    handoff:
+      known_context:
+        - I2 and I3 provide stable source identities and payload contracts.
+        - I5 will expose these actions in the compact UI.
+      target_files:
+        - app/runtime_actions.py
+        - app/todoist_client.py
+        - app/runstate.py
+        - app/tests/
+        - frontend/src/store/
+        - frontend/src/adapters/
+      constraints:
+        - Use fake providers and journals; never call live source writers or billed endpoints.
+        - Preserve imported-event and recurrence safeguards exactly.
+    requires_review: true
+    review_depth: full
+    review_security_sensitive: false
+
+  - id: I5
+    title: Implement the validated compact planning cockpit
+    description: >-
+      Recompose the canonical frontend around the validated desktop-first
+      capacity rail, Today's work bands, direct actions, compact duration
+      controls, inspectable capacity, calendar review, and accessible responsive
+      behavior.
+    wave: 17
+    agent: gem-implementer
+    status: pending
+    covers:
+      - compact cockpit composition
+      - capacity inspection
+      - collapsible work bands
+      - duration and action controls
+      - responsive and accessible UI
+    depends_on:
+      - I4
+      - D1
+      - M11
+    conflicts_with: []
+    context_files:
+      - path: /Users/walle-mini/Repos/Projects/TDTB/frontend/src/ui
+        description: Canonical frontend composition seams.
+      - path: /Users/walle-mini/Repos/Projects/TDTB/frontend/src/model
+        description: Capacity, duration, and action presentation models.
+      - path: /Users/walle-mini/Repos/Projects/TDTB/frontend/src/store
+        description: Refresh, action, and setup state.
+      - path: docs/plan/2026-08-12-tdtb-project-extraction/evidence/ui-design-validation.md
+        description: Designer handoff for layout, interaction, and accessibility constraints.
+    flags:
+      requires_design_validation: true
+      retries_used: 0
+      revision_reason: ''
+    acceptance_criteria:
+      - Desktop default shows compact capacity, Today's work, collapsible priority bands, direct Done/Drop, More actions, and no pruned or timeline-review surfaces.
+      - Capacity and pie inspection recompute immediately and present Anchored, Remaining, Vault assigned, and Todoist assigned with the locked semantics.
+      - Rows provide slider, minus/plus 15-minute controls, source label, exact duration entry, and accessible action menus.
+      - Calendar review, Mint setup, keyboard flow, focus, reduced motion, both themes, and supported responsive widths remain usable without horizontal clipping.
+    handoff:
+      known_context:
+        - D1 is the required design validation and I4 supplies the final action contract.
+        - The source plan forbids replacement pool browsing and manual timeline UI.
+      target_files:
+        - frontend/src/ui/
+        - frontend/src/model/
+        - frontend/src/store/
+        - frontend/src/app.css
+        - frontend/src/
+      constraints:
+        - Implement only the validated locked composition; do not copy malformed historical mockup markup.
+        - Keep all provider behavior fake or scratch-only during implementation.
+    requires_review: true
+    review_depth: full
+    review_security_sensitive: false
+
+  - id: I6
+    title: Prune retired surfaces and rebuild package bundles
+    description: >-
+      Remove the retired forgotten, trim, scenario, and read-only placement
+      surfaces from mounts, source, tests, styles, and copy while preserving
+      approved shortcuts and Mint interaction, then rebuild both bundles from
+      the tested canonical source.
+    wave: 18
+    agent: gem-implementer
+    status: pending
+    covers:
+      - retired surface removal
+      - source and test cleanup
+      - mockup bundle
+      - production bundle
+    depends_on:
+      - I5
+      - M11
+    conflicts_with: []
+    context_files:
+      - path: /Users/walle-mini/Repos/Projects/TDTB/frontend
+        description: Frontend source, tests, styles, and build configuration.
+      - path: /Users/walle-mini/Repos/Projects/TDTB/app/static/cockpit
+        description: Production bundle destination.
+      - path: /Users/walle-mini/Repos/Projects/TDTB/mockups/cockpit
+        description: Mockup bundle destination.
+      - path: /Users/walle-mini/Repos/Projects/TDTB/spec.md
+        description: Migrated user-facing behavior specification.
+    flags:
+      requires_design_validation: false
+      retries_used: 0
+      revision_reason: ''
+    acceptance_criteria:
+      - Forgotten/unassigned strip, Trim Assist, Scenario panel, and read-only placement or schedule review are absent from mounts, imports, tests, styles, and user copy.
+      - Copy-prompt fallback, keyboard help, and confirmed Mint setup remain present.
+      - Mockup and production bundles are rebuilt from the same tested canonical source and read back as current.
+      - Build output stays within approved destination paths and no live runtime is restarted.
+    handoff:
+      known_context:
+        - I5 establishes the final mounted UI; pruning must not reintroduce a replacement pool or manual timeline.
+        - Generated bundle output is destination-owned application material.
+      target_files:
+        - frontend/
+        - mockups/cockpit/
+        - app/static/cockpit/
+        - spec.md
+      constraints:
+        - Use the existing mockup and production build scripts.
+        - Do not copy stale Playwright evidence or mutate live launchd assets.
+    requires_review: true
+    review_depth: full
+    review_security_sensitive: false
+
+  - id: I7
+    title: Run complete isolated application gates
+    description: >-
+      Run the complete backend, frontend, typecheck, bundle, migration-boundary,
+      and repository hygiene gates against the canonical TDTB repository using
+      fake or scratch clients only.
+    wave: 19
+    agent: gem-implementer
+    status: pending
+    covers:
+      - backend suite
+      - frontend suite
+      - typecheck and builds
+      - repository hygiene
+      - non-live verification
+    depends_on:
+      - I6
+      - M11
+    conflicts_with: []
+    context_files:
+      - path: /Users/walle-mini/Repos/Projects/TDTB/app/tests
+        description: Complete backend test suite.
+      - path: /Users/walle-mini/Repos/Projects/TDTB/frontend/package.json
+        description: Frontend test, typecheck, and build commands.
+      - path: /Users/walle-mini/Repos/Projects/TDTB/AGENTS.md
+        description: Migrated project policy and verification rules.
+      - path: /Users/walle-mini/Repos/Claudius/Scripts/test_tdtb_project_boundary.py
+        description: Source-side boundary gate after rewiring.
+    flags:
+      requires_design_validation: false
+      retries_used: 0
+      revision_reason: ''
+    acceptance_criteria:
+      - Complete backend tests, frontend tests, typecheck, mockup build, and production build pass in the canonical repository.
+      - Boundary, structure, instruction, bundle, and diff checks pass for the source and destination ownership contract.
+      - Verification uses fake, synthetic, or scratch clients and records zero live writes, billed calls, service restart, or provider mutation.
+      - Any failure leaves implementation incomplete and identifies the exact failing gate for revision.
+    handoff:
+      known_context:
+        - I6 must have produced current bundles before the full gate.
+        - The original source policy requires structure audit, instruction check, focused builder tests, and git diff check for boundary work.
+      target_files: []
+      constraints:
+        - Do not treat a static pass as completion if a required suite or bundle gate is missing.
+        - Do not access live :8746 or real external writers.
+    requires_review: true
+    review_depth: full
+    review_security_sensitive: false
+
+  - id: I8
+    title: Qualify the canonical cockpit in the scratch browser
+    description: >-
+      Perform the bounded scratch-browser qualification of the verified canonical
+      bundle for the locked desktop-first behavior, themes, controls, keyboard
+      flow, responsive width, focus, and console-error contract.
+    wave: 20
+    agent: gem-browser-tester
+    status: pending
+    covers:
+      - scratch visual qualification
+      - interaction behavior
+      - responsive behavior
+      - console and accessibility smoke checks
+    depends_on:
+      - I7
+      - M11
+    conflicts_with: []
+    context_files:
+      - path: /Users/walle-mini/Repos/Projects/TDTB/mockups/cockpit
+        description: Canonical scratch-served bundle.
+      - path: /Users/walle-mini/Repos/Projects/TDTB/frontend/src
+        description: Tested frontend source and interaction seams.
+      - path: docs/plan/2026-08-12-tdtb-project-extraction/evidence/ui-design-validation.md
+        description: Design validation contract.
+    flags:
+      requires_design_validation: false
+      retries_used: 0
+      revision_reason: ''
+    acceptance_criteria:
+      - Scratch qualification covers desktop hierarchy, both themes, collapses, pie inspection, calendar review, duration controls, Mint synchronization, row menus, Undo, keyboard flow, and supported responsive width.
+      - Qualification reports no horizontal clipping, duplicate mobile surface, focus trap, broken control cluster, or console error.
+      - Qualification uses only the scratch instance and canned or fake data; it does not access :8746 or real source writers.
+      - Any failure includes bounded evidence and a screenshot when the configured failure policy requires it.
+    handoff:
+      known_context:
+        - Visual regression automation is disabled, so this is a required manual scratch gate.
+        - The browser must qualify the canonical destination bundle, not the retained Claudius fallback.
+      target_files:
+        - docs/plan/2026-08-12-tdtb-project-extraction/evidence/scratch-qualification.md
+      constraints:
+        - Do not perform live restart, billed judgment, commit, Todoist write, Calendar write, or vault write.
+        - Record only bounded qualification evidence; do not redesign during testing.
+    requires_review: true
+    review_depth: full
+    review_security_sensitive: false
+
+  - id: I9
+    title: Independently review implementation and close out the plan
+    description: >-
+      Perform the final implementation review against the authoritative objective,
+      preserved baseline, migrated ownership, locked UI and backend contracts,
+      non-live safety envelope, and all migration and implementation evidence.
+    wave: 21
+    agent: gem-reviewer
+    status: pending
+    covers:
+      - final acceptance review
+      - migration and implementation linkage
+      - safety closeout
+      - cutover handoff readiness
+    depends_on:
+      - I8
+      - M11
+    conflicts_with: []
+    context_files:
+      - path: docs/plan/2026-08-12-tdtb-project-extraction/plan.yaml
+        description: Authoritative objective, baseline, DAG, and acceptance criteria.
+      - path: docs/plan/2026-08-12-tdtb-project-extraction/evidence
+        description: Migration, design, automated gate, and scratch evidence.
+      - path: /Users/walle-mini/Repos/Projects/TDTB
+        description: Canonical application repository and final worktree.
+      - path: /Users/walle-mini/Repos/Claudius
+        description: Rewired source repository and historical evidence.
+    flags:
+      requires_design_validation: false
+      retries_used: 0
+      revision_reason: ''
+    acceptance_criteria:
+      - Migration evidence and implementation evidence satisfy the authoritative objective and every preserved baseline criterion.
+      - All implementation tasks completed in the canonical repository after M11, with no hidden Claudius application dependency.
+      - No unresolved dirty-state loss, collision, missing file, byte mismatch, broken consumer, or live-action violation remains.
+      - Final review produces a bounded attended cutover handoff; it does not execute live cutover.
+    handoff:
+      known_context:
+        - M11 accepted migration before implementation; M12 is the separate attended live cutover gate.
+        - The source fallback remains pre-cutover until M12 succeeds.
+      target_files:
+        - docs/plan/2026-08-12-tdtb-project-extraction/evidence/final-review.json
+      constraints:
+        - Review-only; do not modify application code or perform live cutover.
+        - Return needs_revision or blocked on any acceptance or evidence gap.
+    requires_review: false
+    review_depth: null
+    review_security_sensitive: false

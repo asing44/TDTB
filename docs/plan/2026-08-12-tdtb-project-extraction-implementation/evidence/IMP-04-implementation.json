@@ -1,0 +1,68 @@
+{
+  "artifact": "IMP-04-implementation",
+  "plan_id": "2026-08-12-tdtb-project-extraction-implementation",
+  "task_id": "IMP-04",
+  "captured_at": "2026-08-13",
+  "status": "GREEN_WITH_EXPECTED_RED",
+  "scope": "backend calendar identity/default semantics, all-day, date eligibility (future exclusion), Mint window direction, duration memory seam",
+  "files_changed": {
+    "modified": [
+      "app/calendar_bridge.py",
+      "app/external_sources.py",
+      "app/main.py",
+      "app/sequence.py",
+      "app/tests/test_external_sources.py",
+      "app/tests/test_plan_inputs_sources.py",
+      "app/tests/test_calendar_capacity.py"
+    ],
+    "created": ["app/duration_memory.py"]
+  },
+  "contracts_implemented": [
+    {"item": 5, "summary": "Future-dated vault assigned notes excluded from today's /plan-inputs digest in main._run_gather (deadline > today skip); Todoist side already excluded by ASSIGNED_QUERY_FALLBACK 'today | overdue'"},
+    {"item": 14, "summary": "Mint placement direction corrected in sequence.validate_sequence: only row_end > window end is a hard error; assignment may lead into the selected session"},
+    {"item": 16, "summary": "fetch_calendar_busy canonicalizes duplicate events by stable identity (event_id/id), first occurrence wins; identity-less events keep one row each"},
+    {"item": 17, "summary": "Known-but-unclassified calendar titles default to quarantined capacity class (excluded from fixed/work capacity and frame planning); unidentified calendars keep historical fixed default; own-write ids stay ignored"},
+    {"item": 18, "summary": "All-day source events stay all-day and non-timed on the wire (all_day: True, no Start/End); no ordinary planning/commit path can convert them"},
+    {"item": 10, "summary": "app/duration_memory.py seam created: stable-ID keyed memory (todoist:<id>, vault path), atomic writes when path supplied, in-memory default for tests"},
+    {"item": 11, "summary": "resolve_duration precedence memory -> tag -> native/preset -> type -> default with source labels; same-precedence tag collisions raise ValueError"},
+    {"item": 12, "summary": "Memory keyed by canonical identity only; name alone raises ValueError; never rewrites source duration fields"}
+  ],
+  "bounded_test_updates": [
+    "app/tests/test_external_sources.py::test_all_day_event_skipped superseded -> test_all_day_event_stays_all_day_and_non_timed (contract 18 reverses skip)",
+    "app/tests/test_external_sources.py::test_calendar_identity_and_capacity_classes_are_preserved: unclassified known 'Personal' calendar now expects quarantined (contract 17)",
+    "app/tests/test_plan_inputs_sources.py::MINIMAL_CONFIG: fixture calendar 'Fixture' explicitly classified fixed (contract 17; preserves T28 dismissal test intent)"
+  ],
+  "added_regression_tests": [
+    "app/tests/test_external_sources.py: duplicate-by-identity canonicalization, identity-less rows kept, known-unclassified quarantine default, configured class beats quarantine",
+    "app/tests/test_calendar_capacity.py: quarantined unknown calendar excluded from fixed/work capacity"
+  ],
+  "test_results": {
+    "backend_suite": {"passed": 1137, "failed": 4},
+    "gather_cli_suite": {"passed": 88, "failed": 0},
+    "imp04_scoped_red_tests": {"passed": 9, "failed": 0},
+    "duration_memory_contract": {"passed": 4, "failed": 0}
+  },
+  "residual_failures": [
+    "tests/test_locked_contract_red.py::test_final_action_verbs_exist",
+    "tests/test_locked_contract_red.py::test_drop_from_plan_is_date_scoped_with_no_source_write",
+    "tests/test_locked_contract_red.py::test_unassign_advances_recurring_without_completing",
+    "tests/test_locked_contract_red.py::test_drop_and_unassign_are_legal_before_commit"
+  ],
+  "residual_failure_owner": "IMP-07 final source-action engine (frozen contract map implemented_by: IMP-07); intentionally left Red; not an IMP-04 regression",
+  "baseline_comparison": {
+    "pre_imp03": {"passed": 1123, "failed": 0},
+    "now": {"passed": 1137, "failed": 4},
+    "delta": "+14 passing (5 IMP-04 Red + 4 duration Red + 5 added regression tests); 4 expected IMP-07 Red remain"
+  },
+  "safety": {
+    "live_providers_accessed": false,
+    "vault_todoist_calendar_launchd_billed_accessed": false,
+    "writes": ["none outside synthetic temp dirs / runstate digest_index pre-existing behavior"],
+    "commit": false
+  },
+  "out_of_scope_recorded": [
+    "CLI tdtb_gather.py assigned set not date-filtered (only /plan-inputs digest surface; contract targets today's digest)",
+    "main.resolve_assigned_blocks rewiring to duration_memory left to IMP-05 (API/wire minutes+source, undo, persistence wiring)",
+    "Frontend calendar-review UI classification left to IMP-08"
+  ]
+}

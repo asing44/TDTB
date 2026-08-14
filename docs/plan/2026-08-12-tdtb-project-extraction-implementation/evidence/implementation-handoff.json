@@ -1,0 +1,131 @@
+{
+  "artifact": "implementation-handoff",
+  "plan_id": "2026-08-12-tdtb-project-extraction-implementation",
+  "task_id": "IMP-11",
+  "captured_at": "2026-08-13",
+  "status": "PASS",
+  "gate": "GREEN",
+  "verdict": "ACCEPTED_WITH_DECLARED_LIMITATIONS",
+  "scope": "canonical TDTB implementation acceptance only",
+  "canonical_root": "/Users/walle-mini/Repos/Projects/TDTB",
+  "readiness": {
+    "implementation": "READY",
+    "optional_attended_cutover": "READY_FOR_SEPARATE_APPROVAL_GATED_PLAN",
+    "live_cutover_completed": false,
+    "live_cutover_authorized": false,
+    "rollback_prerequisites_preserved": true
+  },
+  "upstream_gates": {
+    "migration": {
+      "artifact": "docs/plan/2026-08-12-tdtb-project-extraction-migration/evidence/migration-handoff.json",
+      "status": "PASS",
+      "gate": "GREEN",
+      "current_hash_matches_rewiring_record": true,
+      "canonical_head_matches_recorded_destination_head": true
+    },
+    "rewiring": {
+      "artifact": "docs/plan/2026-08-12-tdtb-project-extraction-claudius-rewiring/evidence/rewiring-handoff.json",
+      "status": "PARTIAL",
+      "gate": "AMBER",
+      "verdict": "ACCEPTED_CONDITIONAL",
+      "implementation_authorized": true,
+      "limitations_carried_forward": true
+    }
+  },
+  "input_authority": {
+    "record": "docs/plan/2026-08-12-tdtb-project-extraction-implementation/evidence/implementation-inputs.json",
+    "decision": "USER_APPROVED_SCOPED_WAIVER",
+    "current_prd_supplied": false,
+    "current_design_supplied": false,
+    "missing_documents_represented_as_supplied": false,
+    "bounded_authority": [
+      "Frozen 2026-08-09 reliability plan as product and backlog authority",
+      "Canonical app, frontend, and spec contracts",
+      "Implementation-plan task acceptance criteria"
+    ],
+    "historical_design_is_current_authority": false
+  },
+  "implementation_evidence": {
+    "backend_contracts": "implemented and green",
+    "frontend_contracts": "implemented and green",
+    "source_actions": "Done, Drop from plan, Unassign, and Delete implemented with fake-provider coverage",
+    "retired_surfaces": "removed from rendered composition; current source tests assert absence",
+    "imp05_artifact_valid_json": true,
+    "imp05_scope": "final source-action engine only",
+    "current_automated_results": {
+      "backend_pytest": "1261 passed",
+      "gather_pytest": "88 passed",
+      "frontend_vitest": "498 passed, 6 skipped",
+      "frontend_typecheck": "passed",
+      "mockup_build": "passed",
+      "production_build": "passed"
+    },
+    "scratch_results": {
+      "backend": "41/41 passed",
+      "browser": "32/32 passed",
+      "console_errors": 0,
+      "page_errors": 0,
+      "network_failures": 0
+    },
+    "current_bundle_hashes_match_scratch_verification": true,
+    "security_scan": "no credential or private-key material found in implementation evidence or bundle hygiene scans"
+  },
+  "safety": {
+    "billed_calls": 0,
+    "real_source_writes": 0,
+    "live_8746_access": false,
+    "vault_todoist_calendar_launchd_accessed": false,
+    "restart_performed": false,
+    "commit_created": false
+  },
+  "acceptance_criteria": [
+    {
+      "criterion": "Migration and rewiring handoffs remain valid/current enough for implementation acceptance.",
+      "met": true
+    },
+    {
+      "criterion": "User-approved PRD/design waiver and bounded authority are recorded without false document claims.",
+      "met": true
+    },
+    {
+      "criterion": "Backend/frontend locked contracts are implemented and tested in canonical TDTB.",
+      "met": true
+    },
+    {
+      "criterion": "Retired surfaces are removed and current bundles are built from tested source.",
+      "met": true
+    },
+    {
+      "criterion": "Automated and scratch verification passes with zero live writes and billed calls.",
+      "met": true
+    },
+    {
+      "criterion": "This handoff states optional cutover readiness and residual limitations.",
+      "met": true
+    },
+    {
+      "criterion": "IMP-05-implementation.json is valid JSON and accurately scoped.",
+      "met": true
+    }
+  ],
+  "residual_limitations": [
+    "PRD and current cockpit DESIGN remain absent under the approved scoped waiver.",
+    "Rewiring remains conditional on the authorized vault-gated LiveSourceContract.",
+    "Browser accessibility audit was skipped because a11y_audit_level is none.",
+    "Visual regression automation remains disabled; scratch browser checks are the visual gate.",
+    "Shadow commit was verified with fakes only; no live provider or runtime qualification occurred.",
+    "Reports/audit-status.md remains a protected dirty path without pre-task byte-identity proof.",
+    "Optional cutover still requires attended approval, preimage, rollback, resume, and GET-only proof."
+  ],
+  "downstream_handoff": {
+    "authorized": true,
+    "next_scope": "optional attended cutover plan only",
+    "guards": [
+      "Implementation acceptance does not perform or authorize live cutover.",
+      "Do not mutate launchd, the running process, providers, or source fallback without explicit approval.",
+      "Preserve rollback and source-fallback prerequisites until attended cutover succeeds."
+    ]
+  },
+  "no_commit": true,
+  "artifact_path": "/Users/walle-mini/Repos/Projects/TDTB/docs/plan/2026-08-12-tdtb-project-extraction-implementation/evidence/implementation-handoff.json"
+}

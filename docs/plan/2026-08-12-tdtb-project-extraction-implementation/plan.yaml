@@ -1,0 +1,602 @@
+plan_id: 2026-08-12-tdtb-project-extraction-implementation
+objective: >-
+  Complete the outstanding TDTB backend, frontend, packaging, and verification
+  work in the canonical repository after migration and Claudius rewiring are green.
+created_at: '2026-08-13T00:00:00Z'
+created_by: gem-planner
+status: pending
+tldr: >-
+  Implement only in canonical TDTB. Resolve missing PRD/DESIGN as explicit scoped
+  inputs; do not make them hidden migration or rewiring blockers.
+workstream_type: canonical_implementation
+parent_plan: docs/plan/2026-08-12-tdtb-project-extraction-decomposition/plan.yaml
+upstream_dependencies:
+  - plan: 2026-08-12-tdtb-project-extraction-migration
+    gate: MIG-07
+    artifact: docs/plan/2026-08-12-tdtb-project-extraction-migration/evidence/migration-handoff.json
+  - plan: 2026-08-12-tdtb-project-extraction-claudius-rewiring
+    gate: RW-06
+    artifact: docs/plan/2026-08-12-tdtb-project-extraction-claudius-rewiring/evidence/rewiring-handoff.json
+downstream_handoffs:
+  - plan: 2026-08-12-tdtb-project-extraction-attended-cutover
+    gate: IMP-11
+    artifact: docs/plan/2026-08-12-tdtb-project-extraction-implementation/evidence/implementation-handoff.json
+baseline:
+  objective: >-
+    Finish the outstanding TDTB planning UI and reliability scope in the canonical
+    repository without hidden dependencies on Claudius paths or live providers.
+  acceptance_criteria:
+    - Implementation starts only after green migration and rewiring handoffs.
+    - Missing PRD and current DESIGN inputs are explicitly supplied, waived, or block implementation.
+    - Backend and frontend locked contracts are implemented and tested in canonical TDTB.
+    - Retired surfaces are removed and current bundles are built from tested source.
+    - Automated and scratch verification passes without live writes or billed calls.
+    - Implementation handoff clearly states whether optional cutover is ready.
+  captured_at: '2026-08-13T00:00:00Z'
+plan_lineage:
+  root_plan_id: 2026-08-12-tdtb-project-extraction
+  revision: 0
+  replan_count: 0
+  max_replans: 2
+  parent_revision: 6
+  reason: scope_change
+plan_metrics:
+  wave_1_task_count: 1
+  total_dependencies: 11
+  risk_score: high
+  quality_warnings:
+    - docs/PRD.yaml is absent and requires explicit input or waiver.
+    - Current DESIGN.md is absent; archived DESIGN.md is provenance only.
+    - Implementation spans Python, Preact, TypeScript, bundles, and scratch verification.
+    - Live providers, :8746, Todoist, Calendar, vault, and billed endpoints remain forbidden.
+context_version: 1
+context_updated_at: '2026-08-13T00:00:00Z'
+context_fields_changed: [upstream_gates, explicit_input_resolution, implementation_scope, live_safety]
+tech_stack:
+  - name: Python 3.12 and FastAPI
+    role: TDTB backend implementation and tests
+    evidence: /Users/walle-mini/Repos/Projects/TDTB/app
+  - name: Preact, TypeScript, Vite, and Vitest
+    role: TDTB frontend implementation, tests, and bundles
+    evidence: /Users/walle-mini/Repos/Projects/TDTB/frontend
+  - name: Python and Node test tooling
+    role: Isolated automated verification
+    evidence: /Users/walle-mini/Repos/Projects/TDTB/app/tests
+conventions:
+  - Implement only in /Users/walle-mini/Repos/Projects/TDTB.
+  - Treat both upstream handoffs as immutable prerequisites.
+  - Keep product contracts in task acceptance criteria and input decisions in this plan.
+  - Use fake, synthetic, or scratch clients; never use live source writers.
+  - Route visual/layout/a11y decisions through a designer before UI implementation.
+constraints:
+  hard:
+    - Do not start implementation before MIG-07 and RW-06 are green.
+    - Do not use Claudius app paths as implementation targets after handoff acceptance.
+    - Do not invent docs/PRD.yaml or current DESIGN.md; record supply, waiver, or block.
+    - Do not change Claudius consumers, live launchd/process state, or external provider data.
+    - Do not call billed judgment endpoints or real Todoist, Calendar, or vault writers.
+    - Do not expand into unrelated cleanup, redesign, dependency upgrades, or history import.
+  soft:
+    - Preserve existing design tokens and frontend patterns when compatible with the locked contract.
+  compatibility:
+    - Preserve FastAPI contracts, Preact/TypeScript build split, and source identity safeguards.
+    - Preserve current Mint session and Live selection semantics.
+  security_requirements:
+    - Keep credentials and local runtime state out of source and evidence.
+    - Verify linked-source actions with fake clients and compensation journals only.
+architecture_snapshot:
+  backend_seams:
+    - calendar_bridge.py and external_sources.py
+    - sequence.py, shadow.py, and commit.py
+    - main.py, config_reader.py, runtime_actions.py, todoist_client.py, runstate.py
+  frontend_seams:
+    - frontend/src/ui
+    - frontend/src/model
+    - frontend/src/store
+    - frontend/src/adapters
+  locked_scope:
+    - calendar identity, all-day, past/future date semantics, Live/Mint IDs
+    - duration memory and precedence
+    - Done, Drop, Unassign, Delete actions
+    - compact desktop-first cockpit and capacity inspection
+    - retired surface removal and both bundle outputs
+research_digest:
+  digest: >-
+    The frozen reliability plan defines the outstanding implementation contract:
+    calendar/date semantics, exact source identities, stable duration memory,
+    final source actions, compact UI, pruning, bundles, and scratch qualification.
+  top_files:
+    - path: docs/plan/2026-08-12-tdtb-project-extraction-migration/evidence/migration-handoff.json
+      trust_level: required_migration_gate
+    - path: docs/plan/2026-08-12-tdtb-project-extraction-claudius-rewiring/evidence/rewiring-handoff.json
+      trust_level: required_consumer_gate
+    - path: /Users/walle-mini/Repos/Claudius/Plans Link/2026-08-09-tdtb-planning-ui-reliability.md
+      trust_level: frozen_contract_and_backlog
+    - path: /Users/walle-mini/Repos/Projects/TDTB/app
+      trust_level: canonical_backend_target
+    - path: /Users/walle-mini/Repos/Projects/TDTB/frontend
+      trust_level: canonical_frontend_target
+    - path: /Users/walle-mini/Repos/Claudius/Projects/TDTB/archive/skill-era/DESIGN.md
+      trust_level: historical_design_reference_only
+prior_decisions:
+  - decision: Outstanding implementation is downstream of repository and consumer gates.
+    context: Implementation cannot silently repair migration or rewiring failures.
+  - decision: Missing PRD and DESIGN are explicit implementation inputs.
+    context: They do not block migration or rewiring; implementation pauses if unresolved.
+  - decision: The frozen 2026-08-09 plan supplies backlog and locked contracts.
+    context: It is scope evidence, not current repository ownership.
+reuse_notes:
+  - path: /Users/walle-mini/Repos/Claudius/Plans Link/2026-08-09-tdtb-planning-ui-reliability.md
+    trust_level: frozen_backlog_and_contract_evidence
+  - path: /Users/walle-mini/Repos/Claudius/Projects/TDTB/archive/skill-era/DESIGN.md
+    trust_level: historical_reference_not_current_authority
+replan:
+  reason: >-
+    Separate outstanding implementation from migration and rewiring so missing
+    PRD/DESIGN inputs remain visible implementation decisions instead of hidden upstream blockers.
+  changed_tasks: [I1-I9 become IMP-01 through IMP-11 with explicit input and upstream gates.]
+  added_tasks: [IMP-01, IMP-02, IMP-03, IMP-04, IMP-05, IMP-06, IMP-07, IMP-08, IMP-09, IMP-10, IMP-11]
+  removed_tasks: []
+  preserved_acceptance_criteria:
+    - Locked backend and frontend reliability contracts remain preserved.
+    - Implementation uses the canonical TDTB repository only.
+    - Live runtime and external providers remain out of scope.
+  new_risks:
+    - A missing PRD/DESIGN input could cause an unreviewed product decision.
+    - UI implementation could start before design validation.
+    - Existing migration or rewiring regressions could be misattributed to implementation.
+  progress_signal: >-
+    Eleven gates separate upstream validation, input resolution, contract tests,
+    backend, action, design, UI, packaging, full verification, scratch qualification, and handoff.
+open_questions:
+  - question: Will the user provide a current docs/PRD.yaml or approve a scoped waiver?
+    context: No current PRD exists in the canonical repository.
+    type: decision_blocker
+    affects: [IMP-02, IMP-11]
+  - question: What current design source replaces the archived DESIGN.md reference?
+    context: The archive is historical and cannot silently authorize current UI behavior.
+    type: decision_blocker
+    affects: [IMP-02, IMP-06, IMP-07, IMP-11]
+assumptions:
+  - Both upstream handoffs include stable manifests and exact repository identities.
+  - The frozen source plan remains the best available backlog evidence until inputs are resolved.
+  - Implementation can use scratch or fake clients for all acceptance tests.
+  - Optional live cutover is not needed to validate repository-local implementation.
+pre_mortem:
+  overall_risk_level: high
+  critical_failure_modes:
+    - scenario: Implementation starts from absent or stale product/design authority.
+      likelihood: high
+      impact: critical
+      mitigation: IMP-02 requires an explicit current input or user-approved waiver before coding.
+    - scenario: A downstream implementation edit masks an upstream migration or rewiring defect.
+      likelihood: medium
+      impact: high
+      mitigation: Validate both immutable handoff artifacts before IMP-01 and at IMP-11.
+    - scenario: Linked actions mutate real external sources during tests.
+      likelihood: low
+      impact: critical
+      mitigation: Require fake clients, scratch data, and a no-live-write verification record.
+    - scenario: UI work violates locked accessibility or responsive constraints.
+      likelihood: medium
+      impact: high
+      mitigation: Designer validation precedes UI implementation and scratch qualification.
+    - scenario: Generated bundles are stale or sourced from an untested tree.
+      likelihood: medium
+      impact: high
+      mitigation: Build both outputs from the tested canonical source and read back current hashes.
+coordination_notes:
+  - IMP-01 joins both upstream handoffs and confirms the canonical target.
+  - IMP-02 resolves PRD/DESIGN as explicit input or waiver; no hidden substitution is allowed.
+  - IMP-03 establishes failing or gap tests before behavior changes.
+  - IMP-04, IMP-05, and IMP-06 cover backend and design seams; UI waits for IMP-06.
+  - IMP-07 through IMP-09 cover UI, pruning, and package outputs.
+  - IMP-10 runs full non-live automated and scratch gates.
+  - IMP-11 emits implementation-handoff.json; CUTOVER may be skipped.
+tasks:
+  - id: IMP-01
+    title: Validate migration and rewiring prerequisites
+    description: >-
+      Confirm both upstream handoffs are green, current, and identity-consistent
+      before any implementation task claims canonical app paths.
+    wave: 1
+    agent: gem-reviewer
+    status: pending
+    covers: [migration prerequisite, rewiring prerequisite, canonical target, input baseline]
+    depends_on: []
+    conflicts_with: []
+    context_files:
+      - path: docs/plan/2026-08-12-tdtb-project-extraction-migration/evidence/migration-handoff.json
+        description: Required migration gate.
+      - path: docs/plan/2026-08-12-tdtb-project-extraction-claudius-rewiring/evidence/rewiring-handoff.json
+        description: Required rewiring gate.
+      - path: /Users/walle-mini/Repos/Projects/TDTB
+        description: Canonical implementation target.
+    flags:
+      requires_design_validation: false
+      retries_used: 0
+      revision_reason: ''
+    acceptance_criteria:
+      - Both handoff artifacts exist, are green, and match the canonical destination Git identity.
+      - No implementation starts if either upstream gate is missing, stale, or failed.
+      - The source fallback and live consumer are recorded as outside implementation scope.
+    handoff:
+      known_context: [Migration and rewiring are complete prerequisites, not tasks to repair here.]
+      target_files: [docs/plan/2026-08-12-tdtb-project-extraction-implementation/evidence/implementation-inputs.json]
+      constraints: [Review-only; do not edit source, consumers, or app behavior.]
+    requires_review: false
+    review_depth: full
+    review_security_sensitive: false
+
+  - id: IMP-02
+    title: Resolve current PRD and design inputs for implementation
+    description: >-
+      Record the authoritative PRD and current design source for the backlog, or
+      record explicit user-approved waivers that bound what implementation may claim.
+    wave: 2
+    agent: gem-documentation-writer
+    status: pending
+    covers: [PRD input, design input, waiver record, implementation authority]
+    depends_on: [IMP-01]
+    conflicts_with: []
+    context_files:
+      - path: /Users/walle-mini/Repos/Projects/TDTB
+        description: Canonical repository checked for current inputs.
+      - path: /Users/walle-mini/Repos/Claudius/Plans Link/2026-08-09-tdtb-planning-ui-reliability.md
+        description: Frozen contract and backlog evidence.
+      - path: /Users/walle-mini/Repos/Claudius/Projects/TDTB/archive/skill-era/DESIGN.md
+        description: Historical design evidence only.
+    flags:
+      requires_design_validation: false
+      retries_used: 0
+      revision_reason: ''
+    acceptance_criteria:
+      - A current PRD path is supplied, or an explicit waiver states its scope and limits.
+      - A current design path is supplied, or an explicit waiver states its scope and limits.
+      - Historical DESIGN.md is never treated as current authority without explicit approval.
+      - Unresolved inputs block implementation tasks that rely on them, not migration or rewiring.
+    handoff:
+      known_context: [docs/PRD.yaml and current DESIGN.md are absent in the destination.]
+      target_files: [docs/plan/2026-08-12-tdtb-project-extraction-implementation/evidence/input-decision.json]
+      constraints: [Do not invent requirements or modify application code.]
+    requires_review: true
+    review_depth: full
+    review_security_sensitive: false
+    task_type: prd
+    audience: stakeholders
+    coverage_matrix: [backlog authority, product acceptance, design authority, waiver limits]
+    target_path: null
+    topic: TDTB implementation inputs and authority
+
+  - id: IMP-03
+    title: Establish canonical contract tests and fixtures
+    description: >-
+      Pin the locked backend and frontend behavior contracts in the canonical
+      repository with focused tests and fixture coverage before implementation changes.
+    wave: 3
+    agent: gem-implementer
+    status: pending
+    covers: [contract tests, fixtures, source identity, date semantics, action semantics]
+    depends_on: [IMP-02]
+    conflicts_with: []
+    context_files:
+      - path: /Users/walle-mini/Repos/Projects/TDTB/app/tests
+        description: Canonical backend tests.
+      - path: /Users/walle-mini/Repos/Projects/TDTB/frontend/src
+        description: Canonical frontend tests and fixtures.
+      - path: /Users/walle-mini/Repos/Claudius/Plans Link/2026-08-09-tdtb-planning-ui-reliability.md
+        description: Locked contract evidence.
+    flags:
+      requires_design_validation: false
+      retries_used: 0
+      revision_reason: ''
+    acceptance_criteria:
+      - Focused tests cover calendar identity, all-day/date rules, Live/Mint IDs, durations, actions, UI composition, and pruning.
+      - Test results identify current gaps before behavior changes and use fake or synthetic inputs only.
+      - Tests target canonical paths and do not depend on Claudius app paths or live providers.
+    handoff:
+      known_context: [This task establishes measurable contract coverage; later tasks implement behavior.]
+      target_files: [/Users/walle-mini/Repos/Projects/TDTB/app/tests/, /Users/walle-mini/Repos/Projects/TDTB/frontend/src/]
+      constraints: [Do not alter consumer wiring or live runtime.]
+    requires_review: true
+    review_depth: full
+    review_security_sensitive: false
+
+  - id: IMP-04
+    title: Implement backend calendar, identity, date, and scheduling contracts
+    description: >-
+      Implement the locked backend corrections for calendar identity, all-day and
+      date semantics, exact Live/Mint identities, structured event fields, and soft rules.
+    wave: 4
+    agent: gem-implementer
+    status: pending
+    covers: [calendar canonicalization, all-day, date eligibility, Live/Mint identity, soft rules]
+    depends_on: [IMP-03]
+    conflicts_with: []
+    context_files:
+      - path: /Users/walle-mini/Repos/Projects/TDTB/app/calendar_bridge.py
+        description: Calendar input seam.
+      - path: /Users/walle-mini/Repos/Projects/TDTB/app/external_sources.py
+        description: Source identity seam.
+      - path: /Users/walle-mini/Repos/Projects/TDTB/app/sequence.py
+        description: Scheduling payload seam.
+      - path: /Users/walle-mini/Repos/Projects/TDTB/app/shadow.py
+        description: Event semantics seam.
+      - path: /Users/walle-mini/Repos/Projects/TDTB/app/commit.py
+        description: Commit planning seam.
+    flags:
+      requires_design_validation: false
+      retries_used: 0
+      revision_reason: ''
+    acceptance_criteria:
+      - Duplicate events canonicalize deterministically and unknown calendars remain quarantined.
+      - All-day values remain non-timed through input, wire, sequence, shadow, and commit planning.
+      - Past rows remain visible, future work is excluded from today, and exact Live/Mint IDs persist.
+      - Structured event times, semantic titles, soft-rule explanations, and today-only overrides match input authority.
+      - Focused backend tests from IMP-03 pass without live calls.
+    handoff:
+      known_context: [Calendar/date and source identity contracts feed duration, actions, and UI.]
+      target_files: [/Users/walle-mini/Repos/Projects/TDTB/app/]
+      constraints: [Use fake providers; do not mutate Todoist, Calendar, vault, or billed services.]
+    requires_review: true
+    review_depth: full
+    review_security_sensitive: false
+
+  - id: IMP-05
+    title: Implement deterministic duration memory and source resolution
+    description: >-
+      Implement stable-ID duration precedence, source labels, atomic memory, collision
+      handling, and safe undo in the canonical repository.
+    wave: 5
+    agent: gem-implementer
+    status: pending
+    covers: [duration resolver, stable identities, precedence, atomic memory, undo]
+    depends_on: [IMP-04]
+    conflicts_with: []
+    context_files:
+      - path: /Users/walle-mini/Repos/Projects/TDTB/app/main.py
+        description: Existing duration seam.
+      - path: /Users/walle-mini/Repos/Projects/TDTB/app/config_reader.py
+        description: Duration configuration seam.
+      - path: /Users/walle-mini/Repos/Projects/TDTB/frontend/src/model
+        description: Frontend duration presentation.
+      - path: /Users/walle-mini/Repos/Projects/TDTB/app/tests
+        description: Duration and source identity tests.
+    flags:
+      requires_design_validation: false
+      retries_used: 0
+      revision_reason: ''
+    acceptance_criteria:
+      - Duration memory uses stable Todoist IDs or normalized vault identities, never names alone.
+      - Precedence is memory, deterministic tag, native/preset, type, then default with visible collisions.
+      - API/frontend data expose minutes and winning source labels; edits persist atomically after success.
+      - Source duration fields remain unchanged and same-date undo is safe.
+      - Duration tests pass with synthetic sources only.
+    handoff:
+      known_context: [IMP-04 establishes source/date semantics required by stable duration identity.]
+      target_files: [/Users/walle-mini/Repos/Projects/TDTB/app/, /Users/walle-mini/Repos/Projects/TDTB/frontend/src/]
+      constraints: [Preserve existing cache discipline; no source provider writes.]
+    requires_review: true
+    review_depth: full
+    review_security_sensitive: false
+
+  - id: IMP-06
+    title: Validate the compact cockpit design direction
+    description: >-
+      Validate the current design authority or approved waiver against the compact
+      cockpit composition, responsive behavior, interaction hierarchy, and accessibility needs.
+    wave: 5
+    agent: gem-designer
+    status: pending
+    covers: [layout, responsive behavior, interaction hierarchy, tokens, accessibility]
+    depends_on: [IMP-02]
+    conflicts_with: []
+    context_files:
+      - path: /Users/walle-mini/Repos/Projects/TDTB/frontend
+        description: Canonical frontend source.
+      - path: docs/plan/2026-08-12-tdtb-project-extraction-implementation/evidence/input-decision.json
+        description: Current design authority or waiver.
+      - path: /Users/walle-mini/Repos/Claudius/Plans Link/2026-08-09-tdtb-planning-ui-reliability.md
+        description: Locked UI contract evidence.
+    flags:
+      requires_design_validation: true
+      retries_used: 0
+      revision_reason: ''
+    acceptance_criteria:
+      - Validation covers desktop composition, responsive no-clipping, keyboard focus, labels, reduced motion, and both themes.
+      - Validation identifies implementation seams and confirms pruned surfaces remain absent.
+      - A bounded design handoff exists without modifying application source or historical design evidence.
+    handoff:
+      known_context: [Archived DESIGN.md is historical unless IMP-02 records explicit authority.]
+      target_files: [docs/plan/2026-08-12-tdtb-project-extraction-implementation/evidence/ui-design-validation.md]
+      constraints: [Validation only; do not implement UI or rewrite archive material.]
+    requires_review: true
+    review_depth: full
+    review_security_sensitive: false
+
+  - id: IMP-07
+    title: Implement the final source-action engine
+    description: >-
+      Implement Done, Drop from plan, Unassign, and Delete semantics with linked-source
+      preflight, compensation, journaling, idempotency, refresh, and safe undo.
+    wave: 6
+    agent: gem-implementer
+    status: pending
+    covers: [Done, Drop, Unassign, Delete, compensation, journaling, idempotency]
+    depends_on: [IMP-05]
+    conflicts_with: []
+    context_files:
+      - path: /Users/walle-mini/Repos/Projects/TDTB/app/runtime_actions.py
+        description: Runtime action seam.
+      - path: /Users/walle-mini/Repos/Projects/TDTB/app/todoist_client.py
+        description: Todoist action seam.
+      - path: /Users/walle-mini/Repos/Projects/TDTB/app/runstate.py
+        description: Date-scoped planning state.
+      - path: /Users/walle-mini/Repos/Projects/TDTB/frontend/src/store
+        description: Frontend action state.
+    flags:
+      requires_design_validation: false
+      retries_used: 0
+      revision_reason: ''
+    acceptance_criteria:
+      - Done, Drop, Unassign, and Delete match the locked source/TDTB boundaries before and after commit.
+      - Linked targets preflight, fail closed, compensate partial application, journal evidence, and refresh capacity.
+      - Repeated actions are idempotent; Undo appears only when safe; imported events are never deleted.
+      - Fake-provider action tests pass without live writes or billed calls.
+    handoff:
+      known_context: [IMP-04 and IMP-05 supply stable source identity and duration contracts.]
+      target_files: [/Users/walle-mini/Repos/Projects/TDTB/app/, /Users/walle-mini/Repos/Projects/TDTB/frontend/src/store/]
+      constraints: [Use fake providers and journals only; preserve recurrence safeguards.]
+    requires_review: true
+    review_depth: full
+    review_security_sensitive: false
+
+  - id: IMP-08
+    title: Implement the validated compact planning cockpit
+    description: >-
+      Implement the validated desktop-first cockpit with compact capacity, Today's
+      work bands, direct actions, duration controls, calendar review, and accessible responsiveness.
+    wave: 7
+    agent: gem-implementer
+    status: pending
+    covers: [cockpit composition, capacity inspection, work bands, controls, responsive UI]
+    depends_on: [IMP-06, IMP-07]
+    conflicts_with: []
+    context_files:
+      - path: /Users/walle-mini/Repos/Projects/TDTB/frontend/src/ui
+        description: UI composition seams.
+      - path: /Users/walle-mini/Repos/Projects/TDTB/frontend/src/model
+        description: Capacity and duration models.
+      - path: /Users/walle-mini/Repos/Projects/TDTB/frontend/src/store
+        description: Refresh and action state.
+      - path: docs/plan/2026-08-12-tdtb-project-extraction-implementation/evidence/ui-design-validation.md
+        description: Design handoff.
+    flags:
+      requires_design_validation: true
+      retries_used: 0
+      revision_reason: ''
+    acceptance_criteria:
+      - Desktop default shows compact capacity, Today's work, collapsible bands, direct Done/Drop, and More actions.
+      - Capacity inspection, duration controls, calendar review, Mint setup, keyboard flow, themes, and responsive widths work.
+      - Retired timeline, replacement pool, and duplicate mobile surfaces do not render.
+      - Frontend tests and design handoff checks pass without live providers.
+    handoff:
+      known_context: [IMP-06 is the required designer handoff and IMP-07 supplies final action contracts.]
+      target_files: [/Users/walle-mini/Repos/Projects/TDTB/frontend/src/]
+      constraints: [Implement only validated composition; preserve existing tokens and scratch safety.]
+    requires_review: true
+    review_depth: full
+    review_security_sensitive: false
+
+  - id: IMP-09
+    title: Prune retired surfaces and rebuild package bundles
+    description: >-
+      Remove retired surfaces from mounts, imports, tests, styles, and copy, then
+      rebuild mockup and production bundles from the tested canonical frontend.
+    wave: 8
+    agent: gem-implementer
+    status: pending
+    covers: [surface pruning, source cleanup, mockup bundle, production bundle]
+    depends_on: [IMP-08]
+    conflicts_with: []
+    context_files:
+      - path: /Users/walle-mini/Repos/Projects/TDTB/frontend
+        description: Canonical frontend source and build configuration.
+      - path: /Users/walle-mini/Repos/Projects/TDTB/app/static/cockpit
+        description: Production bundle destination.
+      - path: /Users/walle-mini/Repos/Projects/TDTB/mockups/cockpit
+        description: Mockup bundle destination.
+      - path: /Users/walle-mini/Repos/Projects/TDTB/spec.md
+        description: User-facing behavior specification.
+    flags:
+      requires_design_validation: false
+      retries_used: 0
+      revision_reason: ''
+    acceptance_criteria:
+      - Forgotten, Trim Assist, Scenario, and read-only placement surfaces are absent from source and output.
+      - Copy prompt, keyboard help, confirmed Mint setup, and approved shortcuts remain present.
+      - Mockup and production bundles are rebuilt from the same tested source and current hashes are recorded.
+      - Build output stays within approved destination paths and no runtime restart occurs.
+    handoff:
+      known_context: [Pruning must not introduce replacement pool browsing or manual timeline UI.]
+      target_files: [/Users/walle-mini/Repos/Projects/TDTB/frontend/, /Users/walle-mini/Repos/Projects/TDTB/mockups/cockpit/, /Users/walle-mini/Repos/Projects/TDTB/app/static/cockpit/]
+      constraints: [Use canonical build scripts; do not copy stale evidence or touch live assets.]
+    requires_review: true
+    review_depth: full
+    review_security_sensitive: false
+
+  - id: IMP-10
+    title: Run isolated implementation and scratch qualification gates
+    description: >-
+      Run complete backend/frontend/type/build/boundary checks and a bounded scratch
+      browser qualification against the canonical repository using only fake or canned inputs.
+    wave: 9
+    agent: gem-browser-tester
+    status: pending
+    covers: [automated suites, typecheck, builds, boundary hygiene, scratch behavior]
+    depends_on: [IMP-09]
+    conflicts_with: []
+    context_files:
+      - path: /Users/walle-mini/Repos/Projects/TDTB/app/tests
+        description: Backend suite.
+      - path: /Users/walle-mini/Repos/Projects/TDTB/frontend/package.json
+        description: Frontend suite, typecheck, and build commands.
+      - path: /Users/walle-mini/Repos/Projects/TDTB/mockups/cockpit
+        description: Scratch-served bundle.
+      - path: docs/plan/2026-08-12-tdtb-project-extraction-implementation/evidence/ui-design-validation.md
+        description: Design qualification contract.
+    flags:
+      requires_design_validation: false
+      retries_used: 0
+      revision_reason: ''
+    acceptance_criteria:
+      - Backend, frontend, typecheck, mockup build, production build, and boundary checks pass.
+      - Scratch qualification covers desktop hierarchy, themes, collapses, controls, keyboard flow, responsive width, and console errors.
+      - No live :8746 access, provider write, billed call, restart, or external state mutation occurs.
+      - Failures include bounded evidence and prevent the implementation handoff.
+    handoff:
+      known_context: [Visual regression automation is disabled; scratch qualification is the non-live visual gate.]
+      target_files: [docs/plan/2026-08-12-tdtb-project-extraction-implementation/evidence/implementation-verification.json, docs/plan/2026-08-12-tdtb-project-extraction-implementation/evidence/scratch-qualification.md]
+      constraints: [Test only canonical destination output; do not redesign during qualification.]
+    requires_review: true
+    review_depth: full
+    review_security_sensitive: false
+
+  - id: IMP-11
+    title: Accept canonical TDTB implementation and cutover readiness
+    description: >-
+      Independently review implementation, upstream handoffs, explicit input decisions,
+      tests, bundles, and scratch evidence, then emit a handoff for optional cutover.
+    wave: 10
+    agent: gem-reviewer
+    status: pending
+    covers: [implementation acceptance, input authority, safety, optional cutover readiness]
+    depends_on: [IMP-10]
+    conflicts_with: []
+    context_files:
+      - path: docs/plan/2026-08-12-tdtb-project-extraction-implementation/evidence
+        description: Implementation evidence set.
+      - path: docs/plan/2026-08-12-tdtb-project-extraction-migration/evidence/migration-handoff.json
+        description: Migration acceptance.
+      - path: docs/plan/2026-08-12-tdtb-project-extraction-claudius-rewiring/evidence/rewiring-handoff.json
+        description: Rewiring acceptance.
+      - path: /Users/walle-mini/Repos/Projects/TDTB
+        description: Canonical application repository.
+    flags:
+      requires_design_validation: false
+      retries_used: 0
+      revision_reason: ''
+    acceptance_criteria:
+      - Both upstream handoffs and all implementation evidence remain green and internally consistent.
+      - PRD and design authority or approved waivers are recorded without hidden substitution.
+      - All implementation work occurred in canonical TDTB after upstream gates.
+      - Automated and scratch checks pass with no live writes, billed calls, or runtime changes.
+      - implementation-handoff.json states optional cutover readiness and preserves rollback prerequisites.
+      - A missing or failed cutover does not invalidate this implementation acceptance.
+    handoff:
+      known_context: [Cutover is optional and must not be inferred from implementation success.]
+      target_files: [docs/plan/2026-08-12-tdtb-project-extraction-implementation/evidence/implementation-handoff.json]
+      constraints: [Review-only; do not change launchd, process, source fallback, or external state.]
+    requires_review: false
+    review_depth: full
+    review_security_sensitive: false

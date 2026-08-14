@@ -1,0 +1,147 @@
+{
+  "artifact": "staged-verification",
+  "plan_id": "2026-08-12-tdtb-project-extraction-migration",
+  "task_id": "MIG-04",
+  "status": "PASS",
+  "gate": "GREEN",
+  "blocks_mig_05": false,
+  "scope": {
+    "source_requested_path": "/Users/walle-mini/Repos/Claudius",
+    "source_resolved_path": "/Users/walle-mini/Development/Claudius",
+    "stage_root": "/var/folders/gw/5_33ynbd5vv5884_v5h7vmg80000gn/T/opencode/tdtb-migration-stage",
+    "destination_path": "/Users/walle-mini/Repos/Projects/TDTB",
+    "comparison_only": true,
+    "destination_install_performed": false,
+    "consumer_rewire_performed": false,
+    "commit_performed": false
+  },
+  "inputs": {
+    "transfer_manifest": "docs/plan/2026-08-12-tdtb-project-extraction-migration/evidence/transfer-manifest.json",
+    "staged_manifest": "docs/plan/2026-08-12-tdtb-project-extraction-migration/evidence/staged-manifest.json",
+    "generated_exclusion_manifest": "docs/plan/2026-08-12-tdtb-project-extraction-migration/evidence/generated-exclusion-manifest.json",
+    "migration_inputs": "docs/plan/2026-08-12-tdtb-project-extraction-migration/evidence/migration-inputs.json",
+    "historical_source_receipt": "/Users/walle-mini/Development/Claudius/Plans Link/2026-08-12-tdtb-project-extraction/evidence/transfer-receipt.json",
+    "historical_source_receipt_sha256": "/Users/walle-mini/Development/Claudius/Plans Link/2026-08-12-tdtb-project-extraction/evidence/transfer-receipt.sha256",
+    "receipt_trust_level": "immutable_historical_receipt_not_current"
+  },
+  "verification_counts": {
+    "transfer_manifest_items": 259,
+    "staged_expected_items": 255,
+    "generated_excluded_items": 4,
+    "staged_actual_items": 255,
+    "mapped_entries_present": 255,
+    "byte_hash_matches": 255,
+    "text_hash_matches": 255,
+    "binary_hash_matches": 0,
+    "mode_matches": 255,
+    "symlink_target_matches": 255,
+    "disposition_matches": 255,
+    "staged_manifest_entry_matches": 255,
+    "missing_paths": 0,
+    "extra_paths": 0,
+    "unexpected_renames": 0,
+    "paths_outside_sealed_map": 0,
+    "byte_hash_mismatches": 0,
+    "text_hash_mismatches": 0,
+    "binary_hash_mismatches": 0,
+    "mode_mismatches": 0,
+    "symlink_target_mismatches": 0,
+    "disposition_mismatches": 0,
+    "staged_manifest_entry_mismatches": 0,
+    "historical_receipt_entries": 198,
+    "historical_receipt_transfer_entries_compared": 198,
+    "historical_receipt_entry_matches": 198,
+    "historical_receipt_entry_mismatches": 0,
+    "transfer_entries_outside_historical_receipt_scope": 61,
+    "protected_source_dirty_paths_checked": 7,
+    "protected_source_dirty_paths_unchanged": 7,
+    "preserved_source_receipt_files_checked": 2,
+    "preserved_source_receipt_files_unchanged": 2,
+    "excluded_disk_paths_checked": 10,
+    "excluded_disk_paths_absent_from_stage": 10,
+    "source_git_entries_in_stage": 0,
+    "secret_signature_matches": 0
+  },
+  "hash_verification": {
+    "algorithm": "SHA-256",
+    "byte_hash_policy": "hash raw file bytes without newline or encoding normalization",
+    "content_hash_policy": "UTF-8 decodable entries use text_sha256; otherwise binary_sha256",
+    "all_staged_entries_utf8_decodable": true,
+    "source_transfer_stage_byte_hashes_equal": true,
+    "historical_receipt_file_sha256_declared": "6cd8bb4e3913d9151e394d602b686766fd1250471f72fa7fdde6369f8d06824d",
+    "historical_receipt_file_sha256_observed": "6cd8bb4e3913d9151e394d602b686766fd1250471f72fa7fdde6369f8d06824d",
+    "historical_receipt_file_sha256_matches": true,
+    "historical_receipt_sealed_manifest_sha256": "e381db0f6599d9291bc69de349ebca99f34c7fb03b99217bbae8ff4ba3ea54ef",
+    "historical_receipt_sidecar_sealed_manifest_sha256": "e381db0f6599d9291bc69de349ebca99f34c7fb03b99217bbae8ff4ba3ea54ef",
+    "historical_receipt_seal_values_match": true,
+    "note": "The historical receipt covers 198 current map entries; all match. The sealed current transfer map covers all 259 entries."
+  },
+  "exclusion_verification": {
+    "tracked_generated_source_items_checked": 4,
+    "tracked_generated_source_items_tracked": 4,
+    "tracked_generated_source_hash_matches": 4,
+    "tracked_generated_paths_absent": [
+      "app/schema-hashes.json",
+      "mockups/cockpit/assets/index-C4W5O96u.js",
+      "mockups/cockpit/assets/index-DGbVzjSj.css",
+      "mockups/cockpit/index.html"
+    ],
+    "disk_exclusion_groups_absent": {
+      "pytest_cache": 2,
+      "virtualenv": 1,
+      "python_bytecode_cache": 5,
+      "node_modules": 1,
+      "empty_generated_output_directory": 1,
+      "total": 10
+    },
+    "disk_exclusion_source_items_exist": 10,
+    "disk_exclusion_source_contents_ignored": 10,
+    "source_git_exclusion": {
+      "source_git_directory_remains_at_source": true,
+      "git_named_entries_in_stage": 0,
+      "stage_is_git_worktree": false,
+      "git_history_imported": false
+    }
+  },
+  "security_scan": {
+    "scope": "staged executable and text material",
+    "secret_patterns": [
+      "private key headers",
+      "AWS access key IDs",
+      "Google API keys",
+      "GitHub tokens",
+      "OpenAI-style secret keys",
+      "quoted credential assignments"
+    ],
+    "matches": 0,
+    "reviewed_process_invocations": 3,
+    "shell_injection_findings": 0,
+    "xss_sink_findings": 0,
+    "sql_injection_findings": 0
+  },
+  "acceptance_criteria": [
+    {
+      "criterion": "Every mapped entry matches byte hash, text/binary hash, mode, symlink target, and disposition.",
+      "met": true
+    },
+    {
+      "criterion": "No staged path is missing, extra, renamed unexpectedly, or outside the sealed map.",
+      "met": true
+    },
+    {
+      "criterion": "Generated exclusions and source .git exclusions are independently checked.",
+      "met": true
+    },
+    {
+      "criterion": "A green staged verification record exists before any destination install.",
+      "met": true
+    },
+    {
+      "criterion": "Any mismatch leaves source and destination untouched and blocks MIG-05.",
+      "met": true,
+      "mismatches_observed": 0
+    }
+  ],
+  "blockers": [],
+  "next_gate": "MIG-05 may install only the 255 entries verified by this record and apply sealed collision decisions."
+}

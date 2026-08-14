@@ -1,0 +1,401 @@
+plan_id: 2026-08-12-tdtb-project-extraction-claudius-rewiring
+objective: >-
+  Rewire non-live Claudius consumers to the verified canonical TDTB repository
+  after migration acceptance, while preserving shared Claudius ownership and
+  leaving the loaded live runtime unchanged.
+created_at: '2026-08-13T00:00:00Z'
+created_by: gem-planner
+status: pending
+tldr: >-
+  Update and verify Claudius path consumers only after MIG-07. Do not migrate
+  files, implement TDTB behavior, or perform live cutover.
+workstream_type: claudius_consumer_rewiring
+parent_plan: docs/plan/2026-08-12-tdtb-project-extraction-decomposition/plan.yaml
+upstream_dependencies:
+  - plan: 2026-08-12-tdtb-project-extraction-migration
+    gate: MIG-07
+    artifact: docs/plan/2026-08-12-tdtb-project-extraction-migration/evidence/migration-handoff.json
+downstream_handoffs:
+  - plan: 2026-08-12-tdtb-project-extraction-implementation
+    gate: RW-06
+    artifact: docs/plan/2026-08-12-tdtb-project-extraction-claudius-rewiring/evidence/rewiring-handoff.json
+baseline:
+  objective: >-
+    Make Claudius non-live TDTB consumers resolve to the canonical repository
+    without moving shared skills or changing live runtime state.
+  acceptance_criteria:
+    - Every non-live operational TDTB consumer resolves to the canonical root or approved contract.
+    - Shared skills, rituals, plans, reports, and historical evidence remain in Claudius.
+    - The loaded launchd job and running process remain unchanged and are classified as pre-cutover.
+    - Broad post-rewire references are fully classified with no unresolved broken operational match.
+    - A rewiring handoff records changed paths, preserved paths, live fallback state, and verification.
+  captured_at: '2026-08-13T00:00:00Z'
+plan_lineage:
+  root_plan_id: 2026-08-12-tdtb-project-extraction
+  revision: 0
+  replan_count: 0
+  max_replans: 2
+  parent_revision: 6
+  reason: scope_change
+plan_metrics:
+  wave_1_task_count: 1
+  total_dependencies: 5
+  risk_score: high
+  quality_warnings:
+    - Consumer surfaces span skills, bootstrap, launch templates, scripts, tests, and docs.
+    - The source live process remains pointed at the old app until optional cutover.
+    - Claudius contains valid historical TDTB references that must not be erased.
+    - Unrelated source dirty paths must not be touched.
+context_version: 1
+context_updated_at: '2026-08-13T00:00:00Z'
+context_fields_changed: [upstream_migration_gate, consumer_scope, live_fallback_boundary, sweep_gate]
+tech_stack:
+  - name: Python
+    role: Claudius boundary and integration checks
+    evidence: /Users/walle-mini/Repos/Claudius/Scripts/test_tdtb_project_boundary.py
+  - name: Shell and launch configuration
+    role: Non-live path consumers and deferred runtime templates
+    evidence: /Users/walle-mini/Repos/Claudius/.claude/launch.json
+  - name: TDTB shared skills
+    role: Claudius-owned ritual and consumer contracts
+    evidence: /Users/walle-mini/Repos/Claudius/Skills/user/tdtb-bridger-vault
+conventions:
+  - Treat MIG-07 as a hard prerequisite, not as a factual assumption.
+  - Keep shared TDTB behavior and historical material in Claudius.
+  - Update only path-scoped operational references that should resolve to TDTB.
+  - Keep the source app consumer as an explicit pre-cutover fallback.
+  - Classify history and archives rather than rewriting them to remove references.
+constraints:
+  hard:
+    - Do not start without a green migration-handoff.json from MIG-07.
+    - Do not move shared skills, rituals, plans, reports, references, or historical evidence.
+    - Do not change the loaded launchd job, running process, or any live process state.
+    - Do not implement backend/frontend behavior or modify canonical app code.
+    - Do not touch unrelated dirty source paths.
+    - Fail closed on unresolved non-live operational references or ambiguous ownership.
+    - Do not claim operational cutover while any live consumer points to source.
+  soft:
+    - Retain a clearly marked source fallback until the attended cutover succeeds.
+  compatibility:
+    - Preserve shared skill and ritual paths while changing app path consumers.
+    - Preserve source and destination Git identities.
+  security_requirements:
+    - Do not access provider writes, vault data, Todoist, Calendar, or billed endpoints.
+    - Use bounded path edits and record all changed files in the handoff.
+architecture_snapshot:
+  consumer_classes:
+    - shared_skill_sources: remain in Claudius
+    - non_live_app_paths: resolve to /Users/walle-mini/Repos/Projects/TDTB
+    - historical_archive: remain and are allowlisted
+    - live_runtime: remains source until optional cutover
+  known_surfaces:
+    - Skills/user/tdtb-bridger-vault/
+    - Configurations/gpt-stack/
+    - Configurations/gpt-stack/seat-bootstrap.sh
+    - .claude/launch.json
+    - Scripts/test_tdtb_project_boundary.py
+    - Scripts/precommit-bundle-check.py
+    - Scripts/structure-audit.py
+    - CLAUDE.md and GPT-stack documentation
+research_digest:
+  digest: >-
+    The combined plan names shared skills, bootstrap, launch templates, boundary
+    tests, audits, bundle checks, documentation, and path resolution as consumer
+    surfaces. M8 and M9 are isolated here; M12 remains outside this workstream.
+  top_files:
+    - path: docs/plan/2026-08-12-tdtb-project-extraction-migration/evidence/migration-handoff.json
+      trust_level: required_upstream_gate
+    - path: /Users/walle-mini/Repos/Claudius/Skills/user/tdtb-bridger-vault
+      trust_level: shared_consumer_source
+    - path: /Users/walle-mini/Repos/Claudius/Configurations/gpt-stack
+      trust_level: shared_consumer_variant
+    - path: /Users/walle-mini/Repos/Claudius/.claude/launch.json
+      trust_level: non_live_launch_consumer
+    - path: /Users/walle-mini/Repos/Claudius/Scripts/test_tdtb_project_boundary.py
+      trust_level: boundary_verification
+    - path: /Users/walle-mini/Repos/Claudius/CLAUDE.md
+      trust_level: repository_instruction_consumer
+prior_decisions:
+  - decision: Rewire non-live consumers after migration, not before.
+    context: The canonical destination must exist and be independently verified first.
+  - decision: Live launchd/process change is isolated to the optional cutover child plan.
+    context: Rewiring prepares references but does not activate them.
+  - decision: Historical references are valid evidence.
+    context: A broad sweep classifies them instead of deleting them.
+reuse_notes:
+  - path: docs/plan/2026-08-12-tdtb-project-extraction/evidence/source-inventory.json
+    trust_level: preserved_consumer_inventory
+  - path: /Users/walle-mini/Repos/Claudius/Plans Link/2026-08-12-tdtb-project-extraction.md
+    trust_level: historical_boundary_and_consumer_scope
+replan:
+  reason: >-
+    Separate Claudius consumer rewiring from the migration install and from live
+    cutover so non-live path changes can be reviewed independently.
+  changed_tasks: [M8-M9 become RW-02 through RW-04 and no longer depend on implementation.]
+  added_tasks: [RW-01, RW-02, RW-03, RW-04, RW-05, RW-06]
+  removed_tasks: []
+  preserved_acceptance_criteria:
+    - Claudius consumers correctly resolve to the new repository.
+    - Shared Claudius ownership remains intact.
+    - Live cutover remains attended and separate.
+  new_risks:
+    - A path rewrite could accidentally relocate shared behavior.
+    - A historical source reference could be misclassified as broken.
+    - A prepared launch template could be mistaken for an active cutover.
+  progress_signal: >-
+    Six gates define migration receipt validation, consumer classification, non-live
+    rewiring, boundary verification, broad sweep, and a downstream rewiring handoff.
+open_questions:
+  - question: Is every identified launch and bootstrap reference non-live for this workstream?
+    context: Loaded runtime changes are excluded; execution must classify each surface explicitly.
+    type: decision_blocker
+    affects: [RW-02, RW-03, RW-06]
+assumptions:
+  - MIG-07 provides an immutable canonical destination manifest and green readiness result.
+  - The source live process can remain unchanged while non-live consumers are rewired.
+  - Claudius historical documents may retain source paths when clearly classified.
+  - Consumer tests can run without real provider writes or live service access.
+pre_mortem:
+  overall_risk_level: high
+  critical_failure_modes:
+    - scenario: A shared skill is moved or rewritten as an app consumer.
+      likelihood: medium
+      impact: critical
+      mitigation: Require a consumer inventory with ownership class before any path edit.
+    - scenario: Rewiring activates the live source or destination process accidentally.
+      likelihood: low
+      impact: critical
+      mitigation: Exclude loaded launchd/process state and require CUTOVER for activation.
+    - scenario: Historical references are deleted to make the sweep appear clean.
+      likelihood: medium
+      impact: high
+      mitigation: 'Require disposition values: operational, shared, historical, fallback, or broken.'
+    - scenario: Implementation begins from an incomplete rewiring result.
+      likelihood: medium
+      impact: high
+      mitigation: RW-06 must include all changed paths, sweep output, and live fallback classification.
+coordination_notes:
+  - RW-01 joins the migration handoff before any consumer edit.
+  - RW-02 builds the disposition map and identifies protected shared and live surfaces.
+  - RW-03 rewires only approved non-live consumers.
+  - RW-04 verifies boundary, structure, instruction, and consumer checks.
+  - RW-05 performs the broad classification sweep after rewiring.
+  - RW-06 is the sole implementation handoff gate.
+tasks:
+  - id: RW-01
+    title: Validate the migration handoff for consumer work
+    description: >-
+      Confirm MIG-07 is green, destination identity is canonical, and the
+      migration output contains the material required by downstream consumers.
+    wave: 1
+    agent: gem-reviewer
+    status: pending
+    covers: [upstream gate, destination identity, migration output completeness]
+    depends_on: []
+    conflicts_with: []
+    context_files:
+      - path: docs/plan/2026-08-12-tdtb-project-extraction-migration/evidence/migration-handoff.json
+        description: Required migration gate.
+      - path: /Users/walle-mini/Repos/Projects/TDTB
+        description: Canonical destination.
+    flags:
+      requires_design_validation: false
+      retries_used: 0
+      revision_reason: ''
+    acceptance_criteria:
+      - migration-handoff.json exists, is green, and names the canonical destination.
+      - The handoff contains transfer, collision, exclusion, hash, and readiness evidence.
+      - No rewiring starts when the migration handoff is missing, stale, or failed.
+    handoff:
+      known_context: [Migration did not rewire Claudius consumers or change live state.]
+      target_files: [docs/plan/2026-08-12-tdtb-project-extraction-claudius-rewiring/evidence/rewiring-inputs.json]
+      constraints: [Review-only; do not edit consumers or destination.]
+    requires_review: false
+    review_depth: full
+    review_security_sensitive: false
+
+  - id: RW-02
+    title: Classify Claudius consumer ownership and path dispositions
+    description: >-
+      Map each relevant Claudius TDTB reference to non-live operational, shared,
+      historical/archive, intentional fallback, or unresolved disposition.
+    wave: 2
+    agent: gem-implementer
+    status: pending
+    covers: [consumer inventory, ownership boundaries, protected paths, live classification]
+    depends_on: [RW-01]
+    conflicts_with: []
+    context_files:
+      - path: docs/plan/2026-08-12-tdtb-project-extraction-claudius-rewiring/evidence/rewiring-inputs.json
+        description: Validated migration handoff.
+      - path: /Users/walle-mini/Repos/Claudius/Skills/user/tdtb-bridger-vault
+        description: Shared skill consumer.
+      - path: /Users/walle-mini/Repos/Claudius/Configurations/gpt-stack
+        description: GPT-stack consumer variants.
+      - path: /Users/walle-mini/Repos/Claudius/.claude/launch.json
+        description: Launch configuration surface.
+      - path: /Users/walle-mini/Repos/Claudius/Scripts/test_tdtb_project_boundary.py
+        description: Existing boundary gate.
+    flags:
+      requires_design_validation: false
+      retries_used: 0
+      revision_reason: ''
+    acceptance_criteria:
+      - Every candidate consumer has exactly one ownership and path disposition.
+      - Shared skills, rituals, plans, reports, and archives are protected from relocation.
+      - The live source process and loaded launchd job are explicitly classified as pre-cutover.
+      - Unresolved non-live operational references block RW-03.
+    handoff:
+      known_context: [A source reference is not automatically broken; history and fallback are valid classes.]
+      target_files: [docs/plan/2026-08-12-tdtb-project-extraction-claudius-rewiring/evidence/consumer-disposition.json]
+      constraints: [Read-only inventory; preserve unrelated dirty paths.]
+    requires_review: true
+    review_depth: full
+    review_security_sensitive: false
+
+  - id: RW-03
+    title: Rewire approved non-live Claudius consumers
+    description: >-
+      Update only the approved non-live Claudius references so app paths resolve
+      to the canonical TDTB root while shared behavior and live fallback remain intact.
+    wave: 3
+    agent: gem-implementer
+    status: pending
+    covers: [bootstrap paths, scratch launch paths, tests, audits, documentation, path resolution]
+    depends_on: [RW-02]
+    conflicts_with: []
+    context_files:
+      - path: docs/plan/2026-08-12-tdtb-project-extraction-claudius-rewiring/evidence/consumer-disposition.json
+        description: Approved consumer classes.
+      - path: /Users/walle-mini/Repos/Claudius/Configurations/gpt-stack/seat-bootstrap.sh
+        description: Bootstrap consumer.
+      - path: /Users/walle-mini/Repos/Claudius/.claude/launch.json
+        description: Non-live launch configuration consumer.
+      - path: /Users/walle-mini/Repos/Claudius/Scripts
+        description: Boundary, audit, and bundle consumers.
+    flags:
+      requires_design_validation: false
+      retries_used: 0
+      revision_reason: ''
+    acceptance_criteria:
+      - Each approved non-live consumer resolves to /Users/walle-mini/Repos/Projects/TDTB or an approved contract.
+      - Shared TDTB skills and Claudius-owned history remain in their original paths.
+      - The loaded launchd job, running process, and source fallback are unchanged.
+      - Edits are limited to the approved disposition map and preserve unrelated dirty files.
+      - No application behavior, provider state, or live service state changes.
+    handoff:
+      known_context: [Prepared launch references do not activate the live runtime.]
+      target_files: [Claudius files listed in consumer-disposition.json]
+      constraints: [Use path-scoped edits; do not touch live launchd state or app implementation.]
+    requires_review: true
+    review_depth: full
+    review_security_sensitive: false
+
+  - id: RW-04
+    title: Verify Claudius boundary and consumer contracts
+    description: >-
+      Independently verify changed consumers, shared ownership, source fallback
+      classification, and repository boundary checks after rewiring.
+    wave: 4
+    agent: gem-reviewer
+    status: pending
+    covers: [boundary tests, structure checks, instruction checks, consumer verification]
+    depends_on: [RW-03]
+    conflicts_with: []
+    context_files:
+      - path: docs/plan/2026-08-12-tdtb-project-extraction-claudius-rewiring/evidence/consumer-disposition.json
+        description: Expected consumer dispositions.
+      - path: /Users/walle-mini/Repos/Claudius/Scripts/test_tdtb_project_boundary.py
+        description: Boundary verification.
+      - path: /Users/walle-mini/Repos/Claudius/CLAUDE.md
+        description: Repository instruction contract.
+      - path: /Users/walle-mini/Repos/Projects/TDTB
+        description: Canonical destination referenced by consumers.
+    flags:
+      requires_design_validation: false
+      retries_used: 0
+      revision_reason: ''
+    acceptance_criteria:
+      - Boundary, structure, instruction, bundle, and path-resolution checks pass for changed consumers.
+      - Every changed file matches the approved disposition map and no protected dirty path changed.
+      - The live source consumer remains explicit pre-cutover and does not make the gate fail.
+      - No unresolved non-live operational consumer remains.
+    handoff:
+      known_context: [A green consumer check proves rewiring only, not implementation or live ownership.]
+      target_files: [docs/plan/2026-08-12-tdtb-project-extraction-claudius-rewiring/evidence/consumer-verification.json]
+      constraints: [Review-only verification; do not repair failures in this task.]
+    requires_review: false
+    review_depth: full
+    review_security_sensitive: false
+
+  - id: RW-05
+    title: Classify the post-rewire Claudius reference sweep
+    description: >-
+      Sweep remaining Claudius TDTB references and classify every result as
+      operational canonical, shared, historical/archive, intentional fallback, or broken.
+    wave: 5
+    agent: gem-implementer
+    status: pending
+    covers: [broad sweep, allowlist, fallback classification, orphan detection]
+    depends_on: [RW-04]
+    conflicts_with: []
+    context_files:
+      - path: /Users/walle-mini/Repos/Claudius
+        description: Remaining repository to sweep.
+      - path: docs/plan/2026-08-12-tdtb-project-extraction-claudius-rewiring/evidence/consumer-disposition.json
+        description: Expected classifications.
+      - path: docs/plan/2026-08-12-tdtb-project-extraction/evidence/source-inventory.json
+        description: Original consumer inventory.
+    flags:
+      requires_design_validation: false
+      retries_used: 0
+      revision_reason: ''
+    acceptance_criteria:
+      - Sweep covers runtime text, path literals, launch/bootstrap references, scripts, tests, docs, and archives.
+      - Every match has one recorded disposition and source history remains retained.
+      - Zero unresolved broken or orphaned non-live operational references remain.
+      - The live source consumer is classified as intentional pre-cutover fallback.
+    handoff:
+      known_context: [Historical evidence is preserved and does not need source-path removal.]
+      target_files: [docs/plan/2026-08-12-tdtb-project-extraction-claudius-rewiring/evidence/post-rewire-sweep.json]
+      constraints: [Do not rewrite historical plans or delete the fallback tree.]
+    requires_review: true
+    review_depth: full
+    review_security_sensitive: false
+
+  - id: RW-06
+    title: Accept Claudius consumer rewiring
+    description: >-
+      Review the complete rewiring evidence and emit the implementation handoff
+      only when migration, consumer checks, sweep classifications, and live fallback
+      boundaries are consistent.
+    wave: 6
+    agent: gem-reviewer
+    status: pending
+    covers: [rewiring acceptance, source ownership, downstream implementation readiness]
+    depends_on: [RW-05]
+    conflicts_with: []
+    context_files:
+      - path: docs/plan/2026-08-12-tdtb-project-extraction-claudius-rewiring/evidence
+        description: Rewiring evidence set.
+      - path: docs/plan/2026-08-12-tdtb-project-extraction-migration/evidence/migration-handoff.json
+        description: Upstream migration acceptance.
+      - path: /Users/walle-mini/Repos/Claudius
+        description: Rewired shared host and historical evidence.
+    flags:
+      requires_design_validation: false
+      retries_used: 0
+      revision_reason: ''
+    acceptance_criteria:
+      - MIG-07 remains green and all rewiring evidence is internally consistent.
+      - All non-live operational consumers resolve to the canonical TDTB root.
+      - Shared Claudius ownership and historical evidence remain preserved.
+      - Live source state is explicitly pre-cutover and no live mutation occurred.
+      - rewiring-handoff.json is green and names exact changed, preserved, and classified paths.
+    handoff:
+      known_context: [This is the sole upstream gate for implementation.]
+      target_files: [docs/plan/2026-08-12-tdtb-project-extraction-claudius-rewiring/evidence/rewiring-handoff.json]
+      constraints: [Review-only; do not implement app behavior or activate runtime.]
+    requires_review: false
+    review_depth: full
+    review_security_sensitive: false
