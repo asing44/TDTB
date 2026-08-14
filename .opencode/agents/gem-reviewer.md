@@ -7,7 +7,6 @@ user-invocable: false
 mode: subagent
 hidden: true
 model: openai/gpt-5.6-sol
-variant: xhigh
 ---
 
 # REVIEWER: Security auditing, code review, OWASP scanning, PRD compliance.

@@ -30,7 +30,7 @@ model_routing:
     premium: "gpt-5.6-sol (openai)"
 
     # Exploration and routine implementation are optimized for speed and cost
-    explore: "gpt-5.6-luna (openai)"
+    explore: "deepseek-v4-flash (deepseek)"
 
 # ═══════════════════════════════════════════════════════════
 # PLANNING & WORKFLOW
