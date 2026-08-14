@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TDTB — Morning Wizard</title>
+<link rel="stylesheet" href="/static/ui_kit.css">
+<style>
+  /* Wizard chrome (spa-overhaul T1). View-specific styles live in each
+     step module's section; shared primitives stay in ui_kit.css. */
+  .wiz-header { display: flex; align-items: baseline; gap: 1rem; flex-wrap: wrap; }
+  .wiz-budget { margin-left: auto; font-size: 0.85rem; opacity: 0.8; }
+  .wiz-budget.spent { color: var(--err, #c0392b); font-weight: 600; opacity: 1; }
+  .wiz-nav { display: flex; gap: 0.4rem; margin: 0.8rem 0; flex-wrap: wrap; }
+  .wiz-chip {
+    border: 1px solid var(--border, #ccc); border-radius: 999px;
+    padding: 0.25rem 0.8rem; cursor: pointer; background: none;
+    font: inherit; font-size: 0.85rem;
+  }
+  .wiz-chip.active { border-color: var(--accent, #2c6e9e); font-weight: 600; }
+  .wiz-chip.done { opacity: 0.6; }
+  .wiz-notice {
+    border-left: 3px solid var(--warn, #d9a400); padding: 0.4rem 0.8rem;
+    margin: 0.6rem 0; font-size: 0.9rem;
+  }
+  .wiz-footer { display: flex; gap: 0.6rem; margin-top: 1.2rem; }
+  .wiz-footer .spacer { flex: 1; }
+  #step-root { min-height: 40vh; }
+</style>
+</head>
+<body>
+<div class="wiz-header">
+  <h1>TDTB</h1>
+  <span id="wiz-phase" class="muted"></span>
+  <span id="wiz-budget" class="wiz-budget">budget: —</span>
+</div>
+<nav class="wiz-nav" id="wiz-nav"></nav>
+<div id="wiz-notice" class="wiz-notice" hidden></div>
+<main id="step-root"></main>
+<div class="wiz-footer">
+  <button id="wiz-prev" class="btn">← Back</button>
+  <span class="spacer"></span>
+  <button id="wiz-skip" class="btn" hidden>Skip →</button>
+  <button id="wiz-next" class="btn">Next →</button>
+</div>
+
+<script src="/static/ui_kit.js"></script>
+<script src="/static/timeline_logic.js"></script>
+<script src="/static/wizard_logic.js"></script>
+<script src="/static/steps/setup.js"></script>
+<script src="/static/steps/digest.js"></script>
+<script src="/static/steps/adjust.js"></script>
+<script src="/static/steps/timeline.js"></script>
+<script src="/static/steps/commit.js"></script>
+<script>
+(function () {
+  'use strict';
+  var wiz = window.tdtbWizard;
+  var kit = window.tdtbKit;
+  var steps = window.tdtbSteps || {};
+
+  // Shared wizard state. Steps read/write via ctx; shell derives gating
+  // inputs from it. Session-scoped by design (matches runstate day scope).
+  var state = {
+    token: null,
+    daySetup: null,       // /plan-inputs day_setup echo
+    hasDaySetup: false,
+    sequence: null,       // staged proposal (timeline step writes)
+    hasSequence: false,
+    commitDone: false,
+    ledger: null          // /billed-ledger body
+  };
+  try {
+    var saved = JSON.parse(sessionStorage.getItem('tdtb-wiz') || '{}');
+    state.sequence = saved.sequence || null;
+    // Stash shape is {digest, sequence:{sequence:rows}, config, anchored_blocks};
+    // hasSequence means "has actual rows", not "has a stash object".
+    var stashRows = (state.sequence && state.sequence.sequence &&
+      state.sequence.sequence.sequence) || [];
+    state.hasSequence = stashRows.length > 0;
+    state.commitDone = !!saved.commitDone;
+  } catch (e) { /* fresh state */ }
+
+  function persist() {
+    sessionStorage.setItem('tdtb-wiz', JSON.stringify({
+      sequence: state.sequence, commitDone: state.commitDone
+    }));
+  }
+
+  var current = null;
+
+  function ctx() {
+    return {
+      state: state, kit: kit, wizard: wiz,
+      token: state.token,
+      goto: show,
+      persist: persist,
+      refreshStatus: refreshStatus
+    };
+  }
+
+  function renderNav() {
+    var nav = document.getElementById('wiz-nav');
+    nav.innerHTML = '';
+    var curIdx = wiz.stepIndex(current);
+    wiz.STEPS.forEach(function (s, i) {
+      var b = document.createElement('button');
+      b.className = 'wiz-chip' + (s.id === current ? ' active' : i < curIdx ? ' done' : '');
+      b.textContent = (i + 1) + ' · ' + s.title;
+      b.onclick = function () { show(s.id); };
+      nav.appendChild(b);
+    });
+  }
+
+  function show(stepId) {
+    if (!wiz.stepById(stepId)) return;
+    current = stepId;
+    if (wiz.hashForStep(stepId) !== location.hash) location.hash = wiz.hashForStep(stepId);
+    renderNav();
+
+    var notice = wiz.entryNotice(stepId, state);
+    var nEl = document.getElementById('wiz-notice');
+    nEl.hidden = !notice;
+    nEl.textContent = notice || '';
+
+    document.getElementById('wiz-prev').disabled = !wiz.prevStep(stepId);
+    var next = wiz.nextStep(stepId);
+    document.getElementById('wiz-next').disabled = !next;
+    document.getElementById('wiz-skip').hidden =
+      !(next && wiz.stepById(next) && wiz.stepById(next).skippable);
+
+    var root = document.getElementById('step-root');
+    root.innerHTML = '';
+    var mod = steps[stepId];
+    if (mod && typeof mod.render === 'function') {
+      mod.render(root, ctx());   // G23: render must NEVER auto-fire a billed call
+    } else {
+      var p = document.createElement('p');
+      p.className = 'status status-err';
+      p.textContent = 'Step module missing: ' + stepId;
+      root.appendChild(p);
+    }
+  }
+
+  function refreshStatus() {
+    return kit.kitFetch('/billed-ledger').then(function (ledger) {
+      state.ledger = ledger;
+      var el = document.getElementById('wiz-budget');
+      el.textContent = wiz.budgetLabel(ledger);
+      el.classList.toggle('spent', wiz.budgetSpent(ledger));
+    }).catch(function () { /* status bar is best-effort */ });
+  }
+
+  document.getElementById('wiz-prev').onclick = function () {
+    var p = wiz.prevStep(current); if (p) show(p);
+  };
+  document.getElementById('wiz-next').onclick = function () {
+    var n = wiz.nextStep(current); if (n) show(n);
+  };
+  document.getElementById('wiz-skip').onclick = function () {
+    var n = wiz.nextStep(current, { skipAdjust: true }); if (n) show(n);
+  };
+  window.addEventListener('hashchange', function () {
+    var s = wiz.stepFromHash(location.hash);
+    if (s && s !== current) show(s);
+  });
+
+  // Boot: token → plan-inputs (day-phase inputs) → land.
+  fetch('/session-token').then(function (r) { return r.json(); })
+    .then(function (t) {
+      state.token = t.token;
+      return fetch('/plan-inputs').then(function (r) { return r.json(); });
+    })
+    .then(function (pi) {
+      state.daySetup = (pi && pi.day_setup) || null;
+      state.hasDaySetup = !!(state.daySetup && state.daySetup.anchor);
+      document.getElementById('wiz-phase').textContent = wiz.dayPhase(state);
+      refreshStatus();
+      show(wiz.stepFromHash(location.hash) || wiz.landingStep(state));
+    })
+    .catch(function (e) {
+      document.getElementById('step-root').innerHTML =
+        '<p class="status status-err">boot failed: /session-token or /plan-inputs — ' + e + '</p>';
+    });
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,43 @@
+{
+  "description": "Preset-trigger day: the Press micro-adventure preset (before_work zone exception) and a QT block with @10min tasks, exercising the standing no-morning-workout rule's sole carve-out.",
+  "run_data": {
+    "generated": "2026-07-12T12:00:00+00:00",
+    "valid_date": "2026-07-12",
+    "pool_count": 2,
+    "assigned_count": 2,
+    "pool_items": [
+      {"name": "Press", "path": "50 - Operations/Pursuits/Press.md", "types": ["interval"], "urgency": "2", "deadline": null, "priority_score": 15, "assigned": true},
+      {"name": "Quick Tasks", "path": "50 - Operations/Pursuits/Quick Tasks.md", "types": ["interval"], "urgency": "1", "deadline": null, "priority_score": 6, "assigned": true}
+    ],
+    "assigned_items": [
+      {"name": "Press", "path": "50 - Operations/Pursuits/Press.md", "types": ["interval"], "urgency": "2", "deadline": null, "priority_score": 15, "assigned": true},
+      {"name": "Quick Tasks", "path": "50 - Operations/Pursuits/Quick Tasks.md", "types": ["interval"], "urgency": "1", "deadline": null, "priority_score": 6, "assigned": true}
+    ]
+  },
+  "digest": {
+    "valid_date": "2026-07-12",
+    "ranking_order": ["urgency", "overdue", "deadline", "staleness", "summit"],
+    "assigned_count": 2,
+    "pool_count": 2,
+    "assigned": [
+      {"name": "Press", "path": "50 - Operations/Pursuits/Press.md", "urgency": "2", "deadline": null},
+      {"name": "Quick Tasks", "path": "50 - Operations/Pursuits/Quick Tasks.md", "urgency": "1", "deadline": null}
+    ],
+    "suggested": []
+  },
+  "config": {
+    "presets": [
+      {"name": "Press", "type": "interval", "blocks": 2, "priority": 2, "zone": "before_work", "note": "Press micro-adventure — TDTB config explicitly sets before_work per the standing exception"},
+      {"name": "Quick Tasks", "type": "interval", "blocks": 1, "priority": 1, "zone": "any"}
+    ],
+    "caps": {"deep": 4, "mixed": 3}
+  },
+  "assigned": [
+    {"id": "Press", "blocks": 2, "priority": 2},
+    {"id": "Quick Tasks", "blocks": 1, "priority": 1}
+  ],
+  "anchored_blocks": [
+    {"id": "Medication AM", "type": "hard", "start": "08:00", "end": "08:15"}
+  ],
+  "adjust_instruction": "complete Quick Tasks"
+}

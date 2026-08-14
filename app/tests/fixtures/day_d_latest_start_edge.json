@@ -1,0 +1,43 @@
+{
+  "description": "latest_start edge day: an item's preset latest_start window is nearly closed by the time it would naturally be placed, forcing a latest_start_violation flag rather than a drop (never-bump).",
+  "run_data": {
+    "generated": "2026-07-12T12:00:00+00:00",
+    "valid_date": "2026-07-12",
+    "pool_count": 2,
+    "assigned_count": 2,
+    "pool_items": [
+      {"name": "Minting", "path": "50 - Operations/Pursuits/Minting.md", "types": ["pursuit"], "urgency": "2", "deadline": null, "priority_score": 10, "assigned": true},
+      {"name": "Professional Development", "path": "50 - Operations/Pursuits/Professional Development.md", "types": ["pursuit"], "urgency": "2", "deadline": null, "priority_score": 9, "assigned": true}
+    ],
+    "assigned_items": [
+      {"name": "Minting", "path": "50 - Operations/Pursuits/Minting.md", "types": ["pursuit"], "urgency": "2", "deadline": null, "priority_score": 10, "assigned": true},
+      {"name": "Professional Development", "path": "50 - Operations/Pursuits/Professional Development.md", "types": ["pursuit"], "urgency": "2", "deadline": null, "priority_score": 9, "assigned": true}
+    ]
+  },
+  "digest": {
+    "valid_date": "2026-07-12",
+    "ranking_order": ["urgency", "overdue", "deadline", "staleness", "summit"],
+    "assigned_count": 2,
+    "pool_count": 2,
+    "assigned": [
+      {"name": "Minting", "path": "50 - Operations/Pursuits/Minting.md", "urgency": "2", "deadline": null},
+      {"name": "Professional Development", "path": "50 - Operations/Pursuits/Professional Development.md", "urgency": "2", "deadline": null}
+    ],
+    "suggested": []
+  },
+  "config": {
+    "presets": [
+      {"name": "Minting", "type": "pursuit", "blocks": 4, "priority": 3, "zone": "work_hours"},
+      {"name": "Professional Development", "type": "pursuit", "blocks": 1, "priority": 1, "zone": "work_hours", "latest_start": "16:45"}
+    ],
+    "caps": {"deep": 4, "mixed": 3}
+  },
+  "assigned": [
+    {"id": "Minting", "blocks": 4, "priority": 3},
+    {"id": "Professional Development", "blocks": 1, "priority": 1, "latest_start": "16:45"}
+  ],
+  "anchored_blocks": [
+    {"id": "Trinoor Work Zone", "type": "template", "start": "13:30", "end": "17:00"}
+  ],
+  "adjust_instruction": "swap Minting for Professional Development"
+}

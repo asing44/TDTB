@@ -1,0 +1,86 @@
+/* ui_kit.css — shared styles for the five TDTB views (ui-revamp T1).
+   No framework, no build step: each view <link>s this and keeps only its
+   view-specific rules inline. Light + dark via prefers-color-scheme. */
+
+:root { color-scheme: light dark; }
+
+body {
+  font-family: -apple-system, sans-serif;
+  max-width: 720px;
+  margin: 2rem auto;
+  padding: 0 1rem;
+  color: #1a1a1a;
+  background: #fff;
+}
+h1 { font-size: 20px; }
+h2 { font-size: 15px; }
+nav a { margin-right: 1rem; }
+button { font-size: 13px; padding: 4px 10px; }
+
+/* status line — .status.error is the named-endpoint failure render */
+.status { font-size: 13px; color: #666; margin-bottom: 1rem; }
+.status.error { color: #a33; font-weight: 600; }
+
+/* tables */
+table { width: 100%; border-collapse: collapse; margin-bottom: 1.5rem; }
+th, td { text-align: left; padding: 4px 6px; border-bottom: 1px solid #eee; font-size: 13px; }
+th { color: #666; font-weight: 500; }
+.empty { color: #888; font-size: 13px; }
+
+/* per-row cost readout ("2 blk · 1h") */
+.cost { color: #667; font-size: 12px; white-space: nowrap; }
+
+/* source chips — color + text, never emoji-only (locked decision 3) */
+.chip {
+  display: inline-block;
+  font-size: 11px;
+  line-height: 16px;
+  padding: 0 6px;
+  border-radius: 8px;
+  margin-left: 6px;
+  vertical-align: 1px;
+}
+.chip-vault       { background: #e6e0f5; color: #5b3fa8; }
+.chip-todoist     { background: #e8f0fe; color: #1a56b0; }
+.chip-calendar    { background: #e0f2e6; color: #1e7a3c; }
+.chip-schedulable { background: #fdf3e0; color: #8a5a00; }
+
+/* loud banners */
+.banner-error {
+  display: none;
+  background: #fdecea; border: 1px solid #c0392b; color: #922;
+  border-radius: 6px; padding: 8px 12px; font-size: 13px; margin-bottom: 1rem;
+}
+.banner-warn {
+  display: none;
+  background: #fdf3e0; border: 1px solid #d99a2b; color: #8a5a00;
+  border-radius: 6px; padding: 6px 10px; font-size: 12px; margin: 0.4rem 0;
+}
+
+/* responsive (spa-overhaul T7) — phone-browser usable, ≤480px. Tables and
+   the timeline canvas scroll inside their own container; the page never
+   scrolls horizontally. */
+@media (max-width: 480px) {
+  body { margin: 0.75rem auto; }
+  button { padding: 8px 12px; }              /* finger-sized targets */
+  table { display: block; overflow-x: auto; }
+  .wiz-header h1 { font-size: 18px; }
+  .wiz-nav { overflow-x: auto; flex-wrap: nowrap; scrollbar-width: none; }
+  .wiz-chip { flex: 0 0 auto; }
+  .wiz-footer button { flex: 1; }            /* Back/Skip/Next full-width row */
+  .wiz-footer .spacer { display: none; }
+}
+
+@media (prefers-color-scheme: dark) {
+  body { background: #1e1e1e; color: #e6e6e6; }
+  h1, h2 { color: #e6e6e6; }
+  .status { color: #aaa; }
+  th, td, table { border-color: #444; }
+  .cost { color: #99a; }
+  .chip-vault       { background: #32285a; color: #c3aef5; }
+  .chip-todoist     { background: #1f3a5f; color: #9cc3f5; }
+  .chip-calendar    { background: #1d3a26; color: #9be0b0; }
+  .chip-schedulable { background: #3a2c10; color: #e0a955; }
+  .banner-error { background: #3a1f1d; color: #f0a9a0; }
+  .banner-warn  { background: #3a2c10; color: #e0a955; border-color: #8a5a00; }
+}

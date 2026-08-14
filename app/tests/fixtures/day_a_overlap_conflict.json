@@ -1,0 +1,47 @@
+{
+  "description": "Overlap conflict day: a hard anchored block (Dinner) sits back-to-back with a fixed calendar event, and two schedulable items compete for the same short window.",
+  "run_data": {
+    "generated": "2026-07-12T12:00:00+00:00",
+    "valid_date": "2026-07-12",
+    "pool_count": 3,
+    "assigned_count": 2,
+    "pool_items": [
+      {"name": "Garage Buildout", "path": "50 - Operations/Projects/Garage Buildout.md", "types": ["project"], "urgency": "3", "deadline": null, "priority_score": 22, "assigned": true},
+      {"name": "Entryway Design", "path": "50 - Operations/Projects/Entryway Design.md", "types": ["project"], "urgency": "2", "deadline": null, "priority_score": 12, "assigned": true},
+      {"name": "AWS Cloud Practitioner Essentials", "path": "50 - Operations/Projects/AWS Cloud Practitioner Essentials.md", "types": ["project"], "urgency": "2", "deadline": "2026-07-25", "priority_score": 14, "assigned": false}
+    ],
+    "assigned_items": [
+      {"name": "Garage Buildout", "path": "50 - Operations/Projects/Garage Buildout.md", "types": ["project"], "urgency": "3", "deadline": null, "priority_score": 22, "assigned": true},
+      {"name": "Entryway Design", "path": "50 - Operations/Projects/Entryway Design.md", "types": ["project"], "urgency": "2", "deadline": null, "priority_score": 12, "assigned": true}
+    ]
+  },
+  "digest": {
+    "valid_date": "2026-07-12",
+    "ranking_order": ["urgency", "overdue", "deadline", "staleness", "summit"],
+    "assigned_count": 2,
+    "pool_count": 3,
+    "assigned": [
+      {"name": "Entryway Design", "path": "50 - Operations/Projects/Entryway Design.md", "urgency": "2", "deadline": null},
+      {"name": "Garage Buildout", "path": "50 - Operations/Projects/Garage Buildout.md", "urgency": "3", "deadline": null}
+    ],
+    "suggested": [
+      {"name": "AWS Cloud Practitioner Essentials", "path": "50 - Operations/Projects/AWS Cloud Practitioner Essentials.md", "urgency": "2", "deadline": "2026-07-25"}
+    ]
+  },
+  "config": {
+    "presets": [
+      {"name": "Garage Buildout", "type": "project", "blocks": 2, "priority": 3, "zone": "any"},
+      {"name": "Entryway Design", "type": "project", "blocks": 2, "priority": 2, "zone": "any"}
+    ],
+    "caps": {"deep": 4, "mixed": 3}
+  },
+  "assigned": [
+    {"id": "Garage Buildout", "blocks": 2, "priority": 3},
+    {"id": "Entryway Design", "blocks": 2, "priority": 2}
+  ],
+  "anchored_blocks": [
+    {"id": "Foods Dinner", "type": "window", "start": "18:00", "end": "20:30"},
+    {"id": "Eye Doctor (calendar)", "type": "calendar", "start": "17:30", "end": "18:15"}
+  ],
+  "adjust_instruction": "drop Entryway Design"
+}
