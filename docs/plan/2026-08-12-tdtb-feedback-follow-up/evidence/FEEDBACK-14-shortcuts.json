@@ -1,0 +1,80 @@
+{
+  "task_id": "FEEDBACK-14",
+  "plan_id": "2026-08-12-tdtb-feedback-follow-up",
+  "title": "Correct the keyboard shortcut display and adjustment contract",
+  "status": "completed",
+  "objective": "Align every affected shortcut hint and the ← → keyboard action to exact ±15-minute adjustments while keeping pointer controls, duration bounds, persisted overrides, and 12-hour user-facing time labels consistent. No affected surface displays or applies ±30 minutes.",
+  "defect": {
+    "display": "Rail KeysCard rendered the ← → hint as '±30min' while the row steppers and slider already stepped in 15-minute (half-block) increments.",
+    "behavior": "Queue rowKeydown adjusted ArrowLeft/ArrowRight by BLOCK_STEP (1 block = 30 minutes) on the integer grid via clampBlocks, so the keyboard action disagreed with the ±15 min pointer steppers (a − press at every integer was a no-op and + jumped 30 minutes).",
+    "persistence_impact": "Keyboard overrides wrote 30-minute-grid values into the same OVERRIDE_SET store the pointer controls use, so the persisted value differed from the pointer contract."
+  },
+  "fix": [
+    {
+      "file": "frontend/src/ui/Rail.tsx",
+      "behavior": "KeysCard ← → hint changed from '±30min' to '±15min'. No other hint surface was affected."
+    },
+    {
+      "file": "frontend/src/ui/Queue.tsx",
+      "behavior": "rowKeydown ArrowLeft/ArrowRight now steps by HALF_BLOCK (0.5 block = exactly 15 minutes) and clamps via clampHalfBlocks, matching the row steppers and slider grid. Unused BLOCK_STEP/clampBlocks imports removed."
+    }
+  ],
+  "unchanged_contracts": [
+    "MIN_BLOCKS=0 / MAX_BLOCKS=16 duration bounds unchanged; clampHalfBlocks already honored them.",
+    "Pointer steppers ('−15 min' / '+15 min' tooltips, '15 minutes less/more' aria labels) and slider step=0.5 already on the half-block grid; untouched.",
+    "setOverride → OVERRIDE_SET persistence path untouched; keyboard and pointer now write the same half-block grid.",
+    "Internal HH:MM wire format and 12-hour display12h authority (FEEDBACK-12) untouched.",
+    "SetupDrawer Mint 'each session is 30min' copy is a Mint session length, not a shortcut hint; out of scope and unchanged."
+  ],
+  "acceptance_criteria_met": [
+    "Every affected shortcut hint displays ±15 min and no affected hint displays ±30 min: Rail KeysCard asserts getByText('±15min'), queryByText('±30min') null, and the Keyboard shortcuts section never contains '30min'.",
+    "The ← → keyboard action changes the effective value by exactly 15 minutes in both directions: ArrowRight 3 → 3.5 blocks, ArrowLeft 1 → 0.5 blocks, both directions from the same base return to 3.",
+    "Pointer controls, duration bounds, and persisted values stay consistent: stepper clicks persist the same half-block override value as the keyboard, slider step equals HALF_BLOCK, ArrowLeft walks 1 → 0.5 → 0 and clamps at 0 and at 16, and ArrowRight from all day lands on 0.5 (15 min), never 1 (30 min).",
+    "Focused tests cover display text, both adjustment directions, and boundary behavior: 10 new tests in frontend/src/ui/feedback14.test.tsx (hint text, ArrowRight, ArrowLeft, both-directions, floor walk, all-day ArrowRight, upper-bound clamp, pointer persistence, slider grid, 12-hour labels).",
+    "User-facing time labels in the tested surface remain 12-hour: sequenced Queue asserts '10:45 AM', /AM|PM/ present, and no bare HH:MM readout without AM/PM."
+  ],
+  "verification": {
+    "red_green": "Red: 5 focused tests failed against the ±30min hint and BLOCK_STEP keyboard path (hint text, ArrowRight exact, ArrowLeft exact, floor walk, all-day ArrowRight). Green: all 10 focused pass after the two-line fix.",
+    "focused_tests": "10 passed (frontend/src/ui/feedback14.test.tsx)",
+    "full_frontend": "npm test: 40 files passed | 1 skipped, 610 passed | 6 skipped (616 total; FEEDBACK-13 baseline 606 -> +10 new FEEDBACK-14 tests)",
+    "typecheck": "tsc --noEmit clean (0 errors)",
+    "build_mockup": "ok - vite build --mode mockup: CSS 34.20 kB, JS 129.69 kB",
+    "build_prod": "ok - vite build --mode production: CSS 34.20 kB, JS 131.44 kB",
+    "bundle_readback": [
+      "mockup bundle mockups/cockpit/assets/index-C3R4uKg5.js contains exactly 1 '±15min' and 0 '±30min'",
+      "prod bundle app/static/cockpit/assets/index-DockfXYD.js contains exactly 1 '±15min' and 0 '±30min'"
+    ],
+    "backend_full": "1283 passed (app/tests) - zero Python edits; bundle in app/static rebuilt and regression-green"
+  },
+  "changed_files": {
+    "created": [
+      "frontend/src/ui/feedback14.test.tsx",
+      "docs/plan/2026-08-12-tdtb-feedback-follow-up/evidence/FEEDBACK-14-shortcuts.json"
+    ],
+    "modified": [
+      "frontend/src/ui/Rail.tsx",
+      "frontend/src/ui/Queue.tsx"
+    ],
+    "rebuilt_bundles": [
+      "mockups/cockpit/assets/index-C3R4uKg5.js",
+      "app/static/cockpit/assets/index-DockfXYD.js"
+    ]
+  },
+  "safety_proof": {
+    "live_post_sequence_adjust_commit": "none",
+    "billed_calls": "0",
+    "provider_writes": "none",
+    "real_source_writes": "none",
+    "runtime_restart": "none",
+    "port_8746_access": "none - no live service contact this task",
+    "scratch_service": "not started - bounded DOM-level verification via vitest harness, matching FEEDBACK-13 precedent",
+    "branch_or_index_mutation": "none - no commit, stage, reset, clean, stash, rebase, or merge; branch Development/tdtb-canonical-cutover unchanged",
+    "backend_source_changes": "0 - app/*.py untouched",
+    "foreign_changes_preserved": "pre-existing dirty/untracked state untouched; only frontend/src owned files, rebuilt bundles, and this evidence file written"
+  },
+  "residual_issues": [
+    "Browser-level visual check not rerun (playwright-core not present); vitest DOM suite renders the real Rail and Queue against fixture scenarios and asserts the hint text, keyboard behavior, pointer persistence, bounds, and 12-hour labels.",
+    "plan.yaml task status remains 'pending'; plan status reconciliation is the plan owner's step and is out of this task's scope."
+  ],
+  "evidence_path": "docs/plan/2026-08-12-tdtb-feedback-follow-up/evidence/FEEDBACK-14-shortcuts.json"
+}

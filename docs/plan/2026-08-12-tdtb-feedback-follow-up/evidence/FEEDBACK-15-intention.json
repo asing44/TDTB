@@ -1,0 +1,77 @@
+{
+  "plan_id": "2026-08-12-tdtb-feedback-follow-up",
+  "task_id": "FEEDBACK-15",
+  "title": "Correct Intention copy and textarea readability",
+  "status": "completed",
+  "objective": "Validate and correct the Day Setup Intention field copy and textarea readability: the prompt names one focus for today, every state (text, placeholder, surface, border, focus, disabled) is readable and intentionally styled, the capture never clips at desktop or narrow widths, persistence is unchanged, and user-facing times stay 12-hour.",
+  "treatment": {
+    "copy": "Label 'Intention' plus helper 'One thing to focus on today.' (exact FEEDBACK-13 sentence, unchanged). Empty state gains placeholder 'One thing to focus on today' so the field reads as a single focus before typing.",
+    "readable_states": [
+      "text: color var(--t-text)",
+      "placeholder: color var(--t-muted) via ::placeholder",
+      "surface: background var(--t-surface)",
+      "border: 1px solid var(--t-border)",
+      "focus: :focus-visible outline 2px solid var(--t-accent), outline-offset 1px, border-color var(--t-accent)",
+      "disabled: color var(--t-muted), background var(--t-surface-2), border-color var(--t-border), cursor not-allowed"
+    ],
+    "narrow_width": "@media (max-width: 520px) { .field textarea.cap-intention { flex-basis: 100% } } so the 96px label keeps its own row and the textarea takes a full field line — no clipping.",
+    "unchanged": "DaySetup data shape, captures.intention persistence, and SETUP_SAVED flow untouched."
+  },
+  "measurable": {
+    "element": "textarea#cap-intention.cap-intention",
+    "placeholder_equals": "One thing to focus on today",
+    "helper": "p#cap-intention-hint.field__hint text_equals 'One thing to focus on today.'",
+    "aria": "textarea#cap-intention aria-describedby=\"cap-intention-hint\"",
+    "css_states": [
+      "color: var(--t-text)",
+      "background: var(--t-surface)",
+      "border: 1px solid var(--t-border)",
+      "min-height: 64px",
+      "::placeholder color: var(--t-muted)",
+      ":focus-visible outline",
+      ":disabled color + cursor: not-allowed"
+    ],
+    "narrow_media": "@media (max-width: 520px) { .field textarea.cap-intention { flex-basis: 100% } }"
+  },
+  "tests": {
+    "focused": "frontend/src/ui/feedback15.test.tsx: 5 passed (copy+placeholder+aria, all six CSS states incl. disabled, narrow-width no-clip rule, persistence unchanged, 12-hour labels)",
+    "regression": "feedback13.test.tsx + feedback14.test.tsx + components.test.tsx: 67 passed",
+    "full_frontend": "41 files passed | 1 skipped; 615 passed | 6 skipped (621 total)",
+    "typecheck": "tsc --noEmit clean (0 errors)",
+    "build_mockup": "ok — vite build --mode mockup: CSS 34.41 kB, JS 129.73 kB",
+    "build_prod": "ok — vite build --mode production: CSS 34.41 kB, JS 131.48 kB",
+    "bundle_readback": [
+      "prod CSS + mockup CSS contain cap-intention and cap-intention:disabled",
+      "prod + mockup JS contain 'One thing to focus on today' (copy + placeholder)",
+      "prod CSS contains flex-basis:100% narrow rule"
+    ]
+  },
+  "red_green": "Red: 3 focused tests failed asserting placeholder, :disabled CSS, and the 520px flex-basis rule while the current treatment lacked all three. Green: all 5 focused pass after adding the placeholder attribute (SetupDrawer.tsx) and the :disabled + @media rules (app.css).",
+  "constraints_respected": [
+    "FEEDBACK-13 helper sentence, aria wiring, and label unchanged; FEEDBACK-14 shortcut contract untouched.",
+    "FEEDBACK-23..29 contracts untouched (no backend or timeline edits).",
+    "Persistence behavior unchanged — saveDaySetup receives captures.intention exactly as typed.",
+    "User-facing times remain 12-hour in the drawer (AM/PM present, no bare HH:MM).",
+    "No live writes, no external mutations, no restart, no commit."
+  ],
+  "changed_files": [
+    "frontend/src/ui/SetupDrawer.tsx",
+    "frontend/src/app.css",
+    "frontend/src/ui/feedback15.test.tsx"
+  ],
+  "verification": {
+    "focused_tests": "npx vitest run src/ui/feedback15.test.tsx -> 5 passed",
+    "full_frontend": "npm test -> 41 files passed | 1 skipped; 615 passed | 6 skipped",
+    "typecheck": "npm run typecheck -> clean",
+    "builds": "npm run build:mockup + npm run build:prod -> both succeed; bundles read back with treatment",
+    "evidence_path": "docs/plan/2026-08-12-tdtb-feedback-follow-up/evidence/FEEDBACK-15-intention.json"
+  },
+  "safety_proof": {
+    "live_post_sequence_adjust_commit": "none",
+    "billed_calls": "0",
+    "external_writes": "none",
+    "runtime_restart": "none",
+    "branch_or_index_mutation": "none — no commit, stage, reset, or push"
+  },
+  "residual_issues": []
+}

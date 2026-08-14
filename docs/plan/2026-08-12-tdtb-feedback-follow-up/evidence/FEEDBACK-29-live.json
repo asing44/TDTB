@@ -1,0 +1,126 @@
+{
+  "task_id": "FEEDBACK-29",
+  "plan_id": "2026-08-12-tdtb-feedback-follow-up",
+  "title": "Attended live write and readback verification gate",
+  "status": "completed",
+  "executed_by": "devops-delegated-agent",
+  "executed_at": "2026-08-14T16:20:00Z",
+  "approval": {
+    "state": "approved",
+    "approved_write_set": {
+      "todoist_target": {"url": "https://app.todoist.com/app/task/call-parents-6h66PQj9mwwq5hgG", "task_id": "6h66PQj9mwwq5hgG", "title": "Call Parents", "intended_due": "2026-08-14T16:00:00 local user timezone"},
+      "mint_target": {"title": "Minting", "calendar": "Mint", "busycal_calendar_id": "6F572990-8928-46A6-8804-8DF74B1946C0/65B2667F-39E9-4DDB-8369-218068A883D4", "date": "2026-08-14", "start": "13:30", "end": "14:30", "duration_min": 60, "rule": "if existing matching output event found, verify it rather than creating a duplicate"},
+      "cleanup": "explicitly approved: remove only the test Todoist due mutation and the test Mint output created by this gate; do not alter pre-existing user data"
+    }
+  },
+  "get_only_checks_before": {
+    "GET /health": {"http": 200, "body": {"status": "ok", "judgment_model": "openai/gpt-5.6-luna"}},
+    "GET /version": {"http": 404, "note": "not a real route; contract surface is /config + /plan-inputs"},
+    "GET /contract": {"http": 404, "note": "not a real route"},
+    "GET /config": {"http": 200},
+    "GET /plan-inputs": {"http": 200, "day_setup_confirmed": true, "source_counts": {"vault": 89, "todoist": 23, "calendar": 11}},
+    "busycal_list_calendars": {"note": "runtime-resolved Mint calendar = '🟡 Mint' id 6F572990-8928-46A6-8804-8DF74B1946C0 (differs from plan-inputs fallback 6D0AC73B-...; runtime resolution used)"},
+    "busycal_query_events(2026-08-14, search=Minting)": {"found_matching_output": {"title": "Minting", "calendar_id": "6F572990-8928-46A6-8804-8DF74B1946C0", "calendar_title": "🟡 Mint", "start": "1:30 PM", "end": "2:30 PM", "date": "2026-08-14", "tz": "America/New_York", "id": "3F1A5ECA-31CA-4ECD-8F70-A38AEBFCD29A+808421400+x-coredata://981D7607-E9CA-46C4-8D3B-0CE818CB7DDA/SyncableEvent/p69543", "matches_approved_target": true}}
+  },
+  "retry_history": {
+    "retry_1": {"attempted_at": "2026-08-14T15:50:00Z", "result": "todoist_fetch-object terminated again; capture failed; no write (rule: if capture fails, do not write)"},
+    "retry_2": {"attempted_at": "2026-08-14T16:05:00Z", "result": "todoist_* MCP tools absent from session registry ('unavailable tool'); capture failed; no write"}
+  },
+  "todoist_leg": {
+    "status": "VERIFIED",
+    "original_capture": {
+      "endpoint": "todoist_fetch-object task 6h66PQj9mwwq5hgG",
+      "content": "Call parents",
+      "dueDate": "2026-08-14T16:00:00",
+      "priority": "p3",
+      "projectId": "6fgQFh9xRphMXqHc",
+      "labels": ["🍅30min"],
+      "recurring": false,
+      "note": "Original due ALREADY equaled the approved target (16:00 local). Capture succeeded on this attempt."
+    },
+    "write_update": {
+      "endpoint": "todoist_update-tasks",
+      "body": {"id": "6h66PQj9mwwq5hgG", "dueString": "2026-08-14 at 16:00"},
+      "result_dueDate": "2026-08-14T16:00:00",
+      "updateCount": 1,
+      "failures": 0,
+      "idempotent": true,
+      "note": "Target == original, so no net change; write path executed without error."
+    },
+    "readback_1": {
+      "endpoint": "todoist_fetch-object task 6h66PQj9mwwq5hgG",
+      "dueDate": "2026-08-14T16:00:00",
+      "local_interpretation": "16:00 America/New_York = 4:00 PM (12-hour user-facing)",
+      "mismatch": false,
+      "verdict": "PASS - intended local due 16:00 reads back as 16:00 local; no false UTC/local mismatch."
+    },
+    "cleanup_restore": {
+      "endpoint": "todoist_update-tasks",
+      "body": {"id": "6h66PQj9mwwq5hgG", "dueString": "2026-08-14 at 16:00"},
+      "result_dueDate": "2026-08-14T16:00:00",
+      "note": "Restores exact captured original (idempotent)."
+    },
+    "readback_2_cleanup": {
+      "endpoint": "todoist_fetch-object task 6h66PQj9mwwq5hgG",
+      "dueDate": "2026-08-14T16:00:00",
+      "equals_original": true,
+      "other_fields_unchanged": true,
+      "verdict": "PASS - cleanup restored original state; no pre-existing user data altered."
+    },
+    "summary": "Todoist due normalization/readback verified: write path executed, readback confirmed 16:00 local with no false UTC/local mismatch, 12-hour display would be '4:00 PM', and cleanup restored identity (original due already 16:00 local)."
+  },
+  "mint_execution": {
+    "status": "VERIFIED_NO_WRITE",
+    "action": "Existing matching TDTB-owned output event verified; no duplicate created; no source event mutated.",
+    "verified_event": {
+      "title": "Minting",
+      "calendar": "🟡 Mint",
+      "calendar_id": "6F572990-8928-46A6-8804-8DF74B1946C0/65B2667F-39E9-4DDB-8369-218068A883D4",
+      "date": "2026-08-14",
+      "start": "13:30",
+      "end": "14:30",
+      "duration_min": 60,
+      "timezone": "America/New_York",
+      "contains_assigned_task": false,
+      "is_source_event_mutation": false
+    },
+    "readback": "PASS - title, calendar, date, start, end, duration all match approved target; no assigned task inside the Mint window.",
+    "cleanup": "NONE REQUIRED - no output was created by this gate; the verified event is pre-existing and was left untouched."
+  },
+  "get_only_checks_after": {
+    "GET /health": {"http": 200, "body": {"status": "ok", "judgment_model": "openai/gpt-5.6-luna"}, "identical_to_before": true}
+  },
+  "external_writes_summary": {
+    "todoist_writes": 1,
+    "todoist_write_note": "Idempotent update to an already-matching due; no net state change; restored on cleanup.",
+    "mint_calendar_writes": 0,
+    "billed_calls": 0,
+    "calendar_source_mutations": 0,
+    "runtime_restart": false,
+    "git_mutations": 0
+  },
+  "acceptance_criteria_assessment": {
+    "GET-only :8746 checks pass before and after": "PASS - health identical 200 before/after; version/contract not exposed; config/plan-inputs 200.",
+    "Exactly the approved bounded live test executed; report every endpoint and external write": "PASS - endpoints: GET /health, GET /config, GET /plan-inputs, busycal_list_calendars, busycal_query_events (reads); todoist_fetch-object x3 (captures/readbacks); todoist_update-tasks x2 (idempotent write + restore). External writes: 1 idempotent Todoist due update (restored). No /commit, /sequence, /adjust, or restart.",
+    "Todoist due readback matches intended local time": "PASS - readback dueDate 2026-08-14T16:00:00 = 16:00 local; no false UTC/local mismatch.",
+    "Mint blocks read back correctly and contain no assigned tasks": "PASS - existing Minting 13:30-14:30 on 🟡 Mint verified; no assigned task inside; no creation/mutation.",
+    "No BusyCal source event mutated": "PASS - only reads issued; verified Mint event left untouched.",
+    "No broad /sequence or /adjust; no POST /commit except bounded test; no restart": "PASS - no /sequence, /adjust, /commit, or restart.",
+    "Stop on first mismatch/unknown/unexpected external write": "TRIGGERED earlier for Todoist outage (blocked write, zero mutations); once reachable, execution completed cleanly with no mismatch.",
+    "Write evidence to FEEDBACK-29-live.json": "PASS - this file."
+  },
+  "safety_proof": {
+    "live_post_sequence_adjust_commit_day_setup": "none",
+    "billed_calls": 0,
+    "provider_writes": 1,
+    "provider_write_note": "Single idempotent Todoist due update to an already-matching value; restored on cleanup; no net change to user data.",
+    "real_source_writes": 0,
+    "calendar_mutations": 0,
+    "runtime_restart": "none",
+    "git_mutations": "none",
+    "foreign_changes_preserved": "pre-existing tracked/untracked work untouched; only this evidence file written"
+  },
+  "residual_issue": "None. Both legs verified with no mismatch and no unexpected writes. Note: the Todoist target due was already 16:00 local pre-existing, so the live write was idempotent and cleanup restored identity (zero net change to user data). Mint leg verified read-only against an existing matching output event.",
+  "recommended_next_action": "None required. FEEDBACK-29 gate is complete; it can be marked passed and FEEDBACK-13 UI polish unblocked per plan coordination notes.",
+  "evidence_path": "docs/plan/2026-08-12-tdtb-feedback-follow-up/evidence/FEEDBACK-29-live.json"
+}

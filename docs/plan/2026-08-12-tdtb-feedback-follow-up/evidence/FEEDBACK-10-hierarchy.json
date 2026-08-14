@@ -1,0 +1,61 @@
+{
+  "task_id": "FEEDBACK-10",
+  "plan_id": "2026-08-12-tdtb-feedback-follow-up",
+  "title": "Clarify queue hierarchy, actions, and allocation state",
+  "status": "completed",
+  "objective": "Implement the remaining high-value UI polish from the FEEDBACK-07 design direction: non-alarmist critical-band wording, unmistakable collapsed state, readable remaining/over-capacity hierarchy without gray washout, opaque readable More menus, hover/focus tooltips for icon actions, simplified row action cluster, explicit allocation overflow, and visible duration-memory state.",
+  "implementation": {
+    "A15_band_wording": "model/bands.ts notes: Critical 'do today', High 'soon', Everything else 'when room'. Urgency tier logic untouched; no alarmist copy.",
+    "A11_collapse_state": "BandHeader/DroppedHeader render a visible band__state chip (expanded/collapsed), count gains ' hidden', header gets band--collapsed surface shift, and aria-label announces 'Band X, collapsed, N rows hidden, activate to expand' (and the expanded counterpart).",
+    "A10_over_capacity_hierarchy": "Queue renders queue__remaining (role=status) above bands when selected exceeds capacity: 'X blk selected of Y capacity - Z over' with overflow color and strong weight; balanced days render nothing.",
+    "LP01_row_hierarchy": "qrow--flagged and qrow--excluded no longer use whole-row opacity. Flagged rows get an overflow tint + badge chip; excluded rows drop to a muted-but-readable name; the would-drop badge is a bordered chip.",
+    "A13_action_simplification": "Place at a specific time and Unschedule moved from row icons into the More menu (conditional on queue state; recurring rows stay placement-immune). Row cluster is now exclude + exact-duration + divider + Done + Drop + More.",
+    "A14_more_menu": "row-more__menu now uses solid var(--t-surface) background with border, z-index 12, and shadow; ArrowDown/ArrowUp move focus between menuitems; Escape closes and refocuses the trigger.",
+    "A12_tooltips": "New shared ui/Tooltip.tsx: hover + focus label popover for every icon action (exclude, exact duration, +/- steppers, More trigger), role=tooltip, aria-describedby wiring, align=end for the right-edge More trigger. Native title attributes removed from row icons.",
+    "A08_duration_source": "Every duration slider's aria-valuetext is 'HH:MM (source|memory)' and a visible qrow__src-tag chip (source quiet, memory accent-tinted) sits beside the value; the * marker stays.",
+    "A09_overflow_caption": "AllocationPie renders pie__over-caption 'Over by X blk - trim or drop' (role=status, overflow color) when allocated exceeds the day."
+  },
+  "tests": {
+    "new": ["frontend/src/ui/feedback10.test.tsx (20 tests)"],
+    "updated": [
+      "frontend/src/model/bands.test.ts: band-note copy test",
+      "frontend/src/ui/components.test.tsx: placement path now opens More first (A13 intent)"
+    ],
+    "coverage": [
+      "band notes concise/non-alarmist (A15)",
+      "collapsed band + Dropped header announce state and hidden count, reverse on expand (A11)",
+      "over-capacity summary present when over, absent when balanced (A10)",
+      "flagged rows keep name + badge; CSS guard blocks whole-row opacity (LP-01)",
+      "row no longer renders placement verb directly; Place/Unschedule live in More and keep their effects (A13)",
+      "Unassign/Delete stay in More; frozen verb model intact",
+      "Arrow navigation + Escape/refocus (A14)",
+      "More menu solid surface + border + z-index (A14)",
+      "tooltip on hover and focus for exclude/exact-duration icons (A12)",
+      "duration source chip and aria-valuetext source/memory (A08)",
+      "pie over caption present/absent (A09)"
+    ]
+  },
+  "verification": {
+    "frontend_tests": "567 passed | 6 skipped (37 files passed, 1 skipped) across full vitest run",
+    "typecheck": "tsc --noEmit clean",
+    "build_mockup": "vite build --mode mockup OK (CSS 33.50 kB, JS 129.25 kB)",
+    "build_prod": "vite build --mode production OK (CSS 33.50 kB, JS 130.61 kB)",
+    "browser_scratch": "Served built mockup on scratch 127.0.0.1:8790 (GET-only): index 200, JS 200, CSS 200; bundle contains queue__remaining, tooltip-anchor, qrow__src-tag, band__state markers; scratch server stopped after check; live :8746 untouched."
+  },
+  "preserved_contracts": [
+    "FEEDBACK-01..09 behavior unchanged: 24h readouts, zero-writer calendar projection, results/day-setup reachability, wall badges, quarantine handling.",
+    "Frozen verb model: Done/Drop direct; Unassign/Delete behind More; no Defer; no new product verbs.",
+    "Collapsible bands remain disclosure buttons with aria-expanded/aria-controls (locked contract item 6).",
+    "44px control floor, keyboard row nav, all-day visibility, reduced-motion global guard."
+  ],
+  "safety_proof": {
+    "source_edits": "frontend/src/ui/Queue.tsx, frontend/src/ui/AllocationPie.tsx, frontend/src/ui/Tooltip.tsx (new), frontend/src/app.css, frontend/src/model/bands.ts, frontend/src/ui/feedback10.test.tsx (new), frontend/src/model/bands.test.ts, frontend/src/ui/components.test.tsx",
+    "live_post_sequence_adjust_commit": "none",
+    "external_writes": "none",
+    "runtime_restart": "none - :8746 left listening, pid unchanged",
+    "scratch_service": "127.0.0.1:8790 started for GET-only static check, stopped after verification",
+    "branch_or_index_mutation": "none - no commit, stage, reset, clean, stash, rebase, or merge",
+    "foreign_changes_preserved": "pre-existing dirty/untracked repo state untouched; edits confined to frontend/src and the FEEDBACK-10 evidence file"
+  },
+  "evidence_path": "docs/plan/2026-08-12-tdtb-feedback-follow-up/evidence/FEEDBACK-10-hierarchy.json"
+}

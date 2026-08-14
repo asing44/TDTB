@@ -1,0 +1,64 @@
+{
+  "task_id": "FEEDBACK-08",
+  "plan_id": "2026-08-12-tdtb-feedback-follow-up",
+  "title": "Make results and day setup reachable and prominent",
+  "status": "completed",
+  "objective": "Implement the highest-priority UI usability fixes: make the results/SOW side and day setup panels reachable from the primary cockpit hierarchy, give day setup clear prominence instead of a low-priority chip, and ensure open/close/focus behavior is understandable and accessible. Preserve existing backend/data contracts and finish-first reliability behavior.",
+  "design_authority": "FEEDBACK-07-ui-direction.json (A06 Results/SOW reachability, A07 Day Setup prominence)",
+  "acceptance_criteria_met": [
+    "Results/SOW panel has a clear primary entry point and is reachable from the main cockpit without hidden or dead controls.",
+    "Day setup has a prominent entry point with clear pending/setup state and accessible label.",
+    "Panel open/close/focus behavior works with mouse and keyboard and does not trap users.",
+    "Existing frontend tests plus focused panel tests pass.",
+    "No live POST calls, external writes, runtime restart, or dependency upgrades.",
+    "No calendar event mutation; no backend contract changes."
+  ],
+  "changes": [
+    {
+      "file": "frontend/src/ui/ActionDock.tsx",
+      "behavior": "Persistent 'Results' button in review/preview/verified dock states; opens the approval drawer (the SOW surface). Preview state labels it primary; review shows sub-label 'Preview writes'; verified shows sub-label 'statement of work'. Replaces the old 'Open approval'/'View result' labels. Day setup button gains a 'setup not confirmed' sub-label while state==setup."
+    },
+    {
+      "file": "frontend/src/ui/ApprovalDrawer.tsx",
+      "behavior": "h2 relabels per FEEDBACK-07: committed -> 'Results', armed -> 'Approve writes', review/preview -> 'Preview writes', loading unchanged. No-shadow review state renders guidance 'Run Preview commit from the dock to build the exact-writes preview.' so the reachable-but-not-built panel is never empty."
+    },
+    {
+      "file": "frontend/src/ui/Rail.tsx",
+      "behavior": "Pending setup chip upgraded from passive status note to prominent action: accent-tinted chip--setup-pending styling, visible text 'Setup pending — start here', aria-label 'Open day setup — setup not confirmed'. Confirmed state keeps calm 'Setup ✓' with aria-label 'Open day setup'."
+    },
+    {
+      "file": "frontend/src/app.css",
+      "behavior": "Added .chip--setup-pending: accent-subtle background, accent-text color, accent border, weight 600 — outranks passive status chips in both themes."
+    },
+    {
+      "file": "frontend/src/ui/panels.test.tsx",
+      "behavior": "Created: 11 focused tests covering Results reachability (review/preview/verified, absent in sequence/setup, T21 partial shout preserved), Day Setup prominence (pending chip + dock hint, confirmed collapse), and open/close/focus (keyboard-activated open, Escape close + focus restore, backdrop mouse close)."
+    }
+  ],
+  "preserved_contracts": [
+    "FEEDBACK-01..06 behavior unchanged (chronological sort, walls, infeasibility warnings, quarantine copy, scenario parity, zero calendar writer calls).",
+    "Two-gate live commit stays inside the approval drawer; dock still never renders a live-commit control.",
+    "T21 partial-commit shout preserved verbatim: 'Commit incomplete — view failures' with verification-failure count (failure-states.test.tsx green).",
+    "Existing dock labels pinned by tests unchanged: 'Confirm day setup', 'Preview commit', 'Auto sequence N blk', status texts.",
+    "useDialog focus management (initial focus, Tab wrap, Escape, focus restore) untouched; no dialog trap introduced.",
+    "No backend contract, store, adapter, or model changes; no dependency upgrades."
+  ],
+  "verification": {
+    "npm test": "36 test files passed, 540 tests passed, 0 failed, 6 skipped",
+    "npm run typecheck": "clean (tsc --noEmit)",
+    "npm run build:mockup": "built ok (mockups/cockpit)",
+    "npm run build:prod": "built ok (app/static/cockpit)",
+    "live_contact": "none — fixture harness only; no POST, no external writes, no restart, no launchctl"
+  },
+  "safety_proof": {
+    "source_edits": "4 frontend source files + 1 test file + 1 evidence file",
+    "live_post_sequence_adjust_commit": "none",
+    "external_writes": "none",
+    "runtime_restart": "none",
+    "port_8746_access": "none",
+    "calendar_event_mutation": "none",
+    "branch_or_index_mutation": "none - no commit, stage, reset, clean, stash, rebase, or merge",
+    "dependency_changes": "none"
+  },
+  "evidence_path": "docs/plan/2026-08-12-tdtb-feedback-follow-up/evidence/FEEDBACK-08-panels.json"
+}

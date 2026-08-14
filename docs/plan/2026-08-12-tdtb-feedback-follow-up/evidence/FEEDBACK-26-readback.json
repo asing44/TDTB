@@ -1,0 +1,87 @@
+{
+  "task_id": "FEEDBACK-26",
+  "plan_id": "2026-08-12-tdtb-feedback-follow-up",
+  "title": "Verify Mint calendar writes by full interval identity",
+  "status": "completed",
+  "objective": "Strengthen Mint/output calendar readback verification so every intended write is verified by title, calendar ID, start, end, and duration; distinguish TDTB-owned output IDs from read-only source calendar rows; classify Trinoor/source rows by an explicit exact-match policy instead of broad substring overlay rules.",
+  "diagnosis_used": "Task handoff (authoritative): app/commit.py::write_calendar reconciliation checked only title + calendar_id on readback, so a provider shift (intended 13:00-14:00 read back as 13:30-14:30) PASSED. Imported calendar rows were not mutated; Mint rows are TDTB-owned outputs. Idempotency/noop matching (commit._match_event) matched by title+time across ALL calendars, so a same-title event on a read-only source calendar could collapse an intended create and read back as our write. shadow.build_plan_manifest classified Step D′ by the broad substring rule `\"trinoor\" in row_id.lower()`, hijacking anchored/source blocks whose names merely contain the word (e.g. \"Trinoor sync\") and silently dropping their Step E write.",
+  "acceptance_criteria_met": [
+    "A Mint write that shifts from intended start/end fails readback with structured mismatch details: ShiftingStore repro (intent 13:00-14:00 reads back 13:30-14:30) yields ok=False, verify_failures 'readback interval mismatch (intent 1 PM–2 PM, live 1:30 PM–2:30 PM)' (12-hour, no raw 24h), and a structured verify_details record kind='calendar' with canonical ISO mismatches for start and end. An end-only drift (60->30 min) additionally records the duration_min mismatch (test_shifted_interval_fails_readback_with_structured_details, test_duration_shift_fails_readback).",
+    "Correct title/calendar/start/end/duration passes: a create whose readback matches the full identity yields ok=True with empty verify_failures and verify_details (test_correct_full_identity_readback_passes); the idempotent pre-existing write fixture was completed with its end field to carry full identity.",
+    "Source/read-only calendar events are not treated as TDTB output writes: commit._match_event is now scoped to the intent's TDTB-owned output calendar_id, so a same-title+time event on a read-only source calendar never collapses the create (store.created_calls stays 1, noops empty, our event id reads back) (test_source_event_same_title_not_treated_as_our_write). Read-model ownership already pins TDTB-owned output IDs (config calendar_ids) as ignored via exact ID match in external_sources.fetch_calendar_busy.",
+    "Exact Trinoor classification policy is covered by fixtures and does not regress quarantined behavior: shadow.py uses an explicit exact-match policy `^(?:🟡 )?Trinoor : .+` (the canonical zone id build_schedulable_blocks emits) instead of the substring rule; fixtures pin that 'Trinoor sync' and 'Trinoorish' are NOT Step D′ while 'Trinoor : Morning' / '🟡 Trinoor : Morning' still are. external_sources pins that a 'Trinoor'-titled read-only source calendar with no configured class stays quarantined (never label-guessed to work) while a TDTB-owned Mint output row stays ignored (test_trinoor_named_source_calendar_never_label_guessed). FEEDBACK-04 TestFeedback04FixtureClassification (2 tests) remains green.",
+    "Tests use fakes only; no live calendar writes, restart, or commit: all new tests drive in-memory FakeStore/ShiftingStore fakes and pure manifest/config fixtures; safety_proof below records zero live calls, writes, restarts, and Git mutations."
+  ],
+  "changes": [
+    {
+      "file": "app/calendar_bridge.py",
+      "behavior": "Add pure event_readback_mismatches(EventSpec, event) returning structured mismatch records — empty only when title + calendar_id + start + end + duration all match. Canonical ISO datetimes/minutes in each record; a missing/unparseable live time fails closed with an explicit 'interval' record rather than guessing. This is the calendar analog of the FEEDBACK-23 Todoist due reading and lives in the pure-logic layer with assert_write_target."
+    },
+    {
+      "file": "app/commit.py",
+      "behavior": "write_calendar reconciliation now verifies FULL interval identity via calendar_bridge.event_readback_mismatches; WriterResult gains fail_calendar() which records kind='calendar' verify_details with machine-canonical mismatches + a 12-hour display message (keeps the existing 'landed on wrong calendar' wording for calendar_id-only failures). _match_event gains a calendar_id scope so idempotency/noop resolution only matches events on the intent's TDTB-owned output calendar. result.touched now propagates (parity with write_todoist) so post-commit consumers can recover the landed id."
+    },
+    {
+      "file": "app/shadow.py",
+      "behavior": "Replace the broad `\"trinoor\" in row_id.lower()` Step D′ rule with _is_trinoor_zone_id (exact-match regex `^(?:🟡 )?Trinoor : .+`). A row is a Trinoor work zone only in the canonical zone shape; anchored/source blocks whose names merely contain 'Trinoor' keep their Step E classification."
+    },
+    {
+      "file": "app/external_sources.py",
+      "behavior": "No production change — the explicit exact-title capacity policy and exact-ID ownership (own_ids -> ignored) already encode the contract. New fixture test pins the no-label-guessing behavior."
+    },
+    {
+      "file": "app/tests/test_commit.py",
+      "behavior": "Add ShiftingStore fake + TestWriteCalendarReadbackIdentity (4 tests): shifted interval fails with structured details, duration shift fails, correct full identity passes, source event same title is not treated as our write. Complete the idempotency fixture's end field for full-identity verification."
+    },
+    {
+      "file": "app/tests/test_shadow.py",
+      "behavior": "Add 2 tests to TestScheduableClassification: 'Trinoor sync' anchored block is Step E not Step D′; 'Trinoorish' is a plain Step D block, not a zone."
+    },
+    {
+      "file": "app/tests/test_external_sources.py",
+      "behavior": "Add test_trinoor_named_source_calendar_never_label_guessed: 'Trinoor'-titled source calendar without a configured class stays quarantined; TDTB-owned Mint output stays ignored."
+    }
+  ],
+  "preserved_semantics": [
+    "FEEDBACK-04 quarantined/fixed/work/ignored classification and hard-wall semantics unchanged: TestFeedback04FixtureClassification and the full calendar capacity suite stay green.",
+    "Internal comparison and provider serialization never depend on display-formatted strings; mismatch records carry canonical ISO datetimes and minutes; the user-visible message is 12-hour only.",
+    "Pre-write assert_write_target, UPDATE/CREATE partition, check-before-write idempotency, and per-write verify_failures aggregation all preserved.",
+    "Existing D′ tests for 'Trinoor : Morning' and '🟡 Trinoor : Morning' remain green under the exact-match policy.",
+    "Imported/source calendar event data is never mutated; read-model ownership precedence (own output IDs -> ignored) unchanged."
+  ],
+  "verification": {
+    "red_green": "Red: 5 new tests failed before the fix — shifted interval readback PASSED (no interval check), duration shift passed, source event collapsed the create to a no-op, and both Trinoor substring rows classified as Step D′. Green: all 7 new tests pass.",
+    "backend_focused": "tests/test_commit.py + test_shadow.py + test_external_sources.py + test_calendar_bridge.py + test_calendar_capacity.py: 233 passed (226 baseline + 7 new).",
+    "backend_full": "app suite: 1239 passed, 0 failed (1 pre-existing starlette deprecation warning only).",
+    "structured_record_probe": "write_calendar on ShiftingStore: verify_failures [\"calendar: '🟡 Minting 1' readback interval mismatch (intent 1 PM–2 PM, live 1:30 PM–2:30 PM)\"]; verify_details [{'kind': 'calendar', 'name': '🟡 Minting 1', 'mismatches': [{'field': 'start', 'intent': '2026-07-12T13:00:00', 'live': '2026-07-12T13:30:00'}, {'field': 'end', 'intent': '2026-07-12T14:00:00', 'live': '2026-07-12T14:30:00'}], 'message': ...}]"
+  },
+  "safety_proof": {
+    "live_post_sequence_adjust_commit": "none",
+    "billed_calls": "0",
+    "provider_writes": "0 — all tests use in-memory FakeStore/ShiftingStore fakes; no EventKit, no network",
+    "real_source_writes": "none — no real vault, Todoist, or Calendar state touched; source event data unaltered",
+    "runtime_restart": "none — no launchctl, no tdtb-restart, no kill of :8746",
+    "port_8746_access": "none",
+    "git_mutations": "none — no commit, stage, reset, clean, stash, rebase, or merge; branch Development/tdtb-canonical-cutover unchanged",
+    "foreign_changes_preserved": "pre-existing tracked modifications and untracked app/ + frontend/ trees untouched except the bounded files listed below"
+  },
+  "files": {
+    "created": [
+      "docs/plan/2026-08-12-tdtb-feedback-follow-up/evidence/FEEDBACK-26-readback.json"
+    ],
+    "modified": [
+      "app/calendar_bridge.py",
+      "app/commit.py",
+      "app/shadow.py",
+      "app/tests/test_commit.py",
+      "app/tests/test_shadow.py",
+      "app/tests/test_external_sources.py"
+    ]
+  },
+  "residual_limitations": [
+    "app/commit.py and app/tests/test_commit.py were outside the named task target list but are the write-call path the diagnosis names (write_calendar reconciliation) — change is bounded to the reconciliation loop, the match helper, and one new WriterResult recorder.",
+    "shadow.diff_against_live's preview calendar match (title+time) is not calendar-scoped; the write path now is. Preview misclassification cannot cause a missed/wrong write — it can only mislabel a preview row; left as out-of-scope since the manifest carries no resolved calendar id at preview time.",
+    "Browser-level verification not applicable — no frontend files changed; the task acceptance surface is backend readback verification only."
+  ],
+  "evidence_path": "docs/plan/2026-08-12-tdtb-feedback-follow-up/evidence/FEEDBACK-26-readback.json"
+}

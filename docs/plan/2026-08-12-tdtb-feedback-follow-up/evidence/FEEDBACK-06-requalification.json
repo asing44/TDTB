@@ -1,0 +1,115 @@
+{
+  "task_id": "FEEDBACK-06",
+  "plan_id": "2026-08-12-tdtb-feedback-follow-up",
+  "title": "Re-qualify finish-first behavior with fixtures and scratch",
+  "status": "completed",
+  "objective": "Run the complete finish-first verification using the reported-day fixtures and scratch/mock adapters only: chronological output, hard calendar walls, explicit infeasibility, quarantined/fixed classification, no calendar writes, no billed calls, no real source writes, and no live runtime mutation.",
+  "evidence_chain_consistency": {
+    "FEEDBACK-01_sequence": "frontend/src/store/controller.ts autoSequence final sort byStartThenId; app/sequence.py merge_immutable_rows sorts (start, id); validate_sequence hard-rejects descending order",
+    "FEEDBACK-02_walls": "calendar-sourced fixed/work blocks are hard walls (sequence.py calendar_spans); ignored/quarantined rows are no wall; frontend overflow.ts calendarWalls + wall-aware overflowRows",
+    "FEEDBACK-03_overflow": "planOverflow free-gap placement; infeasible rows reported with id/blocks/reason; never staged over walls or pins; warnings gate shadow/commit",
+    "FEEDBACK-04_classification": "quarantined is a fourth explicit wire class; projectAnchored passes it through; excluded from fixed-input fingerprint, overflow walls, and export prompt",
+    "FEEDBACK-05_fixtures": "shared scenario 2026-07-14 (Cooking fixed, DCP trivia work, Steelers quarantined, Foods Dinner window, 16 vs 2 blocks); backend 14 tests + frontend 7 tests"
+  },
+  "suite_results": {
+    "backend_full": {
+      "command": ".venv/bin/python -m pytest -q",
+      "result": "1298 passed, 1 warning (starlette testclient deprecation only)",
+      "matches_feedback_05": true
+    },
+    "backend_focused": {
+      "command": ".venv/bin/python -m pytest tests/test_feedback_calendar_scenario.py tests/test_sequence.py tests/test_calendar_capacity.py tests/test_t12_fixes.py tests/test_external_sources.py -q",
+      "result": "142 passed (feedback_scenario 14 + sequence/capacity/t12/external 128), 1 warning",
+      "matches_feedback_05": true
+    },
+    "frontend_full": {
+      "command": "npx vitest run",
+      "result": "529 passed, 6 skipped (35 files passed, 1 skipped, 36 total)",
+      "matches_feedback_05": true
+    },
+    "frontend_focused": {
+      "command": "npx vitest run src/feedback_scenario.test.ts src/model/overflow.test.ts src/store/controller.test.ts src/adapters/wire.test.ts src/ui/calendar-capacity.test.tsx src/store/exportPrompt.test.ts",
+      "result": "117 passed (6 files)",
+      "matches_feedback_05": true
+    },
+    "frontend_fixture_file": {
+      "command": "npx vitest run src/feedback_scenario.test.ts",
+      "result": "7 passed"
+    },
+    "typecheck": "tsc --noEmit clean (0 errors)",
+    "build_mockup": "ok — vite build --mode mockup (assets written to mockups/cockpit)",
+    "build_prod": "ok — vite build --mode production (assets written to app/static/cockpit)"
+  },
+  "scratch_scenario": {
+    "script": "docs/plan/2026-08-12-tdtb-feedback-follow-up/evidence/FEEDBACK-06-scratch.py",
+    "method": "fixture-only: read-only fake EventStore with call ledger, pure capacity/sequence functions, in-memory TestClient against temp vault; no network, no live runtime",
+    "result": "19/19 assertions passed",
+    "assertions": {
+      "S1_walls_block": [
+        "Cooking classified fixed; DCP Bark Bar trivia classified work",
+        "row over Cooking 20:30-21:00 hard-rejected naming Cooking and overlap",
+        "row over DCP trivia 19:00-20:00 hard-rejected naming DCP Bark Bar trivia",
+        "route /validate-sequence (TestClient) hard-rejects Cooking overlap"
+      ],
+      "S2_steelers_not_a_wall": [
+        "Steelers vs Packers classified quarantined",
+        "row crossing only Steelers 20:00-22:00 validates clean (ok, no hard errors)",
+        "Steelers adds zero capacity: work_busy=2 (trivia only), work_overflow=0, mint=2, fixed=1"
+      ],
+      "S3_overassignment_explicit": [
+        "capacity total=11, fixed=1 (Cooking once), available_for_selection=2, selected=16, free=-14",
+        "overassigned flag true; remaining text contains over warning",
+        "never silent: no row is placed over a wall; infeasible rows surfaced as named diagnostics"
+      ],
+      "S4_chronological": [
+        "merge_immutable_rows sorts (start, id): Log hours 17:15 precedes Deep Work 23:15 after replace",
+        "descending final sequence (23:15 then 17:15) rejected deterministically with chronological error naming Log hours, 17:15, 23:15"
+      ],
+      "S5_zero_writes": [
+        "fake store ledger exactly [auth_status, calendars, query_events] — zero writer verbs",
+        "writer methods absent on the fake; a production write path would raise",
+        "no billed call: judgment.propose_sequence never invoked in scratch",
+        "no live POST: TestClient is in-process; only GET /health touched the live runtime"
+      ]
+    }
+  },
+  "safety_proof": {
+    "calendar_writer_calls": 0,
+    "external_source_writes": 0,
+    "billed_calls": 0,
+    "live_posts": 0,
+    "runtime_restart": "none — launchctl/tdtb-restart not invoked",
+    "port_8746_access": "GET /health only (bounded read-only health proof)",
+    "live_health_check": {
+      "url": "http://127.0.0.1:8746/health",
+      "http_status": 200,
+      "body": "{\"status\":\"ok\",\"judgment_model\":\"openai/gpt-5.6-luna\"}",
+      "listener": "Python PID 46875 on 127.0.0.1:8746"
+    },
+    "branch_or_index_mutation": "none — no commit, stage, reset, clean, stash, rebase, or merge; HEAD bcc0ee0 unchanged",
+    "foreign_changes_preserved": "tracked dirty work (.gitignore, AGENTS.md, README.md, gem-team.yaml, .opencode, extraction plan.yaml) untouched; verification wrote only the FEEDBACK-06 evidence files under docs/plan/2026-08-12-tdtb-feedback-follow-up/evidence/"
+  },
+  "acceptance_criteria": {
+    "feedback_01_through_05_evidence_internally_consistent": true,
+    "backend_and_frontend_focused_full_suites_pass_with_exact_results_recorded": true,
+    "scratch_proves_walls_steelers_exclusion_overassignment_chronology": true,
+    "zero_calendar_writer_external_billed_live_post_calls_asserted": true,
+    "live_runtime_untouched_and_healthy_no_restart": true,
+    "requalification_artifact_written": true,
+    "ui_polish_remains_downstream": true
+  },
+  "files": {
+    "created": [
+      "docs/plan/2026-08-12-tdtb-feedback-follow-up/evidence/FEEDBACK-06-requalification.json",
+      "docs/plan/2026-08-12-tdtb-feedback-follow-up/evidence/FEEDBACK-06-scratch.py"
+    ],
+    "modified": 0
+  },
+  "evidence_path": "docs/plan/2026-08-12-tdtb-feedback-follow-up/evidence/FEEDBACK-06-requalification.json",
+  "out_of_scope_noted": [
+    "UI polish (later_polish group): 24-hour formatting, calendar action controls, Not attending wording, panel access — downstream of FF-09, untouched",
+    "live deployment/restart (DEP-01) — attended approval required, not performed",
+    "frontend/src/adapters/fixture.ts fixtureValidate wall filter (dead dev-mock path, unchanged per FEEDBACK-04)",
+    "backend_full count history FEEDBACK-01..04 (1271/1192/1282/1196) reflects suite growth across tasks; current collection measures 1298, exactly matching FEEDBACK-05 and internally consistent"
+  ]
+}

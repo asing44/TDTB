@@ -1,0 +1,153 @@
+{
+  "task_id": "FEEDBACK-24",
+  "plan_id": "2026-08-12-tdtb-feedback-follow-up",
+  "title": "Make Day Setup confirmation explicit",
+  "status": "completed",
+  "objective": "Prevent runstate skeleton keys, Drop, ledger, or other unrelated writes from satisfying the Day Setup gate. Persist day_setup_confirmed only from a successful POST /day-setup for the current planning day and require an explicit setup confirmation before write paths proceed.",
+  "diagnosis": {
+    "root_cause": "Two compounding defects: (a) /plan-inputs echoed any non-empty day_setup keys from a materialised skeleton runstate, and frontend projectDaySetup derived confirmed: Object.keys(wire).length > 0 (the any-key check), so a skeleton note (gather / Drop / ledger writes) read back as user-confirmed; (b) no server-side gate existed on the external write paths, so an unconfirmed day could still commit.",
+    "observed_failure": "The observed run skipped Day Setup because schedulable was empty and work_allotment_minutes was null — the skeleton echo satisfied the frontend confirmation heuristic and the wizard landed past the setup step.",
+    "fix": "Explicit runstate key day_setup_confirmed (default False) written True ONLY by a successful POST /day-setup for the dated note; /plan-inputs exposes the flag; frontend confirmation is flag-driven, never key-presence-driven; /commit?mode=live and /runtime-actions apply/undo fail closed (409, actionable) when the flag is missing."
+  },
+  "acceptance_criteria_met": [
+    "An empty or skeleton runstate cannot satisfy Day Setup confirmation: is_day_setup_confirmed is strict-boolean on day_setup_confirmed; a fresh note, a /gather materialised skeleton, a Drop write, a commit-ledger persist, a billed-ledger persist, a sequence side-effect write (overlap_grants/pinned_rows/fingerprint), and a pre-change note WITHOUT the key all read False (covered by TestConfirmationSource).",
+    "Drop/ledger/other runstate writes cannot satisfy the Day Setup gate: only the /day-setup route writes updates[DAY_SETUP_CONFIRMED_KEY] = True; every other runstate write (gather, dropped, commit_ledger, billed_calls, sequence keys) leaves the key False or absent, and the frontend projection ignores echoed keys entirely.",
+    "Successful day setup POST is the only source of confirmation, scoped to the current planning day: POST /day-setup returns day_setup_confirmed: True and persists it into today's dated note only; a day_setup_confirmed: True note on another date does not confirm today (test_confirmation_scoped_to_planning_day).",
+    "Write paths fail closed with actionable status when setup is missing: /commit?mode=live and /runtime-actions apply/undo return 409 with 'Day Setup not confirmed for <date> — confirm Day Setup before <action>'; the live-commit fail-closed test proves zero vault bytes written on the refusal.",
+    "Existing setup and write-path tests remain green: full backend suite 1232 passed, frontend 580 passed | 6 skipped, app JS suites 160 passed; write-path tests that model the pre-gate contract were seeded through the real /day-setup route or an explicit day_setup_confirmed fixture so they exercise the write path under the new contract."
+  ],
+  "changes": [
+    {
+      "file": "app/runstate.py",
+      "behavior": "Add DAY_SETUP_CONFIRMED_KEY constant, day_setup_confirmed: False in RUNSTATE_DEFAULTS, and is_day_setup_confirmed(vault_root, valid_date) -> bool (strict is True check; missing/unparseable note -> False; pre-change note without the key fails closed)."
+    },
+    {
+      "file": "app/main.py",
+      "behavior": "Add _require_day_setup route helper (409 + actionable detail). POST /day-setup writes updates[DAY_SETUP_CONFIRMED_KEY] = True in the same locked RMW and returns day_setup_confirmed: True. /plan-inputs returns top-level day_setup_confirmed. _run_live_commit and post_runtime_action/post_runtime_action_undo call _require_day_setup before any client or write work."
+    },
+    {
+      "file": "frontend/src/adapters/wire.ts",
+      "behavior": "projectDaySetup now takes an explicit confirmed boolean (from wire.day_setup_confirmed === true in projectPlanInputs); the any-key heuristic and its comment are removed. projectPlanInputs passes wire.day_setup_confirmed === true."
+    },
+    {
+      "file": "frontend/src/adapters/contract-fixtures/*.json",
+      "behavior": "Add day_setup_confirmed to all 9 plan-inputs fixtures and day-setup-response.json (true for fixtures with non-empty day_setup that model a saved setup; false for plan-inputs.json and plan-inputs-allotment-omitted.json with day_setup: {})."
+    },
+    {
+      "file": "frontend/src/adapters/wire.test.ts",
+      "behavior": "Update projectDaySetup call sites to pass the flag; add 4 FEEDBACK-24 tests: echoed skeleton keys without the flag stay unconfirmed, the explicit flag drives confirmed, skeleton echo via projectPlanInputs is NOT confirmed, explicit flag confirms an empty echo."
+    },
+    {
+      "file": "app/tests/test_day_setup_gate.py",
+      "behavior": "New: TestConfirmationSource (fresh/skeleton/drop/ledger/billed/sequence-side-effect/legacy notes never confirm; scoped to planning day; only /day-setup POST confirms; /plan-inputs exposes the flag) and TestWritePathFailClosed (live commit 409 + zero writes without setup, 200 after setup; runtime-actions apply and undo 409 without setup)."
+    },
+    {
+      "file": "app/tests/test_main_api.py",
+      "behavior": "TestLiveCommit three tests seed Day Setup through the real POST /day-setup (frozen to the same date) before the live commit."
+    },
+    {
+      "file": "app/tests/test_shared_store.py",
+      "behavior": "TestWritableCalendarPrecondition._post_live seeds Day Setup via POST /day-setup so the calendar-writability precondition stays the tested gate."
+    },
+    {
+      "file": "app/tests/test_budget_locks.py",
+      "behavior": "test_lock_released_on_error_path seeds Day Setup via POST /day-setup so the shadow-state error path under test is reached."
+    },
+    {
+      "file": "app/tests/test_micro_adventure_routes.py",
+      "behavior": "TestCommitHistoryAppend._seed adds day_setup_confirmed: True to the runstate seed."
+    },
+    {
+      "file": "app/tests/test_final_actions.py",
+      "behavior": "route_vault fixture seeds day_setup_confirmed: True in the runstate note."
+    },
+    {
+      "file": "app/tests/test_staging_actions.py",
+      "behavior": "vault fixture writes a runstate note with day_setup_confirmed: True (digest-index resolution tests unaffected)."
+    },
+    {
+      "file": "app/tests/test_runtime_actions_routes.py",
+      "behavior": "vault fixture seeds day_setup_confirmed: True in the runstate note."
+    }
+  ],
+  "preserved_semantics": [
+    "The dated run-state note shape and the skill's round-trip contract are unchanged; day_setup_confirmed is a new JSON key inside the existing fenced body.",
+    "Locked RMW (G26) preserved: /day-setup persists the confirmation in the SAME update_runstate call as the setup fields — no extra write, no lost-update window.",
+    "/sequence, /adjust, /validate-sequence, /commit?mode=shadow, /gather, /digest, /capacity-preview, and all GET routes are NOT gated (they are not external write paths); existing /sequence and shadow tests pass untouched.",
+    "Frontend store semantics unchanged: SETUP_SAVED still sets confirmed: true on the user's explicit save; INPUTS_LOADED now carries the server's flag instead of the key-presence heuristic.",
+    "Contract fixtures updated in lockstep with the server contract (flag is additive; no removed field)."
+  ],
+  "verification": {
+    "red_green": "Red: 13 new backend tests failed (missing is_day_setup_confirmed, no gate, no flag exposure) + 1 passed (live-success path); 4 new frontend projection tests added after the wire signature change. Green: all 14 backend gate tests pass; wire suite 46 passed.",
+    "full_backend": "pytest tests/ from app/: 1232 passed, 1 warning (StarletteDeprecationWarning, pre-existing)",
+    "focused_backend": "tests/test_day_setup_gate.py: 14 passed; write-path suites (test_main_api, test_shared_store, test_budget_locks, test_final_actions, test_staging_actions, test_runtime_actions_routes, test_micro_adventure_routes, test_judgment_routes, test_commit_shadow, test_orchestrate): all green",
+    "full_frontend": "npm test from frontend/: 37 files passed | 1 skipped, 580 passed | 6 skipped (baseline 572 passed | 6 skipped; 4 new FEEDBACK-24 wire tests added)",
+    "typecheck": "tsc --noEmit clean (0 errors)",
+    "app_js": "node --test app/tests/js/*.mjs: 160 passed (wizard/timeline/ui_kit/step suites untouched by this task)",
+    "build_mockup": "ok - vite build --mode mockup: CSS 33.50 kB, JS 129.33 kB (index-Csvm9Ghl.js)",
+    "build_prod": "ok - vite build --mode production: CSS 33.50 kB, JS 131.09 kB (index-xlWqKtnG.js)",
+    "bundle_readback": [
+      "prod bundle app/static/cockpit/assets/index-xlWqKtnG.js contains day_setup_confirmed (the flag-driven projection compiled in)",
+      "mockup bundle uses the FixtureAdapter (vite config __FIXTURE__ non-production) and correctly does NOT contain the api adapter's wire.ts — fixture scenarios own confirmed state in mockup mode"
+    ],
+    "git_diff_check": "git diff --check on owned paths: clean (exit 0)"
+  },
+  "bounded_scratch": {
+    "server": "not run - no scratch :8790 walkthrough for this task; the frontend change is an adapter projection verified by the vitest DOM suite + prod bundle readback, and no billed endpoint behavior changed (gate sits before /sequence, /adjust). Zero-writer envelope preserved.",
+    "billed_calls": 0,
+    "real_source_writes": 0
+  },
+  "live_health_proof": {
+    "url": "http://127.0.0.1:8746/health",
+    "http_status": 200,
+    "body": "{\"status\":\"ok\",\"judgment_model\":\"openai/gpt-5.6-luna\"}",
+    "note": "GET-only health read after verification; no restart, no POST, no mutation"
+  },
+  "safety_proof": {
+    "live_post_day_setup_commit_sequence_adjust": "none",
+    "billed_calls": "0",
+    "external_writes": "none - no Todoist/calendar/vault-source writes; only repo test fixtures, source edits, and regenerated build bundles",
+    "runtime_restart": "none - no launchctl, no tdtb-restart, no kill of :8746",
+    "port_8746_access": "GET /health only",
+    "scratch_service": "not started",
+    "branch_or_index_mutation": "none - no commit, stage, reset, clean, stash, rebase, or merge",
+    "foreign_changes_preserved": "pre-existing dirty/untracked state (app/, frontend/, docs/plan/...) untouched; only owned source, tests, fixtures, generated bundles, and this evidence file written"
+  },
+  "residual_limitations": [
+    "/sequence and /commit?mode=shadow remain ungated server-side (they are not external write paths; the frontend flag keeps the wizard on setup, and a direct client could still propose/预览 over an unconfirmed day — tracked as follow-up if the cockpit wants a billed-call gate there).",
+    "The gate uses HTTP 409 with an actionable detail string; the SPA's api adapter surfaces it as a request failure rather than a dedicated wizard redirect (the wizard normally prevents reaching the write paths).",
+    "Legacy app/static wizard (wizard_logic.js/ui_kit.js) is untouched: its non-blocking 'Day Setup not confirmed yet' notice remains, but the SPA is the active surface and is fully flag-driven."
+  ],
+  "files": {
+    "created": [
+      "app/tests/test_day_setup_gate.py",
+      "docs/plan/2026-08-12-tdtb-feedback-follow-up/evidence/FEEDBACK-24-setup-gate.json"
+    ],
+    "modified": [
+      "app/runstate.py",
+      "app/main.py",
+      "app/tests/test_main_api.py",
+      "app/tests/test_shared_store.py",
+      "app/tests/test_budget_locks.py",
+      "app/tests/test_micro_adventure_routes.py",
+      "app/tests/test_final_actions.py",
+      "app/tests/test_staging_actions.py",
+      "app/tests/test_runtime_actions_routes.py",
+      "frontend/src/adapters/wire.ts",
+      "frontend/src/adapters/wire.test.ts",
+      "frontend/src/adapters/contract-fixtures/plan-inputs.json",
+      "frontend/src/adapters/contract-fixtures/plan-inputs-with-setup.json",
+      "frontend/src/adapters/contract-fixtures/plan-inputs-allotment-null.json",
+      "frontend/src/adapters/contract-fixtures/plan-inputs-allotment-omitted.json",
+      "frontend/src/adapters/contract-fixtures/plan-inputs-allotment-zero.json",
+      "frontend/src/adapters/contract-fixtures/plan-inputs-day-preset.json",
+      "frontend/src/adapters/contract-fixtures/plan-inputs-degraded.json",
+      "frontend/src/adapters/contract-fixtures/plan-inputs-fingerprint-changed.json",
+      "frontend/src/adapters/contract-fixtures/plan-inputs-malformed.json",
+      "frontend/src/adapters/contract-fixtures/day-setup-response.json",
+      "app/static/cockpit/assets/index-xlWqKtnG.js",
+      "mockups/cockpit/assets/index-Csvm9Ghl.js"
+    ]
+  },
+  "evidence_path": "docs/plan/2026-08-12-tdtb-feedback-follow-up/evidence/FEEDBACK-24-setup-gate.json"
+}

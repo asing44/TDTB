@@ -1,0 +1,124 @@
+{
+  "task_id": "FEEDBACK-12",
+  "plan_id": "2026-08-12-tdtb-feedback-follow-up",
+  "title": "Restore 12-hour time display",
+  "status": "completed",
+  "objective": "Revert the user-visible time formatting introduced under FEEDBACK-09/11 from 24-hour back to 12-hour (user correction: time should be 12-hour, not 24-hour). Preserve internal ISO/time ordering, calendar wall calculations, local accounting overrides, sequence validation, and all source mutation protections.",
+  "supersedes": {
+    "FEEDBACK-09": "display24h helper and its call sites on CalendarImpact, Queue (scheduledRow.start, scheduledStart, droppedTimeLabel), and ApprovalDrawer exact-write times are reverted to display12h. FEEDBACK-09's 24-hour display claim is superseded; its other behaviors (ignored-source filter, accounting action model, projection-only local override, hard-block badge) are untouched and re-verified green.",
+    "FEEDBACK-11": "browser checks S3b (exact writes 24h) and S6r (queue scheduled time 24h) and S5a (calendar times 24h) asserted the superseded presentation; this task corrects the display format. FEEDBACK-11's method/retention/safety evidence remains valid except where it claims 24-hour compliance."
+  },
+  "design_authority": "User correction (handoff): time should be 12-hour, not 24-hour. display12h is the authoritative user-facing formatter (ported from the wizard, previously retained for Rail/SetupDrawer/ExecutionView/AnchoredEditor/exportPrompt/anchored warnings).",
+  "acceptance_criteria_met": [
+    "Calendar impact, queue scheduled rows, day setup/results drawers, and exact-write displays use 12-hour format with AM/PM where applicable: CalendarImpact start/end ('9:30 AM-10:20 AM', '10 AM-10:30 AM'), Queue scheduledRow.start ('12:30 PM', '10:45 AM'), recurring scheduledStart ('fixed · recurring · 12:30 PM'), droppedTimeLabel (ISO -> compact 12h 'dropped 8 AM'), ApprovalDrawer exact-write times ('schedule · Pick up prescription @ 4 PM', 'create-event · Magic Mirror @ 10:45 AM'); SetupDrawer and Results panels were already display12h and are re-verified.",
+    "Internal ordering and arithmetic remain unchanged and timezone-safe: no edits to store/controller/allocator/overflow/wire; toHHMM/toMinutes/addMinutes/to24h untouched; sort keys, wall calculations, and sequence validation byte-identical (full frontend suite 572 passed, backend untouched).",
+    "Focused frontend tests, typecheck, build, and bounded scratch checks pass: focused 48 passed; full suite 37 files passed | 1 skipped, 572 passed | 6 skipped; typecheck clean; build:mockup + build:prod pass; rebuilt bundles read back containing the 12h AM/PM formatter; scratch :8790 served the rebuilt bundle GET-only with zero errors and was stopped.",
+    "FEEDBACK-11 evidence is superseded without claiming 24-hour compliance: this artifact supersedes the FEEDBACK-09/11 24-hour display claims; FEEDBACK-11 historical evidence is left intact and is not cited as 24-hour-compliant.",
+    "No live POST calls, calendar writes, runtime restart, external writes, or commit: safety_proof below."
+  ],
+  "changes": [
+    {
+      "file": "frontend/src/model/time.ts",
+      "behavior": "Remove display24h (FEEDBACK-09 helper) and its comment; display12h remains the single authoritative display formatter. Wire helpers (toMinutes/toHHMM/addMinutes/blocksLabel/compactDuration/minutesToBlocks) untouched."
+    },
+    {
+      "file": "frontend/src/ui/CalendarImpact.tsx",
+      "behavior": "display24h -> display12h for row start/end readouts. All other FEEDBACK-09 behavior (ignored-source filter + note, hard-block badge, accounting action model, local stepper, 'today only · event untouched') unchanged."
+    },
+    {
+      "file": "frontend/src/ui/Queue.tsx",
+      "behavior": "display24h -> display12h for scheduledRow.start and recurring scheduledStart; droppedTimeLabel renders a compact 12-hour label via display12h (ISO date parsed locally, then formatted). Ordering/sort logic untouched."
+    },
+    {
+      "file": "frontend/src/ui/ApprovalDrawer.tsx",
+      "behavior": "display24h -> display12h for exact-write times."
+    },
+    {
+      "file": "frontend/src/model/time.test.ts",
+      "behavior": "display24h suite replaced with display12h contract suite: AM/PM suffixes, noon/midnight as 12, zero-padded minutes, null/empty em dash."
+    },
+    {
+      "file": "frontend/src/ui/calendar-capacity.test.tsx",
+      "behavior": "CalendarImpact time assertions flipped to 12h ('9:30 AM-10:20 AM', '10 AM-10:30 AM'); removed the no-AM/PM guard, asserts AM/PM presence instead; projection test asserts 12h event readout unchanged."
+    },
+    {
+      "file": "frontend/src/ui/feedback10.test.tsx",
+      "behavior": "New FEEDBACK-12 describe: scheduled row start 12h, recurring scheduledStart 12h, dropped row label 12h (timezone-robust regex)."
+    },
+    {
+      "file": "frontend/src/ui/panels.test.tsx",
+      "behavior": "New FEEDBACK-12 describe: expanded exact-write rows render AM/PM times, never 24h."
+    }
+  ],
+  "preserved_semantics": [
+    "Wire format stays 24h HH:MM (server contract); to24h parser in adapters/wire.ts untouched.",
+    "Chronological ordering (FEEDBACK-01) unchanged: sort keys and controller sort untouched.",
+    "Calendar walls (FEEDBACK-02), overflow/infeasibility (FEEDBACK-03), quarantined classification (FEEDBACK-04), fixture scenarios (FEEDBACK-05), zero-writer envelope (FEEDBACK-06) all re-verified in the full suite.",
+    "Local accounting override (FEEDBACK-09) is projection-only: event start/end readout renders 12h but the stored source row is untouched; saveAnchoredOverride wire shape unchanged.",
+    "Export prompt and anchored warning copy keep display12h as before (retained non-affected surfaces)."
+  ],
+  "verification": {
+    "red_green": "Red: 6 focused tests failed asserting 12h on CalendarImpact/Queue/ApprovalDrawer while display24h still rendered. Green: all 48 focused pass after call-site revert + display24h removal.",
+    "focused_tests": "48 passed (time 4, calendar-capacity 3 suites, feedback10 +4, panels +1)",
+    "full_frontend": "npm test: 37 files passed / 1 skipped, 572 passed / 6 skipped (FEEDBACK-11 baseline 567 -> +5 new 12h tests)",
+    "typecheck": "tsc --noEmit clean (0 errors)",
+    "build_mockup": "ok - vite build --mode mockup: CSS 33.50 kB, JS 129.10 kB (down from 129.25 kB: display24h removed)",
+    "build_prod": "ok - vite build --mode production: CSS 33.50 kB, JS 130.46 kB (down from 130.61 kB: display24h removed)",
+    "bundle_readback": [
+      "mockup bundle index-B7dvMHBf.js contains AM/PM literals (12h formatter compiled in)",
+      "prod bundle index-DlgRu7TK.js contains AM/PM literals; served by scratch :8790 at 130465 bytes matching build output"
+    ],
+    "backend_full": "not rerun - zero backend edits this task (app/*.py untouched); frontend-only display revert"
+  },
+  "bounded_scratch": {
+    "server": "app/.venv/bin/python frontend/scripts/scratch_preview.py on 127.0.0.1:8790 (synthetic vault, faked read clients, dead in-memory writers, frozen clock; refuses a busy :8790 and never :8746)",
+    "checks": [
+      "cockpit GET /static/cockpit/ -> 200",
+      "served bundle = index-DlgRu7TK.js (the FEEDBACK-12 prod build) -> 200, 130465 bytes",
+      "bundle contains 12h AM/PM formatter literals",
+      "server log: zero errors, zero POST/write entries",
+      "server stopped after verification; port 8790 re-verified closed"
+    ],
+    "billed_calls": 0,
+    "real_source_writes": 0
+  },
+  "live_health_proof": {
+    "url": "http://127.0.0.1:8746/health",
+    "http_status": 200,
+    "body": "{\"status\":\"ok\",\"judgment_model\":\"openai/gpt-5.6-luna\"}",
+    "note": "GET-only health read after verification; no restart, no POST, no mutation"
+  },
+  "safety_proof": {
+    "live_post_sequence_adjust_commit": "none",
+    "billed_calls": "0",
+    "calendar_writer_calls": "0 - no adapter writer invoked; override wire shape unchanged",
+    "external_writes": "none - scratch used synthetic vault + fake clients + dead writers only",
+    "runtime_restart": "none - no launchctl, no tdtb-restart, no kill of :8746",
+    "port_8746_access": "GET /health only",
+    "scratch_service": "127.0.0.1:8790 started for verification, stopped after; port re-verified closed",
+    "branch_or_index_mutation": "none - no commit, stage, reset, clean, stash, rebase, or merge; branch Development/tdtb-canonical-cutover unchanged",
+    "backend_changes": "0 - app/*.py untouched",
+    "foreign_changes_preserved": "pre-existing dirty/untracked state untouched; only frontend/src owned files and this evidence file written"
+  },
+  "residual_limitations": [
+    "Browser-level visual check was not rerun (playwright-core not present in this environment); the vitest DOM suite renders the real Queue/CalendarImpact/ApprovalDrawer against fixture scenarios and asserts the 12h text on every affected surface, which is the bounded DOM-level check for a display-format revert.",
+    "FEEDBACK-11 evidence files are preserved as historical record; this artifact supersedes their 24-hour compliance claims.",
+    "display12h drops ':00' minutes for whole-hour readouts ('4 PM' not '4:00 PM'); this is the ported wizard formatter already in use on retained surfaces, unchanged by this task."
+  ],
+  "files": {
+    "created": [
+      "docs/plan/2026-08-12-tdtb-feedback-follow-up/evidence/FEEDBACK-12-12-hour.json"
+    ],
+    "modified": [
+      "frontend/src/model/time.ts",
+      "frontend/src/ui/CalendarImpact.tsx",
+      "frontend/src/ui/Queue.tsx",
+      "frontend/src/ui/ApprovalDrawer.tsx",
+      "frontend/src/model/time.test.ts",
+      "frontend/src/ui/calendar-capacity.test.tsx",
+      "frontend/src/ui/feedback10.test.tsx",
+      "frontend/src/ui/panels.test.tsx"
+    ]
+  },
+  "evidence_path": "docs/plan/2026-08-12-tdtb-feedback-follow-up/evidence/FEEDBACK-12-12-hour.json"
+}

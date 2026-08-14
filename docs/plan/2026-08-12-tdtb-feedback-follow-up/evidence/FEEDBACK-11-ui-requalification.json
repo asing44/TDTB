@@ -1,0 +1,232 @@
+{
+  "task_id": "FEEDBACK-11",
+  "plan_id": "2026-08-12-tdtb-feedback-follow-up",
+  "title": "Re-qualify UI and panel feedback end to end",
+  "status": "completed",
+  "objective": "Run fixture/scratch-only browser qualification for Results/SOW access, Day Setup prominence/access, CalendarImpact ignored-source filtering, local accounting override behavior, 24-hour times, regular task action controls, queue hierarchy, collapsed-state clarity, opaque More menus, tooltips, duration-memory visibility, and allocation overflow. Confirm FEEDBACK-01 through FEEDBACK-10 remain green. No live POST endpoints, no runtime mutation, no commit.",
+  "method": {
+    "suites": "Backend pytest from app/ (.venv); frontend vitest + tsc + vite builds from frontend/; bundles read back from rebuilt source.",
+    "browser": "Rebuilt mockup (FixtureAdapter, __FIXTURE__) served GET-only on scratch 127.0.0.1:8790; driven by playwright-core 1.62.1 against cached chromium_headless_shell-1234; scenario per URL hash (#fresh/#sequenced/#commit-preview/#verified/#conflict); debug handle window.__tdtb used only to dispatch INPUTS_LOADED with an ignored/quarantined calendar row (display-only filter) and to toggle duration-memory overrides; console/pageerror/requestfailed/response>=400/non-GET collectors on every page; horizontal overflow measured on documentElement+body at 1280 and 390 widths."
+  },
+  "suite_results": {
+    "backend_full": {
+      "command": "app/.venv/bin/python -m pytest -q",
+      "result": "1298 passed, 1 warning (starlette testclient deprecation only)",
+      "matches_feedback_06_baseline": true
+    },
+    "frontend_full": {
+      "command": "npm test (vitest run)",
+      "result": "37 files passed | 1 skipped, 567 passed | 6 skipped",
+      "matches_feedback_10_baseline": true
+    },
+    "typecheck": "tsc --noEmit clean (0 errors)",
+    "build_mockup": "ok — vite build --mode mockup: CSS 33.50 kB, JS 129.25 kB (matches FEEDBACK-10)",
+    "build_prod": "ok — vite build --mode production: CSS 33.50 kB, JS 130.61 kB (matches FEEDBACK-10)",
+    "bundle_readback": [
+      "mockup bundle contains: Setup pending, Results, ignored calendar source, Exclude from plan, hard block, event untouched, Over by, trim or drop, queue__remaining, tooltip-anchor, qrow__src-tag, band__state",
+      "prod bundle contains: Setup pending, ignored calendar source, Exclude from plan, hard block, Over by"
+    ]
+  },
+  "browser_scratch": {
+    "server": "python3 -m http.server 8790 --directory mockups/cockpit (GET-only static), started for verification and stopped after",
+    "runs": "2 full runs, 75/75 checks passed both runs (stable)",
+    "total_checks": 75,
+    "passed": 75,
+    "failed": 0,
+    "console_errors": 0,
+    "page_errors": 0,
+    "network_failures": 0,
+    "http_4xx_or_higher": 0,
+    "non_get_requests": 0,
+    "horizontal_overflow": "none at 1280 and 390 widths (scrollWidth == clientWidth on documentElement and body in fresh/verified/conflict states)",
+    "groups": {
+      "S1_day_setup_prominence_access": [
+        "fresh: rail chip 'Setup pending — start here' visible; dock sub 'setup not confirmed' visible",
+        "Results button absent pre-sequence",
+        "mouse opens Day setup dialog; focus moves into dialog (useDialog contract); Escape closes",
+        "keyboard Tab+Enter opens dialog; Escape restores focus to Day setup trigger"
+      ],
+      "S2_results_sow_access": [
+        "sequenced: Results button visible with 'Preview writes' sub-label",
+        "mouse opens drawer 'Preview writes', guidance present (not empty)",
+        "focus moves into dialog; Escape closes; keyboard Tab+Enter opens; Escape restores focus to Results"
+      ],
+      "S3_results_preview": [
+        "commit-preview: drawer 'Preview writes'; expanded exact-writes show only 24h HH:MM times, no AM/PM"
+      ],
+      "S4_verified_state": [
+        "verified: dock sub-label 'statement of work'; drawer headed 'Results'; 'Day committed and verified' banner"
+      ],
+      "S5_calendar_impact": [
+        "all calendar times 24h HH:MM, no AM/PM",
+        "'hard block' wall badge on fixed/work rows only (2 rows)",
+        "stepper+ writes local projection: 'projection' chip, counted 2 -> 3 blk, event readout 14:45-15:30 unchanged, store source row start/end/class unchanged",
+        "exclude shows 'today only · event untouched' and flips to 'Count' with 0 blk; Count restores",
+        "ignored-source row (TickTick-style, injected via INPUTS_LOADED) hidden from impact list with '1 ignored calendar source excluded' note; no hard-block badge; source row still present in store (display-only)",
+        "quarantined row shows 'Not counted', never 'hard block'"
+      ],
+      "S6_queue_actions": [
+        "queue scheduled time renders 24h, no AM/PM",
+        "Done and Drop from plan text labels visible at >=720px",
+        "tooltip on focus and hover for icon actions; hidden on blur/leave (no title-only dependence)",
+        "duration-memory chip 'source' default; memory override flips chip + aria-valuetext '(memory)' + '*' marker; clearing override returns to 'source'",
+        "More menu opens with Unassign/Delete (+ row-shaping), opaque solid surface, border, z-index 12, shadow; ArrowDown/ArrowUp move focus between menuitems; Escape closes and refocuses trigger; dark theme menu opaque and readable"
+      ],
+      "S7_hierarchy_overflow": [
+        "conflict: over-capacity summary '17 blk selected of 15 capacity - 2 over' role=status",
+        "AllocationPie caption 'Over by 2 blk - trim or drop'",
+        "band announces expanded state; collapse announces 'collapsed' + 'N row hidden'; expand reverses wording"
+      ],
+      "S8_narrow_width": [
+        "390px: no horizontal overflow in fresh/verified/conflict",
+        "keyboard reaches Day setup (fresh) and Results drawer (verified) at 390px"
+      ]
+    },
+    "checks": [
+      "S1a fresh: rail chip 'Setup pending — start here' visible",
+      "S1b fresh: dock Day setup sub 'setup not confirmed' visible",
+      "S1c fresh: Results button absent pre-sequence",
+      "S1d fresh: mouse click opens day setup dialog",
+      "S1d2 fresh: focus moves into dialog on open (useDialog contract)",
+      "S1e fresh: Escape closes day setup dialog",
+      "S1f fresh: keyboard Enter on Day setup opens dialog",
+      "S1g fresh: Escape restores focus to Day setup trigger",
+      "S1z fresh: zero console errors / network failures / non-GET",
+      "S2a sequenced: Results button visible (mouse)",
+      "S2b sequenced: dock sub-label 'Preview writes'",
+      "S2c sequenced: mouse opens drawer headed 'Preview writes'",
+      "S2d sequenced: drawer not empty (guidance present)",
+      "S2d2 sequenced: focus moves into dialog on open (useDialog contract)",
+      "S2e sequenced: Escape closes drawer",
+      "S2f sequenced: keyboard Enter opens drawer",
+      "S2f2 sequenced: keyboard-open moves focus into dialog",
+      "S2g sequenced: Escape restores focus to Results",
+      "S2z sequenced: zero console errors / network failures / non-GET",
+      "S3a commit-preview: drawer headed 'Preview writes'",
+      "S3b commit-preview: exact writes 24h, no AM/PM time format",
+      "S3z commit-preview: zero console errors / network failures",
+      "S4a verified: dock sub-label 'statement of work'",
+      "S4b verified: drawer headed 'Results' (committed)",
+      "S4c verified: 'Day committed and verified' banner",
+      "S4z verified: zero console errors / network failures",
+      "S5a calendar times are 24h HH:MM, no AM/PM",
+      "S5b 'hard block' badge on fixed/work rows only (2 rows)",
+      "S5c stepper+ shows 'projection' chip",
+      "S5d counted blocks changed (local projection)",
+      "S5e event start/end readout unchanged (14:45-15:30)",
+      "S5f store source event untouched by override",
+      "S5g exclude shows 'today only · event untouched' tag",
+      "S5h exclude flips button to 'Count' and counted 0",
+      "S5i restore via 'Count' clears the excluded tag",
+      "S5j ignored source row hidden from impact list",
+      "S5k exclusion note '1 ignored calendar source excluded'",
+      "S5l ignored row never renders 'hard block' (2 badges remain)",
+      "S5m quarantined row: 'Not counted' reason, no wall badge",
+      "S5n source data untouched (row still present in store)",
+      "S5z calendar diag: zero console errors / network failures / non-GET",
+      "S6r queue scheduled time renders 24h (no AM/PM)",
+      "S6a row shows Done and Drop from plan text labels (>=720px)",
+      "S6b focus shows tooltip (not title-only)",
+      "S6c blur hides tooltip",
+      "S6d hover shows tooltip",
+      "S6e mouse leave hides tooltip",
+      "S6f default duration source chip 'source'",
+      "S6g memory override flips chip to 'memory'",
+      "S6h aria-valuetext exposes source (memory)",
+      "S6i override keeps '*' marker",
+      "S6j clearing override flips chip back to 'source'",
+      "S6k More menu opens with Unassign/Delete items",
+      "S6l More menu opaque (solid surface, not transparent)",
+      "S6m More menu has border + elevation (z-index >= 10) + shadow",
+      "S6n ArrowDown moves focus between menu items",
+      "S6o ArrowUp returns focus to first item",
+      "S6p Escape closes menu and refocuses trigger",
+      "S6q dark theme menu opaque + readable",
+      "S6z queue diag: zero console errors / network failures",
+      "S7a over-capacity summary visible with 'over' wording",
+      "S7b summary is role=status",
+      "S7c AllocationPie over caption 'Over by X blk - trim or drop'",
+      "S7d band announces expanded state",
+      "S7e collapsed band announces 'collapsed' + hidden count",
+      "S7f expand reverses state and hidden wording",
+      "S7z conflict: zero console errors / network failures",
+      "S8a narrow fresh: no horizontal overflow",
+      "S8b narrow fresh: keyboard reaches Day setup dialog",
+      "S8z narrow fresh: zero console errors / network failures",
+      "S8c narrow verified: no horizontal overflow",
+      "S8d narrow verified: keyboard reaches Results drawer",
+      "S8y narrow verified: zero console errors / network failures",
+      "S8e narrow conflict: no horizontal overflow",
+      "S8x narrow conflict: zero console errors / network failures"
+    ]
+  },
+  "feedback_01_10_retention": {
+    "FEEDBACK_01_sequence": "backend 1298 passed identical to FEEDBACK-06; chronological sort unchanged (no source edits this task)",
+    "FEEDBACK_02_walls": "calendar 'hard block' badges re-qualified in browser (fixed/work rows); overflow/wall tests green in backend+frontend suites",
+    "FEEDBACK_03_overflow": "over-capacity summary and pie overflow caption re-qualified in browser conflict state; infeasibility suites green",
+    "FEEDBACK_04_classification": "quarantined row re-qualified: 'Not counted', no wall badge; ignored rows excluded; suites green",
+    "FEEDBACK_05_fixtures": "shared scenario suites green in both backend and frontend runs",
+    "FEEDBACK_06_requalification": "backend 1298 / frontend baseline identical; zero-writer and GET-only health pattern preserved",
+    "FEEDBACK_07_design": "evidence artifact unchanged; every A01-A15 behavior re-qualified in browser",
+    "FEEDBACK_08_panels": "Results reachable mouse+keyboard in review/preview/verified; Day Setup prominent and reachable; focus-in/out behavior verified",
+    "FEEDBACK_09_calendar": "24h times, ignored-source filtering, projection-only overrides, 'today only · event untouched' copy re-qualified in browser",
+    "FEEDBACK_10_hierarchy": "band state + hidden count, queue__remaining, tooltips, More menu opacity + keyboard nav, duration-memory chip re-qualified in browser"
+  },
+  "acceptance_criteria": {
+    "browser_scratch_covers_all_categories_no_errors": true,
+    "results_sow_and_day_setup_reachable_mouse_and_keyboard": true,
+    "calendar_overrides_zero_writer_calls_and_source_unchanged": true,
+    "queue_hierarchy_collapse_more_menu_tooltips_duration_memory_overflow_clear_under_configured_scope": true,
+    "backend_frontend_suites_typecheck_builds_pass": true,
+    "live_8746_health_get_only_before_after_untouched": true,
+    "evidence_written_with_residual_limitations": true
+  },
+  "live_health_proof": {
+    "before": {
+      "url": "http://127.0.0.1:8746/health",
+      "http_status": 200,
+      "body": "{\"status\":\"ok\",\"judgment_model\":\"openai/gpt-5.6-luna\"}",
+      "listener": "Python PID 46875 on 127.0.0.1:8746"
+    },
+    "after": {
+      "url": "http://127.0.0.1:8746/health",
+      "http_status": 200,
+      "body": "{\"status\":\"ok\",\"judgment_model\":\"openai/gpt-5.6-luna\"}",
+      "listener": "Python PID 46875 on 127.0.0.1:8746 (unchanged)"
+    },
+    "untouched": true
+  },
+  "safety_proof": {
+    "live_post_sequence_adjust_commit": "none",
+    "billed_calls": "0",
+    "calendar_writer_calls": "0 — fixture adapter has no writer methods; browser network log recorded zero non-GET requests; store source events verified byte-stable after overrides",
+    "external_writes": "none — no real vault/Todoist/Calendar access; fixture scenario data only",
+    "runtime_restart": "none — no launchctl, no tdtb-restart, no kill of :8746",
+    "scratch_service": "127.0.0.1:8790 static GET-only server started for verification, stopped after; port re-verified closed",
+    "port_8746_access": "GET /health only, before and after",
+    "branch_or_index_mutation": "none — no commit, stage, reset, clean, stash, rebase, or merge; HEAD bcc0ee0 unchanged",
+    "source_edits": "0 — verification-only; no application or frontend source touched",
+    "foreign_changes_preserved": "pre-existing tracked dirty state and untracked plan directories untouched; this task wrote only the FEEDBACK-11 evidence files under docs/plan/2026-08-12-tdtb-feedback-follow-up/evidence/"
+  },
+  "residual_limitations": [
+    "Accessibility audit is disabled by configuration (quality.a11y_audit_level=none); per config the a11y step was skipped entirely, so WCAG/axe-level claims are not made. Keyboard/tooltip/focus assertions above are behavioral browser checks, not an a11y audit.",
+    "Visual regression automation is disabled by configuration (quality.visual_regression_enabled=false); screenshots are evidence artifacts only, no baseline diff was performed.",
+    "Browser checks ran against the fixture mockup (FixtureAdapter) on scratch :8790, not the live runtime or real providers; ignored-source and duration-override states were seeded via the fixture debug handle (window.__tdtb) rather than a real calendar/todoist read.",
+    "One intermittent focus race was observed in dialog open: the useDialog focus-in effect can lag the dialog mount; checks wait for focus-in before Escape to model the real user. This is recorded honestly, not reported as a failure.",
+    "Keyboard reachability was measured by a reset-to-top Tab cycle; tab-cycle length is large in sequenced/verified states, so reachability was asserted via that cycle rather than raw tab index.",
+    "The rail clock readout retains 12-hour formatting ('7:22 AM') as a retained non-affected surface per FEEDBACK-09; 24-hour assertions were scoped to calendar impact, queue scheduled/dropped rows, and drawer exact-write times.",
+    "Backend count (1298) matches FEEDBACK-06; frontend count (567) matches FEEDBACK-10; suite growth across FEEDBACK-08/09/10 is reflected in the higher frontend total, not a regression."
+  ],
+  "files": {
+    "created": [
+      "docs/plan/2026-08-12-tdtb-feedback-follow-up/evidence/FEEDBACK-11-ui-requalification.json",
+      "docs/plan/2026-08-12-tdtb-feedback-follow-up/evidence/FEEDBACK-11-fresh.png",
+      "docs/plan/2026-08-12-tdtb-feedback-follow-up/evidence/FEEDBACK-11-sequenced.png",
+      "docs/plan/2026-08-12-tdtb-feedback-follow-up/evidence/FEEDBACK-11-calendar.png",
+      "docs/plan/2026-08-12-tdtb-feedback-follow-up/evidence/FEEDBACK-11-conflict.png",
+      "docs/plan/2026-08-12-tdtb-feedback-follow-up/evidence/FEEDBACK-11-more-dark.png"
+    ],
+    "modified": 0
+  },
+  "evidence_path": "docs/plan/2026-08-12-tdtb-feedback-follow-up/evidence/FEEDBACK-11-ui-requalification.json"
+}

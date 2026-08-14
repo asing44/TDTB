@@ -1,0 +1,68 @@
+{
+  "task_id": "FEEDBACK-01",
+  "plan_id": "2026-08-12-tdtb-feedback-follow-up",
+  "title": "Fix chronological sequence ordering and validation",
+  "status": "completed",
+  "root_cause": {
+    "boundary": "frontend/src/store/controller.ts::Controller.autoSequence",
+    "mechanism": "autoSequence appended anchor-based overflow rows AFTER server-validated rows without a final sort or revalidation",
+    "reported_shape": "on a late-anchored overbooked day, overflow is laid out from 17:15 while the plan already reaches 23:15; merged sequence was descending and the server rejected it: sequence not in chronological start order at 'Log hours' ('17:15' < preceding '23:15')"
+  },
+  "fix": {
+    "production": [
+      "frontend/src/store/controller.ts: added byStartThenId comparator (start HH:MM lexicographic, id tiebreak mirroring app/sequence.py merge_immutable_rows sort key)",
+      "frontend/src/store/controller.ts: final merged sequence is [...rows, ...overflow].sort(byStartThenId) before SEQUENCE_OK dispatch; sort reorders, never drops"
+    ],
+    "no_backend_production_change": "app/sequence.py merge_immutable_rows already sorts by (start, id) and validate_sequence already hard-rejects descending order; behavior pinned by new tests instead"
+  },
+  "regression_tests": [
+    {
+      "file": "frontend/src/store/controller.test.ts",
+      "test": "FEEDBACK-01 chronological sequence ordering > sorts overflow after server rows — Log hours at 17:15 precedes the 23:15 row",
+      "behavior": "fixture-only: mocked loadPlanInputs (anchor 17:15, Log hours assigned) and mocked autoSequence (rows reaching 23:15, Log hours dropped); asserts merged sequence is chronologically ordered, Log hours at 17:15 precedes the 23:15 row, no rows dropped, overflowIds includes Log hours",
+      "red_before_fix": "failed at the descending 17:15 < 23:15 pair; green after fix"
+    },
+    {
+      "file": "app/tests/test_sequence.py",
+      "test": "TestFeedback01Chronology.test_reported_17_15_after_23_15_rejected_deterministically",
+      "behavior": "pins validate_sequence hard rejection of the exact reported shape with the deterministic chronological error"
+    },
+    {
+      "file": "app/tests/test_sequence.py",
+      "test": "TestFeedback01Chronology.test_merge_immutable_rows_is_chronological_after_replace",
+      "behavior": "pins merge_immutable_rows output is chronological after a model 23:15 copy is replaced by an immutable 17:15 pin"
+    }
+  ],
+  "test_results": {
+    "frontend_full": "499 passed, 6 skipped (35 files)",
+    "frontend_typecheck": "tsc --noEmit clean",
+    "backend_full": "1271 passed (1 starlette deprecation warning only)",
+    "sequence_focused": "app/tests/test_sequence.py: 54 passed (52 baseline + 2 new)"
+  },
+  "acceptance_criteria": {
+    "reported_case_reproduced_and_fixed": true,
+    "final_sequence_sorted_after_overflow_and_immutable_merges": true,
+    "validation_rejects_descending_with_deterministic_error": true,
+    "existing_valid_sequence_behavior_green": true,
+    "fixtures_fakes_only_no_live_access": true
+  },
+  "safety_proof": {
+    "live_post_sequence_adjust_commit": "none — adapter.autoSequence mocked in the regression; backend tests are pure unit tests",
+    "external_writes": "none",
+    "runtime_restart": "none",
+    "port_8746_access": "none",
+    "branch_or_index_mutation": "none — no commit, stage, reset, clean, stash, rebase, or merge",
+    "foreign_changes_preserved": "tracked dirty work (.gitignore, AGENTS.md, README.md, gem-team.yaml, .opencode, extraction plan.yaml) untouched; edited files live in untracked frontend/ and app/ dirs"
+  },
+  "files": {
+    "modified": 3,
+    "created": 1
+  },
+  "evidence_path": "docs/plan/2026-08-12-tdtb-feedback-follow-up/evidence/FEEDBACK-01-sequence.json",
+  "out_of_scope_noted": [
+    "calendar-wall enforcement (FF-CAL-03)",
+    "event classification (FF-CAL-01/FF-06)",
+    "safe overflow/infeasibility reporting (FF-CAL-02/FF-CAL-03)",
+    "UI polish (later_polish group)"
+  ]
+}

@@ -1,0 +1,73 @@
+{
+  "task_id": "FEEDBACK-03",
+  "plan_id": "2026-08-12-tdtb-feedback-follow-up",
+  "title": "Replace wall-blind overflow with safe placement or explicit infeasibility",
+  "status": "completed",
+  "root_cause": {
+    "boundary": "frontend/src/model/overflow.ts::overflowRows (anchor-first sequential placement) + frontend/src/store/controller.ts::Controller.autoSequence (wall- and pin-blind overflow staging)",
+    "mechanism": "overflowRows laid dropped rows back-to-back from the frame anchor and skipped non-permeable calendar walls (FEEDBACK-02), but it was still blind to immutable pinned rows and silently omitted any row that could not fit before a wall running to end of day — an over-assigned day could stage a row overlapping a pinned commitment or lose work with no diagnostic; the production path had no explicit infeasibility state"
+  },
+  "fix": {
+    "frontend_production": [
+      "frontend/src/model/overflow.ts: new planOverflow(dropped, anchor, blocksOf, walls, occupied) — free-gap scan treating non-permeable calendar walls AND immutable pinned-row intervals as blocked; a row no gap can hold is returned in infeasible as {id, blocks, freeBlocks (largest remaining contiguous gap in 30-min blocks), reason naming the gap, the need, and the obstacle (walls / pins / day-runs-out)}",
+      "frontend/src/model/overflow.ts: overflowRows is now a thin wrapper over planOverflow().rows — one algorithm, legacy callers and tests unchanged",
+      "frontend/src/store/controller.ts: autoSequence calls planOverflow with occupied = the server's effective pin set (result.pinnedRows ?? pendingPinnedRows, zone rows filtered), so overflow never overlaps a manual or recurring auto-pin; infeasible rows are NOT staged, and their diagnostics append to the sequence warnings as '⚠ overflow infeasible — <id>: <reason>' so they render in alerts and gate shadow/commit behind LD24 acceptance",
+      "Final merged sequence stays sorted byStartThenId (FEEDBACK-01) — chronological order preserved; the sort reorders, never drops"
+    ],
+    "no_backend_production_change": "app/sequence.py unchanged — FEEDBACK-02 already hardens non-permeable calendar walls; new tests pin the backend half of the explicit-infeasibility contract (immutable pinned-row overlap is never silent; a sequence omitting an infeasible row is rejected loudly by never-bump)",
+    "no_store_change": "infeasibility rides the existing SEQUENCE_OK warnings path — no new AppState field or action payload; acceptableDefects/alerts already render it and defectsResolved already gates"
+  },
+  "regression_tests": [
+    {
+      "file": "frontend/src/model/overflow.test.ts",
+      "test": "planOverflow free-gap placement (7 tests)",
+      "behavior": "places rows into free gaps around walls AND occupied pins; straddling row moves after the wall; rows with no free gap reported infeasible with id/need/freeBlocks and a reason naming the gap (17:30-18:00) and obstacle; pin occupying the only gap reported with 'pinned row'; legacy overflowRows omission now visible via planOverflow.infeasible; all-day rows skipped never infeasible; no anchor reports every row infeasible instead of a midnight pile"
+    },
+    {
+      "file": "frontend/src/store/controller.test.ts",
+      "test": "FEEDBACK-03 explicit overflow infeasibility (2 tests)",
+      "behavior": "mocked full-day non-permeable calendar wall: every dropped row reported as 'overflow infeasible' warning naming rows (Magic Mirror, Note Processing) and capacity (block text), zero overflow rows staged, defectsResolved false (gates shadow/commit); mocked server pinnedRows: every overflow row avoids the pinned 07:30-09:00 interval and every effective calendar wall"
+    },
+    {
+      "file": "app/tests/test_sequence.py",
+      "test": "TestFeedback03OverflowInfeasibility (2 tests)",
+      "behavior": "row overlapping an immutable pinned row yields a named unexpected_overlap warning, never a clean pass; a merged sequence omitting a row the overflow could not place is rejected loudly (never-bump names the missing row), never ok"
+    }
+  ],
+  "test_results": {
+    "backend_full": "1282 passed (1 starlette deprecation warning only)",
+    "backend_sequence_focused": "app/tests/test_sequence.py: 64 passed (62 baseline + 2 new)",
+    "frontend_full": "517 passed, 6 skipped (35 files)",
+    "frontend_focused": "overflow.test.ts 22 passed + controller.test.ts 33 passed",
+    "frontend_typecheck": "tsc --noEmit clean",
+    "frontend_build_mockup": "ok",
+    "frontend_build_prod": "ok"
+  },
+  "acceptance_criteria": {
+    "overflow_placement_scans_free_gaps_never_overlaps_walls_or_immutable_rows": true,
+    "overassigned_days_produce_explicit_infeasibility_diagnostics_naming_rows_and_capacity": true,
+    "no_silent_anchor_first_append_in_production_path": true,
+    "final_output_chronologically_ordered_and_passes_validation": true,
+    "existing_valid_overflow_behavior_green": true,
+    "fixtures_fakes_only_no_live_access": true
+  },
+  "safety_proof": {
+    "live_post_sequence_adjust_commit": "none — all tests use FixtureAdapter, vitest mocks, and pure unit fixtures; no adapter call reaches a live endpoint",
+    "external_writes": "none",
+    "runtime_restart": "none",
+    "port_8746_access": "none",
+    "branch_or_index_mutation": "none — no commit, stage, reset, clean, stash, rebase, or merge",
+    "foreign_changes_preserved": "tracked dirty work (.gitignore, AGENTS.md, README.md, gem-team.yaml, .opencode, extraction plan.yaml) untouched; edited files live in untracked app/ and frontend/ dirs, same as FEEDBACK-01/02"
+  },
+  "files": {
+    "modified": 5,
+    "created": 1
+  },
+  "evidence_path": "docs/plan/2026-08-12-tdtb-feedback-follow-up/evidence/FEEDBACK-03-overflow.json",
+  "out_of_scope_noted": [
+    "event classification changes (FF-CAL-01/FF-06) — quarantined frontend projection still maps to fixed, unchanged",
+    "UI polish (later_polish group)",
+    "hardening pinned rows to backend hard walls — kept on the LD26 acceptable-defect path per FEEDBACK-02's scope; the frontend avoids generating the shape entirely",
+    "store.ts acceptableDefects unchanged — verified infeasibility warnings flow through the existing defects path"
+  ]
+}

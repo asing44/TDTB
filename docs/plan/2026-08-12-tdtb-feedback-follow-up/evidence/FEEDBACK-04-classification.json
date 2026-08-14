@@ -1,0 +1,91 @@
+{
+  "task_id": "FEEDBACK-04",
+  "plan_id": "2026-08-12-tdtb-feedback-follow-up",
+  "title": "Correct quarantined and fixed event classification",
+  "status": "completed",
+  "root_cause": {
+    "boundary": "frontend/src/adapters/wire.ts::projectAnchored (read-model projection) + every consumer that trusted capacityClass",
+    "mechanism": "projectAnchored recognized only 'work' and 'ignored' as explicit calendar classes, so any calendar row carrying capacity_class 'quarantined' (known-but-unreviewed title, frozen contract 17) fell through to capacityClass 'fixed'. The row then displayed as Fixed in CalendarImpact, walled the client-side overflow scan (calendarWalls skips only ignored), entered the fixed-input fingerprint (projectFixedInputs counted it attending), and appeared under 'Fixed commitments' in the manual export prompt — all contradicting the server, which excludes quarantined rows from planning capacity, walls, and the judgment payload (main.py::_judged_anchored, _capacity_frame, sequence.py::_CALENDAR_EXCLUDED_CLASSES)"
+  },
+  "fix": {
+    "frontend_production": [
+      "frontend/src/model/types.ts: CalendarCapacityClass gains 'quarantined' (fourth explicit wire class)",
+      "frontend/src/adapters/wire.ts::projectAnchored: 'quarantined' passes through verbatim instead of collapsing to fixed",
+      "frontend/src/adapters/wire.ts::projectFixedInputs: quarantined rows excluded from fixed-input calendar commitments — they never affect planning, so their presence/absence must not invalidate a staged plan",
+      "frontend/src/fixtures/scenarios.ts::fixedInputsOf: mirrors the wire normalization (comment promises parity)",
+      "frontend/src/model/overflow.ts::calendarWalls: quarantined rows wall nothing, alongside ignored (contract 17) — no hidden hard wall client-side",
+      "frontend/src/ui/CalendarImpact.tsx: quarantined rows render class badge 'quarantined', reason 'Not counted', counted blocks 0 — never Fixed",
+      "frontend/src/store/exportPrompt.ts: quarantined rows excluded from the 'Fixed commitments — do not move these' section of the manual LLM fallback"
+    ],
+    "backend_production": "none — fetch_calendar_busy (work/fixed/ignored/quarantined), main.py::_judged_anchored and _capacity_frame (both drop quarantined), and sequence.py (excluded classes) already encode the contract; FEEDBACK-02/03 tests cover them. New tests pin the pipeline with fixture titles"
+  },
+  "regression_tests": [
+    {
+      "file": "frontend/src/adapters/wire.test.ts",
+      "test": "FEEDBACK-04 event classification (2 tests)",
+      "behavior": "Cooking (fixed) and Trivia Night (work) pass through; Steelers Game (quarantined) projects as capacityClass 'quarantined' — never Fixed; projectFixedInputs.calendar contains exactly Cooking and Trivia Night, never the quarantined row",
+      "red_before_fix": "both failed — Steelers Game projected as capacityClass 'fixed' and entered the fixed-input list"
+    },
+    {
+      "file": "frontend/src/model/overflow.test.ts",
+      "test": "calendarWalls excludes quarantined rows (1 test)",
+      "behavior": "a quarantined Steelers 20:00-22:00 row walls nothing; the fixed Cooking 20:30-21:00 row beside it still walls its interval",
+      "red_before_fix": "failed — quarantined row (projected as fixed) emitted a 20:00-22:00 wall"
+    },
+    {
+      "file": "frontend/src/ui/calendar-capacity.test.tsx",
+      "test": "CalendarImpact labels quarantined rows excluded (1 test)",
+      "behavior": "Steelers Game renders badge 'quarantined', reason 'Not counted', '0 blk counted'; configured fixed Cooking beside it still renders Fixed with '1 blk counted' (accounted exactly once)",
+      "red_before_fix": "failed — quarantined row rendered as Fixed with 2 blk counted"
+    },
+    {
+      "file": "frontend/src/store/exportPrompt.test.ts",
+      "test": "excludes quarantined calendar rows from Fixed commitments (1 test)",
+      "behavior": "a quarantined Steelers row added to the ready scenario does not appear in the prompt's '## Fixed commitments' section",
+      "red_before_fix": "failed — 'Steelers Game: 8 PM · 120min (calendar event)' appeared under Fixed commitments"
+    },
+    {
+      "file": "app/tests/test_calendar_capacity.py",
+      "test": "TestFeedback04FixtureClassification (2 tests)",
+      "behavior": "fetch_calendar_busy classifies Cooking->fixed, Trivia Night->work, Steelers Game->quarantined per EXPLICIT config rules (unconfigured known title stays quarantined, never label-guessed); _capacity_frame then counts Cooking exactly once (fixed=1), Trivia inside the work envelope (work_busy=2, overflow=0), and the quarantined Steelers 20:00-22:00 overlap costs zero and does not inflate work_busy or mint",
+      "red_before_fix": "n/a — backend already encoded the contract; tests pass immediately as contract pins (frontend projection was the defect)"
+    }
+  ],
+  "test_results": {
+    "backend_full": "1196 passed (1 starlette deprecation warning only)",
+    "backend_capacity_focused": "app/tests/test_calendar_capacity.py: 7 passed (5 baseline + 2 new)",
+    "frontend_full": "522 passed, 6 skipped (35 files)",
+    "frontend_focused": "wire.test.ts + overflow.test.ts + calendar-capacity.test.tsx + exportPrompt.test.ts: 77 passed (72 baseline + 5 new)",
+    "frontend_typecheck": "tsc --noEmit clean",
+    "frontend_build_mockup": "ok",
+    "frontend_build_prod": "ok",
+    "bundle_readback": "built app/static/cockpit and mockups/cockpit bundles both contain the quarantined class token (read back, not assumed)"
+  },
+  "acceptance_criteria": {
+    "quarantined_rows_represented_as_excluded_not_fixed": true,
+    "cooking_dinner_trivia_steelers_classifications_follow_explicit_source_class_rules": true,
+    "excluded_events_do_not_enter_planning_capacity_or_create_hidden_walls": true,
+    "fixed_nonpermeable_events_visible_and_accounted_exactly_once": true,
+    "backend_frontend_classification_tests_pass_with_fixtures_only": true,
+    "no_commit": true
+  },
+  "safety_proof": {
+    "live_post_sequence_adjust_commit": "none — all tests are unit tests with fakes and vitest fixtures; no adapter call reaches a live endpoint",
+    "external_writes": "none",
+    "runtime_restart": "none",
+    "port_8746_access": "none",
+    "branch_or_index_mutation": "none — no commit, stage, reset, clean, stash, rebase, or merge",
+    "foreign_changes_preserved": "tracked dirty work (.gitignore, AGENTS.md, README.md, gem-team.yaml, .opencode, docs/plan extraction plan.yaml) untouched; edited files live in untracked app/ and frontend/ dirs, same as FEEDBACK-01/02/03"
+  },
+  "files": {
+    "modified": 11,
+    "created": 1
+  },
+  "evidence_path": "docs/plan/2026-08-12-tdtb-feedback-follow-up/evidence/FEEDBACK-04-classification.json",
+  "out_of_scope_noted": [
+    "frontend/src/adapters/fixture.ts::fixtureValidate wall filter still ignores capacityClass entirely (an ignored/quarantined row would wall in the dev mock) — dead path, no scenario fixture carries such a row; the production /validate-sequence contract is covered in test_sequence.py",
+    "UI polish (later_polish group): 24-hour formatting, calendar action controls, 'Not attending' wording",
+    "ignored rows remain in the fixed-input fingerprint (pre-existing) — only quarantined was in this defect; ignored rows already wall nothing and count zero everywhere else",
+    "FEEDBACK-03 evidence recorded backend_full 1282 while the collected suite measures 1196 (1194 baseline + 2 new); the historical count is inconsistent with the current collection — current suite is internally consistent and fully green"
+  ]
+}

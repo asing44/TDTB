@@ -1,0 +1,85 @@
+{
+  "task_id": "FEEDBACK-02",
+  "plan_id": "2026-08-12-tdtb-feedback-follow-up",
+  "title": "Make non-permeable calendar walls hard constraints",
+  "status": "completed",
+  "root_cause": {
+    "boundary": "app/sequence.py::validate_sequence (backend soft warnings) + frontend/src/model/overflow.ts (wall-blind overflow placement)",
+    "mechanism": "backend emitted calendar-block overlaps as soft unexpected_overlap acceptable defects (T18d/LD26), so a model-placed row over Cooking validated clean; frontend overflowRows laid dropped rows from the anchor with no wall awareness, so Magic Mirror could be staged over Cooking at 20:30 and the exact shape the server then hard-rejects was generated client-side"
+  },
+  "fix": {
+    "backend_production": [
+      "app/sequence.py: calendar-sourced anchored blocks (source == calendar) with capacity_class fixed/work and no overlap_allowed, no window Type, not ignored/quarantined are now calendar_spans; overlap hard-rejects with a deterministic hard error naming the block and interval",
+      "app/sequence.py: calendar wall overlap in the overflow tail is also hard (explicit infeasibility, not G16 overflow_overlap softness) — only config-backed blocks and movable work keep soft readings",
+      "app/sequence.py: ignored/quarantined calendar rows are no wall at all (frozen contract 17: excluded from planning) via _CALENDAR_EXCLUDED_CLASSES",
+      "app/main.py::_judged_anchored: quarantined calendar rows dropped alongside ignored rows so the judgment prompt never sees a row that would otherwise harden silently",
+      "Exact overlap grants still downgrade a calendar wall overlap to allowed_overlap (soft info); window blocks and permeable overlap_allowed blocks unchanged"
+    ],
+    "frontend_production": [
+      "frontend/src/model/overflow.ts: new calendarWalls(anchored) helper — kind calendar, not ignored, on, attending, not overlapAllowed, with a real interval",
+      "frontend/src/model/overflow.ts: overflowRows accepts walls and skips them — a row that would intersect a wall moves to just after it; rows that cannot fit before a wall running to end of day are omitted; rows still never overlap each other",
+      "frontend/src/store/controller.ts: autoSequence passes calendarWalls(effectiveAnchoredBlocks(post)) so Day-Setup dismissals free their interval and overflow never stages the calendar-wall overlap the server hard-rejects"
+    ],
+    "no_store_change": "frontend/src/store/store.ts::acceptableDefects needs no change — a calendar wall overlap is now a backend hard error (never a warning), and overflow avoids generating one client-side"
+  },
+  "regression_tests": [
+    {
+      "file": "app/tests/test_sequence.py",
+      "test": "TestCalendarHardWalls (8 tests) + TestCalendarBusyBlocks.test_overlap_with_calendar_block_is_hard_rejection",
+      "behavior": "fixed and work class calendar blocks hard-reject overlap; unidentified calendar defaults to hard wall; ignored/quarantined rows are no wall; exact grant keeps allowed_overlap; overflow-tail calendar overlap is hard; config-backed blocks keep LD26 acceptable-defect softness; no-overlap still passes",
+      "red_before_fix": "6 failed before the fix: hard-wall tests returned ok=True with unexpected_overlap warnings; ignored-row test emitted a soft warning"
+    },
+    {
+      "file": "app/tests/test_t12_fixes.py",
+      "test": "TestSuppressedAnchoredFiltered.test_quarantined_calendar_block_filtered",
+      "behavior": "POST /sequence with a quarantined calendar block must not hand it to the judgment payload (contract 17); red before fix (block leaked into captured anchored)"
+    },
+    {
+      "file": "frontend/src/model/overflow.test.ts",
+      "test": "overflowRows wall avoidance (5 tests) + calendarWalls (3 tests)",
+      "behavior": "overflow skips a wall interval and continues after it; a straddling row moves after the wall; anchor inside a wall jumps past; wall to midnight omits rows; rows stay mutually non-overlapping; calendarWalls selects only on/attending/non-ignored calendar rows with real intervals"
+    },
+    {
+      "file": "frontend/src/store/controller.test.ts",
+      "test": "FEEDBACK-02 overflow wall avoidance (controller wiring)",
+      "behavior": "mocked autoSequence drops six included rows so overflow runs from the 07:30 anchor across the 09:15-09:45 Trinoor Standup wall; asserts every overflow row avoids every effective calendar wall"
+    }
+  ],
+  "test_results": {
+    "backend_full": "1192 passed (1 starlette deprecation warning only)",
+    "backend_sequence_focused": "app/tests/test_sequence.py: 62 passed (54 baseline + 8 new/updated)",
+    "backend_capacity_focused": "app/tests/test_calendar_capacity.py: 5 passed (unchanged — accounting contract untouched)",
+    "backend_t12_focused": "app/tests/test_t12_fixes.py: 11 passed (10 baseline + 1 new)",
+    "frontend_full": "508 passed, 6 skipped (35 files)",
+    "frontend_focused": "overflow.test.ts 15 passed + controller.test.ts 31 passed",
+    "frontend_typecheck": "tsc --noEmit clean",
+    "frontend_build_mockup": "ok",
+    "frontend_build_prod": "ok"
+  },
+  "acceptance_criteria": {
+    "cooking_and_equivalent_fixed_events_block_placement": true,
+    "sequence_overlapping_wall_rejected_deterministically_never_soft": true,
+    "permeable_windows_and_exact_overlap_grants_remain_valid": true,
+    "calendar_capacity_tests_updated_only_where_contract_contradicted": true,
+    "fixtures_fakes_only_no_live_access": true
+  },
+  "safety_proof": {
+    "live_post_sequence_adjust_commit": "none — all backend tests are unit tests with fakes; no adapter call reaches a live endpoint",
+    "external_writes": "none",
+    "runtime_restart": "none",
+    "port_8746_access": "none",
+    "branch_or_index_mutation": "none — no commit, stage, reset, clean, stash, rebase, or merge",
+    "foreign_changes_preserved": "tracked dirty work (.gitignore, AGENTS.md, README.md, gem-team.yaml, .opencode, docs/plan extraction plan.yaml) untouched; edited files live in untracked app/ and frontend/ dirs, same as FEEDBACK-01"
+  },
+  "files": {
+    "modified": 8,
+    "created": 1
+  },
+  "evidence_path": "docs/plan/2026-08-12-tdtb-feedback-follow-up/evidence/FEEDBACK-02-calendar-walls.json",
+  "out_of_scope_noted": [
+    "event classification changes (FF-CAL-01/FF-06) — quarantined frontend projection still maps to fixed, unchanged",
+    "safe overflow/infeasibility reporting UX (FF-CAL-02/FF-CAL-03 remainder)",
+    "UI polish (later_polish group)",
+    "store.ts acceptableDefects unchanged — verified no calendar-wall finding belongs there"
+  ]
+}

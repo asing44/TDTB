@@ -1,0 +1,90 @@
+{
+  "task_id": "FEEDBACK-27",
+  "plan_id": "2026-08-12-tdtb-feedback-follow-up",
+  "title": "Add Press, setup-gate, Mint-capacity, and Mint-overlap fixtures",
+  "status": "completed",
+  "objective": "Add deterministic write-path and Mint reliability fixtures covering the reported write failure and Mint defects: Press with intent 19:00 versus Todoist 23:00Z/19:00 local, skeleton runstate without explicit Day Setup, configured 300 Mint minutes versus the prior 60-minute/2-block fallback, selected Mint intervals with overlapping assigned tasks, shifted Mint readback, and exact Trinoor classification.",
+  "acceptance_criteria_met": [
+    "Fixtures reproduce the original Press mismatch before normalization and pass after FEEDBACK-23: backend test_press_repro_before_normalization parses the raw fixed due wall clock ('2026-07-12T23:00:00Z' -> '23:00'), asserts it differs from the 19:00 intent (the exact reported failure), then proves commit._todoist_due_reading normalizes 23:00Z through America/New_York to '19:00' and write_todoist verifies clean with empty verify_failures; equivalent-encoding, floating-local, true-mismatch (12h message, no raw 24h), missing-timezone fail-closed, and structured canonical detail tests pin the same contract.",
+    "Fixtures prove missing Day Setup blocks external writes after FEEDBACK-24: a /gather-materialised skeleton runstate reads is_day_setup_confirmed False and /plan-inputs day_setup_confirmed False; /commit?mode=live returns 409 with zero vault bytes written (byte-for-byte before/after compare); /runtime-actions apply and undo both return 409; only a successful POST /day-setup then unblocks a live commit (200 ok with fake providers).",
+    "Fixtures prove 300-minute Mint configuration yields the expected blocks/intents and no hardcoded 2-block fallback: resolved_day_semantics effective_allotment_minutes 300 yields the aggregate Minting row with blocks == 10 and duration == 300 (dated work_allotment_minutes 300 does the same); capacity _capacity_frame reserves mint == 10; 10 selected sessions total 10 blocks and suppress the aggregate; the hardcoded 2-block default is pinned as surviving ONLY when no allotment context exists.",
+    "Fixtures prove tasks overlapping Mint are rejected or explicitly infeasible: validate_sequence hard-rejects an assigned row overlapping a selected Mint session (no overlap-grant escape, Mint row itself exempt, back-to-back touch allowed); the /validate-sequence route rejects the same shape; frontend planOverflow moves a dropped row straddling a Mint interval after it and reports rows no gap can hold as explicit 'overflow infeasible' — never staged over Mint.",
+    "Fixtures prove shifted Mint readback fails and exact readback passes: ShiftingStore repro (intended 13:00-14:00 reads back 13:30-14:30) yields ok False with structured kind='calendar' verify_details (start/end ISO mismatches); an end-only drift records duration_min 60 vs 30; FakeStore exact identity passes with empty verify_failures/verify_details; a same-title source event on another calendar is never treated as our write (created_calls 1, noops empty).",
+    "Fixtures assert no real writer calls; no live POST, external write, restart, or commit: backend read pipeline fake records exactly auth_status/calendars/query_events and its writer methods raise AssertionError tripwires; write fakes (FakeTodoist/FakeStore/ShiftingStore) expose no http/client/session/base_url/token handle; frontend spies assert liveCommit/shadowCommit/runtimeAction/undoRuntimeAction are never called during load -> setup -> sequence; safety_proof below records zero live calls, writes, restarts, and Git mutations."
+  ],
+  "fixtures": {
+    "backend": {
+      "file": "app/tests/test_feedback_write_mint.py",
+      "tests": 30,
+      "classes": {
+        "TestPressDueFixture": "Press due (FEEDBACK-23): 6 tests — original raw-wall mismatch repro then normalized pass, 23:00Z/19:00 equivalent encoding, floating local due, true different instant fails with 12h only, missing timezone fails closed, structured detail keeps canonical ISO/timezone/24h.",
+        "TestSetupGateBlocksExternalWrites": "Setup gate (FEEDBACK-24): 4 tests — /gather skeleton not confirmed, live commit 409 with zero vault bytes, runtime apply/undo 409, confirmed setup unblocks live commit with fakes.",
+        "TestMintCapacity300": "Mint capacity (FEEDBACK-25): 5 tests — 300-min allotment -> 10 blocks/300 min, dated override same, 2-block default only without allotment context, capacity frame reserves mint 10, 10 selected sessions total 10 blocks.",
+        "TestMintOverlapRejected": "Mint overlap (FEEDBACK-25): 4 tests — overlap hard rejection, no grant escape, back-to-back touch allowed, Mint row itself exempt.",
+        "TestMintOverlapRoute": "Mint overlap route: 2 tests — /validate-sequence rejects overlap, allows clean rows beside the selected session.",
+        "TestMintReadback": "Mint readback (FEEDBACK-26): 4 tests — shifted interval fails with structured details, duration shift fails, exact identity passes, source same-title event not our write.",
+        "TestTrinoorExactClassification": "Trinoor (FEEDBACK-26): 3 tests — canonical '🟡 Trinoor : Morning' is Step D'; 'Trinoor sync' is Step E not D'; 'Trinoorish' is plain Step D.",
+        "TestZeroRealWriterCalls": "Zero writers: 2 tests — calendar read pipeline records only read verbs; write fakes expose no live provider handle."
+      }
+    },
+    "frontend": {
+      "file": "frontend/src/feedback_write_mint.test.ts",
+      "tests": 8,
+      "fixture_helpers": {
+        "mint300Inputs": "PlanInputs with effectiveAllotmentMinutes 300, capacity.mint 10 (never 2), anchor 08:00 eod 18:00 totalBlocks 20.",
+        "mint300Sequence": "10 selected Mint session rows 08:30-13:30 with wire.mint_session/source schedulable markers plus 3 placed work rows; mintWalls resolves 10 intervals.",
+        "DrawerHost": "Preact h/Fragment render (no JSX — .ts target) mirroring App.tsx drawer lifecycle."
+      }
+    }
+  },
+  "regression_contracts": {
+    "FEEDBACK-23_press_due": "Raw fixed UTC wall clock 23:00 != intent 19:00 (the original mismatch); normalized 23:00Z through America/New_York == 19:00 local passes; true different instant fails with 12h text and canonical machine detail.",
+    "FEEDBACK-24_setup_gate": "Skeleton /gather runstate never confirms; live commit and runtime actions fail closed 409 with zero vault bytes; only POST /day-setup unlocks.",
+    "FEEDBACK-25_mint_capacity": "300-minute configuration derives 10 blocks / 300 minutes in rows and capacity; hardcoded 2-block default survives only without allotment context.",
+    "FEEDBACK-25_mint_walls": "Selected Mint intervals are hard walls: overlap hard-rejected at validate_sequence and /validate-sequence; frontend free-gap scan never stages over Mint and reports infeasibility explicitly.",
+    "FEEDBACK-26_mint_readback": "Shifted interval readback fails with structured kind='calendar' mismatch details; exact identity passes; source same-title events never collapse TDTB-owned writes.",
+    "FEEDBACK-26_trinoor_exact": "Step D' is exactly '[🟡 ]Trinoor : <slot>'; 'Trinoor sync'/'Trinoorish' keep Step E/D.",
+    "zero_writer_calls": "Backend read pipeline records only read verbs with writer tripwires; frontend writer spies never fire through load -> setup -> sequence."
+  },
+  "verification": {
+    "backend_focused": "tests/test_feedback_write_mint.py: 30 passed, 0 failed (1 pre-existing StarletteDeprecationWarning).",
+    "backend_full": "pytest tests/ from app/: 1283 passed, 0 failed (baseline 1253 + 30 new fixture tests; 1 pre-existing starlette deprecation warning).",
+    "frontend_focused": "src/feedback_write_mint.test.ts: 8 passed, 0 failed.",
+    "frontend_full": "npm test from frontend/: 38 files passed | 1 skipped, 594 passed | 6 skipped (baseline 586 | 6 + 8 new fixture tests).",
+    "typecheck": "tsc --noEmit clean (0 errors).",
+    "app_js": "node --test app/tests/js/*.mjs: 160 passed (legacy wizard suites untouched).",
+    "build_mockup": "ok - vite build --mode mockup: CSS 33.50 kB, JS 129.56 kB (index-5BTkoyJV.js — identical hash to the FEEDBACK-25 bundle).",
+    "build_prod": "ok - vite build --mode production: CSS 33.50 kB, JS 131.31 kB (index-D8Jvf47a.js — identical hash to the FEEDBACK-25 bundle).",
+    "bundle_readback": [
+      "prod bundle app/static/cockpit/assets/index-D8Jvf47a.js still contains the Mint wall logic (mint_session markers) — unchanged because this task adds tests only, no frontend source",
+      "mockup bundle mockups/cockpit/assets/index-5BTkoyJV.js identical — fixture/test additions never reach the bundle"
+    ],
+    "git_diff_check": "git diff --check clean (exit 0); no tracked path modified by this task"
+  },
+  "safety_proof": {
+    "live_post_sequence_adjust_commit": "none — all backend tests use in-memory fakes and pure/route TestClient calls against a tmp vault; no live :8746 endpoint contacted",
+    "billed_calls": "0",
+    "provider_writes": "0 — Todoist/EventStore writes flow through FakeTodoist/FakeStore/ShiftingStore only; the read pipeline fake records exactly auth_status/calendars/query_events",
+    "real_source_writes": "none — no real vault, Todoist, Calendar, or Mint state touched; vault writes in gate fixtures go to tmp_path only",
+    "runtime_restart": "none — no launchctl, no tdtb-restart, no kill of :8746",
+    "port_8746_access": "none",
+    "git_mutations": "none — no commit, stage, reset, clean, stash, rebase, or merge; branch Development/tdtb-canonical-cutover unchanged",
+    "generated_artifacts": "build:mockup and build:prod regenerated identical bundles (byte-identical hashes) proving the test-only change produced no source drift",
+    "foreign_changes_preserved": "pre-existing tracked modifications and untracked app/ + frontend/ trees untouched; only the three owned fixture/test files and this evidence file written"
+  },
+  "files": {
+    "created": [
+      "app/tests/test_feedback_write_mint.py",
+      "frontend/src/feedback_write_mint.test.ts",
+      "docs/plan/2026-08-12-tdtb-feedback-follow-up/evidence/FEEDBACK-27-fixtures.json"
+    ],
+    "modified": 0
+  },
+  "out_of_scope_noted": [
+    "No source mutation: this task adds fixtures/tests only; FEEDBACK-23/24/25/26 source changes remain as completed.",
+    "Frontend fixtures are inline in feedback_write_mint.test.ts (target_files list no fixture module); shared fixture module remains available if a later task needs cross-file reuse.",
+    "Browser-level visual check not applicable — no UI source changed; the vitest DOM suite renders the real ApprovalDrawer for the Press due fixture.",
+    "No commit performed per task constraint; evidence and source changes remain in the untracked workspace tree."
+  ],
+  "evidence_path": "docs/plan/2026-08-12-tdtb-feedback-follow-up/evidence/FEEDBACK-27-fixtures.json"
+}

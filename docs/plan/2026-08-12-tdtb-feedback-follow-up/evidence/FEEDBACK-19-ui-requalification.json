@@ -1,0 +1,509 @@
+{
+  "plan_id": "2026-08-12-tdtb-feedback-follow-up",
+  "task_id": "FEEDBACK-19",
+  "title": "Re-qualify the latest UI feedback in isolated scratch",
+  "status": "completed",
+  "objective": "Verify all five corrections (shortcut ±15min, Intention readability, Day Setup hierarchy, quarantined row containment, Results/Preview status hierarchy) with focused suites, rebuilt bundles, and screenshot-derived browser scenarios on scratch port 8790 only. Zero live writes, zero billed calls, zero restarts, zero commits.",
+  "method": {
+    "suites": "frontend vitest (npm test), tsc typecheck (npm run typecheck), vite mockup build, vite production build; bundles read back from rebuilt source.",
+    "browser": "Rebuilt mockup (FixtureAdapter, __FIXTURE__) served GET-only on scratch 127.0.0.1:8790 (python3 -m http.server --directory mockups/cockpit); driven by playwright-core 1.63.0-alpha-2026-08-05 against cached chromium_headless_shell-1234; scenario per URL hash (#fresh/#sequenced/#commit-preview/#verified/#conflict); debug handle window.__tdtb used only to dispatch INPUTS_LOADED with a quarantined calendar row (display-only) and Mint session semantics (display-only); console/pageerror/requestfailed/response>=400/non-GET collectors on every page; horizontal overflow measured on documentElement+body at 1280 and 390 widths; dialog-scoped overflow measured for Day Setup at 390.",
+    "a11y_visual_regression": "Configured a11y and visual-regression automation unavailable (quality.a11y_audit_level=none, quality.visual_regression_enabled=false) - skipped entirely per config; screenshots are evidence artifacts only, no baseline diff; keyboard/focus/overflow assertions are behavioral browser checks, not an a11y audit."
+  },
+  "suite_results": {
+    "frontend_full": "npm test (vitest run) -> 44 files passed | 1 skipped; 647 passed | 6 skipped (653 total) - matches FEEDBACK-17 revision baseline",
+    "typecheck": "npm run typecheck (tsc --noEmit) -> clean, exit 0",
+    "build_mockup": "ok - vite build --mode mockup: CSS 36.35 kB, JS 132.12 kB",
+    "build_prod": "ok - vite build --mode production: CSS 36.35 kB, JS 133.88 kB",
+    "bundle_readback": [
+      "mockup + prod JS contain exactly 1 '±15min' and 0 '±30min' (FEEDBACK-14)",
+      "mockup + prod JS contain 'One thing to focus on today' x2 (copy + placeholder; FEEDBACK-15)",
+      "mockup CSS+JS contain .setup-section, .setup__actions, setup-sec-frame/-anchored/-captures (FEEDBACK-16)",
+      "mockup + prod CSS contain .calendar-impact__class with max-width:100%, overflow:hidden, text-overflow:ellipsis, white-space:nowrap containment (FEEDBACK-17)",
+      "prod JS contains 'Writes by surface', 'preview not built yet', 'Committed and verified', 'nothing written yet', 'statement of work' (FEEDBACK-18)"
+    ]
+  },
+  "browser_scratch": {
+    "server": "python3 -m http.server 8790 --directory mockups/cockpit (GET-only static, rebuilt mockup bundle), started for verification and stopped after; port re-verified closed",
+    "runs": "2 full runs, 79/79 checks passed both runs (stable)",
+    "total_checks": 79,
+    "passed": 79,
+    "failed": 0,
+    "console_errors": 0,
+    "page_errors": 0,
+    "network_failures": 0,
+    "http_4xx_or_higher": 0,
+    "non_get_requests": 0,
+    "server_log": "248/248 requests GET with HTTP 200; zero POST/PUT/PATCH/DELETE observed in scratch server log",
+    "horizontal_overflow": "none at 1280 and 390 widths in fresh/sequenced/commit-preview/verified/conflict (scrollWidth == clientWidth on documentElement and body); Day Setup dialog and quarantined row scoped checks clean at 390",
+    "checks": [
+      {
+        "name": "S1a sequenced: KeysCard hint '±15min' visible",
+        "pass": true,
+        "detail": ""
+      },
+      {
+        "name": "S1b sequenced: Keyboard shortcuts section has no '±30min'",
+        "pass": true,
+        "detail": "Keys↑ ↓move row← →±15minxexclude today⏎mark done"
+      },
+      {
+        "name": "S1c sequenced: queue row scheduled time is 12-hour (AM/PM present)",
+        "pass": true,
+        "detail": "projectvault · 10:45 AM"
+      },
+      {
+        "name": "S1d sequenced: ArrowRight steps exactly +0.5 block (15 min)",
+        "pass": true,
+        "detail": "base=3 right=3.5"
+      },
+      {
+        "name": "S1e sequenced: ArrowLeft from 3.5 returns to 3 blocks",
+        "pass": true,
+        "detail": "back=3"
+      },
+      {
+        "name": "S1f sequenced: second ArrowLeft reaches 2.5 (never 30min jump)",
+        "pass": true,
+        "detail": "left=2.5"
+      },
+      {
+        "name": "S1g sequenced: rail clock readout is 12-hour",
+        "pass": true,
+        "detail": "7:22 AM · frame 7:30 AM–11 PM"
+      },
+      {
+        "name": "S1z sequenced: zero console errors / network failures / non-GET",
+        "pass": true,
+        "detail": "{\"c\":[],\"p\":[],\"f\":[],\"h\":[],\"ng\":[]}"
+      },
+      {
+        "name": "S2a fresh: rail chip 'Setup pending — start here' visible",
+        "pass": true,
+        "detail": ""
+      },
+      {
+        "name": "S2b fresh: dock Day setup sub 'setup not confirmed' visible",
+        "pass": true,
+        "detail": ""
+      },
+      {
+        "name": "S2c fresh: Day setup dialog opens",
+        "pass": true,
+        "detail": ""
+      },
+      {
+        "name": "S2d fresh: focus moves into dialog on open (panel focus gate)",
+        "pass": true,
+        "detail": ""
+      },
+      {
+        "name": "S3a fresh: Intention helper 'One thing to focus on today.' visible",
+        "pass": true,
+        "detail": "One thing to focus on today."
+      },
+      {
+        "name": "S3b fresh: Intention placeholder 'One thing to focus on today'",
+        "pass": true,
+        "detail": ""
+      },
+      {
+        "name": "S3c fresh: Intention textarea aria-describedby wires helper",
+        "pass": true,
+        "detail": ""
+      },
+      {
+        "name": "S3d fresh: Intention textarea readable (text color, surface, border, min-height 64px)",
+        "pass": true,
+        "detail": "{\"color\":\"rgb(42, 42, 39)\",\"bg\":\"rgb(253, 252, 249)\",\"border\":\"1px solid\",\"minH\":\"64px\"}"
+      },
+      {
+        "name": "S4a fresh: Day Setup section scan order Frame, Anchored blocks, Live micro-adventure, Captures",
+        "pass": true,
+        "detail": "[\"Frame\",\"Anchored blocks\",\"Live micro-adventure\",\"Captures\"]"
+      },
+      {
+        "name": "S4b fresh: Frame section groups every day-frame field (preset, allotment, anchor, EOD, buffering)",
+        "pass": true,
+        "detail": "[true,true,true,true,true]"
+      },
+      {
+        "name": "S4c fresh: terminal action bar .setup__actions present and separated",
+        "pass": true,
+        "detail": ""
+      },
+      {
+        "name": "S4d fresh: Save day setup is primary, Cancel is secondary",
+        "pass": true,
+        "detail": ""
+      },
+      {
+        "name": "S4e fresh: Cancel closes dialog without persisting (confirmed stays false)",
+        "pass": true,
+        "detail": ""
+      },
+      {
+        "name": "S4f fresh: Save persists intention and closes dialog",
+        "pass": true,
+        "detail": "intention=Focus on qualifying the UI"
+      },
+      {
+        "name": "S4z fresh: zero console errors / network failures / non-GET",
+        "pass": true,
+        "detail": "{\"c\":[],\"p\":[],\"f\":[],\"h\":[],\"ng\":[]}"
+      },
+      {
+        "name": "S5a fresh+mint: Mint sessions section sits between Frame and Anchored blocks",
+        "pass": true,
+        "detail": "[\"Frame\",\"Mint sessions\",\"Anchored blocks\",\"Live micro-adventure\",\"Captures\"]"
+      },
+      {
+        "name": "S5b fresh+mint: 'Mint allotment' label replaces 'Work allotment'",
+        "pass": true,
+        "detail": ""
+      },
+      {
+        "name": "S6a sequenced: hard-wall badges on fixed/work rows only (2)",
+        "pass": true,
+        "detail": "count=2"
+      },
+      {
+        "name": "S6b quarantined: row time is 12-hour (8 PM–10 PM)",
+        "pass": true,
+        "detail": "8 PM–10 PMQuarantined SamplePersonalquarantined2hr0 blk coun"
+      },
+      {
+        "name": "S6c quarantined: 'Not counted' reason + '0 blk counted' + no hard block",
+        "pass": true,
+        "detail": "8 PM–10 PMQuarantined SamplePersonalquarantined2hr0 blk countedNot counted−+Exclude from plan"
+      },
+      {
+        "name": "S6d quarantined: still exactly 2 hard-wall badges (quarantined never walls)",
+        "pass": true,
+        "detail": "count=2"
+      },
+      {
+        "name": "S6e quarantined: badge containment — no overlap with duration cell, within row",
+        "pass": true,
+        "detail": "{\"badge\":{\"l\":689.359375,\"r\":753.359375,\"w\":64},\"dur\":{\"l\":761.359375,\"r\":831.359375,\"w\":70},\"time\":{\"l\":300,\"r\":416,\"w\":116},\"row\":{\"l\":300,\"r\":1260}}"
+      },
+      {
+        "name": "S6z quarantined: zero console errors / network failures / non-GET",
+        "pass": true,
+        "detail": "{\"c\":[],\"p\":[],\"f\":[],\"h\":[],\"ng\":[]}"
+      },
+      {
+        "name": "S7a sequenced: stepper+ shows 'projection' chip",
+        "pass": true,
+        "detail": ""
+      },
+      {
+        "name": "S7b sequenced: counted blocks changed to 3 blk (local projection)",
+        "pass": true,
+        "detail": "3 blk counted"
+      },
+      {
+        "name": "S7c sequenced: store source row untouched by override (14:45-15:30 fixed)",
+        "pass": true,
+        "detail": "{\"start\":\"14:45\",\"end\":\"15:30\",\"capacityClass\":\"fixed\",\"blocks\":null}"
+      },
+      {
+        "name": "S7d sequenced: all calendar impact times 12-hour (AM/PM present, no bare HH:MM)",
+        "pass": true,
+        "detail": "[\"9:15 AM–9:45 AM\",\"2:45 PM–3:30 PM\"]"
+      },
+      {
+        "name": "S7z sequenced: zero console errors / network failures / non-GET",
+        "pass": true,
+        "detail": "{\"c\":[],\"p\":[],\"f\":[],\"h\":[],\"ng\":[]}"
+      },
+      {
+        "name": "S8a sequenced: Results dock sub-label 'preview not built yet'",
+        "pass": true,
+        "detail": ""
+      },
+      {
+        "name": "S8b commit-preview: Results dock sub-label '6 writes ready'",
+        "pass": true,
+        "detail": ""
+      },
+      {
+        "name": "S8c commit-preview: drawer headed 'Preview writes'",
+        "pass": true,
+        "detail": ""
+      },
+      {
+        "name": "S8d commit-preview: preview status strip role=status 'Preview current' + '6 exact writes staged — nothing written yet'",
+        "pass": true,
+        "detail": "Preview current6 exact writes staged — nothing written yet."
+      },
+      {
+        "name": "S8e commit-preview: 'Writes by surface' heading before surface totals",
+        "pass": true,
+        "detail": "[\"Writes by surface\",\"Exact writes (7) ▾\"]"
+      },
+      {
+        "name": "S8f commit-preview: primary action 'Looks right — arm live commit' (two-gate)",
+        "pass": true,
+        "detail": ""
+      },
+      {
+        "name": "S8g commit-preview: no 'Done' button in preview state",
+        "pass": true,
+        "detail": ""
+      },
+      {
+        "name": "S8h commit-preview: exact-write times are 12-hour (AM/PM present, no bare HH:MM without suffix)",
+        "pass": true,
+        "detail": "{\"rows\":7,\"tokens\":[\"4 PM\",\"12:30 PM\",\"10:45 AM\",\"9:45 AM\",\"7 PM\"]}"
+      },
+      {
+        "name": "S8i commit-preview: arm reveals second gate 'Commit live — write to all surfaces'",
+        "pass": true,
+        "detail": ""
+      },
+      {
+        "name": "S8z commit-preview: zero console errors / network failures / non-GET",
+        "pass": true,
+        "detail": "{\"c\":[],\"p\":[],\"f\":[],\"h\":[],\"ng\":[]}"
+      },
+      {
+        "name": "S9a verified: Results dock sub-label 'statement of work'",
+        "pass": true,
+        "detail": ""
+      },
+      {
+        "name": "S9b verified: drawer headed 'Results'",
+        "pass": true,
+        "detail": ""
+      },
+      {
+        "name": "S9c verified: status strip --ok 'Committed and verified'",
+        "pass": true,
+        "detail": ""
+      },
+      {
+        "name": "S9d verified: 'Verification' heading precedes verification list",
+        "pass": true,
+        "detail": ""
+      },
+      {
+        "name": "S9e verified: primary action is Done (no re-commit affordance)",
+        "pass": true,
+        "detail": ""
+      },
+      {
+        "name": "S9f verified: Done closes the drawer",
+        "pass": true,
+        "detail": ""
+      },
+      {
+        "name": "S9z verified: zero console errors / network failures / non-GET",
+        "pass": true,
+        "detail": "{\"c\":[],\"p\":[],\"f\":[],\"h\":[],\"ng\":[]}"
+      },
+      {
+        "name": "S10 desktop fresh: no horizontal overflow",
+        "pass": true,
+        "detail": "{\"sw\":1280,\"cw\":1280,\"bsw\":1280} "
+      },
+      {
+        "name": "S10z desktop fresh: zero console errors / network failures / non-GET",
+        "pass": true,
+        "detail": "{\"c\":[],\"p\":[],\"f\":[],\"h\":[],\"ng\":[]}"
+      },
+      {
+        "name": "S10 desktop sequenced: no horizontal overflow",
+        "pass": true,
+        "detail": "{\"sw\":1280,\"cw\":1280,\"bsw\":1280} "
+      },
+      {
+        "name": "S10z desktop sequenced: zero console errors / network failures / non-GET",
+        "pass": true,
+        "detail": "{\"c\":[],\"p\":[],\"f\":[],\"h\":[],\"ng\":[]}"
+      },
+      {
+        "name": "S10 desktop conflict: no horizontal overflow",
+        "pass": true,
+        "detail": "{\"sw\":1280,\"cw\":1280,\"bsw\":1280} "
+      },
+      {
+        "name": "S10z desktop conflict: zero console errors / network failures / non-GET",
+        "pass": true,
+        "detail": "{\"c\":[],\"p\":[],\"f\":[],\"h\":[],\"ng\":[]}"
+      },
+      {
+        "name": "S10 desktop verified: no horizontal overflow",
+        "pass": true,
+        "detail": "{\"sw\":1280,\"cw\":1280,\"bsw\":1280} "
+      },
+      {
+        "name": "S10z desktop verified: zero console errors / network failures / non-GET",
+        "pass": true,
+        "detail": "{\"c\":[],\"p\":[],\"f\":[],\"h\":[],\"ng\":[]}"
+      },
+      {
+        "name": "S10 desktop commit-preview: no horizontal overflow",
+        "pass": true,
+        "detail": "{\"sw\":1280,\"cw\":1280,\"bsw\":1280} "
+      },
+      {
+        "name": "S10z desktop commit-preview: zero console errors / network failures / non-GET",
+        "pass": true,
+        "detail": "{\"c\":[],\"p\":[],\"f\":[],\"h\":[],\"ng\":[]}"
+      },
+      {
+        "name": "S10 narrow fresh: no horizontal overflow",
+        "pass": true,
+        "detail": "{\"sw\":390,\"cw\":390,\"bsw\":390} "
+      },
+      {
+        "name": "S10z narrow fresh: zero console errors / network failures / non-GET",
+        "pass": true,
+        "detail": "{\"c\":[],\"p\":[],\"f\":[],\"h\":[],\"ng\":[]}"
+      },
+      {
+        "name": "S10 narrow sequenced: no horizontal overflow",
+        "pass": true,
+        "detail": "{\"sw\":390,\"cw\":390,\"bsw\":390} "
+      },
+      {
+        "name": "S10z narrow sequenced: zero console errors / network failures / non-GET",
+        "pass": true,
+        "detail": "{\"c\":[],\"p\":[],\"f\":[],\"h\":[],\"ng\":[]}"
+      },
+      {
+        "name": "S10 narrow commit-preview: no horizontal overflow",
+        "pass": true,
+        "detail": "{\"sw\":390,\"cw\":390,\"bsw\":390} "
+      },
+      {
+        "name": "S10z narrow commit-preview: zero console errors / network failures / non-GET",
+        "pass": true,
+        "detail": "{\"c\":[],\"p\":[],\"f\":[],\"h\":[],\"ng\":[]}"
+      },
+      {
+        "name": "S10 narrow verified: no horizontal overflow",
+        "pass": true,
+        "detail": "{\"sw\":390,\"cw\":390,\"bsw\":390} "
+      },
+      {
+        "name": "S10z narrow verified: zero console errors / network failures / non-GET",
+        "pass": true,
+        "detail": "{\"c\":[],\"p\":[],\"f\":[],\"h\":[],\"ng\":[]}"
+      },
+      {
+        "name": "S10 narrow conflict: no horizontal overflow",
+        "pass": true,
+        "detail": "{\"sw\":390,\"cw\":390,\"bsw\":390} "
+      },
+      {
+        "name": "S10z narrow conflict: zero console errors / network failures / non-GET",
+        "pass": true,
+        "detail": "{\"c\":[],\"p\":[],\"f\":[],\"h\":[],\"ng\":[]}"
+      },
+      {
+        "name": "S10a narrow fresh: Day Setup dialog has no horizontal overflow",
+        "pass": true,
+        "detail": "{\"sw\":389,\"cw\":389}"
+      },
+      {
+        "name": "S10b narrow fresh: Intention textarea flex-basis 100% (no clip)",
+        "pass": true,
+        "detail": "100%"
+      },
+      {
+        "name": "S10c narrow fresh: Intention textarea fits inside dialog width",
+        "pass": true,
+        "detail": "{\"ta\":{\"x\":34,\"y\":1273.546875,\"width\":323,\"height\":64},\"dlg\":{\"x\":0,\"y\":0,\"width\":390,\"height\":844}}"
+      },
+      {
+        "name": "S10d narrow quarantined: badge contained — no overlap with duration cell",
+        "pass": true,
+        "detail": "{\"badge\":{\"l\":14,\"r\":99.328125,\"w\":85.328125},\"dur\":{\"l\":138,\"r\":376,\"w\":238},\"row\":{\"l\":14,\"r\":376}}"
+      },
+      {
+        "name": "S10e narrow quarantined: no page horizontal overflow",
+        "pass": true,
+        "detail": "{\"sw\":390,\"cw\":390,\"bsw\":390} "
+      },
+      {
+        "name": "S10z narrow quarantined: zero console errors / network failures / non-GET",
+        "pass": true,
+        "detail": "{\"c\":[],\"p\":[],\"f\":[],\"h\":[],\"ng\":[]}"
+      }
+    ]
+  },
+  "scenario_coverage": {
+    "shortcut_F14": "KeysCard hint '±15min' visible; Keyboard shortcuts section contains no ±30min/30min; ArrowRight 3 -> 3.5 blocks (exactly +15min); ArrowLeft 3.5 -> 3 -> 2.5 (never 30min jump); queue row time 12-hour; rail clock 12-hour",
+    "intention_F15": "helper 'One thing to focus on today.' visible; placeholder exact; aria-describedby wires cap-intention-hint; textarea readable (text color rgb(42,42,39), surface rgb(253,252,249), 1px border, min-height 64px); narrow flex-basis 100% with no clip",
+    "day_setup_F16": "section scan order Frame, Anchored blocks, Live micro-adventure, Captures; Frame groups preset/allotment/anchor/EOD/buffering (all five true); Mint sessions section positions between Frame and Anchored when injected; .setup__actions bar with Save primary / Cancel secondary; Cancel closes without persisting; Save persists and closes",
+    "quarantined_row_F17": "row time 12-hour 8 PM-10 PM; 'Not counted' reason; 0 blk counted; no hard block on quarantined row; badge bbox contained within its track (right edge <= duration cell left edge) at desktop (14..99 vs dur 138) and 390 (14..99 vs dur 138); hard-wall badges remain exactly 2",
+    "results_preview_F18": "sequenced dock sub-label 'preview not built yet'; commit-preview dock '6 writes ready'; drawer 'Preview writes' + status strip --preview role=status 'Preview current' + '6 exact writes staged - nothing written yet'; 'Writes by surface' heading precedes surface totals; primary 'Looks right - arm live commit'; no Done in preview; arm reveals second gate 'Commit live - write to all surfaces'; verified dock 'statement of work'; drawer 'Results' + status --ok 'Committed and verified'; 'Verification' heading precedes list; primary Done closes; no re-commit affordance"
+  },
+  "acceptance_criteria": {
+    "frontend_tests_typecheck_mockup_build_prod_build_pass": true,
+    "browser_checks_cover_shortcut_intention_day_setup_quarantined_row_results_preview": true,
+    "desktop_and_narrow_readable_hierarchy_no_overlap_no_overflow": true,
+    "all_affected_user_facing_time_labels_12_hour_no_24_hour_asserted": true,
+    "hard_walls_quarantine_local_projection_panel_focus_commit_gates_green": true,
+    "evidence_records_zero_billed_live_posts_provider_writes_real_writes_restarts_commits": true
+  },
+  "twelve_hour_authority": {
+    "surfaces_asserted": [
+      "queue row scheduled time (AM/PM present, e.g. '10:45 AM')",
+      "rail clock + frame readout (.rail__date-meta, e.g. '7:22 AM · frame 7:30 AM-11 PM')",
+      "calendar impact row times (display12h, e.g. '8 PM-10 PM')",
+      "preview exact-write times (display12h tokens, e.g. '12:30 PM', '10:45 AM'; no bare HH:MM without suffix)"
+    ],
+    "wire_format_note": "Internal HH:MM wire format remains 24h (server contract); display12h is the only user-facing formatter (FEEDBACK-12). No 24-hour display requirement was asserted anywhere in this qualification.",
+    "earlier_24h_note": "FEEDBACK-11 asserted 24h exact-write/calendar times; FEEDBACK-12 flipped user-facing display to 12-hour authority. This qualification asserts the current 12-hour contract."
+  },
+  "gates_green": {
+    "hard_walls": "exactly 2 'hard block' badges on fixed/work rows in sequenced (Trinoor Standup + PHEP sync); quarantined injection never adds a badge",
+    "quarantine": "quarantined row 'Not counted' with 0 blk counted and no hard-block affordance",
+    "local_projection": "PHEP stepper+ shows 'projection' chip, counted 2 -> 3 blk, source row start/end/capacityClass unchanged in store (14:45-15:30 fixed)",
+    "panel_focus": "Day Setup dialog focus-in on open (useDialog contract); Cancel/Save behavior preserved; Results drawer focus-in and Escape restore re-verified (S2d, S4e, S8 flow)",
+    "commit_gates": "two-gate preserved: preview primary arms live commit, second gate 'Commit live - write to all surfaces' appears only after arm; Results state has Done only and no re-commit affordance"
+  },
+  "safety_proof": {
+    "live_post_sequence_adjust_commit": "none",
+    "billed_calls": "0",
+    "calendar_writer_calls": "0 - fixture adapter has no writer methods; browser network log recorded zero non-GET requests; scratch server log 248/248 GET",
+    "provider_writes": "none - no real Todoist/Calendar/vault access; fixture scenario data only",
+    "real_source_writes": "none",
+    "runtime_restart": "none - no launchctl, no tdtb-restart, no kill of :8746",
+    "port_8746_access": "GET /health only, before and after (200, judgment_model openai/gpt-5.6-luna, PID 66803 unchanged)",
+    "scratch_service": "127.0.0.1:8790 static GET-only server started for verification, stopped after; port re-verified closed",
+    "branch_or_index_mutation": "none - no commit, stage, reset, clean, stash, rebase, or merge; HEAD bcc0ee0 unchanged",
+    "source_edits": "0 - verification-only; no application or frontend source touched; rebuilt bundles generated from existing source",
+    "foreign_changes_preserved": "pre-existing dirty/untracked state untouched; this task wrote only the FEEDBACK-19 evidence files under docs/plan/2026-08-12-tdtb-feedback-follow-up/evidence/ and regenerated the committed build outputs from source"
+  },
+  "residual_limitations": [
+    "Accessibility audit disabled by configuration (quality.a11y_audit_level=none); skipped entirely - no WCAG/axe-level claims; keyboard/focus checks are behavioral browser checks only.",
+    "Visual regression automation disabled by configuration (quality.visual_regression_enabled=false); screenshots are evidence artifacts only, no baseline diff was performed.",
+    "Browser checks ran against the fixture mockup (FixtureAdapter) on scratch :8790, not the live runtime or real providers; quarantined-row and Mint-session states were seeded via the fixture debug handle (window.__tdtb INPUTS_LOADED), display-only.",
+    "Configured automation tooling (playwright module) is not installed in the repo venv/node_modules; the harness reused the FEEDBACK-11 cached playwright-core + chromium_headless_shell-1234 from the npx cache and temp dir.",
+    "One harness-selector defect was corrected during the run (Exact writes disclosure click target; Frame membership compare) - both were test-harness bugs, not app defects; final runs 79/79 twice.",
+    "Plan.yaml task status remains 'pending'; plan status reconciliation is the plan owner's step and out of this task's scope.",
+    "Backend pytest suite was not rerun: FEEDBACK-19 is frontend-scope; no app/*.py source changed since the FEEDBACK-23..29 backend evidence (1298 passed baseline)."
+  ],
+  "files": {
+    "created": [
+      "docs/plan/2026-08-12-tdtb-feedback-follow-up/evidence/FEEDBACK-19-ui-requalification.json",
+      "docs/plan/2026-08-12-tdtb-feedback-follow-up/evidence/FEEDBACK-19-sequenced.png",
+      "docs/plan/2026-08-12-tdtb-feedback-follow-up/evidence/FEEDBACK-19-setup.png",
+      "docs/plan/2026-08-12-tdtb-feedback-follow-up/evidence/FEEDBACK-19-quarantine.png",
+      "docs/plan/2026-08-12-tdtb-feedback-follow-up/evidence/FEEDBACK-19-preview.png",
+      "docs/plan/2026-08-12-tdtb-feedback-follow-up/evidence/FEEDBACK-19-results.png",
+      "docs/plan/2026-08-12-tdtb-feedback-follow-up/evidence/FEEDBACK-19-narrow.png"
+    ],
+    "modified": 0,
+    "rebuilt_bundles": [
+      "mockups/cockpit/assets/index-w2N1HAYb.css",
+      "mockups/cockpit/assets/index-DzNBVIUE.js",
+      "app/static/cockpit/assets/index-w2N1HAYb.css",
+      "app/static/cockpit/assets/index-Cs9qJuE4.js"
+    ]
+  },
+  "evidence_path": "docs/plan/2026-08-12-tdtb-feedback-follow-up/evidence/FEEDBACK-19-ui-requalification.json"
+}

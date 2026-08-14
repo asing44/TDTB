@@ -1,0 +1,78 @@
+{
+  "plan_id": "2026-08-12-tdtb-feedback-follow-up",
+  "task_id": "FEEDBACK-18",
+  "title": "Clarify Results and Preview writes hierarchy",
+  "status": "completed",
+  "objective": "Presentation-only refinement of ActionDock and ApprovalDrawer so Preview writes and Results states are distinct and scannable while preserving write semantics, the two-gate commit contract, exact-write disclosure, dialog focus, and 12-hour times.",
+  "treatment": {
+    "approval_drawer_preview": "Preview writes state gains a status strip (.drawer-status--preview, role=status) naming the phase (Preview current / stale / loading) and the exact active-write count with 'nothing written yet'; surface totals get their own heading 'Writes by surface'; primary next action remains the two-gate arm ('Looks right — arm live commit').",
+    "approval_drawer_results": "Results state gains a distinct status strip (.drawer-status--ok or --partial): 'Committed and verified' on ok, 'Commit incomplete' plus verification-failure count on partial/failed; the Verification heading now precedes the verification list it describes (scan order fix); the single primary next action is a Done button that closes the drawer — never a re-commit affordance.",
+    "dock_entry_point": "Results entry is statusful in every applicable state: review sub-label 'preview not built yet' (matches the FEEDBACK-08 intent comment), preview sub-label 'N writes ready' (exact active write count from the current shadow), verified keeps 'statement of work'. Aria-label 'Results — review exact writes and commit result' unchanged.",
+    "scan_hierarchy": "Drawer reads top-down as: state status strip -> Writes by surface -> Accepted defects -> Blockers -> Exact writes (collapsed disclosure) -> commit zone; Results reads: state status strip -> Verification (heading -> surface list -> failure detail) -> Done.",
+    "css": "New .drawer-status (left accent border 3px var(--t-accent), variants --ok/--partial with --c-free/--c-overflow accents), .drawer-status__label/__detail, .drawer-done, .commit-zone__back class replaces the inline Back margin; at <=520px .commit-zone becomes flex-wrap with gap (armed row never clips), .commit-zone .btn margin-left 0, .drawer-status stacks label over detail.",
+    "unchanged": "Two-gate arm -> second-click commit, exact-write disclosure collapsed-by-default, canLiveCommit/shadowBlockers gating, useDialog focus/Escape/restore, display12h rendering, FEEDBACK-23 due-verification markup and raw hover fields."
+  },
+  "measurable": {
+    "preview_status": "div.drawer-status.drawer-status--preview role=status; label 'Preview current'; detail '{6} exact writes staged — nothing written yet.' (fixture: 6 of 7 rows active)",
+    "preview_heading": "h2 'Preview writes'; h3 'Writes by surface' before .surface-totals",
+    "preview_primary": "button 'Looks right — arm live commit' (btn--primary); no 'Done'",
+    "results_status": "div.drawer-status--ok on status ok with label 'Committed and verified'; div.drawer-status--partial on partial/failed with label 'Commit incomplete' and detail '{n} verification failure{s} to review'",
+    "results_heading": "h2 'Results'; h3 'Verification' DOM position before ul.verify-list",
+    "results_primary": "button 'Done' (btn--primary on ok) closes the drawer; no arm-live / Commit-live control in Results",
+    "dock_sublabels": "review -> 'preview not built yet'; preview -> '{6} writes ready' (btn--primary); verified -> 'statement of work'",
+    "css_rules": [
+      ".drawer-status { border-left: 3px solid var(--t-accent) }",
+      ".drawer-status--preview { border-left-color: var(--t-accent) }",
+      ".drawer-status--ok { border-left-color: var(--c-free) }",
+      ".drawer-status--partial { border-left-color: var(--c-overflow) }",
+      ".drawer-done { border-top: ... }",
+      ".commit-zone__back { margin-left: 8px }",
+      "@media (max-width: 520px) { .commit-zone { flex-wrap: wrap } .drawer-status { flex-direction: column } }"
+    ]
+  },
+  "tests": {
+    "focused": "frontend/src/ui/feedback18.test.tsx: 14 passed (preview heading/status/primary, results heading/status/primary + Done close, partial status count, Verification heading precedes list, dock sub-labels in review/preview/verified, CSS strips/Done/Back/narrow rules, exact-write disclosure preserved, 12-hour exact writes, two-gate arm->commit preserved, FEEDBACK-23 due verification preserved)",
+    "regression": "feedback13/14/15 + panels + components + a11y + failure-states: 131 passed",
+    "full_frontend": "43 files passed | 1 skipped; 635 passed | 6 skipped (641 total)",
+    "typecheck": "npm run typecheck: 3 errors, all in untracked foreign frontend/src/ui/feedback17.test.tsx (concurrent in-flight FEEDBACK-17 work created 18:28 during this session, not scoped to FEEDBACK-18, left untouched per concurrent-work preservation); FEEDBACK-18 scope compiles clean — full-project tsc reported zero errors outside that file",
+    "build_mockup": "ok — vite build --mode mockup: CSS 35.46 kB, JS 131.11 kB",
+    "build_prod": "ok — vite build --mode production: CSS 35.46 kB, JS 132.86 kB",
+    "bundle_readback": [
+      "prod + mockup CSS contain drawer-status--ok and commit-zone__back and 520px flex-wrap rule",
+      "prod + mockup JS contain 'Writes by surface', 'preview not built yet', 'Committed and verified'",
+      "'N writes ready' is assembled at runtime from JSX fragments and is asserted by the component test (textContent contains '6 writes ready')"
+    ]
+  },
+  "red_green": "Red: 9 focused tests failed asserting the status strips, Writes by surface heading, Verification-before-list order, dock sub-labels, and the new CSS rules while the current drawer/dock lacked all of them. Green: all 14 focused pass after ApprovalDrawer status strips + heading reorder + Done action, ActionDock stateful sub-labels, and app.css strip/Done/Back/narrow rules. Two pinned regressions surfaced during Green (duplicate '1 verification failure' text with the dock partial shout, and duplicate stale-banner copy) — fixed by differentiating the drawer status detail copy; both pinned tests then passed unchanged.",
+  "constraints_respected": [
+    "Presentation only: no new write action, no commit-gate change, no provider behavior change.",
+    "Two-gate live commit (arm -> second click), exact-write disclosure, dialog focus, and 12-hour times intact (asserted in focused suite).",
+    "FEEDBACK-13..15 and FEEDBACK-23..29 contracts preserved; FEEDBACK-23 due-verification markup and raw hover fields byte-identical.",
+    "FEEDBACK-08 reachability baseline preserved: Results button accessible name, review drawer 'Preview writes' heading + guidance, verified heading 'Results' all unchanged.",
+    "No live writes, external mutations, restart, or commit."
+  ],
+  "changed_files": [
+    "frontend/src/ui/ApprovalDrawer.tsx",
+    "frontend/src/ui/ActionDock.tsx",
+    "frontend/src/app.css",
+    "frontend/src/ui/feedback18.test.tsx"
+  ],
+  "verification": {
+    "focused_tests": "npx vitest run src/ui/feedback18.test.tsx -> 14 passed",
+    "regression_tests": "feedback13/14/15 + panels + components + a11y + failure-states -> 131 passed",
+    "full_frontend": "npm test -> 43 files passed | 1 skipped; 635 passed | 6 skipped",
+    "typecheck": "npm run typecheck -> FEEDBACK-18 scope clean (3 errors reported, all in untracked foreign feedback17.test.tsx from concurrent FEEDBACK-17 work)",
+    "builds": "npm run build:mockup + npm run build:prod -> both succeed; bundles read back with treatment",
+    "evidence_path": "docs/plan/2026-08-12-tdtb-feedback-follow-up/evidence/FEEDBACK-18-ui-requalification.json"
+  },
+  "safety_proof": {
+    "live_post_sequence_adjust_commit": "none",
+    "billed_calls": "0",
+    "external_writes": "none",
+    "runtime_restart": "none",
+    "branch_or_index_mutation": "none — no commit, stage, reset, or push"
+  },
+  "residual_issues": [
+    "frontend/src/ui/feedback17.test.tsx (untracked, concurrent FEEDBACK-17 work) has 3 pre-existing TS errors (TS18046/TS2339 at lines 87/90/91); not scoped to FEEDBACK-18 and not modified; it passes at runtime (6/6) and blocks a fully clean npm run typecheck until FEEDBACK-17 lands its Green pass."
+  ]
+}

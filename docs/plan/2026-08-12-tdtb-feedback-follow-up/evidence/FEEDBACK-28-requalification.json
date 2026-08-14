@@ -1,0 +1,145 @@
+{
+  "task_id": "FEEDBACK-28",
+  "plan_id": "2026-08-12-tdtb-feedback-follow-up",
+  "title": "Requalify write verification and Mint scheduling in scratch",
+  "status": "completed",
+  "objective": "Run fixture/scratch-only end-to-end qualification for Press due normalization, explicit Day Setup gating, Mint block generation from configured allotment, Mint hard walls, shifted readback failure, exact readback success, and Trinoor classification. Assert no real Todoist/Calendar/Vault writes, no billed calls, no live POST, and no runtime restart.",
+  "method": "verification-only — no source repaired, no build regenerated, no commit. Scratch walkthrough FEEDBACK-28-scratch.py (fixture-only: in-memory fakes FakeTodoist/FakeStore/ShiftingStore, pure functions, in-memory TestClient against tmp vaults) re-proves each FEEDBACK-23..27 contract; focused/full suites rerun with the exact evidence commands; live :8746 checked GET-only before and after.",
+  "evidence_chain_consistency": {
+    "FEEDBACK-23_press_due": "Scratch S1: raw UTC wall 23:00 != intent 19:00 (original failure); normalized 23:00Z through America/New_York == 19:00 local verifies clean; true mismatch fails with 12h '7 PM'/'11 PM' and NO raw 24h; missing timezone fails closed; structured detail keeps intent 18:00/live 19:00/live_raw 2026-07-12T23:00:00Z/live_timezone America/New_York/reason mismatch.",
+    "FEEDBACK-24_setup_gate": "Scratch S2: /gather skeleton runstate NOT confirmed; /plan-inputs day_setup_confirmed False; /commit?mode=live 409 with ZERO vault bytes written (byte-for-byte before/after); /runtime-actions apply and undo both 409; only POST /day-setup confirms and unblocks a live commit (200 ok with FakeLiveTodoist/FakeLiveStore).",
+    "FEEDBACK-25_mint_capacity": "Scratch S3: 300-min allotment -> aggregate Minting row 10 blocks/300 min; dated override same; hardcoded 2-block default survives ONLY without allotment context; capacity frame reserves mint 10; 10 selected sessions total 10 blocks (sessions win, no aggregate).",
+    "FEEDBACK-25_mint_walls": "Scratch S4: assigned row overlapping selected Mint session hard-rejected (no overlap-grant escape); back-to-back touch allowed; Mint row itself exempt; /validate-sequence route rejects the same overlap shape.",
+    "FEEDBACK-26_mint_readback": "Scratch S5: shifted 13:00-14:00 -> 13:30-14:30 readback FAILS with kind=calendar structured ISO mismatches; end-only drift records duration_min 60 vs 30; exact readback PASSES (empty verify); same-title source event never treated as our write (created e5001, noops empty).",
+    "FEEDBACK-26_trinoor_exact": "Scratch S6: canonical '🟡 Trinoor : Morning' is Step D'; 'Trinoor sync' anchored block is Step E not D'; 'Trinoorish' is plain Step D.",
+    "FEEDBACK-27_fixtures": "Focused suites rerun exactly: backend test_feedback_write_mint.py 30 passed; frontend feedback_write_mint.test.ts 8 passed — matches FEEDBACK-27 evidence (30 backend / 8 frontend)."
+  },
+  "scratch_scenario": {
+    "script": "docs/plan/2026-08-12-tdtb-feedback-follow-up/evidence/FEEDBACK-28-scratch.py",
+    "method": "fixture-only: in-memory fakes (FakeTodoist/FakeStore/ShiftingStore), pure commit/external_sources/sequence/shadow functions, in-memory TestClient against tmp vaults; no network, no live runtime",
+    "result": "37/37 assertions passed",
+    "assertions": {
+      "S1_press_due_8": [
+        "raw UTC wall clock 23:00 != 19:00 intent (original mismatch)",
+        "normalized 23:00Z through America/New_York == 19:00 local (local_hhmm=19:00)",
+        "equivalent encoding verifies clean (ok, empty verify_failures)",
+        "floating local due verifies locally (timezone must not shift)",
+        "true mismatch fails: 'due mismatch (intent 7 PM, live 11 PM)' — 12h only, no raw 24h",
+        "missing timezone on UTC due fails closed",
+        "structured detail keeps canonical machine values (intent/live/live_raw/timezone/reason)",
+        "user-facing error string is 12-hour format"
+      ],
+      "S2_setup_gate_8": [
+        "/gather materialises skeleton runstate (200)",
+        "skeleton runstate is NOT Day Setup confirmed",
+        "/plan-inputs day_setup_confirmed is False",
+        "/commit?mode=live fails closed 409 with GATE_DETAIL",
+        "live commit refusal wrote ZERO vault bytes (byte-for-byte)",
+        "runtime apply fails closed 409",
+        "runtime undo fails closed 409",
+        "POST /day-setup confirms then unblocks live commit with fakes (200 ok)"
+      ],
+      "S3_mint_capacity_5": [
+        "300-min allotment -> aggregate Minting row 10 blocks / 300 min",
+        "dated 300-min override matches (10/300)",
+        "hardcoded 2-block default survives ONLY without allotment context",
+        "capacity frame reserves 10 mint blocks for 300 minutes",
+        "10 selected sessions total 10 blocks (sessions win)"
+      ],
+      "S4_mint_walls_5": [
+        "assigned row overlapping selected Mint is HARD rejection (names Mint session)",
+        "Mint wall is NOT softened by an overlap grant",
+        "back-to-back boundary is allowed",
+        "Mint row itself is not a violation",
+        "route /validate-sequence rejects the same overlap"
+      ],
+      "S5_mint_readback_5": [
+        "shifted interval readback FAILS ('readback interval mismatch (intent 1 PM–2 PM, live 1:30 PM–2:30 PM)')",
+        "structured kind=calendar details with canonical ISO start/end mismatches",
+        "duration shift fails readback (duration_min intent 60 vs live 30)",
+        "exact readback PASSES (empty verify_failures/verify_details)",
+        "same-title source event never treated as our write (created e5001, noops empty, touched set)"
+      ],
+      "S6_trinoor_3": [
+        "canonical '🟡 Trinoor : Morning' is Step D'",
+        "'Trinoor sync' anchored block is Step E, not D'",
+        "'Trinoorish' is plain Step D, not a zone"
+      ],
+      "S7_zero_writers_2": [
+        "read pipeline ledger is exactly [auth_status, calendars, query_events]",
+        "write fakes never expose a live provider handle (http/client/session/base_url/token absent)"
+      ]
+    }
+  },
+  "suite_results": {
+    "backend_focused": {
+      "command": ".venv/bin/python -m pytest tests/test_feedback_write_mint.py -q (from app/)",
+      "result": "30 passed, 1 pre-existing StarletteDeprecationWarning",
+      "matches_feedback_27": true
+    },
+    "backend_full": {
+      "command": ".venv/bin/python -m pytest tests/ -q (from app/) — exact FEEDBACK-27 command",
+      "result": "1283 passed, 1 warning (starlette testclient deprecation only)",
+      "matches_feedback_27": true
+    },
+    "backend_full_app_root_note": "pytest -q from app/ root (broader collection incl. gather/tests/) collects 1371 tests, 1371 passed — the FEEDBACK-27 recorded number 1283 is the app/tests/ subset command; both are green and the evidence command reproduces 1283 exactly",
+    "frontend_focused": {
+      "command": "npx vitest run src/feedback_write_mint.test.ts",
+      "result": "8 passed (1 file)",
+      "matches_feedback_27": true
+    },
+    "frontend_full": {
+      "command": "npm test (from frontend/)",
+      "result": "38 files passed | 1 skipped, 594 passed | 6 skipped",
+      "matches_feedback_27": true
+    },
+    "typecheck": "tsc --noEmit clean (0 errors)",
+    "app_js": "node --test app/tests/js/*.mjs: 160 passed (legacy wizard suites untouched)",
+    "git_diff_check": "git diff --check clean (exit 0)"
+  },
+  "acceptance_criteria": {
+    "feedback_23_through_27_evidence_internally_consistent": true,
+    "scratch_verifies_19_local_against_23z_and_reports_12h_errors": true,
+    "scratch_blocks_writes_without_explicit_day_setup": true,
+    "scratch_derives_mint_from_300_minutes_prevents_overlap_reports_infeasibility": true,
+    "scratch_fails_shifted_mint_readback_passes_exact_readback": true,
+    "zero_external_writers_billed_live_post_restart_asserted": true,
+    "live_8746_checked_get_only_before_after_and_untouched": true,
+    "evidence_written_without_false_green": true
+  },
+  "safety_proof": {
+    "live_post_sequence_adjust_commit_day_setup": "none — scratch uses in-memory TestClient only; no live :8746 endpoint contacted",
+    "billed_calls": "0 — judgment.propose_sequence never invoked; no provider network",
+    "provider_writes": "0 — Todoist/EventStore writes flow through FakeTodoist/FakeStore/ShiftingStore only; the read pipeline fake records exactly auth_status/calendars/query_events",
+    "real_source_writes": "none — no real vault, Todoist, Calendar, or Mint state touched; all vault writes go to tmp_path",
+    "runtime_restart": "none — no launchctl, no tdtb-restart, no kill of :8746",
+    "live_health_proof_before": {
+      "url": "http://127.0.0.1:8746/health",
+      "http_status": 200,
+      "body": "{\"status\":\"ok\",\"judgment_model\":\"openai/gpt-5.6-luna\"}"
+    },
+    "live_health_proof_after": {
+      "url": "http://127.0.0.1:8746/health",
+      "http_status": 200,
+      "body": "{\"status\":\"ok\",\"judgment_model\":\"openai/gpt-5.6-luna\"}",
+      "identical_to_before": true
+    },
+    "port_8746_access": "GET /health only, before and after; no POST, no mutation",
+    "git_mutations": "none — no commit, stage, reset, clean, stash, rebase, or merge; branch Development/tdtb-canonical-cutover unchanged; HEAD bcc0ee0 unchanged",
+    "foreign_changes_preserved": "pre-existing tracked modifications (.gitignore, AGENTS.md, README.md, gem-team.yaml, .opencode) untouched; app/ + frontend/ untracked trees untouched; only the scratch script and this evidence file written under docs/plan/2026-08-12-tdtb-feedback-follow-up/evidence/"
+  },
+  "files": {
+    "created": [
+      "docs/plan/2026-08-12-tdtb-feedback-follow-up/evidence/FEEDBACK-28-scratch.py",
+      "docs/plan/2026-08-12-tdtb-feedback-follow-up/evidence/FEEDBACK-28-requalification.json"
+    ],
+    "modified": 0
+  },
+  "out_of_scope_noted": [
+    "No source repair or regeneration: this is a verification-only requalification; bundles were not rebuilt (no frontend source changed since FEEDBACK-27) and no commit was performed per task constraint.",
+    "Frontend browser-level rendering was not re-run in a headed browser; the vitest DOM suite (feedback_write_mint.test.ts 8 passed) renders the real ApprovalDrawer for the Press due 12h fixture, matching FEEDBACK-27's browser-equivalent coverage.",
+    "The app-root full collect (1371) includes gather/tests/ suites outside the FEEDBACK-27 evidence command scope; the exact evidence command reproduces 1283, so no regression and no false green.",
+    "Mint infeasibility in the frontend free-gap scan is covered by feedback_write_mint.test.ts (rows that cannot fit reported 'overflow infeasible', never staged over Mint) — rerun green as part of the 8-test focused suite."
+  ],
+  "evidence_path": "docs/plan/2026-08-12-tdtb-feedback-follow-up/evidence/FEEDBACK-28-requalification.json"
+}

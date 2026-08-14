@@ -1,0 +1,287 @@
+{
+  "task_id": "FEEDBACK-07",
+  "plan_id": "2026-08-12-tdtb-feedback-follow-up",
+  "title": "Complete implementation-ready UI direction",
+  "status": "completed",
+  "objective": "Convert every supplied browser annotation into concrete, implementation-ready UI behavior for the finish-first cockpit; preserve FEEDBACK-01..06 data contracts; design only, no source edits or commit.",
+  "constraints_honored": [
+    "Evidence/design only; no source edits, runtime restart, live POST, external writes, or commit.",
+    "Calendar accounting overrides are local projection-only and never mutate source events.",
+    "All wall-clock readouts render 24-hour HH:MM.",
+    "Day Setup and Results/SOW are prioritized for reachability and clarity.",
+    "FEEDBACK-01..06 behavior is preserved, not re-litigated."
+  ],
+  "principles": [
+    "Extend existing seams (CalendarImpact, ActionDock, AllocationPie, Queue, ApprovalDrawer, time.ts); do not add a framework.",
+    "Time formatting: add display24h in frontend/src/model/time.ts; replace every display12h call.",
+    "Override copy describes planning accounting only ('counted toward capacity'), never attendance or event mutation.",
+    "Reachable Results/SOW in every applicable state via ActionDock; Day Setup stays always visible and primary during setup.",
+    "Duration rows expose effective value plus source (memory override vs default) for sighted and AT users.",
+    "Over/remaining capacity is explicit in normal and over states via AllocationPie readout and dock status.",
+    "Action affordances work for pointer, keyboard, and touch (no title-only dependence).",
+    "Accessibility floor: 44x44px targets, visible focus, semantic roles, reduced-motion, AA contrast in both themes."
+  ],
+  "mapped_annotations": [
+    {
+      "id": "A01",
+      "source": "observed_live_evidence.projection_observations (Cooking overlaps Magic Mirror)",
+      "feedback": "Assigned rows visually overlap fixed calendar blocks; user cannot tell which blocks are hard walls.",
+      "current_state": "CalendarImpact shows class badge + counted blocks but no wall/exclusivity signal; overflow avoidance lives in controller/overflow.ts (FEEDBACK-02/03).",
+      "mapped_ui_behavior": "Render a 'wall' affordance on fixed/work calendar rows (non-permeable); show overflow/infeasible warnings via existing acceptableDefects alerts path. No reorder UI needed.",
+      "component": "frontend/src/ui/CalendarImpact.tsx",
+      "spec": "Add calendar-impact__wall badge for capacityClass fixed/work (not ignored/quarantined/window); keep quarantined as 'Not counted'/'0 blk counted' per FEEDBACK-04.",
+      "preserves_feedback": "FEEDBACK-02 (hard walls), FEEDBACK-03 (explicit infeasibility warnings)"
+    },
+    {
+      "id": "A02",
+      "source": "observed_live_evidence.sequence_observation (Log hours 17:15 after 23:15)",
+      "feedback": "Non-chronological sequence error surfaced as a raw server rejection; user needs it readable in-app.",
+      "current_state": "controller hard errors and acceptableDefects flow to alerts; ActionDock status shows blocking issues.",
+      "mapped_ui_behavior": "Ensure sequence hard errors and 'overflow infeasible' warnings render in the alerts region and gate shadow/commit; status text already names blocking issue count.",
+      "component": "frontend/src/ui/ActionDock.tsx + alerts region",
+      "spec": "Keep defectsResolved gate; surface s.validation.hardErrors and defects in a visible alerts list tied to the dock 'fix' state.",
+      "preserves_feedback": "FEEDBACK-01 (chronological sort), FEEDBACK-03 (infeasibility warnings)"
+    },
+    {
+      "id": "A03",
+      "source": "plan covers '24-hour calendar rows'; FF-07 AC 'render 24-hour HH:MM consistently'",
+      "feedback": "Time readouts must be 24-hour, not 12-hour, across calendar and task rows.",
+      "current_state": "time.ts exposes display12h (user preference); CalendarImpact, Queue, ApprovalDrawer, droppedTimeLabel all use display12h.",
+      "mapped_ui_behavior": "Add display24h(hhmm) -> 'HH:MM' (null -> em dash); replace all display12h call sites with display24h.",
+      "component": "frontend/src/model/time.ts, CalendarImpact.tsx, Queue.tsx, ApprovalDrawer.tsx",
+      "spec": "display24h: split HH:MM, return `${hh}:${mm}` zero-padded; wire already 24h so no reparse risk. Keep toHHMM as canonical serializer.",
+      "preserves_feedback": "none (pure presentation)"
+    },
+    {
+      "id": "A04",
+      "source": "FF-05 known_context 'CalendarImpact uses 12-hour and Not attending wording'",
+      "feedback": "'Not attending' implies calendar attendance semantics and source mutation; copy must describe planning accounting.",
+      "current_state": "CalendarImpact button toggles skipToday via controller.saveAnchoredOverride; label 'Not attending'/'Restore'.",
+      "mapped_ui_behavior": "Rename to accounting copy: attending -> 'Exclude from plan' (aria 'Do not count NAME toward today's capacity'); excluded -> 'Count'. Add subtitle 'today only'.",
+      "component": "frontend/src/ui/CalendarImpact.tsx",
+      "spec": "Label uses accounting language; reason() stays (Not counted / Fixed / Inside work budget). No change to saveAnchoredOverride signature.",
+      "preserves_feedback": "FEEDBACK-04 (classification unchanged)"
+    },
+    {
+      "id": "A05",
+      "source": "FF-06 AC 'local duration/accounting override changes planning capacity for that day only'; prior_decision 'Imported calendar events are read-only inputs'",
+      "feedback": "Calendar accounting override must be defined as a local projection-only change, never source event mutation.",
+      "current_state": "saveAnchoredOverride(rowId,{on:true,skipToday,time:null}) is a local override; FF-06 backend keeps event start/end/title/source unchanged.",
+      "mapped_ui_behavior": "Document override as projection-only in UI: when skipToday true, show 'Excluded from plan today' tag; copy states 'changes today's counted capacity only; the calendar event is untouched'.",
+      "component": "frontend/src/ui/CalendarImpact.tsx",
+      "spec": "Add calendar-impact__local tag on excluded rows; no writer call implied. Mirrors FF-06 'no event mutation' contract.",
+      "preserves_feedback": "FEEDBACK-06 (zero calendar writer calls)"
+    },
+    {
+      "id": "A06",
+      "source": "prior_decision assumptions 'Results/SOW names post-sequence surfaces user could not reach'; FF-05 'reachable and understandable Results/SOW'",
+      "feedback": "Results/SOW (ApprovalDrawer commit result / approve writes) was not reachable or understood.",
+      "current_state": "ActionDock exposes 'Open approval' (preview), 'View result' (verified), 'Commit incomplete' (partial); not in review/sequencing; label says 'Approve today's writes'/'Commit result'.",
+      "mapped_ui_behavior": "Prioritize a persistent 'Results' button reachable in review, preview, verified, partial; relabel to 'Results' / 'Statement of work' for clarity; keep two-gate live commit inside drawer.",
+      "component": "frontend/src/ui/ActionDock.tsx, frontend/src/ui/ApprovalDrawer.tsx",
+      "spec": "Dock: add Results button when s.shadow || s.commitReport exists; title 'Review exact writes and commit result'. Drawer h2: 'Results' (committed) / 'Preview writes' (review) / 'Approve writes' (arm).",
+      "preserves_feedback": "none (accessibility of existing surfaces)"
+    },
+    {
+      "id": "A07",
+      "source": "FF-05 known_context 'Day Setup and View result exist but were not reachable or understood'",
+      "feedback": "Day Setup access must be prominent and primary in the unconfirmed state.",
+      "current_state": "ActionDock 'Day setup' button always visible; primary styling only in setup state.",
+      "mapped_ui_behavior": "Keep Day setup always visible and primary during setup; add aria-label 'Open day setup' and a 'setup not confirmed' hint while state==setup. No relocation.",
+      "component": "frontend/src/ui/ActionDock.tsx",
+      "spec": "Preserve openSetup dispatch; ensure 44px target and visible label in all states.",
+      "preserves_feedback": "none"
+    },
+    {
+      "id": "A08",
+      "source": "FF-07 AC 'Duration rows show effective value and whether memory or another source won'",
+      "feedback": "User cannot tell if a row duration is a memory override or the source/default value.",
+      "current_state": "Row shows blocksLabel(blocks) with '*' when overridden; no explicit source label.",
+      "mapped_ui_behavior": "Show effective duration value plus a source chip: 'memory' when s.overrides[id].blocks != null, else 'source'. Expose via aria-valuetext and a visible chip.",
+      "component": "frontend/src/ui/Queue.tsx (Row time block)",
+      "spec": "Add qrow__src-tag 'memory' | 'source' beside alloc-track__value; aria-valuetext = `${blocksLabel(blocks)} (${source})`. Keep '*' marker as redundant signal.",
+      "preserves_feedback": "none"
+    },
+    {
+      "id": "A09",
+      "source": "FF-07 AC 'Overflow and remaining capacity are explicit in normal and over-capacity states'",
+      "feedback": "Over-assignment can be hidden by overflow tail or read as a blocking defect.",
+      "current_state": "AllocationPie center readout shows 'X over' / 'Y remaining'; dock status shows spend/budget.",
+      "mapped_ui_behavior": "Keep pie readout explicit; when over>0 add 'Over by X blk - trim or drop' caption using --c-overflow token; dock status keeps 'X of Y blk'. Overflow warnings from FEEDBACK-03 render in alerts.",
+      "component": "frontend/src/ui/AllocationPie.tsx, frontend/src/ui/ActionDock.tsx",
+      "spec": "pie__readout over-state already present; add pie__over-caption when over>0. Keep live region aria-live=polite.",
+      "preserves_feedback": "FEEDBACK-03 (explicit infeasibility), FEEDBACK-05 (over-assignment readout)"
+    },
+    {
+      "id": "A10",
+      "source": "later_polish LP-01 'critical-band wording and stronger remaining-item hierarchy'",
+      "feedback": "Remaining/over-capacity items need a stronger visual hierarchy, not buried in bands.",
+      "current_state": "BandHeader shows share/over per band; over-capacity only in pie.",
+      "mapped_ui_behavior": "Add a 'Remaining / Over capacity' summary line above bands when total selected exceeds capacity; use --c-overflow for over. Keep band notes concise.",
+      "component": "frontend/src/ui/Queue.tsx, frontend/src/ui/AllocationPie.tsx",
+      "spec": "queue__remaining summary: 'X blk selected of Y capacity - Z over' with strong weight; collapses to within-share when balanced.",
+      "preserves_feedback": "FEEDBACK-05 (remaining text '7hr over')"
+    },
+    {
+      "id": "A11",
+      "source": "later_polish LP-02 'clearer collapsed-state indicators'",
+      "feedback": "Collapsed bands hide rows with only a chevron; state is unclear to sighted and AT users.",
+      "current_state": "BandHeader/DroppedHeader use chevron + count; aria-expanded present but no 'hidden' wording.",
+      "mapped_ui_behavior": "When collapsed, show 'Collapsed - N rows hidden' text and aria-label 'Band NAME, collapsed, N rows hidden, activate to expand'; expanded shows 'N rows'.",
+      "component": "frontend/src/ui/Queue.tsx (BandHeader, DroppedHeader)",
+      "spec": "Add band__state text node driven by open; keep aria-controls/aria-expanded; announce hidden count to AT.",
+      "preserves_feedback": "none"
+    },
+    {
+      "id": "A12",
+      "source": "later_polish LP-02 'action tooltip or popover affordances' + LP-01 'without title-only dependence'",
+      "feedback": "Action explanations rely on title tooltips (pointer only); keyboard and touch users get nothing.",
+      "current_state": "StagingVerbs/MoreMenu/row icon buttons use title attributes only.",
+      "mapped_ui_behavior": "Provide a focus+hover popover (Tooltip component) for every action button; keep aria-label as the AT equivalent; touch shows popover on focus. Visible text labels preferred for high-frequency verbs.",
+      "component": "frontend/src/ui/Queue.tsx, frontend/src/ui/CalendarImpact.tsx",
+      "spec": "Add shared Tooltip wrapper: onFocus/onMouseEnter shows label; respects prefers-reduced-motion; theme-safe surface token.",
+      "preserves_feedback": "none"
+    },
+    {
+      "id": "A13",
+      "source": "later_polish LP-03 'simplify overlapping actions and clarify opaque More menu'",
+      "feedback": "Row action cluster (exclude, duration, place, unschedule, Done, Drop, More) overlaps and is noisy.",
+      "current_state": "Row actions: exclude, duration, place (conditional), unschedule (conditional), divider, Done, Drop, More(Unassign/Delete).",
+      "mapped_ui_behavior": "Keep Done/Drop direct (frozen verb model). Group shape actions: keep exclude + duration on row; move place/unschedule into More menu. Add a visible text label to Done/Drop at >=720px width, icon-only below.",
+      "component": "frontend/src/ui/Queue.tsx (Row actions, MoreMenu)",
+      "spec": "Move place/unschedule menuitems into MORE_VERBS; keep DIRECT_VERBS = done, drop. No new product verbs; side effects unchanged.",
+      "preserves_feedback": "FF-07/LP-02 'no new product actions'; Done/Drop/Unassign/Delete contracts intact"
+    },
+    {
+      "id": "A14",
+      "source": "later_polish LP-03 'opaque More menu' + LP-02 'theme-safe layering'",
+      "feedback": "More menu layering is not opaque/readable across light and dark themes.",
+      "current_state": "row-more__menu uses surface token but no explicit border/shadow/z-index in both themes.",
+      "mapped_ui_behavior": "Style menu with --t-surface background, --t-border, elevated z-index, and shadow; ensure >=4.5:1 text contrast in both themes; menu items keep text labels (Unassign, Delete).",
+      "component": "frontend/src/ui/Queue.tsx (row-more__menu) + tokens.css",
+      "spec": "Add menu elevation token; verify contrast; keep aria-haspopup/menu/expanded/controls and Escape refocus.",
+      "preserves_feedback": "none"
+    },
+    {
+      "id": "A15",
+      "source": "later_polish LP-01 'critical-band note wording'",
+      "feedback": "Band note wording should be concise and must not change urgency semantics.",
+      "current_state": "Band notes derive from BANDS spec in model/bands.ts.",
+      "mapped_ui_behavior": "Keep Critical/High/Else tiers; tighten band.note copy to one clause; do not alter urgency tier logic.",
+      "component": "frontend/src/model/bands.ts",
+      "spec": "Notes: Critical 'do today', High 'soon', Else 'when room'. No semantic change to banding.",
+      "preserves_feedback": "none"
+    }
+  ],
+  "component_specs": {
+    "time_ts": {
+      "add": "display24h(hhmm: string|null): string -> HH:MM zero-padded; null/empty -> em dash",
+      "keep": ["toHHMM", "addMinutes", "blocksLabel", "compactDuration", "minutesToBlocks"],
+      "remove_usage": "display12h retained for fallback only; no new call sites"
+    },
+    "CalendarImpact_tsx": {
+      "time": "use display24h for start/end",
+      "override_label": "attending -> 'Exclude from plan' (subtitle 'today only'); excluded -> 'Count'",
+      "override_aria": "attending -> 'Do not count NAME toward today's capacity'; excluded -> 'Count NAME toward capacity'",
+      "wall_badge": "capacityClass fixed|work -> calendar-impact__wall 'hard block'; ignored|quarantined|window -> none",
+      "local_tag": "skipToday -> calendar-impact__local 'Excluded from plan today (event untouched)'",
+      "preserve": "quarantined renders 'quarantined'/'Not counted'/'0 blk counted' (FEEDBACK-04)"
+    },
+    "ActionDock_tsx": {
+      "day_setup": "always visible; primary in setup; aria-label 'Open day setup'",
+      "results": "persistent 'Results' button when s.shadow || s.commitReport; labels: review='Preview writes', preview/verified/partial='Results'",
+      "status": "keep spend/budget and blocking-issue counts; add over-capacity phrasing from capacity.remaining",
+      "preserve": "Copy prompt fallback, Auto sequence (1 billed) gating, Accept as-is, Preview commit unchanged"
+    },
+    "AllocationPie_tsx": {
+      "readout": "keep allocated/total/over/remaining live region",
+      "over_caption": "when over>0 add 'Over by X blk - trim or drop' with --c-overflow",
+      "preserve": "slice inspection, legend buttons, hatch for buffer/unallocated"
+    },    "Queue_tsx": {
+      "time": "display24h for scheduledRow.start, scheduledStart, droppedTimeLabel",
+      "duration_source": "qrow__src-tag 'memory'|'source' beside value; aria-valuetext includes source",
+      "remaining_summary": "queue__remaining line above bands when selected>capacity",
+      "collapse_indicator": "band__state 'Collapsed - N hidden' / 'N rows'",
+      "actions": "Done/Drop direct; place/unschedule moved to More; Tooltip popover on focus+hover; text labels at >=720px",
+      "more_menu": "opaque surface token, border, shadow, z-index; text labels Unassign/Delete",
+      "preserve": "BANDS tiers, keyboard nav, 44px floor, all-day visibility"
+    },
+    "ApprovalDrawer_tsx": {
+      "time": "display24h for exact-write times",
+      "labels": "h2 'Results' (committed) / 'Preview writes' (review) / 'Approve writes' (arm); keep two-gate live commit",
+      "preserve": "SurfaceTotals, Blockers, Exact writes disclosure, verify list"
+    }
+  },
+  "feedback_01_06_preservation": {
+    "FEEDBACK-01": "Chronological order enforced in controller.sort(byStartThenId); UI shows hard errors via alerts (A02). No UI reorder.",
+    "FEEDBACK-02": "Hard walls: CalendarImpact wall badge (A01); overflow avoids walls in controller/overflow.ts.",
+    "FEEDBACK-03": "Explicit infeasibility warnings render in alerts; AllocationPie over readout (A09).",
+    "FEEDBACK-04": "quarantined -> 'quarantined'/'Not counted'/'0 blk counted' preserved (A01/A04).",
+    "FEEDBACK-05": "Scenario parity maintained; over-assignment readout explicit (A09/A10).",
+    "FEEDBACK-06": "Zero calendar writer calls; override copy never implies mutation (A04/A05)."
+  },
+  "open_decisions": [
+    {
+      "id": "OD1",
+      "question": "Exact label for the calendar local override action: 'Exclude from plan' vs 'Do not count today' vs 'Skip'.",
+      "impact": "A04/A05 copy; needs user wording choice before FF-07 implementation."
+    },
+    {
+      "id": "OD2",
+      "question": "Should Results/SOW be reachable pre-sequence (review state) or only after a shadow preview exists?",
+      "impact": "A06 reachability scope; current spec shows it when s.shadow exists (post-sequence)."
+    },
+    {
+      "id": "OD3",
+      "question": "Duration-source chip placement within the 44px row floor: inline chip vs prefix vs aria-only.",
+      "impact": "A08 layout; inline chip chosen in spec but width-constrained rows may need aria-only at narrow widths."
+    },
+    {
+      "id": "OD4",
+      "question": "Place/Unschedule: move fully into More menu (simpler row) vs keep conditional icons on row.",
+      "impact": "A13 action simplification; spec moves them to More to reduce row noise."
+    },
+    {
+      "id": "OD5",
+      "question": "24-hour user-facing format: strict HH:MM (matches wire) vs H:MM.",
+      "impact": "A03; spec uses HH:MM to match server contract and avoid reparse."
+    },
+    {
+      "id": "OD6",
+      "question": "Where the over-capacity summary lives: dedicated queue__remaining line (A10) vs rely on AllocationPie only.",
+      "impact": "A10/A09; spec adds a line above bands for scan-distance hierarchy."
+    }
+  ],
+  "a11y_checklist": [
+    "All time readouts 24-hour HH:MM (A03).",
+    "Override copy describes accounting, not attendance/mutation (A04/A05).",
+    "Results/SOW reachable by keyboard and pointer in applicable states (A06).",
+    "Day Setup 44px target, always visible (A07).",
+    "Duration source exposed to AT via aria-valuetext (A08).",
+    "Over/remaining explicit in normal and over states (A09/A10).",
+    "Collapsed bands announce hidden count to AT (A11).",
+    "Action affordances on focus+hover, not title-only (A12).",
+    "More menu opaque, >=4.5:1 contrast, theme-safe (A14).",
+    "Reduced-motion respected for any new transitions; semantic HTML/ARIA preserved."
+  ],
+  "acceptance_criteria_met": [
+    "Artifact exists and is valid JSON (this file).",
+    "Every supplied annotation (A01..A15) is mapped or explicitly classified (open decisions OD1..OD6).",
+    "Design is implementation-ready: component specs cite real files, props, and tokens; FEEDBACK-01..06 behavior preserved.",
+    "No source/live changes: design handoff only; no edit, restart, POST, commit."
+  ],
+  "files": {
+    "created": ["docs/plan/2026-08-12-tdtb-feedback-follow-up/evidence/FEEDBACK-07-ui-direction.json"],
+    "modified": 0
+  },
+  "safety_proof": {
+    "source_edits": 0,
+    "live_post_sequence_adjust_commit": "none",
+    "external_writes": "none",
+    "runtime_restart": "none",
+    "port_8746_access": "none",
+    "branch_or_index_mutation": "none - no commit, stage, reset, clean, stash, rebase, or merge",
+    "foreign_changes_preserved": "tracked dirty work untouched; only FEEDBACK-07 evidence file written under docs/plan/2026-08-12-tdtb-feedback-follow-up/evidence/"
+  },
+  "evidence_path": "docs/plan/2026-08-12-tdtb-feedback-follow-up/evidence/FEEDBACK-07-ui-direction.json"
+}

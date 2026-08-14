@@ -1,0 +1,109 @@
+{
+  "task_id": "FEEDBACK-23",
+  "plan_id": "2026-08-12-tdtb-feedback-follow-up",
+  "title": "Normalize Todoist due verification and display errors",
+  "status": "completed",
+  "objective": "Fix the exact write-path failure where intent 19:00 was compared with live 23:00 because a UTC Todoist due value was treated as a local wall time. Normalize fixed/UTC due values using the due timezone and zoneinfo; preserve floating local due semantics; fail closed when required zone data is missing; return structured mismatch data and format user-facing verification errors in 12-hour display.",
+  "diagnosis_used": "FEEDBACK-21 handoff (authoritative): app/commit.py::_todoist_due_hhmm compared fixed UTC due.date wall time (23:00) directly to local intent HH:MM (19:00). Todoist fixed due.date is UTC; floating due.date is user-local. FEEDBACK-12 restored 12h visible display but raw verify_failures bypassed it.",
+  "acceptance_criteria_met": [
+    "A 23:00Z due with America/New_York timezone verifies against 19:00 local intent: _todoist_due_reading converts UTC-anchored due.date through due.timezone via zoneinfo (23:00Z -> 19:00 EDT); test_fixed_utc_due_normalizes_through_due_timezone pins the exact Press repro and passes clean (verify_failures empty).",
+    "Floating/local Todoist due values remain local and verify correctly: an offset-less due.date (with or without a timezone field) passes through unchanged as the local wall time; test_floating_local_due_verifies_locally pins 19:00 floating vs intent 19:00 clean.",
+    "Missing/ambiguous timezone data fails closed with actionable structured error: a UTC-anchored due without due.timezone yields reason 'missing timezone for UTC due'; an unknown zone yields 'unknown timezone <tz>'; both recorded as structured verify_details with canonical live_raw/timezone, never a guessed zone (test_missing_timezone_on_utc_due_fails_closed, test_unknown_timezone_fails_closed).",
+    "Verification error UI displays 12-hour times while machine fields retain canonical ISO/timezone values: backend verify_failures strings are 12h ('7 PM', '11 PM', no raw 24h); new WriterResult.verify_details carry canonical 24h intent/live, raw ISO due.date, and IANA timezone; orchestrate aggregates them into the /commit response; wire.ts projects verifyDetails; ApprovalDrawer renders display12h from machine fields with raw ISO/timezone kept in the hover title.",
+    "Existing commit/write verification tests remain green; no live writes or commit: full backend suite 1306 passed, full frontend suite 576 passed | 6 skipped, typecheck clean, build:mockup + build:prod pass with bundle readback; safety_proof records zero live POSTs, provider writes, real source writes, restarts, and zero Git mutations."
+  ],
+  "changes": [
+    {
+      "file": "app/commit.py",
+      "behavior": "Add DueReading dataclass and _todoist_due_reading: UTC-anchored fixed dues (date ends in Z or carries an offset) convert through due.timezone via zoneinfo; floating offset-less dues pass through unchanged; all-day dues have no comparable time; missing/unknown timezone fails closed with an actionable error instead of guessing. _todoist_due_hhmm is now the normalized-local wrapper. Add _display12h (mirrors frontend display12h: '7 PM' / '7:30 PM' / em dash). WriterResult gains verify_details (machine-canonical records, lockstep with verify_failures) plus fail_due(); fail() appends a plain detail record so the two arrays stay aligned. Reconciliation loop in write_todoist uses the structured reading, records fail_due for mismatch/all-day/fail-closed, and formats user-visible messages in 12h."
+    },
+    {
+      "file": "app/orchestrate.py",
+      "behavior": "_result_entry carries per-surface verify_details; top-level /commit report aggregates verify_details alongside verify_failures so machine-canonical values cross the wire to the frontend."
+    },
+    {
+      "file": "app/tests/test_commit.py",
+      "behavior": "New TestDueVerificationNormalization class (7 tests): equivalent 23:00Z/19:00 encoding passes, floating local due passes, true mismatch fails with 12h message and no raw 24h, missing and unknown timezone fail closed, structured detail keeps canonical raw ISO/timezone/24h values, equivalent-vs-different instants are separate."
+    },
+    {
+      "file": "app/tests/test_orchestrate.py",
+      "behavior": "New test pins verify_details aggregation: canonical fields (intent 24h, live_raw, timezone, reason) travel in the report alongside the 12h display string; clean report keeps both arrays empty."
+    },
+    {
+      "file": "frontend/src/model/types.ts",
+      "behavior": "Add DueVerificationDetail (kind, name, intent, live, liveRaw, liveTimezone, reason, message — machine-canonical) and CommitReport.verifyDetails (optional)."
+    },
+    {
+      "file": "frontend/src/adapters/wire.ts",
+      "behavior": "projectCommitReport projects wire.verify_details into verifyDetails with canonical fields (live_raw -> liveRaw, live_timezone -> liveTimezone); absent for legacy payloads."
+    },
+    {
+      "file": "frontend/src/ui/ApprovalDrawer.tsx",
+      "behavior": "Verification failures render structured 'due' records as 12h via display12h(intent)/display12h(live), raw ISO/timezone in the hover title (matching the writeTarget raw-handle pattern); non-due failures render verbatim. Hoisted report const so TS narrows into the map callback."
+    },
+    {
+      "file": "frontend/src/adapters/wire.test.ts",
+      "behavior": "2 new tests: canonical verify_details projection and legacy payload without verify_details."
+    },
+    {
+      "file": "frontend/src/ui/panels.test.tsx",
+      "behavior": "2 new FEEDBACK-23 tests: structured due failure renders 'Press — due verification: intent 7 PM, live 11 PM' with no 19:00/23:00 visible and canonical raw ISO/timezone in title; plain failure renders verbatim."
+    }
+  ],
+  "preserved_semantics": [
+    "Floating/local Todoist due semantics unchanged: offset-less wall times compare as-is.",
+    "Internal comparison and provider serialization never depend on display-formatted strings; _todoist_due_hhmm returns canonical 24h HH:MM.",
+    "Write path untouched: reschedule_task / reschedule_task_datetime call shapes and recurrence-preserving retime logic unchanged.",
+    "D1 per-write verification aggregation preserved: any verify_failures entry still blocks a bake-in PASS.",
+    "All-day intents, pinned recurring no-ops, and silent-drop/readback failure paths keep their existing behavior.",
+    "FEEDBACK-12 authority preserved: display12h is the only user-facing formatter; no display24h reintroduced."
+  ],
+  "verification": {
+    "red_green": "Backend Red: 6 new tests failed reproducing 'due mismatch (intent 19:00, live 23:00)' before the fix; Green: 64 passed in tests/test_commit.py. Frontend Red: 2 new tests failed (verify_details undefined, raw string rendered); Green: wire.test.ts + panels.test.tsx 56 passed.",
+    "backend_focused": "tests/test_commit.py 64 passed (57 baseline + 7 new); tests/test_orchestrate.py 22 passed incl. 1 new aggregation test; combined 80 passed.",
+    "backend_full": "app suite: 1306 passed, 0 failed.",
+    "frontend_focused": "wire.test.ts + panels.test.tsx 56 passed (4 new).",
+    "full_frontend": "npm test: 37 files passed | 1 skipped, 576 passed | 6 skipped (FEEDBACK-12 baseline 572 -> +4 new)",
+    "typecheck": "tsc --noEmit clean (0 errors)",
+    "build_mockup": "ok - vite build --mode mockup: CSS 33.50 kB, JS 129.33 kB (index-Csvm9Ghl.js)",
+    "build_prod": "ok - vite build --mode production: CSS 33.50 kB, JS 131.09 kB (index-xlWqKtnG.js)",
+    "bundle_readback": [
+      "prod bundle app/static/cockpit/assets/index-xlWqKtnG.js contains the FEEDBACK-23 display literals ('due verification', 'floating local') compiled in",
+      "mockup bundle ../mockups/cockpit/assets/index-Csvm9Ghl.js built from the same source"
+    ]
+  },
+  "safety_proof": {
+    "live_post_sequence_adjust_commit": "none",
+    "billed_calls": "0",
+    "provider_writes": "0 - backend tests use in-memory fakes only",
+    "real_source_writes": "none - no real vault, Todoist, or Calendar state touched",
+    "runtime_restart": "none - no launchctl, no tdtb-restart, no kill of :8746",
+    "port_8746_access": "none",
+    "git_mutations": "none - no commit, stage, reset, clean, stash, rebase, or merge; branch Development/tdtb-canonical-cutover unchanged",
+    "generated_artifacts": "build:mockup and build:prod regenerated bundle assets under mockups/cockpit and app/static/cockpit from source per AGENTS.md verification gate",
+    "foreign_changes_preserved": "pre-existing tracked modifications (AGENTS.md, README.md, gem-team.yaml, etc.) untouched; app/ and frontend/ remain untracked as before"
+  },
+  "files": {
+    "created": [
+      "docs/plan/2026-08-12-tdtb-feedback-follow-up/evidence/FEEDBACK-23-due-verification.json"
+    ],
+    "modified": [
+      "app/commit.py",
+      "app/orchestrate.py",
+      "app/tests/test_commit.py",
+      "app/tests/test_orchestrate.py",
+      "frontend/src/model/types.ts",
+      "frontend/src/adapters/wire.ts",
+      "frontend/src/ui/ApprovalDrawer.tsx",
+      "frontend/src/adapters/wire.test.ts",
+      "frontend/src/ui/panels.test.tsx"
+    ]
+  },
+  "residual_limitations": [
+    "app/orchestrate.py and app/tests/test_orchestrate.py were outside the named task target list but were required so machine-canonical verify_details cross the /commit wire (acceptance criterion 4); change is bounded to two aggregation points.",
+    "frontend/src/model/types.ts was required for the wire projection to typecheck; no other type changes.",
+    "Browser-level visual check was not rerun; the vitest DOM suite renders the real ApprovalDrawer against a committed report and asserts 12h text and canonical title values.",
+    "No commit performed per task constraint; evidence and source changes remain in the untracked workspace tree."
+  ],
+  "evidence_path": "docs/plan/2026-08-12-tdtb-feedback-follow-up/evidence/FEEDBACK-23-due-verification.json"
+}

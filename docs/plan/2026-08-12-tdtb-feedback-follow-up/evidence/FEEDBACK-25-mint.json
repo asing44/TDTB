@@ -1,0 +1,120 @@
+{
+  "task_id": "FEEDBACK-25",
+  "plan_id": "2026-08-12-tdtb-feedback-follow-up",
+  "title": "Make Mint blocks authoritative hard scheduling walls",
+  "status": "completed",
+  "objective": "Replace hardcoded/fallback Mint block generation and soft movable-zone behavior with one authoritative source: effective Mint allotment plus selected session IDs. Derive capacity, Mint rows, shadow intents, calendar writes, and readback expectations from that source. Make selected Mint intervals immutable/hard walls for judgment, backend validation, and frontend overflow. Retire any rule that allows Mint tasks before/inside selected Mint sessions unless explicitly permitted by a fixture contract.",
+  "diagnosis": {
+    "root_cause": "Two compounding defects: (a) capacity reserved effective_allotment_minutes/30 Mint blocks while _SCHED_DEFAULTS injected the legacy aggregate 'Minting' row with a hardcoded n=2 (60 minutes) whenever no saved sessions list existed — a 300-minute allotment showed 10 capacity blocks but placed only 2; (b) selected Mint session rows were immutable in output but never placement walls — an assigned task could overlap a selected Mint interval, and the only window rule was the upper-bound-only frozen contract 14 allowance.",
+    "observed_failure": "BusyCal showed Mint output intervals and assigned tasks overlapping them; capacity and the injected row disagreed (300 minutes of capacity vs 2 blocks placed).",
+    "fix": "The effective Mint allotment (resolved day-semantics contract, dated override fallback) derives the legacy aggregate Minting row's size (allotment/30 blocks — the same number capacity reserves). Selected Mint session intervals become HARD walls: sequence.validate_sequence rejects any assigned row overlapping one (no overlap-grant escape), and the frontend overflow free-gap scan treats them as walls like calendar walls and immutable pins."
+  },
+  "acceptance_criteria_met": [
+    "Effective Mint allotment and selected session IDs produce the same Mint capacity/rows/intents: capacity reserves effective_allotment_minutes/30 blocks; the legacy aggregate row is now derived from the same allotment (300 minutes → 10 blocks, duration 300); selected-session rows are 1 block each and their total equals allotment/30 when in sync; shadow/write intents inherit the sequence rows unchanged (test_session_row_total_matches_effective_allotment_capacity, test_aggregate_minting_row_uses_effective_allotment, route-level test_sequence_injects_allotment_derived_minting_row).",
+    "No fallback hardcoded 2-block Mint injection when configured allotment is 300 minutes: build_schedulable_blocks uses the effective allotment when present; the _SCHED_DEFAULTS n=2 default survives only when NO allotment context exists (legacy no-preset callers), preserving test_weekday_defaults.",
+    "Assigned tasks cannot be placed inside selected Mint intervals; over-assignment is explicit: validate_sequence hard-rejects any assigned row overlapping a selected Mint interval (no grant escape), while a row ending exactly at the interval's start or beginning exactly at its end is allowed as touching, not overlap (test_assigned_row_overlapping_selected_mint_session_is_hard_rejection, test_mint_wall_is_not_softened_by_an_overlap_grant, test_back_to_back_boundary_is_allowed).",
+    "Mint rows are immutable/hard walls across backend and frontend validation: backend rejects overlaps at validate_sequence and /validate-sequence (route test); frontend overflow free-gap placement skips selected Mint intervals via the new mintWalls helper wired into planOverflow in controller.autoSequence; the mint row itself is exempt from its own wall (test_mint_row_itself_is_not_a_violation).",
+    "Existing calendar-wall, overflow, classification, and setup-gate tests remain green: FEEDBACK-02/05 calendar scenario suite, FEEDBACK-03 overflow suite, capacity/classification suites, FEEDBACK-24 setup-gate suite, sequence/validate-sequence/shadow/external-sources suites all pass (targeted run 284 passed; full backend 1253 passed).",
+    "Fixtures/fakes only: zero live POST, zero calendar/Todoist writes, zero restart, zero commit. All tests use synthetic data and monkeypatched judgment."
+  ],
+  "changes": [
+    {
+      "file": "app/external_sources.py",
+      "behavior": "Add _effective_mint_minutes(day_setup, resolved_day_semantics) — the effective Mint allotment, preferring the resolved day-semantics contract then the dated work_allotment_minutes runstate override, else None (legacy no-allotment). build_schedulable_blocks accepts resolved_day_semantics and derives the legacy aggregate Minting row's n from the effective allotment (allotment/30) instead of the hardcoded _SCHED_DEFAULTS n=2; the window-remainder cap and explicit-on re-include behavior are unchanged."
+    },
+    {
+      "file": "app/sequence.py",
+      "behavior": "Add selected_mint_walls(items) — rows whose item carries mint_session plus a placement window become hard wall spans. validate_sequence rejects any non-Mint row overlapping a selected Mint interval as a HARD error (no overlap-grant escape; the Mint row's own id is exempt; back-to-back touch allowed). The upper-bound window backstop (frozen contract 14) is preserved."
+    },
+    {
+      "file": "app/main.py",
+      "behavior": "POST /sequence and /validate-sequence pass resolved_day_semantics (body.day_semantics, getattr-guarded) into build_schedulable_blocks so the effective Mint allotment reaches schedulable-row injection."
+    },
+    {
+      "file": "app/judgment.py",
+      "behavior": "SEQUENCE_SYSTEM_PROMPT METADATA-AWARE PLACEMENT section: selected Mint sessions are now framed as HARD placement walls — only the Mint row occupies its exact window, no other assigned row may overlap it (prompt-side hardening so the single billed call avoids producing a hard-rejected proposal)."
+    },
+    {
+      "file": "frontend/src/model/overflow.ts",
+      "behavior": "Add mintWalls(rows) — selected Mint session intervals as WallInterval[], identified by the server's mint_session wire marker or the canonical 'Mint …' id prefix; the legacy aggregate 'Minting' row is not a wall. planOverflow callers pass them in the walls list; docstrings updated."
+    },
+    {
+      "file": "frontend/src/store/controller.ts",
+      "behavior": "controller.autoSequence passes [...calendarWalls(...), ...mintWalls(rows)] into planOverflow so dropped-row overflow placement never stages a row over a selected Mint interval."
+    },
+    {
+      "file": "app/tests/test_feedback25_mint_walls.py",
+      "behavior": "New suite (14 tests): TestMintAllotmentDerivation (effective-allotment derivation, dated override, legacy default preserved, zero suppress, sessions win over aggregate, session total == capacity), TestMintWallsHardValidation (overlap hard rejection, mint row exempt, back-to-back touch, no grant escape, upper-bound backstop), TestSequenceRouteMintDerivation (route injects allotment-derived row), TestValidateSequenceMintWalls (route rejects overlap, allows clean rows)."
+    },
+    {
+      "file": "frontend/src/model/overflow.test.ts",
+      "behavior": "Add mintWalls tests (metadata rows, id-prefix fallback, non-Mint/zero-length ignored) and planOverflow Mint-wall avoidance tests (row moved after wall, infeasibility reported)."
+    },
+    {
+      "file": "frontend/src/store/controller.test.ts",
+      "behavior": "Add FEEDBACK-25 controller-wiring test: a canned sequence with a selected Mint session at the anchor plus dropped rows — overflow rows never overlap the Mint interval."
+    }
+  ],
+  "preserved_semantics": [
+    "Legacy aggregate Minting row with no allotment context keeps the historical 2-block default (test_weekday_defaults) — the hardcoded fallback is retired only when an effective allotment exists.",
+    "Frozen contract 14 upper-bound window check for placement-window items is preserved; the locked-contract suite (test_locked_contract_red.py) still passes — its before-window mint-row case is the explicit fixture-contract permission the task's retire-clause allows.",
+    "The window-remainder cap (skill 1249) and explicit-on re-include still operate; a zero allotment still suppresses the legacy row.",
+    "Mint capacity computation (_capacity_frame) is unchanged; rows now agree with it instead of diverging.",
+    "No event immutability or no-writer fixture contract is touched; quarantine/ignored calendar exclusion (contract 17) is untouched."
+  ],
+  "verification": {
+    "red_green": "Red: 9 backend tests failed (allotment derivation missing, no wall, no grant-free rejection, route wiring) + 4 frontend tests failed (mintWalls missing, overflow placement, controller wiring). Green: all 14 backend + 6 frontend new tests pass after the changes.",
+    "full_backend": "pytest tests/ from app/: 1253 passed, 1 warning (StarletteDeprecationWarning, pre-existing) — baseline 1232; +14 FEEDBACK-25 tests; the working tree also gained ~7 concurrent FEEDBACK-26/23 tests in test_external_sources.py/test_shadow.py/test_commit.py during the session (foreign edits, preserved, all green together)",
+    "targeted_ac5_suites": "tests/test_feedback_calendar_scenario.py + test_capacity_preview.py + test_calendar_capacity.py + test_day_setup_gate.py + test_sequence.py + test_validate_sequence.py + test_shadow.py + test_external_sources.py + test_locked_contract_red.py: 284 passed",
+    "full_frontend": "npm test from frontend/: 37 files passed | 1 skipped, 586 passed | 6 skipped (baseline 580 | 6; +6 FEEDBACK-25 tests: 3 mintWalls + 2 planOverflow + 1 controller wiring)",
+    "typecheck": "tsc --noEmit clean (0 errors)",
+    "app_js": "node --test app/tests/js/*.mjs: 160 passed (legacy wizard suites untouched)",
+    "build_mockup": "ok - vite build --mode mockup: CSS 33.50 kB, JS 129.56 kB (index-5BTkoyJV.js)",
+    "build_prod": "ok - vite build --mode production: CSS 33.50 kB, JS 131.31 kB (index-D8Jvf47a.js)",
+    "bundle_readback": [
+      "prod bundle app/static/cockpit/assets/index-D8Jvf47a.js contains the mint wall regex /^Mint /i and Mint references (mintWalls compiled in)",
+      "mockup bundle mockups/cockpit/assets/index-5BTkoyJV.js contains the same mint wall logic (FixtureAdapter surface)"
+    ],
+    "git_diff_check": "git diff --check on tracked paths: clean (exit 0); app/ and frontend/ are untracked pre-existing state"
+  },
+  "bounded_scratch": {
+    "server": "not run - no scratch :8790 walkthrough for this task; behavior is pure/route-level with monkeypatched judgment and fakes, verified by pytest + vitest + bundle readback. Zero-writer envelope preserved.",
+    "billed_calls": 0,
+    "real_source_writes": 0
+  },
+  "safety_proof": {
+    "live_post_day_setup_commit_sequence_adjust": "none",
+    "billed_calls": "0",
+    "external_writes": "none - no Todoist/calendar/vault-source writes; only repo test fixtures, source edits, and regenerated build bundles",
+    "runtime_restart": "none - no launchctl, no tdtb-restart, no kill of :8746",
+    "port_8746_access": "none - no health probe this task (no server behavior changed that required live proof)",
+    "scratch_service": "not started",
+    "branch_or_index_mutation": "none - no commit, stage, reset, clean, stash, rebase, or merge",
+    "foreign_changes_preserved": "pre-existing dirty/untracked state (app/, frontend/, docs/plan/...) untouched; concurrent FEEDBACK-26/23 test edits in test_external_sources.py/test_shadow.py/test_commit.py (mtimes 13:31-13:33) preserved and verified green together; only owned source, tests, fixtures, generated bundles, and this evidence file written"
+  },
+  "residual_limitations": [
+    "The frozen contract 14 upper-bound-only allowance for a placement-window row's own placement remains (the mint row is merged to its exact window after judgment, so the lower bound is enforced by merge; the locked-contract test is the explicit fixture-contract permission the retire-clause allows).",
+    "The legacy aggregate Minting row (no selected sessions) remains a model-movable row sized by the effective allotment — it is not a hard wall because it has no fixed interval; only user-selected session intervals are walls.",
+    "planOverflow infeasibility reason text labels all wall kinds as 'calendar wall' when mint walls share the list — placement correctness is exact; the wording is shared with the FEEDBACK-03 calendar-wall test assertion.",
+    "The judgment prompt change is prompt-side hardening only; enforcement is the deterministic validate_sequence wall (a violating proposal is rejected, never silently accepted)."
+  ],
+  "files": {
+    "created": [
+      "app/tests/test_feedback25_mint_walls.py",
+      "docs/plan/2026-08-12-tdtb-feedback-follow-up/evidence/FEEDBACK-25-mint.json",
+      "app/static/cockpit/assets/index-D8Jvf47a.js",
+      "mockups/cockpit/assets/index-5BTkoyJV.js"
+    ],
+    "modified": [
+      "app/external_sources.py",
+      "app/sequence.py",
+      "app/main.py",
+      "app/judgment.py",
+      "frontend/src/model/overflow.ts",
+      "frontend/src/model/overflow.test.ts",
+      "frontend/src/store/controller.ts",
+      "frontend/src/store/controller.test.ts"
+    ]
+  },
+  "evidence_path": "docs/plan/2026-08-12-tdtb-feedback-follow-up/evidence/FEEDBACK-25-mint.json"
+}

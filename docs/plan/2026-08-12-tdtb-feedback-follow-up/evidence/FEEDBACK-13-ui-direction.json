@@ -1,0 +1,95 @@
+{
+  "plan_id": "2026-08-12-tdtb-feedback-follow-up",
+  "task_id": "FEEDBACK-13",
+  "title": "Validate the latest bounded UI direction",
+  "mode": "implement-and-validate",
+  "ui_direction": "Bounded polish of the existing TDTB cockpit UI (SetupDrawer, CalendarImpact, ApprovalDrawer). No redesign; current components and the calm DATA visual language (tokens.css) are preserved.",
+  "observations": [
+    {
+      "id": 1,
+      "name": "Intention clarity and one-focus helper",
+      "treatment": "SetupDrawer Captures > Intention field gains a one-focus helper and ARIA wiring. Helper text is the exact, declarative sentence 'One thing to focus on today.' so the primary daily capture reads as a single focus, not a free journal.",
+      "measurable": {
+        "element": "p#cap-intention-hint.field__hint",
+        "text_equals": "One thing to focus on today.",
+        "aria": "textarea#cap-intention aria-describedby=\"cap-intention-hint\""
+      },
+      "tests": ["feedback13.test.tsx > obs 1+2: getByText('One thing to focus on today.') and aria-describedby"]
+    },
+    {
+      "id": 2,
+      "name": "Readable intention textarea states",
+      "treatment": "The intention textarea gets a distinct, explicitly-defined treatment (.field textarea.cap-intention) so it reads clearly against the muted default fields. Each required state is named in CSS: readable text, surface, border, focus, and spacing.",
+      "measurable": {
+        "class": "field textarea.cap-intention",
+        "readable_text": "color: var(--t-text)",
+        "surface": "background: var(--t-surface)",
+        "border": "1px solid var(--t-border)",
+        "focus": ":focus-visible { outline: 2px solid var(--t-accent); outline-offset: 1px; border-color: var(--t-accent) }",
+        "spacing": "padding: 8px 10px; min-height: 64px; line-height: 1.5",
+        "hover": "border-color tinted toward var(--t-accent)"
+      },
+      "tests": ["feedback13.test.tsx > obs 1+2: className contains cap-intention + 5 CSS-source assertions for color/background/border/focus/min-height"]
+    },
+    {
+      "id": 3,
+      "name": "Calendar hierarchy (desktop + narrow, no overlap)",
+      "treatment": "CalendarImpact row is a documented grid hierarchy: time, event, class badge, duration, count, reason, actions. The flexible event column carries min-width:0 so it truncates instead of pushing the row past the viewport. At <=767px the row re-templates to one fixed time column + a flexible column, and the attend control spans full width — no horizontal overlap at either width.",
+      "measurable": {
+        "desktop_grid": "grid-template-columns: 116px minmax(160px,1fr) 64px 70px 92px 124px auto",
+        "shrinkable_column": ".calendar-impact__event { min-width: 0 }",
+        "narrow_media": "@media (max-width: 767px) { .calendar-impact__row { grid-template-columns: 116px minmax(0,1fr) } ; .calendar-impact__attend { grid-column: 1/-1 } }",
+        "hierarchy_elements": ["time", "event name", "class badge", "duration", "count", "reason", "actions"]
+      },
+      "tests": ["feedback13.test.tsx > obs 3: time/event/class/count/reason/actions render; .calendar-impact__row present; event min-width:0 in CSS; @media 767px rule present"]
+    },
+    {
+      "id": 4,
+      "name": "Results/Preview hierarchy (desktop + narrow, no overlap)",
+      "treatment": "ApprovalDrawer keeps a desktop baseline: .surface-totals auto-fit grid (>=120px) and .write-row flex (name flex:1, target max-width:46%). At <=520px the write-row wraps and the name + target each take a full line so neither clips the other; surface totals drop to two columns. The collapsed-by-default Exact-writes disclosure and the two-gate arm->commit flow are untouched.",
+      "measurable": {
+        "desktop_surface_totals": "grid-template-columns: repeat(auto-fit, minmax(120px,1fr))",
+        "desktop_write_row": "flex; name flex:1; path max-width:46%",
+        "narrow_media": "@media (max-width: 520px) { .write-row { flex-wrap: wrap } ; .write-row__name { flex-basis: 100% } ; .write-row__path { flex-basis: 100%; max-width: 100% } ; .surface-totals { grid-template-columns: 1fr 1fr } }",
+        "hierarchy_elements": ["surface-totals", "write-row name", "write-row path", "verification list"]
+      },
+      "tests": ["feedback13.test.tsx > obs 4: surface-totals + write-row (after disclosure) render; verified case shows 'All surfaces verified — zero failures'; @media 520px rule present"]
+    },
+    {
+      "id": 5,
+      "name": "Strict 12-hour user-facing time examples",
+      "treatment": "Every user-facing time is rendered through display12h (AM/PM). Native <input type=time> is locale-adaptive and is not a hardcoded 24-hour example; no bare HH:MM example string is presented to the user. No 24-hour display requirement is introduced.",
+      "measurable": {
+        "formatter": "display12h -> 'H:MM AM/PM' or 'H AM/PM'",
+        "no_bare_24h": "no visible text matches /\\d{1,2}:\\d{2}(?!\\s*(AM|PM))/ (native input values are not textContent)",
+        "am_pm_present": "visible text matches /AM|PM/"
+      },
+      "tests": ["feedback13.test.tsx > obs 5: text matches /AM|PM/ and bare 24h regex is null; calendar-capacity.test.tsx already asserts 12-hour wall-clock (FEEDBACK-12)"]
+    }
+  ],
+  "gates_preserved": {
+    "hard_wall": "CalendarImpact renders 'hard block' affordance on fixed/work rows only (.calendar-impact__wall). Unchanged.",
+    "quarantine": "Quarantined rows render excluded / 'Not counted' / 0 blocks, never Fixed. FEEDBACK-04 test unchanged.",
+    "zero_writer": "Calendar rows are projection-only via saveAnchoredOverride (local override); never event or source mutation. Unchanged.",
+    "local_projection": "Seeded duration adjustments render a 'projection' marker and keep the event window untouched. Unchanged.",
+    "commit_gate": "ApprovalDrawer two-gate flow (arm live -> second click commit), canLiveCommit / shadowBlockers gating. Unchanged."
+  },
+  "constraints_respected": [
+    "Preserved FEEDBACK-23..29 behavior (no component/timeline changes to those paths).",
+    "No live writes, external source mutations, restart, or commit (test-only, FixtureAdapter).",
+    "TDD: added frontend/src/ui/feedback13.test.tsx; ran vitest (606 tests, 600 passed / 6 skipped), typecheck clean, build:prod and build:mockup succeed.",
+    "No 24-hour visible example introduced."
+  ],
+  "changed_files": [
+    "frontend/src/ui/SetupDrawer.tsx",
+    "frontend/src/app.css",
+    "frontend/src/ui/feedback13.test.tsx"
+  ],
+  "verification": {
+    "tests": "npx vitest run -> 39 files passed, 1 skipped; 600 passed / 6 skipped (606 total)",
+    "typecheck": "tsc --noEmit clean",
+    "build_prod": "npm run build:prod -> app/static/cockpit assets built",
+    "build_mockup": "npm run build:mockup -> mockups/cockpit assets built"
+  },
+  "residual_issues": []
+}

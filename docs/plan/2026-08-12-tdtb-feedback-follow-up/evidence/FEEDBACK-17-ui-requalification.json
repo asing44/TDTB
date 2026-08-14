@@ -1,0 +1,123 @@
+{
+  "plan_id": "2026-08-12-tdtb-feedback-follow-up",
+  "task_id": "FEEDBACK-17",
+  "title": "Repair the quarantined Calendar Impact row layout",
+  "status": "completed",
+  "objective": "Presentation-only repair of quarantined Calendar Impact rows so text, badge, times, counted state, and controls do not overlap at desktop or narrow width, while preserving classification, capacity, projection, and writer semantics (FEEDBACK-04/09/13 contracts).",
+  "root_cause": {
+    "boundary": "frontend/src/app.css .calendar-impact__class",
+    "mechanism": "The FEEDBACK-13 desktop row grid pins the class cell to a fixed 64px track (116px minmax(160px,1fr) 64px 70px 92px 124px auto). The class badge is width:fit-content at 10px uppercase; 'QUARANTINED' measures ~80px, wider than the 64px track, so the pill overflowed into the adjacent 70px duration track and visually collided with the '2hr' readout. Fixed/work/ignored badges are short enough to fit, which is why the compressed and overlapping row appeared only for quarantined events.",
+    "evidence": "Live screenshot (supplied) shows compressed and overlapping quarantined row; reproduced in component test by asserting the badge containment declarations were absent from app.css (Red)."
+  },
+  "fix": {
+    "frontend_production": [
+      "frontend/src/app.css: .calendar-impact__class gains max-width:100%, overflow:hidden, text-overflow:ellipsis, white-space:nowrap. The badge now caps at its grid track and ellipsizes instead of spilling into the duration cell at desktop widths."
+    ],
+    "frontend_component": "none — CalendarImpact.tsx unchanged; the row grid, cell order, and DOM structure already carry the FEEDBACK-13 hierarchy.",
+    "backend_production": "none"
+  },
+  "regression_tests": [
+    {
+      "file": "frontend/src/ui/feedback17.test.tsx",
+      "tests": 6,
+      "behavior": [
+        "quarantined row renders every cell (time 8 PM–10 PM, event, badge quarantined, duration 2hr, count 0 blk counted, reason Not counted, actions) in the documented FEEDBACK-13 hierarchy order",
+        "class badge containment CSS exists (max-width 100%, overflow hidden, text-overflow ellipsis, white-space nowrap) — the quarantined pill cannot overlap the duration cell",
+        "narrow ≤767px media keeps the badge in its own 116px column with containment (base rule) so it never bleeds into the flexible column",
+        "quarantined stays Not counted / 0 blk counted / no hard-block affordance; fixed + work rows keep hard block, Inside work budget, and accounting",
+        "all visible row times are authoritative 12-hour (AM/PM present, no bare HH:MM)",
+        "FEEDBACK-13 desktop grid, event min-width:0, narrow re-template, and attend span-full-width contracts unchanged"
+      ],
+      "red_before_fix": "2 failed — the four containment declarations (max-width, overflow, text-overflow, white-space) were absent from .calendar-impact__class"
+    }
+  ],
+  "test_results": {
+    "focused": "npx vitest run src/ui/feedback17.test.tsx -> 6 passed (Red 2 failed / 4 passed -> Green 6 passed)",
+    "regression_focused": "feedback13 + feedback15 + calendar-capacity + responsive: 27 passed",
+    "full_frontend": "npm test -> 43 files passed | 1 skipped; 635 passed | 6 skipped (641 total)",
+    "typecheck": "npm run typecheck -> tsc --noEmit clean (0 errors)",
+    "build_mockup": "ok — vite build --mode mockup: CSS 35.46 kB, JS 131.11 kB",
+    "build_prod": "ok — vite build --mode production: CSS 35.46 kB, JS 132.86 kB",
+    "bundle_readback": [
+      "prod CSS + mockup CSS contain .calendar-impact__class with text-overflow:ellipsis, max-width:100%, overflow:hidden, white-space:nowrap and the narrow justify-self:start override",
+      "prod + mockup JS contain the calendar-impact__class-- cell token"
+    ]
+  },
+  "red_green": "Red: feedback17.test.tsx failed 2 containment assertions (.calendar-impact__class lacked max-width/overflow/text-overflow/white-space) while the quarantined row rendered cells correctly. Green: after adding the four declarations to .calendar-impact__class in app.css, all 6 focused tests pass.",
+  "constraints_respected": [
+    "Presentation only — no classification, capacity, projection, or writer changes; CalendarImpact.tsx untouched.",
+    "FEEDBACK-04 quarantine semantics preserved (Not counted, zero capacity, no hard-wall badge).",
+    "FEEDBACK-09 hard-wall and accounting-control behavior preserved for fixed and work rows.",
+    "FEEDBACK-13 desktop grid and narrow re-template contracts preserved (responsive.test.ts + feedback13.test.tsx remain green).",
+    "FEEDBACK-15 Intention contract untouched; FEEDBACK-23..29 contracts untouched (no backend or timeline edits).",
+    "User-facing row times remain authoritative 12-hour display (FEEDBACK-12).",
+    "No live writes, no external mutations, no restart, no commit."
+  ],
+  "changed_files": {
+    "modified": 1,
+    "created": 2
+  },
+  "verification": {
+    "focused_tests": "npx vitest run src/ui/feedback17.test.tsx -> 6 passed",
+    "full_frontend": "npm test -> 43 files passed | 1 skipped; 635 passed | 6 skipped",
+    "typecheck": "npm run typecheck -> clean",
+    "builds": "npm run build:mockup + npm run build:prod -> both succeed; bundles read back with containment rule",
+    "evidence_path": "docs/plan/2026-08-12-tdtb-feedback-follow-up/evidence/FEEDBACK-17-ui-requalification.json"
+  },
+  "safety_proof": {
+    "live_post_sequence_adjust_commit": "none",
+    "billed_calls": "0",
+    "external_writes": "none",
+    "runtime_restart": "none",
+    "branch_or_index_mutation": "none — no commit, stage, reset, push, or rebase",
+    "port_8746_access": "none"
+  },
+  "acceptance_criteria": {
+    "quarantined_row_cells_do_not_overlap": true,
+    "desktop_and_narrow_reading_order_without_horizontal_overflow": true,
+    "quarantined_remains_not_counted_zero_capacity_no_wall_badge": true,
+    "fixed_and_work_rows_retain_hard_wall_and_accounting_controls": true,
+    "all_visible_row_times_use_authoritative_12_hour_display": true
+  },
+  "residual_issues": [
+    "Transient full-suite failure observed once when npm test and npm run typecheck ran concurrently (feedback18 commit-zone CSS assertion); the same suite passed 3 consecutive serial runs (43 files / 635 tests). Attributed to vitest cache/worker contention under parallel node processes, not to this change; subsequent runs green."
+  ],
+  "revision": {
+    "task_id": "FEEDBACK-17-REVISION",
+    "title": "Resolve FEEDBACK-17 TypeScript test errors",
+    "status": "completed",
+    "root_cause": {
+      "boundary": "frontend/src/ui/feedback17.test.tsx lines 86-91",
+      "mechanism": "The harness ui() returns ReturnType<typeof render>; destructured container loses DOM querySelectorAll typing through that inferred ReturnType, so Array.from(container.querySelectorAll(...)) produced TS2339 (property does not exist) and the find callback param widened to unknown (TS18046) at the row selection."
+    },
+    "fix": {
+      "frontend_test_typing": "feedback17.test.tsx pins the receiver to the DOM-lib Element type: const box: Element = container; then Array.from(box.querySelectorAll('.calendar-impact__row')).find((el) => el.textContent?.includes('Steelers Game')). Type annotation only; runtime behavior identical (Element cast is erased)."
+    },
+    "changed_files": {
+      "modified": 1,
+      "created": 0
+    },
+    "regression_test": "npm run typecheck (tsc --noEmit over include src) is the regression gate; it previously failed on feedback17.test.tsx TS18046/TS2339 at lines 87/90/91 and now exits clean with the pin fix.",
+    "test_results": {
+      "focused": "npx vitest run src/ui/feedback17.test.tsx -> 6 passed (re-verified after concurrent FEEDBACK-16 edits landed)",
+      "full_frontend": "npm test -> 44 files passed | 1 skipped; 647 passed | 6 skipped (final tree; concurrent FEEDBACK-16 added 12 passing tests vs the 635 baseline)",
+      "typecheck": "npm run typecheck -> tsc --noEmit clean (0 errors, exit 0; re-verified after concurrent FEEDBACK-16 edits)",
+      "build_mockup": "ok — vite build --mode mockup: CSS 36.35 kB, JS 132.12 kB",
+      "build_prod": "ok — vite build --mode production: CSS 36.35 kB, JS 133.88 kB"
+    },
+    "constraints_respected": [
+      "Test typing only; no CalendarImpact.tsx, app.css, backend, or other source changes.",
+      "FEEDBACK-17 presentation-only behavior and semantics unchanged (6/6 focused suite proves it).",
+      "No runtime classification, capacity, projection, writer, or 12-hour behavior changes.",
+      "No live writes, external mutations, restart, or commit."
+    ],
+    "verification": {
+      "typecheck_clean_including_test_file": true,
+      "focused_6_of_6": true,
+      "full_frontend_green": true,
+      "both_builds_green": true,
+      "evidence_path": "docs/plan/2026-08-12-tdtb-feedback-follow-up/evidence/FEEDBACK-17-ui-requalification.json"
+    },
+    "concurrency_note": "A concurrent agent executing FEEDBACK-16 edited SetupDrawer.tsx, app.css, and feedback16.test.tsx during this revision run. The revision did not touch those files; final typecheck/full-suite/builds were re-verified green on the merged tree."
+  }
+}

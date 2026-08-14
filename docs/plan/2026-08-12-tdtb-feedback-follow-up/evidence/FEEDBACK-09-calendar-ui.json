@@ -1,0 +1,82 @@
+{
+  "task_id": "FEEDBACK-09",
+  "plan_id": "2026-08-12-tdtb-feedback-follow-up",
+  "title": "Improve calendar impact controls and time presentation",
+  "status": "completed",
+  "objective": "Implement calendar UI feedback: hide ignored calendar-source entries (TickTick-style) from Calendar impact, render 24-hour HH:MM consistently on affected surfaces, replace the Not attending attendance verb with the task-style accounting action model, and add a local accounted-duration control that changes only the scheduling projection — never calendar events or attendance/source state. Preserve hard-wall and quarantined classification semantics (FEEDBACK-02/03/04).",
+  "design_authority": "FEEDBACK-07-ui-direction.json (A01 wall badge, A03 display24h, A04 accounting action copy, A05 projection-only override); FEEDBACK-09 AC 1-6.",
+  "acceptance_criteria_met": [
+    "Ignored calendar-source entries are hidden from Calendar impact with an explicit exclusion note ('N ignored calendar source(s) excluded'); source data untouched (no adapter writes, display-only filter).",
+    "Local accounting duration control exists on calendar rows (−/+ stepper, 30-min blocks, floor 1, ceiling 12) and visibly distinguishes projection override from event mutation ('projection' chip; event start/end readout unchanged; 'today only · event untouched' tag on excluded rows).",
+    "Calendar row actions use the task-style accounting model ('Exclude from plan' / 'Count', aria 'Do not count NAME toward today's capacity' / 'Count NAME toward today's capacity') via saveAnchoredOverride with skipToday + preserved blocks; hard-wall affordance ('hard block') renders on fixed/work rows only, quarantined stays 'Not counted'/'0 blk counted' (FEEDBACK-04).",
+    "Affected times render 24-hour: display24h added to model/time.ts; CalendarImpact, Queue (incl. droppedTimeLabel), ApprovalDrawer call sites switched; no AM/PM readouts on the calendar impact surface.",
+    "Frontend full suite passes: 546 passed / 6 skipped / 1 file skipped (scratch integration, env-gated); typecheck clean; build:mockup and build:prod pass; bundles read back containing the new copy strings.",
+    "Zero calendar writer calls: CalendarImpact's only outbound action is controller.saveAnchoredOverride -> adapter.saveDaySetup; FixtureAdapter.saveDaySetup is a no-op; no calendar write method exists in frontend adapters; no TDTB_SCRATCH_URL set, so no live adapter ran."
+  ],
+  "changes": [
+    {
+      "file": "frontend/src/model/time.ts",
+      "behavior": "Add display24h(hhmm) -> zero-padded HH:MM, null/empty -> em dash. display12h retained for non-affected surfaces (exportPrompt/anchored warning text untouched)."
+    },
+    {
+      "file": "frontend/src/ui/CalendarImpact.tsx",
+      "behavior": "Filters capacityClass 'ignored' rows out of the impact list and renders the exclusion note; renders times via display24h; adds 'hard block' wall badge for fixed/work (nested in event source line); accounting action model: 'Exclude from plan'/'Count' with accounting aria; local accounted-duration stepper (−/+) writing blocks into daySetup.anchored; 'projection' chip when a blocks override exists; 'today only · event untouched' tag on excluded rows; reason() skipToday copy becomes 'Excluded today'."
+    },
+    {
+      "file": "frontend/src/store/store.ts",
+      "behavior": "effectiveAnchoredBlocks honors a calendar row's blocks override as a local accounting projection: durationMin becomes blocks*30 for counted capacity, while start/end (event wall-clock window) stay immutable (LD19)."
+    },
+    {
+      "file": "frontend/src/store/controller.ts",
+      "behavior": "calendarParticipation helper used by saveDaySetup and saveAnchoredOverride: calendar entries carry {on:true, skipToday, time:null} plus blocks only when a projection is present — plain attendance toggles stay byte-identical to the T28 wire shape."
+    },
+    {
+      "file": "frontend/src/ui/Queue.tsx",
+      "behavior": "display12h -> display24h for scheduledRow.start and recurring scheduledStart; droppedTimeLabel renders 24h HH:MM."
+    },
+    {
+      "file": "frontend/src/ui/ApprovalDrawer.tsx",
+      "behavior": "display12h -> display24h for exact-write times."
+    },
+    {
+      "file": "frontend/src/app.css",
+      "behavior": "Adds .calendar-impact__ignored, __wall, __projection, __local, __actions, __stepper; narrow media block keeps .calendar-impact__attend grid-column rule and adds .calendar-impact__actions grid-column 1/-1."
+    },
+    {
+      "file": "frontend/src/model/time.test.ts",
+      "behavior": "display24h tests: zero-pad, single-digit hour, null/empty em dash."
+    },
+    {
+      "file": "frontend/src/store/store.test.ts",
+      "behavior": "T28 describe updated: calendar rows now apply skipToday AND the blocks projection; new test pins durationMin projection with start/end untouched."
+    },
+    {
+      "file": "frontend/src/store/controller.test.ts",
+      "behavior": "T28 sanitize tests updated: calendar override with blocks sends {on:true, skipToday, time:null, blocks}; without blocks stays byte-identical."
+    },
+    {
+      "file": "frontend/src/ui/calendar-capacity.test.tsx",
+      "behavior": "CalendarImpact describe rewritten for FEEDBACK-09: hidden ignored sources + note, 24h readouts (no AM/PM), hard-block badges, accounting action model, local duration stepper + seeded projection rendering; FEEDBACK-04 quarantined test keeps hard-block count assertion."
+    }
+  ],
+  "preserved_semantics": [
+    "FEEDBACK-02/03: calendarWalls still uses event end when present, so the projection never shrinks or moves a non-permeable wall; overflow planning unchanged.",
+    "FEEDBACK-04: quarantined renders 'quarantined' badge, 'Not counted', '0 blk counted'; never Fixed.",
+    "T28/LD19: event time/existence never reach an imported calendar event; only skipToday and the local blocks projection cross the day-setup wire."
+  ],
+  "safety_proof": {
+    "live_post_sequence_adjust_commit": "none",
+    "calendar_writer_calls": "0 - CalendarImpact outbound is saveAnchoredOverride only; FixtureAdapter.saveDaySetup is a no-op; no calendar write method exists in frontend adapters",
+    "external_writes": "none - test suite ran against FixtureAdapter; scratch integration self-skips without TDTB_SCRATCH_URL",
+    "runtime_restart": "none - no launchctl, no tdtb-restart, no port access",
+    "branch_or_index_mutation": "none - no commit, stage, reset, clean, stash, rebase, or merge; branch unchanged (Development/tdtb-canonical-cutover)",
+    "backend_changes": "0 - app/*.py untouched; wall/classification semantics unchanged",
+    "foreign_changes_preserved": "pre-existing dirty/untracked state untouched"
+  },
+  "verification": {
+    "focused_tests": "10 Red -> Green (time 3, store 1 new + 1 updated, controller 1 new + 1 updated, calendar-capacity 4)",
+    "full_frontend": "npm test: 36 files passed / 1 skipped, 546 tests passed / 6 skipped; npm run typecheck: clean; npm run build:mockup + build:prod: pass",
+    "bundle_readback": "prod and mockup bundles contain 'Exclude from plan', 'Do not count', 'hard block', 'ignored calendar source' from rebuilt source"
+  },
+  "evidence_path": "docs/plan/2026-08-12-tdtb-feedback-follow-up/evidence/FEEDBACK-09-calendar-ui.json"
+}

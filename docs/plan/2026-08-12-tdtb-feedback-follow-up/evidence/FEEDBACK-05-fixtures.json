@@ -1,0 +1,108 @@
+{
+  "task_id": "FEEDBACK-05",
+  "plan_id": "2026-08-12-tdtb-feedback-follow-up",
+  "title": "Add end-to-end regression fixtures",
+  "status": "completed",
+  "objective": "Deterministic backend/frontend fixtures for the reported calendar scenario — Cooking, Foods Dinner, DCP Bark Bar trivia, Steelers vs Packers, excluded/quarantined classification, assigned rows, over-assignment with only 2 available blocks versus 16 included blocks — pinning chronological order, hard wall safety, explicit infeasibility, fixed/excluded accounting, and zero calendar writer calls.",
+  "fixtures": {
+    "shared_scenario": {
+      "date": "2026-07-14",
+      "time_frame": {
+        "now": "17:10",
+        "anchor": "17:15",
+        "effective_eod": "23:00",
+        "config_eod": "23:45",
+        "total_blocks": 11
+      },
+      "events": [
+        { "name": "Cooking", "kind": "calendar", "start": "20:30", "end": "21:00", "capacity_class": "fixed", "wall": true },
+        { "name": "DCP Bark Bar trivia", "kind": "calendar", "start": "19:00", "end": "20:00", "capacity_class": "work", "wall": true },
+        { "name": "Steelers vs Packers", "kind": "calendar", "start": "20:00", "end": "22:00", "capacity_class": "quarantined", "wall": false },
+        { "name": "Foods Dinner", "kind": "window", "start": "18:00", "end": "20:30", "capacity_class": null, "wall": false },
+        { "name": "Suds", "kind": "hard", "start": "17:45", "end": "18:15", "capacity_class": null, "wall": false },
+        { "name": "Night Routine", "kind": "hard", "start": "23:00", "end": "23:45", "capacity_class": null, "wall": false }
+      ],
+      "assigned_rows": [
+        { "id": "Magic Mirror", "blocks": 3 },
+        { "id": "Log hours", "blocks": 1 },
+        { "id": "Note Processing", "blocks": 1 },
+        { "id": "Pick up prescription", "blocks": 1 },
+        { "id": "Press", "blocks": 3 },
+        { "id": "Rowe's T-shirt Redesign 2026", "blocks": 2 },
+        { "id": "Review AWS module 4", "blocks": 2 },
+        { "id": "Entryway Design", "blocks": 1 },
+        { "id": "Deep CWEAN", "blocks": 2 }
+      ],
+      "assigned_total_blocks": 16,
+      "capacity": {
+        "total": 11,
+        "fixed": 1,
+        "anchored": 5,
+        "habits": 1,
+        "mint": 2,
+        "selected": 16,
+        "buffer": 0,
+        "free": -14,
+        "available_for_selection": 2,
+        "overassigned": true,
+        "work_busy": 2,
+        "work_overflow": 0,
+        "remaining": "⚠ 7hr over · 14 blk"
+      }
+    },
+    "backend": {
+      "file": "app/tests/test_feedback_calendar_scenario.py",
+      "fake_store": "read-only EventStore fake recording a call ledger; writer methods deliberately absent so any write path raises",
+      "tests": 14
+    },
+    "frontend": {
+      "fixture_file": "frontend/src/fixtures/feedbackScenario.ts",
+      "test_file": "frontend/src/feedback_scenario.test.ts",
+      "tests": 7
+    }
+  },
+  "regression_contracts": {
+    "FEEDBACK-01_chronological": "final merged sequence sorted by start (Log hours 17:15 precedes pinned 23:15 row); validate rejects descending order deterministically; merge_immutable_rows sorts by (start, id)",
+    "FEEDBACK-02_hard_walls": "Cooking (fixed) and DCP Bark Bar trivia (work) are non-permeable walls — assigned overlap hard-rejects; Foods Dinner window stays permeable (soft advisory); config-backed blocks stay acceptable-defect",
+    "FEEDBACK-03_explicit_infeasibility": "16 included blocks vs 2 available: dropped rows surface as '⚠ overflow infeasible' warnings naming the row and capacity; never staged over a wall; never-bump names a missing row loudly",
+    "FEEDBACK-04_classification": "Cooking->fixed, DCP Bark Bar trivia->work, Steelers vs Packers->quarantined per EXPLICIT config rules; quarantined rows cost zero capacity, wall nothing, and stay out of fixed-input fingerprints (contract 17)",
+    "FEEDBACK-05_zero_writer_calls": "backend fake store ledger records only auth_status/calendars/query_events; frontend spies assert liveCommit/shadowCommit/runtimeAction/undoRuntimeAction never called during load -> setup -> sequence"
+  },
+  "test_results": {
+    "backend_focused": "app/tests/test_feedback_calendar_scenario.py: 14 passed",
+    "backend_related": "test_sequence.py + test_calendar_capacity.py + new file: 85 passed",
+    "backend_full": "1298 passed (1 starlette deprecation warning only)",
+    "frontend_focused": "src/feedback_scenario.test.ts: 7 passed",
+    "frontend_full": "529 passed, 6 skipped (35 files + 1 skipped)",
+    "frontend_typecheck": "tsc --noEmit clean",
+    "frontend_build_mockup": "ok",
+    "frontend_build_prod": "ok"
+  },
+  "acceptance_criteria": {
+    "fixtures_represent_all_named_events_and_assigned_rows": true,
+    "no_assigned_row_overlaps_non_permeable_wall": true,
+    "quarantined_steelers_exclusion_consumes_no_capacity_and_no_hidden_wall": true,
+    "overassignment_produces_explicit_diagnostics_not_silent_placement": true,
+    "final_sequence_is_chronological": true,
+    "zero_calendar_source_mutation_write_calls": true,
+    "no_live_endpoints_external_writes_restart_or_commit": true
+  },
+  "safety_proof": {
+    "live_post_sequence_adjust_commit": "none — backend tests use a read-only fake EventStore and pure unit calls; frontend tests use FixtureAdapter + vitest mocks, never a live endpoint",
+    "external_writes": "none — calendar writers are absent on the fake store and spied-and-asserted-absent on the frontend adapter",
+    "runtime_restart": "none",
+    "port_8746_access": "none",
+    "branch_or_index_mutation": "none — no commit, stage, reset, clean, stash, rebase, or merge",
+    "foreign_changes_preserved": "tracked dirty work (.gitignore, AGENTS.md, README.md, gem-team.yaml, .opencode, docs/plan extraction plan.yaml) untouched; edited files live in untracked app/ and frontend/ dirs, same as FEEDBACK-01..04"
+  },
+  "files": {
+    "modified": 0,
+    "created": 4
+  },
+  "evidence_path": "docs/plan/2026-08-12-tdtb-feedback-follow-up/evidence/FEEDBACK-05-fixtures.json",
+  "out_of_scope_noted": [
+    "UI polish (later_polish group): 24-hour formatting, calendar action controls, 'Not attending' wording",
+    "store.ts acceptableDefects unchanged — infeasibility warnings ride the existing SEQUENCE_OK warnings path (FEEDBACK-03)",
+    "fixtureValidate wall filter in frontend/src/adapters/fixture.ts still ignores capacityClass (dead dev-mock path, unchanged per FEEDBACK-04 out_of_scope)"
+  ]
+}

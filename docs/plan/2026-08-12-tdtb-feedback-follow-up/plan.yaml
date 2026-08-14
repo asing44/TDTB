@@ -1,0 +1,1198 @@
+plan_id: 2026-08-12-tdtb-feedback-follow-up
+objective: >-
+  Extend the completed TDTB reliability and UI follow-up with the latest
+  live-browser feedback while preserving all safety and projection contracts.
+created_at: '2026-08-13T00:00:00Z'
+created_by: gem-planner
+status: completed
+tldr: >-
+  FEEDBACK-19 through FEEDBACK-22 are reconciled from direct existing evidence;
+  all tasks are complete and the repository plan is closure-ready with no pending tasks.
+baseline:
+  objective: >-
+    Incorporate the user's new browser annotations and observed sequence error
+    into a follow-up TDTB UI and reliability plan, then prepare it for execution.
+  acceptance_criteria:
+    - New plan exists at docs/plan/2026-08-12-tdtb-feedback-follow-up/plan.yaml.
+    - Finish-first and later-polish work are separate, with sequence diagnosis first.
+    - Sequence work has distinct diagnosis, regression, fix, and scratch verification tasks.
+    - Calendar filtering, 24-hour time, accounting overrides, and actions have explicit tasks.
+    - Duration state, results/day-setup access, allocation, and UI feedback have explicit tasks.
+    - Verification uses fixtures and scratch, with no live source writes or billed calls.
+    - Branch choice is explicit and excludes codex/ branches.
+    - The canonical live runtime and prior handoffs remain preserved until an attended gate.
+  captured_at: '2026-08-13T00:00:00Z'
+plan_lineage:
+  root_plan_id: 2026-08-12-tdtb-feedback-follow-up
+  revision: 3
+  replan_count: 2
+  max_replans: 2
+  parent_revision: 2
+  reason: scope_change
+plan_metrics:
+  wave_1_task_count: 1
+  total_dependencies: 34
+  risk_score: high
+quality_warnings:
+  - The immutable baseline retains a historical 24-hour criterion superseded by FEEDBACK-12.
+  - Replan count remains at its immutable maximum; this scope extension does not increase it.
+  - Screenshot feedback needs responsive checks because visual regression automation is disabled.
+  - Accessibility audit is disabled; keyboard and readability checks remain scenario-based.
+  - The worktree contains extensive pre-existing tracked and untracked changes.
+  - FEEDBACK-21 and FEEDBACK-22 have no standalone evidence files; direct downstream evidence closes them.
+context_version: 4
+context_updated_at: '2026-08-14T00:00:00Z'
+context_fields_changed:
+  - write_verification_time_normalization
+  - mint_write_and_readback_contract
+  - mint_hard_placement_constraints
+  - mint_rule_config_and_source_ownership_audit
+  - finish_first_scratch_requalification
+  - completed_feedback_projection
+  - authoritative_12_hour_display
+  - keyboard_shortcut_copy
+  - day_setup_intention_and_visual_treatment
+  - calendar_impact_responsive_layout
+  - results_preview_hierarchy
+  - completed_status_reconciliation
+  - final_review_reconciliation
+  - closure_readiness
+tech_stack:
+  - name: Python 3.12 and FastAPI
+    role: Preserved sequence, hard-wall, quarantine, and zero-writer contracts
+    evidence: app/
+  - name: Preact, TypeScript, Vite, and Vitest
+    role: Cockpit UI, state, responsive behavior, and generated bundles
+    evidence: frontend/
+conventions:
+  - TDD applies to frontend behavior and any affected Python contracts.
+  - User-facing wall-clock labels use the authoritative 12-hour formatter from FEEDBACK-12.
+  - Internal wire, ordering, arithmetic, and write comparisons use canonical unambiguous values.
+  - Display formatting is never used as the comparison or serialization contract for provider writes.
+  - Calendar accounting overrides are local planning projections only.
+  - Imported calendar events remain immutable.
+  - New visual work requires designer validation before implementation.
+constraints:
+  hard:
+    - This planning update changes only this plan.yaml and does not alter evidence.
+    - Do not restart, commit, stage, push, or change machine-local projections.
+    - Do not POST to live /sequence, /adjust, or /commit.
+    - Use fixtures, fake providers, and scratch port 8790 for implementation verification.
+    - Do not write the real vault, Todoist, Calendar, or any other source.
+    - Preserve FEEDBACK-01 through FEEDBACK-12 and their evidence as completed.
+    - Preserve hard-wall, quarantine, zero-writer, and local-projection contracts.
+  soft:
+    - Keep each new correction bounded to supplied annotations and screenshots.
+    - Extend established components and tokens; do not broaden into a redesign.
+  compatibility:
+    - Preserve FastAPI contracts and the Preact/TypeScript build split.
+    - Preserve 12-hour display while keeping internal and provider time serialization unambiguous.
+    - Preserve current source identities, commit safeguards, and rollback readiness.
+  security_requirements:
+    - Record zero billed calls, live POSTs, provider writes, and real source writes.
+    - Require explicit attended approval for any later production deployment or restart.
+architecture_snapshot:
+  canonical_root: /Users/walle-mini/Repos/Projects/TDTB
+  live_runtime:
+    port: 8746
+    mutation_policy: get_only_if_needed_and_never_restart_for_this_extension
+  scratch_runtime:
+    port: 8790
+    policy: fixtures_and_fake_providers_only
+  preserved_contracts:
+    - chronological sequence output
+    - non-permeable calendar hard walls
+    - explicit overflow infeasibility
+    - quarantined rows excluded from capacity and walls
+    - local accounting projections never mutate calendar events
+    - zero external writers during qualification
+    - display formatting remains separate from internal and provider time serialization
+    - Mint reservations are hard placement walls for assigned tasks
+  frontend_seams:
+    - frontend/src/ui/SetupDrawer.tsx
+    - frontend/src/ui/CalendarImpact.tsx
+    - frontend/src/ui/ApprovalDrawer.tsx
+    - frontend/src/ui/ActionDock.tsx
+    - frontend/src/ui/Queue.tsx
+    - frontend/src/app.css
+research_digest:
+  digest: >-
+    FEEDBACK-01 through FEEDBACK-11 passed reliability and UI qualification;
+    FEEDBACK-12 controls display only; new evidence reports Todoist time comparison drift and
+    unreliable Mint writes, readback, placement, classification, ordering, and ownership.
+  top_files:
+    - path: docs/plan/2026-08-12-tdtb-feedback-follow-up/evidence/FEEDBACK-11-ui-requalification.json
+      trust_level: completed_ui_scratch_qualification
+    - path: docs/plan/2026-08-12-tdtb-feedback-follow-up/evidence/FEEDBACK-12-12-hour.json
+      trust_level: authoritative_time_display_correction
+    - path: frontend/src/ui/SetupDrawer.tsx
+      trust_level: current_day_setup_surface
+    - path: frontend/src/ui/CalendarImpact.tsx
+      trust_level: current_calendar_impact_surface
+    - path: frontend/src/ui/ApprovalDrawer.tsx
+      trust_level: current_results_preview_surface
+prior_decisions:
+  - decision: FEEDBACK-01 through FEEDBACK-11 are completed and remain accepted.
+    context: Their evidence and reliability contracts are not reopened by this extension.
+  - decision: FEEDBACK-12 is authoritative for user-facing time display.
+    context: It supersedes historical 24-hour claims without changing internal HH:MM values.
+  - decision: Imported calendar events are read-only inputs.
+    context: Accounting changes remain local projections and writer calls remain zero.
+  - decision: The new observations are bounded UI follow-up, not a full redesign.
+    context: Each annotated surface has a separate measurable completion boundary.
+  - decision: New write-path and Mint reliability work is finish-first.
+    context: Remaining UI polish cannot start until isolated reliability acceptance completes.
+  - decision: Attended live write verification is a separate approval gate.
+    context: Diagnosis, implementation, and scratch qualification authorize no live or external writes.
+  - decision: FEEDBACK-21 and FEEDBACK-22 are complete from direct downstream diagnosis evidence.
+    context: Their original criteria are mapped to FEEDBACK-23 through FEEDBACK-29 without false completion.
+  - decision: The plan is closure-ready with no pending tasks.
+    context: FEEDBACK-20 passed implementation review; its only revision request was plan bookkeeping.
+closure:
+  ready: true
+  remaining_pending_tasks: []
+  limitations:
+    - Configured accessibility audit automation remained disabled.
+    - Configured visual-regression automation remained disabled; screenshots were evidence, not baseline diffs.
+reuse_notes:
+  - path: docs/plan/2026-08-12-tdtb-feedback-follow-up/evidence/FEEDBACK-11-ui-requalification.json
+    trust_level: accepted_pre_extension_ui_baseline
+  - path: docs/plan/2026-08-12-tdtb-feedback-follow-up/evidence/FEEDBACK-12-12-hour.json
+    trust_level: accepted_authoritative_time_baseline
+replan:
+  reason: >-
+    New feedback reports false Todoist due mismatches, unreliable Mint writes, and assigned work
+    inside Mint reservations; these defects must close before pending UI polish.
+  changed_tasks:
+    - FEEDBACK-13
+  added_tasks:
+    - FEEDBACK-21
+    - FEEDBACK-22
+    - FEEDBACK-23
+    - FEEDBACK-24
+    - FEEDBACK-25
+    - FEEDBACK-26
+    - FEEDBACK-27
+    - FEEDBACK-28
+    - FEEDBACK-29
+  removed_tasks: []
+  preserved_acceptance_criteria:
+    - New plan exists at docs/plan/2026-08-12-tdtb-feedback-follow-up/plan.yaml.
+    - Finish-first and later-polish work are separate, with sequence diagnosis first.
+    - Sequence work has distinct diagnosis, regression, fix, and scratch verification tasks.
+    - Calendar filtering, 24-hour time, accounting overrides, and actions have explicit tasks.
+    - Duration state, results/day-setup access, allocation, and UI feedback have explicit tasks.
+    - Verification uses fixtures and scratch, with no live source writes or billed calls.
+    - Branch choice is explicit and excludes codex/ branches.
+    - The canonical live runtime and prior handoffs remain preserved until an attended gate.
+  new_risks:
+    - Display strings can be compared as write values and create false timezone or serialization drift.
+    - Mint classification or ownership drift can omit intended writes or target a forbidden provider.
+    - Mint reservations can be counted in capacity but remain permeable during final placement.
+  progress_signal: >-
+    FEEDBACK-28 accepts separate time, Mint write/readback, placement, rule, and scratch proofs;
+    FEEDBACK-13 can then resume UI polish while FEEDBACK-29 remains approval-gated.
+open_questions: []
+assumptions:
+  - The supplied screenshots are sufficient to define bounded layout defects without new product behavior.
+  - The shortcut should display and apply 15-minute adjustments, not 30-minute adjustments.
+  - The Intention helper copy is exactly one thing to focus on today.
+  - Existing components and design tokens can support the required hierarchy and readability.
+  - The reported 19:00 intent and 23:00 live value may represent one instant in different encodings.
+  - The Mint audit will identify one authorized source owner without permitting Calendar mutation.
+pre_mortem:
+  overall_risk_level: high
+  critical_failure_modes:
+    - scenario: A UI task reintroduces 24-hour labels while changing nearby layout.
+      likelihood: medium
+      impact: high
+      mitigation: Make FEEDBACK-12 authoritative in every new task and scratch assertion.
+    - scenario: Day Setup polish changes layout but leaves the intention textarea hard to read.
+      likelihood: medium
+      impact: high
+      mitigation: Separate copy/readability acceptance from broader Day Setup polish.
+    - scenario: Calendar rows overlap only at a width not covered by component tests.
+      likelihood: high
+      impact: high
+      mitigation: Require desktop and narrow-width screenshot-derived browser scenarios.
+    - scenario: Results and Preview controls become prominent but obscure write safety gates.
+      likelihood: medium
+      impact: critical
+      mitigation: Preserve exact-write disclosure, two-gate commit, and zero-writer contracts.
+    - scenario: Parallel visual changes conflict in shared styles.
+      likelihood: medium
+      impact: high
+      mitigation: Use one design handoff and declare shared-style conflicts between implementers.
+    - scenario: Time normalization hides a genuine due-time mismatch.
+      likelihood: medium
+      impact: critical
+      mitigation: Test equivalent encodings and genuinely different instants as separate cases.
+    - scenario: Mint blocks write successfully but are not reserved during placement.
+      likelihood: high
+      impact: critical
+      mitigation: Gate write/readback and placement with separate contracts and shared fixtures.
+    - scenario: Scratch proof accidentally reaches a live provider.
+      likelihood: low
+      impact: critical
+      mitigation: Require fake adapters and explicit zero-call counters before acceptance.
+coordination_notes:
+  - FEEDBACK-21 is closed by the direct diagnosis and boundary evidence in FEEDBACK-23 and FEEDBACK-28.
+  - FEEDBACK-22 is closed by the direct audit evidence across FEEDBACK-25 through FEEDBACK-29.
+  - FEEDBACK-28 is the finish-first acceptance gate for all pending UI work.
+  - FEEDBACK-29 was approval-gated; its completion evidence records explicit attended approval.
+  - FEEDBACK-13 owns the visual contract and references DESIGN.md without changing it.
+  - FEEDBACK-15, FEEDBACK-16, FEEDBACK-17, and FEEDBACK-18 are completed from scoped evidence.
+  - FEEDBACK-17 revision resolves the three TypeScript errors with a clean final typecheck.
+  - FEEDBACK-19 completed with 79 of 79 browser checks, clean frontend gates, and zero writes.
+  - FEEDBACK-20 passed implementation review; plan bookkeeping was its only needs-revision item.
+  - No task in this extension authorizes production deployment, restart, commit, or external writes.
+  - FEEDBACK-23 through FEEDBACK-29 are completed from their existing evidence files.
+  - No pending tasks remain; the plan is closure-ready without deployment, restart, or commit authorization.
+task_groups:
+  completed_baseline:
+    order: [FEEDBACK-01, FEEDBACK-02, FEEDBACK-03, FEEDBACK-04, FEEDBACK-05, FEEDBACK-06, FEEDBACK-07, FEEDBACK-08, FEEDBACK-09, FEEDBACK-10, FEEDBACK-11, FEEDBACK-12]
+    scope: [completed reliability, completed UI work, authoritative 12-hour correction]
+  finish_first_write_and_mint:
+    order: [FEEDBACK-21, FEEDBACK-22, FEEDBACK-23, FEEDBACK-24, FEEDBACK-25, FEEDBACK-26, FEEDBACK-27, FEEDBACK-28]
+    scope:
+      - Todoist verification time normalization
+      - Mint write and readback contract
+      - hard Mint placement walls
+      - Mint classification, ordering, config, and source ownership audit
+      - fixture and scratch requalification with zero writes
+  attended_live_gate:
+    order: [FEEDBACK-29]
+    scope: [explicitly approved attended live write and readback verification]
+  latest_feedback:
+    order: [FEEDBACK-13, FEEDBACK-14, FEEDBACK-15, FEEDBACK-16, FEEDBACK-17, FEEDBACK-18, FEEDBACK-19, FEEDBACK-20]
+    scope:
+      - 15-minute shortcut display and behavior
+      - Intention copy and textarea readability
+      - bounded Day Setup visual enhancement
+      - readable responsive quarantined calendar row
+      - clearer Results and Preview hierarchy
+      - scratch qualification and independent acceptance
+tasks:
+  - id: FEEDBACK-01
+    title: Fix chronological sequence ordering and validation
+    description: Preserve the completed chronological ordering correction and its regressions.
+    wave: 1
+    agent: gem-implementer
+    status: completed
+    covers: [chronological sequence, deterministic validation]
+    depends_on: []
+    conflicts_with: []
+    context_files:
+      - path: docs/plan/2026-08-12-tdtb-feedback-follow-up/evidence/FEEDBACK-01-sequence.json
+        description: Completed task evidence.
+    flags: {requires_design_validation: false, retries_used: 0, revision_reason: ''}
+    acceptance_criteria: [The completed evidence remains unchanged and authoritative.]
+    handoff:
+      known_context: [Final merged rows are sorted before sequence acceptance.]
+      target_files: []
+      constraints: [Do not reopen or modify this completed task.]
+    requires_review: true
+    review_depth: full
+    review_security_sensitive: false
+
+  - id: FEEDBACK-02
+    title: Make non-permeable calendar walls hard constraints
+    description: Preserve the completed fixed and work calendar wall enforcement.
+    wave: 2
+    agent: gem-implementer
+    status: completed
+    covers: [calendar hard walls, overlap rejection]
+    depends_on: [FEEDBACK-01]
+    conflicts_with: []
+    context_files:
+      - path: docs/plan/2026-08-12-tdtb-feedback-follow-up/evidence/FEEDBACK-02-calendar-walls.json
+        description: Completed task evidence.
+    flags: {requires_design_validation: false, retries_used: 0, revision_reason: ''}
+    acceptance_criteria: [The completed evidence remains unchanged and authoritative.]
+    handoff:
+      known_context: [Fixed and work calendar rows are hard walls unless an explicit policy applies.]
+      target_files: []
+      constraints: [Do not weaken hard-wall enforcement.]
+    requires_review: true
+    review_depth: full
+    review_security_sensitive: true
+
+  - id: FEEDBACK-03
+    title: Replace wall-blind overflow with safe placement or explicit infeasibility
+    description: Preserve the completed safe overflow and explicit infeasibility behavior.
+    wave: 3
+    agent: gem-implementer
+    status: completed
+    covers: [safe overflow, explicit infeasibility]
+    depends_on: [FEEDBACK-02]
+    conflicts_with: []
+    context_files:
+      - path: docs/plan/2026-08-12-tdtb-feedback-follow-up/evidence/FEEDBACK-03-overflow.json
+        description: Completed task evidence.
+    flags: {requires_design_validation: false, retries_used: 0, revision_reason: ''}
+    acceptance_criteria: [The completed evidence remains unchanged and authoritative.]
+    handoff:
+      known_context: [Unplaceable rows remain visible as explicit infeasibility diagnostics.]
+      target_files: []
+      constraints: [Do not hide, drop, or overlap infeasible work.]
+    requires_review: true
+    review_depth: full
+    review_security_sensitive: false
+
+  - id: FEEDBACK-04
+    title: Correct quarantined and fixed event classification
+    description: Preserve the completed quarantined-row exclusion and fixed-row classification.
+    wave: 4
+    agent: gem-implementer
+    status: completed
+    covers: [quarantine classification, capacity exclusion]
+    depends_on: [FEEDBACK-03]
+    conflicts_with: []
+    context_files:
+      - path: docs/plan/2026-08-12-tdtb-feedback-follow-up/evidence/FEEDBACK-04-classification.json
+        description: Completed task evidence.
+    flags: {requires_design_validation: false, retries_used: 0, revision_reason: ''}
+    acceptance_criteria: [The completed evidence remains unchanged and authoritative.]
+    handoff:
+      known_context: [Quarantined rows cost zero capacity and create no hidden wall.]
+      target_files: []
+      constraints: [Do not classify quarantined rows as fixed.]
+    requires_review: true
+    review_depth: full
+    review_security_sensitive: true
+
+  - id: FEEDBACK-05
+    title: Add end-to-end regression fixtures
+    description: Preserve the completed shared backend and frontend feedback fixtures.
+    wave: 5
+    agent: gem-implementer
+    status: completed
+    covers: [shared fixtures, zero-writer regression]
+    depends_on: [FEEDBACK-04]
+    conflicts_with: []
+    context_files:
+      - path: docs/plan/2026-08-12-tdtb-feedback-follow-up/evidence/FEEDBACK-05-fixtures.json
+        description: Completed task evidence.
+    flags: {requires_design_validation: false, retries_used: 0, revision_reason: ''}
+    acceptance_criteria: [The completed evidence remains unchanged and authoritative.]
+    handoff:
+      known_context: [Fixtures pin chronology, walls, quarantine, overflow, and zero writers.]
+      target_files: []
+      constraints: [Use synthetic data only.]
+    requires_review: true
+    review_depth: full
+    review_security_sensitive: true
+
+  - id: FEEDBACK-06
+    title: Re-qualify finish-first behavior with fixtures and scratch
+    description: Preserve the completed reliability qualification and safety proof.
+    wave: 6
+    agent: gem-browser-tester
+    status: completed
+    covers: [finish-first qualification, scratch safety]
+    depends_on: [FEEDBACK-05]
+    conflicts_with: []
+    context_files:
+      - path: docs/plan/2026-08-12-tdtb-feedback-follow-up/evidence/FEEDBACK-06-requalification.json
+        description: Completed task evidence.
+    flags: {requires_design_validation: false, retries_used: 0, revision_reason: ''}
+    acceptance_criteria: [The completed evidence remains unchanged and authoritative.]
+    handoff:
+      known_context: [Qualification recorded zero billed calls and zero real writes.]
+      target_files: []
+      constraints: [Do not convert scratch proof into live verification.]
+    requires_review: true
+    review_depth: full
+    review_security_sensitive: true
+
+  - id: FEEDBACK-07
+    title: Complete implementation-ready UI direction
+    description: Preserve the completed UI direction as historical design evidence.
+    wave: 7
+    agent: gem-designer
+    status: completed
+    covers: [UI direction, panel access, calendar controls, hierarchy]
+    depends_on: [FEEDBACK-06]
+    conflicts_with: []
+    context_files:
+      - path: docs/plan/2026-08-12-tdtb-feedback-follow-up/evidence/FEEDBACK-07-ui-direction.json
+        description: Completed design evidence; time claims are superseded by FEEDBACK-12.
+    flags: {requires_design_validation: true, retries_used: 0, revision_reason: ''}
+    acceptance_criteria: [Evidence remains unchanged; FEEDBACK-12 controls time display.]
+    handoff:
+      known_context: [All non-time UI contracts remain accepted.]
+      target_files: []
+      constraints: [Do not reuse superseded 24-hour display guidance.]
+    requires_review: true
+    review_depth: full
+    review_security_sensitive: false
+
+  - id: FEEDBACK-08
+    title: Make results and day setup reachable and prominent
+    description: Preserve the completed panel reachability and prominence work.
+    wave: 8
+    agent: gem-implementer
+    status: completed
+    covers: [Results access, Day Setup access, focus behavior]
+    depends_on: [FEEDBACK-07]
+    conflicts_with: []
+    context_files:
+      - path: docs/plan/2026-08-12-tdtb-feedback-follow-up/evidence/FEEDBACK-08-panels.json
+        description: Completed task evidence.
+    flags: {requires_design_validation: true, retries_used: 0, revision_reason: ''}
+    acceptance_criteria: [The completed evidence remains unchanged and authoritative.]
+    handoff:
+      known_context: [Results and Day Setup remain reachable by pointer and keyboard.]
+      target_files: []
+      constraints: [Do not regress dialog focus or two-gate commit behavior.]
+    requires_review: true
+    review_depth: full
+    review_security_sensitive: false
+
+  - id: FEEDBACK-09
+    title: Improve calendar impact controls and time presentation
+    description: Preserve completed calendar controls; FEEDBACK-12 supersedes only time display.
+    wave: 9
+    agent: gem-implementer
+    status: completed
+    covers: [calendar controls, local projection, historical time change]
+    depends_on: [FEEDBACK-08]
+    conflicts_with: []
+    context_files:
+      - path: docs/plan/2026-08-12-tdtb-feedback-follow-up/evidence/FEEDBACK-09-calendar-ui.json
+        description: Completed evidence with superseded 24-hour display claims.
+    flags: {requires_design_validation: true, retries_used: 0, revision_reason: ''}
+    acceptance_criteria: [Non-time evidence remains unchanged; FEEDBACK-12 controls display format.]
+    handoff:
+      known_context: [Projection controls never mutate source calendar events.]
+      target_files: []
+      constraints: [Do not restore display24h or add calendar writers.]
+    requires_review: true
+    review_depth: full
+    review_security_sensitive: true
+
+  - id: FEEDBACK-10
+    title: Clarify queue hierarchy, actions, and allocation state
+    description: Preserve the completed queue hierarchy and action clarity work.
+    wave: 10
+    agent: gem-implementer
+    status: completed
+    covers: [queue hierarchy, tooltips, More menu, allocation state]
+    depends_on: [FEEDBACK-09]
+    conflicts_with: []
+    context_files:
+      - path: docs/plan/2026-08-12-tdtb-feedback-follow-up/evidence/FEEDBACK-10-hierarchy.json
+        description: Completed task evidence; time retention text is superseded by FEEDBACK-12.
+    flags: {requires_design_validation: true, retries_used: 0, revision_reason: ''}
+    acceptance_criteria: [Evidence remains unchanged; FEEDBACK-12 controls time display.]
+    handoff:
+      known_context: [Queue action semantics and responsive hierarchy remain accepted.]
+      target_files: []
+      constraints: [Do not change Done, Drop, Unassign, or Delete semantics.]
+    requires_review: true
+    review_depth: full
+    review_security_sensitive: false
+
+  - id: FEEDBACK-11
+    title: Re-qualify UI and panel feedback end to end
+    description: Preserve the completed scratch UI qualification as the pre-extension baseline.
+    wave: 11
+    agent: gem-browser-tester
+    status: completed
+    covers: [UI scratch qualification, responsive baseline, zero-write proof]
+    depends_on: [FEEDBACK-10]
+    conflicts_with: []
+    context_files:
+      - path: docs/plan/2026-08-12-tdtb-feedback-follow-up/evidence/FEEDBACK-11-ui-requalification.json
+        description: Completed evidence; 24-hour checks are superseded by FEEDBACK-12.
+    flags: {requires_design_validation: false, retries_used: 0, revision_reason: ''}
+    acceptance_criteria: [Evidence remains unchanged; superseded time claims are not reused.]
+    handoff:
+      known_context: [All non-time browser and safety checks remain the accepted baseline.]
+      target_files: []
+      constraints: [Do not claim historical 24-hour checks are current requirements.]
+    requires_review: true
+    review_depth: full
+    review_security_sensitive: true
+
+  - id: FEEDBACK-12
+    title: Restore authoritative 12-hour time display
+    description: Preserve the completed correction that makes display12h authoritative.
+    wave: 12
+    agent: gem-implementer
+    status: completed
+    covers: [12-hour display, internal HH:MM preservation]
+    depends_on: [FEEDBACK-11]
+    conflicts_with: []
+    context_files:
+      - path: docs/plan/2026-08-12-tdtb-feedback-follow-up/evidence/FEEDBACK-12-12-hour.json
+        description: Current user-facing time authority and completed verification.
+    flags: {requires_design_validation: false, retries_used: 0, revision_reason: ''}
+    acceptance_criteria:
+      - User-facing times remain 12-hour with AM or PM where applicable.
+      - Internal ordering, arithmetic, and wire values remain 24-hour HH:MM.
+      - Completed evidence remains unchanged.
+    handoff:
+      known_context: [display12h is authoritative and display24h was removed.]
+      target_files: []
+      constraints: [Do not reintroduce a 24-hour user-facing requirement.]
+    requires_review: true
+    review_depth: full
+    review_security_sensitive: false
+
+  - id: FEEDBACK-21
+    title: Diagnose Todoist due verification time drift
+    description: >-
+      Establish why equivalent intent and live due values can compare as different, including
+      format, timezone, provider serialization, and error-display boundaries.
+    wave: 7
+    agent: gem-debugger
+    status: completed
+    covers: [Todoist mismatch diagnosis, canonical time boundary, display boundary]
+    depends_on: [FEEDBACK-06]
+    conflicts_with: []
+    context_files:
+      - path: app/commit.py
+        description: Todoist write verification and mismatch reporting boundary.
+      - path: app/todoist_client.py
+        description: Todoist provider serialization and readback boundary.
+      - path: docs/plan/2026-08-12-tdtb-feedback-follow-up/evidence/FEEDBACK-12-12-hour.json
+        description: Authoritative user-facing display contract.
+      - path: docs/plan/2026-08-12-tdtb-feedback-follow-up/evidence/FEEDBACK-23-due-verification.json
+        description: Direct root-cause, timezone, serialization, comparison, and display diagnosis.
+      - path: docs/plan/2026-08-12-tdtb-feedback-follow-up/evidence/FEEDBACK-28-requalification.json
+        description: Independent scratch proof of equivalent and genuinely different due instants.
+    flags: {requires_design_validation: false, retries_used: 0, revision_reason: ''}
+    acceptance_criteria:
+      - Diagnosis identifies the comparison, timezone, serialization, and display boundaries.
+      - The 19:00 intent versus 23:00 live report is classified as equivalent or different by instant.
+      - Diagnosis distinguishes canonical write values from 12-hour user-facing error text.
+      - A genuinely different due instant remains a required verification failure.
+      - Evidence reports no live POST, billed call, provider write, real source write, or restart.
+    handoff:
+      known_context:
+        - User observed todoist Press due mismatch with intent 19:00 and live 23:00.
+        - A 24-hour value still appeared in the user-visible error.
+      target_files:
+        - docs/plan/2026-08-12-tdtb-feedback-follow-up/evidence/FEEDBACK-21-time-diagnosis.json
+      constraints: [Diagnosis only; use fixtures or recorded values and do not contact live providers.]
+    requires_review: true
+    review_depth: full
+    review_security_sensitive: true
+    result:
+      status: completed
+      files_changed: []
+      output: >-
+        FEEDBACK-23 directly identifies the UTC-wall versus local-time defect, canonical comparison,
+        provider serialization, 12-hour display boundary, and true-mismatch failure; FEEDBACK-28 re-proves it.
+      summary: Direct downstream diagnosis evidence satisfies every original FEEDBACK-21 criterion.
+
+  - id: FEEDBACK-22
+    title: Audit Mint rules, configuration, ordering, and source ownership
+    description: >-
+      Produce one authoritative diagnosis of Mint classification, configuration precedence,
+      ordering, reservation semantics, intended write ownership, and forbidden writer boundaries.
+    wave: 7
+    agent: gem-debugger
+    status: completed
+    covers: [Mint rule audit, config precedence, ordering, source ownership]
+    depends_on: [FEEDBACK-06]
+    conflicts_with: []
+    context_files:
+      - path: app/config_reader.py
+        description: Runtime configuration and precedence boundary.
+      - path: app/day_semantics.py
+        description: Mint enablement, allotment, and zone semantics.
+      - path: app/placement_rules.py
+        description: Placement policy and reserved-window boundary.
+      - path: app/sequence.py
+        description: Mint classification and final sequence validation boundary.
+      - path: app/commit.py
+        description: Write intent, provider ownership, and readback boundary.
+      - path: docs/plan/2026-08-12-tdtb-feedback-follow-up/evidence/FEEDBACK-25-mint.json
+        description: Direct config precedence, stale fallback, ordering, and hard-wall diagnosis.
+      - path: docs/plan/2026-08-12-tdtb-feedback-follow-up/evidence/FEEDBACK-26-readback.json
+        description: Direct output ownership, immutable source, classification, and readback diagnosis.
+      - path: docs/plan/2026-08-12-tdtb-feedback-follow-up/evidence/FEEDBACK-27-fixtures.json
+        description: Deterministic rule, owner, missing-write, and permeable-space signatures.
+      - path: docs/plan/2026-08-12-tdtb-feedback-follow-up/evidence/FEEDBACK-28-requalification.json
+        description: Independent scratch acceptance of the separated Mint contracts.
+      - path: docs/plan/2026-08-12-tdtb-feedback-follow-up/evidence/FEEDBACK-29-live.json
+        description: Attended proof of resolved Mint ownership and immutable source behavior.
+    flags: {requires_design_validation: false, retries_used: 0, revision_reason: ''}
+    acceptance_criteria:
+      - Audit names the authoritative Mint classifiers and their ordering before final placement.
+      - Audit states configuration precedence and detects stale, conflicting, or duplicate Mint rules.
+      - Audit identifies the sole authorized write owner for each Mint intent or returns a blocker.
+      - Calendar events remain immutable and no calendar writer is authorized for Mint blocks.
+      - Audit defines separate failure signatures for missing Mint writes and permeable Mint space.
+      - Evidence reports zero live POSTs, billed calls, provider writes, and real source writes.
+    handoff:
+      known_context:
+        - User reports Mint blocks were not correctly written and assigned tasks occupied Mint time.
+        - Screenshot evidence shows Minting and later Mint-related rows with overlapping assignments.
+      target_files:
+        - docs/plan/2026-08-12-tdtb-feedback-follow-up/evidence/FEEDBACK-22-mint-audit.json
+      constraints: [Audit only; preserve source identities and the calendar no-writer contract.]
+    requires_review: true
+    review_depth: full
+    review_security_sensitive: true
+    result:
+      status: completed
+      files_changed: []
+      output: >-
+        FEEDBACK-25 diagnoses effective-allotment precedence, stale two-block fallback, classifier ordering,
+        and permeable space; FEEDBACK-26 through FEEDBACK-29 pin sole output ownership and source immutability.
+      summary: Direct downstream audit evidence satisfies every original FEEDBACK-22 criterion.
+
+  - id: FEEDBACK-23
+    title: Normalize Todoist write verification time semantics
+    description: >-
+      Make Todoist due verification compare canonical time meaning across intent, provider
+      serialization, timezone, and readback while formatting user-visible errors in 12-hour time.
+    wave: 8
+    agent: gem-implementer
+    status: completed
+    covers: [canonical due comparison, provider serialization, 12-hour error display]
+    depends_on: [FEEDBACK-21]
+    conflicts_with: [FEEDBACK-24]
+    context_files:
+      - path: app/commit.py
+        description: Todoist verification and mismatch reporting boundary.
+      - path: app/todoist_client.py
+        description: Provider due serialization and readback boundary.
+      - path: docs/plan/2026-08-12-tdtb-feedback-follow-up/evidence/FEEDBACK-21-time-diagnosis.json
+        description: Required debugger diagnosis and canonical comparison contract.
+    flags: {requires_design_validation: false, retries_used: 0, revision_reason: ''}
+    acceptance_criteria:
+      - Equivalent intent and readback instants pass despite different valid encodings.
+      - Different dates, all-day states, missing times, or genuinely different instants fail clearly.
+      - Internal comparison and provider serialization do not depend on display-formatted strings.
+      - User-visible mismatch text uses 12-hour time with AM or PM and no raw 24-hour time.
+      - Regression tests cover equivalent 19:00 and 23:00 encodings plus a true mismatch.
+      - Tests use fakes only and record zero provider or real source writes.
+    handoff:
+      known_context: [FEEDBACK-21 supplies the verified diagnosis and normalization boundary.]
+      target_files: [app/commit.py, app/todoist_client.py, app/tests/]
+      constraints: [Do not weaken per-write verification or change user-visible 12-hour authority.]
+    requires_review: true
+    review_depth: full
+    review_security_sensitive: true
+
+  - id: FEEDBACK-24
+    title: Enforce the Mint write and readback contract
+    description: >-
+      Make each intended Mint block explicit in the authorized write set and require verified
+      readback of its identity, date, canonical time, duration, and source ownership.
+    wave: 8
+    agent: gem-implementer
+    status: completed
+    covers: [Mint write intent, authorized owner, per-write readback, failure reporting]
+    depends_on: [FEEDBACK-22]
+    conflicts_with: [FEEDBACK-23, FEEDBACK-25]
+    context_files:
+      - path: app/commit.py
+        description: Exact write and readback verification boundary.
+      - path: app/commit_run.py
+        description: Commit orchestration and provider result boundary.
+      - path: docs/plan/2026-08-12-tdtb-feedback-follow-up/evidence/FEEDBACK-22-mint-audit.json
+        description: Authoritative Mint owner and write-contract diagnosis.
+    flags: {requires_design_validation: false, retries_used: 0, revision_reason: ''}
+    acceptance_criteria:
+      - Every intended Mint block appears once in the exact write preview for its authorized owner.
+      - Readback verifies Mint identity, date, canonical time, duration, and source ownership.
+      - Missing, duplicate, shifted, shortened, or wrong-owner Mint readback blocks acceptance.
+      - Calendar write calls remain zero and imported calendar events remain immutable.
+      - User-visible Mint times and write errors use 12-hour display without changing wire values.
+      - Focused tests use fake providers and prove both successful and failed readback scenarios.
+    handoff:
+      known_context: [FEEDBACK-22 controls source ownership and may block implementation if unresolved.]
+      target_files: [app/commit.py, app/commit_run.py, app/tests/]
+      constraints: [No new provider owner, live call, calendar writer, or weakened commit gate.]
+    requires_review: true
+    review_depth: full
+    review_security_sensitive: true
+
+  - id: FEEDBACK-25
+    title: Make Mint reservations hard placement constraints
+    description: >-
+      Make resolved Mint blocks non-permeable during proposal validation, final placement,
+      overflow handling, and infeasibility reporting so assigned tasks cannot occupy Mint space.
+    wave: 8
+    agent: gem-implementer
+    status: completed
+    covers: [Mint hard walls, assigned-task exclusion, overflow safety, infeasibility]
+    depends_on: [FEEDBACK-22]
+    conflicts_with: [FEEDBACK-24]
+    context_files:
+      - path: app/placement_rules.py
+        description: Hard placement policy boundary.
+      - path: app/sequence.py
+        description: Proposal and final-sequence validation boundary.
+      - path: app/day_semantics.py
+        description: Resolved Mint reservation source.
+      - path: docs/plan/2026-08-12-tdtb-feedback-follow-up/evidence/FEEDBACK-22-mint-audit.json
+        description: Authoritative Mint classification and ordering diagnosis.
+    flags: {requires_design_validation: false, retries_used: 0, revision_reason: ''}
+    acceptance_criteria:
+      - No assigned task overlaps any resolved Mint reservation in accepted output.
+      - Mint reservations are enforced after model output, sorting, repair, and overflow handling.
+      - Work that cannot avoid Mint and existing hard walls remains explicit as infeasible.
+      - Mint walls do not mutate calendar events or change quarantined-event capacity semantics.
+      - Regression tests cover the reported afternoon Mint windows and later fixed-window conflicts.
+      - Tests use synthetic data and record zero billed calls and external writes.
+    handoff:
+      known_context: [Assigned tasks currently appear inside Mint time in reported output.]
+      target_files: [app/placement_rules.py, app/sequence.py, app/tests/]
+      constraints: [Extend the hard-wall contract; do not hide, drop, or silently overlap work.]
+    requires_review: true
+    review_depth: full
+    review_security_sensitive: true
+
+  - id: FEEDBACK-26
+    title: Add separate write and Mint regression fixtures
+    description: >-
+      Add deterministic fixtures that independently prove Todoist time normalization, Mint
+      write/readback verification, Mint placement exclusion, and audited rule ownership.
+    wave: 9
+    agent: gem-implementer
+    status: completed
+    covers: [time fixtures, Mint write fixtures, Mint placement fixtures, ownership fixtures]
+    depends_on: [FEEDBACK-23, FEEDBACK-24, FEEDBACK-25]
+    conflicts_with: []
+    context_files:
+      - path: app/tests
+        description: Backend contract and regression suite.
+      - path: app/fixtures_dryrun.py
+        description: Isolated fixture qualification boundary.
+      - path: frontend/src/fixtures/feedbackScenario.ts
+        description: Shared frontend feedback scenario where contract projection is required.
+    flags: {requires_design_validation: false, retries_used: 0, revision_reason: ''}
+    acceptance_criteria:
+      - Todoist equivalent-encoding and true-mismatch scenarios can pass or fail independently.
+      - Mint write/readback success and each required failure signature are separately selectable.
+      - Mint placement overlap and explicit infeasibility scenarios are separately selectable.
+      - Fixtures pin the audited Mint classification, ordering, config, and owner contract.
+      - Visible fixture output uses 12-hour time while wire and comparison values stay canonical.
+      - Fixture execution proves zero billed calls, live POSTs, provider writes, and real writes.
+    handoff:
+      known_context: [FEEDBACK-23 through FEEDBACK-25 define independent completed contracts.]
+      target_files: [app/tests/, app/fixtures_dryrun.py, frontend/src/fixtures/]
+      constraints: [Synthetic deterministic inputs only; do not add live credentials or endpoints.]
+    requires_review: true
+    review_depth: full
+    review_security_sensitive: true
+
+  - id: FEEDBACK-27
+    title: Re-qualify write and Mint reliability in isolated scratch
+    description: >-
+      Run the new backend, frontend, fixture, and scratch scenarios as one bounded reliability
+      qualification on port 8790 with fake providers and explicit zero-write counters.
+    wave: 10
+    agent: gem-browser-tester
+    status: completed
+    covers: [scratch qualification, scenario isolation, zero-write proof, 12-hour display]
+    depends_on: [FEEDBACK-26]
+    conflicts_with: []
+    context_files:
+      - path: app/tests
+        description: Backend reliability suites and fixtures.
+      - path: frontend/package.json
+        description: Frontend test, typecheck, and build gates.
+      - path: docs/plan/2026-08-12-tdtb-feedback-follow-up/evidence/FEEDBACK-06-requalification.json
+        description: Accepted scratch safety baseline.
+    flags: {requires_design_validation: false, retries_used: 0, revision_reason: ''}
+    acceptance_criteria:
+      - Backend tests and required frontend tests, typecheck, mockup build, and production build pass.
+      - Scratch scenarios separately prove time normalization, Mint readback, and Mint placement.
+      - Rule and owner fixtures match FEEDBACK-22 without unresolved conflicts or duplicate ownership.
+      - Visible times and errors are 12-hour; internal and write values remain canonical.
+      - Evidence records zero billed calls, live POSTs, provider writes, real writes, and restarts.
+      - No result claims that live Todoist, Calendar, vault, or Mint state was repaired.
+    handoff:
+      known_context: [Port 8790 and fake providers are the only authorized qualification surface.]
+      target_files:
+        - docs/plan/2026-08-12-tdtb-feedback-follow-up/evidence/FEEDBACK-27-write-mint-requalification.json
+      constraints: [No live endpoint, external source, production restart, or Git mutation.]
+    requires_review: true
+    review_depth: full
+    review_security_sensitive: true
+
+  - id: FEEDBACK-28
+    title: Accept the finish-first write and Mint reliability gates
+    description: >-
+      Independently accept the diagnoses, bounded contracts, regression isolation, scratch proof,
+      and preserved no-writer boundaries before any remaining UI polish starts.
+    wave: 11
+    agent: gem-reviewer
+    status: completed
+    covers: [finish-first acceptance, contract separation, safety proof]
+    depends_on: [FEEDBACK-27]
+    conflicts_with: []
+    context_files:
+      - path: docs/plan/2026-08-12-tdtb-feedback-follow-up/evidence
+        description: Completed baseline plus FEEDBACK-21 through FEEDBACK-27 evidence.
+    flags: {requires_design_validation: false, retries_used: 0, revision_reason: ''}
+    acceptance_criteria:
+      - Todoist mismatch, Mint write/readback, Mint placement, and rule audit have separate proofs.
+      - Display formatting is separate from canonical internal and provider serialization values.
+      - FEEDBACK-01 through FEEDBACK-12 tasks and evidence remain unchanged and accepted.
+      - Scratch proof records zero live POSTs, billed calls, provider writes, and real source writes.
+      - Remaining UI polish is unblocked only if every finish-first gate passes.
+      - Attended live verification remains a separate explicit-approval gate.
+    handoff:
+      known_context: [This gate accepts repository and scratch evidence only.]
+      target_files:
+        - docs/plan/2026-08-12-tdtb-feedback-follow-up/evidence/FEEDBACK-28-reliability-acceptance.json
+      constraints: [Review only; do not mutate source, runtime, external state, or Git history.]
+    requires_review: false
+    review_depth: full
+    review_security_sensitive: true
+
+  - id: FEEDBACK-29
+    title: Hold an attended live write and readback verification gate
+    description: >-
+      Keep any live Todoist or Mint write verification behind a separate attended decision after
+      repository acceptance, with exact intended writes, rollback, and readback scope disclosed.
+    wave: 12
+    agent: gem-browser-tester
+    status: completed
+    covers: [attended approval boundary, live readback gate, no calendar writes]
+    depends_on: [FEEDBACK-28]
+    conflicts_with: []
+    context_files:
+      - path: docs/plan/2026-08-12-tdtb-feedback-follow-up/evidence/FEEDBACK-28-reliability-acceptance.json
+        description: Required repository and scratch acceptance.
+    flags: {requires_design_validation: false, retries_used: 0, revision_reason: ''}
+    acceptance_criteria:
+      - No action occurs without Adam's explicit attended approval of the exact write set.
+      - Approved scope names the provider, target objects, expected canonical values, and rollback.
+      - Readback checks the approved writes without authorizing Calendar or vault mutation.
+      - User-visible attended results use 12-hour time while evidence retains canonical values.
+      - A denied or absent approval leaves this task blocked and does not block repository safety.
+    handoff:
+      known_context: [Plan inclusion is not approval and authorizes no POST or external write.]
+      target_files:
+        - docs/plan/2026-08-12-tdtb-feedback-follow-up/evidence/FEEDBACK-29-attended-live-gate.json
+      constraints: [Explicit attended approval required; never mutate Calendar events or the vault.]
+    requires_review: true
+    review_depth: full
+    review_security_sensitive: true
+
+  - id: FEEDBACK-13
+    title: Validate the latest bounded UI direction
+    description: >-
+      Convert the latest screenshots into one implementation-ready design handoff with
+      separate contracts for shortcuts, Day Setup, Calendar Impact, and Results/Preview.
+    wave: 13
+    agent: gem-designer
+    status: completed
+    covers:
+      - 15-minute shortcut copy
+      - Intention copy and textarea readability
+      - Day Setup visual enhancement
+      - quarantined calendar row responsiveness
+      - Results and Preview hierarchy
+      - authoritative 12-hour display
+    depends_on: [FEEDBACK-12, FEEDBACK-28]
+    conflicts_with: []
+    context_files:
+      - path: DESIGN.md
+        description: Repository design reference; designer owns format interpretation.
+      - path: docs/plan/2026-08-12-tdtb-feedback-follow-up/evidence/FEEDBACK-12-12-hour.json
+        description: Authoritative time display requirement.
+      - path: docs/plan/2026-08-12-tdtb-feedback-follow-up/evidence/FEEDBACK-11-ui-requalification.json
+        description: Accepted pre-extension responsive and panel baseline.
+    flags: {requires_design_validation: true, retries_used: 0, revision_reason: ''}
+    acceptance_criteria:
+      - Handoff defines a distinct measurable treatment for each of the five observations.
+      - Intention label or helper says one thing to focus on today.
+      - Intention textarea treatment defines readable text, surface, border, focus, and spacing states.
+      - Calendar and Results treatments define desktop and narrow-width hierarchy without overlap.
+      - Every user-facing time example is 12-hour; no 24-hour display requirement appears.
+      - Existing hard-wall, quarantine, zero-writer, local-projection, and commit gates remain explicit.
+    handoff:
+      known_context:
+        - Supplied evidence includes tdtb.orca.localhost and Day Setup screenshots.
+        - This is bounded follow-up, not a new cockpit redesign.
+      target_files:
+        - docs/plan/2026-08-12-tdtb-feedback-follow-up/evidence/FEEDBACK-13-ui-direction.json
+      constraints: [Design handoff only; do not implement or change DESIGN.md.]
+    requires_review: true
+    review_depth: full
+    review_security_sensitive: false
+
+  - id: FEEDBACK-14
+    title: Correct the keyboard shortcut display and adjustment contract
+    description: >-
+      Align the visible keyboard shortcut guidance and its adjustment behavior to 15-minute
+      increments so no affected surface states or applies a 30-minute shortcut.
+    wave: 14
+    agent: gem-implementer
+    status: completed
+    covers: [shortcut copy, shortcut behavior, regression tests]
+    depends_on: [FEEDBACK-13]
+    conflicts_with: [FEEDBACK-16, FEEDBACK-18]
+    context_files:
+      - path: frontend/src
+        description: Current shortcut display and keyboard handling surfaces.
+      - path: docs/plan/2026-08-12-tdtb-feedback-follow-up/evidence/FEEDBACK-13-ui-direction.json
+        description: Approved shortcut presentation contract.
+    flags: {requires_design_validation: false, retries_used: 0, revision_reason: ''}
+    acceptance_criteria:
+      - Every affected shortcut hint displays +/- 15 min and no affected hint displays +/- 30 min.
+      - The corresponding keyboard action changes the effective value by exactly 15 minutes.
+      - Pointer controls, duration bounds, and persisted values remain consistent with the shortcut.
+      - Focused tests cover display text, both adjustment directions, and boundary behavior.
+      - User-facing time labels in the tested surface remain 12-hour.
+    handoff:
+      known_context: [The latest live UI shows the wrong 30-minute shortcut guidance.]
+      target_files: [frontend/src/]
+      constraints: [Do not change unrelated scheduling granularity or internal HH:MM contracts.]
+    requires_review: true
+    review_depth: full
+    review_security_sensitive: false
+
+  - id: FEEDBACK-15
+    title: Correct Intention copy and textarea readability
+    description: >-
+      Make the Day Setup Intention prompt describe one focus for today and make the
+      textarea readable across supported themes, focus states, and widths.
+    wave: 14
+    agent: gem-implementer
+    status: completed
+    covers: [Intention label, helper text, textarea readability]
+    depends_on: [FEEDBACK-13]
+    conflicts_with: [FEEDBACK-16]
+    context_files:
+      - path: frontend/src/ui/SetupDrawer.tsx
+        description: Day Setup Intention field surface.
+      - path: frontend/src/app.css
+        description: Current form-field and theme treatment.
+      - path: docs/plan/2026-08-12-tdtb-feedback-follow-up/evidence/FEEDBACK-13-ui-direction.json
+        description: Approved field treatment.
+    flags: {requires_design_validation: false, retries_used: 0, revision_reason: ''}
+    acceptance_criteria:
+      - Visible Intention label or helper copy says one thing to focus on today.
+      - Text, placeholder, surface, border, focus ring, and disabled states remain readable.
+      - Textarea content is not clipped or obscured at desktop and narrow widths.
+      - Existing value persistence and Day Setup confirmation behavior remain unchanged.
+      - Focused component tests cover exact copy and field states.
+    handoff:
+      known_context: [The current textarea is visually difficult to read in the supplied screenshot.]
+      target_files: [frontend/src/ui/SetupDrawer.tsx, frontend/src/app.css]
+      constraints: [Do not alter Day Setup data shape or persistence semantics.]
+    requires_review: true
+    review_depth: full
+    review_security_sensitive: false
+
+  - id: FEEDBACK-16
+    title: Enhance the broader Day Setup visual hierarchy
+    description: >-
+      Apply the approved bounded hierarchy, grouping, spacing, and action treatment to
+      Day Setup after the Intention field contract is fixed.
+    wave: 15
+    agent: gem-implementer
+    status: completed
+    covers: [Day Setup hierarchy, section grouping, responsive layout, action clarity]
+    depends_on: [FEEDBACK-15]
+    conflicts_with: [FEEDBACK-14, FEEDBACK-18]
+    context_files:
+      - path: frontend/src/ui/SetupDrawer.tsx
+        description: Day Setup composition and controls.
+      - path: frontend/src/app.css
+        description: Shared cockpit layout and responsive styles.
+      - path: docs/plan/2026-08-12-tdtb-feedback-follow-up/evidence/FEEDBACK-13-ui-direction.json
+        description: Approved Day Setup hierarchy contract.
+      - path: docs/plan/2026-08-12-tdtb-feedback-follow-up/evidence/FEEDBACK-16-ui.json
+        description: Completed implementation and qualification evidence.
+    flags: {requires_design_validation: false, retries_used: 0, revision_reason: ''}
+    acceptance_criteria:
+      - Day Setup sections have a clear scan order and distinct grouping without adding product steps.
+      - Primary, secondary, pending, and confirmed actions retain their existing behavior and hierarchy.
+      - Layout remains readable without overlap or horizontal overflow at supported widths.
+      - FEEDBACK-15 copy and textarea readability remain intact.
+      - Dialog focus, Escape close, focus restore, and 12-hour time labels remain intact.
+    handoff:
+      known_context: [FEEDBACK-08 reachability and focus behavior are accepted and must remain green.]
+      target_files: [frontend/src/ui/SetupDrawer.tsx, frontend/src/app.css]
+      constraints: [Bounded visual enhancement only; no new workflow or state transition.]
+    requires_review: true
+    review_depth: full
+    review_security_sensitive: false
+
+  - id: FEEDBACK-17
+    title: Repair the quarantined Calendar Impact row layout
+    description: >-
+      Give quarantined calendar rows a readable responsive structure so metadata,
+      classification, counted state, and controls do not compress or overlap.
+    wave: 14
+    agent: gem-implementer
+    status: completed
+    covers: [quarantined row layout, responsive readability, preserved classification]
+    depends_on: [FEEDBACK-13]
+    conflicts_with: []
+    context_files:
+      - path: frontend/src/ui/CalendarImpact.tsx
+        description: Calendar row content and quarantined state.
+      - path: frontend/src/app.css
+        description: Calendar row grid and narrow-width styles.
+      - path: docs/plan/2026-08-12-tdtb-feedback-follow-up/evidence/FEEDBACK-04-classification.json
+        description: Accepted quarantine semantics.
+      - path: docs/plan/2026-08-12-tdtb-feedback-follow-up/evidence/FEEDBACK-17-ui-requalification.json
+        description: Revised completed evidence with clean typecheck and final-tree verification.
+    flags: {requires_design_validation: false, retries_used: 0, revision_reason: ''}
+    acceptance_criteria:
+      - Quarantined row text, badges, times, counted state, and controls do not overlap.
+      - Desktop and narrow-width layouts retain a clear reading order without horizontal overflow.
+      - Quarantined remains Not counted, costs zero capacity, and creates no hard-wall badge.
+      - Fixed and work rows retain hard-wall and accounting-control behavior.
+      - All visible row times use the authoritative 12-hour display.
+    handoff:
+      known_context: [The supplied live screenshot shows a compressed and overlapping quarantined row.]
+      target_files: [frontend/src/ui/CalendarImpact.tsx, frontend/src/app.css]
+      constraints: [Presentation only; no classification, capacity, projection, or writer changes.]
+    requires_review: true
+    review_depth: full
+    review_security_sensitive: true
+
+  - id: FEEDBACK-18
+    title: Clarify Results and Preview writes hierarchy
+    description: >-
+      Improve the live cockpit entry point and drawer hierarchy so Preview writes,
+      Results, exact writes, blockers, and status are easy to scan without weakening gates.
+    wave: 14
+    agent: gem-implementer
+    status: completed
+    covers: [Results entry point, Preview writes panel, exact-write hierarchy, responsive layout]
+    depends_on: [FEEDBACK-13]
+    conflicts_with: [FEEDBACK-14, FEEDBACK-16]
+    context_files:
+      - path: frontend/src/ui/ActionDock.tsx
+        description: Live cockpit Results and Preview entry point.
+      - path: frontend/src/ui/ApprovalDrawer.tsx
+        description: Preview writes, Results, blockers, and exact writes.
+      - path: frontend/src/app.css
+        description: Panel and dock hierarchy styles.
+      - path: docs/plan/2026-08-12-tdtb-feedback-follow-up/evidence/FEEDBACK-08-panels.json
+        description: Accepted reachability and focus baseline.
+    flags: {requires_design_validation: false, retries_used: 0, revision_reason: ''}
+    acceptance_criteria:
+      - Preview writes and Results states have distinct headings, status, and primary next actions.
+      - Exact writes, blockers, totals, and verification status have a clear scan hierarchy.
+      - The cockpit entry point remains visible and understandable in every applicable state.
+      - Desktop and narrow-width layouts have no overlap, clipping, or horizontal overflow.
+      - Two-gate live commit, exact-write disclosure, dialog focus, and 12-hour times remain intact.
+    handoff:
+      known_context: [Supplied screenshots show weak hierarchy in both the panel and live cockpit.]
+      target_files: [frontend/src/ui/ActionDock.tsx, frontend/src/ui/ApprovalDrawer.tsx, frontend/src/app.css]
+      constraints: [No new write action, no commit-gate change, and no provider behavior change.]
+    requires_review: true
+    review_depth: full
+    review_security_sensitive: true
+
+  - id: FEEDBACK-19
+    title: Re-qualify the latest UI feedback in isolated scratch
+    description: >-
+      Verify all five corrections with focused suites, rebuilt bundles, and
+      screenshot-derived browser scenarios on scratch port 8790 only.
+    wave: 16
+    agent: gem-browser-tester
+    status: completed
+    covers: [automated gates, responsive browser checks, 12-hour authority, zero-write proof]
+    depends_on: [FEEDBACK-14, FEEDBACK-16, FEEDBACK-17, FEEDBACK-18]
+    conflicts_with: []
+    context_files:
+      - path: frontend/package.json
+        description: Frontend test, typecheck, and build gates.
+      - path: docs/plan/2026-08-12-tdtb-feedback-follow-up/evidence/FEEDBACK-13-ui-direction.json
+        description: Approved scenario and visual contract.
+      - path: docs/plan/2026-08-12-tdtb-feedback-follow-up/evidence/FEEDBACK-12-12-hour.json
+        description: Authoritative time baseline.
+    flags: {requires_design_validation: false, retries_used: 0, revision_reason: ''}
+    acceptance_criteria:
+      - Frontend tests, typecheck, mockup build, and production build pass.
+      - Browser checks cover shortcut, Intention, Day Setup, quarantined row, and Results/Preview.
+      - Desktop and narrow-width checks show readable hierarchy with no overlap or overflow.
+      - Every affected user-facing time label is 12-hour and no 24-hour requirement is asserted.
+      - Hard walls, quarantine, local projection, panel focus, and commit gates remain green.
+      - Evidence records zero billed calls, live POSTs, provider writes, real writes, restarts, and commits.
+    handoff:
+      known_context:
+        - Configured a11y and visual-regression automation are unavailable.
+        - FEEDBACK-14, FEEDBACK-16, FEEDBACK-17, and FEEDBACK-18 are completed; this task is unblocked.
+      target_files:
+        - docs/plan/2026-08-12-tdtb-feedback-follow-up/evidence/FEEDBACK-19-ui-requalification.json
+      constraints: [Use fixture adapters, rebuilt bundles, and scratch port 8790 only.]
+    requires_review: true
+    review_depth: full
+    review_security_sensitive: true
+    result:
+      status: completed
+      files_changed: []
+      output: >-
+        FEEDBACK-19-ui-requalification.json records two stable 79-of-79 browser runs, clean tests,
+        typecheck and builds, zero non-GET requests, zero writes, and no runtime or Git mutation.
+      summary: All FEEDBACK-19 acceptance criteria are directly satisfied by its evidence file.
+
+  - id: FEEDBACK-20
+    title: Accept the latest feedback extension
+    description: >-
+      Independently review the design handoff, bounded implementations, automated
+      gates, responsive scratch evidence, and preserved safety contracts.
+    wave: 17
+    agent: gem-reviewer
+    status: completed
+    covers: [final acceptance, regression integrity, safety proof]
+    depends_on: [FEEDBACK-19]
+    conflicts_with: []
+    context_files:
+      - path: docs/plan/2026-08-12-tdtb-feedback-follow-up/evidence
+        description: Completed baseline and extension evidence.
+    flags: {requires_design_validation: false, retries_used: 0, revision_reason: ''}
+    acceptance_criteria:
+      - Each latest observation maps to a passing task and verification scenario.
+      - FEEDBACK-01 through FEEDBACK-12 evidence remains unchanged and accepted.
+      - 12-hour user-facing display is authoritative with internal HH:MM preserved.
+      - Hard-wall, quarantine, zero-writer, local-projection, and commit-gate contracts remain green.
+      - Repository readiness is not represented as deployment, restart, or commit authorization.
+    handoff:
+      known_context: [This review closes the repository plan only; it does not deploy.]
+      target_files:
+        - docs/plan/2026-08-12-tdtb-feedback-follow-up/evidence/FEEDBACK-20-handoff.json
+      constraints: [Review only; do not mutate source, runtime, external state, or Git history.]
+    requires_review: false
+    review_depth: full
+    review_security_sensitive: true
+    result:
+      status: completed
+      files_changed: []
+      output: >-
+        Final reviewer passed implementation and found no material UI or security issue; 148 focused
+        checks, typecheck, and diff check passed. The only needs-revision item was plan bookkeeping.
+      summary: >-
+        Repository acceptance passes. Configured a11y and visual-regression automation remained disabled;
+        behavioral browser checks and screenshots do not replace those audits.
+verification_performed:
+  - Read AGENTS.md, README.md, the current plan, and scoped app and frontend contract locations.
+  - Preserved the immutable baseline objective and acceptance criteria verbatim.
+  - Preserved every completed FEEDBACK-01 through FEEDBACK-12 task and evidence reference unchanged.
+  - Added separate gates for Todoist mismatch, Mint write/readback, Mint placement, and rule audit.
+  - Put all implementation and scratch work downstream of the completed FEEDBACK-06 reliability gate.
+  - Made FEEDBACK-28 a prerequisite for FEEDBACK-13 and all remaining UI polish.
+  - Kept 12-hour display separate from canonical internal and provider serialization values.
+  - Preserved calendar immutability, zero-writer, hard-wall, quarantine, and commit-gate contracts.
+  - Kept a distinct attended live gate; completion evidence records explicit approval.
+  - Defined fixture and scratch qualification with zero billed calls, live POSTs, and real writes.
+  - Validated unique task IDs, dependency references, wave ordering, and an acyclic DAG.
+  - Changed only this plan.yaml; no evidence, application source, runtime, external state, or commit changed.
+  - Reconciled FEEDBACK-23 through FEEDBACK-29 to completed from existing status-complete evidence.
+  - Reconciled FEEDBACK-21 from direct FEEDBACK-23 and FEEDBACK-28 diagnosis evidence.
+  - Reconciled FEEDBACK-22 from direct FEEDBACK-25 through FEEDBACK-29 audit evidence.
+  - Reconciled FEEDBACK-15 to completed from 615 passed, clean typecheck, and clean builds.
+  - Reconciled FEEDBACK-16 to completed from 12 focused, 647 full, clean typecheck, and clean builds.
+  - Reconciled revised FEEDBACK-17 to completed from 6 focused, 647 full, clean typecheck, and clean builds.
+  - Confirmed FEEDBACK-18 remains completed without weakening its accepted criteria.
+  - Reconciled FEEDBACK-19 to completed from its 79-of-79 scratch browser evidence and green gates.
+  - Reconciled FEEDBACK-20 to completed from the final reviewer pass and recorded its automation limits.
+  - Confirmed the plan is closure-ready with no remaining pending tasks.

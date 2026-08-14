@@ -1,0 +1,72 @@
+{
+  "plan_id": "2026-08-12-tdtb-feedback-follow-up",
+  "task_id": "FEEDBACK-16",
+  "title": "Enhance the broader Day Setup visual hierarchy",
+  "status": "completed",
+  "objective": "Apply a bounded visual enhancement to Day Setup so scan order, grouping, and action hierarchy are clear without adding workflow steps or state transitions: each section renders as a distinct card in a fixed top-to-bottom order, the Frame group contains every day-frame field (preset, allotment, anchor, EOD, buffering), and the terminal Cancel/Save bar is separated from the last section by its own divider while keeping secondary/primary hierarchy.",
+  "treatment": {
+    "section_grouping": "SetupDrawer wraps each h3 group in <section class=\"setup-section\" aria-labelledby=\"setup-sec-*\"> with a .setup-section__head (stronger h3: text color, weight 600) and a .setup-section__body. Sections scan top-to-bottom: Frame, [Mint sessions when present], Anchored blocks, Live micro-adventure, Captures.",
+    "frame_group": "Start (anchor), End of day, and Buffering fields moved into the Frame section body so every day-frame field groups under one card. Mint sessions (conditional) renders as its own card between Frame and Anchored blocks. Behavior, labels, ids, and handlers unchanged — DOM order only.",
+    "action_bar": "Terminal actions div gains class setup__actions on top of the shared editor__actions: own top border, padding, and larger top margin visually separate Cancel (secondary .btn) and Save day setup (primary .btn--primary). BlockEditor and AnchoredEditor keep the untouched editor__actions baseline.",
+    "responsive": "@media (max-width: 520px): cards trim padding, .anchored-row__controls wraps instead of spilling past the viewport, and the action bar wraps with full-width buttons. No horizontal overflow at desktop or narrow widths."
+  },
+  "measurable": {
+    "section_order": "sectionHeadings === ['Frame', 'Anchored blocks', 'Live micro-adventure', 'Captures'] on the base scenario; every .setup-section carries a .setup-section__head h3 and a .setup-section__body",
+    "frame_membership": "Day preset, Work allotment, Start (anchor), End of day, Buffering all have closest('.setup-section') equal to the Frame section",
+    "mint_position": "with mintSessions loaded, 'Mint sessions' heading sits between 'Frame' and 'Anchored blocks'",
+    "action_hierarchy": ".setup__actions present; Save is .btn--primary; Cancel is .btn without btn--primary; Reset to config is .btn inside the Frame section; Cancel closes without persisting; Save persists and closes",
+    "css": [
+      ".setup-section { border: 0.5px solid var(--t-border); background: var(--t-surface-2) }",
+      ".setup-section__head h3 { font-weight: 600; color: var(--t-text) }",
+      ".setup__actions { border-top: ... }",
+      "@media (max-width: 520px) { .setup__actions { flex-wrap: wrap } ; .anchored-row__controls { flex-wrap: wrap } }"
+    ]
+  },
+  "tests": {
+    "focused": "frontend/src/ui/feedback16.test.tsx: 12 passed (scan order, Frame grouping incl. moved fields, Mint section position, Cancel/Save hierarchy + behavior, Reset secondary, FEEDBACK-15 copy/aria/CSS preserved, dialog focus/Escape/focus restore, 12-hour labels, hierarchy CSS, narrow wrap rules)",
+    "regression": "feedback13 + feedback14 + feedback15 + feedback18 + components + panels + micro + a11y + locked-contract + failure-states + feedback17 + feedback10 + calendar-capacity: 13 files, 179 passed",
+    "full_frontend": "npm test -> 44 files passed | 1 skipped; 647 passed | 6 skipped (653 total)",
+    "typecheck": "tsc --noEmit clean (0 errors)",
+    "build_mockup": "ok — vite build --mode mockup: CSS 36.35 kB, JS 132.12 kB",
+    "build_prod": "ok — vite build --mode production: CSS 36.35 kB, JS 133.88 kB",
+    "bundle_readback": [
+      "mockup + prod CSS contain .setup-section and .setup__actions",
+      "mockup + prod JS contain setup-sec-frame, setup-sec-captures, setup__actions, and 'One thing to focus on today'"
+    ]
+  },
+  "red_green": "Red: 7 new tests failed (no .setup-section cards, Frame did not contain anchor/EOD/buffering, no Mint section position, no .setup__actions, missing hierarchy CSS and narrow wrap rules); 5 preservation tests already passed. Green: all 12 pass after SetupDrawer section wrapping + Frame field move (DOM order only, no logic change) and app.css setup-section/setup__actions/narrow rules.",
+  "constraints_respected": [
+    "Bounded visual enhancement only — no new workflow step, no state transition, no data-shape change; handlers, ids, labels, and save payload semantics untouched.",
+    "FEEDBACK-15 one-focus copy ('One thing to focus on today.'), placeholder, cap-intention class/aria wiring, and all textarea states preserved (asserted).",
+    "FEEDBACK-14 and FEEDBACK-18 contracts untouched — no Rail/Queue/ApprovalDrawer edits; shared .editor__actions baseline untouched for other drawers.",
+    "FEEDBACK-13/23..29 contracts untouched (no backend, timeline, or component edits outside SetupDrawer/app.css).",
+    "Dialog focus, Escape close, focus restore, Tab wrap, and 12-hour user-facing labels remain intact (asserted via DrawerHost + display12h).",
+    "No live writes, no external mutations, no restart, no commit."
+  ],
+  "changed_files": [
+    "frontend/src/ui/SetupDrawer.tsx",
+    "frontend/src/app.css",
+    "frontend/src/ui/feedback16.test.tsx",
+    "docs/plan/2026-08-12-tdtb-feedback-follow-up/evidence/FEEDBACK-16-ui.json"
+  ],
+  "verification": {
+    "focused_tests": "npx vitest run src/ui/feedback16.test.tsx -> 12 passed",
+    "regression_tests": "13 SetupDrawer-adjacent test files -> 179 passed",
+    "full_frontend": "npm test -> 44 files passed | 1 skipped; 647 passed | 6 skipped",
+    "typecheck": "npm run typecheck -> clean",
+    "builds": "npm run build:mockup + npm run build:prod -> both succeed; bundles read back with .setup-section/.setup__actions and FEEDBACK-15 copy",
+    "evidence_path": "docs/plan/2026-08-12-tdtb-feedback-follow-up/evidence/FEEDBACK-16-ui.json"
+  },
+  "safety_proof": {
+    "live_post_sequence_adjust_commit": "none",
+    "billed_calls": "0",
+    "external_writes": "none",
+    "runtime_restart": "none",
+    "branch_or_index_mutation": "none — no commit, stage, reset, clean, stash, rebase, or merge; branch Development/tdtb-canonical-cutover unchanged",
+    "foreign_changes_preserved": "pre-existing dirty/untracked state untouched; only frontend/src owned files, rebuilt bundles, and this evidence file written"
+  },
+  "residual_issues": [
+    "Browser-level visual check not rerun (playwright-core not present); vitest DOM suite renders the real SetupDrawer against fixture scenarios and asserts section order, grouping, action hierarchy, focus, and 12-hour labels; narrow-width no-overflow is asserted via the CSS source rules.",
+    "plan.yaml task status remains 'pending'; plan status reconciliation is the plan owner's step and is out of this task's scope."
+  ]
+}
