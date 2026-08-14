@@ -1,0 +1,87 @@
+{
+  "segments": {
+    "fixed": 1,
+    "anchored": 0,
+    "habits": 1,
+    "mint": 0,
+    "selected": 0,
+    "buffer": 0
+  },
+  "total": 31,
+  "free": 29,
+  "over": 0,
+  "overassigned": false,
+  "available_for_selection": 29,
+  "remaining": "\u2b06 14hr 30min left \u00b7 29 blk",
+  "ratio": "2 / 31 blk",
+  "legend": "Fixed 1 \u00b7 Anchored 0 \u00b7 Habits 1 \u00b7 Mint 0 \u00b7 Selected 0 \u00b7 Buffer 0 \u00b7 Free 29 \u00b7 Total 31 (habits: 0 done \u00b7 1 left)",
+  "counters": "deep: 0 / 0 \u00b7 mixed: 0 / 0",
+  "time": {
+    "now": "08:00",
+    "anchor": "07:30",
+    "effective_eod": "23:00",
+    "eod_note": null,
+    "config_eod": "23:59",
+    "total_blocks": 31,
+    "no_time_left": false
+  },
+  "day_setup_echo": {
+    "anchor": "07:30",
+    "eod": "23:00",
+    "buffering": "standard",
+    "re_included": [],
+    "anchored": [
+      {
+        "id": "Live",
+        "on": true,
+        "skip_today": false,
+        "time": null
+      }
+    ],
+    "schedulable": {},
+    "intention": "Sample intention",
+    "megan_nicety": "Sample nicety",
+    "stoic_intention": "Sample stoic",
+    "day_preset": "Workday",
+    "work_allotment_minutes": 0
+  },
+  "day_semantics": {
+    "available_presets": [
+      {
+        "name": "Workday",
+        "days": [
+          "mon",
+          "tue",
+          "wed",
+          "thu",
+          "fri"
+        ],
+        "enabled_zones": [],
+        "work_allotment_minutes": 240
+      }
+    ],
+    "selected_preset": {
+      "name": "Workday",
+      "days": [
+        "mon",
+        "tue",
+        "wed",
+        "thu",
+        "fri"
+      ],
+      "enabled_zones": [],
+      "work_allotment_minutes": 240
+    },
+    "resolution_source": "dated_override",
+    "enabled_zones": [],
+    "effective_allotment_minutes": 0,
+    "default_allotment_minutes": 180,
+    "mint_enabled": false,
+    "warnings": [],
+    "errors": [
+      "Day Presets: no row marked Default; exactly one row must have a truthy Default column (true/yes/1/\u2713/x)"
+    ],
+    "overlap_permissions_raw": ""
+  },
+  "planning_config_fingerprint": "f440fdcb085f96bc79adbc303f8524621bb74b23bb32e4dd1206c77b87295465"
+}

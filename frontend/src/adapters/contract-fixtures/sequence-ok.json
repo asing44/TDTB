@@ -1,0 +1,36 @@
+{
+  "sequence": [
+    {
+      "id": "Make",
+      "start": "10:00",
+      "end": "11:00",
+      "zone": null
+    },
+    {
+      "id": "Sample Press",
+      "start": "11:00",
+      "end": "12:30",
+      "zone": null
+    },
+    {
+      "id": "Sample Project",
+      "start": "12:30",
+      "end": "13:00",
+      "zone": null
+    },
+    {
+      "id": "Sample Todoist Task",
+      "start": "13:00",
+      "end": "14:30",
+      "zone": null
+    },
+    {
+      "id": "Quick Tasks",
+      "start": "14:30",
+      "end": "15:00",
+      "zone": null
+    }
+  ],
+  "warnings": [],
+  "pinned_rows": []
+}

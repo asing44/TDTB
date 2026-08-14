@@ -1,0 +1,108 @@
+{
+  "segments": {
+    "fixed": 1,
+    "anchored": 6,
+    "habits": 1,
+    "mint": 0,
+    "selected": 0,
+    "buffer": 0
+  },
+  "total": 31,
+  "free": 23,
+  "over": 0,
+  "overassigned": false,
+  "available_for_selection": 23,
+  "remaining": "\u2b06 11hr 30min left \u00b7 23 blk",
+  "ratio": "8 / 31 blk",
+  "legend": "Fixed 1 \u00b7 Anchored 6 \u00b7 Habits 1 \u00b7 Mint 0 \u00b7 Selected 0 \u00b7 Buffer 0 \u00b7 Free 23 \u00b7 Total 31 (habits: 0 done \u00b7 1 left)",
+  "counters": "deep: 0 / 0 \u00b7 mixed: 0 / 0",
+  "time": {
+    "now": "08:00",
+    "anchor": "07:30",
+    "effective_eod": "23:00",
+    "eod_note": null,
+    "config_eod": "23:45",
+    "total_blocks": 31,
+    "no_time_left": false
+  },
+  "day_setup_echo": {
+    "anchor": "07:30",
+    "eod": "23:00",
+    "buffering": "standard",
+    "re_included": [],
+    "anchored": [
+      {
+        "id": "Live",
+        "on": true,
+        "skip_today": false,
+        "time": null
+      }
+    ],
+    "schedulable": {},
+    "intention": "Sample intention",
+    "megan_nicety": "Sample nicety",
+    "stoic_intention": "Sample stoic",
+    "day_preset": "Workday",
+    "work_allotment_minutes": 0
+  },
+  "day_semantics": {
+    "available_presets": [
+      {
+        "name": "Workday",
+        "days": [
+          "mon",
+          "tue",
+          "wed",
+          "thu",
+          "fri"
+        ],
+        "enabled_zones": [],
+        "work_allotment_minutes": 300
+      },
+      {
+        "name": "Weekend",
+        "days": [
+          "sat",
+          "sun"
+        ],
+        "enabled_zones": [],
+        "work_allotment_minutes": 0
+      },
+      {
+        "name": "Default",
+        "days": [
+          "mon",
+          "tue",
+          "wed",
+          "thu",
+          "fri",
+          "sat",
+          "sun"
+        ],
+        "enabled_zones": [],
+        "work_allotment_minutes": null
+      }
+    ],
+    "selected_preset": {
+      "name": "Workday",
+      "days": [
+        "mon",
+        "tue",
+        "wed",
+        "thu",
+        "fri"
+      ],
+      "enabled_zones": [],
+      "work_allotment_minutes": 300
+    },
+    "resolution_source": "dated_override",
+    "enabled_zones": [],
+    "effective_allotment_minutes": 0,
+    "default_allotment_minutes": 180,
+    "mint_enabled": false,
+    "warnings": [],
+    "errors": [],
+    "overlap_permissions_raw": "## Overlap Permissions\n\nDefault for everything is no-overlap."
+  },
+  "planning_config_fingerprint": "9b573548c7f24c129613fe94bed38ef975dd0e30ab15fa7f3ace7c1ef86419f4"
+}

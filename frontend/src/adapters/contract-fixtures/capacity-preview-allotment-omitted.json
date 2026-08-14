@@ -1,0 +1,89 @@
+{
+  "segments": {
+    "fixed": 1,
+    "anchored": 6,
+    "habits": 1,
+    "mint": 8,
+    "selected": 0,
+    "buffer": 0
+  },
+  "total": 31,
+  "free": 15,
+  "over": 0,
+  "overassigned": false,
+  "available_for_selection": 15,
+  "remaining": "\u2b06 7hr 30min left \u00b7 15 blk",
+  "ratio": "16 / 31 blk",
+  "legend": "Fixed 1 \u00b7 Anchored 6 \u00b7 Habits 1 \u00b7 Mint 8 \u00b7 Selected 0 \u00b7 Buffer 0 \u00b7 Free 15 \u00b7 Total 31 (habits: 0 done \u00b7 1 left)",
+  "counters": "deep: 0 / 0 \u00b7 mixed: 0 / 0",
+  "time": {
+    "now": "08:00",
+    "anchor": "08:00",
+    "effective_eod": "23:45",
+    "eod_note": null,
+    "config_eod": "23:45",
+    "total_blocks": 31,
+    "no_time_left": false
+  },
+  "day_setup_echo": {},
+  "day_semantics": {
+    "available_presets": [
+      {
+        "name": "Workday",
+        "days": [
+          "mon",
+          "tue",
+          "wed",
+          "thu",
+          "fri"
+        ],
+        "enabled_zones": [],
+        "work_allotment_minutes": 240
+      },
+      {
+        "name": "Weekend",
+        "days": [
+          "sat",
+          "sun"
+        ],
+        "enabled_zones": [],
+        "work_allotment_minutes": 0
+      },
+      {
+        "name": "Default",
+        "days": [
+          "mon",
+          "tue",
+          "wed",
+          "thu",
+          "fri",
+          "sat",
+          "sun"
+        ],
+        "enabled_zones": [],
+        "work_allotment_minutes": null
+      }
+    ],
+    "selected_preset": {
+      "name": "Workday",
+      "days": [
+        "mon",
+        "tue",
+        "wed",
+        "thu",
+        "fri"
+      ],
+      "enabled_zones": [],
+      "work_allotment_minutes": 240
+    },
+    "resolution_source": "matched_row",
+    "enabled_zones": [],
+    "effective_allotment_minutes": 240,
+    "default_allotment_minutes": 180,
+    "mint_enabled": true,
+    "warnings": [],
+    "errors": [],
+    "overlap_permissions_raw": "## Overlap Permissions\n\nDefault for everything is no-overlap."
+  },
+  "planning_config_fingerprint": "68849880d6c4eba8f2214785640631a035975b78572fb1c5940e3b0438daee1d"
+}

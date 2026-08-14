@@ -1,0 +1,21 @@
+{
+  "ok": true,
+  "hard_errors": [],
+  "warnings": [
+    {
+      "id": "Make",
+      "rule": "past_eod",
+      "detail": "⚠ past EOD — ends 23:30, effective EOD 23:00"
+    },
+    {
+      "id": "Deep Work",
+      "kind": "window-overlap",
+      "detail": "1 task(s) scheduled within the 'Deep Work' window — place its floating block in a free gap"
+    },
+    {
+      "kind": "zone_violation",
+      "id": "Guitar",
+      "detail": "placed at 09:00, outside evening window 18:00-22:00"
+    }
+  ]
+}

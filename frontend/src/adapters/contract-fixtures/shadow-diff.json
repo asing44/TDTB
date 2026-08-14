@@ -1,0 +1,260 @@
+{
+  "entries": [
+    {
+      "manifest": {
+        "step": "A",
+        "system": "todoist",
+        "action": "schedule",
+        "name": "Make",
+        "id_or_path": "50 - Operations/Projects/Make.md",
+        "time": "10:00",
+        "duration_min": 60,
+        "routing": "PHEP"
+      },
+      "classification": "would-create",
+      "detail": {
+        "content": "Make",
+        "due_time": "10:00"
+      }
+    },
+    {
+      "manifest": {
+        "step": "A",
+        "system": "todoist",
+        "action": "schedule",
+        "name": "Sample Press",
+        "id_or_path": "50 - Operations/Projects/Sample Press.md",
+        "time": "11:00",
+        "duration_min": 90,
+        "routing": "Inbox"
+      },
+      "classification": "would-create",
+      "detail": {
+        "content": "Sample Press",
+        "due_time": "11:00"
+      }
+    },
+    {
+      "manifest": {
+        "step": "A",
+        "system": "todoist",
+        "action": "schedule",
+        "name": "Sample Project",
+        "id_or_path": "50 - Operations/Projects/Sample Project.md",
+        "time": "12:30",
+        "duration_min": 30,
+        "routing": "PHEP"
+      },
+      "classification": "would-create",
+      "detail": {
+        "content": "Sample Project",
+        "due_time": "12:30"
+      }
+    },
+    {
+      "manifest": {
+        "step": "A",
+        "system": "todoist",
+        "action": "schedule",
+        "name": "Sample Todoist Task",
+        "id_or_path": "todoist://9001",
+        "time": "13:00",
+        "duration_min": 90,
+        "routing": "Inbox"
+      },
+      "classification": "would-create",
+      "detail": {
+        "content": "Sample Todoist Task",
+        "due_time": "13:00"
+      }
+    },
+    {
+      "manifest": {
+        "step": "A",
+        "system": "todoist",
+        "action": "schedule",
+        "name": "Quick Tasks",
+        "id_or_path": "Quick Tasks",
+        "time": "14:30",
+        "duration_min": 30,
+        "routing": "Inbox"
+      },
+      "classification": "would-create",
+      "detail": {
+        "content": "Quick Tasks",
+        "due_time": "14:30"
+      }
+    },
+    {
+      "manifest": {
+        "step": "E",
+        "system": "calendar",
+        "action": "create-event",
+        "name": "Morning Routine",
+        "id_or_path": "Morning Routine",
+        "time": "07:45",
+        "duration_min": 80,
+        "routing": "\u2b1c Blocks"
+      },
+      "classification": "would-create",
+      "detail": {
+        "title": "Morning Routine",
+        "start": "07:45"
+      }
+    },
+    {
+      "manifest": {
+        "step": "E",
+        "system": "calendar",
+        "action": "create-event",
+        "name": "Foods Dinner",
+        "id_or_path": "Foods Dinner",
+        "time": "18:00",
+        "duration_min": 60,
+        "routing": "\u2b1c Blocks"
+      },
+      "classification": "would-create",
+      "detail": {
+        "title": "Foods Dinner",
+        "start": "18:00"
+      }
+    },
+    {
+      "manifest": {
+        "step": "A",
+        "system": "todoist",
+        "action": "schedule",
+        "name": "\ud83c\udf31 Walk the greenway trail near the townhome",
+        "id_or_path": "Live",
+        "time": "12:00",
+        "duration_min": 30,
+        "routing": "Inbox"
+      },
+      "classification": "would-create",
+      "detail": {
+        "content": "\ud83c\udf31 Walk the greenway trail near the townhome",
+        "due_time": "12:00"
+      }
+    },
+    {
+      "manifest": {
+        "step": "A",
+        "system": "todoist",
+        "action": "capture-nicety",
+        "name": "Sample nicety",
+        "id_or_path": "capture://megan_nicety",
+        "time": null,
+        "duration_min": 0,
+        "routing": "Inbox"
+      },
+      "classification": "would-create",
+      "detail": {
+        "content": "Sample nicety",
+        "due_time": null
+      }
+    },
+    {
+      "manifest": {
+        "step": "A",
+        "system": "todoist",
+        "action": "capture-nicety",
+        "name": "Sample stoic",
+        "id_or_path": "capture://stoic_intention",
+        "time": null,
+        "duration_min": 0,
+        "routing": "Inbox"
+      },
+      "classification": "would-create",
+      "detail": {
+        "content": "Sample stoic",
+        "due_time": null
+      }
+    },
+    {
+      "manifest": {
+        "step": "B6",
+        "system": "vault",
+        "action": "frontmatter-captures",
+        "name": "Phase-1 captures",
+        "id_or_path": "<today's daily note>",
+        "time": null,
+        "duration_min": 0,
+        "routing": "\u2014"
+      },
+      "classification": "conflict",
+      "detail": {
+        "reason": "daily note not found"
+      }
+    },
+    {
+      "manifest": {
+        "step": "B",
+        "system": "vault",
+        "action": "patch",
+        "name": "# TDTB Plan",
+        "id_or_path": "<today's daily note>",
+        "time": null,
+        "duration_min": 0,
+        "routing": "\u2014"
+      },
+      "classification": "conflict",
+      "detail": {
+        "reason": "daily note not found"
+      }
+    },
+    {
+      "manifest": {
+        "step": "C",
+        "system": "vault",
+        "action": "set-flag",
+        "name": "Make",
+        "id_or_path": "50 - Operations/Projects/Make.md",
+        "time": null,
+        "duration_min": 0,
+        "routing": "\u2014"
+      },
+      "classification": "conflict",
+      "detail": {
+        "reason": "target missing: 50 - Operations/Projects/Make.md"
+      }
+    },
+    {
+      "manifest": {
+        "step": "C",
+        "system": "vault",
+        "action": "set-flag",
+        "name": "Sample Press",
+        "id_or_path": "50 - Operations/Projects/Sample Press.md",
+        "time": null,
+        "duration_min": 0,
+        "routing": "\u2014"
+      },
+      "classification": "conflict",
+      "detail": {
+        "reason": "target missing: 50 - Operations/Projects/Sample Press.md"
+      }
+    },
+    {
+      "manifest": {
+        "step": "C",
+        "system": "vault",
+        "action": "set-flag",
+        "name": "Sample Project",
+        "id_or_path": "50 - Operations/Projects/Sample Project.md",
+        "time": null,
+        "duration_min": 0,
+        "routing": "\u2014"
+      },
+      "classification": "no-op",
+      "detail": {}
+    }
+  ],
+  "unavailable_surfaces": [],
+  "counts": {
+    "would-create": 10,
+    "would-update": 0,
+    "no-op": 1,
+    "conflict": 4,
+    "unavailable": 0
+  }
+}

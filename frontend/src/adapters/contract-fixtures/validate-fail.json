@@ -1,0 +1,8 @@
+{
+  "ok": false,
+  "hard_errors": [
+    "'Make': end '05:30' not after start '06:00'",
+    "assigned item 'Make' missing from sequence (never-bump violated)"
+  ],
+  "warnings": []
+}

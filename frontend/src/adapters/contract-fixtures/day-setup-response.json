@@ -1,0 +1,25 @@
+{
+  "ok": true,
+  "re_included": [],
+  "day_setup": {
+    "anchor": "07:30",
+    "eod": "23:00",
+    "buffering": "standard",
+    "schedulable": {},
+    "anchored": [
+      {
+        "id": "Live",
+        "on": true,
+        "skip_today": false,
+        "time": null
+      }
+    ],
+    "re_included": [],
+    "intention": "Sample intention",
+    "megan_nicety": "Sample nicety",
+    "stoic_intention": "Sample stoic",
+    "day_preset": "Workday",
+    "work_allotment_minutes": 240
+  },
+  "day_setup_confirmed": true
+}

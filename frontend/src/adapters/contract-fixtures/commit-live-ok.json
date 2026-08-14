@@ -1,0 +1,60 @@
+{
+  "ok": true,
+  "resumed": false,
+  "today": "2026-07-24",
+  "surfaces": {
+    "todoist": {
+      "status": "ok",
+      "step": "A",
+      "created": [],
+      "updated": [],
+      "noops": [],
+      "reconciliation": {},
+      "error": null,
+      "note": "no intents"
+    },
+    "vault_flips": {
+      "status": "ok",
+      "step": "C",
+      "created": [],
+      "updated": [],
+      "noops": [],
+      "reconciliation": {},
+      "error": null,
+      "note": "no intents"
+    },
+    "daily_note": {
+      "status": "ok",
+      "step": "B",
+      "created": [],
+      "updated": [],
+      "noops": [],
+      "reconciliation": {},
+      "error": null,
+      "note": "no intents"
+    },
+    "captures": {
+      "status": "ok",
+      "step": "B6",
+      "created": [],
+      "updated": [],
+      "noops": [],
+      "reconciliation": {},
+      "error": null,
+      "note": "no intents"
+    },
+    "calendar": {
+      "status": "ok",
+      "step": "D/E",
+      "created": [],
+      "updated": [],
+      "noops": [],
+      "reconciliation": {},
+      "error": null,
+      "note": "no intents"
+    }
+  },
+  "landed": [],
+  "failed": [],
+  "verify_failures": []
+}

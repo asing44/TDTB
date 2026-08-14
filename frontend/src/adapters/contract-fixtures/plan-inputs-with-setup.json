@@ -1,0 +1,378 @@
+{
+  "digest": {
+    "valid_date": "2026-07-24",
+    "ranking_order": [
+      "urgency",
+      "overdue",
+      "deadline",
+      "staleness",
+      "summit"
+    ],
+    "assigned_count": 4,
+    "pool_count": 0,
+    "assigned": [
+      {
+        "name": "Make",
+        "path": "50 - Operations/Projects/Make.md",
+        "types": [
+          "project"
+        ],
+        "urgency": null,
+        "deadline": null,
+        "priority_score": 4,
+        "assigned": true,
+        "blocks": 2
+      },
+      {
+        "name": "Sample Press",
+        "path": "50 - Operations/Projects/Sample Press.md",
+        "types": [
+          "press"
+        ],
+        "urgency": null,
+        "deadline": null,
+        "priority_score": 4,
+        "assigned": true,
+        "blocks": 3
+      },
+      {
+        "name": "Sample Project",
+        "path": "50 - Operations/Projects/Sample Project.md",
+        "types": [
+          "project"
+        ],
+        "urgency": "3-high",
+        "deadline": "2026-07-19",
+        "priority_score": 112,
+        "assigned": true,
+        "blocks": 1
+      },
+      {
+        "name": "Sample Todoist Task",
+        "path": "todoist://9001",
+        "types": [
+          "todoist"
+        ],
+        "urgency": 3,
+        "deadline": "2026-07-24",
+        "priority_score": 3.0,
+        "assigned": true,
+        "source": "todoist",
+        "todoist_id": "9001",
+        "duration": 90,
+        "labels": [],
+        "is_recurring": false,
+        "scheduled_start": null,
+        "blocks": 3
+      }
+    ],
+    "suggested": [],
+    "unassigned_candidates": [],
+    "stale_assigned": [
+      {
+        "name": "Sample Project",
+        "path": "50 - Operations/Projects/Sample Project.md",
+        "reason": "assigned but deadline 2026-07-19 has passed"
+      }
+    ]
+  },
+  "config": {
+    "Defaults": {
+      "eod": "11:45 PM",
+      "work_allotment_minutes": 180
+    },
+    "Day Presets": [
+      {
+        "Name": "Workday",
+        "Days": "workdays",
+        "Zones": null,
+        "Work Allotment (min)": 240,
+        "Default": null
+      },
+      {
+        "Name": "Weekend",
+        "Days": "weekends",
+        "Zones": null,
+        "Work Allotment (min)": 0,
+        "Default": null
+      },
+      {
+        "Name": "Default",
+        "Days": "daily",
+        "Zones": null,
+        "Work Allotment (min)": null,
+        "Default": true
+      }
+    ],
+    "Overlap Permissions": {
+      "_body": "Default for everything is no-overlap."
+    },
+    "Anchored Lifestyle Blocks": [
+      {
+        "Block": "Morning Routine",
+        "Type": "hard",
+        "Start": "7:45 AM",
+        "End": null,
+        "Duration": "80m",
+        "Days": "daily",
+        "overlap_allowed": false
+      },
+      {
+        "Block": "Foods Dinner",
+        "Type": "window",
+        "Start": "6:00 PM",
+        "End": "8:30 PM",
+        "Duration": "60m",
+        "Days": "daily",
+        "overlap_allowed": false
+      },
+      {
+        "Block": "Live",
+        "Type": "window",
+        "Start": "12:00 PM",
+        "End": "8:00 PM",
+        "Duration": "30m",
+        "Days": "daily",
+        "overlap_allowed": true,
+        "on": true,
+        "skip_today": false,
+        "time": null
+      }
+    ],
+    "Calendar Titles": [
+      {
+        "Logical name": "blocks",
+        "BusyCal title": "⬜ Blocks",
+        "Role": "schedulable"
+      }
+    ],
+    "Presets": [
+      {
+        "Name": "Make",
+        "Type": "interval",
+        "Blocks": 2,
+        "Priority": 2
+      }
+    ],
+    "micro_adventure": {
+      "id": "ma01",
+      "idea": "Walk the greenway trail near the townhome",
+      "category": "nature"
+    },
+    "re_included": [],
+    "captures": {
+      "intention": "Sample intention",
+      "megan_nicety": "Sample nicety",
+      "stoic_intention": "Sample stoic"
+    }
+  },
+  "anchored_blocks": [
+    {
+      "Block": "Morning Routine",
+      "Type": "hard",
+      "Start": "7:45 AM",
+      "End": null,
+      "Duration": "80m",
+      "Days": "daily",
+      "overlap_allowed": false
+    },
+    {
+      "Block": "Foods Dinner",
+      "Type": "window",
+      "Start": "6:00 PM",
+      "End": "8:30 PM",
+      "Duration": "60m",
+      "Days": "daily",
+      "overlap_allowed": false
+    },
+    {
+      "Block": "Live",
+      "Type": "window",
+      "Start": "12:00 PM",
+      "End": "8:00 PM",
+      "Duration": "30m",
+      "Days": "daily",
+      "overlap_allowed": true,
+      "on": true,
+      "skip_today": false,
+      "time": null
+    },
+    {
+      "Block": "Sample Meeting",
+      "Start": "09:15",
+      "End": "09:45",
+      "source": "calendar"
+    }
+  ],
+  "anchored_source_fingerprint": "0c0eada52127bb71239c4dca7be0dfdac04d59885bd671ae975b42914c61f8f8",
+  "habits": {
+    "total": 1,
+    "done": 0,
+    "outstanding": 1,
+    "est_minutes": 15
+  },
+  "time": {
+    "now": "08:00",
+    "anchor": "07:30",
+    "effective_eod": "23:00",
+    "eod_note": null,
+    "config_eod": "23:45",
+    "total_blocks": 31,
+    "no_time_left": false
+  },
+  "capacity": {
+    "total": 31,
+    "fixed": 1,
+    "anchored": 6,
+    "habits": 1,
+    "mint": 8,
+    "selected": 0,
+    "buffer": 0,
+    "free": 15,
+    "overassigned": false,
+    "available_for_selection": 15,
+    "remaining": "⬆ 7hr 30min left · 15 blk",
+    "ratio": "16 / 31 blk",
+    "legend": "Fixed 1 · Anchored 6 · Habits 1 · Mint 8 · Selected 0 · Buffer 0 · Free 15 · Total 31 (habits: 0 done · 1 left)",
+    "counters": "deep: 0 / 0 · mixed: 0 / 0"
+  },
+  "day_setup": {
+    "anchor": "07:30",
+    "eod": "23:00",
+    "buffering": "standard",
+    "re_included": [],
+    "anchored": [
+      {
+        "id": "Live",
+        "on": true,
+        "skip_today": false,
+        "time": null
+      }
+    ],
+    "schedulable": {},
+    "intention": "Sample intention",
+    "megan_nicety": "Sample nicety",
+    "stoic_intention": "Sample stoic",
+    "day_preset": "Workday",
+    "work_allotment_minutes": 240
+  },
+  "day_semantics": {
+    "available_presets": [
+      {
+        "name": "Workday",
+        "days": [
+          "mon",
+          "tue",
+          "wed",
+          "thu",
+          "fri"
+        ],
+        "enabled_zones": [],
+        "work_allotment_minutes": 240
+      },
+      {
+        "name": "Weekend",
+        "days": [
+          "sat",
+          "sun"
+        ],
+        "enabled_zones": [],
+        "work_allotment_minutes": 0
+      },
+      {
+        "name": "Default",
+        "days": [
+          "mon",
+          "tue",
+          "wed",
+          "thu",
+          "fri",
+          "sat",
+          "sun"
+        ],
+        "enabled_zones": [],
+        "work_allotment_minutes": null
+      }
+    ],
+    "selected_preset": {
+      "name": "Workday",
+      "days": [
+        "mon",
+        "tue",
+        "wed",
+        "thu",
+        "fri"
+      ],
+      "enabled_zones": [],
+      "work_allotment_minutes": 240
+    },
+    "resolution_source": "dated_override",
+    "enabled_zones": [],
+    "effective_allotment_minutes": 240,
+    "default_allotment_minutes": 180,
+    "mint_enabled": true,
+    "warnings": [],
+    "errors": [],
+    "overlap_permissions_raw": "## Overlap Permissions\n\nDefault for everything is no-overlap."
+  },
+  "planning_config_fingerprint": "68849880d6c4eba8f2214785640631a035975b78572fb1c5940e3b0438daee1d",
+  "micro_adventure": {
+    "pick": {
+      "id": "ma01",
+      "idea": "Walk the greenway trail near the townhome",
+      "category": "nature"
+    },
+    "source": "auto",
+    "live_pool": [
+      {
+        "id": "ma01",
+        "idea": "Walk the greenway trail near the townhome",
+        "category": "nature"
+      },
+      {
+        "id": "ma02",
+        "idea": "Call a friend you haven't talked to in a while",
+        "category": "social"
+      },
+      {
+        "id": "ma03",
+        "idea": "Ride bike somewhere",
+        "category": "novelty"
+      },
+      {
+        "id": "ma04",
+        "idea": "Cook or eat something you've never tried",
+        "category": "novelty"
+      },
+      {
+        "id": "ma05",
+        "idea": "Strike up a conversation with a stranger",
+        "category": "courage"
+      },
+      {
+        "id": "ma06",
+        "idea": "Sit outside, no phone, for 15 minutes",
+        "category": "stillness"
+      },
+      {
+        "id": "ma07",
+        "idea": "Watch sunset",
+        "category": "nature"
+      },
+      {
+        "id": "ma08",
+        "idea": "Sketch or photograph something ordinary",
+        "category": "creative"
+      }
+    ],
+    "streak": 0,
+    "pending_confirm": null
+  },
+  "source_warnings": [],
+  "source_counts": {
+    "vault": 3,
+    "todoist": 1,
+    "calendar": 1
+  },
+  "day_setup_confirmed": true
+}
