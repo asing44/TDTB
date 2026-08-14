@@ -1,1 +1,9 @@
 .history/
+.DS_Store
+**/.venv/
+**/__pycache__/
+*.pyc
+.pytest_cache/
+node_modules/
+graphify-out/
+schema-hashes.json
