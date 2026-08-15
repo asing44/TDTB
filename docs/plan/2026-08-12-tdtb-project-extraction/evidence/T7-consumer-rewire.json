@@ -1,0 +1,121 @@
+{
+  "meta": {
+    "plan_id": "2026-08-12-tdtb-project-extraction",
+    "task_id": "T7",
+    "title": "Rewire Claudius consumers",
+    "created_at": "2026-08-15T00:45:42Z",
+    "mode": "edit-scoped-claudius-consumers",
+    "no_claim": "Consumer rewire only within the bounded scope. No app/source mutation, no commit, no checkout, no merge, no restart, no live POST, no Todoist/Calendar/vault write.",
+    "evidence_path": "docs/plan/2026-08-12-tdtb-project-extraction/evidence/T7-consumer-rewire.json"
+  },
+  "repos": {
+    "canonical": {
+      "path": "/Users/walle-mini/Repos/Projects/TDTB",
+      "branch": "main",
+      "head": "84c1e0cad5069c125131a0c1d3d8f579c76ac898"
+    },
+    "claudius": {
+      "path": "/Users/walle-mini/Repos/Claudius",
+      "resolves_to": "/Users/walle-mini/Development/Claudius",
+      "branch": "main",
+      "head": "7a8919ac606ab6a9811a43ad3d7eeea5eb2efdd4"
+    }
+  },
+  "changed_files": [
+    {
+      "path": "/Users/walle-mini/Repos/Claudius/Scripts/test_tdtb_schema_guard_runner.py",
+      "rewire": "PYTHON and TEST now resolve to canonical app/.venv/bin/python and app/tests/test_schema_guard.py; runner cwd = canonical app dir; docstring marks Tasks/tdtb-app-pilot historical."
+    },
+    {
+      "path": "/Users/walle-mini/Repos/Claudius/Scripts/test_tdtb_judgment_runner.py",
+      "rewire": "TEST_FILE and _app_python resolve to canonical app/tests/test_judgment.py and app/.venv/bin/python; removed worktree-relative fallback path logic; docstring marks fallback historical."
+    },
+    {
+      "path": "/Users/walle-mini/Repos/Claudius/Scripts/test_tdtb_project_boundary.py",
+      "rewire": "Corrected test_archive_and_redirect_are_present to post-extraction reality: skill-era files preserved in Claudius Projects/TDTB/archive/skill-era, NOT at canonical root; canonical root asserted free of skill-era files; redirect assertion unchanged; docstring probe label updated to canonical TDTB repository."
+    },
+    {
+      "path": "/Users/walle-mini/Repos/Claudius/Scripts/precommit-bundle-check.py",
+      "rewire": "TARGETS now repo-relative frontend -> app/static/cockpit for the canonical repo (run with --repo /Users/walle-mini/Repos/Projects/TDTB or from canonical cwd); dropped fallback-only tdtb-cockpit-mockup target (mockups/cockpit is T4-excluded fallback-only); docstring explains canonical target and Claudius-hook no-op."
+    },
+    {
+      "path": "/Users/walle-mini/Repos/Claudius/Scripts/test_tdtb_restart.py",
+      "rewire": "Path unchanged; added residual-gap comment documenting that canonical restart-live.sh is missing (T1/T5) and the fallback reference remains for rollback until attended T10/T11."
+    },
+    {
+      "path": "/Users/walle-mini/Repos/Projects/TDTB/docs/plan/2026-08-12-tdtb-project-extraction/plan.yaml",
+      "rewire": "T7 status set to completed; T7 context_files and result metadata added; context_fields_changed += t7_consumer_rewire; context_updated_at bumped. Historical plan content untouched."
+    }
+  ],
+  "resolved_references": [
+    { "changed_reference": "test_tdtb_schema_guard_runner.py PYTHON", "resolves_to": "/Users/walle-mini/Repos/Projects/TDTB/app/.venv/bin/python", "exists": true },
+    { "changed_reference": "test_tdtb_schema_guard_runner.py TEST", "resolves_to": "/Users/walle-mini/Repos/Projects/TDTB/app/tests/test_schema_guard.py", "exists": true },
+    { "changed_reference": "test_tdtb_judgment_runner.py TEST_FILE", "resolves_to": "/Users/walle-mini/Repos/Projects/TDTB/app/tests/test_judgment.py", "exists": true },
+    { "changed_reference": "test_tdtb_judgment_runner.py _app_python", "resolves_to": "/Users/walle-mini/Repos/Projects/TDTB/app/.venv/bin/python", "exists": true },
+    { "changed_reference": "precommit-bundle-check.py tdtb-cockpit source_root", "resolves_to": "/Users/walle-mini/Repos/Projects/TDTB/frontend", "exists": true },
+    { "changed_reference": "precommit-bundle-check.py tdtb-cockpit bundle_root", "resolves_to": "/Users/walle-mini/Repos/Projects/TDTB/app/static/cockpit", "exists": true },
+    { "changed_reference": "test_tdtb_project_boundary.py archive path", "resolves_to": "/Users/walle-mini/Repos/Claudius/Projects/TDTB/archive/skill-era", "exists": true },
+    { "changed_reference": "test_tdtb_project_boundary.py TDTB root", "resolves_to": "/Users/walle-mini/Repos/Projects/TDTB", "exists": true }
+  ],
+  "unchanged_scope_files_reviewed": [
+    {
+      "path": "/Users/walle-mini/Repos/Claudius/Skills/user/tdtb-bridger-vault/SKILL.md",
+      "finding": "No fallback app-path reference. Only script path is the skill's own host script via ~/.claude/skills/tdtb-bridger-vault symlink -> Claudius skill dir; no Tasks/tdtb-app-pilot, launchd, port, or venv reference. No change required."
+    },
+    {
+      "path": "/Users/walle-mini/Repos/Claudius/Configurations/gpt-stack/skills/tdtb-bridger-vault/SKILL.md",
+      "finding": "No fallback app-path reference. Script/glossary paths use ~/Development/Claudius (host repo, resolves to same tree); no app-pilot reference. No change required."
+    },
+    {
+      "path": "/Users/walle-mini/Repos/Claudius/Scripts/instr-build.py",
+      "finding": "No tdtb-app-pilot reference in script, manifest (instr-build-manifest.json), Core/ sources, or test_structure_audit.py. instr-build --check clean (1 wired target AGENTS.md 3999/4000). No change required."
+    }
+  ],
+  "residual": {
+    "restart_gap": {
+      "detail": "Canonical restart-live.sh MISSING from /Users/walle-mini/Repos/Projects/TDTB (T1 source_of_truth, T5 5 restart-rewire failures). Attended restart wiring deferred to T10/T11.",
+      "disposition": "test_tdtb_restart.py keeps the fallback SCRIPT reference /Users/walle-mini/Repos/Claudius/Tasks/tdtb-app-pilot/restart-live.sh as explicit rollback documentation; offline sandbox test passes (3/3) with fake launchctl/curl, no live action.",
+      "carried_to": "T10/T11"
+    },
+    "precommit_bundle_test_residual": {
+      "detail": "test_precommit_bundle_check.py (OUT of bounded scope, not edited) has 2 residual failures after the mockup target was dropped: test_real_targets_are_registered (expects both target names) and test_failure_hint_names_the_right_npm_script (looks up tdtb-cockpit-mockup). 14/16 pass.",
+      "disposition": "Recorded honestly; test file requires a follow-up edit outside T7 scope."
+    },
+    "boundary_test_pre_existing_red": {
+      "detail": "test_tdtb_project_boundary.py was already RED before T7 (test_archive_and_redirect_are_present asserted skill-era files at the canonical root post-extraction). Corrected within scope; now 5/5 pass."
+    }
+  },
+  "tests": [
+    { "suite": "Scripts/test_tdtb_project_boundary.py", "result": "5/5 passed", "note": "was 4/5 before rewire" },
+    { "suite": "Scripts/test_tdtb_schema_guard_runner.py", "result": "15 passed", "note": "canonical venv + canonical test" },
+    { "suite": "Scripts/test_tdtb_judgment_runner.py", "result": "61 passed", "note": "canonical venv + canonical test" },
+    { "suite": "Scripts/test_tdtb_restart.py", "result": "3 passed", "note": "fallback sandbox, residual by design" },
+    { "suite": "Scripts/test_precommit_bundle_check.py", "result": "14 passed / 2 residual failures", "note": "failures in out-of-scope test file" },
+    { "suite": "Scripts/instr-build.py --check", "result": "clean", "note": "1 wired target AGENTS.md matches sources" },
+    { "suite": "Scripts/test_structure_audit.py", "result": "32/32 passed", "note": "TDTB registered GPT_ACTIVE_PROJECTS unchanged" },
+    { "suite": "precommit-bundle-check.py --repo /Users/walle-mini/Repos/Projects/TDTB --report-only --json", "result": "status ok", "note": "resolves canonical frontend and app/static/cockpit" },
+    { "suite": "precommit-bundle-check.py --repo /Users/walle-mini/Repos/Claudius --report-only --json", "result": "status ok", "note": "no-op: canonical targets absent from Claudius root, post-extraction hook no longer blocks" }
+  ],
+  "foreign_changes_preserved": [
+    { "path": "/Users/walle-mini/Repos/Claudius/Plans Link/2026-07-24-vault-sweep-coverage-reconciliation.md", "state": "modified, untouched" },
+    { "path": "/Users/walle-mini/Repos/Claudius/Skills/corrections/log-hours.md", "state": "modified, untouched" }
+  ],
+  "safety": {
+    "no_live_restart": true,
+    "no_post_commit": true,
+    "no_post_sequence": true,
+    "no_post_adjust": true,
+    "no_todoist_write": true,
+    "no_calendar_write": true,
+    "no_vault_write": true,
+    "no_commit": true,
+    "no_checkout_merge_push": true
+  },
+  "out_of_scope_noted": [
+    "Scripts/hooks/pre-commit wiring (still passes --repo $repo for the Claudius hook; post-extraction it no-ops on TDTB bundles - hook file not in bounded scope)",
+    "Scripts/README.md runner descriptions (lines 468-470 describe the schema-guard runner; not in bounded scope)",
+    "Scripts/test_precommit_bundle_check.py (2 residual failures; not in bounded scope)",
+    "Canonical README.md / AGENTS.md stale fallback-runtime wording (canonical-only, marked not claimed in T4)",
+    "Canonical launchd/com.walle.tdtb.plist fallback copy and installed plist (runtime projections; no mutation)"
+  ]
+}

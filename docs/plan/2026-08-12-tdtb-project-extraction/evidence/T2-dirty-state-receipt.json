@@ -1,0 +1,147 @@
+{
+  "meta": {
+    "plan_id": "2026-08-12-tdtb-project-extraction",
+    "task_id": "T2",
+    "title": "Freeze active UI plan and capture immutable dirty-state receipt",
+    "created_at": "2026-08-14T23:49:41Z",
+    "mode": "read-only-inspection-plus-receipt-write",
+    "evidence_path": "docs/plan/2026-08-12-tdtb-project-extraction/evidence/T2-dirty-state-receipt.json",
+    "no_mutation_claim": "This receipt asserts NO app-path claim, NO extraction, NO merge, NO commit, NO checkout, NO reset, NO push, NO clean, NO restart, NO live POST, NO billed endpoint, and NO external write. The only writes are the receipt itself and the T2 plan-status flip required by the active plan workflow. This receipt does NOT declare cutover complete.",
+    "frozen_context": "The completed UI/reliability plan docs/plan/2026-08-12-tdtb-feedback-follow-up/ (status: completed) is frozen for extraction. Its plan.yaml and evidence are recorded below and NOT altered."
+  },
+  "capture": {
+    "utc": "2026-08-14T23:49:41Z",
+    "local": "2026-08-14T19:49:41-0400"
+  },
+  "canonical_repo": {
+    "path": "/Users/walle-mini/Repos/Projects/TDTB",
+    "branch": "main",
+    "head": "84c1e0cad5069c125131a0c1d3d8f579c76ac898",
+    "head_short": "84c1e0c",
+    "head_message": "docs: Add TDTB feedback-follow-up plan and acceptance evidence",
+    "upstream": "origin/main",
+    "upstream_state": "matched",
+    "remote": "https://github.com/asing44/TDTB.git",
+    "tracked_file_count": 329,
+    "worktree_count": 1,
+    "worktree_list": ["/Users/walle-mini/Repos/Projects/TDTB 84c1e0c [main]"],
+    "worktree_status": {
+      "clean": false,
+      "modified_tracked": [
+        "docs/plan/2026-08-12-tdtb-project-extraction/plan.yaml"
+      ],
+      "untracked_paths": [
+        "docs/plan/2026-08-12-tdtb-project-extraction/evidence/",
+        "docs/plan/2026-08-14-tdtb-canonical-cutover/"
+      ],
+      "untracked_files": [
+        "docs/plan/2026-08-12-tdtb-project-extraction/evidence/T1-inventory.json",
+        "docs/plan/2026-08-14-tdtb-canonical-cutover/plan.yaml"
+      ]
+    }
+  },
+  "development_branch": {
+    "name": "Development/tdtb-canonical-cutover",
+    "head_short": "7c1a74a",
+    "head_message": "Add initial HTML structure and CSS styles for the cockpit interface",
+    "relation_to_main": "3 commits ahead of main; merge base is 84c1e0c",
+    "ahead_behind_main": {"ahead": 3, "behind": 0},
+    "upstream": "origin/Development/tdtb-canonical-cutover",
+    "upstream_state": "matched",
+    "checked_out": false,
+    "disposition": "Foreign/unmerged work; preserve untouched. Recorded here, NOT merged, NOT checked out, NOT reset."
+  },
+  "sibling_repo": {
+    "path": "/Users/walle-mini/Repos/Claudius",
+    "branch": "main",
+    "head": "7a8919ac606ab6a9811a43ad3d7eeea5eb2efdd4",
+    "head_short": "7a8919ac",
+    "head_message": "feat: Add transfer receipt SHA256 and update plan status",
+    "upstream": "origin/main",
+    "upstream_state": "matched",
+    "remote": "https://github.com/asing44/Claudius.git",
+    "worktree_status": {
+      "clean": true,
+      "captured_at": "2026-08-14T23:49:41Z"
+    },
+    "post_capture_observation": {
+      "observed_at": "2026-08-14T19:50:08-0400",
+      "detail": "Foreign concurrent work appeared after capture: modified tracked file 'Plans Link/2026-07-24-vault-sweep-coverage-reconciliation.md' (22 insertions, 8 deletions; mtime 2026-08-14T19:50:08 local). Sibling HEAD unchanged at 7a8919ac. This foreign change is preserved untouched; it is NOT owned by this plan."
+    }
+  },
+  "fallback_runtime_path": {
+    "path": "/Users/walle-mini/Repos/Claudius/Tasks/tdtb-app-pilot/",
+    "head_for_path": "f20923449df46eeacd6f4d4ce19cf4674318a1f9",
+    "head_for_path_short": "f2092344",
+    "head_message": "fix(tdtb): repair setup, prompt fallback, and routing",
+    "dirty_for_path": false
+  },
+  "active_extraction_plan": {
+    "path": "docs/plan/2026-08-12-tdtb-project-extraction/plan.yaml",
+    "status": "approved",
+    "task_dag": "T1 completed; T2-T11 pending at capture; T2 flipped to completed by this task",
+    "worktree_modification": "Modified in working tree (context update + T1 status flip); pre-existing at T2 start, retained, not reverted"
+  },
+  "frozen_completed_ui_plan": {
+    "plan_path": "docs/plan/2026-08-12-tdtb-feedback-follow-up/plan.yaml",
+    "status": "completed",
+    "evidence_dir": "docs/plan/2026-08-12-tdtb-feedback-follow-up/evidence/",
+    "evidence_file_count": 39,
+    "disposition": "Frozen. Owned completed UI/reliability evidence. NOT altered by this task."
+  },
+  "cutover_wrapper_plan": {
+    "path": "docs/plan/2026-08-14-tdtb-canonical-cutover/plan.yaml",
+    "status": "pending",
+    "disposition": "Untracked plan wrapper; recorded, NOT modified by this task"
+  },
+  "ownership_distinction": {
+    "owned_completed_ui_reliability_evidence": [
+      "docs/plan/2026-08-12-tdtb-feedback-follow-up/plan.yaml (status: completed)",
+      "docs/plan/2026-08-12-tdtb-feedback-follow-up/evidence/ (39 evidence files)",
+      "app/duration_memory.py (canonical-only reliability work)",
+      "app/tests/test_duration_memory_contract.py",
+      "app/tests/test_day_setup_gate.py",
+      "app/tests/test_feedback_write_mint.py",
+      "app/tests/test_feedback25_mint_walls.py",
+      "app/tests/test_feedback_calendar_scenario.py",
+      "app/tests/test_final_actions.py",
+      "app/tests/test_locked_contract_red.py",
+      "app/tests/test_restart_rewire.py",
+      "frontend/src/feedback_scenario.test.ts (canonical-only)",
+      "frontend/src/feedback_write_mint.test.ts",
+      "frontend/src/fixtures/feedbackScenario.ts",
+      "frontend/src/responsive.test.ts",
+      "frontend/src/ui/Tooltip.tsx",
+      "docs/plan/2026-08-12-tdtb-project-extraction/evidence/T1-inventory.json (owned by this plan process)"
+    ],
+    "foreign_or_ambiguous_work": [
+      "Development/tdtb-canonical-cutover branch: 3 unmerged commits (7c1a74a, fc8d587, d8411f5); preserve, do not merge blindly",
+      "Fallback-only UI components in Claudius Tasks/tdtb-app-pilot: frontend/src/ui/ForgotStrip.tsx, MobileAgenda.tsx, PlacementList.tsx, ScenarioPanel.tsx, TrimAssist.tsx",
+      "Host-owned Claudius paths: Skills/user/tdtb-bridger-vault/SKILL.md, Configurations/gpt-stack/skills/tdtb-bridger-vault/SKILL.md, Plans Link/2026-07-17-tdtb-cockpit-overhaul.md, Projects/TDTB/archive/skill-era/",
+      "Host consumer rewire candidates: Scripts/test_tdtb_project_boundary.py, test_tdtb_schema_guard_runner.py, test_tdtb_restart.py, test_tdtb_judgment_runner.py, precommit-bundle-check.py, instr-build.py"
+    ]
+  },
+  "runtime_ownership": {
+    "port": 8746,
+    "live_job": {"label": "com.walle.tdtb", "pid": 64949, "state": "running", "exit_status": 0, "started": "2026-08-14T19:23:43-0400"},
+    "process_cwd": "/Users/walle-mini/Repos/Projects/TDTB/app",
+    "process_command": "/opt/homebrew/Cellar/python@3.12/3.12.14/.../Python main.py",
+    "installed_plist": "/Users/walle-mini/Library/LaunchAgents/com.walle.tdtb.plist",
+    "health_get": {"endpoint": "GET http://127.0.0.1:8746/health", "status": 200, "response": "{\"status\":\"ok\",\"judgment_model\":\"openai/gpt-5.6-luna\"}"},
+    "config_get": {"endpoint": "GET http://127.0.0.1:8746/config", "status": 200},
+    "points_to": "canonical app at /Users/walle-mini/Repos/Projects/TDTB/app",
+    "cutover_declared_complete": false,
+    "doc_discrepancy": "AGENTS.md and README.md still describe the Claudius fallback as the live runtime; stale wording is recorded, NOT silently corrected here"
+  },
+  "no_mutation_proof": {
+    "writes_performed": [
+      "docs/plan/2026-08-12-tdtb-project-extraction/evidence/T2-dirty-state-receipt.json (this receipt)",
+      "docs/plan/2026-08-12-tdtb-project-extraction/plan.yaml (T2 status pending -> completed per active plan workflow)"
+    ],
+    "forbidden_actions_observed": ["checkout", "merge", "commit", "reset", "push", "clean", "restart", "external write", "live POST", "billed endpoint"],
+    "source_modified": false,
+    "runtime_modified": false,
+    "external_systems_written": false,
+    "frozen_plan_altered": false
+  }
+}

@@ -1,0 +1,218 @@
+{
+  "meta": {
+    "plan_id": "2026-08-12-tdtb-project-extraction",
+    "wrapper_plan_id": "2026-08-14-tdtb-canonical-cutover",
+    "task_id": "T5",
+    "title": "Stage target/copy and independently verify against the receipt",
+    "created_at": "2026-08-15T00:20:05Z",
+    "mode": "bounded-tests-and-builds-plus-evidence-write",
+    "evidence_path": "docs/plan/2026-08-12-tdtb-project-extraction/evidence/T5-standalone-validation.json",
+    "no_mutation_claim": "This task performed NO commit, NO checkout, NO merge, NO reset, NO clean, NO push, NO restart, NO live POST, NO billed endpoint, NO external write, and NO copy/modify/delete of any Claudius fallback file. The only writes are this evidence file. No canonical tracked file changed during validation (git status after all runs identical to pre-run state).",
+    "user_decision": "The canonical repository /Users/walle-mini/Repos/Projects/TDTB IS the standalone target. The Claudius fallback tree Tasks/tdtb-app-pilot/ must remain untouched. No staging/copy into or out of the fallback tree."
+  },
+  "target": {
+    "path": "/Users/walle-mini/Repos/Projects/TDTB",
+    "branch": "main",
+    "head": "84c1e0c",
+    "head_full": "84c1e0cad5069c125131a0c1d3d8f579c76ac898",
+    "head_message": "docs: Add TDTB feedback-follow-up plan and acceptance evidence",
+    "upstream": "origin/main",
+    "tracked_file_count": 329,
+    "tracked_by_top_dir": {
+      "app": 116,
+      "frontend": 135,
+      ".opencode": 28
+    },
+    "pre_run_status": {
+      "modified_tracked": ["docs/plan/2026-08-12-tdtb-project-extraction/plan.yaml"],
+      "untracked_paths": [
+        "docs/plan/2026-08-12-tdtb-project-extraction/evidence/",
+        "docs/plan/2026-08-14-tdtb-canonical-cutover/"
+      ],
+      "note": "Identical to T2 receipt worktree_status; pre-existing plan-workflow dirty state, not caused by this task."
+    },
+    "post_run_status": {
+      "note": "Identical to pre_run_status. No canonical tracked file changed; no new untracked paths created by tests or builds (mockups/ and frontend/dist remain absent)."
+    }
+  },
+  "completeness_vs_t1_inventory": {
+    "claimed_roots_present": [
+      {"path": "app/", "observed": "116 tracked files; 51 test_*.py files; 8 js tests under app/tests/js/", "t1_claim": "canonical app/ 116 tracked"},
+      {"path": "frontend/", "observed": "135 tracked files; 45 test files matched T1 count", "t1_claim": "canonical frontend/ 135 tracked"},
+      {"path": "app/static/cockpit/assets/index-Cs9qJuE4.js", "observed": "present, 133884 bytes, sha256 48e7cf89cb6a78dc6066faee0241845af30defc51680f6711339278759c99fbb", "t1_claim": "canonical built bundle, tracked"},
+      {"path": "app/static/cockpit/assets/index-w2N1HAYb.css", "observed": "present, 36354 bytes, sha256 91aefa1386804ef84664419d2d92c161eeb730ccf35ca8eac684c7f8c229961c", "t1_claim": "canonical built bundle, tracked"},
+      {"path": "frontend/package-lock.json", "observed": "present (tracked lockfile)", "t1_claim": "canonical, tracked"},
+      {"path": "app/.venv/", "observed": "present; app/.venv/bin/python3.12; pytest 9.1.1 in venv", "t1_claim": "canonical, ignored, live runtime interpreter"},
+      {"path": "frontend/node_modules/", "observed": "present; vitest 4.1.10, vite 8.1.5 run from it", "t1_claim": "canonical, ignored"}
+    ],
+    "policy_files_present": {
+      "AGENTS.md": true,
+      "README.md": true,
+      ".gitignore": true,
+      ".opencode/": "28 tracked files",
+      "launchd/com.walle.tdtb.plist": "present (canonical template)"
+    },
+    "expected_absent_matches_t1": [
+      {"path": "restart-live.sh", "observed": "absent in canonical; present only in fallback (mtime 2026-08-06, untouched)", "t1_claim": "fallback only, missing from canonical root"},
+      {"path": "spec.md", "observed": "absent in canonical; present only in fallback (mtime 2026-08-02, untouched)", "t1_claim": "fallback only, missing from canonical root"},
+      {"path": "app/schema-hashes.json", "observed": "absent in canonical", "t1_claim": "fallback only; canonical .gitignore ignores it"},
+      {"path": "frontend/dist/", "observed": "absent; build:prod outputs to app/static/cockpit per vite.config.ts", "t1_claim": "no dist dir in canonical"}
+    ]
+  },
+  "internal_consistency": {
+    "index_html_asset_refs": {
+      "observed": "app/static/cockpit/index.html references exactly index-Cs9qJuE4.js and index-w2N1HAYb.css",
+      "note": "References match the tracked asset filenames present on disk."
+    },
+    "prod_build_readback": {
+      "command": "npm run build:prod (vite build --mode production)",
+      "exit": 0,
+      "output_assets": ["app/static/cockpit/assets/index-Cs9qJuE4.js", "app/static/cockpit/assets/index-w2N1HAYb.css"],
+      "byte_identity": "git status --porcelain -- app/static/ returned empty after build => rebuilt bundle is byte-identical to the tracked claimed generated root.",
+      "note": "Satisfies AGENTS.md 'generated bundles must be rebuilt from their source and read back before they count as verified' for the production target."
+    },
+    "mockup_build_readback": {
+      "command": "npx vite build --mode mockup --outDir <temp>",
+      "exit": 0,
+      "output_assets": ["index-w2N1HAYb.css", "index-DzNBVIUE.js (mockup fixture mode)"],
+      "note": "Mockup mode compiles the fixture adapter (__FIXTURE__=true). outDir overridden to /var/folders/gw/5_33ynbd5vv5884_v5h7vmg80000gn/T/opencode/tdtb-mockup-build to avoid creating canonical mockups/cockpit (fallback-only per T1/T4, excluded_non_owned). Deviation from the literal script is only the output location; pipeline, mode, and module transform count are unchanged."
+    }
+  },
+  "canonical_vs_fallback_distinction": {
+    "bundle_sha256": {
+      "canonical": {
+        "index-Cs9qJuE4.js": "48e7cf89cb6a78dc6066faee0241845af30defc51680f6711339278759c99fbb",
+        "index-w2N1HAYb.css": "91aefa1386804ef84664419d2d92c161eeb730ccf35ca8eac684c7f8c229961c"
+      },
+      "fallback": {
+        "index-DPNhuUK9.js": "75f28d129e4663e9e3ace0322a4ccb5a641f2afdf1f6384eae9fdce6d861f67d",
+        "index-DGbVzjSj.css": "16c821970f7d8de79cc75b9c8d4bfbc38c777bc0944646d3272ba6d83a198073"
+      },
+      "conclusion": "Canonical and fallback bundles differ (different filenames and SHAs), matching T1 bundle_divergence. No fallback asset was copied into canonical; canonical bundle was regenerated from canonical frontend source."
+    },
+    "fallback_only_files_untouched": [
+      "Tasks/tdtb-app-pilot/restart-live.sh",
+      "Tasks/tdtb-app-pilot/spec.md",
+      "Tasks/tdtb-app-pilot/app/schema-hashes.json",
+      "Tasks/tdtb-app-pilot/app/static/cockpit/assets/index-DPNhuUK9.js",
+      "Tasks/tdtb-app-pilot/app/static/cockpit/assets/index-DGbVzjSj.css"
+    ],
+    "fallback_only_ui_components_untouched": [
+      "frontend/src/ui/ForgotStrip.tsx",
+      "frontend/src/ui/MobileAgenda.tsx",
+      "frontend/src/ui/PlacementList.tsx",
+      "frontend/src/ui/ScenarioPanel.tsx",
+      "frontend/src/ui/TrimAssist.tsx"
+    ]
+  },
+  "test_results": {
+    "backend_pytest": {
+      "command": "app/.venv/bin/python -m pytest app/tests -q --no-header -rf",
+      "workdir": "/Users/walle-mini/Repos/Projects/TDTB",
+      "summary": "5 failed, 1278 passed, 1 warning in ~5.5s",
+      "failed_tests": [
+        "app/tests/test_restart_rewire.py::test_canonical_script_is_executable",
+        "app/tests/test_restart_rewire.py::test_canonical_script_passes_zsh_syntax_check",
+        "app/tests/test_restart_rewire.py::test_canonical_script_has_no_old_layout_references",
+        "app/tests/test_restart_rewire.py::test_canonical_script_plist_template_points_at_canonical_launchd",
+        "app/tests/test_restart_rewire.py::test_canonical_script_resolves_canonical_runtime_paths"
+      ],
+      "failure_classification": {
+        "class": "residual_pre_extraction_gap",
+        "root_cause": "test_restart_rewire.py reads REPO_ROOT/restart-live.sh (asserts existence, zsh -n, marker checks). restart-live.sh is absent from canonical root, exactly as recorded in T1 source_of_truth discrepancy and T4 excluded_non_owned. The test suite carries post-extraction rewire expectations for a file the canonical repo does not yet contain.",
+        "impact": "No app/source, runtime, or external impact; failures are file-presence assertions only, no live actions executed (test docstring confirms launchctl/restart-live/tdtb-restart are never executed).",
+        "disposition": "Not fixed by this task (surgical scope; extraction/rewire tasks T6-T7 own bringing restart-live.sh into canonical or reconciling the test). No other backend failure observed."
+      },
+      "js_tests": "Included in pytest via app/tests/test_js_logic.py -> node --test over 8 app/tests/js/*.test.mjs files; node v26.7.0 present; all passed as part of the 1278."
+    },
+    "frontend_vitest": {
+      "command": "npm test (vitest run)",
+      "workdir": "/Users/walle-mini/Repos/Projects/TDTB/frontend",
+      "summary": "Test Files 44 passed | 1 skipped (45); Tests 647 passed | 6 skipped (653)",
+      "note": "45 test files matches T1 canonical_frontend_test_files: 45. jsdom environment via vite.config.ts."
+    },
+    "frontend_typecheck": {
+      "command": "npm run typecheck (tsc --noEmit)",
+      "exit": 0,
+      "result": "clean"
+    }
+  },
+  "build_results": {
+    "build_prod": {
+      "command": "npm run build:prod",
+      "exit": 0,
+      "output": "53 modules transformed; app/static/cockpit/index.html + assets; built in 99ms",
+      "identity": "byte-identical to tracked bundles (git clean on app/static/)"
+    },
+    "build_mockup": {
+      "command": "npx vite build --mode mockup --outDir /var/folders/gw/5_33ynbd5vv5884_v5h7vmg80000gn/T/opencode/tdtb-mockup-build",
+      "exit": 0,
+      "output": "53 modules transformed; built in 41ms",
+      "note": "outDir overridden to temp to avoid creating canonical mockups/cockpit (fallback-only per T1/T4)."
+    }
+  },
+  "fallback_non_mutation_proof": {
+    "fallback_path": "/Users/walle-mini/Repos/Claudius/Tasks/tdtb-app-pilot/",
+    "before_runs": {
+      "git_status_for_path": "clean (empty porcelain output)",
+      "path_head": "f20923449df46eeacd6f4d4ce19cf4674318a1f9 fix(tdtb): repair setup, prompt fallback, and routing",
+      "claudius_main_head": "7a8919ac"
+    },
+    "after_runs": {
+      "git_status_for_path": "clean (empty porcelain output)",
+      "path_head": "f20923449df46eeacd6f4d4ce19cf4674318a1f9",
+      "claudius_main_head": "7a8919ac"
+    },
+    "conclusion": "Identical before/after fingerprint. No Claudius fallback file copied, modified, or deleted. Fallback bundle assets still present with original SHAs; restart-live.sh and spec.md mtimes unchanged (Aug 6 / Aug 2)."
+  },
+  "foreign_work_preservation": {
+    "Development/tdtb-canonical-cutover": "branch NOT checked out, NOT merged, NOT reset; refs untouched (T2 disposition preserved)",
+    "claudius_foreign_change": "Plans Link/2026-07-24-vault-sweep-coverage-reconciliation.md foreign modification from T2 preserved; not owned, not touched",
+    "host_owned_paths": "Skills/user/tdtb-bridger-vault/SKILL.md, Configurations/gpt-stack/skills/tdtb-bridger-vault/SKILL.md, Plans Link/2026-07-17-tdtb-cockpit-overhaul.md, Projects/TDTB/archive/skill-era/ not touched"
+  },
+  "forbidden_actions_observed": [
+    "commit",
+    "checkout",
+    "merge",
+    "reset",
+    "clean",
+    "push",
+    "restart",
+    "live POST",
+    "billed endpoint",
+    "external source write",
+    "fallback copy/modify/delete"
+  ],
+  "live_runtime": {
+    "port": 8746,
+    "disposition": "Treated as live per AGENTS.md; NO restart, NO POST, NO mutation. Health/version state NOT re-queried beyond T2 receipt (T2 health_get status 200; cutover not declared complete)."
+  },
+  "exact_commands": [
+    "git status --porcelain=v1; git branch --show-current; git rev-parse --short HEAD",
+    "app/.venv/bin/python -m pytest app/tests -q --no-header -rf",
+    "npm test (frontend/)",
+    "npm run typecheck (frontend/)",
+    "npm run build:prod (frontend/)",
+    "npx vite build --mode mockup --outDir /var/folders/gw/5_33ynbd5vv5884_v5h7vmg80000gn/T/opencode/tdtb-mockup-build (frontend/)",
+    "git status --porcelain=v1 -- app/static/",
+    "git -C /Users/walle-mini/Repos/Claudius status --porcelain=v1 -- Tasks/tdtb-app-pilot/",
+    "git -C /Users/walle-mini/Repos/Claudius log -1 --format=%H %s -- Tasks/tdtb-app-pilot/",
+    "shasum -a 256 canonical and fallback bundle assets"
+  ],
+  "residual_risks": [
+    "5 backend failures are the missing restart-live.sh in canonical; later tasks (T6/T7) must carry the script in or reconcile test_restart_rewire.py; cutover checklist (T10) depends on that resolution.",
+    "AGENTS.md/README.md still describe the fallback as live runtime; documentation staleness recorded in T1/T2, not corrected here.",
+    "mockups/cockpit build target is canonical-only-on-paper; mockup build verified to temp dir, so a canonical mockups/ dir does not yet exist (matches T1 absent).",
+    "No /version route in canonical app; post-cutover GET proof must use /health or /config (T1 discrepancy)."
+  ],
+  "conclusion": {
+    "standalone_complete": true,
+    "independently_testable": true,
+    "internal_consistency": true,
+    "canonical_vs_fallback_distinguished": true,
+    "fallback_non_mutation": true,
+    "foreign_work_preserved": true,
+    "residual_failures_classified": true,
+    "summary": "Canonical repository validated as the standalone target: completeness matches T1 inventory (329 tracked, claimed roots present), backend suite 1278 passed with 5 honestly-classified residual failures (missing restart-live.sh), frontend 647 passed/6 skipped + clean typecheck, production bundle rebuilds byte-identical to tracked assets, mockup mode compiles. Claudius fallback fingerprint identical before/after; no copies, modifications, deletions, commits, restarts, or external writes."
+  }
+}

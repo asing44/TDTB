@@ -1,0 +1,171 @@
+{
+  "meta": {
+    "plan_id": "2026-08-12-tdtb-project-extraction",
+    "wrapper_plan_id": "2026-08-14-tdtb-canonical-cutover",
+    "task_id": "T10",
+    "title": "Attended cutover-wait handoff",
+    "created_at": "2026-08-15T02:30:00Z",
+    "mode": "attended-checklist-wait-handoff",
+    "evidence_path": "docs/plan/2026-08-12-tdtb-project-extraction/evidence/T10-attended-cutover-checklist.json",
+    "no_claim": "This task produced the attended cutover checklist ONLY. No restart, no launchctl action, no materialization of canonical restart-live.sh, no launchd file modification, no source mutation, no external write, no checkout, no merge, no commit, no push. :8746 treated as live and inspected with GET-only diagnostics only. Cutover is NOT declared complete; T11 owns post-cutover removal/closure.",
+    "wait_handoff": "T10 stops before any restart or live write. The attended operator gate is the explicit approval boundary below."
+  },
+  "current_state": {
+    "captured_at": "2026-08-15T02:30:00Z",
+    "canonical_repo": {
+      "path": "/Users/walle-mini/Repos/Projects/TDTB",
+      "branch": "main",
+      "head": "84c1e0c",
+      "head_full": "84c1e0cad5069c125131a0c1d3d8f579c76ac898",
+      "head_message": "docs: Add TDTB feedback-follow-up plan and acceptance evidence",
+      "tracked_file_count": 329
+    },
+    "fallback_runtime_repo": {
+      "path": "/Users/walle-mini/Repos/Claudius/Tasks/tdtb-app-pilot/",
+      "resolves_to": "/Users/walle-mini/Development/Claudius/Tasks/tdtb-app-pilot/",
+      "head_for_path": "f2092344",
+      "head_message": "fix(tdtb): repair setup, prompt fallback, and routing",
+      "role": "Historical fallback copy; preserved for rollback until T11 acceptance"
+    },
+    "runtime": {
+      "port": 8746,
+      "live_job": {"label": "com.walle.tdtb", "pid": 64949, "state": "running", "exit_status": 0},
+      "process_cwd": "/Users/walle-mini/Repos/Projects/TDTB/app",
+      "installed_plist": "/Users/walle-mini/Library/LaunchAgents/com.walle.tdtb.plist",
+      "installed_plist_mtime": "2026-08-13T16:06:00Z",
+      "points_to": "canonical app at /Users/walle-mini/Repos/Projects/TDTB/app",
+      "observed_get_checks": {
+        "health": {"endpoint": "GET http://127.0.0.1:8746/health", "status": 200, "response": "{\"status\":\"ok\",\"judgment_model\":\"openai/gpt-5.6-luna\"}"},
+        "config": {"endpoint": "GET http://127.0.0.1:8746/config", "status": 200},
+        "version": {"endpoint": "GET http://127.0.0.1:8746/version", "status": 404, "note": "No /version route in canonical app; post-restart proof MUST use /health and /config"}
+      },
+      "cutover_declared_complete": false,
+      "doc_discrepancy": "AGENTS.md and README.md still describe the Claudius fallback as live runtime; stale wording recorded, NOT corrected by T10"
+    },
+    "pre_cutover_worktree": {
+      "canonical_modified_tracked": [
+        "app/judgment.py",
+        "app/requirements.txt",
+        "docs/plan/2026-08-12-tdtb-project-extraction/plan.yaml",
+        "frontend/vite.config.ts"
+      ],
+      "canonical_untracked_paths": [
+        "docs/plan/2026-08-12-tdtb-project-extraction/evidence/",
+        "docs/plan/2026-08-14-tdtb-canonical-cutover/"
+      ],
+      "note": "Pre-existing plan-workflow dirty state from T5-T9 evidence writes and bounded repairs; not caused by T10"
+    }
+  },
+  "residual_restart_failures": {
+    "count": 5,
+    "suite": "app/tests/test_restart_rewire.py",
+    "command": "app/.venv/bin/python -m pytest app/tests -q --no-header -rf",
+    "backend_summary": "1366 passed, 5 failed (T9) / 1278 passed, 5 failed (T5); frontend 647 passed/6 skipped, typecheck clean, builds green; Claudius checks green",
+    "failed_tests": [
+      "app/tests/test_restart_rewire.py::test_canonical_script_is_executable",
+      "app/tests/test_restart_rewire.py::test_canonical_script_passes_zsh_syntax_check",
+      "app/tests/test_restart_rewire.py::test_canonical_script_has_no_old_layout_references",
+      "app/tests/test_restart_rewire.py::test_canonical_script_plist_template_points_at_canonical_launchd",
+      "app/tests/test_restart_rewire.py::test_canonical_script_resolves_canonical_runtime_paths"
+    ],
+    "root_cause": "test_restart_rewire.py reads REPO_ROOT/restart-live.sh (asserts existence, zsh -n, marker checks). restart-live.sh is absent from canonical root, exactly as recorded in T1 source_of_truth and T4 excluded_non_owned. File-presence assertions only; no live action executed by the test.",
+    "impact": "No app/source, runtime, or external impact. Backend suite otherwise green.",
+    "disposition": "Carried forward to attended cutover and T11. The canonical restart-live.sh gap is handled in this checklist by the manual launchctl restart action below; T10 does NOT materialize the script."
+  },
+  "exact_paths": {
+    "installed_plist": "/Users/walle-mini/Library/LaunchAgents/com.walle.tdtb.plist",
+    "canonical_plist_template": "/Users/walle-mini/Repos/Projects/TDTB/launchd/com.walle.tdtb.plist",
+    "fallback_plist_template": "/Users/walle-mini/Repos/Claudius/Tasks/tdtb-app-pilot/launchd/com.walle.tdtb.plist",
+    "canonical_restart_live_sh": "/Users/walle-mini/Repos/Projects/TDTB/restart-live.sh",
+    "canonical_restart_live_sh_state": "MISSING - do not materialize in T10",
+    "fallback_restart_live_sh": "/Users/walle-mini/Repos/Claudius/Tasks/tdtb-app-pilot/restart-live.sh",
+    "fallback_restart_live_sh_state": "Present, executable, 6838 bytes, mtime 2026-08-06T15:24:00Z; preserved for rollback until T11 acceptance",
+    "canonical_runtime_interpreter": "/Users/walle-mini/Repos/Projects/TDTB/app/.venv/bin/python",
+    "canonical_working_directory": "/Users/walle-mini/Repos/Projects/TDTB/app",
+    "fallback_runtime_interpreter": "/Users/walle-mini/Development/Claudius/Tasks/tdtb-app-pilot/app/.venv/bin/python",
+    "vault_root": "/Users/walle-mini/Obsidian/WALL\u22c5E-THNK",
+    "log": "/Users/walle-mini/Library/Logs/tdtb-server.log",
+    "label": "com.walle.tdtb",
+    "port": 8746,
+    "plist_placeholder_substitution": {
+      "__WALLE_HOME__": "/Users/walle-mini",
+      "__TDTB_VAULT_ROOT__": "/Users/walle-mini/Obsidian/WALL\u22c5E-THNK",
+      "glyph_note": "Canonical template uses U+00B7 middle dot; installed plist uses U+22C5 dot operator (T1 observed sole substitution diff). plutil -lint validates the rendered plist."
+    }
+  },
+  "checklist": {
+    "phase_1_preflight_read_only": [
+      "Confirm git state: canonical repo main at 84c1e0c; only plan-scoped modified/untracked paths present; no foreign mutation.",
+      "Confirm fallback preserved: /Users/walle-mini/Repos/Claudius/Tasks/tdtb-app-pilot/restart-live.sh and launchd/com.walle.tdtb.plist present and untouched.",
+      "Confirm :8746 currently healthy: GET /health = 200 with expected judgment_model; GET /config = 200; GET /version = 404 (expected; do not use /version for proof).",
+      "Confirm launchd job loaded: launchctl list | grep com.walle.tdtb shows running pid with exit 0.",
+      "Confirm installed plist target: plutil -p ~/Library/LaunchAgents/com.walle.tdtb.plist shows ProgramArguments/WorkingDirectory pointing at /Users/walle-mini/Repos/Projects/TDTB/app.",
+      "Check log tail: tail -20 /Users/walle-mini/Library/Logs/tdtb-server.log shows no new startup errors."
+    ],
+    "phase_2_staging_canonical_plist_attended_only": [
+      "Render canonical template /Users/walle-mini/Repos/Projects/TDTB/launchd/com.walle.tdtb.plist with __WALLE_HOME__=/Users/walle-mini and __TDTB_VAULT_ROOT__=/Users/walle-mini/Obsidian/WALL\u22c5E-THNK into a temp file.",
+      "plutil -lint the rendered temp plist; must pass before any install.",
+      "Compare rendered temp against installed /Users/walle-mini/Library/LaunchAgents/com.walle.tdtb.plist. Installed already targets canonical (mtime 2026-08-13T16:06:00Z); reinstall only if rendered differs.",
+      "Back up the current installed plist (e.g. cp to ~/Library/LaunchAgents/com.walle.tdtb.plist.pre-cutover) before any replacement; this backup is the canonical-rollback source.",
+      "Do NOT modify the fallback plist/script; do NOT delete them (rollback until T11 acceptance)."
+    ],
+    "phase_3_approval_boundary": [
+      "Restart of com.walle.tdtb requires explicit Adam instruction naming: label com.walle.tdtb, port 8746, staged canonical plist, GET-only proof, no POST.",
+      "Attended operator action only. Automated/unattended sessions must never run the restart sequence.",
+      "The approval request is recorded here and re-issued at completion; T10 stops before any restart."
+    ],
+    "phase_4_restart_command_action_attended_only": [
+      "Because canonical restart-live.sh is MISSING and T10 does not materialize it, the attended restart uses the manual launchctl sequence below (equivalent to the fallback script's reload logic, targeting canonical):",
+      "Step 1: launchctl bootout gui/$UID/com.walle.tdtb  (tolerate failure if job is not loaded)",
+      "Step 2: launchctl bootstrap gui/$UID $HOME/Library/LaunchAgents/com.walle.tdtb.plist",
+      "Step 3: Wait for health, up to 25s: loop curl -sf -m 2 http://127.0.0.1:8746/health",
+      "Step 4: If health responds, proceed to GET-only proof (phase 5). If not, execute rollback (phase 6).",
+      "Never run the fallback script /Users/walle-mini/Repos/Claudius/Tasks/tdtb-app-pilot/restart-live.sh to restart the canonical app: its REPO_DIR/PLIST_TEMPLATE resolve to fallback paths and would point the job back at fallback.",
+      "If canonical restart-live.sh is later materialized (T11 or attended gate), re-run the 5 restart-rewire tests to clear the residual failures; do not materialize during T10."
+    ],
+    "phase_5_get_only_post_restart_proof": [
+      "GET http://127.0.0.1:8746/health must return 200 and {\"status\":\"ok\",\"judgment_model\":\"openai/gpt-5.6-luna\"}.",
+      "GET http://127.0.0.1:8746/config must return 200.",
+      "launchctl print gui/$UID/com.walle.tdtb must show a running pid whose process cwd is /Users/walle-mini/Repos/Projects/TDTB/app.",
+      "lsof -nP -iTCP:8746 -sTCP:LISTEN must show the launchd-owned python listener on port 8746.",
+      "tail -20 /Users/walle-mini/Library/Logs/tdtb-server.log must show the fresh startup, no traceback.",
+      "GET /version is NOT part of proof (route 404 in canonical; use /health and /config).",
+      "No POST /commit, /sequence, /adjust, and no live source write during or after proof."
+    ],
+    "phase_6_rollback_conditions": [
+      "Rollback trigger: health not responding after 25s, /config not 200, log shows traceback, or process cwd is not canonical.",
+      "Rollback action 1: launchctl bootout gui/$UID/com.walle.tdtb (tolerate failure).",
+      "Rollback action 2: restore fallback projection - launchctl bootstrap gui/$UID $HOME/Library/LaunchAgents/com.walle.tdtb.plist restored from the preserved fallback template /Users/walle-mini/Repos/Claudius/Tasks/tdtb-app-pilot/launchd/com.walle.tdtb.plist (renders interpreter /Users/walle-mini/Development/Claudius/Tasks/tdtb-app-pilot/app/.venv/bin/python and WorkingDirectory .../app).",
+      "Rollback action 3: re-run GET-only proof (phase 5) against the restored fallback runtime; expect fallback health.",
+      "Fallback plist/script remain preserved until T11 acceptance; only then may they be retired.",
+      "Any rollback that itself risks a second TDTB writer on :8746 must stop and report instead (port ownership check via lsof)."
+    ]
+  },
+  "forbidden_during_cutover": [
+    "POST /commit",
+    "POST /sequence",
+    "POST /adjust",
+    "Real source writes: vault, Todoist, Calendar, or any external source state",
+    "Unattended launchctl/restart actions",
+    "Modification or deletion of fallback plist/script",
+    "Materialization of canonical restart-live.sh during T10",
+    "Checkout, merge, commit, push, reset, clean"
+  ],
+  "safety": {
+    "no_live_restart_performed": true,
+    "no_launchctl_action_performed": true,
+    "no_plist_modified": true,
+    "no_restart_live_sh_created": true,
+    "no_post_commit": true,
+    "no_post_sequence": true,
+    "no_post_adjust": true,
+    "no_source_write": true,
+    "no_external_write": true,
+    "no_checkout_merge_commit_push": true,
+    "get_only_diagnostics": ["GET /health", "GET /config", "GET /version (404 observed, documented)"]
+  },
+  "handoff_to_T11": {
+    "post_cutover_removal": "Fallback Tasks/tdtb-app-pilot/** removal, test_tdtb_restart.py fallback reference retirement, seat-bootstrap tdtb-restart link materialization, AGENTS.md/README.md stale runtime wording update, canonical restart-live.sh materialization or test reconciliation",
+    "gate": "T11 runs only after attended cutover acceptance per this checklist and explicit Adam approval"
+  }
+}

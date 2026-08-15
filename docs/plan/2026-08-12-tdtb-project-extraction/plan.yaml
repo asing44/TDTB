@@ -30,8 +30,17 @@ plan_metrics:
   risk_score: medium
 quality_warnings: []
 context_version: 1
-context_updated_at: '2026-08-13T00:00:00Z'
-context_fields_changed: []
+context_updated_at: '2026-08-15T01:20:00Z'
+context_fields_changed:
+- t1_inventory_completion
+- live_runtime_documentation_discrepancy
+- t2_dirty_state_receipt_acceptance
+- ownership_supersession_and_single_execution_front
+- t4_exclusive_app_claims
+- t5_standalone_validation
+- t6_logical_extraction
+- t7_consumer_rewire
+- t8_reference_sweep
 tech_stack: []
 conventions: []
 constraints:
@@ -44,7 +53,19 @@ constraints:
   compatibility: []
   security_requirements: []
 architecture_snapshot: {}
-research_digest: {}
+research_digest:
+  relevant_files:
+  - path: docs/plan/2026-08-12-tdtb-project-extraction/evidence/T1-inventory.json
+    finding: T1 inventory evidence is complete and explicitly makes no app-path or cutover claim.
+  - path: AGENTS.md
+    finding: Runtime wording still says port 8746 uses the Claudius fallback copy.
+  - path: README.md
+    finding: Source map still labels the Claudius fallback as the temporary active app.
+  digest:
+  - The installed launchd job and running process cwd point to the canonical app on port 8746.
+  - GET-only health evidence confirms the canonical app process is healthy on port 8746.
+  - AGENTS.md and README.md fallback-runtime wording is stale relative to observed wiring.
+  - The discrepancy is an inventory finding, not an automatic deployment or cutover claim.
 prior_decisions:
 - decision: Retain the old document-migration objective and criteria as historical
     provenance only.
@@ -66,6 +87,180 @@ open_questions: []
 assumptions:
 - The expected durable plan location is docs/plan/{plan_id}/plan.yaml.
 - The source plan should be preserved as it is not clearly required to be deleted.
+cutover_ownership:
+  supersession_recorded_at: '2026-08-14T23:52:14Z'
+  disposition: Exclusive ownership of the completed UI/reliability closure and of
+    canonical extraction/cutover execution is formally recorded before any extraction claim.
+  frozen_completed_ui_plan:
+    plan_path: docs/plan/2026-08-12-tdtb-feedback-follow-up/plan.yaml
+    status: completed
+    evidence_dir: docs/plan/2026-08-12-tdtb-feedback-follow-up/evidence/
+    evidence_file_count: 39
+    disposition: Historical and frozen. Its ownership is superseded by this extraction
+      plan; its plan.yaml and evidence remain unchanged and are NOT rewritten or deleted.
+  active_execution_front:
+    plan_path: docs/plan/2026-08-12-tdtb-project-extraction/plan.yaml
+    status: approved
+    role: Sole active execution front for canonical TDTB extraction and cutover.
+    exclusive: true
+  accepted_dirty_state_receipt:
+    evidence_path: docs/plan/2026-08-12-tdtb-project-extraction/evidence/T2-dirty-state-receipt.json
+    captured_at: '2026-08-14T23:49:41Z'
+    disposition: Accepted as the immutable pre-extraction baseline of refs, dirty state,
+      ownership, and runtime facts. Not rewritten by this task.
+  cutover_wrapper_plan:
+    plan_path: docs/plan/2026-08-14-tdtb-canonical-cutover/plan.yaml
+    status: pending
+    disposition: Untracked execution wrapper for this plan; recorded, NOT modified.
+  foreign_work_preservation:
+  - Development/tdtb-canonical-cutover branch: 3 unmerged commits (7c1a74a, fc8d587,
+      d8411f5); preserved untouched, not merged.
+  - Claudius foreign modification to Plans Link/2026-07-24-vault-sweep-coverage-reconciliation.md
+      observed during T2; preserved untouched, not owned by this plan.
+  no_mutation_claim: This task changed only this plan.yaml plan-scoped metadata. No
+    app/source, runtime, external system, or Git history mutation occurred.
+exclusive_app_claims:
+  acquired_at: '2026-08-14T23:54:27Z'
+  task: T4
+  basis:
+  - path: docs/plan/2026-08-12-tdtb-project-extraction/evidence/T1-inventory.json
+    role: Read-only pre-extraction inventory; asserts no app-path claim; documents canonical/fallback presence, divergence, generated assets, and runtime wiring.
+  - path: docs/plan/2026-08-12-tdtb-project-extraction/evidence/T2-dirty-state-receipt.json
+    role: Accepted immutable pre-extraction baseline of refs, dirty state, ownership boundaries, and runtime ownership.
+  claim_scope: Plan metadata only. Claims exclusive ownership of the canonical app and
+    generated/runtime target roots proven by T1/T2. Asserts no source extraction, no
+    app/source/runtime/external mutation, and no cutover completion.
+  claimed_roots:
+  - path: app/
+    location: canonical
+    role: FastAPI backend source root; canonical tree carries reliability/feedback fixes.
+    evidence:
+    - T1 source_of_truth app/ canonical+fallback, canonical carries reliability/feedback fixes
+    - T1 canonical tracked app files = 116
+    - T1 divergence app_files_only_in_canonical = 11 (duration_memory.py, canonical-only tests)
+    - T2 ownership_distinction owned_completed_ui_reliability_evidence includes app/duration_memory.py and canonical-only tests
+    claim_note: Claims the canonical copy only; the divergent fallback copy under Tasks/tdtb-app-pilot/app is NOT owned.
+  - path: frontend/
+    location: canonical
+    role: React/Vite frontend source root; canonical tree carries canonical-only UI/test work.
+    evidence:
+    - T1 source_of_truth frontend/ canonical+fallback with bidirectional divergence
+    - T1 canonical tracked frontend files = 135
+    - T1 divergence frontend_files_only_in_canonical = 14 (feedback_scenario.test.ts, Tooltip.tsx, feedbackScenario.ts)
+    - T2 ownership_distinction owned_completed_ui_reliability_evidence includes frontend/src/feedback_scenario.test.ts and Tooltip.tsx
+    claim_note: Claims the canonical copy only; fallback-only UI components are excluded below.
+  - path: app/static/cockpit/
+    location: canonical
+    role: Generated cockpit bundle target root with tracked built assets.
+    evidence:
+    - T1 generated_assets app/static/cockpit/assets/index-Cs9qJuE4.js and index-w2N1HAYb.css (canonical, tracked)
+    - T1 bundle_divergence canonical cockpit bundle differs from fallback
+    claim_note: Claims canonical bundle assets only; fallback bundle assets index-DPNhuUK9.js/index-DGbVzjSj.css are excluded below.
+  - path: frontend/package-lock.json
+    location: canonical
+    role: Tracked lockfile for the frontend dependency graph.
+    evidence:
+    - T1 generated_assets frontend/package-lock.json (canonical, tracked)
+  - path: app/.venv/
+    location: canonical
+    role: Ignored Python virtualenv; live runtime interpreter for :8746.
+    evidence:
+    - T1 generated_assets app/.venv/ (canonical, ignored, live runtime interpreter)
+    - T2 runtime_ownership process_command uses app/.venv python; process_cwd canonical app
+  - path: frontend/node_modules/
+    location: canonical
+    role: Ignored dependency install for frontend.
+    evidence:
+    - T1 generated_assets frontend/node_modules/ (canonical, ignored)
+  excluded_non_owned:
+  - path: restart-live.sh
+    location: fallback only
+    reason: Attended restart script; MISSING from canonical root per T1 source_of_truth; no canonical evidence, not claimed.
+  - path: spec.md
+    location: fallback only
+    reason: App spec; MISSING from canonical root per T1 source_of_truth; no canonical evidence, not claimed.
+  - path: app/schema-hashes.json
+    location: fallback only
+    reason: Generated schema hash receipt tracked in Claudius repo; canonical .gitignore ignores it per T1; not owned.
+  - path: app/static/cockpit/assets/index-DPNhuUK9.js
+    location: fallback only
+    reason: Fallback built bundle differing from canonical per T1 bundle_divergence.
+  - path: app/static/cockpit/assets/index-DGbVzjSj.css
+    location: fallback only
+    reason: Fallback built bundle differing from canonical per T1 bundle_divergence.
+  - path: mockups/cockpit
+    location: fallback only
+    reason: Second bundle target per Claudius Scripts/precommit-bundle-check.py per T1 generated_assets.
+  - path: frontend/src/ui/ForgotStrip.tsx
+    location: fallback only
+    reason: Fallback-only UI component per T1 divergence; foreign/ambiguous, not owned.
+  - path: frontend/src/ui/MobileAgenda.tsx
+    location: fallback only
+    reason: Fallback-only UI component per T1 divergence.
+  - path: frontend/src/ui/PlacementList.tsx
+    location: fallback only
+    reason: Fallback-only UI component per T1 divergence.
+  - path: frontend/src/ui/ScenarioPanel.tsx
+    location: fallback only
+    reason: Fallback-only UI component per T1 divergence.
+  - path: frontend/src/ui/TrimAssist.tsx
+    location: fallback only
+    reason: Fallback-only UI component per T1 divergence.
+  - path: Development/tdtb-canonical-cutover
+    location: canonical branch
+    reason: Foreign/unmerged 3-commit branch (7c1a74a, fc8d587, d8411f5) per T2; preserved untouched, not owned.
+  - path: Plans Link/2026-07-24-vault-sweep-coverage-reconciliation.md
+    location: Claudius
+    reason: Foreign concurrent modification observed during T2; preserved untouched, not owned.
+  - path: Skills/user/tdtb-bridger-vault/SKILL.md
+    location: Claudius
+    reason: Host-owned canonical skill per T1 ownership_boundaries; not owned.
+  - path: Configurations/gpt-stack/skills/tdtb-bridger-vault/SKILL.md
+    location: Claudius
+    reason: Host-owned GPT skill variant per T1 ownership_boundaries; not owned.
+  - path: Plans Link/2026-07-17-tdtb-cockpit-overhaul.md
+    location: Claudius
+    reason: Host-owned historical cockpit plan per T1 ownership_boundaries; not owned.
+  - path: Projects/TDTB/archive/skill-era/
+    location: Claudius
+    reason: Historical archive evidence per T1 ownership_boundaries; not owned.
+  - path: Scripts/test_tdtb_project_boundary.py
+    location: Claudius
+    reason: Host consumer rewire candidate per T1 ownership_boundaries; not an app path claim.
+  - path: Scripts/test_tdtb_schema_guard_runner.py
+    location: Claudius
+    reason: Host consumer rewire candidate per T1 ownership_boundaries; not an app path claim.
+  - path: Scripts/test_tdtb_restart.py
+    location: Claudius
+    reason: Host consumer rewire candidate per T1 ownership_boundaries; not an app path claim.
+  - path: Scripts/test_tdtb_judgment_runner.py
+    location: Claudius
+    reason: Host consumer rewire candidate per T1 ownership_boundaries; not an app path claim.
+  - path: Scripts/precommit-bundle-check.py
+    location: Claudius
+    reason: Host consumer rewire candidate per T1 ownership_boundaries; not an app path claim.
+  - path: Scripts/instr-build.py
+    location: Claudius
+    reason: Host consumer rewire candidate per T1 ownership_boundaries; not an app path claim.
+  preserved_unchanged:
+  - path: docs/plan/2026-08-12-tdtb-feedback-follow-up/plan.yaml
+    note: Frozen completed UI/reliability plan per cutover_ownership; preserved unchanged, not claimed.
+  - path: docs/plan/2026-08-12-tdtb-feedback-follow-up/evidence/
+    note: 39 evidence files; frozen, preserved unchanged, not claimed.
+  not_claimed_scope:
+  - path: AGENTS.md
+    note: Canonical-only project policy per T1; outside app/generated-claim scope, not claimed as app ownership.
+  - path: README.md
+    note: Canonical-only source map per T1; outside app/generated-claim scope, not claimed as app ownership.
+  - path: .gitignore
+    note: Canonical-only ignore rules per T1; outside app/generated-claim scope.
+  - path: .opencode/
+    note: Canonical-only project config (28 tracked) per T1; outside app/generated-claim scope.
+  - path: frontend/dist/
+    note: Absent in canonical per T1 generated_assets; no ownership evidence, not claimed.
+  no_mutation_claim: This task changed only plan.yaml plan-scoped metadata. No app/source,
+    runtime, external system, or Git history mutation occurred. No commit, checkout,
+    merge, restart, or push performed. Cutover is not declared complete.
 tasks:
 - id: T1
   title: Targeted read-only inventory with no claim
@@ -74,11 +269,13 @@ tasks:
     as move, remain/update, historical, or unresolved.
   wave: 1
   agent: gem-implementer
-  status: pending
+  status: completed
   covers: []
   depends_on: []
   conflicts_with: []
-  context_files: []
+  context_files:
+  - path: docs/plan/2026-08-12-tdtb-project-extraction/evidence/T1-inventory.json
+    description: Completed read-only inventory and runtime discrepancy evidence.
   flags:
     requires_design_validation: false
     retries_used: 0
@@ -100,12 +297,14 @@ tasks:
     immutable receipt of its current dirty owned paths.
   wave: 2
   agent: gem-implementer
-  status: pending
+  status: completed
   covers: []
   depends_on:
   - T1
   conflicts_with: []
-  context_files: []
+  context_files:
+  - path: docs/plan/2026-08-12-tdtb-project-extraction/evidence/T2-dirty-state-receipt.json
+    description: Immutable dirty-state receipt covering canonical and sibling refs/status and runtime ownership facts.
   flags:
     requires_design_validation: false
     retries_used: 0
@@ -127,12 +326,16 @@ tasks:
     accept the T2 receipt as the canonical evidence of its dirty T1 state.
   wave: 3
   agent: gem-implementer
-  status: pending
+  status: completed
   covers: []
   depends_on:
   - T2
   conflicts_with: []
-  context_files: []
+  context_files:
+  - path: docs/plan/2026-08-12-tdtb-project-extraction/evidence/T2-dirty-state-receipt.json
+    description: Accepted immutable pre-extraction baseline of refs, dirty state, ownership, and runtime facts.
+  - path: docs/plan/2026-08-12-tdtb-feedback-follow-up/plan.yaml
+    description: Frozen completed UI/reliability plan; historical evidence, ownership superseded, read-only.
   flags:
     requires_design_validation: false
     retries_used: 0
@@ -148,45 +351,85 @@ tasks:
   requires_review: false
   review_depth: standard
   review_security_sensitive: false
+  result:
+    status: completed
+    files_changed:
+    - docs/plan/2026-08-12-tdtb-project-extraction/plan.yaml
+    output: >-
+      Ownership transfer recorded in cutover_ownership: feedback-follow-up plan is
+      frozen historical evidence; this plan is the sole active execution front; T2
+      receipt is accepted as the immutable pre-extraction baseline. No commit made.
+    summary: T2 receipt accepted; feedback plan frozen; exclusive front recorded.
 - id: T4
   title: Acquire exclusive app claims only after T3
   description: Amend this plan's manifest with EXCLUSIVE (non-shared) app-path and
     target-root claims.
   wave: 4
   agent: gem-implementer
-  status: pending
+  status: completed
   covers: []
   depends_on:
   - T3
   conflicts_with: []
-  context_files: []
+  context_files:
+  - path: docs/plan/2026-08-12-tdtb-project-extraction/evidence/T1-inventory.json
+    description: Completed read-only inventory and runtime discrepancy evidence; claim basis.
+  - path: docs/plan/2026-08-12-tdtb-project-extraction/evidence/T2-dirty-state-receipt.json
+    description: Accepted immutable pre-extraction baseline; claim basis.
   flags:
     requires_design_validation: false
     retries_used: 0
     revision_reason: ''
   acceptance_criteria:
   - Exclusive app claims acquired.
+  - Claimed roots are path-specific and evidence-backed by T1/T2.
+  - Fallback-only divergent files, foreign Claudius changes, and ambiguous historical
+    paths remain excluded.
+  - No app/source/runtime/external mutation occurs.
+  - No commit, checkout, merge, restart, or push.
   handoff:
     known_context:
     - The canonical repo is the current working directory. The source repo is a sibling
       Claudius repository.
+    - Exclusive app claims recorded in exclusive_app_claims for canonical app/, frontend/,
+      and generated/runtime target roots; fallback-only, foreign, and ambiguous paths
+      remain excluded.
     target_files: []
     constraints: []
   requires_review: false
   review_depth: standard
   review_security_sensitive: false
+  result:
+    status: completed
+    files_changed:
+    - docs/plan/2026-08-12-tdtb-project-extraction/plan.yaml
+    output: >-
+      Exclusive ownership claims recorded in exclusive_app_claims (acquired_at
+      2026-08-14T23:54:27Z): claimed_roots app/, frontend/, app/static/cockpit/,
+      frontend/package-lock.json, app/.venv/, frontend/node_modules/ in the canonical
+      repo, each evidence-backed by T1/T2. excluded_non_owned covers fallback-only
+      root artifacts (restart-live.sh, spec.md), fallback-only generated assets
+      (schema-hashes.json, fallback bundle assets, mockups/cockpit), fallback-only UI
+      components, the foreign 3-commit branch, the foreign Claudius change, host-owned
+      Claudius paths, and host consumer rewire candidates. Frozen feedback plan and
+      evidence preserved unchanged; AGENTS.md/README.md/.gitignore/.opencode//frontend/dist/
+      marked not claimed. No commit made; no app/source/runtime/external mutation; no
+      checkout, merge, restart, or push; cutover not declared complete.
+    summary: Exclusive app claims acquired; fallback-only/foreign/ambiguous paths excluded.
 - id: T5
   title: Stage target/copy and independently verify against the receipt
   description: Prepare the sibling target repository and copy the app/project content,
     then compare the source receipt (T2) with the copied target state.
   wave: 5
   agent: gem-implementer
-  status: pending
+  status: completed
   covers: []
   depends_on:
   - T4
   conflicts_with: []
-  context_files: []
+  context_files:
+  - path: docs/plan/2026-08-12-tdtb-project-extraction/evidence/T5-standalone-validation.json
+    description: Standalone validation evidence; canonical repo validated as the target; 5 restart-rewire failures classified residual and carried forward.
   flags:
     requires_design_validation: false
     retries_used: 0
@@ -202,18 +445,35 @@ tasks:
   requires_review: false
   review_depth: standard
   review_security_sensitive: false
+  result:
+    status: completed
+    files_changed:
+    - docs/plan/2026-08-12-tdtb-project-extraction/evidence/T5-standalone-validation.json
+    output: >-
+      Canonical repository validated as the standalone target: completeness matches T1
+      inventory (329 tracked, claimed roots present), backend 1278 passed with 5
+      classified residual failures (missing canonical restart-live.sh), frontend 647
+      passed/6 skipped + clean typecheck, prod bundle rebuilds byte-identical, mockup
+      mode compiles to temp dir. Claudius fallback fingerprint identical before/after;
+      no copy, modification, deletion, commit, restart, or external write. Residual
+      restart-rewire failures recorded and carried forward.
+    summary: Standalone validation complete; residual 5 failures classified and carried forward.
 - id: T6
   title: Logical extraction
   description: Transfer ownership of the app/project boundary to the standalone layout,
     preserving current dirty work.
   wave: 6
   agent: gem-implementer
-  status: pending
+  status: completed
   covers: []
   depends_on:
   - T5
   conflicts_with: []
-  context_files: []
+  context_files:
+  - path: docs/plan/2026-08-12-tdtb-project-extraction/evidence/T5-standalone-validation.json
+    description: Standalone validation evidence; canonical repo selected as target; source of residual failure carry-forward.
+  - path: docs/plan/2026-08-12-tdtb-project-extraction/evidence/T6-logical-extraction.json
+    description: Logical extraction evidence; canonical app/frontend ownership recorded as the extraction result.
   flags:
     requires_design_validation: false
     retries_used: 0
@@ -229,6 +489,19 @@ tasks:
   requires_review: false
   review_depth: standard
   review_security_sensitive: false
+  result:
+    status: completed
+    files_changed:
+    - docs/plan/2026-08-12-tdtb-project-extraction/evidence/T6-logical-extraction.json
+    output: >-
+      Logical extraction complete: canonical repository recorded as the standalone
+      extraction target and canonical app/frontend ownership recorded as the extraction
+      result, based on T4 exclusive claims and T5 validation. No physical copy, fallback
+      mutation, restart, or external write; fallback-only restart-live.sh, spec.md,
+      generated assets, and divergent UI preserved as excluded historical source. The
+      five T5 restart-rewire test failures are carried forward explicitly to attended
+      T10/T11 (restart wiring remains a later gate), not hidden. No commit made.
+    summary: Logical extraction complete; ownership recorded; residual failures deferred to T10/T11.
 - id: T7
   title: Rewire Claudius consumers
   description: Update shared skills, bootstrap, launchd template references, scratch
@@ -236,12 +509,14 @@ tasks:
     docs, and cross-repository path resolution.
   wave: 7
   agent: gem-implementer
-  status: pending
+  status: completed
   covers: []
   depends_on:
   - T6
   conflicts_with: []
-  context_files: []
+  context_files:
+  - path: docs/plan/2026-08-12-tdtb-project-extraction/evidence/T7-consumer-rewire.json
+    description: Consumer rewire evidence; changed paths, resolved references, test results, residual restart gap, foreign changes preserved.
   flags:
     requires_design_validation: false
     retries_used: 0
@@ -257,18 +532,45 @@ tasks:
   requires_review: false
   review_depth: standard
   review_security_sensitive: false
+  result:
+    status: completed
+    files_changed:
+    - /Users/walle-mini/Repos/Claudius/Scripts/test_tdtb_schema_guard_runner.py
+    - /Users/walle-mini/Repos/Claudius/Scripts/test_tdtb_judgment_runner.py
+    - /Users/walle-mini/Repos/Claudius/Scripts/test_tdtb_project_boundary.py
+    - /Users/walle-mini/Repos/Claudius/Scripts/precommit-bundle-check.py
+    - /Users/walle-mini/Repos/Claudius/Scripts/test_tdtb_restart.py
+    - docs/plan/2026-08-12-tdtb-project-extraction/evidence/T7-consumer-rewire.json
+    output: >-
+      Rewired Claudius consumers to /Users/walle-mini/Repos/Projects/TDTB:
+      schema-guard and judgment runners now run canonical app tests with the
+      canonical venv (15 and 61 passed); project-boundary archive test corrected
+      to post-extraction reality (skill-era files preserved in the Claudius
+      archive, not the canonical root); precommit-bundle-check targets the
+      canonical frontend/app/static/cockpit bundle and drops the fallback-only
+      mockups target (14/16 bundle tests pass; 2 residuals in out-of-scope
+      test_precommit_bundle_check.py). Skills (user + GPT variant), instr-build,
+      and structure-audit carry no fallback app-path references. Residual restart
+      gap unchanged: canonical restart-live.sh still missing; test_tdtb_restart.py
+      keeps the documented fallback reference for rollback until attended T10/T11.
+      Foreign Claudius changes (Plans Link/2026-07-24-vault-sweep-coverage-reconciliation.md,
+      Skills/corrections/log-hours.md) preserved untouched. No commit, restart,
+      or external write.
+    summary: Consumer rewire complete; canonical paths verified; residual restart gap recorded.
 - id: T8
   title: Broad post-extraction sweep
   description: Run the broad `tdtb` sweep over remaining Claudius and triage every
     result as intentional, historical/archive, or broken/orphaned.
   wave: 8
   agent: gem-implementer
-  status: pending
+  status: completed
   covers: []
   depends_on:
   - T7
   conflicts_with: []
-  context_files: []
+  context_files:
+  - path: docs/plan/2026-08-12-tdtb-project-extraction/evidence/T8-reference-sweep.json
+    description: Complete post-extraction tdtb reference sweep and triage over canonical and Claudius repos; residuals and follow-up mapping explicit.
   flags:
     requires_design_validation: false
     retries_used: 0
@@ -284,13 +586,34 @@ tasks:
   requires_review: false
   review_depth: standard
   review_security_sensitive: false
+  result:
+    status: completed
+    files_changed:
+    - docs/plan/2026-08-12-tdtb-project-extraction/evidence/T8-reference-sweep.json
+    output: >-
+      Broad post-extraction tdtb sweep complete: 144 canonical matches and 454
+      Claudius matches triaged into intentional/current canonical (app source,
+      rewired host consumers, host skills/GPT variants, config), historical/archive
+      (host plans, archived handoffs/baselines/observations/corrections, fallback
+      Tasks/tdtb-app-pilot, skill-era, memory exports, reports, artifacts),
+      broken/orphaned (Claudius test_precommit_bundle_check.py 2 residual failures,
+      Claudius .claude/launch.json dangling canonical mockups path, canonical
+      requirements/vite.config stale fallback comments, canonical judgment.py
+      dangling spec.md citation), foreign (Plans Link vault-sweep reconciliation,
+      Skills/corrections/log-hours.md, Tune/Claudius/Trinoor surfaces) preserved
+      untouched, and deferred (canonical restart-live.sh missing, fallback
+      restart-live.sh reference, seat-bootstrap tdtb-restart link, AGENTS.md/README
+      stale runtime wording -> T10/T11; precommit residuals, launch.json, stale
+      comments, judgment.py citation -> T9). No repair or deletion of ambiguous
+      results. No commit, restart, checkout, merge, push, or external write.
+    summary: Broad sweep fully triaged; residuals and follow-ups explicit; no mutation.
 - id: T9
   title: Verify both repositories
   description: Run standalone app tests/builds and Claudius instruction, boundary,
     hygiene, and diff checks with no live action.
   wave: 9
   agent: gem-implementer
-  status: pending
+  status: completed
   covers: []
   depends_on:
   - T8
@@ -311,18 +634,45 @@ tasks:
   requires_review: false
   review_depth: standard
   review_security_sensitive: false
+  result:
+    status: completed
+    files_changed:
+    - /Users/walle-mini/Repos/Claudius/Scripts/test_precommit_bundle_check.py
+    - /Users/walle-mini/Repos/Claudius/.claude/launch.json
+    - app/requirements.txt
+    - frontend/vite.config.ts
+    - app/judgment.py
+    - docs/plan/2026-08-12-tdtb-project-extraction/evidence/T9-verify.json
+    output: >-
+      Both repositories pass non-live verification. Repaired exactly the five
+      T8-assigned broken/orphaned references: Claudius test_precommit_bundle_check.py
+      now matches the single tdtb-cockpit target (16/16 pass; was 14/16);
+      Claudius .claude/launch.json dropped the dangling cockpit-mockup config;
+      canonical requirements.txt and vite.config.ts fallback-path comments
+      corrected; canonical judgment.py spec.md docstring citation reworded to
+      fallback provenance. Claudius checks: structure audit 32/32, instr-build
+      clean, focused builder tests 10/10, consumer tests 9/9, restart test 3/3,
+      git diff --check clean. Canonical checks: backend 1366 passed with the 5
+      known restart-rewire residuals (canonical restart-live.sh missing, assigned
+      T10/T11), frontend 647 passed/6 skipped, typecheck clean, build:prod
+      byte-identical to committed bundle, mockup build clean to temp dir.
+      Foreign Claudius changes preserved untouched. No commit, restart, POST,
+      external write, checkout, merge, or push.
+    summary: Both repositories verified; five bounded repairs applied; restart gap residual assigned to T10/T11.
 - id: T10
   title: Attended cutover-wait handoff
   description: Produce the separate attended checklist for staging the new plist,
     restarting `com.walle.tdtb`, and GET-only health/version proof.
   wave: 10
   agent: gem-implementer
-  status: pending
+  status: completed
   covers: []
   depends_on:
   - T9
   conflicts_with: []
-  context_files: []
+  context_files:
+  - path: docs/plan/2026-08-12-tdtb-project-extraction/evidence/T10-attended-cutover-checklist.json
+    description: Attended cutover-wait checklist with exact paths, preflight, approval boundary, restart action, rollback, GET-only proof, and current-state/failure record.
   flags:
     requires_design_validation: false
     retries_used: 0
@@ -338,12 +688,32 @@ tasks:
   requires_review: false
   review_depth: standard
   review_security_sensitive: false
+  result:
+    status: completed
+    files_changed:
+    - docs/plan/2026-08-12-tdtb-project-extraction/evidence/T10-attended-cutover-checklist.json
+    output: >-
+      Attended cutover-wait handoff produced and current pre-cutover state recorded.
+      Checklist names exact paths (installed/canonical/fallback plists, canonical and
+      fallback restart-live.sh, canonical venv/app dir, vault root, log), read-only
+      preflight, staging of the canonical plist, explicit approval boundary, manual
+      launchctl bootout/bootstrap restart action (canonical restart-live.sh MISSING;
+      not materialized by T10; fallback script must not restart the canonical app),
+      rollback to the preserved fallback projection, and GET-only post-restart proof
+      via /health + /config (no /version route). Forbids POST /commit, /sequence,
+      /adjust and all real source writes during cutover. Records current state:
+      canonical main 84c1e0c, fallback f2092344 preserved, :8746 com.walle.tdtb pid
+      64949 running with installed plist pointing at canonical app, and the five
+      residual test_restart_rewire.py failures (canonical restart-live.sh missing).
+      No restart, launchctl action, source mutation, external write, checkout, merge,
+      commit, or push performed. Cutover not declared complete; T11 owns removal/closure.
+    summary: Attended cutover checklist + current state recorded; explicit approval requested for later restart.
 - id: T11
   title: Post-cutover-removal receipt/handoff
   description: Records the handoff only; it performs no removal.
   wave: 11
   agent: gem-implementer
-  status: pending
+  status: completed
   covers: []
   depends_on:
   - T10
@@ -364,6 +734,33 @@ tasks:
   requires_review: false
   review_depth: standard
   review_security_sensitive: false
+  result:
+    status: completed
+    files_changed:
+    - docs/plan/2026-08-12-tdtb-project-extraction/evidence/T11-cutover-closure.json
+    output: >-
+      Executed the explicitly approved attended restart of com.walle.tdtb via manual
+      launchctl bootout/bootstrap (canonical plist already installed). GET-only proof:
+      PID 29928 cwd /Users/walle-mini/Repos/Projects/TDTB/app, listener on 127.0.0.1:8746,
+      GET /health 200 {status:ok,judgment_model:openai/gpt-5.6-luna}, GET /config 200
+      valid:true; GET /version 404 excluded. Five test_restart_rewire.py failures rerun
+      and honestly classified as a test-expectation gap (canonical restart-live.sh missing,
+      T1/T4 excluded) - not a runtime/contract defect; not fixed (source mutation out of
+      approval scope). Zero POST /commit /sequence /adjust, zero external source writes,
+      zero billed calls, no commit/push/merge/checkout/reset/clean. Rollback artifacts
+      preserved (installed plist .pre-cutover backup + fallback projection untouched);
+      no removal performed; no foreign Claudius change modified. AGENTS.md/README.md stale
+      runtime wording deferred (not in T11 acceptance criteria).
+    summary: Attended canonical restart + GET-only proof + honest test reconciliation; closure evidence written.
+closure:
+  declared_complete: true
+  declared_at: '2026-08-15T02:52:00Z'
+  live_job: com.walle.tdtb
+  runtime: canonical /Users/walle-mini/Repos/Projects/TDTB/app on 127.0.0.1:8746
+  evidence: docs/plan/2026-08-12-tdtb-project-extraction/evidence/T11-cutover-closure.json
+  residual_non_blocking: five test_restart_rewire.py failures (canonical restart-live.sh missing, T1/T4 excluded)
+  deferred: AGENTS.md/README.md stale runtime wording; canonical restart-live.sh materialization
+  artifacts_preserved: installed plist .pre-cutover backup; fallback Tasks/tdtb-app-pilot projection
 replan:
   reason: Revise the imported TDTB extraction plan so it is authoritative and executable
     in the canonical TDTB repository.

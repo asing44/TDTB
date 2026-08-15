@@ -1,0 +1,109 @@
+{
+  "meta": {
+    "plan_id": "2026-08-12-tdtb-project-extraction",
+    "task_id": "T1",
+    "title": "Targeted read-only inventory with no claim",
+    "created_at": "2026-08-14T00:00:00Z",
+    "mode": "read-only",
+    "no_claim": "This inventory asserts NO app-path claim, performs NO extraction, NO merge, NO commit, NO restart, NO live POST, NO generated rebuild, and NO external write. All observations are bounded filesystem/git/GET-only checks.",
+    "evidence_path": "docs/plan/2026-08-12-tdtb-project-extraction/evidence/T1-inventory.json"
+  },
+  "canonical_repo": {
+    "path": "/Users/walle-mini/Repos/Projects/TDTB",
+    "branch": "main",
+    "head": "84c1e0c",
+    "head_message": "docs: Add TDTB feedback-follow-up plan and acceptance evidence",
+    "clean": true,
+    "untracked": ["docs/plan/2026-08-14-tdtb-canonical-cutover/"],
+    "remote": "https://github.com/asing44/TDTB.git",
+    "tracked_file_count": 329,
+    "tracked_by_top_dir": {"app": 116, "frontend": 135, "docs": 41, ".opencode": 28, "root_files": 9}
+  },
+  "fallback_runtime_repo": {
+    "path": "/Users/walle-mini/Repos/Claudius/Tasks/tdtb-app-pilot/",
+    "host_repo": "/Users/walle-mini/Repos/Claudius",
+    "head_for_path": "f2092344",
+    "head_message": "fix(tdtb): repair setup, prompt fallback, and routing",
+    "dirty_for_path": false,
+    "role_per_docs": "Live runtime copy per AGENTS.md/README until attended cutover (see discrepancies)"
+  },
+  "source_of_truth": [
+    {"path": "app/", "location": "canonical + fallback", "role": "FastAPI backend source; canonical tree carries reliability/feedback fixes, fallback tree is stale plus app/schema-hashes.json"},
+    {"path": "frontend/", "location": "canonical + fallback", "role": "React/Vite frontend source; trees diverge bidirectionally (see divergence)"},
+    {"path": "launchd/com.walle.tdtb.plist", "location": "canonical + fallback + installed", "role": "Canonical copy is a template with __WALLE_HOME__/__TDTB_VAULT_ROOT__ placeholders; fallback copy targets __WALLE_HOME__/Development/Claudius/Tasks/tdtb-app-pilot/app; installed copy targets canonical app with real values"},
+    {"path": "restart-live.sh", "location": "fallback only", "role": "Attended restart script; MISSING from canonical root despite AGENTS.md listing it as canonical"},
+    {"path": "spec.md", "location": "fallback only", "role": "App spec; MISSING from canonical root despite AGENTS.md listing it as canonical"},
+    {"path": "AGENTS.md", "location": "canonical only", "role": "Canonical project policy (repo root)"},
+    {"path": "README.md", "location": "canonical only", "role": "Canonical source map and lifecycle boundary"},
+    {"path": ".gitignore", "location": "canonical only", "role": "Ignores .history, .DS_Store, **/.venv, __pycache__, *.pyc, .pytest_cache, node_modules, graphify-out, schema-hashes.json"},
+    {"path": ".opencode/", "location": "canonical only", "role": "Project opencode config (28 tracked files)"}
+  ],
+  "generated_assets": [
+    {"path": "app/static/cockpit/assets/index-Cs9qJuE4.js", "location": "canonical", "role": "Built Vite bundle, tracked"},
+    {"path": "app/static/cockpit/assets/index-w2N1HAYb.css", "location": "canonical", "role": "Built Vite bundle, tracked"},
+    {"path": "app/static/cockpit/assets/index-DPNhuUK9.js", "location": "fallback", "role": "Built Vite bundle, differs from canonical"},
+    {"path": "app/static/cockpit/assets/index-DGbVzjSj.css", "location": "fallback", "role": "Built Vite bundle, differs from canonical"},
+    {"path": "app/schema-hashes.json", "location": "fallback only", "role": "Generated schema hash receipt, tracked in Claudius repo; canonical .gitignore ignores it"},
+    {"path": "frontend/node_modules/", "location": "canonical", "role": "Ignored dependency install"},
+    {"path": "app/.venv/", "location": "canonical", "role": "Ignored Python venv (live runtime interpreter)"},
+    {"path": "frontend/package-lock.json", "location": "canonical", "role": "Tracked lockfile"},
+    {"path": "frontend/dist/", "location": "absent", "role": "No dist dir in canonical; bundles live under app/static/cockpit"},
+    {"path": "mockups/cockpit", "location": "fallback", "role": "Second bundle target per Claudius Scripts/precommit-bundle-check.py"}
+  ],
+  "launch_runtime_wiring": {
+    "installed_plist": "/Users/walle-mini/Library/LaunchAgents/com.walle.tdtb.plist",
+    "installed_plist_mtime": "2026-08-13T16:06:00Z",
+    "installed_targets": {"ProgramArguments": ["/Users/walle-mini/Repos/Projects/TDTB/app/.venv/bin/python", "main.py"], "WorkingDirectory": "/Users/walle-mini/Repos/Projects/TDTB/app", "TDTB_VAULT_ROOT": "/Users/walle-mini/Obsidian/WALL\u22c5E-THNK"},
+    "live_job": {"label": "com.walle.tdtb", "pid": 64949, "state": "running", "exit_status": 0},
+    "live_process_cwd": "/Users/walle-mini/Repos/Projects/TDTB/app",
+    "live_health_get": {"endpoint": "GET http://127.0.0.1:8746/health", "response": "{\"status\":\"ok\",\"judgment_model\":\"openai/gpt-5.6-luna\"}"},
+    "live_version_get": {"endpoint": "GET http://127.0.0.1:8746/version", "response": "404 Not Found; no /version route in canonical app/main.py"},
+    "installed_vs_canonical_template": "Installed plist equals canonical launchd/com.walle.tdtb.plist with placeholders substituted; sole diff is vault-root glyph (template U+00B7 middle dot vs installed U+22C5 dot operator). Installed is derived from the CANONICAL template.",
+    "fallback_plist_target": {"ProgramArguments": ["__WALLE_HOME__/Development/Claudius/Tasks/tdtb-app-pilot/app/.venv/bin/python", "main.py"], "WorkingDirectory": "__WALLE_HOME__/Development/Claudius/Tasks/tdtb-app-pilot/app"},
+    "restart_script": "/Users/walle-mini/Repos/Claudius/Tasks/tdtb-app-pilot/restart-live.sh references Tasks/tdtb-app-pilot paths, port 8746, launchctl bootstrap/bootout on gui/$UID/com.walle.tdtb"
+  },
+  "tests": {
+    "canonical_app_pytest_files": 51,
+    "canonical_frontend_test_files": 45,
+    "canonical_app_js_mjs_tests": 8,
+    "fallback_app_pytest_files": 43,
+    "fallback_frontend_test_files": 35
+  },
+  "ownership_boundaries": {
+    "canonical_skill": "/Users/walle-mini/Repos/Claudius/Skills/user/tdtb-bridger-vault/SKILL.md (196135 bytes)",
+    "gpt_skill_variant": "/Users/walle-mini/Repos/Claudius/Configurations/gpt-stack/skills/tdtb-bridger-vault/SKILL.md (30614 bytes)",
+    "host_historical_plan": "/Users/walle-mini/Repos/Claudius/Plans Link/2026-07-17-tdtb-cockpit-overhaul.md (116673 bytes)",
+    "historical_archive": "/Users/walle-mini/Repos/Claudius/Projects/TDTB/archive/skill-era/ (DESIGN.md, tdtb-2026-04-29.md, tdtb-bridger-v5.1.md, tdtb-kickoff-2026-04-29.html, tdtb-master-reference.md)",
+    "host_consumers_rewire_candidates": [
+      "/Users/walle-mini/Repos/Claudius/Scripts/test_tdtb_project_boundary.py (asserts README contains Tasks/tdtb-app-pilot/)",
+      "/Users/walle-mini/Repos/Claudius/Scripts/test_tdtb_schema_guard_runner.py (fallback venv + test path)",
+      "/Users/walle-mini/Repos/Claudius/Scripts/test_tdtb_restart.py (fallback restart-live.sh)",
+      "/Users/walle-mini/Repos/Claudius/Scripts/test_tdtb_judgment_runner.py (fallback venv + test path)",
+      "/Users/walle-mini/Repos/Claudius/Scripts/precommit-bundle-check.py (source_root Tasks/tdtb-app-pilot/frontend, bundle_root Tasks/tdtb-app-pilot/app/static/cockpit and mockups/cockpit)",
+      "/Users/walle-mini/Repos/Claudius/Scripts/instr-build.py (exists; no tdtb path grep match in test_structure_audit.py)"
+    ],
+    "structure_audit_tdtb_references": "None found in /Users/walle-mini/Repos/Claudius/Scripts/test_structure_audit.py; only GPT-active-project name 'TDTB' logic and a negative assertion"
+  },
+  "divergence": {
+    "app_files_differing": 26,
+    "app_files_only_in_canonical": 11,
+    "app_files_only_in_fallback": 3,
+    "frontend_files_differing": 47,
+    "frontend_files_only_in_canonical": 14,
+    "frontend_files_only_in_fallback": 7,
+    "canonical_only_app_examples": ["app/duration_memory.py", "app/tests/test_duration_memory_contract.py", "app/tests/test_day_setup_gate.py", "app/tests/test_feedback_write_mint.py", "app/tests/test_feedback25_mint_walls.py", "app/tests/test_feedback_calendar_scenario.py", "app/tests/test_final_actions.py", "app/tests/test_locked_contract_red.py", "app/tests/test_restart_rewire.py"],
+    "fallback_only_app_examples": ["app/schema-hashes.json", "app/static/cockpit/assets/index-DGbVzjSj.css", "app/static/cockpit/assets/index-DPNhuUK9.js"],
+    "canonical_only_frontend_examples": ["frontend/src/feedback_scenario.test.ts", "frontend/src/feedback_write_mint.test.ts", "frontend/src/fixtures/feedbackScenario.ts", "frontend/src/responsive.test.ts", "frontend/src/ui/Tooltip.tsx", "feedback10-18 UI tests, forgot/placement tests"],
+    "fallback_only_frontend_examples": ["frontend/src/ui/ForgotStrip.tsx", "frontend/src/ui/MobileAgenda.tsx", "frontend/src/ui/PlacementList.tsx", "frontend/src/ui/ScenarioPanel.tsx", "frontend/src/ui/TrimAssist.tsx"],
+    "differing_shared_app_examples": ["app/calendar_bridge.py", "app/commit.py", "app/external_sources.py", "app/judgment.py", "app/main.py", "app/orchestrate.py", "app/runstate.py", "app/runtime_actions.py", "app/sequence.py", "app/shadow.py", "app/todoist_client.py"],
+    "differing_shared_frontend_examples": ["app.css", "main.tsx", "adapters/wire.ts", "model/types.ts", "store/store.ts", "ui/App.tsx", "ui/Queue.tsx", "ui/Rail.tsx", "ui/SetupDrawer.tsx", "contract-fixtures/*.json"],
+    "bundle_divergence": "Canonical cockpit bundle index-Cs9qJuE4.js/index-w2N1HAYb.css differs from fallback index-DPNhuUK9.js/index-DGbVzjSj.css; app/static/cockpit/index.html differs"
+  },
+  "discrepancies": [
+    "AGENTS.md/README claim the live runtime remains the Claudius fallback (Tasks/tdtb-app-pilot/) until attended cutover, but the installed plist (2026-08-13T16:06) and the running process cwd both target the canonical /Users/walle-mini/Repos/Projects/TDTB/app. Runtime is cut over at the launchd level; documentation is stale.",
+    "restart-live.sh and spec.md exist only in the fallback; canonical root lacks them despite AGENTS.md naming them as canonical files.",
+    "Fallback holds UI work not present in canonical (ForgotStrip, MobileAgenda, PlacementList, ScenarioPanel, TrimAssist); canonical holds reliability/feedback work not present in fallback (duration_memory, feedback tests, restart_rewire, Tooltip, feedbackScenario).",
+    "Canonical .gitignore lists schema-hashes.json as ignored, but the generated file is tracked in the Claudius fallback repo.",
+    "No /version route exists in canonical app; the plan's cutover GET proof must use /health or /config."
+  ]
+}

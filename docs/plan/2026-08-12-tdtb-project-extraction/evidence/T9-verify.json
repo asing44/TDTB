@@ -1,0 +1,139 @@
+{
+  "meta": {
+    "plan_id": "2026-08-12-tdtb-project-extraction",
+    "task_id": "T9",
+    "title": "Verify both repositories",
+    "created_at": "2026-08-15T02:15:00Z",
+    "mode": "bounded-repair-and-non-live-verification",
+    "no_claim": "Repair only the five T8-assigned broken/orphaned references, then run non-live verification. No restart, POST, external source write, checkout, merge, commit, push, or fallback mutation.",
+    "evidence_path": "docs/plan/2026-08-12-tdtb-project-extraction/evidence/T9-verify.json"
+  },
+  "repos": {
+    "canonical": {
+      "path": "/Users/walle-mini/Repos/Projects/TDTB",
+      "branch": "main",
+      "head": "84c1e0cad5069c125131a0c1d3d8f579c76ac898",
+      "head_unchanged": true
+    },
+    "claudius": {
+      "path": "/Users/walle-mini/Repos/Claudius",
+      "resolves_to": "/Users/walle-mini/Development/Claudius",
+      "branch": "main",
+      "head": "7a8919ac606ab6a9811a43ad3d7eeea5eb2efdd4",
+      "head_unchanged": true
+    }
+  },
+  "repairs": {
+    "bounded_to_five": true,
+    "items": [
+      {
+        "repo": "claudius",
+        "path": "Scripts/test_precommit_bundle_check.py",
+        "change": "Dropped mockup-target assertions to match post-T7 single-target reality: test_failure_hint_names_the_right_npm_script no longer looks up tdtb-cockpit-mockup and asserts it is NOT registered; test_real_targets_are_registered asserts names == {tdtb-cockpit} and validates source/bundle roots against the canonical repo (TDTB = /Users/walle-mini/Repos/Projects/TDTB, same convention as test_tdtb_project_boundary.py).",
+        "result": "16/16 tests pass (was failures=1, errors=1)."
+      },
+      {
+        "repo": "claudius",
+        "path": ".claude/launch.json",
+        "change": "Removed the dangling cockpit-mockup launch config (http.server 8791 --directory /Users/walle-mini/Repos/Projects/TDTB/mockups/cockpit; canonical mockups/ absent). Kept digest-mock and cockpit-scratch (scratch_preview.py exists in canonical).",
+        "result": "Valid JSON; configurations = [digest-mock, cockpit-scratch]."
+      },
+      {
+        "repo": "canonical",
+        "path": "app/requirements.txt",
+        "change": "Fresh-setup comment path corrected from <repo>/Tasks/tdtb-app-pilot/app to <repo>/app.",
+        "result": "Comment-only; dependencies untouched."
+      },
+      {
+        "repo": "canonical",
+        "path": "frontend/vite.config.ts",
+        "change": "Stale fallback path comments replaced with canonical-relative outputs (mockups/cockpit, app/static/cockpit) and committed-build claim narrowed to production only (mockups/ absent in canonical).",
+        "result": "Code unchanged; build:prod reproduces committed bundle byte-identically."
+      },
+      {
+        "repo": "canonical",
+        "path": "app/judgment.py",
+        "change": "Docstring spec.md citation reworded to provenance: original spec.md is fallback-only historical preserved under Claudius Tasks/tdtb-app-pilot until attended removal; skill semantics remain the cited canonical source.",
+        "result": "Docstring-only; no functional change."
+      }
+    ],
+    "not_repaired_by_design": [
+      "Canonical restart-live.sh (MISSING) -> T10/T11",
+      "Fallback Tasks/tdtb-app-pilot/restart-live.sh reference in test_tdtb_restart.py -> T10/T11",
+      "seat-bootstrap tdtb-restart link -> T10/T11",
+      "AGENTS.md/README.md stale fallback-runtime wording -> T10/T11",
+      "Fallback removal -> T11"
+    ]
+  },
+  "verification": {
+    "claudius": {
+      "test_precommit_bundle_check": "16/16 passed (Red confirmed before fix: failures=1 errors=1).",
+      "test_structure_audit": "32/32 passed.",
+      "instr-build": "python3 Scripts/instr-build.py --check clean (AGENTS.md 3999/4000 matches sources; unwired files expected).",
+      "focused_builder_tests": "Scripts.test_instr_build + Scripts.test_plugin_skill_bundle 10/10 passed.",
+      "consumer_tests": "test_tdtb_schema_guard_runner + test_tdtb_judgment_runner + test_tdtb_project_boundary + test_seat_bootstrap_tdtb 9/9 passed.",
+      "restart_test": "test_tdtb_restart 3/3 passed (keeps documented fallback reference; restart gap is T10/T11 by design).",
+      "git_diff_check": "exit 0 on owned Scripts + .claude/launch.json."
+    },
+    "canonical": {
+      "backend_pytest": "1366 passed, 5 failed (all test_restart_rewire.py; canonical restart-live.sh MISSING - documented T10/T11 residual, unchanged from T5). 0 new failures.",
+      "frontend_test": "647 passed | 6 skipped (45 files) - matches T5.",
+      "typecheck": "tsc --noEmit exit 0.",
+      "build_prod": "exit 0; fresh bundle app/static/cockpit/assets/index-Cs9qJuE4.js + index-w2N1HAYb.css byte-identical to committed (git status clean for app/static/cockpit/).",
+      "build_mockup": "exit 0 with --outDir override to temp dir (canonical mockups/ absent per constraint); no canonical mockups/ mutation.",
+      "git_diff_check": "exit 0 on owned changed paths."
+    }
+  },
+  "residuals_assigned": {
+    "T10_T11": [
+      "5 backend restart-rewire test failures (canonical restart-live.sh missing; materialization + restart proof at attended cutover)",
+      "test_tdtb_restart.py fallback restart-live.sh reference retirement",
+      "seat-bootstrap.sh + test_seat_bootstrap_tdtb.py tdtb-restart link materialization",
+      "AGENTS.md + README.md stale fallback-runtime wording",
+      "Fallback Tasks/tdtb-app-pilot/** removal"
+    ]
+  },
+  "safety": {
+    "no_live_restart": true,
+    "no_post_commit": true,
+    "no_post_sequence": true,
+    "no_post_adjust": true,
+    "no_todoist_write": true,
+    "no_calendar_write": true,
+    "no_vault_write": true,
+    "no_commit": true,
+    "no_checkout_merge_push": true,
+    "no_fallback_mutation": true
+  },
+  "foreign_work_proof": {
+    "claudius_preserved_untouched": [
+      "Plans Link/2026-07-24-vault-sweep-coverage-reconciliation.md (M, foreign)",
+      "Skills/corrections/log-hours.md (M, foreign)"
+    ],
+    "claudius_pre_existing_rewired": [
+      "Scripts/precommit-bundle-check.py",
+      "Scripts/test_tdtb_judgment_runner.py",
+      "Scripts/test_tdtb_project_boundary.py",
+      "Scripts/test_tdtb_restart.py",
+      "Scripts/test_tdtb_schema_guard_runner.py"
+    ],
+    "claudius_this_task_modified": [
+      "Scripts/test_precommit_bundle_check.py",
+      ".claude/launch.json"
+    ],
+    "canonical_this_task_modified": [
+      "app/requirements.txt",
+      "frontend/vite.config.ts",
+      "app/judgment.py",
+      "docs/plan/2026-08-12-tdtb-project-extraction/plan.yaml (T9 status metadata only)",
+      "docs/plan/2026-08-12-tdtb-project-extraction/evidence/T9-verify.json (new evidence)"
+    ]
+  },
+  "no_mutation_proof": {
+    "canonical_head_before": "84c1e0cad5069c125131a0c1d3d8f579c76ac898",
+    "canonical_head_after": "84c1e0cad5069c125131a0c1d3d8f579c76ac898",
+    "claudius_head_before": "7a8919ac606ab6a9811a43ad3d7eeea5eb2efdd4",
+    "claudius_head_after": "7a8919ac606ab6a9811a43ad3d7eeea5eb2efdd4",
+    "no_commit_restart_external_write": true
+  }
+}

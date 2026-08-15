@@ -1,0 +1,149 @@
+{
+  "meta": {
+    "plan_id": "2026-08-12-tdtb-project-extraction",
+    "wrapper_plan_id": "2026-08-14-tdtb-canonical-cutover",
+    "task_id": "T6",
+    "title": "Logical extraction",
+    "created_at": "2026-08-15T00:22:39Z",
+    "mode": "evidence-write-only-plan-and-evidence-state",
+    "evidence_path": "docs/plan/2026-08-12-tdtb-project-extraction/evidence/T6-logical-extraction.json",
+    "no_mutation_claim": "This task performed NO commit, NO checkout, NO merge, NO reset, NO clean, NO push, NO restart, NO live POST, NO billed endpoint, NO external write, and NO copy/modify/delete of any Claudius fallback file. The only writes are this evidence file and plan.yaml task status/result metadata for T5 and T6. No canonical app/source or runtime state changed; canonical git status before and after is identical."
+  },
+  "user_decision": "The canonical repository /Users/walle-mini/Repos/Projects/TDTB IS the standalone extraction target (recorded in T5 evidence). The Claudius fallback tree Tasks/tdtb-app-pilot/ remains the excluded historical source and must stay untouched. No staging/copy into or out of the fallback tree."
+  ,
+  "extraction_result": {
+    "standalone_target": {
+      "path": "/Users/walle-mini/Repos/Projects/TDTB",
+      "branch": "main",
+      "head": "84c1e0c",
+      "head_full": "84c1e0cad5069c125131a0c1d3d8f579c76ac898",
+      "tracked_file_count": 329,
+      "decision": "Canonical repository is recorded as the standalone extraction target, validated independently by T5 (backend 1278 passed with 5 classified residual failures; frontend 647 passed/6 skipped, typecheck and builds green)."
+    },
+    "ownership_transfer": {
+      "result": "Logical extraction complete: canonical app/frontend ownership is the extraction result.",
+      "basis": "T4 exclusive_app_claims recorded exclusive ownership of canonical app/, frontend/, app/static/cockpit/, frontend/package-lock.json, app/.venv/, frontend/node_modules/; T5 verified completeness vs T1 inventory (329 tracked, claimed roots present, prod bundle rebuilds byte-identical).",
+      "scope": "Ownership is recorded for the canonical copy only. No physical file copy, move, or deletion was performed; the canonical tree is already the standalone target."
+    },
+    "excluded_historical_source": {
+      "note": "Fallback-only files and divergent UI are preserved as excluded historical source in the Claudius tree; NOT owned, NOT copied, NOT modified.",
+      "fallback_only_root_artifacts": [
+        "Tasks/tdtb-app-pilot/restart-live.sh",
+        "Tasks/tdtb-app-pilot/spec.md"
+      ],
+      "fallback_only_generated": [
+        "Tasks/tdtb-app-pilot/app/schema-hashes.json",
+        "Tasks/tdtb-app-pilot/app/static/cockpit/assets/index-DPNhuUK9.js",
+        "Tasks/tdtb-app-pilot/app/static/cockpit/assets/index-DGbVzjSj.css",
+        "Tasks/tdtb-app-pilot/mockups/cockpit"
+      ],
+      "fallback_only_ui_components": [
+        "frontend/src/ui/ForgotStrip.tsx",
+        "frontend/src/ui/MobileAgenda.tsx",
+        "frontend/src/ui/PlacementList.tsx",
+        "frontend/src/ui/ScenarioPanel.tsx",
+        "frontend/src/ui/TrimAssist.tsx"
+      ],
+      "cross_reference": "Matches T4 exclusive_app_claims.excluded_non_owned and T5 canonical_vs_fallback_distinction; no excluded file was touched by this task."
+    },
+    "deferred_restart_wiring": {
+      "note": "The restart wiring gap is deferred to the attended later gate, NOT resolved or hidden here.",
+      "carried_forward_to": ["T10", "T11"],
+      "destination_role": "T10 produces the attended cutover-wait checklist (plist staging, com.walle.tdtb restart, GET-only health/version proof); T11 records the post-cutover-removal receipt/handoff. Per wrapper handoff, T10/T11 own attended restart/cutover proof.",
+      "gap": "canonical root has no restart-live.sh (T1 source_of_truth discrepancy; T4 excluded_non_owned). test_restart_rewire.py asserts file presence and rewire markers, producing the five residual failures recorded in T5."
+    }
+  },
+  "carry_forward_of_t5_residual_failures": {
+    "source": "T5-standalone-validation.json test_results.backend_pytest.failure_classification (class residual_pre_extraction_gap) and residual_risks.",
+    "explicit_carry_forward": true,
+    "not_hidden": true,
+    "failures": [
+      "app/tests/test_restart_rewire.py::test_canonical_script_is_executable",
+      "app/tests/test_restart_rewire.py::test_canonical_script_passes_zsh_syntax_check",
+      "app/tests/test_restart_rewire.py::test_canonical_script_has_no_old_layout_references",
+      "app/tests/test_restart_rewire.py::test_canonical_script_plist_template_points_at_canonical_launchd",
+      "app/tests/test_restart_rewire.py::test_canonical_script_resolves_canonical_runtime_paths"
+    ],
+    "count": 5,
+    "classification": "residual_pre_extraction_gap",
+    "root_cause": "test_restart_rewire.py reads REPO_ROOT/restart-live.sh; the file is absent from the canonical root exactly as T1/T4 recorded. Failures are file-presence assertions only; no live action executed.",
+    "disposition": "Not fixed by T5 or T6 (surgical scope). Deferred to the attended restart/cutover gate: T10/T11 own the restart wiring proof and its checklist; the canonical script presence or test reconciliation is addressed there, not hidden here."
+  },
+  "no_mutation_proof": {
+    "canonical_pre_status": {
+      "modified_tracked": ["docs/plan/2026-08-12-tdtb-project-extraction/plan.yaml"],
+      "untracked_paths": [
+        "docs/plan/2026-08-12-tdtb-project-extraction/evidence/",
+        "docs/plan/2026-08-14-tdtb-canonical-cutover/"
+      ],
+      "note": "Pre-existing plan-workflow dirty state, identical to T2 receipt and T5 pre_run_status; not caused by this task."
+    },
+    "canonical_post_status": {
+      "note": "Identical to canonical_pre_status except this evidence file and the T5/T6 plan status metadata. No app/source tracked file changed; no new non-plan untracked path created."
+    },
+    "fallback_fingerprint": {
+      "path": "/Users/walle-mini/Repos/Claudius/Tasks/tdtb-app-pilot/",
+      "git_status_for_path": "clean (empty porcelain output)",
+      "path_head": "f20923449df46eeacd6f4d4ce19cf4674318a1f9 fix(tdtb): repair setup, prompt fallback, and routing",
+      "claudius_main_head": "7a8919ac",
+      "restart-live.sh_mtime": "2026-08-06 (unchanged)",
+      "spec.md_mtime": "2026-08-02 (unchanged)",
+      "conclusion": "Fingerprint identical to T5 before/after. No fallback file copied, modified, or deleted."
+    },
+    "forbidden_actions_observed": [
+      "commit",
+      "checkout",
+      "merge",
+      "reset",
+      "clean",
+      "push",
+      "restart",
+      "live POST",
+      "billed endpoint",
+      "external source write",
+      "fallback copy/modify/delete"
+    ]
+  },
+  "preserved_unchanged": {
+    "T2_dirty_state_receipt": "docs/plan/2026-08-12-tdtb-project-extraction/evidence/T2-dirty-state-receipt.json preserved; not rewritten.",
+    "T1_inventory": "docs/plan/2026-08-12-tdtb-project-extraction/evidence/T1-inventory.json preserved; not rewritten.",
+    "T5_evidence": "docs/plan/2026-08-12-tdtb-project-extraction/evidence/T5-standalone-validation.json preserved as recorded; failure classification remains the source for the carry-forward.",
+    "feedback_plan": "docs/plan/2026-08-12-tdtb-feedback-follow-up/ (plan.yaml + 39 evidence files) frozen historical evidence; preserved unchanged.",
+    "foreign_work": "Development/tdtb-canonical-cutover 3-commit branch (7c1a74a, fc8d587, d8411f5) not checked out/merged/reset; Claudius foreign change Plans Link/2026-07-24-vault-sweep-coverage-reconciliation.md not touched."
+  },
+  "plan_status_update": {
+    "T5": {
+      "from": "pending",
+      "to": "completed",
+      "evidence": "docs/plan/2026-08-12-tdtb-project-extraction/evidence/T5-standalone-validation.json"
+    },
+    "T6": {
+      "from": "pending",
+      "to": "completed",
+      "evidence": "docs/plan/2026-08-12-tdtb-project-extraction/evidence/T6-logical-extraction.json"
+    },
+    "note": "Only T5 and T6 plan statuses/evidence updated. T1-T4 already completed; T7-T11 remain pending. Restart wiring stays an attended later gate."
+  },
+  "live_runtime": {
+    "port": 8746,
+    "disposition": "Treated as live per AGENTS.md; NO restart, NO POST, NO mutation. No live state re-queried beyond T2 receipt; cutover not declared complete."
+  },
+  "exact_commands": [
+    "git status --porcelain=v1; git rev-parse --short HEAD; git rev-parse HEAD; git branch --show-current; git ls-files | wc -l; ls restart-live.sh spec.md (canonical)",
+    "git -C /Users/walle-mini/Repos/Claudius status --porcelain=v1 -- Tasks/tdtb-app-pilot/; git -C /Users/walle-mini/Repos/Claudius log -1 --format='%H %s' -- Tasks/tdtb-app-pilot/; git -C /Users/walle-mini/Repos/Claudius rev-parse --short HEAD; ls -la Tasks/tdtb-app-pilot/restart-live.sh Tasks/tdtb-app-pilot/spec.md"
+  ],
+  "residual_risks": [
+    "5 backend failures (missing canonical restart-live.sh) deferred to attended T10/T11 restart/cutover proof; T7 rewire work may also reconcile the script or test.",
+    "AGENTS.md/README.md still describe the fallback as live runtime; documentation staleness recorded in T1/T2, not corrected here.",
+    "No /version route in canonical app; post-cutover GET proof must use /health or /config (T1 discrepancy)."
+  ],
+  "conclusion": {
+    "logical_extraction_complete": true,
+    "standalone_target_recorded": true,
+    "fallback_non_mutation": true,
+    "foreign_work_preserved": true,
+    "t5_t6_statuses_consistent": true,
+    "residual_failures_carried_forward": true,
+    "summary": "Logical extraction complete: canonical repository is recorded as the standalone extraction target and canonical app/frontend ownership is the extraction result, based on T4 exclusive claims and T5 independent validation. No physical copy, mutation, restart, or external write occurred; fallback fingerprint identical before/after. Fallback-only restart-live.sh, spec.md, generated assets, and divergent UI remain excluded historical source. The five T5 restart-rewire test failures are carried forward explicitly to attended T10/T11, not hidden. Plan statuses for T5 and T6 updated to completed only."
+  }
+}

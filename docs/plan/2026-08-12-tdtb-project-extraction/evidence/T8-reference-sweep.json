@@ -1,0 +1,503 @@
+{
+  "meta": {
+    "plan_id": "2026-08-12-tdtb-project-extraction",
+    "task_id": "T8",
+    "title": "Broad post-extraction sweep",
+    "created_at": "2026-08-15T01:20:00Z",
+    "mode": "read-only-sweep-and-triage",
+    "no_claim": "Sweep and triage only. No repair, no deletion, no restart, no commit, no checkout, no merge, no push, no external write, no source/runtime mutation.",
+    "evidence_path": "docs/plan/2026-08-12-tdtb-project-extraction/evidence/T8-reference-sweep.json"
+  },
+  "repos": {
+    "canonical": {
+      "path": "/Users/walle-mini/Repos/Projects/TDTB",
+      "branch": "main",
+      "head": "84c1e0cad5069c125131a0c1d3d8f579c76ac898",
+      "matches": 144
+    },
+    "claudius": {
+      "path": "/Users/walle-mini/Development/Claudius",
+      "resolves_to": "/Users/walle-mini/Repos/Claudius",
+      "branch": "main",
+      "head": "7a8919ac606ab6a9811a43ad3d7eeea5eb2efdd4",
+      "matches": 454
+    }
+  },
+  "sweep": {
+    "pattern": "tdtb (case-insensitive)",
+    "bounded_exclusions": [
+      ".git/**", "node_modules/**", ".venv/**", "__pycache__/**",
+      ".pytest_cache/**", "dist/**", "*.pyc"
+    ],
+    "historical_archives_included_for_categorization": [
+      "Claudius/Projects/TDTB/archive/skill-era/**",
+      "Claudius/Tasks/tdtb-app-pilot/**",
+      "Claudius/References/archive/Handoffs/handoff-tdtb-*.md",
+      "Claudius/References/archive/migration-baselines/tdtb-bridger-vault/**",
+      "Claudius/Skills/archive/retired/tdtb-bridger/**",
+      "Claudius/Skills/corrections/archive/**",
+      "Claudius/Skills/observations/archive/**",
+      "Claudius/Skills/retired/**",
+      "Claudius/Configurations/memory-export/**",
+      "Claudius/Projects/Artifacts/**"
+    ]
+  },
+  "categories": {
+    "intentional_current_canonical": {
+      "count": 0,
+      "groups": [
+        {
+          "repo": "canonical",
+          "root": "app/**",
+          "rationale": "Canonical FastAPI backend source; every tdtb reference is the project's own code, logger names, tests, static UI, and gather module."
+        },
+        {
+          "repo": "canonical",
+          "root": "frontend/**",
+          "rationale": "Canonical React/Vite frontend source; tdtb references are the project's own app code, fixtures, and tests."
+        },
+        {
+          "repo": "canonical",
+          "root": "launchd/com.walle.tdtb.plist",
+          "rationale": "Canonical launchd template with __WALLE_HOME__/__TDTB_VAULT_ROOT__ placeholders targeting the canonical app; installed copy derives from it (T1)."
+        },
+        {
+          "repo": "canonical",
+          "root": "app/static/cockpit/assets/index-Cs9qJuE4.js + index-w2N1HAYb.css",
+          "rationale": "Canonical generated cockpit bundle, tracked (T1/T4 claimed root)."
+        },
+        {
+          "repo": "canonical",
+          "root": "frontend/package-lock.json",
+          "rationale": "Canonical tracked lockfile (T4 claimed root); tdtb substring appears in generated lock metadata."
+        },
+        {
+          "repo": "canonical",
+          "root": "docs/plan/2026-08-12-tdtb-project-extraction/**",
+          "rationale": "This plan's own plan.yaml and T1-T7 evidence; active execution front."
+        },
+        {
+          "repo": "canonical",
+          "root": "docs/plan/2026-08-14-tdtb-canonical-cutover/plan.yaml",
+          "rationale": "Untracked cutover wrapper plan; recorded, NOT modified."
+        },
+        {
+          "repo": "canonical",
+          "root": "AGENTS.md, README.md, .gitignore, gem-team.yaml, opencode.json",
+          "rationale": "Canonical project policy/source map/config; tdtb references are the project's own identity. Stale fallback-runtime wording in AGENTS.md/README.md is a known T1 discrepancy, separately deferred to T10/T11 below."
+        },
+        {
+          "repo": "claudius",
+          "root": "Scripts/precommit-bundle-check.py",
+          "rationale": "Rewired T7: targets canonical frontend -> app/static/cockpit; drops fallback-only mockups target."
+        },
+        {
+          "repo": "claudius",
+          "root": "Scripts/test_tdtb_schema_guard_runner.py, test_tdtb_judgment_runner.py, test_tdtb_project_boundary.py",
+          "rationale": "Rewired T7 to canonical app venv/tests/archive reality; suites pass."
+        },
+        {
+          "repo": "claudius",
+          "root": "Scripts/test_tdtb_restart.py",
+          "rationale": "Rewired T7; keeps documented fallback restart-live.sh reference as rollback doc until attended T10/T11 (see deferred)."
+        },
+        {
+          "repo": "claudius",
+          "root": "Scripts/test_seat_bootstrap_tdtb.py",
+          "rationale": "Host consumer test for launchd staging; uses canonical home layout Repos/Projects/TDTB; 4/4 sandbox pass; restart-live.sh link expectation is part of the deferred restart gap."
+        },
+        {
+          "repo": "claudius",
+          "root": "Scripts/test_assignment_attention_contract.py",
+          "rationale": "Contract test referencing canonical app/gather/tdtb_gather.py and the host skill gather script; intentional current consumer."
+        },
+        {
+          "repo": "claudius",
+          "root": "Scripts/structure-audit.py, test_structure_audit.py",
+          "rationale": "GPT_ACTIVE_PROJECTS includes TDTB; structure audit 32/32 passed post-rewire."
+        },
+        {
+          "repo": "claudius",
+          "root": "Scripts/dark-item-audit.py, ecosystem-map.py, zk_clusters.py, corrections-mirror-drift.py",
+          "rationale": "Host operational scripts mirroring TDTB eligibility gates / ritual nodes / correction mapping; intentional current."
+        },
+        {
+          "repo": "claudius",
+          "root": "Scripts/README.md",
+          "rationale": "Host runner documentation; line 245 and 468-470 describe TDTB consumers with canonical paths; intentional current."
+        },
+        {
+          "repo": "claudius",
+          "root": "Skills/user/tdtb-bridger-vault/**",
+          "rationale": "Host-owned canonical skill: SKILL.md, artifact-day-setup.html, references/glossary.md, scripts/tdtb_gather.py, scripts/tests/*. Per T1/T4 host-owned, not owned by extraction."
+        },
+        {
+          "repo": "claudius",
+          "root": "Skills/user/tdtb-continue/SKILL.md",
+          "rationale": "Host-owned canonical continue skill for TDTB cockpit resume; intentional current."
+        },
+        {
+          "repo": "claudius",
+          "root": "Configurations/gpt-stack/skills/tdtb-bridger-vault/SKILL.md, Configurations/gpt-stack/skills/tdtb-continue/SKILL.md",
+          "rationale": "GPT-compatible skill variants; host-owned per T1 ownership boundaries."
+        },
+        {
+          "repo": "claudius",
+          "root": "Configurations/scheduled-tasks/nightly-tdtb-precompute/SKILL.md",
+          "rationale": "Host scheduled ritual for TDTB precompute; intentional current."
+        },
+        {
+          "repo": "claudius",
+          "root": "Configurations/gpt-stack/seat-bootstrap.sh",
+          "rationale": "References canonical TDTB_REPO (line 38) and links canonical restart-live.sh to tdtb-restart; restart link is part of the deferred restart gap (T10/T11)."
+        },
+        {
+          "repo": "claudius",
+          "root": "Skills/corrections/tdtb-bridger-vault.md",
+          "rationale": "Active corrections file managed by correction-logger, loaded when the skill triggers; intentional current."
+        },
+        {
+          "repo": "claudius",
+          "root": "Skills/observations/cross-cutting-principles.md",
+          "rationale": "Current cross-cutting observation citing tdtb-bridger-vault transcription; intentional current."
+        },
+        {
+          "repo": "claudius",
+          "root": "Skills/user/weekplan-vault/SKILL.md, movements.md, regression.md",
+          "rationale": "Shared-heuristic and incident references to tdtb-bridger-vault; intentional current host skills."
+        },
+        {
+          "repo": "claudius",
+          "root": "Skills/user/inbox-parser-vault/SKILL.md, references/audit-log.md",
+          "rationale": "Shared active-inventory cache schema with tdtb-bridger-vault; intentional current."
+        },
+        {
+          "repo": "claudius",
+          "root": "Skills/user/{claude-handoff,correction-logger,heavy-buildout,hot-cache-sync,plan-executor,realign,semi-weekly-reflection-vault,shutdown-vault,skill-editor,travel-packer,writing-plans-claudius}/SKILL.md",
+          "rationale": "Trigger-exclusion and routing references to tdtb-bridger-vault/tdtb-continue; intentional current host skills."
+        },
+        {
+          "repo": "claudius",
+          "root": "Configurations/gpt-stack/chatgpt-custom-instructions.md, Configurations/gpt-stack/README.md, Configurations/gpt-stack/launchd/README.md, Configurations/gpt-stack/automations/weekly-skill-review/SKILL.md, Configurations/gpt-stack/skills/{PORT-SPEC,hot-cache-sync,plan-executor,realign,schedule,semi-weekly-reflection-vault,shutdown-vault,travel-packer,weekplan-vault}/SKILL.md",
+          "rationale": "Host GPT-stack config referencing TDTB rituals and trigger boundaries; intentional current."
+        },
+        {
+          "repo": "claudius",
+          "root": "CLAUDE.md, userPreferences.md, hotCache.md, cowork-global-instructions.md, Core/adapters/cowork.md, .claude/agents/cowork-compat-reviewer.md",
+          "rationale": "Host policy/operational files referencing TDTB ritual and tdtb-bridger-vault; intentional current."
+        },
+        {
+          "repo": "claudius",
+          "root": "References/tdtb-master-reference.md",
+          "rationale": "Live redirect to canonical TDTB sources (README documents this); intentional current."
+        },
+        {
+          "repo": "claudius",
+          "root": "Skills/.review-state.json, Skills/.uploaded-state.json",
+          "rationale": "Host skill state files referencing tdtb-bridger-vault; intentional current operational state."
+        },
+        {
+          "repo": "claudius",
+          "root": ".gitignore",
+          "rationale": "Ignore rule for archived artifact Projects/_archive/Artifacts/tdtb-phase1-configure/; intentional host config."
+        }
+      ]
+    },
+    "historical_archive": {
+      "count": 0,
+      "groups": [
+        {
+          "repo": "canonical",
+          "root": "2026-08-12-tdtb-project-extraction.md",
+          "rationale": "Legacy markdown source plan at repo root; superseded by docs/plan/.../plan.yaml. Constraint says do not delete the source plan unless clearly required; preserved as historical."
+        },
+        {
+          "repo": "canonical",
+          "root": "update_plan.py",
+          "rationale": "One-off plan migration helper used during replan; not part of the app boundary; historical tooling, preserved."
+        },
+        {
+          "repo": "canonical",
+          "root": "docs/plan/2026-08-12-tdtb-feedback-follow-up/**",
+          "rationale": "Frozen completed UI/reliability plan (plan.yaml + 39 evidence files) per cutover_ownership; historical evidence, NOT rewritten or deleted."
+        },
+        {
+          "repo": "claudius",
+          "root": "Plans Link/**tdtb* and other plans mentioning tdtb",
+          "rationale": "Host-owned historical plans (e.g. 2026-05-29-tdtb-accuracy-hardening, 2026-06-05-tdtb-anti-drift-overhaul, 2026-07-12-tdtb-app-pilot-build, 2026-07-17-tdtb-cockpit-overhaul, 2026-08-02-tdtb-assignment-audit-reconciliation, 2026-08-09-tdtb-planning-ui-reliability) plus plans mentioning tdtb in passing; evidence only, per T1 ownership boundaries."
+        },
+        {
+          "repo": "claudius",
+          "root": "Plans Link/2026-08-12-tdtb-project-extraction/evidence/transfer-receipt.json",
+          "rationale": "Historical extraction transfer receipt captured before T2 freeze; preserved evidence."
+        },
+        {
+          "repo": "claudius",
+          "root": "Plans Link/STATUS.md, plan-migration-2026-07-22.yaml, b-start-plan-quiet-bee.md, Snapshots/2026-07-22-plan-status.md",
+          "rationale": "Historical plan infra mentioning tdtb; host-owned."
+        },
+        {
+          "repo": "claudius",
+          "root": "References/archive/Handoffs/handoff-tdtb-*.md",
+          "rationale": "Archived handoffs from 2026-06-04 through 2026-07-14; historical evidence."
+        },
+        {
+          "repo": "claudius",
+          "root": "References/archive/migration-baselines/tdtb-bridger-vault/**",
+          "rationale": "Archived migration baselines for the skill; historical."
+        },
+        {
+          "repo": "claudius",
+          "root": "References/tdtb-bridger-design-reference-2026-04-15.md",
+          "rationale": "Historical design reference from 2026-04-15; host-owned."
+        },
+        {
+          "repo": "claudius",
+          "root": "Projects/TDTB/archive/skill-era/**",
+          "rationale": "Historical archive: DESIGN.md, tdtb-2026-04-29.md, tdtb-bridger-v5.1.md, tdtb-kickoff-2026-04-29.html, tdtb-master-reference.md. T4 excluded non-owned; boundary test asserts presence."
+        },
+        {
+          "repo": "claudius",
+          "root": "Projects/TDTB/AGENTS.md, Projects/TDTB/README.md",
+          "rationale": "Host-side mirror copies of project policy that differ from canonical (canonical carries extraction wording); historical mirrors, not authoritative."
+        },
+        {
+          "repo": "claudius",
+          "root": "Tasks/tdtb-app-pilot/**",
+          "rationale": "Fallback runtime app copy (stale divergent tree) preserved for rollback until attended T11 post-cutover removal; T4/T6 excluded non-owned fallback. tdtb references are the app's own; removal deferred to T11."
+        },
+        {
+          "repo": "claudius",
+          "root": "Tasks/tdtb-bridger-redesign/spec.md, Tasks/tdtb-open-corrections-verify/checklist.md, Tasks/vault-workflow-audit/tdtb_dark_audit.py, Tasks/workflow-fulfillment-audit/**, Tasks/workflow-audit/**, Tasks/opus-proofing/**, Tasks/interval-audit-wipe/spec.md, Tasks/tasknotes-integration/spec.md, Tasks/inbox-parser-skill-edits-2026-05-22/plan.md",
+          "rationale": "Historical task directories mentioning tdtb; host-owned historical work records."
+        },
+        {
+          "repo": "claudius",
+          "root": "Skills/archive/retired/tdtb-bridger/SKILL.md",
+          "rationale": "Archived retired pre-vault skill; historical."
+        },
+        {
+          "repo": "claudius",
+          "root": "Skills/corrections/archive/{tdtb-bridger-vault,weekly-wipe-vault,weekplan-vault}.md",
+          "rationale": "Archived correction records mentioning tdtb; historical."
+        },
+        {
+          "repo": "claudius",
+          "root": "Skills/observations/archive/log-2026-*.md, tdtb-bridger-vault-2026-05-08.md",
+          "rationale": "Archived observation logs mentioning tdtb; historical."
+        },
+        {
+          "repo": "claudius",
+          "root": "Skills/retired/mint-day/SKILL.md, Skills/retired/weekly-wipe-vault/SKILL.md",
+          "rationale": "Retired skills mentioning tdtb in trigger text; historical."
+        },
+        {
+          "repo": "claudius",
+          "root": "Skills/.review-state.json.bak-20260703",
+          "rationale": "Backup of skill review state; historical."
+        },
+        {
+          "repo": "claudius",
+          "root": "Configurations/memory-export/**",
+          "rationale": "Historical memory export snapshots mentioning tdtb; host-owned archive data."
+        },
+        {
+          "repo": "claudius",
+          "root": "References/pa1-usage-audit-2026-07-15.md, pa5-normal-week-workload.md, pa7-wave1-keeper-review.md, pa8-parity-battery.md, harness-spotcheck-tasks-2026-07-15.md, claudius-repo-reference.md",
+          "rationale": "Reference/analysis docs mentioning tdtb; host-owned historical/current reference material, not app code."
+        },
+        {
+          "repo": "claudius",
+          "root": "Reports/tdtb-project-boundary-probe-2026-08-05.md, Reports/tdtb-legacy-project-agents-dispositions-2026-08-05.md, Reports/2026-07-27-tdtb-m3-qualification.md, Reports/audit-status.md, Reports/weekly-skill-review-*.md, Reports/workflow-*.md, Reports/2026-07-23-codex-native-plan-conflict-review.md, Reports/2026-07-28-correction-pattern-metadata-final-review-packet.md, Reports/2026-07-29-ground-truth-high-impact-skill-review.md, Reports/main-worktree-preservation-inventory-2026-08-02.md, Reports/compass_artifact_*.md",
+          "rationale": "Historical reports mentioning tdtb; host-owned evidence."
+        },
+        {
+          "repo": "claudius",
+          "root": "Projects/Artifacts/capture-triage-review/versions/*.html, inbox-triage-preview/versions/*.html, inbox-triage-review/versions/*.html, tdtb-phase1-configure/index.html",
+          "rationale": "Historical artifact snapshots mentioning tdtb; host-owned."
+        },
+        {
+          "repo": "claudius",
+          "root": "Scripts/archive/vault-lint.py, Scripts/output/zk-amnesty-*",
+          "rationale": "Archived script / generated output mentioning tdtb; historical."
+        }
+      ]
+    },
+    "broken_orphaned": {
+      "count": 0,
+      "items": [
+        {
+          "repo": "claudius",
+          "path": "Scripts/test_precommit_bundle_check.py",
+          "finding": "2 residual failures after T7 dropped the tdtb-cockpit-mockup target: test_real_targets_are_registered (expects both target names) and test_failure_hint_names_the_right_npm_script (looks up tdtb-cockpit-mockup). 14/16 pass. File is out of T8 scope; NOT modified.",
+          "follow_up": "T9",
+          "rationale": "Broken vs post-rewire reality; needs test-file edit to match dropped mockup target."
+        },
+        {
+          "repo": "claudius",
+          "path": ".claude/launch.json",
+          "finding": "cockpit-mockup launch config serves --directory /Users/walle-mini/Repos/Projects/TDTB/mockups/cockpit; canonical mockups/ directory does not exist (fallback-only target per T1). Scratch launch reference is dangling in canonical.",
+          "follow_up": "T9",
+          "rationale": "Broken/orphaned host scratch-launch path pointing at a canonical dir that does not exist."
+        },
+        {
+          "repo": "canonical",
+          "path": "app/requirements.txt",
+          "finding": "Line 6 comment 'cd <repo>/Tasks/tdtb-app-pilot/app' is a stale fallback path in canonical requirements comment.",
+          "follow_up": "T9",
+          "rationale": "Broken/orphaned stale doc reference in canonical file; comment only, no functional impact."
+        },
+        {
+          "repo": "canonical",
+          "path": "frontend/vite.config.ts",
+          "finding": "Comment lines 6-7 reference Tasks/tdtb-app-pilot/mockups/cockpit and Tasks/tdtb-app-pilot/app/static/cockpit; code itself resolves relative paths correctly. Stale comments.",
+          "follow_up": "T9",
+          "rationale": "Broken/orphaned stale comment references to fallback paths; code functional."
+        },
+        {
+          "repo": "canonical",
+          "path": "app/judgment.py",
+          "finding": "Docstring cites spec.md (fallback-only, MISSING from canonical) and Plans Link/2026-07-12-tdtb-app-pilot-build.md (host historical plan); the tdtb-bridger-vault skill semantics citations are intentional, but spec.md citation is dangling in canonical.",
+          "follow_up": "T9",
+          "rationale": "Broken/orphaned docstring citation to a fallback-only spec absent from canonical; provenance note."
+        }
+      ]
+    },
+    "foreign": {
+      "count": 0,
+      "items": [
+        {
+          "repo": "claudius",
+          "path": "Plans Link/2026-07-24-vault-sweep-coverage-reconciliation.md",
+          "finding": "Foreign concurrent modification observed during T2/T7; modified, untouched, not owned by this plan.",
+          "rationale": "Foreign Claudius modification preserved per AGENTS.md concurrent-work rule."
+        },
+        {
+          "repo": "claudius",
+          "path": "Skills/corrections/log-hours.md",
+          "finding": "Foreign concurrent modification observed during T7; modified, untouched.",
+          "rationale": "Foreign Claudius modification preserved per AGENTS.md concurrent-work rule."
+        },
+        {
+          "repo": "claudius",
+          "root": "Projects/Tune/**, Projects/Claudius/Efforts/**",
+          "rationale": "Non-TDTB host project surfaces (Tune efforts, Claudius efforts) mentioning tdtb-bridger-vault in passing; foreign to extraction, untouched."
+        },
+        {
+          "repo": "claudius",
+          "path": "Projects/Trinoor/.claude/launch.json",
+          "finding": "Foreign Trinoor project launch config 'tdtb-preview' referencing /Users/adam/Development/Claudius/Skills/user/tdtb-bridger-vault (stale old user path); foreign project file, untouched.",
+          "rationale": "Foreign project surface, not owned by extraction."
+        }
+      ]
+    },
+    "deferred": {
+      "count": 0,
+      "items": [
+        {
+          "repo": "canonical",
+          "path": "restart-live.sh (MISSING)",
+          "finding": "Canonical restart-live.sh absent (T1/T5); 5 T5 restart-rewire failures carried forward. Referenced by canonical app/tests/test_restart_rewire.py (RESTART_SCRIPT = REPO_ROOT/restart-live.sh) and host consumers.",
+          "follow_up": "T10/T11",
+          "rationale": "Attended restart wiring is a later gate; restart-live.sh materialization and restart proof deferred."
+        },
+        {
+          "repo": "claudius",
+          "path": "Tasks/tdtb-app-pilot/restart-live.sh (fallback reference)",
+          "finding": "Scripts/test_tdtb_restart.py keeps documented fallback SCRIPT reference for rollback until attended restart wiring; fallback Tasks/tdtb-app-pilot/restart-live.sh remains the only copy.",
+          "follow_up": "T10/T11",
+          "rationale": "Restart gap by design; T7 recorded residual; defer to attended T10/T11."
+        },
+        {
+          "repo": "claudius",
+          "path": "Configurations/gpt-stack/seat-bootstrap.sh + Scripts/test_seat_bootstrap_tdtb.py (restart-live.sh link)",
+          "finding": "Both reference canonical restart-live.sh link to ~/.local/bin/tdtb-restart; canonical file missing, so the link cannot materialize until restart wiring lands.",
+          "follow_up": "T10/T11",
+          "rationale": "Part of the restart gap; deferred to attended T10/T11."
+        },
+        {
+          "repo": "canonical",
+          "path": "AGENTS.md, README.md (stale fallback-runtime wording)",
+          "finding": "AGENTS.md line 31 and README.md line 14 still state the live runtime runs from the Claudius fallback Tasks/tdtb-app-pilot/ until attended cutover; installed plist and running process actually target canonical (T1 discrepancy). Marked not-claimed in T4.",
+          "follow_up": "T10/T11",
+          "rationale": "Documentation wording resolved at attended cutover; not modified in this task."
+        }
+      ]
+    },
+    "false_positive_noise": {
+      "count": 2,
+      "items": [
+        {
+          "repo": "claudius",
+          "path": "References/actualbudget-docs.md, References/scraped-docs/actualbudget-docs.md",
+          "finding": "Only tdtb match is a base64 image data substring on line 3435; not a real TDTB reference. Classified as noise, not a relevant reference.",
+          "rationale": "rg -i 'tdtb' matched base64 payload; excluded from reference triage."
+        }
+      ]
+    }
+  },
+  "residuals": {
+    "precommit_bundle_test_residual": {
+      "detail": "test_precommit_bundle_check.py: 2 residual failures (test_real_targets_are_registered, test_failure_hint_names_the_right_npm_script) both expect the dropped tdtb-cockpit-mockup target. Re-verified 2026-08-15: Ran 16 tests, FAILED failures=1 errors=1.",
+      "disposition": "Not modified in T8; carried to T9.",
+      "carried_to": "T9"
+    },
+    "restart_live_sh_residual": {
+      "detail": "Canonical restart-live.sh MISSING; fallback Tasks/tdtb-app-pilot/restart-live.sh is the only copy and remains referenced by test_tdtb_restart.py, seat-bootstrap.sh, test_seat_bootstrap_tdtb.py, and canonical test_restart_rewire.py.",
+      "disposition": "Not modified in T8; carried to attended T10/T11.",
+      "carried_to": "T10/T11"
+    }
+  },
+  "follow_up_mapping": {
+    "T9": [
+      "Claudius/Scripts/test_precommit_bundle_check.py (2 residual failures: drop mockup-target assertions)",
+      "Claudius/.claude/launch.json (dangling canonical mockups/cockpit scratch path)",
+      "Canonical/app/requirements.txt (stale Tasks/tdtb-app-pilot comment)",
+      "Canonical/frontend/vite.config.ts (stale Tasks/tdtb-app-pilot comments)",
+      "Canonical/app/judgment.py (dangling spec.md docstring citation)"
+    ],
+    "T10/T11": [
+      "Canonical/restart-live.sh materialization + restart proof (restart gap)",
+      "Claudius/Tasks/tdtb-app-pilot/restart-live.sh fallback reference retirement at cutover",
+      "Claudius/Configurations/gpt-stack/seat-bootstrap.sh + Scripts/test_seat_bootstrap_tdtb.py tdtb-restart link (once restart-live.sh exists)",
+      "Canonical/AGENTS.md + README.md stale fallback-runtime wording (attended cutover doc update)",
+      "Claudius/Tasks/tdtb-app-pilot/** removal (T11 post-cutover-removal receipt)"
+    ]
+  },
+  "safety": {
+    "no_live_restart": true,
+    "no_post_commit": true,
+    "no_post_sequence": true,
+    "no_post_adjust": true,
+    "no_todoist_write": true,
+    "no_calendar_write": true,
+    "no_vault_write": true,
+    "no_commit": true,
+    "no_checkout_merge_push": true,
+    "no_repair_or_delete_of_ambiguous": true,
+    "no_foreign_mutation": true
+  },
+  "no_mutation_proof": {
+    "canonical_before": {
+      "head": "84c1e0cad5069c125131a0c1d3d8f579c76ac898",
+      "branch": "main",
+      "dirty": "docs/plan/2026-08-12-tdtb-project-extraction/plan.yaml (M, plan-scoped from T3-T7); evidence/ and cutover/ untracked"
+    },
+    "claudius_before": {
+      "head": "7a8919ac606ab6a9811a43ad3d7eeea5eb2efdd4",
+      "branch": "main",
+      "dirty": "6 Scripts rewired by T7 + 2 foreign files (Plans Link/2026-07-24-vault-sweep-coverage-reconciliation.md, Skills/corrections/log-hours.md) modified untouched"
+    },
+    "this_task_wrote": [
+      "docs/plan/2026-08-12-tdtb-project-extraction/evidence/T8-reference-sweep.json (new evidence)",
+      "docs/plan/2026-08-12-tdtb-project-extraction/plan.yaml (T8 status metadata only)"
+    ],
+    "no_other_files_changed": true
+  },
+  "out_of_scope_noted": [
+    "Scripts/hooks/pre-commit wiring (passes --repo $repo; post-extraction no-ops on TDTB bundles; hook file not in bounded scope)",
+    "Scripts/README.md runner descriptions (lines 468-470 schema-guard runner; T7 out-of-scope)",
+    "Canonical frontend/dist/ (absent)",
+    "Fallback app/schema-hashes.json (fallback-only generated receipt, T4 excluded)"
+  ]
+}

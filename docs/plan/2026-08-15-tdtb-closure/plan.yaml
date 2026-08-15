@@ -1,0 +1,193 @@
+plan_id: 2026-08-15-tdtb-closure
+objective: Reconcile stale plan metadata after canonical cutover and Pi chart completion.
+created_at: '2026-08-15T19:44:24Z'
+created_by: gem-planner
+status: pending
+tldr: |
+  - Close the stale cutover wrapper against the completed T1-T11 extraction record.
+  - Add the missing Pi chart wrapper from existing commit and evidence records.
+  - Preserve all completed evidence and unrelated plans without source or external writes.
+baseline:
+  objective: Reconcile stale plan metadata after canonical cutover and Pi chart completion.
+  acceptance_criteria:
+  - No active plan says T1-T11 are pending when extraction plan records completed closure.
+  - Pi chart evidence has a valid plan wrapper or an explicit documented reason not to add one.
+  - Existing evidence files are not rewritten or deleted.
+  - Foreign/unrelated plans remain untouched.
+  captured_at: '2026-08-15T19:44:24Z'
+plan_lineage:
+  root_plan_id: 2026-08-15-tdtb-closure
+  revision: 1
+  replan_count: 0
+  max_replans: 2
+  parent_revision: 0
+  reason: initial
+plan_metrics:
+  wave_1_task_count: 1
+  total_dependencies: 1
+  risk_score: medium
+quality_warnings:
+- PI-CHART-01 has no standalone evidence file; its closure must cite existing evidence precisely.
+- The working tree contains foreign changes that must remain outside this plan's writes.
+context_version: 1
+context_updated_at: '2026-08-15T19:44:24Z'
+context_fields_changed: []
+tech_stack:
+- name: YAML plan metadata
+  role: Canonical plan status, lineage, task closure, and evidence pointers
+  evidence: docs/plan/
+conventions:
+- Canonical plans and acceptance evidence live under docs/plan/.
+- Completed evidence is immutable during metadata reconciliation.
+- Wrapper status must agree with the authoritative plan it references.
+constraints:
+  hard:
+  - Write only the cutover wrapper, the new Pi wrapper, and this governing plan.
+  - Do not rewrite or delete any evidence file.
+  - Do not edit app, frontend, generated bundles, project policy, or unrelated plans.
+  - Do not commit, push, restart, checkout, merge, reset, stage, or write external systems.
+  soft:
+  - Prefer explicit historical pointers over duplicated extraction evidence.
+  compatibility:
+  - Preserve valid fields and immutable baselines in existing plans.
+  security_requirements:
+  - Do not contact live endpoints or providers.
+architecture_snapshot:
+  authoritative_extraction_plan:
+    path: docs/plan/2026-08-12-tdtb-project-extraction/plan.yaml
+    task_state: T1-T11 completed
+    closure_declared_complete: true
+  stale_cutover_wrapper:
+    path: docs/plan/2026-08-14-tdtb-canonical-cutover/plan.yaml
+    status: pending
+    stale_claim: T1-T11 pending
+  pi_chart_followup:
+    plan_path: docs/plan/2026-08-14-pi-chart-followup/plan.yaml
+    current_state: missing
+    completion_commit: 8764ef2be7731d13a6f10e30720f0177237b4927
+research_digest:
+  relevant_files:
+  - path: docs/plan/2026-08-12-tdtb-project-extraction/plan.yaml
+    finding: T1-T11 are completed and closure.declared_complete is true.
+  - path: docs/plan/2026-08-14-tdtb-canonical-cutover/plan.yaml
+    finding: Wrapper remains pending and still reports T1-T11 pending.
+  - path: docs/plan/2026-08-14-pi-chart-followup/evidence/PI-CHART-02.json
+    finding: Implementation, red-green tests, builds, and safety proof are completed.
+  - path: docs/plan/2026-08-14-pi-chart-followup/evidence/PI-CHART-03.json
+    finding: Scratch browser scenarios and zero-write ledger are completed.
+  - path: docs/plan/2026-08-12-tdtb-feedback-follow-up/plan.yaml
+    finding: Completed feedback plan is frozen and outside the write set.
+  digest:
+  - Extraction closure is authoritative over the earlier cutover next-task snapshot.
+  - Pi chart evidence names PI-CHART-02 and PI-CHART-03 but lacks its plan wrapper.
+  - Commit 8764ef2 records the Pi implementation, tests, bundle, and evidence files.
+prior_decisions:
+- decision: Treat the extraction plan as the authoritative cutover closure record.
+  source: docs/plan/2026-08-12-tdtb-project-extraction/plan.yaml
+- decision: Preserve the completed feedback plan and all evidence without modification.
+  source: User acceptance criteria and repository policy
+reuse_notes:
+- path: docs/plan/2026-08-12-tdtb-project-extraction/plan.yaml
+  trust_level: authoritative completion record
+- path: docs/plan/2026-08-14-pi-chart-followup/evidence/
+  trust_level: existing completion evidence
+open_questions: []
+assumptions:
+- A completed historical wrapper is valid when it retains its baseline and points to closure evidence.
+- PI-CHART-01 can close from the red-phase record in PI-CHART-02 without a new evidence file.
+tasks:
+- id: CLOSURE-PLAN-01
+  title: Reconcile cutover wrapper and Pi plan metadata
+  description: Align both wrappers with authoritative completion records without changing evidence.
+  wave: 1
+  agent: gem-implementer
+  status: pending
+  covers:
+  - Canonical cutover wrapper closure
+  - Pi chart follow-up wrapper creation
+  - Evidence and foreign-plan preservation
+  depends_on: []
+  conflicts_with:
+  - Any concurrent write to the two target plan paths
+  context_files:
+  - path: docs/plan/2026-08-12-tdtb-project-extraction/plan.yaml
+    description: Authoritative T1-T11 task and closure record; read-only.
+  - path: docs/plan/2026-08-14-tdtb-canonical-cutover/plan.yaml
+    description: Stale wrapper to reconcile while preserving its immutable baseline.
+  - path: docs/plan/2026-08-14-pi-chart-followup/evidence/PI-CHART-02.json
+    description: Pi implementation, test, build, and safety evidence; read-only.
+  - path: docs/plan/2026-08-14-pi-chart-followup/evidence/PI-CHART-03.json
+    description: Pi scratch browser and zero-write evidence; read-only.
+  - path: docs/plan/2026-08-12-tdtb-feedback-follow-up/plan.yaml
+    description: Completed foreign plan that must remain unchanged.
+  flags:
+    requires_design_validation: false
+    retries_used: 0
+    revision_reason: ''
+  acceptance_criteria:
+  - Cutover wrapper status is completed and no current field reports T1-T11 pending.
+  - Cutover wrapper preserves its baseline and points to extraction T11 closure evidence.
+  - Cutover wrapper has a non-empty replan delta for the stale-metadata correction.
+  - Pi wrapper exists with plan status completed and PI-CHART-01..03 all completed.
+  - PI-CHART-01 cites the PI-CHART-02 red-phase record; no evidence is fabricated.
+  - PI-CHART-02 and PI-CHART-03 cite their existing JSON evidence and commit 8764ef2.
+  - No evidence file, completed feedback plan, source file, or unrelated plan changes.
+  - The exact write set is the cutover wrapper and Pi wrapper only.
+  handoff:
+    known_context:
+    - Extraction T1-T11 and closure.declared_complete are authoritative.
+    - The cutover wrapper is an old next-task snapshot, not an active execution front.
+    - Pi completion commit is 8764ef2be7731d13a6f10e30720f0177237b4927.
+    - PI-CHART-02 records the red phase and completed implementation verification.
+    - PI-CHART-03 records completed scratch scenarios and zero external writes.
+    target_files:
+    - docs/plan/2026-08-14-tdtb-canonical-cutover/plan.yaml
+    - docs/plan/2026-08-14-pi-chart-followup/plan.yaml
+    constraints:
+    - Preserve the cutover wrapper baseline objective and acceptance criteria verbatim.
+    - Use schema-valid completed task statuses, results, and evidence pointers.
+    - Preserve all foreign dirty state and do not stage or commit.
+  requires_review: true
+  review_depth: lightweight
+  review_security_sensitive: false
+- id: CLOSURE-REVIEW-01
+  title: Verify closure metadata and path isolation
+  description: Audit both reconciled wrappers against authoritative records and the exact write set.
+  wave: 2
+  agent: gem-reviewer
+  status: pending
+  covers:
+  - YAML and DAG validity
+  - Cross-plan status consistency
+  - Evidence immutability and path isolation
+  depends_on:
+  - CLOSURE-PLAN-01
+  conflicts_with: []
+  context_files:
+  - path: docs/plan/2026-08-12-tdtb-project-extraction/plan.yaml
+    description: Authoritative completed extraction record.
+  - path: docs/plan/2026-08-14-tdtb-canonical-cutover/plan.yaml
+    description: Reconciled historical wrapper under review.
+  - path: docs/plan/2026-08-14-pi-chart-followup/plan.yaml
+    description: New completed Pi chart wrapper under review.
+  flags:
+    requires_design_validation: false
+    retries_used: 0
+    revision_reason: ''
+  acceptance_criteria:
+  - Both target plans parse as YAML and use unique task IDs with valid dependencies.
+  - Cutover wrapper is completed and contains no active or current T1-T11 pending claim.
+  - Pi wrapper is completed and maps PI-CHART-01..03 to existing evidence without invention.
+  - Path-scoped diff shows no evidence, feedback plan, source, or unrelated plan changes.
+  - Review reports exact target file statuses and any residual contradiction.
+  handoff:
+    known_context:
+    - Review is read-only and limited to the two target plans plus authoritative evidence.
+    - Existing unrelated dirty work predates this plan and must not be attributed to it.
+    target_files: []
+    constraints:
+    - Do not repair findings during review; return needs_revision with exact evidence.
+    - Do not stage, commit, restart, or contact external systems.
+  requires_review: false
+  review_depth: lightweight
+  review_security_sensitive: false
