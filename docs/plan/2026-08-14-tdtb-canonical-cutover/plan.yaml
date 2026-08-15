@@ -1,0 +1,177 @@
+plan_id: 2026-08-14-tdtb-canonical-cutover
+objective: Continue the approved canonical TDTB extraction and cutover plan.
+created_at: '2026-08-14T00:00:00Z'
+created_by: gem-planner
+status: pending
+tldr: |
+  - T1 is the first pending dependency-valid task in the approved plan on main.
+  - T1 is read-only inventory work and requires no live POST, external write, or restart.
+  - A three-commit development branch overlaps the plan and must not be merged blindly.
+baseline:
+  objective: Continue the approved canonical TDTB extraction and cutover plan.
+  acceptance_criteria:
+  - Exact next task ID, title, dependencies, criteria, agent, and target files are recorded.
+  - Source extraction work is distinguished from attended deployment and restart work.
+  - No live POST, restart, billed endpoint, or real external write is authorized.
+  - Any conflict with current main or worktree state is identified.
+  captured_at: '2026-08-14T00:00:00Z'
+plan_lineage:
+  root_plan_id: 2026-08-14-tdtb-canonical-cutover
+  revision: 1
+  replan_count: 0
+  max_replans: 2
+  parent_revision: 0
+  reason: initial
+plan_metrics:
+  wave_1_task_count: 1
+  total_dependencies: 0
+  risk_score: high
+quality_warnings:
+- The active plan gives T1 no target files and only one broad acceptance criterion.
+- Development/tdtb-canonical-cutover changes the active plan and adds overlapping evidence.
+context_version: 1
+context_updated_at: '2026-08-14T00:00:00Z'
+context_fields_changed: []
+tech_stack: []
+conventions:
+- Canonical plans and acceptance evidence live under docs/plan/.
+- Main is integration and review only; interactive mutations require a dedicated worktree.
+constraints:
+  hard:
+  - This plan authorizes read-only repository and plan inspection only.
+  - Do not checkout, merge, commit, reset, restart, or write external systems.
+  - Do not call live POST endpoints or billed sequence and adjust endpoints.
+  - Do not restart :8746 before the attended cutover gate.
+  soft:
+  - Preserve the development branch and inspect its evidence before later mutation.
+  compatibility: []
+  security_requirements:
+  - Treat :8746 as live when visibility is incomplete.
+architecture_snapshot:
+  canonical_repo:
+    path: /Users/walle-mini/Repos/Projects/TDTB
+    branch: main
+    head: 84c1e0c
+    worktree: clean
+    upstream: origin/main
+    upstream_state: matched
+  active_plan:
+    path: docs/plan/2026-08-12-tdtb-project-extraction/plan.yaml
+    status: approved
+    task_state: T1-T11 pending
+  overlapping_branch:
+    name: Development/tdtb-canonical-cutover
+    head: 7c1a74a
+    relation_to_main: three commits ahead with merge base 84c1e0c
+    worktree_checked_out: false
+research_digest:
+  relevant_files:
+  - path: AGENTS.md
+    finding: Defines source ownership, live safety, verification, and concurrency gates.
+  - path: README.md
+    finding: Defines the canonical source map and attended Phase 2 promotion boundary.
+  - path: docs/plan/2026-08-12-tdtb-project-extraction/plan.yaml
+    finding: Approved plan has a linear T1-T11 DAG with every task pending.
+  digest:
+  - T1 has no dependencies and is the only dependency-valid pending task.
+  - T1 is inventory only; T2-T9 cover preparation, extraction, rewiring, and verification.
+  - T10 is the attended cutover-wait handoff; T11 records post-cutover handoff only.
+prior_decisions:
+- decision: Keep the loaded live runtime on the Claudius fallback until attended cutover.
+  source: AGENTS.md
+- decision: Do not merge the later development branch blindly.
+  source: Current repository state supplied by the orchestrator and verified with Git.
+reuse_notes: []
+open_questions:
+- question: Which development-branch evidence is authoritative before any later mutation?
+  context: The branch modifies the active plan and adds source inventory and cutover evidence.
+  type: decision_blocker
+  affects:
+  - T2
+  - T3
+  - T4
+  - T5
+  - T6
+  - T7
+  - T8
+  - T9
+  - T10
+  - T11
+assumptions:
+- The approved plan on main is the active plan named by the user.
+- A pending task is dependency-valid when every depends_on task is completed or the list is empty.
+- T1 may proceed read-only despite branch overlap, but later mutation requires reconciliation.
+pre_mortem:
+  overall_risk_level: high
+  critical_failure_modes:
+  - scenario: Later work repeats or overwrites evidence already present on the development branch.
+    likelihood: high
+    impact: high
+    mitigation: Reconcile branch evidence and plan lineage before the first mutating task.
+  - scenario: Source extraction is mistaken for permission to deploy or restart the live service.
+    likelihood: low
+    impact: critical
+    mitigation: Keep all live actions behind T10 and the explicit attended approval boundary.
+  - scenario: Read-only inspection triggers a real source write or billed endpoint.
+    likelihood: low
+    impact: critical
+    mitigation: Limit T1 to repository inspection and exclude all live POST operations.
+coordination_notes:
+- Preserve main and the development branch exactly during T1.
+- Forward the branch-overlap blocker before any task that mutates plans, source, or wiring.
+tasks:
+- id: CUTOVER-NEXT-01
+  title: Identify and prepare the next canonical cutover task
+  description: Record the first pending dependency-valid task and its safe execution boundary.
+  wave: 1
+  agent: gem-planner
+  status: pending
+  covers:
+  - Active-plan task selection
+  - Safety-boundary classification
+  - Git and worktree conflict identification
+  depends_on: []
+  conflicts_with:
+  - Unreconciled Development/tdtb-canonical-cutover plan and evidence changes
+  context_files:
+  - path: docs/plan/2026-08-12-tdtb-project-extraction/plan.yaml
+    description: Approved source plan whose pending DAG determines the next task.
+  - path: AGENTS.md
+    description: Canonical safety, ownership, verification, and concurrency policy.
+  - path: README.md
+    description: Canonical source map and Phase 2 promotion boundary.
+  flags:
+    requires_design_validation: false
+    retries_used: 0
+    revision_reason: ''
+  acceptance_criteria:
+  - Next task is T1, Targeted read-only inventory with no claim.
+  - T1 has no dependencies and is assigned to gem-implementer.
+  - T1 acceptance is exactly: Targeted pre-extraction inventory is complete.
+  - T1 target_files is exactly empty in the approved active plan.
+  - T1 is classified as read-only preparation, not extraction, deployment, or restart.
+  - T10 is identified as the first task that prepares an attended restart checklist.
+  - T1 authorizes no live POST, restart, billed endpoint, or real external write.
+  - Main is recorded as clean at 84c1e0c and matched to origin/main.
+  - The three-commit development branch overlap is recorded as a later-mutation blocker.
+  handoff:
+    known_context:
+    - Active next task ID is T1.
+    - Active next task title is Targeted read-only inventory with no claim.
+    - Active next task dependencies are empty.
+    - Active next task agent is gem-implementer.
+    - Active next task target_files is empty.
+    - Active next task criterion is Targeted pre-extraction inventory is complete.
+    - T1 records matches as move, remain/update, historical, or unresolved.
+    - T1 asserts no app-path claim and does not prepare a target.
+    - T10 only produces the attended plist, restart, and GET-only proof checklist.
+    - T11 records a post-cutover handoff and performs no removal.
+    - Main is clean and has no additional checked-out worktree.
+    - The development branch is three commits ahead and changes the active plan.
+    target_files: []
+    constraints:
+    - Read-only inspection only.
+    - Do not acquire claims or prepare a target during T1.
+    - Do not checkout or merge the development branch.
+    - Do not restart :8746 or alter machine-local projections.
+    - Do not write the real vault, Todoist, Calendar, or other source state.
