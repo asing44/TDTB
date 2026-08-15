@@ -309,6 +309,41 @@ describe("FEEDBACK-10 allocation overflow is explicit in the pie (A09)", () => {
   });
 });
 
+describe("PI-CHART-02: exhausted day renders the pie with explicit overage", () => {
+  it("renders slices and a zero-capacity overage without clock examples", () => {
+    const h = makeHarness("ready", (sc) => {
+      sc.inputs.capacity = {
+        ...sc.inputs.capacity, total: 0, free: 0, overassigned: true,
+      };
+    });
+    const { container } = h.ui(<AllocationPie />);
+    const svg = container.querySelector("svg.pie__svg");
+    expect(svg).not.toBeNull();
+    const paths = container.querySelectorAll("path.pie__slice");
+    expect(paths.length).toBeGreaterThan(0);
+    const readout = container.querySelector(".pie__readout");
+    expect(readout?.textContent).toMatch(/0 blk capacity/);
+    expect(readout?.textContent).toMatch(/over/i);
+    // Zero-capacity state is named in blocks, never as 24-hour clock examples.
+    expect(readout?.textContent).not.toMatch(/\d{1,2}:\d{2}/);
+    const caption = container.querySelector(".pie__over-caption");
+    expect(caption?.textContent).toMatch(/Over by \d+ blk/);
+  });
+
+  it("keeps the pie absent when an exhausted day has no allocations", () => {
+    const h = makeHarness("ready", (sc) => {
+      sc.inputs.assigned = [];
+      sc.inputs.capacity = {
+        ...sc.inputs.capacity,
+        total: 0, fixed: 0, anchored: 0, habits: 0, mint: 0, selected: 0,
+        buffer: 0, free: 0, overassigned: false,
+      };
+    });
+    const { container } = h.ui(<AllocationPie />);
+    expect(container.querySelector("svg.pie__svg")).toBeNull();
+  });
+});
+
 describe("FEEDBACK-12 queue scheduled rows render 12-hour", () => {
   it("a scheduled row's start reads as 12-hour with AM/PM", () => {
     const h = makeHarness("sequenced");

@@ -122,7 +122,7 @@ export function pieSlices(
   localSelected?: number,
   innerR = 0,
 ): PieSlice[] {
-  if (!cap || cap.total <= 0) return [];
+  if (!cap || cap.total < 0) return [];
   const values = SEGMENTS.map((seg) => ({
     ...seg,
     blocks: Math.max(
@@ -133,6 +133,11 @@ export function pieSlices(
     ),
   }));
   const allocated = values.reduce((sum, v) => sum + v.blocks, 0);
+  // Exhausted days (PI-CHART-02): at EOD the server reports total=0 yet the
+  // day's segments still exist. A zero-total day with allocations renders
+  // normalized against the allocated total; only a truly empty day stays
+  // absent. Positive-total and overassignment handling below is untouched.
+  if (cap.total === 0 && allocated === 0) return [];
   // Overassignment is real and must not be hidden: when the segments exceed
   // the day, the pie normalizes to the allocated total so every slice stays
   // proportional and Unallocated simply vanishes.

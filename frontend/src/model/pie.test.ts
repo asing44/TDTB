@@ -50,8 +50,11 @@ describe("pieSlices", () => {
     expect(pieSlices(null, 50, 50, 40)).toEqual([]);
   });
 
-  it("a zero-total day yields nothing rather than dividing by zero", () => {
-    expect(pieSlices(cap({ total: 0 }), 50, 50, 40)).toEqual([]);
+  it("an exhausted day with no allocations yields nothing rather than dividing by zero", () => {
+    expect(
+      pieSlices(cap({ total: 0, fixed: 0, anchored: 0, selected: 0, free: 0 }),
+        50, 50, 40),
+    ).toEqual([]);
   });
 
   it("drops zero-width segments instead of emitting invisible wedges", () => {
@@ -122,6 +125,32 @@ describe("pieSlices", () => {
     for (const s of pieSlices(cap(), 50, 50, 40)) {
       expect(s.color).toMatch(/^var\(--/);
     }
+  });
+});
+
+describe("zero-capacity day (PI-CHART-02)", () => {
+  it("renders normalized slices when total is zero but segments exist", () => {
+    // Exhausted EOD: the server reports total=0 yet the day's commitments
+    // still exist — the pie must not vanish, and every wedge must stay
+    // proportional against the allocated total (no division by zero).
+    const slices = pieSlices(cap({ total: 0, free: 0 }), 50, 50, 40);
+    expect(slices.length).toBeGreaterThan(0);
+    const sum = slices.reduce((n, s) => n + s.fraction, 0);
+    expect(sum).toBeCloseTo(1);
+    for (const s of slices) expect(s.d).not.toBe("");
+  });
+
+  it("keeps segment blocks and order, dropping unallocated on an exhausted day", () => {
+    const slices = pieSlices(cap({ total: 0, free: 0 }), 50, 50, 40);
+    expect(slices.map((s) => s.key)).toEqual(["fixed", "anchored", "selected"]);
+    expect(slices.map((s) => s.blocks)).toEqual([2, 4, 4]);
+  });
+
+  it("stays absent when an exhausted day has no allocations", () => {
+    expect(
+      pieSlices(cap({ total: 0, fixed: 0, anchored: 0, selected: 0, free: 0 }),
+        50, 50, 40),
+    ).toEqual([]);
   });
 });
 

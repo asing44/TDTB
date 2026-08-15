@@ -1,0 +1,83 @@
+{
+  "task_id": "PI-CHART-03",
+  "plan_id": "2026-08-14-pi-chart-followup",
+  "title": "Scratch browser verification of exhausted-day Pi chart",
+  "status": "completed",
+  "method": "Headless Chromium (Playwright 1.58.2 + chromium_headless_shell-1234) driven against the built mockup bundle (mockups/cockpit, index-DslsceKB.js) served by a GET-only static server on scratch port :8790. Capacity states applied through the fixture debug handle window.__tdtb (store dispatch INPUTS_LOADED + CAPACITY_UPDATED), mirroring the harness test pattern. No source edits, no live :8746 contact, no POSTs.",
+  "bundle_readback": {
+    "mockup_bundle": "mockups/cockpit/assets/index-DslsceKB.js contains the zero-total guard (total===0&&s===0), pieSummary fallback text, and pie__over-caption marker",
+    "prod_bundle": "app/static/cockpit/assets/index-gKRqwwBw.js contains the identical zero-total guard and pie markers; index.html references index-gKRqwwBw.js; stale index-Cs9qJuE4.js removed",
+    "conclusion": "Both generated bundles serve the PI-CHART-02 fix"
+  },
+  "scenarios": {
+    "exhausted": {
+      "fixture": "sequenced base; capacity mutated to total=0, fixed=3, anchored=8, habits=1, selected=13, buffer=0, free=-25 (server-verbatim exhausted EOD shape: total collapses, segments persist)",
+      "result": "pie renders (4 slices: fixed/anchored/habits/selected, buffer dropped as 0-blk, unallocated dropped)",
+      "readout": "25 blk / of 0 blk capacity / 25 over",
+      "caption": "Over by 25 blk - trim or drop",
+      "screenshot": "PI-CHART-03-exhausted.png",
+      "pass": true
+    },
+    "empty": {
+      "fixture": "fresh base; assigned=[] and capacity all-zero (total=0, every segment 0)",
+      "result": "AllocationPie returns null — no svg, no readout, no caption, no legend",
+      "screenshot": "PI-CHART-03-empty.png",
+      "pass": true
+    },
+    "positive": {
+      "fixture": "sequenced baseline untouched (total=31, fixed=3, anchored=8, habits=1, selected=13, buffer=4, free=2)",
+      "result": "pie renders unchanged (6 slices incl. unallocated 2 blk); readout 29 blk / of 31 blk capacity / 2 remaining; no over caption",
+      "screenshot": "PI-CHART-03-positive.png",
+      "pass": true
+    }
+  },
+  "assertions": {
+    "exhausted renders pie": true,
+    "exhausted slice count > 0": true,
+    "exhausted readout shows 0 blk capacity": true,
+    "exhausted shows explicit over readout": true,
+    "exhausted shows over caption": true,
+    "exhausted svg aria-label present": true,
+    "empty hides pie": true,
+    "empty has no slices": true,
+    "empty has no readout": true,
+    "empty has no over caption": true,
+    "positive renders pie": true,
+    "positive slice count > 0": true,
+    "positive readout shows 31 blk capacity": true,
+    "positive no over caption": true,
+    "positive no over in readout": true
+  },
+  "a11y_spot_check": {
+    "svg": "role=img with descriptive aria-label ('Allocation: Fixed 3 blk (10%), ...')",
+    "readout": "role=status aria-live=polite",
+    "legend": "6 focusable buttons with aria-pressed=false and aria-label per segment",
+    "slice_titles": "each path has <title> 'Label — N blk'",
+    "issues": 0
+  },
+  "console_errors": 0,
+  "console_warnings": 0,
+  "network_failures": 0,
+  "network_ledger": {
+    "requests": "3 local GETs only (index.html, js, css) on 127.0.0.1:8790",
+    "post_requests": 0,
+    "live_writes": 0,
+    "external_requests": 0,
+    "contacts_with_8746": 0
+  },
+  "zero_write_ledger": {
+    "source_edits": "none",
+    "commits": "none",
+    "live_posts_sequence_adjust_commit": "none",
+    "provider_writes": "none",
+    "restarts": "none — :8746 service untouched (PID unchanged, GET-only static scratch on :8790)",
+    "foreign_changes": "pre-existing dirty/untracked state untouched; only added evidence files under docs/plan/2026-08-14-pi-chart-followup/evidence/"
+  },
+  "evidence_path": "docs/plan/2026-08-14-pi-chart-followup/evidence/PI-CHART-03.json",
+  "artifacts": [
+    "docs/plan/2026-08-14-pi-chart-followup/evidence/PI-CHART-03-exhausted.png",
+    "docs/plan/2026-08-14-pi-chart-followup/evidence/PI-CHART-03-empty.png",
+    "docs/plan/2026-08-14-pi-chart-followup/evidence/PI-CHART-03-positive.png",
+    "docs/plan/2026-08-14-pi-chart-followup/evidence/PI-CHART-03-raw.json"
+  ]
+}
