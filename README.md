@@ -11,7 +11,8 @@ source map and lifecycle boundary, not a second instruction file.
 | Surface | Canonical location | Role |
 |---|---|---|
 | Project policy | `Projects/TDTB/AGENTS.md` | GPT-first architecture, safety, testing, and completion rules |
-| Active app (temporary) | `Tasks/tdtb-app-pilot/` | Current FastAPI + frontend implementation until Phase 2 promotion |
+| Canonical app (live) | Repository root (`app/`, `frontend/`, `launchd/`, `restart-live.sh`) | Current FastAPI + frontend implementation running the live `:8746` runtime |
+| Rollback fallback (preserved) | Claudius `Tasks/tdtb-app-pilot/` | Preserved rollback source only; not part of normal operation |
 | Canonical skill | `Skills/user/tdtb-bridger-vault/SKILL.md` | Shared TDTB behavior source |
 | GPT skill variant | `Configurations/gpt-stack/skills/tdtb-bridger-vault/SKILL.md` | Codex/OpenCode-compatible skill surface |
 | Historical host plan | `Plans Link/2026-07-17-tdtb-cockpit-overhaul.md` (Claudius repo) | Host-owned historical evidence of the qualification, bake-in, and retirement gates; not a canonical plan |

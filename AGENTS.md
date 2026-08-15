@@ -26,10 +26,11 @@ current source contracts; it is not a second assignment or pool browser.
 ## Source ownership
 
 - The canonical app lives at the repository root (`app/`, `frontend/`,
-  `launchd/`, `restart-live.sh`, `spec.md`). Do not relocate it until the
-  Phase 2 gates named in `README.md` are evidenced. The loaded live runtime
-  still runs from the Claudius fallback copy (`Tasks/tdtb-app-pilot/`) until
-  the attended cutover.
+  `launchd/`, `restart-live.sh`, `spec.md`) and runs the loaded live runtime
+  on `:8746`. Do not relocate it until the Phase 2 gates named in `README.md`
+  are evidenced. The Claudius fallback copy (`Tasks/tdtb-app-pilot/`) is
+  preserved only as rollback source; it must not be repointed into normal
+  operation.
 - Shared behavior belongs in the Claudius host repo:
   `Skills/user/tdtb-bridger-vault/SKILL.md`; the GPT-compatible variant
   belongs in `Configurations/gpt-stack/skills/tdtb-bridger-vault/SKILL.md`.

@@ -3,7 +3,7 @@
 # Python: 3.12 (uv-managed cpython-3.12; match on other machines).
 #
 # Fresh setup on another Mac (e.g. desktop / walle-mini):
-#   cd <repo>/Tasks/tdtb-app-pilot/app
+#   cd <repo>/app
 #   uv venv --python 3.12 .venv
 #   VIRTUAL_ENV="$PWD/.venv" uv pip install -r requirements.txt
 # Regenerate this file after a dep change:

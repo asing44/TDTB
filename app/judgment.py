@@ -1,7 +1,9 @@
 """judgment.py — the four Agent SDK judgment calls (T11).
 
-Per spec.md § "Judgment | Claude Agent SDK" and Plans Link/2026-07-12-tdtb-app-pilot-build.md
-T11: exactly four judgment calls per run, Sonnet-tier, no tools/no filesystem access — pure
+Per the tdtb-bridger-vault skill semantics (the original spec.md § "Judgment | Claude
+Agent SDK" is fallback-only historical, preserved under Claudius Tasks/tdtb-app-pilot
+until attended removal) and Plans Link/2026-07-12-tdtb-app-pilot-build.md T11: exactly
+four judgment calls per run, Sonnet-tier, no tools/no filesystem access — pure
 text-in/JSON-out. Every call is schema-validated; on parse/validation failure, ONE retry with
 the error appended to the prompt, then ``JudgmentError``.
 

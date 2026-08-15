@@ -3,9 +3,10 @@ import preact from "@preact/preset-vite";
 import path from "node:path";
 
 // Two build targets (locked decisions 12/13/15):
-//  - mockup:  fixture adapter compiled in, outputs to Tasks/tdtb-app-pilot/mockups/cockpit/
-//  - production: api adapter only, outputs to Tasks/tdtb-app-pilot/app/static/cockpit/
-// Both are committed builds; FastAPI serves static files — no runtime CDN deps.
+//  - mockup:  fixture adapter compiled in, outputs to mockups/cockpit/
+//  - production: api adapter only, outputs to app/static/cockpit/
+// Production is the committed served bundle (FastAPI serves static files — no
+// runtime CDN deps); mockup mode is a local preview build.
 export default defineConfig(({ mode }) => ({
   plugins: [preact()],
   base: "./",
