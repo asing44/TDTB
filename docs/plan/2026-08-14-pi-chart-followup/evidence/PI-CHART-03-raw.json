@@ -1,0 +1,122 @@
+{
+  "status": "passed",
+  "scenarios": {
+    "exhausted": {
+      "hasPie": true,
+      "sliceCount": 4,
+      "readoutText": "25 blkof 0 blk capacity25 over",
+      "captionText": "Over by 25 blk - trim or drop",
+      "legendItems": 4,
+      "ariaLabel": "Allocation: Fixed 3 blk (12%), Anchored 8 blk (32%), Habits 1 blk (4%), Selected 13 blk (52%)",
+      "state": {
+        "capacity": {
+          "total": 0,
+          "fixed": 3,
+          "anchored": 8,
+          "habits": 1,
+          "mint": 0,
+          "selected": 13,
+          "buffer": 0,
+          "free": -25,
+          "overassigned": true,
+          "availableForSelection": 0,
+          "remaining": "⬇ 12hr 30min over · 25 blk",
+          "ratio": "0 / 0 blk",
+          "legend": "Fixed 3 · Anchored 8 · Habits 1 · Selected 13 · Buffer 0 · Free -25 · Total 0",
+          "counters": "deep: 1 / 4 · mixed: 2 / 3"
+        },
+        "loaded": true,
+        "loadError": null,
+        "assignedCount": 8
+      }
+    },
+    "empty": {
+      "hasPie": false,
+      "sliceCount": 0,
+      "readoutText": null,
+      "captionText": null,
+      "legendItems": 0,
+      "ariaLabel": null,
+      "state": {
+        "capacity": {
+          "total": 0,
+          "fixed": 0,
+          "anchored": 0,
+          "habits": 0,
+          "mint": 0,
+          "selected": 0,
+          "buffer": 0,
+          "free": 0,
+          "overassigned": false,
+          "availableForSelection": 0,
+          "remaining": "⬆ fully booked · 0 blk left",
+          "ratio": "0 / 0 blk",
+          "legend": "Fixed 0 · Anchored 0 · Habits 0 · Selected 0 · Buffer 0 · Free 0 · Total 0",
+          "counters": "deep: 1 / 4 · mixed: 2 / 3"
+        },
+        "loaded": true,
+        "loadError": null,
+        "assignedCount": 0
+      }
+    },
+    "positive": {
+      "hasPie": true,
+      "sliceCount": 6,
+      "readoutText": "29 blkof 31 blk capacity2 remaining",
+      "captionText": null,
+      "legendItems": 6,
+      "ariaLabel": "Allocation: Fixed 3 blk (10%), Anchored 8 blk (26%), Habits 1 blk (3%), Selected 13 blk (42%), Buffer 4 blk (13%), Unallocated 2 blk (6%)",
+      "state": {
+        "capacity": {
+          "total": 31,
+          "fixed": 3,
+          "anchored": 8,
+          "habits": 1,
+          "mint": 0,
+          "selected": 13,
+          "buffer": 4,
+          "free": 2,
+          "overassigned": false,
+          "availableForSelection": 15,
+          "remaining": "⬆ 1hr left · 2 blk",
+          "ratio": "29 / 31 blk",
+          "legend": "Fixed 3 · Anchored 8 · Habits 1 · Selected 13 · Buffer 4 · Free 2 · Total 31",
+          "counters": "deep: 1 / 4 · mixed: 2 / 3"
+        },
+        "loaded": true,
+        "loadError": null,
+        "assignedCount": 8
+      }
+    }
+  },
+  "assertions": {
+    "exhausted renders pie": true,
+    "exhausted slice count > 0": true,
+    "exhausted readout shows 0 blk capacity": true,
+    "exhausted shows explicit over readout": true,
+    "exhausted shows over caption": true,
+    "exhausted svg aria-label present": true,
+    "empty hides pie": true,
+    "empty has no slices": true,
+    "empty has no readout": true,
+    "empty has no over caption": true,
+    "positive renders pie": true,
+    "positive slice count > 0": true,
+    "positive readout shows 31 blk capacity": true,
+    "positive no over caption": true,
+    "positive no over in readout": true
+  },
+  "failures": [],
+  "console": {
+    "errors": [],
+    "warnings": []
+  },
+  "network": {
+    "failures": [],
+    "postRequests": [],
+    "liveWrites": [],
+    "localRequestCount": 3,
+    "externalRequestCount": 0,
+    "externalRequests": []
+  }
+}
