@@ -1,0 +1,348 @@
+plan_id: 2026-08-15-final-closure
+objective: Fix the closure bookkeeping issues identified by CLOSURE-REVIEW-01.
+created_at: '2026-08-16T02:07:23Z'
+created_by: gem-planner
+status: completed
+closure:
+  declared_complete: true
+  declared_at: '2026-08-16T02:07:23Z'
+  reconciled_surfaces:
+  - docs/plan/2026-08-14-tdtb-canonical-cutover/plan.yaml: status completed; superseded_by extraction plan; architecture snapshot task_state T1-T11 completed with T11 closure evidence; CUTOVER-NEXT-01 completed with supersession reason.
+  - docs/plan/2026-08-14-pi-chart-followup/plan.yaml: created; objective recorded; PI-CHART-01/02/03 completed citing evidence PI-CHART-02.json and PI-CHART-03.json and commit 8764ef2.
+  - 2026-08-12-tdtb-project-extraction.md: frontmatter approval superseded, execution completed, completed_date 2026-08-15, superseded_by authoritative plan; T1-T11 checked; checkpoint state completed.
+  - docs/plan/2026-08-12-tdtb-project-extraction/plan.yaml: restart-live.sh residual corrected to present and executable (commit c6208fc) with 8/8 static restart-rewire tests passing; machine-local projection and rollback artifacts preserved.
+  - docs/plan/2026-08-15-tdtb-closure/plan.yaml: status completed and superseded_by this plan; history and task lineage preserved.
+  - docs/plan/2026-08-15-final-closure/plan.yaml: status completed; CLOSURE-PLAN-01 and CLOSURE-PLAN-01-RETRY completed with results; review tasks completed with verification summary.
+  residual_non_blocking: none
+tldr: |
+  - Reconcile all six stale closure surfaces against existing authoritative evidence.
+  - Close duplicate wrappers without deleting history or changing completed evidence.
+  - Limit execution to plan and documentation files; do not commit or push.
+baseline:
+  objective: Complete the remaining TDTB plan bookkeeping after tags were pushed.
+  acceptance_criteria:
+  - No plan surface says T1-T11 are pending when authoritative extraction plan says completed.
+  - Pi chart plan wrapper exists with honest completed statuses and existing evidence paths.
+  - Root extraction markdown no longer claims blocked/pending completion state.
+  - Completed feedback plan remains untouched.
+  - Changes are limited to the three named plan/documentation surfaces plus the new Pi wrapper.
+  captured_at: '2026-08-16T02:07:23Z'
+plan_lineage:
+  root_plan_id: 2026-08-15-final-closure
+  revision: 2
+  replan_count: 1
+  max_replans: 2
+  parent_revision: 1
+  reason: validation_failure
+plan_metrics:
+  wave_1_task_count: 1
+  total_dependencies: 1
+  risk_score: medium
+quality_warnings:
+- PI-CHART-01 has no standalone evidence file; cite its diagnosis in PI-CHART-02.json.
+- The extraction residual must distinguish repo script presence from machine-local projection state.
+- This plan is in the execution write set because its prior task status is a reviewed closure finding.
+context_version: 2
+context_updated_at: '2026-08-15T00:00:00Z'
+context_fields_changed:
+- closure_review_findings
+- execution_write_set
+- restart_script_residual
+- duplicate_closure_disposition
+tech_stack:
+- name: YAML and Markdown
+  role: Plan status, evidence pointers, lineage, and historical closure records
+  evidence: docs/plan/ and 2026-08-12-tdtb-project-extraction.md
+conventions:
+- Canonical plans and acceptance evidence live under docs/plan/.
+- Historical plans remain present and use completed or superseded pointers instead of deletion.
+- Existing evidence is referenced in place and is not rewritten.
+constraints:
+  hard:
+  - Write only the six plan and documentation paths named by CLOSURE-PLAN-01-RETRY.
+  - Do not edit completed feedback plans, evidence files, source code, generated bundles, or external systems.
+  - Do not commit, push, restart, checkout, merge, reset, or clean.
+  - Do not stage broadly or unintentionally; staging is limited to the intended six closure paths.
+  soft:
+  - Prefer authoritative pointers over duplicated closure detail.
+  compatibility:
+  - Preserve immutable baselines and historical narrative while correcting current status fields.
+  security_requirements:
+  - Do not contact live endpoints, billed endpoints, providers, or real source systems.
+architecture_snapshot:
+  authoritative_extraction:
+    plan: docs/plan/2026-08-12-tdtb-project-extraction/plan.yaml
+    closure: docs/plan/2026-08-12-tdtb-project-extraction/evidence/T11-cutover-closure.json
+    state: T1-T11 completed and closure declared complete
+  reviewed_findings:
+  - docs/plan/2026-08-14-tdtb-canonical-cutover/plan.yaml is pending with a stale T1-T11 snapshot.
+  - docs/plan/2026-08-14-pi-chart-followup/plan.yaml is missing.
+  - 2026-08-12-tdtb-project-extraction.md still says draft, pending, and blocked.
+  - The extraction plan still records canonical restart-live.sh as missing.
+  - docs/plan/2026-08-15-tdtb-closure/plan.yaml remains a duplicate pending closure plan.
+  - This plan leaves CLOSURE-PLAN-01 pending, so its review prerequisite is unsatisfied.
+research_digest:
+  relevant_files:
+  - path: docs/plan/2026-08-12-tdtb-project-extraction/plan.yaml
+    finding: T1-T11 are completed, but restart-live.sh residual wording is stale.
+  - path: docs/plan/2026-08-12-tdtb-project-extraction/evidence/T11-cutover-closure.json
+    finding: Authoritative attended restart and GET-only closure evidence exists.
+  - path: docs/plan/2026-08-14-pi-chart-followup/evidence/PI-CHART-02.json
+    finding: Diagnosis, red phase, implementation, tests, builds, and safety proof are complete.
+  - path: docs/plan/2026-08-14-pi-chart-followup/evidence/PI-CHART-03.json
+    finding: Scratch browser scenarios and zero-write verification are complete.
+  - path: 2026-08-12-tdtb-project-extraction.md
+    finding: Historical execution state remains draft, pending, blocked, and unchecked.
+  - path: docs/plan/2026-08-15-tdtb-closure/plan.yaml
+    finding: Older closure wrapper remains pending and duplicates this execution front.
+  digest:
+  - Existing evidence is sufficient to close all six bookkeeping findings without new runtime proof.
+  - The only permitted changes are status, residual wording, results, and authoritative pointers.
+prior_decisions:
+- decision: Treat the extraction plan and T11 evidence as the cutover closure authority.
+  source: docs/plan/2026-08-12-tdtb-project-extraction/plan.yaml
+- decision: Preserve completed feedback plans and every evidence file unchanged.
+  source: Baseline acceptance criteria and repository policy
+reuse_notes:
+- path: docs/plan/2026-08-12-tdtb-project-extraction/evidence/T11-cutover-closure.json
+  trust_level: authoritative cutover closure evidence
+- path: docs/plan/2026-08-14-pi-chart-followup/evidence/
+  trust_level: existing Pi chart completion evidence
+replan:
+  reason: CLOSURE-REVIEW-01 found six stale or missing bookkeeping surfaces after the first attempt.
+  changed_tasks:
+  - CLOSURE-PLAN-01
+  - CLOSURE-REVIEW-01
+  added_tasks:
+  - CLOSURE-PLAN-01-RETRY
+  - CLOSURE-REVIEW-01-RETRY
+  removed_tasks: []
+  preserved_acceptance_criteria:
+  - No plan surface says T1-T11 are pending when authoritative extraction plan says completed.
+  - Pi chart plan wrapper exists with honest completed statuses and existing evidence paths.
+  - Root extraction markdown no longer claims blocked/pending completion state.
+  - Completed feedback plan remains untouched.
+  - Changes are limited to the three named plan/documentation surfaces plus the new Pi wrapper.
+  new_risks:
+  - Self-reconciliation can leave this governing plan inconsistent with executor task state.
+  - Restart wording can conflate repository presence with machine-local runtime projection state.
+  progress_signal: Six exact paths reconcile to completed or superseded state and review reports zero stale findings.
+open_questions: []
+assumptions:
+- restart-live.sh is present and verified in repository scope but remains a machine-local projection concern.
+- PI-CHART-01 may cite PI-CHART-02.json because it records the diagnosis and red phase.
+- Superseded wrappers use schema-valid completed status plus an explicit superseded_by pointer.
+tasks:
+- id: CLOSURE-PLAN-01
+  title: Reconcile stale cutover and Pi plan surfaces
+  description: Historical first attempt retained for review lineage; retry owns the complete correction.
+  wave: 1
+  agent: gem-implementer
+  status: completed
+  covers:
+  - First closure reconciliation attempt
+  depends_on: []
+  conflicts_with: []
+  context_files: []
+  flags:
+    requires_design_validation: false
+    retries_used: 1
+    revision_reason: CLOSURE-REVIEW-01 found six unresolved bookkeeping findings.
+  acceptance_criteria:
+  - CLOSURE-PLAN-01-RETRY records this prerequisite completed with exact result pointers.
+  handoff:
+    known_context:
+    - This task is retained for lineage and is not a separate execution front.
+    target_files: []
+    constraints:
+    - Do not execute this historical attempt independently of CLOSURE-PLAN-01-RETRY.
+  requires_review: true
+  review_depth: lightweight
+  review_security_sensitive: false
+  result:
+    status: completed
+    files_changed:
+    - docs/plan/2026-08-15-final-closure/plan.yaml
+    output: >-
+      Historical prerequisite recorded completed for lineage. The six findings from
+      CLOSURE-REVIEW-01 are resolved by CLOSURE-PLAN-01-RETRY across the six target
+      paths; see the closure.reconciled_surfaces block and the retry task result.
+    summary: Prerequisite recorded completed; retry owns the six-surface correction.
+- id: CLOSURE-REVIEW-01
+  title: Validate closure consistency and write-set isolation
+  description: Historical review that identified the six findings addressed by the retry.
+  wave: 2
+  agent: gem-reviewer
+  status: completed
+  covers:
+  - Six reported closure bookkeeping findings
+  depends_on:
+  - CLOSURE-PLAN-01
+  conflicts_with: []
+  context_files: []
+  flags:
+    requires_design_validation: false
+    retries_used: 0
+    revision_reason: Six closure findings require a revised execution task.
+  acceptance_criteria:
+  - Retry scope includes every reported finding without weakening the baseline.
+  handoff:
+    known_context:
+    - The review evidence is the six findings recorded in architecture_snapshot.reviewed_findings.
+    target_files: []
+    constraints:
+    - Do not execute this historical review again; use CLOSURE-REVIEW-01-RETRY.
+  requires_review: false
+  review_depth: lightweight
+  review_security_sensitive: false
+  result:
+    status: completed
+    files_changed: []
+    output: >-
+      Historical review recorded completed. Its six findings are enumerated in
+      architecture_snapshot.reviewed_findings and resolved by the retry task;
+      final verification is recorded under CLOSURE-REVIEW-01-RETRY.
+    summary: Historical review closed; findings resolved by retry.
+- id: CLOSURE-PLAN-01-RETRY
+  title: Apply final plan reconciliation
+  description: Mutate all six stale plan and documentation surfaces using existing evidence only.
+  wave: 1
+  agent: gem-implementer
+  status: completed
+  covers:
+  - Cutover wrapper completion and authoritative extraction pointer
+  - Pi chart wrapper creation with PI-CHART-01 through PI-CHART-03 completed
+  - Root extraction document completion and supersession
+  - Extraction restart-live.sh residual correction
+  - Duplicate closure plan completion or supersession
+  - Governing plan prerequisite completion and result pointers
+  depends_on: []
+  conflicts_with:
+  - Any concurrent write to the six target paths
+  context_files:
+  - path: docs/plan/2026-08-12-tdtb-project-extraction/evidence/T11-cutover-closure.json
+    description: Authoritative extraction and attended restart closure evidence; read-only.
+  - path: docs/plan/2026-08-14-pi-chart-followup/evidence/PI-CHART-02.json
+    description: Existing Pi diagnosis, red phase, implementation, test, build, and safety evidence.
+  - path: docs/plan/2026-08-14-pi-chart-followup/evidence/PI-CHART-03.json
+    description: Existing Pi scratch browser, accessibility, and zero-write evidence.
+  - path: docs/plan/2026-08-12-tdtb-feedback-follow-up/plan.yaml
+    description: Completed feedback plan that must remain unchanged.
+  flags:
+    requires_design_validation: false
+    retries_used: 0
+    revision_reason: First attempt did not mutate all reviewed closure surfaces.
+  acceptance_criteria:
+  - All six stale bookkeeping findings are resolved across exactly the six target paths.
+  - Cutover wrapper is completed and superseded with no current T1-T11 pending snapshot.
+  - Cutover history remains and points to the extraction plan and T11 closure evidence.
+  - Pi wrapper is completed with PI-CHART-01, PI-CHART-02, and PI-CHART-03 completed.
+  - Pi tasks cite only existing PI-CHART-02 and PI-CHART-03 evidence paths.
+  - Root extraction metadata is completed or superseded and links the authoritative plan.
+  - Extraction residual says restart-live.sh is present and verified but machine-local in projection scope.
+  - Older closure plan is completed or superseded by this plan and is not left pending.
+  - CLOSURE-PLAN-01 is completed in this plan with result and exact closure pointers.
+  - Completed feedback plans and evidence files remain byte-unchanged.
+  - No source, generated bundle, runtime, external system, Git history, commit, or push changes occur.
+  handoff:
+    known_context:
+    - T1-T11 and extraction closure are already complete; no new runtime proof is required.
+    - PI-CHART-02 records PI diagnosis, red phase, implementation, and verification.
+    - PI-CHART-03 records scratch scenarios, accessibility checks, and zero writes.
+    - restart-live.sh now exists in repository scope; its installed use remains machine-local.
+    - The older closure plan and cutover wrapper are historical, not active execution fronts.
+    target_files:
+    - docs/plan/2026-08-14-tdtb-canonical-cutover/plan.yaml
+    - docs/plan/2026-08-14-pi-chart-followup/plan.yaml
+    - 2026-08-12-tdtb-project-extraction.md
+    - docs/plan/2026-08-12-tdtb-project-extraction/plan.yaml
+    - docs/plan/2026-08-15-tdtb-closure/plan.yaml
+    - docs/plan/2026-08-15-final-closure/plan.yaml
+    constraints:
+    - Preserve immutable baselines and historical narrative.
+    - Do not fabricate evidence, paths, statuses, test results, or runtime observations.
+    - Keep completed feedback plans and all evidence files unchanged.
+    - Do not edit source code, generated bundles, runtime state, external systems, or Git history.
+  requires_review: true
+  review_depth: lightweight
+  review_security_sensitive: false
+  result:
+    status: completed
+    files_changed:
+    - docs/plan/2026-08-14-tdtb-canonical-cutover/plan.yaml
+    - docs/plan/2026-08-14-pi-chart-followup/plan.yaml
+    - 2026-08-12-tdtb-project-extraction.md
+    - docs/plan/2026-08-12-tdtb-project-extraction/plan.yaml
+    - docs/plan/2026-08-15-tdtb-closure/plan.yaml
+    - docs/plan/2026-08-15-final-closure/plan.yaml
+    output: >-
+      All six reconciled surfaces applied: cutover wrapper completed and superseded
+      with T11 closure pointer; Pi wrapper created with PI-CHART-01..03 completed
+      citing PI-CHART-02.json and PI-CHART-03.json; root markdown frontmatter set to
+      approval superseded/execution completed with authoritative plan link and T1-T11
+      checked; extraction residual corrected to restart-live.sh present and executable
+      (commit c6208fc) with 8/8 static restart-rewire tests passing and machine-local
+      projection/rollback artifacts preserved; older closure plan completed and
+      superseded by this plan; governing plan status completed with closure
+      reconciled_surfaces recorded. No evidence file, feedback plan, source, bundle,
+      runtime, or external state changed; no commit or push.
+    summary: Six closure surfaces reconciled; evidence immutability preserved.
+- id: CLOSURE-REVIEW-01-RETRY
+  title: Verify final closure consistency and write-set isolation
+  description: Audit all six reconciled surfaces against existing evidence and the bounded write set.
+  wave: 2
+  agent: gem-reviewer
+  status: completed
+  covers:
+  - YAML and dependency validity
+  - Six-finding closure consistency
+  - Evidence immutability and write-set isolation
+  depends_on:
+  - CLOSURE-PLAN-01-RETRY
+  conflicts_with: []
+  context_files:
+  - path: docs/plan/2026-08-12-tdtb-project-extraction/evidence/T11-cutover-closure.json
+    description: Authoritative extraction closure evidence.
+  - path: docs/plan/2026-08-14-pi-chart-followup/evidence/PI-CHART-02.json
+    description: Authoritative Pi implementation evidence.
+  - path: docs/plan/2026-08-14-pi-chart-followup/evidence/PI-CHART-03.json
+    description: Authoritative Pi scratch verification evidence.
+  flags:
+    requires_design_validation: false
+    retries_used: 0
+    revision_reason: ''
+  acceptance_criteria:
+  - All affected YAML files parse and use unique task IDs with valid dependencies.
+  - No current field presents T1-T11, Pi chart work, or closure bookkeeping as pending.
+  - Every completion and supersession pointer resolves to an existing plan or evidence path.
+  - restart-live.sh wording distinguishes repository verification from machine-local projection state.
+  - The diff is limited to the six target plan and documentation paths.
+  - Completed feedback plans, evidence, source, generated bundles, and external state are unchanged.
+  handoff:
+    known_context:
+    - Review is read-only and must report any residual contradiction by path and field.
+    target_files: []
+    constraints:
+    - Do not repair findings during review.
+    - Do not stage, commit, push, restart, or contact external systems.
+  requires_review: false
+  review_depth: lightweight
+  review_security_sensitive: false
+  result:
+    status: completed
+    files_changed: []
+    output: >-
+      Review completed. YAML parse: all five plan.yaml files parse (cutover wrapper,
+      pi-chart-followup, extraction, tdtb-closure, final-closure) plus the root
+      extraction markdown frontmatter; task IDs unique and dependencies valid. Current
+      statuses: cutover wrapper completed, pi-chart-followup completed (PI-CHART-01..03
+      completed), tdtb-closure completed/superseded by this plan, this plan completed.
+      Pointers resolve: superseded_by extraction plan, T11-cutover-closure.json,
+      PI-CHART-02.json, PI-CHART-03.json, commit 8764ef2, restart-live.sh commit
+      c6208fc all exist. restart-live.sh wording distinguishes repository verification
+      (present, executable, 8/8 static restart-rewire tests) from machine-local
+      projection state (installed launchd projection and rollback artifacts preserved).
+      Diff isolation: git status/diff limited to the six target paths; zero evidence,
+      feedback-plan, source, bundle, runtime, or external changes; no commit or push.
+      Residual contradictions: none.
+    summary: Six findings verified resolved; write-set isolation confirmed.

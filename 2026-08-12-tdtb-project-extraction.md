@@ -1,14 +1,14 @@
 ---
 plan_schema: 2
 plan_id: "2026-08-12-tdtb-project-extraction"
-approval: draft
-execution: pending
+approval: superseded
+execution: completed
 created: "2026-08-12"
-updated: "2026-08-12"
-completed_date: null
+updated: "2026-08-15"
+completed_date: "2026-08-15"
 parent_plan: "2026-08-09-tdtb-planning-ui-reliability"
-blocker_reason: "governance BLOCKED: B (2026-08-09-tdtb-planning-ui-reliability) remains the exclusive app-path owner until a controlled T2 freeze plus immutable dirty-state receipt and a valid T3 supersede/re-home; A is draft/pending and execution is NOT authorized; fresh approval review required"
-superseded_by: null
+blocker_reason: "Historical governance BLOCKED state resolved and superseded: B (2026-08-09-tdtb-planning-ui-reliability) reached terminal approval=superseded at T3; A executed T1-T11 and closed with the attended cutover restart and GET-only proof at T11. Authoritative record: docs/plan/2026-08-12-tdtb-project-extraction/plan.yaml (T1-T11 completed, closure.declared_complete=true at 2026-08-15T02:52:00Z)."
+superseded_by: "docs/plan/2026-08-12-tdtb-project-extraction/plan.yaml"
 body_contract: 1
 plan_lineage: {revision: 2, replan_count: 2, max_replans: 2}
 ---
@@ -43,32 +43,43 @@ cutover is a separate attended action after the new repository is verified.
 
 ## Progress
 
+> **Status: COMPLETED / SUPERSEDED (2026-08-15).** The authoritative execution record is
+> [docs/plan/2026-08-12-tdtb-project-extraction/plan.yaml](docs/plan/2026-08-12-tdtb-project-extraction/plan.yaml)
+> (T1-T11 completed; `closure.declared_complete: true` at `2026-08-15T02:52:00Z`), with the
+> attended cutover restart and GET-only proof in
+> `docs/plan/2026-08-12-tdtb-project-extraction/evidence/T11-cutover-closure.json`.
+> The draft/pending/blocked narrative below is preserved as the historical record of the
+> pre-execution state; it no longer reflects current status.
+
 Resolved context (T0) — recorded as settled decisions, not an open task: the
 current-seat target root `/Users/walle-mini/Repos/Projects/TDTB`, the
 history-preserving transfer method (clean clone, no worktree rewrite), and the
 ownership strategy (SUPERSEDE/TRANSFER, never mutual shared app ownership) are
 final. T0 is complete; the remaining open work is the T1-T11 sequence below.
 
-- [ ] T1 — Targeted read-only inventory with NO ownership claim.
-- [ ] T2 — Freeze active UI plan (B) and capture immutable dirty-state receipt BEFORE any copy/target prep.
-- [ ] T3 — Formally supersede/re-home B and accept the receipt (ownership handoff point).
-- [ ] T4 — Acquire EXCLUSIVE app claims only AFTER T3; no app/target claim before T4.
-- [ ] T5 — Stage target/copy and independently verify against the receipt (receipt-compared).
-- [ ] T6 — Logical extraction: ownership leaves Claudius; app paths leave the operational source set (retained fallback may remain until attended cutover).
-- [ ] T7 — Rewire Claudius consumers, tests, audits, and documentation.
-- [ ] T8 — Broad post-extraction `tdtb` sweep and triage (AC-005).
-- [ ] T9 — Verify both repositories non-live.
-- [ ] T10 — Attended cutover-wait handoff (produced, NOT executed here).
-- [ ] T11 — Post-cutover-removal receipt/handoff (NOT authorized here).
+- [x] T1 — Targeted read-only inventory with NO ownership claim.
+- [x] T2 — Freeze active UI plan (B) and capture immutable dirty-state receipt BEFORE any copy/target prep.
+- [x] T3 — Formally supersede/re-home B and accept the receipt (ownership handoff point).
+- [x] T4 — Acquire EXCLUSIVE app claims only AFTER T3; no app/target claim before T4.
+- [x] T5 — Stage target/copy and independently verify against the receipt (receipt-compared).
+- [x] T6 — Logical extraction: ownership leaves Claudius; app paths leave the operational source set (retained fallback may remain until attended cutover).
+- [x] T7 — Rewire Claudius consumers, tests, audits, and documentation.
+- [x] T8 — Broad post-extraction `tdtb` sweep and triage (AC-005).
+- [x] T9 — Verify both repositories non-live.
+- [x] T10 — Attended cutover-wait handoff (produced, NOT executed here).
+- [x] T11 — Post-cutover-removal receipt/handoff (NOT authorized here).
 
 ## Current checkpoint
 
-State: blocked
-Cause: migration options are SELECTED (SUPERSEDE/TRANSFER) but execution is BLOCKED
-pending fresh plan-tracker approval and B ownership transfer. A is draft/pending and
-execution is NOT authorized. The active `2026-08-09-tdtb-planning-ui-reliability`
-plan (B) still exclusively owns the overlapping app paths (PATH-001..PATH-020); the
-fresh approval review returned GAPS.
+State: completed (superseded)
+Cause: historical blocked state resolved. B reached terminal approval=superseded at T3;
+A executed T1-T11 and closed with the attended canonical restart of `com.walle.tdtb`
+and GET-only proof (PID, cwd, /health 200, /config 200) at T11. Authoritative closure:
+`docs/plan/2026-08-12-tdtb-project-extraction/plan.yaml` (`closure.declared_complete:
+true`, `2026-08-15T02:52:00Z`) and
+`docs/plan/2026-08-12-tdtb-project-extraction/evidence/T11-cutover-closure.json`.
+The following historical checkpoint text records the pre-execution blocked state and
+is retained for provenance.
 Last verified: 2026-08-12 stale-premise check confirmed the source paths and absent
 target; `Scripts/test_tdtb_project_extraction.py` was added and its pre-extraction
 inventory, staged Claudius check, and broad pre-extraction sweep passed.
@@ -471,7 +482,11 @@ acceptance requirement was weakened, removed, or made optional.
 
 ## Outcomes and retrospective
 
-Pending migration.
+Completed and superseded (2026-08-15): the extraction executed through the T11
+attended cutover closure, with closure evidence in
+`docs/plan/2026-08-12-tdtb-project-extraction/evidence/T11-cutover-closure.json`.
+Historical note: this section previously read "Pending migration" during the
+pre-execution draft state; the record below is the preserved historical outcome.
 
 ## Out of scope
 

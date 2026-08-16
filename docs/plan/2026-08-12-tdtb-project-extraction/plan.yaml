@@ -110,8 +110,10 @@ cutover_ownership:
       ownership, and runtime facts. Not rewritten by this task.
   cutover_wrapper_plan:
     plan_path: docs/plan/2026-08-14-tdtb-canonical-cutover/plan.yaml
-    status: pending
-    disposition: Untracked execution wrapper for this plan; recorded, NOT modified.
+    status: completed
+    superseded_by: docs/plan/2026-08-12-tdtb-project-extraction/plan.yaml
+    closure_evidence: docs/plan/2026-08-12-tdtb-project-extraction/evidence/T11-cutover-closure.json
+    disposition: Historical execution wrapper; completed and superseded by this plan's T1-T11 closure; recorded, NOT modified.
   foreign_work_preservation:
   - Development/tdtb-canonical-cutover branch: 3 unmerged commits (7c1a74a, fc8d587,
       d8411f5); preserved untouched, not merged.
@@ -174,8 +176,8 @@ exclusive_app_claims:
     - T1 generated_assets frontend/node_modules/ (canonical, ignored)
   excluded_non_owned:
   - path: restart-live.sh
-    location: fallback only
-    reason: Attended restart script; MISSING from canonical root per T1 source_of_truth; no canonical evidence, not claimed.
+    location: canonical root (committed c6208fc); historical T1 exclusion superseded
+    reason: Attended restart script; now present and executable at the canonical repo root (commit c6208fc, mode -rwxr-xr-x). Historical T1 source_of_truth recorded it MISSING from canonical root and excluded it from claims; that exclusion is superseded by the committed canonical script. Installed launchd projection and rollback artifacts remain machine-local and preserved.
   - path: spec.md
     location: fallback only
     reason: App spec; MISSING from canonical root per T1 source_of_truth; no canonical evidence, not claimed.
@@ -758,8 +760,17 @@ closure:
   live_job: com.walle.tdtb
   runtime: canonical /Users/walle-mini/Repos/Projects/TDTB/app on 127.0.0.1:8746
   evidence: docs/plan/2026-08-12-tdtb-project-extraction/evidence/T11-cutover-closure.json
-  residual_non_blocking: five test_restart_rewire.py failures (canonical restart-live.sh missing, T1/T4 excluded)
-  deferred: AGENTS.md/README.md stale runtime wording; canonical restart-live.sh materialization
+  residual_non_blocking: resolved - canonical restart-live.sh is present and executable at the repo root (commit c6208fc); the 8/8 static restart-rewire tests pass (app/tests/test_restart_rewire.py). Machine-local launchd projection and rollback artifacts are preserved (installed plist .pre-cutover backup, fallback Tasks/tdtb-app-pilot projection).
+  deferred: AGENTS.md/README.md runtime wording reconciliation (recorded in commit c854ff0); no restart-live.sh materialization remains - the canonical script is committed.
+  restart_script_resolution:
+    present: true
+    path: restart-live.sh
+    executable: true
+    committed: c6208fc
+    static_restart_rewire_tests: 8/8 passed
+    test_file: app/tests/test_restart_rewire.py
+    scope: Repository script verified present and executable. Installed launchd projection and rollback artifacts remain machine-local and preserved; the script was not re-executed by this metadata closure.
+    history_note: Historical task result outputs (T5/T6/T7/T9/T10/T11) that recorded the canonical restart-live.sh as missing describe the pre-commit state of the timeline and are preserved verbatim; they are superseded by this resolution record.
   artifacts_preserved: installed plist .pre-cutover backup; fallback Tasks/tdtb-app-pilot projection
 replan:
   reason: Revise the imported TDTB extraction plan so it is authoritative and executable

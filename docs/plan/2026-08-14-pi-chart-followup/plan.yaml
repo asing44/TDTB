@@ -1,0 +1,196 @@
+plan_id: 2026-08-14-pi-chart-followup
+objective: Restore the Pi chart on exhausted zero-total days and verify the behavior in a scratch browser without source or runtime mutation.
+created_at: '2026-08-15T00:00:00Z'
+created_by: gem-implementer
+status: completed
+tldr: |
+  - Diagnose and fix the missing Pi chart when remaining capacity is zero.
+  - Verify exhausted, empty, and positive states in a scratch browser on :8790 with zero live contact.
+  - All three tasks are completed and cite existing evidence files; no evidence was fabricated.
+baseline:
+  objective: Restore the Pi chart on exhausted zero-total days and verify the behavior in a scratch browser without source or runtime mutation.
+  acceptance_criteria:
+  - A zero-total day with allocation segments renders normalized pie slices.
+  - A zero-total day with no allocations keeps the pie hidden.
+  - Positive-capacity and overassignment rendering is unchanged.
+  - Exhausted-day readout and over caption are explicit; copy uses block counts only.
+  - Scratch browser verification covers exhausted, empty, and positive states with zero live contact.
+  captured_at: '2026-08-15T00:00:00Z'
+plan_lineage:
+  root_plan_id: 2026-08-14-pi-chart-followup
+  revision: 1
+  replan_count: 0
+  max_replans: 2
+  parent_revision: 0
+  reason: initial
+plan_metrics:
+  wave_1_task_count: 3
+  total_dependencies: 2
+  risk_score: low
+quality_warnings: []
+context_version: 1
+context_updated_at: '2026-08-15T00:00:00Z'
+context_fields_changed: []
+tech_stack:
+- name: TypeScript/React
+  role: Frontend pie model and UI
+  evidence: frontend/src/model/pie.ts, frontend/src/ui/feedback10.test.tsx
+- name: Playwright headless Chromium
+  role: Scratch browser verification on port 8790
+  evidence: docs/plan/2026-08-14-pi-chart-followup/evidence/PI-CHART-03.json
+conventions:
+- Canonical plans and acceptance evidence live under docs/plan/.
+- Completed evidence is referenced in place and is never rewritten.
+constraints:
+  hard:
+  - Write only this plan wrapper; do not rewrite evidence files.
+  - Do not edit app source, generated bundles, policy, or unrelated plans.
+  - Do not commit, push, restart, checkout, merge, reset, or write external systems.
+  soft:
+  - Cite existing PI-CHART-02 and PI-CHART-03 evidence paths exactly.
+  compatibility:
+  - Preserve backend capacity semantics and the FEEDBACK-01..29 contracts.
+  security_requirements:
+  - Do not contact live endpoints, billed endpoints, or real source systems.
+architecture_snapshot:
+  completion_commit: 8764ef2be7731d13a6f10e30720f0177237b4927
+  evidence_02: docs/plan/2026-08-14-pi-chart-followup/evidence/PI-CHART-02.json
+  evidence_03: docs/plan/2026-08-14-pi-chart-followup/evidence/PI-CHART-03.json
+  scratch_port: '127.0.0.1:8790'
+  live_port_contact: none
+research_digest:
+  relevant_files:
+  - path: docs/plan/2026-08-14-pi-chart-followup/evidence/PI-CHART-02.json
+    finding: PI-CHART-02 records the diagnosis, red phase, implementation, tests, builds, and safety proof as completed.
+  - path: docs/plan/2026-08-14-pi-chart-followup/evidence/PI-CHART-03.json
+    finding: PI-CHART-03 records scratch browser scenarios, accessibility spot check, and zero-write ledger as completed.
+  digest:
+  - The evidence files predate this wrapper and are treated as authoritative completion records.
+  - PI-CHART-01 has no standalone evidence file; its diagnosis and red phase are recorded in PI-CHART-02.json.
+prior_decisions:
+- decision: Treat PI-CHART-02.json and PI-CHART-03.json as the authoritative completion evidence.
+  source: Existing evidence files under docs/plan/2026-08-14-pi-chart-followup/evidence/
+reuse_notes:
+- path: docs/plan/2026-08-14-pi-chart-followup/evidence/PI-CHART-02.json
+  trust_level: authoritative implementation evidence
+- path: docs/plan/2026-08-14-pi-chart-followup/evidence/PI-CHART-03.json
+  trust_level: authoritative scratch verification evidence
+open_questions: []
+assumptions:
+- PI-CHART-01 closes from the red-phase record inside PI-CHART-02.json; no new evidence file is required.
+tasks:
+- id: PI-CHART-01
+  title: Diagnose the missing Pi chart on exhausted days
+  description: Identify why the allocation pie disappears when remaining capacity is zero and record the red phase before the fix.
+  wave: 1
+  agent: gem-implementer
+  status: completed
+  covers:
+  - Root-cause diagnosis of zero-total pie disappearance
+  - Red phase: 3 new tests failing before the fix
+  depends_on: []
+  conflicts_with: []
+  context_files:
+  - path: docs/plan/2026-08-14-pi-chart-followup/evidence/PI-CHART-02.json
+    description: Records the diagnosis, red phase, and completed implementation verification.
+  flags:
+    requires_design_validation: false
+    retries_used: 0
+    revision_reason: ''
+  acceptance_criteria:
+  - The zero-capacity pie bug is diagnosed and the red phase is recorded in PI-CHART-02.json.
+  result:
+    status: completed
+    files_changed: []
+    evidence:
+    - docs/plan/2026-08-14-pi-chart-followup/evidence/PI-CHART-02.json
+    output: >-
+      Diagnosis recorded: pieSlices returned [] for every total<=0 day, hiding the chart
+      when allocation segments exist. Red phase confirmed: 3 new tests failed before the
+      single pie.ts guard change. No standalone PI-CHART-01 evidence file exists; this
+      task closes from the red-phase record inside PI-CHART-02.json.
+    summary: Diagnosis and red phase recorded via PI-CHART-02.json.
+- id: PI-CHART-02
+  title: Render allocation pie when remaining capacity is zero
+  description: Update the frontend pie model so zero remaining capacity does not hide the chart when allocation segments exist, preserving over-normalization and the exhausted-day readout.
+  wave: 1
+  agent: gem-implementer
+  status: completed
+  covers:
+  - Zero-total pie model guard
+  - Focused and full frontend tests
+  - Mockup and prod bundle rebuilds
+  depends_on:
+  - PI-CHART-01
+  conflicts_with: []
+  context_files:
+  - path: docs/plan/2026-08-14-pi-chart-followup/evidence/PI-CHART-02.json
+    description: Completed implementation, tests, builds, bundle readback, and safety proof.
+  flags:
+    requires_design_validation: false
+    retries_used: 0
+    revision_reason: ''
+  acceptance_criteria:
+  - Zero-total day with non-empty segments renders normalized slices.
+  - Zero-total day with no allocations stays hidden.
+  - Positive-capacity and overassignment behavior unchanged.
+  - Exhausted-day readout and over caption explicit with block-only copy.
+  result:
+    status: completed
+    files_changed:
+    - frontend/src/model/pie.ts
+    - frontend/src/model/pie.test.ts
+    - frontend/src/ui/feedback10.test.tsx
+    evidence:
+    - docs/plan/2026-08-14-pi-chart-followup/evidence/PI-CHART-02.json
+    output: >-
+      Single guard change in pie.ts restores the chart for zero-total days with
+      allocation segments. Focused tests 49 passed (red phase 3 failed first); full
+      frontend suite 652 passed/6 skipped; typecheck clean; mockup and prod builds OK
+      with bundle readback of index-gKRqwwBw.js. Backend capacity semantics untouched;
+      no live POST, restart, or external write. Completion commit 8764ef2.
+    summary: Zero-total pie fix implemented, tested, and built; evidence PI-CHART-02.json.
+- id: PI-CHART-03
+  title: Scratch browser verification of exhausted-day Pi chart
+  description: Drive the built mockup bundle in a headless Chromium scratch browser on port 8790 across exhausted, empty, and positive states with zero live contact.
+  wave: 2
+  agent: gem-implementer
+  status: completed
+  covers:
+  - Exhausted, empty, and positive scenario verification
+  - Accessibility spot check
+  - Zero-write and network ledger
+  depends_on:
+  - PI-CHART-02
+  conflicts_with: []
+  context_files:
+  - path: docs/plan/2026-08-14-pi-chart-followup/evidence/PI-CHART-03.json
+    description: Completed scratch browser scenarios, assertions, accessibility spot check, and zero-write ledger.
+  flags:
+    requires_design_validation: false
+    retries_used: 0
+    revision_reason: ''
+  acceptance_criteria:
+  - Exhausted state renders the pie with 0 blk capacity and explicit over caption.
+  - Empty state hides the pie.
+  - Positive state renders unchanged.
+  - Zero live contact with :8746 and zero external writes.
+  result:
+    status: completed
+    files_changed: []
+    evidence:
+    - docs/plan/2026-08-14-pi-chart-followup/evidence/PI-CHART-03.json
+    output: >-
+      All 15 assertions passed across exhausted, empty, and positive scenarios; 0
+      console errors, 0 warnings, 0 network failures; accessibility spot check clean
+      (role=img svg, role=status readout, focusable legend). Only 3 local GETs on
+      127.0.0.1:8790; zero POSTs, zero :8746 contact, zero external requests.
+    summary: Scratch browser verification complete; evidence PI-CHART-03.json.
+closure:
+  declared_complete: true
+  declared_at: '2026-08-15T00:11:14Z'
+  completion_commit: 8764ef2be7731d13a6f10e30720f0177237b4927
+  evidence:
+  - docs/plan/2026-08-14-pi-chart-followup/evidence/PI-CHART-02.json
+  - docs/plan/2026-08-14-pi-chart-followup/evidence/PI-CHART-03.json
+  residual_non_blocking: none

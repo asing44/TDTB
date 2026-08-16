@@ -2,7 +2,13 @@ plan_id: 2026-08-15-tdtb-closure
 objective: Reconcile stale plan metadata after canonical cutover and Pi chart completion.
 created_at: '2026-08-15T19:44:24Z'
 created_by: gem-planner
-status: pending
+status: completed
+superseded_by: docs/plan/2026-08-15-final-closure/plan.yaml
+closure:
+  declared_complete: true
+  superseded_at: '2026-08-16T02:07:23Z'
+  superseded_by_plan: docs/plan/2026-08-15-final-closure/plan.yaml
+  disposition: Duplicate closure wrapper; execution superseded by the final closure plan. History preserved; task rows below record the first-attempt lineage.
 tldr: |
   - Close the stale cutover wrapper against the completed T1-T11 extraction record.
   - Add the missing Pi chart wrapper from existing commit and evidence records.
@@ -59,12 +65,16 @@ architecture_snapshot:
     closure_declared_complete: true
   stale_cutover_wrapper:
     path: docs/plan/2026-08-14-tdtb-canonical-cutover/plan.yaml
-    status: pending
-    stale_claim: T1-T11 pending
+    status: completed
+    stale_claim: T1-T11 pending (historical finding; resolved by supersession)
   pi_chart_followup:
     plan_path: docs/plan/2026-08-14-pi-chart-followup/plan.yaml
-    current_state: missing
+    current_state: present
+    status: completed
     completion_commit: 8764ef2be7731d13a6f10e30720f0177237b4927
+    evidence:
+    - docs/plan/2026-08-14-pi-chart-followup/evidence/PI-CHART-02.json
+    - docs/plan/2026-08-14-pi-chart-followup/evidence/PI-CHART-03.json
 research_digest:
   relevant_files:
   - path: docs/plan/2026-08-12-tdtb-project-extraction/plan.yaml
@@ -101,7 +111,7 @@ tasks:
   description: Align both wrappers with authoritative completion records without changing evidence.
   wave: 1
   agent: gem-implementer
-  status: pending
+  status: archived
   covers:
   - Canonical cutover wrapper closure
   - Pi chart follow-up wrapper creation
@@ -123,7 +133,7 @@ tasks:
   flags:
     requires_design_validation: false
     retries_used: 0
-    revision_reason: ''
+    revision_reason: First attempt superseded; final execution owned by docs/plan/2026-08-15-final-closure/plan.yaml CLOSURE-PLAN-01-RETRY.
   acceptance_criteria:
   - Cutover wrapper status is completed and no current field reports T1-T11 pending.
   - Cutover wrapper preserves its baseline and points to extraction T11 closure evidence.
@@ -155,7 +165,7 @@ tasks:
   description: Audit both reconciled wrappers against authoritative records and the exact write set.
   wave: 2
   agent: gem-reviewer
-  status: pending
+  status: archived
   covers:
   - YAML and DAG validity
   - Cross-plan status consistency
@@ -173,7 +183,7 @@ tasks:
   flags:
     requires_design_validation: false
     retries_used: 0
-    revision_reason: ''
+    revision_reason: First review superseded; final verification owned by docs/plan/2026-08-15-final-closure/plan.yaml CLOSURE-REVIEW-01-RETRY.
   acceptance_criteria:
   - Both target plans parse as YAML and use unique task IDs with valid dependencies.
   - Cutover wrapper is completed and contains no active or current T1-T11 pending claim.
