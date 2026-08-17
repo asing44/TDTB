@@ -953,8 +953,13 @@
   padding-bottom: 4px;
   border-bottom: 0.5px solid var(--t-border);
 }
+/* Row-spacing polish (tdtb-row-spacing-20260817): 6px vertical padding doubles
+   the breathing room between adjacent rows so titles and controls at the
+   table's density stay separable in one scan. Vertical-only — the grid
+   tracks and 44px control floors are untouched, and the padding applies at
+   every breakpoint. */
 .qrow {
-  padding: 3px 0;
+  padding: 6px 0;
   border-bottom: 0.5px solid color-mix(in srgb, var(--t-border) 55%, transparent);
 }
 .qrow:focus-visible {
