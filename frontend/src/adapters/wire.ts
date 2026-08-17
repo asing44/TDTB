@@ -19,6 +19,7 @@ import type {
   CommitReport,
   CommitSurface,
   DaySetup,
+  DurationSourceLabel,
   FixedInputs,
   ForgotItem,
   Ledger,
@@ -37,6 +38,10 @@ import type {
   OverlapGrant,
   SchedulableOverride,
 } from "../model/types";
+import type {
+  DurationMemoryResetResult,
+  DurationMemorySaveResult,
+} from "./adapter";
 
 // Wire payloads are untyped JSON — this alias marks the boundary.
 export type Wire = Record<string, any>;
@@ -86,12 +91,89 @@ export function blocksLabel(blocks: number): string {
   return m % 60 === 0 ? `${m / 60}hr` : `${Math.floor(m / 60)}hr ${m % 60}min`;
 }
 
+// -- duration memory (MVP) ---------------------------------------------------
+
+/** Coerce the backend resolver's source_label onto the model's closed set.
+    Unknown or absent labels fail OPEN to "default" (source-resolved) so
+    legacy payloads without duration-memory metadata behave exactly like no
+    remembered duration. */
+export function durationSourceOf(label: unknown): DurationSourceLabel {
+  const s = String(label ?? "");
+  if (s === "remembered") return "remembered";
+  if (s === "native") return "native";
+  if (s === "preset") return "preset";
+  if (s === "type") return "type";
+  if (s.startsWith("tag:")) return "tag";
+  return "default";
+}
+
+/** Canonical stable source identity for a row (mirrors the backend
+    item_identity rule): todoist:<id> for todoist rows, the normalized vault
+    path otherwise, null when neither is present. A display name alone is
+    never an identity. */
+export function itemIdentity(item: {
+  source?: string;
+  todoistId?: string | null;
+  path?: string | null;
+}): string | null {
+  if (item.source === "todoist" && item.todoistId) return `todoist:${item.todoistId}`;
+  if (item.path && !String(item.path).startsWith("todoist://")) return String(item.path);
+  return null;
+}
+
+/** Exact minutes from a duration-memory wire payload: null when absent,
+    null, or non-finite — a missing reset fallback (found:false) must never
+    coerce to zero (FT-05 F2). */
+function projectDurationMemoryMinutes(wire: Wire): number | null {
+  const raw = wire.duration_minutes ?? wire.minutes;
+  if (raw == null) return null;
+  const n = Number(raw);
+  return Number.isFinite(n) ? n : null;
+}
+
+function projectDurationMemoryResult(wire: Wire): {
+  identity: string;
+  minutes: number | null;
+  source: DurationSourceLabel;
+} {
+  return {
+    identity: String(wire.identity ?? ""),
+    // Reset returns `duration_minutes` (FT-01 backend); save returns
+    // `minutes`. Read both so the two routes share one projection.
+    minutes: projectDurationMemoryMinutes(wire),
+    source: durationSourceOf(wire.duration_source ?? (wire.source ?? "default")),
+  };
+}
+
+/** A successful save makes the row durable-remembered by definition — the
+    client owns the success label even if the wire omits the echo. The save
+    route always echoes the exact persisted minutes. */
+export function projectDurationMemorySave(wire: Wire): DurationMemorySaveResult {
+  const base = projectDurationMemoryResult(wire);
+  return { identity: base.identity, minutes: base.minutes ?? 0, source: "remembered" };
+}
+
+/** Reset returns the current source-resolved fallback and its label, or
+    minutes null when no fallback exists (found:false) — the caller then
+    preserves authoritative state instead of applying zero. */
+export function projectDurationMemoryReset(wire: Wire): DurationMemoryResetResult {
+  return projectDurationMemoryResult(wire);
+}
+
 // -- per-endpoint projections ------------------------------------------------
 
 export function projectAssigned(row: Wire): AssignedItem {
   const source = row.source === "todoist" ? "todoist" : "vault";
   const blocks =
     typeof row.blocks === "number" && Number.isFinite(row.blocks) ? row.blocks : 1;
+  // FT-05 F1: exact remembered minutes win for the user-visible label —
+  // 45 minutes renders "45min" even if a stale payload carries a
+  // 30-minute-grid-rounded blocks value. Absent minutes fall back to the
+  // block grid (legacy payloads).
+  const exactMinutes =
+    typeof row.duration_minutes === "number" && Number.isFinite(row.duration_minutes)
+      ? row.duration_minutes
+      : null;
   return {
     id: String(row.name),
     name: String(row.name),
@@ -102,11 +184,24 @@ export function projectAssigned(row: Wire): AssignedItem {
     deadline: row.deadline ?? null,
     priorityScore: Number(row.priority_score ?? 0),
     blocks,
-    durationLabel: blocksLabel(blocks),
+    durationLabel:
+      exactMinutes != null ? blocksLabel(exactMinutes / 30) : blocksLabel(blocks),
     todoistId:
       source === "todoist" && row.todoist_id != null && String(row.todoist_id) !== ""
         ? String(row.todoist_id)
         : null,
+    // Duration memory (MVP): the canonical identity the mutation API keys on
+    // plus the resolver's source label. Absent/unknown wire labels project to
+    // "default" so legacy payloads keep source-resolved behavior.
+    identity: itemIdentity({
+      source,
+      todoistId:
+        source === "todoist" && row.todoist_id != null && String(row.todoist_id) !== ""
+          ? String(row.todoist_id)
+          : null,
+      path: row.path ?? null,
+    }),
+    durationSource: durationSourceOf(row.duration_source),
     isRecurring: source === "todoist" && row.is_recurring === true,
     scheduledStart: source === "todoist" ? to24h(row.scheduled_start) : null,
     labels: Array.isArray(row.labels) ? row.labels.map(String) : [],

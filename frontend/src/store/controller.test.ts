@@ -837,3 +837,182 @@ describe("FEEDBACK-25 overflow avoids Mint walls (controller wiring)", () => {
     }
   }, 15000);
 });
+
+describe("explicit duration memory (MVP)", () => {
+  const identityOf = (i: { id: string; path: string | null; todoistId: string | null; source: "vault" | "todoist" }) =>
+    i.source === "todoist" && i.todoistId ? `todoist:${i.todoistId}` : i.path;
+
+  it("save refuses invalid values with NO adapter call and surfaces an error", async () => {
+    const { store, adapter, controller } = harness("ready");
+    await controller.load();
+    const save = vi.spyOn(adapter, "saveDurationMemory");
+    const item = store.getState().inputs!.assigned[0];
+    await controller.saveDurationMemory(item.id, 7); // off-grid: no snapping, no POST
+    expect(save).not.toHaveBeenCalled();
+    const st = store.getState();
+    expect(st.durationMemory[item.id]).toEqual({
+      pending: false,
+      error: expect.stringMatching(/5-minute/),
+    });
+  });
+
+  it("save applies the remembered value to the model only after the response", async () => {
+    const { store, adapter, controller } = harness("ready");
+    await controller.load();
+    const item = store.getState().inputs!.assigned[0];
+    const identity = identityOf(item)!;
+    const save = vi.spyOn(adapter, "saveDurationMemory").mockResolvedValue({
+      identity, minutes: 90, source: "remembered",
+    });
+    await controller.saveDurationMemory(item.id, 90);
+    expect(save).toHaveBeenCalledTimes(1);
+    expect(save).toHaveBeenCalledWith(identity, 90);
+    const st = store.getState();
+    const row = st.inputs!.assigned.find((i) => i.id === item.id)!;
+    expect(row.blocks).toBe(3); // 90 / 30
+    expect(row.durationSource).toBe("remembered");
+    expect(st.durationMemory[item.id]).toEqual({ pending: false, error: null });
+  });
+
+  // FT-05 F1: the exact 45-minute value stays 45 in model state — 1.5
+  // blocks and a "45min" label, never a 30-minute-grid rounding.
+  it("save applies the exact 45-minute value to the model", async () => {
+    const { store, adapter, controller } = harness("ready");
+    await controller.load();
+    const item = store.getState().inputs!.assigned[0];
+    const identity = identityOf(item)!;
+    const save = vi.spyOn(adapter, "saveDurationMemory").mockResolvedValue({
+      identity, minutes: 45, source: "remembered",
+    });
+    await controller.saveDurationMemory(item.id, 45);
+    expect(save).toHaveBeenCalledWith(identity, 45);
+    const row = store.getState().inputs!.assigned.find((i) => i.id === item.id)!;
+    expect(row.blocks).toBe(1.5); // 45 / 30, exact
+    expect(row.durationLabel).toBe("45min");
+    expect(row.durationSource).toBe("remembered");
+  });
+
+  it("save failure preserves the last authoritative value and never claims success", async () => {
+    const { store, adapter, controller } = harness("ready");
+    await controller.load();
+    const item = store.getState().inputs!.assigned[0];
+    const before = store.getState().inputs!.assigned.find((i) => i.id === item.id)!;
+    vi.spyOn(adapter, "saveDurationMemory").mockRejectedValue(new Error("network down"));
+    await controller.saveDurationMemory(item.id, 90);
+    const st = store.getState();
+    const row = st.inputs!.assigned.find((i) => i.id === item.id)!;
+    expect(row.blocks).toBe(before.blocks);
+    expect(row.durationSource).not.toBe("remembered");
+    expect(st.durationMemory[item.id]!.pending).toBe(false);
+    expect(st.durationMemory[item.id]!.error).toMatch(/network down/);
+  });
+
+  it("reset applies the returned source fallback and drops the remembered label", async () => {
+    const { store, adapter, controller } = harness("ready");
+    await controller.load();
+    const item = store.getState().inputs!.assigned[0];
+    // Simulate a durable-remembered row (server rehydrates it on load).
+    const inputs = store.getState().inputs!;
+    store.dispatch({
+      type: "INPUTS_LOADED",
+      inputs: {
+        ...inputs,
+        assigned: inputs.assigned.map((r) =>
+          r.id === item.id ? { ...r, blocks: 3, durationSource: "remembered" } : r,
+        ),
+      },
+      ledger: store.getState().ledger!,
+    });
+    const identity = identityOf(item)!;
+    const reset = vi.spyOn(adapter, "resetDurationMemory").mockResolvedValue({
+      identity, minutes: 60, source: "default",
+    });
+    await controller.resetDurationMemory(item.id);
+    expect(reset).toHaveBeenCalledTimes(1);
+    expect(reset).toHaveBeenCalledWith(identity);
+    const st = store.getState();
+    const row = st.inputs!.assigned.find((i) => i.id === item.id)!;
+    expect(row.blocks).toBe(2); // 60 / 30 source fallback applied
+    expect(row.durationSource).toBe("default");
+    expect(st.durationMemory[item.id]).toEqual({ pending: false, error: null });
+  });
+
+  // FT-05 F2: a reset that finds no source fallback must NEVER become zero
+  // or All day — the remembered value stays authoritative and a bounded
+  // failure state surfaces.
+  it("reset with no source fallback preserves the remembered value and surfaces bounded failure", async () => {
+    const { store, adapter, controller } = harness("ready");
+    await controller.load();
+    const item = store.getState().inputs!.assigned[0];
+    const inputs = store.getState().inputs!;
+    store.dispatch({
+      type: "INPUTS_LOADED",
+      inputs: {
+        ...inputs,
+        assigned: inputs.assigned.map((r) =>
+          r.id === item.id ? { ...r, blocks: 3, durationSource: "remembered" } : r,
+        ),
+      },
+      ledger: store.getState().ledger!,
+    });
+    const identity = identityOf(item)!;
+    const reset = vi.spyOn(adapter, "resetDurationMemory").mockResolvedValue({
+      identity, minutes: null, source: "default",
+    });
+    await controller.resetDurationMemory(item.id);
+    expect(reset).toHaveBeenCalledTimes(1);
+    const st = store.getState();
+    const row = st.inputs!.assigned.find((i) => i.id === item.id)!;
+    expect(row.blocks).toBe(3); // last authoritative value preserved
+    expect(row.durationSource).toBe("remembered");
+    expect(st.durationMemory[item.id]!.pending).toBe(false);
+    expect(st.durationMemory[item.id]!.error).toMatch(/no source/i);
+  });
+
+  it("reset failure preserves the remembered value and reports the error", async () => {
+    const { store, adapter, controller } = harness("ready");
+    await controller.load();
+    const item = store.getState().inputs!.assigned[0];
+    const inputs = store.getState().inputs!;
+    store.dispatch({
+      type: "INPUTS_LOADED",
+      inputs: {
+        ...inputs,
+        assigned: inputs.assigned.map((r) =>
+          r.id === item.id ? { ...r, blocks: 3, durationSource: "remembered" } : r,
+        ),
+      },
+      ledger: store.getState().ledger!,
+    });
+    vi.spyOn(adapter, "resetDurationMemory").mockRejectedValue(new Error("reset 503"));
+    await controller.resetDurationMemory(item.id);
+    const st = store.getState();
+    const row = st.inputs!.assigned.find((i) => i.id === item.id)!;
+    expect(row.blocks).toBe(3);
+    expect(row.durationSource).toBe("remembered");
+    expect(st.durationMemory[item.id]!.error).toMatch(/reset 503/);
+    expect(st.durationMemory[item.id]!.pending).toBe(false);
+  });
+
+  it("an item with no stable identity refuses without a network call", async () => {
+    const { store, adapter, controller } = harness("ready");
+    await controller.load();
+    const save = vi.spyOn(adapter, "saveDurationMemory");
+    // A row with neither path nor todoist id has no canonical identity.
+    const inputs = store.getState().inputs!;
+    store.dispatch({
+      type: "INPUTS_LOADED",
+      inputs: {
+        ...inputs,
+        assigned: [
+          { ...inputs.assigned[0], path: null, todoistId: null },
+          ...inputs.assigned.slice(1),
+        ],
+      },
+      ledger: store.getState().ledger!,
+    });
+    await controller.saveDurationMemory(inputs.assigned[0].id, 90);
+    expect(save).not.toHaveBeenCalled();
+    expect(store.getState().durationMemory[inputs.assigned[0].id]!.error).toMatch(/identity/);
+  });
+});

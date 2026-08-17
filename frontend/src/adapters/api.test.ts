@@ -323,3 +323,79 @@ describe("T12 qualification: token rotation + error detail", () => {
     );
   });
 });
+
+describe("duration-memory mutations (MVP)", () => {
+  it("saveDurationMemory sends ONE token-guarded POST and projects the result", async () => {
+    route("/duration-memory/save", {
+      identity: "vault:50 - Operations/Pursuits/Press.md",
+      minutes: 90,
+      duration_source: "remembered",
+    });
+    const a = new ApiAdapter();
+    const r = await a.saveDurationMemory("vault:50 - Operations/Pursuits/Press.md", 90);
+    expect(r).toEqual({
+      identity: "vault:50 - Operations/Pursuits/Press.md",
+      minutes: 90,
+      source: "remembered",
+    });
+    const post = calls.find((c) => c.path === "/duration-memory/save");
+    expect(post?.init?.method).toBe("POST");
+    expect((post!.init!.headers as any)["X-TDTB-Token"]).toBe("tok-123");
+    expect(JSON.parse(post!.init!.body as string)).toEqual({
+      identity: "vault:50 - Operations/Pursuits/Press.md",
+      minutes: 90,
+    });
+    // exactly one POST, and no billed/ledger/plan-inputs traffic
+    expect(calls.filter((c) => c.init?.method === "POST").length).toBe(1);
+    expect(calls.some((c) => c.path === "/sequence" || c.path === "/commit")).toBe(false);
+  });
+
+  it("resetDurationMemory sends ONE token-guarded POST and projects the fallback", async () => {
+    route("/duration-memory/reset", {
+      ok: true,
+      identity: "todoist:9001",
+      duration_minutes: 30,
+      duration_source: "default",
+    });
+    const a = new ApiAdapter();
+    const r = await a.resetDurationMemory("todoist:9001");
+    expect(r).toEqual({ identity: "todoist:9001", minutes: 30, source: "default" });
+    const post = calls.find((c) => c.path === "/duration-memory/reset");
+    expect(post?.init?.method).toBe("POST");
+    expect((post!.init!.headers as any)["X-TDTB-Token"]).toBe("tok-123");
+    expect(JSON.parse(post!.init!.body as string)).toEqual({ identity: "todoist:9001" });
+    expect(calls.filter((c) => c.init?.method === "POST").length).toBe(1);
+  });
+
+  it("a rejected save surfaces as ApiError with the server detail", async () => {
+    route("/duration-memory/save", { detail: "duration must be divisible by 5" }, 422);
+    const a = new ApiAdapter();
+    const err = await a
+      .saveDurationMemory("vault:x", 7)
+      .catch((e) => e);
+    expect(err).toBeInstanceOf(ApiError);
+    expect(err.status).toBe(422);
+    expect(err.message).toContain("divisible by 5");
+  });
+
+  // FT-05 F2: found:false with a null fallback projects minutes null — the
+  // client must never turn a missing fallback into zero (All day).
+  it("resetDurationMemory with found:false projects minutes null, never zero", async () => {
+    route("/duration-memory/reset", {
+      ok: true, identity: "todoist:9001", removed: true,
+      duration_minutes: null, duration_source: null, found: false,
+    });
+    const a = new ApiAdapter();
+    const r = await a.resetDurationMemory("todoist:9001");
+    expect(r).toEqual({ identity: "todoist:9001", minutes: null, source: "default" });
+  });
+
+  it("a rejected reset surfaces as ApiError and is never retried automatically", async () => {
+    route("/duration-memory/reset", error403, 403);
+    const a = new ApiAdapter();
+    const err = await a.resetDurationMemory("todoist:9001").catch((e) => e);
+    expect(err).toBeInstanceOf(ApiError);
+    expect(calls.filter((c) => c.path === "/duration-memory/reset").length).toBe(2); // initial + one 403 retry, then stop
+    expect(calls.filter((c) => c.path === "/duration-memory/reset" && c.init?.method === "POST").length).toBe(2);
+  });
+});

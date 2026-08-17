@@ -1207,3 +1207,320 @@ class TestCalendarDismissalSequenceSide:
         assert r.status_code == 200, r.text
         assert any(b.get("Block") == "Farmers Market"
                    for b in captured["anchored"])
+
+
+# ---------------------------------------------------------------------------
+# FT-01: duration-memory routes — token guard, strict validation, save, reset
+# ---------------------------------------------------------------------------
+
+import duration_memory as dm  # noqa: E402
+
+_DM_CONFIG = """\
+---
+description: test config
+last_updated: 2026-07-01
+---
+
+# TDTB Bridger Config
+
+## Defaults
+
+| Key | Value    |
+| --- | -------- |
+| eod | 11:45 PM |
+
+## Presets
+
+| Name | Type | Blocks | Priority |
+|------|------|--------|----------|
+| Make | interval | 2 | 2 |
+"""
+
+DM_IDENTITY = "50 - Operations/Projects/Make.md"
+
+
+def _seed_dm_vault(vault: Path) -> None:
+    """Vault with one assigned preset-named note (Make, 2 blocks) + config."""
+    cfg = vault / "00 - META/Skill-Configs/tdtb-bridger.md"
+    cfg.parent.mkdir(parents=True, exist_ok=True)
+    cfg.write_text(_DM_CONFIG, encoding="utf-8")
+    proj = vault / "50 - Operations" / "Projects"
+    proj.mkdir(parents=True, exist_ok=True)
+    (proj / "Make.md").write_text(
+        "---\ntype: project\nassigned: true\n---\nbody\n", encoding="utf-8"
+    )
+
+
+class TestDurationMemorySave:
+    def test_save_requires_token(self, client):
+        assert client.post("/duration-memory/save", json={
+            "identity": DM_IDENTITY, "minutes": 90,
+        }).status_code == 403
+
+    def test_save_wrong_token_403(self, client):
+        r = client.post("/duration-memory/save", json={
+            "identity": DM_IDENTITY, "minutes": 90,
+        }, headers={"X-TDTB-Token": "nope"})
+        assert r.status_code == 403
+
+    def test_save_valid_persists_vault_scoped(self, client, vault):
+        r = client.post("/duration-memory/save", json={
+            "identity": DM_IDENTITY, "minutes": 90,
+        }, headers=_auth(client))
+        assert r.status_code == 200
+        body = r.json()
+        assert body["ok"] is True
+        assert body["identity"] == DM_IDENTITY
+        assert body["minutes"] == 90
+        assert body["duration_source"] == "remembered"
+        cache = dm.cache_path(vault)
+        assert cache.is_file()
+        assert cache.is_relative_to(vault)
+
+    @pytest.mark.parametrize("minutes", [7, 23, 8])
+    def test_save_rejects_off_grid(self, client, vault, minutes):
+        r = client.post("/duration-memory/save", json={
+            "identity": DM_IDENTITY, "minutes": minutes,
+        }, headers=_auth(client))
+        assert r.status_code == 422
+        assert not dm.cache_path(vault).exists()
+
+    @pytest.mark.parametrize("minutes", [30.5, "30", True, None])
+    def test_save_rejects_fraction_string_bool(self, client, vault, minutes):
+        r = client.post("/duration-memory/save", json={
+            "identity": DM_IDENTITY, "minutes": minutes,
+        }, headers=_auth(client))
+        assert r.status_code == 422
+        assert not dm.cache_path(vault).exists()
+
+    def test_save_rejects_negative(self, client, vault):
+        r = client.post("/duration-memory/save", json={
+            "identity": DM_IDENTITY, "minutes": -5,
+        }, headers=_auth(client))
+        assert r.status_code == 422
+        assert not dm.cache_path(vault).exists()
+
+    def test_save_rejects_name_only_identity(self, client, vault):
+        r = client.post("/duration-memory/save", json={
+            "identity": "Some Display Name", "minutes": 90,
+        }, headers=_auth(client))
+        assert r.status_code == 422
+        assert not dm.cache_path(vault).exists()
+
+    def test_save_zero_is_valid(self, client, vault):
+        r = client.post("/duration-memory/save", json={
+            "identity": DM_IDENTITY, "minutes": 0,
+        }, headers=_auth(client))
+        assert r.status_code == 200, r.text
+        assert r.json()["minutes"] == 0
+
+    def test_invalid_save_preserves_existing_cache(self, client, vault):
+        ok = client.post("/duration-memory/save", json={
+            "identity": DM_IDENTITY, "minutes": 90,
+        }, headers=_auth(client))
+        assert ok.status_code == 200
+        before = dm.cache_path(vault).read_bytes()
+        for minutes in (7, 30.5, -5):
+            r = client.post("/duration-memory/save", json={
+                "identity": DM_IDENTITY, "minutes": minutes,
+            }, headers=_auth(client))
+            assert r.status_code == 422
+        assert dm.cache_path(vault).read_bytes() == before
+
+
+class TestDurationMemoryReset:
+    def test_reset_requires_token(self, client):
+        assert client.post("/duration-memory/reset", json={
+            "identity": DM_IDENTITY,
+        }).status_code == 403
+
+    def test_reset_removes_and_returns_source_fallback(self, client, vault):
+        _seed_dm_vault(vault)
+        save = client.post("/duration-memory/save", json={
+            "identity": DM_IDENTITY, "minutes": 90,
+        }, headers=_auth(client))
+        assert save.status_code == 200
+
+        r = client.post("/duration-memory/reset", json={
+            "identity": DM_IDENTITY,
+        }, headers=_auth(client))
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["ok"] is True
+        assert body["removed"] is True
+        assert body["identity"] == DM_IDENTITY
+        # Source fallback: Make preset = 2 blocks = 60 minutes.
+        assert body["duration_minutes"] == 60
+        assert body["duration_source"] == "preset"
+        assert body["found"] is True
+        assert dm.read_vault_memory(vault) == {}
+
+    def test_reset_no_source_fallback_returns_bounded_error(self, client, vault):
+        # FT-06 F2-R1: resolve-first — an identity absent from today's plan has
+        # NO source fallback, so reset must return a bounded error (not a
+        # successful found:false response) and leave durable memory unchanged.
+        r = client.post("/duration-memory/reset", json={
+            "identity": "todoist:never-saved",
+        }, headers=_auth(client))
+        assert r.status_code == 409, r.text
+        detail = r.json()["detail"]
+        assert isinstance(detail, dict)
+        assert detail["code"] == "duration_memory_no_fallback"
+        assert "message" in detail
+        assert not dm.cache_path(vault).exists()
+
+    def test_reset_no_source_fallback_preserves_durable_bytes(self, client, vault):
+        # FT-06 F2-R1: when reset is rejected for a missing fallback, the
+        # remembered value stays byte-for-byte identical on disk.
+        save = client.post("/duration-memory/save", json={
+            "identity": "todoist:ghost", "minutes": 90,
+        }, headers=_auth(client))
+        assert save.status_code == 200
+        cache = dm.cache_path(vault)
+        before = cache.read_bytes()
+
+        r = client.post("/duration-memory/reset", json={
+            "identity": "todoist:ghost",
+        }, headers=_auth(client))
+        assert r.status_code == 409, r.text
+        assert cache.read_bytes() == before
+        assert dm.read_vault_memory(vault) == {"todoist:ghost": 90}
+
+    def test_reset_fallback_resolution_failure_preserves_durable_bytes(
+        self, client, vault, monkeypatch
+    ):
+        # FT-06 F2-R1: when fallback resolution fails (gather error), reset
+        # returns a bounded error and the remembered value stays unchanged.
+        _seed_dm_vault(vault)
+        save = client.post("/duration-memory/save", json={
+            "identity": DM_IDENTITY, "minutes": 90,
+        }, headers=_auth(client))
+        assert save.status_code == 200
+        cache = dm.cache_path(vault)
+        before = cache.read_bytes()
+
+        def boom(pool_notes, assigned_notes, today):
+            raise RuntimeError("gather exploded mid-resolution")
+
+        monkeypatch.setattr(gather, "build_run_data", boom)
+        r = client.post("/duration-memory/reset", json={
+            "identity": DM_IDENTITY,
+        }, headers=_auth(client))
+        assert r.status_code == 500, r.text
+        detail = r.json()["detail"]
+        assert isinstance(detail, dict)
+        assert detail["code"] == "duration_memory_fallback_error"
+        assert str(vault) not in r.text
+        assert cache.read_bytes() == before
+        assert dm.read_vault_memory(vault) == {DM_IDENTITY: 90}
+
+    def test_reset_unremembered_with_valid_fallback_reports_removed_false(
+        self, client, vault
+    ):
+        # No remembered value but a valid source fallback: reset is a no-op
+        # deletion and returns the source-resolved fallback.
+        _seed_dm_vault(vault)
+        r = client.post("/duration-memory/reset", json={
+            "identity": DM_IDENTITY,
+        }, headers=_auth(client))
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["ok"] is True
+        assert body["removed"] is False
+        assert body["duration_minutes"] == 60
+        assert body["duration_source"] == "preset"
+        assert body["found"] is True
+        assert not dm.cache_path(vault).exists()
+
+    def test_reset_rejects_name_only_identity(self, client, vault):
+        r = client.post("/duration-memory/reset", json={
+            "identity": "Some Display Name",
+        }, headers=_auth(client))
+        assert r.status_code == 422
+
+    def test_reset_fallback_source_resolves_for_vault_row(self, client, vault):
+        _seed_dm_vault(vault)
+        client.post("/duration-memory/save", json={
+            "identity": DM_IDENTITY, "minutes": 90,
+        }, headers=_auth(client))
+        client.post("/duration-memory/reset", json={
+            "identity": DM_IDENTITY,
+        }, headers=_auth(client))
+        body = client.get("/plan-inputs").json()
+        rows = {i["name"]: i for i in body["digest"]["assigned"]}
+        assert rows["Make"]["blocks"] == 2
+        assert "duration_source" not in rows["Make"]
+
+
+class TestDurationMemoryErrorRedaction:
+    """FT-05 F3: client-visible cache error details must never expose absolute
+    vault/cache paths or raw internal diagnostics. Errors keep bounded,
+    safe message codes; the real cause stays in the server-side exception
+    chain only."""
+
+    def test_save_cache_error_detail_has_no_absolute_path(self, client, vault):
+        p = dm.cache_path(vault)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text("{not json", encoding="utf-8")
+        r = client.post("/duration-memory/save", json={
+            "identity": DM_IDENTITY, "minutes": 90,
+        }, headers=_auth(client))
+        assert r.status_code == 500
+        assert str(vault) not in r.text
+        assert str(dm.cache_path(vault)) not in r.text
+        detail = r.json()["detail"]
+        assert isinstance(detail, dict)
+        assert "message" in detail
+
+    def test_reset_cache_error_detail_has_no_absolute_path(self, client, vault):
+        # FT-06 resolve-first: a valid source fallback must exist before the
+        # route touches the cache, so seed the vault to reach the store-error
+        # path. A corrupt cache then fails closed with a bounded 500.
+        _seed_dm_vault(vault)
+        p = dm.cache_path(vault)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text("{not json", encoding="utf-8")
+        r = client.post("/duration-memory/reset", json={
+            "identity": DM_IDENTITY,
+        }, headers=_auth(client))
+        assert r.status_code == 500
+        assert str(vault) not in r.text
+        assert str(dm.cache_path(vault)) not in r.text
+        detail = r.json()["detail"]
+        assert isinstance(detail, dict)
+        assert "message" in detail
+
+    def test_save_oserror_detail_has_no_absolute_path(self, client, vault, monkeypatch):
+        def boom(path, data):
+            raise OSError(
+                "write failed at /private/tmp/secret-cache/tdtb-duration-memory.json"
+            )
+
+        monkeypatch.setattr(dm, "_atomic_write_json", boom)
+        r = client.post("/duration-memory/save", json={
+            "identity": DM_IDENTITY, "minutes": 90,
+        }, headers=_auth(client))
+        assert r.status_code == 500
+        assert "/private/tmp/secret-cache" not in r.text
+        detail = r.json()["detail"]
+        assert isinstance(detail, dict)
+        assert "message" in detail
+
+
+class TestDurationMemoryIsolation:
+    def test_app_vault_isolation(self, tmp_path):
+        a = tmp_path / "vault-a"
+        b = tmp_path / "vault-b"
+        a.mkdir()
+        b.mkdir()
+        app_a = main_mod.create_app(vault_root=a)
+        app_b = main_mod.create_app(vault_root=b)
+        c_a = TestClient(app_a)
+        c_b = TestClient(app_b)
+        h_a = {"X-TDTB-Token": app_a.state.token}
+        r = c_a.post("/duration-memory/save", json={
+            "identity": "todoist:1", "minutes": 90,
+        }, headers=h_a)
+        assert r.status_code == 200
+        assert dm.read_vault_memory(a) == {"todoist:1": 90}
+        assert dm.read_vault_memory(b) == {}

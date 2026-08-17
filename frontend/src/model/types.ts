@@ -13,6 +13,17 @@
 
 export type Source = "vault" | "todoist";
 
+/** Resolved duration source label (mirrors the backend resolver's
+    source_label). "remembered" means a durable server-side memory entry won;
+    every other value is a deterministic source resolution. */
+export type DurationSourceLabel =
+  | "remembered"
+  | "tag"
+  | "native"
+  | "preset"
+  | "type"
+  | "default";
+
 export interface AssignedItem {
   id: string; // = name (name-keyed sequence identity)
   name: string;
@@ -32,6 +43,15 @@ export interface AssignedItem {
       so the copy-prompt fallback can instruct update-by-id (the app's own
       commit convention) instead of duplicate creation. */
   todoistId: string | null;
+  /** Canonical stable source identity (todoist:<id> or normalized vault
+      path) — the key the duration-memory mutation API operates on. Absent
+      only when the wire carries neither; a display name alone is never an
+      identity. */
+  identity?: string | null;
+  /** Where the row's effective duration came from: "remembered" (durable
+      server memory) or a deterministic source label. Absent for legacy
+      payloads without duration-memory metadata = source-resolved behavior. */
+  durationSource?: DurationSourceLabel;
   /** Recurring Todoist tasks are immutable existing commitments, not work for
       the planner to place. scheduledStart is their current Todoist wall time. */
   isRecurring?: boolean;
