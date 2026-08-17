@@ -1,0 +1,337 @@
+plan_id: tdtb-postmerge-publish-20260817
+objective: Push merged TDTB main to origin/main and safely restore today's allowed call total to 4.
+complexity: MEDIUM
+created_at: '2026-08-17T00:00:00Z'
+created_by: gem-planner
+status: completed
+completed_at: '2026-08-17T00:00:00Z'
+approval_exception: User explicitly approved the exact real-vault billed_calls reset after CALL-00 identified the safe target and semantics.
+tldr: |
+  - Publish only the verified local main history through an explicit fast-forward push.
+  - Preserve the dirty index, foreign deletion, and all untracked plan directories.
+  - Prove call-budget ownership and counter semantics before any setting mutation.
+  - Set today's allowed total to 4 only through a proven local, non-billed path.
+  - Stop on billed, external-source, or ambiguous behavior; finish with lightweight review.
+
+baseline:
+  objective: Push merged TDTB main to origin/main and safely restore today's allowed call total to 4.
+  acceptance_criteria:
+    - origin/main advances only by the verified local main commits and ends at the merge commit.
+    - Main foreign unstaged and untracked state remains unchanged.
+    - Today's allowed call total is 4, or an exact safety blocker is reported without mutation.
+    - Used and remaining counters are not inferred or reset without evidence and authorization.
+    - No billed endpoint, external source write, restart, or unrelated repository mutation occurs.
+    - Final read-only review validates both post-merge actions and their safety evidence.
+  captured_at: '2026-08-17T00:00:00Z'
+
+plan_lineage:
+  root_plan_id: tdtb-postmerge-publish-20260817
+  revision: 0
+  replan_count: 0
+  max_replans: 2
+  parent_revision: 0
+  reason: initial
+
+plan_metrics:
+  wave_1_task_count: 2
+  total_dependencies: 4
+  risk_score: medium
+quality_warnings:
+  - Main is dirty with a foreign gem-team.yaml deletion and untracked plan directories.
+  - The screenshot exposes conflicting-looking call indicators whose semantics are not proven.
+  - A call-budget control may map to a live, billed, or upstream mutation and must be classified first.
+
+context_version: 1
+context_updated_at: '2026-08-17T00:00:00Z'
+context_fields_changed: []
+tech_stack:
+  - name: Git
+    role: Explicit fast-forward publication and remote verification
+  - name: TDTB FastAPI and frontend
+    role: Call-budget ownership, mutation, and UI/status verification
+conventions:
+  - Use explicit branch and remote references for publication.
+  - Treat local dirty state as foreign evidence, not as push content.
+  - Separate allowed-total configuration from used and remaining counters.
+constraints:
+  hard:
+    - Push only local main to origin/main without force, tags, or any feature branch.
+    - Never reset, clean, rebase, pull, merge, stage, stash, or delete foreign state.
+    - Preserve the gem-team.yaml deletion and every untracked plan directory unchanged.
+    - Never call POST /commit or billed POST /sequence or /adjust.
+    - Do not write Todoist, Calendar, a real vault, source notes, or upstream source state.
+    - Do not restart :8746 or mutate launchd and machine-local projections.
+    - Use bounded GET-only checks until a safe local, non-billed setting path is proven.
+    - Do not change used or remaining counters unless their semantics and authorization are explicit.
+    - Modify no code or artifact outside this plan during planning.
+  soft:
+    - Prefer the visible TDTB UI or settings path when it is proven local and non-billed.
+    - Reuse INT-00, INT-02, INT-03, and INT-04 receipts where current fingerprints match.
+  compatibility:
+    - Keep the live :8746 service running without restart.
+    - Preserve the served merged bundle already qualified by INT-03.
+  security_requirements:
+    - Do not expose credentials, tokens, private source content, or sensitive request payloads.
+
+architecture_snapshot:
+  main:
+    branch: main
+    head: 54bac6b3f96036ca5dc2749409146c6bfdc69e9f
+    remote_baseline: b97d00864b50044c2ff445bc6e9d5fd061324d2c
+    state: Foreign gem-team.yaml deletion and untracked plan directories must remain untouched.
+  live_runtime:
+    endpoint: ':8746'
+    state: Treat as live; bounded GET-only until a safe call-setting mutation is proven.
+  call_budget:
+    intended_target: Today's allowed total equals 4.
+    screenshot_evidence: Calls 0/4 and 1 billed call - 0 left today.
+    unknown: Ownership and used/remaining semantics require read-only verification.
+research_digest:
+  relevant_files:
+    - path: AGENTS.md
+      finding: Defines live, billed-endpoint, git-preservation, and restart safety boundaries.
+    - path: README.md
+      finding: Defines the root app as canonical and docs/plan as plan evidence.
+    - path: docs/plan/tdtb-duration-memory-integration-20260817/plan.yaml
+      finding: INT-00, INT-02, INT-03, and INT-04 contain accepted merge and safety receipts.
+  digest:
+    - Local main is three commits ahead and ends at merge commit 54bac6b3.
+    - The prior review passed with no remote push, restart, billed call, or call-total edit.
+prior_decisions:
+  - decision: Push local main only to origin/main.
+    source: Explicit user authorization
+  - decision: Restore today's allowed call total to 4 without guessing counter semantics.
+    source: Explicit user authorization and screenshot clarification
+  - decision: Stop if the required action is billed or changes external source state.
+    source: Explicit user safety constraint
+  - decision: Use lightweight final review without a critic pass.
+    source: Explicit user routing constraint
+reuse_notes:
+  - path: docs/plan/tdtb-duration-memory-integration-20260817/plan.yaml
+    trust_level: Reuse INT-00, INT-02, INT-03, and INT-04 only after current-state matching.
+
+open_questions: []
+assumptions:
+  - origin/main still resolves to b97d00864b50044c2ff445bc6e9d5fd061324d2c at preflight.
+  - Local main still resolves to merge commit 54bac6b3f96036ca5dc2749409146c6bfdc69e9f.
+  - The three commits to publish are 756f2c2, c73f04a, and 54bac6b3, subject to preflight proof.
+  - Push publication does not require staging or altering local dirty state.
+  - The screenshot proves the intended allowed total, but not used or remaining semantics.
+decision_blockers: []
+
+acceptance_criteria:
+  - Remote preflight proves origin/main has not diverged from the recorded baseline.
+  - Only refs/heads/main is pushed to refs/heads/main through a non-force fast-forward update.
+  - origin/main resolves to 54bac6b3f96036ca5dc2749409146c6bfdc69e9f after publication.
+  - Local branch, index, foreign deletion, and untracked-plan fingerprints remain unchanged.
+  - Read-only evidence identifies the allowed-total owner, mutation path, and counter meanings.
+  - Today's allowed total becomes 4 only through a proven local, non-billed action.
+  - If the allowed total is already 4, no usage or remaining state is reset.
+  - Any billed, external-source, or ambiguous action stops with the exact endpoint or UI action.
+  - No restart, prohibited POST, external source write, unrelated file edit, or critic pass occurs.
+
+verification_strategy:
+  publication:
+    - Compare local main, remote main, merge ancestry, ahead commits, index, and status before push.
+    - Use an explicit main-to-main non-force push and verify the remote ref independently afterward.
+    - Compare preflight and final foreign-state fingerprints, including this untracked plan.
+  call_budget:
+    - Trace source, runtime contract, persistence owner, and UI labels using read-only evidence first.
+    - Classify the exact mutation as local non-billed, live local, billed, or upstream/source writing.
+    - Verify allowed total separately from used and remaining values before and after any safe action.
+    - Record the exact blocker and perform no mutation if classification is unsafe or incomplete.
+  final_gate:
+    - Use one read-only lightweight gem-reviewer pass after both action paths resolve.
+    - Do not add a critic pass.
+
+safety_constraints:
+  - No force-push, tags, feature-branch push, pull, merge, rebase, reset, clean, stage, stash, or delete.
+  - No restart of :8746 and no launchd or machine-local projection changes.
+  - No POST /commit, billed POST /sequence or /adjust, or external source write.
+  - No call-setting mutation before a local, non-billed path and exact semantics are proven.
+  - No unrelated code, plan, foreign-state, or counter mutation.
+
+tasks:
+  - id: PUBLISH-00
+    title: Preflight and publish main to origin/main
+    description: Prove the exact fast-forward boundary, push only main, and verify remote and local state.
+    wave: 1
+    agent: gem-devops
+    status: pending
+    covers:
+      - Local and remote main identity and ancestry
+      - Exact commit publication set
+      - Explicit non-force main-only push
+      - Remote and foreign-state verification
+    depends_on: []
+    conflicts_with: []
+    context_files:
+      - path: AGENTS.md
+        description: Git and concurrent-work safety rules
+      - path: docs/plan/tdtb-duration-memory-integration-20260817/plan.yaml
+        description: INT-00, INT-02, and INT-04 merge receipts
+    flags:
+      requires_design_validation: false
+      retries_used: 0
+      revision_reason: ''
+    acceptance_criteria:
+      - Preflight records branch, HEAD, upstream, index, status, remote ref, and merge ancestry.
+      - Preflight identifies every commit between origin/main and local main in publication order.
+      - Any remote divergence, unexpected local commit, staged path, or changed foreign state stops push.
+      - The push targets only refs/heads/main on origin and uses no force, tags, or upstream rewrite.
+      - Remote verification proves refs/heads/main equals 54bac6b3f96036ca5dc2749409146c6bfdc69e9f.
+      - Local HEAD, index, gem-team.yaml deletion, and all untracked plans retain fingerprints.
+    handoff:
+      known_context:
+        - Local main ended at 54bac6b3 and origin/main was b97d008 before the merge.
+        - Current evidence reports main is three commits ahead with no push yet.
+      target_files: []
+      constraints:
+        - Use remote-ref inspection that does not pull or merge.
+        - Preserve this new untracked plan with all existing foreign state.
+    environment: production
+    requires_approval: false
+    devops_security_sensitive: true
+
+  - id: CALL-00
+    title: Prove call-budget ownership and mutation safety
+    description: Locate the allowed-total setting and classify its path and counter semantics read-only.
+    wave: 1
+    agent: gem-researcher
+    status: completed
+    result:
+      status: blocked_without_approval
+      authoritative_cap: 4
+      current_spent: 4
+      current_remaining: 0
+      meaning: Calls 0/4 displays remaining/cap, not used/cap.
+      mutation_path: real_vault_runstate_billed_calls
+      safe_local_setting: false
+      approval_required: true
+    covers:
+      - Source, runtime, persistence, and UI ownership
+      - Allowed, used, and remaining counter semantics
+      - Mutation endpoint or UI action classification
+      - Billed and external-source stop gate
+    depends_on: []
+    conflicts_with: []
+    context_files:
+      - path: AGENTS.md
+        description: Live runtime and billed-endpoint safety envelope
+      - path: app/
+        description: Backend contracts and local persistence ownership
+      - path: frontend/
+        description: Calls pill, status copy, and settings controls
+    flags:
+      requires_design_validation: false
+      retries_used: 0
+      revision_reason: ''
+    acceptance_criteria:
+      - Evidence names the authoritative field for today's allowed call total and its persistence scope.
+      - Evidence explains Calls 0/4 and the bottom-right status without inferring unsupported meanings.
+      - The exact mutation path is classified as local non-billed, live local, billed, or upstream write.
+      - A safe outcome supplies CALL-01 with the exact action and non-billing proof.
+      - An unsafe or ambiguous outcome supplies the exact endpoint or UI action as a decision blocker.
+      - No mutation, billed request, external write, restart, or unrelated UI action occurs.
+    handoff:
+      known_context:
+        - The requested target is today's allowed total equals 4.
+        - The user did not authorize silently resetting used or remaining counters.
+      target_files: []
+      constraints:
+        - Prefer bounded source inspection, runtime contracts, GET checks, and read-only UI evidence.
+        - Stop rather than test a mutation to discover whether it bills or writes upstream.
+
+  - id: CALL-01
+    title: Apply today's allowed total only through the proven safe path
+    description: Set the allowed total to 4, or preserve state and propagate the proven no-op or blocker.
+    wave: 2
+    agent: gem-implementer
+    status: completed
+    result:
+      status: completed
+      before_billed_calls: 4
+      after_billed_calls: 0
+      ledger_after: cap 4, spent 0, remaining 4
+      changed_fields: [billed_calls]
+      other_writes: none
+      live_post_calls: 0
+      user_approval: explicit
+    approval_state: approved
+    approved_scope: Reset today's billed_calls from 4 to 0 in the real TDTB runstate note only.
+    covers:
+      - Conditional local non-billed setting mutation
+      - Already-satisfied no-op handling
+      - UI and status verification
+      - Used and remaining semantics receipt
+    depends_on: [CALL-00]
+    conflicts_with: []
+    context_files:
+      - path: AGENTS.md
+        description: Live write and billed-call boundaries
+    flags:
+      requires_design_validation: false
+      retries_used: 0
+      revision_reason: ''
+    acceptance_criteria:
+      - Mutation occurs only on the exact runstate path identified by CALL-00 after explicit user approval of the real-vault reset.
+      - If today's allowed total is already 4, no setting or usage counter is changed.
+      - If CALL-00 reports a blocker, no mutation occurs and the exact blocker is preserved for review.
+      - A performed mutation changes only today's allowed total to 4.
+      - Post-action evidence shows the target and records evidence-based used and remaining meanings.
+      - No billed endpoint, external source write, restart, prohibited POST, or unrelated edit occurs.
+    handoff:
+      known_context:
+        - CALL-00 must provide one outcome: safe action, already satisfied, or exact blocker.
+      target_files: []
+      constraints:
+        - Do not improvise an endpoint, payload, UI action, or counter reset.
+        - Use the visible UI/settings path when CALL-00 proves it is the safe canonical control.
+
+  - id: FINAL-REVIEW
+    title: Review publication and call-budget evidence
+    description: Read only the remote result, local preservation, and conditional call-setting outcome.
+    wave: 3
+    agent: gem-reviewer
+    status: completed
+    result:
+      status: completed
+      verdict: pass
+      origin_main: 54bac6b3f96036ca5dc2749409146c6bfdc69e9f
+      call_budget: cap 4, spent 0, remaining 4
+      approved_reset_only: true
+      safety_findings: 0
+    covers:
+      - Remote main publication proof
+      - Foreign-state preservation
+      - Call-budget target or exact blocker
+      - Zero billed, external-source, restart, and unrelated writes
+    depends_on: [PUBLISH-00, CALL-00, CALL-01]
+    conflicts_with: []
+    context_files:
+      - path: AGENTS.md
+        description: Completion and independent-review rules
+      - path: docs/plan/tdtb-duration-memory-integration-20260817/plan.yaml
+        description: Accepted merge and prior final-review evidence
+    flags:
+      requires_design_validation: false
+      retries_used: 0
+      revision_reason: No critic pass is authorized for these bounded post-merge actions.
+    acceptance_criteria:
+      - Review independently proves origin/main equals the verified local merge commit.
+      - Review confirms no other ref, tag, branch, index, or foreign path changed.
+      - Review confirms allowed total equals 4 or reports CALL-00's exact unresolved safety blocker.
+      - Review rejects any unsupported interpretation or reset of used and remaining counters.
+      - Review confirms zero billed calls, external source writes, restarts, and prohibited POSTs.
+      - Review returns pass or a concrete fixable blocker without mutation or a critic pass.
+    handoff:
+      known_context:
+        - Publication and call-budget work are independent until this join gate.
+        - A safe no-op or exact call-setting blocker is an expected CALL-01 outcome.
+      target_files: []
+      constraints:
+        - Review is lightweight and read-only.
+        - Do not repair findings or invoke UI mutation during review.
+    requires_review: false
+    review_depth: lightweight
+    review_security_sensitive: true

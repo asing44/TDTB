@@ -1,0 +1,488 @@
+plan_id: tdtb-duration-memory-integration-20260817
+objective: Safely merge the completed duration-memory MVP into main and verify tdtb-restart usability.
+complexity: MEDIUM
+created_at: '2026-08-17T00:00:00Z'
+created_by: gem-planner
+status: completed
+completed_at: '2026-08-17T00:00:00Z'
+tldr: |
+  - Freeze the feature and main worktree state before any git mutation.
+  - Exclude every docs/plan path; commit only product, test, and generated bundle files.
+  - Preserve each divergent untracked MVP plan copy against its own hash and size through local merge.
+  - Verify tdtb-restart by read-only inspection and bounded GET checks; do not restart :8746.
+  - Reuse completed FT-03 and FT-06 evidence when it matches the exact feature commit.
+
+baseline:
+  objective: Safely merge the completed duration-memory MVP into main and verify tdtb-restart usability.
+  acceptance_criteria:
+    - The completed MVP is committed from features/duration-memory with only its owned paths.
+    - Main receives the feature through a safe local merge with no remote push.
+    - Main foreign unstaged, deleted, and untracked state remains unchanged.
+    - tdtb-restart usability is assessed without invoking a restart.
+    - Any backend/frontend skew that requires restart is reported and waits for separate approval.
+    - Final evidence shows no live/source/billed writes and traces verification to the merged commit.
+    - No call-total or quota limit changes occur without clarification.
+  captured_at: '2026-08-17T00:00:00Z'
+
+plan_lineage:
+  root_plan_id: tdtb-duration-memory-integration-20260817
+  revision: 2
+  replan_count: 2
+  max_replans: 2
+  parent_revision: 1
+  reason: validation_failure
+
+plan_metrics:
+  wave_1_task_count: 1
+  total_dependencies: 5
+  risk_score: medium
+quality_warnings:
+  - Main is dirty with a foreign deletion and untracked plan directories.
+  - Each worktree has a divergent untracked MVP plan that must remain untouched and excluded.
+  - Existing FT evidence is reusable only if it matches the exact paths committed.
+  - The recorded restart symlink failure has a narrow platform-specific classification.
+  - tdtb-restart is an attended deployment action and is inspection-only in this plan.
+
+context_version: 3
+context_updated_at: '2026-08-17T00:00:00Z'
+context_fields_changed:
+  - Owned inventory excludes every plan path by explicit user decision.
+  - Divergent MVP plan copies are preserved independently by preflight hash and size.
+  - Known restart symlink failure classification is explicit.
+tech_stack:
+  - name: Git worktrees and local branches
+    role: Feature commit, state preservation, and local integration
+    evidence: features/duration-memory and main worktree status
+  - name: zsh, launchd, and FastAPI health endpoints
+    role: Static restart command qualification and bounded live read checks
+    evidence: restart-live.sh, launchd/com.walle.tdtb.plist, and :8746 GET contracts
+conventions:
+  - Use explicit path staging from a frozen owned-path inventory.
+  - Limit owned paths to feature product, test, and generated bundle files outside docs/plan.
+  - Treat generated bundle replacement pairs as owned only when FT evidence covers them.
+  - Preserve each untracked MVP plan copy by worktree path, hash, size, and untracked status.
+  - Reuse exact completed-MVP evidence instead of repeating tests without cause.
+constraints:
+  hard:
+    - Never use git add -A, reset, clean, pull, rebase, or push.
+    - Exclude docs/plan/tdtb-duration-memory-mvp-20260817/plan.yaml from commit and merge.
+    - Exclude every other docs/plan path and plan directory from staging and merge.
+    - Do not stash, overwrite, stage, or commit either worktree's untracked MVP plan copy.
+    - Preserve the divergent MVP plan copies independently; do not overwrite or reconcile either copy.
+    - Record separate preflight hash and size values for the main and feature MVP plan copies.
+    - Do not alter other worktrees or machine-local projections.
+    - Do not invoke tdtb-restart, restart-live.sh, launchctl mutation, or any POST endpoint.
+    - Use only bounded GET requests for live health, version, and contract inspection.
+    - Do not write the real vault, Todoist, Calendar, source notes, or billed endpoints.
+    - Stop for separate approval if restart is required to resolve backend/frontend skew.
+    - Do not change call-total, quota, or configuration limits without clarification.
+  soft:
+    - Prefer a normal local merge that preserves existing main state without temporary relocation.
+    - Keep integration evidence in task results; create no second planning artifact.
+  compatibility:
+    - The merged tree must retain the generated production and mockup bundle replacements.
+    - The live :8746 service remains unchanged unless a later attended action is approved.
+  security_requirements:
+    - Verification must not expose tokens, vault contents, or absolute private paths in reports.
+    - Read-only endpoint checks must not trigger sequence, adjust, commit, or source refresh writes.
+
+architecture_snapshot:
+  feature_worktree:
+    path: /Users/walle-mini/Repos/Projects/features/duration-memory
+    branch: features/duration-memory
+    state: Completed MVP is uncommitted and includes generated bundle replacements.
+  main_worktree:
+    path: /Users/walle-mini/Repos/Projects/TDTB
+    branch: main
+    state: Foreign gem-team.yaml deletion and untracked plan directories must remain untouched.
+  restart_surface:
+    command: /Users/walle-mini/.local/bin/tdtb-restart
+    expected_target: /Users/walle-mini/Repos/Projects/TDTB/restart-live.sh
+    behavior: Rebuilds bundles, refreshes launchd projection, restarts, then checks health.
+
+research_digest:
+  relevant_files:
+    - path: AGENTS.md
+      finding: Defines git preservation, test, live-service, and attended restart boundaries.
+    - path: README.md
+      finding: Names the root app and restart-live.sh as canonical source.
+    - path: docs/plan/tdtb-duration-memory-mvp-20260817/plan.yaml
+      finding: Feature copy records completed FT-03 and FT-06 evidence and final review pass.
+    - path: restart-live.sh
+      finding: The command mutates bundles, plist, and launchd state and must not be dry-run guessed.
+  digest:
+    - FT-03 records backend, frontend, bundle, scratch :8790, and zero-write evidence.
+    - FT-06 records reset-order regression coverage and clean diff checks.
+    - The installed tdtb-restart symlink currently resolves to canonical main restart-live.sh.
+prior_decisions:
+  - decision: Merge to main is authorized; remote push is not authorized.
+    source: User request
+  - decision: Exclude the MVP plan and all plan directories from feature commit and merge.
+    source: Explicit user clarification
+  - decision: Preserve the divergent MVP plan copies independently as untouched, untracked files.
+    source: Explicit user decision after reviewer rejection of byte identity
+  - decision: tdtb-restart is checked but not invoked automatically.
+    source: User request and AGENTS.md
+  - decision: No separate critic pass is needed for this completed MVP.
+    source: User routing constraint
+reuse_notes:
+  - path: docs/plan/tdtb-duration-memory-mvp-20260817/plan.yaml
+    trust_level: Read-only receipt; exclude from staging and preserve both untracked copies.
+  - path: restart-live.sh
+    trust_level: Use as the canonical argument and side-effect contract for static qualification.
+
+open_questions:
+  - question: What does "alot call total back to 4 for today" mean and which setting owns it?
+    context: The phrase may refer to a separate quota or configuration surface.
+    type: decision_blocker
+    affects: [call-total or quota changes only]
+decision_blockers:
+  - The call-total phrase requires clarification; no limit or configuration change is in scope.
+assumptions:
+  - The feature worktree plan is the authoritative completed-MVP receipt.
+  - FT-03 and FT-06 evidence remains valid only if no covered path changed afterward.
+  - Every docs/plan path is outside the feature commit and merge inventory.
+  - A merge must stop rather than stash, delete, or relocate foreign main state.
+  - Read-only :8746 checks are allowed, but unavailable host visibility must be reported as unknown.
+
+replan:
+  reason: Reviewer blocked byte identity; user chose independent preservation of divergent plan copies.
+  changed_tasks: [INT-00, INT-01, INT-02, INT-03, INT-04]
+  added_tasks: []
+  removed_tasks: []
+  preserved_acceptance_criteria:
+    - The completed MVP is committed from features/duration-memory with only its owned paths.
+    - Main receives the feature through a safe local merge with no remote push.
+    - Main foreign unstaged, deleted, and untracked state remains unchanged.
+    - tdtb-restart usability is assessed without invoking a restart.
+    - Any backend/frontend skew that requires restart is reported and waits for separate approval.
+    - Final evidence shows no live/source/billed writes and traces verification to the merged commit.
+    - No call-total or quota limit changes occur without clarification.
+  new_risks:
+    - Either untracked MVP plan copy could be staged, overwritten, or reconciled during integration.
+    - A changed restart symlink failure could be misclassified as the recorded platform limitation.
+  progress_signal: Each excluded copy has its own preflight hash and size for post-merge comparison.
+
+dependencies:
+  INT-00: []
+  INT-01: [INT-00]
+  INT-02: [INT-01]
+  INT-03: [INT-02]
+  INT-04: [INT-02, INT-03]
+
+acceptance_criteria:
+  - Preflight records each divergent MVP plan copy's own hash, size, path, and untracked status.
+  - The owned inventory contains only product, test, and generated files outside docs/plan.
+  - One feature commit contains only the frozen product, test, and generated bundle inventory.
+  - Main integrates that commit locally while foreign state remains byte-for-byte unchanged.
+  - tdtb-restart resolves to canonical main and passes static and bounded GET qualification.
+  - No restart, remote push, live POST, source write, billed call, or quota change occurs.
+  - Final review traces the merged commit to valid FT-03 and FT-06 evidence or blocks on a gap.
+  - The recorded symlink test failure is platform-specific only on an exact receipt match.
+
+verification_strategy:
+  git_safety:
+    - Compare preflight and final branch, HEAD, index, status, diff, and worktree receipts.
+    - Verify the feature commit tree against the frozen explicit owned-path inventory.
+    - Prove all docs/plan paths are absent from the feature commit and merge diff.
+    - Compare each excluded copy with its own preflight hash and size after feature commit and merge.
+    - Prove each excluded copy remains untracked in its worktree after the merge.
+    - Verify merge diff and stat contain the feature commit and no foreign main path.
+  existing_evidence:
+    - Bind FT-03 and FT-06 results to the exact committed content and generated bundle hashes.
+    - Classify the known symlink failure as platform-specific only on exact receipt equivalence.
+    - Treat any new or changed failure signature or context as a possible regression.
+    - If content differs or evidence is incomplete, stop and report the required test gap.
+  restart_usability:
+    - Inspect symlink target, executable bit, zsh syntax, supported arguments, and canonical path.
+    - Inspect script dependencies and side effects without executing the restart command.
+    - Use bounded GET-only health, version, and contract checks against :8746 when visible.
+    - Compare served backend/frontend identity with merged main and report skew without restart.
+  final_gate:
+    - Use one lightweight gem-reviewer pass; do not add a critic pass.
+
+safety_constraints:
+  - Explicit path staging only; no bulk staging or destructive git commands.
+  - No remote push, restart, launchd mutation, POST, real-source write, or billed endpoint.
+  - Preserve main foreign state and every other worktree exactly.
+  - Any merge overlap, evidence mismatch, live skew, or unknown ownership blocks mutation.
+
+tasks:
+  - id: INT-00
+    title: Freeze integration state and owned-path inventory
+    description: Record both worktrees and prove the completed MVP boundary before git mutation.
+    wave: 1
+    agent: gem-devops
+    status: completed
+    result:
+      status: completed
+      main_head: b97d00864b50044c2ff445bc6e9d5fd061324d2c
+      feature_head: 756f2c24acb5f213934c64033c8a84da3bbb27fb
+      owned_paths: 25
+      excluded_plan_paths: 9
+      main_plan_sha256: 81232cdea70bb5a87516ebc6bbd54ee1114ac818299e3ab8e809491f1df9924d
+      feature_plan_sha256: db01d0415106dcd81ca507b1995dd8aa522072e509f59d7854ad5e68d250fad4
+      main_foreign_state_preserved: true
+      overlap_blocked: false
+    covers:
+      - Feature and main branch, HEAD, index, status, and diff receipts
+      - Product, test, and generated bundle owned-path inventory
+      - Separate hash, size, path, and untracked receipts for both divergent MVP plan copies
+      - FT-03 and FT-06 evidence traceability
+      - Foreign-state preservation baseline
+    depends_on: []
+    conflicts_with: []
+    context_files:
+      - path: AGENTS.md
+        description: Canonical integration and live safety rules
+      - path: docs/plan/tdtb-duration-memory-mvp-20260817/plan.yaml
+        description: Completed feature evidence and accepted boundaries
+    flags:
+      requires_design_validation: false
+      retries_used: 0
+      revision_reason: ''
+    acceptance_criteria:
+      - Receipts record worktree path, branch, HEAD, upstream, index, status, and changed paths.
+      - The owned inventory contains only product, test, and generated bundle paths.
+      - No docs/plan path or plan directory appears in the owned or staging inventory.
+      - Each MVP plan copy has a separate preflight hash and size and is untracked before staging.
+      - The divergent copy values are recorded independently; cross-copy equality is not required.
+      - Every owned path is covered by completed MVP scope and FT evidence.
+      - Main foreign deletion and each untracked plan directory have preservation fingerprints.
+      - Feature/main overlap and merge blockers are checked before approval to continue.
+      - Any unknown path, changed evidence input, staged path, or overlap stops integration.
+      - No file, index, branch, service, source, or remote state changes in this task.
+    handoff:
+      known_context:
+        - The feature status currently includes source, tests, bundle replacements, and its plan.
+        - Main currently includes a foreign gem-team.yaml deletion and untracked plan directories.
+        - The user requires both MVP plan copies to remain untracked and untouched.
+      target_files: []
+      constraints:
+        - Treat current status as evidence, not permission to include every changed path.
+        - Produce the canonical explicit owned-path list for INT-01.
+        - Exclude docs/plan/tdtb-duration-memory-mvp-20260817/plan.yaml and all plans.
+    environment: development
+    requires_approval: false
+    devops_security_sensitive: true
+
+  - id: INT-01
+    title: Commit the completed MVP on the feature branch
+    description: Create one feature commit from the frozen owned inventory using explicit staging.
+    wave: 2
+    agent: gem-devops
+    status: completed
+    result:
+      status: completed
+      commit_hash: c73f04a0c364e96960fc71cccc23aecf6aa88232
+      commit_message: feat: duration-memory MVP (backend contract, frontend adapters, bundle rebuild)
+      committed_paths: 25
+      docs_plan_paths_in_commit: 0
+      index_empty: true
+      excluded_plan_copies_preserved: true
+    covers:
+      - Explicit owned-path staging
+      - Generated bundle replacement integrity
+      - Feature commit and post-commit receipt
+    depends_on: [INT-00]
+    conflicts_with: []
+    context_files:
+      - path: docs/plan/tdtb-duration-memory-mvp-20260817/plan.yaml
+        description: Completed MVP scope, evidence, and final review result
+    flags:
+      requires_design_validation: false
+      retries_used: 0
+      revision_reason: ''
+    acceptance_criteria:
+      - Only INT-00 owned paths are staged through explicit path arguments.
+      - Deleted and added hashed bundle files are included as verified replacement pairs.
+      - No docs/plan path is staged or present in the feature commit tree diff.
+      - Each MVP plan copy remains untracked, untouched, and equal to its own INT-00 hash and size.
+      - The commit diff and stat contain no path outside the frozen inventory.
+      - The feature index has no staged path after commit; excluded untracked plans remain visible.
+      - No add -A, reset, clean, pull, rebase, merge, push, test, or service action occurs.
+    handoff:
+      known_context:
+        - No feature commit existed when this plan was created.
+        - Existing verification is reusable only for the exact content committed.
+      target_files:
+        - Owned paths emitted by INT-00
+      constraints:
+        - Stop if the inventory or content changed after INT-00.
+        - Do not stage the MVP plan, this integration plan, or any plan directory.
+    environment: development
+    requires_approval: false
+    devops_security_sensitive: true
+
+  - id: INT-02
+    title: Merge the feature commit into main locally
+    description: Integrate the frozen feature commit while preserving all foreign main state.
+    wave: 3
+    agent: gem-devops
+    status: completed
+    result:
+      status: completed
+      merge_commit: 54bac6b3f96036ca5dc2749409146c6bfdc69e9f
+      merged_paths: 25
+      docs_plan_paths_in_merge: 0
+      foreign_state_preserved: true
+      index_empty: true
+      remote_push: false
+      plan_copies_preserved_independently: true
+    covers:
+      - Pre-merge main-state revalidation
+      - Safe local merge
+      - Foreign-state preservation
+      - No-push boundary
+    depends_on: [INT-01]
+    conflicts_with: []
+    context_files:
+      - path: AGENTS.md
+        description: Main integration and concurrent-work constraints
+      - path: docs/plan/tdtb-duration-memory-integration-20260817/plan.yaml
+        description: Owned integration plan state to preserve in main
+    flags:
+      requires_design_validation: false
+      retries_used: 0
+      revision_reason: ''
+    acceptance_criteria:
+      - Main branch, HEAD, index, and foreign-state fingerprints still match INT-00.
+      - Git proves the merge cannot overwrite or absorb any foreign unstaged or untracked path.
+      - Main receives the exact INT-01 feature commit through a local merge.
+      - Merge diff and stat contain only frozen product, test, bundle, and merge metadata paths.
+      - No docs/plan path appears in the feature commit, merge diff, or staged state.
+      - Each MVP plan copy remains untracked and matches its own INT-00 hash and size after merge.
+      - No merge action overwrites, reconciles, stages, or requires equality between the two copies.
+      - Foreign deletion and untracked plan directories remain byte-for-byte unchanged and unstaged.
+      - No conflict is resolved by altering, stashing, deleting, or staging foreign state.
+      - No pull, rebase, reset, clean, remote push, test, restart, or live write occurs.
+    handoff:
+      known_context:
+        - Main is integration-only and dirty with foreign state that cannot be moved aside.
+        - Remote push was not requested.
+      target_files: []
+      constraints:
+        - Stop before merge if main changed, overlap exists, or preservation cannot be proved.
+        - Report conflicts or unsafe state for replan; do not improvise remediation.
+    environment: development
+    requires_approval: false
+    devops_security_sensitive: true
+
+  - id: INT-03
+    title: Verify tdtb-restart usability without restarting
+    description: Qualify command wiring and post-merge live read contracts without mutation.
+    wave: 4
+    agent: gem-devops
+    status: completed
+    result:
+      status: completed
+      symlink: /Users/walle-mini/Repos/Projects/TDTB/restart-live.sh
+      syntax: zsh -n passed; executable
+      health_get: 200
+      served_bundle_matches_merge: true
+      restart_needed: false
+      restart_invoked: false
+      live_writes: 0
+      version_endpoint: absent_non_blocking
+    covers:
+      - Installed symlink and canonical target
+      - Executable, zsh syntax, argument, and dependency contract
+      - Bounded GET-only live checks
+      - Backend/frontend skew decision gate
+    depends_on: [INT-02]
+    conflicts_with: []
+    context_files:
+      - path: restart-live.sh
+        description: Canonical restart behavior and supported argument contract
+      - path: launchd/com.walle.tdtb.plist
+        description: Canonical launchd projection template
+      - path: README.md
+        description: Canonical main app and restart source path
+    flags:
+      requires_design_validation: false
+      retries_used: 0
+      revision_reason: ''
+    acceptance_criteria:
+      - tdtb-restart resolves to the canonical main restart-live.sh path.
+      - Target is executable, zsh syntax-valid, and exposes only the documented argument contract.
+      - Static inspection confirms expected main, frontend, launchd, port, and health dependencies.
+      - Neither tdtb-restart nor restart-live.sh is invoked, including with any argument.
+      - No check executes build, plist refresh, launchctl mutation, restart, or script side effects.
+      - Bounded GET-only checks record health, version, and contract state when :8746 is visible.
+      - Served backend/frontend identity is compared with merged main without assuming freshness.
+      - If skew requires restart, the result requests separate attended approval and stops.
+      - If visibility is unavailable, server state is reported as unknown under LIVE rules.
+      - No POST, billed call, source write, quota change, or machine-local mutation occurs.
+    handoff:
+      known_context:
+        - The symlink currently points from ~/.local/bin/tdtb-restart to canonical restart-live.sh.
+        - The script rebuilds bundles and mutates plist and launchd state when executed.
+      target_files: []
+      constraints:
+        - Do not invoke the symlink or script, including with --no-build or unknown arguments.
+        - Do not treat command presence alone as proof that the live service matches merged main.
+    environment: production
+    requires_approval: false
+    devops_security_sensitive: true
+
+  - id: INT-04
+    title: Perform the lightweight integration review
+    description: Read only the merge, evidence, restart qualification, and final repository state.
+    wave: 5
+    agent: gem-reviewer
+    status: completed
+    result:
+      status: completed
+      verdict: pass
+      merge_commit: 54bac6b3f96036ca5dc2749409146c6bfdc69e9f
+      restart_verdict: usable; canonical target, executable, syntax-valid, health GET 200, no restart needed
+      merged_paths: 25
+      docs_plan_paths_in_merge: 0
+      plan_copies_preserved: true
+      foreign_state_preserved: true
+      remote_push: false
+      call_total: outside_scope_pending_clarification
+    covers:
+      - Merge and owned-path traceability
+      - FT-03 and FT-06 evidence validity
+      - Foreign-state and safety verification
+      - Restart usability verdict
+    depends_on: [INT-02, INT-03]
+    conflicts_with: []
+    context_files:
+      - path: AGENTS.md
+        description: Completion and independent review requirements
+      - path: docs/plan/tdtb-duration-memory-mvp-20260817/plan.yaml
+        description: Completed test, scratch, and review evidence
+      - path: docs/plan/tdtb-duration-memory-integration-20260817/plan.yaml
+        description: Integration acceptance and safety boundary
+    flags:
+      requires_design_validation: false
+      retries_used: 0
+      revision_reason: No separate critic pass is authorized for this integration.
+    acceptance_criteria:
+      - Review traces the merged main tree to the INT-01 commit and frozen owned inventory.
+      - Merge diff and stat contain no plan, foreign, or unexplained path.
+      - Each MVP plan copy remains untracked and equals its own preflight hash and size after merge.
+      - Review does not require equality between the divergent main and feature copies.
+      - FT-03 and FT-06 evidence matches committed content, or the exact missing gate is reported.
+      - The known test_tdtb_restart_symlink_points_at_canonical_script failure is platform-specific
+        only when its signature and context exactly match the recorded feature receipt.
+      - Any new or changed test failure is classified as a possible regression and blocks acceptance.
+      - Final branch, index, worktree, and foreign-state receipts satisfy the preservation baseline.
+      - Restart usability receives pass, blocked, or unknown with concrete read-only evidence.
+      - Evidence confirms no remote push, restart, live POST, source write, billed call, or quota edit.
+      - The ambiguous call-total request remains blocked for clarification and outside integration.
+      - Review creates no edit, test run, critic pass, service action, or new artifact.
+    handoff:
+      known_context:
+        - The MVP already passed its final review after FT-06 remediation.
+        - This gate reviews integration and operational usability, not feature design again.
+      target_files: []
+      constraints:
+        - Review is lightweight and read-only.
+        - Treat any evidence mismatch or foreign-state change as a blocking integration failure.
+        - Do not modify call-total, quota, or limit settings while clarification remains open.
+    requires_review: false
+    review_depth: lightweight
+    review_security_sensitive: true

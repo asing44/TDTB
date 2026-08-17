@@ -1,0 +1,727 @@
+plan_id: tdtb-persistent-memory-20260817
+objective: Implement durable cross-run duration memory in the dedicated features/duration-memory worktree.
+created_at: '2026-08-17T00:00:00Z'
+created_by: gem-planner
+status: pending
+tldr: |
+  - Create and verify the isolated features/duration-memory worktree before product edits.
+  - Persist only explicit duration preferences, scoped by vault and stable source identity.
+  - Rehydrate through GET /plan-inputs across fresh server and clean browser lifetimes.
+  - Provide conditional save, per-item reset, and clear-all with deterministic race ordering.
+  - Use a stable sidecar lock, durable atomic replacement, and complete temp-file cleanup.
+  - Preserve today-only session semantics; never persist plans, approvals, or source data.
+
+baseline:
+  objective: Design durable cross-run memory functionality for the current repository.
+  acceptance_criteria:
+    - A remembered duration survives independent server and browser process lifetimes.
+    - Memory reloads on a later run without a billed call or a write to an upstream source.
+    - Persistence follows existing vault-root, stable-identity, and atomic-cache conventions.
+    - Corruption, partial writes, concurrency, isolation, privacy, retention, and deletion are covered.
+    - Existing same-date session restore and date-rollover safety behavior remain compatible.
+    - Fresh-run tests and required repository verification produce measurable evidence.
+  captured_at: '2026-08-17T00:00:00Z'
+
+plan_lineage:
+  root_plan_id: tdtb-persistent-memory-20260817
+  revision: 3
+  replan_count: 2
+  max_replans: 2
+  parent_revision: 2
+  reason: validation_failure
+
+plan_metrics:
+  wave_1_task_count: 1
+  total_dependencies: 16
+  risk_score: high
+quality_warnings:
+  - User-approved scope is duration preferences only; general conversation, session, and plan memory are excluded.
+  - The user-approved features/duration-memory branch overrides the default codex/ branch naming convention.
+  - The live vault and :8746 service are outside unattended implementation and verification scope.
+  - A clear-all control adds a small UI surface and requires design and accessibility validation.
+
+context_version: 3
+context_updated_at: '2026-08-17T00:00:00Z'
+context_fields_changed:
+  - Dedicated worktree and branch gate
+  - Real browser and server OS-process evidence
+  - Generation-ordered compare-and-swap recovery
+  - Durable contract output artifacts
+  - Strict API and UI 5-minute validation
+tech_stack:
+  - name: Python and FastAPI
+    role: Vault-scoped persistence, duration resolution, and token-guarded mutation API
+    evidence: app/main.py and app/duration_memory.py
+  - name: Preact and TypeScript
+    role: Duration editing, wire projection, and visible remembered-source state
+    evidence: frontend/src/store/controller.ts and frontend/src/ui/Queue.tsx
+  - name: JSON vault cache
+    role: Existing durable local state convention with atomic replacement
+    evidence: app/deferrals.py and app/runstate.py
+conventions:
+  - Resolve vault_root per request; never hardcode a user vault path.
+  - Use stable Todoist IDs or normalized vault paths; never use display names as memory identity.
+  - Keep source systems authoritative; memory changes only the TDTB cache and projected duration.
+  - Mutating routes require X-TDTB-Token and do not retry ambiguous writes.
+  - Use TDD and isolated tmp_path or scratch-vault fixtures for all persistence tests.
+constraints:
+  hard:
+    - Product edits occur only in /Users/walle-mini/Repos/Projects/features/duration-memory.
+    - The implementation branch is features/duration-memory and is created before product edits.
+    - Persist only duration preferences; do not persist staged plans, shadow state, approvals, or tokens.
+    - Do not write Todoist, Calendar, source notes, the real vault, or billed endpoints during verification.
+    - Do not restart or mutate the live :8746 service during unattended execution.
+    - Preserve the today-only localStorage contract and date-rollover invalidation.
+    - Keep all durable state isolated by the resolved vault_root and canonical source identity.
+    - Reject booleans, fractions, negatives, and non-multiples of 5 at the API boundary without coercion.
+  soft:
+    - Reuse app/duration_memory.py and standard-library locking before adding a dependency.
+    - Keep one versioned JSON cache and one narrow mutation endpoint.
+    - Retain absent-item preferences until item reset or clear-all; do not add automatic expiry.
+  compatibility:
+    - Missing storage behaves like no remembered duration.
+    - Existing clients may omit the new duration-source field and keep source-based behavior.
+    - Existing same-day tdtb-session-v2 blobs remain readable and date-scoped.
+    - Backend, wire, UI, and tests preserve each accepted non-negative 5-minute value exactly.
+  security_requirements:
+    - Expose no endpoint that lists all stored identities or cache contents.
+    - Store only stable identity, duration minutes, schema version, and update metadata.
+    - Require the existing session token for create, update, and delete operations.
+    - Surface storage degradation without leaking absolute vault paths or raw corrupt content.
+    - Clear-all removes all duration identities, including entries absent from current inputs.
+
+architecture_snapshot:
+  current_lifecycle:
+    backend_duration_resolution:
+      entry: GET /plan-inputs in app/main.py
+      behavior: resolve_assigned_blocks ignores app/duration_memory.py and returns source-derived blocks.
+      gap: Existing durable-memory seam is not imported or supplied with a vault cache path.
+    duration_memory_seam:
+      file: app/duration_memory.py
+      behavior: Optional path persists a flat JSON map with temp-file replacement; default is process memory.
+      gap: No production caller, API route, schema envelope, cross-process lock, delete operation, or warning state.
+    frontend_context:
+      entry: ProductionRoot loads server inputs, then attaches localStorage persistence.
+      behavior: tdtb-session-v2 restores same-date overrides and staged sequence after browser refresh.
+      invalidation: Date mismatch deletes the blob; shadow, review, acceptance, and live arming never restore.
+      gap: A duration edit is only OVERRIDE_SET client state and is lost across dates, browsers, or cleared storage.
+    existing_durable_boundaries:
+      runstate: Dated vault markdown for day setup, ledgers, selections, and runtime state.
+      deferrals: Rolling versioned JSON cache with bounded retention and atomic replace.
+      recent_selections: Rolling vault markdown capped at five runs.
+  target_boundary:
+    path: 00 - META/Cache/tdtb-duration-memory.json under resolved vault_root
+    lock_path: Stable sibling .tdtb-duration-memory.lock file that is never replaced with the data file.
+    schema: Versioned envelope with monotonic generation, opaque token, and per-entry last-change generation.
+    read_path: GET /plan-inputs returns resolved values, labels, revisions, and the current store token.
+    write_path: Token-guarded conditional save, item reset, and clear-all mutations.
+    lifecycle_triggers:
+      load: Every plan-inputs read, including a fresh process or later planning date.
+      save: Explicit user duration edit after frontend debounce, never on initial render or restore.
+      delete: Item reset removes one identity, then uses the server source fallback and re-fetches inputs.
+    clear_all: Explicit clear-all advances generation, rotates token, writes empty state, and cleans eligible temps.
+    retention: Entries absent from current assigned inputs remain retained and are removable by clear-all.
+    concurrency: Every mutation matches generation, token, and entry revision under one stable sidecar lock.
+    lock_timeout: Two seconds by monotonic clock; reads fall back and mutations return a retryable 503.
+    durability: Fsync temp, atomic replace, parent fsync, then acknowledge and advance committed state.
+    temp_recovery: Never promote temps; remove only proven obsolete copies and preserve newer unknown candidates.
+    failure_mode: Reads use source fallback with warning; unsafe mutations fail without claiming success.
+    recovery: Clear-all may replace malformed stores under lock and invalidates every earlier writer token.
+    ordering:
+      committed_state: Only the atomically replaced and directory-fsynced data file is committed.
+      mutation: Match expected generation and token, then increment generation and rotate token once.
+      entry_revision: A save records the commit generation; reset validates its expected entry revision.
+      stale_writer: Any generation, token, or entry-revision mismatch returns 409 without disk mutation.
+      crash_before_replace: The old durable file remains authoritative; the candidate temp is never promoted.
+      temp_cleanup: Delete only own temps or candidates no newer than durable generation; quarantine newer unknowns.
+      corrupt_clear: Explicit clear-all creates a new epoch token under lock and deletes superseded temp copies.
+
+research_digest:
+  relevant_files:
+    - path: app/duration_memory.py
+      finding: Stable identity and atomic path writes exist, but production uses neither.
+    - path: app/main.py
+      finding: GET /plan-inputs uses a separate resolver without memory or source labels.
+    - path: frontend/src/store/persist.ts
+      finding: localStorage restores only same-date shaping state and deliberately expires on date change.
+    - path: frontend/src/store/controller.ts
+      finding: Duration edits dispatch OVERRIDE_SET and only refresh capacity and validation.
+    - path: frontend/src/adapters/api.ts
+      finding: Existing token refresh and POST behavior can carry a narrow memory mutation.
+    - path: frontend/src/adapters/wire.ts
+      finding: Assigned projection carries stable path or Todoist ID but no duration source.
+    - path: frontend/src/ui/Queue.tsx
+      finding: Memory label currently means a transient session override, not durable rehydration.
+    - path: app/deferrals.py
+      finding: Versioned vault JSON, atomic replace, and graceful read degradation are established patterns.
+    - path: app/runstate.py
+      finding: Process-local locking assumes one writer and is not enough for required cross-process concurrency.
+    - path: app/tests/test_duration_memory_contract.py
+      finding: Stable IDs, precedence, and remembered source labels are already contract-tested in isolation.
+    - path: frontend/src/ui/BlockEditor.tsx
+      finding: Exact duration input accepts and snaps to 5-minute multiples; steppers remain 15-minute jumps.
+  digest:
+    - The smallest safe feature is integration and hardening of duration memory, not a new context subsystem.
+    - Server-side vault persistence is required because browser localStorage is date-scoped and seat-local.
+    - Rehydration must precede model projection so every frontend run receives the same resolved source.
+    - No production caller supplies a persistence path to the flat store, so no v0 migration is justified.
+prior_decisions:
+  - decision: User memory outranks deterministic tag, native, preset, type, and default duration sources.
+    source: app/duration_memory.py and app/tests/test_duration_memory_contract.py
+  - decision: Name alone is not a durable identity.
+    source: app/duration_memory.py
+  - decision: Same-date browser state must not survive date rollover.
+    source: frontend/src/store/persist.ts and frontend/src/store/store.ts
+  - decision: Vault caches are enhancements and must not block read-only planning.
+    source: app/deferrals.py and app/runstate.py
+reuse_notes:
+  - path: app/duration_memory.py
+    trust_level: Partial trusted seam; identity and precedence are valid, persistence needs hardening.
+  - path: app/deferrals.py
+    trust_level: Trusted cache location and version-envelope precedent.
+  - path: frontend/src/adapters/api.ts
+    trust_level: Trusted token-guarded mutation and one-retry-on-403 behavior.
+
+replan:
+  reason: Final bounded replan adds worktree isolation, durable contracts, strict validation, and OS-process proof.
+  changed_tasks:
+    - MEM-01
+    - MEM-UI-DESIGN
+    - MEM-02
+    - MEM-03
+    - MEM-04
+    - MEM-05
+  added_tasks:
+    - MEM-00
+  removed_tasks: []
+  preserved_acceptance_criteria:
+    - A remembered duration survives independent server and browser process lifetimes.
+    - Memory reloads on a later run without a billed call or a write to an upstream source.
+    - Persistence follows existing vault-root, stable-identity, and atomic-cache conventions.
+    - Corruption, partial writes, concurrency, isolation, privacy, retention, and deletion are covered.
+    - Existing same-date session restore and date-rollover safety behavior remain compatible.
+    - Fresh-run tests and required repository verification produce measurable evidence.
+  new_risks:
+    - A worktree based before this replan can omit the governing revision or leak product edits onto main.
+    - Temp cleanup can delete a newer candidate unless generation and ownership are checked under the lock.
+    - A stale writer can recreate deleted state unless generation, token, and entry revision all match.
+    - Browser contexts can appear clean while sharing an OS process, profile, service worker, or storage partition.
+    - Python boolean-to-integer coercion or UI snapping can silently persist an unsupported duration.
+  progress_signal: MEM-00 gates six later tasks; artifacts plus process and race evidence trace all six baseline criteria.
+
+open_questions: []
+assumptions:
+  - The user approved duration preferences as the complete feature scope for this plan.
+  - The user approved branch features/duration-memory despite the repository's default codex/ naming rule.
+  - The exact worktree path is /Users/walle-mini/Repos/Projects/features/duration-memory.
+  - A preference is vault-scoped and shared by TDTB runs that resolve the same vault_root.
+  - Durable memory applies to assigned Todoist and vault items only, not suggested pool items or anchored blocks.
+  - Supported values are non-negative integers divisible by 5; steppers may still jump 15 minutes.
+  - Booleans, fractions, negatives, and off-grid values are invalid and are never rounded or coerced.
+  - Entries remain until item reset or clear-all, including identities absent from the current assigned set.
+  - Normal writes preserve corrupt or unsupported stores; explicit clear-all is the destructive recovery path.
+  - No legacy flat-store migration is required because repository evidence shows no production persistent caller.
+  - POSIX advisory locking is acceptable because the supported live runtime is macOS.
+
+pre_mortem:
+  overall_risk_level: high
+  critical_failure_modes:
+    - scenario: A duration edit is keyed by display name and applies to the wrong item after a rename or collision.
+      likelihood: medium
+      impact: high
+      mitigation: Reject writes without canonical Todoist ID or vault path and test rename and collision cases.
+    - scenario: Two processes update different identities and the later writer drops the earlier update.
+      likelihood: medium
+      impact: high
+      mitigation: Use a stable sidecar lock with timeout across fresh read, merge, fsync, and atomic replacement.
+    - scenario: Recovery cleanup removes a newer candidate or promotes a stale temp over committed state.
+      likelihood: medium
+      impact: high
+      mitigation: Never promote temps; compare generations and preserve newer unknown candidates under lock.
+    - scenario: A corrupt cache is read as empty and the next edit destroys recoverable user memory.
+      likelihood: medium
+      impact: high
+      mitigation: Mark corruption explicitly, preserve the file, fail writes closed, and surface a bounded warning.
+    - scenario: A delayed save arrives after reset or clear-all and recreates a preference the user deleted.
+      likelihood: medium
+      impact: high
+      mitigation: Require matching store tokens and entry revisions; re-fetch and retry the latest user intent.
+    - scenario: Reset succeeds on disk but the UI keeps a remembered value after source refresh fails.
+      likelihood: medium
+      impact: high
+      mitigation: Return the source-resolved fallback in the delete response, then re-fetch and warn on failure.
+    - scenario: Atomic replacement is visible but not durable after a crash or leaves sensitive temp copies.
+      likelihood: low
+      impact: high
+      mitigation: Fsync file and parent directory and clean matching temp copies under the sidecar lock.
+    - scenario: Rehydrated state bypasses validation or restores unsafe approval state.
+      likelihood: low
+      impact: critical
+      mitigation: Rehydrate only duration input values; keep sequence, shadow, acceptance, and arming contracts unchanged.
+    - scenario: Save-on-load writes defaults as user preferences and permanently masks source changes.
+      likelihood: medium
+      impact: high
+      mitigation: Persist only explicit edit events and prove boot and refresh perform no memory mutation.
+    - scenario: A live or scratch test writes real vault or upstream state.
+      likelihood: low
+      impact: critical
+      mitigation: Use tmp_path and :8790 fixtures, instrument billed calls and source writes, and keep :8746 GET-only.
+    - scenario: A boolean, fraction, or off-grid value is coerced and becomes durable memory.
+      likelihood: medium
+      impact: high
+      mitigation: Validate type and 5-minute divisibility at API and UI boundaries and test exact round trips.
+coordination_notes:
+  - MEM-00 records the isolated branch, path, base commit, and copied plan before any product task starts.
+  - MEM-01 persists its contract; MEM-02 and MEM-UI-DESIGN consume that artifact without broadening scope.
+  - MEM-02 owns generation, tokens, revisions, lock timeout, recovery, validation, and fallback semantics.
+  - MEM-UI-DESIGN persists UI states and validation; MEM-03 consumes that artifact exactly.
+  - MEM-03 must cancel stale saves, preserve latest intent, and never write during load or restore.
+  - MEM-04 requires separate server and browser OS processes, empty profiles, and cleared browser storage.
+  - MEM-05 checks the final diff against the baseline and cockpit live-write safety contracts.
+
+tasks:
+  - id: MEM-00
+    title: Establish the isolated duration-memory worktree
+    description: Create and verify the approved branch and worktree before any product implementation.
+    wave: 0
+    agent: gem-devops
+    status: pending
+    covers:
+      - Dedicated branch and sibling worktree creation
+      - Governing plan availability in the worktree
+      - Base commit, branch, path, and isolation evidence
+      - Foreign-change preservation and owned-path safety
+    depends_on: []
+    conflicts_with: []
+    context_files:
+      - path: AGENTS.md
+        description: Worktree, concurrent-work, and mutation safety rules
+      - path: docs/plan/tdtb-persistent-memory-20260817/plan.yaml
+        description: Governing revision 3 plan to copy into the worktree
+    flags:
+      requires_design_validation: false
+      retries_used: 0
+      revision_reason: Final replan requires an isolation gate before every product task.
+    acceptance_criteria:
+      - Before mutation, evidence records main branch, HEAD, index, worktree status, and owned-path hashes.
+      - The branch is exactly features/duration-memory at a recorded base commit.
+      - The worktree path is exactly /Users/walle-mini/Repos/Projects/features/duration-memory.
+      - The creation command is git worktree add -b features/duration-memory /Users/walle-mini/Repos/Projects/features/duration-memory <base_commit>.
+      - If the branch or path exists, verification reuses it only when branch, base, ownership, and cleanliness match.
+      - Revision 3 plan.yaml is copied into the same relative path in the worktree and byte-compared.
+      - Main receives no app/ or frontend/ edit; before-and-after evidence proves foreign changes are unchanged.
+      - git worktree list --porcelain records both roots and git -C <worktree> status --short --branch records isolation.
+      - The receipt records branch, absolute path, base commit, plan hash, main status, and worktree status.
+    output_artifacts:
+      - docs/plan/tdtb-persistent-memory-20260817/artifacts/MEM-00-worktree.yaml
+    handoff:
+      known_context:
+        - The user explicitly approved features/duration-memory instead of the default codex/ prefix.
+        - No product code has changed for this plan.
+      target_files:
+        - docs/plan/tdtb-persistent-memory-20260817/plan.yaml
+        - docs/plan/tdtb-persistent-memory-20260817/artifacts/MEM-00-worktree.yaml
+      constraints:
+        - Preserve all foreign staged, unstaged, untracked, branch, and worktree state.
+        - Do not reset, clean, pull, rebase, merge, push, kill, or repair another process or worktree.
+        - Stage only owned plan and evidence paths if staging is explicitly required later.
+        - Stop on branch, path, base, ownership, or hash mismatch; do not improvise another location.
+    environment: development
+    requires_approval: false
+    devops_security_sensitive: true
+
+  - id: MEM-01
+    title: Lock the duration-memory storage and lifecycle contract
+    description: Audit the approved scope and lock deletion, recovery, ordering, durability, and security contracts.
+    wave: 1
+    agent: gem-reviewer
+    status: pending
+    covers:
+      - Approved duration-only scope and explicit exclusions
+      - Identity, schema, retention, deletion, recovery, and security contract
+      - Lock timeout, conditional ordering, fsync, and temporary-copy threat model
+    depends_on:
+      - MEM-00
+    conflicts_with: []
+    context_files:
+      - path: app/duration_memory.py
+        description: Existing memory seam and precedence contract
+      - path: app/main.py
+        description: Current production read and API entry points
+      - path: frontend/src/store/persist.ts
+        description: Existing same-date persistence boundary
+      - path: app/deferrals.py
+        description: Existing versioned vault-cache convention
+    flags:
+      requires_design_validation: false
+      retries_used: 0
+      revision_reason: ''
+    acceptance_criteria:
+      - Audit confirms only explicit duration preferences persist across independent runs.
+      - Audit fixes one versioned schema with store token, per-entry revision, and no unsupported v0 migration.
+      - Audit fixes the stable sidecar path, two-second timeout, read fallback, and retryable mutation failure.
+      - Audit defines file fsync, atomic replacement, parent-directory fsync, and temp cleanup requirements.
+      - Audit defines item reset, clear-all, orphan retention, corrupt recovery, and unsupported-store behavior.
+      - Audit defines latest-intent ordering for save versus item reset and save versus clear-all races.
+      - Audit proves no token, plan, approval, source body, or free-text content belongs in the cache.
+      - Audit defines bounded client-visible failures without absolute paths or corrupt payload disclosure.
+      - Audit defines accepted values as non-negative integers divisible by 5 and rejects all coercion.
+      - Findings are persisted at the declared output path with schema, API, recovery, and ordering tables.
+    output_artifacts:
+      - docs/plan/tdtb-persistent-memory-20260817/artifacts/MEM-01-contract.yaml
+    handoff:
+      known_context:
+        - Existing duration_memory.py is unused by production and defaults to process memory.
+        - Browser persistence is same-date only and must remain so.
+        - The exact editor accepts 5-minute values; 15 minutes is only the stepper increment.
+      target_files:
+        - docs/plan/tdtb-persistent-memory-20260817/artifacts/MEM-01-contract.yaml
+      constraints:
+        - Review only; do not implement or broaden feature scope.
+        - Preserve the baseline acceptance criteria.
+    requires_review: false
+    review_depth: full
+    review_security_sensitive: true
+
+  - id: MEM-UI-DESIGN
+    title: Define duration-memory reset and clear-all interaction states
+    description: Specify the smallest accessible UI contract for durable state, reset, clear-all, and failures.
+    wave: 2
+    agent: gem-designer
+    status: pending
+    covers:
+      - Remembered versus source-resolved status
+      - Per-item reset and vault-scoped clear-all confirmation
+      - Pending, conflict, refresh-failure, and retry states
+      - Keyboard, focus, announcement, and destructive-action accessibility
+    depends_on:
+      - MEM-00
+      - MEM-01
+    conflicts_with: []
+    context_files:
+      - path: frontend/src/ui/Queue.tsx
+        description: Current duration controls and source-versus-memory label surface
+      - path: frontend/src/ui/BlockEditor.tsx
+        description: Existing exact 5-minute editor and 15-minute steppers
+      - path: frontend/src/store/controller.ts
+        description: Current explicit edit and refresh lifecycle
+    flags:
+      requires_design_validation: true
+      retries_used: 0
+      revision_reason: Scope revision adds a destructive clear-all control and race-visible states.
+    acceptance_criteria:
+      - Design distinguishes source, remembered, saving, reset, conflict, and failed states without ambiguity.
+      - Per-item reset and clear-all have distinct labels, scope explanations, and confirmation behavior.
+      - Clear-all states that absent retained entries in the current vault scope are also deleted.
+      - Successful reset immediately shows the server fallback value and never keeps a remembered label.
+      - Re-fetch failure retains the server fallback, shows a bounded warning, and offers retry.
+      - Keyboard flow, focus return, live announcements, and destructive-action semantics are specified.
+      - Design preserves existing 5-minute exact entry and 15-minute stepper behavior.
+      - Design shows validation errors for booleans, fractions, negatives, and off-grid values without snapping.
+      - UI findings are persisted at the declared output path as the contract consumed by MEM-03.
+    output_artifacts:
+      - docs/plan/tdtb-persistent-memory-20260817/artifacts/MEM-UI-DESIGN-contract.md
+    handoff:
+      known_context:
+        - No DESIGN.md exists; use current component patterns as repository evidence.
+        - This task owns interaction requirements, not implementation or product code.
+      target_files:
+        - docs/plan/tdtb-persistent-memory-20260817/artifacts/MEM-UI-DESIGN-contract.md
+      constraints:
+        - Keep the UI addition minimal and duration-memory-only.
+        - Do not introduce conversation, session, plan, or bulk memory browsing surfaces.
+        - Provide verified states and measurable checks for MEM-03; do not edit product files.
+    requires_review: false
+    review_depth: full
+    review_security_sensitive: false
+
+  - id: MEM-02
+    title: Implement the vault-scoped duration-memory backend
+    description: Harden the existing seam and integrate durable read, mutation, and deletion contracts.
+    wave: 2
+    agent: gem-implementer
+    status: pending
+    covers:
+      - Versioned serialization without unsupported legacy migration
+      - Stable sidecar locking, conditional ordering, and durable replacement
+      - Plan-input rehydration and source labels
+      - Token-guarded save, item reset, and clear-all API
+      - Orphan retention, corruption recovery, and temporary-copy cleanup
+    depends_on:
+      - MEM-00
+      - MEM-01
+    conflicts_with: []
+    context_files:
+      - path: app/duration_memory.py
+        description: Extend rather than replace the existing stable-ID resolver seam
+      - path: app/main.py
+        description: Integrate GET /plan-inputs and the narrow mutation route
+      - path: app/tests/test_duration_memory_contract.py
+        description: Preserve existing stable-ID and precedence tests
+      - path: app/tests/test_durations.py
+        description: Preserve source-duration compatibility and route projection behavior
+    flags:
+      requires_design_validation: false
+      retries_used: 0
+      revision_reason: ''
+    acceptance_criteria:
+      - Cache path is resolved under each request's vault_root and cannot cross vault scopes.
+      - Version 1 round-trips identity, exact 5-minute values, generation, token, entry revision, and metadata.
+      - Missing stores load as empty; flat maps, malformed stores, and unsupported versions are not migrated.
+      - Normal writes preserve malformed or unsupported stores, use source fallback, warn, and fail closed.
+      - All store access uses one stable sidecar lock with a two-second monotonic timeout.
+      - Reads fall back on lock timeout; mutations return retryable 503 and do not claim success.
+      - Every successful mutation matches generation and token, advances generation once, and rotates the token.
+      - Save records its commit generation as entry revision; reset also matches the expected entry revision.
+      - Any stale generation, token, or entry revision returns 409 and makes no disk mutation.
+      - Writes fsync the temp, atomically replace, fsync the parent directory, then acknowledge success.
+      - Recovery never promotes a temp file or replaces a durable file from a temp candidate.
+      - Cleanup deletes own temps or candidates no newer than durable state and quarantines newer unknowns.
+      - Clear-all under lock establishes a new token epoch and removes only state superseded by that intent.
+      - Concurrent process writes to distinct identities preserve both values with no torn JSON.
+      - GET /plan-inputs returns values, source labels, entry revisions, and store token before projection.
+      - Item reset returns the current source-resolved fallback and removes only the requested identity.
+      - Clear-all removes current and orphaned identities, recovers corrupt stores, and rotates the store token.
+      - Save, reset, and clear-all require X-TDTB-Token; stale preconditions return a conflict, not success.
+      - The API rejects booleans, fractions, negatives, and non-multiples of 5 without integer coercion or rounding.
+      - Backend tests cover same-ID save/save, save/reset, stale writers, and save/clear-all races.
+      - Backend tests cover crash-before-replace, failed fsync/replace, temp cleanup, and newer-state preservation.
+      - Reads and writes neither call billed endpoints nor mutate Todoist, Calendar, or source notes.
+    handoff:
+      known_context:
+        - Consume docs/plan/tdtb-persistent-memory-20260817/artifacts/MEM-01-contract.yaml.
+        - Consume docs/plan/tdtb-persistent-memory-20260817/artifacts/MEM-00-worktree.yaml.
+        - No production persistent caller supports a legacy flat-map migration requirement.
+        - Duration precedence already exists in duration_memory.resolve_duration.
+      target_files:
+        - app/duration_memory.py
+        - app/main.py
+        - app/tests/test_duration_memory_contract.py
+        - app/tests/test_durations.py
+        - app/tests/test_main_api.py
+      constraints:
+        - Use TDD and standard-library facilities already valid on the macOS runtime.
+        - Do not make GET /plan-inputs persist, migrate, repair, or delete memory.
+        - Do not expose a bulk memory-listing API.
+        - Keep clear-all recovery explicit; normal saves and item resets must not overwrite corrupt data.
+        - Never treat bool as int or round, truncate, clamp, or snap an API duration.
+    requires_review: true
+    review_depth: full
+    review_security_sensitive: true
+
+  - id: MEM-03
+    title: Connect explicit duration edits and deletion controls
+    description: Implement the validated UI contract with conditional mutations and authoritative reset fallback.
+    wave: 3
+    agent: gem-implementer
+    status: pending
+    covers:
+      - Wire and model duration-source projection
+      - Stable identity selection for writes
+      - Debounced save, item reset, clear-all, and race ordering
+      - Source re-fetch, fallback, conflicts, and visible durable-memory state
+      - Session-persistence compatibility
+    depends_on:
+      - MEM-00
+      - MEM-02
+      - MEM-UI-DESIGN
+    conflicts_with: []
+    context_files:
+      - path: frontend/src/adapters/wire.ts
+        description: Assigned-item projection and stable identity fields
+      - path: frontend/src/adapters/api.ts
+        description: Token-guarded mutation transport
+      - path: frontend/src/store/controller.ts
+        description: Explicit duration edit lifecycle and debounce boundary
+      - path: frontend/src/store/persist.ts
+        description: Today-only browser persistence that must remain isolated
+      - path: frontend/src/ui/Queue.tsx
+        description: Existing source versus memory label surface
+    flags:
+      requires_design_validation: false
+      retries_used: 0
+      revision_reason: Implement only after MEM-UI-DESIGN validates the destructive and failure states.
+    acceptance_criteria:
+      - A server-remembered row renders as memory before any current-session edit.
+      - An explicit duration edit writes canonical identity, exact 5-minute value, entry revision, and store token.
+      - Initial load, session restore, source refresh, and capacity refresh do not write durable memory.
+      - Reset cancels queued saves and uses conditional ordering so a stale in-flight save cannot win later.
+      - Reset success immediately applies the response fallback, removes the remembered label, then re-fetches inputs.
+      - Re-fetch failure keeps the response fallback, shows a warning, and never restores stale remembered UI state.
+      - A reset conflict re-fetches current revisions and retries only while reset remains the latest user intent.
+      - Clear-all confirms vault scope, deletes orphaned entries, rotates state, and blocks stale save recreation.
+      - Failed saves remain visible and retryable; the UI does not claim durability after failure.
+      - Same-date staged-plan restore, date rollover, revalidation, shadow, and live-arming behavior remain unchanged.
+      - Existing clients and fixtures without duration-source metadata continue to render source behavior.
+      - UI and wire preserve accepted 5-minute values exactly and never snap typed input during persistence.
+      - Invalid fractions, negatives, and off-grid values show an error and do not call the mutation API.
+    handoff:
+      known_context:
+        - Queue currently labels any transient override as memory.
+        - AssignedItem already carries either todoistId or vault path for canonical identity.
+        - Consume docs/plan/tdtb-persistent-memory-20260817/artifacts/MEM-01-contract.yaml.
+        - Consume docs/plan/tdtb-persistent-memory-20260817/artifacts/MEM-UI-DESIGN-contract.md.
+      target_files:
+        - frontend/src/model/types.ts
+        - frontend/src/adapters/adapter.ts
+        - frontend/src/adapters/api.ts
+        - frontend/src/adapters/wire.ts
+        - frontend/src/store/controller.ts
+        - frontend/src/store/store.ts
+        - frontend/src/store/persist.ts
+        - frontend/src/ui/Queue.tsx
+        - frontend/src/store/controller.test.ts
+        - frontend/src/adapters/api.test.ts
+        - frontend/src/adapters/wire.test.ts
+        - frontend/src/ui/feedback10.test.tsx
+      constraints:
+        - Do not persist include, placement, sequence, approval, shadow, or token state to the durable cache.
+        - Do not send a mutation from rehydration or load code paths.
+        - Preserve explicit user feedback for persistence failures.
+        - Preserve exact 5-minute input values; do not round durable memory to 15-minute increments.
+        - Do not round, clamp, truncate, or snap invalid exact input into an accepted value.
+    requires_review: true
+    review_depth: full
+    review_security_sensitive: false
+
+  - id: MEM-04
+    title: Prove fresh-run durability and failure safety
+    description: Produce scenario evidence across fresh servers, clean browsers, races, and storage failures.
+    wave: 4
+    agent: gem-browser-tester
+    status: pending
+    covers:
+      - Fresh server and clean browser persistence proof
+      - Cross-vault isolation
+      - Deletion, corruption recovery, lock timeout, durability, and race scenarios
+      - No-billed-call and no-source-write evidence
+      - Full backend and frontend regression gates
+    depends_on:
+      - MEM-00
+      - MEM-02
+      - MEM-03
+    conflicts_with: []
+    context_files:
+      - path: app/tests/test_duration_memory_contract.py
+        description: Backend persistence and identity scenarios
+      - path: frontend/src/adapters/scratch.integration.test.ts
+        description: Existing scratch integration test convention
+      - path: AGENTS.md
+        description: Required test, build, scratch, and live-safety gates
+    flags:
+      requires_design_validation: false
+      retries_used: 0
+      revision_reason: ''
+    acceptance_criteria:
+      - Set WORKTREE=/Users/walle-mini/Repos/Projects/features/duration-memory for every command.
+      - Set SCRATCH_VAULT, PROFILE_A, and PROFILE_B to three distinct new mktemp directories.
+      - Server A runs as its own OS process and its PID is recorded before any browser starts.
+      - Server A command is app/.venv/bin/python frontend/scripts/duration_memory_scratch.py --port 8790 --vault "$SCRATCH_VAULT".
+      - Browser A runs as a separate OS process with PROFILE_A and exits before server A is stopped.
+      - Browser A command is node frontend/scripts/duration_memory_fresh_browser.mjs --url http://127.0.0.1:8790/static/cockpit/ --profile "$PROFILE_A" --clear-storage --mode write.
+      - Server A stores accepted 5-minute and non-15-minute values, then exits and closes port 8790.
+      - Server B starts with the same server command and SCRATCH_VAULT but has a new recorded PID.
+      - Browser B starts only after server A and browser A exit, using distinct empty PROFILE_B.
+      - Browser B command is node frontend/scripts/duration_memory_fresh_browser.mjs --url http://127.0.0.1:8790/static/cockpit/ --profile "$PROFILE_B" --clear-storage --mode read.
+      - Browser evidence records browser PID, child process IDs, profile path, and storage-clear assertions.
+      - Browser B shows remembered values with empty localStorage, sessionStorage, IndexedDB, and cache storage.
+      - No server, browser process, context, profile, service worker, or storage partition is reused across runs.
+      - A separate scratch vault with the same source identity does not observe the first vault's value.
+      - Concurrent independent writers preserve all committed identities and leave parseable versioned JSON.
+      - Same-ID concurrent saves conflict deterministically instead of silently overwriting a committed revision.
+      - Save versus item reset proves reset wins when it is latest intent and no delayed save recreates the entry.
+      - Save versus clear-all proves the old store token cannot recreate current or orphaned entries.
+      - Boolean, fractional, negative, and off-grid API values return validation errors and never mutate disk.
+      - Every accepted non-negative 5-minute value used by the scenarios round-trips byte-for-value unchanged.
+      - Lock timeout completes within two seconds plus test tolerance and returns fallback or retryable failure.
+      - Pre-replace failures leave the prior file; post-replace failures leave only old or complete new JSON.
+      - Mutation success is returned only after the replacement and parent-directory fsync both complete.
+      - Temp recovery never promotes a candidate or overwrites a higher committed generation.
+      - Cleanup removes eligible stale temps and preserves or quarantines a newer unknown candidate.
+      - A crash or pre-replace failure preserves the prior durable generation and rejects the stale retry.
+      - Corrupt and unsupported files use source fallback and are byte-preserved after normal rejected writes.
+      - Clear-all recovers corrupt and unsupported stores into a valid empty envelope and removes known temp copies.
+      - Item reset and clear-all survive a fresh server and restore source precedence with no remembered UI state.
+      - Evidence records zero billed calls and zero real source writes on the :8790 scratch path.
+      - Backend command app/.venv/bin/python -m pytest passes from WORKTREE.
+      - Frontend commands npm test, npm run typecheck, npm run build:mockup, and npm run build:prod pass.
+      - Evidence records exact commands, exit codes, PIDs, process boundaries, counters, and artifact hashes.
+    output_artifacts:
+      - docs/plan/tdtb-persistent-memory-20260817/evidence/MEM-04-fresh-process.json
+    handoff:
+      known_context:
+        - Module reload, TestClient reset, and reused browser storage are not sufficient fresh-run evidence.
+        - The real vault and live :8746 runtime are prohibited for this task.
+        - Consume MEM-00-worktree.yaml, MEM-01-contract.yaml, and MEM-UI-DESIGN-contract.md.
+      target_files:
+        - app/tests/test_duration_memory_contract.py
+        - app/tests/test_durations.py
+        - app/tests/test_main_api.py
+        - frontend/src/store/controller.test.ts
+        - frontend/src/adapters/scratch.integration.test.ts
+        - frontend/scripts/duration_memory_scratch.py
+        - frontend/scripts/duration_memory_fresh_browser.mjs
+        - docs/plan/tdtb-persistent-memory-20260817/evidence/
+      constraints:
+        - Use isolated temporary vaults and fixture or scratch clients only.
+        - Launch distinct server and browser OS processes; a new context in a reused process is insufficient.
+        - Do not substitute static assertions, module resets, or in-process clients for boundary proof.
+        - Evidence must name commands, PIDs, browser isolation, outcomes, fsync probes, and write counters.
+    requires_review: true
+    review_depth: full
+    review_security_sensitive: true
+
+  - id: MEM-05
+    title: Review durable memory against cockpit safety contracts
+    description: Perform final full review of scope, compatibility, security, and execution evidence.
+    wave: 5
+    agent: gem-reviewer
+    status: pending
+    covers:
+      - Baseline acceptance criteria
+      - Storage and API security
+      - Fresh server, clean browser, race, lock, fsync, deletion, and recovery evidence
+      - Existing session and live-write safety invariants
+      - Scope and regression control
+    depends_on:
+      - MEM-00
+      - MEM-01
+      - MEM-02
+      - MEM-03
+      - MEM-04
+    conflicts_with: []
+    context_files:
+      - path: docs/plan/tdtb-persistent-memory-20260817/plan.yaml
+        description: Governing scope and immutable acceptance criteria
+      - path: docs/plan/tdtb-persistent-memory-20260817/evidence/
+        description: Fresh-run and regression evidence
+      - path: AGENTS.md
+        description: Repository safety and completion rules
+    flags:
+      requires_design_validation: false
+      retries_used: 0
+      revision_reason: ''
+    acceptance_criteria:
+      - Review traces every baseline criterion to code, tests, and fresh evidence.
+      - Review confirms durable scope is limited to duration preferences and resolved vault_root.
+      - Review confirms item reset and clear-all cover current, orphaned, corrupt, and temporary copies.
+      - Review confirms stale saves cannot win after reset or clear-all and lock waits are bounded.
+      - Review confirms acknowledged writes use file fsync, atomic replacement, and parent-directory fsync.
+      - Review confirms no unsafe state rehydrates and no billed or real source write occurs on load.
+      - Review confirms missing-store fallback and rejects unsupported flat-map migration assumptions.
+      - Review confirms exact 5-minute values survive fresh server and clean browser lifetimes.
+      - Review confirms booleans, fractions, negatives, and off-grid values are rejected without coercion.
+      - Review confirms recovery never promotes temps or overwrites or deletes newer durable state.
+      - Review confirms implementation and evidence exist only in the recorded dedicated worktree.
+      - Review reports no unresolved high-severity security, privacy, isolation, or regression finding.
+    handoff:
+      known_context:
+        - Consume MEM-00-worktree.yaml, MEM-01-contract.yaml, and MEM-UI-DESIGN-contract.md.
+        - MEM-04 must contain separate server and browser OS-process evidence with cleared storage.
+      target_files: []
+      constraints:
+        - Review only; do not repair findings in place.
+        - Any baseline change is a decision blocker and requires replan.
+    requires_review: false
+    review_depth: full
+    review_security_sensitive: true

@@ -1,0 +1,1149 @@
+plan_id: tdtb-persistent-memory-20260817-r5
+objective: Implement durable cross-run duration-memory functionality in a dedicated features/duration-memory worktree.
+created_at: '2026-08-17T00:00:00Z'
+created_by: gem-planner
+status: pending
+tldr: |
+  - Implement durable cross-run duration memory from the final user-authorized derived plan.
+  - Gate all product work on an isolated features/duration-memory worktree.
+  - Persist explicit duration preferences only, isolated by vault and stable identity.
+  - Use per-entry CAS so unrelated identities never conflict.
+  - Make reset and clear-all durable, race-safe, and source-fallback aware.
+  - Prove fresh server and browser OS processes with clean scratch-only state.
+  - Finish with full git, build, bundle-readback, main-diff, and security review gates.
+
+baseline:
+  objective: Design durable cross-run memory functionality for the current repository.
+  acceptance_criteria:
+    - A remembered duration survives independent server and browser process lifetimes.
+    - Memory reloads on a later run without a billed call or a write to an upstream source.
+    - Persistence follows existing vault-root, stable-identity, and atomic-cache conventions.
+    - Corruption, partial writes, concurrency, isolation, privacy, retention, and deletion are covered.
+    - Existing same-date session restore and date-rollover safety behavior remain compatible.
+    - Fresh-run tests and required repository verification produce measurable evidence.
+  captured_at: '2026-08-17T00:00:00Z'
+
+plan_lineage:
+  root_plan_id: tdtb-persistent-memory-20260817
+  parent_plan_id: tdtb-persistent-memory-20260817-r4
+  revision: 0
+  replan_count: 0
+  max_replans: 2
+  parent_revision: 2
+  reason: validation_failure
+  derivation_authorization: User authorized this final derived plan after r4 exhausted its replan limit.
+
+plan_metrics:
+  wave_1_task_count: 1
+  total_dependencies: 30
+  risk_score: high
+quality_warnings:
+  - This is the final user-authorized derived plan after r4 exhausted two bounded replans.
+  - No product work, worktree, test run, commit, or push exists at this plan boundary.
+  - Duration preferences are the full durable scope; conversation, plan, and approval memory are excluded.
+  - The approved branch name overrides the repository default codex/ branch convention.
+  - Live :8746, the real vault, billed routes, and upstream writes remain prohibited.
+  - Clear-all is destructive and requires explicit accessible confirmation and full review.
+  - The baseline objective wording is immutable historical input; this plan objective governs implementation.
+
+context_version: 6
+context_updated_at: '2026-08-17T00:00:00Z'
+context_fields_changed:
+  - Final derived-plan lineage and execution-front paths
+  - Same-ID equal-state idempotent retry and newer-save conflict barrier
+  - Complete bounded GET metadata for safe clear-all CAS
+  - Clear-all observed store and entry generation plus fingerprint preconditions
+tech_stack:
+  - name: Python 3.12, FastAPI, and uv
+    role: Vault-scoped persistence, strict API validation, and scratch server runtime
+    evidence: app/requirements.txt, app/main.py, and app/duration_memory.py
+  - name: Preact, TypeScript, and npm
+    role: Duration editing, durable-source projection, reset, and clear-all UI
+    evidence: frontend/package.json and frontend/package-lock.json
+  - name: Playwright 1.58.2 and Chromium
+    role: Pinned clean-profile cross-process browser evidence
+    evidence: Required exact devDependency and lockfile update in wave-0 MEM-00
+  - name: Versioned vault JSON cache
+    role: Durable state with sidecar locking, fsync, and atomic replacement
+    evidence: app/deferrals.py, app/runstate.py, and app/duration_memory.py
+conventions:
+  - Resolve vault_root per request; never hardcode a user vault path.
+  - Use stable Todoist IDs or normalized vault paths; never use display names as identity.
+  - Keep source systems authoritative; memory changes only TDTB duration projection.
+  - Mutating routes require X-TDTB-Token and explicit conditional metadata.
+  - GET returns only bounded metadata needed for per-entry CAS and safe clear-all.
+  - Use TDD with tmp_path, scratch vaults, and fixture clients only.
+constraints:
+  hard:
+    - Product edits occur only in /Users/walle-mini/Repos/Projects/features/duration-memory.
+    - Branch features/duration-memory exists and is verified before any product edit.
+    - Automatic staging and automatic commits are disabled; no commit occurs without a later explicit user request.
+    - If explicitly requested, stage only with git add -- <owned paths> from the verified feature worktree.
+    - Never run git add -A, stage foreign files, or stage or commit from main.
+    - The only checkout-like operation allowed is git worktree add for the approved feature worktree and branch.
+    - Persist only duration preferences, identity metadata, revisions, schema, and timestamps.
+    - Never persist plans, approvals, staged state, source bodies, free text, or tokens from upstream systems.
+    - Never touch live :8746, the real vault, Todoist, Calendar, source notes, or billed endpoints.
+    - Never reset, clean, pull, rebase, merge, push, or mutate foreign worktree or process state.
+    - Arbitrary git checkout is prohibited together with reset, clean, pull, rebase, merge, and push.
+    - Preserve today-only localStorage restore and date-rollover invalidation.
+    - Isolate durable state by resolved vault_root and canonical source identity.
+    - API values are non-negative integers divisible by 5; bool, fraction, and off-grid values fail.
+    - API validation never rounds, clamps, truncates, snaps, or otherwise coerces input.
+    - Missing, corrupt, degraded, and unsupported stores fail open for reads and fail closed for ordinary writes.
+    - Corrupt clear-all is allowed only after explicit confirmation and exact observed metadata CAS.
+    - Same-ID retries require equal intended state and an expected revision that has not advanced.
+    - Newer or unequal state requires explicit user reconfirmation before any new write.
+  soft:
+    - Extend app/duration_memory.py and established cache conventions rather than rewrite them.
+    - Use standard-library locking and filesystem primitives already valid on macOS.
+    - Keep one versioned cache, one stable sidecar lock, and narrow mutation routes.
+    - Retain absent-item preferences until item reset or clear-all; add no automatic expiry.
+  compatibility:
+    - Missing storage behaves like no remembered duration.
+    - Existing clients may omit duration-memory metadata and retain source-based behavior.
+    - Existing same-date tdtb-session-v2 blobs remain readable and date-scoped.
+    - Every accepted non-negative 5-minute value round-trips exactly.
+  security_requirements:
+    - Expose no route that lists all stored identities or raw cache contents.
+    - Require the existing session token for save, reset, and clear-all.
+    - Do not disclose absolute vault paths, raw corrupt bytes, tokens, or temp contents.
+    - Clear-all removes current, orphaned, tombstoned, and recognized temporary identity state.
+    - GET exposes no raw corrupt payload, absolute path, token, temp content, or bulk identity listing.
+
+architecture_snapshot:
+  current_lifecycle:
+    backend_duration_resolution:
+      entry: GET /plan-inputs in app/main.py
+      gap: Source-derived blocks do not consume the existing duration-memory seam.
+    duration_memory_seam:
+      file: app/duration_memory.py
+      gap: No production path, cross-process lock, deletion API, or versioned durable envelope.
+    frontend_context:
+      entry: ProductionRoot and tdtb-session-v2
+      gap: Explicit edits survive a same-day refresh only, not a new date, browser, or server.
+    durable_precedent:
+      files: app/deferrals.py and app/runstate.py
+      note: Existing cache patterns provide versioning and atomic-replace evidence, not full CAS safety.
+  target_boundary:
+    data_path: 00 - META/Cache/tdtb-duration-memory.json under the resolved vault_root
+    lock_path: 00 - META/Cache/.tdtb-duration-memory.lock under the same vault_root
+    schema:
+      version: 1
+      fields:
+        - epoch token rotated only by clear-all
+        - monotonic commit generation advanced by every committed mutation
+        - per-identity record with observable revision, duration, tombstone state, and bounded metadata
+      fingerprints:
+        entry_state: Hash of canonical duration-or-tombstone state; excludes revision and sensitive data.
+        store: Hash of exact durable bytes, or a bounded sentinel for a missing store.
+    read_path:
+      behavior: GET /plan-inputs overlays active records before projection without mutating duration storage.
+      output: Resolved values plus bounded store status, fingerprint, version, epoch, and CAS metadata.
+      entry_output: Canonical identity, current revision, state fingerprint, tombstone, and entry generation.
+      clear_all_output: Store generation, entry-set generation, fingerprint, version, and bounded status.
+      bounded_status: Distinguish missing, valid, corrupt, degraded, and unsupported without sensitive payloads.
+      allowed_existing_side_effect: Existing local digest_index behavior may remain if current tests prove it.
+      prohibited_side_effects: No duration-store write, migration, repair, deletion, billed call, or source write.
+    conditional_write:
+      mode: Per-entry CAS, never global-generation CAS for save or item reset.
+      save_request: Carry canonical identity, exact duration, observed epoch, and expected identity revision.
+      reset_request: Carry canonical identity, observed epoch, and expected identity revision.
+      save_preconditions: Match epoch token and expected revision for only the target identity.
+      reset_preconditions: Match epoch token and expected revision for only the target identity.
+      unrelated_ids: Serialize under the lock, re-read fresh state, merge, and never conflict.
+      same_id: First commit wins; later stale save or reset receives 409 with no mutation.
+      tombstone: Reset commits a new per-ID tombstone revision so delayed expected-null saves fail.
+      success_response: Return identity, revision, state fingerprint, tombstone, epoch, and generations.
+      conflict_response: Return 409 with expected and current revisions, state fingerprint, tombstone, and generations.
+    clear_all:
+      request: Carry observed epoch, store and entry-set generations, fingerprint, version, and store status.
+      supported_precondition: Match all observed store and entry-set metadata before mutation or cleanup.
+      corrupt_precondition: Match an exact observed corrupt-byte fingerprint and corrupt status.
+      stale_rejection: Any epoch, generation, fingerprint, or status mismatch returns 409 before cleanup.
+      commit: Write an empty envelope, advance generation, rotate epoch, and remove all records.
+      stale_writer: Prior-epoch save/reset and stale-generation clear-all return 409 without mutation.
+      later_save: A save committed after clear-all observation advances generation and blocks that stale clear.
+      corrupt_recovery: Confirmed clear-all replaces only the exact corrupt bytes previously observed.
+      repaired_race: A repaired or otherwise changed store rejects stale clear with 409 before cleanup.
+    client_conflict_policy:
+      unrelated_ids: No 409 is emitted because global generation is not a save precondition.
+      same_id: Re-fetch; retry only if current state equals intended state and expected revision has not advanced.
+      equal_state_retry: At most once, using the defined entry-state fingerprint and unchanged expected revision.
+      equal_state_result: The retry is idempotent and cannot advance, reverse, overwrite, or delete newer state.
+      newer_state: Stop, surface conflict, and require explicit reconfirmation before any new write.
+      delete_reset: Apply the same equality and revision rule; never erase a later save.
+      superseded_intent: Cancel retry and preserve the newer reset, clear-all, or edit intent.
+      forbidden_retry: Never retry ambiguous, newer-save, destructive, corrupt, repair, or clear-all intent.
+      stale_clear: Re-fetch state and require a new explicit clear confirmation; never auto-retry clear-all.
+    locking:
+      scope: Hold the stable sidecar lock across re-read, CAS, merge, durable write, and cleanup.
+      timeout: Two seconds measured by a monotonic clock.
+      read_timeout: Return source fallback with a bounded degradation warning.
+      mutation_timeout: Return retryable 503 and claim no durable success.
+    durability:
+      sequence: Lock, re-read, CAS, temp write, temp fsync, atomic replace, cleanup, parent fsync, acknowledge.
+      committed_state: Only the replaced data path after parent fsync is authoritative.
+      failed_ack: Never report success before both fsync boundaries complete.
+    recovery:
+      temp_promotion: Never promote any temp candidate.
+      owned_temp: The writer removes its unique uncommitted temp after failure while holding the lock.
+      orphan_temp: Under the lock, recognized namespace temps are uncommitted and safe to unlink.
+      unknown_file: Preserve files outside the exact recognized namespace and report a bounded warning.
+      newer_state: Re-read the durable path under lock; never replace or delete its newer generation.
+      corrupt_normal_write: Preserve corrupt or unsupported durable bytes and fail closed.
+      corrupt_clear_all: Validate fingerprint first, replace with empty state, clean exact temps, fsync parent.
+    deletion_evidence:
+      item_reset: Active duration is gone, tombstone revision is durable, and source fallback is returned.
+      clear_all: Empty envelope, new epoch, no records, no recognized temps, and parent fsync are evidenced.
+      fresh_run: A new server and browser show source labels only after reset or clear-all.
+
+research_digest:
+  relevant_files:
+    - path: app/requirements.txt
+      finding: Python 3.12 and fully pinned uv installation commands are repository-defined.
+    - path: frontend/package.json
+      finding: npm scripts define test, typecheck, mockup build, and production build gates.
+    - path: frontend/package-lock.json
+      finding: npm ci is reproducible, but Playwright is not yet a direct pinned dependency.
+    - path: app/duration_memory.py
+      finding: Stable identity and precedence exist, but production durable integration is absent.
+    - path: app/main.py
+      finding: GET /plan-inputs is the durable rehydration entry and must stay read-only.
+    - path: frontend/src/store/persist.ts
+      finding: Browser persistence is intentionally same-date and must remain independent.
+    - path: frontend/src/store/controller.ts
+      finding: Explicit edit intent and debounce ordering belong at this boundary.
+    - path: frontend/src/adapters/api.ts
+      finding: Existing token transport can carry narrow conditional mutations.
+    - path: frontend/src/ui/Queue.tsx
+      finding: Durable remembered, reset, clear-all, and fallback labels need distinct states.
+    - path: app/deferrals.py
+      finding: Versioned JSON and atomic replacement are established local cache patterns.
+  digest:
+    - Server-side vault persistence is required for cross-date and cross-browser duration memory.
+    - Per-entry CAS avoids false conflicts; epoch plus generation makes clear-all a global barrier.
+    - Tombstone revisions make reset order durable without retaining a duration value.
+    - Fresh-process proof needs pinned browser tooling and recorded OS-process boundaries.
+prior_decisions:
+  - decision: User memory outranks deterministic tag, native, preset, type, and default sources.
+    source: app/duration_memory.py and app/tests/test_duration_memory_contract.py
+  - decision: Display name alone is never a durable identity.
+    source: app/duration_memory.py
+  - decision: Same-date browser state never survives date rollover.
+    source: frontend/src/store/persist.ts
+  - decision: Vault caches enhance planning and must degrade to source reads.
+    source: app/deferrals.py and app/runstate.py
+reuse_notes:
+  - path: app/duration_memory.py
+    trust_level: Partial; stable identity and precedence are valid, persistence needs hardening.
+  - path: app/deferrals.py
+    trust_level: Trusted versioned-cache and atomic-replace precedent.
+  - path: frontend/src/adapters/api.ts
+    trust_level: Trusted session-token mutation transport precedent.
+
+replan:
+  reason: r4 critic blocked unsafe same-ID retry and incomplete GET metadata for safe clear-all.
+  changed_tasks:
+    - MEM-00
+    - MEM-01
+    - MEM-01A
+    - MEM-UI-DESIGN
+    - MEM-02
+    - MEM-03
+    - MEM-04A
+    - MEM-04B
+    - MEM-05
+  added_tasks: []
+  removed_tasks: []
+  preserved_acceptance_criteria:
+    - A remembered duration survives independent server and browser process lifetimes.
+    - Memory reloads on a later run without a billed call or a write to an upstream source.
+    - Persistence follows existing vault-root, stable-identity, and atomic-cache conventions.
+    - Corruption, partial writes, concurrency, isolation, privacy, retention, and deletion are covered.
+    - Existing same-date session restore and date-rollover safety behavior remain compatible.
+    - Fresh-run tests and required repository verification produce measurable evidence.
+  new_risks:
+    - Semantic equality can be underspecified and allow a stale retry to overwrite a newer same-ID save.
+    - A stale reset or clear-all can erase a later save if any observed generation or fingerprint is omitted.
+    - GET metadata can leak identities or corrupt bytes if bounded response fields are not enforced.
+    - Read handling can accidentally migrate or repair duration storage while reporting degraded status.
+  progress_signal: '9 tasks changed; 0 added; 0 removed; 4 same-ID race gates and 4 clear-all metadata gates.'
+
+open_questions: []
+assumptions:
+  - The user explicitly authorized this final derived plan and its new bounded replan budget.
+  - r4 remains immutable predecessor context; r5 is the execution front after validation.
+  - The exact worktree path is /Users/walle-mini/Repos/Projects/features/duration-memory.
+  - The user approved branch features/duration-memory despite the default codex/ convention.
+  - Durable memory applies only to assigned Todoist and vault items with stable identities.
+  - Values are non-negative integers divisible by 5; steppers may still move by 15 minutes.
+  - Per-entry tombstones may retain identity and revision metadata until clear-all.
+  - POSIX advisory locking is acceptable because the supported live runtime is macOS.
+  - Playwright 1.58.2 is pinned as a direct devDependency for reproducible browser evidence.
+
+pre_mortem:
+  overall_risk_level: high
+  critical_failure_modes:
+    - scenario: Unrelated identity saves conflict because a global generation is used as CAS.
+      likelihood: medium
+      impact: high
+      mitigation: Match only epoch and target-ID revision; merge fresh state under the lock.
+    - scenario: A delayed save recreates state after item reset or clear-all.
+      likelihood: medium
+      impact: high
+      mitigation: Use reset tombstones; clear-all CASes generation and rotates epoch.
+    - scenario: An automatic same-ID retry overwrites or deletes a newer save.
+      likelihood: medium
+      impact: critical
+      mitigation: Retry only equal state with unadvanced expected revision; otherwise require reconfirmation.
+    - scenario: Incomplete GET metadata lets stale clear-all erase a later or repaired store.
+      likelihood: medium
+      impact: critical
+      mitigation: CAS all observed generations, fingerprint, version, epoch, and status before mutation.
+    - scenario: A failed clear-all leaves durable bytes or stale remembered UI state.
+      likelihood: medium
+      impact: high
+      mitigation: Acknowledge only after fsync; apply fallback response and re-fetch with warning states.
+    - scenario: Recovery cleanup deletes a newer committed file or active writer candidate.
+      likelihood: low
+      impact: critical
+      mitigation: Hold one lock, re-read durable state, delete only exact uncommitted temp namespace files.
+    - scenario: Fresh-run evidence reuses a browser process, profile, or storage partition.
+      likelihood: medium
+      impact: high
+      mitigation: Pin Playwright, launch two OS processes, use distinct profiles, and assert empty stores.
+    - scenario: Verification mutates main, live :8746, the real vault, or an upstream source.
+      likelihood: low
+      impact: critical
+      mitigation: Use read-only git comparisons and scratch :8790 with instrumented zero-write counters.
+coordination_notes:
+  - MEM-00 is the sole initial task and gates every later task through a direct dependency.
+  - MEM-00 makes the worktree plan copy active and pins and bootstraps browser tooling before edits.
+  - MEM-01 is read-only; MEM-01A persists its accepted backend contract from orchestrator output.
+  - MEM-UI-DESIGN owns the durable UI contract; MEM-02 owns backend code and backend tests.
+  - MEM-03 owns UI code and UI tests; MEM-04A owns harnesses, full gates, builds, and readback.
+  - MEM-04B is read-only browser OS-process verification after all implementation is complete.
+  - MEM-05 is read-only final review and consumes backend and UI contracts plus all task outputs.
+
+git_policy:
+  automatic_staging: false
+  automatic_commit: false
+  commit_requires_explicit_user_request: true
+  allowed_worktree_creation: git worktree add for the approved feature worktree and branch only
+  staging_if_requested: git add -- <owned paths> from the verified feature worktree only
+  commit_verification_if_requested: git show --stat HEAD and verify only owned paths
+  prohibited:
+    - git add -A
+    - staging or committing from main
+    - staging foreign files
+    - arbitrary checkout, reset, clean, pull, rebase, merge, push, or foreign-state mutation
+
+read_only_output_contract:
+  applies_to:
+    - MEM-01
+    - MEM-04B
+    - MEM-05
+  schema:
+    status: completed | failed | needs_revision
+    findings: list of bounded findings with severity and criterion references
+    evidence_commands_results: list of read-only commands or scenarios with results and exit status
+    acceptance_criteria_results: list of criterion IDs with pass, fail, or blocked status and evidence
+    learn: list of reusable verified facts or empty list
+    blockers: list of unresolved blockers or empty list
+  persistence:
+    - The agent returns this structure to the orchestrator and writes no evidence file.
+    - The orchestrator persists it in the active plan task output and state before dependents run.
+    - Final review starts only after all upstream structured outputs are persisted and available.
+    - Implementers or a documentation writer may create only requested product tests or harness artifacts.
+
+executor_handoff:
+  entry_task: MEM-00
+  active_plan_after_gate:
+    worktree_root: /Users/walle-mini/Repos/Projects/features/duration-memory
+    relative_path: docs/plan/tdtb-persistent-memory-20260817-r5/plan.yaml
+  instructions:
+    - Start only MEM-00; no other task is unblocked in wave 0.
+    - After MEM-00, resolve every context file and artifact from the recorded feature worktree.
+    - Treat the main-worktree plan as transfer source only, never as the execution front after copy.
+    - Do not stage or commit automatically; a later explicit user request is required for any commit.
+    - If requested, use git add -- <owned paths> only in the verified feature worktree.
+    - After an explicitly requested commit, verify git show --stat HEAD contains only owned paths.
+    - Never run git add -A, stage foreign files, or stage or commit from main.
+    - Allow only git worktree add for approved creation; prohibit all arbitrary checkout operations.
+    - Stop if branch, base, plan hash, worktree path, or main-isolation evidence differs.
+
+verification_strategy:
+  bootstrap:
+    python:
+      - cd "$WORKTREE/app"
+      - uv venv --python 3.12 .venv
+      - VIRTUAL_ENV="$PWD/.venv" uv pip install -r requirements.txt
+      - .venv/bin/python --version
+    frontend:
+      - cd "$WORKTREE/frontend"
+      - npm ci
+      - npx playwright install chromium
+      - npx playwright --version
+    pinning:
+      - package.json and package-lock.json contain exact playwright 1.58.2 as a devDependency.
+      - The installed Playwright version and Chromium executable path are recorded.
+  automated_gates:
+    backend: cd "$WORKTREE" && app/.venv/bin/python -m pytest
+    frontend:
+      - cd "$WORKTREE/frontend" && npm test
+      - cd "$WORKTREE/frontend" && npm run typecheck
+      - cd "$WORKTREE/frontend" && npm run build:mockup
+      - cd "$WORKTREE/frontend" && npm run build:prod
+    bundles:
+      - Hash and read back generated mockup and production bundles after each matching build.
+  scratch_boundary:
+    - Use only new temporary vault and browser profile directories with scratch :8790.
+    - Record distinct server and browser PIDs for write and read runs.
+    - Assert empty localStorage, sessionStorage, IndexedDB, cache storage, and service workers.
+    - Instrument and record zero billed calls, zero live requests, and zero real source writes.
+  git_gates:
+    - Record status, branch, HEAD, worktree list, base commit, and path hashes before mutation.
+    - Run git diff --check on working-tree and base-to-worktree changes.
+    - Enumerate staged, unstaged, and untracked paths; reject paths outside the approved set.
+    - Compare with read-only refs; permit only approved worktree add and no arbitrary checkout or ref mutation.
+    - Confirm automatic staging and commit remain disabled unless a later user request authorizes a commit.
+    - Re-read AGENTS.md, the active plan, generated bundles, and evidence before final approval.
+
+tasks:
+  - id: MEM-00
+    title: Establish the active worktree and runnable toolchain
+    description: Create the sole execution front, copy the plan, pin tooling, and prove isolation.
+    wave: 0
+    agent: gem-devops
+    status: pending
+    covers:
+      - Dedicated worktree and branch creation
+      - Fresh Python and frontend dependency bootstrap
+      - Pinned browser tooling availability
+      - Active-plan transfer and executor handoff
+      - Main and foreign-state isolation evidence
+    depends_on: []
+    conflicts_with: []
+    context_files:
+      - path: AGENTS.md
+        description: Canonical worktree, mutation, and live-safety rules
+      - path: app/requirements.txt
+        description: Exact Python 3.12 uv bootstrap contract
+      - path: frontend/package-lock.json
+        description: Reproducible npm dependency boundary
+      - path: docs/plan/tdtb-persistent-memory-20260817-r5/plan.yaml
+        description: Active derived execution front
+    flags:
+      requires_design_validation: false
+      retries_used: 0
+      revision_reason: Derived revision requires a fresh isolation and bootstrap gate.
+    acceptance_criteria:
+      - Pre-mutation evidence records main HEAD, branch, index, status, worktrees, and owned-path hashes.
+      - Branch is exactly features/duration-memory at a recorded base commit.
+      - Worktree is exactly /Users/walle-mini/Repos/Projects/features/duration-memory.
+      - Creation uses git worktree add -b features/duration-memory <path> <base_commit>.
+      - Existing branch or path is reused only if branch, base, ownership, and cleanliness match.
+      - The plan is copied to the same relative worktree path before package or product changes.
+      - Receipt records source and worktree plan paths and matching transfer-time hashes.
+      - The worktree plan copy becomes the sole active execution front for every later task.
+      - Python bootstrap uses uv venv --python 3.12 .venv in app.
+      - Python install uses VIRTUAL_ENV="$PWD/.venv" uv pip install -r requirements.txt in app.
+      - package.json and package-lock.json pin direct devDependency playwright exactly to 1.58.2.
+      - Frontend bootstrap uses npm ci and installs Chromium before any product or test edit.
+      - Receipt records Node, npm, Playwright, and Chromium executable versions or paths.
+      - Main receives no app, frontend, package, test, plan, evidence, or bundle mutation.
+      - Main and worktree status, HEAD, index, and owned-path hashes prove isolation after bootstrap.
+      - Receipt records base commit, branch, path, plan hash, statuses, and exact bootstrap exit codes.
+      - Automatic staging and commit are disabled unless a later user request explicitly authorizes a commit.
+      - Any authorized staging uses git add -- <owned paths> only from the verified feature worktree.
+      - Any authorized commit is followed by git show --stat HEAD proving only owned paths were committed.
+      - Git worktree add is the sole checkout-like exception; arbitrary checkout operations are prohibited.
+    output_artifacts:
+      - docs/plan/tdtb-persistent-memory-20260817-r5/artifacts/MEM-00-worktree.yaml
+    verification:
+      - git worktree list --porcelain shows the main and exact feature roots.
+      - git -C "$WORKTREE" status --short --branch shows the expected isolated branch.
+      - app/.venv/bin/python --version reports Python 3.12 after dependency installation.
+      - npm ls --depth=0 and npx playwright --version succeed; no tests or builds run.
+    safety_constraints:
+      - Edit only the copied plan, receipt, and exact Playwright package and lock entries.
+      - Do not reset, clean, pull, rebase, merge, push, delete, or mutate foreign state.
+      - Never auto-stage or auto-commit, stage from main, run git add -A, or stage foreign files.
+      - Do not use checkout except the approved git worktree add creation operation.
+      - Stop on any branch, path, base, hash, ownership, or cleanliness mismatch.
+    handoff:
+      known_context:
+        - The user authorized this final derived plan after r4 exhausted its replan limit.
+        - The user approved the non-default features/duration-memory branch.
+      target_files:
+        - docs/plan/tdtb-persistent-memory-20260817-r5/plan.yaml
+        - docs/plan/tdtb-persistent-memory-20260817-r5/artifacts/MEM-00-worktree.yaml
+      constraints:
+        - All later reads and writes occur in the recorded worktree; no automatic staging or commit occurs.
+        - A later explicit commit request must use path-scoped staging and git show --stat HEAD verification.
+        - Later tasks consume the copied active plan and receipt from that worktree.
+        - Preserve all foreign staged, unstaged, untracked, process, and worktree state.
+    environment: development
+    requires_approval: false
+    devops_security_sensitive: true
+
+  - id: MEM-01
+    title: Review the storage, concurrency, deletion, and API contract
+    description: Issue read-only findings that remove shared-state and no-write ambiguity.
+    wave: 1
+    agent: gem-reviewer
+    status: pending
+    covers:
+      - Duration-only scope and exclusions
+      - Per-entry CAS and clear-all epoch ordering
+      - Locking, fsync, atomic replace, recovery, and deletion
+      - Strict 5-minute API validation and bounded failure contracts
+    depends_on:
+      - MEM-00
+    conflicts_with: []
+    context_files:
+      - path: app/duration_memory.py
+        description: Existing identity and precedence seam
+      - path: app/main.py
+        description: Production read and mutation entry points
+      - path: app/deferrals.py
+        description: Existing versioned atomic-cache convention
+      - path: frontend/src/store/persist.ts
+        description: Same-date browser persistence boundary
+    flags:
+      requires_design_validation: false
+      retries_used: 0
+      revision_reason: The r4 critic left same-ID retry and GET clear-all metadata blocking.
+    acceptance_criteria:
+      - Contract limits durable state to explicit duration preferences and bounded identity metadata.
+      - Contract fixes schema version 1, epoch token, commit generation, and per-ID revisions.
+      - Read and mutation schemas expose current per-ID revision and tombstone state to the client.
+      - Read and conflict schemas expose expected/current per-ID revision and a bounded state fingerprint.
+      - Save and reset requests carry canonical identity, observed epoch, and expected per-ID revision.
+      - Save and reset CAS only the epoch and target-ID revision, never global generation.
+      - Unrelated identity writes re-read and merge under the lock without a 409 conflict.
+      - Reset commits a tombstone revision; same-ID stale save or reset receives 409 without mutation.
+      - Every stale mutation returns deterministic 409 with current revision, tombstone, epoch, and generation.
+      - Clear-all CASes observed epoch plus global generation before any mutation or cleanup.
+      - A later save advances generation, so a stale clear-all receives 409 without mutation.
+      - Corrupt repair CASes exact observed byte fingerprint and status before replacement.
+      - Same-ID 409 retry occurs only when current state equals intended state and expected revision did not advance.
+      - Equality is exact bytes or one documented semantic canonicalization; the retry is idempotent and at most once.
+      - A newer or unequal state stops retry, surfaces conflict, and requires explicit user reconfirmation.
+      - Save, reset, and delete use the same retry rule; stale deletion cannot erase a later save.
+      - Retry is forbidden for ambiguous writes, newer saves, corrupt state, repair state, and clear-all.
+      - Stale clear-all is never auto-retried and requires re-fetch plus new explicit confirmation.
+      - Stable lock scope, two-second timeout, read fallback, and retryable mutation 503 are exact.
+      - Commit order is lock, re-read, CAS, temp fsync, replace, cleanup, parent fsync, success.
+      - Recovery never promotes a temp or overwrites or deletes a newer committed durable state.
+      - Exact recognized uncommitted temps may be deleted only under the stable lock.
+      - Normal writes preserve corrupt or unsupported durable bytes and fail closed.
+      - Corrupt clear validates fingerprint, replaces empty state, cleans exact temps, then fsyncs parent.
+      - Item reset and clear-all response, re-fetch, fallback, warning, and stale-label rules are exact.
+      - API rejects bool, fraction, negative, and non-multiple-of-5 values without coercion.
+      - GET no-write findings separate allowed current digest-index behavior from prohibited writes.
+      - GET exposes bounded store status, fingerprint, version, and all clear-all CAS inputs.
+      - GET exposes store and entry-set generations without listing stored identities or corrupt payloads.
+      - Clear-all carries all observed generations, fingerprint, version, epoch, and status.
+      - Any clear-all metadata mismatch returns deterministic 409 before mutation, cleanup, or repair.
+      - Missing, corrupt, degraded, and unsupported stores fail open for reads and fail closed for writes.
+      - Findings are captured only in the orchestrator task result for MEM-01A consumption.
+      - Result conforms to read_only_output_contract with all six fields populated, including empty lists.
+      - Orchestrator persistence in active plan state is complete before MEM-01A starts.
+    verification:
+      - Each baseline criterion maps to at least one contract row and dependent task criterion.
+      - Concurrency tables cover distinct IDs, same-ID save/save, save/reset, and save/clear-all.
+      - Recovery tables distinguish committed durable files, recognized temps, and unknown files.
+    safety_constraints:
+      - Read-only review only; do not write artifacts, edit files, stage paths, or run tests.
+      - Orchestrator persistence of the structured task result is required and is not a reviewer file write.
+      - Do not broaden scope or weaken the immutable baseline.
+      - Do not expose bulk identity listing, raw corrupt content, or absolute vault paths.
+    handoff:
+      known_context:
+        - Global generation remains audit order but is not a save or reset CAS precondition.
+        - Epoch plus generation is the clear-all barrier; tombstones are the reset barrier.
+      target_files: []
+      constraints:
+        - Return the read_only_output_contract structure for orchestrator persistence before MEM-01A.
+        - Preserve duration-only scope and all baseline acceptance criteria.
+    output_contract_ref: read_only_output_contract
+    requires_review: false
+    review_depth: full
+    review_security_sensitive: true
+
+  - id: MEM-01A
+    title: Persist the accepted backend contract
+    description: Convert MEM-01 findings into the durable contract consumed by implementation and review.
+    wave: 2
+    agent: gem-documentation-writer
+    status: pending
+    covers:
+      - Schema, API, concurrency, recovery, deletion, and no-write tables
+      - Traceability from reviewer findings to immutable baseline criteria
+    depends_on:
+      - MEM-00
+      - MEM-01
+    conflicts_with: []
+    context_files:
+      - path: docs/plan/tdtb-persistent-memory-20260817-r5/plan.yaml
+        description: Active feature-worktree plan and immutable baseline
+    flags:
+      requires_design_validation: false
+      retries_used: 0
+      revision_reason: Reviewer findings require a separate durable contract owner.
+    acceptance_criteria:
+      - Artifact incorporates every accepted MEM-01 finding without weakening the baseline.
+      - Tables define per-entry save/reset CAS and epoch-plus-generation clear-all CAS.
+      - Wire and API tables expose expected/current revision, state fingerprint, and exact CAS requests.
+      - Conflict tables define deterministic 409 fields, no mutation, re-fetch, and retry prohibitions.
+      - Retry tables permit only equal-state idempotence with an unadvanced expected revision.
+      - Retry tables require explicit reconfirmation for newer or unequal save, reset, or delete state.
+      - Corrupt repair requires exact observed fingerprint and status under the lock.
+      - Ordering covers stale rejection before cleanup and durable replacement before acknowledgment.
+      - Clear-all tables reject later-save and repaired-store races before any cleanup or replacement.
+      - GET criteria distinguish allowed existing digest-index writes from prohibited duration writes.
+      - GET tables define bounded status, version, fingerprint, store generation, and entry-set generation.
+      - GET tables prohibit raw corrupt payloads, absolute paths, tokens, and bulk stored-identity listings.
+      - Clear-all tables require every observed GET CAS field and reject any mismatch before mutation.
+      - Artifact maps schema, API, race, recovery, deletion, and error cases to dependent tasks.
+    output_artifacts:
+      - docs/plan/tdtb-persistent-memory-20260817-r5/artifacts/MEM-01-contract.yaml
+    safety_constraints:
+      - Write only the contract artifact in the feature worktree.
+      - Do not edit product, test, package, bundle, or main-worktree files.
+      - Use the MEM-01 orchestrator result as the authoritative review input.
+    handoff:
+      known_context:
+        - MEM-01 is read-only and returns findings through orchestrator plan state.
+        - Global generation is a clear-all CAS but not a save or reset CAS.
+      target_files:
+        - docs/plan/tdtb-persistent-memory-20260817-r5/artifacts/MEM-01-contract.yaml
+      constraints:
+        - Later tasks consume this artifact only from the recorded feature worktree.
+        - Preserve all six immutable baseline acceptance criteria.
+    task_type: documentation
+    audience: developers
+    coverage_matrix:
+      - Baseline to schema, API, race, recovery, deletion, and no-write rows
+    target_path: docs/plan/tdtb-persistent-memory-20260817-r5/artifacts/MEM-01-contract.yaml
+
+  - id: MEM-UI-DESIGN
+    title: Define reset, clear-all, fallback, and conflict UI states
+    description: Publish the accessible UI contract for durable labels, destructive actions, and failures.
+    wave: 3
+    agent: gem-designer
+    status: pending
+    covers:
+      - Remembered and source-resolved labels
+      - Per-item reset and vault-scoped clear-all confirmation
+      - Pending, conflict, fallback, re-fetch failure, and retry states
+      - Keyboard, focus, announcement, and stale-label behavior
+    depends_on:
+      - MEM-00
+      - MEM-01A
+    conflicts_with: []
+    context_files:
+      - path: frontend/src/ui/Queue.tsx
+        description: Current duration control and source-label surface
+      - path: frontend/src/ui/BlockEditor.tsx
+        description: Exact 5-minute editor and 15-minute steppers
+      - path: frontend/src/store/controller.ts
+        description: Explicit edit and refresh lifecycle
+    flags:
+      requires_design_validation: true
+      retries_used: 0
+      revision_reason: Clear-all and fallback behavior require design validation before implementation.
+    acceptance_criteria:
+      - Contract distinguishes source, remembered, saving, reset, clearing, conflict, and failed states.
+      - Reset and clear-all have distinct labels, scopes, confirmations, and disabled states.
+      - Clear-all states that current, absent, orphaned, and tombstoned entries are removed.
+      - Reset success applies server fallback immediately and removes the remembered label.
+      - Clear-all success applies returned source fallbacks and removes every remembered label.
+      - Re-fetch failure retains authoritative fallback, shows a bounded warning, and offers retry.
+      - Mutation failure retains pre-action durable UI state and never claims deletion.
+      - Conflict behavior never retries an intent superseded by a newer edit, reset, or clear-all.
+      - Equal-state idempotent retry is distinct from a newer-state conflict that requires reconfirmation.
+      - Reset or clear-all conflict never erases a later save and never auto-retries destructive intent.
+      - Keyboard flow, focus return, live announcements, and destructive semantics are specified.
+      - Exact 5-minute entry remains unchanged; invalid values display errors without snapping.
+      - UI contract is persisted at the declared path and is directly consumable by MEM-03.
+    output_artifacts:
+      - docs/plan/tdtb-persistent-memory-20260817-r5/artifacts/MEM-UI-DESIGN-contract.md
+    verification:
+      - State table covers success, 409, 503, network failure, and re-fetch failure.
+      - Accessibility checks cover keyboard-only operation, focus, names, descriptions, and announcements.
+      - Each destructive state names the authoritative value and remembered-label outcome.
+    safety_constraints:
+      - Do not edit product files or implement interactions in this task.
+      - Keep the surface duration-memory-only; add no memory browser or general reset feature.
+      - Do not change date rollover, sequence, approval, shadow, or live-arming UX.
+    handoff:
+      known_context:
+        - No DESIGN.md exists; current components are the repository visual evidence.
+        - Consume MEM-01-contract.yaml from the feature worktree for exact server semantics.
+      target_files:
+        - docs/plan/tdtb-persistent-memory-20260817-r5/artifacts/MEM-UI-DESIGN-contract.md
+      constraints:
+        - Define measurable states only; formatting ownership remains with this designer task.
+        - MEM-03 must implement this artifact without broadening it.
+    requires_review: false
+    review_depth: full
+    review_security_sensitive: false
+
+  - id: MEM-02
+    title: Implement the vault-scoped duration-memory backend
+    description: Integrate durable reads and race-safe save, reset, and clear-all mutations.
+    wave: 3
+    agent: gem-implementer
+    status: pending
+    covers:
+      - Versioned durable envelope and vault isolation
+      - Per-entry CAS, tombstones, and clear-all epoch barriers
+      - Stable locking, durability, corruption, and temp recovery
+      - Plan-input overlay and strict mutation API validation
+    depends_on:
+      - MEM-00
+      - MEM-01A
+    conflicts_with: []
+    context_files:
+      - path: app/duration_memory.py
+        description: Extend the stable-ID and duration-precedence seam
+      - path: app/main.py
+        description: Integrate read-only plan inputs and narrow mutation routes
+      - path: app/tests/test_duration_memory_contract.py
+        description: Existing contract tests and new durable behavior boundary
+      - path: app/tests/test_main_api.py
+        description: Token, validation, and route contract coverage
+    flags:
+      requires_design_validation: false
+      retries_used: 0
+      revision_reason: ''
+    acceptance_criteria:
+      - Cache and lock paths derive from each resolved vault_root and cannot cross vault scopes.
+      - Version 1 round-trips epoch, generation, identity, exact value or tombstone, revision, and metadata.
+      - Plan-input and mutation responses expose expected/current revision, state fingerprint, and tombstone.
+      - Missing store loads empty; malformed, flat-map, and unsupported stores are not migrated.
+      - GET overlays memory without writing, migrating, repairing, or deleting duration storage.
+      - GET performs no upstream source write or billed call; current digest-index behavior may remain.
+      - Tests identify allowed existing digest-index writes separately from prohibited write counters.
+      - GET exposes bounded store status, fingerprint, version, epoch, and store and entry-set generations.
+      - GET entry metadata exposes only identity, revision, state fingerprint, tombstone, and entry generation.
+      - GET exposes no corrupt payload, absolute path, token, temp content, or bulk identity inventory.
+      - Save and reset match epoch plus target-ID revision only; global generation is not CAS.
+      - Save and reset require expected revision and return the new revision and tombstone state on success.
+      - Two concurrent distinct-ID saves both commit and preserve both values without 409.
+      - Same-ID save/save and save/reset races yield one commit and one stale 409.
+      - Stale save returns 409 with expected/current revision, state fingerprint, tombstone, and generations.
+      - Equal-state retry is allowed only when intended state matches and expected revision has not advanced.
+      - Newer or unequal state stops retry and requires re-fetch plus explicit user reconfirmation.
+      - Reset writes a tombstone revision and returns the current source-resolved fallback.
+      - Reset and delete conflicts use the same equality rule and cannot erase a later save.
+      - Clear-all carries epoch, store and entry-set generations, fingerprint, version, and status.
+      - Clear-all matches every observed field before cleanup, replacement, repair, or temp deletion.
+      - A save committed after clear observation makes that clear stale and returns 409 unchanged.
+      - Corrupt clear-all CASes exact observed byte fingerprint and status before repair.
+      - A repaired-store race makes stale corrupt clear-all return 409 before cleanup or replacement.
+      - Clear-all writes empty state, advances generation, rotates epoch, and invalidates old writers.
+      - Stable lock covers re-read, CAS, merge, temp write, replacement, cleanup, and fsync.
+      - Lock wait uses a two-second monotonic timeout; reads fall back and mutations return 503.
+      - Success follows temp fsync, atomic replace, parent fsync, and no earlier acknowledgment.
+      - Recovery never promotes temps and never replaces or deletes a newer committed durable file.
+      - Recognized uncommitted temps are removed only under the lock; unknown files are preserved.
+      - Normal writes byte-preserve corrupt or unsupported stores and fail closed with bounded warnings.
+      - Corrupt clear validates fingerprint, replaces empty state, cleans exact temps, then fsyncs parent.
+      - Save, reset, and clear-all require X-TDTB-Token and exact conditional metadata.
+      - API rejects bool, fraction, negative, and off-grid values without coercion or disk mutation.
+      - Tests cover crashes, failed fsync or replace, stale writers, isolation, deletion, and recovery.
+      - Tests cover same-ID save/delete, stale save, stale clear-all, distinct-ID saves, and repaired-store races.
+      - Tests prove newer-save races stop save, reset, and delete retries without mutation.
+      - Tests prove equal-state save and reset retries are bounded, idempotent, and revision-safe.
+      - Tests prove GET metadata is sufficient for valid clear-all and stale metadata rejects unchanged.
+      - Tests snapshot duration-store bytes across GET for missing, valid, corrupt, degraded, and unsupported states.
+      - No backend path calls billed endpoints or writes Todoist, Calendar, source notes, or the real vault.
+    output_artifacts:
+      - docs/plan/tdtb-persistent-memory-20260817-r5/evidence/MEM-02-backend.json
+    verification:
+      - Focused backend tests trace every MEM-01 schema, API, race, durability, and recovery row.
+      - Multiprocess tests use distinct processes and scratch vaults, not module reloads or TestClient alone.
+      - Disk snapshots prove old-or-complete-new JSON and exact durable deletion outcomes.
+    safety_constraints:
+      - Edit only after MEM-00 proves the exact branch and worktree.
+      - Use TDD and scratch or tmp_path state only.
+      - Do not make GET /plan-inputs persist, migrate, repair, delete, or call upstream sources.
+      - Do not expose a bulk memory-listing API or store excluded product state.
+      - Bound metadata and never expose corrupt payloads, absolute paths, tokens, or identity inventories.
+    handoff:
+      known_context:
+        - Consume the worktree plan, MEM-00 receipt, and MEM-01 contract before implementation.
+        - Global generation is retained for order and audit, not unrelated-write CAS.
+        - No production persistent caller requires legacy flat-map migration.
+      target_files:
+        - app/duration_memory.py
+        - app/main.py
+        - app/tests/test_duration_memory_contract.py
+        - app/tests/test_durations.py
+        - app/tests/test_main_api.py
+      constraints:
+        - Extend existing identity and precedence behavior rather than replace it.
+        - Preserve exact 5-minute values and reject all API coercion.
+        - Read and write only under the MEM-00 recorded feature worktree.
+    requires_review: true
+    review_depth: full
+    review_security_sensitive: true
+
+  - id: MEM-03
+    title: Implement durable duration edits, reset, and clear-all UI
+    description: Connect explicit user intents to conditional APIs and authoritative fallback states.
+    wave: 4
+    agent: gem-implementer
+    status: pending
+    covers:
+      - Wire projection of durable source, epoch, generation, per-ID revision, and tombstone
+      - Explicit save, item reset, clear-all, and latest-intent ordering
+      - Source fallback, re-fetch failure, stale-label removal, and retry behavior
+      - Existing same-date session compatibility
+    depends_on:
+      - MEM-00
+      - MEM-01A
+      - MEM-02
+      - MEM-UI-DESIGN
+    conflicts_with: []
+    context_files:
+      - path: frontend/src/adapters/wire.ts
+        description: Stable identity and assigned-item projection
+      - path: frontend/src/adapters/api.ts
+        description: Token-guarded mutation transport
+      - path: frontend/src/store/controller.ts
+        description: Debounce and latest-intent ownership
+      - path: frontend/src/store/persist.ts
+        description: Today-only persistence boundary to preserve
+      - path: frontend/src/ui/Queue.tsx
+        description: Durable label, reset, and clear-all interaction surface
+    flags:
+      requires_design_validation: false
+      retries_used: 0
+      revision_reason: Implementation follows the validated UI contract.
+    acceptance_criteria:
+      - A server-remembered row renders as remembered before any current-session edit.
+      - Explicit save sends canonical identity, exact value, epoch, and target-ID expected revision.
+      - Wire state exposes expected/current revision, state fingerprint, tombstone, and entry generation.
+      - Wire state exposes bounded store status, fingerprint, version, epoch, and clear-all generations.
+      - Initial load, restore, source refresh, and capacity refresh send no durable mutation.
+      - Distinct-ID saves do not retry or surface false conflicts from global generation changes.
+      - Same-ID 409 re-fetches and retries at most once only for equal state and unadvanced expected revision.
+      - Newer or unequal state surfaces conflict and requires explicit user reconfirmation before a write.
+      - Client applies the same rule to save, reset, and delete; stale deletion cannot erase a later save.
+      - Client never retries ambiguous, newer-save, corrupt, repair, or clear-all intents.
+      - Reset cancels queued saves and prevents any stale in-flight save from recreating the value.
+      - Reset success applies response fallback, removes remembered label, then re-fetches inputs.
+      - Clear-all success applies returned fallbacks, clears all remembered labels, then re-fetches.
+      - Clear-all sends observed epoch, store and entry-set generations, fingerprint, version, and status.
+      - Any stale or mismatched clear-all metadata surfaces deterministic conflict without deletion.
+      - Stale clear-all re-fetches state and requires a new explicit confirmation; it is never auto-retried.
+      - Re-fetch failure preserves response fallbacks, shows a warning, and offers an explicit retry.
+      - Reset or clear failure leaves durable UI state intact and never claims deletion.
+      - Clear-all confirmation names vault scope and current, absent, orphaned, and tombstoned entries.
+      - A stale prior-epoch save cannot recreate state after clear-all.
+      - Same-date restore, date rollover, shadow, approval, sequence, and live arming remain unchanged.
+      - Existing fixtures without memory metadata retain source behavior.
+      - Exact 5-minute values persist unchanged; invalid values show errors and make no API call.
+      - UI behavior matches the complete MEM-UI-DESIGN state and accessibility contract.
+    output_artifacts:
+      - docs/plan/tdtb-persistent-memory-20260817-r5/evidence/MEM-03-frontend.json
+    verification:
+      - Controller tests cover newer-save races, equal-state idempotence, reconfirmation, and stale deletion.
+      - API and wire tests prove complete bounded GET and clear-all metadata and no load-time writes.
+      - UI tests prove fallback retention, stale-label removal, failure states, focus, and announcements.
+    safety_constraints:
+      - Edit only in the MEM-00 worktree after MEM-02 and MEM-UI-DESIGN complete.
+      - Never persist include, placement, sequence, approval, shadow, token, or source content.
+      - Never round, clamp, truncate, or snap invalid exact input into an accepted value.
+      - Do not contact live :8746 or any real source during development or verification.
+    handoff:
+      known_context:
+        - Consume both backend and UI contracts only from the feature worktree.
+        - Assigned rows already carry stable Todoist ID or vault path identity fields.
+      target_files:
+        - frontend/src/model/types.ts
+        - frontend/src/adapters/adapter.ts
+        - frontend/src/adapters/api.ts
+        - frontend/src/adapters/wire.ts
+        - frontend/src/store/controller.ts
+        - frontend/src/store/store.ts
+        - frontend/src/store/persist.ts
+        - frontend/src/ui/Queue.tsx
+        - frontend/src/store/controller.test.ts
+        - frontend/src/adapters/api.test.ts
+        - frontend/src/adapters/wire.test.ts
+        - frontend/src/ui/feedback10.test.tsx
+      constraints:
+        - Server responses are authoritative for reset and clear-all fallback.
+        - Retry only equal intended state with unchanged expected revision and cap retry at one.
+        - Require explicit reconfirmation for newer or unequal state, including reset and delete.
+        - Never retry ambiguous, superseded, newer-save, corrupt, repair, or clear-all intents.
+    requires_review: true
+    review_depth: full
+    review_security_sensitive: false
+
+  - id: MEM-04A
+    title: Implement verification harnesses and complete repository gates
+    description: Own test and harness edits, backend race proof, full gates, builds, and bundle readback.
+    wave: 5
+    agent: gem-implementer
+    status: pending
+    covers:
+      - Scratch-only backend process and concurrency harnesses
+      - Browser OS-process harness implementation without browser verdict ownership
+      - Concurrency, recovery, clear-all, fallback, and durable deletion scenarios
+      - Full tests, builds, generated-bundle readback, and path isolation
+    depends_on:
+      - MEM-00
+      - MEM-01A
+      - MEM-UI-DESIGN
+      - MEM-02
+      - MEM-03
+    conflicts_with: []
+    context_files:
+      - path: app/requirements.txt
+        description: Exact uv and Python 3.12 bootstrap source
+      - path: frontend/package.json
+        description: Frontend scripts and exact Playwright pin target
+      - path: frontend/package-lock.json
+        description: npm ci and Playwright lock reproducibility
+      - path: frontend/src/adapters/scratch.integration.test.ts
+        description: Existing scratch integration convention
+      - path: AGENTS.md
+        description: Required test, build, scratch, and live-safety gates
+    flags:
+      requires_design_validation: false
+      retries_used: 0
+      revision_reason: Preserve r4 fresh-process, full-gate, and final build evidence ownership.
+    acceptance_criteria:
+      - Harnesses encode both MEM-01 backend and MEM-UI-DESIGN contracts without live dependencies.
+      - Distinct-ID races preserve both values; same-ID races reject one stale writer.
+      - Same-ID save/delete proves one commit and one 409 with current observable revision and tombstone.
+      - Stale save proves no overwrite and a deterministic 409 carrying current version state.
+      - Newer-save races prove stale save, reset, and delete retries stop without mutation.
+      - Equal-state save and reset retries prove one bounded idempotent result without revision reversal.
+      - Save then stale clear-all rejects the clear by generation and preserves the later save.
+      - Prior-epoch save after committed clear-all returns 409 and cannot recreate any entry.
+      - Corrupt repair rejects changed fingerprint or status before cleanup or replacement.
+      - Repaired-store races reject stale clear before cleanup and preserve the repaired state exactly.
+      - Lock timeout, fsync failure, replace failure, crash, corruption, and temp recovery are covered.
+      - GET assertions separate allowed current digest-index behavior from prohibited duration writes.
+      - GET assertions prove zero duration migration, repair, deletion, source write, and billed call.
+      - GET metadata provides every observed input needed for a successful conditional clear-all.
+      - Stale store or entry generation, fingerprint, version, epoch, or status rejects clear-all unchanged.
+      - GET response inspection proves bounded status and no paths, tokens, corrupt bytes, or identity listing.
+      - Item reset and clear-all prove durable source fallback and stale-label removal.
+      - Invalid bool, fraction, negative, and off-grid values never mutate disk.
+      - Browser harness is runnable read-only by MEM-04B with external scratch path inputs.
+      - Backend app/.venv/bin/python -m pytest passes from the feature worktree.
+      - Frontend npm test, typecheck, build:mockup, and build:prod pass from frontend.
+      - Generated mockup and production bundles are hashed and read back after matching builds.
+      - Git evidence enumerates staged, unstaged, and untracked approved paths without git add -A.
+      - Verification does not stage or commit; automatic staging and automatic commit remain disabled.
+      - Evidence records exact commands, exit codes, counters, hashes, and contract traceability.
+      - Evidence includes pre/post byte hashes proving GET leaves duration storage unchanged in every store state.
+    output_artifacts:
+      - docs/plan/tdtb-persistent-memory-20260817-r5/evidence/MEM-04A-verification.json
+    verification:
+      - WORKTREE=/Users/walle-mini/Repos/Projects/features/duration-memory for every command.
+      - app/.venv/bin/python -m pytest runs from WORKTREE.
+      - npm test, npm run typecheck, npm run build:mockup, and npm run build:prod run in frontend.
+      - Generated bundle manifests and files are read and hashed after each corresponding build.
+      - git diff --check covers working-tree and base-to-worktree changes.
+      - Staged, unstaged, and untracked paths are enumerated and checked against approved paths.
+    safety_constraints:
+      - Use scratch :8790, temporary vaults, fixture sources, and temporary profiles only.
+      - Do not contact or restart :8746 and do not read or write the real vault.
+      - Do not send billed sequence, adjust, commit, Todoist, Calendar, or source-write requests.
+      - Do not claim the independent browser OS-process verdict; MEM-04B owns that proof.
+      - Do not reset, clean, pull, rebase, merge, push, or alter main or foreign state.
+      - Do not checkout, stage, or commit; the worktree-add exception was owned only by MEM-00.
+    handoff:
+      known_context:
+        - Consume both backend and UI contract artifacts from the feature worktree.
+        - MEM-00 already pinned and bootstrapped Playwright before product edits.
+      target_files:
+        - frontend/package.json
+        - frontend/package-lock.json
+        - app/tests/test_duration_memory_contract.py
+        - app/tests/test_main_api.py
+        - frontend/src/store/controller.test.ts
+        - frontend/src/adapters/scratch.integration.test.ts
+        - frontend/scripts/duration_memory_scratch.py
+        - frontend/scripts/duration_memory_fresh_browser.mjs
+        - docs/plan/tdtb-persistent-memory-20260817-r5/evidence/
+      constraints:
+        - Evidence and harnesses must be reproducible from the recorded feature worktree.
+        - Harness edits remain test-only and are included in path-isolation review.
+    requires_review: true
+    review_depth: full
+    review_security_sensitive: true
+
+  - id: MEM-04B
+    title: Verify independent browser and server OS-process durability
+    description: Run the completed browser scenario read-only and return process-boundary findings.
+    wave: 6
+    agent: gem-browser-tester
+    status: pending
+    covers:
+      - Separate browser and server OS-process proof
+      - Clean browser profiles and same-vault rehydration
+      - Cross-vault isolation, reset, clear-all, and zero-write counters
+    depends_on:
+      - MEM-00
+      - MEM-01A
+      - MEM-UI-DESIGN
+      - MEM-02
+      - MEM-03
+      - MEM-04A
+    conflicts_with: []
+    context_files:
+      - path: docs/plan/tdtb-persistent-memory-20260817-r5/artifacts/MEM-01-contract.yaml
+        description: Backend process, deletion, and no-write contract
+      - path: docs/plan/tdtb-persistent-memory-20260817-r5/artifacts/MEM-UI-DESIGN-contract.md
+        description: UI fallback, label, failure, and accessibility contract
+      - path: frontend/scripts/duration_memory_fresh_browser.mjs
+        description: Implementer-owned browser OS-process harness
+      - path: docs/plan/tdtb-persistent-memory-20260817-r5/evidence/MEM-04A-verification.json
+        description: Implementer gate and harness-readiness evidence
+    flags:
+      requires_design_validation: false
+      retries_used: 0
+      revision_reason: Browser tester is restricted to post-implementation read-only verification.
+    acceptance_criteria:
+      - Server A and Server B are separate OS processes with distinct PIDs on scratch :8790.
+      - Browser A and Browser B are separate OS processes with distinct PIDs and profiles.
+      - Browser A and Server A exit before Browser B and Server B begin.
+      - Both profiles start with empty localStorage, sessionStorage, IndexedDB, caches, and workers.
+      - Browser A saves an exact non-15-minute 5-minute value through explicit user intent.
+      - Browser B and Server B rehydrate that value from the same scratch vault only.
+      - A different scratch vault with the same identity never observes the value.
+      - Reset and clear-all survive new processes and show source fallback without remembered labels.
+      - Stale clear-all cannot erase a later save; stale prior-epoch save cannot recreate cleared state.
+      - A newer same-ID save blocks stale reset or delete and requires visible explicit reconfirmation.
+      - An equal-state conflict completes only through the bounded idempotent retry path.
+      - Clear-all uses metadata from GET and any stale observed field preserves the later state.
+      - Evidence reports zero billed calls, real source writes, and live :8746 requests.
+      - Findings record commands, PIDs, profile paths, storage checks, counters, and observed outcomes.
+      - Findings are returned in orchestrator task output; no repository file is changed.
+      - Result conforms to read_only_output_contract with all six fields populated, including empty lists.
+      - Orchestrator persists the result in active plan state before MEM-05 starts.
+    verification:
+      - WORKTREE is the exact MEM-00 path and all scenario inputs are new temporary directories.
+      - The pinned Playwright and Chromium installed by MEM-00 are used without dependency changes.
+      - Browser findings trace both durable backend and UI contract rows.
+    safety_constraints:
+      - Read-only repository verification only; do not edit code, tests, harnesses, packages, or evidence.
+      - Orchestrator persistence of the structured task result is required and is not a tester file write.
+      - Use scratch :8790, fixture sources, temporary vaults, and new profiles only.
+      - Do not contact or restart :8746 or read or write the real vault or upstream sources.
+      - Do not send billed sequence, adjust, commit, Todoist, Calendar, or source-write requests.
+      - Do not stage, commit, install, repair, or alter main, feature, or foreign worktree state.
+    handoff:
+      known_context:
+        - MEM-04A owns all harness implementation and automated repository gates.
+        - Orchestrator task output is the durable browser-verification result consumed by MEM-05.
+      target_files: []
+      constraints:
+        - Execute only the separate browser OS-process scenario and return the structured result.
+        - Any harness defect returns needs_revision to MEM-04A; do not repair it.
+    output_contract_ref: read_only_output_contract
+    requires_review: false
+    review_depth: full
+    review_security_sensitive: true
+
+  - id: MEM-05
+    title: Perform final full shared-state and main-isolation review
+    description: Gate completion on the immutable baseline, security, evidence, git isolation, and main diff.
+    wave: 7
+    agent: gem-reviewer
+    status: pending
+    covers:
+      - Immutable baseline acceptance criteria
+      - Shared-state concurrency, deletion, recovery, and security
+      - Fresh-process, full test, build, bundle, and zero-write evidence
+      - Read-only comparison against main and approved path isolation
+    depends_on:
+      - MEM-00
+      - MEM-01
+      - MEM-01A
+      - MEM-UI-DESIGN
+      - MEM-02
+      - MEM-03
+      - MEM-04A
+      - MEM-04B
+    conflicts_with: []
+    context_files:
+      - path: docs/plan/tdtb-persistent-memory-20260817-r5/plan.yaml
+        description: Active derived plan and immutable baseline
+      - path: docs/plan/tdtb-persistent-memory-20260817-r5/evidence/
+        description: Process, test, build, bundle, git, and safety evidence
+      - path: AGENTS.md
+        description: Canonical safety and completion rules
+    flags:
+      requires_design_validation: false
+      retries_used: 0
+      revision_reason: Final full gate is mandatory for security and cross-process shared state.
+    acceptance_criteria:
+      - Review traces every immutable baseline criterion to implementation, tests, and fresh evidence.
+      - Review confirms durable scope contains only duration preferences and bounded metadata.
+      - Review confirms vault-root and stable-identity isolation with no display-name fallback.
+      - Review confirms per-entry CAS prevents unrelated conflicts and rejects stale same-ID writers.
+      - Review confirms wire and API expose expected/current revision, fingerprint, tombstone, and generations.
+      - Review confirms 409 responses return current version state and never silently overwrite or delete.
+      - Review confirms equal-state retry is bounded, idempotent, and requires an unadvanced expected revision.
+      - Review confirms newer or unequal state requires explicit reconfirmation before any new write.
+      - Review confirms retries exclude ambiguous, newer-save, corrupt, repair, and clear intents.
+      - Review confirms tombstones order reset and epoch plus generation CAS orders clear-all.
+      - Review confirms a stale clear-all cannot erase a later save or changed corrupt store.
+      - Review confirms repaired-store races reject stale clear before cleanup and preserve repaired state.
+      - Review confirms two-second lock bounds and fsync, atomic replace, and acknowledgment order.
+      - Review confirms recovery never promotes temps or overwrites or deletes newer committed state.
+      - Review confirms item reset and clear-all remove values durably and clear stale UI labels.
+      - Review confirms source response fallback and re-fetch failure behavior match both contracts.
+      - Review confirms exact 5-minute values survive fresh server and clean browser lifetimes.
+      - Review confirms bool, fractions, negatives, and off-grid values fail without coercion.
+      - Review confirms exact uv, npm, Playwright, and Chromium bootstrap is reproducible.
+      - Review confirms all backend and frontend commands passed and bundles were read back.
+      - Review confirms zero billed calls, zero real source writes, and no live :8746 requests.
+      - Review confirms GET allows only proven current digest-index behavior, not duration/source writes.
+      - Review confirms GET exposes bounded status and complete store, entry-set, and fingerprint CAS metadata.
+      - Review confirms GET exposes no corrupt payload, path, token, temp content, or bulk identity listing.
+      - Review confirms clear-all carries every observed GET CAS field and rejects any mismatch unchanged.
+      - Review confirms GET byte hashes prove no duration-store migration, repair, deletion, or write.
+      - Review records git status, staged, unstaged, untracked, and git diff --check results.
+      - Review compares feature worktree with read-only main and merge-base refs without modifying main.
+      - Review rejects any changed path outside approved product, test, package, plan, evidence, or bundle paths.
+      - Review confirms no automatic staging or commit and no git add -A or foreign-file staging.
+      - Review confirms main and all foreign worktrees, branches, indexes, and processes are unchanged.
+      - Review reports no unresolved high-severity security, privacy, isolation, or regression finding.
+      - Final findings and baseline traceability are returned only in orchestrator task output.
+      - Result conforms to read_only_output_contract with all six fields populated, including empty lists.
+      - Orchestrator persists the final structured result in active plan state before completion.
+    verification:
+      - Re-read AGENTS.md, worktree plan, both contracts, task outputs, evidence, and bundles.
+      - Run read-only git status and diff checks in both main and feature worktree.
+      - Compare main...HEAD, merge-base...HEAD, working-tree diff, index diff, and untracked paths.
+      - Confirm only approved git worktree add occurred; no arbitrary checkout or prohibited git mutation occurred.
+    safety_constraints:
+      - Read-only review; do not write artifacts or modify code, tests, packages, bundles, or main.
+      - Orchestrator persistence of the structured task result is required and is not a reviewer file write.
+      - Any baseline change is a decision blocker and requires a bounded replan or escalation.
+      - Any missing process, deletion, build, bundle, git, or zero-write evidence blocks approval.
+    handoff:
+      known_context:
+        - This final derived plan has revision 0, replan_count 0, and max_replans 2.
+        - r4 remains historical and cannot resume as the execution front.
+      target_files: []
+      constraints:
+        - Return the read_only_output_contract verdict with baseline traceability.
+        - Do not weaken acceptance criteria or approve with unresolved high-severity findings.
+    output_contract_ref: read_only_output_contract
+    requires_review: false
+    review_depth: full
+    review_security_sensitive: true
