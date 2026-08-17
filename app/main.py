@@ -51,6 +51,7 @@ import tdtb_gather as gather  # noqa: E402  (path-shimmed import, see inventory.
 import config_reader  # noqa: E402
 import day_semantics  # noqa: E402
 import deferrals  # noqa: E402
+import duration_memory  # noqa: E402
 import runstate  # noqa: E402
 import judgment  # noqa: E402
 import sequence  # noqa: E402
@@ -371,6 +372,37 @@ class CommitRequest(BaseModel):
     overlap_grants: list[dict[str, Any]] = Field(default_factory=list)
     pinned_rows: list[dict[str, Any]] = Field(default_factory=list)
     planning_config_fingerprint: str = ""
+
+
+class DurationMemoryRequest(BaseModel):
+    """/duration-memory/reset body: one canonical source identity."""
+
+    identity: str
+
+
+class DurationSaveRequest(BaseModel):
+    """/duration-memory/save body (FT-01): one canonical identity + strict
+    minutes.
+
+    ``minutes`` is a ``StrictInt`` so bools, floats/fractions, and strings
+    are rejected at the JSON boundary; the grid rule (integer >= 0 divisible
+    by 5) is validated here and re-checked by ``duration_memory.save_memory``
+    before any cache access — a rejected value never mutates the cache."""
+
+    identity: str
+    minutes: StrictInt
+
+    @field_validator("minutes")
+    @classmethod
+    def _minutes_grid(cls, value: int) -> int:
+        if isinstance(value, bool):
+            raise ValueError("minutes must be an integer")
+        if value < 0 or value % duration_memory.DURATION_STEP_MINUTES != 0:
+            raise ValueError(
+                "minutes must be a nonnegative integer "
+                f"divisible by {duration_memory.DURATION_STEP_MINUTES}"
+            )
+        return value
 
 
 class RuntimeActionRequest(BaseModel):
@@ -1073,6 +1105,15 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
                 row, presets, fm_by_path.get(row.get("path"))
             )
 
+        # FT-01: remembered-duration overlay — a valid vault-scoped remembered
+        # value wins over the source-derived blocks and is labelled
+        # ``remembered``. Pure read: never mutates the duration cache, never
+        # calls billed endpoints, never writes upstream sources. Missing or
+        # corrupt cache data simply leaves source-resolved blocks in place.
+        remembered = duration_memory.read_vault_memory(vault)
+        for row in digest["assigned"]:
+            duration_memory.apply_remembered_overlay(row, remembered)
+
         # micro_adventure side-load (Locked #7 / build_commit_body parity):
         # today's exact-date run-state selection merges into config so a
         # selected Live micro-adventure reaches the /commit Live→Todoist
@@ -1331,6 +1372,155 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
             "day_setup_echo": merged,
             "day_semantics": resolved_day_semantics,
             "planning_config_fingerprint": planning_config_fingerprint,
+        }
+
+    # -- duration-memory (FT-01) ----------------------------------------------
+
+    def _source_resolved_fallback(vault: Path, today: date, identity: str):
+        """Current source-resolved ``(minutes, label)`` for a canonical
+        identity, resolved WITHOUT memory — the reset route's fallback.
+        Mirrors /plan-inputs' row assembly (vault gather + external Todoist
+        via the injected read clients); read-only and deterministic. None
+        when the identity is not present today."""
+        pool_notes, assigned_notes = _run_gather(vault, today)
+        run_data = gather.build_run_data(pool_notes, assigned_notes, today)
+        result = config_reader.read_config(vault)
+        config: dict[str, Any] = (
+            dict(result.config.sections) if result.config is not None else {}
+        )
+        presets = result.config.get_presets() if result.config is not None else []
+        fm_by_path = {n["path"]: n["fm"] for n in assigned_notes}
+        rows = list(run_data["assigned_items"]) + list(run_data["pool_items"])
+        build_clients = app.state.build_read_clients or (lambda v, c: (None, None))
+        todoist_c, _store = build_clients(vault, config)
+        try:
+            if todoist_c is not None:
+                ext_cfg: dict[str, Any] = {
+                    **dict(config.get("Defaults") or {}),
+                    "calendar_capacity_classes": config.get("Calendar Capacity Classes"),
+                }
+                t_assigned, t_pool, _w = external_sources.fetch_todoist_items(
+                    todoist_c, ext_cfg
+                )
+                rows = rows + list(t_assigned) + list(t_pool)
+        finally:
+            if todoist_c is not None and hasattr(todoist_c, "close"):
+                try:
+                    todoist_c.close()
+                except Exception:  # noqa: BLE001
+                    pass
+        for row in rows:
+            if duration_memory.item_identity(row) == identity:
+                return duration_memory.resolve_duration(
+                    row, presets, fm_by_path.get(row.get("path")), memory={}
+                )
+        return None
+
+    @app.post("/duration-memory/save", dependencies=[Depends(require_token)])
+    def post_duration_save(body: DurationSaveRequest) -> dict:
+        """FT-01: persist a remembered duration for one canonical identity.
+
+        Strict validation (integer >= 0 divisible by 5) happens before any
+        cache access; lock/read/write failures fail closed (500) and never
+        replace existing durable bytes."""
+        vault = resolve_vault_root()
+        try:
+            identity = duration_memory.normalize_identity(body.identity)
+            minutes = duration_memory.save_memory(vault, identity, body.minutes)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except (duration_memory.MemoryStoreError, OSError) as exc:
+            # FT-05 F3: never return raw internal diagnostics (they can carry
+            # absolute vault/cache paths). The real cause stays server-side.
+            print(f"duration-memory save failed: {exc}", file=sys.stderr)
+            raise HTTPException(
+                status_code=500,
+                detail={
+                    "code": "duration_memory_store_error",
+                    "message": (
+                        "Duration memory could not be saved; "
+                        "the existing value was preserved."
+                    ),
+                },
+            ) from exc
+        return {"ok": True, "identity": identity, "minutes": minutes,
+                "duration_source": "remembered"}
+
+    @app.post("/duration-memory/reset", dependencies=[Depends(require_token)])
+    def post_duration_reset(body: DurationMemoryRequest) -> dict:
+        """FT-01: remove the remembered duration for one canonical identity
+        and return the current source-resolved fallback. No billed calls and
+        no upstream writes — the fallback resolves from vault gather plus the
+        same injected read clients /plan-inputs uses.
+
+        FT-06 F2-R1 ordering: the source fallback is resolved FIRST. When no
+        fallback exists (identity absent from today's plan) or resolution
+        fails, reset returns a bounded error and leaves the durable cache
+        bytes unchanged — the remembered value is never deleted without a
+        proven fallback. Only a valid fallback proceeds to the (fail-closed)
+        deletion and is returned to the client."""
+        vault = resolve_vault_root()
+        today = gather.effective_date(datetime.now())
+        try:
+            identity = duration_memory.normalize_identity(body.identity)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        try:
+            fallback = _source_resolved_fallback(vault, today, identity)
+        except Exception as exc:  # noqa: BLE001 — bounded client-safe boundary
+            # FT-06 F2-R1: resolution failure must not delete durable memory.
+            # The real cause (which may name vault/source paths) stays
+            # server-side only.
+            print(
+                f"duration-memory reset fallback resolution failed: {exc}",
+                file=sys.stderr,
+            )
+            raise HTTPException(
+                status_code=500,
+                detail={
+                    "code": "duration_memory_fallback_error",
+                    "message": (
+                        "Duration memory could not be reset; the source "
+                        "duration could not be resolved and the existing "
+                        "value was preserved."
+                    ),
+                },
+            ) from exc
+        if fallback is None:
+            # FT-06 F2-R1: no source fallback — bounded error, memory preserved.
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "duration_memory_no_fallback",
+                    "message": (
+                        "No source duration was found to restore; the "
+                        "remembered value was preserved."
+                    ),
+                },
+            )
+        try:
+            removed = duration_memory.reset_memory(vault, identity)
+        except (duration_memory.MemoryStoreError, OSError) as exc:
+            # FT-05 F3: bounded client-safe detail; the real cause (which may
+            # name the vault/cache path) stays server-side only.
+            print(f"duration-memory reset failed: {exc}", file=sys.stderr)
+            raise HTTPException(
+                status_code=500,
+                detail={
+                    "code": "duration_memory_store_error",
+                    "message": (
+                        "Duration memory could not be reset; "
+                        "the existing value was preserved."
+                    ),
+                },
+            ) from exc
+        return {
+            "ok": True,
+            "identity": identity,
+            "removed": removed,
+            "duration_minutes": fallback[0],
+            "duration_source": fallback[1],
+            "found": True,
         }
 
     # -- mutating routes (token-guarded) --------------------------------------

@@ -45,6 +45,25 @@ export interface SourceRefreshResult {
   ledger: Ledger;
 }
 
+/** One explicit duration-memory save result (MVP): the server-authoritative
+    remembered value. `source` is always "remembered" — a successful save
+    makes the row durable-remembered by definition. */
+export interface DurationMemorySaveResult {
+  identity: string;
+  minutes: number;
+  source: "remembered";
+}
+
+/** One explicit duration-memory reset result (MVP): the current
+    source-resolved fallback the row should now use, with its source label.
+    `minutes` is null when the server found no fallback (found:false) — the
+    caller must preserve authoritative state, never apply zero. */
+export interface DurationMemoryResetResult {
+  identity: string;
+  minutes: number | null;
+  source: import("../model/types").DurationSourceLabel;
+}
+
 export interface Adapter {
   /** GET /plan-inputs, projected assigned-only (digest.suggested dropped). */
   loadPlanInputs(): Promise<PlanInputs>;
@@ -63,6 +82,14 @@ export interface Adapter {
       pick / custom); null clears the dated override back to the auto-pick.
       Never billed, never a history write. */
   saveMicroAdventure(pick: import("../model/types").MicroIdea | null): Promise<void>;
+  /** POST /duration-memory/save — one token-guarded non-billed mutation
+      (duration-memory MVP). Strict value validation happens BEFORE the call;
+      the adapter never rounds, truncates, snaps, or coerces. */
+  saveDurationMemory(identity: string, minutes: number): Promise<DurationMemorySaveResult>;
+  /** POST /duration-memory/reset — one token-guarded non-billed mutation
+      (duration-memory MVP). The response carries the current
+      source-resolved fallback the row should apply. */
+  resetDurationMemory(identity: string): Promise<DurationMemoryResetResult>;
   /** POST /sequence — the ONE billed action. Never called automatically. */
   autoSequence(ctx: SequenceContext): Promise<SequenceResult>;
   /** POST /validate-sequence — deterministic, free. */

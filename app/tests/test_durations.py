@@ -213,3 +213,86 @@ def test_plan_inputs_no_config_still_enriches_default(tmp_path):
     body = TestClient(app).get("/plan-inputs").json()
     rows = _assigned_by_name(body)
     assert rows["Garage Buildout"]["blocks"] == 1
+
+
+# ---------------------------------------------------------------------------
+# FT-01: /plan-inputs remembered-duration overlay (read-only)
+# ---------------------------------------------------------------------------
+
+import json as _json  # noqa: E402
+
+import duration_memory as dm  # noqa: E402
+
+MAKE_IDENTITY = "50 - Operations/Projects/Make.md"
+
+
+def _auth_client(vault, todoist=None) -> tuple[TestClient, dict]:
+    app = main_mod.create_app(vault_root=vault)
+    app.state.build_read_clients = lambda v, cfg: (todoist, FakeStore())
+    c = TestClient(app)
+    return c, {"X-TDTB-Token": app.state.token}
+
+
+def _save(client, headers, identity, minutes):
+    r = client.post("/duration-memory/save", json={
+        "identity": identity, "minutes": minutes,
+    }, headers=headers)
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+def test_plan_inputs_overlays_remembered_duration(vault):
+    client, headers = _auth_client(vault, todoist=FakeTodoist({}))
+    _save(client, headers, MAKE_IDENTITY, 90)
+    body = client.get("/plan-inputs").json()
+    rows = _assigned_by_name(body)
+    assert rows["Make"]["blocks"] == 3              # 90m remembered
+    assert rows["Make"]["duration_source"] == "remembered"
+    assert rows["Make"]["duration_minutes"] == 90
+
+
+# FT-05 F1: a valid 45-minute remembered value stays exactly 45 through the
+# GET /plan-inputs rehydration (1.5 blocks, not a 30-minute-grid ceiling of 2),
+# including a fresh server process reading the persisted vault cache.
+def test_plan_inputs_remembered_45_minutes_stays_exact(vault):
+    client, headers = _auth_client(vault, todoist=FakeTodoist({}))
+    _save(client, headers, MAKE_IDENTITY, 45)
+    body = client.get("/plan-inputs").json()
+    rows = _assigned_by_name(body)
+    assert rows["Make"]["duration_minutes"] == 45
+    assert rows["Make"]["duration_source"] == "remembered"
+    assert rows["Make"]["blocks"] == 1.5
+    # Fresh server process: a NEW app instance rehydrates the same disk cache.
+    fresh, _ = _auth_client(vault, todoist=FakeTodoist({}))
+    rows = _assigned_by_name(fresh.get("/plan-inputs").json())
+    assert rows["Make"]["duration_minutes"] == 45
+    assert rows["Make"]["blocks"] == 1.5
+
+
+def test_plan_inputs_get_does_not_mutate_duration_cache(vault):
+    client, headers = _auth_client(vault, todoist=FakeTodoist({}))
+    _save(client, headers, MAKE_IDENTITY, 90)
+    cache_path = dm.cache_path(vault)
+    before = cache_path.read_bytes()
+    client.get("/plan-inputs")
+    assert cache_path.read_bytes() == before
+
+
+def test_plan_inputs_source_resolved_when_no_memory(vault):
+    client, headers = _auth_client(vault, todoist=FakeTodoist({}))
+    body = client.get("/plan-inputs").json()
+    rows = _assigned_by_name(body)
+    assert rows["Make"]["blocks"] == 2              # preset 2 blocks
+    assert "duration_source" not in rows["Make"]
+
+
+def test_plan_inputs_ignores_corrupt_cache_and_serves_source(vault):
+    client, headers = _auth_client(vault, todoist=FakeTodoist({}))
+    p = dm.cache_path(vault)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text("not json", encoding="utf-8")
+    body = client.get("/plan-inputs").json()
+    rows = _assigned_by_name(body)
+    assert rows["Make"]["blocks"] == 2              # fallback to preset
+    assert "duration_source" not in rows["Make"]
+    assert p.read_text(encoding="utf-8") == "not json"  # no repair

@@ -6,6 +6,8 @@
 
 import type {
   Adapter,
+  DurationMemoryResetResult,
+  DurationMemorySaveResult,
   SequenceContext,
   SequenceResult,
   SourceRefreshResult,
@@ -24,6 +26,7 @@ import type {
 } from "../model/types";
 import { makeScenario, fixedInputsOf, type Scenario, type ScenarioName } from "../fixtures/scenarios";
 import { toMinutes } from "../model/time";
+import { itemIdentity } from "./wire";
 
 const LATENCY_MS = 350;
 
@@ -254,6 +257,28 @@ export class FixtureAdapter implements Adapter {
 
   async saveMicroAdventure(_pick: MicroIdea | null): Promise<void> {
     await wait(LATENCY_MS);
+  }
+
+  /** Duration memory (MVP): in-memory mirror of the token-guarded mutation.
+      The store model is updated only from the returned result — the fixture
+      never mutates its loaded inputs, matching the server-authoritative
+      contract. */
+  private memory = new Map<string, number>();
+
+  async saveDurationMemory(identity: string, minutes: number): Promise<DurationMemorySaveResult> {
+    await wait(LATENCY_MS);
+    this.memory.set(identity, minutes);
+    return { identity, minutes, source: "remembered" };
+  }
+
+  async resetDurationMemory(identity: string): Promise<DurationMemoryResetResult> {
+    await wait(LATENCY_MS);
+    this.memory.delete(identity);
+    // Source fallback: the fixture row's resolved blocks (never mutated by a
+    // save), falling back to the resolver default of 30 minutes.
+    const item = this.inputs.assigned.find((i) => itemIdentity(i) === identity);
+    const minutes = item ? Math.round(item.blocks * 30) : 30;
+    return { identity, minutes, source: "default" };
   }
 
   async autoSequence(_ctx: SequenceContext): Promise<SequenceResult> {

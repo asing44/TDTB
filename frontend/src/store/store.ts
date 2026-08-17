@@ -33,6 +33,8 @@ import {
   type RefreshSummary,
 } from "../model/refresh";
 import { allowedOverlaps, defectsCovered, workOverlaps } from "../model/findings";
+import { blocksLabel } from "../model/time";
+import { durationSourceOf } from "../adapters/wire";
 
 export type SeqPhase = "none" | "sequencing" | "valid" | "dirty" | "failed";
 export type ShadowPhase = "none" | "loading" | "current" | "stale";
@@ -88,6 +90,10 @@ export interface AppState {
   runtimeBusy: boolean;
   lastRuntimeAction: RuntimeAction | null;
   runtimeError: string | null;
+  /** Duration-memory MVP: per-item pending/error feedback for the explicit
+      save and reset mutations. Purely local mutation state — never written
+      into the session blob (durable memory is server-side). */
+  durationMemory: Record<string, { pending: boolean; error: string | null }>;
   /** A guaranteed-no-write server rejection (409 single-flight, 422 plan
       refused): the plan stays intact and retryable — distinct from a failed
       report, where writes may have partially landed. */
@@ -157,6 +163,7 @@ export const initialState: AppState = {
   runtimeBusy: false,
   lastRuntimeAction: null,
   runtimeError: null,
+  durationMemory: {},
   commitError: null,
   driftNotice: null,
   acceptedDefects: null,
@@ -222,6 +229,12 @@ export type Action =
   | { type: "RUNTIME_OK"; action: RuntimeAction }
   | { type: "RUNTIME_FAIL"; error: string }
   | { type: "RUNTIME_UNDO_OK"; action: RuntimeAction }
+  // Duration-memory MVP: explicit save/reset lifecycle. OK applies the
+  // server-authoritative result (remembered value or source fallback) to the
+  // row; FAIL preserves the last authoritative value.
+  | { type: "DURATION_MEMORY_START"; id: string }
+  | { type: "DURATION_MEMORY_OK"; id: string; minutes: number; source: string }
+  | { type: "DURATION_MEMORY_FAIL"; id: string; error: string }
   | {
       // Same-date refresh restore (locked decision 16): today-only state
       // rehydrates; shadow/review NEVER restore — preview must rerun.
@@ -563,6 +576,50 @@ export function reducer(s: AppState, a: Action): AppState {
       return { ...s, runtimeBusy: false, runtimeError: a.error };
     case "RUNTIME_UNDO_OK":
       return { ...s, runtimeBusy: false, lastRuntimeAction: a.action };
+    case "DURATION_MEMORY_START":
+      return {
+        ...s,
+        durationMemory: { ...s.durationMemory, [a.id]: { pending: true, error: null } },
+      };
+    case "DURATION_MEMORY_OK": {
+      // Server-authoritative result lands on the model row: the remembered
+      // value (save) or the source fallback (reset) becomes the effective
+      // duration. A missing/non-numeric result is ignored — the row keeps its
+      // last authoritative value.
+      const inputs = s.inputs;
+      const done = {
+        ...s.durationMemory,
+        [a.id]: { pending: false, error: null },
+      };
+      if (!inputs || !Number.isFinite(a.minutes)) {
+        return { ...s, durationMemory: done };
+      }
+      const blocks = a.minutes / 30;
+      const assigned = inputs.assigned.map((row) =>
+        row.id === a.id
+          ? {
+              ...row,
+              blocks,
+              durationLabel: blocksLabel(blocks),
+              durationSource: a.source === "remembered" ? "remembered" : durationSourceOf(a.source),
+            }
+          : row,
+      );
+      return {
+        ...s,
+        inputs: { ...inputs, assigned },
+        durationMemory: done,
+        // A duration change reshapes the plan payload — dirty + stale shadow,
+        // exactly like any other duration edit.
+        ...dirtySeq(s),
+        ...staleShadow(s),
+      };
+    }
+    case "DURATION_MEMORY_FAIL":
+      return {
+        ...s,
+        durationMemory: { ...s.durationMemory, [a.id]: { pending: false, error: a.error } },
+      };
     case "SESSION_RESTORED":
       // Restored plan re-enters as dirty — deterministic revalidation (free)
       // must confirm it before shadow/commit are reachable again. Review

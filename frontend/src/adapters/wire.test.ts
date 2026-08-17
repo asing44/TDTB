@@ -9,10 +9,14 @@ import {
   calendarWarnings,
   daySetupToWire,
   durationMinutes,
+  durationSourceOf,
+  itemIdentity,
   projectAssigned,
   projectCommitReport,
   projectDaySetup,
   projectDaySemantics,
+  projectDurationMemoryReset,
+  projectDurationMemorySave,
   projectFixedInputs,
   projectPlanInputs,
   projectSequenceResult,
@@ -603,5 +607,128 @@ describe("projectDaySetup edge shapes", () => {
       start: "08:30",
       end: "12:30",
     }]);
+  });
+});
+
+describe("duration-memory wire projection (MVP)", () => {
+  it("projectAssigned carries the canonical identity from wire identity fields", () => {
+    const todoist = projectAssigned({
+      name: "Sample Todoist Task", path: "todoist://9001", source: "todoist",
+      todoist_id: "9001", blocks: 3,
+    });
+    expect(todoist.identity).toBe("todoist:9001");
+    const vault = projectAssigned({
+      name: "Make", path: "50 - Operations/Projects/Make.md", blocks: 2,
+    });
+    expect(vault.identity).toBe("50 - Operations/Projects/Make.md");
+  });
+
+  it("projectAssigned maps duration_source to a remembered/source label", () => {
+    const remembered = projectAssigned({
+      name: "Press", path: "50 - Operations/Pursuits/Press.md",
+      duration_source: "remembered", blocks: 4,
+    });
+    expect(remembered.durationSource).toBe("remembered");
+    const native = projectAssigned({
+      name: "Task", path: "todoist://1", source: "todoist",
+      todoist_id: "1", duration_source: "native", blocks: 2,
+    });
+    expect(native.durationSource).toBe("native");
+    const tag = projectAssigned({
+      name: "Task", path: "todoist://2", source: "todoist",
+      todoist_id: "2", duration_source: "tag:dur45", blocks: 1,
+    });
+    expect(tag.durationSource).toBe("tag");
+  });
+
+  it("absent or unknown duration_source projects as default (source-resolved)", () => {
+    const row = projectAssigned({
+      name: "Make", path: "50 - Operations/Projects/Make.md", blocks: 2,
+    });
+    expect(row.durationSource).toBe("default");
+    const weird = projectAssigned({
+      name: "Make", path: "50 - Operations/Projects/Make.md",
+      duration_source: "legacy-label", blocks: 2,
+    });
+    expect(weird.durationSource).toBe("default");
+  });
+
+  it("itemIdentity mirrors the backend canonical identity rule", () => {
+    expect(itemIdentity({ source: "todoist", todoistId: "9001", path: "todoist://9001" })).toBe("todoist:9001");
+    expect(itemIdentity({ source: "vault", path: "50 - Operations/Pursuits/Press.md" })).toBe("50 - Operations/Pursuits/Press.md");
+    expect(itemIdentity({ source: "vault", path: null })).toBeNull();
+    expect(itemIdentity({ source: "todoist", todoistId: null, path: null })).toBeNull();
+  });
+
+  it("durationSourceOf coerces resolver labels and fails open to default", () => {
+    expect(durationSourceOf("remembered")).toBe("remembered");
+    expect(durationSourceOf("tag:dur45")).toBe("tag");
+    expect(durationSourceOf("native")).toBe("native");
+    expect(durationSourceOf("preset")).toBe("preset");
+    expect(durationSourceOf("type")).toBe("type");
+    expect(durationSourceOf("default")).toBe("default");
+    expect(durationSourceOf(null)).toBe("default");
+    expect(durationSourceOf("")).toBe("default");
+  });
+
+  it("save projection preserves identity, minutes, and forces remembered", () => {
+    const r = projectDurationMemorySave({
+      identity: "vault:50 - Operations/Pursuits/Press.md", minutes: 90,
+    });
+    expect(r).toEqual({
+      identity: "vault:50 - Operations/Pursuits/Press.md",
+      minutes: 90,
+      source: "remembered",
+    });
+  });
+
+  it("reset projection preserves identity, fallback minutes, and source label", () => {
+    // FT-01 backend shape: the reset route returns duration_minutes.
+    const r = projectDurationMemoryReset({
+      identity: "todoist:9001", duration_minutes: 30, duration_source: "default",
+    });
+    expect(r).toEqual({ identity: "todoist:9001", minutes: 30, source: "default" });
+    const rememberedFallback = projectDurationMemoryReset({
+      identity: "vault:x", duration_minutes: 45, duration_source: "native",
+    });
+    expect(rememberedFallback.source).toBe("native");
+    // Tolerant of the save-style `minutes` field too.
+    const legacy = projectDurationMemoryReset({
+      identity: "vault:x", minutes: 60, duration_source: "default",
+    });
+    expect(legacy.minutes).toBe(60);
+  });
+
+  // FT-05 F2: a reset response with found:false/null fallback must project
+  // minutes as null — never coerce the missing fallback to zero (All day).
+  it("reset projection keeps minutes null when the server reports no fallback", () => {
+    const r = projectDurationMemoryReset({
+      ok: true, identity: "todoist:9001", removed: true,
+      duration_minutes: null, duration_source: null, found: false,
+    });
+    expect(r).toEqual({ identity: "todoist:9001", minutes: null, source: "default" });
+    const absent = projectDurationMemoryReset({
+      ok: true, identity: "vault:x", removed: true, found: false,
+    });
+    expect(absent.minutes).toBeNull();
+  });
+
+  // FT-05 F1: exact remembered minutes must survive the GET projection — the
+  // label renders 45min, never a 30-minute-grid-rounded "1hr".
+  it("projectAssigned preserves exact remembered minutes in the label", () => {
+    const exact = projectAssigned({
+      name: "Press", path: "50 - Operations/Pursuits/Press.md",
+      duration_source: "remembered", blocks: 1.5, duration_minutes: 45,
+    });
+    expect(exact.blocks).toBe(1.5);
+    expect(exact.durationLabel).toBe("45min");
+    // Defensive: an exact duration_minutes always wins over a rounded blocks
+    // value for the user-visible label.
+    const roundedBlocks = projectAssigned({
+      name: "Press", path: "50 - Operations/Pursuits/Press.md",
+      duration_source: "remembered", blocks: 2, duration_minutes: 45,
+    });
+    expect(roundedBlocks.blocks).toBe(2);
+    expect(roundedBlocks.durationLabel).toBe("45min");
   });
 });
