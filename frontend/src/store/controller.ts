@@ -16,6 +16,7 @@ import { fingerprintFixedInputs } from "../model/fingerprint";
 import { isStagingVerb } from "../model/staging";
 import { prunePins } from "../model/pins";
 import { planOverflow, calendarWalls, mintWalls } from "../model/overflow";
+import { MINT_SESSION_MINUTES, wallFreeMintSessionIds } from "../model/mint";
 import { toMinutes } from "../model/time";
 import { droppedItems } from "../model/placement";
 import type { AppState, Action } from "./store";
@@ -67,6 +68,42 @@ function calendarParticipation(
     time: null,
   };
   if (o.blocks != null) out.blocks = o.blocks;
+  return out;
+}
+
+/** FEEDBACK-28: filter a saved Mint selection against the CURRENT effective
+    fixed/work walls before the day-setup payload carries it to the server.
+    The drawer filters as the user edits, but saved state can be stale (the
+    August 17 incident kept the 15:00-15:30 row across refresh), and the
+    /day-setup request is the only payload that can carry Mint rows to the
+    server before the billed /sequence judgment. The on/n/total are kept
+    consistent with the filtered rows; a numeric allotment follows the total. */
+function sanitizeMinting(
+  s: AppState,
+  daySetup: AppState["daySetup"],
+): AppState["daySetup"] {
+  const sessions = s.inputs?.daySemantics.mintSessions ?? [];
+  const minting = daySetup.schedulable?.minting;
+  if (sessions.length === 0 || !minting || !Array.isArray(minting.sessions)) {
+    return daySetup;
+  }
+  const walls = calendarWalls(effectiveAnchoredBlocks(s));
+  const selected = wallFreeMintSessionIds(sessions, minting.sessions, walls);
+  const out: AppState["daySetup"] = {
+    ...daySetup,
+    schedulable: {
+      ...daySetup.schedulable,
+      minting: {
+        ...minting,
+        on: minting.on !== false && selected.length > 0,
+        n: selected.length,
+        sessions: selected,
+      },
+    },
+  };
+  if (typeof daySetup.workAllotmentMinutes === "number") {
+    out.workAllotmentMinutes = selected.length * MINT_SESSION_MINUTES;
+  }
   return out;
 }
 
@@ -162,6 +199,9 @@ export class Controller {
   }
 
   async saveDaySetup(daySetup: AppState["daySetup"]): Promise<void> {
+    // FEEDBACK-28: the Mint rows are filtered against current effective walls
+    // BEFORE any payload leaves — saved state can be stale.
+    const mintSafe = sanitizeMinting(this.getState(), daySetup);
     const calendarIds = new Set(
       (this.getState().inputs?.anchored ?? [])
         .filter((a) => a.kind === "calendar")
@@ -174,13 +214,13 @@ export class Controller {
     // dropped) so a restore beats server rows that still carry the dismissal
     // until the next source refresh.
     const anchored = Object.fromEntries(
-      Object.entries(daySetup.anchored).map(([id, o]) =>
+      Object.entries(mintSafe.anchored).map(([id, o]) =>
         calendarIds.has(id)
           ? [id, calendarParticipation(o)]
           : [id, o],
       ),
     );
-    const sanitized = { ...daySetup, anchored };
+    const sanitized = { ...mintSafe, anchored };
     await this.adapter.saveDaySetup(sanitized);
     this.dispatch({ type: "SETUP_SAVED", daySetup: sanitized });
     await this.refreshCapacity();
@@ -328,6 +368,17 @@ export class Controller {
       block.kind === "calendar"
         ? calendarParticipation(override)
         : override;
+    // FEEDBACK-28 (retry): CalendarImpact's per-row toggle IS the explicit
+    // current-run intent. Record it so effectiveAnchoredBlocks can
+    // distinguish this skip from persisted state that must not suppress a
+    // current wall.
+    if (block.kind === "calendar") {
+      this.dispatch({
+        type: "CALENDAR_SKIP_EXPLICIT",
+        id,
+        skipToday: sanitized.skipToday === true,
+      });
+    }
     const setup = this.getState().daySetup;
     await this.saveDaySetup({
       ...setup,

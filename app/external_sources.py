@@ -151,13 +151,13 @@ def fetch_calendar_busy(
     """Today's events as anchored-block-shaped busy blocks.
 
     T12j preserves source calendar identity and resolves each event to one of
-    four durable capacity states: ``fixed`` (default for unidentified
-    calendars), ``work``, ``ignored``, or ``quarantined`` (a KNOWN title the
-    user has not classified yet — excluded from capacity/planning until
-    reviewed, frozen contract 17). TDTB's own zone-write IDs are always
-    ``ignored`` even if a conflicting title rule exists. Ignored rows remain
-    on the wire so the UI can explain why they cost zero instead of silently
-    hiding them.
+    four durable capacity states: ``fixed`` (default for unlisted or
+    unclassified timed calendars — FEEDBACK-27 live contract), ``work``,
+    ``ignored``, or ``quarantined`` (only via an explicit Calendar Capacity
+    Classes row; excluded from capacity/planning, contract 17 exclusion kept).
+    TDTB's own zone-write IDs are always ``ignored`` even if a conflicting
+    title rule exists. Ignored rows remain on the wire so the UI can explain
+    why they cost zero instead of silently hiding them.
 
     Frozen contract 16: events sharing a canonical identity (``event_id`` /
     ``id``) canonicalize into ONE logical group — attendance and capacity
@@ -249,15 +249,13 @@ def fetch_calendar_busy(
             seen_identities.add(identity)
         calendar_id = str(ev.get("calendar_id") or "")
         calendar_title = title_by_id.get(calendar_id)
-        # Contract 17: a KNOWN title the user has not classified stays
-        # quarantined — never silently counted as fixed. An unidentified
-        # calendar (no inventory) keeps the historical fixed default.
-        if calendar_title is not None:
-            capacity_class = title_classes.get(
-                calendar_title, calendar_bridge.CAPACITY_CLASS_QUARANTINED
-            )
-        else:
-            capacity_class = title_classes.get("", "fixed")
+        # FEEDBACK-27: unlisted/unclassified timed calendars default FIXED and
+        # stay visible — the live contract requires real timed commitments to
+        # surface as capacity (2026-08-17 incident: an unclassified calendar
+        # must not be silently quarantined away). Explicit title->class config
+        # and own-write IDs still win; a configured "quarantined" class keeps
+        # the contract-17 exclusion behavior.
+        capacity_class = title_classes.get(calendar_title or "", "fixed")
         if calendar_id in own_ids:
             capacity_class = "ignored"
         # Contract 18: all-day events remain all-day and non-timed — emitted
@@ -622,6 +620,94 @@ def build_schedulable_blocks(
                 "zone": "work_hours", "backdrop": True,
             })
     return items, zone_rows, notes
+
+
+def _mint_session_interval(item: dict[str, Any]) -> tuple[int, int] | None:
+    """Selected Mint session window as [start, end) minutes, or None."""
+    window = item.get("placement_window")
+    if not isinstance(window, dict):
+        return None
+    start = _hhmm_min(window.get("start"))
+    end = _hhmm_min(window.get("end"))
+    if start is None or end is None or end <= start:
+        return None
+    return start, end
+
+
+def _wall_interval(block: dict[str, Any]) -> tuple[int, int] | None:
+    """[start, end) minutes for a non-window anchored wall, or None.
+
+    Mirrors sequence.validate_sequence's wall reading: ``Type: window`` and
+    ``overlap_allowed`` blocks are permeable (never walls), and imported
+    calendar rows in the ignored/quarantined classes are excluded from
+    planning (frozen contract 17). Duration-only blocks ("—" End) derive
+    their end from Duration minutes."""
+    if block.get("overlap_allowed"):
+        return None
+    if str(block.get("Type", "")).strip().lower() == "window":
+        return None
+    if str(block.get("source", "")).casefold() == "calendar":
+        klass = str(block.get("capacity_class") or "fixed").strip().casefold()
+        if klass in ("ignored", "quarantined"):
+            return None
+    start = _hhmm_min(block.get("Start"))
+    if start is None:
+        return None
+    end = _hhmm_min(block.get("End"))
+    if end is not None:
+        return (start, end) if end > start else None
+    duration = block.get("Duration")
+    minutes = 0
+    if isinstance(duration, (int, float)) and duration > 0:
+        minutes = int(duration)
+    elif isinstance(duration, str):
+        m = re.match(r"^(\d+)\s*m$", duration.strip())
+        if m:
+            minutes = int(m.group(1))
+    if minutes <= 0:
+        return None
+    return start, start + minutes
+
+
+def stale_mint_conflicts(
+    mint_items: list[dict[str, Any]], anchored_blocks: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """Selected Mint sessions overlapping effective fixed or work walls.
+
+    FEEDBACK-27: saved frontend Mint selection can be stale — a session whose
+    window collides with a current fixed/work calendar wall or a hard
+    anchored block must be surfaced BEFORE judgment or the immutable merge
+    (live 2026-08-17: Mint 15:00-15:30 vs OPPD 15:00-15:30 became an
+    immutable-over-immutable overlap and validation rejected a billed
+    proposal). Returns deterministic conflict rows naming both sides; an
+    empty list means the selection is wall-clean.
+    """
+    walls: list[tuple[str, tuple[int, int]]] = []
+    for block in anchored_blocks or []:
+        interval = _wall_interval(block)
+        if interval is not None:
+            walls.append((str(block.get("Block") or block.get("name") or "?"), interval))
+
+    def _fmt(interval: tuple[int, int]) -> dict[str, str]:
+        return {"start": _fmt_hhmm(interval[0]), "end": _fmt_hhmm(interval[1])}
+
+    conflicts: list[dict[str, Any]] = []
+    for item in mint_items or []:
+        if item.get("mint_session") is not True:
+            continue
+        mint_interval = _mint_session_interval(item)
+        if mint_interval is None:
+            continue
+        mint_id = str(item.get("id") or item.get("name") or "")
+        for wall_id, (w_start, w_end) in walls:
+            if mint_interval[0] < w_end and w_start < mint_interval[1]:
+                conflicts.append({
+                    "mint_id": mint_id,
+                    "mint_interval": _fmt(mint_interval),
+                    "wall_id": wall_id,
+                    "wall_interval": _fmt((w_start, w_end)),
+                })
+    return conflicts
 
 
 def absorb_quick_tasks(

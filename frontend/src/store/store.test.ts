@@ -13,6 +13,7 @@ import {
 } from "./store";
 import { makeScenario, fixedInputsOf } from "../fixtures/scenarios";
 import { fingerprintFixedInputs } from "../model/fingerprint";
+import { calendarWalls } from "../model/overflow";
 import type { Ledger, SequenceRow } from "../model/types";
 
 const ledger: Ledger = { today: "2026-07-18", spent: 0, cap: 4, remaining: 4 };
@@ -522,11 +523,18 @@ describe("T27 recurring placement immunity", () => {
 });
 
 describe("T28 calendar dismissal (effectiveAnchoredBlocks)", () => {
-  it("applies skipToday and the local accounting projection to calendar rows", () => {
+  /* FEEDBACK-28 retry (2026-08-17): a skip is honored only when it is
+     EXPLICIT current-run intent (CalendarImpact → saveAnchoredOverride,
+     recorded in currentRunCalendarSkips). A persisted skip — loaded from the
+     server daySetup or merged onto the raw calendar row by a previous run —
+     must not suppress a current wall; the event stays visible and
+     participates in planning walls until the user re-expresses the skip. */
+  it("applies skipToday and the local accounting projection to calendar rows for a current-run skip", () => {
     let s = loaded();
     const cal = s.inputs!.anchored.find((a) => a.kind === "calendar")!;
     s = {
       ...s,
+      currentRunCalendarSkips: [cal.id],
       daySetup: {
         ...s.daySetup,
         anchored: {
@@ -543,6 +551,50 @@ describe("T28 calendar dismissal (effectiveAnchoredBlocks)", () => {
     expect(eff.durationMin).toBe(270);        // 9 blocks × 30
     expect(eff.end).toBe(cal.end);
     expect(eff.on).toBe(true);                // participation, not existence
+  });
+
+  it("a persisted skip without current-run intent does NOT suppress a calendar wall", () => {
+    let s = loaded();
+    const cal = s.inputs!.anchored.find((a) => a.kind === "calendar")!;
+    // Persisted state: the server daySetup carries the skip, but the user has
+    // not re-expressed it this run — the event must stay visible and walled.
+    s = {
+      ...s,
+      daySetup: {
+        ...s.daySetup,
+        anchored: {
+          ...s.daySetup.anchored,
+          [cal.id]: { on: false, skipToday: true, time: null, blocks: null },
+        },
+      },
+    };
+    const eff = effectiveAnchoredBlocks(s).find((a) => a.id === cal.id)!;
+    expect(eff.skipToday).toBe(false);
+    expect(eff.on).toBe(true);
+    expect(eff.start).toBe(cal.start);
+    expect(eff.end).toBe(cal.end);
+    expect(calendarWalls(effectiveAnchoredBlocks(s))).toEqual(
+      expect.arrayContaining([{ start: 9 * 60 + 15, end: 9 * 60 + 45 }]),
+    );
+  });
+
+  it("a server-merged persisted skip on the raw calendar row also stays visible", () => {
+    let s = loaded();
+    const cal = s.inputs!.anchored.find((a) => a.kind === "calendar")!;
+    s = {
+      ...s,
+      inputs: {
+        ...s.inputs!,
+        anchored: s.inputs!.anchored.map((a) =>
+          a.id === cal.id ? { ...a, skipToday: true } : a,
+        ),
+      },
+    };
+    const eff = effectiveAnchoredBlocks(s).find((a) => a.id === cal.id)!;
+    expect(eff.skipToday).toBe(false);
+    expect(calendarWalls(effectiveAnchoredBlocks(s))).toEqual(
+      expect.arrayContaining([{ start: 9 * 60 + 15, end: 9 * 60 + 45 }]),
+    );
   });
 
   it("calendar rows without an override are untouched", () => {

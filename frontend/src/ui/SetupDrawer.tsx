@@ -10,7 +10,7 @@ import {
   initialMintSessionIds as resolveInitialMintSessionIds,
   mintMinutesForSessionIds,
   mintSessionIdsForMinutes,
-  validMintSessionIds,
+  wallFreeMintSessionIds,
   MINT_SESSION_MINUTES,
 } from "../model/mint";
 import type { AnchoredOverride, Buffering, DaySetup } from "../model/types";
@@ -19,6 +19,7 @@ import {
   anchoredOverrideOf,
   validateAnchoredOverride,
 } from "../model/anchored";
+import { calendarWalls } from "../model/overflow";
 import { effectiveAnchoredBlocks } from "../store/store";
 
 export function SetupDrawer() {
@@ -31,11 +32,17 @@ export function SetupDrawer() {
       ? s.daySetup.workAllotmentMinutes
       : s.inputs?.daySemantics.effectiveAllotmentMinutes ?? 0;
   const initialMintAnchor = s.daySetup.anchor ?? s.inputs?.time.anchor;
+  // FEEDBACK-28: Mint choices are filtered against the current effective
+  // fixed/work calendar walls — the August 17 incident selected Mint
+  // 15:00-15:30 over the OPPD fixed wall at 15:00. The wall set is the same
+  // non-permeable calendar walls the overflow scan already respects.
+  const effectiveMintWalls = calendarWalls(effectiveAnchoredBlocks(s));
   const initialMintSessionIds = resolveInitialMintSessionIds(
     availableMintSessions,
     savedMintOverride,
     savedAllotment,
     initialMintAnchor,
+    effectiveMintWalls,
   );
   const initialDraft: DaySetup = { ...s.daySetup };
   if (availableMintSessions.length > 0) {
@@ -77,11 +84,11 @@ export function SetupDrawer() {
     mintOverride?.on === false
       ? []
       : Array.isArray(mintOverride?.sessions)
-        ? validMintSessionIds(availableMintSessions, mintOverride.sessions)
-        : mintSessionIdsForMinutes(availableMintSessions, Number(workAllotment), mintAnchor);
+        ? wallFreeMintSessionIds(availableMintSessions, mintOverride.sessions, effectiveMintWalls)
+        : mintSessionIdsForMinutes(availableMintSessions, Number(workAllotment), mintAnchor, effectiveMintWalls);
 
   const setMintSelection = (ids: string[], anchor = mintAnchor) => {
-    const sessions = validMintSessionIds(availableMintSessions, ids);
+    const sessions = wallFreeMintSessionIds(availableMintSessions, ids, effectiveMintWalls);
     const minutes = mintMinutesForSessionIds(availableMintSessions, sessions);
     setWorkAllotment(String(minutes));
     setAllotmentMode("override");
@@ -137,7 +144,7 @@ export function SetupDrawer() {
       setAllotmentMode("override");
       return;
     }
-    setMintSelection(mintSessionIdsForMinutes(availableMintSessions, minutes, mintAnchor));
+    setMintSelection(mintSessionIdsForMinutes(availableMintSessions, minutes, mintAnchor, effectiveMintWalls));
   };
 
   const setMintAnchor = (anchor: string) => {
@@ -150,7 +157,7 @@ export function SetupDrawer() {
       selectedMintSessionIds,
     );
     setMintSelection(
-      mintSessionIdsForMinutes(availableMintSessions, currentMinutes, anchor),
+      mintSessionIdsForMinutes(availableMintSessions, currentMinutes, anchor, effectiveMintWalls),
       anchor,
     );
   };
@@ -167,10 +174,13 @@ export function SetupDrawer() {
     if (availableMintSessions.length > 0) {
       // In session mode, checked rows and the daily Mint total are one value.
       // Persist the selected 30-minute total even when an older saved setup
-      // carried a mismatched allotment.
-      const sessions = validMintSessionIds(
+      // carried a mismatched allotment. FEEDBACK-28: wall-conflicting rows are
+      // dropped here too — the saved choice must never overlap a fixed/work
+      // commitment, even when the draft was seeded from stale state.
+      const sessions = wallFreeMintSessionIds(
         availableMintSessions,
         selectedMintSessionIds,
+        effectiveMintWalls,
       );
       const minutes = mintMinutesForSessionIds(availableMintSessions, sessions);
       next.workAllotmentMinutes = minutes;

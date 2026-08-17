@@ -30,6 +30,7 @@ import math
 import os
 import secrets
 import re
+import subprocess
 import sys
 import threading
 from datetime import date, datetime
@@ -859,9 +860,92 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
     ``TDTB_VAULT_ROOT`` env var; neither present → vault-dependent routes
     return 503 rather than guessing a path.
     """
+
+    # -----------------------------------------------------------------------
+    # GET /version — tokenless, pure read-only source/runtime fingerprint
+    # -----------------------------------------------------------------------
+
+    _GIT_ID_RE = re.compile(r"^[0-9a-f]{40}$")
+    _COCKPIT_INDEX_ASSET_RE = re.compile(r"assets/index-[A-Za-z0-9_-]+\.js")
+
+    def _git_head_identity(repo_root: Path) -> tuple[str, str] | None:
+        """(commit, tree) object IDs at the repo HEAD, or None when the
+        running process has no resolvable Git identity (non-repo checkout,
+        unborn HEAD, missing git binary). ``git rev-parse`` handles worktree
+        gitdir indirection. Pure read of local repo state — no writes."""
+        try:
+            commit = subprocess.run(
+                ["git", "-C", str(repo_root), "rev-parse", "HEAD"],
+                capture_output=True, text=True, check=True, timeout=10,
+            ).stdout.strip()
+            tree = subprocess.run(
+                ["git", "-C", str(repo_root), "rev-parse", "HEAD^{tree}"],
+                capture_output=True, text=True, check=True, timeout=10,
+            ).stdout.strip()
+        except (OSError, subprocess.SubprocessError):
+            return None
+        if not _GIT_ID_RE.fullmatch(commit) or not _GIT_ID_RE.fullmatch(tree):
+            return None
+        return commit, tree
+
+    def _cockpit_index_asset(cockpit_dir: Path) -> tuple[Path, str] | None:
+        """(index_path, single assets/index-*.js reference) from the cockpit
+        index.html — or None when the index is missing or the reference is
+        not exactly one (fail closed on ambiguity)."""
+        index = cockpit_dir / "index.html"
+        if not index.is_file():
+            return None
+        try:
+            text = index.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            return None
+        refs = _COCKPIT_INDEX_ASSET_RE.findall(text)
+        if len(refs) != 1:
+            return None
+        return index, refs[0]
+
+    def _sha256_hex(path: Path) -> str | None:
+        try:
+            return hashlib.sha256(path.read_bytes()).hexdigest()
+        except OSError:
+            return None
+
+    def build_version_fingerprint(repo_root: Path,
+                                  cockpit_dir: Path) -> dict[str, str] | None:
+        """GET /version payload — deterministic read-only fingerprint of the
+        repo's committed identity plus the committed cockpit index and its
+        single production asset. None on ANY missing/invalid input (fail
+        closed without state mutation): no Git identity, no index, a
+        non-unique asset reference, or a missing asset file."""
+        identity = _git_head_identity(repo_root)
+        if identity is None:
+            return None
+        commit, tree = identity
+        indexed = _cockpit_index_asset(cockpit_dir)
+        if indexed is None:
+            return None
+        index_path, asset_ref = indexed
+        index_sha = _sha256_hex(index_path)
+        asset_sha = _sha256_hex(cockpit_dir / asset_ref)
+        if index_sha is None or asset_sha is None:
+            return None
+        return {
+            "status": "ok",
+            "source_commit": commit,
+            "source_tree": tree,
+            "cockpit_index_sha256": index_sha,
+            "cockpit_asset": asset_ref,
+            "cockpit_asset_sha256": asset_sha,
+        }
+
     app = FastAPI(title="TDTB", docs_url=None, redoc_url=None)
     app.state.vault_root = str(vault_root) if vault_root else None
     app.state.token = secrets.token_urlsafe(32)
+    # T02: /version fingerprint paths — the running process's own repo root
+    # and the committed cockpit dir. Tests override these to isolated
+    # fixtures; the route never touches the vault or any state-bearing path.
+    app.state.repo_root = str(Path(__file__).resolve().parent.parent)
+    app.state.cockpit_dir = str(_STATIC_DIR / "cockpit")
     # Tests inject a Callable[[Path, dict], tuple[todoist_like, store_like|None]]
     # here so mode=live can be exercised without a real Todoist token or
     # EventKit grant. None (the default) means "build the real clients".
@@ -974,6 +1058,26 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
             "status": "ok",
             "judgment_model": judgment.OPENROUTER_MODEL,
         }
+
+    @app.get("/version")
+    def get_version() -> dict:
+        """T02: tokenless, pure read-only source/runtime fingerprint. Reads
+        only Git identity (rev-parse on the running repo) and the committed
+        cockpit index + referenced production asset bytes — no judgment,
+        ledger, provider, runstate, billing, Todoist, Calendar, Vault, or
+        external-source call, and never resolve_vault_root. Missing Git
+        identity, index, unique asset reference, or asset → 503 (fail
+        closed, no state mutation)."""
+        payload = build_version_fingerprint(
+            Path(app.state.repo_root), Path(app.state.cockpit_dir)
+        )
+        if payload is None:
+            raise HTTPException(
+                status_code=503,
+                detail="version fingerprint unavailable (missing Git "
+                       "identity, index, or asset)",
+            )
+        return payload
 
     @app.get("/session-token")
     def get_session_token(request: Request) -> dict:
@@ -1816,6 +1920,23 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
             body.config or {}, day_setup, today, anchor,
             resolved_day_semantics=body.day_semantics,
         )
+        # FEEDBACK-27: the effective anchored set judgment/validation should
+        # see (Day Setup merged, suppressed/quarantined dropped) is also the
+        # current fixed/work wall set. A selected Mint session whose window
+        # overlaps such a wall is STALE saved frontend state — fail closed
+        # HERE, before any judgment adapter, immutable merge, or billed
+        # ledger change (live 2026-08-17: Mint 15:00-15:30 vs OPPD
+        # 15:00-15:30 reached a billed 422). Clean selections proceed.
+        seq_anchored = _judged_anchored(body.anchored_blocks, day_setup)
+        mint_conflicts = external_sources.stale_mint_conflicts(blocks, seq_anchored)
+        if mint_conflicts:
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "message": "selected Mint sessions conflict with fixed or work walls",
+                    "conflicts": mint_conflicts,
+                },
+            )
         # G18a: planning-fallacy correction — inflate each assigned item's
         # block estimate by the configured factor BEFORE injection/judgment,
         # so the prompt, the duration validator, and the manifest all see the
@@ -1870,7 +1991,6 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
             "planning_config_fingerprint": body.planning_config_fingerprint,
         }
 
-        seq_anchored = _judged_anchored(body.anchored_blocks, day_setup)
         pinned_walls = [
             {"Block": pin["id"], "Type": "hard", "Start": pin["start"],
              "End": pin["end"], "pinned": True}

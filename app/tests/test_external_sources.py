@@ -194,15 +194,16 @@ class TestFetchCalendarBusy:
             _event("Generated block", cal="CAL-OWN"),
         ], calendars=calendars)
         blocks, _ = ext.fetch_calendar_busy(store, cfg, TODAY)
-        # "🙋‍♂️ Personal" is a KNOWN title with no configured class — frozen
-        # contract 17 quarantines it rather than silently defaulting to fixed.
+        # "🙋‍♂️ Personal" is a KNOWN title with no configured class — the
+        # FEEDBACK-27 live contract defaults unlisted timed calendars to fixed
+        # and keeps them visible instead of quarantining them.
         assert [
             (b["calendar_id"], b["calendar_title"], b["capacity_class"])
             for b in blocks
         ] == [
             ("CAL-WORK", "Trinoor", "work"),
             ("CAL-FOCUS", "Session: focus", "ignored"),
-            ("CAL-FIXED", "🙋‍♂️ Personal", "quarantined"),
+            ("CAL-FIXED", "🙋‍♂️ Personal", "fixed"),
             ("CAL-OWN", "⬜ Blocks", "ignored"),
         ]
 
@@ -226,9 +227,9 @@ class TestFetchCalendarBusy:
     def test_trinoor_named_source_calendar_never_label_guessed(self):
         # FEEDBACK-26: classification follows explicit exact-title rules or
         # ownership — never a name overlay. A "Trinoor"-titled read-only
-        # source calendar with no configured class stays quarantined (known
-        # but unreviewed, frozen contract 17); a TDTB-owned output row on the
-        # configured Mint calendar stays ignored.
+        # source calendar with no configured class defaults fixed (FEEDBACK-27
+        # unlisted-calendar contract, not a name-guess); a TDTB-owned output
+        # row on the configured Mint calendar stays ignored.
         calendars = [
             CalendarInfo("Trinoor", "CAL-WORK", False, "Exchange"),
             CalendarInfo("🟡 Mint", "CAL-MINT", True, "Google"),
@@ -247,7 +248,7 @@ class TestFetchCalendarBusy:
             (b["calendar_id"], b["calendar_title"], b["capacity_class"])
             for b in blocks
         ] == [
-            ("CAL-WORK", "Trinoor", "quarantined"),
+            ("CAL-WORK", "Trinoor", "fixed"),
             ("CAL-MINT", "🟡 Mint", "ignored"),
         ]
 
@@ -297,9 +298,11 @@ class TestFetchCalendarBusy:
         blocks, _ = ext.fetch_calendar_busy(FakeStore([ev1, ev2]), {}, TODAY)
         assert len(blocks) == 2  # no identity -> no canonicalization
 
-    def test_known_unclassified_calendar_stays_quarantined(self):
-        # Frozen contract 17: a KNOWN calendar title the user has not
-        # classified must not silently default to fixed capacity.
+    def test_known_unclassified_calendar_defaults_fixed(self):
+        # FEEDBACK-27: a KNOWN calendar title that is unlisted in the
+        # capacity-class config defaults to fixed and stays visible — the
+        # deterministic regression coverage for the live unlisted-calendar
+        # contract (supersedes the earlier quarantine default).
         store = FakeStore(
             [_event("Mystery", cal="CAL-UNKNOWN")],
             calendars=[CalendarInfo("Some Random Cal", "CAL-UNKNOWN", True, "Local")],
@@ -307,7 +310,23 @@ class TestFetchCalendarBusy:
         blocks, _ = ext.fetch_calendar_busy(
             store, {"calendar_capacity_classes": {}}, TODAY
         )
-        assert blocks[0]["capacity_class"] == "quarantined"
+        assert blocks[0]["capacity_class"] == "fixed"
+        assert blocks[0]["Block"] == "Mystery"
+
+    def test_unlisted_timed_calendar_defaults_fixed_and_remains_visible(self):
+        # FEEDBACK-27: an unlisted timed calendar (no store inventory entry)
+        # defaults to fixed and stays on the wire — never silently omitted or
+        # quarantined. The event's timed row is visible planning evidence.
+        store = FakeStore(
+            [_event("A + M Busy Bees", "09:00", "09:30", cal="CAL-UNLISTED")],
+            calendars=[CalendarInfo("Personal", "CAL-PERSONAL", True, "iCloud")],
+        )
+        blocks, warnings = ext.fetch_calendar_busy(store, {}, TODAY)
+        assert warnings == []
+        [row] = [b for b in blocks if b["Block"] == "A + M Busy Bees"]
+        assert row["Start"] == "09:00" and row["End"] == "09:30"
+        assert row["source"] == "calendar"
+        assert row["capacity_class"] == "fixed"
 
     def test_configured_class_beats_quarantine_default(self):
         calendars = [CalendarInfo("Personal", "CAL-P", True, "iCloud")]
@@ -349,6 +368,70 @@ class TestFetchCalendarBusy:
         blocks, warnings = ext.fetch_calendar_busy(store, {}, TODAY)
         assert blocks == [] and len(warnings) == 1
         assert "calendar" in warnings[0].lower()
+
+
+# ---------------------------------------------------------------------------
+# FEEDBACK-27 — stale Mint sessions vs effective fixed/work walls
+# ---------------------------------------------------------------------------
+
+class TestStaleMintConflicts:
+    def _mint(self, start="15:00", end="15:30"):
+        return {
+            "id": f"Mint Afternoon · {start}",
+            "name": f"Mint Afternoon · {start}",
+            "mint_session": True,
+            "placement_window": {"start": start, "end": end},
+        }
+
+    def test_fixed_wall_overlap_is_reported(self):
+        conflicts = ext.stale_mint_conflicts(
+            [self._mint()],
+            [{"Block": "OPPD", "source": "calendar", "capacity_class": "fixed",
+              "Start": "15:00", "End": "15:30"}],
+        )
+        assert conflicts == [{
+            "mint_id": "Mint Afternoon · 15:00",
+            "mint_interval": {"start": "15:00", "end": "15:30"},
+            "wall_id": "OPPD",
+            "wall_interval": {"start": "15:00", "end": "15:30"},
+        }]
+
+    def test_work_wall_overlap_is_reported(self):
+        conflicts = ext.stale_mint_conflicts(
+            [self._mint()],
+            [{"Block": "Work call", "source": "calendar", "capacity_class": "work",
+              "Start": "15:15", "End": "16:00"}],
+        )
+        assert len(conflicts) == 1
+        assert conflicts[0]["wall_id"] == "Work call"
+        assert conflicts[0]["mint_id"] == "Mint Afternoon · 15:00"
+
+    def test_touching_boundaries_are_not_conflicts(self):
+        before = ext.stale_mint_conflicts(
+            [self._mint()],
+            [{"Block": "Before", "source": "calendar", "capacity_class": "fixed",
+              "Start": "14:30", "End": "15:00"}],
+        )
+        after = ext.stale_mint_conflicts(
+            [self._mint()],
+            [{"Block": "After", "source": "calendar", "capacity_class": "fixed",
+              "Start": "15:30", "End": "16:00"}],
+        )
+        assert before == []
+        assert after == []
+
+    def test_window_types_and_excluded_classes_are_not_walls(self):
+        conflicts = ext.stale_mint_conflicts(
+            [self._mint()],
+            [
+                {"Block": "Window", "Type": "window", "Start": "15:00", "End": "16:00"},
+                {"Block": "Ignored", "source": "calendar", "capacity_class": "ignored",
+                 "Start": "15:00", "End": "16:00"},
+                {"Block": "Quarantined", "source": "calendar",
+                 "capacity_class": "quarantined", "Start": "15:00", "End": "16:00"},
+            ],
+        )
+        assert conflicts == []
 
 
 # ---------------------------------------------------------------------------

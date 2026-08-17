@@ -332,3 +332,191 @@ class TestValidateSequenceMintWalls:
         body = r.json()
         assert body["ok"] is True
         assert body["hard_errors"] == []
+
+
+# ---------------------------------------------------------------------------
+# FEEDBACK-27 — stale Mint sessions vs effective fixed/work walls (route)
+# ---------------------------------------------------------------------------
+
+AUG17 = date(2026, 8, 17)  # Monday — workday so Mint sessions emit
+
+
+def _seed_aug17_mint(vault, sessions=("mint:afternoon:15:00",)) -> None:
+    # QT is disabled so the AUG17 fixture's selected set is exactly the
+    # chosen Mint session plus the tasks the test posts — never-bump then
+    # proves each selected item appears exactly once.
+    rs.write_runstate(vault, AUG17, rs.build_runstate({
+        "schedulable": {"minting": {
+            "on": True,
+            "sessions": list(sessions),
+        }, "qt": {"on": False}},
+    }))
+
+
+def _freeze_aug17(monkeypatch) -> None:
+    class _FrozenDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return cls(2026, 8, 17, 9, 0)  # Monday 09:00
+
+    monkeypatch.setattr(main_mod, "datetime", _FrozenDatetime)
+
+
+def _oppd_wall(capacity_class="fixed"):
+    return {"Block": "OPPD", "source": "calendar",
+            "capacity_class": capacity_class,
+            "Start": "15:00", "End": "15:30"}
+
+
+def _post_aug17(client, anchored_blocks, assigned=None):
+    return client.post("/sequence", json={
+        "assigned": assigned if assigned is not None else [],
+        "config": {"Template Blocks": {"Trinoor Hours": [
+            {"Slot": "Morning", "Start": "8:30 AM", "End": "12:30 PM"},
+            {"Slot": "Afternoon", "Start": "1:30 PM", "End": "5:00 PM"},
+        ]}},
+        "anchored_blocks": anchored_blocks,
+    }, headers=_auth(client))
+
+
+def test_august_17_stale_mint_filtered_before_judgment(client, vault, monkeypatch):
+    """FEEDBACK-27: a saved Mint selection overlapping a current fixed or work
+    calendar wall is a stale preflight failure. It must stop BEFORE judgment,
+    the immutable merge, or any billed ledger change — the exact August 17
+    incident shape (Mint 15:00-15:30 vs OPPD 15:00-15:30)."""
+    _write_cfg(vault)
+    _seed_aug17_mint(vault)
+    _freeze_aug17(monkeypatch)
+    judgment_calls = []
+
+    def fake_propose(*args, **kwargs):
+        judgment_calls.append(args)
+        return {"sequence": [], "overlap_grants": []}
+
+    monkeypatch.setattr(main_mod.judgment, "propose_sequence", fake_propose)
+
+    ledger_before = client.get("/billed-ledger", headers=_auth(client)).json()
+    r = _post_aug17(client, [_oppd_wall()])
+    assert r.status_code == 422
+    body = r.json()
+    assert body["detail"]["message"] == (
+        "selected Mint sessions conflict with fixed or work walls"
+    )
+    assert body["detail"]["conflicts"] == [{
+        "mint_id": "Mint Afternoon · 15:00",
+        "mint_interval": {"start": "15:00", "end": "15:30"},
+        "wall_id": "OPPD",
+        "wall_interval": {"start": "15:00", "end": "15:30"},
+    }]
+    assert judgment_calls == []
+    state = rs.read_runstate(vault, AUG17)
+    assert state["billed_calls"] == 0
+    # Public ledger seam: the stale preflight never spends the per-day budget.
+    ledger_after = client.get("/billed-ledger", headers=_auth(client)).json()
+    assert ledger_after == ledger_before
+    assert ledger_after["spent"] == 0
+
+
+def test_august_17_work_wall_also_stops_before_judgment(client, vault, monkeypatch):
+    # The server-side recheck covers work walls too, not only fixed.
+    _write_cfg(vault)
+    _seed_aug17_mint(vault)
+    _freeze_aug17(monkeypatch)
+    judgment_calls = []
+    monkeypatch.setattr(
+        main_mod.judgment, "propose_sequence",
+        lambda *a, **k: judgment_calls.append(a) or {"sequence": []},
+    )
+    r = _post_aug17(client, [_oppd_wall("work")])
+    assert r.status_code == 422
+    assert r.json()["detail"]["conflicts"][0]["wall_id"] == "OPPD"
+    assert judgment_calls == []
+    assert rs.read_runstate(vault, AUG17)["billed_calls"] == 0
+
+
+def test_clean_mint_selection_still_sequences(client, vault, monkeypatch):
+    # A saved Mint session that does NOT touch a wall keeps the normal path:
+    # judgment runs, the exact immutable row is merged, no conflict.
+    _write_cfg(vault)
+    _seed_aug17_mint(vault, sessions=("mint:afternoon:14:00",))
+    _freeze_aug17(monkeypatch)
+    captured = {}
+
+    def fake_propose(assigned, config, anchored_blocks, ctx=None):
+        captured["assigned"] = assigned
+        return {"sequence": [], "overlap_grants": []}
+
+    monkeypatch.setattr(main_mod.judgment, "propose_sequence", fake_propose)
+    monkeypatch.setattr(main_mod.sequence, "validate_sequence",
+                        lambda *a, **k: type("R", (), {
+                            "ok": True, "hard_errors": [], "warnings": []})())
+    r = _post_aug17(client, [_oppd_wall()])
+    assert r.status_code == 200, r.text
+    mint_rows = [
+        row for row in r.json()["sequence"]
+        if row.get("mint_session_id") == "mint:afternoon:14:00"
+    ]
+    assert mint_rows == [{
+        "id": "Mint Afternoon · 14:00",
+        "start": "14:00",
+        "end": "14:30",
+        "zone": "work_hours",
+        "source": "schedulable",
+        "mint_session": True,
+        "mint_session_id": "mint:afternoon:14:00",
+        "calendar_class": "mint",
+    }]
+
+
+def test_august_17_clean_sequence_places_every_task_once_at_exact_duration(
+    client, vault, monkeypatch
+):
+    """FEEDBACK-27 August 17 AC: with the OPPD 15:00-15:30 fixed wall in place
+    and a collision-free saved Mint session (14:00-14:30), the route sequences
+    EVERY selected task exactly once at its exact 15/30-minute duration
+    through the REAL validator — no dropped, duplicated, or shortened rows,
+    and the selected Mint session stays a single immutable row."""
+    _write_cfg(vault)
+    _seed_aug17_mint(vault, sessions=("mint:afternoon:14:00",))
+    _freeze_aug17(monkeypatch)
+
+    def fake_propose(assigned, config, anchored_blocks, ctx=None):
+        return {"sequence": [
+            {"id": "Write brief", "start": "09:00", "end": "09:15"},
+            {"id": "Deep work", "start": "09:15", "end": "09:45"},
+        ], "overlap_grants": []}
+
+    monkeypatch.setattr(main_mod.judgment, "propose_sequence", fake_propose)
+    r = _post_aug17(client, [_oppd_wall()], assigned=[
+        {"id": "Write brief", "name": "Write brief", "duration": 15,
+         "blocks": 1, "labels": []},
+        {"id": "Deep work", "name": "Deep work", "duration": 30,
+         "blocks": 1, "labels": []},
+    ])
+    assert r.status_code == 200, r.text
+    body = r.json()
+
+    def _minutes(hhmm: str) -> int:
+        hour, minute = (int(p) for p in hhmm.split(":"))
+        return hour * 60 + minute
+
+    placed = [
+        row for row in body["sequence"]
+        if not row.get("mint_session") and not row.get("backdrop")
+    ]
+    assert [row["id"] for row in placed] == ["Write brief", "Deep work"]
+    by_id = {row["id"]: row for row in placed}
+    for task_id, start, end, minutes in (
+        ("Write brief", "09:00", "09:15", 15),
+        ("Deep work", "09:15", "09:45", 30),
+    ):
+        assert by_id[task_id]["start"] == start
+        assert by_id[task_id]["end"] == end
+        assert _minutes(end) - _minutes(start) == minutes
+    # The selected Mint session remains exactly one immutable row.
+    mint_rows = [
+        row for row in body["sequence"]
+        if row.get("mint_session_id") == "mint:afternoon:14:00"
+    ]
+    assert len(mint_rows) == 1
+    assert mint_rows[0]["start"] == "14:00" and mint_rows[0]["end"] == "14:30"

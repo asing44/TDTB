@@ -1,7 +1,10 @@
 """Integration tests for main.py — T9 gate (routes, token guard, run-state)."""
 from __future__ import annotations
 
+import hashlib
 import json
+import re
+import subprocess
 import sys
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -1524,3 +1527,156 @@ class TestDurationMemoryIsolation:
         assert r.status_code == 200
         assert dm.read_vault_memory(a) == {"todoist:1": 90}
         assert dm.read_vault_memory(b) == {}
+# T02: GET /version — tokenless, pure read-only source/runtime fingerprint
+# ---------------------------------------------------------------------------
+
+VERSION_FIELDS = {
+    "status", "source_commit", "source_tree", "cockpit_index_sha256",
+    "cockpit_asset", "cockpit_asset_sha256",
+}
+_GIT_ID_RE = re.compile(r"^[0-9a-f]{40}$")
+_SHA256_HEX_RE = re.compile(r"^[0-9a-f]{64}$")
+_ASSET_RE = re.compile(r"^assets/index-[A-Za-z0-9_-]+\.js$")
+
+
+def _make_git_repo(root: Path) -> None:
+    root.mkdir(parents=True, exist_ok=True)
+    subprocess.run(["git", "-C", str(root), "init", "-q"], check=True)
+    subprocess.run(["git", "-C", str(root), "config", "user.email",
+                    "test@example.com"], check=True)
+    subprocess.run(["git", "-C", str(root), "config", "user.name",
+                    "TDTB Test"], check=True)
+    (root / "seed.txt").write_text("seed\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(root), "add", "-A"], check=True)
+    subprocess.run(["git", "-C", str(root), "commit", "-qm", "init"], check=True)
+
+
+def _git_ids(root: Path) -> tuple[str, str]:
+    commit = subprocess.run(
+        ["git", "-C", str(root), "rev-parse", "HEAD"],
+        capture_output=True, text=True, check=True).stdout.strip()
+    tree = subprocess.run(
+        ["git", "-C", str(root), "rev-parse", "HEAD^{tree}"],
+        capture_output=True, text=True, check=True).stdout.strip()
+    return commit, tree
+
+
+def _seed_cockpit_repo(tmp_path: Path, index_text: str, asset_name: str,
+                       asset_bytes: bytes | None) -> tuple[Path, Path]:
+    """(repo_root, cockpit_dir) fixture: a real git repo whose committed
+    static/cockpit holds index.html plus (when asset_bytes is not None) the
+    referenced production asset."""
+    repo = tmp_path / "repo"
+    _make_git_repo(repo)
+    cockpit = repo / "static" / "cockpit"
+    cockpit.mkdir(parents=True, exist_ok=True)
+    (cockpit / "index.html").write_text(index_text, encoding="utf-8")
+    if asset_bytes is not None:
+        (cockpit / asset_name).parent.mkdir(parents=True, exist_ok=True)
+        (cockpit / asset_name).write_bytes(asset_bytes)
+    subprocess.run(["git", "-C", str(repo), "add", "-A"], check=True)
+    subprocess.run(["git", "-C", str(repo), "commit", "-qm", "cockpit"],
+                   check=True)
+    return repo, cockpit
+
+
+def _point_version_paths(client, repo_root: Path, cockpit_dir: Path) -> None:
+    client.app.state.repo_root = str(repo_root)
+    client.app.state.cockpit_dir = str(cockpit_dir)
+
+
+class TestVersionEndpoint:
+    def test_version_tokenless_exact_fields_and_formats(self, client):
+        r = client.get("/version")  # no X-TDTB-Token header
+        assert r.status_code == 200
+        body = r.json()
+        assert set(body) == VERSION_FIELDS  # exactly six fields, no extras
+        assert body["status"] == "ok"
+        assert _GIT_ID_RE.fullmatch(body["source_commit"])
+        assert _GIT_ID_RE.fullmatch(body["source_tree"])
+        assert _SHA256_HEX_RE.fullmatch(body["cockpit_index_sha256"])
+        assert _SHA256_HEX_RE.fullmatch(body["cockpit_asset_sha256"])
+        assert _ASSET_RE.fullmatch(body["cockpit_asset"])
+
+    def test_version_does_not_require_vault_or_config(self, monkeypatch):
+        monkeypatch.delenv(main_mod.VAULT_ROOT_ENV, raising=False)
+        c = TestClient(main_mod.create_app())
+        assert c.get("/version").status_code == 200
+        assert c.get("/config").status_code == 503  # contrast: config needs vault
+
+    def test_version_deterministic_and_pins_fixture_values(self, client, tmp_path):
+        asset_name = "assets/index-abc12345.js"
+        asset_bytes = b"export const x = 1;\n"
+        repo, cockpit = _seed_cockpit_repo(
+            tmp_path,
+            '<script type="module" src="./assets/index-abc12345.js"></script>',
+            asset_name, asset_bytes,
+        )
+        _point_version_paths(client, repo, cockpit)
+
+        first = client.get("/version").json()
+        second = client.get("/version").json()
+        assert first == second  # deterministic across calls
+
+        commit, tree = _git_ids(repo)
+        assert first["source_commit"] == commit
+        assert first["source_tree"] == tree
+        assert first["cockpit_index_sha256"] == hashlib.sha256(
+            (cockpit / "index.html").read_bytes()).hexdigest()
+        assert first["cockpit_asset"] == asset_name
+        assert first["cockpit_asset_sha256"] == hashlib.sha256(asset_bytes).hexdigest()
+
+    def test_version_no_state_bearing_calls(self, client, monkeypatch):
+        def _forbidden(*_a, **_k):
+            raise AssertionError(
+                "state-bearing surface must never be called by GET /version")
+
+        monkeypatch.setattr(main_mod.judgment, "propose_sequence", _forbidden)
+        monkeypatch.setattr(main_mod.judgment, "adjust_freetext", _forbidden)
+        monkeypatch.setattr(main_mod.runstate, "update_runstate", _forbidden)
+        monkeypatch.setattr(main_mod.runstate, "write_digest_index", _forbidden)
+        monkeypatch.setattr(main_mod.external_sources, "fetch_todoist_items",
+                            _forbidden)
+        monkeypatch.setattr(main_mod.external_sources, "fetch_calendar_busy",
+                            _forbidden)
+        monkeypatch.setattr(main_mod.calendar_bridge, "shared_store", _forbidden)
+        monkeypatch.setattr(main_mod.config_reader, "read_config", _forbidden)
+
+        r = client.get("/version")
+        assert r.status_code == 200
+
+    @pytest.mark.parametrize(
+        "kind,index_text,asset_name,asset_bytes",
+        [
+            ("no_index", "", "assets/index-x.js", b"x"),
+            ("ambiguous",
+             '<script src="./assets/index-a.js"></script>'
+             '<script src="./assets/index-b.js"></script>',
+             "assets/index-a.js", b"x"),
+            ("missing_asset",
+             '<script src="./assets/index-missing.js"></script>',
+             "assets/index-missing.js", None),
+        ],
+    )
+    def test_version_fails_closed(self, client, tmp_path, kind, index_text,
+                                  asset_name, asset_bytes):
+        repo, cockpit = _seed_cockpit_repo(
+            tmp_path, index_text, asset_name, asset_bytes)
+        _point_version_paths(client, repo, cockpit)
+        before = sorted(p.name for p in cockpit.iterdir())
+        r = client.get("/version")
+        assert r.status_code == 503
+        assert sorted(p.name for p in cockpit.iterdir()) == before  # no mutation
+
+    def test_version_fails_closed_no_git_identity(self, client, tmp_path):
+        plain = tmp_path / "plain"
+        plain.mkdir(parents=True, exist_ok=True)
+        cockpit = plain / "static" / "cockpit"
+        cockpit.mkdir(parents=True)
+        (cockpit / "index.html").write_text(
+            '<script src="./assets/index-x.js"></script>', encoding="utf-8")
+        (cockpit / "assets").mkdir()
+        (cockpit / "assets/index-x.js").write_bytes(b"x")
+        _point_version_paths(client, plain, cockpit)
+        r = client.get("/version")
+        assert r.status_code == 503

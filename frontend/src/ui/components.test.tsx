@@ -16,11 +16,14 @@ import { App } from "./App";
 import { ExecutionView } from "./ExecutionView";
 import { createStore, type Store } from "../store/createStore";
 import { Controller } from "../store/controller";
+import { effectiveAnchoredBlocks } from "../store/store";
 import { FixtureAdapter } from "../adapters/fixture";
 import { makeScenario, fixedInputsOf, type ScenarioName } from "../fixtures/scenarios";
 import { fingerprintFixedInputs } from "../model/fingerprint";
 import { fixtureValidate } from "../adapters/fixture";
 import { buildDayPrompt } from "../store/exportPrompt";
+import { CalendarImpact } from "./CalendarImpact";
+import { calendarWalls } from "../model/overflow";
 import type { ComponentChildren } from "preact";
 
 function makeHarness(scenario: ScenarioName): {
@@ -452,10 +455,12 @@ describe("T18g Day Setup semantics", () => {
   it("keeps checked Mint sessions, slider total, and saved payload synchronized", async () => {
     const { ui, store, controller } = makeHarness("ready");
     const inputs = store.getState().inputs!;
+    // Wall-free sessions (the ready scenario's calendar walls sit 09:15-15:30):
+    // the sync contract is exercised without wall filtering noise.
     const sessions = [
       { id: "mint:morning:08:30", name: "Mint Morning · 08:30", slot: "Morning", start: "08:30", end: "09:00" },
-      { id: "mint:morning:09:00", name: "Mint Morning · 09:00", slot: "Morning", start: "09:00", end: "09:30" },
-      { id: "mint:morning:09:30", name: "Mint Morning · 09:30", slot: "Morning", start: "09:30", end: "10:00" },
+      { id: "mint:afternoon:13:30", name: "Mint Afternoon · 13:30", slot: "Afternoon", start: "13:30", end: "14:00" },
+      { id: "mint:afternoon:14:00", name: "Mint Afternoon · 14:00", slot: "Afternoon", start: "14:00", end: "14:30" },
     ];
     store.dispatch({
       type: "INPUTS_LOADED",
@@ -490,7 +495,7 @@ describe("T18g Day Setup semantics", () => {
     fireEvent.click(getByLabelText("Enable Mint Morning · 08:30"));
     expect((getByLabelText("Mint allotment") as HTMLInputElement).value).toBe("60");
     fireEvent.input(getByLabelText("Mint allotment"), { target: { value: "90" } });
-    expect(getByLabelText("Disable Mint Morning · 09:30")).toBeTruthy();
+    expect(getByLabelText("Disable Mint Afternoon · 14:00")).toBeTruthy();
 
     await act(async () => {
       fireEvent.click(getByText("Save day setup"));
@@ -526,6 +531,9 @@ describe("T18g Day Setup semantics", () => {
       type: "INPUTS_LOADED",
       inputs: {
         ...inputs,
+        // Anchor behavior is exercised wall-free; wall filtering has its own
+        // dedicated FEEDBACK-28 tests.
+        anchored: inputs.anchored.filter((a) => a.kind !== "calendar"),
         daySetup,
         daySemantics: {
           ...inputs.daySemantics,
@@ -545,6 +553,106 @@ describe("T18g Day Setup semantics", () => {
     fireEvent.input(getByLabelText("Start (anchor)"), { target: { value: "08:00" } });
     expect(getByLabelText("Disable Mint Morning · 08:30")).toBeTruthy();
     expect(getByLabelText("Enable Mint Afternoon · 13:30")).toBeTruthy();
+  });
+
+  /* FEEDBACK-28: the August 17 incident — Day Setup selected the first
+     post-anchor Mint rows without checking calendar walls, so Mint 15:00-15:30
+     collided with the OPPD fixed wall at 15:00. Default, edited, and saved
+     Mint choices must all exclude fixed or work wall overlaps. */
+  describe("FEEDBACK-28 wall-aware Mint choices (SetupDrawer)", () => {
+    function mintWallHarness() {
+      const h = makeHarness("ready");
+      const inputs = structuredClone(h.store.getState().inputs!);
+      const sessions = [
+        { id: "mint:morning:08:30", name: "Mint Morning · 08:30", slot: "Morning", start: "08:30", end: "09:00" },
+        { id: "mint:morning:09:00", name: "Mint Morning · 09:00", slot: "Morning", start: "09:00", end: "09:30" },
+        { id: "mint:afternoon:15:00", name: "Mint Afternoon · 15:00", slot: "Afternoon", start: "15:00", end: "15:30" },
+      ];
+      inputs.anchored = [
+        ...inputs.anchored.filter((a) => a.kind !== "calendar"),
+        {
+          id: "OPPD meter read", name: "OPPD meter read", kind: "calendar",
+          start: "15:00", end: "15:30", durationMin: 30, overlapAllowed: false,
+          on: true, skipToday: false, calendarId: "oppd", calendarTitle: "OPPD",
+          capacityClass: "fixed",
+        },
+      ];
+      inputs.daySemantics = {
+        ...inputs.daySemantics,
+        mintEnabled: true,
+        effectiveAllotmentMinutes: 90,
+        mintSessions: sessions,
+      };
+      inputs.daySetup = {
+        ...inputs.daySetup,
+        workAllotmentMinutes: 60,
+        schedulable: { minting: { on: true, sessions: [sessions[0].id, sessions[2].id] } },
+      };
+      h.store.dispatch({ type: "INPUTS_LOADED", inputs, ledger: h.store.getState().ledger! });
+      h.store.dispatch({ type: "SETUP_SAVED", daySetup: inputs.daySetup });
+      h.store.dispatch({ type: "UI", patch: { setupOpen: true } });
+      return { ...h, sessions };
+    }
+
+    it("default checks never include the wall-conflicting 15:00 session", () => {
+      const { ui } = mintWallHarness();
+      const { getByLabelText } = ui(<SetupDrawer />);
+      // The stale saved choice [08:30, 15:00] keeps its wall-free half;
+      // 15:00-15:30 overlaps OPPD 15:00-15:30 and is never restored.
+      expect(getByLabelText("Disable Mint Morning · 08:30")).toBeTruthy();
+      expect(getByLabelText("Enable Mint Afternoon · 15:00")).toBeTruthy();
+    });
+
+    it("edited allotment still excludes the wall-conflicting session and save payload is clean", async () => {
+      const { ui, controller, sessions } = mintWallHarness();
+      const save = vi.spyOn(controller, "saveDaySetup").mockResolvedValue();
+      const { getByLabelText, getByText } = ui(<SetupDrawer />);
+      const slider = getByLabelText("Mint allotment") as HTMLInputElement;
+      // 3 sessions × 30 = 90 is the max; the 15:00 row stays out of it.
+      fireEvent.input(slider, { target: { value: "90" } });
+      expect(getByLabelText("Enable Mint Afternoon · 15:00")).toBeTruthy();
+      expect((getByLabelText("Mint allotment") as HTMLInputElement).value).toBe("60");
+      // Explicitly enabling the wall row does not smuggle it into the payload.
+      fireEvent.click(getByLabelText("Enable Mint Afternoon · 15:00"));
+      await act(async () => {
+        fireEvent.click(getByText("Save day setup"));
+      });
+      expect(save).toHaveBeenCalledWith(expect.objectContaining({
+        workAllotmentMinutes: 60,
+        schedulable: {
+          minting: {
+            on: true,
+            n: 2,
+            sessions: [sessions[0].id, sessions[1].id],
+          },
+        },
+      }));
+    });
+  });
+
+  /* FEEDBACK-28: an unlisted timed calendar defaults to fixed and must remain
+     visible — the incident silently omitted real events before Mint selection
+     could avoid them. */
+  it("surfaces an unlisted timed calendar (A + M Busy Bees) as a fixed wall", () => {
+    const { ui, store } = makeHarness("ready");
+    const inputs = structuredClone(store.getState().inputs!);
+    inputs.anchored = [
+      {
+        id: "A + M Busy Bees", name: "A + M Busy Bees", kind: "calendar",
+        start: "10:30", end: "11:00", durationMin: 30, overlapAllowed: false,
+        on: true, skipToday: false, calendarId: "busy-bees",
+        calendarTitle: "A + M Busy Bees",
+      },
+    ];
+    store.dispatch({ type: "INPUTS_LOADED", inputs, ledger: store.getState().ledger! });
+    const { getByText, getAllByText } = ui(<CalendarImpact />);
+    expect(getAllByText("A + M Busy Bees").length).toBeGreaterThan(0);
+    expect(getByText("Fixed")).toBeTruthy();
+    expect(getByText("hard block")).toBeTruthy();
+    expect(getByText("1 blk counted")).toBeTruthy();
+    // And it is a real wall for Mint selection / overflow avoidance.
+    const walls = calendarWalls(effectiveAnchoredBlocks(store.getState()));
+    expect(walls).toEqual([{ start: 10 * 60 + 30, end: 11 * 60 }]);
   });
 });
 
