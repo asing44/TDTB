@@ -166,4 +166,23 @@ describe("attachSessionPersistence", () => {
     attachSessionPersistence(store, ctl, storage);
     expect((ctl.revalidate as any).mock.calls.length).toBe(0);
   });
+
+  it("durable duration memory never enters the localStorage session blob", () => {
+    const store = createStore();
+    store.dispatch({ type: "INPUTS_LOADED", inputs: inputs("2026-07-18"), ledger: LEDGER });
+    attachSessionPersistence(store, fakeController(), storage);
+    // A successful explicit save updates the MODEL (server-authoritative
+    // durable memory) — the same-day session blob must stay independent.
+    store.dispatch({
+      type: "DURATION_MEMORY_OK",
+      id: "A",
+      minutes: 90,
+      source: "remembered",
+    });
+    const blob = JSON.parse(storage.getItem(KEY)!);
+    expect(blob).not.toHaveProperty("durationMemory");
+    expect(blob.overrides.A).toBeUndefined();
+    expect(store.getState().inputs!.assigned[0].blocks).toBe(3); // 90/30
+    expect(store.getState().inputs!.assigned[0].durationSource).toBe("remembered");
+  });
 });

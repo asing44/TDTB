@@ -332,6 +332,14 @@ function Row({
   const blocks = effectiveBlocks(s, item.id);
   const included = s.overrides[item.id]?.included ?? true;
   const overridden = s.overrides[item.id]?.blocks != null;
+  // Duration-memory MVP: three distinct provenance states — "memory" (a
+  // same-day session override holds the value), "remembered" (a durable
+  // server-side memory entry), "source" (deterministic source resolution).
+  const srcTag: "memory" | "remembered" | "source" = overridden
+    ? "memory"
+    : item.durationSource === "remembered"
+      ? "remembered"
+      : "source";
   const scheduledRow = s.sequence?.find((r) => r.id === item.id && r.kind === "work");
   const track = trackFor(cumBefore, blocks, budgetTotal(s), MAX_BLOCKS);
 
@@ -429,8 +437,9 @@ function Row({
                 value={blocks}
                 aria-label={`${item.name} duration in 15-minute steps`}
                 /* FEEDBACK-10 (A08): the spoken value names WHERE the duration
-                   came from — a session memory override or the source. */
-                aria-valuetext={`${blocksLabel(blocks)} (${overridden ? "memory" : "source"})`}
+                   came from — a session memory override, durable memory, or
+                   the source. */
+                aria-valuetext={`${blocksLabel(blocks)} (${srcTag})`}
                 onInput={(e) =>
                   controller.setOverride(
                     item.id,
@@ -463,13 +472,14 @@ function Row({
               {blocksLabel(blocks)}
               {overridden ? "*" : ""}
             </span>
-            {/* FEEDBACK-10 (A08): duration-memory state is a visible chip —
-                "memory" when a session override holds the value, "source"
-                otherwise. The * on the value stays as a redundant signal. */}
+            {/* FEEDBACK-10 (A08) + duration-memory MVP: provenance chip —
+                "memory" for a session override, "remembered" for durable
+                server memory, "source" otherwise. The * on the value stays as
+                a redundant session-memory signal. */}
             <span
-              class={`qrow__src-tag qrow__src-tag--${overridden ? "memory" : "source"}`}
+              class={`qrow__src-tag qrow__src-tag--${srcTag}`}
             >
-              {overridden ? "memory" : "source"}
+              {srcTag}
             </span>
           </>
         ) : (

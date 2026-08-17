@@ -11,7 +11,7 @@
 
 import type { Adapter, SequenceContext } from "../adapters/adapter";
 import { ApiError } from "../adapters/api";
-import { projectSequenceRow } from "../adapters/wire";
+import { itemIdentity, projectSequenceRow } from "../adapters/wire";
 import { fingerprintFixedInputs } from "../model/fingerprint";
 import { isStagingVerb } from "../model/staging";
 import { prunePins } from "../model/pins";
@@ -44,6 +44,13 @@ function byStartThenId(a: SequenceRow, b: SequenceRow): number {
   if (a.start !== b.start) return a.start < b.start ? -1 : 1;
   if (a.id !== b.id) return a.id < b.id ? -1 : 1;
   return 0;
+}
+
+/** Strict duration-memory value rule (MVP): a whole number of minutes, at
+    least zero, on the 5-minute grid. Never coerces — bool, fraction,
+    negative, and off-grid values are rejected exactly as typed. */
+export function isValidDurationMinutes(minutes: number): boolean {
+  return Number.isInteger(minutes) && minutes >= 0 && minutes % 5 === 0;
 }
 
 /** T28 + FEEDBACK-09: a calendar row's day-setup entry is plan participation
@@ -192,6 +199,111 @@ export class Controller {
       pick: pick ?? pool[0] ?? null,
       source: pick === null ? "auto" : "override",
     });
+  }
+
+  // -- explicit duration memory (MVP) ---------------------------------------
+
+  /** Canonical mutation identity for a row: the model's projected identity,
+      else derived from the wire identity fields (todoist:<id> / vault path).
+      Null only when the row carries neither — name alone is never an
+      identity, and such a row cannot be saved or reset. */
+  private identityOf(id: string): string | null {
+    const item = this.getState().inputs?.assigned.find((i) => i.id === id);
+    if (!item) return null;
+    return item.identity ?? itemIdentity(item);
+  }
+
+  private durationMemoryFail(id: string, error: string): void {
+    this.dispatch({ type: "DURATION_MEMORY_FAIL", id, error });
+  }
+
+  /** Explicit durable save (MVP): exactly ONE token-guarded non-billed
+      mutation. Invalid values (bool, fraction, negative, off-grid) are
+      blocked with NO network call and NO snapping; success is claimed only
+      after the response lands, and the remembered value then becomes the
+      row's effective duration (any same-day session override is dropped so
+      the queue reflects what was actually saved). */
+  async saveDurationMemory(id: string, minutes: number): Promise<void> {
+    const s = this.getState();
+    if (!s.inputs?.assigned.some((i) => i.id === id)) return;
+    if (!isValidDurationMinutes(minutes)) {
+      this.durationMemoryFail(
+        id,
+        "Duration must be whole minutes in 5-minute steps (e.g. 45, 60, 90).",
+      );
+      return;
+    }
+    const identity = this.identityOf(id);
+    if (!identity) {
+      this.durationMemoryFail(id, "This item has no stable identity to remember.");
+      return;
+    }
+    this.dispatch({ type: "DURATION_MEMORY_START", id });
+    try {
+      const result = await this.adapter.saveDurationMemory(identity, minutes);
+      this.dispatch({
+        type: "DURATION_MEMORY_OK",
+        id,
+        minutes: result.minutes,
+        source: result.source,
+      });
+      // The saved value is now the model's effective duration. Drop any
+      // same-day session override so the queue shows the remembered value —
+      // the session override system stays independent, it just no longer
+      // shadows the value the user explicitly saved.
+      const override = this.getState().overrides[id];
+      if (override) {
+        this.setOverride(id, override.included ?? true, null);
+      }
+    } catch (e) {
+      this.durationMemoryFail(
+        id,
+        String(e instanceof Error ? e.message : e),
+      );
+    }
+  }
+
+  /** Explicit durable reset (MVP): exactly ONE token-guarded non-billed
+      mutation. On success the returned source fallback is applied to the row
+      (blocks + source label) and any same-day session override is dropped;
+      on failure the last authoritative value stays untouched and nothing
+      claims the reset. FT-05 F2: a reset that finds no source fallback
+      (minutes null) NEVER becomes zero or All day — the remembered value
+      stays authoritative and a bounded failure state surfaces. */
+  async resetDurationMemory(id: string): Promise<void> {
+    const s = this.getState();
+    if (!s.inputs?.assigned.some((i) => i.id === id)) return;
+    const identity = this.identityOf(id);
+    if (!identity) {
+      this.durationMemoryFail(id, "This item has no stable identity to reset.");
+      return;
+    }
+    this.dispatch({ type: "DURATION_MEMORY_START", id });
+    try {
+      const result = await this.adapter.resetDurationMemory(identity);
+      if (result.minutes == null) {
+        this.durationMemoryFail(
+          id,
+          "No source duration was found after reset; the previous value is preserved.",
+        );
+        return;
+      }
+      this.dispatch({
+        type: "DURATION_MEMORY_OK",
+        id,
+        minutes: result.minutes,
+        source: result.source,
+      });
+      const override = this.getState().overrides[id];
+      if (override) {
+        this.setOverride(id, override.included ?? true, null);
+      }
+    } catch (e) {
+      this.durationMemoryFail(
+        id,
+        String(e instanceof Error ? e.message : e),
+      );
+    }
   }
 
   /* T18g's saveAndRegenerateDay (save + immediate billed autoSequence) was

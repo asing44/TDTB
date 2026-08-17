@@ -16,6 +16,8 @@
 
 import type {
   Adapter,
+  DurationMemoryResetResult,
+  DurationMemorySaveResult,
   SequenceContext,
   SequenceResult,
   SourceRefreshResult,
@@ -38,6 +40,8 @@ import {
   daySetupToWire,
   projectCapacity,
   projectCommitReport,
+  projectDurationMemoryReset,
+  projectDurationMemorySave,
   projectFixedInputs,
   projectLedger,
   projectPlanInputs,
@@ -193,6 +197,23 @@ export class ApiAdapter implements Adapter {
           ? null
           : { id: pick.id, idea: pick.idea, category: pick.category },
     });
+  }
+
+  /** Explicit durable save (duration-memory MVP): exactly ONE token-guarded
+      non-billed POST. Strict client validation happens before this method is
+      ever reached; the wire body carries the exact value untouched. */
+  async saveDurationMemory(identity: string, minutes: number): Promise<DurationMemorySaveResult> {
+    return projectDurationMemorySave(
+      await this.post("/duration-memory/save", { identity, minutes }),
+    );
+  }
+
+  /** Explicit durable reset (duration-memory MVP): exactly ONE token-guarded
+      non-billed POST; the response carries the current source fallback. */
+  async resetDurationMemory(identity: string): Promise<DurationMemoryResetResult> {
+    return projectDurationMemoryReset(
+      await this.post("/duration-memory/reset", { identity }),
+    );
   }
 
   async autoSequence(ctx: SequenceContext): Promise<SequenceResult> {
