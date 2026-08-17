@@ -245,6 +245,42 @@ class TestBuildPlanManifest:
         manifest = shadow.build_plan_manifest({}, {}, {})
         assert [m.step for m in manifest] == ["B"]
 
+    def test_manifest_preserves_exact_durations_ids_routing_and_write_ownership(self):
+        # FEEDBACK-27 routing contract: exact 15/30-minute durations, existing
+        # Todoist IDs, vault-to-PHEP routing, and Blocks-only fixed calendar
+        # writes all survive manifest generation. Work rows are Todoist-only;
+        # the fixed anchored row is the only calendar create.
+        digest = {"assigned": [
+            {"name": "Todoist Task", "path": "todoist://t42", "types": ["todoist"]},
+            {"name": "Vault Project", "path": "50 - Operations/Projects/Vault Project.md",
+             "types": ["project"]},
+        ]}
+        sequence = {"sequence": [
+            {"id": "Todoist Task", "start": "09:00", "end": "09:15", "zone": "any"},
+            {"id": "Vault Project", "start": "10:00", "end": "10:30", "zone": "any"},
+            {"id": "Foods Dinner", "start": "18:00", "end": "18:30", "zone": "any"},
+        ]}
+        config = {"anchored_blocks": [{"id": "Foods Dinner", "on": True}]}
+        manifest = shadow.build_plan_manifest(digest, sequence, config)
+
+        step_a = {m.name: m for m in manifest if m.step == "A"}
+        assert step_a["Todoist Task"].duration_min == 15
+        assert step_a["Todoist Task"].id_or_path == "todoist://t42"
+        assert step_a["Todoist Task"].routing == "Inbox"
+        assert step_a["Vault Project"].duration_min == 30
+        assert step_a["Vault Project"].id_or_path == (
+            "50 - Operations/Projects/Vault Project.md"
+        )
+        assert step_a["Vault Project"].routing == "PHEP"
+        # Write ownership: both work rows go to Todoist, never to Calendar.
+        todoist_rows = [m for m in manifest if m.system == "todoist" and m.step == "A"]
+        assert {m.name for m in todoist_rows} == {"Todoist Task", "Vault Project"}
+        calendar_rows = [m for m in manifest if m.system == "calendar"]
+        assert [m.name for m in calendar_rows] == ["Foods Dinner"]
+        [e] = calendar_rows
+        assert e.step == "E" and e.routing == "⬜ Blocks"
+        assert e.duration_min == 30
+
 
 class TestPopulatedTitleCaseConfig:
     """ISS-1 regression: build_plan_manifest fed a REAL vault config.

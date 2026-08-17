@@ -291,6 +291,69 @@ describe("T12 anchored edits", () => {
   });
 });
 
+describe("FEEDBACK-28 current-run calendar skip intent", () => {
+  /* The August 17 review: a PERSISTED skip (loaded from the server daySetup or
+     merged onto the raw row) must not suppress a current wall. Only an
+     explicit CURRENT-RUN saveAnchoredOverride may; the event otherwise stays
+     visible and participates in planning walls. */
+  it("saveAnchoredOverride records current-run intent so the wall is suppressed", async () => {
+    const { store, controller } = harness("ready");
+    await controller.load();
+    await controller.saveAnchoredOverride("Trinoor Standup", {
+      on: true, skipToday: true, time: null,
+    });
+    const s = store.getState();
+    expect(s.currentRunCalendarSkips).toContain("Trinoor Standup");
+    const eff = effectiveAnchoredBlocks(s).find((a) => a.id === "Trinoor Standup")!;
+    expect(eff.skipToday).toBe(true);
+    expect(calendarWalls(effectiveAnchoredBlocks(s))).not.toEqual(
+      expect.arrayContaining([{ start: 9 * 60 + 15, end: 9 * 60 + 45 }]),
+    );
+  });
+
+  it("a persisted skip without current-run intent keeps the wall in the overflow scan", async () => {
+    const { store, adapter, controller } = harness("ready");
+    // Server daySetup carries a persisted skip for Trinoor Standup; the user
+    // has not re-expressed it this run.
+    vi.spyOn(adapter, "loadPlanInputs").mockResolvedValue({
+      ...structuredClone(adapter.scenario.inputs),
+      daySetup: {
+        ...adapter.scenario.inputs.daySetup,
+        confirmed: true,
+        anchored: {
+          "Trinoor Standup": { on: true, skipToday: true, time: null },
+        },
+      },
+    });
+    await controller.load();
+    const s = store.getState();
+    expect(s.currentRunCalendarSkips).toEqual([]);
+    const eff = effectiveAnchoredBlocks(s).find((a) => a.id === "Trinoor Standup")!;
+    expect(eff.skipToday).toBe(false);
+    expect(calendarWalls(effectiveAnchoredBlocks(s))).toEqual(
+      expect.arrayContaining([{ start: 9 * 60 + 15, end: 9 * 60 + 45 }]),
+    );
+  });
+
+  it("a server-merged persisted skip on the raw row also keeps the wall", async () => {
+    const { store, adapter, controller } = harness("ready");
+    vi.spyOn(adapter, "loadPlanInputs").mockResolvedValue({
+      ...structuredClone(adapter.scenario.inputs),
+      anchored: adapter.scenario.inputs.anchored.map((a) =>
+        a.kind === "calendar" ? { ...a, skipToday: true } : a,
+      ),
+    });
+    await controller.load();
+    const s = store.getState();
+    expect(s.currentRunCalendarSkips).toEqual([]);
+    const eff = effectiveAnchoredBlocks(s).find((a) => a.id === "Trinoor Standup")!;
+    expect(eff.skipToday).toBe(false);
+    expect(calendarWalls(effectiveAnchoredBlocks(s))).toEqual(
+      expect.arrayContaining([{ start: 9 * 60 + 15, end: 9 * 60 + 45 }]),
+    );
+  });
+});
+
 describe("drift invalidation (locked decision 17)", () => {
   it("calendar drift between sequence and shadow invalidates the plan", async () => {
     const { store, adapter, controller } = harness("ready");
@@ -796,8 +859,7 @@ describe("FEEDBACK-03 explicit overflow infeasibility (controller wiring)", () =
   }, 15000);
 });
 
-describe("FEEDBACK-25 overflow avoids Mint walls (controller wiring)", () => {
-  it("never lays a dropped row over a selected Mint session interval", async () => {
+describe("FEEDBACK-25 overflow avoids Mint walls (controller wiring)", () => {  it("never lays a dropped row over a selected Mint session interval", async () => {
     const { store, adapter, controller } = harness("ready");
     // The canned proposal places a selected Mint session at 07:30-08:00 (the
     // frame anchor) plus Press, dropping the other included rows — enough
@@ -837,7 +899,6 @@ describe("FEEDBACK-25 overflow avoids Mint walls (controller wiring)", () => {
     }
   }, 15000);
 });
-
 describe("explicit duration memory (MVP)", () => {
   const identityOf = (i: { id: string; path: string | null; todoistId: string | null; source: "vault" | "todoist" }) =>
     i.source === "todoist" && i.todoistId ? `todoist:${i.todoistId}` : i.path;
@@ -1015,4 +1076,91 @@ describe("explicit duration memory (MVP)", () => {
     expect(save).not.toHaveBeenCalled();
     expect(store.getState().durationMemory[inputs.assigned[0].id]!.error).toMatch(/identity/);
   });
+});
+describe("FEEDBACK-28 stale saved Mint filtering at the payload boundary", () => {
+  /* The August 17 incident: a stale saved Mint selection kept the 15:00-15:30
+     row across refresh, and the frontend sent wall-conflicting Mint rows to
+     the server before judgment. The /day-setup payload is the ONLY request
+     that can carry Mint rows to the server, so saveDaySetup must filter the
+     saved selection against the current effective fixed/work walls before
+     that payload is emitted — the drawer filter alone is not enough for
+     stale saved state. */
+  const mintSessions = [
+    { id: "mint:morning:08:30", name: "Mint Morning · 08:30", slot: "Morning", start: "08:30", end: "09:00" },
+    { id: "mint:morning:09:00", name: "Mint Morning · 09:00", slot: "Morning", start: "09:00", end: "09:30" },
+    { id: "mint:afternoon:13:30", name: "Mint Afternoon · 13:30", slot: "Afternoon", start: "13:30", end: "14:00" },
+    { id: "mint:afternoon:15:00", name: "Mint Afternoon · 15:00", slot: "Afternoon", start: "15:00", end: "15:30" },
+  ];
+  const oppdWall = {
+    id: "OPPD meter read", name: "OPPD meter read", kind: "calendar" as const,
+    start: "15:00", end: "15:30", durationMin: 30, overlapAllowed: false,
+    on: true, skipToday: false, calendarId: "oppd", calendarTitle: "OPPD",
+    capacityClass: "fixed" as const,
+  };
+
+  function august17Inputs(adapter: FixtureAdapter) {
+    return {
+      ...structuredClone(adapter.scenario.inputs),
+      anchored: [
+        ...adapter.scenario.inputs.anchored.filter((a) => a.kind !== "calendar"),
+        oppdWall,
+      ],
+      daySemantics: {
+        ...adapter.scenario.inputs.daySemantics,
+        mintEnabled: true,
+        effectiveAllotmentMinutes: 60,
+        mintSessions,
+      },
+      daySetup: {
+        ...adapter.scenario.inputs.daySetup,
+        workAllotmentMinutes: 60,
+        schedulable: { minting: { on: true, n: 2, sessions: [mintSessions[2].id, mintSessions[3].id] } },
+      },
+    };
+  }
+
+  it("filters wall-conflicting saved Mint sessions before the /day-setup payload is emitted", async () => {
+    const { store, adapter, controller } = harness("ready");
+    vi.spyOn(adapter, "loadPlanInputs").mockResolvedValue(august17Inputs(adapter) as never);
+    await controller.load();
+
+    const save = vi.spyOn(adapter, "saveDaySetup");
+    const sequence = vi.spyOn(adapter, "autoSequence");
+    await controller.saveDaySetup({
+      ...store.getState().daySetup,
+      confirmed: true,
+      workAllotmentMinutes: 60,
+      schedulable: { minting: { on: true, sessions: [mintSessions[2].id, mintSessions[3].id] } },
+    });
+
+    // 13:30 survives; 15:00 (over the OPPD wall) is filtered before the
+    // payload leaves. The persisted allotment follows the filtered total.
+    const sent = save.mock.calls[0][0];
+    expect(sent.schedulable!.minting.sessions).toEqual([mintSessions[2].id]);
+    expect(sent.schedulable!.minting.n).toBe(1);
+    expect(sent.schedulable!.minting.on).toBe(true);
+    expect(sent.workAllotmentMinutes).toBe(30);
+    // The sanitized selection is what the store keeps for the next judgment.
+    expect(store.getState().daySetup.schedulable!.minting.sessions).toEqual([mintSessions[2].id]);
+    // The save path never fires the billed judgment.
+    expect(sequence).not.toHaveBeenCalled();
+  }, 15000);
+
+  it("leaves a wall-free saved Mint selection byte-identical", async () => {
+    const { store, adapter, controller } = harness("ready");
+    vi.spyOn(adapter, "loadPlanInputs").mockResolvedValue(august17Inputs(adapter) as never);
+    await controller.load();
+
+    const save = vi.spyOn(adapter, "saveDaySetup");
+    await controller.saveDaySetup({
+      ...store.getState().daySetup,
+      confirmed: true,
+      workAllotmentMinutes: 30,
+      schedulable: { minting: { on: true, sessions: [mintSessions[2].id] } },
+    });
+    const sent = save.mock.calls[0][0];
+    expect(sent.schedulable!.minting.sessions).toEqual([mintSessions[2].id]);
+    expect(sent.schedulable!.minting.n).toBe(1);
+    expect(sent.workAllotmentMinutes).toBe(30);
+  }, 15000);
 });

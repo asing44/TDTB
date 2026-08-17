@@ -37,11 +37,27 @@ export function buildDayPrompt(s: AppState): string {
 
   // FEEDBACK-04: quarantined rows are excluded from planning on the server —
   // the fallback must not hand them to an external scheduler as fixed.
+  // FEEDBACK-28 (retry): effectiveAnchoredBlocks already gates calendar
+  // skips to EXPLICIT current-run intent (saveAnchoredOverride). A persisted
+  // skip from a previous run therefore lands in `fixed` as a real
+  // "(calendar event)" commitment — visible and planned around. Only a
+  // current-run skip reaches the "skipped today" branch below. Skipped config
+  // anchored blocks stay omitted: they are planning scaffolding, not real
+  // commitments.
   const fixed = effectiveAnchoredBlocks(s).filter(
     (a) => a.on && !a.skipToday && a.capacityClass !== "quarantined",
   );
+  const skippedCalendar = effectiveAnchoredBlocks(s).filter(
+    (a) =>
+      a.kind === "calendar" &&
+      a.on &&
+      a.skipToday &&
+      a.capacityClass !== "quarantined",
+  );
   out.push("## Fixed commitments — do not move these");
-  if (fixed.length === 0) out.push("- (none known — see warnings)");
+  if (fixed.length === 0 && skippedCalendar.length === 0) {
+    out.push("- (none known — see warnings)");
+  }
   for (const a of fixed) {
     const window =
       a.kind === "window" && a.start && a.end && s.daySetup.anchored[a.id]?.time == null
@@ -53,6 +69,16 @@ export function buildDayPrompt(s: AppState): string {
         window,
         `· ${a.durationMin}min`,
         a.kind === "calendar" ? "(calendar event)" : null,
+      ]),
+    );
+  }
+  for (const a of skippedCalendar) {
+    out.push(
+      line([
+        `- ${a.name}:`,
+        `${display12h(a.start)}`,
+        `· ${a.durationMin}min`,
+        "(calendar event · skipped today — not planned around)",
       ]),
     );
   }
@@ -151,9 +177,11 @@ export function buildDayPrompt(s: AppState): string {
     // The fallback must mirror the real write contract, not invent a wider one.
     "5. Also on approval, publish ONLY the fixed commitments listed above to " +
       "my \"⬜ Blocks\" calendar (at their shown or agreed times) — except " +
-      "rows marked \"(calendar event)\", which already exist. Placed work " +
-      "blocks do NOT get calendar events: their timed Todoist entries from " +
-      "step 4 are the schedule. This mirrors what my planner itself commits.",
+      "rows marked \"(calendar event)\", which already exist, and rows marked " +
+      "\"skipped today\", which are NOT planned around and must not be " +
+      "published. Placed work blocks do NOT get calendar events: their timed " +
+      "Todoist entries from step 4 are the schedule. This mirrors what my " +
+      "planner itself commits.",
   );
   out.push(
     "6. Write only to the \"⬜ Blocks\" calendar — never modify events on any " +

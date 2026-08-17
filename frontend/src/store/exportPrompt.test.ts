@@ -157,3 +157,128 @@ describe("buildDayPrompt (manual LLM fallback)", () => {
     expect(p).toContain("never modify events on any other calendar");
   });
 });
+
+describe("FEEDBACK-28 prompt surfacing for real calendar commitments", () => {
+  /* An unlisted timed calendar (no capacity_class on the wire) defaults to
+     fixed — it must surface in the exported plan as a fixed commitment, not
+     silently omit the real event. */
+  it("surfaces an unlisted timed calendar (A + M Busy Bees) as a fixed commitment", () => {
+    const p = buildDayPrompt(
+      stateFor("ready", (store) => {
+        const s = store.getState();
+        store.dispatch({
+          type: "INPUTS_LOADED",
+          inputs: {
+            ...s.inputs!,
+            anchored: [
+              ...s.inputs!.anchored,
+              {
+                id: "A + M Busy Bees", name: "A + M Busy Bees", kind: "calendar",
+                start: "10:30", end: "11:00", durationMin: 30, overlapAllowed: false,
+                on: true, skipToday: false, calendarId: "busy-bees",
+                calendarTitle: "A + M Busy Bees",
+              },
+            ],
+          },
+          ledger: s.ledger!,
+        });
+      }),
+    );
+    const fixedSection = p.split("## Tasks to place")[0];
+    expect(fixedSection).toContain("A + M Busy Bees");
+    expect(fixedSection).toContain("(calendar event)");
+    expect(fixedSection).toContain("10:30 AM");
+  });
+
+  /* FEEDBACK-28 (retry, 2026-08-17): a PERSISTED skip (loaded from the server
+     daySetup or merged onto the raw calendar row by a previous run) must not
+     silently hide the real commitment. The event stays visible as a fixed
+     commitment and participates in planning walls until the user re-expresses
+     the skip in the CURRENT run. */
+  it("never silently hides a persisted skipped calendar commitment (Meegy cooking)", () => {
+    const p = buildDayPrompt(
+      stateFor("ready", (store) => {
+        const s = store.getState();
+        store.dispatch({
+          type: "INPUTS_LOADED",
+          inputs: {
+            ...s.inputs!,
+            anchored: [
+              ...s.inputs!.anchored,
+              {
+                id: "Meegy cooking", name: "Meegy cooking", kind: "calendar",
+                start: "17:30", end: "18:30", durationMin: 60, overlapAllowed: false,
+                on: true, skipToday: false, calendarId: "cooking",
+                calendarTitle: "Personal", capacityClass: "fixed",
+              },
+            ],
+            daySetup: {
+              ...s.inputs!.daySetup,
+              anchored: {
+                ...(s.inputs!.daySetup?.anchored ?? {}),
+                // Persisted skip from a previous run — NOT current-run intent.
+                "Meegy cooking": { on: true, skipToday: true, time: null },
+              },
+            },
+          },
+          ledger: s.ledger!,
+        });
+      }),
+    );
+    const fixedSection = p.split("## Tasks to place")[0];
+    // The event remains visible and participates in planning walls.
+    expect(fixedSection).toContain("Meegy cooking");
+    expect(fixedSection).toContain("(calendar event)");
+    expect(fixedSection).not.toMatch(/skipped today/i);
+    expect(fixedSection).not.toMatch(/not planned around/i);
+  });
+
+  /* Explicit CURRENT-RUN intent (CalendarImpact → saveAnchoredOverride,
+     recorded in currentRunCalendarSkips) DOES suppress the wall: the prompt
+     marks the event as skipped and not planned around. */
+  it("marks an explicitly skipped calendar as skipped today (current-run intent)", () => {
+    const p = buildDayPrompt(
+      stateFor("ready", (store) => {
+        const s = store.getState();
+        store.dispatch({
+          type: "INPUTS_LOADED",
+          inputs: {
+            ...s.inputs!,
+            anchored: [
+              ...s.inputs!.anchored,
+              {
+                id: "Meegy cooking", name: "Meegy cooking", kind: "calendar",
+                start: "17:30", end: "18:30", durationMin: 60, overlapAllowed: false,
+                on: true, skipToday: false, calendarId: "cooking",
+                calendarTitle: "Personal", capacityClass: "fixed",
+              },
+            ],
+          },
+          ledger: s.ledger!,
+        });
+        // Current-run explicit skip: the user toggled the row this run
+        // (saveAnchoredOverride dispatches both the marker and the override).
+        store.dispatch({
+          type: "CALENDAR_SKIP_EXPLICIT",
+          id: "Meegy cooking",
+          skipToday: true,
+        });
+        store.dispatch({
+          type: "SETUP_SAVED",
+          daySetup: {
+            ...store.getState().daySetup,
+            confirmed: true,
+            anchored: {
+              ...store.getState().daySetup.anchored,
+              "Meegy cooking": { on: true, skipToday: true, time: null },
+            },
+          },
+        });
+      }),
+    );
+    const fixedSection = p.split("## Tasks to place")[0];
+    expect(fixedSection).toContain("Meegy cooking");
+    expect(fixedSection).toContain("(calendar event)");
+    expect(fixedSection).toMatch(/skipped today/i);
+  });
+});

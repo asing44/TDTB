@@ -14,6 +14,14 @@ _ACTIVITY_STOPWORDS = frozenset({
     "a", "an", "and", "at", "for", "in", "of", "on", "the", "to", "with",
 })
 
+# FEEDBACK-27: household person tokens. A shared person name alone is not
+# activity semantics — "Cook dinner with Meegy" must not inherit the span of
+# "Meegy vet appointment" (live 2026-08-17 false 90-minute override). A
+# companion match needs at least one shared NON-person token.
+_PERSON_TOKENS = frozenset({
+    "adam", "meegan", "meegy", "megan",
+})
+
 
 def semantic_name(value: Any) -> str:
     text = str(value or "").strip()
@@ -150,9 +158,15 @@ def derive_constraints(
         tokens = item_tokens(companion)
         if not companion_id or not tokens:
             continue
+        # FEEDBACK-27: a unique shared person token is NOT activity semantics
+        # (live 2026-08-17: "Cook dinner with Meegy" vs "Meegy vet
+        # appointment" fabricated a 90-minute override). Require at least one
+        # shared NON-person token: "walk" in Walk Meegy survives; "meegy"
+        # alone does not. Valid activity nouns like "dinner" still match.
         matches = [
             event for event in calendar_items
-            if item_id(event) != companion_id and tokens.intersection(item_tokens(event))
+            if item_id(event) != companion_id
+            and (tokens - _PERSON_TOKENS).intersection(item_tokens(event))
         ]
         if len(matches) != 1:
             continue

@@ -432,3 +432,83 @@ describe("FEEDBACK-27 Mint walls + zero writers through the controller", () => {
     expect(undoRuntimeAction).not.toHaveBeenCalled();
   }, 15000);
 });
+
+/* ---------------------------------------------------------------------- */
+/* FEEDBACK-28 August 17 incident fixture — stale saved Mint vs OPPD wall   */
+/* ---------------------------------------------------------------------- */
+
+describe("FEEDBACK-28 August 17 incident fixture (frontend)", () => {
+  /* The August 17 failure: Day Setup saved Mint 15:00-15:30, the OPPD fixed
+     wall began at 15:00, and the frontend sent the wall-conflicting Mint row
+     in the day-setup payload before the billed judgment. The frontend guard
+     is: the /day-setup payload (the only request that can carry Mint rows to
+     the server) is filtered against current effective fixed/work walls
+     before it is emitted, and the sanitized selection is what the store keeps
+     for the next judgment. Backend revalidation remains authoritative. */
+  const OPPD_SESSIONS = [
+    { id: "mint:morning:08:30", name: "Mint Morning · 08:30", slot: "Morning", start: "08:30", end: "09:00" },
+    { id: "mint:afternoon:13:30", name: "Mint Afternoon · 13:30", slot: "Afternoon", start: "13:30", end: "14:00" },
+    { id: "mint:afternoon:15:00", name: "Mint Afternoon · 15:00", slot: "Afternoon", start: "15:00", end: "15:30" },
+  ];
+
+  function august17Inputs(adapter: FixtureAdapter) {
+    return {
+      ...structuredClone(adapter.scenario.inputs),
+      anchored: [
+        ...adapter.scenario.inputs.anchored.filter((a) => a.kind !== "calendar"),
+        {
+          id: "OPPD meter read", name: "OPPD meter read", kind: "calendar",
+          start: "15:00", end: "15:30", durationMin: 30, overlapAllowed: false,
+          on: true, skipToday: false, calendarId: "oppd", calendarTitle: "OPPD",
+          capacityClass: "fixed",
+        },
+      ],
+      daySemantics: {
+        ...adapter.scenario.inputs.daySemantics,
+        mintEnabled: true,
+        effectiveAllotmentMinutes: 60,
+        mintSessions: OPPD_SESSIONS,
+      },
+      daySetup: {
+        ...adapter.scenario.inputs.daySetup,
+        workAllotmentMinutes: 60,
+        schedulable: { minting: { on: true, n: 2, sessions: [OPPD_SESSIONS[1].id, OPPD_SESSIONS[2].id] } },
+      },
+    };
+  }
+
+  it("filters the stale 15:00-15:30 Mint row out of the payload before judgment", async () => {
+    const { store, adapter, controller } = harness();
+    vi.spyOn(adapter, "loadPlanInputs").mockResolvedValue(august17Inputs(adapter) as never);
+    const save = vi.spyOn(adapter, "saveDaySetup");
+    const sequence = vi.spyOn(adapter, "autoSequence");
+    const liveCommit = vi.spyOn(adapter, "liveCommit");
+    const shadowCommit = vi.spyOn(adapter, "shadowCommit");
+    const runtimeAction = vi.spyOn(adapter, "runtimeAction");
+    const undoRuntimeAction = vi.spyOn(adapter, "undoRuntimeAction");
+
+    await controller.load();
+    await controller.saveDaySetup({
+      ...store.getState().daySetup,
+      confirmed: true,
+      workAllotmentMinutes: 60,
+      schedulable: { minting: { on: true, sessions: [OPPD_SESSIONS[1].id, OPPD_SESSIONS[2].id] } },
+    });
+
+    // The payload that reaches the server carries only the wall-free session.
+    const sent = save.mock.calls[0][0];
+    expect(sent.schedulable!.minting.sessions).toEqual([OPPD_SESSIONS[1].id]);
+    expect(sent.schedulable!.minting.on).toBe(true);
+    expect(sent.schedulable!.minting.n).toBe(1);
+    expect(sent.workAllotmentMinutes).toBe(30);
+    // The sanitized selection is what the store keeps for the next judgment.
+    const minting = store.getState().daySetup.schedulable?.minting;
+    expect(minting?.sessions).toEqual([OPPD_SESSIONS[1].id]);
+    // No judgment fired from the save path, and no writer was ever reached.
+    expect(sequence).not.toHaveBeenCalled();
+    expect(liveCommit).not.toHaveBeenCalled();
+    expect(shadowCommit).not.toHaveBeenCalled();
+    expect(runtimeAction).not.toHaveBeenCalled();
+    expect(undoRuntimeAction).not.toHaveBeenCalled();
+  }, 15000);
+});

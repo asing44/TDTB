@@ -6,8 +6,7 @@ disable-model-invocation: false
 user-invocable: false
 mode: subagent
 hidden: true
-model: openai/gpt-5.6-sol
-variant: xhigh
+
 ---
 
 # DEBUGGER: Root-cause analysis, stack trace diagnosis, regression bisection, error reproduction.

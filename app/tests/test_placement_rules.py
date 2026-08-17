@@ -1,4 +1,8 @@
-from placement_rules import derive_constraints, validate_constraints
+from placement_rules import (
+    derive_constraints,
+    effective_duration_overrides,
+    validate_constraints,
+)
 
 
 def _grant(primary_id, primary, companion_id, companion, fingerprint="fp"):
@@ -41,6 +45,38 @@ def test_ambiguous_calendar_matches_are_not_selected():
         ],
     )
     assert not any(c["kind"] == "calendar_companion" for c in constraints)
+
+
+def test_positive_meegy_semantic_match():
+    # Shared activity "walk" plus person "Meegy" is sufficient companion
+    # evidence: exactly ONE intended companion override. The event spans
+    # 08:00-09:00, so the 30-minute task inherits the 60-minute event span.
+    constraints = derive_constraints(
+        [{"name": "Walk Meegy", "duration_minutes": 30}],
+        [{"Block": "Walk Meegy at Forest Park", "source": "calendar",
+          "Start": "08:00", "End": "09:00"}],
+    )
+    companions = [c for c in constraints if c["kind"] == "calendar_companion"]
+    assert len(companions) == 1
+    companion = companions[0]
+    assert companion["item_id"] == "Walk Meegy"
+    assert companion["event_id"] == "Walk Meegy at Forest Park"
+    assert companion["event_interval"] == {"start": "08:00", "end": "09:00"}
+    assert companion["effective_duration_minutes"] == 60
+    assert companion["source_duration_minutes"] == 30
+    assert effective_duration_overrides(constraints) == {"Walk Meegy": 60}
+
+
+def test_meegy_cooking_person_token_does_not_match():
+    # "Meegy" alone is a shared person token, not shared activity semantics:
+    # cooking dinner must NOT inherit the vet appointment's span. No companion
+    # constraint and no duration override (task stays at its own 30 minutes).
+    assigned = [{"name": "Cook dinner with Meegy", "duration_minutes": 30}]
+    anchored = [{"Block": "Meegy vet appointment", "source": "calendar",
+                 "Start": "17:00", "End": "18:30"}]
+    constraints = derive_constraints(assigned, anchored)
+    assert not any(c["kind"] == "calendar_companion" for c in constraints)
+    assert effective_duration_overrides(constraints) == {}
 
 
 def test_validate_constraints_accepts_parent_systems_and_event_span():

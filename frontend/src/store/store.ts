@@ -80,6 +80,12 @@ export interface AppState {
   pinnedRows: SequenceRow[];
   /** Manual placement constraints to send on the next explicit regeneration. */
   pendingPinnedRows: SequenceRow[];
+  /** FEEDBACK-28 (retry): calendar ids the user explicitly skip-toggled in
+      the CURRENT run (CalendarImpact → saveAnchoredOverride). A persisted
+      skip — loaded from the server daySetup or merged onto the raw calendar
+      row by a previous run — must not suppress a current wall; only this
+      explicit current-run intent may. */
+  currentRunCalendarSkips: string[];
   shadow: ShadowDiff | null;
   shadowPhase: ShadowPhase;
   liveArmed: boolean; // second-click reveal (locked decision 9)
@@ -155,6 +161,7 @@ export const initialState: AppState = {
   overlapGrants: [],
   pinnedRows: [],
   pendingPinnedRows: [],
+  currentRunCalendarSkips: [],
   shadow: null,
   shadowPhase: "none",
   liveArmed: false,
@@ -178,6 +185,10 @@ export type Action =
   | { type: "LOAD_FAILED"; error: string }
   | { type: "SETUP_SAVED"; daySetup: DaySetup }
   | { type: "OVERRIDE_SET"; id: string; override: TodayOverride }
+  // FEEDBACK-28 (retry): explicit current-run calendar skip intent recorded
+  // by saveAnchoredOverride. Persisted skip state alone never suppresses a
+  // current wall; this marker is the user's re-expressed choice this run.
+  | { type: "CALENDAR_SKIP_EXPLICIT"; id: string; skipToday: boolean }
   // T19: Live micro-adventure changed (shuffle / pick / custom / reset).
   // Free and unbilled, but it changes the commit's Live→Todoist content —
   // any current shadow preview goes stale and acceptance is revoked.
@@ -310,6 +321,10 @@ export function reducer(s: AppState, a: Action): AppState {
         inputs: a.inputs,
         capacity: s.capacity ?? a.inputs.capacity,
         daySetup: s.daySetup.confirmed ? s.daySetup : a.inputs.daySetup,
+        // FEEDBACK-28 (retry): a fresh inputs load is a fresh run — persisted
+        // skip state is authoritative until the user re-expresses it, so any
+        // current-run intent from a previous session is cleared.
+        currentRunCalendarSkips: [],
         // T27: recurring pins always re-seed from fresh inputs — a non-empty
         // pin set (manual pins, restored session) must not suppress them.
         pendingPinnedRows: mergeRecurringPins(s.pendingPinnedRows, a.inputs),
@@ -328,6 +343,13 @@ export function reducer(s: AppState, a: Action): AppState {
         ...dirtySeq(s),
         ...staleShadow(s),
       };
+    case "CALENDAR_SKIP_EXPLICIT": {
+      const rest = s.currentRunCalendarSkips.filter((id) => id !== a.id);
+      return {
+        ...s,
+        currentRunCalendarSkips: a.skipToday ? [...rest, a.id] : rest,
+      };
+    }
     case "MICRO_SET": {
       if (!s.inputs) return s;
       return {
@@ -837,10 +859,21 @@ export function effectiveAnchoredBlocks(s: AppState) {
       // projection (blocks) — time/existence stay imported truth (LD19).
       // blocks rewrites the accounted duration so Calendar impact counts it,
       // while the event's wall-clock window (start/end) never moves.
+      //
+      // FEEDBACK-28 (retry): a skip is honored ONLY when the user expressed
+      // it explicitly in the CURRENT run (CalendarImpact →
+      // saveAnchoredOverride → CALENDAR_SKIP_EXPLICIT, recorded in
+      // currentRunCalendarSkips). A persisted skip — loaded from the server
+      // daySetup or merged onto the raw calendar row by a previous run —
+      // must not silently suppress a current wall: the event stays visible
+      // and participates in planning walls until re-expressed. This is the
+      // single gate feeding calendarWalls, the prompt, and the impact list.
       const o = s.daySetup.anchored[block.id];
-      if (!o) return block;
-      const skip = o.skipToday === true;
-      const durationMin = o.blocks == null ? block.durationMin : o.blocks * 30;
+      const explicitSkip = s.currentRunCalendarSkips.includes(block.id);
+      const skip = explicitSkip
+        ? (o ? o.skipToday === true : block.skipToday === true)
+        : false;
+      const durationMin = o?.blocks == null ? block.durationMin : o.blocks * 30;
       return skip === block.skipToday && durationMin === block.durationMin
         ? block
         : { ...block, on: true, skipToday: skip, durationMin };
