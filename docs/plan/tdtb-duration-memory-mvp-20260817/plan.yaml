@@ -1,0 +1,447 @@
+plan_id: tdtb-duration-memory-mvp-20260817
+objective: Implement a usable duration-memory MVP in an isolated features/duration-memory worktree.
+complexity: MEDIUM
+created_at: '2026-08-17T00:00:00Z'
+created_by: gem-planner
+status: pending
+tldr: |
+  - Ship vault-scoped duration memory with locked atomic writes and planner rehydration.
+  - Add explicit save and per-item reset without changing same-day browser restore behavior.
+  - Prove persistence with scratch :8790 across a fresh server process.
+  - Defer advanced concurrency and recovery hardening behind one lightweight final review.
+
+baseline:
+  objective: Implement a usable duration-memory MVP in an isolated features/duration-memory worktree.
+  acceptance_criteria:
+    - A valid explicit duration saves to a cache scoped to the resolved scratch vault root.
+    - A later GET rehydrates the remembered duration after the scratch server process is replaced.
+    - Explicit reset removes the remembered value and restores the current source-resolved duration.
+    - Writes are locked and atomic; invalid or unsafe writes do not replace valid durable data.
+    - Missing, corrupt, or unsupported cache data falls back to the source-resolved duration.
+    - Values are integers at least zero and divisible by 5; bools and fractions are rejected.
+    - Stable Todoist IDs or normalized vault paths identify entries; mutations require the session token.
+    - Existing tdtb-session-v2 same-day restore and date-rollover invalidation remain compatible.
+    - Verification uses tmp_path or scratch :8790 and records zero real-source and billed writes.
+    - No automatic stage, commit, push, live :8746 use, or foreign worktree mutation occurs.
+  captured_at: '2026-08-17T00:00:00Z'
+
+plan_lineage:
+  root_plan_id: tdtb-persistent-memory-20260817
+  parent_plan_id: tdtb-persistent-memory-20260817-r5
+  revision: 0
+  replan_count: 0
+  max_replans: 2
+  parent_revision: 0
+  reason: scope_change
+
+scope_change:
+  authorization: User-approved fast-track MVP on 2026-08-17.
+  rationale: Prior plans were blocked by advanced concurrency and recovery details now deferred.
+  critic_policy: No separate critic pass; use only FT-04 as a lightweight final reviewer gate.
+
+plan_metrics:
+  wave_1_task_count: 2
+  total_dependencies: 5
+  risk_score: medium
+quality_warnings:
+  - The approved branch name is an explicit exception to the default codex/ branch convention.
+  - The worktree task must preserve the current dirty and untracked state in main.
+  - Deferred hardening is not a release blocker for this user-approved MVP.
+  - FT-04 is the only review gate; no separate critic task is authorized.
+
+context_version: 1
+context_updated_at: '2026-08-17T00:00:00Z'
+context_fields_changed:
+  - New fast-track MVP execution front derived from tdtb-persistent-memory-20260817-r5
+  - Advanced CAS, unknown-outcome recovery, clear-all metadata, and race proof deferred
+tech_stack:
+  - name: Python 3.12 and FastAPI
+    role: Vault-scoped cache, guarded mutations, planner rehydration, and backend tests
+    evidence: app/main.py, app/duration_memory.py, app/requirements.txt
+  - name: Preact, TypeScript, Vitest, and Vite
+    role: Wire projection, state actions, explicit save/reset UI, tests, and bundles
+    evidence: frontend/src, frontend/package.json
+conventions:
+  - Extend app/duration_memory.py and existing cache, token, adapter, and store seams.
+  - Resolve vault_root per request and derive cache paths beneath 00 - META/Cache.
+  - Use stable Todoist IDs or normalized vault paths, never display names.
+  - Keep source systems authoritative; duration memory changes only planner projection.
+  - Preserve tdtb-session-v2 as same-day browser state with date-rollover invalidation.
+constraints:
+  hard:
+    - Product work occurs only in /Users/walle-mini/Repos/Projects/features/duration-memory.
+    - The branch is exactly features/duration-memory and its base commit is recorded before edits.
+    - Never use live :8746, billed endpoints, the real vault, Todoist, Calendar, or source-note writes.
+    - Use tmp_path fixtures or scratch :8790 with a temporary vault root.
+    - Require X-TDTB-Token for save and reset mutations.
+    - Reject bools, fractions, negatives, and values not divisible by 5 without coercion.
+    - Missing, corrupt, and unsupported caches fail open on read to source duration.
+    - Unsafe writes fail closed and preserve existing durable bytes.
+    - Never stage, commit, push, reset, clean, pull, rebase, merge, or alter foreign state.
+    - No separate critic pass is permitted; FT-04 is the only final review gate.
+  soft:
+    - Extend existing modules and conventions rather than introduce a new subsystem.
+    - Keep save and reset explicit; do not add automatic durable writes.
+    - Keep UI changes within existing duration controls and visual language.
+  compatibility:
+    - Missing cache state behaves exactly like no remembered duration.
+    - Existing clients without duration-memory data retain source-resolved behavior.
+    - Existing same-day localStorage restore and date rollover remain unchanged.
+  security_requirements:
+    - Persist only canonical identity and duration-memory metadata needed by the MVP.
+    - Do not persist tokens, source bodies, plans, approvals, or free text.
+    - Do not expose absolute vault paths, raw corrupt content, or a bulk memory browser.
+
+architecture_snapshot:
+  current:
+    backend: app/duration_memory.py has identity, precedence, and optional atomic JSON seams.
+    planner: GET /plan-inputs in app/main.py is the rehydration entry point.
+    frontend: ApiAdapter, store/controller, and duration controls own explicit user intent.
+    browser_state: frontend/src/store/persist.ts owns date-scoped tdtb-session-v2 behavior.
+  mvp_target:
+    cache: 00 - META/Cache/tdtb-duration-memory.json below resolved vault_root.
+    read: GET /plan-inputs overlays valid remembered values without duration-cache writes.
+    write: Token-guarded explicit save and reset use locked read-modify-write and atomic replace.
+    fallback: Missing, corrupt, or unsupported cache data returns source-resolved durations.
+
+research_digest:
+  relevant_files:
+    - path: app/duration_memory.py
+      finding: Stable identity and remembered-first precedence exist; durable app wiring is absent.
+    - path: app/main.py
+      finding: GET /plan-inputs and require_token are the established read and mutation seams.
+    - path: app/deferrals.py
+      finding: Vault-relative versioned JSON, locking, and atomic replacement are established.
+    - path: app/runstate.py
+      finding: Caller-supplied vault_root and atomic cache writes are repository conventions.
+    - path: frontend/src/adapters/api.ts
+      finding: The adapter already owns token transport and explicit write behavior.
+    - path: frontend/src/store/persist.ts
+      finding: tdtb-session-v2 is intentionally same-date and invalidated at date rollover.
+  digest:
+    - The MVP can extend existing seams without adding a general memory subsystem.
+    - Server-side vault persistence is required to survive browser and server lifetimes.
+    - A scratch fresh-process smoke test is sufficient for the approved fast-track boundary.
+prior_decisions:
+  - decision: Remembered duration outranks deterministic source duration.
+    source: app/duration_memory.py
+  - decision: Display name alone is not a durable identity.
+    source: app/duration_memory.py
+  - decision: Browser session state is same-day only and dies on date rollover.
+    source: frontend/src/store/persist.ts
+reuse_notes:
+  - path: app/duration_memory.py
+    trust_level: Reuse identity and precedence; extend persistence and validation.
+  - path: app/deferrals.py
+    trust_level: Reuse vault-relative locked atomic-cache conventions.
+  - path: frontend/src/adapters/api.ts
+    trust_level: Reuse token-guarded explicit mutation transport.
+
+open_questions: []
+assumptions:
+  - The user-approved MVP baseline supersedes the broader r5 execution scope.
+  - Per-item reset is in scope; vault-wide clear-all is not required for this MVP.
+  - Zero minutes remains valid because the approved rule is non-negative 5-minute increments.
+  - Existing Python and frontend toolchains are sufficient; no browser dependency is required.
+  - A clean browser storage context is used when available in the existing smoke-test tooling.
+  - FT-01 and FT-02 have disjoint backend and frontend target paths after FT-00.
+
+dependencies:
+  FT-00: []
+  FT-01: [FT-00]
+  FT-02: [FT-00]
+  FT-03: [FT-01, FT-02]
+  FT-04: [FT-03]
+
+verification_strategy:
+  backend:
+    - Run the complete backend pytest suite from the isolated feature worktree.
+    - Cover cache scope, strict validation, fallback, atomic failure, token guard, save, and reset.
+  frontend:
+    - Run npm test, npm run typecheck, npm run build:mockup, and npm run build:prod.
+    - Read back generated mockup and production bundles after successful builds.
+  scratch_smoke:
+    - Use only a temporary vault and scratch :8790; never send traffic to :8746.
+    - Save a duration, stop the scratch server, start a fresh process, and prove GET rehydration.
+    - Use a clean browser storage context where available and prove reset restores source duration.
+    - Record zero billed calls and zero Todoist, Calendar, source-note, and real-vault writes.
+  repository_safety:
+    - Record branch, base, worktree path, status, and changed paths before and after execution.
+    - Run git diff --check and confirm no staged paths, commits, pushes, or foreign mutations.
+  final_gate:
+    - FT-04 performs one lightweight read-only review of criteria, evidence, and deferred boundaries.
+
+deferred_hardening:
+  - Advanced CAS and idempotent retry semantics.
+  - Post-fsync unknown-outcome recovery.
+  - Full clear-all conflict metadata and related race handling.
+  - Exhaustive adversarial race matrices.
+  - Cross-process browser OS-process proof beyond the scratch fresh-run smoke test.
+
+learn:
+  - app/duration_memory.py already provides stable identity and remembered-first resolution seams.
+  - Existing cache modules establish vault-relative locking and atomic replacement conventions.
+  - The frontend adapter already centralizes token-guarded writes and avoids implicit billed calls.
+  - tdtb-session-v2 compatibility is an independent same-day browser-state contract.
+
+tasks:
+  - id: FT-00
+    title: Establish the isolated feature execution front
+    description: Create or verify the approved worktree and branch and activate this plan copy.
+    wave: 0
+    agent: gem-devops
+    status: pending
+    covers:
+      - Dedicated worktree and branch
+      - Active plan transfer
+      - Base, path, and foreign-state evidence
+    depends_on: []
+    conflicts_with: []
+    context_files:
+      - path: AGENTS.md
+        description: Canonical git, live-safety, and verification rules
+      - path: README.md
+        description: Canonical source and plan boundaries
+      - path: docs/plan/tdtb-duration-memory-mvp-20260817/plan.yaml
+        description: Approved MVP execution front to activate in the worktree
+    flags:
+      requires_design_validation: false
+      retries_used: 0
+      revision_reason: ''
+    acceptance_criteria:
+      - Worktree path is exactly /Users/walle-mini/Repos/Projects/features/duration-memory.
+      - Branch is exactly features/duration-memory at a recorded base commit.
+      - Existing branch or path is reused only when branch, base, ownership, and status are safe.
+      - The plan exists at the same relative path in the worktree before product edits begin.
+      - Main and foreign worktree staged, unstaged, untracked, and commit state are preserved.
+      - Receipt in the orchestrator result records path, branch, base, plan hash, and git status.
+      - No product edit, test, build, stage, commit, push, or live-service action occurs in FT-00.
+    handoff:
+      known_context:
+        - Main currently contains foreign deleted and untracked paths that must remain untouched.
+        - The user explicitly approved the non-default features/duration-memory branch.
+      target_files:
+        - docs/plan/tdtb-duration-memory-mvp-20260817/plan.yaml
+      constraints:
+        - Only the approved git worktree add operation may create the worktree or branch.
+        - All later task paths resolve from the verified feature worktree.
+    environment: development
+    requires_approval: false
+    devops_security_sensitive: true
+
+  - id: FT-01
+    title: Implement the backend duration-memory MVP
+    description: Add vault cache persistence, guarded save/reset APIs, and GET rehydration with tests.
+    wave: 1
+    agent: gem-implementer
+    status: pending
+    covers:
+      - Vault-scoped versioned JSON cache
+      - Locked atomic save and per-item reset
+      - Planner GET rehydration and source fallback
+      - Strict API validation and backend tests
+    depends_on: [FT-00]
+    conflicts_with: []
+    context_files:
+      - path: app/duration_memory.py
+        description: Existing stable identity and precedence seam
+      - path: app/main.py
+        description: GET /plan-inputs and token-guarded route seams
+      - path: app/deferrals.py
+        description: Existing versioned, locked, atomic JSON cache convention
+      - path: app/runstate.py
+        description: Caller-resolved vault_root and cache path convention
+      - path: app/tests/test_duration_memory_contract.py
+        description: Existing duration-memory contract coverage
+      - path: app/tests/test_durations.py
+        description: Existing planner duration projection coverage
+    flags:
+      requires_design_validation: false
+      retries_used: 0
+      revision_reason: ''
+    acceptance_criteria:
+      - Cache and lock paths derive only from the resolved vault_root.
+      - Persisted entries use stable Todoist IDs or normalized vault paths, never display names.
+      - Save and reset are X-TDTB-Token guarded and operate only on one canonical identity.
+      - Save accepts only integer values at least zero and divisible by 5.
+      - Bool, fraction, negative, and off-grid values return validation errors without mutation.
+      - Cache writes serialize read-modify-write under the cache lock and replace atomically.
+      - A failed validation, lock, read, or write does not replace known durable data.
+      - Missing, corrupt, or unsupported cache reads return source-resolved durations with no repair.
+      - GET /plan-inputs overlays valid remembered values and labels them as remembered.
+      - Reset removes the remembered value and returns the current source-resolved fallback.
+      - GET performs no duration-cache mutation, billed call, or upstream source write.
+      - Backend tests cover vault isolation, save, reset, rehydration, fallback, token, and validation.
+      - Backend tests cover atomic failure preservation without requiring deferred CAS semantics.
+      - No clear-all, advanced CAS retry, or unknown-outcome recovery enters the implementation.
+    handoff:
+      known_context:
+        - Remembered duration already has highest precedence in resolve_duration.
+        - Advanced concurrency and post-fsync recovery semantics are intentionally deferred.
+      target_files:
+        - app/duration_memory.py
+        - app/main.py
+        - app/tests/test_duration_memory_contract.py
+        - app/tests/test_durations.py
+        - app/tests/test_main_api.py
+      constraints:
+        - Use TDD and only tmp_path or scratch vault state.
+        - Do not touch frontend paths, live :8746, real sources, billed endpoints, or git state.
+    requires_review: true
+    review_depth: lightweight
+    review_security_sensitive: true
+
+  - id: FT-02
+    title: Implement explicit duration save and reset in the frontend
+    description: Wire server memory into the model and add explicit save/reset behavior with tests.
+    wave: 1
+    agent: gem-implementer
+    status: pending
+    covers:
+      - Duration-memory wire and model projection
+      - Explicit save and per-item reset controls
+      - Pending, success, fallback, and failure state
+      - Frontend tests and session-persistence compatibility
+    depends_on: [FT-00]
+    conflicts_with: []
+    context_files:
+      - path: frontend/src/adapters/api.ts
+        description: Existing token transport and explicit mutation adapter
+      - path: frontend/src/adapters/wire.ts
+        description: Wire-to-model projection boundary
+      - path: frontend/src/store/controller.ts
+        description: Explicit user intent and state coordination
+      - path: frontend/src/store/persist.ts
+        description: Same-day tdtb-session-v2 compatibility boundary
+      - path: frontend/src/ui/Queue.tsx
+        description: Current queue duration control surface
+      - path: frontend/src/ui/BlockEditor.tsx
+        description: Existing exact duration editing surface
+    flags:
+      requires_design_validation: false
+      retries_used: 0
+      revision_reason: Existing UI patterns are extended without visual redesign.
+    acceptance_criteria:
+      - Wire and model state preserve canonical identity, effective duration, and source label.
+      - Editing a duration does not persist until the user activates the explicit save action.
+      - Save sends one token-guarded non-billed mutation and shows success only after response.
+      - Reset sends one token-guarded non-billed mutation and applies returned source fallback.
+      - Invalid values are blocked without rounding, truncation, snapping, or a network mutation.
+      - Mutation failure preserves the last authoritative value and does not claim success or reset.
+      - Remembered and source-resolved states are distinguishable in the existing control surface.
+      - Save and reset remain keyboard operable and expose pending and error state accessibly.
+      - tdtb-session-v2 same-date restore and date-rollover invalidation tests remain unchanged.
+      - Frontend tests cover save, reset, invalid input, failure, and localStorage compatibility.
+      - No auto-save, clear-all, visual redesign, billed call, or upstream write is introduced.
+    handoff:
+      known_context:
+        - ApiAdapter already fetches and refreshes X-TDTB-Token for explicit POST requests.
+        - Existing same-day local overrides must remain independent from durable memory.
+      target_files:
+        - frontend/src/adapters/adapter.ts
+        - frontend/src/adapters/api.ts
+        - frontend/src/adapters/wire.ts
+        - frontend/src/model/types.ts
+        - frontend/src/store/controller.ts
+        - frontend/src/store/persist.test.ts
+        - frontend/src/ui/Queue.tsx
+        - frontend/src/ui/BlockEditor.tsx
+      constraints:
+        - Stay within existing component structure, visual language, and duration controls.
+        - Do not touch backend paths, live services, real sources, billed endpoints, or git state.
+    requires_review: true
+    review_depth: lightweight
+    review_security_sensitive: false
+
+  - id: FT-03
+    title: Verify the integrated MVP and fresh-process persistence
+    description: Run required gates and a scratch fresh-run smoke test, then record bounded evidence.
+    wave: 2
+    agent: gem-implementer
+    status: pending
+    covers:
+      - Complete backend and frontend verification
+      - Generated bundle readback
+      - Scratch :8790 fresh-server smoke test
+      - Git and no-write safety evidence
+    depends_on: [FT-01, FT-02]
+    conflicts_with: []
+    context_files:
+      - path: AGENTS.md
+        description: Required test, build, scratch, and safety gates
+      - path: docs/plan/tdtb-duration-memory-mvp-20260817/plan.yaml
+        description: MVP acceptance and deferred-hardening boundary
+      - path: frontend/package.json
+        description: Required frontend command definitions
+    flags:
+      requires_design_validation: false
+      retries_used: 0
+      revision_reason: ''
+    acceptance_criteria:
+      - Complete backend pytest suite passes in the feature worktree.
+      - npm test and npm run typecheck pass in frontend.
+      - npm run build:mockup and npm run build:prod pass.
+      - Generated mockup and production bundles are read back after their builds.
+      - Scratch smoke uses a temporary vault root and only port :8790.
+      - Smoke saves a valid duration, replaces the server process, and proves GET rehydration.
+      - Smoke uses a clean browser storage context where available and records that boundary.
+      - Smoke resets the item and proves a later GET returns the source-resolved duration.
+      - Evidence records zero billed calls and zero real-vault, Todoist, Calendar, or source-note writes.
+      - git diff --check passes and changed paths stay within the approved feature scope.
+      - Main and foreign worktree state remain unchanged; no path is staged or committed.
+      - Evidence distinguishes completed MVP checks from deferred hardening checks not run.
+    handoff:
+      known_context:
+        - FT-01 and FT-02 must both complete before integrated verification starts.
+        - Fresh server persistence is required; browser OS-process proof is deferred.
+      target_files: []
+      constraints:
+        - Verification may create only temporary fixtures and generated bundles in the feature worktree.
+        - Never use :8746, real source state, billed endpoints, stage, commit, or push.
+    requires_review: true
+    review_depth: lightweight
+    review_security_sensitive: true
+
+  - id: FT-04
+    title: Perform the lightweight final MVP review
+    description: Review the diff and evidence against the MVP and deferred boundary without writes.
+    wave: 3
+    agent: gem-reviewer
+    status: pending
+    covers:
+      - MVP acceptance traceability
+      - Safety and regression boundary
+      - Deferred-hardening scope control
+      - Final structured findings
+    depends_on: [FT-03]
+    conflicts_with: []
+    context_files:
+      - path: AGENTS.md
+        description: Canonical safety and completion requirements
+      - path: docs/plan/tdtb-duration-memory-mvp-20260817/plan.yaml
+        description: Approved MVP criteria and explicit deferrals
+    flags:
+      requires_design_validation: false
+      retries_used: 0
+      revision_reason: No separate critic pass is authorized.
+    acceptance_criteria:
+      - Review is read-only and limited to the feature diff, task results, and recorded evidence.
+      - Every baseline criterion receives pass, fail, or blocked status with evidence.
+      - Review confirms strict validation, token guard, vault scope, fallback, and write preservation.
+      - Review confirms tdtb-session-v2 behavior and zero live, billed, and upstream writes.
+      - Review confirms no stage, commit, push, or foreign worktree mutation occurred.
+      - Deferred items are reported as deferred, not reopened as MVP blockers.
+      - Findings identify only concrete MVP regressions, safety failures, or missing evidence.
+      - Result returns status, findings, acceptance results, blockers, and learn to orchestration.
+      - No separate critic task, second review loop, product edit, or test execution is created.
+    handoff:
+      known_context:
+        - The user intentionally limited critic involvement to this lightweight final gate.
+        - Advanced CAS, unknown-outcome recovery, full clear-all metadata, and race proof are deferred.
+      target_files: []
+      constraints:
+        - Do not write files, alter git state, run live calls, or widen the approved scope.
+        - Return structured findings to orchestration; create no separate review artifact.
+    requires_review: false
+    review_depth: lightweight
+    review_security_sensitive: true
