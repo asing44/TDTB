@@ -8,6 +8,11 @@ They MUST FAIL against current source; that is the expected pre-implementation
 (Red) state recorded in ``contract-test-gaps.json``. IMP-04/05/07 implement the
 behavior - do not edit these tests into passing.
 
+T04 corrective (2026-08-17): the contract-17 case was reconciled to post-merge
+FEEDBACK-27 semantics — an EXPLICIT ``quarantined`` class keeps the exclusion,
+while unlisted/unclassified timed calendars default ``fixed`` and stay visible.
+The contract-17 test below passes against current source.
+
 Fake/synthetic inputs only: no EventKit, no Todoist, no vault writes.
 """
 from __future__ import annotations
@@ -83,13 +88,34 @@ def test_duplicate_calendar_events_canonicalize_to_one_logical_group():
 
 
 # ---------------------------------------------------------------------------
-# Contract 17 - unknown/inactive calendars stay quarantined until review
+# Contract 17 - quarantined calendars stay excluded; unlisted defaults fixed
 # ---------------------------------------------------------------------------
 
-def test_unknown_calendar_stays_quarantined_until_review():
-    """An unknown calendar must not silently count as fixed capacity. It stays
-    excluded until explicitly reviewed (busy-counted or ignored). Current
-    behavior defaults the row to ``fixed``."""
+def test_explicitly_quarantined_calendar_stays_excluded():
+    """Contract 17 exclusion is KEPT for an explicitly configured
+    ``quarantined`` class: the row stays on the wire, excluded from
+    fixed/work capacity and planning until reviewed."""
+    store = FakeStore(
+        [_event("Mystery", cal="CAL-UNKNOWN")],
+        calendars=[{"identifier": "CAL-UNKNOWN", "title": "Some Random Cal"}],
+    )
+    blocks, _ = ext.fetch_calendar_busy(
+        store,
+        {
+            "calendar_ids": {},
+            "calendar_capacity_classes": [
+                {"BusyCal title": "Some Random Cal", "Class": "quarantined"},
+            ],
+        },
+        TODAY,
+    )
+    assert blocks[0]["capacity_class"] == "quarantined"
+
+
+def test_unlisted_timed_calendar_defaults_fixed_and_stays_visible():
+    """FEEDBACK-27 (2026-08-17): an unlisted/unclassified timed calendar
+    defaults ``fixed`` and remains visible — implicit unlisted quarantine is
+    superseded so real timed commitments surface as capacity."""
     store = FakeStore(
         [_event("Mystery", cal="CAL-UNKNOWN")],
         calendars=[{"identifier": "CAL-UNKNOWN", "title": "Some Random Cal"}],
@@ -99,7 +125,8 @@ def test_unknown_calendar_stays_quarantined_until_review():
         {"calendar_ids": {}, "calendar_capacity_classes": {}},
         TODAY,
     )
-    assert blocks[0]["capacity_class"] != "fixed"
+    assert blocks[0]["capacity_class"] == "fixed"
+    assert blocks[0]["calendar_title"] == "Some Random Cal"
 
 
 # ---------------------------------------------------------------------------

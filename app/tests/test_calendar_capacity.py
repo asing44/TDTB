@@ -101,8 +101,9 @@ def test_ignored_calendar_neither_pins_capacity_nor_counts_as_fixed():
 
 
 def test_quarantined_unknown_calendar_excluded_from_capacity():
-    # Frozen contract 17: a known-but-unclassified calendar stays quarantined
-    # and must not count as fixed or work capacity until explicitly reviewed.
+    # Frozen contract 17: an explicitly quarantined calendar stays excluded
+    # and must not count as fixed or work capacity (FEEDBACK-27 kept the
+    # exclusion for configured quarantined titles; unlisted defaults fixed).
     _time, cap = _frame(
         [_event("Mystery", "09:00", "11:00", "quarantined")],
         work_minutes=90,
@@ -144,10 +145,11 @@ class TestFeedback04FixtureClassification:
     """FF-CAL-01/FF-06 fixture titles (2026-08-14): Cooking, trivia, Steelers,
     and dinner must classify per EXPLICIT source/class rules, never by label
     guessing. Cooking is a configured fixed calendar; Trivia Night is a
-    configured work calendar; Steelers Game is a KNOWN title with no class →
-    quarantined (contract 17). Dinner is a config window, not a calendar event
-    — no fixture event for it. Quarantined rows cost zero capacity and stay on
-    the wire so the UI can explain why."""
+    configured work calendar; Steelers Game is an EXPLICITLY quarantined
+    Sports title (contract 17 exclusion kept — unlisted/unclassified timed
+    calendars default fixed per FEEDBACK-27). Dinner is a config window, not
+    a calendar event — no fixture event for it. Quarantined rows cost zero
+    capacity and stay on the wire so the UI can explain why."""
 
     def _fixture(self) -> tuple[_FakeStore, dict]:
         calendars = [
@@ -160,6 +162,7 @@ class TestFeedback04FixtureClassification:
             "calendar_capacity_classes": [
                 {"BusyCal title": "Cooking", "Class": "fixed"},
                 {"BusyCal title": "Trivia Night", "Class": "work"},
+                {"BusyCal title": "Sports", "Class": "quarantined"},
             ],
         }
         events = [

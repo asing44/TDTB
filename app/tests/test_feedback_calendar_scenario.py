@@ -103,7 +103,8 @@ class _FakeStore:
 class TestFeedback05FixtureClassification:
     """FF-CAL-01/FF-06 fixture titles from the reported screenshot: Cooking,
     dinner, trivia, Steelers. Classification follows EXPLICIT config rules;
-    a known-but-unclassified title stays quarantined (contract 17)."""
+    an explicitly quarantined Sports title keeps the contract-17 exclusion
+    (unlisted/unclassified timed calendars default fixed — FEEDBACK-27)."""
 
     def _fixture(self) -> tuple[_FakeStore, dict]:
         calendars = [
@@ -116,6 +117,7 @@ class TestFeedback05FixtureClassification:
             "calendar_capacity_classes": [
                 {"BusyCal title": "Cooking", "Class": "fixed"},
                 {"BusyCal title": "DCP Bark Bar trivia", "Class": "work"},
+                {"BusyCal title": "Sports", "Class": "quarantined"},
             ],
         }
         events = [
@@ -356,6 +358,7 @@ class TestFeedback05ZeroCalendarWriters:
             "calendar_capacity_classes": [
                 {"BusyCal title": "Cooking", "Class": "fixed"},
                 {"BusyCal title": "DCP Bark Bar trivia", "Class": "work"},
+                {"BusyCal title": "Sports", "Class": "quarantined"},
             ],
         }
         events = [

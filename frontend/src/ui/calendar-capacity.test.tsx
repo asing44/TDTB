@@ -7,6 +7,8 @@ import { CalendarImpact } from "./CalendarImpact";
 import { AllocationPie } from "./AllocationPie";
 import { Rail } from "./Rail";
 import { makeHarness } from "./test-harness";
+import { effectiveAnchoredBlocks } from "../store/store";
+import { calendarWalls } from "../model/overflow";
 
 function calendarHarness() {
   const h = makeHarness("ready");
@@ -31,35 +33,63 @@ function calendarHarness() {
       capacityClass: "ignored",
     },
     {
+      // FEEDBACK-28: a PERSISTED skip (server daySetup / merged raw row) stays
+      // visible, counted, and walled until the user re-expresses it this run.
       id: "Skipped visit", name: "Skipped visit", kind: "calendar",
       start: "12:00", end: "13:00", durationMin: 60, overlapAllowed: false,
       on: false, skipToday: true, calendarId: "skip", calendarTitle: "Personal",
+      capacityClass: "fixed",
+    },
+    {
+      // FEEDBACK-28: only an EXPLICIT current-run skip is the excluded-today /
+      // non-walling case (marker dispatched below after inputs load).
+      id: "Declined sync", name: "Declined sync", kind: "calendar",
+      start: "13:00", end: "13:30", durationMin: 30, overlapAllowed: false,
+      on: true, skipToday: true, calendarId: "decline", calendarTitle: "Personal",
       capacityClass: "fixed",
     },
   ];
   inputs.capacity.workBusy = 2;
   inputs.capacity.workOverflow = 0;
   h.store.dispatch({ type: "INPUTS_LOADED", inputs, ledger: h.store.getState().ledger! });
+  // Explicit current-run intent — the marker CalendarImpact's per-row toggle
+  // records through saveAnchoredOverride (CALENDAR_SKIP_EXPLICIT).
+  h.store.dispatch({ type: "CALENDAR_SKIP_EXPLICIT", id: "Declined sync", skipToday: true });
   return h;
 }
 
 describe("CalendarImpact", () => {
   it("explains every in-frame class, hides ignored sources, and shows hard walls (FEEDBACK-09)", () => {
     const h = calendarHarness();
-    const { getByText, queryByText, getAllByText, container } = h.ui(<CalendarImpact />);
+    const { getByText, queryByText, queryByRole, getAllByText, getByRole, container } =
+      h.ui(<CalendarImpact />);
     expect(getByText("Fixed appointment")).toBeTruthy();
     expect(getByText("Work sync")).toBeTruthy();
+    // FEEDBACK-28: the persisted skip stays visible (and counted/walled —
+    // asserted below); the explicit current-run skip is visible too.
     expect(getByText("Skipped visit")).toBeTruthy();
+    expect(getByText("Declined sync")).toBeTruthy();
     // FEEDBACK-09: ignored calendar sources (TickTick-style) are excluded
     // from Calendar impact — hidden, with a note naming the exclusion.
     expect(queryByText("Focus timer")).toBeNull();
     expect(getByText("1 ignored calendar source excluded")).toBeTruthy();
-    // Hard-wall affordance renders on fixed/work rows only.
-    expect(getAllByText("hard block").length).toBe(3);
+    // Hard-wall affordance renders on fixed/work rows only — including the
+    // persisted skip; only the explicit skip frees its interval from planning
+    // walls (asserted via calendarWalls in the FEEDBACK-28 test below).
+    expect(getAllByText("hard block").length).toBe(4);
     expect(getByText("Inside work budget")).toBeTruthy();
-    // Accounting language, never attendance/mutation copy.
+    // FEEDBACK-28: a persisted skip is counted and walled — reason stays
+    // Fixed, blocks counted, exclude verb offered, no exclusion copy.
+    expect(getAllByText("Fixed").length).toBe(2); // Fixed appointment + Skipped visit
+    expect(getAllByText("2 blk counted").length).toBe(2); // Work sync + Skipped visit
+    expect(getByRole("button", { name: "Do not count Skipped visit toward today's capacity" })).toBeTruthy();
+    expect(queryByRole("button", { name: "Count Skipped visit toward today's capacity" })).toBeNull();
+    // Only the explicit current-run skip renders the excluded-today case.
     expect(getByText("Excluded today")).toBeTruthy();
     expect(getByText("today only · event untouched")).toBeTruthy();
+    expect(getByText("0 blk counted")).toBeTruthy();
+    expect(getByRole("button", { name: "Count Declined sync toward today's capacity" })).toBeTruthy();
+    // Accounting language, never attendance/mutation copy.
     expect(getByText(/exclusive busy time/i)).toBeTruthy();
     // FEEDBACK-12: wall-clock readouts are 12-hour with AM/PM (user
     // preference); FEEDBACK-09/11 24-hour presentation is superseded.
@@ -79,12 +109,31 @@ describe("CalendarImpact", () => {
       "Work sync",
       expect.objectContaining({ skipToday: true, time: null }),
     );
-    // Excluded rows offer the reverse accounting verb.
-    fireEvent.click(getByRole("button", { name: "Count Skipped visit toward today's capacity" }));
+    // FEEDBACK-28: a persisted skip stays attending — it offers the exclude
+    // verb, never the reverse accounting verb.
+    expect(
+      getByRole("button", { name: "Do not count Skipped visit toward today's capacity" }),
+    ).toBeTruthy();
+    // Excluded rows (explicit current-run skip only) offer the reverse verb.
+    fireEvent.click(getByRole("button", { name: "Count Declined sync toward today's capacity" }));
     expect(save).toHaveBeenLastCalledWith(
-      "Skipped visit",
+      "Declined sync",
       expect.objectContaining({ skipToday: false }),
     );
+  });
+
+  // FEEDBACK-28 (2026-08-17): only an EXPLICIT current-run skip frees a
+  // calendar interval from planning walls; a persisted skip stays walled —
+  // the impact list mirrors the same gate.
+  it("writes persisted skips into walls and excludes only the explicit current-run skip (FEEDBACK-28)", () => {
+    const h = calendarHarness();
+    const eff = effectiveAnchoredBlocks(h.store.getState());
+    const walls = calendarWalls(eff);
+    expect(walls).toContainEqual({ start: 12 * 60, end: 13 * 60 }); // persisted Skipped visit
+    expect(walls).not.toContainEqual({ start: 13 * 60, end: 13 * 60 + 30 }); // explicit Declined sync
+    const { getByText, queryByRole } = h.ui(<CalendarImpact />);
+    expect(getByText("Excluded today")).toBeTruthy(); // Declined sync reason
+    expect(queryByRole("button", { name: "Count Skipped visit toward today's capacity" })).toBeNull();
   });
 
   it("adjusts counted duration as a local projection, never the event (FEEDBACK-09)", () => {
