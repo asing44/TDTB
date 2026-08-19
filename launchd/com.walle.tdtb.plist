@@ -7,12 +7,12 @@
 
   <key>ProgramArguments</key>
   <array>
-    <string>__WALLE_HOME__/Repos/Projects/TDTB/app/.venv/bin/python</string>
+    <string>__TDTB_REPO__/app/.venv/bin/python</string>
     <string>main.py</string>
   </array>
 
   <key>WorkingDirectory</key>
-  <string>__WALLE_HOME__/Repos/Projects/TDTB/app</string>
+  <string>__TDTB_REPO__/app</string>
 
   <key>EnvironmentVariables</key>
   <dict>
