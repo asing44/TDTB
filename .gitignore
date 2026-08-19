@@ -7,3 +7,4 @@
 node_modules/
 graphify-out/
 schema-hashes.json
+frontend/.tdtb-lock-hash
