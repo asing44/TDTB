@@ -3,21 +3,11 @@
   "provider": {
     "openrouter": {
       "models": {
-        "google/gemini-3.1-pro-preview": {
-          "limit": {
-            "context": 1048576,
-            "output": 12000
-          }
         }
       }
-    }
-  },
+    },
   "agent": {
     "build": {
-      "model": "openai/gpt-5.6-luna",
-      "variant": "max"
-    },
-    "gem-orchestrator": {
       "model": "openai/gpt-5.6-luna",
       "variant": "max"
     }
