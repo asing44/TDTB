@@ -69,9 +69,9 @@ foreign process or worktree.
 ## Verification and completion
 
 Use TDD for Python and frontend behavior. From the canonical repo root, run
-the backend pytest suite; from `frontend/`, run `npm test`,
-`npm run typecheck`, `npm run build:mockup`, and `npm run build:prod` when
-the frontend or bundle is in scope. Use a scratch
+the backend pytest suite (including the bootstrap runner tests); from
+`frontend/`, run `npm test`, `npm run typecheck`, `npm run build:mockup`, and
+`npm run build:prod` when the frontend or bundle is in scope. Use a scratch
 `:8790` walkthrough with fixtures/mocks and assert zero billed calls and zero
 real source writes. Generated bundles must be rebuilt from their source and
 read back before they count as verified.
