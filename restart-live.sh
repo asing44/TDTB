@@ -65,10 +65,18 @@ refresh_plist() {
   }
   if ! sed \
     -e "s|__WALLE_HOME__|$HOME|g" \
+    -e "s|__TDTB_REPO__|$TASK_DIR|g" \
     -e "s|__TDTB_VAULT_ROOT__|$vault|g" \
     "$PLIST_TEMPLATE" > "$temp"; then
     rm -f "$temp"
     print -u2 -- "  plist       FAILED — could not render $PLIST_TEMPLATE"
+    return 1
+  fi
+  # Reject any remaining template placeholders before plutil/mutation
+  if grep -q '__[A-Z_]*__' "$temp" 2>/dev/null; then
+    rm -f "$temp"
+    print -u2 -- "  plist       FAILED — unresolved template placeholder in rendered plist"
+    print -u2 -- "              update the sed substitution list to cover all placeholders"
     return 1
   fi
   if ! plutil -lint "$temp" >/dev/null 2>&1; then

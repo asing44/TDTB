@@ -56,8 +56,8 @@ def test_canonical_script_resolves_canonical_runtime_paths():
 
 def test_canonical_plist_template_uses_canonical_layout():
     text = PLIST_TEMPLATE.read_text()
-    assert "__WALLE_HOME__/Repos/Projects/TDTB/app/.venv/bin/python" in text
-    assert "<string>__WALLE_HOME__/Repos/Projects/TDTB/app</string>" in text
+    assert "__TDTB_REPO__/app/.venv/bin/python" in text
+    assert "<string>__TDTB_REPO__/app</string>" in text
     for marker in OLD_LAYOUT_MARKERS:
         assert marker not in text, f"old layout marker {marker!r} in plist"
 
@@ -66,6 +66,7 @@ def test_plist_template_renders_cleanly():
     """Dry-run: replicate the script's sed substitution into a temp file and
     lint the result. No launchctl, no ~/Library/LaunchAgents write."""
     home = "/Users/walle-mini"
+    repo = str(REPO_ROOT)
     vault = "/tmp/tdtb-fake-vault"
     template = PLIST_TEMPLATE.read_text()
     result = subprocess.run(
@@ -73,6 +74,8 @@ def test_plist_template_renders_cleanly():
             "sed",
             "-e",
             f"s|__WALLE_HOME__|{home}|g",
+            "-e",
+            f"s|__TDTB_REPO__|{repo}|g",
             "-e",
             f"s|__TDTB_VAULT_ROOT__|{vault}|g",
         ],
@@ -83,9 +86,14 @@ def test_plist_template_renders_cleanly():
     assert result.returncode == 0, result.stderr
     rendered = result.stdout
     assert "__WALLE_HOME__" not in rendered
+    assert "__TDTB_REPO__" not in rendered
     assert "__TDTB_VAULT_ROOT__" not in rendered
-    assert "Repos/Projects/TDTB/app/.venv/bin/python" in rendered
-    assert "Repos/Projects/TDTB/app</string>" in rendered
+    assert f"{repo}/app/.venv/bin/python" in rendered
+    assert f"{repo}/app</string>" in rendered
+    # Verify no unresolved __...__ placeholders remain
+    assert not re.search(r'__[A-Z_]+__', rendered), (
+        "rendered plist contains unresolved placeholder"
+    )
     with tempfile.TemporaryDirectory() as td:
         out = Path(td) / "com.walle.tdtb.plist"
         out.write_text(rendered)
@@ -93,6 +101,50 @@ def test_plist_template_renders_cleanly():
             ["plutil", "-lint", str(out)], capture_output=True, text=True
         )
         assert lint.returncode == 0, lint.stderr
+
+
+def test_tdtb_restart_plist_refresh_includes_repo_substitution():
+    """restart-live.sh's refresh_plist() substitutes __TDTB_REPO__ with TASK_DIR."""
+    text = RESTART_SCRIPT.read_text()
+    # Check the sed command in refresh_plist() has all three substitutions
+    assert re.search(
+        r'__TDTB_REPO__.*\$TASK_DIR', text
+    ), "refresh_plist must substitute __TDTB_REPO__ with TASK_DIR"
+    assert "__TDTB_REPO__" in text
+    assert "__TDTB_VAULT_ROOT__" in text
+    assert "__WALLE_HOME__" in text
+
+
+def test_tdtb_restart_rejects_unresolved_placeholders():
+    """The grep guard in refresh_plist() rejects remaining __...__ placeholders."""
+    text = RESTART_SCRIPT.read_text()
+    assert "grep -q '__[A-Z_]*__'" in text or re.search(
+        r"grep.*__\[A-Z_\]+__", text
+    ), "refresh_plist must grep for unresolved placeholders before plutil"
+
+
+def test_plist_template_rejects_unresolved_placeholder():
+    """A rendered plist with a leftover placeholder fails lint and grep guard."""
+    # Start from the real template and omit one substitution
+    home = "/Users/walle-mini"
+    repo = str(REPO_ROOT)
+    vault = "/tmp/tdtb-fake-vault"
+    template = PLIST_TEMPLATE.read_text()
+    # Only substitute two of three — leave __TDTB_REPO__ unresolved
+    result = subprocess.run(
+        ["sed", "-e", f"s|__WALLE_HOME__|{home}|g", "-e", f"s|__TDTB_VAULT_ROOT__|{vault}|g"],
+        input=template,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0
+    rendered = result.stdout
+    # Verify __TDTB_REPO__ is still present
+    assert "__TDTB_REPO__" in rendered
+    # The grep guard regex should match
+    assert re.search(r'__[A-Z_]+__', rendered), (
+        "grep guard should detect unresolved __TDTB_REPO__"
+    )
 
 
 def test_tdtb_restart_symlink_points_at_canonical_script():
