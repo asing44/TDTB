@@ -28,6 +28,7 @@ setopt errreturn
 readonly SCRIPT_DIR="${0:A:h}"
 readonly LABEL="com.walle.tdtb"
 readonly RESTART_LINK="$HOME/.local/bin/tdtb-restart"
+readonly BOOTSTRAP_LINK="$HOME/.local/bin/tdtb-bootstrap"
 readonly VENV_MARKER=".tdtb-req-hash"
 readonly FRONTEND_MARKER=".tdtb-lock-hash"
 
@@ -43,7 +44,7 @@ Portable TDTB seat bootstrap for /Users/adam and /Users/walle-mini.
 Modes:
   (default)   Validate app/frontend/launchd paths; create app/.venv via uv
               (Python 3.12); install frontend deps via npm ci; symlink
-              ~/.local/bin/tdtb-restart → restart-live.sh.
+              ~/.local/bin/{tdtb-restart,tdtb-bootstrap} → repo scripts.
               Dependency freshness is tracked by SHA-256 marker files; stale
               or missing markers trigger reinstallation.
   --launchd   Also stage \$HOME/Library/LaunchAgents/\$LABEL.plist from the
@@ -100,6 +101,7 @@ VENV_DIR="$APP_DIR/.venv"
 VENV_MARKER_FILE="$VENV_DIR/$VENV_MARKER"
 FRONTEND_MARKER_FILE="$FRONTEND_DIR/$FRONTEND_MARKER"
 RESTART_SCRIPT="$REPO_ROOT/restart-live.sh"
+BOOTSTRAP_SCRIPT="$REPO_ROOT/bootstrap-seat.sh"
 PLIST_TEMPLATE="$REPO_ROOT/launchd/$LABEL.plist"
 LAUNCH_AGENTS_DIR="$HOME/Library/LaunchAgents"
 PLIST_DEST="$LAUNCH_AGENTS_DIR/$LABEL.plist"
@@ -139,7 +141,7 @@ validate_paths() {
   local missing=0
   for p in "$APP_DIR" "$APP_DIR/requirements.txt" "$FRONTEND_DIR" \
            "$FRONTEND_DIR/package.json" "$FRONTEND_DIR/package-lock.json" \
-           "$RESTART_SCRIPT"; do
+           "$RESTART_SCRIPT" "$BOOTSTRAP_SCRIPT"; do
     if [[ ! -e "$p" ]]; then
       fail "required path missing: $p"
       missing=1
@@ -292,35 +294,39 @@ ensure_frontend() {
 }
 
 # ---------------------------------------------------------------------------
-# Step 3: restart symlink
+# Step 3: symlinks — manage ~/.local/bin/tdtb-restart and tdtb-bootstrap
 # ---------------------------------------------------------------------------
-ensure_restart_link() {
-  step "restart symlink ($RESTART_LINK)"
 
-  local link_parent="${RESTART_LINK:h}"
-  local resolved_restart="${RESTART_SCRIPT:A}"
+# Internal: manage a single symlink *link_path* → *target_script*.
+# Handles dry-run, idempotence, non-symlink collisions.
+_ensure_link() {
+  local link_path="$1"
+  local target_script="$2"
 
-  if [[ -L "$RESTART_LINK" ]]; then
+  local link_parent="${link_path:h}"
+  local resolved_target="${target_script:A}"
+
+  if [[ -L "$link_path" ]]; then
     local current resolved_current
-    current="$(readlink "$RESTART_LINK")"
+    current="$(readlink "$link_path")"
     if [[ "$current" == /* ]]; then
       resolved_current="$current"
     else
       resolved_current="${link_parent:A}/$current"
     fi
     resolved_current="${resolved_current:A}"
-    if [[ "$resolved_current" == "$resolved_restart" ]]; then
-      ok "symlink already points to $resolved_restart"
+    if [[ "$resolved_current" == "$resolved_target" ]]; then
+      ok "symlink already points to $resolved_target"
       return 0
     fi
-  elif [[ -e "$RESTART_LINK" ]]; then
-    fail "non-symlink exists at $RESTART_LINK — remove it manually"
+  elif [[ -e "$link_path" ]]; then
+    fail "non-symlink exists at $link_path — remove it manually"
     return 1
   fi
 
   if (( dry_run )); then
     dry "mkdir -p $link_parent"
-    dry "ln -sf $resolved_restart $RESTART_LINK"
+    dry "ln -sf $resolved_target $link_path"
     return 0
   fi
 
@@ -328,11 +334,21 @@ ensure_restart_link() {
     fail "could not create $link_parent"
     return 1
   }
-  ln -sf "$resolved_restart" "$RESTART_LINK" || {
-    fail "could not create symlink $RESTART_LINK → $resolved_restart"
+  ln -sf "$resolved_target" "$link_path" || {
+    fail "could not create symlink $link_path → $resolved_target"
     return 1
   }
-  ok "symlinked $RESTART_LINK → $resolved_restart"
+  ok "symlinked $link_path → $resolved_target"
+}
+
+ensure_restart_link() {
+  step "restart symlink ($RESTART_LINK)"
+  _ensure_link "$RESTART_LINK" "$RESTART_SCRIPT"
+}
+
+ensure_bootstrap_link() {
+  step "bootstrap symlink ($BOOTSTRAP_LINK)"
+  _ensure_link "$BOOTSTRAP_LINK" "$BOOTSTRAP_SCRIPT"
 }
 
 # ---------------------------------------------------------------------------
@@ -419,9 +435,10 @@ print -- ""
 
 # 2. Dependency setup
 overall=0
-ensure_venv         || overall=1
-ensure_frontend     || overall=1
-ensure_restart_link || overall=1
+ensure_venv           || overall=1
+ensure_frontend       || overall=1
+ensure_restart_link   || overall=1
+ensure_bootstrap_link || overall=1
 
 if (( launchd_mode )); then
   stage_plist || overall=1

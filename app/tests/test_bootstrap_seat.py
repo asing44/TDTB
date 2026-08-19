@@ -173,9 +173,11 @@ def temp_repo(tmp_path: Path, temp_home: Path) -> Path:
 </dict>
 </plist>
 """)
-    # restart-live.sh stub
+    # restart-live.sh and bootstrap-seat.sh stubs
     (repo / "restart-live.sh").write_text("#!/bin/zsh\n# stub\n")
     (repo / "restart-live.sh").chmod(0o755)
+    (repo / "bootstrap-seat.sh").write_text("#!/bin/zsh\n# stub\n")
+    (repo / "bootstrap-seat.sh").chmod(0o755)
     return repo
 
 
@@ -477,6 +479,79 @@ class TestDefaultBootstrap:
         assert (temp_repo / "frontend" / ".tdtb-lock-hash").read_text().strip() == expected_hash
 
 
+class TestBootstrapLink:
+    """Default mode also creates ~/.local/bin/tdtb-bootstrap symlink."""
+
+    def test_creates_bootstrap_symlink(self, temp_repo: Path, temp_home: Path, fake_bindir: Path):
+        """Default run creates tdtb-bootstrap symlink."""
+        result = _run_bootstrap(temp_repo, temp_home, fake_bindir)
+        assert result.returncode == 0, f"stderr: {result.stderr}"
+        link = temp_home / ".local" / "bin" / "tdtb-bootstrap"
+        assert link.is_symlink(), "tdtb-bootstrap symlink should exist"
+
+    def test_both_symlinks_created(self, temp_repo: Path, temp_home: Path, fake_bindir: Path):
+        """Default run creates both tdtb-restart and tdtb-bootstrap."""
+        result = _run_bootstrap(temp_repo, temp_home, fake_bindir)
+        assert result.returncode == 0
+        restart_link = temp_home / ".local" / "bin" / "tdtb-restart"
+        bootstrap_link = temp_home / ".local" / "bin" / "tdtb-bootstrap"
+        assert restart_link.is_symlink(), "tdtb-restart symlink should exist"
+        assert bootstrap_link.is_symlink(), "tdtb-bootstrap symlink should exist"
+
+    def test_bootstrap_symlink_target_correct(self, temp_repo: Path, temp_home: Path, fake_bindir: Path):
+        """tdtb-bootstrap points to bootstrap-seat.sh in the repo."""
+        result = _run_bootstrap(temp_repo, temp_home, fake_bindir)
+        assert result.returncode == 0
+        link = temp_home / ".local" / "bin" / "tdtb-bootstrap"
+        expected_target = (temp_repo / "bootstrap-seat.sh").resolve()
+        assert link.resolve() == expected_target, (
+            f"symlink target mismatch: {link.resolve()} != {expected_target}"
+        )
+
+    def test_bootstrap_symlink_idempotent(self, temp_repo: Path, temp_home: Path, fake_bindir: Path):
+        """Second run detects both links already point correctly."""
+        r1 = _run_bootstrap(temp_repo, temp_home, fake_bindir)
+        assert r1.returncode == 0, f"first run failed: {r1.stderr}"
+        r2 = _run_bootstrap(temp_repo, temp_home, fake_bindir)
+        assert r2.returncode == 0, f"second run failed: {r2.stderr}"
+        # Both links should show "already points to" in output
+        assert "symlink already points to" in r2.stdout
+
+    def test_bootstrap_symlink_custom_repo(self, temp_repo: Path, temp_home: Path, fake_bindir: Path, tmp_path: Path):
+        """When TDTB_REPO points to a worktree, the symlink targets its bootstrap-seat.sh."""
+        worktree = tmp_path / "worktree"
+        (worktree / "app").mkdir(parents=True)
+        (worktree / "app" / "requirements.txt").write_text("# wt\n")
+        (worktree / "frontend").mkdir(parents=True)
+        (worktree / "frontend" / "package.json").write_text('{"name":"wt"}\n')
+        (worktree / "frontend" / "package-lock.json").write_text('{"lockfileVersion":3}\n')
+        (worktree / "launchd").mkdir(parents=True)
+        (worktree / "launchd" / "com.walle.tdtb.plist").write_text(
+            (temp_repo / "launchd" / "com.walle.tdtb.plist").read_text()
+        )
+        (worktree / "restart-live.sh").write_text("#!/bin/zsh\n# stub\n")
+        (worktree / "restart-live.sh").chmod(0o755)
+        (worktree / "bootstrap-seat.sh").write_text("#!/bin/zsh\n# stub\n")
+        (worktree / "bootstrap-seat.sh").chmod(0o755)
+
+        result = _run_bootstrap(worktree, temp_home, fake_bindir)
+        assert result.returncode == 0, f"stderr: {result.stderr}"
+
+        link = temp_home / ".local" / "bin" / "tdtb-bootstrap"
+        expected_target = (worktree / "bootstrap-seat.sh").resolve()
+        assert link.resolve() == expected_target
+
+    def test_bootstrap_symlink_fails_on_non_symlink_collision(self, temp_repo: Path, temp_home: Path, fake_bindir: Path):
+        """A regular file at the link path causes a clear failure."""
+        link = temp_home / ".local" / "bin" / "tdtb-bootstrap"
+        link.write_text("not a symlink")
+
+        result = _run_bootstrap(temp_repo, temp_home, fake_bindir)
+        assert result.returncode != 0
+        assert "non-symlink" in result.stderr
+        assert "tdtb-bootstrap" in result.stderr
+
+
 class TestLaunchdMode:
     """--launchd renders and stages the plist."""
 
@@ -517,6 +592,8 @@ class TestLaunchdMode:
         )
         (worktree / "restart-live.sh").write_text("#!/bin/zsh\n# worktree stub\n")
         (worktree / "restart-live.sh").chmod(0o755)
+        (worktree / "bootstrap-seat.sh").write_text("#!/bin/zsh\n# worktree stub\n")
+        (worktree / "bootstrap-seat.sh").chmod(0o755)
 
         result = _run_bootstrap(
             worktree, temp_home, fake_bindir,
@@ -621,11 +698,13 @@ class TestDryRun:
         assert not nm.exists(), "node_modules should NOT have been created during dry run"
 
     def test_no_symlink(self, temp_repo: Path, temp_home: Path, fake_bindir: Path):
-        """--dry-run does not create the restart symlink."""
+        """--dry-run does not create either symlink."""
         result = _run_bootstrap(temp_repo, temp_home, fake_bindir, extra_args=["--dry-run"])
         assert result.returncode == 0
-        link = temp_home / ".local" / "bin" / "tdtb-restart"
-        assert not link.exists(), "symlink should NOT have been created during dry run"
+        restart_link = temp_home / ".local" / "bin" / "tdtb-restart"
+        bootstrap_link = temp_home / ".local" / "bin" / "tdtb-bootstrap"
+        assert not restart_link.exists(), "restart symlink should NOT have been created during dry run"
+        assert not bootstrap_link.exists(), "bootstrap symlink should NOT have been created during dry run"
 
     def test_no_plist(self, temp_repo: Path, temp_home: Path, fake_bindir: Path, temp_vault: Path):
         """--dry-run --launchd does not stage the plist."""
