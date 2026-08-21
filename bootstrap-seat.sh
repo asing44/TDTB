@@ -17,6 +17,11 @@
 #
 # This script is the authoritative machine-local bootstrap. It never
 # activates launchd, never restarts :8746, and never touches the real vault.
+#
+# Ownership boundary: the global ~/.local/bin/tdtb-restart launcher is owned
+# by Configurations/gpt-stack/seat-bootstrap.sh (HQ). This script manages
+# TDTB-specific projections only: venv, frontend deps, tdtb-bootstrap symlink,
+# and the launchd plist template.
 
 set -u
 setopt pipefail
@@ -27,7 +32,6 @@ setopt errreturn
 # ---------------------------------------------------------------------------
 readonly SCRIPT_DIR="${0:A:h}"
 readonly LABEL="com.walle.tdtb"
-readonly RESTART_LINK="$HOME/.local/bin/tdtb-restart"
 readonly BOOTSTRAP_LINK="$HOME/.local/bin/tdtb-bootstrap"
 readonly VENV_MARKER=".tdtb-req-hash"
 readonly FRONTEND_MARKER=".tdtb-lock-hash"
@@ -44,7 +48,7 @@ Portable TDTB seat bootstrap for /Users/adam and /Users/walle-mini.
 Modes:
   (default)   Validate app/frontend/launchd paths; create app/.venv via uv
               (Python 3.12); install frontend deps via npm ci; symlink
-              ~/.local/bin/{tdtb-restart,tdtb-bootstrap} → repo scripts.
+              ~/.local/bin/tdtb-bootstrap → bootstrap-seat.sh.
               Dependency freshness is tracked by SHA-256 marker files; stale
               or missing markers trigger reinstallation.
   --launchd   Also stage \$HOME/Library/LaunchAgents/\$LABEL.plist from the
@@ -294,7 +298,7 @@ ensure_frontend() {
 }
 
 # ---------------------------------------------------------------------------
-# Step 3: symlinks — manage ~/.local/bin/tdtb-restart and tdtb-bootstrap
+# Step 3: symlink — manage ~/.local/bin/tdtb-bootstrap
 # ---------------------------------------------------------------------------
 
 # Internal: manage a single symlink *link_path* → *target_script*.
@@ -339,11 +343,6 @@ _ensure_link() {
     return 1
   }
   ok "symlinked $link_path → $resolved_target"
-}
-
-ensure_restart_link() {
-  step "restart symlink ($RESTART_LINK)"
-  _ensure_link "$RESTART_LINK" "$RESTART_SCRIPT"
 }
 
 ensure_bootstrap_link() {
@@ -437,7 +436,6 @@ print -- ""
 overall=0
 ensure_venv           || overall=1
 ensure_frontend       || overall=1
-ensure_restart_link   || overall=1
 ensure_bootstrap_link || overall=1
 
 if (( launchd_mode )); then

@@ -241,7 +241,7 @@ def _run_bootstrap(
 # ===================================================================
 
 class TestDefaultBootstrap:
-    """Default mode: venv, frontend deps, restart symlink."""
+    """Default mode: venv, frontend deps, bootstrap symlink (no restart symlink)."""
 
     def test_creates_venv(self, temp_repo: Path, temp_home: Path, fake_bindir: Path):
         """Default run creates .venv, installs deps, and writes hash marker."""
@@ -261,15 +261,13 @@ class TestDefaultBootstrap:
         marker = temp_repo / "frontend" / ".tdtb-lock-hash"
         assert marker.is_file(), "lock hash marker should exist"
 
-    def test_creates_restart_symlink(self, temp_repo: Path, temp_home: Path, fake_bindir: Path):
-        """Default run symlinks tdtb-restart to restart-live.sh."""
+    def test_does_not_create_restart_symlink(self, temp_repo: Path, temp_home: Path, fake_bindir: Path):
+        """Default run does NOT create tdtb-restart — HQ owns the global launcher."""
         result = _run_bootstrap(temp_repo, temp_home, fake_bindir)
         assert result.returncode == 0, f"stderr: {result.stderr}"
         link = temp_home / ".local" / "bin" / "tdtb-restart"
-        assert link.is_symlink(), "tdtb-restart symlink should exist"
-        expected_target = (temp_repo / "restart-live.sh").resolve()
-        assert link.resolve() == expected_target, (
-            f"symlink target mismatch: {link.resolve()} != {expected_target}"
+        assert not link.exists(), (
+            "tdtb-restart symlink should NOT be created — HQ owns the global launcher"
         )
 
     def test_idempotent(self, temp_repo: Path, temp_home: Path, fake_bindir: Path):
@@ -489,13 +487,13 @@ class TestBootstrapLink:
         link = temp_home / ".local" / "bin" / "tdtb-bootstrap"
         assert link.is_symlink(), "tdtb-bootstrap symlink should exist"
 
-    def test_both_symlinks_created(self, temp_repo: Path, temp_home: Path, fake_bindir: Path):
-        """Default run creates both tdtb-restart and tdtb-bootstrap."""
+    def test_only_bootstrap_symlink_created(self, temp_repo: Path, temp_home: Path, fake_bindir: Path):
+        """Default run creates tdtb-bootstrap but NOT tdtb-restart (HQ-owned)."""
         result = _run_bootstrap(temp_repo, temp_home, fake_bindir)
         assert result.returncode == 0
         restart_link = temp_home / ".local" / "bin" / "tdtb-restart"
         bootstrap_link = temp_home / ".local" / "bin" / "tdtb-bootstrap"
-        assert restart_link.is_symlink(), "tdtb-restart symlink should exist"
+        assert not restart_link.exists(), "tdtb-restart symlink should NOT exist — HQ-owned"
         assert bootstrap_link.is_symlink(), "tdtb-bootstrap symlink should exist"
 
     def test_bootstrap_symlink_target_correct(self, temp_repo: Path, temp_home: Path, fake_bindir: Path):
@@ -698,12 +696,10 @@ class TestDryRun:
         assert not nm.exists(), "node_modules should NOT have been created during dry run"
 
     def test_no_symlink(self, temp_repo: Path, temp_home: Path, fake_bindir: Path):
-        """--dry-run does not create either symlink."""
+        """--dry-run does not create the bootstrap symlink."""
         result = _run_bootstrap(temp_repo, temp_home, fake_bindir, extra_args=["--dry-run"])
         assert result.returncode == 0
-        restart_link = temp_home / ".local" / "bin" / "tdtb-restart"
         bootstrap_link = temp_home / ".local" / "bin" / "tdtb-bootstrap"
-        assert not restart_link.exists(), "restart symlink should NOT have been created during dry run"
         assert not bootstrap_link.exists(), "bootstrap symlink should NOT have been created during dry run"
 
     def test_no_plist(self, temp_repo: Path, temp_home: Path, fake_bindir: Path, temp_vault: Path):

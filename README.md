@@ -42,15 +42,20 @@ redirect to live sources; its snapshot is preserved in the archive.
 `/Users/adam` and `/Users/walle-mini`. It resolves repo paths from its own
 directory (or `$TDTB_REPO`) and never hardcodes a user home.
 
-After a successful run, two symlinks are installed in `~/.local/bin/`:
-- **`tdtb-restart`** → `restart-live.sh` (attended restart)
+After a successful run, one symlink is installed in `~/.local/bin/`:
 - **`tdtb-bootstrap`** → `bootstrap-seat.sh` (run from any directory)
+
+The global **`tdtb-restart`** launcher is owned by HQ
+(`Configurations/gpt-stack/seat-bootstrap.sh`), not by TDTB bootstrap.
+TDTB owns the app-specific `restart-live.sh` (attended restart) and the
+`launchd/com.walle.tdtb.plist` template. Installed launchd plists, restart
+links, and other machine-local projections are not repo source.
 
 You can run `tdtb-bootstrap` from anywhere after the first bootstrap completes.
 
 | Flag | Behaviour |
 |---|---|
-| *(none)* | Validate paths; create `app/.venv` (uv + Python 3.12); `npm ci` in `frontend/`; symlink `~/.local/bin/{tdtb-restart,tdtb-bootstrap}` → repo scripts. Dependency freshness is tracked by SHA-256 marker files (`.tdtb-req-hash`, `.tdtb-lock-hash`); stale or missing markers trigger reinstallation. |
+| *(none)* | Validate paths; create `app/.venv` (uv + Python 3.12); `npm ci` in `frontend/`; symlink `~/.local/bin/tdtb-bootstrap` → `bootstrap-seat.sh`. Dependency freshness is tracked by SHA-256 marker files (`.tdtb-req-hash`, `.tdtb-lock-hash`); stale or missing markers trigger reinstallation. |
 | `--launchd` | Also stage `~/Library/LaunchAgents/com.walle.tdtb.plist` from the canonical launchd template. Substitutes `__WALLE_HOME__`, `__TDTB_REPO__`, and `__TDTB_VAULT_ROOT__`. Does **not** activate launchd or restart `:8746`. |
 | `--dry-run` | Read-only: report what would change without creating venvs, node_modules, symlinks, plist files, or hash markers. |
 

@@ -147,10 +147,15 @@ def test_plist_template_rejects_unresolved_placeholder():
     )
 
 
-def test_tdtb_restart_symlink_points_at_canonical_script():
+def test_tdtb_restart_symlink_is_hq_owned():
+    """The global ~/.local/bin/tdtb-restart launcher is owned by HQ
+    (Configurations/gpt-stack/seat-bootstrap.sh), not by TDTB bootstrap.
+    This test verifies the canonical restart-live.sh source is valid;
+    the symlink itself is a machine-local HQ projection, not a TDTB contract."""
+    # Source-only: verify the canonical script exists and is executable
+    assert RESTART_SCRIPT.exists(), "canonical restart-live.sh must exist"
+    assert os.access(RESTART_SCRIPT, os.X_OK), "canonical restart-live.sh must be executable"
+    # The symlink at ~/.local/bin/tdtb-restart is an HQ-owned projection;
+    # its target is not a TDTB contract. Skip if not installed.
     if not TDTB_RESTART.is_symlink():
-        pytest.skip("tdtb-restart not installed on this seat")
-    target = os.path.realpath(TDTB_RESTART)
-    assert target == str(RESTART_SCRIPT)
-    for marker in OLD_LAYOUT_MARKERS:
-        assert marker not in target
+        pytest.skip("tdtb-restart not installed on this seat (HQ-owned projection)")
