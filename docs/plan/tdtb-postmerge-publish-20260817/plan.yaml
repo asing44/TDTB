@@ -3,8 +3,7 @@ objective: Push merged TDTB main to origin/main and safely restore today's allow
 complexity: MEDIUM
 created_at: '2026-08-17T00:00:00Z'
 created_by: gem-planner
-status: completed
-completed_at: '2026-08-17T00:00:00Z'
+status: pending
 approval_exception: User explicitly approved the exact real-vault billed_calls reset after CALL-00 identified the safe target and semantics.
 tldr: |
   - Publish only the verified local main history through an explicit fast-forward push.

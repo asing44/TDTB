@@ -2,7 +2,8 @@ plan_id: tdtb-persistent-memory-20260817-r5
 objective: Implement durable cross-run duration-memory functionality in a dedicated features/duration-memory worktree.
 created_at: '2026-08-17T00:00:00Z'
 created_by: gem-planner
-status: pending
+status: completed
+superseded_by: docs/plan/tdtb-duration-memory-mvp-20260817/plan.yaml
 tldr: |
   - Implement durable cross-run duration memory from the final user-authorized derived plan.
   - Gate all product work on an isolated features/duration-memory worktree.
@@ -1147,3 +1148,13 @@ tasks:
     requires_review: false
     review_depth: full
     review_security_sensitive: true
+
+closure:
+  declared_complete: true
+  declared_at: '2026-08-21T12:39:31Z'
+  superseded_at: '2026-08-21T12:39:31Z'
+  superseded_by_plan: docs/plan/tdtb-duration-memory-mvp-20260817/plan.yaml
+  disposition: >-
+    Historical planning front superseded before execution by the user-approved
+    fast-track duration-memory MVP. Task rows remain pending; no implementation
+    completion is claimed.

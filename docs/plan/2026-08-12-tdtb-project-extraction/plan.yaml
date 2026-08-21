@@ -3,7 +3,8 @@ objective: Extract the TDTB application and project boundary out of the Claudius
   and into the canonical TDTB repository.
 created_at: '2026-08-13T00:00:00Z'
 created_by: gem-planner
-status: approved
+status: completed
+completed_at: '2026-08-15T02:52:00Z'
 tldr: Execute the extraction of the TDTB application from the sibling Claudius repository
   into this canonical TDTB repository, preserving dirty state and rewiring consumers.
 baseline:
@@ -100,8 +101,8 @@ cutover_ownership:
       plan; its plan.yaml and evidence remain unchanged and are NOT rewritten or deleted.
   active_execution_front:
     plan_path: docs/plan/2026-08-12-tdtb-project-extraction/plan.yaml
-    status: approved
-    role: Sole active execution front for canonical TDTB extraction and cutover.
+    status: completed
+    role: Completed authoritative record for canonical TDTB extraction and cutover.
     exclusive: true
   accepted_dirty_state_receipt:
     evidence_path: docs/plan/2026-08-12-tdtb-project-extraction/evidence/T2-dirty-state-receipt.json
