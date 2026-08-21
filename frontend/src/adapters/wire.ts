@@ -38,6 +38,7 @@ import type {
   OverlapGrant,
   SchedulableOverride,
 } from "../model/types";
+import { blocksLabel } from "../model/time";
 import type {
   DurationMemoryResetResult,
   DurationMemorySaveResult,
@@ -83,13 +84,9 @@ function minutesOf(hhmm: string): number {
   return h * 60 + m;
 }
 
-/** Human duration label from blocks: 3 → "1hr 30min", 0 → "All day". */
-export function blocksLabel(blocks: number): string {
-  if (blocks === 0) return "All day";
-  const m = Math.round(blocks * 30);
-  if (m < 60) return `${m}min`;
-  return m % 60 === 0 ? `${m / 60}hr` : `${Math.floor(m / 60)}hr ${m % 60}min`;
-}
+// Keep the historical adapter export for callers while sharing the one
+// duration formatter with the UI and the other wire projections.
+export { blocksLabel } from "../model/time";
 
 // -- duration memory (MVP) ---------------------------------------------------
 

@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { createStore } from "./createStore";
 import { Controller } from "./controller";
 import { FixtureAdapter } from "../adapters/fixture";
-import { canLiveCommit, defectsResolved, dockState, effectiveAnchoredBlocks } from "./store";
+import { canLiveCommit, defectsResolved, dockState, effectiveAnchoredBlocks, sourceHealthBlocked } from "./store";
 import { calendarWalls, mintWalls } from "../model/overflow";
 import { ApiError } from "../adapters/api";
 import type { ScenarioName } from "../fixtures/scenarios";
@@ -420,6 +420,10 @@ describe("budget exhaustion", () => {
     const { store, controller } = harness("conflict");
     await controller.load();
     await controller.saveDaySetup({ ...store.getState().daySetup, confirmed: true });
+    // The conflict scenario ships with degraded source health; this test is
+    // about validation failure, not the source-health gate — restore ok so
+    // the billed call reaches the fixture's designed rejection.
+    store.getState().inputs!.sourceHealth = "ok";
     await controller.autoSequence();
     store.dispatch({ type: "ACCEPT_DEFECTS" }); // fixture warnings are designed acceptable defects (LD 24)
     const s = store.getState();
@@ -811,7 +815,7 @@ describe("FEEDBACK-03 explicit overflow infeasibility (controller wiring)", () =
     expect(warnings.some((w) => w.includes("Magic Mirror"))).toBe(true);
     expect(warnings.some((w) => w.includes("Note Processing"))).toBe(true);
     // and the available capacity
-    expect(warnings.some((w) => /block/.test(w))).toBe(true);
+    expect(warnings.some((w) => /blk/.test(w))).toBe(true);
     // nothing was staged over the wall — the infeasible rows are not placed
     expect(s.sequence!.filter((r) => s.overflowIds.includes(r.id))).toEqual([]);
     // infeasibility is a real defect: it gates shadow/commit until accepted
@@ -1163,4 +1167,116 @@ describe("FEEDBACK-28 stale saved Mint filtering at the payload boundary", () =>
     expect(sent.schedulable!.minting.n).toBe(1);
     expect(sent.workAllotmentMinutes).toBe(30);
   }, 15000);
+});
+
+describe("source-health gate (controller entry points)", () => {
+  /** Set up a fully sequenced + shadowed + armed state, then degrade source
+      health and verify each entry point refuses before any network call. */
+  async function healthyHarness() {
+    const h = harness("ready");
+    await h.controller.load();
+    await h.controller.saveDaySetup({ ...h.store.getState().daySetup, confirmed: true });
+    await h.controller.autoSequence();
+    h.store.dispatch({ type: "ACCEPT_DEFECTS" });
+    await h.controller.shadowPreview();
+    h.controller.armLive();
+    return h;
+  }
+
+  it("autoSequence makes zero billed calls when source health is degraded", async () => {
+    const { store, adapter, controller } = harness("ready");
+    await controller.load();
+    await controller.saveDaySetup({ ...store.getState().daySetup, confirmed: true });
+    // Degrade source health before the billed call
+    store.getState().inputs!.sourceHealth = "degraded";
+    expect(sourceHealthBlocked(store.getState())).toBe(true);
+
+    const spy = vi.spyOn(adapter, "autoSequence");
+    await controller.autoSequence();
+    expect(spy).not.toHaveBeenCalled();
+    // State must not have advanced into sequencing
+    expect(store.getState().seqPhase).not.toBe("sequencing");
+  });
+
+  it("autoSequence makes zero billed calls when source health is failed", async () => {
+    const { store, adapter, controller } = harness("ready");
+    await controller.load();
+    await controller.saveDaySetup({ ...store.getState().daySetup, confirmed: true });
+    store.getState().inputs!.sourceHealth = "failed";
+
+    const spy = vi.spyOn(adapter, "autoSequence");
+    await controller.autoSequence();
+    expect(spy).not.toHaveBeenCalled();
+    expect(store.getState().seqPhase).not.toBe("sequencing");
+  });
+
+  it("shadowPreview makes zero network calls when source health is degraded", async () => {
+    const { store, adapter, controller } = harness("ready");
+    await controller.load();
+    await controller.saveDaySetup({ ...store.getState().daySetup, confirmed: true });
+    await controller.autoSequence();
+    store.dispatch({ type: "ACCEPT_DEFECTS" });
+    store.getState().inputs!.sourceHealth = "degraded";
+
+    const spy = vi.spyOn(adapter, "shadowCommit");
+    await controller.shadowPreview();
+    expect(spy).not.toHaveBeenCalled();
+    // Must not have dispatched SHADOW_START
+    expect(store.getState().shadowPhase).not.toBe("loading");
+  });
+
+  it("shadowPreview makes zero network calls when source health is failed", async () => {
+    const { store, adapter, controller } = harness("ready");
+    await controller.load();
+    await controller.saveDaySetup({ ...store.getState().daySetup, confirmed: true });
+    await controller.autoSequence();
+    store.dispatch({ type: "ACCEPT_DEFECTS" });
+    store.getState().inputs!.sourceHealth = "failed";
+
+    const spy = vi.spyOn(adapter, "shadowCommit");
+    await controller.shadowPreview();
+    expect(spy).not.toHaveBeenCalled();
+    expect(store.getState().shadowPhase).not.toBe("loading");
+  });
+
+  it("requestLiveCommit makes zero write calls when source health is degraded", async () => {
+    const { store, adapter, controller } = await healthyHarness();
+    store.getState().inputs!.sourceHealth = "degraded";
+
+    const spy = vi.spyOn(adapter, "liveCommit");
+    await controller.requestLiveCommit();
+    expect(spy).not.toHaveBeenCalled();
+    // Must not have dispatched COMMIT_START
+    expect(store.getState().commitPhase).not.toBe("committing");
+  });
+
+  it("requestLiveCommit makes zero write calls when source health is failed", async () => {
+    const { store, adapter, controller } = await healthyHarness();
+    store.getState().inputs!.sourceHealth = "failed";
+
+    const spy = vi.spyOn(adapter, "liveCommit");
+    await controller.requestLiveCommit();
+    expect(spy).not.toHaveBeenCalled();
+    expect(store.getState().commitPhase).not.toBe("committing");
+  });
+
+  it("healthy source health allows all three entry points (regression guard)", async () => {
+    const { store } = await healthyHarness();
+    expect(store.getState().inputs!.sourceHealth).toBe("ok");
+    expect(sourceHealthBlocked(store.getState())).toBe(false);
+
+    // All gates open — the harness already proved autoSequence + shadowPreview
+    // worked. Verify liveCommit would proceed (it will fail on fixture adapter
+    // because liveCommit isn't mocked, but the gate itself must pass).
+    expect(canLiveCommit(store.getState())).toBe(true);
+
+    // Prove autoSequence gate is open from a fresh state too
+    const h2 = harness("ready");
+    await h2.controller.load();
+    await h2.controller.saveDaySetup({ ...h2.store.getState().daySetup, confirmed: true });
+    expect(sourceHealthBlocked(h2.store.getState())).toBe(false);
+    const seqSpy = vi.spyOn(h2.adapter, "autoSequence");
+    await h2.controller.autoSequence();
+    expect(seqSpy).toHaveBeenCalledTimes(1);
+  });
 });

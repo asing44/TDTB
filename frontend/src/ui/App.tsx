@@ -1,16 +1,7 @@
-/* App — cockpit shell, T12e redesign (3a spec) → IMP-07. Desktop: two-column
-   grid — 280px rail (capacity, trim, pie, keys, chips) beside the banded
-   allocator table — plus a full-width sticky footer (banners + dock) so the
-   number being committed is never off-screen. Mobile (≤767px) stacks to a
-   single column via CSS. Drawers overlay both.
-
-   IMP-07 composition (design-validation): Rail + CalendarImpact +
-   Today's work (Queue) + ActionDock footer + drawers. The retired surfaces
-   are NOT mounted: MobileAgenda (duplicate mobile planning surface),
-   PlacementList (read-only placement review — CalendarImpact's compact alert
-   owns review routing), ForgotStrip/TrimAssist (pruned from Rail), and
-   ScenarioPanel (pruned from main). ExecutionView self-gates to a live-commit
-   day (brief problem 5: NOW/NEXT was dead space pre-sequence). */
+/* App — compact planning cockpit. Desktop keeps a capacity rail beside the
+   assigned-only work list, while the footer owns the final action and recovery
+   affordances. Mobile stacks the same surfaces; it does not render a second
+   planning view. Drawers overlay the shell. */
 
 import { useEffect } from "preact/hooks";
 import { useAppState } from "./context";
@@ -66,9 +57,13 @@ export function App() {
             </div>
           </section>
         )}
-        <CalendarImpact />
-        {/* T20 runtime surface — renders only once a live commit exists. */}
+        {/* T20 runtime surface — renders only once a live commit exists. Keep
+            execution ahead of planning evidence after a commit: the first
+            question then is what to do next, not how the plan was built. */}
         <ExecutionView />
+        {/* Calendar review is compact in the default cockpit. The full
+            projection-only rows remain one disclosure away. */}
+        <CalendarImpact compact />
         <Queue />
       </main>
       <div class="cockpit__footer">

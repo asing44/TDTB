@@ -1,9 +1,7 @@
 /* main.tsx — entry. Fixture builds boot a FixtureAdapter with a scenario
-   selected from the URL hash; production builds (T5+) will construct the API
-   adapter instead. No billed endpoint is ever called on boot (test matrix
-   § Safety). IMP-07 pruned the fixture-only ScenarioPanel switcher surface
-   (contract item 21); the hash still selects the boot scenario for
-   mockup/review builds. */
+   selected from the URL hash; production builds construct the API adapter.
+   No billed endpoint is ever called on boot (test matrix § Safety). The hash
+   remains a fixture-build review aid, not a user-facing planning surface. */
 
 import { render } from "preact";
 import { useEffect, useMemo, useState } from "preact/hooks";

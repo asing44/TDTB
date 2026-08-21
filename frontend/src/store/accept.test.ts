@@ -156,9 +156,9 @@ describe("acceptable-defect gating", () => {
     let s = sequenced([]);
     s = reducer(s, {
       type: "CAPACITY_UPDATED",
-      capacity: { ...s.capacity!, overassigned: true, remaining: "1.5 blocks over" },
+      capacity: { ...s.capacity!, overassigned: true, free: -1.5, remaining: "1.5 blocks over" },
     });
-    expect(acceptableDefects(s)).toEqual(["Overassigned — 1.5 blocks over"]);
+    expect(acceptableDefects(s)).toEqual(["Overassigned — ⚠ 45min over"]);
     expect(canShadow(s)).toBe(false);
     s = reducer(s, { type: "ACCEPT_DEFECTS" });
     expect(canShadow(s)).toBe(true);

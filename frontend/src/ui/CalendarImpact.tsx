@@ -8,7 +8,7 @@
 
 import { useApp, useAppState } from "./context";
 import { effectiveAnchoredBlocks } from "../store/store";
-import { blocksLabel, display12h } from "../model/time";
+import { blocksLabel, display12h, formatBlockAmount } from "../model/time";
 import type { AnchoredBlock, CalendarCapacityClass } from "../model/types";
 
 /** Local accounted-duration grid for calendar rows: 30-minute blocks, floor 1
@@ -59,7 +59,7 @@ function countedBlocks(row: AnchoredBlock): number {
   return Math.ceil(row.durationMin / 30);
 }
 
-export function CalendarImpact() {
+export function CalendarImpact({ compact = false }: { compact?: boolean }) {
   const s = useAppState();
   const { controller } = useApp();
   if (!s.inputs) return null;
@@ -80,8 +80,99 @@ export function CalendarImpact() {
   const workEnvelope = s.capacity?.mint ?? 0;
   const workOverflow = s.capacity?.workOverflow ?? 0;
 
+  const hardWalls = visible.filter((row) => isWallClass(capacityClass(row))).length;
+  const quarantined = visible.filter((row) => capacityClass(row) === "quarantined").length;
+
+  const list = (
+    <ul class="calendar-impact__list">
+      {visible.map((row) => {
+        const attending = !row.skipToday;
+        const cls = capacityClass(row);
+        const counted = countedBlocks(row);
+        const effectiveBlocks = Math.ceil(row.durationMin / 30);
+        const projectedBlocks = s.daySetup.anchored[row.id]?.blocks ?? null;
+        const projected = projectedBlocks != null;
+        // One accounting save path: participation toggles keep any local
+        // projection; duration steps keep attendance. Never a writer call.
+        const save = (patch: Record<string, unknown>) =>
+          void controller.saveAnchoredOverride(row.id, {
+            on: true,
+            skipToday: row.skipToday,
+            time: null,
+            ...(projectedBlocks != null ? { blocks: projectedBlocks } : {}),
+            ...patch,
+          });
+        return (
+          <li key={row.id} class="calendar-impact__row">
+            <span class="calendar-impact__time">
+              {display12h(row.start)}
+              {row.end ? `–${display12h(row.end)}` : ""}
+            </span>
+            <span class="calendar-impact__event">
+              <strong>{row.name}</strong>
+              <small>
+                {row.calendarTitle ?? "Unknown calendar"}
+                {isWallClass(cls) && (
+                  <span class="calendar-impact__wall">hard block</span>
+                )}
+              </small>
+            </span>
+            <span class={`calendar-impact__class calendar-impact__class--${cls}`}>
+              {cls}
+            </span>
+            <span class="calendar-impact__duration">
+              {blocksLabel(effectiveBlocks)}
+              {projected && (
+                <span class="calendar-impact__projection">projection</span>
+              )}
+            </span>
+            <span class="calendar-impact__count">{formatBlockAmount(counted)} counted</span>
+            <span class="calendar-impact__reason">{reason(row)}</span>
+            <span class="calendar-impact__actions">
+              {attending && (
+                <span class="calendar-impact__stepper">
+                  <button
+                    type="button"
+                    class="iconbtn"
+                    aria-label={`Less counted time for ${row.name} (today only)`}
+                    disabled={s.runtimeBusy || counted <= CAL_BLOCKS_MIN}
+                    onClick={() => save({ blocks: counted - 1 })}
+                  >−</button>
+                  <button
+                    type="button"
+                    class="iconbtn"
+                    aria-label={`More counted time for ${row.name} (today only)`}
+                    disabled={s.runtimeBusy || counted >= CAL_BLOCKS_MAX}
+                    onClick={() => save({ blocks: counted + 1 })}
+                  >+</button>
+                </span>
+              )}
+              <button
+                class="calendar-impact__attend"
+                disabled={s.runtimeBusy}
+                aria-label={
+                  attending
+                    ? `Do not count ${row.name} toward today's capacity`
+                    : `Count ${row.name} toward today's capacity`
+                }
+                onClick={() => save({ skipToday: attending })}
+              >
+                {attending ? "Exclude from plan" : "Count"}
+              </button>
+              {row.skipToday && (
+                <span class="calendar-impact__local">
+                  today only · event untouched
+                </span>
+              )}
+            </span>
+          </li>
+        );
+      })}
+    </ul>
+  );
+
   return (
-    <section class="calendar-impact" aria-label="Calendar impact">
+    <section class={`calendar-impact${compact ? " calendar-impact--compact" : ""}`} aria-label="Calendar impact">
       <div class="calendar-impact__head">
         <div>
           <h2>Calendar impact</h2>
@@ -92,9 +183,9 @@ export function CalendarImpact() {
         </div>
         {(workEnvelope > 0 || workBusy > 0) && (
           <div class="calendar-impact__work" aria-label="Work envelope summary">
-            <strong>{workEnvelope} blk</strong> work envelope · {workBusy} blk
+            <strong>{formatBlockAmount(workEnvelope)}</strong> work envelope · {formatBlockAmount(workBusy)}
             exclusive busy time
-            {workOverflow > 0 ? ` · ${workOverflow} blk overflow` : ""}
+            {workOverflow > 0 ? ` · ${formatBlockAmount(workOverflow)} overflow` : ""}
           </div>
         )}
       </div>
@@ -103,91 +194,18 @@ export function CalendarImpact() {
           {hiddenIgnored} ignored calendar source{hiddenIgnored === 1 ? "" : "s"} excluded
         </p>
       )}
-      <ul class="calendar-impact__list">
-        {visible.map((row) => {
-          const attending = !row.skipToday;
-          const cls = capacityClass(row);
-          const counted = countedBlocks(row);
-          const effectiveBlocks = Math.ceil(row.durationMin / 30);
-          const projectedBlocks = s.daySetup.anchored[row.id]?.blocks ?? null;
-          const projected = projectedBlocks != null;
-          // One accounting save path: participation toggles keep any local
-          // projection; duration steps keep attendance. Never a writer call.
-          const save = (patch: Record<string, unknown>) =>
-            void controller.saveAnchoredOverride(row.id, {
-              on: true,
-              skipToday: row.skipToday,
-              time: null,
-              ...(projectedBlocks != null ? { blocks: projectedBlocks } : {}),
-              ...patch,
-            });
-          return (
-            <li key={row.id} class="calendar-impact__row">
-              <span class="calendar-impact__time">
-                {display12h(row.start)}
-                {row.end ? `–${display12h(row.end)}` : ""}
-              </span>
-              <span class="calendar-impact__event">
-                <strong>{row.name}</strong>
-                <small>
-                  {row.calendarTitle ?? "Unknown calendar"}
-                  {isWallClass(cls) && (
-                    <span class="calendar-impact__wall">hard block</span>
-                  )}
-                </small>
-              </span>
-              <span class={`calendar-impact__class calendar-impact__class--${cls}`}>
-                {cls}
-              </span>
-              <span class="calendar-impact__duration">
-                {blocksLabel(effectiveBlocks)}
-                {projected && (
-                  <span class="calendar-impact__projection">projection</span>
-                )}
-              </span>
-              <span class="calendar-impact__count">{counted} blk counted</span>
-              <span class="calendar-impact__reason">{reason(row)}</span>
-              <span class="calendar-impact__actions">
-                {attending && (
-                  <span class="calendar-impact__stepper">
-                    <button
-                      type="button"
-                      class="iconbtn"
-                      aria-label={`Less counted time for ${row.name} (today only)`}
-                      disabled={s.runtimeBusy || counted <= CAL_BLOCKS_MIN}
-                      onClick={() => save({ blocks: counted - 1 })}
-                    >−</button>
-                    <button
-                      type="button"
-                      class="iconbtn"
-                      aria-label={`More counted time for ${row.name} (today only)`}
-                      disabled={s.runtimeBusy || counted >= CAL_BLOCKS_MAX}
-                      onClick={() => save({ blocks: counted + 1 })}
-                    >+</button>
-                  </span>
-                )}
-                <button
-                  class="calendar-impact__attend"
-                  disabled={s.runtimeBusy}
-                  aria-label={
-                    attending
-                      ? `Do not count ${row.name} toward today's capacity`
-                      : `Count ${row.name} toward today's capacity`
-                  }
-                  onClick={() => save({ skipToday: attending })}
-                >
-                  {attending ? "Exclude from plan" : "Count"}
-                </button>
-                {row.skipToday && (
-                  <span class="calendar-impact__local">
-                    today only · event untouched
-                  </span>
-                )}
-              </span>
-            </li>
-          );
-        })}
-      </ul>
+      {compact ? (
+        <>
+          <div class="calendar-impact__summary" role="status">
+            <strong>{visible.length} calendar commitment{visible.length === 1 ? "" : "s"} in frame</strong>
+            <span>{hardWalls} hard wall{hardWalls === 1 ? "" : "s"}{quarantined > 0 ? ` · ${quarantined} awaiting review` : ""}</span>
+          </div>
+          <details class="calendar-impact__review">
+            <summary>Review calendar impact</summary>
+            {list}
+          </details>
+        </>
+      ) : list}
     </section>
   );
 }

@@ -45,7 +45,7 @@ import {
   localSelected,
   trimForState,
 } from "../store/allocatorView";
-import { blocksLabel, display12h } from "../model/time";
+import { blocksLabel, display12h, formatBlockAmount } from "../model/time";
 import {
   HALF_BLOCK,
   MAX_BLOCKS,
@@ -569,10 +569,10 @@ function BandHeader({
         />
       </span>
       <span class="band__share">
-        {spend} / {band.share} blk
+        {formatBlockAmount(spend)} / {formatBlockAmount(band.share)}
       </span>
       <span class={`band__over ${over > 0 ? "band__over--over" : ""}`}>
-        {over > 0 ? `${over} over share` : "within share"}
+        {over > 0 ? `${formatBlockAmount(over)} over share` : "within share"}
       </span>
       <span class={`band__state${open ? "" : " band__state--closed"}`}>
         {open ? "expanded" : "collapsed"}
@@ -613,6 +613,35 @@ function DroppedHeader({
       </span>
       <span class="band__chevron" aria-hidden="true">{open ? "▾" : "▸"}</span>
     </button>
+  );
+}
+
+/** The rail owns the full capacity breakdown; this smaller readout stays with
+    the controls that change it. It makes a slider edit legible without asking
+    the user to look away from the assigned rows. */
+function AllocationMeter({ s }: { s: AppState }) {
+  const selected = localSelected(s);
+  const budget = budgetTotal(s);
+  const basis = Math.max(selected, budget, 1);
+  const selectedPct = Math.min(100, (selected / basis) * 100);
+  const budgetPct = Math.min(100, (budget / basis) * 100);
+  const over = Math.max(0, selected - budget);
+  const state = over > 0
+    ? `${formatBlockAmount(over)} over task room`
+    : `${formatBlockAmount(Math.max(0, budget - selected))} left in task room`;
+
+  return (
+    <div class={`allocation-meter${over > 0 ? " allocation-meter--over" : ""}`} aria-label="Task room">
+      <div class="allocation-meter__head">
+        <span class="allocation-meter__label">Task room</span>
+        <strong>{formatBlockAmount(selected)} / {formatBlockAmount(budget)}</strong>
+      </div>
+      <div class="allocation-meter__track" aria-hidden="true">
+        <span class="allocation-meter__fill" style={{ width: `${selectedPct}%` }} />
+        <span class="allocation-meter__mark" style={{ left: `${budgetPct}%` }} />
+      </div>
+      <span class="allocation-meter__state" role="status">{state}</span>
+    </div>
   );
 }
 
@@ -672,10 +701,19 @@ export function Queue() {
 
   return (
     <section class="queue" aria-label="Today's work">
+      <header class="queue__head">
+        <div>
+          <span class="queue__eyebrow">Allocation</span>
+          <h1>Today's work</h1>
+          <p>Assigned items only · shape today's copy here; assignment stays upstream.</p>
+        </div>
+        <span class="queue__assigned-chip">assigned only</span>
+      </header>
       <p class="queue__subtractive">
-        Every digest-assigned row starts selected. Remove or trim what will not fit;
+        Every assigned row starts selected. Remove or trim what will not fit;
         chosen task effort stays additive until Send.
       </p>
+      <AllocationMeter s={s} />
       <div class="queue__cols" aria-hidden="true">
         <span />
         <span>Needs placement · {needsPlacement}</span>
@@ -685,7 +723,7 @@ export function Queue() {
       </div>
       {over > 0 && (
         <p class="queue__remaining queue__remaining--over" role="status">
-          {selected} blk selected of {budget} capacity - {over} over
+          {formatBlockAmount(selected)} selected of {formatBlockAmount(budget)} capacity - {formatBlockAmount(over)} over
         </p>
       )}
       {BANDS.map((band) => {

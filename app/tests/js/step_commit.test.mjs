@@ -8,8 +8,8 @@ import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
-const kit = require('../../static/ui_kit.js');
-const commitStep = require('../../static/steps/commit.js');
+const kit = require('../../legacy-static/ui_kit.js');
+const commitStep = require('../../legacy-static/steps/commit.js');
 const pure = commitStep._pure;
 
 // -- itemKey ------------------------------------------------------------------

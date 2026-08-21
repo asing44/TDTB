@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
-const wiz = require('../../static/wizard_logic.js');
+const wiz = require('../../legacy-static/wizard_logic.js');
 
 test('step order matches the morning ritual', () => {
   assert.deepEqual(wiz.STEPS.map(s => s.id),

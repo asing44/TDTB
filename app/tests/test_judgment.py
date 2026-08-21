@@ -441,6 +441,32 @@ class TestProposeSequence:
         assert "12:00 is invalid" in captured["user"]
         assert "start >= earliest_start" in captured["user"]
 
+    def test_prompt_repeats_exact_assigned_inventory_for_never_bump(self, monkeypatch):
+        import json
+
+        captured = {}
+
+        async def fake_run_query(system_prompt, user_prompt):
+            captured["user"] = user_prompt
+            return (
+                '{"sequence": ['
+                '{"id": "Short", "start": "13:00", "end": "13:30", "zone": "any"}, '
+                '{"id": "PLan Parents iteinerary items", "start": "13:30", '
+                '"end": "14:00", "zone": "any"}]}'
+            )
+
+        assigned = [
+            {"id": "Short"},
+            {"id": "PLan Parents iteinerary items"},
+        ]
+        monkeypatch.setattr(j, "_run_query", fake_run_query)
+        j.propose_sequence(assigned, {}, [])
+
+        assert "ASSIGNED INVENTORY CHECK" in captured["user"]
+        assert json.dumps([item["id"] for item in assigned]) in captured["user"]
+        assert "OUTPUT UNIQUENESS CHECK" in captured["user"]
+        assert "remove the duplicate row" in captured["user"]
+
     def test_anchor_absent_no_past_check(self, monkeypatch):
         _queue(monkeypatch, [
             '{"sequence": [{"id": "A", "start": "07:45", "end": "08:15", "zone": "any"}]}'

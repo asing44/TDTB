@@ -34,6 +34,7 @@ import {
 } from "../model/refresh";
 import { allowedOverlaps, defectsCovered, workOverlaps } from "../model/findings";
 import { blocksLabel } from "../model/time";
+import { remainingLabel } from "../model/allocator";
 import { durationSourceOf } from "../adapters/wire";
 
 export type SeqPhase = "none" | "sequencing" | "valid" | "dirty" | "failed";
@@ -917,12 +918,21 @@ export function dockState(s: AppState): DockState {
   return "sequence";
 }
 
+/** True when the fixed-source read is degraded or failed — the loaded
+    snapshot is not a usable planning surface. Sequencing, shadow preview,
+    and live commit must all refuse before any billed or write endpoint call.
+    Mirrored in the ActionDock health alert and ApprovalDrawer source blockers. */
+export function sourceHealthBlocked(s: AppState): boolean {
+  return s.inputs?.sourceHealth !== "ok";
+}
+
 export function canAutoSequence(s: AppState): boolean {
   return (
     s.daySetup.confirmed &&
     (s.ledger?.remaining ?? 0) > 0 &&
     s.seqPhase !== "sequencing" &&
-    s.commitPhase === "idle"
+    s.commitPhase === "idle" &&
+    !sourceHealthBlocked(s)
   );
 }
 
@@ -944,7 +954,7 @@ export function acceptableDefects(s: AppState): string[] {
     ...(s.validation?.warnings ?? []),
     ...workOverlaps(s.sequence, s.overlapGrants, grantFingerprint(s)),
     ...(s.capacity?.overassigned
-      ? [`Overassigned — ${s.capacity.remaining}`]
+      ? [`Overassigned — ${remainingLabel(s.capacity.free)}`]
       : []),
   ];
 }
@@ -961,7 +971,8 @@ export function canShadow(s: AppState): boolean {
     s.validation?.ok === true &&
     s.commitPhase === "idle" &&
     s.shadowPhase !== "loading" &&
-    defectsResolved(s)
+    defectsResolved(s) &&
+    !sourceHealthBlocked(s)
   );
 }
 
@@ -1003,7 +1014,8 @@ export function canLiveCommit(s: AppState): boolean {
     s.seqPhase === "valid" &&
     s.commitPhase === "idle" &&
     shadowBlockers(s).length === 0 &&
-    defectsResolved(s)
+    defectsResolved(s) &&
+    !sourceHealthBlocked(s)
   );
 }
 
@@ -1034,7 +1046,7 @@ export function alerts(s: AppState): Alert[] {
   for (const o of allowedOverlaps(s.sequence, s.overlapGrants, grantFingerprint(s)))
     out.push({ level: "info", text: o });
   if (s.capacity?.overassigned)
-    out.push({ level: "warning", text: `Overassigned — ${s.capacity.remaining}` });
+    out.push({ level: "warning", text: `Overassigned — ${remainingLabel(s.capacity.free)}` });
   if (s.seqPhase === "failed" && s.seqError)
     out.push({ level: "error", text: s.seqError });
   if (s.commitError) out.push({ level: "error", text: s.commitError });

@@ -255,8 +255,8 @@ describe("planOverflow free-gap placement", () => {
     expect(f.id).toBe("A");
     expect(f.blocks).toBe(2);
     expect(f.freeBlocks).toBe(1);
-    expect(f.reason).toMatch(/2 blocks/);
-    expect(f.reason).toMatch(/1 block/);
+    expect(f.reason).toMatch(/2 blk/);
+    expect(f.reason).toMatch(/1 blk/);
     expect(f.reason).toMatch(/17:30-18:00/);
     expect(f.reason).toMatch(/calendar wall/);
   });

@@ -50,6 +50,14 @@
   font-size: 16px;
   font-weight: 500;
 }
+.rail__kicker {
+  margin-bottom: 2px;
+  color: var(--t-accent-text);
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
 .rail__date-meta {
   font-size: 12px;
   color: var(--t-muted);
@@ -408,12 +416,119 @@
   color: var(--t-text);
   cursor: pointer;
 }
+.calendar-impact--compact {
+  padding-block: 10px 12px;
+  background: var(--t-surface);
+}
+.calendar-impact--compact .calendar-impact__head {
+  margin-bottom: 6px;
+}
+.calendar-impact__summary {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  padding: 8px 10px;
+  border-left: 3px solid var(--c-event);
+  background: color-mix(in srgb, var(--c-event) 8%, var(--t-surface-2));
+  font-size: 12px;
+}
+.calendar-impact__summary strong {
+  font-weight: 600;
+}
+.calendar-impact__summary span {
+  color: var(--t-muted);
+  font-size: 11px;
+}
+.calendar-impact__review {
+  margin-top: 7px;
+  border-top: 0.5px solid var(--t-border);
+}
+.calendar-impact__review summary {
+  display: flex;
+  align-items: center;
+  min-height: 36px;
+  padding: 4px 0;
+  color: var(--t-accent-text);
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 600;
+  list-style: none;
+}
+.calendar-impact__review summary::-webkit-details-marker {
+  display: none;
+}
+.calendar-impact__review summary::before {
+  content: "＋";
+  width: 18px;
+  color: var(--t-accent);
+  font-size: 14px;
+}
+.calendar-impact__review[open] summary::before {
+  content: "−";
+}
 .queue__subtractive {
   margin: 0;
-  padding: 10px 20px;
+  padding: 9px 0;
   border-bottom: 0.5px solid var(--t-border);
   color: var(--t-muted);
   font-size: 12px;
+}
+.allocation-meter {
+  position: sticky;
+  top: 0;
+  z-index: 4;
+  display: grid;
+  gap: 5px;
+  margin: 10px 0 4px;
+  padding: 9px 10px 8px;
+  border: 0.5px solid var(--t-border);
+  border-left: 3px solid var(--c-free);
+  background: var(--t-surface);
+}
+.allocation-meter--over {
+  border-left-color: var(--c-overflow);
+}
+.allocation-meter__head,
+.allocation-meter__state {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+.allocation-meter__label,
+.allocation-meter__state {
+  color: var(--t-muted);
+  font-size: 11px;
+}
+.allocation-meter__head strong {
+  font-size: 12px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.allocation-meter--over .allocation-meter__head strong,
+.allocation-meter--over .allocation-meter__state {
+  color: var(--c-overflow);
+}
+.allocation-meter__track {
+  position: relative;
+  height: 7px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--t-surface-2);
+}
+.allocation-meter__fill {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--c-selected);
+}
+.allocation-meter__mark {
+  position: absolute;
+  top: -2px;
+  bottom: -2px;
+  width: 2px;
+  background: var(--t-text);
 }
 .rail-keys__key {
   font-family: var(--font-mono);
@@ -491,12 +606,20 @@
 }
 /* FEEDBACK-08: pending day setup is the next action, so the chip reads as
    one — accent-tinted like chip--ok but with a visible accent border and
-   stronger weight to outrank the passive status chips around it. */
+   stronger weight to outrank the passive status chips around it. It also gets
+   its own full row so the unfinished state is the first action in the pinned
+   rail footer; confirmed setup keeps the ordinary, quiet chip treatment. */
 .chip--setup-pending {
+  order: -1;
+  flex-basis: 100%;
+  justify-content: space-between;
+  min-height: 36px;
+  padding: 8px 12px;
+  font-size: 12px;
   font-weight: 600;
   background: var(--t-accent-subtle);
   color: var(--t-accent-text);
-  border-color: var(--t-accent);
+  border: 1px solid var(--t-accent);
 }
 
 /* -- allocation pie (T8) ---------------------------------------------------- */
@@ -661,6 +784,15 @@
   font-size: 16px;
   font-weight: 500;
 }
+.execution__eyebrow {
+  display: block;
+  margin-bottom: 2px;
+  color: var(--t-accent-text);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
 .execution__cards {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -731,6 +863,46 @@
 .queue {
   padding: 0 20px 24px 16px;
 }
+.queue__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 18px 0 10px;
+  border-bottom: 0.5px solid var(--t-border);
+}
+.queue__eyebrow {
+  display: block;
+  margin-bottom: 3px;
+  color: var(--t-accent-text);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+.queue__head h1 {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+}
+.queue__head p {
+  margin: 4px 0 0;
+  color: var(--t-muted);
+  font-size: 11px;
+}
+.queue__assigned-chip {
+  flex: none;
+  padding: 4px 8px;
+  border: 0.5px solid var(--t-accent);
+  border-radius: 999px;
+  background: var(--t-accent-subtle);
+  color: var(--t-accent-text);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
 .queue h2 {
   font-size: 12px;
   font-weight: 500;
@@ -740,13 +912,13 @@
   margin: 14px 0 8px;
 }
 /* One aligned grid for the column header and every row: stripe | name | due |
-   time+budget line | actions. The Actions track stays ≥340px — rendered verb
-   widths exceed their min-widths (the source of the earlier overlap). */
+   time+budget line | row controls. The final track starts its controls at the
+   row boundary so the duration cluster and its verbs read as one unit. */
 .queue__cols,
 .qrow {
   display: grid;
   /* Time column widened for the ±15 steppers flanking the slider. */
-  grid-template-columns: 3px minmax(0, 1fr) 128px 256px minmax(348px, auto);
+  grid-template-columns: 3px minmax(0, 1fr) 128px 256px minmax(0, 1fr);
   align-items: center;
   gap: 12px;
 }
@@ -1106,6 +1278,8 @@
   display: flex;
   align-items: center;
   gap: 6px;
+  min-width: 0;
+  flex-wrap: wrap;
 }
 /* Flanking half-block trim. Deliberately quieter than the row's verbs — these
    nudge a number, they don't act on the item. */
@@ -1128,8 +1302,11 @@
 .qrow__actions {
   display: flex;
   align-items: center;
-  justify-content: flex-end;
+  /* The controls belong to the row, not to a distant right-edge toolbar. */
+  justify-content: flex-start;
   gap: 6px;
+  min-width: 0;
+  flex-wrap: wrap;
 }
 .qrow__divider {
   flex: none;
@@ -1241,8 +1418,8 @@
    day's budget line where cumulative spend crosses it. */
 .alloc-track {
   position: relative;
-  flex: 1;
-  min-width: 0;
+  flex: 1 1 140px;
+  min-width: 140px;
   height: 44px;
   display: flex;
   align-items: center;
@@ -1271,16 +1448,16 @@
 .alloc-track__input::-webkit-slider-thumb {
   -webkit-appearance: none;
   appearance: none;
-  width: 14px;
-  height: 14px;
+  width: 10px;
+  height: 10px;
   border-radius: 50%;
   background: var(--t-surface);
   border: 1.5px solid var(--t-text);
-  margin-top: -4px;
+  margin-top: -2px;
 }
 .alloc-track__input::-moz-range-thumb {
-  width: 14px;
-  height: 14px;
+  width: 10px;
+  height: 10px;
   border-radius: 50%;
   background: var(--t-surface);
   border: 1.5px solid var(--t-text);
@@ -1598,6 +1775,27 @@
   color: var(--t-muted);
   flex: 1;
   min-width: 140px;
+}
+.dock__controls {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex: 1 1 auto;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+}
+.dock__health {
+  flex: 1 1 100%;
+  padding: 7px 10px;
+  border-left: 3px solid var(--c-overflow);
+  background: color-mix(in srgb, var(--c-overflow) 8%, var(--t-surface));
+  color: var(--t-text);
+  font-size: 12px;
+}
+.dock__health span {
+  margin-left: 6px;
+  color: var(--t-muted);
 }
 .btn {
   border: 0.5px solid var(--t-border);
@@ -2104,6 +2302,39 @@
   color: var(--t-muted);
 }
 
+/* The desktop allocator keeps five aligned columns, but the queue's time and
+   action clusters are allowed to wrap inside their tracks. At intermediate
+   widths the two-column row is a better fit: it gives the duration control and
+   row verbs the full content width instead of making a fixed desktop column
+   spill past the page. Primary row controls remain visible; only secondary
+   band instrumentation is trimmed, as it is at phone width below. */
+@media (max-width: 1100px) {
+  .queue__cols {
+    display: none;
+  }
+  .queue__cols,
+  .qrow {
+    grid-template-columns: 3px minmax(0, 1fr);
+    gap: 4px 10px;
+  }
+  .qrow__due,
+  .qrow__time {
+    grid-column: 2;
+  }
+  .qrow__actions {
+    grid-column: 1 / -1;
+    justify-content: flex-start;
+    flex-wrap: wrap;
+  }
+  .band__note,
+  .band__bar,
+  .band__share,
+  .band__state,
+  .band__over {
+    display: none;
+  }
+}
+
 /* -- responsive: ≤767px stacks to one column (IMP-07) ----------------------- */
 @media (max-width: 767px) {
   /* No duplicate mobile surface: the rail stacks above the Today's-work
@@ -2130,6 +2361,22 @@
   }
   .execution {
     padding: 14px;
+  }
+  .queue {
+    padding-inline: 14px;
+  }
+  .queue__head {
+    align-items: flex-start;
+    padding-top: 14px;
+  }
+  .queue__head h1 {
+    font-size: 18px;
+  }
+  .queue__head p {
+    max-width: 240px;
+  }
+  .allocation-meter {
+    position: static;
   }
   .execution__head {
     align-items: center;
@@ -2204,11 +2451,16 @@
   .band__over {
     display: none;
   }
-  .main {
-    display: none;
-  }
   .dock {
     padding: 10px 14px;
+  }
+  .dock__controls {
+    justify-content: flex-start;
+    flex-basis: 100%;
+  }
+  .dock__health span {
+    display: block;
+    margin: 3px 0 0;
   }
 }
 

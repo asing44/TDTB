@@ -196,7 +196,7 @@ describe("FEEDBACK-05 controller end-to-end (fake sources, call ledger)", () => 
     const warnings = s.validation?.warnings ?? [];
     expect(warnings.some((w) => w.includes("overflow infeasible"))).toBe(true);
     expect(warnings.some((w) => w.includes("Deep CWEAN"))).toBe(true);
-    expect(warnings.some((w) => /block/.test(w))).toBe(true);
+    expect(warnings.some((w) => /blk/.test(w))).toBe(true);
     expect(defectsResolved(s)).toBe(false); // gates shadow/commit until accepted
 
     // FEEDBACK-05: zero calendar source writer calls — load → setup →

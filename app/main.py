@@ -1996,9 +1996,22 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
              "End": pin["end"], "pinned": True}
             for pin in effective_pins
         ]
+        # CP-T29: selected Mint sessions are prompt-visible HARD walls. The
+        # model must see the exact immutable intervals to place movable work
+        # around them — without this it guesses where the free gaps are and
+        # burns the billed call on a proposal that hard-rejects. Prompt-only:
+        # the post-judgment merge (merge_immutable_rows) and validation
+        # (validate_sequence → selected_mint_walls) semantics are unchanged,
+        # and the Mint rows are never made movable.
+        mint_walls = [
+            {"Block": row["id"], "Type": "hard", "Start": row["start"],
+             "End": row["end"], "pinned": True, "mint_session": True}
+            for row in fixed_schedulable_rows
+        ]
         try:
             proposal = judgment.propose_sequence(
-                movable_assigned, seq_config, seq_anchored + pinned_walls,
+                movable_assigned, seq_config,
+                seq_anchored + pinned_walls + mint_walls,
                 ctx=_billed_ctx(vault, today))
         except judgment.BudgetExceededError as exc:
             raise HTTPException(status_code=429, detail=str(exc)) from exc

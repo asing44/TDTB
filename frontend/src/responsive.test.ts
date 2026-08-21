@@ -87,9 +87,9 @@ describe("narrow layout (≤767px) has no calendar-impact overflow (IMP-10 F-1)"
     );
   });
 
-  it("desktop allocator grid is untouched (5 fixed tracks)", () => {
+  it("desktop allocator grid keeps a shrinkable action track", () => {
     expect(appCss).toMatch(
-      /\.queue__cols,\s*\n\.qrow\s*\{[^}]*grid-template-columns:\s*3px\s+minmax\(0,\s*1fr\)\s+128px\s+256px\s+minmax\(348px,\s*auto\)/,
+      /\.queue__cols,\s*\n\.qrow\s*\{[^}]*grid-template-columns:\s*3px\s+minmax\(0,\s*1fr\)\s+128px\s+256px\s+minmax\(0,\s*1fr\)/,
     );
   });
 });

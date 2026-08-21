@@ -36,7 +36,7 @@
    the free capacity) instead of silently omitted. The production path never
    stages a row over a wall or a pin, and never drops one without saying so. */
 
-import { addMinutes, toMinutes } from "./time";
+import { addMinutes, formatBlockAmount, toMinutes } from "./time";
 import type { AnchoredBlock, AssignedItem, SequenceRow } from "./types";
 
 /** Minutes in a block. Mirrors the 30-min grid used everywhere else. */
@@ -244,8 +244,8 @@ export function planOverflow(
       const freeBlocks = gap
         ? Math.floor((gap.end - gap.start) / BLOCK_MIN)
         : 0;
-      const need = `${blocks} ${blocks === 1 ? "block" : "blocks"}`;
-      const have = `${freeBlocks} ${freeBlocks === 1 ? "block" : "blocks"}`;
+      const need = formatBlockAmount(blocks);
+      const have = formatBlockAmount(freeBlocks);
       const obstacles =
         nWalls === 0 && nPinned === 0
           ? "the day runs out"

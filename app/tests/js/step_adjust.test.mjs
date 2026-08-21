@@ -9,10 +9,10 @@ import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
-const mod = require('../../static/steps/adjust.js');
+const mod = require('../../legacy-static/steps/adjust.js');
 const adjust = mod.tdtbSteps.adjust;
 const P = adjust._pure;
-const kit = require('../../static/ui_kit.js');
+const kit = require('../../legacy-static/ui_kit.js');
 
 test('module registers render + _pure on window.tdtbSteps.adjust', () => {
   assert.equal(typeof adjust.render, 'function');

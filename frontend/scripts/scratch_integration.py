@@ -162,6 +162,35 @@ def canned_propose(assigned_arg, config, anchored, ctx):
     return {"sequence": rows, "warnings": []}
 
 
+def build_vault(root):
+    """Synthetic scratch vault, renamed off the generic ``Sample`` token so the
+    scratch gate can't false-positive on a missing ``Sample`` collision."""
+    vault = cf.build_vault(root)
+    proj = vault / "50 - Operations/Projects"
+    (proj / "Sample Project.md").rename(proj / "Client Project.md")
+    (proj / "Sample Press.md").rename(proj / "Press Brief.md")
+    return vault
+
+
+def todoist_fake():
+    """cf.todoist_fake() with only the synthetic assigned task renamed."""
+    fake = cf.todoist_fake()
+    for tasks in fake.by_query.values():
+        for task in tasks:
+            if task.get("content") == "Sample Todoist Task":
+                task["content"] = "Inbox Task"
+    return fake
+
+
+def store_fake():
+    """cf.store_fake() with only the synthetic calendar title renamed."""
+    fake = cf.store_fake()
+    for event in fake.events:
+        if event.get("title") == "Sample Meeting":
+            event["title"] = "Team Meeting"
+    return fake
+
+
 def canned_live_state(config, vault_root):
     """Canned live surfaces that AGREE with the scratch vault, so the commit
     planner sees clean would-creates instead of refusing on conflicts. All
@@ -171,9 +200,9 @@ def canned_live_state(config, vault_root):
         "todoist": {"tasks": []},
         "calendar": {"events": [], "unavailable": False},
         "vault_frontmatter": {
-            "50 - Operations/Projects/Sample Project.md": {"type": "project", "assigned": True},
+            "50 - Operations/Projects/Client Project.md": {"type": "project", "assigned": True},
             "50 - Operations/Projects/Make.md": {"type": "project", "assigned": True},
-            "50 - Operations/Projects/Sample Press.md": {"type": "press", "assigned": True},
+            "50 - Operations/Projects/Press Brief.md": {"type": "press", "assigned": True},
         },
         "daily_note_text": "---\ntype: daily\n---\n\n# Notes\n",
         "unavailable_surfaces": [],
@@ -187,7 +216,7 @@ def main() -> int:
             return 2
 
     tmp = Path(tempfile.mkdtemp(prefix="tdtb-scratch-t7-"))
-    vault = cf.build_vault(tmp)
+    vault = build_vault(tmp)
     # Daily note: the vault write path (plan section + captures) targets it.
     from datetime import date
 
@@ -195,7 +224,7 @@ def main() -> int:
     daily.parent.mkdir(parents=True, exist_ok=True)
     daily.write_text("---\ntype: daily\n---\n\n# Notes\n", encoding="utf-8")
     app = main_mod.create_app(vault_root=vault)
-    app.state.build_read_clients = lambda v, cfg: (cf.todoist_fake(), cf.store_fake())
+    app.state.build_read_clients = lambda v, cfg: (todoist_fake(), store_fake())
     app.state.build_commit_clients = lambda v, cfg: (WriterTodoist(), WriterStore())
     judgment.propose_sequence = canned_propose
     shadow_mod.gather_live_state = canned_live_state

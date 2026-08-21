@@ -27,6 +27,7 @@ import {
   effectiveAnchoredBlocks,
   effectiveBlocks,
   includedItems,
+  sourceHealthBlocked,
 } from "./store";
 import type { MicroIdea, SequenceRow, AnchoredOverride } from "../model/types";
 
@@ -703,7 +704,9 @@ export class Controller {
     const s = this.getState();
     // Acceptable defects gate preview until explicitly accepted (locked
     // decision 24) — controller-level twin of the dock's canShadow guard.
-    if (!s.sequence || s.validation?.ok !== true || !defectsResolved(s)) return;
+    // Source-health gate: a degraded/failed read is not a usable planning
+    // snapshot — refuse before any network call (mirrors canShadow selector).
+    if (!s.sequence || s.validation?.ok !== true || !defectsResolved(s) || sourceHealthBlocked(s)) return;
     this.dispatch({ type: "SHADOW_START" });
     try {
       if (!(await this.fixedInputsStillValid())) return;

@@ -1,8 +1,8 @@
 """Static-UI structural markers.
 
-spa-overhaul T8: the five legacy views are redirect stubs into the wizard SPA
-(`app.html` + `steps/*.js`); every content marker that used to pin a legacy
-view now pins its step module. Endpoint-shape tests (session token, digest
+cockpit-overhaul T15: the five legacy views are redirect stubs into the
+cockpit SPA. The wizard source is archived under app/legacy-static/ and is
+no longer served at runtime. Endpoint-shape tests (session token, digest
 fetch flow) are view-independent and survive unchanged.
 """
 from __future__ import annotations
@@ -22,6 +22,7 @@ POOL_ITEMS = [
 ]
 
 STATIC_DIR = Path(__file__).parent.parent / "static"
+LEGACY_ARCHIVE_DIR = Path(__file__).parent.parent / "legacy-static"
 LEGACY_TO_STEP = {
     "index.html": "setup",
     "digest.html": "digest",
@@ -38,7 +39,11 @@ def _read_static(name: str) -> str:
 
 
 def _read_step(name: str) -> str:
-    return (STATIC_DIR / "steps" / name).read_text()
+    return (LEGACY_ARCHIVE_DIR / "steps" / name).read_text()
+
+
+def _read_archive(name: str) -> str:
+    return (LEGACY_ARCHIVE_DIR / name).read_text()
 
 
 @pytest.fixture
@@ -57,9 +62,9 @@ def client(vault) -> TestClient:
 
 
 class TestLegacyRedirectStubs:
-    """cockpit-overhaul T11 (locked decision 15): legacy bookmarks land on the
-    cockpit; each stub still links the wizard fallback at legacy.html. Served
-    200 so bookmarks work, one-commit revertable, zero leftover view logic."""
+    """cockpit-overhaul T15 (locked decision 15): legacy bookmarks land on the
+    cockpit. Served 200 so bookmarks work, one-commit revertable, zero leftover
+    view logic. No wizard fallback — the wizard is archived, not served."""
 
     @pytest.mark.parametrize("view,step", sorted(LEGACY_TO_STEP.items()))
     def test_stub_served_and_redirects(self, client, view, step):
@@ -67,7 +72,6 @@ class TestLegacyRedirectStubs:
         assert r.status_code == 200
         assert "text/html" in r.headers["content-type"]
         assert "/static/cockpit/" in r.text
-        assert f"/static/legacy.html#/{step}" in r.text  # wizard fallback link
         assert "http-equiv=\"refresh\"" in r.text      # no-JS fallback
         assert "location.replace(" in r.text            # instant path
 
@@ -79,44 +83,36 @@ class TestLegacyRedirectStubs:
             assert remnant not in html, f"{view} still carries view logic: {remnant}"
 
 
-class TestSpaShell:
-    """cockpit-overhaul T11: the wizard SPA lives on at the direct fallback
-    URL legacy.html (kit + state machine + all five step modules) until T13;
-    app.html is now a thin redirect into the cockpit."""
+class TestLegacyWizardArchived:
+    """cockpit-overhaul T15: the wizard SPA is archived under app/legacy-static/
+    for rollback/history. It is no longer served at runtime — /static/legacy.html
+    returns 404. Archive structural integrity is preserved."""
 
-    def test_app_redirects_to_cockpit(self, client):
-        r = client.get("/static/app.html")
-        assert r.status_code == 200
-        assert "text/html" in r.headers["content-type"]
-        assert "/static/cockpit/" in r.text
-        assert "http-equiv=\"refresh\"" in r.text
-        assert len(r.text) < 2048, "app.html is not a thin stub"
-
-    def test_legacy_fallback_served(self, client):
+    def test_legacy_html_not_served(self, client):
         r = client.get("/static/legacy.html")
-        assert r.status_code == 200
-        assert "text/html" in r.headers["content-type"]
+        assert r.status_code == 404
 
-    def test_shell_includes_kit_and_wizard(self):
-        html = _read_static("legacy.html")
-        assert "/static/ui_kit.css" in html
-        assert "/static/ui_kit.js" in html
-        assert "/static/wizard_logic.js" in html
-        assert "/static/timeline_logic.js" in html
+    def test_archive_legacy_html_exists(self):
+        assert (LEGACY_ARCHIVE_DIR / "legacy.html").is_file()
 
-    def test_shell_loads_all_step_modules(self):
-        html = _read_static("legacy.html")
+    def test_archive_includes_kit_and_wizard(self):
+        html = _read_archive("legacy.html")
+        assert "ui_kit.css" in html
+        assert "ui_kit.js" in html
+        assert "wizard_logic.js" in html
+        assert "timeline_logic.js" in html
+
+    def test_archive_loads_all_step_modules(self):
+        html = _read_archive("legacy.html")
         for step in STEP_FILES:
-            assert f"/static/steps/{step}" in html, f"legacy.html missing steps/{step}"
+            assert f"steps/{step}" in html, f"legacy.html missing steps/{step}"
 
-    def test_step_modules_exist(self):
+    def test_archive_step_modules_exist(self):
         for step in STEP_FILES:
-            assert (STATIC_DIR / "steps" / step).is_file(), f"steps/{step} missing"
+            assert (LEGACY_ARCHIVE_DIR / "steps" / step).is_file(), f"steps/{step} missing"
 
-    def test_budget_header_renders_server_ledger(self):
-        # G24/LD6: the budget readout comes from GET /billed-ledger, never a
-        # client-side count.
-        html = _read_static("legacy.html")
+    def test_archive_budget_header_renders_server_ledger(self):
+        html = _read_archive("legacy.html")
         assert "/billed-ledger" in html
 
 
@@ -221,9 +217,9 @@ class TestStepModuleMarkers:
 
 
 class TestCockpitBuildBeside:
-    """cockpit-overhaul T10 (locked decision 15): production cockpit build is
-    served at the alternate URL /static/cockpit/ while the wizard keeps the
-    live route. Build must be the api-adapter-only bundle — no fixture code."""
+    """cockpit-overhaul T15 (locked decision 15): production cockpit build is
+    served at /static/cockpit/ as the sole runtime UI. Build must be the
+    api-adapter-only bundle — no fixture code."""
 
     COCKPIT_DIR = STATIC_DIR / "cockpit"
 
@@ -263,11 +259,3 @@ class TestCockpitBuildBeside:
         assert "/sequence" in js          # explicit action exists
         assert "/plan-inputs" in js       # read model boots from reads
         assert "/adjust" not in js, "cockpit must carry no /adjust affordance"
-
-    def test_wizard_preserved_at_fallback_url(self, client):
-        # T11 flipped the live route to the cockpit; the full wizard must stay
-        # directly reachable at legacy.html until T13 retires it.
-        r = client.get("/static/legacy.html")
-        assert r.status_code == 200
-        assert "/static/wizard_logic.js" in r.text
-        assert "cockpit" not in r.text.lower()

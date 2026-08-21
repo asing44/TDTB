@@ -161,23 +161,24 @@ describe("liveFree", () => {
 });
 
 describe("remainingLabel", () => {
-  it("mirrors the server's 'left' wording", () => {
-    expect(remainingLabel(9)).toBe("⬆ 4hr 30min left · 9 blk");
+  it("keeps the server's 'left' wording", () => {
+    expect(remainingLabel(9)).toBe("⬆ 9 blk left");
   });
 
-  it("mirrors the server's fully-booked wording", () => {
+  it("keeps the server's fully-booked wording", () => {
     expect(remainingLabel(0)).toBe("⬆ fully booked · 0 blk left");
   });
 
-  it("mirrors the server's over wording", () => {
-    expect(remainingLabel(-3)).toBe("⚠ 1hr 30min over · 3 blk");
+  it("keeps the server's over wording", () => {
+    expect(remainingLabel(-3)).toBe("⚠ 3 blk over");
   });
 
-  it("uses minutes below the hour", () => {
-    expect(remainingLabel(1)).toBe("⬆ 30min left · 1 blk");
+  it("uses a human duration for fractional remaining capacity", () => {
+    expect(remainingLabel(9.166666666666668)).toBe("⬆ 4hr 35min left");
+    expect(remainingLabel(-9.166666666666668)).toBe("⚠ 4hr 35min over");
   });
 
-  it("drops the minutes part on a whole hour", () => {
-    expect(remainingLabel(4)).toBe("⬆ 2hr left · 4 blk");
+  it("normalizes near-integer capacity arithmetic", () => {
+    expect(remainingLabel(9.000000000000002)).toBe("⬆ 9 blk left");
   });
 });

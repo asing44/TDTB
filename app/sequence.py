@@ -308,8 +308,15 @@ def selected_mint_walls(items: list[dict[str, Any]]) -> list[tuple[str, tuple[in
     window is a user-selected Mint reservation. It is immutable (the exact
     row is merged after judgment) AND a HARD wall — no other row may overlap
     it, in any phase. Returns ``[(item_id, (start_min, end_min)), ...]``.
+
+    CP-T29: the same Mint item can appear in BOTH ``optional_items`` and
+    ``assigned`` (the schedulable row is injected into the assigned set while
+    also flowing through optional_items). Identical (item id, interval)
+    duplicates are collapsed, first occurrence wins, so one overlapping row
+    yields exactly one hard error. The Mint row itself stays exempt.
     """
     walls: list[tuple[str, tuple[int, int]]] = []
+    seen: set[tuple[str, tuple[int, int]]] = set()
     for item in items or []:
         if item.get("mint_session") is not True:
             continue
@@ -317,7 +324,11 @@ def selected_mint_walls(items: list[dict[str, Any]]) -> list[tuple[str, tuple[in
         item_id = str(item.get("id") or item.get("name") or "")
         if window is None or not item_id:
             continue
-        walls.append((item_id, window))
+        entry = (item_id, window)
+        if entry in seen:
+            continue
+        seen.add(entry)
+        walls.append(entry)
     return walls
 
 
@@ -513,6 +524,14 @@ def validate_sequence(
     # extras not in assigned (and not an anchored block passthrough or an
     # optional id — e.g. QT-absorbed items a manual layout places directly)
     anchored_ids = {str(b.get("Block")) for b in anchored_blocks}
+    # /sequence and /validate-sequence append synthetic pinned walls to this
+    # list. They are immutable movable rows, not source anchored passthroughs,
+    # so keep a separate identity set for exemptions below.
+    source_anchored_ids = {
+        str(b.get("Block"))
+        for b in anchored_blocks
+        if b.get("pinned") is not True
+    }
     allowed = anchored_ids | (optional_ids or set())
     extras = [i for i in set(seen_ids) if i not in assigned_by_id and i not in allowed]
     for e in extras:
@@ -654,7 +673,11 @@ def validate_sequence(
     mint_wall_ids = {wall_id for wall_id, _ in mint_walls}
     for row in rows:
         row_id = str(row.get("id"))
-        if row_id in mint_wall_ids:
+        # Anchored passthrough rows are source walls/windows, not movable work.
+        # Their own permeability/calendar rules are handled above (and the
+        # /sequence route performs stale Mint-vs-fixed preflight), so do not
+        # turn a permissible anchored window such as Live into a Mint breach.
+        if row_id in mint_wall_ids or row_id in source_anchored_ids:
             continue
         r_start, r_end = _to_minutes(row["start"]), _to_minutes(row["end"])
         for wall_id, (w_start, w_end) in mint_walls:

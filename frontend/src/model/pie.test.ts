@@ -160,6 +160,17 @@ describe("pieSummary", () => {
       .toBe("Fixed 2 blk (10%), Anchored 4 blk (20%), Selected 4 blk (20%), Unallocated 10 blk (50%)");
   });
 
+  it("uses a human duration for a fractional allocation", () => {
+    const summary = pieSummary(pieSlices(
+      cap({ fixed: 9.166666666666668, anchored: 0, selected: 0, total: 20, free: 10.833333333333332 }),
+      50,
+      50,
+      40,
+    ));
+    expect(summary).toContain("Fixed 4hr 35min");
+    expect(summary).not.toContain("9.166666666666668 blk");
+  });
+
   it("says something useful when there is nothing to show", () => {
     expect(pieSummary([])).toBe("No capacity to allocate yet.");
   });

@@ -127,14 +127,17 @@ class TestMintAllotmentDerivation:
 # ---------------------------------------------------------------------------
 
 class TestMintWallsHardValidation:
-    def _res(self, rows, optional_items=None, assigned=None, grants=None):
+    def _res(
+        self, rows, optional_items=None, assigned=None, grants=None,
+        anchored_blocks=None,
+    ):
         assigned = assigned if assigned is not None else [
             {"id": r["id"], "zone": r.get("zone") or "any"} for r in rows
         ]
         proposal = {"sequence": rows,
                     "overlap_grants": grants or []}
         return validate_sequence(
-            proposal, assigned, [], CFG,
+            proposal, assigned, anchored_blocks or [], CFG,
             optional_items=optional_items or [],
         )
 
@@ -205,6 +208,86 @@ class TestMintWallsHardValidation:
         )
         assert result.ok is False
         assert "selected Mint session window" in result.hard_errors[0]
+
+    def test_duplicate_mint_item_in_assigned_and_optional_yields_one_wall_error(self):
+        # CP-T29: the same Mint item is present in BOTH assigned and
+        # optional_items (the schedulable row is injected into the assigned
+        # set while also flowing through optional_items). The assigned copy
+        # carries the SAME mint_session/placement_window metadata, so
+        # selected_mint_walls sees two identical (item id, interval) entries
+        # that must collapse to ONE hard wall — a single overlapping row then
+        # produces exactly one hard error, never two.
+        mint = _mint_item()
+        result = self._res(
+            [
+                {"id": mint["id"], "start": "08:30", "end": "09:00",
+                 "zone": "work_hours"},
+                _seq_row("task-1", "08:45", "09:15"),
+            ],
+            optional_items=[mint],
+            assigned=[dict(mint),  # same metadata → identical (id, interval) wall
+                      {"id": "task-1", "zone": "any"}],
+        )
+        assert result.ok is False
+        mint_errors = [e for e in result.hard_errors if "Mint" in e]
+        assert len(mint_errors) == 1
+        assert "overlaps selected Mint session" in mint_errors[0]
+
+    def test_selected_mint_walls_deduplicates_identical_entries(self):
+        # CP-T29: identical (item id, interval) entries collapse, first
+        # occurrence wins, order preserved.
+        mint = _mint_item()
+        walls = sequence.selected_mint_walls([mint, mint])
+        assert walls == [("Mint Morning · 08:30", (510, 540))]
+
+    def test_anchored_window_is_not_rejected_by_selected_mint_wall(self):
+        # A permeable anchored window may share the selected Mint interval;
+        # the Mint wall protects movable work, not the source row itself.
+        mint = _mint_item()
+        result = self._res(
+            [
+                {"id": "Live", "start": "08:30", "end": "09:00",
+                 "zone": "anchored"},
+                {"id": mint["id"], "start": "08:30", "end": "09:00",
+                 "zone": "work_hours"},
+            ],
+            optional_items=[mint],
+            assigned=[
+                {"id": "Live", "zone": "anchored"},
+                {"id": mint["id"], "zone": "work_hours"},
+            ],
+            anchored_blocks=[
+                {"Block": "Live", "Type": "window", "Start": "08:30",
+                 "End": "12:30", "overlap_allowed": True},
+            ],
+        )
+        assert result.ok is True
+        assert result.hard_errors == []
+
+    def test_pinned_movable_row_is_still_rejected_by_selected_mint_wall(self):
+        # Synthetic pinned walls travel through anchored_blocks, but remain
+        # movable-work identities for the Mint hard-wall contract.
+        mint = _mint_item()
+        result = self._res(
+            [
+                {"id": mint["id"], "start": "08:30", "end": "09:00",
+                 "zone": "work_hours"},
+                _seq_row("task-1", "08:45", "09:15"),
+            ],
+            optional_items=[mint],
+            assigned=[
+                dict(mint),
+                {"id": "task-1", "zone": "any"},
+            ],
+            anchored_blocks=[
+                {"Block": "task-1", "Type": "hard", "Start": "08:45",
+                 "End": "09:15", "pinned": True},
+            ],
+        )
+        assert result.ok is False
+        mint_errors = [e for e in result.hard_errors if "Mint" in e]
+        assert len(mint_errors) == 1
+        assert "overlaps selected Mint session" in mint_errors[0]
 
 
 # ---------------------------------------------------------------------------
@@ -520,3 +603,91 @@ def test_august_17_clean_sequence_places_every_task_once_at_exact_duration(
     ]
     assert len(mint_rows) == 1
     assert mint_rows[0]["start"] == "14:00" and mint_rows[0]["end"] == "14:30"
+
+
+# ---------------------------------------------------------------------------
+# CP-T29 — selected Mint windows are prompt-visible hard walls
+# ---------------------------------------------------------------------------
+
+def test_selected_mint_windows_reach_judgment_as_prompt_only_walls(
+    client, vault, monkeypatch
+):
+    """CP-T29: the exact selected Mint interval is visible to judgment as a
+    hard wall in the anchored_blocks it renders into the prompt, so the model
+    can place movable work around it. The wall is prompt-only: it must NOT be
+    passed to validate_sequence's anchored_blocks (validation derives Mint
+    walls itself from optional_items/assigned), and the Mint row is never
+    made movable."""
+    _write_cfg(vault)
+    _seed_aug17_mint(vault, sessions=("mint:afternoon:14:00",))
+    _freeze_aug17(monkeypatch)
+    captured = {}
+
+    def fake_propose(assigned, config, anchored_blocks, ctx=None):
+        captured["judgment_anchored"] = anchored_blocks
+        return {"sequence": [], "overlap_grants": []}
+
+    def fake_validate(proposal, assigned, anchored_blocks, config, **kwargs):
+        captured["validation_anchored"] = anchored_blocks
+        return type("R", (), {"ok": True, "hard_errors": [], "warnings": []})()
+
+    monkeypatch.setattr(main_mod.judgment, "propose_sequence", fake_propose)
+    monkeypatch.setattr(main_mod.sequence, "validate_sequence", fake_validate)
+    r = _post_aug17(client, [])
+    assert r.status_code == 200, r.text
+
+    # The exact Mint interval reaches judgment as a hard wall.
+    assert {
+        "Block": "Mint Afternoon · 14:00", "Type": "hard",
+        "Start": "14:00", "End": "14:30", "pinned": True, "mint_session": True,
+    } in captured["judgment_anchored"]
+    # Prompt-only: validation's anchored_blocks are untouched — the Mint wall
+    # is derived inside validate_sequence from optional_items/assigned.
+    assert captured["validation_anchored"] == []
+    # The Mint row is not movable work for the model.
+    assert all(
+        str(a.get("id") or a.get("name")) != "Mint Afternoon · 14:00"
+        for a in captured["judgment_anchored"]
+        if isinstance(a, dict) and a.get("mint_session") is not True
+    )
+
+
+def test_sequence_rejects_post_judgment_mint_overlap_once(
+    client, vault, monkeypatch
+):
+    """The real /sequence seam keeps Mint walls hard after judgment returns.
+
+    This deliberately supplies an invalid canned proposal so the route-level
+    validator proves the billed proposal cannot silently cross the selected
+    Mint interval, while the dedupe fix keeps the user-facing error singular.
+    """
+    _write_cfg(vault)
+    _seed_aug17_mint(vault, sessions=("mint:afternoon:14:00",))
+    _freeze_aug17(monkeypatch)
+
+    def fake_propose(assigned, config, anchored_blocks, ctx=None):
+        return {
+            "sequence": [
+                {"id": "overlap", "start": "14:15", "end": "14:45"}
+            ],
+            "overlap_grants": [],
+        }
+
+    monkeypatch.setattr(main_mod.judgment, "propose_sequence", fake_propose)
+    r = _post_aug17(
+        client,
+        [],
+        assigned=[
+            {"id": "overlap", "name": "overlap", "blocks": 1, "labels": []}
+        ],
+    )
+
+    assert r.status_code == 422, r.text
+    detail = r.json()["detail"]
+    mint_errors = [
+        error for error in detail["hard_errors"]
+        if "overlaps selected Mint session" in error
+    ]
+    assert len(mint_errors) == 1
+    assert "Mint Afternoon · 14:00" in mint_errors[0]
+    assert rs.read_runstate(vault, AUG17)["billed_calls"] == 0

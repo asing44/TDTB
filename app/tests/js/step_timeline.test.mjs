@@ -8,7 +8,7 @@ import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
-const stepMod = require('../../static/steps/timeline.js');
+const stepMod = require('../../legacy-static/steps/timeline.js');
 const pure = stepMod.tdtbSteps.timeline._pure;
 
 // -- module registration ------------------------------------------------------

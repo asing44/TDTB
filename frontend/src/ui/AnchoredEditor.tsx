@@ -1,6 +1,6 @@
 import { useState } from "preact/hooks";
 import { anchoredBlocks, anchoredOverrideOf, validateAnchoredOverride } from "../model/anchored";
-import { display12h } from "../model/time";
+import { display12h, formatBlockAmount } from "../model/time";
 import { useApp, useAppState } from "./context";
 import { useDialog } from "./useDialog";
 
@@ -60,7 +60,7 @@ export function AnchoredEditor() {
               disabled={blocks <= 0}
               aria-label="Shorter anchored duration"
             >−</button>
-            <span aria-live="polite">{blocks === 0 ? "Background · 0min" : `${blocks * 30}min`}</span>
+            <span aria-live="polite">{blocks === 0 ? "Background · 0min" : formatBlockAmount(blocks)}</span>
             <button
               type="button"
               onClick={() => setBlocks((b) => b + 1)}

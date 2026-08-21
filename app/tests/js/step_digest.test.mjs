@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
-const digest = require('../../static/steps/digest.js');
+const digest = require('../../legacy-static/steps/digest.js');
 
 // -- rowOf / rowsOf -----------------------------------------------------------
 test('rowOf: shapes name/deadline/urgency/path, defaults missing fields', () => {

@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
-const kit = require('../../static/ui_kit.js');
+const kit = require('../../legacy-static/ui_kit.js');
 
 // -- sourceOf ---------------------------------------------------------------
 test('sourceOf: absent source ⇒ vault', () => {

@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
-const setup = require('../../static/steps/setup.js');
+const setup = require('../../legacy-static/steps/setup.js');
 const pure = setup._pure;
 
 // -- toMinutes ----------------------------------------------------------------

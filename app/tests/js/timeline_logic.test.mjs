@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
-const logic = require('../../static/timeline_logic.js');
+const logic = require('../../legacy-static/timeline_logic.js');
 
 // -- time parsing -----------------------------------------------------------
 

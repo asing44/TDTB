@@ -9,6 +9,7 @@ import {
   initialState,
   queueState,
   reducer,
+  sourceHealthBlocked,
   type AppState,
 } from "./store";
 import { makeScenario, fixedInputsOf } from "../fixtures/scenarios";
@@ -623,5 +624,75 @@ describe("T28 calendar dismissal (effectiveAnchoredBlocks)", () => {
     expect(eff.start).toBe(cal.start);
     expect(eff.end).toBe(cal.end);
     expect(eff.skipToday).toBe(false);
+  });
+});
+
+describe("source-health gate (selectors)", () => {
+  it("sourceHealthBlocked is false when health is ok", () => {
+    const s = sequenced();
+    expect(s.inputs!.sourceHealth).toBe("ok");
+    expect(sourceHealthBlocked(s)).toBe(false);
+  });
+
+  it("sourceHealthBlocked is true when health is degraded", () => {
+    const s = sequenced();
+    s.inputs!.sourceHealth = "degraded";
+    expect(sourceHealthBlocked(s)).toBe(true);
+  });
+
+  it("sourceHealthBlocked is true when health is failed", () => {
+    const s = sequenced();
+    s.inputs!.sourceHealth = "failed";
+    expect(sourceHealthBlocked(s)).toBe(true);
+  });
+
+  it("canAutoSequence is false when source health is degraded", () => {
+    const s = sequenced();
+    expect(canAutoSequence(s)).toBe(true); // healthy baseline
+    s.inputs!.sourceHealth = "degraded";
+    expect(canAutoSequence(s)).toBe(false);
+  });
+
+  it("canAutoSequence is false when source health is failed", () => {
+    const s = sequenced();
+    s.inputs!.sourceHealth = "failed";
+    expect(canAutoSequence(s)).toBe(false);
+  });
+
+  it("canShadow is false when source health is degraded", () => {
+    const s = sequenced();
+    expect(canShadow(s)).toBe(true); // healthy baseline
+    s.inputs!.sourceHealth = "degraded";
+    expect(canShadow(s)).toBe(false);
+  });
+
+  it("canShadow is false when source health is failed", () => {
+    const s = sequenced();
+    s.inputs!.sourceHealth = "failed";
+    expect(canShadow(s)).toBe(false);
+  });
+
+  it("canLiveCommit is false when source health is degraded", () => {
+    let s = shadowed();
+    s = reducer(s, { type: "ARM_LIVE" });
+    expect(canLiveCommit(s)).toBe(true); // healthy baseline
+    s.inputs!.sourceHealth = "degraded";
+    expect(canLiveCommit(s)).toBe(false);
+  });
+
+  it("canLiveCommit is false when source health is failed", () => {
+    let s = shadowed();
+    s = reducer(s, { type: "ARM_LIVE" });
+    s.inputs!.sourceHealth = "failed";
+    expect(canLiveCommit(s)).toBe(false);
+  });
+
+  it("healthy source health does not block any selector", () => {
+    const seq = sequenced();
+    expect(canAutoSequence(seq)).toBe(true);
+    expect(canShadow(seq)).toBe(true);
+    let sh = shadowed();
+    sh = reducer(sh, { type: "ARM_LIVE" });
+    expect(canLiveCommit(sh)).toBe(true);
   });
 });

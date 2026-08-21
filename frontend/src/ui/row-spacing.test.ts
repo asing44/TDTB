@@ -67,4 +67,36 @@ describe("row spacing never erodes control touch targets", () => {
   it("the duration track keeps its 44px hit area", () => {
     expect(firstBlock("alloc-track")).toMatch(/height:\s*44px/);
   });
+
+  it("the 15-minute track has enough visual room without shrinking its hit area", () => {
+    expect(firstBlock("alloc-track")).toMatch(/min-width:\s*140px/);
+    expect(firstBlock("alloc-track__input")).toMatch(/height:\s*44px/);
+  });
+
+  it("uses a compact visual thumb on the full-size keyboard range", () => {
+    const thumb = appCss.match(
+      /\.alloc-track__input::-webkit-slider-thumb\s*\{([^}]*)\}/,
+    )?.[1] ?? "";
+    expect(thumb).toMatch(/width:\s*10px/);
+    expect(thumb).toMatch(/height:\s*10px/);
+  });
+});
+
+describe("queue controls stay inside the viewport", () => {
+  it("lets desktop action columns shrink while row controls wrap", () => {
+    const grid = appCss.match(/\.queue__cols,\s*\.qrow\s*\{([^}]*)\}/)?.[1] ?? "";
+    expect(grid).toMatch(/minmax\(0,\s*1fr\)/);
+    expect(grid).not.toMatch(/minmax\(348px,\s*auto\)/);
+    expect(firstBlock("qrow__actions")).toMatch(/min-width:\s*0/);
+    expect(firstBlock("qrow__actions")).toMatch(/flex-wrap:\s*wrap/);
+  });
+
+  it("switches to full-width two-column rows before the narrow phone layout", () => {
+    expect(appCss).toMatch(
+      /@media\s*\(max-width:\s*1100px\)[\s\S]*\.qrow__actions\s*\{[^}]*grid-column:\s*1\s*\/\s*-1/,
+    );
+    expect(appCss).toMatch(
+      /@media\s*\(max-width:\s*1100px\)[\s\S]*\.qrow__time\s*\{[^}]*grid-column:\s*2/,
+    );
+  });
 });

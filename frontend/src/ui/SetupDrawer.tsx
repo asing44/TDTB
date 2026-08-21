@@ -5,7 +5,7 @@
 import { useState } from "preact/hooks";
 import { useApp, useAppState } from "./context";
 import { useDialog } from "./useDialog";
-import { compactDuration, display12h } from "../model/time";
+import { display12h, formatBlockAmount, formatDurationMinutes } from "../model/time";
 import {
   initialMintSessionIds as resolveInitialMintSessionIds,
   mintMinutesForSessionIds,
@@ -224,9 +224,7 @@ export function SetupDrawer() {
     ? "—"
     : allotmentNumber === 0
       ? "off"
-      : `${Math.floor(allotmentNumber / 60)}hr${
-          allotmentNumber % 60 ? ` ${allotmentNumber % 60}min` : ""
-        }`.replace(/^0hr /, "");
+      : formatDurationMinutes(allotmentNumber);
 
   const anchorErrors = editableAnchors.flatMap((a) =>
     validateAnchoredOverride(sourceAnchor(a.id), overrideOf(a.id), s.inputs!.time).errors.map(
@@ -411,7 +409,7 @@ export function SetupDrawer() {
               <div class="anchored-row__main">
                 <span class="anchored-row__name">{a.name}</span>
                 <span class="anchored-row__time">
-                  {display12h(o.time ?? a.start)} · {blocks === 0 ? "Background · 0min" : compactDuration(blocks * 30)}
+                  {display12h(o.time ?? a.start)} · {blocks === 0 ? "Background · 0min" : formatBlockAmount(blocks)}
                 </span>
                 {findings.errors.map((error) => <span class="field-error" role="alert">{error}</span>)}
                 {findings.warnings.map((warning) => (
@@ -435,7 +433,7 @@ export function SetupDrawer() {
                     disabled={blocks <= 0}
                     aria-label={`Shorten ${a.name}`}
                   >−</button>
-                  <span aria-live="polite">{compactDuration(blocks * 30)}</span>
+                  <span aria-live="polite">{formatBlockAmount(blocks)}</span>
                   <button
                     type="button"
                     onClick={() => patchAnchored(a.id, { blocks: blocks + 1 })}

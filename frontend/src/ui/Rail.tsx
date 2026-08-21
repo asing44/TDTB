@@ -1,10 +1,7 @@
-/* Rail — T12e left rail (3a spec, 280px, surface-2) → IMP-07. The capacity
-   story moves here, adjacent to the table it describes (brief problem 1):
-   budget number + segmented bar with the day's budget line, the pie,
-   keyboard reference, and the readiness chips pinned to the bottom. Absorbs
-   ReadinessStrip / CapacityHeadline / AllocationPie / AlertSummary as
-   page-level mounts. IMP-07 pruned the retired TrimAssist and ForgotStrip
-   from the rail (contract item 21).
+/* Rail — compact day overview. The capacity story lives here beside the
+   assigned work it describes: budget number + segmented bar, the inspectable
+   pie, keyboard reference, and readiness chips pinned to the bottom. The main
+   surface stays focused on assigned rows and their local controls.
 
    Numbers follow the same live substitution as the table (localSelected in,
    server capacity authoritative on refresh) so the rail and the rows answer
@@ -15,13 +12,7 @@ import type { Theme } from "../store/store";
 import { budgetTotal, localSelected } from "../store/allocatorView";
 import { AllocationPie } from "./AllocationPie";
 import { refreshSummaryText } from "./ReadinessStrip";
-import { display12h } from "../model/time";
-
-function hrsMin(blocks: number): string {
-  const m = Math.round(Math.abs(blocks) * 30);
-  if (m < 60) return `${m}min`;
-  return m % 60 === 0 ? `${Math.floor(m / 60)}hr` : `${Math.floor(m / 60)}hr ${m % 60}min`;
-}
+import { display12h, formatBlockAmount } from "../model/time";
 
 function themeLabel(t: Theme): string {
   return t === "system" ? "Auto" : t === "light" ? "Light" : "Dark";
@@ -31,7 +22,7 @@ function clock(iso: string): string {
   const d = new Date(iso);
   return Number.isNaN(d.getTime())
     ? iso
-    : `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+    : display12h(`${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`);
 }
 
 const DAY = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -59,6 +50,16 @@ function BudgetCard() {
   const basis = Math.max(usedAll, cap.total, 1);
   const seg = (blocks: number) => `${(Math.max(0, blocks) / basis) * 100}%`;
   const overflow = Math.max(0, usedAll - cap.total);
+  const capacityLabel = [
+    `Fixed ${formatBlockAmount(cap.fixed)}`,
+    `Anchored ${formatBlockAmount(cap.anchored)}`,
+    `Habits ${formatBlockAmount(cap.habits)}`,
+    `Mint ${formatBlockAmount(cap.mint)}`,
+    `Selected ${formatBlockAmount(spend)}`,
+    `Buffer ${formatBlockAmount(cap.buffer)}`,
+    `Free ${formatBlockAmount(cap.free)}`,
+    `Total ${formatBlockAmount(cap.total)}`,
+  ].join(" · ");
 
   return (
     <div class="rail__section" aria-label="Capacity">
@@ -66,26 +67,26 @@ function BudgetCard() {
       <dl class="rail-capacity">
         <div>
           <dt>Day capacity</dt>
-          <dd>{cap.total} blk · {hrsMin(cap.total)}</dd>
+          <dd>{formatBlockAmount(cap.total)}</dd>
         </div>
         <div>
           <dt>Reserved before tasks</dt>
-          <dd>{reserved} blk · {hrsMin(reserved)}</dd>
+          <dd>{formatBlockAmount(reserved)}</dd>
         </div>
         <div>
           <dt>Task room</dt>
-          <dd>{budget} blk · {hrsMin(budget)}</dd>
+          <dd>{formatBlockAmount(budget)}</dd>
         </div>
         <div>
           <dt>Chosen tasks</dt>
           <dd class={`rail-budget__spend ${over > 0 ? "rail-budget__spend--over rail-capacity__over" : ""}`}>
-            {spend} blk · {hrsMin(spend)}
+            {formatBlockAmount(spend)}
           </dd>
         </div>
         <div>
           <dt>Over by</dt>
           <dd class={over > 0 ? "rail-capacity__over" : ""}>
-            {over} blk · {hrsMin(over)}
+            {formatBlockAmount(over)}
           </dd>
         </div>
       </dl>
@@ -94,14 +95,14 @@ function BudgetCard() {
         role="status"
       >
         {over > 0
-          ? `${hrsMin(over)} over`
+          ? `${formatBlockAmount(over)} over`
           : spend === budget
             ? "fully booked"
-            : `${hrsMin(budget - spend)} left`}
+            : `${formatBlockAmount(budget - spend)} left`}
       </div>
       <p class="rail-capacity__note">Every chosen task is additive before Send.</p>
       <div class="rail-budget__barwrap">
-        <div class="rail-budget__bar" role="img" aria-label={cap.legend}>
+        <div class="rail-budget__bar" role="img" aria-label={capacityLabel}>
           <div style={{ width: seg(cap.fixed), background: "var(--c-event)" }} />
           <div style={{ width: seg(cap.anchored), background: "var(--c-anchored)" }} />
           <div style={{ width: seg(cap.habits), background: "var(--c-habit)" }} />
@@ -265,7 +266,10 @@ export function Rail() {
     <aside class="rail" aria-label="Day overview">
       <div class="rail__date">
         <div class="rail__date-top">
-          <div class="rail__date-day">{prettyDate(s.inputs.validDate)}</div>
+          <div>
+            <div class="rail__kicker">Planning cockpit</div>
+            <div class="rail__date-day">{prettyDate(s.inputs.validDate)}</div>
+          </div>
           <SourcesButton />
         </div>
         <div class="rail__date-meta">

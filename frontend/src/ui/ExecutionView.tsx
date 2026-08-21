@@ -111,7 +111,10 @@ export function ExecutionView() {
   return (
     <section class="execution" aria-label="Now and next">
       <div class="execution__head">
-        <h2>Today</h2>
+        <div>
+          <span class="execution__eyebrow">Execution</span>
+          <h2>Today</h2>
+        </div>
       </div>
       <div class="execution__cards">
         <MomentCard label="Now" moment={model.now} />

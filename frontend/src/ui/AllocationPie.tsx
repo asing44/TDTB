@@ -25,6 +25,7 @@ import { useState } from "preact/hooks";
 import { useAppState } from "./context";
 import { effectiveBlocks, includedItems } from "../store/store";
 import { pieSlices, pieSummary } from "../model/pie";
+import { formatBlockAmount } from "../model/time";
 
 /* Sized to the rail: a 280px column less its 16px padding leaves 248, so 240
    fills the width without forcing the legend to wrap. */
@@ -120,7 +121,7 @@ export function AllocationPie() {
               onMouseEnter={() => setHover(slice.key)}
               onClick={() => toggleInspection(slice.key)}
             >
-              <title>{`${slice.label} — ${slice.blocks} blk`}</title>
+              <title>{`${slice.label} — ${formatBlockAmount(slice.blocks)}`}</title>
             </path>
           ))}
         </svg>
@@ -136,7 +137,7 @@ export function AllocationPie() {
         >
           {active ? (
             <>
-              <span class="pie__readout-value">{active.blocks} blk</span>
+              <span class="pie__readout-value">{formatBlockAmount(active.blocks)}</span>
               <span class="pie__readout-label">{active.label}</span>
               <span class="pie__readout-state">
                 {Math.round(active.fraction * 100)}% of day
@@ -144,10 +145,12 @@ export function AllocationPie() {
             </>
           ) : (
             <>
-              <span class="pie__readout-value">{allocated} blk</span>
-              <span class="pie__readout-label">of {total} blk capacity</span>
+              <span class="pie__readout-value">{formatBlockAmount(allocated)}</span>
+              <span class="pie__readout-label">of {formatBlockAmount(total)} capacity</span>
               <span class="pie__readout-state">
-                {over > 0 ? `${over} over` : `${remaining} remaining`}
+                {over > 0
+                  ? `${formatBlockAmount(over)} over`
+                  : `${formatBlockAmount(remaining)} remaining`}
               </span>
             </>
           )}
@@ -158,7 +161,7 @@ export function AllocationPie() {
           announced without waiting on the readout's polite live region. */}
       {over > 0 && (
         <p class="pie__over-caption" role="status">
-          Over by {over} blk - trim or drop
+          Over by {formatBlockAmount(over)} - trim or drop
         </p>
       )}
       {inspection && (
@@ -177,7 +180,7 @@ export function AllocationPie() {
               type="button"
               class={`pie__legend-item ${hover === slice.key ? "pie__legend-item--on" : ""}`}
               aria-pressed={inspection === slice.key}
-              aria-label={`${slice.label}: ${slice.blocks} blk${
+              aria-label={`${slice.label}: ${formatBlockAmount(slice.blocks)}${
                 inspection === slice.key ? ", selected" : ""
               }`}
               onMouseEnter={() => setHover(slice.key)}
@@ -190,7 +193,7 @@ export function AllocationPie() {
                 style={{ background: slice.color, "--swatch": slice.color }}
               />
               <span class="pie__legend-label">{slice.label}</span>
-              <span class="pie__legend-value">{slice.blocks} blk</span>
+              <span class="pie__legend-value">{formatBlockAmount(slice.blocks)}</span>
             </button>
           </li>
         ))}

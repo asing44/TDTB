@@ -14,6 +14,7 @@ import {
 } from "../store/store";
 import { budgetTotal, localSelected, trimForState } from "../store/allocatorView";
 import { buildDayPrompt } from "../store/exportPrompt";
+import { formatBlockAmount } from "../model/time";
 
 async function copyText(text: string): Promise<boolean> {
   try {
@@ -112,13 +113,17 @@ export function ActionDock() {
   const activeWrites = s.shadow
     ? s.shadow.entries.filter((e) => e.classification !== "no-op").length
     : 0;
+  // A degraded source read is not a usable planning snapshot. Keep the
+  // clipboard fallback available, but do not let a billed sequence or a
+  // write-oriented preview become the accidental recovery path.
+  const sourcesHealthy = s.inputs.sourceHealth === "ok";
 
   const statusText: Record<string, string> = {
     setup: "Confirm your day frame, blocks, and captures to begin.",
     sequence:
       trim.drop.length > 0
-        ? `Accept the trim and you sequence ${trim.after} of ${budget} blk.`
-        : `Setup confirmed. Sequence ${spend} of ${budget} blk when ready.`,
+        ? `Accept the trim and you sequence ${formatBlockAmount(trim.after)} of ${formatBlockAmount(budget)}.`
+        : `Setup confirmed. Sequence ${formatBlockAmount(spend)} of ${formatBlockAmount(budget)} when ready.`,
     sequencing: "Sequencing — one billed judgment call in flight…",
     review: defectsPending
       ? `Sequence staged with ${defects.length} acceptable defect${defects.length === 1 ? "" : "s"} — fix, or accept as-is to proceed.`
@@ -137,7 +142,15 @@ export function ActionDock() {
         {statusText[state]}
       </span>
 
-      <CopyPromptButton />
+      {!sourcesHealthy && (
+        <div class="dock__health" role="alert">
+          Sources {s.inputs.sourceHealth} — sequencing and commit are blocked until the read is healthy.
+          <span>Copy prompt remains available as a no-write fallback.</span>
+        </div>
+      )}
+
+      <div class="dock__controls">
+        <CopyPromptButton />
 
       {/* Day setup reaches the frame, allotment, anchored blocks and the Live
           micro-adventure — all of it editable at any phase, so it belongs in
@@ -188,14 +201,16 @@ export function ActionDock() {
           <button
             class="btn btn--primary"
             onClick={() => void controller.autoSequence()}
-            disabled={!canAutoSequence(s)}
+            disabled={!canAutoSequence(s) || !sourcesHealthy}
             title={
-              canAutoSequence(s)
+              canAutoSequence(s) && sourcesHealthy
                 ? "One billed judgment call"
-                : "Requires confirmed setup and billed budget"
+                : !sourcesHealthy
+                  ? "Sources must be healthy before a billed sequence"
+                  : "Requires confirmed setup and billed budget"
             }
           >
-            Auto sequence {spend} blk
+            Auto sequence {formatBlockAmount(spend)}
             <span class="btn__sub">
               1 billed call · {s.ledger?.remaining ?? 0} left today
             </span>
@@ -208,7 +223,7 @@ export function ActionDock() {
           <button
             class="btn"
             onClick={() => void controller.autoSequence()}
-            disabled={!canAutoSequence(s)}
+            disabled={!canAutoSequence(s) || !sourcesHealthy}
           >
             Resequence
             <span class="btn__sub">1 billed · {s.ledger?.remaining ?? 0} left</span>
@@ -231,7 +246,7 @@ export function ActionDock() {
               openApproval();
               void controller.shadowPreview();
             }}
-            disabled={!canShadow(s)}
+            disabled={!canShadow(s) || !sourcesHealthy}
           >
             Preview commit
             <span class="btn__sub">shadow — writes nothing</span>
@@ -257,6 +272,7 @@ export function ActionDock() {
           Working…
         </button>
       )}
+      </div>
     </footer>
   );
 }

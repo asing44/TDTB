@@ -102,8 +102,8 @@ describe("FEEDBACK-10 over-capacity hierarchy (A10)", () => {
     const { container } = h.ui(<Queue />);
     const summary = container.querySelector(".queue__remaining") as HTMLElement;
     expect(summary).toBeTruthy();
-    expect(summary.textContent).toMatch(/blk selected of \d+ capacity/);
-    expect(summary.textContent).toMatch(/\d+ over/);
+    expect(summary.textContent).toMatch(/blk selected of \d+ blk capacity/);
+    expect(summary.textContent).toMatch(/\d+ blk over/);
     expect(summary.className).toContain("queue__remaining--over");
   });
 

@@ -10,6 +10,7 @@
    opinion about it. */
 
 import type { Capacity } from "./types";
+import { formatBlockAmount } from "./time";
 
 export interface PieSlice {
   key: string;
@@ -172,6 +173,6 @@ export function pieSlices(
 export function pieSummary(slices: PieSlice[]): string {
   if (slices.length === 0) return "No capacity to allocate yet.";
   return slices
-    .map((s) => `${s.label} ${s.blocks} blk (${Math.round(s.fraction * 100)}%)`)
+    .map((s) => `${s.label} ${formatBlockAmount(s.blocks)} (${Math.round(s.fraction * 100)}%)`)
     .join(", ");
 }

@@ -58,8 +58,17 @@ export function ApprovalDrawer() {
   if (!s.ui.approvalOpen) return null;
 
   const shadow = s.shadow;
-  // Same shadow-blocker list the state-level ARM_LIVE/canLiveCommit gate uses.
-  const blockers = [...(s.validation?.hardErrors ?? []), ...shadowBlockers(s)];
+  // Source-health blockers — mirrored in canAutoSequence/canShadow/canLiveCommit
+  // selectors so state can't outrun the UI. A degraded/failed source read is
+  // not a usable planning snapshot; refresh before approving writes.
+  const sourceBlockers = s.inputs?.sourceHealth === "ok"
+    ? []
+    : [`Sources ${s.inputs?.sourceHealth ?? "unknown"} — refresh before approving writes`];
+  const blockers = [
+    ...(s.validation?.hardErrors ?? []),
+    ...shadowBlockers(s),
+    ...sourceBlockers,
+  ];
   const committed = s.commitPhase === "done" || s.commitPhase === "partial" || s.commitPhase === "failed";
   const report = s.commitReport;
   const activeWrites = shadow
@@ -218,7 +227,7 @@ export function ApprovalDrawer() {
                   <button
                     class="btn btn--danger"
                     onClick={() => void controller.requestLiveCommit()}
-                    disabled={!canLiveCommit(s) || s.commitPhase === "committing"}
+                    disabled={!canLiveCommit(s) || blockers.length > 0 || s.commitPhase === "committing"}
                   >
                     {s.commitPhase === "committing"
                       ? "Committing…"

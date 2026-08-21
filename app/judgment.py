@@ -975,12 +975,33 @@ async def propose_sequence_async(
             f"with earliest_start {earliest_start}, 12:00 is invalid even for a "
             f"before_work item; place it at {earliest_start} or later."
         )
+    assigned_ids = [
+        str(item.get("id") or item.get("name") or "")
+        for item in assigned
+        if isinstance(item, dict)
+    ]
+    inventory_instruction = (
+        "\n\nASSIGNED INVENTORY CHECK (hard completeness rule): the sequence must "
+        "contain every exact ID in this list exactly once. Copy the IDs verbatim, "
+        "including long, misspelled, or low-priority-looking names; never omit an "
+        "item because the day is over capacity. Never invent an ID: "
+        + json.dumps(assigned_ids, default=str)
+    )
+    uniqueness_instruction = (
+        "\n\nOUTPUT UNIQUENESS CHECK (hard): before returning JSON, compare every "
+        "sequence row ID against the inventories. If an exact ID appears twice, "
+        "remove the duplicate row; do not normalize distinct IDs into one name. "
+        "Every assigned item and every anchored block must appear once, never "
+        "twice."
+    )
     user_prompt = (
         "Propose a sequence. Return ONLY the JSON object described in your system prompt.\n\n"
         "Each assigned item carries duration_minutes — every sequence row's end minus start "
         "MUST equal that item's duration_minutes exactly unless a derived calendar-companion "
         "rule supplies an explicit event span."
         + anchor_instruction
+        + inventory_instruction
+        + uniqueness_instruction
         + placement_context_instruction(config)
         + placement_semantic_instruction(assigned, anchored_blocks)
         + "\n\n"

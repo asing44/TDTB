@@ -119,7 +119,9 @@ describe("FEEDBACK-08 Day Setup prominence", () => {
   it("confirmed setup collapses the rail chip to a calm state", () => {
     const ready = makeHarness("ready");
     const r = ready.ui(<Rail />);
-    expect(r.getByRole("button", { name: "Open day setup" })).toBeTruthy();
+    const chip = r.getByRole("button", { name: "Open day setup" });
+    expect(chip.className).toContain("chip--ok");
+    expect(chip.className).not.toContain("chip--setup-pending");
     expect(r.queryByText(/Setup pending/)).toBeNull();
     expect(r.getByText("Setup ✓")).toBeTruthy();
   });

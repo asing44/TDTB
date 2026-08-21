@@ -19,6 +19,7 @@
 
 import type { AssignedItem, Capacity } from "./types";
 import { normalizeUrgency } from "./urgency";
+import { formatBlockAmount } from "./time";
 
 /** Slider bounds. 0 = all day (visible, no capacity — locked decision 7);
     16 blocks = 8h, past any single sane work item. */
@@ -94,17 +95,12 @@ export function liveFree(cap: Capacity | null, localSelected: number): number {
   return cap.free + cap.selected - localSelected;
 }
 
-function hrsMin(blocks: number): string {
-  const m = Math.round(blocks * 30);
-  if (m < 60) return `${m}min`;
-  return m % 60 === 0 ? `${Math.floor(m / 60)}hr` : `${Math.floor(m / 60)}hr ${m % 60}min`;
-}
-
-/** The live remaining readout. Wording mirrors capacity.py's server strings
-    verbatim ("left" / "over", "blk") so the live value and the server value
-    never read as two different vocabularies. */
+/** The live remaining readout. Keep the server's "left" / "over" vocabulary,
+    but format the amount through the shared display policy so arithmetic noise
+    never leaks into the cockpit. */
 export function remainingLabel(free: number): string {
-  if (free > 0) return `⬆ ${hrsMin(free)} left · ${free} blk`;
-  if (free === 0) return "⬆ fully booked · 0 blk left";
-  return `⚠ ${hrsMin(-free)} over · ${-free} blk`;
+  const stableFree = Number.isFinite(free) && Math.abs(free) <= 1e-9 ? 0 : free;
+  if (stableFree > 0) return `⬆ ${formatBlockAmount(stableFree)} left`;
+  if (stableFree === 0) return "⬆ fully booked · 0 blk left";
+  return `⚠ ${formatBlockAmount(Math.abs(stableFree))} over`;
 }

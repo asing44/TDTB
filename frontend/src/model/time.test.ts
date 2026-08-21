@@ -1,5 +1,33 @@
 import { describe, expect, it } from "vitest";
-import { compactDuration, display12h } from "./time";
+import {
+  blocksLabel,
+  compactDuration,
+  display12h,
+  formatBlockAmount,
+  formatDurationMinutes,
+} from "./time";
+
+describe("formatBlockAmount", () => {
+  it("keeps exact whole blocks as integer counts", () => {
+    expect(formatBlockAmount(9)).toBe("9 blk");
+  });
+
+  it("turns fractional blocks into an hours/minutes duration", () => {
+    expect(formatBlockAmount(9.166666666666668)).toBe("4hr 35min");
+    expect(formatBlockAmount(2.5)).toBe("1hr 15min");
+    expect(blocksLabel(9.166666666666668)).toBe("4hr 35min");
+  });
+
+  it("retains the sign for negative amounts", () => {
+    expect(formatBlockAmount(-9.166666666666668)).toBe("-4hr 35min");
+    expect(formatBlockAmount(-3)).toBe("-3 blk");
+  });
+
+  it("normalizes floating-point values that are effectively whole blocks", () => {
+    expect(formatBlockAmount(9.000000000000002)).toBe("9 blk");
+    expect(formatBlockAmount(-3.0000000000000004)).toBe("-3 blk");
+  });
+});
 
 describe("compactDuration", () => {
   it("keeps sub-hour durations in minutes", () => {
@@ -14,6 +42,19 @@ describe("compactDuration", () => {
     expect(compactDuration(90)).toBe("1h30m");
     expect(compactDuration(65)).toBe("1h05m");
     expect(compactDuration(210)).toBe("3h30m");
+  });
+  it("rounds floating-point minutes and keeps a negative sign", () => {
+    expect(compactDuration(275.00000000000006)).toBe("4h35m");
+    expect(compactDuration(-90.00000000000001)).toBe("-1h30m");
+  });
+});
+
+describe("formatDurationMinutes", () => {
+  it("omits zero components and retains a sign", () => {
+    expect(formatDurationMinutes(45)).toBe("45min");
+    expect(formatDurationMinutes(75)).toBe("1hr 15min");
+    expect(formatDurationMinutes(120)).toBe("2hr");
+    expect(formatDurationMinutes(-75)).toBe("-1hr 15min");
   });
 });
 

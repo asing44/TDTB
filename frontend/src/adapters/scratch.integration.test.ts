@@ -1,7 +1,7 @@
 /* scratch.integration.test.ts — T7 gate: the production ApiAdapter +
    Controller driven against the REAL FastAPI routes on a scratch server
    (scripts/scratch_integration.py boots it on :8790 with a synthetic vault,
-   canned judgment, dead write surfaces — nothing billed, nothing external).
+   canned judgment, no-op write surfaces — nothing billed, nothing external).
 
    Self-skips unless TDTB_SCRATCH_URL is set, so the normal `vitest run`
    stays hermetic. Run via:  ../app/.venv/bin/python scripts/scratch_integration.py */
