@@ -86,7 +86,7 @@ completion evidence.
 
 ## Concurrent work
 
-Use a dedicated `codex/` branch/worktree for interactive changes; `main` is
+Use a dedicated `TDTB/` branch/worktree for interactive changes; `main` is
 integration/review-only. Recheck branch, index, worktree, and path hashes
 immediately before every mutation. Preserve foreign staged/unstaged work,
 stage only owned paths, and use path-scoped commits followed by
