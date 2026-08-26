@@ -134,6 +134,7 @@ describe("token + POST bodies", () => {
     const body = postBody("/validate-sequence");
     expect(body.sequence).toEqual([{ id: "Make", start: "10:00", end: "12:00", zone: null }]);
     expect(body.assigned.length).toBe(2);
+    expect(body.day_semantics).toEqual((planInputs as any).day_semantics);
     expect(body.overlap_grants).toEqual([]);
     expect(body.planning_config_fingerprint).toBe((planInputs as any).planning_config_fingerprint);
     expect(body.pinned_rows).toEqual([]);

@@ -472,6 +472,43 @@ describe("T18g Day Setup semantics", () => {
     expect((getByText("Save day setup").closest("button") as HTMLButtonElement).disabled).toBe(false);
   });
 
+  it("warns for a positive Mint allotment without concrete session rows", () => {
+    const { ui, store } = makeHarness("ready");
+    const inputs = store.getState().inputs!;
+    store.dispatch({
+      type: "INPUTS_LOADED",
+      inputs: {
+        ...inputs,
+        daySetup: {
+          ...inputs.daySetup,
+          workAllotmentMinutes: 180,
+          schedulable: { minting: { on: true } },
+        },
+        daySemantics: {
+          ...inputs.daySemantics,
+          effectiveAllotmentMinutes: 180,
+          defaultAllotmentMinutes: 240,
+          mintBelowDefault: true,
+          mintSessions: [],
+        },
+      },
+      ledger: store.getState().ledger!,
+    });
+    store.dispatch({ type: "UI", patch: { setupOpen: true } });
+    const { getByLabelText, getByText, queryByRole } = ui(<SetupDrawer />);
+    const allotment = getByLabelText("Work allotment") as HTMLInputElement;
+    const warning = "Mint is below the 8-block (4-hour) daily default. You can continue with less.";
+
+    expect(allotment.value).toBe("180");
+    expect(getByText(warning)).toBeTruthy();
+    fireEvent.input(allotment, { target: { value: "0" } });
+    expect(queryByRole("status", { name: /below the 8-block/i })).toBeNull();
+    fireEvent.input(allotment, { target: { value: "180" } });
+    expect(getByText(warning)).toBeTruthy();
+    fireEvent.input(allotment, { target: { value: "240" } });
+    expect(queryByRole("status", { name: /below the 8-block/i })).toBeNull();
+  });
+
   it("shows automatic preset and config-prefilled Work allotment including zero/reset", () => {
     const { ui, store } = makeHarness("ready");
     const inputs = store.getState().inputs!;

@@ -16,7 +16,8 @@ import { fingerprintFixedInputs } from "../model/fingerprint";
 import { isStagingVerb } from "../model/staging";
 import { prunePins } from "../model/pins";
 import { planOverflow, calendarWalls, mintWalls } from "../model/overflow";
-import { MINT_SESSION_MINUTES, wallFreeMintSessionIds } from "../model/mint";
+import { initialMintSessionIds, MINT_SESSION_MINUTES } from "../model/mint";
+import type { WallInterval } from "../model/overflow";
 import { toMinutes } from "../model/time";
 import { droppedItems } from "../model/placement";
 import type { AppState, Action } from "./store";
@@ -29,7 +30,13 @@ import {
   includedItems,
   sourceHealthBlocked,
 } from "./store";
-import type { MicroIdea, SequenceRow, AnchoredOverride } from "../model/types";
+import type {
+  AnchoredOverride,
+  DaySetup,
+  MicroIdea,
+  PlanInputs,
+  SequenceRow,
+} from "../model/types";
 
 export type Dispatch = (a: Action) => void;
 export type GetState = () => AppState;
@@ -72,40 +79,89 @@ function calendarParticipation(
   return out;
 }
 
-/** FEEDBACK-28: filter a saved Mint selection against the CURRENT effective
-    fixed/work walls before the day-setup payload carries it to the server.
-    The drawer filters as the user edits, but saved state can be stale (the
-    August 17 incident kept the 15:00-15:30 row across refresh), and the
-    /day-setup request is the only payload that can carry Mint rows to the
-    server before the billed /sequence judgment. The on/n/total are kept
-    consistent with the filtered rows; a numeric allotment follows the total. */
-function sanitizeMinting(
-  s: AppState,
-  daySetup: AppState["daySetup"],
-): AppState["daySetup"] {
-  const sessions = s.inputs?.daySemantics.mintSessions ?? [];
+/** FEEDBACK-28: normalize Mint at every frontend boundary. Saved session
+    ids can be stale after calendar changes, and the server's capacity is
+    reserved from the same effective allotment represented by the setup.
+    Concrete rows are filtered against fixed/work walls before on/n/sessions
+    or workAllotmentMinutes leave the client. With no concrete rows, stale
+    session ids are removed and the aggregate allotment is preserved. */
+function normalizeMintSetup(
+  inputs: PlanInputs,
+  daySetup: DaySetup,
+  walls: WallInterval[],
+): DaySetup {
   const minting = daySetup.schedulable?.minting;
-  if (sessions.length === 0 || !minting || !Array.isArray(minting.sessions)) {
-    return daySetup;
+  if (!minting) return daySetup;
+  const sessions = inputs.daySemantics.mintSessions ?? [];
+  const hasNumericOverride =
+    Object.prototype.hasOwnProperty.call(daySetup, "workAllotmentMinutes") &&
+    typeof daySetup.workAllotmentMinutes === "number";
+  const rawMinutes = hasNumericOverride
+    ? daySetup.workAllotmentMinutes
+    : inputs.daySemantics.effectiveAllotmentMinutes;
+  const requested = typeof rawMinutes === "number" && Number.isFinite(rawMinutes)
+    ? Math.max(0, rawMinutes)
+    : 0;
+
+  if (sessions.length === 0) {
+    // An empty concrete-session set cannot satisfy a saved id list. Fall back
+    // to the aggregate contract so capacity and the setup do not disagree.
+    const { sessions: _staleSessions, ...withoutSessions } = minting;
+    const minutes = minting.on === false ? 0 : requested;
+    const out: DaySetup = {
+      ...daySetup,
+      schedulable: {
+        ...daySetup.schedulable,
+        minting: {
+          ...withoutSessions,
+          on: minutes > 0,
+          n: minutes / MINT_SESSION_MINUTES,
+        },
+      },
+    };
+    if (hasNumericOverride) {
+      out.workAllotmentMinutes = minutes;
+    } else if (Object.prototype.hasOwnProperty.call(daySetup, "workAllotmentMinutes")) {
+      // null means reset to the resolved config value; preserve that field
+      // presence instead of turning a preset-derived zero into an override.
+      out.workAllotmentMinutes = null;
+    }
+    return out;
   }
-  const walls = calendarWalls(effectiveAnchoredBlocks(s));
-  const selected = wallFreeMintSessionIds(sessions, minting.sessions, walls);
-  const out: AppState["daySetup"] = {
+
+  const selected = initialMintSessionIds(
+    sessions,
+    minting,
+    requested,
+    daySetup.anchor ?? inputs.time.anchor,
+    walls,
+  );
+  const minutes = selected.length * MINT_SESSION_MINUTES;
+  return {
     ...daySetup,
+    workAllotmentMinutes: minutes,
     schedulable: {
       ...daySetup.schedulable,
       minting: {
         ...minting,
-        on: minting.on !== false && selected.length > 0,
+        on: selected.length > 0,
         n: selected.length,
         sessions: selected,
       },
     },
   };
-  if (typeof daySetup.workAllotmentMinutes === "number") {
-    out.workAllotmentMinutes = selected.length * MINT_SESSION_MINUTES;
-  }
-  return out;
+}
+
+function sanitizeMinting(
+  s: AppState,
+  daySetup: AppState["daySetup"],
+): AppState["daySetup"] {
+  if (!s.inputs) return daySetup;
+  return normalizeMintSetup(
+    s.inputs,
+    daySetup,
+    calendarWalls(effectiveAnchoredBlocks(s)),
+  );
 }
 
 export class Controller {
@@ -155,7 +211,11 @@ export class Controller {
         this.adapter.loadPlanInputs(),
         this.adapter.billedLedger(),
       ]);
-      this.dispatch({ type: "INPUTS_LOADED", inputs, ledger });
+      const normalizedInputs = {
+        ...inputs,
+        daySetup: normalizeMintSetup(inputs, inputs.daySetup, calendarWalls(inputs.anchored)),
+      };
+      this.dispatch({ type: "INPUTS_LOADED", inputs: normalizedInputs, ledger });
     } catch (e) {
       this.dispatch({ type: "LOAD_FAILED", error: String(e instanceof Error ? e.message : e) });
     }
@@ -178,9 +238,13 @@ export class Controller {
     this.dispatch({ type: "SOURCE_REFRESH_START" });
     try {
       const { inputs, fixed, ledger } = await this.adapter.refreshSources();
+      const normalizedInputs = {
+        ...inputs,
+        daySetup: normalizeMintSetup(inputs, inputs.daySetup, calendarWalls(inputs.anchored)),
+      };
       this.dispatch({
         type: "SOURCE_REFRESH_OK",
-        inputs,
+        inputs: normalizedInputs,
         ledger,
         fingerprint: fingerprintFixedInputs(fixed),
         anchoredSourceFingerprint: fixed.anchoredSourceFingerprint,

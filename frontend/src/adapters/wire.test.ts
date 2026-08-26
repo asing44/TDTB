@@ -588,9 +588,13 @@ describe("projectDaySetup edge shapes", () => {
     expect(d.confirmed).toBe(true);
   });
 
-  it("projects Mint session options and object-shaped enabled zones", () => {
+  it("projects the backend Mint sub-default signal with session options", () => {
     const d = projectDaySemantics({
       enabled_zones: [{ name: "work_hours" }],
+      effective_allotment_minutes: 180,
+      default_allotment_minutes: 240,
+      mint_enabled: true,
+      mint_below_default: true,
       mint_sessions: [{
         id: "mint:morning",
         name: "Mint Morning",
@@ -600,6 +604,7 @@ describe("projectDaySetup edge shapes", () => {
       }],
     });
     expect(d.enabledZones).toEqual(["work_hours"]);
+    expect(d.mintBelowDefault).toBe(true);
     expect(d.mintSessions).toEqual([{
       id: "mint:morning",
       name: "Mint Morning",

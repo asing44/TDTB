@@ -53,7 +53,11 @@ _WEEKDAY_TO_ABBREV = {
     4: "fri", 5: "sat", 6: "sun",
 }
 
-_DEFAULT_ALLOTMENT = 0
+# Healthy Mint default: eight 30-minute blocks (240 minutes / four hours).
+# Keep this as the one backend default used by config projection and all route
+# fallbacks; explicit positive values below it remain valid and warn.
+DEFAULT_MINT_ALLOTMENT_MINUTES = 240
+_DEFAULT_ALLOTMENT = DEFAULT_MINT_ALLOTMENT_MINUTES
 
 _TRUTHY_DEFAULT_TOKENS: frozenset[str] = frozenset({"true", "yes", "1", "✓", "x"})
 _FALSEY_DEFAULT_TOKENS: frozenset[str] = frozenset({"", "false", "no", "0", "—", "-", "–", "none", "n/a"})
@@ -170,6 +174,42 @@ def _parse_allotment(raw) -> int | None:
 def _validate_allotment(minutes: int) -> bool:
     """True if the allotment is a valid canonical integer (>=0, divisible by 15)."""
     return minutes >= 0 and minutes % 15 == 0
+
+
+def effective_allotment_minutes(
+    config: dict[str, object] | None = None,
+    day_setup: dict[str, object] | None = None,
+    resolved_day_semantics: dict[str, object] | None = None,
+) -> int:
+    """Return the single effective Mint allotment used by route consumers.
+
+    A dated setup override is authoritative when present, followed by the
+    resolved day contract and then the parsed Defaults section. Invalid or
+    absent values use the healthy 240-minute default. This deliberately
+    preserves explicit zero (rather than treating it as missing), while the
+    callers remain free to expose a positive sub-default as a warning.
+    """
+    for source, key in (
+        (day_setup, "work_allotment_minutes"),
+        (resolved_day_semantics, "effective_allotment_minutes"),
+    ):
+        if not isinstance(source, dict) or key not in source:
+            continue
+        raw = source.get(key)
+        if isinstance(raw, int) and not isinstance(raw, bool) and _validate_allotment(raw):
+            return raw
+
+    defaults = (config or {}).get("Defaults") if isinstance(config, dict) else None
+    raw = defaults.get("work_allotment_minutes") if isinstance(defaults, dict) else None
+    if isinstance(raw, int) and not isinstance(raw, bool) and _validate_allotment(raw):
+        return raw
+    if isinstance(raw, float) and raw.is_integer() and _validate_allotment(int(raw)):
+        return int(raw)
+    if isinstance(raw, str):
+        parsed = _parse_allotment(raw)
+        if parsed is not None and parsed != -1 and _validate_allotment(parsed):
+            return parsed
+    return DEFAULT_MINT_ALLOTMENT_MINUTES
 
 
 def _parse_default_flag(raw) -> bool | None:
@@ -557,15 +597,42 @@ def resolve_day_contract(
     else:
         config = getattr(config_read_result, "config", None)
         if config is None:
+            # Config absence must not erase a valid dated override: bootstrap
+            # reads still support an explicit zero disable (and a positive
+            # sub-default) without inventing preset metadata.
+            effective = _DEFAULT_ALLOTMENT
+            override = (dated_overrides or {}).get("work_allotment_minutes")
+            override_valid = (
+                isinstance(override, int)
+                and not isinstance(override, bool)
+                and _validate_allotment(override)
+            )
+            if override_valid:
+                effective = override
+            allotment_source = (
+                "dated_override" if override_valid else "implicit_default"
+            )
+            below_default = 0 < effective < DEFAULT_MINT_ALLOTMENT_MINUTES
+            warnings = [
+                "Planning config unavailable; using deterministic fallback"
+            ]
+            if below_default:
+                warnings.append(
+                    f"Mint allotment {effective} minutes is below the "
+                    f"{DEFAULT_MINT_ALLOTMENT_MINUTES}-minute daily default; "
+                    "continuing with the explicit value"
+                )
             return {
                 "available_presets": [],
                 "selected_preset": None,
                 "resolution_source": "fallback",
                 "enabled_zones": [],
-                "effective_allotment_minutes": _DEFAULT_ALLOTMENT,
+                "effective_allotment_minutes": effective,
                 "default_allotment_minutes": _DEFAULT_ALLOTMENT,
-                "mint_enabled": False,
-                "warnings": ["Planning config unavailable; using deterministic fallback"],
+                "allotment_source": allotment_source,
+                "mint_enabled": effective > 0,
+                "mint_below_default": below_default,
+                "warnings": warnings,
                 "errors": [],
                 "overlap_permissions_raw": "",
             }
@@ -602,6 +669,33 @@ def resolve_day_contract(
         )
 
     mint_enabled = effective_allotment > 0
+    mint_below_default = 0 < effective_allotment < DEFAULT_MINT_ALLOTMENT_MINUTES
+    if (
+        isinstance(allotment_override, int)
+        and not isinstance(allotment_override, bool)
+        and _validate_allotment(allotment_override)
+    ):
+        allotment_source = "dated_override"
+    elif resolved.preset is not None and resolved.preset.work_allotment_minutes is not None:
+        allotment_source = "preset"
+    else:
+        defaults = sections.get("Defaults")
+        raw_default = defaults.get("work_allotment_minutes") if isinstance(defaults, dict) else None
+        parsed_default = _parse_allotment(raw_default)
+        allotment_source = (
+            "configured_default"
+            if parsed_default is not None
+            and parsed_default != -1
+            and _validate_allotment(parsed_default)
+            else "implicit_default"
+        )
+    warnings = list(resolved.warnings)
+    if mint_below_default:
+        warnings.append(
+            f"Mint allotment {effective_allotment} minutes is below the "
+            f"{DEFAULT_MINT_ALLOTMENT_MINUTES}-minute daily default; continuing "
+            "with the explicit value"
+        )
 
     return {
         "available_presets": [_preset_to_json_safe(p) for p in projection.presets],
@@ -618,8 +712,10 @@ def resolve_day_contract(
         ),
         "effective_allotment_minutes": effective_allotment,
         "default_allotment_minutes": projection.default_allotment_minutes,
+        "allotment_source": allotment_source,
         "mint_enabled": mint_enabled,
-        "warnings": list(resolved.warnings),
+        "mint_below_default": mint_below_default,
+        "warnings": warnings,
         "errors": errors,
         "overlap_permissions_raw": projection.overlap_permissions_raw,
     }
@@ -688,6 +784,7 @@ def planning_config_fingerprint(
         ),
         "default_allotment_minutes": projection.default_allotment_minutes,
         "effective_allotment_minutes": contract["effective_allotment_minutes"],
+        "allotment_source": contract.get("allotment_source"),
         "resolved_preset": selected["name"] if isinstance(selected, dict) else None,
         "overlap_permissions_raw": projection.overlap_permissions_raw,
     }

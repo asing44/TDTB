@@ -78,12 +78,12 @@ class TestMintAllotmentDerivation:
         assert m["blocks"] == 10
         assert m["duration"] == 300
 
-    def test_no_allotment_context_keeps_legacy_default(self):
-        # No resolved semantics and no dated override: the historical
-        # 2-block default is the contract for callers without allotment state.
+    def test_no_allotment_context_uses_healthy_default(self):
+        # No resolved semantics and no dated override: callers without
+        # allotment state use the healthy 8-block default.
         items, _, _ = ext.build_schedulable_blocks(CFG, {}, MONDAY, "09:00")
         [m] = [i for i in items if i["name"] == "Minting"]
-        assert m["blocks"] == 2
+        assert m["blocks"] == 8
 
     def test_zero_allotment_suppresses_legacy_aggregate_row(self):
         items, _, _ = ext.build_schedulable_blocks(

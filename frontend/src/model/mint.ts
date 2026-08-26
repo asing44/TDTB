@@ -26,12 +26,14 @@ function sessionOverlapsWall(
   session: MintSession,
   walls: WallInterval[],
 ): boolean {
-  if (walls.length === 0) return false;
   const start = toMinutes(session.start);
   const end = toMinutes(session.end);
+  // Invalid session intervals must never become selectable. This keeps stale
+  // or hand-edited rows fail-closed even when there are no walls to compare.
   if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) {
-    return false;
+    return true;
   }
+  if (walls.length === 0) return false;
   return walls.some((w) => end > w.start && w.end > start);
 }
 
@@ -45,7 +47,6 @@ export function wallFreeMintSessionIds(
   walls: WallInterval[] = [],
 ): string[] {
   const valid = validMintSessionIds(sessions, ids);
-  if (walls.length === 0) return valid;
   return valid.filter((id) => {
     const session = sessions.find((candidate) => candidate.id === id);
     return session ? !sessionOverlapsWall(session, walls) : true;
@@ -134,10 +135,14 @@ export function initialMintSessionIds(
 ): string[] {
   if (override?.on === false) return [];
   if (Array.isArray(override?.sessions)) {
-    const selected = wallFreeMintSessionIds(sessions, override.sessions, walls);
+    // Detect the former "all sessions" payload before wall filtering. A
+    // newly-conflicting wall must not make an old all-session payload look
+    // like an intentional partial selection and inflate its allotment.
+    const rawSelected = validMintSessionIds(sessions, override.sessions);
+    const selected = wallFreeMintSessionIds(sessions, rawSelected, walls);
     const allotment = Number.isFinite(allotmentMinutes) ? Math.max(0, allotmentMinutes) : 0;
     const isLegacyAll =
-      selected.length === sessions.length &&
+      rawSelected.length === sessions.length &&
       selected.length > 0 &&
       allotment !== selected.length * MINT_SESSION_MINUTES;
     if (!isLegacyAll) {

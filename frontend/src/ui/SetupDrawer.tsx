@@ -36,17 +36,25 @@ export function SetupDrawer() {
   const hasExplicitMintChoice =
     Object.prototype.hasOwnProperty.call(s.daySetup, "workAllotmentMinutes") ||
     Array.isArray(savedMintOverride?.sessions) ||
-    savedMintOverride?.on === false;
-  // An absent dated choice gets the four-hour Mint default. A dated 0 (or a
-  // selected session list) remains an intentional choice and is allowed to
-  // stay below the default with a warning below.
-  const initialMintAllotment = hasExplicitMintChoice
-    ? savedAllotment
-    : Math.max(
-        MINT_DEFAULT_MINUTES,
-        savedAllotment,
-        s.inputs?.daySemantics.defaultAllotmentMinutes ?? 0,
-      );
+    savedMintOverride?.on === false ||
+    s.daySetup.dayPreset != null;
+  // Preserve the resolved backend value exactly, including zero and positive
+  // sub-defaults. Only the old shape with no resolution evidence receives the
+  // four-hour fallback; a selected preset (including a zero preset) is enough
+  // to keep its resolved value authoritative.
+  const hasResolvedMintContract =
+    s.inputs?.daySemantics.effectiveAllotmentMinutes !== 0 ||
+    s.inputs?.daySemantics.defaultAllotmentMinutes !== 0 ||
+    s.inputs?.daySemantics.selectedPreset != null ||
+    s.inputs?.daySemantics.mintBelowDefault !== undefined;
+  const initialMintAllotment =
+    hasExplicitMintChoice || hasResolvedMintContract
+      ? savedAllotment
+      : Math.max(
+          MINT_DEFAULT_MINUTES,
+          savedAllotment,
+          s.inputs?.daySemantics.defaultAllotmentMinutes ?? 0,
+        );
   const initialMintAnchor = s.daySetup.anchor ?? s.inputs?.time.anchor;
   // FEEDBACK-28: Mint choices are filtered against the current effective
   // fixed/work calendar walls — the August 17 incident selected Mint
@@ -252,10 +260,15 @@ export function SetupDrawer() {
     : allotmentNumber === 0
       ? "off"
       : formatDurationMinutes(allotmentNumber);
+  // Derive this from the current normalized value, not the load-time signal:
+  // changing 180 to 0 or 240 must clear the warning immediately. The same
+  // check works for aggregate Mint when no concrete session rows exist.
   const mintBelowDefault =
-    availableMintSessions.length > 0 && allotmentNumber < MINT_DEFAULT_MINUTES;
+    Number.isFinite(allotmentNumber) &&
+    allotmentNumber > 0 &&
+    allotmentNumber < MINT_DEFAULT_MINUTES;
   const mintWarning = mintBelowDefault
-    ? mintSelectionMax < MINT_DEFAULT_BLOCKS
+    ? availableMintSessions.length > 0 && mintSelectionMax < MINT_DEFAULT_BLOCKS
       ? `Only ${mintSelectionMax} Mint block${mintSelectionMax === 1 ? " is" : "s are"} available today; the 8-block default cannot be reached.`
       : "Mint is below the 8-block (4-hour) daily default. You can continue with less."
     : null;
