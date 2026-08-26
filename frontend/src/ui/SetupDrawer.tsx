@@ -12,6 +12,8 @@ import {
   mintSessionIdsForMinutes,
   wallFreeMintSessionIds,
   MINT_SESSION_MINUTES,
+  MINT_DEFAULT_BLOCKS,
+  MINT_DEFAULT_MINUTES,
 } from "../model/mint";
 import type { AnchoredOverride, Buffering, DaySetup } from "../model/types";
 import {
@@ -31,6 +33,20 @@ export function SetupDrawer() {
     typeof s.daySetup.workAllotmentMinutes === "number"
       ? s.daySetup.workAllotmentMinutes
       : s.inputs?.daySemantics.effectiveAllotmentMinutes ?? 0;
+  const hasExplicitMintChoice =
+    Object.prototype.hasOwnProperty.call(s.daySetup, "workAllotmentMinutes") ||
+    Array.isArray(savedMintOverride?.sessions) ||
+    savedMintOverride?.on === false;
+  // An absent dated choice gets the four-hour Mint default. A dated 0 (or a
+  // selected session list) remains an intentional choice and is allowed to
+  // stay below the default with a warning below.
+  const initialMintAllotment = hasExplicitMintChoice
+    ? savedAllotment
+    : Math.max(
+        MINT_DEFAULT_MINUTES,
+        savedAllotment,
+        s.inputs?.daySemantics.defaultAllotmentMinutes ?? 0,
+      );
   const initialMintAnchor = s.daySetup.anchor ?? s.inputs?.time.anchor;
   // FEEDBACK-28: Mint choices are filtered against the current effective
   // fixed/work calendar walls — the August 17 incident selected Mint
@@ -40,7 +56,7 @@ export function SetupDrawer() {
   const initialMintSessionIds = resolveInitialMintSessionIds(
     availableMintSessions,
     savedMintOverride,
-    savedAllotment,
+    initialMintAllotment,
     initialMintAnchor,
     effectiveMintWalls,
   );
@@ -86,6 +102,13 @@ export function SetupDrawer() {
       : Array.isArray(mintOverride?.sessions)
         ? wallFreeMintSessionIds(availableMintSessions, mintOverride.sessions, effectiveMintWalls)
         : mintSessionIdsForMinutes(availableMintSessions, Number(workAllotment), mintAnchor, effectiveMintWalls);
+  const selectableMintSessionIds = mintSessionIdsForMinutes(
+    availableMintSessions,
+    availableMintSessions.length * MINT_SESSION_MINUTES,
+    mintAnchor,
+    effectiveMintWalls,
+  );
+  const mintSelectionMax = selectableMintSessionIds.length;
 
   const setMintSelection = (ids: string[], anchor = mintAnchor) => {
     const sessions = wallFreeMintSessionIds(availableMintSessions, ids, effectiveMintWalls);
@@ -131,13 +154,6 @@ export function SetupDrawer() {
       anchored: { ...d.anchored, [id]: { ...overrideOf(id), ...patch } },
     }));
 
-  const toggleMintSession = (id: string) => {
-    const next = selectedMintSessionIds.includes(id)
-      ? selectedMintSessionIds.filter((value) => value !== id)
-      : [...selectedMintSessionIds, id];
-    setMintSelection(next);
-  };
-
   const setMintAllotment = (minutes: number) => {
     if (availableMintSessions.length === 0) {
       setWorkAllotment(String(minutes));
@@ -145,6 +161,17 @@ export function SetupDrawer() {
       return;
     }
     setMintSelection(mintSessionIdsForMinutes(availableMintSessions, minutes, mintAnchor, effectiveMintWalls));
+  };
+
+  const setMintSessionCount = (count: number) => {
+    setMintSelection(
+      mintSessionIdsForMinutes(
+        availableMintSessions,
+        Math.max(0, count) * MINT_SESSION_MINUTES,
+        mintAnchor,
+        effectiveMintWalls,
+      ),
+    );
   };
 
   const setMintAnchor = (anchor: string) => {
@@ -225,6 +252,13 @@ export function SetupDrawer() {
     : allotmentNumber === 0
       ? "off"
       : formatDurationMinutes(allotmentNumber);
+  const mintBelowDefault =
+    availableMintSessions.length > 0 && allotmentNumber < MINT_DEFAULT_MINUTES;
+  const mintWarning = mintBelowDefault
+    ? mintSelectionMax < MINT_DEFAULT_BLOCKS
+      ? `Only ${mintSelectionMax} Mint block${mintSelectionMax === 1 ? " is" : "s are"} available today; the 8-block default cannot be reached.`
+      : "Mint is below the 8-block (4-hour) daily default. You can continue with less."
+    : null;
 
   const anchorErrors = editableAnchors.flatMap((a) =>
     validateAnchoredOverride(sourceAnchor(a.id), overrideOf(a.id), s.inputs!.time).errors.map(
@@ -285,14 +319,14 @@ export function SetupDrawer() {
           <label for="setup-work-allotment">
             {availableMintSessions.length > 0 ? "Mint allotment" : "Work allotment"}
           </label>
-          {/* With concrete Mint sessions, the allotment is the checked-session
-              total. Moving the slider and checking a row update each other. */}
+          {/* With concrete Mint sessions, the allotment is the selected-session
+              total. The two sliders update the same exact selection. */}
           <input
             id="setup-work-allotment"
             type="range"
             class="field__range"
             min={0}
-            max={availableMintSessions.length > 0 ? availableMintSessions.length * MINT_SESSION_MINUTES : 720}
+            max={availableMintSessions.length > 0 ? mintSelectionMax * MINT_SESSION_MINUTES : 720}
             step={availableMintSessions.length > 0 ? MINT_SESSION_MINUTES : 15}
             value={allotmentNumber || 0}
             aria-valuetext={allotmentLabel}
@@ -303,11 +337,14 @@ export function SetupDrawer() {
           <span class="field__range-value">{allotmentLabel}</span>
           <span class="field__hint">
             {availableMintSessions.length > 0
-              ? `${selectedMintSessionIds.length} of ${availableMintSessions.length} sessions checked · each session is 30min`
+              ? `${selectedMintSessionIds.length} of ${mintSelectionMax} sessions selected · each session is 30min`
               : "0 disables Mint for today · 12hr max"}
           </span>
           {allotmentError && (
             <span class="field-error" role="alert">Use nonnegative 15-minute increments.</span>
+          )}
+          {mintWarning && (
+            <span class="field-warning" role="status">{mintWarning}</span>
           )}
           <button
             type="button"
@@ -372,22 +409,39 @@ export function SetupDrawer() {
               <h3 id="setup-sec-mint">Mint sessions</h3>
             </div>
             <div class="setup-section__body">
-            <p class="field__hint">
-              Check the sessions for Mint. The allotment above stays in sync, so you can use either control.
+            <div class="mint-selection">
+              <label for="setup-mint-selection">Mint session count</label>
+              <input
+                id="setup-mint-selection"
+                type="range"
+                class="mint-selection__range"
+                min={0}
+                max={mintSelectionMax}
+                step={1}
+                value={selectedMintSessionIds.length}
+                aria-valuetext={`${selectedMintSessionIds.length} of ${mintSelectionMax} sessions · ${allotmentLabel}`}
+                aria-describedby="setup-mint-selection-hint"
+                onInput={(e) => setMintSessionCount(Number((e.target as HTMLInputElement).value))}
+              />
+              <strong>{selectedMintSessionIds.length} / {mintSelectionMax}</strong>
+              <p class="field__hint" id="setup-mint-selection-hint">
+              Drag the session slider to reserve 30-minute blocks. The allotment above stays in sync.
             </p>
+            </div>
             {availableMintSessions.map((session) => {
               const checked = selectedMintSessionIds.includes(session.id);
+              const selectable = selectableMintSessionIds.includes(session.id);
+              const sessionState = checked ? "Selected" : selectable ? "Available" : "Blocked by wall";
               return (
-                <label class="mint-session-row" key={session.id}>
-                  <input
-                    type="checkbox"
-                    checked={checked}
-                    onChange={() => toggleMintSession(session.id)}
-                    aria-label={`${checked ? "Disable" : "Enable"} ${session.name}`}
-                  />
+                <div
+                  class={`mint-session-row${checked ? " mint-session-row--selected" : selectable ? "" : " mint-session-row--blocked"}`}
+                  data-selected={checked ? "true" : "false"}
+                  key={session.id}
+                >
                   <span>{session.name}</span>
                   <span>{display12h(session.start)}–{display12h(session.end)}</span>
-                </label>
+                  <span class="mint-session-row__state">{sessionState}</span>
+                </div>
               );
             })}
             </div>

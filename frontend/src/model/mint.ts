@@ -3,6 +3,9 @@ import { toMinutes } from "./time";
 import type { WallInterval } from "./overflow";
 
 export const MINT_SESSION_MINUTES = 30;
+/** Healthy Mint default: eight 30-minute sessions (four hours). */
+export const MINT_DEFAULT_BLOCKS = 8;
+export const MINT_DEFAULT_MINUTES = MINT_DEFAULT_BLOCKS * MINT_SESSION_MINUTES;
 
 export function validMintSessionIds(
   sessions: MintSession[],
@@ -85,7 +88,7 @@ function mintSessionsFromAnchor(
  *
  * Mint session rows are fixed 30-minute windows. The UI therefore snaps a
  * configured 15-minute allotment to the nearest session count and lets the
- * checked-session total become the saved daily value. Without an anchor, the
+ * selected-session total becomes the saved daily value. Without an anchor, the
  * historical first-N behavior remains the fallback for older callers.
  * FEEDBACK-28: sessions overlapping a fixed or work wall are skipped first,
  * so a wall-conflicting session never becomes a Mint commitment.
@@ -114,7 +117,7 @@ export function mintMinutesForSessionIds(
   return validMintSessionIds(sessions, ids).length * MINT_SESSION_MINUTES;
 }
 
-/** Resolve old/inconsistent saved state into one visible checkbox selection.
+/** Resolve old/inconsistent saved state into one visible session selection.
  *
  * A partial saved list is treated as an intentional location choice. An old
  * "all sessions" list with a different allotment was produced by the former

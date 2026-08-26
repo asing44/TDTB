@@ -25,7 +25,7 @@ export function BlockEditor() {
   const item = s.inputs?.assigned.find((i) => i.id === id);
   const row = s.sequence?.find((r) => r.id === id && r.kind === "work");
   const pinned = s.pendingPinnedRows.some((r) => r.id === id);
-  const [start, setStart] = useState(row?.start ?? s.inputs?.time.anchor ?? "09:00");
+  const [start, setStart] = useState(row?.start ?? s.inputs?.time.anchor ?? "");
   const [blocks, setBlocks] = useState(id ? effectiveBlocks(s, id) : 1);
   /** Exact minutes as typed — kept verbatim so the durable save can apply
       strict 5-minute validation instead of the Apply path's snapping. */
