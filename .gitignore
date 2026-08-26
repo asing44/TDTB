@@ -8,3 +8,9 @@ node_modules/
 graphify-out/
 schema-hashes.json
 frontend/.tdtb-lock-hash
+
+# BEGIN oh-my-opencode-slim worktrees
+.slim/worktrees/
+.slim/worktrees.json
+# END oh-my-opencode-slim worktrees
+.playwright-mcp/
