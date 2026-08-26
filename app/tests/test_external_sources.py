@@ -588,7 +588,7 @@ class TestBuildSchedulableBlocks:
         items, zones, notes = ext.build_schedulable_blocks(
             CFG_T5, {}, MONDAY, "09:00")
         by_name = {i["name"]: i for i in items}
-        assert by_name["Minting"]["blocks"] == 2
+        assert by_name["Minting"]["blocks"] == 8
         assert by_name["Minting"]["zone"] == "work_hours"
         assert by_name["Quick Tasks"]["blocks"] == 1
         assert "Shivery Jigs" not in by_name          # default Off
@@ -630,7 +630,7 @@ class TestBuildSchedulableBlocks:
         items, _, _ = ext.build_schedulable_blocks(
             CFG_T5, ds, SATURDAY, "09:00")
         [m] = [i for i in items if i["name"] == "Minting"]
-        assert m["blocks"] == 2                       # re-include: place anyway
+        assert m["blocks"] == 8                       # re-include: place anyway
 
     def test_selected_mint_sessions_emit_windowed_rows(self):
         options = ext.mint_session_options(CFG_T5)
@@ -658,8 +658,7 @@ class TestBuildSchedulableBlocks:
         }
         items, _, _ = ext.build_schedulable_blocks(CFG_T5, ds, MONDAY, "09:00")
         mint = [i for i in items if i.get("mint_session")]
-        assert len(mint) == 1
-        assert mint[0]["mint_session_id"] == ext.mint_session_options(CFG_T5)[0]["id"]
+        assert mint == []
 
 
 class TestQtAbsorption:

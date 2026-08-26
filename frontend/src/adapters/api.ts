@@ -236,6 +236,7 @@ export class ApiAdapter implements Adapter {
       assigned: shapeAssignedWire(raw.digest?.assigned ?? [], ctx.included),
       config: raw.config ?? {},
       anchored_blocks: raw.anchored_blocks ?? [],
+      day_semantics: raw.day_semantics ?? {},
       overlap_grants: (ctx.overlapGrants ?? []).map(grantToWire),
       planning_config_fingerprint: ctx.planningConfigFingerprint ?? raw.planning_config_fingerprint ?? "",
       pinned_rows: (ctx.pinnedRows ?? []).map(rowToWire),

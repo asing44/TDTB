@@ -1123,6 +1123,24 @@ describe("FEEDBACK-28 stale saved Mint filtering at the payload boundary", () =>
     };
   }
 
+  it("normalizes stale Mint sessions during load", async () => {
+    const { store, adapter, controller } = harness("ready");
+    vi.spyOn(adapter, "loadPlanInputs").mockResolvedValue(august17Inputs(adapter) as never);
+
+    await controller.load();
+
+    expect(store.getState().inputs!.daySetup).toMatchObject({
+      workAllotmentMinutes: 30,
+      schedulable: {
+        minting: {
+          on: true,
+          n: 1,
+          sessions: [mintSessions[2].id],
+        },
+      },
+    });
+  });
+
   it("filters wall-conflicting saved Mint sessions before the /day-setup payload is emitted", async () => {
     const { store, adapter, controller } = harness("ready");
     vi.spyOn(adapter, "loadPlanInputs").mockResolvedValue(august17Inputs(adapter) as never);

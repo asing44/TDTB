@@ -10,7 +10,7 @@ export function AnchoredEditor() {
   const id = s.ui.editorAnchor;
   const block = s.inputs?.anchored.find((a) => a.id === id && a.kind !== "calendar");
   const initial = block ? anchoredOverrideOf(block, s.daySetup.anchored[block.id]) : null;
-  const [start, setStart] = useState(initial?.time ?? block?.start ?? "09:00");
+  const [start, setStart] = useState(initial?.time ?? block?.start ?? "");
   const [blocks, setBlocks] = useState(block && initial ? anchoredBlocks(block, initial) : 1);
   const [saving, setSaving] = useState(false);
   const close = () => store.dispatch({ type: "UI", patch: { editorAnchor: null } });

@@ -356,6 +356,7 @@ class ValidateSequenceRequest(BaseModel):
     assigned: list[dict[str, Any]]
     anchored_blocks: list[dict[str, Any]]
     config: dict[str, Any]
+    day_semantics: dict[str, Any] = Field(default_factory=dict)
     overlap_grants: list[dict[str, Any]] = Field(default_factory=list)
     planning_config_fingerprint: str = ""
     pinned_rows: list[dict[str, Any]] = Field(default_factory=list)
@@ -470,6 +471,34 @@ def _read_today_runstate(vault: Path, today: date) -> dict[str, Any]:
     return gather._extract_json_block(
         rs_path.read_text(encoding="utf-8", errors="replace")
     ) or {}
+
+
+def _authoritative_day_semantics(
+    config: dict[str, Any] | None,
+    day_setup: dict[str, Any],
+    today: date,
+) -> dict[str, Any]:
+    """Recompute day semantics from request config and server state.
+
+    Sequence clients may echo stale or partial ``day_semantics``. The request
+    config plus today's persisted setup are the authoritative inputs; direct-
+    section compatibility keeps this route independent of reader internals.
+    """
+    return day_semantics.resolve_day_contract(
+        config or {}, "", today, dated_overrides=day_setup,
+    )
+
+
+def _normalize_route_day_setup(
+    config: dict[str, Any],
+    day_setup: dict[str, Any],
+    today: date,
+    resolved_day_semantics: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Canonicalize dated Mint state before any route emits or validates it."""
+    return external_sources.normalize_mint_day_setup(
+        config, day_setup, today, resolved_day_semantics,
+    )
 
 
 def _todoist_completed_probe(client: Any):
@@ -784,6 +813,7 @@ def _capacity_frame(
     *,
     extra_selected_blocks: int | float = 0,
     now: datetime | None = None,
+    today: date | None = None,
 ) -> tuple[time_engine.TimeFrame, capacity_mod.Capacity]:
     """Shared time-frame + 6-segment capacity assembly (ui-revamp T2).
 
@@ -793,8 +823,9 @@ def _capacity_frame(
     default was the G27 divergence.
     """
     defaults: dict[str, Any] = dict(config.get("Defaults") or {})
+    effective_now = now or datetime.now()
     frame = time_engine.compute_time_frame(
-        now=now or datetime.now(),
+        now=effective_now,
         config_eod=time_engine.to_hhmm(defaults.get("eod")) or "23:59",
         round_to_minutes=int(defaults.get("anchor.round_to_minutes") or 15),
         # T28: a dismissed (not-attending) calendar row frees its interval —
@@ -819,12 +850,40 @@ def _capacity_frame(
     anch_blk = sum(_spec_blocks(s) for s in anchored_specs.values()
                    if not shadow._anchored_block_off(s))
     habits_blk = _blocks_of_minutes(int(habits.get("est_minutes") or 0))
+    effective_today = today or effective_now.date()
+    # Normalize persisted/legacy session selections at the capacity boundary
+    # too. This keeps the capacity amount identical to the schedulable rows
+    # even when the caller supplied stale IDs or a legacy all-session list.
+    day_setup = _normalize_route_day_setup(
+        config, day_setup, effective_today, resolved_day_semantics,
+    )
     sched = dict(day_setup.get("schedulable") or {})
     # Mint is reserved by the resolved integer-minute allotment, independent
     # of the legacy schedulable row. Never count canonical Minting twice.
-    semantics = resolved_day_semantics or {}
-    mint_minutes = int(semantics.get("effective_allotment_minutes") or 0)
-    allotted_work_blk = mint_minutes / 30
+    # Mint rows and capacity use the same active/capped schedule. Do not
+    # independently rebuild this from ``or 0``: absent semantics mean the
+    # healthy default, while zero and default-off days remain real disables.
+    schedule = external_sources.mint_schedule(
+        config, day_setup, effective_today, frame.anchor,
+        resolved_day_semantics,
+    )
+    allotted_work_blk = schedule.active_blocks
+    # Capacity callers may have an explicit semantic allotment without any
+    # configured Trinoor placement windows. Preserve that abstract work
+    # reservation, but leave row generation off because there is no concrete
+    # window in which to place Mint.
+    minting_setup = (sched.get("minting") or {})
+    if (
+        allotted_work_blk == 0
+        and schedule.effective_minutes > 0
+        and not external_sources._trinoor_slots(config)
+        and (
+            effective_today.weekday() < 5
+            or schedule.explicit_on
+        )
+        and minting_setup.get("on") is not False
+    ):
+        allotted_work_blk = schedule.effective_minutes / external_sources.MINT_SESSION_MINUTES
     work_busy_blk = _calendar_union_blocks(
         busy_blocks, frame.anchor, frame.effective_eod, "work"
     )
@@ -1251,6 +1310,14 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
         resolved_day_semantics = day_semantics.resolve_day_contract(
             result, today, dated_overrides=day_setup,
         )
+        normalized_day_setup = _normalize_route_day_setup(
+            config, day_setup, today, resolved_day_semantics,
+        )
+        if normalized_day_setup != day_setup:
+            day_setup = normalized_day_setup
+            resolved_day_semantics = day_semantics.resolve_day_contract(
+                result, today, dated_overrides=day_setup,
+            )
         # Expose configured Trinoor windows as concrete Mint-session choices
         # even when the current allotment is zero. The user can enable the
         # allotment and choose sessions in one Day Setup save.
@@ -1413,6 +1480,14 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
         resolved_day_semantics = day_semantics.resolve_day_contract(
             result, today, dated_overrides=merged,
         )
+        normalized_merged = _normalize_route_day_setup(
+            config, merged, today, resolved_day_semantics,
+        )
+        if normalized_merged != merged:
+            merged = normalized_merged
+            resolved_day_semantics = day_semantics.resolve_day_contract(
+                result, today, dated_overrides=merged,
+            )
         planning_config_fingerprint = day_semantics.planning_config_fingerprint(
             result, today, dated_overrides=merged,
         )
@@ -1689,22 +1764,40 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
         ).anchor
 
         defaults_off = shadow.past_window_defaults(config, anchor, today)
+        present = body.model_fields_set
+        existing_setup = {
+            k: v for k, v in _read_today_runstate(vault, today).items()
+            if k in _DAY_SETUP_KEYS and v not in ("", None)
+        }
+        normalization_overrides = dict(existing_setup)
+        if "day_preset" in present:
+            normalization_overrides["day_preset"] = body.day_preset
+        if "work_allotment_minutes" in present:
+            normalization_overrides["work_allotment_minutes"] = body.work_allotment_minutes
+        normalization_semantics = day_semantics.resolve_day_contract(
+            result, today, dated_overrides=normalization_overrides,
+        )
         re_included: set[str] = set()
         for o in body.anchored or []:
             name = str(o.get("id") or "")
             on = o.get("on") is True or (o.get("skip_today") is False)
             if name in defaults_off and on and not o.get("skip_today"):
                 re_included.add(name)
-        schedulable = body.schedulable
+        # Merge the request over today's state before normalization. This
+        # repairs stale persisted IDs even when the user only edits another
+        # Day Setup field, while preserving omitted dated overrides.
+        candidate_setup = dict(existing_setup)
+        if body.schedulable is not None:
+            candidate_setup["schedulable"] = body.schedulable
+        if "day_preset" in present:
+            candidate_setup["day_preset"] = body.day_preset
+        if "work_allotment_minutes" in present:
+            candidate_setup["work_allotment_minutes"] = body.work_allotment_minutes
+        candidate_setup = _normalize_route_day_setup(
+            config, candidate_setup, today, normalization_semantics,
+        )
+        schedulable = candidate_setup.get("schedulable")
         minting = (schedulable or {}).get("minting") or {}
-        if isinstance(minting, dict) and isinstance(minting.get("sessions"), list):
-            minting = external_sources.normalize_mint_session_override(
-                config, minting
-            )
-            schedulable = {
-                **(schedulable or {}),
-                "minting": minting,
-            }
         if "Minting" in defaults_off and minting.get("on"):
             re_included.add("Minting")
 
@@ -1728,7 +1821,20 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
         # detected via model_fields_set so a default value never counts as
         # present. work_allotment_minutes is validated as a nonnegative 15-
         # divisible integer when not None.
-        present = body.model_fields_set
+        explicit_mint_disable = (
+            "work_allotment_minutes" in present
+            and body.work_allotment_minutes == 0
+        )
+        if explicit_mint_disable:
+            # A dated zero is authoritative even when the client sends stale
+            # selected sessions, or omits schedulable entirely. The RMW below
+            # also clears any previously persisted selection.
+            minting = {**minting, "on": False, "n": 0, "sessions": []}
+            schedulable = {
+                **(schedulable or {}),
+                "minting": minting,
+            }
+            updates["schedulable"] = schedulable
         if "day_preset" in present:
             updates["day_preset"] = body.day_preset
         if "work_allotment_minutes" in present:
@@ -1780,7 +1886,17 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
         # FEEDBACK-24: this successful POST is the ONLY writer of the explicit
         # confirmation, scoped to today's dated note.
         updates[runstate.DAY_SETUP_CONFIRMED_KEY] = True
-        state = runstate.update_runstate(vault, today, updates)
+        def _save_day_setup(state: dict[str, Any]) -> None:
+            state.update(updates)
+            if not explicit_mint_disable:
+                return
+            current_sched = dict(state.get("schedulable") or {})
+            current_mint = dict(current_sched.get("minting") or {})
+            current_mint.update({"on": False, "n": 0, "sessions": []})
+            current_sched["minting"] = current_mint
+            state["schedulable"] = current_sched
+
+        state = runstate.update_runstate(vault, today, _save_day_setup)
         return {"ok": True, "re_included": sorted(re_included),
                 "day_setup_confirmed": True,
                 "day_setup": {k: state.get(k) for k in _DAY_SETUP_KEYS}}
@@ -1898,6 +2014,15 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
         day_setup = {k: v for k, v in _read_today_runstate(vault, today).items()
                      if k in _DAY_SETUP_KEYS and v not in ("", None)}
         defaults: dict[str, Any] = dict((body.config or {}).get("Defaults") or {})
+        resolved_day_semantics = _authoritative_day_semantics(
+            body.config, day_setup, today,
+        )
+        day_setup = _normalize_route_day_setup(
+            body.config or {}, day_setup, today, resolved_day_semantics,
+        )
+        resolved_day_semantics = _authoritative_day_semantics(
+            body.config, day_setup, today,
+        )
         # T28: dismissed calendar rows (server-authoritative runstate merge)
         # free their interval — no frame truncation, no wall (dropped later
         # by _judged_anchored's skip filter).
@@ -1918,7 +2043,7 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
         anchor = frame.anchor
         blocks, zone_rows, block_notes = external_sources.build_schedulable_blocks(
             body.config or {}, day_setup, today, anchor,
-            resolved_day_semantics=body.day_semantics,
+            resolved_day_semantics=resolved_day_semantics,
         )
         # FEEDBACK-27: the effective anchored set judgment/validation should
         # see (Day Setup merged, suppressed/quarantined dropped) is also the
@@ -1984,11 +2109,12 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
         seq_config = {
             **(body.config or {}),
             "time": frame.as_dict(),
-            "resolved_zones": body.day_semantics.get("enabled_zones") or [],
+            "resolved_zones": resolved_day_semantics.get("enabled_zones") or [],
             "overlap_permissions_raw": (
-                body.day_semantics.get("overlap_permissions_raw") or ""
+                resolved_day_semantics.get("overlap_permissions_raw") or ""
             ),
             "planning_config_fingerprint": body.planning_config_fingerprint,
+            "resolved_day_semantics": resolved_day_semantics,
         }
 
         pinned_walls = [
@@ -2092,6 +2218,15 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
         day_setup = {k: v for k, v in _read_today_runstate(vault, today).items()
                      if k in _DAY_SETUP_KEYS and v not in ("", None)}
         defaults = dict((body.config or {}).get("Defaults") or {})
+        resolved_day_semantics = _authoritative_day_semantics(
+            body.config, day_setup, today,
+        )
+        day_setup = _normalize_route_day_setup(
+            body.config or {}, day_setup, today, resolved_day_semantics,
+        )
+        resolved_day_semantics = _authoritative_day_semantics(
+            body.config, day_setup, today,
+        )
         # T28: mirror /sequence — dismissed calendar rows free their interval.
         anchored_effective = shadow.apply_calendar_participation(
             body.anchored_blocks, day_setup)
@@ -2111,7 +2246,7 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
         # Shivery rows in a proposal don't validate as foreign extras here.
         blocks, _zone_rows, _notes = external_sources.build_schedulable_blocks(
             body.config or {}, day_setup, today, frame.anchor,
-            resolved_day_semantics=getattr(body, "day_semantics", None),
+            resolved_day_semantics=resolved_day_semantics,
         )
         qt_on = any(b.get("qt") for b in blocks)
         assigned, _qt = external_sources.absorb_quick_tasks(list(body.assigned), qt_on)
@@ -2124,6 +2259,18 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
         # Injected blocks are OPTIONAL here (unlike /sequence, which requires
         # its own injections): the user may have dragged them off the plan.
         optional = absorbed | {str(b.get("name")) for b in blocks}
+        mint_conflicts = external_sources.stale_mint_conflicts(
+            blocks, _judged_anchored(body.anchored_blocks, day_setup),
+        )
+        if mint_conflicts:
+            return {
+                "ok": False,
+                "hard_errors": [
+                    "selected Mint sessions conflict with fixed or work walls"
+                ],
+                "warnings": [],
+                "conflicts": mint_conflicts,
+            }
         pin_errors = sequence.validate_pinned_rows(body.pinned_rows, body.assigned)
         if pin_errors:
             return {"ok": False, "hard_errors": pin_errors, "warnings": []}
