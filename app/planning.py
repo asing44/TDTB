@@ -51,6 +51,7 @@ class PreparedSequence:
     fixed_schedulable_rows: list[dict[str, Any]] = field(default_factory=list)
     snapshot: dict[str, Any] = field(default_factory=dict)
     sequence: list[dict[str, Any]] = field(default_factory=list)
+    preflight_conflicts: list[dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass
@@ -217,6 +218,7 @@ def prepare_sequence(inputs: dict[str, Any], *, mode: str) -> PreparedSequence:
         fixed_schedulable_rows=fixed_rows,
         snapshot=snapshot,
         sequence=copy.deepcopy(data.get("sequence") or []),
+        preflight_conflicts=conflicts,
     )
 
 
@@ -236,6 +238,7 @@ def _proposal_config(prepared: PreparedSequence) -> dict[str, Any]:
         "overlap_permissions_raw": (
             prepared.day_semantics.get("overlap_permissions_raw") or ""
         ),
+        "resolved_day_semantics": copy.deepcopy(prepared.day_semantics),
         "planning_config_fingerprint": prepared.planning_config_fingerprint,
     }
 
@@ -332,6 +335,13 @@ def validate_revalidation(prepared: PreparedSequence) -> sequence.ValidationResu
     if actual != expected:
         return sequence.ValidationResult(
             ok=False, hard_errors=["pinned rows changed from immutable snapshot"]
+        )
+
+    if prepared.preflight_conflicts:
+        return sequence.ValidationResult(
+            ok=False,
+            hard_errors=["selected Mint sessions conflict with fixed or work walls"],
+            conflicts=copy.deepcopy(prepared.preflight_conflicts),
         )
 
     return sequence.validate_sequence(

@@ -3,6 +3,9 @@ import { toMinutes } from "./time";
 import type { WallInterval } from "./overflow";
 
 export const MINT_SESSION_MINUTES = 30;
+/** Healthy Mint default: eight 30-minute sessions (four hours). */
+export const MINT_DEFAULT_BLOCKS = 8;
+export const MINT_DEFAULT_MINUTES = MINT_DEFAULT_BLOCKS * MINT_SESSION_MINUTES;
 
 export function validMintSessionIds(
   sessions: MintSession[],
@@ -23,12 +26,14 @@ function sessionOverlapsWall(
   session: MintSession,
   walls: WallInterval[],
 ): boolean {
-  if (walls.length === 0) return false;
   const start = toMinutes(session.start);
   const end = toMinutes(session.end);
+  // Invalid session intervals must never become selectable. This keeps stale
+  // or hand-edited rows fail-closed even when there are no walls to compare.
   if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) {
-    return false;
+    return true;
   }
+  if (walls.length === 0) return false;
   return walls.some((w) => end > w.start && w.end > start);
 }
 
@@ -42,7 +47,6 @@ export function wallFreeMintSessionIds(
   walls: WallInterval[] = [],
 ): string[] {
   const valid = validMintSessionIds(sessions, ids);
-  if (walls.length === 0) return valid;
   return valid.filter((id) => {
     const session = sessions.find((candidate) => candidate.id === id);
     return session ? !sessionOverlapsWall(session, walls) : true;
@@ -85,7 +89,7 @@ function mintSessionsFromAnchor(
  *
  * Mint session rows are fixed 30-minute windows. The UI therefore snaps a
  * configured 15-minute allotment to the nearest session count and lets the
- * checked-session total become the saved daily value. Without an anchor, the
+ * selected-session total becomes the saved daily value. Without an anchor, the
  * historical first-N behavior remains the fallback for older callers.
  * FEEDBACK-28: sessions overlapping a fixed or work wall are skipped first,
  * so a wall-conflicting session never becomes a Mint commitment.
@@ -114,7 +118,7 @@ export function mintMinutesForSessionIds(
   return validMintSessionIds(sessions, ids).length * MINT_SESSION_MINUTES;
 }
 
-/** Resolve old/inconsistent saved state into one visible checkbox selection.
+/** Resolve old/inconsistent saved state into one visible session selection.
  *
  * A partial saved list is treated as an intentional location choice. An old
  * "all sessions" list with a different allotment was produced by the former
@@ -131,10 +135,14 @@ export function initialMintSessionIds(
 ): string[] {
   if (override?.on === false) return [];
   if (Array.isArray(override?.sessions)) {
-    const selected = wallFreeMintSessionIds(sessions, override.sessions, walls);
+    // Detect the former "all sessions" payload before wall filtering. A
+    // newly-conflicting wall must not make an old all-session payload look
+    // like an intentional partial selection and inflate its allotment.
+    const rawSelected = validMintSessionIds(sessions, override.sessions);
+    const selected = wallFreeMintSessionIds(sessions, rawSelected, walls);
     const allotment = Number.isFinite(allotmentMinutes) ? Math.max(0, allotmentMinutes) : 0;
     const isLegacyAll =
-      selected.length === sessions.length &&
+      rawSelected.length === sessions.length &&
       selected.length > 0 &&
       allotment !== selected.length * MINT_SESSION_MINUTES;
     if (!isLegacyAll) {

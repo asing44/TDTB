@@ -171,12 +171,12 @@ class TestAllotmentValidation:
     def test_default_allotment_fallback_when_defaults_absent(self):
         sections = {"Day Presets": []}
         proj = day_semantics.project_day_semantics(sections, "")
-        assert proj.default_allotment_minutes == 0
+        assert proj.default_allotment_minutes == 240
 
     def test_default_allotment_fallback_when_key_absent(self):
         sections = {"Defaults": {"eod": "11:59 PM"}}
         proj = day_semantics.project_day_semantics(sections, "")
-        assert proj.default_allotment_minutes == 0
+        assert proj.default_allotment_minutes == 240
 
 
 # ---------------------------------------------------------------------------
@@ -419,7 +419,7 @@ class TestEmptyAbsent:
         resolved = day_semantics.resolve_day(proj, datetime.date(2026, 7, 20))
         assert resolved.preset is None
         assert resolved.resolution_source == "fallback"
-        assert resolved.work_allotment_minutes == 0
+        assert resolved.work_allotment_minutes == 240
 
 
 # ---------------------------------------------------------------------------

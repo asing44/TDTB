@@ -58,6 +58,23 @@ describe("Mint session/allotment sync", () => {
     )).toEqual(["mint:afternoon:13:30"]);
   });
 
+  it("classifies raw valid all-session saves before wall filtering", () => {
+    const allSessions: MintSession[] = [
+      ...sessions,
+      { id: "mint:afternoon:14:00", name: "Mint Afternoon · 14:00", slot: "Afternoon", start: "14:00", end: "14:30" },
+      { id: "mint:afternoon:14:30", name: "Mint Afternoon · 14:30", slot: "Afternoon", start: "14:30", end: "15:00" },
+    ];
+    const wall: WallInterval[] = [{ start: 9 * 60, end: 9 * 60 + 30 }];
+
+    expect(initialMintSessionIds(
+      allSessions,
+      { on: true, sessions: allSessions.map((session) => session.id) },
+      60,
+      undefined,
+      wall,
+    )).toEqual(["mint:morning:08:30", "mint:afternoon:13:30"]);
+  });
+
   it("rebuilds the former all-session default from the saved total", () => {
     expect(initialMintSessionIds(
       sessions,
@@ -131,6 +148,21 @@ describe("FEEDBACK-28 wall-aware Mint selection", () => {
       "13:00",
       oppdWall,
     )).toEqual(["mint:afternoon:14:00"]);
+  });
+
+  it("keeps half-open wall boundaries selectable", () => {
+    const boundarySessions: MintSession[] = [
+      { id: "before", name: "Before", slot: "Day", start: "08:30", end: "09:00" },
+      { id: "overlap", name: "Overlap", slot: "Day", start: "09:15", end: "09:45" },
+      { id: "after", name: "After", slot: "Day", start: "10:00", end: "10:30" },
+    ];
+    const wall: WallInterval[] = [{ start: 9 * 60 + 30, end: 10 * 60 }];
+
+    expect(wallFreeMintSessionIds(
+      boundarySessions,
+      boundarySessions.map((session) => session.id),
+      wall,
+    )).toEqual(["before", "after"]);
   });
 
   it("wallFreeMintSessionIds drops only the wall-conflicting saved ids", () => {

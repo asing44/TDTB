@@ -166,9 +166,17 @@ class ValidationResult:
     ok: bool
     hard_errors: list[str] = field(default_factory=list)
     warnings: list[dict[str, str]] = field(default_factory=list)
+    conflicts: list[dict[str, Any]] = field(default_factory=list)
 
     def as_dict(self) -> dict[str, Any]:
-        return {"ok": self.ok, "hard_errors": self.hard_errors, "warnings": self.warnings}
+        result = {
+            "ok": self.ok,
+            "hard_errors": self.hard_errors,
+            "warnings": self.warnings,
+        }
+        if self.conflicts:
+            result["conflicts"] = self.conflicts
+        return result
 
 
 # ---------------------------------------------------------------------------

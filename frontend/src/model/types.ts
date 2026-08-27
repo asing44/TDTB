@@ -185,6 +185,9 @@ export interface DaySemantics {
   effectiveAllotmentMinutes: number;
   defaultAllotmentMinutes: number;
   mintEnabled: boolean;
+  /** Backend-resolved signal for an explicit positive Mint allotment below
+      the healthy 240-minute (8-block) default. Optional for legacy fixtures. */
+  mintBelowDefault?: boolean;
   warnings: string[];
   errors: string[];
   overlapPermissionsRaw: string;

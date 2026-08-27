@@ -161,7 +161,7 @@ class TestG27Pins:
     def test_fifteen_minute_override_costs_half_a_block(self, client):
         body = _get(client, {"buffering": "off"}, selected=[15, 0]).json()
         assert body["segments"]["selected"] == 0.5
-        assert body["free"] == 17.5
+        assert body["free"] == 9.5  # 24 − 6 anchored − 8 Mint − 0.5 selected
 
     def test_midnight_eod_before_anchor_never_wraps(self, client):
         # Skill: EOD ≤ anchor → "no schedulable time", NOT a +24h wrap
@@ -205,17 +205,19 @@ class TestDaySetupInputs:
             "/capacity-preview", params={"day_setup": json.dumps(FRAME)}
         )
         assert r.json()["segments"]["buffer"] == 0
-        # query override beats persisted
+        # query override beats persisted; the default Mint allotment consumes
+        # 8 of the 18 raw remaining blocks, leaving 10 for buffering.
         body = _get(client, {"buffering": "standard"}).json()
-        assert body["segments"]["buffer"] == 4  # ceil(18 × 0.19)
+        assert body["segments"]["buffer"] == 2  # ceil(10 × 0.19)
 
 
 class TestOverAndErrors:
     def test_over_is_blocks_over_and_free_signed(self, client):
-        # total 4 (08:00–10:00), anchored 6 → free = 4 − 6 = −2 (signed).
+        # total 4 (08:00–10:00), anchored 6 and default Mint 8 →
+        # free = 4 − 6 − 8 = −10 (signed).
         body = _get(client, {"anchor": "08:00", "eod": "10:00"}).json()
-        assert body["free"] == -2
-        assert body["over"] == 2
+        assert body["free"] == -10
+        assert body["over"] == 10
         assert body["overassigned"] is True
 
     def test_over_zero_when_free_positive(self, client):

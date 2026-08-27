@@ -410,6 +410,105 @@ describe("T12 anchored-block adjustment", () => {
 });
 
 describe("T18g Day Setup semantics", () => {
+  function mintSessions(count: number) {
+    return Array.from({ length: count }, (_, index) => {
+      const start = 8 * 60 + index * 30;
+      const hhmm = (minutes: number) =>
+        `${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`;
+      return {
+        id: `mint:default:${index}`,
+        name: `Mint ${index + 1}`,
+        slot: "Day",
+        start: hhmm(start),
+        end: hhmm(start + 30),
+      };
+    });
+  }
+
+  it("defaults Mint to eight 30-minute sessions and exposes no checkbox controls", () => {
+    const { ui, store } = makeHarness("ready");
+    const inputs = store.getState().inputs!;
+    store.dispatch({
+      type: "INPUTS_LOADED",
+      inputs: {
+        ...inputs,
+        daySetup: { ...inputs.daySetup, schedulable: { minting: { on: true } } },
+        daySemantics: {
+          ...inputs.daySemantics,
+          effectiveAllotmentMinutes: 0,
+          defaultAllotmentMinutes: 0,
+          mintSessions: mintSessions(10),
+        },
+      },
+      ledger: store.getState().ledger!,
+    });
+    store.dispatch({ type: "UI", patch: { setupOpen: true } });
+    const { getByLabelText, container, queryByRole } = ui(<SetupDrawer />);
+
+    expect((getByLabelText("Mint allotment") as HTMLInputElement).value).toBe("240");
+    expect((getByLabelText("Mint session count") as HTMLInputElement).value).toBe("8");
+    expect(container.querySelectorAll('input[type="checkbox"]').length).toBe(0);
+    expect(queryByRole("status", { name: /below the 8-block/i })).toBeNull();
+  });
+
+  it("allows fewer than eight Mint blocks but warns clearly", () => {
+    const { ui, store } = makeHarness("ready");
+    const inputs = store.getState().inputs!;
+    store.dispatch({
+      type: "INPUTS_LOADED",
+      inputs: {
+        ...inputs,
+        daySetup: { ...inputs.daySetup, schedulable: { minting: { on: true } } },
+        daySemantics: { ...inputs.daySemantics, mintSessions: mintSessions(10) },
+      },
+      ledger: store.getState().ledger!,
+    });
+    store.dispatch({ type: "UI", patch: { setupOpen: true } });
+    const { getByLabelText, getByText } = ui(<SetupDrawer />);
+    fireEvent.input(getByLabelText("Mint session count"), { target: { value: "7" } });
+
+    expect((getByLabelText("Mint allotment") as HTMLInputElement).value).toBe("210");
+    expect(getByText("Mint is below the 8-block (4-hour) daily default. You can continue with less.")).toBeTruthy();
+    expect((getByText("Save day setup").closest("button") as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it("warns for a positive Mint allotment without concrete session rows", () => {
+    const { ui, store } = makeHarness("ready");
+    const inputs = store.getState().inputs!;
+    store.dispatch({
+      type: "INPUTS_LOADED",
+      inputs: {
+        ...inputs,
+        daySetup: {
+          ...inputs.daySetup,
+          workAllotmentMinutes: 180,
+          schedulable: { minting: { on: true } },
+        },
+        daySemantics: {
+          ...inputs.daySemantics,
+          effectiveAllotmentMinutes: 180,
+          defaultAllotmentMinutes: 240,
+          mintBelowDefault: true,
+          mintSessions: [],
+        },
+      },
+      ledger: store.getState().ledger!,
+    });
+    store.dispatch({ type: "UI", patch: { setupOpen: true } });
+    const { getByLabelText, getByText, queryByRole } = ui(<SetupDrawer />);
+    const allotment = getByLabelText("Work allotment") as HTMLInputElement;
+    const warning = "Mint is below the 8-block (4-hour) daily default. You can continue with less.";
+
+    expect(allotment.value).toBe("180");
+    expect(getByText(warning)).toBeTruthy();
+    fireEvent.input(allotment, { target: { value: "0" } });
+    expect(queryByRole("status", { name: /below the 8-block/i })).toBeNull();
+    fireEvent.input(allotment, { target: { value: "180" } });
+    expect(getByText(warning)).toBeTruthy();
+    fireEvent.input(allotment, { target: { value: "240" } });
+    expect(queryByRole("status", { name: /below the 8-block/i })).toBeNull();
+  });
+
   it("shows automatic preset and config-prefilled Work allotment including zero/reset", () => {
     const { ui, store } = makeHarness("ready");
     const inputs = store.getState().inputs!;
@@ -452,7 +551,7 @@ describe("T18g Day Setup semantics", () => {
     expect(sequence).not.toHaveBeenCalled();
   });
 
-  it("keeps checked Mint sessions, slider total, and saved payload synchronized", async () => {
+  it("keeps Mint session slider, allotment, and saved payload synchronized", async () => {
     const { ui, store, controller } = makeHarness("ready");
     const inputs = store.getState().inputs!;
     // Wall-free sessions (the ready scenario's calendar walls sit 09:15-15:30):
@@ -492,10 +591,10 @@ describe("T18g Day Setup semantics", () => {
     const { getByLabelText, getByText } = ui(<SetupDrawer />);
 
     expect((getByLabelText("Mint allotment") as HTMLInputElement).value).toBe("30");
-    fireEvent.click(getByLabelText("Enable Mint Morning · 08:30"));
+    fireEvent.input(getByLabelText("Mint session count"), { target: { value: "2" } });
     expect((getByLabelText("Mint allotment") as HTMLInputElement).value).toBe("60");
     fireEvent.input(getByLabelText("Mint allotment"), { target: { value: "90" } });
-    expect(getByLabelText("Disable Mint Afternoon · 14:00")).toBeTruthy();
+    expect(getByText("3 / 3")).toBeTruthy();
 
     await act(async () => {
       fireEvent.click(getByText("Save day setup"));
@@ -545,14 +644,13 @@ describe("T18g Day Setup semantics", () => {
     });
     store.dispatch({ type: "SETUP_SAVED", daySetup });
     store.dispatch({ type: "UI", patch: { setupOpen: true } });
-    const { getByLabelText } = ui(<SetupDrawer />);
+    const { getByLabelText, getAllByText } = ui(<SetupDrawer />);
 
-    expect(getByLabelText("Enable Mint Morning · 08:30")).toBeTruthy();
-    expect(getByLabelText("Disable Mint Afternoon · 13:30")).toBeTruthy();
+    expect((getByLabelText("Mint session count") as HTMLInputElement).value).toBe("2");
+    expect(getAllByText("Selected", { exact: true }).length).toBe(2);
 
     fireEvent.input(getByLabelText("Start (anchor)"), { target: { value: "08:00" } });
-    expect(getByLabelText("Disable Mint Morning · 08:30")).toBeTruthy();
-    expect(getByLabelText("Enable Mint Afternoon · 13:30")).toBeTruthy();
+    expect((getByLabelText("Mint session count") as HTMLInputElement).value).toBe("2");
   });
 
   /* FEEDBACK-28: the August 17 incident — Day Setup selected the first
@@ -594,13 +692,16 @@ describe("T18g Day Setup semantics", () => {
       return { ...h, sessions };
     }
 
-    it("default checks never include the wall-conflicting 15:00 session", () => {
+    it("default selection never includes the wall-conflicting 15:00 session", () => {
       const { ui } = mintWallHarness();
-      const { getByLabelText } = ui(<SetupDrawer />);
+      const { getByText } = ui(<SetupDrawer />);
       // The stale saved choice [08:30, 15:00] keeps its wall-free half;
       // 15:00-15:30 overlaps OPPD 15:00-15:30 and is never restored.
-      expect(getByLabelText("Disable Mint Morning · 08:30")).toBeTruthy();
-      expect(getByLabelText("Enable Mint Afternoon · 15:00")).toBeTruthy();
+      expect(getByText("Mint Morning · 08:30").closest(".mint-session-row")?.className)
+        .toContain("mint-session-row--selected");
+      expect(getByText("Mint Afternoon · 15:00").closest(".mint-session-row")?.className)
+        .not.toContain("mint-session-row--selected");
+      expect(getByText("Blocked by wall")).toBeTruthy();
     });
 
     it("edited allotment still excludes the wall-conflicting session and save payload is clean", async () => {
@@ -608,12 +709,9 @@ describe("T18g Day Setup semantics", () => {
       const save = vi.spyOn(controller, "saveDaySetup").mockResolvedValue();
       const { getByLabelText, getByText } = ui(<SetupDrawer />);
       const slider = getByLabelText("Mint allotment") as HTMLInputElement;
-      // 3 sessions × 30 = 90 is the max; the 15:00 row stays out of it.
+      // The wall-conflicting row is not part of the selectable slider range.
       fireEvent.input(slider, { target: { value: "90" } });
-      expect(getByLabelText("Enable Mint Afternoon · 15:00")).toBeTruthy();
       expect((getByLabelText("Mint allotment") as HTMLInputElement).value).toBe("60");
-      // Explicitly enabling the wall row does not smuggle it into the payload.
-      fireEvent.click(getByLabelText("Enable Mint Afternoon · 15:00"));
       await act(async () => {
         fireEvent.click(getByText("Save day setup"));
       });
@@ -711,6 +809,29 @@ describe("T13 canvas deletion", () => {
     expect(getByLabelText("Template zones").textContent).toContain("Mint");
     expect(getByLabelText("Allowed overlap cluster").textContent).toContain("Magic Mirror");
     expect(getByLabelText("Allowed overlap cluster").textContent).toContain("Pairing");
+  });
+
+  it("derives execution card time labels from the supplied row interval", () => {
+    const h = makeHarness("verified");
+    const inputs = h.store.getState().inputs!;
+    h.store.dispatch({
+      type: "INPUTS_LOADED",
+      inputs: { ...inputs, time: { ...inputs.time, now: "06:20" } },
+      ledger: h.store.getState().ledger!,
+    });
+    h.store.dispatch({
+      type: "SEQUENCE_OK",
+      sequence: [{ id: "Magic Mirror", start: "06:10", end: "06:55", zone: null, kind: "work" }],
+      warnings: [],
+      fingerprint: "fixed",
+      anchoredSourceFingerprint: inputs.anchoredSourceFingerprint,
+      planningConfigFingerprint: inputs.planningConfigFingerprint,
+      ledger: h.store.getState().ledger!,
+    });
+    h.store.dispatch({ type: "COMMIT_DONE", report: { status: "ok", surfaces: [], verifyFailures: [] } });
+
+    const { getByText } = h.ui(<ExecutionView />);
+    expect(getByText("6:10 AM – 6:55 AM")).toBeTruthy();
   });
 
   it("T20: runtime verbs absent before a live commit", () => {

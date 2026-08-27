@@ -78,12 +78,12 @@ class TestMintAllotmentDerivation:
         assert m["blocks"] == 10
         assert m["duration"] == 300
 
-    def test_no_allotment_context_keeps_legacy_default(self):
-        # No resolved semantics and no dated override: the historical
-        # 2-block default is the contract for callers without allotment state.
+    def test_no_allotment_context_uses_healthy_default(self):
+        # No resolved semantics and no dated override: callers without
+        # allotment state use the healthy 8-block default.
         items, _, _ = ext.build_schedulable_blocks(CFG, {}, MONDAY, "09:00")
         [m] = [i for i in items if i["name"] == "Minting"]
-        assert m["blocks"] == 2
+        assert m["blocks"] == 8
 
     def test_zero_allotment_suppresses_legacy_aggregate_row(self):
         items, _, _ = ext.build_schedulable_blocks(
@@ -515,6 +515,41 @@ def test_august_17_work_wall_also_stops_before_judgment(client, vault, monkeypat
     assert r.json()["detail"]["conflicts"][0]["wall_id"] == "OPPD"
     assert judgment_calls == []
     assert rs.read_runstate(vault, AUG17)["billed_calls"] == 0
+
+
+def test_validate_sequence_surfaces_stale_mint_wall_conflict(client, vault, monkeypatch):
+    """FEEDBACK-27: revalidation must retain the stale-selection preflight.
+
+    The selected Mint row may be absent from a manually edited client layout;
+    the current fixed/work wall must still be reported before the layout is
+    accepted as clean.
+    """
+    _write_cfg(vault)
+    _seed_aug17_mint(vault)
+    _freeze_aug17(monkeypatch)
+    r = client.post("/validate-sequence", headers=_auth(client), json={
+        "sequence": [],
+        "assigned": [],
+        "anchored_blocks": [_oppd_wall()],
+        "config": {"Template Blocks": {"Trinoor Hours": [
+            {"Slot": "Morning", "Start": "8:30 AM", "End": "12:30 PM"},
+            {"Slot": "Afternoon", "Start": "1:30 PM", "End": "5:00 PM"},
+        ]}},
+    })
+    assert r.status_code == 200
+    assert r.json() == {
+        "ok": False,
+        "hard_errors": [
+            "selected Mint sessions conflict with fixed or work walls"
+        ],
+        "warnings": [],
+        "conflicts": [{
+            "mint_id": "Mint Afternoon · 15:00",
+            "mint_interval": {"start": "15:00", "end": "15:30"},
+            "wall_id": "OPPD",
+            "wall_interval": {"start": "15:00", "end": "15:30"},
+        }],
+    }
 
 
 def test_clean_mint_selection_still_sequences(client, vault, monkeypatch):

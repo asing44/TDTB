@@ -407,6 +407,9 @@ export function projectDaySemantics(wire: Wire): DaySemantics {
     effectiveAllotmentMinutes: Number(wire.effective_allotment_minutes ?? 0),
     defaultAllotmentMinutes: Number(wire.default_allotment_minutes ?? 0),
     mintEnabled: wire.mint_enabled === true,
+    ...(Object.prototype.hasOwnProperty.call(wire, "mint_below_default")
+      ? { mintBelowDefault: wire.mint_below_default === true }
+      : {}),
     warnings: (wire.warnings ?? []).map(String),
     errors: (wire.errors ?? []).map(String),
     overlapPermissionsRaw: String(wire.overlap_permissions_raw ?? ""),

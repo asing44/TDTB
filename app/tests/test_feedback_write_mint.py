@@ -306,18 +306,19 @@ class TestMintCapacity300:
         assert m["blocks"] == 10
         assert m["duration"] == 300
 
-    def test_hardcoded_2_block_default_only_without_allotment_context(self):
-        # The historical fallback is pinned ONLY for no-allotment callers so
-        # a 300-minute configuration can never silently fall back to it.
+    def test_missing_allotment_context_uses_healthy_default(self):
+        # The healthy default is used for callers without an allotment context,
+        # so a missing context cannot silently disable Mint.
         items, _, _ = ext.build_schedulable_blocks(CFG, {}, MONDAY, "09:00")
         [m] = [i for i in items if i["name"] == "Minting"]
-        assert m["blocks"] == 2
+        assert m["blocks"] == 8
 
     def test_capacity_frame_reserves_ten_mint_blocks_for_300_minutes(self):
         _time, cap = main_mod._capacity_frame(
             {"Defaults": {"eod": "18:00", "anchor.round_to_minutes": 15,
                           "buffering.off_pct": 0}},
-            {"anchor": "09:00", "eod": "18:00", "buffering": "off"},
+            {"anchor": "09:00", "eod": "18:00", "buffering": "off",
+             "schedulable": {"minting": {"on": True}}},
             [],
             {"est_minutes": 0, "done": 0, "outstanding": 0},
             {"effective_allotment_minutes": 300},

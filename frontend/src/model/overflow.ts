@@ -120,9 +120,11 @@ export function calendarWalls(anchored: AnchoredBlock[]): WallInterval[] {
   for (const a of anchored) {
     if (a.kind !== "calendar") continue;
     if (a.overlapAllowed) continue;
-    if (a.capacityClass === "ignored" || a.capacityClass === "quarantined") {
-      continue;
-    }
+    // The wire projection defaults an absent calendar class to fixed for
+    // legacy payloads. Other explicit classes are not allowed to silently
+    // hard-block Mint placement.
+    const capacityClass = a.capacityClass ?? "fixed";
+    if (capacityClass !== "fixed" && capacityClass !== "work") continue;
     if (!a.on || a.skipToday) continue;
     if (!a.start) continue;
     const start = toMinutes(a.start);
