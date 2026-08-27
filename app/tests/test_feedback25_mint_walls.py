@@ -343,7 +343,7 @@ class TestSequenceRouteMintDerivation:
             return {"sequence": [], "overlap_grants": []}
 
         monkeypatch.setattr(main_mod.judgment, "propose_sequence", fake_propose)
-        monkeypatch.setattr(main_mod.sequence, "validate_sequence",
+        monkeypatch.setattr(main_mod.planning.sequence, "validate_sequence",
                             lambda *a, **k: type("R", (), {
                                 "ok": True, "hard_errors": [], "warnings": []})())
 
@@ -517,6 +517,41 @@ def test_august_17_work_wall_also_stops_before_judgment(client, vault, monkeypat
     assert rs.read_runstate(vault, AUG17)["billed_calls"] == 0
 
 
+def test_validate_sequence_surfaces_stale_mint_wall_conflict(client, vault, monkeypatch):
+    """FEEDBACK-27: revalidation must retain the stale-selection preflight.
+
+    The selected Mint row may be absent from a manually edited client layout;
+    the current fixed/work wall must still be reported before the layout is
+    accepted as clean.
+    """
+    _write_cfg(vault)
+    _seed_aug17_mint(vault)
+    _freeze_aug17(monkeypatch)
+    r = client.post("/validate-sequence", headers=_auth(client), json={
+        "sequence": [],
+        "assigned": [],
+        "anchored_blocks": [_oppd_wall()],
+        "config": {"Template Blocks": {"Trinoor Hours": [
+            {"Slot": "Morning", "Start": "8:30 AM", "End": "12:30 PM"},
+            {"Slot": "Afternoon", "Start": "1:30 PM", "End": "5:00 PM"},
+        ]}},
+    })
+    assert r.status_code == 200
+    assert r.json() == {
+        "ok": False,
+        "hard_errors": [
+            "selected Mint sessions conflict with fixed or work walls"
+        ],
+        "warnings": [],
+        "conflicts": [{
+            "mint_id": "Mint Afternoon · 15:00",
+            "mint_interval": {"start": "15:00", "end": "15:30"},
+            "wall_id": "OPPD",
+            "wall_interval": {"start": "15:00", "end": "15:30"},
+        }],
+    }
+
+
 def test_clean_mint_selection_still_sequences(client, vault, monkeypatch):
     # A saved Mint session that does NOT touch a wall keeps the normal path:
     # judgment runs, the exact immutable row is merged, no conflict.
@@ -530,7 +565,7 @@ def test_clean_mint_selection_still_sequences(client, vault, monkeypatch):
         return {"sequence": [], "overlap_grants": []}
 
     monkeypatch.setattr(main_mod.judgment, "propose_sequence", fake_propose)
-    monkeypatch.setattr(main_mod.sequence, "validate_sequence",
+    monkeypatch.setattr(main_mod.planning.sequence, "validate_sequence",
                         lambda *a, **k: type("R", (), {
                             "ok": True, "hard_errors": [], "warnings": []})())
     r = _post_aug17(client, [_oppd_wall()])
@@ -632,7 +667,7 @@ def test_selected_mint_windows_reach_judgment_as_prompt_only_walls(
         return type("R", (), {"ok": True, "hard_errors": [], "warnings": []})()
 
     monkeypatch.setattr(main_mod.judgment, "propose_sequence", fake_propose)
-    monkeypatch.setattr(main_mod.sequence, "validate_sequence", fake_validate)
+    monkeypatch.setattr(main_mod.planning.sequence, "validate_sequence", fake_validate)
     r = _post_aug17(client, [])
     assert r.status_code == 200, r.text
 

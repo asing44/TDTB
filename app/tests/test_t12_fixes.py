@@ -95,22 +95,32 @@ class TestSuppressedAnchoredFiltered:
         assert r.status_code == 200
         assert seen["anchored"] == []
 
-    def test_quarantined_calendar_block_filtered(self, client, monkeypatch):
-        # FEEDBACK-02 (frozen contract 17): a known-but-unreviewed calendar is
-        # excluded from planning. Once calendar walls harden, a quarantined
-        # row must not reach the judgment payload (it would silently become a
-        # hard wall) — drop it alongside ignored rows.
+    @pytest.mark.parametrize("capacity_class", ["ignored", "quarantined"])
+    def test_excluded_calendar_block_filtered_from_planning_and_frame(
+            self, client, monkeypatch, capacity_class):
+        # FEEDBACK-02 (frozen contract 17): ignored and known-but-unreviewed
+        # calendars are excluded from planning. Once calendar walls harden,
+        # neither row may reach judgment or shift the live planning frame.
         seen = self._capture_proposer(monkeypatch)
+        frame_busy_events = []
+        real_compute = main_mod.time_engine.compute_time_frame
+
+        def _capture_frame(*args, **kwargs):
+            frame_busy_events.append(kwargs.get("busy_events"))
+            return real_compute(*args, **kwargs)
+
+        monkeypatch.setattr(main_mod.time_engine, "compute_time_frame", _capture_frame)
         r = client.post("/sequence", headers=_auth(client), json={
             "assigned": [{"id": "A"}],
             "config": {},
             "anchored_blocks": [
                 {"Block": "Mystery cal", "Start": "09:00", "End": "10:00",
-                 "source": "calendar", "capacity_class": "quarantined"},
+                 "source": "calendar", "capacity_class": capacity_class},
             ],
         })
         assert r.status_code == 200, r.text
         assert all(b.get("Block") != "Mystery cal" for b in seen["anchored"])
+        assert frame_busy_events == [[]]
 
 
 # ---------------------------------------------------------------------------

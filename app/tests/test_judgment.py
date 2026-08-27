@@ -297,15 +297,16 @@ class TestProposeSequence:
         out = j.propose_sequence([{"id": "A"}, {"id": "B"}], {}, [])
         assert [r["id"] for r in out["sequence"]] == ["A", "B"]
 
-    def test_reject_inflated_duration_without_retry(self, monkeypatch):
+    def test_passes_semantic_duration_defect_to_planner_without_retry(self, monkeypatch):
         # Shakedown 2026-07-14 (Press 75 min): assigned items are sized by their
-        # blocks field (default 1 block = 30 min); a longer span is rejected.
-        _queue(monkeypatch, [
-            '{"sequence": [{"id": "Press", "start": "16:00", "end": "17:15", "zone": "any"}]}',
-            '{"sequence": [{"id": "Press", "start": "16:00", "end": "16:30", "zone": "any"}]}',
+        # blocks field (default 1 block = 30 min); a longer span is rejected
+        # by the deterministic planner, not retried by this adapter.
+        calls = _queue(monkeypatch, [
+            '{"sequence": [{"id": "Press", "start": "16:00", "end": "17:15", "zone": "any"}]}'
         ])
-        with pytest.raises(j.JudgmentError, match="after 1 attempt"):
-            j.propose_sequence([{"name": "Press", "path": "P/Press.md"}], {}, [])
+        out = j.propose_sequence([{"name": "Press", "path": "P/Press.md"}], {}, [])
+        assert out["sequence"][0]["end"] == "17:15"
+        assert calls["n"] == 1
 
     def test_blocks_field_sets_duration_budget(self, monkeypatch):
         _queue(monkeypatch, [
@@ -370,13 +371,12 @@ class TestProposeSequence:
         with pytest.raises(j.JudgmentError, match="after 1 attempt"):
             j.propose_sequence([{"id": "A"}], {}, [])
 
-    def test_reject_end_before_start(self, monkeypatch):
+    def test_passes_reversed_interval_to_planner_without_retry(self, monkeypatch):
         _queue(monkeypatch, [
             '{"sequence": [{"id": "A", "start": "14:00", "end": "13:00", "zone": "any"}]}',
-            '{"sequence": [{"id": "A", "start": "13:00", "end": "14:00", "zone": "any"}]}',
         ])
-        with pytest.raises(j.JudgmentError, match="after 1 attempt"):
-            j.propose_sequence([{"id": "A"}], {}, [])
+        out = j.propose_sequence([{"id": "A"}], {}, [])
+        assert out["sequence"][0]["end"] == "13:00"
 
     def test_reject_empty_sequence(self, monkeypatch):
         _queue(monkeypatch, [
@@ -386,25 +386,24 @@ class TestProposeSequence:
         with pytest.raises(j.JudgmentError, match="after 1 attempt"):
             j.propose_sequence([{"id": "A"}], {}, [])
 
-    def test_reject_morning_workout(self, monkeypatch):
+    def test_passes_morning_workout_to_planner_without_retry(self, monkeypatch):
         """The standing rule: a workout block before 12:00 fails validation
         even though it's syntactically well-formed — this is a VALIDATION
         failure, not just a prompt instruction."""
         _queue(monkeypatch, [
             '{"sequence": [{"id": "Morning Workout", "start": "07:00", "end": "07:30", "zone": "any"}]}',
-            '{"sequence": [{"id": "Morning Workout", "start": "17:00", "end": "17:30", "zone": "evening"}]}',
         ])
-        with pytest.raises(j.JudgmentError, match="after 1 attempt"):
-            j.propose_sequence([{"id": "Morning Workout"}], {}, [])
+        out = j.propose_sequence([{"id": "Morning Workout"}], {}, [])
+        assert out["sequence"][0]["start"] == "07:00"
 
-    def test_reject_morning_workout_no_retry_recovery_raises(self, monkeypatch):
+    def test_morning_workout_semantic_defect_uses_one_attempt(self, monkeypatch):
         import json as _json
         bad = _json.dumps({
             "sequence": [{"id": "Workout", "start": "08:00", "end": "08:30", "zone": "any"}]
         })
-        _queue(monkeypatch, [bad, bad])
-        with pytest.raises(j.JudgmentError, match="before noon is forbidden"):
-            j.propose_sequence([{"id": "Workout"}], {}, [])
+        _queue(monkeypatch, [bad])
+        out = j.propose_sequence([{"id": "Workout"}], {}, [])
+        assert out["sequence"][0]["start"] == "08:00"
 
     def test_start_before_live_anchor_accepted_no_retry(self, monkeypatch):
         """2026-07-21 (Adam, T14 run): a past-anchor row no longer fails schema
@@ -488,9 +487,9 @@ class TestProposeSequence:
         bad = _json.dumps({
             "sequence": [{"id": "Workout: Squats", "start": "06:30", "end": "07:00", "zone": "any"}]
         })
-        _queue(monkeypatch, [bad, bad])
-        with pytest.raises(j.JudgmentError, match="before noon is forbidden"):
-            j.propose_sequence([{"id": "Workout: Squats"}], config, [])
+        _queue(monkeypatch, [bad])
+        out = j.propose_sequence([{"id": "Workout: Squats"}], config, [])
+        assert out["sequence"][0]["start"] == "06:30"
 
 
 # ---------------------------------------------------------------------------

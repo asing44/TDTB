@@ -768,6 +768,8 @@ def _validate_sequence_proposal(
     config: dict | None = None,
     assigned: list | None = None,
     anchored_blocks: list | None = None,
+    *,
+    semantic_checks: bool = True,
 ) -> None:
     _require_keys(d, ("sequence",), "SequenceProposal")
     if not isinstance(d["sequence"], list):
@@ -789,6 +791,31 @@ def _validate_sequence_proposal(
             _require_keys(interval, ("start", "end"), f"overlap_grants[].{key}")
             if not _is_hhmm(interval["start"]) or not _is_hhmm(interval["end"]):
                 raise ValueError(f"overlap_grants[].{key}: invalid interval")
+
+    # Candidate-B keeps provider response shape parsing separate from the
+    # deterministic planning pass.  Semantic failures must be reported by
+    # sequence.validate_sequence after the one billed proposal attempt, never
+    # converted into a provider retry.  The default remains the historical
+    # semantic validator for direct callers/tests of this helper.
+    if not semantic_checks:
+        for row in d["sequence"]:
+            _require_keys(row, ("id", "start", "end", "zone"), "SequenceProposal.sequence[]")
+            if not _is_hhmm(row["start"]):
+                raise ValueError(
+                    f"SequenceProposal.sequence[].start: not HH:MM {row['start']!r}"
+                )
+            if not _is_hhmm(row["end"]):
+                raise ValueError(
+                    f"SequenceProposal.sequence[].end: not HH:MM {row['end']!r}"
+                )
+            # Preserve the wire-level same-day normalization and ordering
+            # that existed before semantic checks moved to the planner.  A
+            # reversed ordinary interval remains untouched for planner
+            # rejection; only an unambiguous late-night rollover is clamped.
+            if row["start"] >= "18:00" and row["end"] <= "06:00":
+                row["end"] = "23:59"
+        d["sequence"].sort(key=lambda r: tuple(int(p) for p in r["start"].split(":")))
+        return
 
     press_before_work_ids: set[str] = _press_before_work_ids(config)
     anchor = str(((config or {}).get("time") or {}).get("anchor") or "")
@@ -1011,7 +1038,9 @@ async def propose_sequence_async(
     )
 
     def _validate(d: Any) -> None:
-        _validate_sequence_proposal(d, config, assigned, anchored_blocks)
+        _validate_sequence_proposal(
+            d, config, assigned, anchored_blocks, semantic_checks=False
+        )
 
     return await _call_and_validate(
         ctx, "propose_sequence", SEQUENCE_SYSTEM_PROMPT, user_prompt, _validate,
