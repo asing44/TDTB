@@ -283,7 +283,7 @@ export function SetupDrawer() {
     <>
       <div class="drawer-backdrop" onClick={close} />
       <div
-        class="drawer"
+        class="drawer setup-drawer"
         role="dialog"
         aria-modal="true"
         aria-label="Day setup"

@@ -2623,3 +2623,822 @@
     flex: 1 1 auto;
   }
 }
+
+/* -- frontend-design pass ---------------------------------------------------
+   Screenshot-derived polish for the desktop setup drawer and allocation
+   cockpit. This is deliberately an override layer: the established hooks,
+   data states, 280px rail, and responsive contracts above remain the source
+   of truth. The treatment stays within the calm DATA system — stronger
+   grouping and contrast, not a new palette or workflow. */
+
+body {
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+.cockpit {
+  background: var(--t-surface-2);
+}
+
+.cockpit__main {
+  background: var(--t-surface);
+  border-left: 1px solid color-mix(in srgb, var(--t-border) 55%, transparent);
+}
+
+.cockpit__footer {
+  border-top: 1px solid var(--t-border);
+  background: var(--t-surface);
+}
+
+/* The rail is a quiet index, not a second table. Give its date and ledger
+   enough structure to remain legible while the main surface does the work. */
+.rail {
+  padding: 20px 18px 18px;
+  gap: 18px;
+  background: var(--t-surface-2);
+  border-right-color: var(--t-border);
+}
+
+.rail__date {
+  padding-bottom: 15px;
+  border-bottom: 1px solid color-mix(in srgb, var(--t-border) 75%, transparent);
+}
+
+.rail__kicker {
+  margin-bottom: 4px;
+  color: var(--t-accent-text);
+  font-size: 10px;
+  letter-spacing: 0.13em;
+}
+
+.rail__date-day {
+  font-size: 18px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+.rail__date-meta {
+  margin-top: 4px;
+  line-height: 1.5;
+}
+
+.rail__section {
+  padding-bottom: 15px;
+  border-bottom: 1px solid color-mix(in srgb, var(--t-border) 65%, transparent);
+}
+
+.rail__label {
+  margin-bottom: 8px;
+  color: var(--t-text);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+}
+
+.rail-capacity {
+  gap: 6px;
+  margin-top: 0;
+}
+
+.rail-capacity > div {
+  min-height: 18px;
+}
+
+.rail-capacity > div:nth-child(3) {
+  margin-top: 3px;
+  padding-top: 8px;
+  border-top: 1px solid color-mix(in srgb, var(--t-border) 65%, transparent);
+}
+
+.rail-capacity > div:nth-child(4) dd {
+  font-weight: 600;
+}
+
+.rail-budget__delta {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  margin-top: 9px;
+  padding: 3px 8px;
+  border-radius: var(--radius-sm);
+  background: var(--t-surface);
+}
+
+.rail-budget__delta--over {
+  background: color-mix(in srgb, var(--c-overflow) 12%, var(--t-surface));
+}
+
+.rail-capacity__note {
+  margin-top: 8px;
+  line-height: 1.4;
+}
+
+.rail-budget__barwrap {
+  margin-top: 14px;
+}
+
+.rail-budget__bar {
+  height: 12px;
+  border: 1px solid color-mix(in srgb, var(--t-border) 70%, transparent);
+}
+
+.rail__pie .pie__chart {
+  padding-top: 4px;
+  padding-bottom: 12px;
+}
+
+.rail__pie .pie__legend {
+  row-gap: 5px;
+}
+
+.rail__pie .pie__legend-item {
+  border-radius: var(--radius-sm);
+  transition: background-color 120ms ease;
+}
+
+.rail__pie .pie__legend-item:hover {
+  background: var(--t-surface);
+}
+
+.rail-keys {
+  row-gap: 6px;
+  margin-top: 0;
+}
+
+.rail-keys__key {
+  min-height: 22px;
+  display: inline-flex;
+  align-items: center;
+}
+
+/* Calendar is evidence before action: make its summary feel like a deliberate
+   audit band and keep the compact disclosure easy to find. */
+.calendar-impact {
+  padding: 18px 28px 16px;
+  background: var(--t-surface-2);
+  border-bottom-color: var(--t-border);
+}
+
+.calendar-impact__head {
+  align-items: flex-start;
+  margin-bottom: 12px;
+}
+
+.calendar-impact h2 {
+  color: var(--t-text);
+  font-size: 11px;
+  letter-spacing: 0.1em;
+}
+
+.calendar-impact p {
+  max-width: 620px;
+  line-height: 1.45;
+}
+
+.calendar-impact__work {
+  padding: 5px 9px;
+  border: 1px solid color-mix(in srgb, var(--t-border) 75%, transparent);
+  border-radius: var(--radius-sm);
+  background: var(--t-surface);
+  line-height: 1.35;
+}
+
+.calendar-impact__summary {
+  min-height: 44px;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--c-event) 38%, var(--t-border));
+  border-left: 3px solid var(--c-event);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--c-event) 9%, var(--t-surface));
+}
+
+.calendar-impact__review {
+  margin-top: 9px;
+  padding-top: 1px;
+  border-top-color: color-mix(in srgb, var(--t-border) 75%, transparent);
+}
+
+.calendar-impact__review summary {
+  min-height: 44px;
+  padding-inline: 4px;
+  border-radius: var(--radius-sm);
+  transition: background-color 120ms ease;
+}
+
+.calendar-impact__review summary:hover {
+  background: var(--t-surface);
+}
+
+.calendar-impact__row {
+  min-height: 44px;
+  padding: 6px 10px;
+  border: 1px solid color-mix(in srgb, var(--t-border) 70%, transparent);
+  border-radius: var(--radius-sm);
+  background: var(--t-surface);
+}
+
+.calendar-impact__list {
+  gap: 6px;
+}
+
+.calendar-impact__attend {
+  min-height: 44px;
+  transition: border-color 120ms ease, background-color 120ms ease;
+}
+
+.calendar-impact__attend:hover {
+  background: var(--t-surface-2);
+}
+
+.calendar-impact__stepper .iconbtn {
+  min-width: 44px;
+  min-height: 44px;
+}
+
+/* Main hierarchy: a generous title band, an explicit additive rule, then the
+   rows. The 3px urgency stripe remains the scan anchor. */
+.queue {
+  padding: 0 28px 36px;
+}
+
+.queue__head {
+  padding: 24px 0 14px;
+  border-bottom-color: var(--t-border);
+}
+
+.queue__eyebrow {
+  margin-bottom: 5px;
+  font-size: 10px;
+  letter-spacing: 0.13em;
+}
+
+.queue__head h1 {
+  font-size: 24px;
+  font-weight: 600;
+  letter-spacing: -0.025em;
+}
+
+.queue__head p {
+  max-width: 560px;
+  margin-top: 6px;
+  line-height: 1.45;
+}
+
+.queue__assigned-chip {
+  min-height: 28px;
+  display: inline-flex;
+  align-items: center;
+  padding-inline: 10px;
+}
+
+.queue__subtractive {
+  margin: 14px 0 0;
+  padding: 11px 13px;
+  border: 1px solid color-mix(in srgb, var(--t-border) 70%, transparent);
+  border-left: 3px solid var(--t-accent);
+  border-radius: var(--radius-sm);
+  background: var(--t-surface-2);
+  line-height: 1.45;
+}
+
+.allocation-meter {
+  margin: 14px 0 6px;
+  padding: 11px 12px 10px;
+  border-radius: var(--radius-sm);
+  background: var(--t-surface-2);
+}
+
+.allocation-meter__head strong {
+  font-size: 13px;
+}
+
+.allocation-meter__track {
+  height: 8px;
+}
+
+.queue__cols {
+  padding: 14px 0 9px;
+  border-bottom-color: var(--t-border);
+}
+
+.band {
+  gap: 11px;
+  padding: 18px 0 8px;
+}
+
+.band__tick {
+  width: 4px;
+  height: 18px;
+}
+
+.band__label {
+  font-size: 12px;
+  letter-spacing: 0.1em;
+}
+
+.band__count,
+.band__share {
+  font-weight: 600;
+}
+
+.queue__band .qrow {
+  border-radius: var(--radius-sm);
+  transition: background-color 120ms ease;
+}
+
+.queue__band .qrow:hover {
+  background: color-mix(in srgb, var(--band-color) 12%, var(--t-surface));
+}
+
+.qrow {
+  min-height: 60px;
+  padding: 8px 10px 8px 0;
+}
+
+.qrow__name {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.qrow__source {
+  margin-top: 2px;
+}
+
+.qrow__actions {
+  gap: 8px;
+}
+
+.qrow__actions .iconbtn {
+  background: var(--t-surface);
+  border-color: color-mix(in srgb, var(--t-border) 85%, transparent);
+  transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease;
+}
+
+.qrow__actions .iconbtn:hover {
+  background: var(--t-surface-2);
+}
+
+.alloc-verb {
+  transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease;
+}
+
+.alloc-verb--drop_from_plan {
+  background: var(--t-surface);
+}
+
+.alloc-verb--delete {
+  border-color: color-mix(in srgb, var(--t-border) 70%, transparent);
+}
+
+.row-more__menu {
+  border-color: var(--t-border);
+}
+
+.row-more__item {
+  min-height: 44px;
+}
+
+/* All normal buttons and form controls share the same touch rhythm. Native
+   range controls keep their 44px hit area while their visual track stays slim. */
+.btn,
+.drawer__close,
+.toggle {
+  min-height: 44px;
+}
+
+.btn {
+  padding-inline: 16px;
+  transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease;
+}
+
+.btn:not(:disabled):hover {
+  background: var(--t-surface-2);
+}
+
+.btn--primary:not(:disabled):hover,
+.btn--danger:not(:disabled):hover {
+  color: #fff;
+}
+
+.btn--primary:not(:disabled):hover {
+  background: var(--t-accent-strong);
+  border-color: var(--t-accent-strong);
+}
+
+.btn--danger:not(:disabled):hover {
+  background: color-mix(in srgb, var(--c-overflow) 82%, var(--t-text));
+  border-color: var(--c-overflow);
+}
+
+.btn:disabled,
+.iconbtn:disabled,
+.toggle:disabled {
+  filter: saturate(0.6);
+}
+
+.dock {
+  gap: 14px;
+  padding: 14px 28px;
+}
+
+.dock__status {
+  max-width: 420px;
+  line-height: 1.4;
+}
+
+.dock__controls {
+  gap: 8px;
+}
+
+.dock__controls > .btn {
+  min-height: 44px;
+}
+
+.dock__controls > .btn--primary {
+  min-width: 176px;
+}
+
+/* Setup is a focused editing surface. The drawer uses the secondary surface
+   as its canvas and the cards return to the primary surface, which makes the
+   Frame → Mint → Anchored → Live → Captures order visible at a glance. */
+.drawer-backdrop {
+  background: color-mix(in srgb, var(--t-text) 34%, transparent);
+}
+
+.setup-drawer {
+  width: min(520px, 100vw);
+  padding: 24px 24px 32px;
+  background: var(--t-surface-2);
+  border-left: 1px solid var(--t-border);
+}
+
+.setup-drawer h2 {
+  margin: 0 52px 5px 0;
+  color: var(--t-text);
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+.setup-drawer > h2::after {
+  content: "";
+  display: block;
+  width: 36px;
+  height: 3px;
+  margin-top: 10px;
+  border-radius: 2px;
+  background: var(--t-accent);
+}
+
+.drawer__close {
+  top: 16px;
+  right: 18px;
+  width: 44px;
+  height: 44px;
+  background: var(--t-surface);
+}
+
+.setup-section {
+  margin-top: 14px;
+  padding: 16px;
+  border: 1px solid color-mix(in srgb, var(--t-border) 85%, transparent);
+  border-radius: var(--radius);
+  background: var(--t-surface);
+}
+
+.setup-section:first-of-type {
+  margin-top: 18px;
+}
+
+.setup-section__head {
+  margin-bottom: 12px;
+  padding-bottom: 9px;
+  border-bottom: 1px solid color-mix(in srgb, var(--t-border) 70%, transparent);
+}
+
+.setup-section__head h3 {
+  font-size: 11px;
+  letter-spacing: 0.12em;
+}
+
+.setup-section__body {
+  gap: 12px;
+}
+
+.setup-drawer .field {
+  gap: 10px;
+  margin-bottom: 0;
+}
+
+.setup-drawer .field label {
+  width: 112px;
+  min-width: 112px;
+  font-weight: 500;
+  color: var(--t-text);
+}
+
+.setup-drawer .field input[type="time"],
+.setup-drawer .field input[type="text"],
+.setup-drawer .field select,
+.setup-drawer .field textarea,
+.anchored-row__controls input[type="time"] {
+  min-height: 44px;
+  border: 1px solid var(--t-border);
+  background: var(--t-surface-2);
+  transition: border-color 120ms ease, background-color 120ms ease;
+}
+
+.setup-drawer .field input[type="time"]:hover,
+.setup-drawer .field input[type="text"]:hover,
+.setup-drawer .field select:hover,
+.setup-drawer .field textarea:hover,
+.anchored-row__controls input[type="time"]:hover {
+  border-color: color-mix(in srgb, var(--t-accent) 65%, var(--t-border));
+  background: var(--t-surface);
+}
+
+.setup-drawer .field input[type="time"]:focus-visible,
+.setup-drawer .field input[type="text"]:focus-visible,
+.setup-drawer .field select:focus-visible,
+.setup-drawer .field textarea:focus-visible,
+.anchored-row__controls input[type="time"]:focus-visible {
+  border-color: var(--t-accent);
+  background: var(--t-surface);
+}
+
+.setup-drawer .field__range,
+.mint-selection__range {
+  min-height: 44px;
+}
+
+.setup-drawer .field textarea {
+  line-height: 1.5;
+  min-height: 72px;
+}
+
+.setup-drawer .field textarea.cap-intention {
+  min-height: 84px;
+  border-inline-start: 3px solid var(--t-accent);
+  background: var(--t-surface);
+}
+
+.setup-drawer .field textarea.cap-intention:focus-visible {
+  border-inline-start-color: var(--t-accent-strong);
+}
+
+.setup-drawer .field__hint {
+  line-height: 1.4;
+}
+
+.mint-selection {
+  gap: 10px;
+  padding: 12px;
+  border-radius: var(--radius);
+}
+
+.mint-session-row {
+  min-height: 44px;
+  padding: 8px 10px;
+  border: 1px solid color-mix(in srgb, var(--t-border) 70%, transparent);
+  border-radius: var(--radius-sm);
+  background: var(--t-surface-2);
+}
+
+.mint-session-row--selected {
+  border-color: color-mix(in srgb, var(--c-minting) 65%, var(--t-border));
+  background: color-mix(in srgb, var(--c-minting) 12%, var(--t-surface));
+}
+
+.mint-session-row--blocked {
+  background: var(--t-surface-2);
+}
+
+.anchored-row {
+  min-height: 60px;
+  padding: 9px 0;
+}
+
+.anchored-row__controls {
+  flex-wrap: wrap;
+}
+
+.setup-section .stepper button {
+  width: 44px;
+  min-width: 44px;
+  height: 44px;
+  min-height: 44px;
+}
+
+.setup-section .stepper span {
+  min-width: 48px;
+}
+
+.toggle {
+  padding-inline: 12px;
+}
+
+.live-micro__status {
+  margin: 0;
+  padding: 10px 12px;
+  border-left: 3px solid var(--c-minting);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--c-minting) 10%, var(--t-surface));
+}
+
+.live-micro__pending {
+  margin: 0;
+  padding: 9px 10px;
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--c-minting) 10%, var(--t-surface-2));
+}
+
+.live-micro__actions {
+  flex-wrap: wrap;
+}
+
+.setup__actions {
+  gap: 10px;
+  margin-top: 20px;
+  padding-top: 16px;
+}
+
+.setup__actions .btn--primary {
+  min-width: 156px;
+}
+
+/* Keep the visual improvements contained at each contract breakpoint. */
+@media (max-width: 1100px) {
+  .calendar-impact,
+  .queue {
+    padding-inline: 20px;
+  }
+
+  .queue__head h1 {
+    font-size: 22px;
+  }
+
+  .dock {
+    padding-inline: 20px;
+  }
+}
+
+@media (max-width: 767px) {
+  .cockpit__main {
+    border-left: 0;
+  }
+
+  .rail {
+    padding: 16px 14px;
+  }
+
+  .rail__date-day {
+    font-size: 17px;
+  }
+
+  .calendar-impact,
+  .queue {
+    padding-inline: 14px;
+  }
+
+  .calendar-impact__row {
+    padding: 8px 10px;
+  }
+
+  .queue__head {
+    padding-top: 18px;
+  }
+
+  .queue__head h1 {
+    font-size: 20px;
+  }
+
+  .qrow {
+    min-height: 64px;
+    padding-right: 8px;
+  }
+
+  .dock {
+    padding-inline: 14px;
+  }
+
+  .dock__status {
+    max-width: none;
+  }
+}
+
+@media (max-width: 520px) {
+  .setup-drawer {
+    width: 100vw;
+    padding: 20px 16px 24px;
+    border-left: 0;
+  }
+
+  .setup-drawer h2 {
+    font-size: 20px;
+  }
+
+  .setup-section {
+    padding: 13px;
+  }
+
+  .setup-drawer .field > label {
+    flex-basis: 100%;
+    width: auto;
+    min-width: 0;
+  }
+
+  .setup-drawer .field input[type="time"],
+  .setup-drawer .field input[type="text"],
+  .setup-drawer .field select,
+  .setup-drawer .field textarea {
+    flex-basis: 100%;
+  }
+
+  .mint-session-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .mint-session-row__state {
+    grid-column: 1 / -1;
+  }
+
+  .anchored-row__main,
+  .anchored-row__controls {
+    flex-basis: 100%;
+  }
+
+  .anchored-row__controls {
+    justify-content: flex-start;
+  }
+
+  .setup__actions .btn {
+    flex: 1 1 140px;
+  }
+
+  .dock__status {
+    flex-basis: 100%;
+  }
+
+  .dock__controls {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    width: 100%;
+  }
+
+  .dock__controls > .btn {
+    width: 100%;
+  }
+
+  .dock__controls > .btn--primary {
+    min-width: 0;
+  }
+
+  .copy-prompt-fallback {
+    grid-column: 1 / -1;
+  }
+
+  .qrow__actions {
+    justify-content: flex-start;
+  }
+
+  .row-more__menu {
+    right: auto;
+    left: 0;
+    max-width: calc(100vw - 28px);
+  }
+}
+
+/* Between the fixed-rail desktop and the <=767px mobile template, the main
+   column is too narrow for the full seven-track calendar row. Keep the rail
+   visible, but let calendar evidence reflow into the same two-column hierarchy
+   used by the mobile contract. The 1280px desktop treatment and the existing
+   <=767px rule are intentionally untouched. */
+@media (min-width: 768px) and (max-width: 1100px) {
+  .calendar-impact__head {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 6px;
+  }
+
+  .calendar-impact__work {
+    white-space: normal;
+  }
+
+  .calendar-impact__row {
+    grid-template-columns: 116px minmax(0, 1fr);
+    gap: 6px 10px;
+    padding: 8px 10px;
+  }
+
+  .calendar-impact__class {
+    justify-self: start;
+  }
+
+  .calendar-impact__actions {
+    grid-column: 1 / -1;
+    justify-content: flex-start;
+  }
+
+  .calendar-impact__attend {
+    grid-column: 1 / -1;
+  }
+}
