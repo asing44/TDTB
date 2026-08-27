@@ -26,7 +26,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import math
 import os
 import secrets
 import re
@@ -55,7 +54,7 @@ import deferrals  # noqa: E402
 import duration_memory  # noqa: E402
 import runstate  # noqa: E402
 import judgment  # noqa: E402
-import sequence  # noqa: E402
+import planning  # noqa: E402
 import shadow  # noqa: E402
 import commit  # noqa: E402
 import calendar_bridge  # noqa: E402
@@ -1857,298 +1856,110 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
 
     @app.post("/sequence", dependencies=[Depends(require_token)])
     def post_sequence(body: SequenceRequest) -> dict:
-        """Propose a timeline sequence via the judgment layer (call #4), then
-        re-validate server-side (T12: sequence.validate_sequence) — the belt
-        to judgment.py's suspenders. SDK/schema failure → 502-style JSON
-        error. A HARD validation failure (structural, or the standing
-        no-morning-workout rule) → 422 with details. Soft warnings
-        (zone/latest_start) are attached to the 200 response, never gate it.
-
-        ui-parity T5: schedulable blocks (Minting/QT/Shivery) are injected
-        server-side from config + Day Setup state before the judgment call —
-        @🚀10min items fold into the QT block (qt_contents), and the 🟡
-        Trinoor zone backdrop rows are appended to the returned proposal
-        (permeable, Step D′ — never validated as placements)."""
+        """Propose a timeline through the pure planning boundary."""
         vault = resolve_vault_root()
         today = gather.effective_date(datetime.now())
-        pin_errors = sequence.validate_pinned_rows(body.pinned_rows, body.assigned)
-        if pin_errors:
-            raise HTTPException(
-                status_code=422,
-                detail={"message": "pinned-row validation failed", "hard_errors": pin_errors},
-            )
-        # T27: recurring todoist rows with a native time are placement-immune —
-        # server-authoritative auto-pins for any the client didn't already pin,
-        # validated with the client pins BEFORE the billed boundary so a
-        # conflict fails closed without spending a call.
-        auto_pins = sequence.recurring_auto_pins(
-            body.assigned,
-            exclude_ids={str(pin.get("id")) for pin in body.pinned_rows},
-        )
-        effective_pins = list(body.pinned_rows) + auto_pins
-        if auto_pins:
-            pin_errors = sequence.validate_pinned_rows(effective_pins, body.assigned)
-            if pin_errors:
-                raise HTTPException(
-                    status_code=422,
-                    detail={"message": "pinned-row validation failed",
-                            "hard_errors": pin_errors},
-                )
-        _require_billed_budget(vault, today)  # G24
         day_setup = {k: v for k, v in _read_today_runstate(vault, today).items()
                      if k in _DAY_SETUP_KEYS and v not in ("", None)}
         defaults: dict[str, Any] = dict((body.config or {}).get("Defaults") or {})
-        # T28: dismissed calendar rows (server-authoritative runstate merge)
-        # free their interval — no frame truncation, no wall (dropped later
-        # by _judged_anchored's skip filter).
-        anchored_effective = shadow.apply_calendar_participation(
-            body.anchored_blocks, day_setup)
+        effective_anchored = _judged_anchored(body.anchored_blocks, day_setup)
         frame = time_engine.compute_time_frame(
             now=datetime.now(),
             config_eod=time_engine.to_hhmm(defaults.get("eod")) or "23:59",
             round_to_minutes=int(defaults.get("anchor.round_to_minutes") or 15),
             busy_events=[{"start": time_engine.to_hhmm(b.get("Start")),
                           "title": b.get("Block")}
-                         for b in anchored_effective
+                         for b in effective_anchored
                          if b.get("source") == "calendar" and b.get("Start")
                          and not b.get("skip_today")],
             anchor_override=time_engine.to_hhmm(day_setup.get("anchor")),
             eod_override=time_engine.to_hhmm(day_setup.get("eod")),
         )
-        anchor = frame.anchor
-        blocks, zone_rows, block_notes = external_sources.build_schedulable_blocks(
-            body.config or {}, day_setup, today, anchor,
-            resolved_day_semantics=body.day_semantics,
-        )
-        # FEEDBACK-27: the effective anchored set judgment/validation should
-        # see (Day Setup merged, suppressed/quarantined dropped) is also the
-        # current fixed/work wall set. A selected Mint session whose window
-        # overlaps such a wall is STALE saved frontend state — fail closed
-        # HERE, before any judgment adapter, immutable merge, or billed
-        # ledger change (live 2026-08-17: Mint 15:00-15:30 vs OPPD
-        # 15:00-15:30 reached a billed 422). Clean selections proceed.
-        seq_anchored = _judged_anchored(body.anchored_blocks, day_setup)
-        mint_conflicts = external_sources.stale_mint_conflicts(blocks, seq_anchored)
-        if mint_conflicts:
+        prepared_inputs = {
+            "assigned": body.assigned,
+            "config": body.config or {},
+            "anchored_blocks": effective_anchored,
+            "day_setup": day_setup,
+            "today": today,
+            "time_frame": frame.as_dict(),
+            "day_semantics": body.day_semantics,
+            "planning_config_fingerprint": body.planning_config_fingerprint,
+            "pinned_rows": body.pinned_rows,
+        }
+        try:
+            prepared = planning.prepare_sequence(prepared_inputs, mode="proposal")
+        except planning.PlanningError as exc:
+            if exc.conflicts:
+                raise HTTPException(
+                    status_code=422,
+                    detail={"message": str(exc), "conflicts": exc.conflicts},
+                ) from exc
             raise HTTPException(
                 status_code=422,
-                detail={
-                    "message": "selected Mint sessions conflict with fixed or work walls",
-                    "conflicts": mint_conflicts,
-                },
+                detail={"message": str(exc), "hard_errors": exc.hard_errors},
+            ) from exc
+        _require_billed_budget(vault, today)
+        try:
+            outcome = planning.run_proposal(
+                prepared, judgment.propose_sequence,
+                ctx=_billed_ctx(vault, today),
             )
-        # G18a: planning-fallacy correction — inflate each assigned item's
-        # block estimate by the configured factor BEFORE injection/judgment,
-        # so the prompt, the duration validator, and the manifest all see the
-        # corrected size. 1.0 (default) is a no-op. Injected schedulable
-        # blocks and anchored blocks are config-sized, never corrected.
-        try:
-            factor = float(defaults.get("estimation.correction_factor") or 1.0)
-        except (TypeError, ValueError):
-            factor = 1.0
-        corrected = body.assigned
-        if factor > 1.0:
-            corrected = []
-            for item in body.assigned:
-                blocks_est = item.get("blocks")
-                n = blocks_est if isinstance(blocks_est, (int, float)) and blocks_est > 0 else 1
-                corrected.append({**item, "blocks": math.ceil(n * factor)})
-        qt_on = any(b.get("qt") for b in blocks)
-        assigned, qt_contents = external_sources.absorb_quick_tasks(corrected, qt_on)
-        # Injected block names must survive the name-keyed sequence identity —
-        # disambiguate against the assigned set like any external source.
-        blocks = external_sources.disambiguate_names(assigned, blocks)
-        assigned = assigned + blocks
-        # Selected Mint sessions are exact user-selected windows, not movable
-        # work for the judgment model. Keep them in the assigned set for
-        # never-bump validation, but synthesize their rows deterministically
-        # after the model returns.
-        fixed_schedulable_rows = sequence.placement_window_rows(blocks)
-        fixed_schedulable_ids = {
-            str(row.get("id")) for row in fixed_schedulable_rows
-        }
-        # An auto-pinned row absorbed out of the assigned set (QT fold) would
-        # validate as a foreign sequence row — drop its pin with it.
-        present_ids = {str(item.get("id") or item.get("name")) for item in assigned}
-        effective_pins = list(body.pinned_rows) + [
-            pin for pin in auto_pins if str(pin.get("id")) in present_ids
-        ]
-        pinned_ids = {str(pin.get("id")) for pin in effective_pins}
-        movable_assigned = [
-            item for item in assigned
-            if str(item.get("id") or item.get("name")) not in pinned_ids
-            and str(item.get("id") or item.get("name")) not in fixed_schedulable_ids
-        ]
-
-        # T7: the judgment prompt sees the live day frame (now/anchor/eod).
-        seq_config = {
-            **(body.config or {}),
-            "time": frame.as_dict(),
-            "resolved_zones": body.day_semantics.get("enabled_zones") or [],
-            "overlap_permissions_raw": (
-                body.day_semantics.get("overlap_permissions_raw") or ""
-            ),
-            "planning_config_fingerprint": body.planning_config_fingerprint,
-        }
-
-        pinned_walls = [
-            {"Block": pin["id"], "Type": "hard", "Start": pin["start"],
-             "End": pin["end"], "pinned": True}
-            for pin in effective_pins
-        ]
-        # CP-T29: selected Mint sessions are prompt-visible HARD walls. The
-        # model must see the exact immutable intervals to place movable work
-        # around them — without this it guesses where the free gaps are and
-        # burns the billed call on a proposal that hard-rejects. Prompt-only:
-        # the post-judgment merge (merge_immutable_rows) and validation
-        # (validate_sequence → selected_mint_walls) semantics are unchanged,
-        # and the Mint rows are never made movable.
-        mint_walls = [
-            {"Block": row["id"], "Type": "hard", "Start": row["start"],
-             "End": row["end"], "pinned": True, "mint_session": True}
-            for row in fixed_schedulable_rows
-        ]
-        try:
-            proposal = judgment.propose_sequence(
-                movable_assigned, seq_config,
-                seq_anchored + pinned_walls + mint_walls,
-                ctx=_billed_ctx(vault, today))
         except judgment.BudgetExceededError as exc:
             raise HTTPException(status_code=429, detail=str(exc)) from exc
         except judgment.JudgmentError as exc:
             raise HTTPException(status_code=502, detail=f"judgment error: {exc}") from exc
-
-        proposal = sequence.canonicalize_sequence_ids(
-            proposal, assigned + [
-                {"id": block.get("Block"), "name": block.get("Block")}
-                for block in seq_anchored
-                if block.get("Block")
-            ],
-        )
-        proposal["sequence"] = sequence.merge_immutable_rows(
-            list(proposal.get("sequence") or []),
-            effective_pins + fixed_schedulable_rows,
-        )
-        result = sequence.validate_sequence(
-            proposal, assigned, seq_anchored + pinned_walls, body.config,
-            time_frame=frame.as_dict(),
-            optional_items=blocks,
-            planning_config_fingerprint=body.planning_config_fingerprint,
-        )
-        if not result.ok:
-            # T12 qualification (2026-07-26): this discarded the proposal
-            # outright. By here the SDK call has ALREADY been made and the
-            # billed ledger ALREADY charged (judgment.py spends per real
-            # attempt), so throwing the body away means the user pays for a
-            # plan they never get to see. The rejection still stands — a hard
-            # failure must never be presentable as a committable plan — but
-            # the proposal rides along so the client can show it read-only,
-            # marked rejected, and the user can at least read what their call
-            # bought and re-enter it by hand.
+        if not outcome.validation.ok:
             raise HTTPException(
                 status_code=422,
                 detail={"message": "sequence validation failed",
-                        "hard_errors": result.hard_errors,
-                        "rejected_proposal": proposal},
+                        "hard_errors": outcome.validation.hard_errors,
+                        "rejected_proposal": outcome.rejected_proposal},
             )
-        proposal["warnings"] = result.warnings + block_notes
-        # Backdrop zone rows append AFTER validation — permeable framing only.
-        proposal["sequence"] = list(proposal.get("sequence") or []) + zone_rows
-        if qt_contents:
-            proposal["qt_contents"] = qt_contents
-        # T27: expose + persist the EFFECTIVE pin set (client + auto) so the
-        # client adopts server-derived recurring pins and later
-        # /validate-sequence /commit snapshot checks line up.
-        proposal["pinned_rows"] = effective_pins
-        runstate.update_runstate(
-            vault, today,
-            {"overlap_grants": list(proposal.get("overlap_grants") or []),
-             "pinned_rows": effective_pins,
-             "planning_config_fingerprint": body.planning_config_fingerprint},
-        )
-        return proposal
+        runstate.update_runstate(vault, today, outcome.snapshot)
+        assert outcome.result is not None
+        return outcome.result
 
     @app.post("/validate-sequence", dependencies=[Depends(require_token)])
     def post_validate_sequence(body: ValidateSequenceRequest) -> dict:
-        """T16: deterministic re-validation of a (possibly drag-adjusted)
-        sequence against the FROZEN sequence.validate_sequence — no judgment
-        call, no writes. Returns {ok, hard_errors, warnings} verbatim so the
-        timeline view can render soft warnings (amber, non-blocking) vs hard
-        errors (red, gate the commit) without re-proposing. The belt's belt:
-        same validator the /commit path trusts, exposed for per-drag feedback."""
+        """Revalidate the client layout without provider calls or merging."""
         vault = resolve_vault_root()
         today = gather.effective_date(datetime.now())
-        if body.pinned_rows or body.overlap_grants or body.planning_config_fingerprint:
-            snapshot = _read_today_runstate(vault, today)
-            if (
-                snapshot.get("pinned_rows", []) != body.pinned_rows
-                or snapshot.get("overlap_grants", []) != body.overlap_grants
-                or snapshot.get("planning_config_fingerprint", "")
-                    != body.planning_config_fingerprint
-            ):
-                return {"ok": False,
-                        "hard_errors": ["planning snapshot is stale"],
-                        "warnings": []}
-        day_setup = {k: v for k, v in _read_today_runstate(vault, today).items()
+        snapshot = _read_today_runstate(vault, today)
+        day_setup = {k: v for k, v in snapshot.items()
                      if k in _DAY_SETUP_KEYS and v not in ("", None)}
         defaults = dict((body.config or {}).get("Defaults") or {})
-        # T28: mirror /sequence — dismissed calendar rows free their interval.
-        anchored_effective = shadow.apply_calendar_participation(
-            body.anchored_blocks, day_setup)
+        effective_anchored = _judged_anchored(body.anchored_blocks, day_setup)
         frame = time_engine.compute_time_frame(
             now=datetime.now(),
             config_eod=time_engine.to_hhmm(defaults.get("eod")) or "23:59",
             round_to_minutes=int(defaults.get("anchor.round_to_minutes") or 15),
             busy_events=[{"start": time_engine.to_hhmm(b.get("Start")),
                           "title": b.get("Block")}
-                         for b in anchored_effective
+                         for b in effective_anchored
                          if b.get("source") == "calendar" and b.get("Start")
                          and not b.get("skip_today")],
             anchor_override=time_engine.to_hhmm(day_setup.get("anchor")),
             eod_override=time_engine.to_hhmm(day_setup.get("eod")),
         )
-        # Mirror /sequence's schedulable-block injection (T5) so Minting/QT/
-        # Shivery rows in a proposal don't validate as foreign extras here.
-        blocks, _zone_rows, _notes = external_sources.build_schedulable_blocks(
-            body.config or {}, day_setup, today, frame.anchor,
-            resolved_day_semantics=getattr(body, "day_semantics", None),
-        )
-        qt_on = any(b.get("qt") for b in blocks)
-        assigned, _qt = external_sources.absorb_quick_tasks(list(body.assigned), qt_on)
-        # QT-absorbed items are optional placements: an LLM proposal folds
-        # them into the QT block (unplaced), a manual layout places them
-        # directly — both must validate.
-        absorbed = {str(i.get("name")) for i in body.assigned} - {
-            str(i.get("name")) for i in assigned}
-        blocks = external_sources.disambiguate_names(assigned, blocks)
-        # Injected blocks are OPTIONAL here (unlike /sequence, which requires
-        # its own injections): the user may have dragged them off the plan.
-        optional = absorbed | {str(b.get("name")) for b in blocks}
-        pin_errors = sequence.validate_pinned_rows(body.pinned_rows, body.assigned)
-        if pin_errors:
-            return {"ok": False, "hard_errors": pin_errors, "warnings": []}
-        expected_pins = {str(pin.get("id")): pin for pin in body.pinned_rows}
-        actual_pins = {
-            str(row.get("id")): row for row in body.sequence
-            if str(row.get("id")) in expected_pins
-        }
-        if actual_pins != expected_pins:
-            return {"ok": False,
-                    "hard_errors": ["pinned rows changed from immutable snapshot"],
+        try:
+            prepared = planning.prepare_sequence({
+                "assigned": body.assigned,
+                "config": body.config or {},
+                "anchored_blocks": effective_anchored,
+                "day_setup": day_setup,
+                "today": today,
+                "time_frame": frame.as_dict(),
+                "day_semantics": {},
+                "planning_config_fingerprint": body.planning_config_fingerprint,
+                "pinned_rows": body.pinned_rows,
+                "overlap_grants": body.overlap_grants,
+                "snapshot": snapshot,
+                "sequence": body.sequence,
+            }, mode="revalidation")
+        except planning.PlanningError as exc:
+            return {"ok": False, "hard_errors": exc.hard_errors or [str(exc)],
                     "warnings": []}
-        pinned_walls = [
-            {"Block": pin["id"], "Type": "hard", "Start": pin["start"],
-             "End": pin["end"], "pinned": True}
-            for pin in body.pinned_rows
-        ]
-        result = sequence.validate_sequence(
-            {"sequence": body.sequence, "overlap_grants": body.overlap_grants}, assigned,
-            _judged_anchored(body.anchored_blocks, day_setup) + pinned_walls,
-            body.config, time_frame=frame.as_dict(), optional_ids=optional,
-            optional_items=blocks,
-            planning_config_fingerprint=body.planning_config_fingerprint,
-        )
-        return result.as_dict()
+        return planning.validate_revalidation(prepared).as_dict()
 
     @app.post("/commit", dependencies=[Depends(require_token)])
     def post_commit(

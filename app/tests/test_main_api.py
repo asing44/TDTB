@@ -866,7 +866,7 @@ class TestSequenceInjection:
             return self._echo_proposal(assigned, config, anchored_blocks)
 
         monkeypatch.setattr(main_mod.judgment, "propose_sequence", fake_propose)
-        monkeypatch.setattr(main_mod.sequence, "validate_sequence",
+        monkeypatch.setattr(main_mod.planning.sequence, "validate_sequence",
                             lambda *a, **k: type("R", (), {
                                 "ok": True, "hard_errors": [], "warnings": []})())
 
@@ -920,7 +920,7 @@ class TestSequenceInjection:
             return {"sequence": [{"id": "B", "start": "10:00", "end": "10:30",
                                   "zone": "any"}], "overlap_grants": []}
         monkeypatch.setattr(main_mod.judgment, "propose_sequence", fake_propose)
-        monkeypatch.setattr(main_mod.sequence, "validate_sequence",
+        monkeypatch.setattr(main_mod.planning.sequence, "validate_sequence",
                             lambda *a, **k: type("R", (), {
                                 "ok": True, "hard_errors": [], "warnings": []})())
         r = client.post("/sequence", json={
@@ -951,7 +951,7 @@ class TestSequenceInjection:
             return self._echo_proposal(assigned, config, anchored_blocks)
 
         monkeypatch.setattr(main_mod.judgment, "propose_sequence", fake_propose)
-        monkeypatch.setattr(main_mod.sequence, "validate_sequence",
+        monkeypatch.setattr(main_mod.planning.sequence, "validate_sequence",
                             lambda *a, **k: type("R", (), {
                                 "ok": True, "hard_errors": [], "warnings": []})())
 
@@ -998,7 +998,7 @@ class TestSequenceInjection:
             }]}
 
         monkeypatch.setattr(main_mod.judgment, "propose_sequence", fake_propose)
-        monkeypatch.setattr(main_mod.sequence, "validate_sequence",
+        monkeypatch.setattr(main_mod.planning.sequence, "validate_sequence",
                             lambda *a, **k: type("R", (), {
                                 "ok": True, "hard_errors": [], "warnings": []})())
         r = client.post("/sequence", json={
@@ -1026,7 +1026,7 @@ class TestEstimationCorrection:
                                    "end": "13:30", "zone": "any"}]}
 
         monkeypatch.setattr(main_mod.judgment, "propose_sequence", fake_propose)
-        monkeypatch.setattr(main_mod.sequence, "validate_sequence",
+        monkeypatch.setattr(main_mod.planning.sequence, "validate_sequence",
                             lambda *a, **k: type("R", (), {
                                 "ok": True, "hard_errors": [], "warnings": []})())
         r = client.post("/sequence", json={
@@ -1117,7 +1117,7 @@ class TestRecurringPlacementImmunity:
             return {"sequence": [{"id": "B", "start": "10:00", "end": "10:30",
                                   "zone": "any"}], "overlap_grants": []}
         monkeypatch.setattr(main_mod.judgment, "propose_sequence", fake_propose)
-        monkeypatch.setattr(main_mod.sequence, "validate_sequence",
+        monkeypatch.setattr(main_mod.planning.sequence, "validate_sequence",
                             lambda *a, **k: type("R", (), {
                                 "ok": True, "hard_errors": [], "warnings": []})())
         return client.post("/sequence", json={
@@ -1181,7 +1181,7 @@ class TestCalendarDismissalSequenceSide:
             captured["time"] = config.get("time")
             return {"sequence": [], "overlap_grants": []}
         monkeypatch.setattr(main_mod.judgment, "propose_sequence", fake_propose)
-        monkeypatch.setattr(main_mod.sequence, "validate_sequence",
+        monkeypatch.setattr(main_mod.planning.sequence, "validate_sequence",
                             lambda *a, **k: type("R", (), {
                                 "ok": True, "hard_errors": [], "warnings": []})())
         r = client.post("/sequence", json={
@@ -1199,7 +1199,7 @@ class TestCalendarDismissalSequenceSide:
             captured["anchored"] = anchored_blocks
             return {"sequence": [], "overlap_grants": []}
         monkeypatch.setattr(main_mod.judgment, "propose_sequence", fake_propose)
-        monkeypatch.setattr(main_mod.sequence, "validate_sequence",
+        monkeypatch.setattr(main_mod.planning.sequence, "validate_sequence",
                             lambda *a, **k: type("R", (), {
                                 "ok": True, "hard_errors": [], "warnings": []})())
         r = client.post("/sequence", json={

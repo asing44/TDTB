@@ -118,10 +118,10 @@ class TestRejectedProposalSurvives422:
     and the user can read what the call bought."""
 
     def _bad_proposal(self, assigned, config, anchored_blocks, ctx=None):
-        # Places a row in the past, which the server-side validator rejects
-        # hard regardless of when the suite runs.
+        # A deterministic semantic defect reaches the planner after the
+        # single provider attempt and is returned as a rejected proposal.
         return {"sequence": [{"id": assigned[0].get("id") if assigned else "A",
-                              "start": "00:05", "end": "00:35", "zone": "any"}]}
+                              "start": "14:00", "end": "13:30", "zone": "any"}]}
 
     def test_422_carries_the_rejected_proposal(self, client, monkeypatch):
         monkeypatch.setattr(judgment, "propose_sequence", self._bad_proposal)

@@ -343,7 +343,7 @@ class TestSequenceRouteMintDerivation:
             return {"sequence": [], "overlap_grants": []}
 
         monkeypatch.setattr(main_mod.judgment, "propose_sequence", fake_propose)
-        monkeypatch.setattr(main_mod.sequence, "validate_sequence",
+        monkeypatch.setattr(main_mod.planning.sequence, "validate_sequence",
                             lambda *a, **k: type("R", (), {
                                 "ok": True, "hard_errors": [], "warnings": []})())
 
@@ -530,7 +530,7 @@ def test_clean_mint_selection_still_sequences(client, vault, monkeypatch):
         return {"sequence": [], "overlap_grants": []}
 
     monkeypatch.setattr(main_mod.judgment, "propose_sequence", fake_propose)
-    monkeypatch.setattr(main_mod.sequence, "validate_sequence",
+    monkeypatch.setattr(main_mod.planning.sequence, "validate_sequence",
                         lambda *a, **k: type("R", (), {
                             "ok": True, "hard_errors": [], "warnings": []})())
     r = _post_aug17(client, [_oppd_wall()])
@@ -632,7 +632,7 @@ def test_selected_mint_windows_reach_judgment_as_prompt_only_walls(
         return type("R", (), {"ok": True, "hard_errors": [], "warnings": []})()
 
     monkeypatch.setattr(main_mod.judgment, "propose_sequence", fake_propose)
-    monkeypatch.setattr(main_mod.sequence, "validate_sequence", fake_validate)
+    monkeypatch.setattr(main_mod.planning.sequence, "validate_sequence", fake_validate)
     r = _post_aug17(client, [])
     assert r.status_code == 200, r.text
 
