@@ -178,15 +178,15 @@ resolve_vault() {
 
   local candidate
   for candidate in \
-    "$HOME/Local Documents/Obsidian/WALL·E-THNK" \
-    "$HOME/Obsidian/WALL·E-THNK"; do
+    "$HOME/Local Documents/Obsidian/WALL⋅E-THNK" \
+    "$HOME/Obsidian/WALL⋅E-THNK"; do
     if [[ -d "$candidate" ]]; then
       print -- "$candidate"
       return 0
     fi
   done
 
-  fail "no WALL·E-THNK vault found — set TDTB_VAULT_ROOT or sync vault first"
+  fail "no WALL⋅E-THNK vault found — set TDTB_VAULT_ROOT or sync vault first"
   return 1
 }
 
