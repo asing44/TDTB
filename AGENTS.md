@@ -92,3 +92,17 @@ immediately before every mutation. Preserve foreign staged/unstaged work,
 stage only owned paths, and use path-scoped commits followed by
 `git show --stat HEAD`. Never reset, clean, unstage, pull, rebase, merge,
 push, or delete another session's state.
+
+## Agent skills
+
+### Issue tracker
+
+Issues and specs for this repo live as GitHub Issues in `asing44/TDTB`, using the `gh` CLI. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Use the default five canonical labels: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, and `wontfix`. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+This is a single-context repo: read root `CONTEXT.md` and `docs/adr/` when present. See `docs/agents/domain.md`.
