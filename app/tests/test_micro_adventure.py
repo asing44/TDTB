@@ -456,11 +456,15 @@ class TestResolvePrior:
         def boom2(_):
             raise RuntimeError("note read failed")
 
+        history = [self._head()]
         res = ma.resolve_prior(
-            [self._head()], today=TODAY, todoist_completed=boom, daily_note_live_checked=boom2
+            history, today=TODAY, todoist_completed=boom, daily_note_live_checked=boom2
         )
         assert res.done_update is None
         assert res.pending_confirm is not None
+        assert res.pending_confirm == history[0]
+        assert res.history == tuple(history)
+        assert res.history[0].done is None
 
     def test_todoist_raises_but_checkbox_true(self):
         def boom(_):

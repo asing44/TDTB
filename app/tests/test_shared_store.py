@@ -152,6 +152,17 @@ class TestWritableCalendarPrecondition:
     def client(self, tmp_path) -> TestClient:
         vault = tmp_path / "vault-root"
         vault.mkdir()
+        config_path = vault / "00 - META" / "Skill-Configs" / "tdtb-bridger.md"
+        config_path.parent.mkdir(parents=True, exist_ok=True)
+        config_path.write_text(
+            "## Defaults\n"
+            "| Key | Value |\n|---|---|\n| eod | 11:59 PM |\n\n"
+            "## Template Blocks\n"
+            "### Trinoor Hours\n"
+            "| Slot | Start | End |\n|---|---|---|\n"
+            "| Morning | 12:00 AM | 11:59 PM |\n",
+            encoding="utf-8",
+        )
         app = main_mod.create_app(vault_root=vault)
         c = TestClient(app)
         c.app_token = app.state.token

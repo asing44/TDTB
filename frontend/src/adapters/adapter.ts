@@ -30,6 +30,8 @@ export interface SequenceResult {
     never reach a payload. */
 export interface SequenceContext {
   included: Array<{ id: string; blocks: number }>;
+  /** Explicit per-item permission for moving an existing Todoist time. */
+  timeAdjustmentOptIns?: Record<string, boolean>;
   planningConfigFingerprint?: string;
   overlapGrants?: OverlapGrant[];
   pinnedRows?: SequenceRow[];

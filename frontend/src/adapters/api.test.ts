@@ -124,6 +124,29 @@ describe("token + POST bodies", () => {
     expect(body.pinned_rows).toEqual([]);
   });
 
+  it("carries the per-item time permission through sequence, validation, shadow, and live bodies", async () => {
+    route("/sequence", sequenceOk);
+    route("/validate-sequence", validateOk);
+    route("/commit", shadowDiff);
+    const a = new ApiAdapter();
+    await a.loadPlanInputs();
+    const ctx = { ...CTX, timeAdjustmentOptIns: { Make: true } };
+    await a.autoSequence(ctx);
+    await a.validateSequence([], ctx);
+    await a.shadowCommit([], ctx);
+    route("/commit", commitLiveOk);
+    await a.liveCommit([], ctx);
+
+    const bodies = calls
+      .filter((call) => call.init?.method === "POST")
+      .filter((call) => call.path.startsWith("/sequence") || call.path.startsWith("/validate-sequence") || call.path.startsWith("/commit"))
+      .map((call) => JSON.parse(call.init!.body as string));
+    expect(bodies[0].assigned.find((row: any) => row.name === "Make").allow_time_adjustment).toBe(true);
+    expect(bodies[1].assigned.find((row: any) => row.name === "Make").allow_time_adjustment).toBe(true);
+    expect(bodies[2].digest.assigned.find((row: any) => row.name === "Make").allow_time_adjustment).toBe(true);
+    expect(bodies[3].digest.assigned.find((row: any) => row.name === "Make").allow_time_adjustment).toBe(true);
+  });
+
   it("validateSequence sends rows + the same shaped assigned set", async () => {
     route("/validate-sequence", validateOk);
     const a = new ApiAdapter();

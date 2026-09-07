@@ -140,15 +140,48 @@ def test_revalidation_keeps_injected_rows_optional_and_preserves_descending_orde
     assert any("chronological" in error for error in result.hard_errors)
 
 
-def test_revalidation_does_not_restore_changed_pins_or_derive_recurring_pins():
-    pin = {"id": "A", "start": "09:00", "end": "09:30", "zone": "any"}
+def test_revalidation_restores_omitted_native_pin_and_matches_snapshot():
+    native_pin = {"id": "A", "start": "12:00", "end": "12:30", "zone": None}
     inputs = _inputs(
-        assigned=[{"id": "A", "is_recurring": True, "scheduled_start": "12:00"}],
-        pinned_rows=[pin],
-        snapshot={"pinned_rows": [pin], "overlap_grants": [], "planning_config_fingerprint": "fp"},
-        sequence=[{"id": "A", "start": "10:00", "end": "10:30", "zone": "any"}],
+        assigned=[{
+            "id": "A", "is_recurring": True, "blocks": 1,
+            "scheduled_start": "12:00",
+        }],
+        pinned_rows=[],
+        snapshot={
+            "pinned_rows": [native_pin],
+            "overlap_grants": [],
+            "planning_config_fingerprint": "fp",
+        },
+        sequence=[native_pin],
     )
-    result = planning.validate_revalidation(planning.prepare_sequence(inputs, mode="revalidation"))
+    prepared = planning.prepare_sequence(inputs, mode="revalidation")
+    assert prepared.pinned_rows == [native_pin]
+    assert prepared.effective_pins == [native_pin]
+    assert planning.validate_revalidation(prepared).ok is True
+
+
+def test_revalidation_rejects_moved_native_pin_restored_from_server_rows():
+    native_pin = {"id": "A", "start": "12:00", "end": "12:30", "zone": None}
+    prepared = planning.prepare_sequence(
+        _inputs(
+            assigned=[{
+                "id": "A", "is_recurring": True, "blocks": 1,
+                "scheduled_start": "12:00",
+            }],
+            pinned_rows=[],
+            snapshot={
+                "pinned_rows": [native_pin],
+                "overlap_grants": [],
+                "planning_config_fingerprint": "fp",
+            },
+            sequence=[{
+                "id": "A", "start": "10:00", "end": "10:30", "zone": "any",
+            }],
+        ),
+        mode="revalidation",
+    )
+    result = planning.validate_revalidation(prepared)
     assert result.ok is False
     assert any("immutable snapshot" in error for error in result.hard_errors)
 

@@ -252,13 +252,19 @@ def write_digest_index(
 
 def read_digest_index(vault_root: Path | str, valid_date: date) -> list[dict[str, Any]]:
     """Today's index; missing or unreadable degrades to ``[]`` (the caller
-    then refuses the target, exactly as an unknown name is refused)."""
+    then refuses the target, exactly as an unknown name is refused).
+
+    P3-03: the stored ``valid_date`` is re-checked on read — an index file
+    whose own valid_date disagrees with the requested day is treated as
+    missing, so a stale/cross-day cache can never authorize a commit."""
     path = Path(vault_root) / digest_index_rel_path(valid_date)
     if not path.is_file():
         return []
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
+        return []
+    if not isinstance(data, dict) or str(data.get("valid_date") or "") != str(valid_date):
         return []
     items = data.get("items") if isinstance(data, dict) else None
     return [i for i in items if isinstance(i, dict)] if isinstance(items, list) else []

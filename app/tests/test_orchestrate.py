@@ -226,15 +226,20 @@ class TestPerSurfaceFailureDoesNotAbort:
         assert report["ok"] is False
         self._others_ok(report["surfaces"], "vault_flips")
 
-    def test_daily_note_failure_no_daily_note(self, tmp_path):
+    def test_daily_note_absence_is_bounded_noop(self, tmp_path):
         vault = _vault(tmp_path)
         (vault / DAILY_REL).unlink()
         report = orchestrate.run_orchestrated(
             _all_four_intents(), todoist=FakeTodoist(), store=FakeStore(), vault_root=vault,
             plan_body="- x", today=TODAY,
         )
-        assert report["ok"] is False
-        self._others_ok(report["surfaces"], "daily_note")
+        assert report["ok"] is True
+        assert report["failed"] == []
+        assert report["surfaces"]["daily_note"]["status"] == "ok"
+        assert all(
+            entry["status"] == "ok" for entry in report["surfaces"].values()
+        )
+        assert not (vault / DAILY_REL).exists()
 
     def test_calendar_failure_wrong_surface_store(self, tmp_path):
         vault = _vault(tmp_path)
@@ -395,10 +400,11 @@ def test_recent_selections_appended_only_on_all_ok(tmp_path):
 
 def test_recent_selections_not_appended_on_failure(tmp_path):
     vault = _vault(tmp_path)
-    (vault / DAILY_REL).unlink()  # forces the daily_note surface to fail
     sel = [{"id": "t2", "path": "x", "blocks": 1}]
 
-    intents = [commit.WriteIntent("B", "vault", "update", "# TDTB Plan")]
+    intents = [commit.WriteIntent(
+        "C", "vault", "update", "Ghost", path="P/Ghost.md"
+    )]
     report = orchestrate.run_orchestrated(
         intents, vault_root=vault, plan_body="- x", today=TODAY, selections=sel,
     )

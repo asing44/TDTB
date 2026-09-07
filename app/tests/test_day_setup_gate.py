@@ -137,6 +137,12 @@ class TestWritePathFailClosed:
         (vault / "30 - Daily/2026-07-12.md").write_text(
             "# Journal\n", encoding="utf-8"
         )
+        # The live /commit guard now accepts the digest row only when today's
+        # frozen server identity index contains it — seed it before the call.
+        runstate.write_digest_index(vault, date(2026, 7, 12), [
+            {"name": "Garage", "todoist_id": "", "path": "P/Garage.md",
+             "surface": "assigned"},
+        ])
 
     def test_live_commit_fails_closed_without_setup(self, client, vault, monkeypatch):
         self._seed_live(vault)

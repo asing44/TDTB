@@ -24,6 +24,7 @@ permitted edit to judgment.py per the T12 spec), never the other direction.
 """
 from __future__ import annotations
 
+import math
 import re
 import unicodedata
 from dataclasses import dataclass, field
@@ -67,7 +68,10 @@ def validate_pinned_rows(
     for pin in pinned_rows:
         pin_id = str(pin.get("id") or "")
         start, end = pin.get("start"), pin.get("end")
-        if not pin_id or not _is_hhmm(start) or not _is_hhmm(end) or end <= start:
+        start_min = placement_rules.time_to_minutes(start)
+        end_min = placement_rules.time_to_minutes(end)
+        if (not pin_id or start_min is None or end_min is None
+                or end_min <= start_min):
             errors.append(f"malformed pinned row {pin_id or '<missing id>'!r}")
             continue
         if pin_id in seen:
@@ -75,7 +79,7 @@ def validate_pinned_rows(
         seen.add(pin_id)
         if pin_id not in assigned_ids:
             errors.append(f"foreign pinned row {pin_id!r}")
-        spans.append((pin_id, _to_minutes(start), _to_minutes(end)))
+        spans.append((pin_id, start_min, end_min))
     for index, (left_id, left_start, left_end) in enumerate(spans):
         for right_id, right_start, right_end in spans[index + 1:]:
             if left_start < right_end and right_start < left_end:
@@ -85,39 +89,249 @@ def validate_pinned_rows(
     return errors
 
 
-def recurring_auto_pins(
-    assigned: list[dict[str, Any]], *, exclude_ids: set[str] | None = None
-) -> list[dict[str, Any]]:
-    """T27: recurring todoist rows with a native time are placement-immune.
+def _is_native_todoist_row(item: dict[str, Any]) -> bool:
+    """Return whether an item is a Todoist row eligible for native protection.
 
-    Server-authoritative — derives an immutable pin at each recurring row's
-    own ``scheduled_start`` regardless of what the client sent, so a client
-    whose pin state was cleared (fingerprint drift, stale persistence) can
-    never hand a recurring row to judgment as movable. ``exclude_ids`` skips
-    rows the client already pinned; an explicit ``blocks == 0`` is the All
-    day state (no timeline row, no pin)."""
+    Real source rows carry ``source``.  Source-less legacy fixtures remain
+    supported, while explicit non-Todoist sources and vault paths are never
+    treated as native timed tasks.
+    """
+    source = str(item.get("source") or "").strip().casefold()
+    if source:
+        return source == "todoist"
+    if item.get("todoist_id"):
+        return True
+    path = str(item.get("path") or "").strip().casefold()
+    if path:
+        return path.startswith("todoist://")
+    types = item.get("types")
+    if isinstance(types, (list, tuple, set)) and any(
+        str(item_type).strip().casefold() == "todoist" for item_type in types
+    ):
+        return True
+    # Backward compatibility for callers that predate source metadata.
+    return True
+
+
+def _protective_blocks(value: Any) -> int | float:
+    """Resolve a block count without allowing bad data to remove protection."""
+    if isinstance(value, bool):
+        return 1
+    if not isinstance(value, (int, float)):
+        return 1
+    try:
+        numeric = float(value)
+    except (OverflowError, ValueError):
+        return 1
+    if not math.isfinite(numeric):
+        return 1
+    if numeric == 0:
+        return 0
+    return value if numeric > 0 else 1
+
+
+def _derive_timed_auto_pins(
+    assigned: list[dict[str, Any]], *, exclude_ids: set[str] | None = None
+) -> tuple[list[dict[str, Any]], list[str]]:
+    """Derive valid native pins and hard errors for unrepresentable intervals."""
     exclude = exclude_ids or set()
     pins: list[dict[str, Any]] = []
+    errors: list[str] = []
     for item in assigned:
-        if not item.get("is_recurring"):
+        if not _is_native_todoist_row(item):
             continue
-        start = item.get("scheduled_start")
-        if not _is_hhmm(start):
+        if item.get("allow_time_adjustment") is True:
+            continue
+        start = placement_rules.canonical_time(item.get("scheduled_start"))
+        if start is None:
             continue
         row_id = str(item.get("id") or item.get("name") or "")
         if not row_id or row_id in exclude:
             continue
-        blocks = item.get("blocks")
-        if blocks == 0:
+        # ``native_blocks`` is server-only provenance for the Todoist due
+        # duration. The ordinary ``blocks`` value remains the effective
+        # planning duration and may legitimately be overridden to zero.
+        duration_value = (
+            item["native_blocks"] if "native_blocks" in item
+            else item.get("blocks")
+        )
+        n = _protective_blocks(duration_value)
+        if n == 0:
             continue
-        n = blocks if isinstance(blocks, (int, float)) and blocks > 0 else 1
-        end_min = min(_to_minutes(start) + int(round(n * 30)), 24 * 60 - 1)
+        try:
+            duration_minutes = max(1, int(round(float(n) * 30)))
+        except (OverflowError, ValueError):
+            # A very large positive value is still protective; the same-day
+            # cap below is the only representation that can be emitted.
+            duration_minutes = 24 * 60
+        start_min = _to_minutes(start)
+        end_min = min(start_min + duration_minutes, 24 * 60 - 1)
+        # HH:MM has no representation for the next day's midnight. For every
+        # representable start before 23:59 keep the protective interval
+        # positive even when rounding/capping a tiny duration near midnight.
+        if end_min <= start_min and start_min < 24 * 60 - 1:
+            end_min = 24 * 60 - 1
+        if end_min <= start_min:
+            # A 23:59 native start cannot be represented as a positive same-day
+            # HH:MM interval. Do not silently make the row movable.
+            errors.append(
+                f"native timed row {row_id!r}: unrepresentable native interval "
+                f"starting at {start!r}"
+            )
+            continue
         pins.append({
             "id": row_id, "start": start,
             "end": f"{end_min // 60:02d}:{end_min % 60:02d}",
             "zone": None,
         })
+    return pins, errors
+
+
+def timed_auto_pins(
+    assigned: list[dict[str, Any]], *, exclude_ids: set[str] | None = None
+) -> list[dict[str, Any]]:
+    """Todoist rows with a native time are placement-immune by default.
+
+    Server-authoritative — derives an immutable pin at each timed row's own
+    ``scheduled_start`` regardless of what the client sent, so a client
+    whose pin state was cleared (fingerprint drift, stale persistence) can
+    never hand a timed row to judgment as movable. This applies to both
+    recurring and one-off Todoist rows unless the item explicitly opts into
+    retiming with ``allow_time_adjustment: true``.
+
+    Duration is fail-closed: positive finite block counts use their duration,
+    while missing, malformed, non-finite, and negative values receive one
+    protective block. An explicit numeric ``blocks == 0`` is the all-day
+    state and has no timeline pin. ``native_blocks``, when present, is used
+    instead for the server-authoritative protection duration. ``exclude_ids``
+    skips rows the client already pinned. Unrepresentable intervals are
+    omitted here because this compatibility helper returns pins only;
+    :func:`enforce_native_pins` and :func:`verify_native_pins_in_sequence`
+    surface those cases as hard errors.
+    """
+    pins, _errors = _derive_timed_auto_pins(assigned, exclude_ids=exclude_ids)
     return pins
+
+
+def recurring_auto_pins(
+    assigned: list[dict[str, Any]], *, exclude_ids: set[str] | None = None
+) -> list[dict[str, Any]]:
+    """Compatibility wrapper for the former recurring-only public helper.
+
+    New callers should use :func:`timed_auto_pins`, which protects both
+    recurring and one-off native Todoist times. Keeping this wrapper scoped to
+    recurring rows preserves the legacy helper's public behavior for existing
+    consumers while the planning boundary uses the generalized contract.
+    """
+    recurring = [item for item in assigned if item.get("is_recurring")]
+    return timed_auto_pins(recurring, exclude_ids=exclude_ids)
+
+
+def _native_conflicts_for_pins(
+    native: list[dict[str, Any]], pinned_rows: list[dict[str, Any]]
+) -> list[str]:
+    """Return caller pins that move a protected native timed row."""
+    native_by_id = {pin["id"]: pin for pin in native}
+    errors: list[str] = []
+    for pin in pinned_rows:
+        pin_id = str(pin.get("id") or "")
+        native_pin = native_by_id.get(pin_id)
+        if native_pin is None:
+            continue
+        pin_start = placement_rules.time_to_minutes(pin.get("start"))
+        pin_end = placement_rules.time_to_minutes(pin.get("end"))
+        native_start = placement_rules.time_to_minutes(native_pin["start"])
+        native_end = placement_rules.time_to_minutes(native_pin["end"])
+        if (pin_start, pin_end) != (native_start, native_end):
+            errors.append(
+                f"pinned row {pin_id!r} conflicts with its protected native "
+                f"time {native_pin['start']}-{native_pin['end']}"
+            )
+    return errors
+
+
+def canonicalize_pinned_row(pin: dict[str, Any]) -> dict[str, Any]:
+    """Copy a pin while normalizing any valid endpoint to canonical HH:MM."""
+    normalized = dict(pin)
+    for key in ("start", "end"):
+        value = placement_rules.canonical_time(pin.get(key))
+        if value is not None:
+            normalized[key] = value
+    return normalized
+
+
+def enforce_native_pins(
+    assigned: list[dict[str, Any]], pinned_rows: list[dict[str, Any]]
+) -> tuple[list[dict[str, Any]], list[str]]:
+    """Canonicalize and complete server-authoritative native timed pins.
+
+    Matching caller pins are replaced by their canonical server-derived row,
+    conflicting caller pins fail closed, and omitted protected rows are added.
+    Non-native manual pins pass through unchanged so the normal pinned-row
+    validator can continue to report malformed or duplicate manual state.
+    """
+    native, native_errors = _derive_timed_auto_pins(assigned)
+    errors = _native_conflicts_for_pins(native, pinned_rows)
+    errors.extend(native_errors)
+    native_by_id = {pin["id"]: pin for pin in native}
+    effective: list[dict[str, Any]] = []
+    native_seen: set[str] = set()
+    for pin in pinned_rows:
+        pin_id = str(pin.get("id") or "")
+        native_pin = native_by_id.get(pin_id)
+        if native_pin is not None:
+            if pin_id not in native_seen:
+                effective.append(native_pin)
+                native_seen.add(pin_id)
+            continue
+        effective.append(canonicalize_pinned_row(pin))
+    for pin in native:
+        if pin["id"] not in native_seen:
+            effective.append(pin)
+            native_seen.add(pin["id"])
+    return effective, errors
+
+
+def verify_native_pins_in_sequence(
+    assigned: list[dict[str, Any]],
+    sequence_rows: list[dict[str, Any]],
+    pinned_rows: list[dict[str, Any]],
+) -> list[str]:
+    """Verify that a sequence still carries every protected native pin.
+
+    Native pins are recomputed from the server-side assigned rows rather than
+    trusted from client ``pinned_rows`` or a snapshot. This makes omission of
+    the client pin list unable to bypass protection. The supplied pin list is
+    still checked for an unauthorized moved native pin when present.
+    """
+    native, native_errors = _derive_timed_auto_pins(assigned)
+    errors = _native_conflicts_for_pins(native, pinned_rows)
+    errors.extend(native_errors)
+    by_id = {str(row.get("id")): row for row in sequence_rows}
+    for pin in native:
+        row = by_id.get(pin["id"])
+        if row is None:
+            errors.append(f"protected native row {pin['id']!r} missing from sequence")
+            continue
+        row_start = placement_rules.time_to_minutes(row.get("start"))
+        row_end = placement_rules.time_to_minutes(row.get("end"))
+        pin_start = placement_rules.time_to_minutes(pin["start"])
+        pin_end = placement_rules.time_to_minutes(pin["end"])
+        if (row_start, row_end) != (pin_start, pin_end):
+            row_start_text = (
+                placement_rules.canonical_time(row.get("start"))
+                or str(row.get("start"))
+            )
+            row_end_text = (
+                placement_rules.canonical_time(row.get("end"))
+                or str(row.get("end"))
+            )
+            errors.append(
+                f"protected native row {pin['id']!r} moved from "
+                f"{pin['start']}-{pin['end']} to "
+                f"{row_start_text}-{row_end_text}"
+            )
+    return errors
 
 
 # ---------------------------------------------------------------------------
@@ -167,6 +381,7 @@ class ValidationResult:
     hard_errors: list[str] = field(default_factory=list)
     warnings: list[dict[str, str]] = field(default_factory=list)
     conflicts: list[dict[str, Any]] = field(default_factory=list)
+    diagnostics: list[dict[str, Any]] = field(default_factory=list)
 
     def as_dict(self) -> dict[str, Any]:
         result = {
@@ -176,6 +391,8 @@ class ValidationResult:
         }
         if self.conflicts:
             result["conflicts"] = self.conflicts
+        if self.diagnostics:
+            result["diagnostics"] = self.diagnostics
         return result
 
 
@@ -184,37 +401,64 @@ class ValidationResult:
 # ---------------------------------------------------------------------------
 
 def _is_hhmm(value: Any) -> bool:
-    return isinstance(value, str) and bool(_HHMM_RE.match(value))
+    return placement_rules.canonical_time(value) is not None
 
 
-def _to_minutes(hhmm: str) -> int:
-    h, m = hhmm.split(":")
-    return int(h) * 60 + int(m)
-
-
-_AMPM_RE = re.compile(r"^(\d{1,2}):(\d{2})\s*([AaPp][Mm])$")
+def _to_minutes(hhmm: Any) -> int:
+    minutes = placement_rules.time_to_minutes(hhmm)
+    if minutes is None:
+        raise ValueError(f"invalid time: {hhmm!r}")
+    return minutes
 
 
 def _normalize_time(value: Any) -> str | None:
     """Best-effort normalize a config time ('7:45 AM', '—', '12:00 PM') to HH:MM
     24h, or None if unparseable/absent (e.g. the '—' placeholder for
     duration-only anchored blocks)."""
-    if not isinstance(value, str):
+    if not isinstance(value, str) or value.strip() in ("", "—", "-", "--"):
         return None
-    v = value.strip()
-    if not v or v in ("—", "-", "--"):
-        return None
-    if _is_hhmm(v):
-        return v
-    m = _AMPM_RE.match(v)
-    if not m:
-        return None
-    hour, minute, ampm = int(m.group(1)), int(m.group(2)), m.group(3).lower()
-    if ampm == "am":
-        hour = 0 if hour == 12 else hour
-    else:
-        hour = 12 if hour == 12 else hour + 12
-    return f"{hour:02d}:{minute:02d}"
+    return placement_rules.canonical_time(value)
+
+
+def canonicalize_pinned_rows(
+    pinned_rows: list[dict[str, Any]] | None,
+) -> list[dict[str, Any]]:
+    """Return a copied pin list with equivalent times in canonical form."""
+    return [canonicalize_pinned_row(pin) for pin in (pinned_rows or [])]
+
+
+def canonicalize_overlap_grants(
+    grants: list[dict[str, Any]] | None,
+) -> list[dict[str, Any]]:
+    """Return copied grants whose valid interval endpoints are canonical."""
+    result: list[dict[str, Any]] = []
+    for grant in grants or []:
+        if not isinstance(grant, dict):
+            result.append(grant)
+            continue
+        normalized = dict(grant)
+        for key in ("primary_interval", "companion_interval"):
+            interval = grant.get(key)
+            if not isinstance(interval, dict):
+                continue
+            copied = dict(interval)
+            for endpoint in ("start", "end"):
+                value = placement_rules.canonical_time(interval.get(endpoint))
+                if value is not None:
+                    copied[endpoint] = value
+            normalized[key] = copied
+        result.append(normalized)
+    return result
+
+
+def canonicalize_time_frame(frame: dict[str, Any] | None) -> dict[str, Any]:
+    """Project frame identity fields into canonical time values for comparison."""
+    normalized = dict(frame or {})
+    for key in ("now", "anchor", "effective_eod", "config_eod"):
+        value = placement_rules.canonical_time(normalized.get(key))
+        if value is not None:
+            normalized[key] = value
+    return normalized
 
 
 def _zone_window(zone: str, config: dict[str, Any] | None) -> tuple[str, str] | None:
@@ -280,6 +524,55 @@ def _placement_window(item: dict[str, Any] | None) -> tuple[int, int] | None:
     return (_to_minutes(start), _to_minutes(end))
 
 
+def _mint_source_identity(
+    item: dict[str, Any], item_id: str, window: tuple[int, int]
+) -> tuple[Any, ...]:
+    """Return the stable identity used to collapse a selected Mint row."""
+    source_id = str(item.get("mint_session_id") or "").strip()
+    if source_id:
+        return ("source", source_id)
+    # Older callers did not carry a source ID. Keep their distinct windows
+    # separate while still collapsing an exact duplicate representation.
+    return ("row", item_id, window)
+
+
+def _mint_candidate_sort_key(
+    candidate: tuple[dict[str, Any], tuple[int, int], str, tuple[Any, ...]]
+) -> tuple[Any, ...]:
+    item, window, item_id, identity = candidate
+    source_id = str(identity[1])
+    # Mint options are emitted in time order by the source. The source ID is a
+    # deterministic tie-breaker for same-time options with distinct labels.
+    return (
+        window[0], window[1], source_id.casefold(), source_id,
+        item_id.casefold(), item_id,
+        0 if item.get("id") == item.get("name") else 1,
+    )
+
+
+def _canonical_mint_candidates(
+    items: list[dict[str, Any]] | None,
+) -> list[tuple[dict[str, Any], tuple[int, int], str, tuple[Any, ...]]]:
+    """Deduplicate selected Mint items and return them in stable option order."""
+    grouped: dict[tuple[Any, ...], list[tuple[dict[str, Any], tuple[int, int], str, tuple[Any, ...]]]] = {}
+    for item in items or []:
+        if not isinstance(item, dict) or item.get("mint_session") is not True:
+            continue
+        window = _placement_window(item)
+        item_id = str(item.get("id") or item.get("name") or "")
+        if window is None or not item_id:
+            continue
+        identity = _mint_source_identity(item, item_id, window)
+        candidate = (item, window, item_id, identity)
+        grouped.setdefault(identity, []).append(candidate)
+
+    canonical = [
+        min(candidates, key=_mint_candidate_sort_key)
+        for candidates in grouped.values()
+    ]
+    return sorted(canonical, key=_mint_candidate_sort_key)
+
+
 def placement_window_rows(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Build immutable sequence rows for items with an explicit window.
 
@@ -289,6 +582,8 @@ def placement_window_rows(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """
     rows: list[dict[str, Any]] = []
     for item in items:
+        if isinstance(item, dict) and item.get("mint_session") is True:
+            continue
         window = _placement_window(item)
         item_id = str(item.get("id") or item.get("name") or "")
         if window is None or not item_id:
@@ -302,6 +597,20 @@ def placement_window_rows(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
         # Preserve the schedulable source metadata for the frontend and the
         # write-preview routing, without copying the whole prompt item into a
         # sequence row.
+        for key in ("source", "mint_session", "mint_session_id", "calendar_class"):
+            if key in item:
+                row[key] = item[key]
+        rows.append(row)
+
+    # Selected Mint rows are source-backed choices. Do not let a stale UI
+    # selection order or a repeated source row decide their final order.
+    for item, window, item_id, _identity in _canonical_mint_candidates(items):
+        row = {
+            "id": item_id,
+            "start": f"{window[0] // 60:02d}:{window[0] % 60:02d}",
+            "end": f"{window[1] // 60:02d}:{window[1] % 60:02d}",
+            "zone": item.get("zone"),
+        }
         for key in ("source", "mint_session", "mint_session_id", "calendar_class"):
             if key in item:
                 row[key] = item[key]
@@ -323,21 +632,10 @@ def selected_mint_walls(items: list[dict[str, Any]]) -> list[tuple[str, tuple[in
     duplicates are collapsed, first occurrence wins, so one overlapping row
     yields exactly one hard error. The Mint row itself stays exempt.
     """
-    walls: list[tuple[str, tuple[int, int]]] = []
-    seen: set[tuple[str, tuple[int, int]]] = set()
-    for item in items or []:
-        if item.get("mint_session") is not True:
-            continue
-        window = _placement_window(item)
-        item_id = str(item.get("id") or item.get("name") or "")
-        if window is None or not item_id:
-            continue
-        entry = (item_id, window)
-        if entry in seen:
-            continue
-        seen.add(entry)
-        walls.append(entry)
-    return walls
+    return [
+        (item_id, window)
+        for _item, window, item_id, _identity in _canonical_mint_candidates(items)
+    ]
 
 
 def merge_immutable_rows(
@@ -350,7 +648,12 @@ def merge_immutable_rows(
         if str(row.get("id")) not in immutable_ids
     ]
     merged.extend(immutable_rows)
-    return sorted(merged, key=lambda row: (str(row.get("start") or ""), str(row.get("id") or "")))
+    def sort_key(row: dict[str, Any]) -> tuple[int, str]:
+        start = placement_rules.time_to_minutes(row.get("start"))
+        return (start if start is not None else 24 * 60 + 1,
+                str(row.get("id") or ""))
+
+    return sorted(merged, key=sort_key)
 
 
 def merge_pinned_rows(
@@ -438,12 +741,93 @@ def validate_sequence(
     """
     hard_errors: list[str] = []
     warnings: list[dict[str, str]] = []
+    diagnostics: list[dict[str, Any]] = []
+
+    def interval_for(row_id: str, start: Any, end: Any) -> dict[str, str] | None:
+        canonical_start = placement_rules.canonical_time(start)
+        canonical_end = placement_rules.canonical_time(end)
+        if canonical_start is None or canonical_end is None:
+            return None
+        return {"id": row_id, "start": canonical_start, "end": canonical_end}
+
+    def span_interval(block_id: str, span: tuple[int, int]) -> dict[str, str]:
+        return {
+            "id": block_id,
+            "start": f"{span[0] // 60:02d}:{span[0] % 60:02d}",
+            "end": f"{span[1] // 60:02d}:{span[1] % 60:02d}",
+        }
+
+    def add_diagnostic(
+        rule: str,
+        severity: str,
+        detail: str,
+        affected_rows: list[str] | None = None,
+        intervals: list[dict[str, str] | None] | None = None,
+    ) -> None:
+        diagnostics.append({
+            "rule": rule,
+            "severity": severity,
+            "affected_rows": affected_rows or [],
+            "intervals": [interval for interval in (intervals or [])
+                          if interval is not None],
+            "detail": detail,
+        })
+
+    def add_hard(
+        detail: str,
+        *,
+        rule: str = "validation",
+        affected_rows: list[str] | None = None,
+        intervals: list[dict[str, str] | None] | None = None,
+    ) -> None:
+        hard_errors.append(detail)
+        add_diagnostic(rule, "error", detail, affected_rows, intervals)
+
+    def add_warning(
+        warning: dict[str, str],
+        *,
+        rule: str | None = None,
+        affected_rows: list[str] | None = None,
+        intervals: list[dict[str, str] | None] | None = None,
+    ) -> None:
+        warnings.append(warning)
+        add_diagnostic(
+            rule or str(warning.get("rule") or warning.get("kind") or "warning"),
+            "warning",
+            str(warning.get("detail") or ""),
+            affected_rows,
+            intervals,
+        )
 
     sequence = proposal.get("sequence")
     if not isinstance(sequence, list):
-        return ValidationResult(ok=False, hard_errors=["SequenceProposal.sequence: expected a list"])
-    sequence = [r for r in sequence if not (isinstance(r, dict) and r.get("backdrop"))]
-    overlap_grants = proposal.get("overlap_grants") or []
+        detail = "SequenceProposal.sequence: expected a list"
+        return ValidationResult(
+            ok=False,
+            hard_errors=[detail],
+            diagnostics=[{
+                "rule": "invalid_sequence",
+                "severity": "error",
+                "affected_rows": [],
+                "intervals": [],
+                "detail": detail,
+            }],
+        )
+    normalized_sequence: list[dict[str, Any]] = []
+    for raw_row in sequence:
+        if isinstance(raw_row, dict) and raw_row.get("backdrop"):
+            continue
+        if not isinstance(raw_row, dict):
+            normalized_sequence.append(raw_row)
+            continue
+        normalized_row = dict(raw_row)
+        for endpoint in ("start", "end"):
+            value = placement_rules.canonical_time(raw_row.get(endpoint))
+            if value is not None:
+                normalized_row[endpoint] = value
+        normalized_sequence.append(normalized_row)
+    sequence = normalized_sequence
+    overlap_grants = canonicalize_overlap_grants(proposal.get("overlap_grants") or [])
 
     def _exact_grant(
         row: dict[str, Any], block_name: str, block_span: tuple[int, int]
@@ -476,58 +860,105 @@ def validate_sequence(
 
     # -- structural: HH:MM validity, end>start, chronological order ---------
     seen_ids: list[str] = []
-    prev_start: str | None = None
+    prev_start_min: int | None = None
     rows: list[dict[str, Any]] = []
+    frame_anchor = _normalize_time(time_frame.get("anchor")) if time_frame else None
+    frame_eod = _normalize_time(time_frame.get("effective_eod")) if time_frame else None
+    frame_anchor_min = _to_minutes(frame_anchor) if frame_anchor else None
+    frame_eod_min = _to_minutes(frame_eod) if frame_eod else None
     for row in sequence:
+        if not isinstance(row, dict):
+            detail = f"{row!r}: sequence row must be an object"
+            add_hard(detail, rule="invalid_sequence_row")
+            continue
         row_id = str(row.get("id"))
-        start, end = row.get("start"), row.get("end")
+        raw_start, raw_end = row.get("start"), row.get("end")
+        start = placement_rules.canonical_time(raw_start)
+        end = placement_rules.canonical_time(raw_end)
 
-        if not _is_hhmm(start):
-            hard_errors.append(f"{row_id!r}: start {start!r} is not valid HH:MM")
+        if start is None:
+            detail = f"{row_id!r}: start {raw_start!r} is not valid HH:MM"
+            add_hard(detail, rule="invalid_time", affected_rows=[row_id])
             continue
-        if not _is_hhmm(end):
-            hard_errors.append(f"{row_id!r}: end {end!r} is not valid HH:MM")
+        if end is None:
+            detail = f"{row_id!r}: end {raw_end!r} is not valid HH:MM"
+            add_hard(detail, rule="invalid_time", affected_rows=[row_id])
             continue
-        if end <= start:
-            hard_errors.append(f"{row_id!r}: end {end!r} not after start {start!r}")
-            continue
-
-        if prev_start is not None and start < prev_start:
-            hard_errors.append(
-                f"sequence not in chronological start order at {row_id!r} "
-                f"({start!r} < preceding {prev_start!r})"
+        start_min = _to_minutes(start)
+        end_min = _to_minutes(end)
+        normalized_row = {**row, "start": start, "end": end}
+        if end_min <= start_min:
+            detail = f"{row_id!r}: end {end!r} not after start {start!r}"
+            add_hard(
+                detail,
+                rule="non_positive_interval",
+                affected_rows=[row_id],
+                intervals=[interval_for(row_id, start, end)],
             )
-        prev_start = start
+            continue
 
-        if time_frame:
-            anchor = _normalize_time(time_frame.get("anchor"))
-            eod = _normalize_time(time_frame.get("effective_eod"))
-            if anchor and start < anchor:
-                # Demoted HARD -> soft 2026-07-21 (Adam, T14 run): the plan
-                # must always come back; past placement renders as an LD24
-                # acceptable defect the user accepts or drags forward.
-                warnings.append({
-                    "id": row_id, "rule": "placement_past",
-                    "detail": f"⚠ starts {start} before anchor {anchor} (in the past)",
-                })
-            if eod and end > eod:
-                warnings.append({
-                    "id": row_id, "rule": "past_eod",
-                    "detail": f"⚠ past EOD — ends {end}, effective EOD {eod}",
-                })
+        if prev_start_min is not None and start_min < prev_start_min:
+            detail = (
+                f"sequence not in chronological start order at {row_id!r} "
+                f"({start!r} < preceding "
+                f"{prev_start_min // 60:02d}:{prev_start_min % 60:02d})"
+            )
+            add_hard(
+                detail,
+                rule="chronological_order",
+                affected_rows=[row_id],
+                intervals=[interval_for(row_id, start, end)],
+            )
+        prev_start_min = start_min
+
+        if frame_anchor_min is not None and start_min < frame_anchor_min:
+            # Demoted HARD -> soft 2026-07-21 (Adam, T14 run): the plan
+            # must always come back; past placement renders as an LD24
+            # acceptable defect the user accepts or drags forward.
+            warning = {
+                "id": row_id, "rule": "placement_past",
+                "detail": (
+                    f"⚠ starts {start} before anchor {frame_anchor} (in the past)"
+                ),
+            }
+            add_warning(
+                warning,
+                affected_rows=[row_id],
+                intervals=[interval_for(row_id, start, end)],
+            )
+        if frame_eod_min is not None and end_min > frame_eod_min:
+            warning = {
+                "id": row_id, "rule": "past_eod",
+                "detail": (
+                    f"⚠ past EOD — ends {end}, effective EOD {frame_eod}"
+                ),
+            }
+            add_warning(
+                warning,
+                affected_rows=[row_id],
+                intervals=[interval_for(row_id, start, end)],
+            )
 
         seen_ids.append(row_id)
-        rows.append(row)
+        rows.append(normalized_row)
 
     # duplicates
     dupes = {i for i in seen_ids if seen_ids.count(i) > 1}
     for d in dupes:
-        hard_errors.append(f"{d!r}: appears more than once in sequence")
+        add_hard(
+            f"{d!r}: appears more than once in sequence",
+            rule="duplicate_sequence_row",
+            affected_rows=[d],
+        )
 
     # never-bump: every assigned item present exactly once
     missing = [aid for aid in assigned_by_id if aid not in seen_ids]
     for m in missing:
-        hard_errors.append(f"assigned item {m!r} missing from sequence (never-bump violated)")
+        add_hard(
+            f"assigned item {m!r} missing from sequence (never-bump violated)",
+            rule="never_bump",
+            affected_rows=[m],
+        )
 
     # extras not in assigned (and not an anchored block passthrough or an
     # optional id — e.g. QT-absorbed items a manual layout places directly)
@@ -543,7 +974,11 @@ def validate_sequence(
     allowed = anchored_ids | (optional_ids or set())
     extras = [i for i in set(seen_ids) if i not in assigned_by_id and i not in allowed]
     for e in extras:
-        hard_errors.append(f"{e!r}: not present in assigned items or anchored blocks")
+        add_hard(
+            f"{e!r}: not present in assigned items or anchored blocks",
+            rule="extra_sequence_row",
+            affected_rows=[e],
+        )
 
     # Explicit schedulable windows are user-selected placement bounds. They
     # are optional rows, so they do not participate in never-bump, but a row
@@ -557,11 +992,17 @@ def validate_sequence(
             continue
         row_end = _to_minutes(row["end"])
         if row_end > window[1]:
-            hard_errors.append(
+            detail = (
                 f"{row['id']!r}: placed {row['start']}-{row['end']} outside "
                 "its selected Mint session window "
                 f"{window[0] // 60:02d}:{window[0] % 60:02d}-"
                 f"{window[1] // 60:02d}:{window[1] % 60:02d}"
+            )
+            add_hard(
+                detail,
+                rule="selected_mint_window",
+                affected_rows=[str(row["id"])],
+                intervals=[interval_for(str(row["id"]), row["start"], row["end"])],
             )
 
     # -- overlap with non-permeable anchored blocks --------------------------
@@ -607,11 +1048,7 @@ def validate_sequence(
     # A row starting at/after the effective EOD sits in the overflow tail — its
     # anchored-block overlap is a SOFT flag the user resolves on the timeline;
     # before the effective EOD, an overlap stays a HARD wall.
-    eod_min = (
-        _to_minutes(_normalize_time(time_frame.get("effective_eod")))
-        if time_frame and _normalize_time(time_frame.get("effective_eod"))
-        else None
-    )
+    eod_min = frame_eod_min
 
     for row in rows:
         row_id = str(row.get("id"))
@@ -631,13 +1068,28 @@ def validate_sequence(
                 )
                 grant = _exact_grant(row, block_name, (b_start, b_end))
                 if grant is not None:
-                    warnings.append({
-                        "id": row_id, "rule": "allowed_overlap",
-                        "detail": f"Allowed overlap with {block_name!r}: "
-                                  f"{grant.get('reason') or 'explicit grant'}",
-                    })
+                    add_warning(
+                        {
+                            "id": row_id, "rule": "allowed_overlap",
+                            "detail": f"Allowed overlap with {block_name!r}: "
+                                      f"{grant.get('reason') or 'explicit grant'}",
+                        },
+                        affected_rows=[row_id, block_name],
+                        intervals=[
+                            interval_for(row_id, row["start"], row["end"]),
+                            span_interval(block_name, (b_start, b_end)),
+                        ],
+                    )
                 else:
-                    hard_errors.append(desc)
+                    add_hard(
+                        desc,
+                        rule="calendar_overlap",
+                        affected_rows=[row_id, block_name],
+                        intervals=[
+                            interval_for(row_id, row["start"], row["end"]),
+                            span_interval(block_name, (b_start, b_end)),
+                        ],
+                    )
         in_overflow_tail = eod_min is not None and r_start >= eod_min
         for block_name, (b_start, b_end) in hard_spans:
             if r_start < b_end and b_start < r_end:
@@ -648,24 +1100,42 @@ def validate_sequence(
                 )
                 grant = _exact_grant(row, block_name, (b_start, b_end))
                 if grant is not None:
-                    warnings.append({
-                        "id": row_id, "rule": "allowed_overlap",
-                        "detail": f"Allowed overlap with {block_name!r}: "
-                                  f"{grant.get('reason') or 'explicit grant'}",
-                    })
+                    add_warning(
+                        {
+                            "id": row_id, "rule": "allowed_overlap",
+                            "detail": f"Allowed overlap with {block_name!r}: "
+                                      f"{grant.get('reason') or 'explicit grant'}",
+                        },
+                        affected_rows=[row_id, block_name],
+                        intervals=[
+                            interval_for(row_id, row["start"], row["end"]),
+                            span_interval(block_name, (b_start, b_end)),
+                        ],
+                    )
                 elif in_overflow_tail:
-                    warnings.append({
-                        "id": row_id, "rule": "overflow_overlap",
-                        "detail": f"⚠ overflow — {desc}",
-                    })
+                    add_warning(
+                        {
+                            "id": row_id, "rule": "overflow_overlap",
+                            "detail": f"⚠ overflow — {desc}",
+                        },
+                        affected_rows=[row_id, block_name],
+                        intervals=[
+                            interval_for(row_id, row["start"], row["end"]),
+                            span_interval(block_name, (b_start, b_end)),
+                        ],
+                    )
                 else:
                     # T18d/locked decision 26: unexpected wall overlaps are
                     # acceptable defects, never silent and never hard-safety
                     # overrides. The user may accept them explicitly later.
-                    warnings.append({
-                        "id": row_id, "rule": "unexpected_overlap",
-                        "detail": desc,
-                    })
+                    add_warning(
+                        {"id": row_id, "rule": "unexpected_overlap", "detail": desc},
+                        affected_rows=[row_id, block_name],
+                        intervals=[
+                            interval_for(row_id, row["start"], row["end"]),
+                            span_interval(block_name, (b_start, b_end)),
+                        ],
+                    )
         for block_name, (b_start, b_end) in window_spans:
             if r_start < b_end and b_start < r_end:
                 window_overlap_counts[block_name] = window_overlap_counts.get(block_name, 0) + 1
@@ -690,19 +1160,28 @@ def validate_sequence(
         r_start, r_end = _to_minutes(row["start"]), _to_minutes(row["end"])
         for wall_id, (w_start, w_end) in mint_walls:
             if r_start < w_end and w_start < r_end:
-                hard_errors.append(
+                detail = (
                     f"{row_id!r} ({row['start']}-{row['end']}) overlaps selected "
                     f"Mint session {wall_id!r} ({w_start // 60:02d}:{w_start % 60:02d}-"
                     f"{w_end // 60:02d}:{w_end % 60:02d})"
                 )
+                add_hard(
+                    detail,
+                    rule="mint_overlap",
+                    affected_rows=[row_id, wall_id],
+                    intervals=[
+                        interval_for(row_id, row["start"], row["end"]),
+                        span_interval(wall_id, (w_start, w_end)),
+                    ],
+                )
 
     for block_name, n in window_overlap_counts.items():
-        warnings.append({
+        add_warning({
             "id": block_name,
             "kind": "window-overlap",
             "detail": f"{n} task(s) scheduled within the {block_name!r} window "
                       f"— place its floating block in a free gap",
-        })
+        }, rule="window-overlap", affected_rows=[block_name])
 
     # -- HARD: morning workout ban (before 12:00), Press before_work excepted --
     for row in rows:
@@ -711,10 +1190,16 @@ def validate_sequence(
         # fold in the proposal row's own zone/id for detection robustness
         probe = {"id": row_id, "zone": row.get("zone") or item.get("zone", ""), "type": item.get("type", "")}
         if is_workout_item(probe) or is_workout_item(item):
-            if row["start"] < "12:00" and row_id not in press_exception_ids:
-                hard_errors.append(
+            if _to_minutes(row["start"]) < _to_minutes("12:00") and row_id not in press_exception_ids:
+                detail = (
                     f"{row_id!r}: workout block placed at {row['start']} — before noon is "
                     f"forbidden except a Press before_work exception"
+                )
+                add_hard(
+                    detail,
+                    rule="morning_workout",
+                    affected_rows=[row_id],
+                    intervals=[interval_for(row_id, row["start"], row["end"])],
                 )
 
     # -- SOFT: zone compatibility --------------------------------------------
@@ -724,38 +1209,48 @@ def validate_sequence(
         zone = item.get("zone") or row.get("zone") or "any"
         window = _zone_window(str(zone), config)
         if window is not None and not _in_window(row["start"], window):
-            warnings.append(
+            add_warning(
                 {
                     "kind": "zone_violation",
                     "id": row_id,
                     "detail": f"placed at {row['start']}, outside {zone} window "
                     f"{window[0]}-{window[1]}",
-                }
+                },
+                affected_rows=[row_id],
+                intervals=[interval_for(row_id, row["start"], row["end"])],
             )
 
     semantic_constraints = placement_rules.derive_constraints(
         assigned, anchored_blocks
     )
-    hard_errors.extend(
-        placement_rules.validate_constraints(
-            {"sequence": rows, "overlap_grants": overlap_grants},
-            semantic_constraints,
-            planning_config_fingerprint=planning_config_fingerprint,
-        )
-    )
+    for detail in placement_rules.validate_constraints(
+        {"sequence": rows, "overlap_grants": overlap_grants},
+        semantic_constraints,
+        planning_config_fingerprint=planning_config_fingerprint,
+    ):
+        add_hard(detail, rule="semantic_constraint")
 
     # -- SOFT: latest_start ----------------------------------------------------
     for row in rows:
         row_id = str(row.get("id"))
         item = item_by_id.get(row_id, {})
         latest_start = item.get("latest_start")
-        if latest_start and _is_hhmm(latest_start) and row["start"] > latest_start:
-            warnings.append(
+        latest_start = _normalize_time(latest_start)
+        if (latest_start is not None
+                and _to_minutes(row["start"]) > _to_minutes(latest_start)):
+            add_warning(
                 {
                     "kind": "latest_start_violation",
                     "id": row_id,
                     "detail": f"started at {row['start']}, after latest_start {latest_start}",
-                }
+                },
+                affected_rows=[row_id],
+                intervals=[interval_for(row_id, row["start"], row["end"])],
             )
 
-    return ValidationResult(ok=not hard_errors, hard_errors=hard_errors, warnings=warnings)
+    return ValidationResult(
+        ok=not hard_errors,
+        hard_errors=hard_errors,
+        warnings=warnings,
+        diagnostics=diagnostics,
+    )

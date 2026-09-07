@@ -146,10 +146,23 @@ def disambiguate_names(
 # Calendar
 # ---------------------------------------------------------------------------
 
-def fetch_calendar_busy(
+def fetch_calendar_decisions(
     store: Any, config: dict[str, Any], today: date
-) -> tuple[list[dict[str, Any]], list[str]]:
-    """Today's events as anchored-block-shaped busy blocks.
+) -> tuple[list[dict[str, Any]], list[str], list[dict[str, Any]]]:
+    """Today's events as anchored-block-shaped busy blocks, plus one
+    structured decision per considered event (issue #6 detailed contract).
+
+    Returns ``(blocks, warnings, decisions)``; never raises. ``blocks`` and
+    ``warnings`` are exactly the frozen two-value ``fetch_calendar_busy``
+    contract; ``decisions`` adds one diagnosable row per queried event:
+    ``included`` (emitted as a busy block), ``excluded`` (disabled calendar,
+    duplicate representation, or zero/negative duration), or ``unresolved``
+    (malformed start/end). Each decision carries a stable identity
+    (``event_id``/``id`` or a deterministic field composite), title, calendar
+    identity, a human-readable reason, and capacity class plus start/end
+    when applicable.
+
+    Underlying classification:
 
     T12j preserves source calendar identity and resolves each event to one of
     four durable capacity states: ``fixed`` (default for unlisted or
@@ -162,8 +175,20 @@ def fetch_calendar_busy(
 
     Frozen contract 16: events sharing a canonical identity (``event_id`` /
     ``id``) canonicalize into ONE logical group — attendance and capacity
-    each count once. First occurrence wins; identity-less events emit
-    one row each (deterministic, stable under refresh).
+    each count once. First occurrence wins. Identity-less events deduplicate
+    by the deterministic canonical composite (calendar identity, title, raw
+    interval, all_day flag): identical composites merge into one row, while
+    distinct identity-less events each emit their own row. Registration of
+    BOTH identities happens BEFORE disabled/unknown filtering, so a later
+    known copy of an already-seen event can never be included after its
+    first occurrence was excluded — first-occurrence-wins holds across
+    exclusion boundaries.
+
+    Legacy test seam (do not rely on this in new code): stores that expose
+    no calendar inventory at all — old test fakes without a ``calendars()``
+    method — keep the historical known/fixed treatment for their events.
+    Production stores always expose an inventory; this carve-out exists only
+    so legacy fixtures keep passing and is explicitly NOT a production path.
 
     Frozen contract 18: all-day source events stay all-day and non-timed on
     the wire. They carry ``all_day: True`` and NO ``Start``/``End`` — every
@@ -173,7 +198,7 @@ def fetch_calendar_busy(
     import calendar_bridge
 
     if store is None:
-        return [], ["Calendar unavailable (no EventKit store/grant) — busy blocks missing"]
+        return [], ["Calendar unavailable (no EventKit store/grant) — busy blocks missing"], []
 
     # An unauthorized EventStore returns [] from query_events without raising —
     # exactly the silent-degrade this module must never allow (bake-in day 1
@@ -186,7 +211,7 @@ def fetch_calendar_busy(
         return [], [
             f"Calendar access {auth} — busy blocks missing "
             "(grant via EventStore().request_access() once)"
-        ]
+        ], []
 
     # Authorized but zero visible calendars is a distinct silent-degrade:
     # incident 2026-07-16 — an EventKit grant didn't carry to a restarted
@@ -199,12 +224,12 @@ def fetch_calendar_busy(
         try:
             cals = calendars_fn()
         except Exception as exc:  # noqa: BLE001 — degrade contract
-            return [], [f"Calendar read failed ({exc}) — busy blocks missing"]
+            return [], [f"Calendar read failed ({exc}) — busy blocks missing"], []
         if not cals:
             return [], [
                 "Calendar store has 0 visible calendars — grant likely "
                 "missing for this process; busy blocks missing"
-            ]
+            ], []
 
     own_ids = set((config.get("calendar_ids") or {}).values())
     title_classes = calendar_bridge.normalize_capacity_class_map(
@@ -224,71 +249,350 @@ def fetch_calendar_busy(
             )
         return getattr(cal, attr, None)
 
-    title_by_id = {
-        str(identifier): str(title)
-        for cal in cals
-        if (identifier := _cal_value(cal, "identifier"))
-        and (title := _cal_value(cal, "title"))
-    }
+    title_by_id: dict[str, str] = {}
+    id_title_by_lower: dict[str, tuple[str, str]] = {}
+    for cal in cals:
+        identifier = _cal_value(cal, "identifier")
+        title = _cal_value(cal, "title")
+        if identifier and title:
+            sid = str(identifier)
+            title_by_id[sid] = str(title)
+            id_title_by_lower[sid.casefold()] = (sid, str(title))
+    # True only when the store actually exposed a calendar inventory; fakes
+    # without a calendars() method (cals stays []) keep legacy behavior.
+    have_inventory = bool(cals)
+
+    # Issue #6: calendars disabled for planning contribute no rows, walls, or
+    # capacity. A calendar is disabled either via the config list
+    # (``calendar_disabled`` / ``Disabled Calendars``) or via an explicit
+    # disable flag on the calendar object itself.
+    disabled_names = calendar_bridge.normalize_disabled_calendars(
+        config.get("calendar_disabled") or config.get("Disabled Calendars")
+    )
+    disabled_ids: set[str] = set()
+    disabled_titles: set[str] = set()
+    for cal in cals:
+        if calendar_bridge.is_calendar_planning_disabled(cal, disabled_names):
+            ident = _cal_value(cal, "identifier")
+            title = _cal_value(cal, "title")
+            if ident is not None:
+                disabled_ids.add(str(ident).casefold())
+            if title is not None:
+                disabled_titles.add(str(title).strip().casefold())
+    match_keys = disabled_names | disabled_ids | disabled_titles
+
     start = datetime.combine(today, time.min)
     end = start + timedelta(days=1)
     try:
         events = store.query_events(start, end, None)
     except Exception as exc:  # noqa: BLE001 — degrade contract
-        return [], [f"Calendar read failed ({exc}) — busy blocks missing"]
+        return [], [f"Calendar read failed ({exc}) — busy blocks missing"], []
 
     blocks: list[dict[str, Any]] = []
-    seen_identities: set[str] = set()
+    warnings: list[str] = []
+    decisions: list[dict[str, Any]] = []
+    omitted: list[str] = []
+    seen_stable_ids: set[str] = set()
+    seen_composites: set[str] = set()
+    duplicates = 0
+
+    def _build_decision(
+        identity: str,
+        title: str,
+        source_calendar_id: str | None,
+        calendar_id: str | None,
+        calendar_title: str | None,
+        decision: str,
+        reason_code: str,
+        reason: str,
+        capacity_class: str | None = None,
+        start: str | None = None,
+        end: str | None = None,
+        all_day: bool | None = None,
+    ) -> dict[str, Any]:
+        """Issue #6: single helper that builds every decision row with the
+        SAME complete schema: stable identity, raw + canonical calendar IDs,
+        title, decision, reason_code/reason, capacity_class, and interval/
+        all_day fields. Nullable values are always explicit (None), never
+        omitted — every branch emits the exact same shape."""
+        row: dict[str, Any] = {
+            "identity": identity,
+            "title": title,
+            "source_calendar_id": source_calendar_id,
+            "calendar_id": calendar_id,
+            "calendar_title": calendar_title,
+            "decision": decision,
+            "reason_code": reason_code,
+            "reason": reason,
+            "capacity_class": capacity_class,
+            "start": start,
+            "end": end,
+            "all_day": all_day,
+        }
+        return row
+
     for ev in events:
-        # Contract 16: canonicalize duplicate source events into one logical
-        # group by stable identity; first occurrence wins.
-        identity = ev.get("event_id") or ev.get("id")
-        if identity is not None:
-            identity = str(identity)
-            if identity in seen_identities:
+        raw_calendar_id = ev.get("calendar_id")
+        source_calendar_id = (
+            str(raw_calendar_id).strip()
+            if raw_calendar_id is not None and str(raw_calendar_id).strip() != ""
+            else None
+        )
+        calendar_id: str | None = source_calendar_id
+        calendar_title: str | None = None
+        # Issue #6: canonicalize the calendar identity. A missing/empty ID
+        # uses the single-calendar fallback; an unlisted ID in a sole visible
+        # calendar keeps its source identity and the unlisted fixed default.
+        # Only an unlisted ID in an ambiguous inventory is unresolved.
+        if not calendar_id and cals and len(cals) == 1:
+            canonical_id = _cal_value(cals[0], "identifier")
+            canonical_title = _cal_value(cals[0], "title")
+            if canonical_id is not None:
+                calendar_id = str(canonical_id)
+            if canonical_title is not None:
+                calendar_title = str(canonical_title)
+            calendar_known = True
+        elif calendar_id:
+            lowered = calendar_id.casefold()
+            if lowered in id_title_by_lower:
+                calendar_id, calendar_title = id_title_by_lower[lowered]
+                calendar_known = True
+            elif not have_inventory:
+                # Store exposes no calendar inventory (fake/test seam): keep
+                # the legacy fixed/visible treatment for its events.
+                calendar_known = True
+            elif len(cals) == 1:
+                # A sole visible calendar is the default scope for an event
+                # whose source ID is not present in the inventory. Preserve
+                # the raw source ID/title identity while retaining the
+                # FEEDBACK-27 fixed default; multi-calendar misses remain
+                # unresolved so issue #6 never silently attributes them.
+                calendar_known = True
+            else:
+                calendar_known = False
+        else:
+            calendar_known = False
+
+        title_disp = ev.get("title") or "(untitled event)"
+        cal_key = (calendar_id or calendar_title or source_calendar_id or "")
+        composite_identity = "|".join(
+            str(v)
+            for v in (
+                cal_key.casefold(),
+                ev.get("title") or "",
+                ev.get("start"),
+                ev.get("end"),
+                ev.get("all_day"),
+            )
+        )
+        identity_raw = ev.get("event_id") or ev.get("id")
+        has_stable_id = identity_raw is not None and str(identity_raw) != ""
+        identity = str(identity_raw) if has_stable_id else composite_identity
+
+        # Issue #6: capacity class is only assigned when the calendar identity
+        # is known; unknown calendars never become fixed capacity.
+        capacity_class: str | None = None
+        if calendar_known:
+            capacity_class = title_classes.get(calendar_title or "", "fixed")
+            if calendar_id in own_ids:
+                capacity_class = "ignored"
+
+        # Issue #6: interval values are computed ONCE per event, before any
+        # classification branch, so every decision row reports the same
+        # complete picture. Datetimes render as HH:MM; malformed raw values
+        # (strings, garbage) are preserved as-is when present. all_day is
+        # always an explicit boolean — True for all-day sources, False for
+        # every timed, malformed, or zero-duration event.
+        if isinstance(ev.get("start"), datetime):
+            interval_start = ev["start"].strftime("%H:%M")
+        elif ev.get("start") is not None:
+            interval_start = str(ev["start"])
+        else:
+            interval_start = None
+        if isinstance(ev.get("end"), datetime):
+            interval_end = ev["end"].strftime("%H:%M")
+        elif ev.get("end") is not None:
+            interval_end = str(ev["end"])
+        else:
+            interval_end = None
+        all_day_flag = bool(ev.get("all_day"))
+
+        # Contract 16: duplicate source events canonicalize into one logical
+        # group; first occurrence wins. Stable-ID records dedup ONLY by stable
+        # ID. Identity-less records dedup ONLY by the canonical composite
+        # (canonical calendar identity/title/time) — the two namespaces never
+        # cross, so an identity-less event is never collapsed against a
+        # stable-ID record, while identity-less equivalents whose raw IDs
+        # canonicalize to the same calendar still merge.
+        # Registration happens FIRST, before disabled/unknown filtering, so a
+        # later known copy of an identity whose first occurrence was excluded
+        # can never slip through as an included block.
+        if has_stable_id:
+            if identity in seen_stable_ids:
+                duplicates += 1
+                reason = (
+                    f"{title_disp}: duplicate event "
+                    "representation merged by stable ID"
+                )
+                decisions.append(_build_decision(
+                    identity, title_disp, source_calendar_id, calendar_id,
+                    calendar_title, "excluded", "excluded_duplicate", reason,
+                    capacity_class=capacity_class,
+                    start=interval_start, end=interval_end,
+                    all_day=all_day_flag,
+                ))
                 continue
-            seen_identities.add(identity)
-        calendar_id = str(ev.get("calendar_id") or "")
-        calendar_title = title_by_id.get(calendar_id)
+            seen_stable_ids.add(identity)
+        else:
+            if composite_identity in seen_composites:
+                duplicates += 1
+                reason = (
+                    f"{title_disp}: duplicate event "
+                    "representation merged by canonical composite identity"
+                )
+                decisions.append(_build_decision(
+                    identity, title_disp, source_calendar_id, calendar_id,
+                    calendar_title, "excluded", "excluded_duplicate", reason,
+                    capacity_class=capacity_class,
+                    start=interval_start, end=interval_end,
+                    all_day=all_day_flag,
+                ))
+                continue
+            seen_composites.add(composite_identity)
+
+        # Issue #6: disabled/inactive calendars contribute no rows, walls, or
+        # capacity — omissions carry a user-readable reason.
+        cal_keys = set()
+        for value in (calendar_id, calendar_title, source_calendar_id):
+            if value:
+                cal_keys.add(str(value).strip().casefold())
+        if cal_keys & match_keys:
+            reason = (
+                f"{title_disp}: calendar "
+                f"{calendar_title or calendar_id or '(unknown)'} is disabled for planning"
+            )
+            omitted.append(reason)
+            decisions.append(_build_decision(
+                identity, title_disp, source_calendar_id, calendar_id,
+                calendar_title, "excluded", "excluded_disabled_calendar",
+                reason,
+                capacity_class=capacity_class,
+                start=interval_start, end=interval_end,
+                all_day=all_day_flag,
+            ))
+            continue
+
+        # Issue #6: a non-empty calendar ID that does not resolve to the
+        # store's inventory is unknown — the event is unresolved, warned, and
+        # never becomes fixed capacity.
+        if not calendar_known:
+            reason = (
+                f"{title_disp}: unknown calendar ID '{source_calendar_id}' — "
+                "event unresolved (not attributable to a known calendar)"
+            )
+            omitted.append(reason)
+            decisions.append(_build_decision(
+                identity, title_disp, source_calendar_id, None, None,
+                "unresolved", "unresolved_unknown_calendar", reason,
+                capacity_class=None,
+                start=interval_start, end=interval_end,
+                all_day=all_day_flag,
+            ))
+            continue
         # FEEDBACK-27: unlisted/unclassified timed calendars default FIXED and
         # stay visible — the live contract requires real timed commitments to
         # surface as capacity (2026-08-17 incident: an unclassified calendar
         # must not be silently quarantined away). Explicit title->class config
         # and own-write IDs still win; a configured "quarantined" class keeps
         # the contract-17 exclusion behavior.
-        capacity_class = title_classes.get(calendar_title or "", "fixed")
-        if calendar_id in own_ids:
-            capacity_class = "ignored"
         # Contract 18: all-day events remain all-day and non-timed — emitted
         # without Start/End so no timed planning path can convert them.
         if ev.get("all_day"):
             blocks.append({
-                "Block": ev.get("title") or "(untitled event)",
+                "Block": title_disp,
                 "source": "calendar",
                 "calendar_id": calendar_id or None,
                 "calendar_title": calendar_title,
                 "capacity_class": capacity_class,
                 "all_day": True,
             })
+            decisions.append(_build_decision(
+                identity, title_disp, source_calendar_id, calendar_id,
+                calendar_title, "included", "included_all_day",
+                "all-day event retained non-timed (contract 18)",
+                capacity_class=capacity_class, all_day=True,
+            ))
             continue
         ev_start, ev_end = ev.get("start"), ev.get("end")
         if not isinstance(ev_start, datetime) or not isinstance(ev_end, datetime):
+            reason = (
+                f"{title_disp}: malformed event "
+                "(missing or non-datetime start/end)"
+            )
+            omitted.append(reason)
+            decisions.append(_build_decision(
+                identity, title_disp, source_calendar_id, calendar_id,
+                calendar_title, "unresolved", "unresolved_malformed_interval",
+                reason,
+                capacity_class=capacity_class,
+                start=interval_start, end=interval_end,
+                all_day=all_day_flag,
+            ))
             continue
         # Zero/negative-duration events are reminder-style markers, not busy
         # time — echoing one as an anchored block is unsatisfiable downstream
         # (judgment rejects end <= start; T11 live: "2.0M" 23:00-23:00).
         if ev_end <= ev_start:
+            reason = (
+                f"{title_disp}: zero or negative "
+                "duration (reminder-style marker)"
+            )
+            omitted.append(reason)
+            decisions.append(_build_decision(
+                identity, title_disp, source_calendar_id, calendar_id,
+                calendar_title, "excluded", "excluded_zero_duration", reason,
+                capacity_class=capacity_class,
+                start=interval_start, end=interval_end,
+                all_day=all_day_flag,
+            ))
             continue
-        blocks.append({
-            "Block": ev.get("title") or "(untitled event)",
+        block = {
+            "Block": title_disp,
             "Start": ev_start.strftime("%H:%M"),
             "End": ev_end.strftime("%H:%M"),
             "source": "calendar",
             "calendar_id": calendar_id or None,
             "calendar_title": calendar_title,
             "capacity_class": capacity_class,
-        })
-    return blocks, []
+        }
+        blocks.append(block)
+        decisions.append(_build_decision(
+            identity, title_disp, source_calendar_id, calendar_id,
+            calendar_title, "included", "included_timed",
+            "timed event included as busy block",
+            capacity_class=capacity_class,
+            start=block["Start"], end=block["End"],
+            all_day=all_day_flag,
+        ))
+    if duplicates:
+        warnings.append(
+            f"Calendar: {duplicates} duplicate event representation(s) merged "
+            "by canonical identity"
+        )
+    for reason in omitted:
+        warnings.append(f"Calendar omission: {reason}")
+    return blocks, warnings, decisions
+
+
+def fetch_calendar_busy(
+    store: Any, config: dict[str, Any], today: date
+) -> tuple[list[dict[str, Any]], list[str]]:
+    """Backward-compatible two-value wrapper around
+    :func:`fetch_calendar_decisions` (issue #6): returns only
+    ``(blocks, warnings)`` with identical content.
+    """
+    blocks, warnings, _decisions = fetch_calendar_decisions(store, config, today)
+    return blocks, warnings
 
 
 # ---------------------------------------------------------------------------
@@ -498,6 +802,8 @@ def _canonical_mint_session_ids(
             continue
         seen.add(canonical)
         selected.append(canonical)
+    option_order = {option["id"]: index for index, option in enumerate(options)}
+    selected.sort(key=lambda session_id: (option_order[session_id], session_id))
     option_ids = {option["id"] for option in options}
     legacy_all = bool(option_ids) and set(selected) == option_ids and len(selected) == len(option_ids)
     return selected, options, legacy_all

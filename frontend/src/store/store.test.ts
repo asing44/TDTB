@@ -523,6 +523,93 @@ describe("T27 recurring placement immunity", () => {
   });
 });
 
+describe("native Todoist time adjustment opt-in", () => {
+  const timedItem = {
+    id: "Timed task",
+    name: "Timed task",
+    path: null,
+    source: "todoist" as const,
+    types: ["todoist"],
+    urgency: null,
+    deadline: null,
+    priorityScore: 1,
+    blocks: 1,
+    durationLabel: "30min",
+    todoistId: "timed-1",
+    scheduledStart: "14:00",
+  };
+
+  it("protects recurring and non-recurring native times by default", () => {
+    const s0 = loaded();
+    const inputs = structuredClone(s0.inputs!);
+    inputs.assigned.push(timedItem, { ...timedItem, id: "Recurring timed", name: "Recurring timed", isRecurring: true });
+    const s = reducer(initialState, {
+      type: "INPUTS_LOADED",
+      inputs,
+      ledger: { today: inputs.validDate, spent: 0, cap: 5, remaining: 5 },
+    });
+    expect(s.timeAdjustmentOptIns).toEqual({});
+    expect(s.pendingPinnedRows.map((row) => row.id)).toEqual(
+      expect.arrayContaining(["Timed task", "Recurring timed"]),
+    );
+    expect(queueState(s, "Timed task")).toBe("scheduled");
+    expect(queueState(s, "Recurring timed")).toBe("scheduled");
+  });
+
+  it("caps late native pins without wrapping, and omits an unrepresentable 23:59 pin", () => {
+    const s0 = loaded();
+    const inputs = structuredClone(s0.inputs!);
+    inputs.assigned.push(
+      { ...timedItem, id: "Late native", name: "Late native", scheduledStart: "23:45" },
+      { ...timedItem, id: "Midnight native", name: "Midnight native", scheduledStart: "23:59" },
+    );
+    const s = reducer(initialState, {
+      type: "INPUTS_LOADED",
+      inputs,
+      ledger: { today: inputs.validDate, spent: 0, cap: 5, remaining: 5 },
+    });
+
+    expect(s.pendingPinnedRows.find((row) => row.id === "Late native")).toEqual(
+      expect.objectContaining({ start: "23:45", end: "23:59" }),
+    );
+    expect(s.pendingPinnedRows.some((row) => row.id === "Midnight native")).toBe(false);
+    expect(s.pendingPinnedRows.some((row) => row.end === "00:00")).toBe(false);
+  });
+
+  it("opts one item out of native pinning and dirties staged review state", () => {
+    let s = shadowed();
+    const inputs = structuredClone(s.inputs!);
+    inputs.assigned.push(timedItem);
+    s = reducer(s, { type: "INPUTS_LOADED", inputs, ledger });
+    s = reducer(s, { type: "SHADOW_OK", shadow: makeScenario("commit-preview").shadow });
+    s = reducer(s, { type: "TIME_ADJUSTMENT_SET", id: "Timed task", allow: true });
+    expect(s.timeAdjustmentOptIns).toEqual({ "Timed task": true });
+    expect(s.pendingPinnedRows.some((row) => row.id === "Timed task")).toBe(false);
+    expect(queueState(s, "Timed task")).toBe("needs-placement");
+    expect(s.seqPhase).toBe("dirty");
+    expect(s.shadowPhase).toBe("stale");
+    expect(s.liveArmed).toBe(false);
+  });
+
+  it("prunes opt-ins when the assigned source changes", () => {
+    let s = loaded();
+    const inputs = structuredClone(s.inputs!);
+    inputs.assigned.push(timedItem);
+    s = reducer(s, { type: "INPUTS_LOADED", inputs, ledger });
+    s = reducer(s, { type: "TIME_ADJUSTMENT_SET", id: "Timed task", allow: true });
+    const refreshed = { ...inputs, assigned: inputs.assigned.filter((item) => item.id !== "Timed task") };
+    s = reducer(s, {
+      type: "SOURCE_REFRESH_OK",
+      inputs: refreshed,
+      ledger,
+      fingerprint: "fp",
+      anchoredSourceFingerprint: refreshed.anchoredSourceFingerprint,
+      at: new Date().toISOString(),
+    });
+    expect(s.timeAdjustmentOptIns).toEqual({});
+  });
+});
+
 describe("T28 calendar dismissal (effectiveAnchoredBlocks)", () => {
   /* FEEDBACK-28 retry (2026-08-17): a skip is honored only when it is
      EXPLICIT current-run intent (CalendarImpact → saveAnchoredOverride,

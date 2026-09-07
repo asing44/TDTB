@@ -292,11 +292,15 @@ class TestFetchCalendarBusy:
         assert len(blocks) == 1
         assert blocks[0]["Block"] == "Standup"
 
-    def test_identity_less_events_keep_individual_rows(self):
+    def test_identityless_duplicates_canonicalize_via_composite_identity(self):
+        # Issue #6 direction (mirrors test_plan_inputs_sources.py): identical
+        # identityless events still deduplicate via the deterministic
+        # composite identity, counting once with a duplicate warning.
         ev1 = _event("Standup", start="09:00", end="09:30")
         ev2 = _event("Standup", start="09:00", end="09:30")
-        blocks, _ = ext.fetch_calendar_busy(FakeStore([ev1, ev2]), {}, TODAY)
-        assert len(blocks) == 2  # no identity -> no canonicalization
+        blocks, warnings = ext.fetch_calendar_busy(FakeStore([ev1, ev2]), {}, TODAY)
+        assert len(blocks) == 1
+        assert any("duplicate" in w.lower() for w in warnings)
 
     def test_known_unclassified_calendar_defaults_fixed(self):
         # FEEDBACK-27: a KNOWN calendar title that is unlisted in the
@@ -314,11 +318,11 @@ class TestFetchCalendarBusy:
         assert blocks[0]["Block"] == "Mystery"
 
     def test_unlisted_timed_calendar_defaults_fixed_and_remains_visible(self):
-        # FEEDBACK-27: an unlisted timed calendar (no store inventory entry)
-        # defaults to fixed and stays on the wire — never silently omitted or
-        # quarantined. The event's timed row is visible planning evidence.
+        # FEEDBACK-27 + issue #6 contract: a timed event with a MISSING/EMPTY
+        # calendar ID falls back to the store's single calendar, defaults to
+        # fixed, and stays visible — never silently omitted or quarantined.
         store = FakeStore(
-            [_event("A + M Busy Bees", "09:00", "09:30", cal="CAL-UNLISTED")],
+            [_event("A + M Busy Bees", "09:00", "09:30", cal="")],
             calendars=[CalendarInfo("Personal", "CAL-PERSONAL", True, "iCloud")],
         )
         blocks, warnings = ext.fetch_calendar_busy(store, {}, TODAY)
@@ -520,7 +524,146 @@ class TestFetchHabitStatus:
                            _event()])
         blocks, warnings = ext.fetch_calendar_busy(store, {}, TODAY)
         assert [b["Block"] for b in blocks] == ["Dentist"]
+        # Issue #6: zero-duration drops are observable, user-readable omissions
+        assert any("zero or negative duration" in w.lower() for w in warnings)
+
+# ---------------------------------------------------------------------------
+# Issue #6 integration — detailed calendar decision seam
+# ---------------------------------------------------------------------------
+
+class TestFetchCalendarDecisions:
+    def test_every_considered_event_gets_one_decision(self):
+        # Remediated issue #6: unknown non-empty calendar IDs in a
+        # multi-calendar store resolve to UNRESOLVED (never silently fixed),
+        # so the normal events here sit on the known CAL-X.
+        ev = _event("Dentist", "09:00", "10:00", cal="CAL-X")
+        first = dict(ev, id="EVT-DUP")
+        dup = dict(first)
+        disabled_ev = _event("Yoga", "08:00", "09:00", cal="CAL-QUIET")
+        ghost = _event("Ghost Event", "12:00", "13:00", cal="CAL-GHOST")
+        broken = _event("Broken Sync", "13:00", "14:00", cal="CAL-X")
+        broken["start"] = "09:00"
+        zero = _event("2.0M", "23:00", "23:00", cal="CAL-X")
+        store = FakeStore(
+            [ev, first, dup, disabled_ev, ghost, broken, zero],
+            calendars=[CalendarInfo("Fixture", "CAL-X", True, "Local"),
+                       CalendarInfo("Quiet Days", "CAL-QUIET", True, "Local")],
+        )
+        blocks, warnings, decisions = ext.fetch_calendar_decisions(
+            store, {"calendar_disabled": ["Quiet Days"]}, TODAY
+        )
+        # 每一個被考慮的來源事件，恰好一筆結構化判定
+        assert len(decisions) == 7
+        kinds = sorted(d["decision"] for d in decisions)
+        assert kinds == ["excluded", "excluded", "excluded", "included",
+                         "included", "unresolved", "unresolved"]
+        # blocks / warnings 與舊雙值契約完全一致
+        assert [b["Block"] for b in blocks] == ["Dentist", "Dentist"]
+        assert any("duplicate" in w.lower() for w in warnings)
+        assert any("disabled" in w.lower() for w in warnings)
+        assert any("unresolved" in w.lower() for w in warnings)
+
+    def test_included_rows_have_canonical_identity_and_class(self):
+        store = FakeStore(
+            [dict(_event("Dentist", cal="CAL-X"), id="EVT-9")],
+            calendars=[CalendarInfo("Fixture", "CAL-X", True, "Local")],
+        )
+        _, _, decisions = ext.fetch_calendar_decisions(store, {}, TODAY)
+        [d] = decisions
+        assert d["decision"] == "included"
+        assert d["identity"] == "EVT-9"
+        assert d["title"] == "Dentist"
+        assert d["calendar_id"] == "CAL-X"
+        assert d["capacity_class"] == "fixed"
+        assert d["start"] == "09:00" and d["end"] == "10:00"
+        assert d["all_day"] is False
+
+    def test_all_day_decision_is_explicitly_non_timed(self):
+        event = _event("Festival", "00:00", "23:59", cal="CAL-X")
+        event["all_day"] = True
+        store = FakeStore(
+            [event],
+            calendars=[CalendarInfo("Fixture", "CAL-X", True, "Local")],
+        )
+        _, _, decisions = ext.fetch_calendar_decisions(store, {}, TODAY)
+        [decision] = decisions
+        assert decision["decision"] == "included"
+        assert decision["all_day"] is True
+        assert decision["start"] is None and decision["end"] is None
+
+    def test_identityless_raw_calendar_id_variants_share_canonical_composite(self):
+        first = _event("Dentist", "09:00", "10:00", cal="cal-x")
+        second = _event("Dentist", "09:00", "10:00", cal="CAL-X")
+        store = FakeStore(
+            [first, second],
+            calendars=[CalendarInfo("Fixture", "CAL-X", True, "Local")],
+        )
+        blocks, warnings, decisions = ext.fetch_calendar_decisions(
+            store, {}, TODAY
+        )
+        assert [block["Block"] for block in blocks] == ["Dentist"]
+        assert len(decisions) == 2
+        assert decisions[1]["reason_code"] == "excluded_duplicate"
+        assert any("duplicate" in warning.lower() for warning in warnings)
+
+    def test_stable_id_first_occurrence_wins_across_disabled_boundary(self):
+        first = _event("Yoga", "09:00", "10:00", cal="CAL-QUIET")
+        first["id"] = "EVT-CROSS"
+        second = dict(first, title="Yoga (known copy)", calendar_id="CAL-X")
+        store = FakeStore(
+            [first, second],
+            calendars=[
+                CalendarInfo("Quiet Days", "CAL-QUIET", True, "Local"),
+                CalendarInfo("Fixture", "CAL-X", True, "Local"),
+            ],
+        )
+        blocks, _, decisions = ext.fetch_calendar_decisions(
+            store, {"calendar_disabled": ["Quiet Days"]}, TODAY
+        )
+        assert blocks == []
+        assert [decision["reason_code"] for decision in decisions] == [
+            "excluded_disabled_calendar", "excluded_duplicate",
+        ]
+
+    def test_disabled_duplicate_invalid_are_excluded_with_reason(self):
+        disabled_ev = _event("Yoga", "08:00", "09:00", cal="CAL-QUIET")
+        zero = _event("2.0M", "23:00", "23:00", cal="CAL-X")
+        ev = _event("Dentist", cal="CAL-X")
+        dup = dict(ev, id="EVT-1")
+        first = dict(ev, id="EVT-1")
+        store = FakeStore(
+            [first, dup, disabled_ev, zero],
+            calendars=[CalendarInfo("Fixture", "CAL-X", True, "Local"),
+                       CalendarInfo("Quiet Days", "CAL-QUIET", True, "Local")],
+        )
+        _, _, decisions = ext.fetch_calendar_decisions(
+            store, {"calendar_disabled": ["Quiet Days"]}, TODAY
+        )
+        by_decision = {}
+        for d in decisions:
+            by_decision.setdefault(d["decision"], []).append(d)
+        assert len(by_decision["excluded"]) == 3
+        reasons = " ".join(d["reason"] for d in by_decision["excluded"]).lower()
+        assert "disabled" in reasons and "duplicate" in reasons and "duration" in reasons
+
+    def test_malformed_event_is_unresolved_and_diagnosable(self):
+        broken = _event("Broken Sync")
+        broken["start"] = "09:00"
+        store = FakeStore([broken])
+        blocks, warnings, decisions = ext.fetch_calendar_decisions(store, {}, TODAY)
+        assert blocks == []
+        [d] = decisions
+        assert d["decision"] == "unresolved"
+        assert "broken sync" in d["reason"].lower()
+
+    def test_busy_wrapper_stays_two_value(self):
+        store = FakeStore([dict(_event(), id="EVT-1")])
+        result = ext.fetch_calendar_busy(store, {}, TODAY)
+        assert isinstance(result, tuple) and len(result) == 2
+        blocks, warnings = result
+        assert [b["Block"] for b in blocks] == ["Dentist"]
         assert warnings == []
+
 
     def test_full_access_status_is_authorized(self):
         # macOS 14+ reports "fullAccess" instead of "authorized" (T11 live

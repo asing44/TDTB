@@ -1,22 +1,18 @@
-/* ReadinessStrip — date, setup/captures completion, source refresh, billed
-   ledger, theme toggle. Completion state only; editing happens in the setup
-   drawer (locked decision 10). The Sources chip is the explicit refresh
-   control (locked decision 20): loading/error/last-refreshed feedback plus
-   a compact added/removed/changed/override summary. */
+/* ReadinessStrip — the one readiness presentation, mounted at the foot of the
+   Rail. The Rail owns date, capacity evidence, chart, and keys; this section
+   owns setup/captures, source refresh, billed ledger, theme, and refresh
+   summary. Editing happens in the setup drawer (locked decision 10). */
 
 import { useApp, useAppState } from "./context";
 import type { Theme } from "../store/store";
 import { summaryHasChanges, type RefreshSummary } from "../model/refresh";
-
-function themeLabel(t: Theme): string {
-  return t === "system" ? "Auto" : t === "light" ? "Light" : "Dark";
-}
+import { display12h } from "../model/time";
 
 function clock(iso: string): string {
   const d = new Date(iso);
   return Number.isNaN(d.getTime())
     ? iso
-    : `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+    : display12h(`${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`);
 }
 
 export function refreshSummaryText(x: RefreshSummary): string {
@@ -35,7 +31,7 @@ export function refreshSummaryText(x: RefreshSummary): string {
 
 export function ReadinessStrip() {
   const s = useAppState();
-  const { store } = useApp();
+  const { controller, store } = useApp();
   if (!s.inputs) return null;
 
   const captures = s.daySetup.captures;
@@ -45,8 +41,6 @@ export function ReadinessStrip() {
   const health = s.inputs.sourceHealth;
   const ledger = s.ledger;
   const refresh = s.refresh;
-  const controller = useApp().controller;
-
   const cycleTheme = () => {
     const next: Theme =
       s.theme === "system" ? "light" : s.theme === "light" ? "dark" : "system";
@@ -54,9 +48,7 @@ export function ReadinessStrip() {
   };
 
   return (
-    <header class="strip">
-      <span class="strip__date">{s.inputs.validDate}</span>
-      <span class="strip__spacer" />
+    <section class="rail__chips" aria-label="Readiness">
       {s.inputs.daySemantics.selectedPreset && (
         <span class="chip">
           Preset {s.inputs.daySemantics.selectedPreset.name}
@@ -64,11 +56,17 @@ export function ReadinessStrip() {
         </span>
       )}
       <button
-        class={`chip chip--btn ${s.daySetup.confirmed ? "chip--ok" : ""}`}
+        class={`chip chip--btn ${
+          s.daySetup.confirmed ? "chip--ok" : "chip--warn chip--setup-pending"
+        }`}
         onClick={() => store.dispatch({ type: "UI", patch: { setupOpen: true } })}
-        aria-label="Open day setup"
+        aria-label={
+          s.daySetup.confirmed
+            ? "Open day setup"
+            : "Open day setup — setup not confirmed"
+        }
       >
-        {s.daySetup.confirmed ? "Setup ✓" : "Setup pending"}
+        {s.daySetup.confirmed ? "Setup ✓" : "Setup pending — start here"}
       </button>
       <button
         class={`chip chip--btn ${captureCount === 3 ? "chip--ok" : ""}`}
@@ -102,14 +100,14 @@ export function ReadinessStrip() {
       </button>
       {ledger && (
         <span class={`chip ${ledger.remaining > 0 ? "" : "chip--warn"}`}>
-          Budget {ledger.remaining}/{ledger.cap}
+          Calls {ledger.remaining}/{ledger.cap}
         </span>
       )}
       <button class="chip chip--btn" onClick={cycleTheme} aria-label="Cycle theme">
-        Theme: {themeLabel(s.theme)}
+        Theme: {s.theme === "system" ? "Auto" : s.theme === "light" ? "Light" : "Dark"}
       </button>
       {(refresh.error || refresh.lastRefreshed) && (
-        <span class="strip__refresh" role="status">
+        <span class="rail__refresh" role="status">
           {refresh.error
             ? `Refresh failed: ${refresh.error} — showing last good data`
             : refresh.summary
@@ -117,6 +115,6 @@ export function ReadinessStrip() {
               : `Refreshed ${clock(refresh.lastRefreshed as string)}`}
         </span>
       )}
-    </header>
+    </section>
   );
 }

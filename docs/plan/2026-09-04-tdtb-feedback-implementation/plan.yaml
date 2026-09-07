@@ -1,0 +1,601 @@
+plan_id: tdtb-feedback-implementation-20260904
+objective: >-
+  Implement the approved TDTB feedback package in correctness-first order while
+  preserving source ownership, approval gates, and zero-live-write verification.
+created_at: '2026-09-04T20:55:00Z'
+created_by: orchestrator
+status: completed
+approval:
+  status: approved
+  source: user message "approval"
+  approved_at: '2026-09-04T20:55:00Z'
+closure:
+  ready: true
+  remaining_pending_tasks: []
+
+baseline:
+  canonical_root: /Users/adam/Repos/Projects/TDTB
+  implementation_worktree: /Users/adam/Repos/Projects/TDTB/.slim/worktrees/feedback-implementation-20260904
+  implementation_branch: TDTB/feedback-implementation-20260904
+  base_head: 77b8ce98cab082042b1822454907954677c016d6
+  scope_order: [6, 5, 3, 4, 7, 9, 8, 10]
+  issue_10_dependency: [3, 4, 5, 6, 7, 8, 9]
+  completed_baseline: docs/plan/tdtb-duration-memory-integration-20260817/plan.yaml
+
+requirements:
+  - id: REQ-001
+    text: >-
+      Make planner visibility, eligibility, calendar accounting, duration
+      provenance, timed-task authorization, validation, grouping, and optional
+      daily-note behavior agree across backend, wire, store, UI, and preview.
+  - id: REQ-002
+    text: >-
+      Treat the completed duration-memory integration as baseline evidence and
+      add only proven cross-feature regressions.
+  - id: REQ-003
+    text: >-
+      Retain relevant past-start work and include the Live block only when the
+      planning application selected it.
+  - id: REQ-004
+    text: >-
+      Keep native timed Todoist tasks fixed by default; explicit opt-in is
+      visible, scoped, server-enforced, recurrence-safe, and readback-verified.
+  - id: REQ-005
+    text: >-
+      Compare canonical time instants and expose structured diagnostics with
+      authoritative 12-hour user-facing formatting.
+  - id: REQ-006
+    text: >-
+      Represent missing optional daily notes as bounded no-ops without hiding
+      genuine write or provider failures.
+  - id: REQ-007
+    text: >-
+      Preserve parent/child, equivalent event/task, selected Mint-session, and
+      related-tag grouping without double-counting.
+  - id: REQ-008
+    text: >-
+      Issue #10 starts only after issues #3 through #9 pass their behavior gates
+      and the UI truthfully distinguishes preview, blocked, failed, approved,
+      and mutation states.
+
+constraints:
+  hard:
+    - Do not contact :8746 or POST /commit, /sequence, or /adjust to live.
+    - Do not make billed calls or write the real vault, Todoist, Calendar, or source notes.
+    - Do not restart launchd or change machine-local projections.
+    - Do not mutate main, the timed-task-opt-in worktree, or the ownership worktrees.
+    - Do not reset, clean, stash, rebase, merge, cherry-pick, commit, or push foreign state.
+    - Use fixtures, temporary directories, fake providers, and scratch :8790.
+  verification:
+    - Apply TDD to affected Python and frontend behavior.
+    - Run the full backend pytest suite and required frontend test/typecheck/build gates.
+    - Rebuild generated bundles from source and read back their index and hashed assets.
+    - Record zero billed calls and zero real-source writes in the final evidence.
+  conventions:
+    - Keep source identities separate from display names.
+    - Keep canonical internal time values separate from display formatting.
+    - Reuse existing seams in external_sources, calendar_bridge, planning, sequence, placement_rules, adapters, store, and UI.
+
+protected_worktrees:
+  - path: /Users/adam/Repos/Projects/TDTB/.slim/worktrees/timed-task-opt-in
+    branch: omos/timed-task-opt-in
+    policy: read_only_reference_until_owner_handoff
+    overlap: issue_4
+    audit: >-
+      timed_auto_pins and /sequence wiring are present; enforce_native_pins and
+      verify_native_pins_in_sequence are defined but untested and unwired, and
+      /commit has no native-pin verification.
+  - path: /Users/adam/Repos/Projects/TDTB/.slim/worktrees/tdtb-ownership-consolidation
+    branch: omos/tdtb-ownership-consolidation
+    policy: preserve_byte_for_byte_and_exclude
+    overlap: none
+
+shared_contracts:
+  - canonical_source_identity_and_duplicate_group
+  - inclusion_decision_and_reason
+  - effective_duration_and_duration_source
+  - retiming_authorization_and_result
+  - structured_validation_diagnostic
+  - semantic_group_and_parent_identity
+
+dependencies:
+  P0-01: []
+  P0-02: [P0-01]
+  P0-03: [P0-02]
+  P0-04: [P0-02]
+  P1-01: [P0-03, P0-04]
+  P1-02: [P1-01]
+  P1-03: [P1-02]
+  P2-01: [P1-03]
+  P2-02: [P2-01]
+  P3-01: [P2-02]
+  P3-02: [P3-01]
+  P3-03: [P3-02]
+  P4-01: [P0-03, P3-03]
+  P4-02: [P4-01]
+  P4-03: [P4-02]
+  P4-04: [P4-03]
+  P5-01: [P4-04]
+  P5-02: [P5-01]
+  P5-03: [P5-02]
+  P6-01: [P5-03]
+  P6-02: [P6-01]
+  P6-03: [P6-02]
+  P7-01: [P6-03]
+  P7-02: [P7-01]
+  P7-03: [P7-02]
+  P8-01: [P1-03, P3-03, P4-04, P5-03, P6-03, P7-03]
+  P8-02: [P8-01]
+  P8-03: [P8-02]
+  P8-04: [P8-03]
+  P9-01: [P8-04]
+  P9-02: [P9-01]
+  P9-03: [P9-02]
+
+tasks:
+  - id: P0-01
+    title: Freeze scope and issue acceptance
+    owner: orchestrator
+    status: completed
+    evidence: issue bodies, branch/worktree/status preflight, and approved scope captured
+    description: >-
+      Re-read AGENTS.md, README.md, applicable plan receipts, and GitHub issue
+      bodies #3 through #10; capture branch, HEAD, index, status, and path-hash
+      evidence in this plan's execution receipt.
+  - id: P0-02
+    title: Reconcile protected worktrees
+    owner: orchestrator
+    status: completed
+    evidence: timed-task and ownership worktrees audited read-only; no staged state or path conflict in the completed P1 slice
+    description: >-
+      Inspect both named dirty worktrees read-only. For issue #4, identify the
+      owner handoff or reimplementation boundary around enforce_native_pins,
+      verify_native_pins_in_sequence, and timed_auto_pins. Never copy or merge
+      the dirty tree wholesale.
+  - id: P0-03
+    title: Lock cross-feature contracts
+    owner: orchestrator
+    status: completed
+    evidence: approved shared_contracts plus issue acceptance and reviewed calendar identity/inclusion/decision schema frozen before P1 implementation
+    description: >-
+      Define the smallest backend/wire/frontend shapes for identity, inclusion,
+      duration provenance, retiming authorization, diagnostics, and grouping.
+  - id: P0-04
+    title: Verify isolated implementation lane
+    owner: orchestrator
+    status: completed
+    evidence: dedicated branch TDTB/feedback-implementation-20260904 at the approved base with owned-path diff only
+    description: >-
+      Recheck the dedicated worktree and prove no target-path overlap with
+      protected dirty paths before any source mutation.
+
+  - id: P1-01
+    title: Add visibility and calendar red tests
+    owner: fixer
+    status: completed
+    evidence: issue #6 source and route tests included in the independently verified 253-test calendar/source suite
+    description: >-
+      Add fixture coverage in app/tests/test_plan_inputs.py,
+      test_plan_inputs_sources.py, test_calendar_capacity.py,
+      test_calendar_bridge.py, and test_calendar_resolve.py for duplicate
+      identities, disabled calendars, all-day events, omissions, and capacity.
+  - id: P1-02
+    title: Implement canonical visibility and accounting
+    owner: fixer
+    status: completed
+    evidence: canonical IDs, disabled/unknown decisions, pre-filter dedup, complete decision schema, and capacity exclusions implemented; final independent review found no behavioral blocker
+    description: >-
+      Update app/external_sources.py, app/calendar_bridge.py, and app/main.py so
+      every considered item has one included/excluded/unresolved decision,
+      stable source identity, and correct capacity contribution.
+  - id: P1-03
+    title: Verify plan-input routes
+    owner: orchestrator
+    status: completed
+    evidence: TestClient coverage proves /plan-inputs disabled/unknown/known/missing-ID behavior and /capacity-preview zero fixed capacity; 253 focused tests pass and git diff --check is clean
+    description: >-
+      Prove /plan-inputs and /capacity-preview with fixtures; use temporary
+      vaults because /plan-inputs writes a derived digest index.
+
+  - id: P2-01
+    title: Verify duration-memory baseline
+    owner: fixer
+    status: completed
+    evidence: completed integration receipt matched current production implementation and existing propagation tests
+    description: >-
+      Compare app/duration_memory.py, app/main.py, existing duration tests, and
+      frontend duration-memory tests against the completed integration receipt;
+      record a no-op if they agree.
+  - id: P2-02
+    title: Add duration propagation regressions
+    owner: fixer
+    status: completed
+    evidence: tag duration happy-path and precedence tests added; 79 duration tests pass
+    description: >-
+      Add only cross-feature tests proving remembered/native/preset/type/tag
+      duration source, blocks, identity, and effective duration survive filtering,
+      capacity, sequence, and wire projection.
+
+  - id: P3-01
+    title: Define eligibility and Live matrix
+    owner: fixer
+    status: completed
+    evidence: assigned/suggested/dropped/schedulable/anchored/Trinoor/Live matrix covered by focused route, sequence, shadow, and refresh tests; 372 focused integration tests pass
+    description: >-
+      Add assigned/suggested/dropped/quarantined/absorbed/calendar/schedulable/
+      Live cases to backend and frontend tests.
+  - id: P3-02
+    title: Enforce eligible projection
+    owner: fixer
+    status: completed
+    evidence: >-
+      Server-authoritative commit validation now rejects stale/dropped or
+      suggested-to-assigned promotion, forged path/todoist IDs, inactive or
+      fabricated schedulables/Trinoor rows, forged fixed timing/backdrop,
+      malformed/duplicate sequence rows, and client digest metadata. Same-day
+      drops also gate /digest; cached digest indexes are date-validated. Shadow
+      and live paths receive the sanitized server projection. Independent oracle
+      review returned PASS.
+    description: >-
+      Update app/main.py projection and sequence boundaries plus frontend
+      store/controller/allocatorView/Queue and adapters so excluded rows do not
+      consume capacity, enter sequence, or reach commit preview.
+  - id: P3-03
+    title: Preserve past-start and selected Live state
+    owner: orchestrator
+    status: completed
+    evidence: >-
+      Past-start rows retain explicit placement_past warnings and survive the
+      intended commit representation; selected Live is singular and refresh
+      stable; same-day dropped rows remain absent from digest/index refreshes.
+      147 focused P3 tests and the full backend suite (1,586 passed, 1 skipped
+      with six known unrelated failures) pass; independent oracle review returned
+      PASS.
+    description: >-
+      Verify relevant past-start rows are retained or explicitly infeasible and
+      selected Live is singular, visible, canonical, and refresh-stable.
+
+  - id: P4-01
+    title: Establish timed-task implementation ownership
+    owner: orchestrator
+    status: completed
+    evidence: >-
+      Read-only comparison of the dirty timed-task worktree and the target
+      established a non-wholesale-import boundary. The target owns the fresh
+      server-authoritative implementation; the reference is informational
+      only. Fail-closed blocks semantics were resolved: positive finite blocks
+      use their duration, missing/malformed/non-finite/negative values fall
+      back to one protective block, and blocks == 0 is all-day/no-timeline.
+      The /commit conditional pin-check bypass and recurrence/readback risks
+      are recorded for P4-02 through P4-04.
+    description: >-
+      Treat the dirty tree as read-only reference. Its timed_auto_pins and
+      /sequence changes may inform the implementation, but the fresh worktree
+      must independently close the missing enforce_native_pins and
+      verify_native_pins_in_sequence wiring, especially the /commit bypass
+      surface, with reviewed tests; do not import the dirty tree wholesale.
+  - id: P4-02
+    title: Add timed-task authorization red tests
+    owner: fixer
+    status: completed
+    evidence: >-
+      Backend red coverage was added for canonical native pins, explicit opt-in,
+      invalid-block fallback, route enforcement, commit bypass rejection, and
+      recurrence/readback failures. Frontend red coverage was added for wire
+      shaping, propagation across sequence/validation/shadow/live, date-scoped
+      state and persistence, invalidation/pruning, and accessible controls.
+      Backend sequence tests ran with 65 passing and 21 intended failures for
+      missing production seams; the broader backend command was blocked by the
+      unavailable fastapi/httpx environment. Frontend execution was blocked by
+      vitest not being installed. Both owned diffs passed git diff --check.
+    description: >-
+      Cover default protection, explicit task/run opt-in, recurring tasks,
+      missing blocks, unauthorized client pins, and fake Todoist readback.
+  - id: P4-03
+    title: Wire server-enforced retiming
+    owner: fixer
+    status: completed
+    evidence: >-
+      Server-derived native protection is wired through sequence, validation,
+      shadow, and commit boundaries; exact per-item opt-in survives only on
+      matching Todoist rows. Frontend state, wire shaping, persistence, and
+      inclusion-aware native-pin merging are wired, with 24 focused backend
+      tests passing and the independent safety review returning PASS.
+    description: >-
+      Wire opt-in through app/planning.py, app/sequence.py, /sequence,
+      /validate-sequence, app/commit.py, app/commit_run.py, app/todoist_client.py,
+      and frontend wire/store/UI; do not trust client-provided pins.
+  - id: P4-04
+    title: Verify protected and opted-in writes
+    owner: orchestrator
+    status: completed
+    evidence: >-
+      Protected rows reject altered timing before manifest/judgment, omitted
+      rows are not spuriously required, opted-in recurring rows use the
+      canonical server due data and recurrence-safe write path, and native
+      readback is checked. Full backend verification reports 1,658 passed and
+      1 skipped with four pre-existing base-capacity failures; frontend test,
+      typecheck, and build commands remain unexecuted because node_modules and
+      the required frontend toolchain are unavailable. Fresh independent
+      review returned PASS.
+    description: >-
+      Prove zero reschedules by default, exactly scoped recurrence-safe opt-in
+      reschedules, canonical due readback, and no mutation on failed readback.
+
+  - id: P5-01
+    title: Define validation truth table
+    owner: fixer
+    status: completed
+    evidence: >-
+      Truth-table coverage was added for equivalent time encodings, boundary
+      overlaps, structured diagnostics, native/manual pins, Mint walls,
+      overflow, ordering, and stale snapshots. Focused validation tests report
+      123 passing and 8 intentional red failures that define the P5-02 seam;
+      owned diffs pass git diff --check.
+    description: >-
+      Cover equivalent encodings, genuine conflicts, warnings, pins, timed rows,
+      calendar/Mint walls, overflow, and stale snapshots.
+  - id: P5-02
+    title: Correct validation semantics
+    owner: fixer
+    status: completed
+    evidence: >-
+      Validation now compares canonical 12-hour/24-hour instants, preserves
+      exact wall-clock 15-minute granularity (0.5 block = 15 minutes), emits
+      additive structured diagnostics, canonicalizes pin/grant snapshots, and
+      detects stale time-frame changes without sorting or broadening eligibility.
+      Focused validation/placement/Mint/calendar coverage passed (255 tests
+      in the combined run); py_compile and git diff --check passed. The full
+      backend run reports 1,677 passed and 1 skipped with the same four
+      pre-existing base-capacity failures.
+    description: >-
+      Update planning.py, sequence.py, placement_rules.py, and route adapters to
+      compare canonical instants and emit structured diagnostics without sorting
+      or broadening eligible rows.
+  - id: P5-03
+    title: Verify validation UI and routes
+    owner: orchestrator
+    status: completed
+    evidence: >-
+      Backend validation routes and canonical diagnostic responses pass focused
+      verification; the frontend preserves structured diagnostics, renders
+      affected rows and exact quarter-hour intervals through display12h, and
+      prevents contradictory warning payloads from downgrading hard errors.
+      Final independent UI review returned PASS. Frontend runtime/typecheck
+      execution remains unavailable because node_modules is absent.
+    description: >-
+      Prove equivalent times warn or pass, real conflicts block with affected
+      rows/intervals, and user-facing values use the authoritative 12-hour form.
+
+  - id: P6-01
+    title: Add grouping relationship fixtures
+    owner: fixer
+    status: completed
+    evidence: >-
+      Backend and frontend grouping truth-table fixtures cover parent/child,
+      calendar companions, Mint-session identity/order/deduplication, related
+      tags, deterministic ordering, hierarchy visibility, and no double-counted
+      spend. Backend grouping truth-table execution reports 11 passed after
+      correcting the Mint fixture to assert selected source intervals; frontend
+      execution is blocked by unavailable node_modules.
+    description: >-
+      Test parent/child, equivalent event/task, selected Mint sessions, related
+      tags, stable ordering, and no double-counting.
+  - id: P6-02
+    title: Implement semantic grouping metadata
+    owner: fixer
+    status: completed
+    evidence: >-
+      Backend grouping, deterministic Mint ordering, source-identity
+      deduplication, and exact hard-wall handling are implemented. The combined
+      focused backend target suite reports 207 passed with git diff --check
+      clean. Frontend AssignedItem tags and wire projection are implemented;
+      npm test/typecheck remain blocked because node_modules is absent.
+    description: >-
+      Reuse placement_rules.py constraints and add stable group/parent metadata
+      only where required by backend and wire contracts.
+  - id: P6-03
+    title: Render deterministic hierarchy
+    owner: designer
+    status: completed
+    evidence: >-
+      Deterministic parent/tag hierarchy is projected in allocatorView, rendered
+      in Queue and the committed schedule, and covered by model/UI fixtures.
+      git diff --check passed. Frontend focused tests and typecheck are blocked
+      by missing node_modules (`vitest`, node types, and vite/client types).
+    description: >-
+      Update allocatorView.ts, Queue.tsx, and schedule rendering to show nesting
+      and grouping without duplicate or hidden infeasible work.
+
+  - id: P7-01
+    title: Add missing-note red tests
+    owner: fixer
+    status: completed
+    evidence: >-
+      Focused backend tests report 3 expected red failures and 177 passes. The
+      failures are limited to absent daily-note handling in the orchestrator,
+      write_daily_note, and write_captures_frontmatter; present-note behavior
+      and micro-adventure inconclusive signals pass. git diff --check passed.
+    description: >-
+      Cover absent and present daily notes in test_orchestrate.py, test_commit.py,
+      and test_micro_adventure.py, including no file creation.
+  - id: P7-02
+    title: Implement bounded daily-note no-op
+    owner: fixer
+    status: completed
+    evidence: >-
+      Absent optional daily notes now return successful bounded no-op
+      reconciliation from both daily-note writers without creating a file;
+      lookup/read/write filesystem errors remain explicit failures. The focused
+      orchestrator/commit/micro-adventure suite reports 180 passed and
+      git diff --check passed. No changes were required in orchestrate.py,
+      runstate.py, or micro_adventure.py.
+    description: >-
+      Update orchestrate.py, commit.py, runstate.py, and micro_adventure.py so
+      only an absent optional note is skipped; permission/provider failures remain
+      visible and the Live probe remains inconclusive.
+  - id: P7-03
+    title: Verify no-op in scratch
+    owner: orchestrator
+    status: completed
+    evidence: >-
+      Temporary-vault walkthrough passed: absent optional daily note remained
+      absent, present-note patching preserved surrounding content and was
+      idempotent, orchestration reported an ok no-op with ledger persistence
+      disabled, and fake Todoist/Calendar received zero calls. No persistent
+      source writes occurred.
+    description: >-
+      Use temporary vaults and fake providers to prove no source writes and
+      unchanged existing-note behavior.
+
+  - id: P8-01
+    title: Freeze UI contract
+    owner: designer
+    status: completed
+    evidence: >-
+      Designer review returned PASS with a concrete evidence-layer layout,
+      state-badge vocabulary, responsive/accessibility rules, and safety/data
+      language invariants. No files were changed; the contract is the gate for
+      P8-02 through P8-04.
+    description: >-
+      After #3 through #9 pass, define the evidence-layer layout and state-badge
+      vocabulary for duration, inclusion, grouping, timing, validation, no-op,
+      approval, and mutation.
+  - id: P8-02
+    title: Implement cohesive shell and surfaces
+    owner: designer
+    status: completed
+    evidence: >-
+      Cohesive shell/readiness, evidence surfaces, semantic state tokens,
+      structured diagnostics, and ignored-calendar exclusion rendering are
+      implemented. Independent oracle review returned PASS after compact-mode
+      correction. git diff --check passed; frontend tests/typecheck remain
+      blocked by missing vitest and Node/Vite type definitions.
+    description: >-
+      Update App, Rail, Queue, SetupDrawer, CalendarImpact, ApprovalDrawer,
+      ReadinessStrip, FooterBanners, app.css, and tokens.css while preserving
+      existing safety gates and calm DATA language.
+  - id: P8-03
+    title: Connect truthful state metadata
+    owner: fixer
+    status: completed
+    evidence: >-
+      Shared metadata/state wiring is connected across model, wire, store,
+      persistence, queue, and exact editing surfaces. Protected native Todoist
+      rows no longer expose movable start/reset affordances without opt-in.
+      Frontend verification reports 781 passed and 6 skipped, focused touched
+      tests 321/321, and clean typecheck; git diff --check passed. Dependencies
+      were exposed via a matching temporary node_modules symlink and removed
+      afterward; no dependency files changed.
+    description: >-
+      Connect model/types, adapters, store/controller/persist, Queue, BlockEditor,
+      and ActionDock to shared metadata; distinguish preview, blocked, failed,
+      approved, and mutation states.
+  - id: P8-04
+    title: Verify responsive and accessible UI
+    owner: designer
+    status: completed
+    evidence: >-
+      Existing responsive, accessibility, failure-state, compact-layout,
+      keyboard, and focus coverage passed: 781 tests passed and 6 skipped;
+      typecheck passed; git diff --check passed. A matching temporary
+      node_modules symlink was used and removed afterward; no source or
+      dependency files changed.
+    description: >-
+      Add component, responsive, keyboard, focus, accessible-name, announcement,
+      disabled-state, and fixture-browser coverage at desktop and narrow widths.
+
+  - id: P9-01
+    title: Run repository verification gates
+    owner: orchestrator
+    status: completed
+    evidence: >-
+      Final backend full suite reports 1,622 passed and 1 skipped with no test
+      failures; the logical-date propagation fix makes /plan-inputs and
+      /capacity-preview agree on TDTB's effective day, and capacity/Mint tests
+      are pinned to a known weekday. Frontend test passed with 781 passed and
+      6 skipped; typecheck, build:mockup, and build:prod passed. Fresh hashed
+      manifests and assets were read back and contain the current cockpit
+      labels. git diff --check passed; the matching temporary dependency
+      symlink was removed afterward.
+    description: >-
+      Run backend pytest; frontend npm test, typecheck, build:mockup, and
+      build:prod; read back generated app/static/cockpit assets.
+  - id: P9-02
+    title: Run scratch zero-write walkthrough
+    owner: orchestrator
+    status: completed
+    evidence: >-
+      frontend/scripts/scratch_integration.py booted the real FastAPI app on
+      127.0.0.1:8790 against a temporary synthetic vault with fake read
+      providers, canned judgment, and in-memory Todoist/EventKit writers. The
+      production ApiAdapter and Controller scratch suite passed all 6 tests,
+      including duration override/provenance, native timed opt-in, validation,
+      grouping, missing-note behavior, refresh safety, and live orchestration.
+      Assertions verified no external provider writes and no billed ledger
+      movement beyond the explicitly canned scratch sequence; the harness
+      refused :8746 and cleaned up its temporary dependency symlink.
+    description: >-
+      Exercise eligibility, Live, duration provenance, timed opt-in, validation,
+      grouping, and missing-note cases on :8790 with temporary fixtures and fake
+      providers; record zero billed/source writes.
+  - id: P9-03
+    title: Assemble final evidence and review
+    owner: orchestrator
+    status: completed
+    evidence: >-
+      Final worktree audit passed: git diff --check HEAD is clean, branch and
+      path status were inspected, generated hashed asset references exist in
+      both app/static/cockpit and mockups/cockpit, and the temporary dependency
+      symlink was removed/restored. Final independent oracle review returned
+      PASS after the logical-date propagation fix; it found no unmet
+      acceptance criterion. No commit, push, live restart, live source write,
+      or real vault/Todoist/Calendar mutation was performed. Claudius-hosted
+      checks were not applicable because no Claudius-hosted instruction or
+      skill boundary files changed.
+    description: >-
+      Run git diff --check, path ownership/status/hash checks, conditional
+      Claudius checks, and independent review; record remaining uncertainty and
+      leave commit/push/live deployment as separate approvals.
+
+acceptance_criteria:
+  - Each issue has red-green regression coverage and focused post-change evidence.
+  - Duration-memory behavior is not duplicated or reopened without a proven regression.
+  - Excluded items cannot consume capacity, enter sequence, or reach commit preview.
+  - Native timed tasks remain fixed without opt-in; authorized retimes are scoped and readback-verified.
+  - Missing daily notes are true bounded no-ops and do not mask genuine failures.
+  - Grouping is deterministic and does not double-count or hide work.
+  - The UI is responsive, keyboard-operable, accessible, and truthful about safety state.
+  - Full gates, generated-bundle readback, scratch verification, and zero-write evidence pass.
+
+verification_strategy:
+  focused_tests: app/tests and frontend/src/**/*.test.{ts,tsx} for each phase
+  full_backend: app/.venv/bin/python -m pytest
+  full_frontend: [npm test, npm run typecheck, npm run build:mockup, npm run build:prod]
+  scratch: fixtures_and_fake_providers_on_8790_only
+  live_policy: no_requests_to_8746_and_no_live_mutations
+  final_review_owner: orchestrator
+
+risks:
+  - id: RISK-001
+    text: The dirty timed-task worktree contains partial #4 behavior and must not be imported without ownership reconciliation.
+  - id: RISK-002
+    text: Calendar capacity-class wording differs between external_sources.py and calendar_bridge.py.
+  - id: RISK-003
+    text: Name-keyed rows coexist with stable source identities; careless grouping can retarget memory or writes.
+  - id: RISK-004
+    text: GET /plan-inputs writes a derived digest index and therefore requires temporary vault verification.
+  - id: RISK-005
+    text: Existing UI projections flatten provenance and validation structure; all visual states must use shared metadata.
+  - id: RISK-006
+    text: Generated bundle hashes must remain paired with source changes and be read back after builds.
+
+related_specs:
+  - https://github.com/asing44/TDTB/issues/3
+  - https://github.com/asing44/TDTB/issues/4
+  - https://github.com/asing44/TDTB/issues/5
+  - https://github.com/asing44/TDTB/issues/6
+  - https://github.com/asing44/TDTB/issues/7
+  - https://github.com/asing44/TDTB/issues/8
+  - https://github.com/asing44/TDTB/issues/9
+  - https://github.com/asing44/TDTB/issues/10

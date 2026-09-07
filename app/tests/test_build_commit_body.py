@@ -116,6 +116,10 @@ class TestLiveRerouteSeam:
         assert step_a[0].system == "todoist"
         assert step_a[0].name == "🌱 Cook something new"
         assert step_a[0].routing == "Inbox"
+        assert not [
+            entry for entry in manifest
+            if entry.step == "E" and entry.system == "calendar" and entry.name == "Live"
+        ]
 
     def test_without_injection_live_stays_step_e_calendar(self, tmp_path):
         """Proves the fix is load-bearing: fed the raw config (no injection),

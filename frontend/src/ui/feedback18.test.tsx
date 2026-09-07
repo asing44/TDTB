@@ -138,10 +138,10 @@ describe("FEEDBACK-18 — dock entry point is statusful in every applicable stat
 
 describe("FEEDBACK-18 — scan hierarchy CSS and narrow-width no-overlap", () => {
   it("defines drawer status strips with distinct accent borders per state", () => {
-    expect(APP_CSS).toMatch(/\.drawer-status\s*\{[^}]*border-left:\s*3px solid var\(--t-accent\)/);
-    expect(APP_CSS).toMatch(/\.drawer-status--preview\s*\{[^}]*border-left-color:\s*var\(--t-accent\)/);
-    expect(APP_CSS).toMatch(/\.drawer-status--ok\s*\{[^}]*border-left-color:\s*var\(--c-free\)/);
-    expect(APP_CSS).toMatch(/\.drawer-status--partial\s*\{[^}]*border-left-color:\s*var\(--c-overflow\)/);
+    expect(APP_CSS).toMatch(/\.drawer-status\s*\{[^}]*border-left:\s*3px solid/);
+    expect(APP_CSS).toMatch(/\.drawer-status--preview\s*\{[^}]*border-left-color:\s*var\(--state-memory\)/);
+    expect(APP_CSS).toMatch(/\.drawer-status--ok\s*\{[^}]*border-left-color:\s*var\(--state-success\)/);
+    expect(APP_CSS).toMatch(/\.drawer-status--partial\s*\{[^}]*border-left-color:\s*var\(--state-danger\)/);
   });
 
   it("defines the Results Done area and a class-based Back spacing", () => {

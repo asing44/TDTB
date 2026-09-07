@@ -58,6 +58,8 @@ export interface AssignedItem {
   scheduledStart?: string | null;
   /** Todoist labels, verbatim (T23 source context); absent/[] for vault rows. */
   labels?: string[];
+  /** Source tags, verbatim; absent/[] when the backend carries no tags. */
+  tags?: string[];
   /** Obsidian parent/child relationship, preserved for sequencing context. */
   relatesTo?: string | null;
 }
@@ -238,12 +240,32 @@ export interface SequenceRow {
   kind: "work" | "zone"; // zone = permeable backdrop row, never validated
   /** Original record retained so a pin can round-trip exactly. */
   wire?: Record<string, unknown>;
+  /** Internal provenance for the client-created native-time protection pin. */
+  nativePin?: boolean;
+}
+
+export type ValidationDiagnosticSeverity = "error" | "warning";
+
+export interface ValidationDiagnosticInterval {
+  id: string;
+  start: string; // canonical HH:MM
+  end: string; // canonical HH:MM
+}
+
+export interface ValidationDiagnostic {
+  rule: string;
+  severity: ValidationDiagnosticSeverity;
+  detail: string;
+  affectedRows: string[];
+  intervals: ValidationDiagnosticInterval[];
 }
 
 export interface Validation {
   ok: boolean;
   hardErrors: string[];
   warnings: string[];
+  /** Additive structured context; absent in legacy validation payloads. */
+  diagnostics?: ValidationDiagnostic[];
 }
 
 export type ShadowClassification =

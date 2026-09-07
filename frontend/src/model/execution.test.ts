@@ -44,6 +44,41 @@ describe("T18h execution-first projection", () => {
     expect(cluster?.overlapReason).toBe("Work alongside the companion block");
   });
 
+  it("carries relationship context into committed work entries", () => {
+    const sc = makeScenario("sequenced");
+    const base = sc.inputs.assigned[0];
+    const parent: typeof base = {
+      ...base,
+      id: "Zeta parent",
+      name: "Zeta parent",
+      urgency: "3-high",
+      relatesTo: null,
+    };
+    const child: typeof base = {
+      ...base,
+      id: "Alpha child",
+      name: "Alpha child",
+      urgency: null,
+      relatesTo: "[[Zeta parent]]",
+    };
+    const model = buildExecutionModel({
+      inputs: { ...sc.inputs, assigned: [child, parent] },
+      sequence: [
+        { id: "Zeta parent", start: "14:00", end: "14:30", zone: null, kind: "work" },
+        { id: "Alpha child", start: "14:30", end: "15:00", zone: null, kind: "work" },
+      ],
+      planningConfigFingerprint: sc.inputs.planningConfigFingerprint,
+      overlapGrants: [],
+    });
+
+    const entries = model.moments.flatMap((moment) => moment.entries);
+    expect(entries.find((entry) => entry.id === "Zeta parent")?.hierarchyDepth).toBe(0);
+    expect(entries.find((entry) => entry.id === "Alpha child")).toMatchObject({
+      hierarchyDepth: 1,
+      parentName: "Zeta parent",
+    });
+  });
+
   it("computes Work-allotment used/remaining from work inside active zones", () => {
     expect(workAllotmentUsage(
       240,

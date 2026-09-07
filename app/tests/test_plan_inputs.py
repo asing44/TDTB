@@ -150,6 +150,41 @@ class TestPlanInputsRoute:
         r = client.get("/plan-inputs")
         assert r.json()["config"].get("micro_adventure") == micro
 
+    def test_micro_adventure_singular_and_refresh_stable(self, client, vault):
+        """P3-03: the selected Live/micro-adventure identity is singular,
+        canonical, and stable across repeated /plan-inputs reads. A same-day
+        refresh must not produce a second Live selection or swap the pick."""
+        today = gather.effective_date(datetime.now())
+        micro = {"id": "ma03", "idea": "Ride bike somewhere", "category": "novelty"}
+        state = runstate_mod.build_runstate({"micro_adventure": micro})
+        runstate_mod.write_runstate(vault, today, state)
+
+        first = client.get("/plan-inputs")
+        assert first.status_code == 200
+        body1 = first.json()
+        second = client.get("/plan-inputs")
+        assert second.status_code == 200
+        body2 = second.json()
+
+        for body in (body1, body2):
+            # singular: exactly one micro_adventure key in config, one pick
+            ma_keys = [k for k in body["config"] if "micro" in k.lower()
+                       or k.lower() == "live"]
+            assert ma_keys == ["micro_adventure"]
+            payload = body["micro_adventure"]
+            assert payload["pick"] == micro
+            assert payload["source"] == "override"
+            # no duplicate Live identity within the payload
+            ids = [p["id"] for p in payload["live_pool"]]
+            assert len(ids) == len(set(ids))
+            assert ids.count(micro["id"]) <= 1
+            if isinstance(payload.get("pending_confirm"), dict):
+                assert payload["pending_confirm"]["id"] == micro["id"]
+
+        # refresh-stable: identical across repeated reads
+        assert body1["config"]["micro_adventure"] == body2["config"]["micro_adventure"]
+        assert body1["micro_adventure"] == body2["micro_adventure"]
+
 
 class TestIgnoreList:
     """`## Ignore List` config section drops matching items from the digest —
@@ -206,3 +241,176 @@ class TestIgnoreList:
         self._write(vault, "M1.0")
         body = client.get("/plan-inputs").json()
         assert "M1.0" in [i["name"] for i in body["digest"]["assigned"]]
+
+
+# ---------------------------------------------------------------------------
+# Issue #6 — route-level calendar decisions: disabled calendars, unknown
+# calendars, and single-calendar canonicalization of missing calendar IDs.
+# Fakes only: no live source calls; the fake store ignores query dates so the
+# tests are deterministic for the route's effective today.
+# ---------------------------------------------------------------------------
+
+from calendar_bridge import CalendarInfo  # noqa: E402
+
+
+CONFIG_DISABLED_CALENDARS = MINIMAL_CONFIG + """
+## Disabled Calendars
+
+| Title    |
+| -------- |
+| Personal |
+"""
+
+
+class _FakeTodoistEmpty:
+    def get_filter_tasks(self, query, limit=None):
+        return []
+
+
+class _DecisionsStore:
+    """Fake EventStore exposing an inventory; ignores queried dates."""
+
+    def __init__(self, events, calendars):
+        self._events = events
+        self._calendars = calendars
+
+    def auth_status(self):
+        return "authorized"
+
+    def calendars(self):
+        return self._calendars
+
+    def query_events(self, start, end, calendar_ids=None):
+        return self._events
+
+
+def _decisions_client(vault: Path, store) -> TestClient:
+    p = vault / CONFIG_REL_PATH
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(CONFIG_DISABLED_CALENDARS, encoding="utf-8")
+    app = main_mod.create_app(vault_root=vault)
+    app.state.build_read_clients = lambda v, cfg: (_FakeTodoistEmpty(), store)
+    return TestClient(app)
+
+
+class TestPlanInputsCalendarDecisions:
+    def test_disabled_unknown_and_known_calendars(self, vault):
+        store = _DecisionsStore(
+            [
+                {"title": "Yoga", "start": datetime(2026, 7, 14, 9, 0),
+                 "end": datetime(2026, 7, 14, 10, 0), "calendar_id": "CAL-PERS"},
+                {"title": "Dentist", "start": datetime(2026, 7, 14, 11, 0),
+                 "end": datetime(2026, 7, 14, 12, 0), "calendar_id": "CAL-SCHOOL"},
+                {"title": "Mystery", "start": datetime(2026, 7, 14, 13, 0),
+                 "end": datetime(2026, 7, 14, 14, 0), "calendar_id": "CAL-GHOST"},
+            ],
+            [
+                CalendarInfo("Personal", "CAL-PERS", False, "Local"),
+                CalendarInfo("School", "CAL-SCHOOL", False, "Local"),
+            ],
+        )
+        body = _decisions_client(vault, store).get("/plan-inputs").json()
+
+        # Disabled and unknown events must not become anchored blocks.
+        calendar_blocks = [
+            b for b in body["anchored_blocks"] if b.get("source") == "calendar"
+        ]
+        assert [b["Block"] for b in calendar_blocks] == ["Dentist"]
+
+        decisions = {d["title"]: d for d in body["calendar_decisions"]}
+
+        # Disabled calendar event: excluded with reason code.
+        assert decisions["Yoga"]["decision"] == "excluded"
+        assert decisions["Yoga"]["reason_code"] == "excluded_disabled_calendar"
+
+        # Unknown calendar event: unresolved and warned with title/ID.
+        mystery = decisions["Mystery"]
+        assert mystery["decision"] == "unresolved"
+        assert mystery["reason_code"] == "unresolved_unknown_calendar"
+        warnings = " ".join(body["source_warnings"])
+        assert "Mystery" in warnings
+        assert "CAL-GHOST" in warnings
+
+        # Known enabled calendar event remains included.
+        dentist = decisions["Dentist"]
+        assert dentist["decision"] == "included"
+        assert dentist["reason_code"] == "included_timed"
+        assert dentist["all_day"] is False
+
+    def test_missing_calendar_id_single_calendar_fallback(self, vault):
+        store = _DecisionsStore(
+            [
+                {"title": "Errand A", "start": datetime(2026, 7, 14, 9, 0),
+                 "end": datetime(2026, 7, 14, 9, 30), "calendar_id": ""},
+                {"title": "Errand B", "start": datetime(2026, 7, 14, 10, 0),
+                 "end": datetime(2026, 7, 14, 10, 30)},
+            ],
+            [CalendarInfo("Only", "CAL-ONE", False, "Local")],
+        )
+        body = _decisions_client(vault, store).get("/plan-inputs").json()
+
+        decisions = {d["title"]: d for d in body["calendar_decisions"]}
+        for title in ("Errand A", "Errand B"):
+            row = decisions[title]
+            assert row["source_calendar_id"] is None
+            assert row["calendar_id"] == "CAL-ONE"
+            assert row["calendar_title"] == "Only"
+
+
+# ---------------------------------------------------------------------------
+# P3-03 — dated Drop-from-plan exclusions persist across same-day refreshes
+# ---------------------------------------------------------------------------
+
+class TestDropFromPlanRefresh:
+    """A dropped item must remain absent from the digest and from the
+    persisted identity index, and a later /plan-inputs refresh on the same
+    day must not resurrect it (drop identity is date-scoped run state, and
+    digest_index is written from the FILTERED digest)."""
+
+    def test_dropped_item_absent_from_digest_and_index_across_refresh(
+        self, client, vault
+    ):
+        note = vault / "50 - Operations" / "Projects" / "Press.md"
+        note.parent.mkdir(parents=True, exist_ok=True)
+        note.write_text(
+            "---\ntype: [project]\nstatus: active\nassigned: true\n---\n\n# Press\n",
+            encoding="utf-8",
+        )
+
+        first = client.get("/plan-inputs").json()
+        row = next(r for r in first["digest"]["assigned"] if r["name"] == "Press")
+        identity = main_mod.runtime_actions.drop_identity_of(row)
+        assert identity
+
+        # Drop it for today (date-scoped runstate exclusion, as /drop writes it).
+        today = gather.effective_date(datetime.now())
+        runstate_mod.update_runstate(
+            vault, today,
+            lambda s: s.setdefault("dropped", []).append(
+                {"identity": identity, "name": "Press",
+                 "dropped_at": "2026-09-05T00:00:00Z"}
+            ),
+        )
+
+        # Two consecutive refreshes on the same day.
+        body1 = client.get("/plan-inputs").json()
+        body2 = client.get("/plan-inputs").json()
+
+        for body in (body1, body2):
+            names = [r["name"] for r in body["digest"]["assigned"]]
+            assert "Press" not in names
+            sugg = [r["name"] for r in body["digest"].get("suggested", [])]
+            assert "Press" not in sugg
+            # dropped_today still surfaces the exclusion
+            assert any(d.get("identity") == identity
+                       for d in body.get("dropped_today", []))
+
+        # identity index is built from the FILTERED digest — the dropped
+        # identity must not be resolvable to staging verbs after refresh.
+        index = runstate_mod.read_digest_index(vault, today)
+        index_identities = {
+            i.get("path") or f"todoist:{i.get('todoist_id')}"
+            for i in index if isinstance(i, dict)
+        }
+        assert identity not in index_identities
+        assert all(i.get("name") != "Press" for i in index)

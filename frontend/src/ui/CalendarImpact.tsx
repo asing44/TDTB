@@ -74,11 +74,45 @@ export function CalendarImpact({ compact = false }: { compact?: boolean }) {
   const visible = rows.filter((row) => capacityClass(row) !== "ignored");
   const hiddenIgnored = rows.length - visible.length;
 
-  if (visible.length === 0) return null;
-
   const workBusy = s.capacity?.workBusy ?? 0;
   const workEnvelope = s.capacity?.mint ?? 0;
   const workOverflow = s.capacity?.workOverflow ?? 0;
+
+  const header = (
+    <div class="calendar-impact__head">
+      <div>
+        <h2>Calendar impact</h2>
+        <p>
+          Work meetings sit inside the work envelope; they are exclusive busy
+          time, not extra task room.
+        </p>
+      </div>
+      {(workEnvelope > 0 || workBusy > 0) && (
+        <div class="calendar-impact__work" aria-label="Work envelope summary">
+          <strong>{formatBlockAmount(workEnvelope)}</strong> work envelope · {formatBlockAmount(workBusy)}
+          exclusive busy time
+          {workOverflow > 0 ? ` · ${formatBlockAmount(workOverflow)} overflow` : ""}
+        </div>
+      )}
+    </div>
+  );
+  const ignoredNote = hiddenIgnored > 0 ? (
+    <p class="calendar-impact__ignored">
+      {hiddenIgnored} ignored calendar source{hiddenIgnored === 1 ? "" : "s"} excluded
+    </p>
+  ) : null;
+
+  // An ignored-only frame still needs to explain why Calendar impact is quiet;
+  // an actually empty frame keeps the existing null behavior.
+  if (visible.length === 0) {
+    if (hiddenIgnored === 0) return null;
+    return (
+      <section class={`calendar-impact${compact ? " calendar-impact--compact" : ""}`} aria-label="Calendar impact">
+        {header}
+        {ignoredNote}
+      </section>
+    );
+  }
 
   const hardWalls = visible.filter((row) => isWallClass(capacityClass(row))).length;
   const quarantined = visible.filter((row) => capacityClass(row) === "quarantined").length;
@@ -173,27 +207,8 @@ export function CalendarImpact({ compact = false }: { compact?: boolean }) {
 
   return (
     <section class={`calendar-impact${compact ? " calendar-impact--compact" : ""}`} aria-label="Calendar impact">
-      <div class="calendar-impact__head">
-        <div>
-          <h2>Calendar impact</h2>
-          <p>
-            Work meetings sit inside the work envelope; they are exclusive busy
-            time, not extra task room.
-          </p>
-        </div>
-        {(workEnvelope > 0 || workBusy > 0) && (
-          <div class="calendar-impact__work" aria-label="Work envelope summary">
-            <strong>{formatBlockAmount(workEnvelope)}</strong> work envelope · {formatBlockAmount(workBusy)}
-            exclusive busy time
-            {workOverflow > 0 ? ` · ${formatBlockAmount(workOverflow)} overflow` : ""}
-          </div>
-        )}
-      </div>
-      {hiddenIgnored > 0 && (
-        <p class="calendar-impact__ignored">
-          {hiddenIgnored} ignored calendar source{hiddenIgnored === 1 ? "" : "s"} excluded
-        </p>
-      )}
+      {header}
+      {ignoredNote}
       {compact ? (
         <>
           <div class="calendar-impact__summary" role="status">

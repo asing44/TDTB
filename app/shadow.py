@@ -49,6 +49,7 @@ from dataclasses import dataclass, field
 from datetime import date, datetime
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 _GATHER_DIR = str(Path(__file__).parent / "gather")
 if _GATHER_DIR not in sys.path:
@@ -59,6 +60,7 @@ import tdtb_gather as gather  # noqa: E402  (path-shimmed import, see inventory.
 import todoist_client  # noqa: E402
 import calendar_bridge  # noqa: E402
 import time_engine  # noqa: E402
+import sequence as sequence_module  # noqa: E402
 
 TOKEN_ENV_PATH = Path.home() / ".config" / "tdtb" / "env"
 
@@ -87,6 +89,14 @@ class ManifestEntry:
     time: str | None = None
     duration_min: int = 0
     routing: str = "—"
+    # Server-authoritative Todoist metadata used only by shadow diffing.  These
+    # fields intentionally stay out of ``as_dict`` so the public manifest shape
+    # remains unchanged.
+    native_protected: bool = False
+    allow_time_adjustment: Any = None
+    is_recurring: bool = False
+    native_start: str | None = None
+    retiming_authorized: bool | None = None
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -314,7 +324,7 @@ def _is_live_block(name: str) -> bool:
 # old broad substring test (`"trinoor" in id`) classified ANY name containing
 # the word (e.g. a configured anchored block "Trinoor sync") as Step D′ and
 # silently dropped its Step E write intent.
-_TRINOOR_ZONE_RE = re.compile(r"^(?:🟡 )?Trinoor : .+")
+_TRINOOR_ZONE_RE = re.compile(r"^(?:🟡 )?Trinoor : .+$")
 
 
 def _is_trinoor_zone_id(row_id: Any) -> bool:
@@ -331,6 +341,55 @@ def _assigned_routing(name: str, item: dict[str, Any], config: dict[str, Any]) -
     item_types = {str(t).strip().lower() for t in (item.get("types") or [])}
     ptype = _preset_type(name, config)
     return "PHEP" if (item_types & _PHEP_TYPES or ptype in _PHEP_TYPES) else "Inbox"
+
+
+def _is_todoist_assigned(item: dict[str, Any]) -> bool:
+    """Identify a server-derived Todoist row without treating vault rows as native.
+
+    The HTTP boundary may retain either the source marker, a Todoist id, or the
+    canonical ``todoist://`` path.  Any one of those is sufficient; a vault
+    path alone is deliberately not.
+    """
+    source = str(item.get("source") or "").strip().casefold()
+    todoist_id = str(item.get("todoist_id") or "").strip()
+    path = str(item.get("path") or "").strip()
+    return source == "todoist" or bool(todoist_id) or path.startswith("todoist://")
+
+
+def _todoist_manifest_metadata(item: dict[str, Any]) -> dict[str, Any]:
+    """Copy the trusted Todoist timing facts into internal manifest metadata.
+
+    ``sequence.timed_auto_pins`` is the canonical fail-closed duration policy:
+    a valid native time plus a positive or protective fallback duration pins the
+    row, while explicit zero/all-day and invalid or absent native times do not.
+    """
+    if not _is_todoist_assigned(item):
+        return {
+            "native_protected": False,
+            "allow_time_adjustment": None,
+            "is_recurring": False,
+            "native_start": None,
+            "retiming_authorized": None,
+        }
+    native_start = time_engine.to_hhmm(item.get("scheduled_start"))
+    # ``native_blocks`` is server-only provenance.  The effective ``blocks``
+    # value may be zero after a client-side duration override, but that must
+    # not erase the server's native timed pin.  Without provenance, an explicit
+    # server-derived numeric blocks == 0 remains all-day.
+    native_blocks = (
+        item["native_blocks"] if "native_blocks" in item else item.get("blocks")
+    )
+    if (not isinstance(native_blocks, bool)
+            and isinstance(native_blocks, (int, float)) and native_blocks == 0):
+        native_start = None
+    authorized = item.get("allow_time_adjustment") is True
+    return {
+        "native_protected": bool(sequence_module.timed_auto_pins([item])),
+        "allow_time_adjustment": item.get("allow_time_adjustment"),
+        "is_recurring": bool(item.get("is_recurring")),
+        "native_start": native_start,
+        "retiming_authorized": authorized,
+    }
 
 
 def _schedulable_routing(name: Any) -> str:
@@ -419,6 +478,7 @@ def build_plan_manifest(
                 name=row_id, id_or_path=item.get("path") or row_id,
                 time=start, duration_min=duration,
                 routing=_assigned_routing(row_id, item, config),
+                **_todoist_manifest_metadata(item),
             ))
         elif isinstance(row_id, str) and row_id.strip().lower() == "quick tasks":
             # QT routes through Todoist (skill 1518) — never a BusyCal event,
@@ -438,18 +498,12 @@ def build_plan_manifest(
             spec = anchored[str(row_id)]
             if _anchored_block_off(spec):
                 continue  # toggled off / skipped today — no write intent
-            # T12a (2026-07-26): the SAME frame rule as the not-in-sequence
-            # loop below. An auto-sequenced day reaches here, not there —
-            # judgment.py's prompt REQUIRES every anchored_block passed to it
-            # to appear in the proposal, _judged_anchored does not drop
-            # elapsed blocks, and validate_sequence demoted pre-anchor rows to
-            # a soft warning, so an elapsed block rides the commit payload as
-            # an ordinary row. Filtering only the fallback loop left the
-            # shakedown's five back-dated create-events fully reachable.
-            # Filters on the PROPOSED start, so a block the sequencer moved
-            # forward into the frame still publishes.
-            if _starts_before_frame(start, time_frame):
-                continue
+            # P3-03 (past-start consistency): do NOT filter here on the frame.
+            # validate_sequence demotes pre-anchor rows to a soft
+            # ``placement_past`` warning that the user explicitly accepted;
+            # an accepted row must survive into the commit representation
+            # rather than being silently filtered here.  The not-in-sequence
+            # fallback loop below still applies the frame filter.
             if _is_live_block(row_id) and micro_adventure:
                 # SKILL.md Step E Live rule: micro-adventure set -> Todoist
                 # create in the Step A batch, NOT a BusyCal event.
@@ -525,6 +579,7 @@ def build_plan_manifest(
             name=name, id_or_path=item.get("path") or name,
             time=None, duration_min=0,
             routing=_assigned_routing(name, item, config),
+            **_todoist_manifest_metadata(item),
         ))
 
     # Step A captures — niceties to Todoist Inbox (skill 1550–1560): bare
@@ -576,23 +631,134 @@ def build_plan_manifest(
 # 2. diff_against_live — pure
 # ---------------------------------------------------------------------------
 
-def _todoist_due_time(task: dict[str, Any]) -> str | None:
-    due = task.get("due") or {}
-    dt = due.get("datetime")
-    if not dt:
-        # Todoist unified-API v1 (/tasks/filter AND /tasks/{id}) carries the timed
-        # due value under `due.date` (e.g. "2026-07-13T09:00:00"), with `datetime`
-        # absent — read it. A date-only due ("2026-07-13", no "T") has no
-        # time-of-day, so it stays None, as before. (ISS-5.)
-        date_val = due.get("date")
-        if date_val and "T" in str(date_val):
-            dt = date_val
-        else:
-            return None
+@dataclass(frozen=True)
+class _TodoistDueReading:
+    """Safe, local-wall-clock reading of one live Todoist due value.
+
+    Offset-bearing values are fixed/UTC-anchored instants and must be
+    converted through the due object's IANA timezone.  Offset-free values are
+    floating local wall clocks.  ``error`` is deliberately data, not an
+    exception: the shadow diff must fail closed rather than invent a time.
+    """
+
+    local_hhmm: str | None = None
+    raw: Any = None
+    timezone: Any = None
+    error: str | None = None
+    timed: bool = False
+
+
+def _todoist_due_reading(task: dict[str, Any]) -> _TodoistDueReading:
+    due_value = task.get("due")
+    if due_value is not None and not isinstance(due_value, dict):
+        return _TodoistDueReading(
+            error="unreadable due object", timed=True
+        )
+    due = due_value or {}
+    raw = due.get("date") or due.get("datetime")
+    timezone = due.get("timezone") or None
+    if not raw:
+        return _TodoistDueReading(raw=raw, timezone=timezone)
+
+    text = str(raw)
+    if "T" not in text:
+        # Date-only dues remain all-day/no-time values.
+        return _TodoistDueReading(raw=raw, timezone=timezone)
+
     try:
-        return datetime.fromisoformat(str(dt).replace("Z", "+00:00")).strftime("%H:%M")
-    except ValueError:
-        return None
+        iso_value = text[:-1] + "+00:00" if text.endswith("Z") else text
+        parsed = datetime.fromisoformat(iso_value)
+    except (TypeError, ValueError):
+        return _TodoistDueReading(
+            raw=raw, timezone=timezone, error="unparseable due datetime", timed=True
+        )
+
+    if parsed.tzinfo is None:
+        # A floating Todoist due is already expressed in the user's local wall
+        # clock.  Do not apply a merely present timezone field to it.
+        return _TodoistDueReading(
+            local_hhmm=parsed.strftime("%H:%M"),
+            raw=raw,
+            timezone=timezone,
+            timed=True,
+        )
+
+    if not timezone:
+        return _TodoistDueReading(
+            raw=raw,
+            timezone=timezone,
+            error="missing timezone for fixed due",
+            timed=True,
+        )
+    try:
+        local = parsed.astimezone(ZoneInfo(timezone))
+    except (KeyError, TypeError, ValueError):
+        return _TodoistDueReading(
+            raw=raw,
+            timezone=timezone,
+            error=f"unknown timezone {timezone!r}",
+            timed=True,
+        )
+    return _TodoistDueReading(
+        local_hhmm=local.strftime("%H:%M"),
+        raw=raw,
+        timezone=timezone,
+        timed=True,
+    )
+
+
+def _todoist_due_time(task: dict[str, Any]) -> str | None:
+    return _todoist_due_reading(task).local_hhmm
+
+
+def _retiming_authorized(
+    manifest: ManifestEntry, is_recurring: bool,
+) -> bool:
+    """Return only the internal authorization that can permit a retime."""
+    if manifest.retiming_authorized is not None:
+        return bool(manifest.retiming_authorized)
+    if manifest.allow_time_adjustment is True:
+        return True
+    if manifest.native_protected:
+        return False
+    return not is_recurring
+
+
+def _todoist_due_detail(
+    manifest: ManifestEntry,
+    match: dict[str, Any],
+    reading: _TodoistDueReading,
+    is_recurring: bool,
+    retiming_authorized: bool,
+    *,
+    native_marker: bool = True,
+) -> dict[str, Any]:
+    """Build bounded live/planned/native diagnostics for a shadow result."""
+    detail: dict[str, Any] = {
+        "task_id": match.get("id"),
+        "retiming_authorized": retiming_authorized,
+        "is_recurring": is_recurring,
+        "due_time": {"live": reading.local_hhmm, "planned": manifest.time},
+    }
+    if manifest.native_start is not None:
+        native_readback = {
+            "live": reading.local_hhmm,
+            "planned": manifest.time,
+            "native": manifest.native_start,
+        }
+        # commit._plan_todoist treats these top-level keys as a protected
+        # write marker.  An authorized UPDATE must retain diagnostics without
+        # being misclassified as a pinned/no-op write.
+        detail["native_readback"] = native_readback
+        if native_marker:
+            detail["native_start"] = manifest.native_start
+            detail["native_time"] = native_readback
+    if reading.raw is not None:
+        detail["live_due"] = {
+            "raw": reading.raw,
+            "timezone": reading.timezone,
+        }
+    return detail
 
 
 def _match_todoist(
@@ -685,30 +851,112 @@ def diff_against_live(manifest: list[ManifestEntry], live_state: dict[str, Any])
             if match is not None:
                 claimed.add(str(match.get("id")))
             if match is None:
+                if m.native_start is not None:
+                    entries.append(ShadowDiffEntry(
+                        m, CONFLICT, {
+                            "reason": "server-derived native Todoist task missing",
+                            "retiming_authorized": _retiming_authorized(
+                                m, m.is_recurring
+                            ),
+                            "planned_time": m.time,
+                            "native_start": m.native_start,
+                        }
+                    ))
+                    continue
                 entries.append(ShadowDiffEntry(m, CREATE, {"content": m.name, "due_time": m.time}))
                 continue
-            live_time = _todoist_due_time(match)
-            is_recurring = bool((match.get("due") or {}).get("is_recurring"))
+            reading = _todoist_due_reading(match)
+            live_time = reading.local_hhmm
+            live_due = match.get("due")
+            is_recurring = bool(
+                live_due.get("is_recurring")
+                if isinstance(live_due, dict) else False
+            )
+            is_recurring = is_recurring or m.is_recurring
+            retiming_authorized = _retiming_authorized(m, is_recurring)
+
+            # A timed due that cannot be read canonically is never a usable
+            # comparison.  In particular, do not compare its offset wall clock
+            # directly to the planned local time and accidentally emit UPDATE.
+            if reading.error:
+                detail = _todoist_due_detail(
+                    m, match, reading, is_recurring, retiming_authorized
+                )
+                detail["reason"] = reading.error
+                entries.append(ShadowDiffEntry(m, CONFLICT, detail))
+                continue
+
+            if m.native_start is not None:
+                native_detail = _todoist_due_detail(
+                    m, match, reading, is_recurring, retiming_authorized
+                )
+                if not reading.timed or live_time is None:
+                    native_detail["reason"] = "native timed due is missing"
+                    entries.append(ShadowDiffEntry(m, CONFLICT, native_detail))
+                    continue
+                if live_time != m.native_start:
+                    native_detail["reason"] = "live due no longer matches native_start"
+                    entries.append(ShadowDiffEntry(m, CONFLICT, native_detail))
+                    continue
+                if live_time == m.time:
+                    entries.append(ShadowDiffEntry(m, NOOP, native_detail))
+                elif m.native_protected:
+                    # A protected server-derived native row is never an update,
+                    # even when the selected plan places it elsewhere.
+                    native_detail.update({
+                        "pinned": True,
+                        "pinned_native": True,
+                        "native_protected": True,
+                    })
+                    if is_recurring:
+                        native_detail["pinned_recurring"] = True
+                    entries.append(ShadowDiffEntry(m, NOOP, native_detail))
+                elif retiming_authorized:
+                    native_detail = _todoist_due_detail(
+                        m, match, reading, is_recurring, retiming_authorized,
+                        native_marker=False,
+                    )
+                    native_detail["due_time"] = {
+                        "old": live_time, "new": m.time,
+                    }
+                    entries.append(ShadowDiffEntry(m, UPDATE, native_detail))
+                else:
+                    native_detail["reason"] = "native retiming is not authorized"
+                    entries.append(ShadowDiffEntry(m, CONFLICT, native_detail))
+                continue
+
             if live_time == m.time:
                 entries.append(ShadowDiffEntry(m, NOOP, {}))
-            elif is_recurring:
+            elif m.native_protected:
+                # Native timed Todoist rows are immutable unless the
+                # server-authoritative row explicitly opted into retiming.
+                # Keep the planned slot in the diagnostic, but never turn a
+                # native mismatch into an update intent.
+                detail = _todoist_due_detail(
+                    m, match, reading, is_recurring, retiming_authorized
+                )
+                detail.update({
+                    "pinned": True,
+                    "pinned_native": True,
+                    "native_protected": True,
+                })
+                if is_recurring:
+                    detail["pinned_recurring"] = True
+                entries.append(ShadowDiffEntry(m, NOOP, detail))
+            elif is_recurring and not retiming_authorized:
                 # Recurring tasks are pinned: the plan schedules AROUND them,
                 # it never retimes them (their pattern owns the time).
-                entries.append(ShadowDiffEntry(
-                    m, NOOP, {
-                        "task_id": match.get("id"),
-                        "pinned_recurring": True,
-                        "due_time": {"live": live_time, "planned": m.time},
-                    }
-                ))
+                detail = _todoist_due_detail(
+                    m, match, reading, is_recurring, retiming_authorized
+                )
+                detail.update({"pinned": True, "pinned_recurring": True})
+                entries.append(ShadowDiffEntry(m, NOOP, detail))
             else:
-                entries.append(ShadowDiffEntry(
-                    m, UPDATE, {
-                        "task_id": match.get("id"),
-                        "due_time": {"old": live_time, "new": m.time},
-                        "is_recurring": False,
-                    }
-                ))
+                detail = _todoist_due_detail(
+                    m, match, reading, is_recurring, retiming_authorized
+                )
+                detail["due_time"] = {"old": live_time, "new": m.time}
+                entries.append(ShadowDiffEntry(m, UPDATE, detail))
 
         elif m.system == "calendar":
             if live_state.get("calendar_unavailable"):

@@ -218,6 +218,21 @@ class TestCommitHistoryAppend:
     def _seed(self, vault: Path, monkeypatch) -> None:
         (vault / "30 - Daily").mkdir(parents=True, exist_ok=True)
         (vault / "30 - Daily/2026-07-12.md").write_text("# Journal\n", encoding="utf-8")
+        config_path = vault / "00 - META" / "Skill-Configs" / "tdtb-bridger.md"
+        config_path.parent.mkdir(parents=True, exist_ok=True)
+        config_path.write_text(
+            "## Defaults\n"
+            "| Key | Value |\n|---|---|\n| eod | 11:59 PM |\n\n"
+            "## Anchored Lifestyle Blocks\n"
+            "| Block | Type | Start | End | Duration | Days |\n"
+            "|---|---|---|---|---|---|\n"
+            "| Live | hard | 8:30 PM | 9:30 PM | 60m | daily |\n\n"
+            "## Template Blocks\n"
+            "### Trinoor Hours\n"
+            "| Slot | Start | End |\n|---|---|---|\n"
+            "| Morning | 12:00 AM | 11:59 PM |\n",
+            encoding="utf-8",
+        )
         monkeypatch.setattr(gather, "effective_date", lambda now: TODAY)
         monkeypatch.setattr(shadow, "gather_live_state", _fake_live_state)
         rs.update_runstate(

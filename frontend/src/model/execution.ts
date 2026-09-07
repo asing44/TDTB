@@ -1,4 +1,5 @@
 import { liveDisplayName } from "./anchored";
+import { hierarchyRows } from "./allocatorView";
 import type {
   AnchoredBlock,
   OverlapGrant,
@@ -14,6 +15,10 @@ export interface ExecutionEntry {
   end: string;
   kind: "work" | "anchored" | "calendar";
   immutable: boolean;
+  /** Additive relationship context for the committed schedule. */
+  hierarchyDepth: number;
+  parentName: string | null;
+  groupLabel: string | null;
 }
 
 export interface ExecutionMoment {
@@ -58,6 +63,9 @@ function anchoredEnd(block: AnchoredBlock): string {
 
 function entriesOf(inputs: PlanInputs, sequence: SequenceRow[] | null): ExecutionEntry[] {
   const entries: ExecutionEntry[] = [];
+  const hierarchyById = new Map(
+    hierarchyRows(inputs.assigned, inputs.validDate).map((entry) => [entry.item.id, entry]),
+  );
   for (const block of inputs.anchored) {
     if (!block.on || block.skipToday || !block.start || block.kind === "template") continue;
     entries.push({
@@ -67,10 +75,14 @@ function entriesOf(inputs: PlanInputs, sequence: SequenceRow[] | null): Executio
       end: anchoredEnd(block),
       kind: block.kind === "calendar" ? "calendar" : "anchored",
       immutable: block.kind === "calendar",
+      hierarchyDepth: 0,
+      parentName: null,
+      groupLabel: null,
     });
   }
   for (const row of sequence ?? []) {
     if (row.kind !== "work") continue;
+    const hierarchy = hierarchyById.get(row.id);
     entries.push({
       id: row.id,
       name: row.id,
@@ -78,6 +90,9 @@ function entriesOf(inputs: PlanInputs, sequence: SequenceRow[] | null): Executio
       end: row.end,
       kind: "work",
       immutable: false,
+      hierarchyDepth: hierarchy?.depth ?? 0,
+      parentName: hierarchy?.parentName ?? null,
+      groupLabel: hierarchy?.groupLabel ?? null,
     });
   }
   return entries.sort((a, b) =>

@@ -28,6 +28,7 @@ import {
   effectiveAnchoredBlocks,
   effectiveBlocks,
   includedItems,
+  mergeNativeTimedPins,
   sourceHealthBlocked,
 } from "./store";
 import type {
@@ -198,10 +199,13 @@ export class Controller {
     );
     return {
       included,
+      timeAdjustmentOptIns: s.timeAdjustmentOptIns,
       planningConfigFingerprint:
         s.planningConfigFingerprint ?? s.inputs?.planningConfigFingerprint ?? "",
       overlapGrants: s.overlapGrants,
-      pinnedRows: pins,
+      pinnedRows: s.inputs
+        ? mergeNativeTimedPins(pins, s.inputs, s.timeAdjustmentOptIns, includedIds)
+        : pins,
     };
   }
 
@@ -481,6 +485,16 @@ export class Controller {
     void this.revalidate();
   }
 
+  /** Allow the scheduler to move one existing Todoist time. This is a
+      per-item edit, not a session-wide mode; the next validation/preview must
+      re-earn trust after the permission changes. */
+  setTimeAdjustmentOptIn(id: string, allow: boolean): void {
+    const item = this.getState().inputs?.assigned.find((i) => i.id === id);
+    if (!item || item.source !== "todoist" || !item.scheduledStart) return;
+    this.dispatch({ type: "TIME_ADJUSTMENT_SET", id, allow });
+    void this.revalidate();
+  }
+
   async refreshCapacity(): Promise<void> {
     const s = this.getState();
     if (!s.inputs) return;
@@ -524,7 +538,7 @@ export class Controller {
       // (post Day-Setup dismissals) are skipped so a staged row can never be
       // the exact calendar-wall overlap the server now hard-rejects.
       // FEEDBACK-03: placement scans free gaps — after the calendar walls AND
-      // the server's effective immutable pin set (manual pins + recurring
+      // the server's effective immutable pin set (manual pins + native timed
       // auto-pins). A dropped row no gap can hold is reported as explicit
       // infeasibility in the sequence warnings (naming the row, its need,
       // and the free capacity) instead of silently omitted; it is not staged
@@ -567,7 +581,7 @@ export class Controller {
         anchoredSourceFingerprint: fixed.anchoredSourceFingerprint,
         planningConfigFingerprint: fixed.planningConfigFingerprint,
         overlapGrants: result.overlapGrants,
-        // T27: prefer the server's effective pin set (client + recurring
+        // Prefer the server's effective pin set (client + native timed
         // auto-pins) so validate/commit snapshots stay byte-exact.
         pinnedRows: result.pinnedRows ?? this.getState().pendingPinnedRows,
         ledger,

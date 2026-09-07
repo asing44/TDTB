@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import secrets
 import re
@@ -279,8 +280,8 @@ def build_forgot_lists(
     return _rows(suggested, False), _rows(assigned, True)
 
 
-def build_digest_index(digest: dict[str, Any]) -> list[dict[str, str]]:
-    """Identity index of a built digest — ``[{name, todoist_id, path}]``.
+def build_digest_index(digest: dict[str, Any]) -> list[dict[str, Any]]:
+    """Build the server-owned identity/timing index for a digest.
 
     Persisted to runstate ``digest_index`` by /plan-inputs so T2's
     staging-phase ``resolve_target`` can map a name the client sends back to
@@ -288,25 +289,287 @@ def build_digest_index(digest: dict[str, Any]) -> list[dict[str, str]]:
     the T20 property "the app only touches artifacts it derived itself"
     survives the move to pre-commit; only the derivation source changes
     (plan_manifest → digest). Rows with no usable identity are dropped.
+
+    FEEDBACK-25: each row carries ``surface`` ("assigned" or "suggested") so
+    the commit eligibility boundary can authorize submitted assigned items
+    only from server rows that were actually assigned. Assigned rows are
+    indexed first; an identical row appearing on both surfaces keeps the
+    assigned role (assigned-first dedupe).
+
+    P4: Todoist timing metadata is retained only from the server-derived
+    digest.  The commit boundary uses these fields to recompute native timed
+    protection; client pin metadata is never persisted as authorization.
     """
-    index: list[dict[str, str]] = []
+    index: list[dict[str, Any]] = []
     seen: set[tuple[str, str, str]] = set()
-    for row in list(digest.get("assigned") or []) + list(digest.get("suggested") or []):
-        if not isinstance(row, dict):
-            continue
-        entry = {
-            "name": str(row.get("name") or ""),
-            "todoist_id": str(row.get("todoist_id") or ""),
-            "path": str(row.get("path") or ""),
-        }
-        if not entry["name"] or not (entry["todoist_id"] or entry["path"]):
-            continue
-        key = (entry["name"], entry["todoist_id"], entry["path"])
-        if key in seen:
-            continue
-        seen.add(key)
-        index.append(entry)
+    for surface in ("assigned", "suggested"):
+        for row in list(digest.get(surface) or []):
+            if not isinstance(row, dict):
+                continue
+            entry = {
+                "name": str(row.get("name") or ""),
+                "todoist_id": str(row.get("todoist_id") or ""),
+                "path": str(row.get("path") or ""),
+                "surface": surface,
+            }
+            for key in (
+                "source", "blocks", "native_blocks", "duration",
+                "scheduled_start", "is_recurring",
+            ):
+                if key in row and row.get(key) is not None:
+                    entry[key] = row[key]
+            # Todoist rows retain their server-native duration provenance in
+            # the index so the route/commit boundaries never need the client
+            # to supply it. Existing ``native_blocks`` wins; otherwise the
+            # trusted server ``blocks`` is recorded (never a client overlay).
+            if ("native_blocks" not in entry and "blocks" in entry
+                    and (str(row.get("source") or "").strip().casefold() == "todoist"
+                         or str(row.get("todoist_id") or "").strip())):
+                entry["native_blocks"] = entry["blocks"]
+            if not entry["name"] or not (entry["todoist_id"] or entry["path"]):
+                continue
+            key = (entry["name"], entry["todoist_id"], entry["path"])
+            if key in seen:
+                continue
+            seen.add(key)
+            index.append(entry)
     return index
+
+
+_ROUTE_TIMING_FIELDS = frozenset({
+    "id", "name", "todoist_id", "path", "source", "scheduled_start",
+    "is_recurring", "duration", "blocks", "duration_minutes",
+    "duration_source", "placement_window", "latest_start", "latest_end",
+    "zone", "native_blocks", "allow_time_adjustment",
+})
+
+_ROUTE_NATIVE_CLAIM_FIELDS = frozenset({
+    "source", "scheduled_start", "is_recurring", "native_blocks",
+    "allow_time_adjustment",
+})
+
+
+def _route_name(value: Any) -> str:
+    """Canonical comparison form for a submitted/displayed item name."""
+    return " ".join(str(value or "").strip().split()).casefold()
+
+
+def _route_source_identity(
+    row: dict[str, Any],
+) -> tuple[str, str] | None:
+    """Return a stable Todoist or vault identity, rejecting contradictions."""
+    todoist_id = str(row.get("todoist_id") or "").strip()
+    path = str(row.get("path") or "").strip()
+    todoist_path = path.casefold().startswith("todoist://")
+
+    if todoist_id:
+        if path:
+            if not todoist_path:
+                return None
+            path_id = path[len("todoist://"):].strip()
+            if path_id != todoist_id:
+                return None
+        return "todoist", todoist_id
+    if not path:
+        return None
+    if todoist_path:
+        path_id = path[len("todoist://"):].strip()
+        return ("todoist", path_id) if path_id else None
+    return "vault", path
+
+
+# Bounded effective-blocks policy: the day runs on 30-minute blocks, so an
+# all-day override tops out at 48 blocks (24h). Anything larger (or
+# malformed) is refused at the route boundary, never silently accepted.
+MAX_EFFECTIVE_BLOCKS = 48
+
+
+def _validated_blocks_overlay(value: Any) -> float | int | None:
+    """Validate a submitted today-only effective-blocks overlay.
+
+    Returns the numeric value (int when integral) for a valid overlay, or
+    None when the overlay is absent (no ``blocks`` key / explicit null) so
+    callers fall back to the trusted server value. Raises ``ValueError`` for
+    malformed or extreme input — bools, non-numbers, non-finite values,
+    negatives, and anything above ``MAX_EFFECTIVE_BLOCKS`` (48 blocks = 24h
+    under the 30-minute-block policy) are never silently accepted.
+    """
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"must be a number, got {type(value).__name__}")
+    try:
+        numeric = float(value)
+    except (OverflowError, ValueError):
+        raise ValueError("must be a finite number within range") from None
+    if not math.isfinite(numeric):
+        raise ValueError("must be a finite number")
+    if numeric < 0:
+        raise ValueError(f"must be >= 0, got {value!r}")
+    if numeric > MAX_EFFECTIVE_BLOCKS:
+        raise ValueError(
+            f"must be <= {MAX_EFFECTIVE_BLOCKS} blocks (24h), got {value!r}"
+        )
+    return int(value) if float(value).is_integer() else value
+
+
+def _canonicalize_route_assigned(
+    vault: Path,
+    today: date,
+    submitted_rows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Canonicalize assigned rows before proposal or revalidation planning.
+
+    The dated digest index is the only source of source identity and native
+    timing for rows that carry a stable identity. The submitted list still
+    controls the included subset, and identity-less legacy rows without native
+    metadata retain their old today-only shaping. Request-provided native
+    timing, source, identity, and opt-in metadata is never carried forward.
+
+    A matched assigned row may carry a validated today-only ``blocks``
+    override (including zero) for planning duration; that effective value is
+    applied on top of the server-derived fields. Todoist native provenance is
+    server-only: ``native_blocks`` (the index value, else the trusted server
+    blocks) is retained on the row — never the client overlay — so an
+    override cannot unpin a native timed row. Malformed or extreme ``blocks``
+    overlays fail closed (the row is refused). Client pins remain untouched
+    and are passed to planning for its canonical conflict diagnostics.
+    """
+    index = runstate.read_digest_index(vault, today)
+    server_rows = [
+        row for row in index
+        if isinstance(row, dict)
+        and str(row.get("surface") or "").casefold() == "assigned"
+        and _route_name(row.get("name"))
+        and _route_source_identity(row) is not None
+    ]
+    named_server_rows = {
+        _route_name(row.get("name"))
+        for row in index
+        if isinstance(row, dict)
+        and _route_name(row.get("name"))
+        and _route_source_identity(row) is not None
+    }
+
+    def _submitted_name(row: dict[str, Any]) -> str:
+        return str(row.get("name") or row.get("id") or "").strip()
+
+    def _has_stable_claim(row: dict[str, Any]) -> bool:
+        return bool(
+            str(row.get("todoist_id") or "").strip()
+            or str(row.get("path") or "").strip()
+        )
+
+    def _has_native_claim(row: dict[str, Any]) -> bool:
+        return bool(
+            _has_stable_claim(row)
+            or any(key in row for key in _ROUTE_NATIVE_CLAIM_FIELDS)
+            # An identity-less explicit all-day claim is still timing
+            # metadata.  Do not let blocks==0 erase a native timed pin;
+            # positive blocks remain valid legacy local planning shape.
+            or row.get("blocks") == 0
+        )
+
+    def _match(row: dict[str, Any]) -> dict[str, Any] | None:
+        name = _route_name(_submitted_name(row))
+        identity = _route_source_identity(row)
+        if not name or identity is None:
+            return None
+        matches = [
+            candidate for candidate in server_rows
+            if _route_name(candidate.get("name")) == name
+            and _route_source_identity(candidate) == identity
+        ]
+        return matches[0] if len(matches) == 1 else None
+
+    refused: list[str] = []
+    canonical: list[dict[str, Any]] = []
+    for row in submitted_rows:
+        if not isinstance(row, dict):
+            refused.append(repr(row))
+            continue
+        name = _submitted_name(row)
+        match = _match(row)
+        if match is not None:
+            # Keep non-timing planning metadata (labels, relationships, and
+            # similar today-only shape), but make every timing/source field
+            # server-owned. Missing server fields are removed rather than
+            # filled from the request.
+            projected = {
+                key: value for key, value in row.items()
+                if key not in _ROUTE_TIMING_FIELDS
+            }
+            projected["id"] = str(match.get("name") or "").strip()
+            projected["name"] = str(match.get("name") or "").strip()
+            for key in _ROUTE_TIMING_FIELDS - {"id", "name", "allow_time_adjustment"}:
+                if key in match and match.get(key) is not None:
+                    projected[key] = match[key]
+            # Todoist native provenance is server-owned: ``native_blocks``
+            # (the index value, else the trusted server blocks) — never the
+            # submitted overlay — so a today-only override cannot unpin a
+            # native timed row.
+            match_identity = _route_source_identity(match)
+            if (
+                match_identity is not None
+                and match_identity[0] == "todoist"
+                and "native_blocks" not in projected
+                and match.get("blocks") is not None
+            ):
+                projected["native_blocks"] = match.get("blocks")
+            # A validated effective-blocks overlay is the planning duration;
+            # absent blocks falls back to the server value just copied above.
+            try:
+                overlay = _validated_blocks_overlay(row.get("blocks"))
+            except ValueError as exc:
+                refused.append(f"{name or '<unnamed>'} (blocks: {exc})")
+                continue
+            if overlay is not None:
+                projected["blocks"] = overlay
+            # Only the exact literal True from this matched Todoist row is an
+            # authorization. False, strings, and pins from other rows vanish.
+            if (
+                match_identity is not None
+                and match_identity[0] == "todoist"
+                and row.get("allow_time_adjustment") is True
+            ):
+                projected["allow_time_adjustment"] = True
+            canonical.append(projected)
+            continue
+
+        # A name-only row cannot fall back to the legacy lane when the server
+        # knows a stable item with that name: doing so would authorize by
+        # display name and could omit native protection. Stable/native claims
+        # also fail closed when today's index is missing or only suggested.
+        if _has_native_claim(row) or _route_name(name) in named_server_rows:
+            refused.append(name or "<unnamed>")
+            continue
+
+        # Legacy route callers use identity-less rows for today-only shaping.
+        # Keep that compatibility, while discarding any opt-in or timing keys
+        # that could be smuggled through an identity-less row — and never
+        # accept a malformed/extreme blocks value through that lane either.
+        try:
+            _validated_blocks_overlay(row.get("blocks"))
+        except ValueError as exc:
+            refused.append(f"{name or '<unnamed>'} (blocks: {exc})")
+            continue
+        projected = {
+            key: value for key, value in row.items()
+            if key not in _ROUTE_NATIVE_CLAIM_FIELDS
+            and key not in {"todoist_id", "path"}
+        }
+        canonical.append(projected)
+
+    if refused:
+        names = ", ".join(repr(name) for name in refused)
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "assigned rows are not server-authorized for today: "
+                f"{names}"
+            ),
+        )
+    return canonical
 
 
 # ---------------------------------------------------------------------------
@@ -1209,6 +1472,9 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
         ext_cfg: dict[str, Any] = {
             **dict(config.get("Defaults") or {}),
             "calendar_capacity_classes": config.get("Calendar Capacity Classes"),
+            # Issue #6: canonical vault config section for disabled calendars,
+            # so route-level exclusions become diagnosable via calendar_decisions.
+            "calendar_disabled": config.get("Disabled Calendars"),
         }
         build_clients = app.state.build_read_clients or (lambda v, c: (None, None))
         todoist_c, store = build_clients(vault, config)
@@ -1227,8 +1493,8 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
                     ext_cfg = {**ext_cfg, "calendar_ids": resolved}
                 except Exception:  # noqa: BLE001 — no titles → no own-write exclusion
                     pass
-            busy_blocks, w_cal = external_sources.fetch_calendar_busy(
-                store, ext_cfg, today
+            busy_blocks, w_cal, calendar_decisions = (
+                external_sources.fetch_calendar_decisions(store, ext_cfg, today)
             )
             habits, w_hab = external_sources.fetch_habit_status(vault, ext_cfg, today)
             # T19: deterministic micro-adventure state — pure reads (config
@@ -1338,6 +1604,7 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
         # excluded from the frame scan alongside ignored rows (contract 17).
         frame, cap = _capacity_frame(
             config, day_setup, busy_effective, habits, resolved_day_semantics,
+            today=today,
         )
 
         anchored = (
@@ -1387,6 +1654,7 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
             "planning_config_fingerprint": planning_config_fingerprint,
             "micro_adventure": micro_payload,
             "dropped_today": dropped_rows,
+            "calendar_decisions": calendar_decisions,
             "source_warnings": w_todo + w_cal + w_hab,
             "source_counts": {
                 "vault": len(run_data["pool_items"]) + len(run_data["assigned_items"]),
@@ -1494,6 +1762,9 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
         ext_cfg: dict[str, Any] = {
             **dict(config.get("Defaults") or {}),
             "calendar_capacity_classes": config.get("Calendar Capacity Classes"),
+            # Issue #6: canonical vault config section for disabled calendars,
+            # so route-level exclusions become diagnosable via calendar_decisions.
+            "calendar_disabled": config.get("Disabled Calendars"),
         }
         build_clients = app.state.build_read_clients or (lambda v, c: (None, None))
         todoist_c, store = build_clients(vault, config)
@@ -1528,6 +1799,7 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
         frame, cap = _capacity_frame(
             config, merged, busy_effective, habits, resolved_day_semantics,
             extra_selected_blocks=extra_blk,
+            today=today,
         )
         return {
             "segments": {
@@ -1918,6 +2190,22 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
             run_data = gather.build_run_data(pool_notes, assigned_notes, today)
             pool_items = run_data["pool_items"]
             assigned_items = run_data["assigned_items"]
+        # P3-02: the same-day Drop-from-plan exclusions must also gate /digest
+        # — a dropped item may neither be returned nor re-indexed for today,
+        # on either surface. Date-scoped: tomorrow the item is eligible again.
+        dropped_rows = runstate.read_dropped(vault, today)
+        dropped_ids = {
+            str(d.get("identity")) for d in dropped_rows if d.get("identity")
+        }
+        if dropped_ids:
+            assigned_items = [
+                i for i in assigned_items
+                if runtime_actions.drop_identity_of(i) not in dropped_ids
+            ]
+            pool_items = [
+                i for i in pool_items
+                if runtime_actions.drop_identity_of(i) not in dropped_ids
+            ]
         cfg_result = config_reader.read_config(vault)
         return build_digest(
             pool_items,
@@ -1976,6 +2264,9 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
         """Propose a timeline through the pure planning boundary."""
         vault = resolve_vault_root()
         today = gather.effective_date(datetime.now())
+        canonical_assigned = _canonicalize_route_assigned(
+            vault, today, body.assigned,
+        )
         day_setup = {k: v for k, v in _read_today_runstate(vault, today).items()
                      if k in _DAY_SETUP_KEYS and v not in ("", None)}
         defaults: dict[str, Any] = dict((body.config or {}).get("Defaults") or {})
@@ -2002,7 +2293,7 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
             eod_override=time_engine.to_hhmm(day_setup.get("eod")),
         )
         prepared_inputs = {
-            "assigned": body.assigned,
+            "assigned": canonical_assigned,
             "config": body.config or {},
             "anchored_blocks": effective_anchored,
             "day_setup": day_setup,
@@ -2050,6 +2341,9 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
         """Revalidate the client layout without provider calls or merging."""
         vault = resolve_vault_root()
         today = gather.effective_date(datetime.now())
+        canonical_assigned = _canonicalize_route_assigned(
+            vault, today, body.assigned,
+        )
         snapshot = _read_today_runstate(vault, today)
         day_setup = {k: v for k, v in snapshot.items()
                      if k in _DAY_SETUP_KEYS and v not in ("", None)}
@@ -2078,7 +2372,7 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
         )
         try:
             prepared = planning.prepare_sequence({
-                "assigned": body.assigned,
+                "assigned": canonical_assigned,
                 "config": body.config or {},
                 "anchored_blocks": effective_anchored,
                 "day_setup": day_setup,
@@ -2096,6 +2390,47 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
                     "warnings": []}
         return planning.validate_revalidation(prepared).as_dict()
 
+    def _check_optional_commit_snapshot(body: CommitRequest) -> None:
+        """Keep the legacy snapshot check optional, separate from native pins.
+
+        Older clients omit the snapshot metadata entirely.  That omission must
+        not disable the server-derived native protection, so this compatibility
+        check is deliberately limited to the metadata a client actually sent.
+        """
+        if not (
+            body.pinned_rows
+            or body.overlap_grants
+            or body.planning_config_fingerprint
+        ):
+            return
+        vault = resolve_vault_root()
+        today = gather.effective_date(datetime.now())
+        snapshot = _read_today_runstate(vault, today)
+        if (
+            snapshot.get("pinned_rows", []) != body.pinned_rows
+            or snapshot.get("overlap_grants", []) != body.overlap_grants
+            or snapshot.get("planning_config_fingerprint", "")
+                != body.planning_config_fingerprint
+        ):
+            raise HTTPException(
+                status_code=409,
+                detail="planning snapshot is stale; regenerate before commit",
+            )
+        sequence_rows = (
+            body.sequence.get("sequence", [])
+            if isinstance(body.sequence, dict) else []
+        )
+        expected_pins = {str(pin.get("id")): pin for pin in body.pinned_rows}
+        actual_pins = {
+            str(row.get("id")): row for row in sequence_rows
+            if str(row.get("id")) in expected_pins
+        }
+        if actual_pins != expected_pins:
+            raise HTTPException(
+                status_code=409,
+                detail="pinned rows changed from immutable snapshot",
+            )
+
     @app.post("/commit", dependencies=[Depends(require_token)])
     def post_commit(
         mode: str | None = None, resume: bool = False, body: CommitRequest | None = None
@@ -2111,37 +2446,8 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
         if mode is None:
             raise HTTPException(status_code=501, detail="not implemented until T14/T15 (commit writers)")
 
-        if body is not None and (
-            body.pinned_rows or body.overlap_grants
-            or body.planning_config_fingerprint
-        ):
-            vault = resolve_vault_root()
-            today = gather.effective_date(datetime.now())
-            snapshot = _read_today_runstate(vault, today)
-            if (
-                snapshot.get("pinned_rows", []) != body.pinned_rows
-                or snapshot.get("overlap_grants", []) != body.overlap_grants
-                or snapshot.get("planning_config_fingerprint", "")
-                    != body.planning_config_fingerprint
-            ):
-                raise HTTPException(
-                    status_code=409,
-                    detail="planning snapshot is stale; regenerate before commit",
-                )
-            sequence_rows = (
-                body.sequence.get("sequence", [])
-                if isinstance(body.sequence, dict) else []
-            )
-            expected_pins = {str(pin.get("id")): pin for pin in body.pinned_rows}
-            actual_pins = {
-                str(row.get("id")): row for row in sequence_rows
-                if str(row.get("id")) in expected_pins
-            }
-            if actual_pins != expected_pins:
-                raise HTTPException(
-                    status_code=409,
-                    detail="pinned rows changed from immutable snapshot",
-                )
+        if body is not None:
+            _check_optional_commit_snapshot(body)
 
         if mode == "live":
             if body is None or body.digest is None or body.sequence is None:
@@ -2158,7 +2464,19 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
                     detail="live commit already in flight — retry after it returns",
                 )
             try:
-                return _run_live_commit(body, resume)
+                # FEEDBACK-24: the Day Setup gate (409) takes precedence over
+                # the P3-02 eligibility boundary; apply the P3-02 eligibility
+                # boundary before any live write path runs.
+                live_vault = resolve_vault_root()
+                live_today = gather.effective_date(datetime.now())
+                _require_day_setup(live_vault, live_today, "committing")
+                commit_config, safe_digest = _validate_commit_eligibility(
+                    body, live_vault, live_today,
+                )
+                return _run_live_commit(
+                    body, resume, config_override=commit_config,
+                    digest_override=safe_digest,
+                )
             finally:
                 app.state.live_commit_lock.release()
 
@@ -2176,14 +2494,15 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
             k: v for k, v in _read_today_runstate(vault, shadow_today).items()
             if k in _DAY_SETUP_KEYS and v not in ("", None)
         }
-        shadow_config = shadow.apply_day_setup(body.config or {}, shadow_day_setup)
-        # T19: server-authoritative Live selection (runstate override → auto),
-        # so the shadow preview reroutes Live → Todoist without trusting the
-        # client echo. Shadow never writes the history log.
-        shadow_config = _ensure_micro_adventure(shadow_config, vault, shadow_today)
+        # P3-02: eligibility boundary immediately before manifest construction.
+        # It returns the same server-authoritative effective config that the
+        # validator used, plus the sanitized digest, so the client cannot
+        # inject or rewrite Step E/D source rows or assigned metadata after
+        # the boundary.
+        shadow_config, safe_digest = _validate_commit_eligibility(body, vault, shadow_today)
         manifest = shadow.build_plan_manifest(
-            body.digest, body.sequence, shadow_config,
-            time_frame=_frame_for_writes(body.config, shadow_day_setup))
+            safe_digest, body.sequence, shadow_config,
+            time_frame=_frame_for_writes(shadow_config, shadow_day_setup))
 
         config_for_state: Any = shadow_config
         try:
@@ -2214,7 +2533,512 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
         )
         return frame.as_dict()
 
-    def _run_live_commit(body: CommitRequest, resume: bool) -> Any:
+    def _server_commit_config(
+        vault: Path, today: date, day_setup: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Build the effective config used by the commit boundary.
+
+        The browser echoes config in the commit body, but source rows must be
+        authorized from the current vault/config and dated setup instead of
+        from that echo.  The returned object is also passed to the manifest
+        builder so a client cannot alter an authorized row after validation.
+        """
+        result = config_reader.read_config(vault)
+        config: dict[str, Any] = (
+            dict(result.config.sections) if result.config is not None else {}
+        )
+        config = shadow.apply_day_setup(config, day_setup)
+        return _ensure_micro_adventure(config, vault, today)
+
+    def _validate_commit_eligibility(
+        body: CommitRequest, vault: Path, today: date,
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        """P3-02 server authorization immediately before manifest building.
+
+        Names alone are not identities: assigned rows must match the server's
+        assigned digest surface and every source identity supplied by the
+        client.  Sequence rows are then limited to current server-derived
+        assigned, anchored, schedulable, and Trinoor identities; fixed-lane
+        rows (anchored blocks, Trinoor work zones) must also carry the exact
+        server timing, and a ``backdrop`` flag is honored only on server-emitted
+        Trinoor zone rows.  The client ``_excluded`` flag and client-only config
+        are never authorization. Native timed protection is recomputed from
+        the dated server digest index immediately before the manifest boundary.
+
+        Returns the server-authoritative effective config plus a SANITIZED
+        digest whose assigned rows carry only trusted server identity, source,
+        timing, recurrence, and duration fields. The only request-derived
+        assigned metadata that can survive is an exact boolean
+        ``allow_time_adjustment`` for a matching Todoist row and a validated
+        effective-blocks overlay (including zero) for planning/manifest
+        duration; client ``types``/routing metadata never reaches the manifest
+        builder, and Todoist ``native_blocks`` is always server-derived so an
+        overlay cannot unpin a native timed row.
+        """
+        def _hhmm(value: Any) -> str | None:
+            text = time_engine.to_hhmm(value)
+            if not text:
+                return None
+            try:
+                hours, minutes = text.split(":")
+                return f"{int(hours):02d}:{int(minutes):02d}"
+            except (ValueError, AttributeError):
+                return None
+
+        digest = body.digest if isinstance(body.digest, dict) else {}
+        submitted_assigned = digest.get("assigned") or []
+        if not isinstance(submitted_assigned, list):
+            raise HTTPException(
+                status_code=422,
+                detail="commit refused: malformed assigned digest — nothing was written",
+            )
+
+        malformed_assigned: list[str] = []
+        for row in submitted_assigned:
+            if not isinstance(row, dict):
+                malformed_assigned.append(repr(row))
+                continue
+            name = str(row.get("name") or "").strip()
+            path = str(row.get("path") or "").strip()
+            todoist_id = str(row.get("todoist_id") or "").strip()
+            if not name or not (path or todoist_id):
+                malformed_assigned.append(name or repr(row))
+        if malformed_assigned:
+            raise HTTPException(
+                status_code=422,
+                detail="commit refused: malformed assigned rows: "
+                       + ", ".join(malformed_assigned)
+                       + " — nothing was written",
+            )
+
+        index = runstate.read_digest_index(vault, today)
+        server_assigned = [
+            row for row in index
+            if isinstance(row, dict)
+            and str(row.get("surface") or "").casefold() == "assigned"
+        ]
+
+        # P3-02 stale/drop revalidation: the cached index may predate a Drop
+        # made after the last /plan-inputs refresh.  Re-read today's dropped
+        # identities and remove matching cached assigned rows so a dropped
+        # item cannot be committed merely because the index was not refreshed.
+        dropped_ids = {
+            str(d.get("identity")) for d in runstate.read_dropped(vault, today)
+            if d.get("identity")
+        }
+        dropped_assigned_names: list[str] = []
+        if dropped_ids:
+            dropped_assigned_names = [
+                str(row.get("name") or "<unnamed>")
+                for row in server_assigned
+                if runtime_actions.drop_identity_of(row) in dropped_ids
+            ]
+            server_assigned = [
+                row for row in server_assigned
+                if runtime_actions.drop_identity_of(row) not in dropped_ids
+            ]
+
+        def _server_identity_matches(
+            submitted: dict[str, Any], candidate: dict[str, Any],
+        ) -> bool:
+            """Match a submitted name plus a stable server source identity.
+
+            A Todoist id and its ``todoist://`` path are equivalent forms of
+            the same source identity. Vault paths remain path-only. In either
+            case a name-only submission is never sufficient.
+            """
+            submitted_path = str(submitted.get("path") or "").strip()
+            submitted_id = str(submitted.get("todoist_id") or "").strip()
+            candidate_path = str(candidate.get("path") or "").strip()
+            candidate_id = str(candidate.get("todoist_id") or "").strip()
+
+            if candidate_id:
+                if submitted_id and submitted_id != candidate_id:
+                    return False
+                if submitted_path and candidate_path and submitted_path != candidate_path:
+                    return False
+                return bool(
+                    submitted_id == candidate_id
+                    or submitted_path == candidate_path
+                    or submitted_path == f"todoist://{candidate_id}"
+                )
+            if candidate_path.startswith("todoist://"):
+                return bool(
+                    submitted_path == candidate_path
+                    or submitted_id == candidate_path[len("todoist://"):]
+                ) and not (
+                    submitted_path and submitted_path != candidate_path
+                )
+            return bool(candidate_path) and submitted_path == candidate_path and not submitted_id
+
+        def _server_match(row: dict[str, Any]) -> dict[str, Any] | None:
+            name = str(row.get("name") or "").strip()
+            for candidate in server_assigned:
+                if str(candidate.get("name") or "").strip() != name:
+                    continue
+                if not _server_identity_matches(row, candidate):
+                    continue
+                return candidate
+            return None
+
+        authorized_rows: list[dict[str, Any]] = []
+        authorized_matches: list[tuple[dict[str, Any], dict[str, Any]]] = []
+        unknown_assigned: list[str] = []
+        for row in submitted_assigned:
+            match = _server_match(row)
+            if match is None:
+                unknown_assigned.append(str(row.get("name") or "<unnamed>"))
+            else:
+                authorized_rows.append(match)
+                authorized_matches.append((match, row))
+
+        # Effective-blocks overlays are validated BEFORE any write decision:
+        # a malformed or extreme value is collected here and fails the commit
+        # closed, never silently accepted as the manifest duration.
+        malformed_blocks: list[str] = []
+        for candidate, submitted in authorized_matches:
+            try:
+                _validated_blocks_overlay(submitted.get("blocks"))
+            except ValueError as exc:
+                malformed_blocks.append(
+                    f"{str(candidate.get('name') or '<unnamed>')!r} (blocks: {exc})"
+                )
+
+        if submitted_assigned and not server_assigned:
+            detail = (
+                "commit refused: no server-derived assigned identity "
+                "available for today"
+            )
+            if dropped_assigned_names:
+                detail += "; dropped today: " + ", ".join(dropped_assigned_names)
+            raise HTTPException(
+                status_code=422,
+                detail=detail + " — nothing was written",
+            )
+
+        day_setup = {
+            key: value
+            for key, value in _read_today_runstate(vault, today).items()
+            if key in _DAY_SETUP_KEYS and value not in ("", None)
+        }
+        config = _server_commit_config(vault, today, day_setup)
+        presets = config.get("Presets") or config.get("presets") or []
+
+        def _server_digest_row(
+            candidate: dict[str, Any],
+        ) -> dict[str, Any]:
+            """Project only server-owned digest fields into the write lane."""
+            projected: dict[str, Any] = {
+                "name": str(candidate.get("name") or "").strip(),
+                "todoist_id": str(candidate.get("todoist_id") or "").strip(),
+                "path": str(candidate.get("path") or "").strip(),
+            }
+            for key in (
+                "source", "duration", "blocks", "native_blocks",
+                "scheduled_start", "is_recurring",
+            ):
+                if key in candidate and candidate.get(key) is not None:
+                    projected[key] = candidate[key]
+            # A legacy index may have duration but not blocks. Resolve that
+            # equivalent from the server row/config, never from the request.
+            if "blocks" not in projected:
+                projected["blocks"] = resolve_assigned_blocks(projected, presets)
+            # Todoist native provenance is server-owned: ``native_blocks``
+            # (existing index value, else the trusted server blocks) is never
+            # the client overlay, so an effective-blocks override (incl. zero)
+            # cannot unpin a native timed row at the commit boundary.
+            if ("native_blocks" not in projected
+                    and _is_todoist_row(projected)
+                    and projected.get("blocks") is not None):
+                projected["native_blocks"] = projected["blocks"]
+            return projected
+
+        def _is_todoist_row(row: dict[str, Any]) -> bool:
+            source = str(row.get("source") or "").strip().casefold()
+            todoist_id = str(row.get("todoist_id") or "").strip()
+            path = str(row.get("path") or "").strip().casefold()
+            return source == "todoist" or bool(todoist_id) or path.startswith("todoist://")
+
+        def _effective_blocks_with_overlay(
+            candidate: dict[str, Any], submitted: dict[str, Any],
+        ) -> float | int | None:
+            """The effective planning blocks for an authorized row: a validated
+            submitted overlay, else the trusted server blocks. Overlays were
+            already validated before any write decision, so this never raises
+            and never re-records a malformed overlay."""
+            overlay = _validated_blocks_overlay(submitted.get("blocks"))
+            if overlay is None:
+                return candidate.get("blocks")
+            return overlay
+
+        client_anchored = set(shadow._anchored_specs(body.config or {}))
+        server_anchored = set(shadow._anchored_specs(config))
+        injected_anchored = sorted(client_anchored - server_anchored)
+
+        sequence = body.sequence if isinstance(body.sequence, dict) else {}
+        rows = sequence.get("sequence") or []
+        if not isinstance(rows, list):
+            raise HTTPException(
+                status_code=422,
+                detail="commit refused: malformed sequence — nothing was written",
+            )
+        malformed_sequence: list[str] = []
+        valid_rows: list[dict[str, Any]] = []
+        seen_seq_ids: set[str] = set()
+        for row in rows:
+            if not isinstance(row, dict) or not str(row.get("id") or "").strip():
+                malformed_sequence.append(repr(row))
+                continue
+            # P3-02: fail closed on malformed or non-positive timing — never
+            # silently normalize a malformed row at the commit boundary.
+            start = time_engine.to_hhmm(row.get("start"))
+            end = time_engine.to_hhmm(row.get("end"))
+            if start is None or end is None:
+                malformed_sequence.append(
+                    f"{str(row.get('id')).strip()!r}: start/end is not valid HH:MM")
+                continue
+            try:
+                start_min = int(start[:2]) * 60 + int(start[3:])
+                end_min = int(end[:2]) * 60 + int(end[3:])
+            except ValueError:
+                malformed_sequence.append(
+                    f"{str(row.get('id')).strip()!r}: unparseable interval")
+                continue
+            if end_min <= start_min:
+                malformed_sequence.append(
+                    f"{str(row.get('id')).strip()!r}: non-positive interval "
+                    f"({start}-{end})")
+                continue
+            row_id = str(row.get("id")).strip()
+            if row_id in seen_seq_ids:
+                malformed_sequence.append(f"{row_id!r}: appears more than once in sequence")
+                continue
+            seen_seq_ids.add(row_id)
+            normalized_row = dict(row)
+            normalized_row.update({"id": row_id, "start": start, "end": end})
+            valid_rows.append(normalized_row)
+
+        # The caller's pin list is only diagnostic input. Native protection is
+        # server-derived for the assigned rows actually included in this
+        # commit; intentionally omitted assigned rows are not in this lane.
+        native_assigned: list[dict[str, Any]] = []
+        for candidate, submitted in authorized_matches:
+            if not _is_todoist_row(candidate):
+                continue
+            native_row = _server_digest_row(candidate)
+            native_row["id"] = native_row["name"]
+            if submitted.get("allow_time_adjustment") is True:
+                native_row["allow_time_adjustment"] = True
+            native_assigned.append(native_row)
+        native_pin_errors = planning.sequence.verify_native_pins_in_sequence(
+            native_assigned, valid_rows, body.pinned_rows,
+        )
+
+        frame = _frame_for_writes(config, day_setup)
+        resolved_day_semantics = _authoritative_day_semantics(
+            config, day_setup, today,
+        )
+        try:
+            sched_items, zone_rows, _notes = external_sources.build_schedulable_blocks(
+                config, day_setup, today, str(frame.get("anchor") or "00:00"),
+                resolved_day_semantics=resolved_day_semantics,
+            )
+        except Exception as exc:  # noqa: BLE001 — fail closed on source ambiguity
+            raise HTTPException(
+                status_code=422,
+                detail=f"commit refused: server schedulable eligibility unavailable ({exc})"
+                       " — nothing was written",
+            ) from exc
+
+        def _hhmm2(value: Any) -> str | None:
+            text = time_engine.to_hhmm(value)
+            if not text:
+                return None
+            try:
+                hours, minutes = text.split(":")
+                return f"{int(hours):02d}:{int(minutes):02d}"
+            except (ValueError, AttributeError):
+                return None
+
+        # Legacy configs predate day-preset projections. Their configured
+        # Trinoor slots remain server-owned fixed rows even when the
+        # schedulable builder suppresses weekday-only backdrop emission; use
+        # the same server slot values and retain exact timing validation.
+        server_zone_rows = list(zone_rows)
+        if not server_zone_rows and "Day Presets" not in config:
+            for slot in ((config.get("Template Blocks") or {}).get("Trinoor Hours") or []):
+                if not isinstance(slot, dict):
+                    continue
+                start = _hhmm2(slot.get("Start"))
+                end = _hhmm2(slot.get("End"))
+                if start is None or end is None or start >= end:
+                    continue
+                server_zone_rows.append({
+                    "id": f"🟡 Trinoor : {slot.get('Slot', '?')}",
+                    "start": start,
+                    "end": end,
+                    "zone": "work_hours",
+                    "backdrop": True,
+                })
+
+        assigned_names = {
+            str(row.get("name") or "").strip() for row in authorized_rows
+        }
+        anchored_names = set(shadow._anchored_specs(config))
+        sched_names = {
+            str(value).strip()
+            for item in sched_items if isinstance(item, dict)
+            for value in (item.get("id"), item.get("name"))
+            if value
+        }
+        sched_names.discard("")
+        # Older clients used emoji-prefixed Minting labels.  These aliases are
+        # eligible only when the current server projection emitted Minting.
+        if any(
+            name.casefold() in {"minting", "🌊 minting", "🟡 minting"}
+            for name in sched_names
+        ):
+            sched_names.update({"Minting", "🌊 Minting", "🟡 Minting"})
+        # The legacy aggregate aliases are a compatibility lane, not a
+        # permanent allowlist. Prefer an actually emitted Minting row; for a
+        # legacy config with no day-preset projection, preserve the old
+        # default row only when today's server setup has not explicitly
+        # disabled Minting or selected an empty session set.
+        minting_setup = (day_setup.get("schedulable") or {}).get("minting")
+        has_mint_session_selection = (
+            isinstance(minting_setup, dict)
+            and isinstance(minting_setup.get("sessions"), list)
+        )
+        explicit_mint_disable = (
+            day_setup.get("work_allotment_minutes") == 0
+            or isinstance(minting_setup, dict)
+            and minting_setup.get("on") is False
+            or isinstance(minting_setup, dict)
+            and isinstance(minting_setup.get("sessions"), list)
+            and not minting_setup.get("sessions")
+        )
+        if (
+            not any(_route_name(name) == "minting" for name in sched_names)
+            and "Day Presets" not in config
+            and not explicit_mint_disable
+            and not has_mint_session_selection
+            and resolved_day_semantics.get("mint_enabled", True) is not False
+        ):
+            sched_names.update({"Minting", "🌊 Minting", "🟡 Minting"})
+
+        zone_names = {
+            str(row.get("id") or "").strip()
+            for row in server_zone_rows if isinstance(row, dict)
+        }
+        zone_names.discard("")
+        allowed = assigned_names | anchored_names | sched_names | zone_names
+        unknown_sequence = [
+            str(row.get("id") or "<empty>")
+            for row in valid_rows
+            if str(row.get("id") or "").strip() not in allowed
+        ]
+
+        # P3-02: exact authorization for server-derived anchored and Trinoor
+        # rows — a valid ID must not authorize forged timing or backdrop.
+        # Assigned/schedulable rows are movable: only well-formedness applies.
+        fixed_timing: list[str] = []
+        for row in valid_rows:
+            row_id = str(row.get("id") or "").strip()
+            submitted_start = _hhmm2(row.get("start"))
+            submitted_end = _hhmm2(row.get("end"))
+            if bool(row.get("backdrop")) and row_id not in zone_names:
+                fixed_timing.append(f"{row_id!r}: client backdrop on non-zone row")
+                continue
+            if row_id in zone_names:
+                server_span = next(
+                    (r for r in server_zone_rows
+                     if str(r.get("id") or "").strip() == row_id),
+                    None,
+                )
+                if (server_span is None
+                        or submitted_start != _hhmm2(server_span.get("start"))
+                        or submitted_end != _hhmm2(server_span.get("end"))):
+                    fixed_timing.append(
+                        f"{row_id!r}: timing {submitted_start}-{submitted_end} "
+                        f"does not match server zone projection")
+                continue
+            if row_id in anchored_names:
+                spec = shadow._anchored_specs(config)[row_id]
+                server_start = _hhmm2(spec.get("time")) or _hhmm2(spec.get("Start")) or _hhmm2(spec.get("start"))
+                if server_start is not None and submitted_start != server_start:
+                    fixed_timing.append(
+                        f"{row_id!r}: start {submitted_start} does not match "
+                        f"server anchored projection {server_start}")
+                    continue
+                server_end = (_hhmm2(spec.get("End")) or _hhmm2(spec.get("end")))
+                if server_end is None:
+                    mins = time_engine.duration_minutes(spec.get("Duration"))
+                    if mins and server_start is not None:
+                        total = (int(server_start[:2]) * 60 + int(server_start[3:])) + mins
+                        server_end = f"{total // 60:02d}:{total % 60:02d}"
+                if server_end is not None and submitted_end != server_end:
+                    fixed_timing.append(
+                        f"{row_id!r}: end {submitted_end} does not match "
+                        f"server anchored projection {server_end}")
+
+        if (unknown_assigned or injected_anchored or malformed_sequence
+                or unknown_sequence or fixed_timing or native_pin_errors
+                or malformed_blocks):
+            parts: list[str] = []
+            if unknown_assigned:
+                parts.append("stale/dropped assigned items: "
+                             + ", ".join(repr(name) for name in unknown_assigned))
+            if injected_anchored:
+                parts.append("client-only anchored items: "
+                             + ", ".join(repr(name) for name in injected_anchored))
+            if malformed_sequence:
+                parts.append("malformed sequence rows: "
+                             + ", ".join(malformed_sequence))
+            if unknown_sequence:
+                parts.append("stale/dropped sequence rows: "
+                             + ", ".join(repr(row) for row in unknown_sequence))
+            if fixed_timing:
+                parts.append("forged fixed-lane timing/backdrop: "
+                             + ", ".join(fixed_timing))
+            if native_pin_errors:
+                parts.append("native timed protection: "
+                             + "; ".join(native_pin_errors))
+            if malformed_blocks:
+                parts.append("malformed blocks overlay: "
+                             + ", ".join(malformed_blocks))
+            raise HTTPException(
+                status_code=422,
+                detail="commit refused: " + "; ".join(parts)
+                       + " — regenerate before committing. Nothing was written",
+            )
+
+        # P3-02/P4 canonical digest: hand the manifest builder a SANITIZED
+        # digest whose assigned rows carry only trusted server fields. The
+        # exact per-item opt-in is added only from its matching request row;
+        # a validated effective-blocks overlay (including zero) rides as the
+        # manifest duration, while ``native_blocks`` stays server-derived and
+        # client ``types``/routing metadata never reaches build_plan_manifest.
+        sanitized_assigned: list[dict[str, Any]] = []
+        for candidate, submitted in authorized_matches:
+            sanitized = _server_digest_row(candidate)
+            overlay = _effective_blocks_with_overlay(candidate, submitted)
+            if overlay is not None:
+                sanitized["blocks"] = overlay
+            if _is_todoist_row(candidate) and submitted.get("allow_time_adjustment") is True:
+                sanitized["allow_time_adjustment"] = True
+            sanitized_assigned.append(sanitized)
+        safe_digest = {
+            "valid_date": str(today),
+            "assigned": sanitized_assigned,
+            "suggested": [],
+        }
+        return config, safe_digest
+
+    def _run_live_commit(
+        body: CommitRequest, resume: bool,
+        config_override: dict[str, Any] | None = None,
+        digest_override: dict[str, Any] | None = None,
+    ) -> Any:
         """T15 live-commit write path — always runs under the G25 lock."""
         vault = resolve_vault_root()
         today = gather.effective_date(datetime.now())
@@ -2229,12 +3053,14 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
             k: v for k, v in _read_today_runstate(vault, today).items()
             if k in _DAY_SETUP_KEYS and v not in ("", None)
         }
-        config: dict[str, Any] = shadow.apply_day_setup(body.config or {}, live_day_setup)
-        # T19: server-authoritative Live selection (runstate override → auto).
-        config = _ensure_micro_adventure(config, vault, today)
+        if config_override is None:
+            config = _server_commit_config(vault, today, live_day_setup)
+        else:
+            config = config_override
         manifest = shadow.build_plan_manifest(
-            body.digest, body.sequence, config,
-            time_frame=_frame_for_writes(body.config, live_day_setup))
+            digest_override if digest_override is not None else body.digest,
+            body.sequence, config,
+            time_frame=_frame_for_writes(config, live_day_setup))
         try:
             live_state = shadow.gather_live_state(config, vault)
         except shadow.ShadowStateError as exc:

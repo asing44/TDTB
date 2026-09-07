@@ -358,10 +358,13 @@
   text-transform: uppercase;
 }
 .calendar-impact__class--work {
-  background: color-mix(in srgb, var(--c-minting) 16%, transparent);
+  background: color-mix(in srgb, var(--state-warning) 16%, transparent);
 }
 .calendar-impact__class--ignored {
   color: var(--t-muted);
+}
+.calendar-impact__class--quarantined {
+  background: color-mix(in srgb, var(--state-warning) 10%, transparent);
 }
 .calendar-impact__reason {
   font-weight: 500;
@@ -374,7 +377,7 @@
 .calendar-impact__wall {
   margin-left: 4px;
   padding: 1px 5px;
-  border: 0.5px solid var(--c-overflow);
+  border: 0.5px solid var(--state-danger);
   border-radius: 3px;
   font-size: 10px;
   color: var(--c-overflow);
@@ -833,6 +836,10 @@
   padding-top: 6px;
   border-top: 0.5px solid var(--t-border);
 }
+.execution-card__entry--nested {
+  padding-left: 14px;
+  border-left: 1px solid color-mix(in srgb, var(--t-accent) 42%, transparent);
+}
 .execution-card__name {
   font-size: 15px;
   font-weight: 500;
@@ -1179,6 +1186,43 @@
   gap: 8px;
   min-width: 0;
 }
+/* P6-03: relationship context lives inside the existing name column. It is a
+   visual trace, not a new grouping row, so no synthetic item can consume
+   capacity or hide an infeasible assigned item. */
+.qrow--nested .qrow__body {
+  padding-left: 18px;
+  border-left: 1px solid color-mix(in srgb, var(--t-accent) 42%, transparent);
+}
+.qrow__branch {
+  flex: none;
+  color: var(--t-accent);
+  font-size: 14px;
+  line-height: 1;
+}
+.qrow__group {
+  flex: none;
+  max-width: 15ch;
+  overflow: hidden;
+  color: var(--t-muted);
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+  padding: 1px 5px;
+  border: 0.5px solid var(--t-border);
+  border-radius: 3px;
+  background: var(--t-surface);
+}
+.qrow__relationship {
+  padding-left: 22px;
+  color: var(--t-muted);
+  font-size: 10px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 /* T26: names wrap to two lines before clipping — single-line ellipsis
    truncated most real titles ("Institute WALL·E-OS ti…"). Full title stays
    on the hover tooltip. */
@@ -1280,6 +1324,61 @@
   gap: 6px;
   min-width: 0;
   flex-wrap: wrap;
+}
+/* P4-03: native Todoist starts are protected planning evidence. The opt-in
+   stays in the existing time track, below its readout, rather than becoming a
+   persistent action column. A full-width, calm line makes the default and the
+   exceptional permission legible without competing with row verbs. */
+.qrow__time-adjustment {
+  flex: 1 1 100%;
+  min-width: 0;
+  min-height: 44px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: 2px 7px;
+  padding: 4px 0 2px;
+  border-top: 0.5px solid color-mix(in srgb, var(--t-border) 65%, transparent);
+}
+.qrow__time-adjustment-control {
+  grid-column: 1 / -1;
+  min-height: 44px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 7px;
+}
+.qrow__time-adjustment input {
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  accent-color: var(--t-accent);
+  cursor: pointer;
+}
+.qrow__time-adjustment label {
+  min-width: 0;
+  color: var(--t-muted);
+  font-size: 10px;
+  line-height: 1.35;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+.qrow__time-adjustment-status {
+  grid-column: 2;
+  min-width: 0;
+  color: var(--t-muted);
+  font-size: 10px;
+  line-height: 1.35;
+}
+.qrow__time-adjustment--allowed {
+  border-top-color: color-mix(in srgb, var(--t-accent) 55%, var(--t-border));
+}
+.qrow__time-adjustment--allowed label,
+.qrow__time-adjustment--allowed .qrow__time-adjustment-status {
+  color: var(--t-accent-text);
+}
+.qrow__time-adjustment:focus-within {
+  border-top-color: var(--t-accent);
 }
 /* Flanking half-block trim. Deliberately quieter than the row's verbs — these
    nudge a number, they don't act on the item. */
@@ -1500,8 +1599,16 @@
 }
 .qrow__src-tag--memory {
   color: var(--t-accent-text);
-  background: var(--t-accent-subtle);
-  border-color: transparent;
+  background: color-mix(in srgb, var(--state-memory) 14%, var(--t-surface));
+  border-color: color-mix(in srgb, var(--state-memory) 45%, transparent);
+}
+.qrow__src-tag--remembered {
+  color: var(--t-text);
+  background: color-mix(in srgb, var(--state-remembered) 13%, var(--t-surface));
+  border-color: color-mix(in srgb, var(--state-remembered) 40%, transparent);
+}
+.qrow__src-tag--source {
+  color: var(--state-source);
 }
 
 /* -- staging verbs (T12e, brief problem 4 → IMP-07) -------------------------- */
@@ -2024,7 +2131,7 @@
   font-size: 11px;
 }
 .field-error {
-  color: var(--c-overflow);
+  color: var(--state-danger);
   font-size: 12px;
 }
 .field__hint {
@@ -2093,7 +2200,7 @@
   margin: 0;
 }
 .field-warning {
-  color: var(--c-minting);
+  color: var(--state-warning);
   font-size: 12px;
 }
 .anchored-row__name {
@@ -2216,16 +2323,16 @@
   color: var(--t-muted);
 }
 .drawer-status--preview {
-  border-left-color: var(--t-accent);
-  background: color-mix(in srgb, var(--t-accent) 6%, var(--t-surface-2));
+  border-left-color: var(--state-memory);
+  background: color-mix(in srgb, var(--state-memory) 6%, var(--t-surface-2));
 }
 .drawer-status--ok {
-  border-left-color: var(--c-free);
-  background: color-mix(in srgb, var(--c-free) 8%, var(--t-surface-2));
+  border-left-color: var(--state-success);
+  background: color-mix(in srgb, var(--state-success) 8%, var(--t-surface-2));
 }
 .drawer-status--partial {
-  border-left-color: var(--c-overflow);
-  background: color-mix(in srgb, var(--c-overflow) 8%, var(--t-surface-2));
+  border-left-color: var(--state-danger);
+  background: color-mix(in srgb, var(--state-danger) 8%, var(--t-surface-2));
 }
 /* FEEDBACK-18: Results' one primary next action is closing the drawer — a
    clear end to the committed state, never a re-commit affordance. */

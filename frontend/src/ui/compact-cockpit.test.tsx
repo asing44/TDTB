@@ -6,6 +6,7 @@ afterEach(cleanup);
 import { App } from "./App";
 import { ActionDock } from "./ActionDock";
 import { ApprovalDrawer } from "./ApprovalDrawer";
+import { CalendarImpact } from "./CalendarImpact";
 import { makeHarness } from "./test-harness";
 
 describe("compact planning cockpit", () => {
@@ -30,6 +31,42 @@ describe("compact planning cockpit", () => {
     expect(calendar?.querySelector(".calendar-impact__review summary")?.textContent).toBe(
       "Review calendar impact",
     );
+  });
+
+  it("keeps ignored-only calendar evidence compact without rendering an empty list", () => {
+    const h = makeHarness("ready", (scenario) => {
+      scenario.inputs.anchored = [
+        {
+          id: "Focus timer",
+          name: "Focus timer",
+          kind: "calendar",
+          start: "10:00",
+          end: "10:30",
+          durationMin: 30,
+          overlapAllowed: false,
+          on: true,
+          skipToday: false,
+          calendarId: "focus",
+          calendarTitle: "Session: focus",
+          capacityClass: "ignored",
+        },
+      ];
+    });
+    const r = h.ui(<CalendarImpact compact />);
+    const calendar = r.container.querySelector(".calendar-impact");
+
+    expect(calendar?.classList.contains("calendar-impact--compact")).toBe(true);
+    expect(r.getByText("1 ignored calendar source excluded")).toBeTruthy();
+    expect(calendar?.querySelector(".calendar-impact__list")).toBeNull();
+  });
+
+  it("keeps a truly empty calendar frame absent", () => {
+    const h = makeHarness("ready", (scenario) => {
+      scenario.inputs.anchored = [];
+    });
+    const r = h.ui(<CalendarImpact compact />);
+
+    expect(r.container.querySelector(".calendar-impact")).toBeNull();
   });
 
   it("puts the committed execution view before planning evidence", () => {

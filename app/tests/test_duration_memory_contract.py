@@ -47,6 +47,37 @@ def test_duration_precedence_memory_first_with_source_label():
     assert (value, source) == (120, "remembered")
 
 
+# Regression: the tag source happy path — a single deterministic dur tag wins
+# over Todoist-native, preset, type, and default (precedence item 11).
+def test_tag_source_resolves_and_beats_native():
+    from duration_memory import resolve_duration
+
+    value, source = resolve_duration(
+        {
+            "name": "Press",
+            "todoist_id": "12345",
+            "labels": ["dur60"],
+            "duration": {"unit": "minute", "amount": 30},
+        },
+        presets=[{"Name": "Press", "Blocks": "2.5"}],
+        fm={"type": ["press"], "duration_min": 75},
+        memory={},
+    )
+    assert (value, source) == (60, "tag:dur60")
+
+
+def test_tag_source_case_insensitive_single_match():
+    from duration_memory import resolve_duration
+
+    value, source = resolve_duration(
+        {"name": "Guitar", "labels": ["DUR45"]},
+        presets=[],
+        fm={},
+        memory={},
+    )
+    assert (value, source) == (45, "tag:DUR45")
+
+
 def test_tag_collision_fails_visibly():
     from duration_memory import resolve_duration
 

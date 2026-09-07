@@ -7,8 +7,11 @@ invariants (overlap, chronological order, never-bump completeness).
 """
 from __future__ import annotations
 
+import math
+
 import pytest
 
+import sequence as sequence_module
 from sequence import (ValidationResult, is_workout_item, merge_immutable_rows,
                       merge_pinned_rows, recurring_auto_pins,
                       canonicalize_sequence_ids, placement_window_rows,
@@ -711,6 +714,24 @@ class TestTimeFrameConstraints:
         assert any("before anchor" in str(w) for w in r.warnings)
         assert not r.hard_errors
 
+    def test_row_before_anchor_kept_with_explicit_placement_past_warning(self):
+        # P3-03: a row starting before the effective anchor must remain in the
+        # returned plan (never dropped) and be flagged with the explicit
+        # ``placement_past`` warning kind, not merely a prose "before anchor".
+        row = {"id": "X", "start": "13:00", "end": "13:30", "zone": "any"}
+        proposal = {"sequence": [row]}
+        r = self._res([row])
+        assert r.ok is True
+        assert not r.hard_errors
+        # the row is never silently dropped from the plan
+        assert len(proposal["sequence"]) == 1
+        assert proposal["sequence"][0] is row
+        past = [w for w in r.warnings
+                if isinstance(w, dict) and w.get("rule") == "placement_past"]
+        assert past, r.warnings
+        assert past[0]["id"] == "X"
+        assert "before anchor" in past[0]["detail"]
+
     def test_row_past_eod_is_soft_warning(self):
         r = self._res([{"id": "X", "start": "20:45", "end": "21:30", "zone": "any"}])
         assert r.ok is True
@@ -783,3 +804,408 @@ class TestRecurringAutoPins:
         del row["id"]
         [pin] = recurring_auto_pins([row])
         assert pin["id"] == "LOOTS"
+
+
+# ---------------------------------------------------------------------------
+# P4-02 — native Todoist timing is protected unless explicitly opted in
+# ---------------------------------------------------------------------------
+
+class TestNativeTimedTodoistProtection:
+    def _row(self, **overrides):
+        row = {
+            "id": "NATIVE",
+            "name": "NATIVE",
+            "source": "todoist",
+            "blocks": 0.5,
+            "is_recurring": True,
+            "scheduled_start": "12:30",
+        }
+        row.update(overrides)
+        return row
+
+    @pytest.mark.parametrize("is_recurring", [True, False])
+    def test_valid_native_time_is_protected_for_recurring_and_one_off_rows(
+        self, is_recurring
+    ):
+        # Contract: a server-canonical native Todoist time is an immutable pin
+        # for both recurring and non-recurring rows by default.
+        [pin] = sequence_module.timed_auto_pins(
+            [self._row(is_recurring=is_recurring)]
+        )
+        assert pin == {
+            "id": "NATIVE",
+            "start": "12:30",
+            "end": "12:45",
+            "zone": None,
+        }
+
+    @pytest.mark.parametrize("is_recurring", [True, False])
+    @pytest.mark.parametrize(
+        "allow_flag",
+        [pytest.param("absent", id="absent"), pytest.param(False, id="false")],
+    )
+    def test_false_or_absent_opt_in_flag_does_not_unprotect_native_time(
+        self, is_recurring, allow_flag
+    ):
+        # Contract: only item-scoped allow_time_adjustment=true opts out.
+        row = self._row(is_recurring=is_recurring)
+        if allow_flag != "absent":
+            row["allow_time_adjustment"] = allow_flag
+        [pin] = sequence_module.timed_auto_pins([row])
+        assert pin["start"] == "12:30"
+        assert pin["end"] == "12:45"
+
+    @pytest.mark.parametrize("is_recurring", [True, False])
+    def test_true_item_opt_in_makes_native_row_movable(self, is_recurring):
+        # Contract: explicit item-scoped opt-in is the only escape hatch.
+        assert sequence_module.timed_auto_pins([
+            self._row(is_recurring=is_recurring, allow_time_adjustment=True)
+        ]) == []
+
+    @pytest.mark.parametrize("blocks", [1.5, 2.0])
+    def test_positive_finite_blocks_use_their_duration(self, blocks):
+        # Contract: positive finite blocks are converted to 30-minute blocks.
+        expected_end = "13:15" if blocks == 1.5 else "13:30"
+        [pin] = sequence_module.timed_auto_pins([self._row(blocks=blocks)])
+        assert pin["start"] == "12:30"
+        assert pin["end"] == expected_end
+
+    @pytest.mark.parametrize(
+        "blocks",
+        [
+            pytest.param("missing", id="missing"),
+            pytest.param("malformed", id="malformed"),
+            pytest.param(math.inf, id="positive-infinity"),
+            pytest.param(math.nan, id="nan"),
+            pytest.param(-math.inf, id="negative-infinity"),
+            pytest.param(-1, id="negative"),
+            pytest.param(True, id="boolean"),
+        ],
+    )
+    def test_invalid_blocks_fail_closed_to_one_protective_block(self, blocks):
+        # Contract: missing, malformed, non-finite, and negative blocks fail
+        # closed; a native timed row must not become movable by bad duration.
+        row = self._row()
+        if blocks == "missing":
+            del row["blocks"]
+        elif blocks == "malformed":
+            row["blocks"] = "one"
+        else:
+            row["blocks"] = blocks
+        [pin] = sequence_module.timed_auto_pins([row])
+        assert pin == {
+            "id": "NATIVE",
+            "start": "12:30",
+            "end": "13:00",
+            "zone": None,
+        }
+
+    def test_explicit_zero_blocks_is_all_day_and_has_no_timeline_pin(self):
+        # Contract: blocks==0 is an explicit all-day/no-timeline state.
+        assert sequence_module.timed_auto_pins([self._row(blocks=0)]) == []
+
+    def test_near_midnight_pin_remains_positive(self):
+        # Contract: native pin derivation must never emit a non-positive span.
+        [pin] = sequence_module.timed_auto_pins(
+            [self._row(scheduled_start="23:45", blocks=0.5)]
+        )
+        assert pin == {
+            "id": "NATIVE",
+            "start": "23:45",
+            "end": "23:59",
+            "zone": None,
+        }
+        assert pin["end"] > pin["start"]
+
+    def test_2359_positive_duration_is_not_emitted_as_an_invalid_pin(self):
+        # HH:MM cannot represent the next-day end of a positive 23:59 task.
+        # The list-only compatibility helper must not emit a malformed row.
+        assert sequence_module.timed_auto_pins([
+            self._row(scheduled_start="23:59", blocks=0.5)
+        ]) == []
+
+    def test_2359_positive_duration_fails_closed_in_enforcement(self):
+        effective, errors = sequence_module.enforce_native_pins(
+            [self._row(scheduled_start="23:59", blocks=0.5)], []
+        )
+        assert effective == []
+        assert errors == [
+            "native timed row 'NATIVE': unrepresentable native interval "
+            "starting at '23:59'"
+        ]
+
+    def test_2359_positive_duration_fails_closed_in_verification(self):
+        errors = sequence_module.verify_native_pins_in_sequence(
+            [self._row(scheduled_start="23:59", blocks=0.5)], [], []
+        )
+        assert errors == [
+            "native timed row 'NATIVE': unrepresentable native interval "
+            "starting at '23:59'"
+        ]
+
+    def test_2359_zero_blocks_is_an_explicit_all_day_exemption(self):
+        row = self._row(scheduled_start="23:59", blocks=0)
+        assert sequence_module.timed_auto_pins([row]) == []
+        assert sequence_module.enforce_native_pins([row], []) == ([], [])
+        assert sequence_module.verify_native_pins_in_sequence([row], [], []) == []
+
+    def test_native_blocks_protects_when_effective_blocks_is_zero(self):
+        row = self._row(blocks=0, native_blocks=1)
+        [pin] = sequence_module.timed_auto_pins([row])
+        assert pin == {
+            "id": "NATIVE", "start": "12:30", "end": "13:00", "zone": None,
+        }
+        effective, errors = sequence_module.enforce_native_pins([row], [])
+        assert errors == []
+        assert effective == [pin]
+
+    def test_native_blocks_takes_precedence_over_positive_effective_blocks(self):
+        # A client-effective blocks override (even a large one) must never
+        # extend the server-native protection duration.
+        row = self._row(blocks=48, native_blocks=1)
+        [pin] = sequence_module.timed_auto_pins([row])
+        assert pin == {
+            "id": "NATIVE", "start": "12:30", "end": "13:00", "zone": None,
+        }
+
+    def test_vault_and_untimed_rows_are_not_native_protected(self):
+        assert sequence_module.timed_auto_pins([
+            self._row(source="vault"),
+            self._row(id="UNTIMED", scheduled_start=None),
+        ]) == []
+
+    def test_matching_client_pin_is_canonicalized_and_conflict_is_rejected(self):
+        # Contract: server canonical time wins over client pin metadata; moving
+        # that pin is a hard preflight error.
+        matching = {
+            "id": "NATIVE", "start": "12:30", "end": "12:45",
+            "zone": "client-zone", "metadata": {"stale": True},
+        }
+        effective, errors = sequence_module.enforce_native_pins(
+            [self._row()], [matching]
+        )
+        assert errors == []
+        assert effective == [{
+            "id": "NATIVE", "start": "12:30", "end": "12:45", "zone": None,
+        }]
+
+        conflicting = {
+            "id": "NATIVE", "start": "13:00", "end": "13:15", "zone": None,
+        }
+        _, conflict_errors = sequence_module.enforce_native_pins(
+            [self._row()], [conflicting]
+        )
+        assert conflict_errors
+        assert any("protected native time" in error for error in conflict_errors)
+
+    def test_sequence_verification_cannot_be_bypassed_by_omitting_client_pins(self):
+        # Contract: sequence verification recomputes native protection from
+        # assigned server rows, not from pinned_rows supplied by the client.
+        errors = sequence_module.verify_native_pins_in_sequence(
+            [self._row()],
+            [{"id": "NATIVE", "start": "13:00", "end": "13:15", "zone": "any"}],
+            [],
+        )
+        assert errors
+        assert any("moved" in error or "protected native row" in error for error in errors)
+
+
+# ---------------------------------------------------------------------------
+# P5-01 — validation truth table
+# ---------------------------------------------------------------------------
+
+class TestValidationTruthTable:
+    @pytest.mark.parametrize(
+        ("start", "end"),
+        [
+            pytest.param("09:00", "09:30", id="canonical-24-hour"),
+            pytest.param("9:00 AM", "9:30 AM", id="12-hour"),
+            pytest.param("12:00 AM", "12:30 AM", id="midnight-12-hour"),
+        ],
+    )
+    def test_equivalent_time_encodings_compare_as_one_instant(
+        self, start, end
+    ):
+        result = validate_sequence(
+            {"sequence": [{"id": "A", "start": start, "end": end, "zone": "any"}]},
+            [_item("A")],
+            [],
+            CONFIG,
+        )
+
+        assert result.ok is True
+        assert result.hard_errors == []
+
+    @pytest.mark.parametrize(
+        ("start", "end", "overlaps"),
+        [
+            pytest.param("10:00 AM", "10:30 AM", False, id="touching-boundary"),
+            pytest.param("09:59", "10:30", True, id="genuine-overlap"),
+        ],
+    )
+    def test_calendar_wall_distinguishes_touching_boundary_from_overlap(
+        self, start, end, overlaps
+    ):
+        wall = {
+            "Block": "Dentist",
+            "Start": "9:00 AM",
+            "End": "10:00 AM",
+            "source": "calendar",
+            "capacity_class": "fixed",
+        }
+        result = validate_sequence(
+            {"sequence": [{"id": "A", "start": start, "end": end, "zone": "any"}]},
+            [_item("A")],
+            [wall],
+            CONFIG,
+        )
+
+        assert result.ok is (not overlaps)
+        if overlaps:
+            assert any("Dentist" in error and "overlap" in error for error in result.hard_errors)
+        else:
+            assert result.hard_errors == []
+
+    def test_calendar_diagnostic_keeps_legacy_error_and_canonical_24_hour_interval(self):
+        wall = {
+            "Block": "Dentist",
+            "Start": "9:00 AM",
+            "End": "10:00 AM",
+            "source": "calendar",
+            "capacity_class": "fixed",
+        }
+        result = validate_sequence(
+            {"sequence": [{"id": "A", "start": "09:30", "end": "10:30", "zone": "any"}]},
+            [_item("A")],
+            [wall],
+            CONFIG,
+        )
+
+        assert result.ok is False
+        assert any("Dentist" in error and "09:00-10:00" in error for error in result.hard_errors)
+        payload = result.as_dict()
+        assert payload["hard_errors"] == result.hard_errors
+        diagnostic = next(
+            item for item in payload["diagnostics"]
+            if item["severity"] == "error"
+        )
+        assert diagnostic["affected_rows"] == ["A", "Dentist"]
+        assert diagnostic["intervals"] == [
+            {"id": "A", "start": "09:30", "end": "10:30"},
+            {"id": "Dentist", "start": "09:00", "end": "10:00"},
+        ]
+
+    def test_warning_diagnostic_names_both_affected_intervals_without_replacing_detail(self):
+        anchored = [_anchored(
+            overlap_allowed=False,
+            block="Morning Routine",
+            start="7:45 AM",
+            end="9:05 AM",
+        )]
+        result = validate_sequence(
+            {"sequence": [_seq_row("A", "07:50", "08:10")]},
+            [_item("A")],
+            anchored,
+            CONFIG,
+        )
+
+        assert result.ok is True
+        warning = next(item for item in result.warnings if item["rule"] == "unexpected_overlap")
+        assert "Morning Routine" in warning["detail"]
+        payload = result.as_dict()
+        assert payload["warnings"][0]["detail"] == warning["detail"]
+        diagnostic = next(
+            item for item in payload["diagnostics"]
+            if item["severity"] == "warning" and item["rule"] == "unexpected_overlap"
+        )
+        assert diagnostic["affected_rows"] == ["A", "Morning Routine"]
+        assert diagnostic["intervals"] == [
+            {"id": "A", "start": "07:50", "end": "08:10"},
+            {"id": "Morning Routine", "start": "07:45", "end": "09:05"},
+        ]
+
+    def test_adjacent_manual_pins_are_valid_but_overlapping_pins_are_not(self):
+        assigned = [_item("A"), _item("B")]
+        adjacent = [
+            {"id": "A", "start": "09:00", "end": "10:00", "zone": "any"},
+            {"id": "B", "start": "10:00", "end": "10:30", "zone": "any"},
+        ]
+        assert validate_pinned_rows(adjacent, assigned) == []
+
+        overlapping = [
+            {"id": "A", "start": "09:00", "end": "10:00", "zone": "any"},
+            {"id": "B", "start": "09:59", "end": "10:30", "zone": "any"},
+        ]
+        errors = validate_pinned_rows(overlapping, assigned)
+        assert errors == ["pinned rows 'A' and 'B' overlap"]
+
+    @pytest.mark.parametrize(
+        ("start", "end", "overlaps"),
+        [
+            pytest.param("13:30", "14:00", False, id="before-mint"),
+            pytest.param("14:00", "14:30", True, id="inside-mint"),
+            pytest.param("14:30", "15:00", False, id="after-mint"),
+        ],
+    )
+    def test_selected_mint_wall_uses_half_open_interval(self, start, end, overlaps):
+        mint = {
+            "id": "Mint Afternoon",
+            "name": "Mint Afternoon",
+            "mint_session": True,
+            "placement_window": {"start": "14:00", "end": "14:30"},
+        }
+        result = validate_sequence(
+            {"sequence": [_seq_row("A", start, end)]},
+            [_item("A")],
+            [],
+            CONFIG,
+            optional_items=[mint],
+        )
+
+        assert result.ok is (not overlaps)
+        if overlaps:
+            assert any("Mint Afternoon" in error for error in result.hard_errors)
+        else:
+            assert result.hard_errors == []
+
+    def test_start_at_eod_is_overflow_tail_and_anchor_equality_is_not_past(self):
+        anchored = [_anchored(
+            overlap_allowed=False,
+            block="Night Routine",
+            start="11:00 PM",
+            end="11:30 PM",
+        )]
+        result = validate_sequence(
+            {"sequence": [_seq_row("A", "23:00", "23:15")]},
+            [_item("A")],
+            anchored,
+            CONFIG,
+            time_frame={"anchor": "23:00", "effective_eod": "23:00"},
+        )
+
+        assert result.ok is True
+        assert not any(item["rule"] == "placement_past" for item in result.warnings)
+        assert any(item["rule"] == "past_eod" for item in result.warnings)
+        assert any(item["rule"] == "overflow_overlap" for item in result.warnings)
+
+    def test_revalidation_preserves_client_order_and_does_not_broaden_eligible_rows(self):
+        proposal = {
+            "sequence": [
+                _seq_row("A", "09:00", "09:30"),
+                _seq_row("B", "09:30", "10:00"),
+                _seq_row("foreign", "10:00", "10:30"),
+            ]
+        }
+        result = validate_sequence(
+            proposal,
+            [_item("A")],
+            [],
+            CONFIG,
+            optional_ids={"B"},
+        )
+
+        assert [row["id"] for row in proposal["sequence"]] == ["A", "B", "foreign"]
+        assert result.ok is False
+        assert result.hard_errors == [
+            "'foreign': not present in assigned items or anchored blocks"
+        ]
