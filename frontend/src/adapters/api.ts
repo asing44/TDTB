@@ -219,7 +219,11 @@ export class ApiAdapter implements Adapter {
   async autoSequence(ctx: SequenceContext): Promise<SequenceResult> {
     const raw = this.rawOrThrow();
     const body = {
-      assigned: shapeAssignedWire(raw.digest?.assigned ?? [], ctx.included),
+      assigned: shapeAssignedWire(
+        raw.digest?.assigned ?? [],
+        ctx.included,
+        ctx.timeAdjustmentOptIns,
+      ),
       config: raw.config ?? {},
       anchored_blocks: raw.anchored_blocks ?? [],
       day_semantics: raw.day_semantics ?? {},
@@ -233,7 +237,11 @@ export class ApiAdapter implements Adapter {
     const raw = this.rawOrThrow();
     const body = {
       sequence: rows.map(rowToWire),
-      assigned: shapeAssignedWire(raw.digest?.assigned ?? [], ctx.included),
+      assigned: shapeAssignedWire(
+        raw.digest?.assigned ?? [],
+        ctx.included,
+        ctx.timeAdjustmentOptIns,
+      ),
       config: raw.config ?? {},
       anchored_blocks: raw.anchored_blocks ?? [],
       day_semantics: raw.day_semantics ?? {},
@@ -264,7 +272,11 @@ export class ApiAdapter implements Adapter {
     return {
       digest: {
         ...(raw.digest ?? {}),
-        assigned: shapeAssignedWire(raw.digest?.assigned ?? [], ctx.included),
+        assigned: shapeAssignedWire(
+          raw.digest?.assigned ?? [],
+          ctx.included,
+          ctx.timeAdjustmentOptIns,
+        ),
       },
       sequence: { sequence: rows.map(rowToWire) },
       config: raw.config ?? {},

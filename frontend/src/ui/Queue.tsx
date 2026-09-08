@@ -38,13 +38,14 @@ import {
 } from "../store/store";
 import type { QueueState } from "../model/types";
 import {
-  bandedRows,
   bandSpend,
   budgetTotal,
+  hierarchyBandedRows,
   includedDisplayOrder,
   localSelected,
   trimForState,
-} from "../store/allocatorView";
+  type HierarchyRow,
+} from "../model/allocatorView";
 import { blocksLabel, display12h, formatBlockAmount } from "../model/time";
 import {
   HALF_BLOCK,
@@ -68,6 +69,17 @@ import { Tooltip } from "./Tooltip";
 
 function sourceDot(item: AssignedItem): string {
   return item.source === "vault" ? "var(--c-projects)" : "var(--c-tasks)";
+}
+
+function hasAdjustableNativeTime(item: AssignedItem): boolean {
+  return (
+    item.source === "todoist" &&
+    item.id.length > 0 &&
+    Number.isFinite(item.blocks) &&
+    item.blocks > 0 &&
+    typeof item.scheduledStart === "string" &&
+    /^(?:[01]\d|2[0-3]):[0-5]\d$/.test(item.scheduledStart)
+  );
 }
 
 /** Stable id for aria-controls/aria-labelledby pairs — item ids are human
@@ -277,6 +289,56 @@ function MoreMenu({
   );
 }
 
+/** Native Todoist times are protected until the user authorizes this specific
+    row to move. Keep the permission beside the time evidence, rather than in
+    the row action cluster, so it reads as planning input and not as a source
+    mutation. */
+function TimeAdjustmentOptIn({
+  item,
+  s,
+}: {
+  item: AssignedItem;
+  s: AppState;
+}) {
+  const { controller } = useApp();
+  if (!hasAdjustableNativeTime(item)) return null;
+
+  const checked = s.timeAdjustmentOptIns[item.id] === true;
+  const controlId = rowId(item, "time-adjustment");
+  const statusId = `${controlId}-status`;
+  const label = `Allow scheduler to move existing time for ${item.name}`;
+
+  return (
+    <div
+      class={`qrow__time-adjustment${checked ? " qrow__time-adjustment--allowed" : ""}`}
+      onClick={(e) => e.stopPropagation()}
+      onKeyDown={(e) => e.stopPropagation()}
+    >
+      <div class="qrow__time-adjustment-control">
+        <input
+          id={controlId}
+          type="checkbox"
+          checked={checked}
+          aria-label={label}
+          aria-describedby={statusId}
+          onChange={(e) =>
+            controller.setTimeAdjustmentOptIn(
+              item.id,
+              (e.target as HTMLInputElement).checked,
+            )
+          }
+        />
+        <label htmlFor={controlId}>{label}</label>
+      </div>
+      <span id={statusId} class="qrow__time-adjustment-status" role="status">
+        {checked
+          ? "Allowed — scheduler may move the Todoist start"
+          : "Protected — keeps the Todoist start fixed"}
+      </span>
+    </div>
+  );
+}
+
 /** Keys-card navigation (3a spec): ↑/↓ move between rows, ←/→ shape the
     focused row's duration, x toggles exclude, ⏎ marks done. Skips when the
     event originates in a control that owns the key (the range input already
@@ -319,11 +381,13 @@ function Row({
   s,
   cumBefore,
   flagged,
+  hierarchy,
 }: {
   item: AssignedItem;
   s: AppState;
   cumBefore: number;
   flagged: boolean;
+  hierarchy?: HierarchyRow;
 }) {
   const { controller, store } = useApp();
   const state = queueState(s, item.id);
@@ -345,17 +409,30 @@ function Row({
 
   return (
     <div
-      class={`qrow ${state === "excluded" ? "qrow--excluded" : ""} ${state === "background" ? "qrow--background" : ""} ${flagged ? "qrow--flagged" : ""}`}
+      class={`qrow ${state === "excluded" ? "qrow--excluded" : ""} ${state === "background" ? "qrow--background" : ""} ${flagged ? "qrow--flagged" : ""} ${hierarchy?.depth ? "qrow--nested" : ""} ${hierarchy?.groupKey ? "qrow--grouped" : ""}`}
+      data-hierarchy-depth={hierarchy?.depth ?? 0}
+      data-group-key={hierarchy?.groupKey ?? undefined}
       tabIndex={0}
       onKeyDown={(e) => rowKeydown(e as unknown as KeyboardEvent, item, s, controller)}
     >
       <span class="qrow__stripe" style={{ background: stripeColor(item) }} />
       <div class="qrow__body">
         <div class="qrow__nameline">
+          {hierarchy?.depth ? (
+            <span class="qrow__branch" aria-hidden="true">↳</span>
+          ) : null}
+          {hierarchy?.groupLabel ? (
+            <span class="qrow__group" title={hierarchy.groupLabel}>
+              {hierarchy.groupStart ? hierarchy.groupLabel : "same group"}
+            </span>
+          ) : null}
           <span class="qrow__name" title={item.path ?? item.name}>
             {item.name}
           </span>
         </div>
+        {hierarchy?.depth && hierarchy.parentName ? (
+          <span class="qrow__relationship">child of {hierarchy.parentName}</span>
+        ) : null}
         {/* The would-drop flag rides the source line, not the name line: on
             the name line it stole width from a 2-line-clamped title, so a row
             gaining or losing the flag mid-drag changed its own height and
@@ -485,6 +562,7 @@ function Row({
         ) : (
           <span class="qrow__excluded-note">excluded today</span>
         )}
+        <TimeAdjustmentOptIn item={item} s={s} />
       </div>
       <div class="qrow__actions">
         <Tooltip label={included ? "Exclude today" : "Include today"}>
@@ -666,7 +744,14 @@ export function Queue() {
     );
   }
 
-  const groups = bandedRows(s);
+  const hierarchyGroups = hierarchyBandedRows(s);
+  const groups = {
+    crit: hierarchyGroups.crit.map(({ item }) => item),
+    high: hierarchyGroups.high.map(({ item }) => item),
+    else: hierarchyGroups.else.map(({ item }) => item),
+    scheduled: hierarchyGroups.scheduled.map(({ item }) => item),
+    excluded: hierarchyGroups.excluded.map(({ item }) => item),
+  };
   const needsPlacement = groups.crit.length + groups.high.length + groups.else.length;
   const dropped = s.inputs.droppedToday ?? [];
 
@@ -689,6 +774,10 @@ export function Queue() {
   const budget = budgetTotal(s);
   const over = Math.max(0, selected - budget);
 
+  const hierarchyById = new Map(
+    [...hierarchyGroups.crit, ...hierarchyGroups.high, ...hierarchyGroups.else,
+      ...hierarchyGroups.scheduled, ...hierarchyGroups.excluded].map((entry) => [entry.item.id, entry]),
+  );
   const row = (i: AssignedItem) => (
     <Row
       key={i.id}
@@ -696,6 +785,7 @@ export function Queue() {
       s={s}
       cumBefore={cumBefore.get(i.id) ?? cum}
       flagged={flagged.has(i.id)}
+      hierarchy={hierarchyById.get(i.id)}
     />
   );
 
@@ -711,7 +801,7 @@ export function Queue() {
       </header>
       <p class="queue__subtractive">
         Every assigned row starts selected. Remove or trim what will not fit;
-        chosen task effort stays additive until Send.
+        chosen task effort stays additive until Commit live.
       </p>
       <AllocationMeter s={s} />
       <div class="queue__cols" aria-hidden="true">

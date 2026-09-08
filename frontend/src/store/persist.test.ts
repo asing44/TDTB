@@ -64,14 +64,16 @@ describe("attachSessionPersistence", () => {
     storage = memStorage();
   });
 
-  it("persists overrides/placements/sequence on state changes", () => {
+  it("persists overrides/placements/sequence and time permissions on state changes", () => {
     const store = createStore();
     store.dispatch({ type: "INPUTS_LOADED", inputs: inputs("2026-07-18"), ledger: LEDGER });
     attachSessionPersistence(store, fakeController(), storage);
     store.dispatch({ type: "OVERRIDE_SET", id: "A", override: { included: true, blocks: 3 } });
+    store.dispatch({ type: "TIME_ADJUSTMENT_SET", id: "A", allow: true });
     const blob = JSON.parse(storage.getItem(KEY)!);
     expect(blob.validDate).toBe("2026-07-18");
     expect(blob.overrides.A).toEqual({ included: true, blocks: 3 });
+    expect(blob.timeAdjustmentOptIns).toEqual({}); // non-timed rows cannot opt in
     expect(blob.version).toBe(2);
   });
 
@@ -133,11 +135,38 @@ describe("attachSessionPersistence", () => {
     expect((ctl.refreshCapacity as any).mock.calls.length).toBe(1);
   });
 
+  it("restores a same-date time permission and keeps it date-scoped", () => {
+    const timed = inputs("2026-07-18");
+    timed.assigned[0] = {
+      ...timed.assigned[0],
+      source: "todoist",
+      path: null,
+      todoistId: "todo-1",
+      scheduledStart: "14:00",
+    };
+    storage.setItem(KEY, JSON.stringify({
+      version: 2,
+      validDate: "2026-07-18",
+      overrides: {},
+      timeAdjustmentOptIns: { A: true },
+      placements: {},
+      sequence: null,
+      fingerprint: null,
+      anchoredSourceFingerprint: null,
+      pinnedRows: [],
+    }));
+    const store = createStore();
+    store.dispatch({ type: "INPUTS_LOADED", inputs: timed, ledger: LEDGER });
+    attachSessionPersistence(store, fakeController(), storage);
+    expect(store.getState().timeAdjustmentOptIns).toEqual({ A: true });
+  });
+
   it("date rollover: stale blob is dropped, nothing restores", () => {
     storage.setItem(KEY, JSON.stringify({
       version: 2,
       validDate: "2026-07-17",
       overrides: { A: { included: false, blocks: null } },
+      timeAdjustmentOptIns: { A: true },
       placements: {},
       sequence: null,
       fingerprint: null,
@@ -148,6 +177,7 @@ describe("attachSessionPersistence", () => {
     const ctl = fakeController();
     attachSessionPersistence(store, ctl, storage);
     expect(store.getState().overrides).toEqual({});
+    expect(store.getState().timeAdjustmentOptIns).toEqual({});
     expect((ctl.revalidate as any).mock.calls.length).toBe(0);
     // stale blob replaced by today's on next change; removed immediately:
     const raw = storage.getItem(KEY);

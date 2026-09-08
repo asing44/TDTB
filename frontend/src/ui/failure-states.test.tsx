@@ -15,6 +15,7 @@ import { ActionDock } from "./ActionDock";
 import { FooterBanners } from "./FooterBanners";
 import { ReadinessStrip } from "./ReadinessStrip";
 import { ApprovalDrawer } from "./ApprovalDrawer";
+import { CalendarImpact } from "./CalendarImpact";
 import { makeHarness } from "./test-harness";
 
 describe("empty day", () => {
@@ -58,8 +59,38 @@ describe("budget spent", () => {
       sc.ledger = { ...sc.ledger, spent: 4, remaining: 0 };
     });
     const { getByText } = ui(<ReadinessStrip />);
-    const chip = getByText(/Budget 0\/4/);
+    const chip = getByText(/Calls 0\/4/);
     expect(chip.className).toContain("chip--warn");
+  });
+
+});
+
+describe("ignored calendar sources", () => {
+  it("keeps an ignored-only calendar frame visible as an exclusion note", () => {
+    const ignored = {
+      id: "Focus timer",
+      name: "Focus timer",
+      kind: "calendar" as const,
+      start: "10:00",
+      end: "10:30",
+      durationMin: 30,
+      overlapAllowed: false,
+      on: true,
+      skipToday: false,
+      calendarId: "focus",
+      calendarTitle: "Session: focus",
+      capacityClass: "ignored" as const,
+    };
+    const h = makeHarness("ready", (sc) => {
+      sc.inputs.anchored = [ignored];
+    });
+    const { getByRole, getByText, container, queryByText } = h.ui(<CalendarImpact />);
+
+    expect(getByRole("region", { name: "Calendar impact" })).toBeTruthy();
+    expect(getByText("1 ignored calendar source excluded")).toBeTruthy();
+    expect(container.querySelector(".calendar-impact__list")).toBeNull();
+    expect(queryByText("Focus timer")).toBeNull();
+    expect(h.store.getState().inputs?.anchored).toEqual([ignored]);
   });
 });
 

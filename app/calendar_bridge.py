@@ -20,9 +20,9 @@ AUTH_STATUS = {0: "notDetermined", 1: "restricted", 2: "denied",
                3: "fullAccess", 4: "writeOnly"}
 # Capacity classes: ``fixed``/``work`` count against capacity; ``ignored``
 # costs zero but stays visible (own-write rows, user-dismissed calendars);
-# ``quarantined`` is the default state of a KNOWN calendar title the user has
-# not classified yet — excluded from capacity and planning until explicitly
-# reviewed (frozen contract 17).
+# ``quarantined`` remains an explicit configured class for calendars that
+# should be excluded from planning. Unclassified known calendars default to
+# ``fixed`` in external_sources.py so real timed commitments stay visible.
 CAPACITY_CLASS_QUARANTINED = "quarantined"
 CAPACITY_CLASSES = frozenset({"fixed", "work", "ignored", CAPACITY_CLASS_QUARANTINED})
 
@@ -135,6 +135,90 @@ def normalize_capacity_class_map(raw: Any) -> dict[str, str]:
         if title_s and class_s in CAPACITY_CLASSES:
             out[title_s] = class_s
     return out
+
+
+def normalize_disabled_calendars(raw: Any) -> set[str]:
+    """Normalize a ``## Disabled Calendars`` config value into a casefolded
+    set of titles and identifiers excluded from planning (issue #6: disabled
+    calendars contribute no rows, no walls, and no capacity).
+
+    Accepts a list of strings, a list of row dicts (``Title`` /
+    ``BusyCal title`` / ``Identifier`` / ``Calendar title``), a dict of
+    truthy entries, or a single comma-separated string. String values —
+    whether a standalone value or each list/dict entry — are split on
+    commas, and row dicts contribute EVERY present field (``Title`` /
+    ``BusyCal title`` / ``Calendar title`` / ``Identifier``), not just the
+    first non-empty one. Anything else —
+    garbage, ``None``, malformed rows — degrades to an empty set rather than
+    raising, mirroring the degrade-never-crash contract of the other
+    config normalizers. Entries are stored casefolded so matching stays
+    case-insensitive end to end.
+    """
+    if isinstance(raw, str):
+        raw = [raw]
+    if not isinstance(raw, (list, dict)):
+        return set()
+
+    values: list[Any] = (
+        raw if isinstance(raw, list)
+        else [key for key, flag in raw.items() if flag]
+    )
+    out: set[str] = set()
+    for entry in values:
+        if isinstance(entry, dict):
+            candidates = (
+                entry.get(key)
+                for key in ("Title", "BusyCal title", "Calendar title", "Identifier")
+            )
+        else:
+            candidates = (entry,)
+        for candidate in candidates:
+            if candidate is None:
+                continue
+            for piece in str(candidate).split(","):
+                text = piece.strip().casefold()
+                if text:
+                    out.add(text)
+    return out
+
+
+def _calendar_planning_disabled_flag(cal: Any) -> bool:
+    """Read an intrinsic per-calendar disable flag from a CalendarInfo, fake,
+    or dict. Returns True only for an explicit truthy disable marker."""
+    def _read(getter: Any) -> bool:
+        for key in ("disabled", "is_disabled", "isDisabled"):
+            value = getter(key)
+            if value is not None:
+                return bool(value)
+        enabled = getter("enabled")
+        return (not bool(enabled)) if enabled is not None else False
+
+    if isinstance(cal, dict):
+        return _read(cal.get)
+    return _read(lambda key: getattr(cal, key, None))
+
+
+def is_calendar_planning_disabled(
+    cal: Any, disabled_names: set[str] | None = None
+) -> bool:
+    """Issue #6: determine whether a calendar is excluded from planning —
+    either by an explicit disable flag on the calendar itself, or by a
+    config-name/identifier match against ``disabled_names``. Pure function,
+    fake-friendly, never raises."""
+    if _calendar_planning_disabled_flag(cal):
+        return True
+    if not disabled_names:
+        return False
+    if isinstance(cal, dict):
+        title = cal.get("title") or cal.get("calendar_title")
+        identifier = cal.get("identifier") or cal.get("id") or cal.get("calendar_id")
+    else:
+        title = getattr(cal, "title", None)
+        identifier = getattr(cal, "identifier", None)
+    for value in (title, identifier):
+        if value is not None and str(value).strip().casefold() in disabled_names:
+            return True
+    return False
 
 
 def resolve_titles_to_ids(

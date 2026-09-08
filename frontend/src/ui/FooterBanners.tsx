@@ -11,6 +11,8 @@
 import { useState } from "preact/hooks";
 import { useApp, useAppState } from "./context";
 import { alerts } from "../store/store";
+import { display12h } from "../model/time";
+import type { ValidationDiagnostic } from "../model/types";
 
 const VERB_LABELS: Record<string, string> = {
   complete: "Completed",
@@ -29,6 +31,34 @@ const VERB_LABELS: Record<string, string> = {
 
 function verbLabel(verb: string): string {
   return VERB_LABELS[verb] ?? verb;
+}
+
+type BannerIssue = {
+  level: "error" | "warning" | "info";
+  text: string;
+  diagnostic?: ValidationDiagnostic;
+};
+
+function DiagnosticDetails({ diagnostic }: { diagnostic: ValidationDiagnostic }) {
+  return (
+    <span>
+      <span>{diagnostic.detail || diagnostic.rule}</span>
+      {diagnostic.affectedRows.length > 0 && (
+        <span> · affected rows: {diagnostic.affectedRows.join(", ")}</span>
+      )}
+      {diagnostic.intervals.length > 0 && (
+        <span>
+          {" · intervals: "}
+          {diagnostic.intervals.map((interval, index) => (
+            <span key={`${interval.id}-${index}`}>
+              {index > 0 ? "; " : ""}
+              {interval.id} {display12h(interval.start)}–{display12h(interval.end)}
+            </span>
+          ))}
+        </span>
+      )}
+    </span>
+  );
 }
 
 export function FooterBanners() {
@@ -52,7 +82,22 @@ export function FooterBanners() {
   // Global alert roll-up (locked decision 6). The overassigned warning is
   // filtered: the rail's budget readout and the dock status already carry
   // that number.
-  const list = alerts(s).filter((x) => !x.text.startsWith("Overassigned"));
+  const diagnostics = s.validation?.diagnostics ?? [];
+  const diagnosticDetails = new Set(diagnostics.map((diagnostic) => diagnostic.detail));
+  const legacyList: BannerIssue[] = alerts(s).filter(
+    (x) => !x.text.startsWith("Overassigned") && !diagnosticDetails.has(x.text),
+  );
+  // Structured diagnostics replace their flattened legacy string in this
+  // panel, keeping the existing roll-up counts while adding affected rows and
+  // exact quarter-hour intervals without duplicate noise.
+  const list: BannerIssue[] = [
+    ...legacyList,
+    ...diagnostics.map((diagnostic) => ({
+      level: diagnostic.severity,
+      text: diagnostic.detail || diagnostic.rule,
+      diagnostic,
+    })),
+  ];
 
   const blocking = list.filter((x) => x.level === "error");
   const rest = list.filter((x) => x.level !== "error");
@@ -80,7 +125,7 @@ export function FooterBanners() {
               {panelItems.map((x, i) => (
                 <div key={i} role="listitem" class={`alert-pills__item alert-pills__item--${x.level}`}>
                   <span aria-hidden="true">{icon(x.level)}</span>
-                  <span>{x.text}</span>
+                  {x.diagnostic ? <DiagnosticDetails diagnostic={x.diagnostic} /> : <span>{x.text}</span>}
                 </div>
               ))}
             </div>

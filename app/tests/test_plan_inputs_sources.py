@@ -276,3 +276,154 @@ def body_has_no_write_methods_called(store) -> bool:
     # FakeStore exposes only read methods; reaching here without AttributeError
     # IS the proof — a write attempt would have raised on the fake.
     return True
+
+
+# ---------------------------------------------------------------------------
+# Issue #6 — canonical identity / dedup, disabled calendars, all-day
+# accounting, and observable omission decisions (unit level, fakes only)
+# ---------------------------------------------------------------------------
+
+import calendar_bridge as cb
+import external_sources as ext2
+
+FIXED_TODAY = datetime(2026, 7, 14).date()
+
+
+class _Cal:
+    def __init__(self, title, identifier, **attrs):
+        self.title = title
+        self.identifier = identifier
+        self.__dict__.update(attrs)
+
+
+class _Store:
+    def __init__(self, events, calendars=None):
+        self._events = events
+        self._calendars = calendars or [_Cal("Fixture", "CAL-X")]
+
+    def auth_status(self):
+        return "authorized"
+
+    def calendars(self):
+        return self._calendars
+
+    def query_events(self, start, end, calendar_ids=None):
+        return self._events
+
+
+class TestCalendarIdentityAndOmissions:
+    def test_same_event_id_counts_once_first_occurrence_wins(self):
+        ev = {"title": "Meeting", "start": datetime(2026, 7, 14, 9, 0),
+              "end": datetime(2026, 7, 14, 10, 0), "calendar_id": "CAL-X"}
+        dup = dict(ev, title="Meeting (sync copy)", event_id="sync-E1")
+        first = dict(ev, event_id="sync-E1")
+        # first occurrence in source order wins: the original title is emitted,
+        # the later sync copy is merged away with a duplicate warning
+        blocks, warnings = ext2.fetch_calendar_busy(_Store([first, dup]), {}, FIXED_TODAY)
+        assert [b["Block"] for b in blocks] == ["Meeting"]
+        assert any("duplicate" in w.lower() for w in warnings)
+
+    def test_identityless_duplicates_canonicalize_on_title_and_interval(self):
+        ev = {"title": "Dentist", "start": datetime(2026, 7, 14, 11, 0),
+              "end": datetime(2026, 7, 14, 12, 0), "calendar_id": "CAL-X"}
+        blocks, warnings = ext2.fetch_calendar_busy(_Store([ev, dict(ev)]), {}, FIXED_TODAY)
+        assert [b["Block"] for b in blocks] == ["Dentist"]
+        assert any("duplicate" in w.lower() for w in warnings)
+
+    def test_identityless_distinct_events_each_survive(self):
+        a = {"title": "Dentist", "start": datetime(2026, 7, 14, 11, 0),
+             "end": datetime(2026, 7, 14, 12, 0), "calendar_id": "CAL-X"}
+        b = {"title": "Coffee", "start": datetime(2026, 7, 14, 12, 0),
+             "end": datetime(2026, 7, 14, 12, 30), "calendar_id": "CAL-X"}
+        blocks, warnings = ext2.fetch_calendar_busy(_Store([a, b]), {}, FIXED_TODAY)
+        assert sorted(b["Block"] for b in blocks) == ["Coffee", "Dentist"]
+        assert warnings == []
+
+    def test_disabled_calendar_by_config_name_omits_events_with_reason(self):
+        store = _Store([
+            {"title": "Yoga", "start": datetime(2026, 7, 14, 8, 0),
+             "end": datetime(2026, 7, 14, 9, 0), "calendar_id": "CAL-QUIET"},
+            {"title": "Dentist", "start": datetime(2026, 7, 14, 11, 0),
+             "end": datetime(2026, 7, 14, 12, 0), "calendar_id": "CAL-X"},
+        ], [_Cal("Quiet Days", "CAL-QUIET"), _Cal("Fixture", "CAL-X")])
+        blocks, warnings = ext2.fetch_calendar_busy(
+            store, {"calendar_disabled": ["Quiet Days"]}, FIXED_TODAY
+        )
+        assert [b["Block"] for b in blocks] == ["Dentist"]
+        joined = " ".join(warnings).lower()
+        assert "disabled" in joined
+        assert "quiet days" in joined
+        assert "yoga" in joined
+
+    def test_disabled_calendar_by_identifier_attribute(self):
+        store = _Store(
+            [{"title": "Pilates", "start": datetime(2026, 7, 14, 7, 0),
+              "end": datetime(2026, 7, 14, 8, 0), "calendar_id": "CAL-X"}],
+            [_Cal("Fixture", "CAL-X", disabled=True)],
+        )
+        blocks, warnings = ext2.fetch_calendar_busy(store, {}, FIXED_TODAY)
+        assert blocks == []
+        assert any("disabled" in w.lower() for w in warnings)
+
+    def test_disabled_calendar_costs_zero_capacity(self):
+        store = _Store(
+            [{"title": "Offsite", "start": datetime(2026, 7, 14, 9, 0),
+              "end": datetime(2026, 7, 14, 13, 0), "calendar_id": "CAL-X"}],
+            [_Cal("Fixture", "CAL-X", disabled=True)],
+        )
+        blocks, _ = ext2.fetch_calendar_busy(store, {}, FIXED_TODAY)
+        assert blocks == []
+
+    def test_not_disabled_calendar_unchanged(self):
+        store = _Store([
+            {"title": "Dentist", "start": datetime(2026, 7, 14, 11, 0),
+             "end": datetime(2026, 7, 14, 12, 0), "calendar_id": "CAL-X"}],
+            [_Cal("Fixture", "CAL-X")],
+        )
+        blocks, warnings = ext2.fetch_calendar_busy(
+            store, {"calendar_disabled": ["Other Calendar"]}, FIXED_TODAY
+        )
+        assert [b["Block"] for b in blocks] == ["Dentist"]
+        assert warnings == []
+
+    def test_all_day_event_is_non_timed_and_costs_zero_capacity(self):
+        ev = {"title": "Festival", "start": datetime(2026, 7, 14, 0, 0),
+              "end": datetime(2026, 7, 15, 0, 0), "calendar_id": "CAL-X",
+              "all_day": True}
+        blocks, warnings = ext2.fetch_calendar_busy(_Store([ev]), {}, FIXED_TODAY)
+        assert warnings == []
+        [block] = blocks
+        assert block["all_day"] is True
+        assert "Start" not in block and "End" not in block
+        assert block["capacity_class"] == "fixed"
+        # accounting: an all-day fixed event contributes zero capacity
+        _time, cap = main_mod._capacity_frame(
+            {
+                "Defaults": {
+                    "eod": "20:00",
+                    "anchor.round_to_minutes": 15,
+                    "buffering.off_pct": 0,
+                },
+                "Anchored Lifestyle Blocks": [],
+            },
+            {"anchor": "08:00", "eod": "20:00", "buffering": "off"},
+            blocks,
+            {"est_minutes": 0, "done": 0, "outstanding": 0},
+            {"effective_allotment_minutes": 0},
+            now=datetime(2026, 7, 14, 8, 0),
+        )
+        assert cap.fixed == 0
+
+    def test_malformed_and_zero_duration_events_omitted_with_reason(self):
+        store = _Store([
+            {"title": "Broken Sync", "start": "09:00", "end": "10:00",
+             "calendar_id": "CAL-X"},
+            {"title": "Reminder Marker", "start": datetime(2026, 7, 14, 9, 0),
+             "end": datetime(2026, 7, 14, 9, 0), "calendar_id": "CAL-X"},
+        ])
+        blocks, warnings = ext2.fetch_calendar_busy(store, {}, FIXED_TODAY)
+        assert blocks == []
+        joined = " ".join(warnings).lower()
+        assert "omission" in joined
+        assert "broken sync" in joined
+        assert "reminder marker" in joined

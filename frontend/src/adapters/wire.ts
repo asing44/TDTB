@@ -30,6 +30,7 @@ import type {
   ShadowEntry,
   SourceHealth,
   Validation,
+  ValidationDiagnostic,
   DayPreset,
   DaySemantics,
   MicroAdventure,
@@ -202,6 +203,7 @@ export function projectAssigned(row: Wire): AssignedItem {
     isRecurring: source === "todoist" && row.is_recurring === true,
     scheduledStart: source === "todoist" ? to24h(row.scheduled_start) : null,
     labels: Array.isArray(row.labels) ? row.labels.map(String) : [],
+    tags: Array.isArray(row.tags) ? row.tags.map(String) : [],
     relatesTo: row.relates_to == null ? null : String(row.relates_to),
   };
 }
@@ -607,6 +609,70 @@ function warningText(w: unknown): string {
   return String(w);
 }
 
+function recordOf(value: unknown): Record<string, unknown> | null {
+  return value !== null && typeof value === "object" ? value as Record<string, unknown> : null;
+}
+
+function diagnosticDetail(value: unknown, record: Record<string, unknown> | null, rule: string): string {
+  const detail = record?.detail ?? record?.message ?? (typeof value === "string" ? value : null);
+  if (typeof detail === "string") return detail;
+  if (detail != null) return String(detail);
+  try {
+    return JSON.stringify(value) || rule;
+  } catch {
+    return rule;
+  }
+}
+
+function projectValidationInterval(
+  value: unknown,
+): ValidationDiagnostic["intervals"][number] | null {
+  const record = recordOf(value);
+  if (!record) return null;
+  const start = to24h(record.start);
+  const end = to24h(record.end);
+  if (!start || !end) return null;
+  return {
+    id: String(record.id ?? record.name ?? ""),
+    start,
+    end,
+  };
+}
+
+function projectValidationDiagnostic(value: unknown, hardErrors: string[]): ValidationDiagnostic {
+  const record = recordOf(value);
+  const rule = String(record?.rule ?? record?.kind ?? "validation");
+  const detail = diagnosticDetail(value, record, rule);
+  const rawRows = record?.affected_rows ?? record?.affectedRows;
+  const affectedRows = Array.isArray(rawRows)
+    ? rawRows.map(String)
+    : rawRows == null
+      ? []
+      : [String(rawRows)];
+  const rawIntervals = record?.intervals;
+  const intervalValues = Array.isArray(rawIntervals)
+    ? rawIntervals
+    : rawIntervals == null
+      ? []
+      : [rawIntervals];
+  return {
+    rule,
+    // A matching hard error always wins: an additive severity cannot downgrade
+    // an existing blocker to an acceptable warning.
+    severity:
+      hardErrors.includes(detail)
+        ? "error"
+        : record?.severity === "error"
+          ? "error"
+          : "warning",
+    detail,
+    affectedRows,
+    intervals: intervalValues
+      .map(projectValidationInterval)
+      .filter((interval): interval is ValidationDiagnostic["intervals"][number] => interval !== null),
+  };
+}
+
 export function projectSequenceResult(wire: Wire): {
   sequence: SequenceRow[];
   warnings: string[];
@@ -627,11 +693,23 @@ export function projectSequenceResult(wire: Wire): {
 }
 
 export function projectValidation(wire: Wire): Validation {
-  return {
+  const projected: Validation = {
     ok: wire.ok === true,
     hardErrors: (wire.hard_errors ?? []).map(String),
     warnings: (wire.warnings ?? []).map(warningText),
   };
+  if (Object.prototype.hasOwnProperty.call(wire, "diagnostics")) {
+    const rawDiagnostics = wire.diagnostics;
+    const diagnosticValues = Array.isArray(rawDiagnostics)
+      ? rawDiagnostics
+      : rawDiagnostics == null
+        ? []
+        : [rawDiagnostics];
+    projected.diagnostics = diagnosticValues.map((value) =>
+      projectValidationDiagnostic(value, projected.hardErrors),
+    );
+  }
+  return projected;
 }
 
 const SHADOW_CLASSIFICATIONS: ShadowClassification[] = [
@@ -775,9 +853,18 @@ export function grantToWire(g: OverlapGrant): Wire {
 export function shapeAssignedWire(
   rawAssigned: Wire[],
   included: Array<{ id: string; blocks: number }>,
+  timeAdjustmentOptIns: Record<string, boolean> = {},
 ): Wire[] {
   const byId = new Map(included.map((i) => [i.id, i.blocks]));
   return rawAssigned
     .filter((row) => byId.has(String(row.name)))
-    .map((row) => ({ ...row, id: String(row.name), blocks: byId.get(String(row.name)) }));
+    .map((row) => ({
+      ...row,
+      id: String(row.name),
+      blocks: byId.get(String(row.name)),
+      // Native Todoist times are protected unless this exact item was opted
+      // in. Always emit the key so every endpoint sees the same explicit
+      // false-by-default contract, regardless of stale source payloads.
+      allow_time_adjustment: timeAdjustmentOptIns[String(row.name)] === true,
+    }));
 }

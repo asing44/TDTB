@@ -169,6 +169,45 @@ class TestDigestDeterminism:
         b = {"pool_items": list(reversed(POOL_ITEMS)), "assigned_items": [], "today": "2026-07-12"}
         assert self._digest(client, a)["suggested"] == self._digest(client, b)["suggested"]
 
+    def test_digest_honors_same_day_drop_on_both_surfaces(self, client, vault):
+        """A dropped source stays out of POST /digest even when the caller
+        supplies fresh pool and assigned inputs without refreshing /plan-inputs."""
+        today = gather.effective_date(datetime.now())
+        assigned = {
+            "name": "Dropped Assigned",
+            "path": "Projects/Dropped Assigned.md",
+            "assigned": True,
+        }
+        suggested = {
+            "name": "Dropped Suggested",
+            "path": "Projects/Dropped Suggested.md",
+            "assigned": False,
+        }
+        rs.update_runstate(vault, today, {
+            "dropped": [
+                {"identity": assigned["path"], "name": assigned["name"]},
+                {"identity": suggested["path"], "name": suggested["name"]},
+            ],
+        })
+        response = client.post(
+            "/digest",
+            headers=_auth(client),
+            json={
+                "pool_items": [suggested],
+                "assigned_items": [assigned],
+                "today": str(today),
+            },
+        )
+        assert response.status_code == 200
+        body = response.json()
+        names = {
+            row["name"]
+            for surface in ("assigned", "suggested")
+            for row in body[surface]
+        }
+        assert "Dropped Assigned" not in names
+        assert "Dropped Suggested" not in names
+
     def test_ranking_order(self, client):
         payload = {"pool_items": POOL_ITEMS, "assigned_items": [], "today": "2026-07-12"}
         names = [i["name"] for i in self._digest(client, payload)["suggested"]]
@@ -290,6 +329,24 @@ class TestLiveCommit:
         (vault / "P/Garage.md").write_text("---\nassigned: false\n---\nbody\n", encoding="utf-8")
         (vault / "30 - Daily").mkdir(parents=True, exist_ok=True)
         (vault / "30 - Daily/2026-07-12.md").write_text("# Journal\n", encoding="utf-8")
+        config_path = vault / "00 - META" / "Skill-Configs" / "tdtb-bridger.md"
+        config_path.parent.mkdir(parents=True, exist_ok=True)
+        config_path.write_text(
+            "## Defaults\n"
+            "| Key | Value |\n|---|---|\n| eod | 11:59 PM |\n\n"
+            "## Template Blocks\n"
+            "### Trinoor Hours\n"
+            "| Slot | Start | End |\n|---|---|---|\n"
+            "| Morning | 12:00 AM | 11:59 PM |\n",
+            encoding="utf-8",
+        )
+        # P3-02: seed today's server digest identity index so the commit
+        # eligibility boundary recognizes "Garage" as a server-known assignment.
+        rs.write_digest_index(
+            vault, date(2026, 7, 12),
+            [{"name": "Garage", "todoist_id": "", "path": "P/Garage.md",
+              "surface": "assigned"}],
+        )
 
     def test_mode_live_injected_clients_succeeds(self, client, vault, monkeypatch):
         self._seed_vault(vault)
@@ -342,8 +399,15 @@ class TestLiveCommit:
         assert r.status_code == 501
         assert "T14" in r.json()["detail"]
 
-    def test_mode_shadow_unchanged(self, client, monkeypatch):
+    def test_mode_shadow_unchanged(self, client, vault, monkeypatch):
         monkeypatch.setattr(shadow, "gather_live_state", _fake_live_state)
+        # P3-02: seed today's digest index so the eligibility boundary
+        # recognizes "Garage" as a server-known assignment.
+        rs.write_digest_index(
+            vault, gather.effective_date(datetime.now()),
+            [{"name": "Garage", "todoist_id": "", "path": "P/Garage.md",
+              "surface": "assigned"}],
+        )
         r = client.post(
             "/commit?mode=shadow",
             headers=_auth(client),
@@ -361,6 +425,7 @@ class TestLiveCommit:
 
     def test_mode_live_plan_error_returns_422(self, client, vault, monkeypatch):
         self._seed_vault(vault)
+        monkeypatch.setattr(gather, "effective_date", lambda now: date(2026, 7, 12))
 
         def fake_live_state_no_calendar(config, vault_root):
             return {
@@ -374,6 +439,10 @@ class TestLiveCommit:
         client.app.state.build_commit_clients = lambda v, cfg: (FakeLiveTodoist(), None)
         assert client.post("/day-setup", json={"anchor": "09:00"},
                            headers=_auth(client)).status_code == 200
+        rs.update_runstate(vault, date(2026, 7, 12), {
+            "work_allotment_minutes": 30,
+            "schedulable": {"minting": {"on": True}},
+        })
 
         digest = {"assigned": [], "suggested": []}
         sequence = {"sequence": [{"id": "🌊 Minting", "start": "14:00", "end": "15:00", "zone": "any"}]}
@@ -879,8 +948,14 @@ class TestSequenceInjection:
                 return cls(2026, 7, 13, 9, 0)  # Monday 09:00
 
         monkeypatch.setattr(main_mod, "datetime", _FrozenDatetime)
+        rs.write_digest_index(vault, date(2026, 7, 13), [{
+            "name": "Garage", "todoist_id": "", "path": "P/Garage.md",
+            "surface": "assigned", "source": "vault", "duration": 60,
+            "blocks": 2,
+        }])
         r = client.post("/sequence", json={
-            "assigned": [{"id": "Garage", "name": "Garage", "duration": 60,
+            "assigned": [{"id": "Garage", "name": "Garage",
+                           "path": "P/Garage.md", "duration": 60,
                            "labels": []}],
             "config": {"Template Blocks": {"Trinoor Hours": [
                 {"Slot": "Morning", "Start": "8:30 AM", "End": "12:30 PM"},
@@ -961,8 +1036,14 @@ class TestSequenceInjection:
                 return cls(2026, 7, 13, 9, 0)
 
         monkeypatch.setattr(main_mod, "datetime", _FrozenDatetime)
+        rs.write_digest_index(vault, frozen_date, [{
+            "name": "Garage", "todoist_id": "", "path": "P/Garage.md",
+            "surface": "assigned", "source": "vault", "duration": 60,
+            "blocks": 2,
+        }])
         r = client.post("/sequence", json={
-            "assigned": [{"id": "Garage", "name": "Garage", "duration": 60}],
+            "assigned": [{"id": "Garage", "name": "Garage",
+                           "path": "P/Garage.md", "duration": 60}],
             "config": {"Template Blocks": {"Trinoor Hours": [
                 {"Slot": "Morning", "Start": "8:30 AM", "End": "10:00 AM"},
             ]}},
@@ -1018,6 +1099,11 @@ class TestEstimationCorrection:
 
     def _run(self, client, vault, monkeypatch, defaults):
         _write_min_config(vault)
+        today = gather.effective_date(datetime.now())
+        rs.write_digest_index(vault, today, [{
+            "name": "Garage", "todoist_id": "", "path": "P/Garage.md",
+            "surface": "assigned", "source": "vault", "blocks": 2,
+        }])
         captured = {}
 
         def fake_propose(assigned, config, anchored_blocks, ctx=None):
@@ -1030,7 +1116,7 @@ class TestEstimationCorrection:
                             lambda *a, **k: type("R", (), {
                                 "ok": True, "hard_errors": [], "warnings": []})())
         r = client.post("/sequence", json={
-            "assigned": [{"name": "Garage", "blocks": 2},
+            "assigned": [{"name": "Garage", "path": "P/Garage.md", "blocks": 2},
                           {"name": "Hotel finds"}],
             "config": {"Defaults": defaults},
             "anchored_blocks": [],
@@ -1106,11 +1192,21 @@ class TestRecurringPlacementImmunity:
     """T27: recurring todoist rows with a native time are placement-immune
     server-side — auto-pinned walls regardless of what the client sent."""
 
-    RECURRING = {"id": "LOOTS", "name": "LOOTS", "blocks": 0.5,
-                 "is_recurring": True, "scheduled_start": "12:30"}
+    RECURRING = {
+        "id": "LOOTS", "name": "LOOTS", "source": "todoist",
+        "todoist_id": "t-loots", "path": "todoist://t-loots",
+        "blocks": 0.5, "is_recurring": True, "scheduled_start": "12:30",
+    }
 
-    def _post(self, client, monkeypatch, *, pinned_rows=None, captured=None):
+    def _post(self, client, vault, monkeypatch, *, pinned_rows=None, captured=None):
         captured = captured if captured is not None else {}
+        today = gather.effective_date(datetime.now())
+        rs.write_digest_index(vault, today, [{
+            "name": "LOOTS", "todoist_id": "t-loots",
+            "path": "todoist://t-loots", "surface": "assigned",
+            "source": "todoist", "blocks": 0.5,
+            "is_recurring": True, "scheduled_start": "12:30",
+        }])
         def fake_propose(assigned, config, anchored_blocks, ctx=None):
             captured["assigned"] = assigned
             captured["anchored"] = anchored_blocks
@@ -1126,38 +1222,805 @@ class TestRecurringPlacementImmunity:
             "pinned_rows": pinned_rows or [],
         }, headers=_auth(client)), captured
 
-    def test_recurring_row_excluded_from_movable_and_walled(self, client, monkeypatch):
-        r, captured = self._post(client, monkeypatch)
+    def test_recurring_row_excluded_from_movable_and_walled(self, client, vault, monkeypatch):
+        r, captured = self._post(client, vault, monkeypatch)
         assert r.status_code == 200, r.text
         assert all((i.get("id") or i.get("name")) != "LOOTS"
                    for i in captured["assigned"])
         walls = [b for b in captured["anchored"] if b.get("pinned")]
         assert [(w["Start"], w["End"]) for w in walls] == [("12:30", "12:45")]
 
-    def test_recurring_row_lands_in_sequence_and_response_pins(self, client, monkeypatch):
-        r, _ = self._post(client, monkeypatch)
+    def test_recurring_row_lands_in_sequence_and_response_pins(self, client, vault, monkeypatch):
+        r, _ = self._post(client, vault, monkeypatch)
         rows = {row["id"]: row for row in r.json()["sequence"]}
         assert rows["LOOTS"]["start"] == "12:30"
         pins = r.json()["pinned_rows"]
         assert [p["id"] for p in pins] == ["LOOTS"]
 
-    def test_client_pin_for_recurring_id_wins_no_duplicate(self, client, monkeypatch):
+    def test_client_pin_for_recurring_id_wins_no_duplicate(self, client, vault, monkeypatch):
         pin = {"id": "LOOTS", "start": "12:30", "end": "12:45", "zone": None}
-        r, captured = self._post(client, monkeypatch, pinned_rows=[pin])
+        r, captured = self._post(client, vault, monkeypatch, pinned_rows=[pin])
         assert r.status_code == 200, r.text
         walls = [b for b in captured["anchored"] if b.get("pinned")]
         assert len(walls) == 1
         assert r.json()["pinned_rows"] == [pin]
 
-    def test_conflicting_client_pin_rejected_before_judgment(self, client, monkeypatch):
+    def test_conflicting_client_pin_rejected_before_judgment(self, client, vault, monkeypatch):
         # a client pin of ANOTHER row overlapping the recurring wall must
         # fail closed pre-charge, same as overlapping client pins do
         pin = {"id": "B", "start": "12:30", "end": "13:00", "zone": None}
         called = {}
-        r, captured = self._post(client, monkeypatch, pinned_rows=[pin],
+        r, captured = self._post(client, vault, monkeypatch, pinned_rows=[pin],
                                  captured=called)
         assert r.status_code == 422
         assert "assigned" not in called  # judgment never invoked
+
+
+class TestNativeTimedRouteEnforcement:
+    """P4-02: /sequence and /validate-sequence rederive native protection."""
+
+    NON_RECURRING = {
+        "id": "ERRAND", "name": "ERRAND", "source": "todoist",
+        "todoist_id": "t-errand", "path": "todoist://t-errand",
+        "blocks": 0.5, "is_recurring": False, "scheduled_start": "14:00",
+    }
+
+    def _seed_index(self, vault, rows=None):
+        today = gather.effective_date(datetime.now())
+        rs.write_digest_index(vault, today, rows or [{
+            "name": "ERRAND", "todoist_id": "t-errand",
+            "path": "todoist://t-errand", "surface": "assigned",
+            "source": "todoist", "blocks": 0.5,
+            "is_recurring": False, "scheduled_start": "14:00",
+        }])
+
+    def _post_sequence(self, client, vault, monkeypatch, *, pinned_rows=None,
+                       captured=None, submitted_rows=None,
+                       server_rows=None):
+        captured = captured if captured is not None else {}
+        self._seed_index(vault, server_rows)
+
+        def fake_propose(assigned, config, anchored_blocks, ctx=None):
+            captured["assigned"] = assigned
+            captured["anchored"] = anchored_blocks
+            return {"sequence": [], "overlap_grants": []}
+
+        monkeypatch.setattr(main_mod.judgment, "propose_sequence", fake_propose)
+        monkeypatch.setattr(
+            main_mod.planning.sequence,
+            "validate_sequence",
+            lambda *a, **k: type("R", (), {
+                "ok": True, "hard_errors": [], "warnings": []
+            })(),
+        )
+        payload = {
+            "assigned": submitted_rows or [dict(self.NON_RECURRING)],
+            "config": {},
+            "anchored_blocks": [],
+        }
+        if pinned_rows is not None:
+            payload["pinned_rows"] = pinned_rows
+        return client.post("/sequence", json=payload, headers=_auth(client)), captured
+
+    def test_omitted_pin_is_rederived_for_non_recurring_native_time(
+        self, client, vault, monkeypatch
+    ):
+        # Contract: omitting pinned_rows cannot turn a native timed row loose.
+        r, captured = self._post_sequence(client, vault, monkeypatch)
+        assert r.status_code == 200, r.text
+        assert all(
+            (item.get("id") or item.get("name")) != "ERRAND"
+            for item in captured["assigned"]
+        )
+        walls = [block for block in captured["anchored"] if block.get("pinned")]
+        assert [(wall["Start"], wall["End"]) for wall in walls] == [("14:00", "14:15")]
+        assert r.json()["sequence"] == [{
+            "id": "ERRAND", "start": "14:00", "end": "14:15", "zone": None,
+        }]
+
+    def test_submitted_blocks_override_is_effective_but_native_provenance_stays_server_owned(
+        self, client, vault, monkeypatch
+    ):
+        # Client timing/source/recurrence are replaced by the dated server
+        # index, and native provenance (native_blocks) is server-owned — but
+        # the submitted blocks=0 is a legitimate effective override.
+        submitted = dict(self.NON_RECURRING)
+        submitted.update({
+            "source": "vault", "scheduled_start": "09:00",
+            "is_recurring": True, "blocks": 0, "duration": 1,
+            "allow_time_adjustment": True,
+        })
+        server = [{
+            "name": "ERRAND", "todoist_id": "t-errand",
+            "path": "todoist://t-errand", "surface": "assigned",
+            "source": "todoist", "blocks": 0.5, "duration": 30,
+            "is_recurring": False, "scheduled_start": "14:00",
+        }]
+        r, captured = self._post_sequence(
+            client, vault, monkeypatch, submitted_rows=[submitted],
+            server_rows=server,
+        )
+        assert r.status_code == 200, r.text
+        row = next(item for item in captured["assigned"] if item["id"] == "ERRAND")
+        assert row["source"] == "todoist"
+        assert row["scheduled_start"] == "14:00"
+        assert row["is_recurring"] is False
+        assert row["blocks"] == 0            # effective override accepted
+        assert row["native_blocks"] == 0.5   # provenance never from the client
+        assert row["duration"] == 30
+        assert row["allow_time_adjustment"] is True
+
+    def test_client_blocks_zero_cannot_disable_native_protection(
+        self, client, vault, monkeypatch
+    ):
+        submitted = dict(self.NON_RECURRING)
+        submitted.update({"blocks": 0, "scheduled_start": "09:00", "source": "vault"})
+        r, captured = self._post_sequence(
+            client, vault, monkeypatch, submitted_rows=[submitted]
+        )
+        assert r.status_code == 200, r.text
+        assert all(item.get("id") != "ERRAND" for item in captured["assigned"])
+        walls = [block for block in captured["anchored"] if block.get("pinned")]
+        assert [(wall["Start"], wall["End"]) for wall in walls] == [("14:00", "14:15")]
+
+    @pytest.mark.parametrize("allow", [False, "true", 1])
+    def test_only_exact_boolean_opt_in_survives(
+        self, client, vault, monkeypatch, allow
+    ):
+        submitted = dict(self.NON_RECURRING)
+        submitted["allow_time_adjustment"] = allow
+        r, captured = self._post_sequence(
+            client, vault, monkeypatch, submitted_rows=[submitted]
+        )
+        assert r.status_code == 200, r.text
+        assert all(item.get("id") != "ERRAND" for item in captured["assigned"])
+        walls = [block for block in captured["anchored"] if block.get("pinned")]
+        assert [(wall["Start"], wall["End"]) for wall in walls] == [("14:00", "14:15")]
+
+    def test_opt_in_on_matching_vault_row_does_not_survive(
+        self, client, vault, monkeypatch
+    ):
+        vault_row = {
+            "id": "LOCAL", "name": "LOCAL", "source": "vault",
+            "path": "Projects/Local.md", "blocks": 1,
+        }
+        server = [{
+            "name": "ERRAND", "todoist_id": "t-errand",
+            "path": "todoist://t-errand", "surface": "assigned",
+            "source": "todoist", "blocks": 0.5,
+            "is_recurring": False, "scheduled_start": "14:00",
+        }, {
+            "name": "LOCAL", "todoist_id": "", "path": "Projects/Local.md",
+            "surface": "assigned", "source": "vault", "blocks": 1,
+        }]
+        submitted = [dict(self.NON_RECURRING, allow_time_adjustment=True),
+                     dict(vault_row, allow_time_adjustment=True)]
+        r, captured = self._post_sequence(
+            client, vault, monkeypatch, submitted_rows=submitted,
+            server_rows=server,
+        )
+        assert r.status_code == 200, r.text
+        local = next(item for item in captured["assigned"] if item["id"] == "LOCAL")
+        assert "allow_time_adjustment" not in local
+
+    def test_native_claim_without_today_index_fails_closed(
+        self, client, monkeypatch
+    ):
+        called = {}
+        monkeypatch.setattr(
+            main_mod.judgment, "propose_sequence",
+            lambda *args, **kwargs: called.setdefault("called", True),
+        )
+        r = client.post("/sequence", json={
+            "assigned": [dict(self.NON_RECURRING)],
+            "config": {}, "anchored_blocks": [],
+        }, headers=_auth(client))
+        assert r.status_code == 422
+        assert "ERRAND" in str(r.json()["detail"])
+        assert called == {}
+
+    def test_suggested_identity_cannot_be_submitted_as_assigned(
+        self, client, vault, monkeypatch
+    ):
+        suggested = dict(self.NON_RECURRING)
+        server = [{
+            "name": "ERRAND", "todoist_id": "t-errand",
+            "path": "todoist://t-errand", "surface": "suggested",
+            "source": "todoist", "blocks": 0.5,
+            "is_recurring": False, "scheduled_start": "14:00",
+        }]
+        called = {}
+        monkeypatch.setattr(
+            main_mod.judgment, "propose_sequence",
+            lambda *args, **kwargs: called.setdefault("called", True),
+        )
+        r, _ = self._post_sequence(
+            client, vault, monkeypatch, submitted_rows=[suggested],
+            server_rows=server,
+        )
+        assert r.status_code == 422
+        assert "ERRAND" in str(r.json()["detail"])
+        assert called == {}
+
+    def test_mismatched_identity_cannot_authorize_by_name(
+        self, client, vault, monkeypatch
+    ):
+        server = [{
+            "name": "ERRAND", "todoist_id": "t-other",
+            "path": "todoist://t-other", "surface": "assigned",
+            "source": "todoist", "blocks": 0.5,
+            "is_recurring": False, "scheduled_start": "14:00",
+        }]
+        called = {}
+        monkeypatch.setattr(
+            main_mod.judgment, "propose_sequence",
+            lambda *args, **kwargs: called.setdefault("called", True),
+        )
+        r, _ = self._post_sequence(
+            client, vault, monkeypatch,
+            submitted_rows=[dict(self.NON_RECURRING, allow_time_adjustment=True)],
+            server_rows=server,
+        )
+        assert r.status_code == 422
+        assert "ERRAND" in str(r.json()["detail"])
+        assert called == {}
+
+    def test_identityless_native_metadata_is_not_a_legacy_row(
+        self, client, monkeypatch
+    ):
+        called = {}
+        monkeypatch.setattr(
+            main_mod.judgment, "propose_sequence",
+            lambda *args, **kwargs: called.setdefault("called", True),
+        )
+        r = client.post("/sequence", json={
+            "assigned": [{"name": "Legacy", "blocks": 0}],
+            "config": {}, "anchored_blocks": [],
+        }, headers=_auth(client))
+        assert r.status_code == 422
+        assert "Legacy" in str(r.json()["detail"])
+        assert called == {}
+
+    def test_matching_pin_is_canonicalized_at_route_boundary(self, client, vault, monkeypatch):
+        # Contract: a matching client pin is accepted only as server canonical.
+        matching = {
+            "id": "ERRAND", "start": "14:00", "end": "14:15",
+            "zone": "client-zone", "metadata": {"stale": True},
+        }
+        r, captured = self._post_sequence(
+            client, vault, monkeypatch, pinned_rows=[matching]
+        )
+        assert r.status_code == 200, r.text
+        walls = [block for block in captured["anchored"] if block.get("pinned")]
+        assert [(wall["Start"], wall["End"]) for wall in walls] == [("14:00", "14:15")]
+        assert r.json()["pinned_rows"] == [{
+            "id": "ERRAND", "start": "14:00", "end": "14:15", "zone": None,
+        }]
+
+    def test_conflicting_native_pin_fails_before_billed_boundary(self, client, vault, monkeypatch):
+        # Contract: an altered native pin is rejected before judgment/billing.
+        captured = {}
+        conflicting = {
+            "id": "ERRAND", "start": "13:00", "end": "13:15", "zone": None,
+        }
+        r, captured = self._post_sequence(
+            client, vault, monkeypatch, pinned_rows=[conflicting],
+            captured=captured,
+        )
+        assert r.status_code == 422
+        assert "assigned" not in captured
+
+    @pytest.mark.parametrize(
+        ("pinned_rows", "message"),
+        [
+            (
+                [
+                    {"id": "ERRAND", "start": "14:00", "end": "14:15"},
+                    {"id": "ERRAND", "start": "14:00", "end": "14:15"},
+                ],
+                "duplicate",
+            ),
+            ([{"id": "foreign", "start": "10:00", "end": "10:30"}], "foreign"),
+            ([{"id": "ERRAND", "start": "bad", "end": "10:30"}], "malformed"),
+        ],
+    )
+    def test_duplicate_foreign_and_malformed_pins_remain_rejected(
+        self, client, vault, monkeypatch, pinned_rows, message
+    ):
+        # Contract: generic pin validation remains a hard preflight boundary.
+        r, captured = self._post_sequence(
+            client, vault, monkeypatch, pinned_rows=pinned_rows,
+        )
+        assert r.status_code == 422
+        assert message in str(r.json()["detail"])
+        assert "assigned" not in captured
+
+    def test_validate_sequence_recomputes_protection_without_pinned_rows(
+        self, client, vault
+    ):
+        # Contract: /validate-sequence must reject a moved native row even when
+        # client pinned_rows and snapshot metadata are both omitted.
+        self._seed_index(vault)
+        r = client.post("/validate-sequence", json={
+            "sequence": [{
+                "id": "ERRAND", "start": "15:00", "end": "15:15", "zone": "any",
+            }],
+            "assigned": [{
+                **self.NON_RECURRING,
+                "source": "vault", "scheduled_start": "09:00",
+                "is_recurring": True, "blocks": 0,
+            }],
+            "anchored_blocks": [],
+            "config": {},
+        }, headers=_auth(client))
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["ok"] is False
+        assert any(
+            "protected native" in str(error)
+            or "moved" in str(error)
+            or "pinned rows changed" in str(error)
+            for error in body["hard_errors"]
+        )
+
+
+class TestCommitNativeProtection:
+    def _seed_recurring_todoist(self, vault, today):
+        rs.write_digest_index(vault, today, [{
+            "name": "Native", "todoist_id": "t-native",
+            "path": "todoist://t-native", "surface": "assigned",
+            "source": "todoist", "duration": 30, "blocks": 1,
+            "is_recurring": True, "scheduled_start": "12:30",
+        }])
+
+    def _capture_shadow_manifest(self, monkeypatch):
+        manifest_calls = []
+        monkeypatch.setattr(
+            main_mod.shadow,
+            "build_plan_manifest",
+            lambda *args, **kwargs: manifest_calls.append((args, kwargs)) or [],
+        )
+        monkeypatch.setattr(main_mod.shadow, "gather_live_state", lambda *a, **k: {})
+        monkeypatch.setattr(
+            main_mod.shadow,
+            "diff_against_live",
+            lambda *a, **k: main_mod.shadow.ShadowDiff(entries=[]),
+        )
+        return manifest_calls
+
+    def _commit_body(self, *, allow=None, path="todoist://t-native", blocks=3):
+        row = {
+            "name": "Native", "todoist_id": "t-native", "path": path,
+            "blocks": blocks, "source": "vault", "types": ["adventure"],
+        }
+        if allow is not None:
+            row["allow_time_adjustment"] = allow
+        return {
+            "digest": {"assigned": [row], "suggested": []},
+            "sequence": {"sequence": [{
+                "id": "Native", "start": "12:30", "end": "13:00", "zone": "any",
+            }]},
+            "config": {},
+        }
+
+    def _seed_included_and_omitted_native_rows(self, vault, today):
+        rs.write_digest_index(vault, today, [{
+            "name": "Included Native", "todoist_id": "t-included",
+            "path": "todoist://t-included", "surface": "assigned",
+            "source": "todoist", "duration": 30, "blocks": 0,
+            "native_blocks": 1, "is_recurring": False,
+            "scheduled_start": "12:30",
+        }, {
+            "name": "Omitted Native", "todoist_id": "t-omitted",
+            "path": "todoist://t-omitted", "surface": "assigned",
+            "source": "todoist", "duration": 30, "blocks": 1,
+            "native_blocks": 1, "is_recurring": False,
+            "scheduled_start": "15:00",
+        }])
+
+    def _included_native_body(self, *, start="12:30", end="13:00"):
+        return {
+            "digest": {"assigned": [{
+                "name": "Included Native", "todoist_id": "t-included",
+                "path": "todoist://t-included", "source": "vault",
+                "scheduled_start": "09:00", "blocks": 0,
+                "native_blocks": 0,
+            }], "suggested": []},
+            "sequence": {"sequence": [{
+                "id": "Included Native", "start": start, "end": end,
+                "zone": "any",
+            }]},
+            "config": {},
+        }
+
+    def test_shadow_commit_rejects_moved_native_row_without_pin_metadata(
+        self, client, vault, monkeypatch
+    ):
+        # Contract: /commit recomputes native protection unconditionally before
+        # manifest construction; omitted client metadata cannot bypass it.
+        today = gather.effective_date(datetime.now())
+        rs.write_digest_index(vault, today, [{
+            "name": "Native", "todoist_id": "t-native",
+            "path": "todoist://t-native", "surface": "assigned",
+            "source": "todoist", "blocks": 1,
+            "is_recurring": False, "scheduled_start": "12:30",
+        }])
+        manifest_calls = []
+        monkeypatch.setattr(
+            main_mod.shadow,
+            "build_plan_manifest",
+            lambda *args, **kwargs: manifest_calls.append((args, kwargs)) or [],
+        )
+        monkeypatch.setattr(main_mod.shadow, "gather_live_state", lambda *a, **k: {})
+        monkeypatch.setattr(
+            main_mod.shadow,
+            "diff_against_live",
+            lambda *a, **k: main_mod.shadow.ShadowDiff(entries=[]),
+        )
+        r = client.post("/commit?mode=shadow", headers=_auth(client), json={
+            "digest": {
+                "assigned": [{
+                    "name": "Native", "todoist_id": "t-native",
+                    "path": "todoist://t-native",
+                }],
+                "suggested": [],
+            },
+            "sequence": {"sequence": [{
+                "id": "Native", "start": "13:00", "end": "13:30", "zone": "any",
+            }]},
+            "config": {},
+        })
+        assert r.status_code == 422
+        assert "Native" in str(r.json()["detail"])
+        assert manifest_calls == []
+
+    def test_exact_opt_in_reaches_sanitized_recurring_digest(
+        self, client, vault, monkeypatch
+    ):
+        today = gather.effective_date(datetime.now())
+        self._seed_recurring_todoist(vault, today)
+        manifest_calls = self._capture_shadow_manifest(monkeypatch)
+
+        body = self._commit_body(allow=True)
+        body["sequence"]["sequence"][0].update({
+            "start": "13:00", "end": "13:30",
+        })
+        r = client.post(
+            "/commit?mode=shadow", headers=_auth(client), json=body,
+        )
+
+        assert r.status_code == 200, r.text
+        assert len(manifest_calls) == 1
+        safe_row = manifest_calls[0][0][0]["assigned"][0]
+        assert safe_row["allow_time_adjustment"] is True
+        assert safe_row["source"] == "todoist"
+        assert safe_row["todoist_id"] == "t-native"
+        assert safe_row["path"] == "todoist://t-native"
+        assert safe_row["blocks"] == 3        # client overlay is the effective duration
+        assert safe_row["native_blocks"] == 1  # server blocks retained as provenance
+        assert safe_row["duration"] == 30
+        assert safe_row["scheduled_start"] == "12:30"
+        assert safe_row["is_recurring"] is True
+        assert "types" not in safe_row
+
+    @pytest.mark.parametrize("allow", [False, "true"])
+    def test_non_boolean_opt_in_is_not_retained(
+        self, client, vault, monkeypatch, allow
+    ):
+        today = gather.effective_date(datetime.now())
+        self._seed_recurring_todoist(vault, today)
+        manifest_calls = self._capture_shadow_manifest(monkeypatch)
+
+        r = client.post(
+            "/commit?mode=shadow", headers=_auth(client),
+            json=self._commit_body(allow=allow),
+        )
+
+        assert r.status_code == 200, r.text
+        safe_row = manifest_calls[0][0][0]["assigned"][0]
+        assert "allow_time_adjustment" not in safe_row
+
+    def test_nonmatching_opt_in_is_rejected_before_manifest(
+        self, client, vault, monkeypatch
+    ):
+        today = gather.effective_date(datetime.now())
+        self._seed_recurring_todoist(vault, today)
+        manifest_calls = self._capture_shadow_manifest(monkeypatch)
+
+        r = client.post(
+            "/commit?mode=shadow", headers=_auth(client),
+            json=self._commit_body(allow=True, path="todoist://other"),
+        )
+
+        assert r.status_code == 422
+        assert "Native" in str(r.json()["detail"])
+        assert manifest_calls == []
+
+    def test_omitted_native_row_is_not_required_in_commit_sequence(
+        self, client, vault, monkeypatch
+    ):
+        today = gather.effective_date(datetime.now())
+        self._seed_included_and_omitted_native_rows(vault, today)
+        manifest_calls = self._capture_shadow_manifest(monkeypatch)
+
+        r = client.post(
+            "/commit?mode=shadow", headers=_auth(client),
+            json=self._included_native_body(),
+        )
+
+        assert r.status_code == 200, r.text
+        safe_rows = manifest_calls[0][0][0]["assigned"]
+        assert [row["name"] for row in safe_rows] == ["Included Native"]
+        safe_row = safe_rows[0]
+        assert safe_row["native_blocks"] == 1
+        assert safe_row["blocks"] == 0
+        assert safe_row["duration"] == 30
+
+    def test_altered_included_native_row_still_rejects_with_omitted_row(
+        self, client, vault, monkeypatch
+    ):
+        today = gather.effective_date(datetime.now())
+        self._seed_included_and_omitted_native_rows(vault, today)
+        manifest_calls = self._capture_shadow_manifest(monkeypatch)
+
+        r = client.post(
+            "/commit?mode=shadow", headers=_auth(client),
+            json=self._included_native_body(start="13:00", end="13:30"),
+        )
+
+        assert r.status_code == 422
+        detail = str(r.json()["detail"])
+        assert "Included Native" in detail
+        assert "Omitted Native" not in detail
+        assert manifest_calls == []
+
+
+class TestEffectiveBlocksOverlay:
+    """Duration-override boundary (P4-xx): a matched assigned row may carry a
+    validated today-only effective-blocks override — including zero — for
+    planning and commit-manifest duration, while identity/source/timing/
+    recurrence and Todoist native provenance stay server-owned. Malformed or
+    extreme overlays fail closed at the route boundary."""
+
+    VAULT = {"id": "LOCAL", "name": "LOCAL", "source": "vault",
+             "path": "Projects/Local.md", "blocks": 1}
+    TODO = {"id": "ERRAND", "name": "ERRAND", "source": "todoist",
+            "todoist_id": "t-errand", "path": "todoist://t-errand",
+            "blocks": 0.5, "is_recurring": False, "scheduled_start": "14:00"}
+
+    def _seed(self, vault, rows):
+        today = gather.effective_date(datetime.now())
+        seeded = [
+            {**dict(row), "surface": "assigned"}
+            for row in rows
+        ]
+        rs.write_digest_index(vault, today, seeded)
+
+    def _post_sequence(self, client, vault, monkeypatch, *, submitted_rows,
+                       server_rows, captured=None, called=None):
+        self._seed(vault, server_rows)
+        captured = captured if captured is not None else {}
+        state = {"called": False}
+
+        def fake_propose(assigned, config, anchored_blocks, ctx=None):
+            state["called"] = True
+            captured["assigned"] = assigned
+            captured["anchored"] = anchored_blocks
+            return {"sequence": [], "overlap_grants": []}
+
+        monkeypatch.setattr(main_mod.judgment, "propose_sequence", fake_propose)
+        monkeypatch.setattr(
+            main_mod.planning.sequence, "validate_sequence",
+            lambda *a, **k: type("R", (), {
+                "ok": True, "hard_errors": [], "warnings": []})(),
+        )
+        r = client.post("/sequence", json={
+            "assigned": submitted_rows, "config": {}, "anchored_blocks": [],
+        }, headers=_auth(client))
+        return r, captured, state
+
+    def test_vault_blocks_override_is_effective_for_planning(
+        self, client, vault, monkeypatch
+    ):
+        # Red repro: a 3-block today-only override must reach the planning
+        # duration (90 min), not be replaced by the server's 1 block.
+        r, captured, _ = self._post_sequence(
+            client, vault, monkeypatch,
+            submitted_rows=[{**self.VAULT, "blocks": 3}],
+            server_rows=[self.VAULT],
+        )
+        assert r.status_code == 200, r.text
+        row = next(item for item in captured["assigned"] if item["id"] == "LOCAL")
+        assert row["blocks"] == 3
+        assert row["source"] == "vault"
+        assert row["path"] == "Projects/Local.md"
+
+    def test_todoist_blocks_override_cannot_unpin_native_row(
+        self, client, vault, monkeypatch
+    ):
+        # blocks=0 is a legitimate effective override, but native protection
+        # is server-derived (native_blocks) and must still pin the row.
+        r, captured, _ = self._post_sequence(
+            client, vault, monkeypatch,
+            submitted_rows=[{**self.TODO, "blocks": 0}],
+            server_rows=[self.TODO],
+        )
+        assert r.status_code == 200, r.text
+        assert all(item.get("id") != "ERRAND" for item in captured["assigned"])
+        walls = [block for block in captured["anchored"] if block.get("pinned")]
+        assert [(wall["Start"], wall["End"]) for wall in walls] == [("14:00", "14:15")]
+
+    def test_todoist_override_with_opt_in_is_movable_and_retains_provenance(
+        self, client, vault, monkeypatch
+    ):
+        # With the exact opt-in the row is movable; the effective override
+        # rides ``blocks`` while ``native_blocks`` keeps the server value.
+        r, captured, _ = self._post_sequence(
+            client, vault, monkeypatch,
+            submitted_rows=[{**self.TODO, "blocks": 3,
+                             "allow_time_adjustment": True,
+                             "native_blocks": 0}],
+            server_rows=[self.TODO],
+        )
+        assert r.status_code == 200, r.text
+        row = next(item for item in captured["assigned"] if item["id"] == "ERRAND")
+        assert row["blocks"] == 3          # overlay accepted
+        assert row["native_blocks"] == 0.5  # provenance never from the client
+        assert row["allow_time_adjustment"] is True
+
+    def test_zero_blocks_override_is_legitimate_for_vault_row(
+        self, client, vault, monkeypatch
+    ):
+        r, captured, _ = self._post_sequence(
+            client, vault, monkeypatch,
+            submitted_rows=[{**self.VAULT, "blocks": 0}],
+            server_rows=[self.VAULT],
+        )
+        assert r.status_code == 200, r.text
+        row = next(item for item in captured["assigned"] if item["id"] == "LOCAL")
+        assert row["blocks"] == 0
+
+    def test_absent_blocks_falls_back_to_server_blocks(
+        self, client, vault, monkeypatch
+    ):
+        submitted = {key: value for key, value in self.VAULT.items()
+                     if key != "blocks"}
+        r, captured, _ = self._post_sequence(
+            client, vault, monkeypatch,
+            submitted_rows=[submitted],
+            server_rows=[self.VAULT],
+        )
+        assert r.status_code == 200, r.text
+        row = next(item for item in captured["assigned"] if item["id"] == "LOCAL")
+        assert row["blocks"] == 1
+
+    @pytest.mark.parametrize("bad", [True, "3", -1, 999, 10**400])
+    def test_malformed_or_extreme_blocks_overlay_fails_closed(
+        self, client, vault, monkeypatch, bad
+    ):
+        # Bounded 30-minute-block policy: bools, non-numbers, non-finite
+        # (10**400 overflows to non-finite), negatives, and >48 blocks are
+        # never silently accepted.
+        r, captured, state = self._post_sequence(
+            client, vault, monkeypatch,
+            submitted_rows=[{**self.VAULT, "blocks": bad}],
+            server_rows=[self.VAULT],
+        )
+        assert r.status_code == 422
+        assert "LOCAL" in str(r.json()["detail"])
+        assert "blocks" in str(r.json()["detail"])
+        assert state["called"] is False
+
+    def test_validate_sequence_accepts_valid_blocks_overlay(
+        self, client, vault
+    ):
+        self._seed(vault, [self.VAULT])
+        r = client.post("/validate-sequence", json={
+            "sequence": [{"id": "LOCAL", "start": "10:00", "end": "11:30",
+                          "zone": "any"}],
+            "assigned": [{**self.VAULT, "blocks": 3}],
+            "anchored_blocks": [], "config": {},
+        }, headers=_auth(client))
+        assert r.status_code == 200, r.text
+        assert r.json()["ok"] is True
+
+    def test_validate_sequence_rejects_malformed_blocks_overlay(
+        self, client, vault
+    ):
+        self._seed(vault, [self.VAULT])
+        r = client.post("/validate-sequence", json={
+            "sequence": [{"id": "LOCAL", "start": "10:00", "end": "10:30",
+                          "zone": "any"}],
+            "assigned": [{**self.VAULT, "blocks": -3}],
+            "anchored_blocks": [], "config": {},
+        }, headers=_auth(client))
+        assert r.status_code == 422
+
+    def _capture_shadow_manifest(self, monkeypatch):
+        manifest_calls = []
+        monkeypatch.setattr(
+            main_mod.shadow, "build_plan_manifest",
+            lambda *args, **kwargs: manifest_calls.append((args, kwargs)) or [],
+        )
+        monkeypatch.setattr(main_mod.shadow, "gather_live_state", lambda *a, **k: {})
+        monkeypatch.setattr(
+            main_mod.shadow, "diff_against_live",
+            lambda *a, **k: main_mod.shadow.ShadowDiff(entries=[]),
+        )
+        return manifest_calls
+
+    def test_shadow_commit_carries_effective_blocks_overlay(
+        self, client, vault, monkeypatch
+    ):
+        self._seed(vault, [self.VAULT])
+        manifest_calls = self._capture_shadow_manifest(monkeypatch)
+        r = client.post("/commit?mode=shadow", headers=_auth(client), json={
+            "digest": {"assigned": [{**self.VAULT, "blocks": 3}],
+                       "suggested": []},
+            "sequence": {"sequence": [{
+                "id": "LOCAL", "start": "10:00", "end": "10:30", "zone": "any",
+            }]},
+            "config": {},
+        })
+        assert r.status_code == 200, r.text
+        safe_row = manifest_calls[0][0][0]["assigned"][0]
+        assert safe_row["blocks"] == 3
+        assert safe_row["path"] == "Projects/Local.md"
+        assert safe_row["source"] == "vault"
+
+    def test_shadow_commit_todoist_zero_override_keeps_native_blocks(
+        self, client, vault, monkeypatch
+    ):
+        self._seed(vault, [self.TODO])
+        manifest_calls = self._capture_shadow_manifest(monkeypatch)
+        r = client.post("/commit?mode=shadow", headers=_auth(client), json={
+            "digest": {"assigned": [{
+                **self.TODO, "blocks": 0, "native_blocks": 0,
+            }], "suggested": []},
+            "sequence": {"sequence": [{
+                "id": "ERRAND", "start": "14:00", "end": "14:15", "zone": "any",
+            }]},
+            "config": {},
+        })
+        assert r.status_code == 200, r.text
+        safe_row = manifest_calls[0][0][0]["assigned"][0]
+        assert safe_row["blocks"] == 0
+        assert safe_row["native_blocks"] == 0.5  # server provenance retained
+
+    def test_shadow_commit_todoist_zero_override_cannot_unpin(
+        self, client, vault, monkeypatch
+    ):
+        self._seed(vault, [self.TODO])
+        manifest_calls = self._capture_shadow_manifest(monkeypatch)
+        r = client.post("/commit?mode=shadow", headers=_auth(client), json={
+            "digest": {"assigned": [{
+                **self.TODO, "blocks": 0, "native_blocks": 0,
+            }], "suggested": []},
+            "sequence": {"sequence": [{
+                "id": "ERRAND", "start": "15:00", "end": "15:15", "zone": "any",
+            }]},
+            "config": {},
+        })
+        assert r.status_code == 422
+        assert "ERRAND" in str(r.json()["detail"])
+        assert manifest_calls == []
+
+    def test_shadow_commit_rejects_malformed_blocks_overlay(
+        self, client, vault, monkeypatch
+    ):
+        self._seed(vault, [self.VAULT])
+        manifest_calls = self._capture_shadow_manifest(monkeypatch)
+        r = client.post("/commit?mode=shadow", headers=_auth(client), json={
+            "digest": {"assigned": [{**self.VAULT, "blocks": -1}],
+                       "suggested": []},
+            "sequence": {"sequence": [{
+                "id": "LOCAL", "start": "10:00", "end": "10:30", "zone": "any",
+            }]},
+            "config": {},
+        })
+        assert r.status_code == 422
+        assert "blocks" in str(r.json()["detail"])
+        assert manifest_calls == []
 
 
 class TestCalendarDismissalSequenceSide:

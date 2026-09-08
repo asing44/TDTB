@@ -197,6 +197,48 @@ describe("sequence excludes overridden items", () => {
   }, 15000);
 });
 
+describe("native timed pin inclusion", () => {
+  it("does not re-add an excluded native task to pending, staged, or context pins", async () => {
+    const { store, adapter, controller } = harness("ready");
+    const excludedId = "Excluded native task";
+    const includedId = "Included native task";
+    const baseInputs = structuredClone(adapter.scenario.inputs);
+    vi.spyOn(adapter, "loadPlanInputs").mockResolvedValue({
+      ...baseInputs,
+      assigned: [
+        ...baseInputs.assigned,
+        {
+          id: excludedId, name: excludedId, path: null, source: "todoist",
+          types: ["todoist"], urgency: null, deadline: null, priorityScore: 1,
+          blocks: 1, durationLabel: "30min", todoistId: "excluded-native",
+          scheduledStart: "14:00",
+        },
+        {
+          id: includedId, name: includedId, path: null, source: "todoist",
+          types: ["todoist"], urgency: null, deadline: null, priorityScore: 1,
+          blocks: 1, durationLabel: "30min", todoistId: "included-native",
+          scheduledStart: "15:00",
+        },
+      ],
+    });
+    await controller.load();
+    await controller.saveDaySetup({ ...store.getState().daySetup, confirmed: true });
+    controller.setOverride(excludedId, false, null);
+    const sequence = vi.spyOn(adapter, "autoSequence");
+
+    await controller.autoSequence();
+
+    const s = store.getState();
+    expect(s.pendingPinnedRows.some((row) => row.id === excludedId)).toBe(false);
+    expect(s.pinnedRows.some((row) => row.id === excludedId)).toBe(false);
+    expect(s.pendingPinnedRows.some((row) => row.id === includedId)).toBe(true);
+    expect(s.pinnedRows.some((row) => row.id === includedId)).toBe(true);
+    const contextPins = sequence.mock.calls[0][0].pinnedRows ?? [];
+    expect(contextPins.some((row) => row.id === excludedId)).toBe(false);
+    expect(contextPins.some((row) => row.id === includedId)).toBe(true);
+  }, 20000);
+});
+
 describe("today-only shaping reaches commit payloads (T6)", () => {
   it("shadowCommit and liveCommit receive the shaped context", async () => {
     const { store, adapter, controller } = harness("ready");

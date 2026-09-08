@@ -39,6 +39,17 @@
   --c-free: #10b981;             /* free capacity */
   --c-overflow: #ef4444;         /* OVERASSIGNED state */
 
+  /* Evidence states — use words as the primary signal and these as quiet
+     reinforcement. The same roles are shared by chips, row badges, drawers,
+     and alert surfaces rather than inventing a new color per component. */
+  --state-source: var(--t-muted);
+  --state-memory: var(--t-accent);
+  --state-remembered: var(--c-selected);
+  --state-protected: var(--c-event);
+  --state-success: var(--c-free);
+  --state-warning: var(--c-minting);
+  --state-danger: var(--c-overflow);
+
   --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
     "Helvetica Neue", Arial, sans-serif;
   --font-mono: ui-monospace, SFMono-Regular, Menlo, monospace;

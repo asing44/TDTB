@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import json
 import sys
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 
 import pytest
@@ -64,6 +64,12 @@ last_updated: 2026-07-01
 
 FRAME = {"anchor": "08:00", "eod": "20:00"}  # total = 24 blocks, deterministic
 
+# Deterministic logical day for weekday-Mint expectations: 2026-07-13 is a
+# Monday. The client fixture pins gather.effective_date to it so the route's
+# logical today (and thus the weekday Mint default) never depends on the host
+# weekday — same convention as test_mint_defaults.MONDAY.
+MONDAY = date(2026, 7, 13)
+
 
 @pytest.fixture
 def vault(tmp_path) -> Path:
@@ -76,7 +82,11 @@ def vault(tmp_path) -> Path:
 
 
 @pytest.fixture
-def client(vault) -> TestClient:
+def client(vault, monkeypatch) -> TestClient:
+    # Route parity: the route's logical today comes from
+    # gather.effective_date; pin it to MONDAY so the weekday Mint default
+    # (8 blocks with the implicit 240-minute allotment) is host-date stable.
+    monkeypatch.setattr(gather, "effective_date", lambda _now: MONDAY)
     return TestClient(main_mod.create_app(vault_root=vault))
 
 
@@ -197,7 +207,10 @@ class TestDaySetupInputs:
         assert body["segments"]["anchored"] == 5 + 3
 
     def test_persisted_runstate_merged_query_wins(self, client, vault):
-        today = gather.effective_date(datetime.now())
+        # Same pinned logical day the route resolves (client fixture pins
+        # gather.effective_date → MONDAY); the persisted runstate must land
+        # exactly where the route reads it back.
+        today = MONDAY
         state = runstate_mod.build_runstate({"buffering": "off"})
         runstate_mod.write_runstate(vault, today, state)
         # no query override → persisted 'off' applies
@@ -209,6 +222,26 @@ class TestDaySetupInputs:
         # 8 of the 18 raw remaining blocks, leaving 10 for buffering.
         body = _get(client, {"buffering": "standard"}).json()
         assert body["segments"]["buffer"] == 2  # ceil(10 × 0.19)
+
+    def test_route_forwards_logical_today_into_capacity_frame(
+        self, client, monkeypatch
+    ):
+        # The client fixture pins gather.effective_date → MONDAY (2026-07-13,
+        # a workday), so the route's logical today is MONDAY. Pin the wall
+        # clock to a Saturday so _capacity_frame's datetime.now() fallback
+        # would disagree: without forwarding the route's logical today the
+        # frame would treat Minting as inactive and report zero Mint blocks.
+        class _FixedClock(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return datetime(2026, 7, 11, 9, 0)  # Saturday
+
+        monkeypatch.setattr(main_mod, "datetime", _FixedClock)
+        body = _get(client, {"anchor": "08:00", "eod": "18:00"}).json()
+        # 240-min implicit allotment (CONFIG has no work_allotment_minutes)
+        # survives only on a workday; without the forwarded logical today the
+        # Saturday fallback would suppress it entirely.
+        assert body["segments"]["mint"] == 8
 
 
 class TestOverAndErrors:
@@ -240,3 +273,81 @@ class TestOverAndErrors:
     def test_unparseable_selected_entry_is_400(self, client):
         r = _get(client, selected=["30m", "banana"])
         assert r.status_code == 400
+
+
+# ---------------------------------------------------------------------------
+# Issue #6 — route-level capacity contract: a timed event on a calendar
+# disabled via the vault config's '## Disabled Calendars' section contributes
+# zero to segments.fixed, with the response shape unchanged. Fakes only; the
+# fake store ignores query dates so the test is deterministic for the route's
+# effective today. No diagnostics (e.g. calendar_decisions) are added to this
+# response.
+# ---------------------------------------------------------------------------
+
+from calendar_bridge import CalendarInfo  # noqa: E402
+
+
+CONFIG_DISABLED_CALENDARS = CONFIG + """
+## Disabled Calendars
+
+| Title    |
+| -------- |
+| Personal |
+"""
+
+
+class _PreviewStore:
+    """Fake EventStore exposing an inventory; ignores queried dates."""
+
+    def __init__(self, events, calendars):
+        self._events = events
+        self._calendars = calendars
+
+    def auth_status(self):
+        return "authorized"
+
+    def calendars(self):
+        return self._calendars
+
+    def query_events(self, start, end, calendar_ids=None):
+        return self._events
+
+
+def _client_with_store(vault: Path, store) -> TestClient:
+    p = vault / CONFIG_REL_PATH
+    p.write_text(CONFIG_DISABLED_CALENDARS, encoding="utf-8")
+    app = main_mod.create_app(vault_root=vault)
+    app.state.build_read_clients = lambda v, cfg: (None, store)
+    return TestClient(app)
+
+
+class TestDisabledCalendarCapacity:
+    def test_disabled_calendar_timed_event_contributes_zero_fixed(self, vault):
+        event = lambda cal: [{  # noqa: E731 — local fixture helper
+            "title": "Yoga", "start": datetime(2026, 7, 14, 9, 0),
+            "end": datetime(2026, 7, 14, 13, 0), "calendar_id": cal,
+        }]
+        calendars = [
+            CalendarInfo("Personal", "CAL-PERS", False, "Local"),
+            CalendarInfo("School", "CAL-SCHOOL", False, "Local"),
+        ]
+        # Baseline: the same 4h timed event on an enabled calendar would
+        # contribute 8 fixed blocks (240 min / 30).
+        enabled_client = _client_with_store(
+            vault, _PreviewStore(event("CAL-SCHOOL"), calendars)
+        )
+        body = _get(enabled_client).json()
+        assert body["segments"]["fixed"] == 8
+
+        # The identical event on a disabled calendar contributes zero.
+        disabled_client = _client_with_store(
+            vault, _PreviewStore(event("CAL-PERS"), calendars)
+        )
+        body = _get(disabled_client).json()
+        assert body["segments"]["fixed"] == 0
+        # Existing response shape preserved; no diagnostics added.
+        assert set(body) >= {"segments", "total", "free", "over", "day_setup_echo"}
+        assert set(body["segments"]) == {
+            "fixed", "anchored", "habits", "mint", "selected", "buffer",
+        }
+        assert "calendar_decisions" not in body

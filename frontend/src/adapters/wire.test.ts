@@ -250,6 +250,70 @@ describe("projectPlanInputs with saved Day Setup (plan-inputs-with-setup.json)",
   });
 });
 
+describe("P6-01 grouping metadata projection", () => {
+  it("projects vault tags without losing labels, relatesTo, or source identity", () => {
+    const digest = (planInputs as any).digest;
+    const vaultPath = "50 - Operations/Projects/Grouped parent.md";
+    const projected = projectPlanInputs({
+      ...(planInputs as any),
+      digest: {
+        ...digest,
+        assigned: [
+          {
+            ...digest.assigned[0],
+            name: "Grouped parent",
+            path: vaultPath,
+            source: "vault",
+            tags: ["systems", "household"],
+            relates_to: "[[Professional Development]]",
+          },
+          {
+            ...digest.assigned[3],
+            name: "Grouped task",
+            path: "todoist://grouped-task",
+            source: "todoist",
+            todoist_id: "grouped-task",
+            labels: ["existing-label"],
+          },
+        ],
+      },
+    });
+
+    const vault = projected.assigned[0] as typeof projected.assigned[number] & {
+      tags?: string[];
+    };
+    const todoist = projected.assigned[1];
+    // P6-02 must add this additive field; existing relationship, label, and
+    // identity fields remain part of the established AssignedItem contract.
+    expect(vault.tags).toEqual(["systems", "household"]);
+    expect(vault.labels).toEqual([]);
+    expect(vault.relatesTo).toBe("[[Professional Development]]");
+    expect(vault.identity).toBe(vaultPath);
+    expect(todoist.labels).toEqual(["existing-label"]);
+    expect(todoist.identity).toBe("todoist:grouped-task");
+  });
+
+  it("keeps a selected Mint session as one marked backdrop row", () => {
+    const result = projectSequenceResult({
+      sequence: [{
+        id: "Mint:morning",
+        start: "08:30",
+        end: "09:00",
+        zone: "Mint",
+        backdrop: true,
+        mint_session: true,
+      }],
+      warnings: [],
+    });
+    expect(result.sequence).toHaveLength(1);
+    expect(result.sequence[0]).toMatchObject({
+      id: "Mint:morning",
+      kind: "zone",
+      wire: expect.objectContaining({ mint_session: true }),
+    });
+  });
+});
+
 describe("degraded sources (plan-inputs-degraded.json)", () => {
   const p = projectPlanInputs(planInputsDegraded);
 
@@ -408,6 +472,70 @@ describe("sequence + validation projections", () => {
     ]);
     for (const w of v.warnings) expect(w).not.toContain("[object");
   });
+
+  it("projects additive structured diagnostics with canonical intervals", () => {
+    const v = projectValidation({
+      ok: false,
+      hard_errors: ["A overlaps Dentist"],
+      warnings: [],
+      diagnostics: [{
+        rule: "calendar_overlap",
+        severity: "error",
+        detail: "A overlaps Dentist",
+        affected_rows: ["A", "Dentist"],
+        intervals: [
+          { id: "A", start: "09:15", end: "10:30" },
+          { id: "Dentist", start: "9:00 AM", end: "10:00 AM" },
+        ],
+      }],
+    });
+    expect(v.diagnostics).toEqual([{
+      rule: "calendar_overlap",
+      severity: "error",
+      detail: "A overlaps Dentist",
+      affectedRows: ["A", "Dentist"],
+      intervals: [
+        { id: "A", start: "09:15", end: "10:30" },
+        { id: "Dentist", start: "09:00", end: "10:00" },
+      ],
+    }]);
+    expect(v.hardErrors).toEqual(["A overlaps Dentist"]);
+    expect(v.warnings).toEqual([]);
+  });
+
+  it("keeps a contradictory hard-error diagnostic blocking", () => {
+    const v = projectValidation({
+      ok: false,
+      hard_errors: ["X"],
+      warnings: [],
+      diagnostics: [{
+        rule: "contradictory_payload",
+        severity: "warning",
+        detail: "X",
+        affected_rows: ["X"],
+        intervals: [],
+      }],
+    });
+
+    expect(v.diagnostics?.[0].severity).toBe("error");
+  });
+
+  it("keeps malformed additive diagnostics safe without weakening legacy fields", () => {
+    const v = projectValidation({
+      ok: true,
+      hard_errors: [],
+      warnings: ["legacy warning"],
+      diagnostics: "legacy diagnostic payload",
+    });
+    expect(v.warnings).toEqual(["legacy warning"]);
+    expect(v.diagnostics).toEqual([{
+      rule: "validation",
+      severity: "warning",
+      detail: "legacy diagnostic payload",
+      affectedRows: [],
+      intervals: [],
+    }]);
+  });
 });
 
 describe("projectShadow (shadow-diff.json)", () => {
@@ -563,6 +691,21 @@ describe("model → wire body builders", () => {
     // Upstream truth untouched (locked decision 16):
     expect(shaped.every((r: any) => r.assigned === true)).toBe(true);
     expect(raw[0].blocks).toBe(2); // input not mutated
+  });
+
+  it("emits an explicit per-item time-adjustment permission", () => {
+    const raw = [
+      { name: "Native", blocks: 2, allow_time_adjustment: true },
+      { name: "Other", blocks: 1 },
+    ];
+    const shaped = shapeAssignedWire(
+      raw,
+      [{ id: "Native", blocks: 2 }, { id: "Other", blocks: 1 }],
+      { Native: true },
+    );
+    expect(shaped.map((row) => row.allow_time_adjustment)).toEqual([true, false]);
+    // The source payload cannot smuggle an opt-in through for another item.
+    expect(shapeAssignedWire(raw, [{ id: "Native", blocks: 2 }])[0].allow_time_adjustment).toBe(false);
   });
 });
 

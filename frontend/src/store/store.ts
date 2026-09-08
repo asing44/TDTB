@@ -60,6 +60,8 @@ export interface AppState {
   capacity: Capacity | null; // live server-verbatim numbers
   daySetup: DaySetup;
   overrides: Record<string, TodayOverride>;
+  /** Sparse opt-in map: absent/false protects a native Todoist time. */
+  timeAdjustmentOptIns: Record<string, boolean>;
   placements: Record<string, string>; // id -> start HH:MM (sequence/exact editor)
   sequence: SequenceRow[] | null;
   seqPhase: SeqPhase;
@@ -149,6 +151,7 @@ export const initialState: AppState = {
   capacity: null,
   daySetup: emptyDaySetup,
   overrides: {},
+  timeAdjustmentOptIns: {},
   placements: {},
   sequence: null,
   seqPhase: "none",
@@ -186,6 +189,7 @@ export type Action =
   | { type: "LOAD_FAILED"; error: string }
   | { type: "SETUP_SAVED"; daySetup: DaySetup }
   | { type: "OVERRIDE_SET"; id: string; override: TodayOverride }
+  | { type: "TIME_ADJUSTMENT_SET"; id: string; allow: boolean }
   // FEEDBACK-28 (retry): explicit current-run calendar skip intent recorded
   // by saveAnchoredOverride. Persisted skip state alone never suppresses a
   // current wall; this marker is the user's re-expressed choice this run.
@@ -252,6 +256,7 @@ export type Action =
       // rehydrates; shadow/review NEVER restore — preview must rerun.
       type: "SESSION_RESTORED";
       overrides: Record<string, TodayOverride>;
+      timeAdjustmentOptIns?: Record<string, boolean>;
       placements: Record<string, string>;
       sequence: SequenceRow[] | null;
       fingerprint: string | null;
@@ -311,9 +316,11 @@ export function reducer(s: AppState, a: Action): AppState {
           inputs: a.inputs,
           capacity: a.inputs.capacity,
           daySetup: a.inputs.daySetup,
+          pendingPinnedRows: nativeTimedPins(a.inputs, {}, allAssignedIds(a.inputs)),
           ledger: a.ledger,
         };
       }
+      const timeAdjustmentOptIns = pruneTimeAdjustmentOptIns(s.timeAdjustmentOptIns, a.inputs);
       return {
         ...s,
         loaded: true,
@@ -326,9 +333,16 @@ export function reducer(s: AppState, a: Action): AppState {
         // skip state is authoritative until the user re-expresses it, so any
         // current-run intent from a previous session is cleared.
         currentRunCalendarSkips: [],
-        // T27: recurring pins always re-seed from fresh inputs — a non-empty
-        // pin set (manual pins, restored session) must not suppress them.
-        pendingPinnedRows: mergeRecurringPins(s.pendingPinnedRows, a.inputs),
+        // Native timed protections always re-seed from fresh inputs — a
+        // non-empty pin set (manual pins, restored session) must not suppress
+        // a still-protected source time.
+        timeAdjustmentOptIns,
+        pendingPinnedRows: mergeNativeTimedPins(
+          s.pendingPinnedRows,
+          a.inputs,
+          timeAdjustmentOptIns,
+          includedIdsForInputs(a.inputs, s.overrides),
+        ),
         ledger: a.ledger,
       };
     }
@@ -390,12 +404,43 @@ export function reducer(s: AppState, a: Action): AppState {
           if (row.id !== a.id || a.override.blocks == null) return row;
           return { ...row, end: addMin(row.start, a.override.blocks * 30) };
         });
+      const pinnedRows =
+        !a.override.included || a.override.blocks === 0
+          ? s.pinnedRows.filter((row) => row.id !== a.id)
+          : s.pinnedRows;
       return {
         ...s,
         overrides,
         sequence,
         placements,
+        pinnedRows,
         pendingPinnedRows,
+        acceptedDefects: null,
+        ...dirtySeq(s),
+        ...staleShadow(s),
+      };
+    }
+    case "TIME_ADJUSTMENT_SET": {
+      const item = s.inputs?.assigned.find((i) => i.id === a.id);
+      if (!item || !isNativeTimedTodoist(item)) return s;
+      const timeAdjustmentOptIns = { ...s.timeAdjustmentOptIns };
+      if (a.allow) timeAdjustmentOptIns[a.id] = true;
+      else delete timeAdjustmentOptIns[a.id];
+      const includedIds = includedIdsForInputs(s.inputs!, s.overrides);
+      return {
+        ...s,
+        timeAdjustmentOptIns,
+        pendingPinnedRows: a.allow
+          ? removeNativeAutoPin(s.pendingPinnedRows, item)
+          : mergeNativeTimedPins(
+              s.pendingPinnedRows,
+              s.inputs!,
+              timeAdjustmentOptIns,
+              includedIds,
+            ),
+        pinnedRows: a.allow
+          ? removeNativeAutoPin(s.pinnedRows, item)
+          : mergeNativeTimedPins(s.pinnedRows, s.inputs!, timeAdjustmentOptIns, includedIds),
         acceptedDefects: null,
         ...dirtySeq(s),
         ...staleShadow(s),
@@ -411,7 +456,8 @@ export function reducer(s: AppState, a: Action): AppState {
         driftNotice: null,
         acceptedDefects: null, // resequence kills any acceptance (LD 24)
       };
-    case "SEQUENCE_OK":
+    case "SEQUENCE_OK": {
+      const includedIds = includedIdsForInputs(s.inputs!, s.overrides);
       return {
         ...s,
         sequence: a.sequence,
@@ -423,13 +469,24 @@ export function reducer(s: AppState, a: Action): AppState {
         anchoredSourceFingerprint: a.anchoredSourceFingerprint,
         planningConfigFingerprint: a.planningConfigFingerprint ?? s.inputs?.planningConfigFingerprint ?? null,
         overlapGrants: a.overlapGrants ?? [],
-        pinnedRows: a.pinnedRows ?? s.pinnedRows,
-        pendingPinnedRows: a.pendingPinnedRows ?? a.pinnedRows ?? s.pendingPinnedRows,
+        pinnedRows: mergeNativeTimedPins(
+          a.pinnedRows ?? s.pinnedRows,
+          s.inputs!,
+          s.timeAdjustmentOptIns,
+          includedIds,
+        ),
+        pendingPinnedRows: mergeNativeTimedPins(
+          a.pendingPinnedRows ?? a.pinnedRows ?? s.pendingPinnedRows,
+          s.inputs!,
+          s.timeAdjustmentOptIns,
+          includedIds,
+        ),
         ledger: a.ledger,
         shadow: null,
         shadowPhase: "none",
         liveArmed: false,
       };
+    }
     case "SEQUENCE_FAIL":
       return {
         ...s,
@@ -647,16 +704,30 @@ export function reducer(s: AppState, a: Action): AppState {
       // Restored plan re-enters as dirty — deterministic revalidation (free)
       // must confirm it before shadow/commit are reachable again. Review
       // state (shadow, defect acceptance) deliberately never restores.
+      const restoredOptIns = s.inputs
+        ? pruneTimeAdjustmentOptIns(a.timeAdjustmentOptIns ?? {}, s.inputs)
+        : (a.timeAdjustmentOptIns ?? {});
       const restoredPins = s.inputs
-        ? mergeRecurringPins(a.pinnedRows ?? [], s.inputs)
+        ? mergeNativeTimedPins(
+            a.pinnedRows ?? [],
+            s.inputs,
+            restoredOptIns,
+            includedIdsForInputs(s.inputs, a.overrides),
+          )
         : (a.pinnedRows ?? []);
       const restoredPendingPins = s.inputs
-        ? mergeRecurringPins(a.pendingPinnedRows ?? a.pinnedRows ?? [], s.inputs)
+        ? mergeNativeTimedPins(
+            a.pendingPinnedRows ?? a.pinnedRows ?? [],
+            s.inputs,
+            restoredOptIns,
+            includedIdsForInputs(s.inputs, a.overrides),
+          )
         : (a.pendingPinnedRows ?? a.pinnedRows ?? []);
       return {
         ...s,
         acceptedDefects: null,
         overrides: a.overrides,
+        timeAdjustmentOptIns: restoredOptIns,
         placements: a.placements,
         sequence: a.sequence,
         fingerprint: a.fingerprint,
@@ -688,7 +759,7 @@ export function reducer(s: AppState, a: Action): AppState {
           inputs: a.inputs,
           capacity: a.inputs.capacity,
           daySetup: a.inputs.daySetup,
-          pendingPinnedRows: recurringPinnedRows(a.inputs),
+          pendingPinnedRows: nativeTimedPins(a.inputs, {}, allAssignedIds(a.inputs)),
           ledger: a.ledger,
           refresh: { phase: "idle", error: null, lastRefreshed: a.at, summary: null },
         };
@@ -719,17 +790,24 @@ export function reducer(s: AppState, a: Action): AppState {
             s.planningConfigFingerprint);
       const summary = { ...r.summary, invalidated: drift };
       const assignedTouched = summaryHasChanges(r.summary) || r.sequenceTouched;
+      const timeAdjustmentOptIns = pruneTimeAdjustmentOptIns(s.timeAdjustmentOptIns, a.inputs);
       const base: AppState = {
         ...s,
         inputs: a.inputs,
         ledger: a.ledger,
+        timeAdjustmentOptIns,
         daySetup: s.daySetup.confirmed
           ? { ...s.daySetup, anchored: r.anchoredOverrides }
           : a.inputs.daySetup,
         overrides: r.overrides,
         placements: r.placements,
         sequence: r.sequence,
-        pendingPinnedRows: mergeRecurringPins(s.pendingPinnedRows, a.inputs),
+        pendingPinnedRows: mergeNativeTimedPins(
+          s.pendingPinnedRows,
+          a.inputs,
+          timeAdjustmentOptIns,
+          includedIdsForInputs(a.inputs, r.overrides),
+        ),
         refresh: { phase: "idle", error: null, lastRefreshed: a.at, summary },
       };
       if (drift) {
@@ -780,32 +858,127 @@ function addMin(hhmm: string, delta: number): string {
   return `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
 }
 
-function recurringPinnedRows(inputs: PlanInputs): SequenceRow[] {
-  return inputs.assigned
-    .filter((item) => item.isRecurring && item.scheduledStart && item.blocks > 0)
-    .map((item) => ({
-      id: item.id,
-      start: item.scheduledStart as string,
-      end: addMin(item.scheduledStart as string, item.blocks * 30),
-      zone: null,
-      kind: "work" as const,
-      wire: {
-        id: item.id,
-        start: item.scheduledStart,
-        end: addMin(item.scheduledStart as string, item.blocks * 30),
-        zone: null,
-      },
-    }));
+function allAssignedIds(inputs: PlanInputs): ReadonlySet<string> {
+  return new Set(inputs.assigned.map((item) => item.id));
 }
 
-function mergeRecurringPins(current: SequenceRow[], inputs: PlanInputs): SequenceRow[] {
-  const recurringIds = new Set(
-    inputs.assigned.filter((item) => item.isRecurring).map((item) => item.id),
+function includedIdsForInputs(
+  inputs: PlanInputs,
+  overrides: Record<string, TodayOverride>,
+): ReadonlySet<string> {
+  return new Set(
+    inputs.assigned
+      .filter((item) => overrides[item.id]?.included !== false)
+      .map((item) => item.id),
   );
+}
+
+function isNativeTimedTodoist(item: PlanInputs["assigned"][number]): boolean {
+  return (
+    item.source === "todoist" &&
+    item.id.length > 0 &&
+    typeof item.scheduledStart === "string" &&
+    /^(?:[01]\d|2[0-3]):[0-5]\d$/.test(item.scheduledStart)
+  );
+}
+
+function nativeTimedPins(
+  inputs: PlanInputs,
+  timeAdjustmentOptIns: Record<string, boolean>,
+  includedIds: ReadonlySet<string>,
+): SequenceRow[] {
+  return inputs.assigned
+    .filter(
+      (item) =>
+        includedIds.has(item.id) &&
+        isNativeTimedTodoist(item) &&
+        item.blocks > 0 &&
+        !timeAdjustmentOptIns[item.id],
+    )
+    .flatMap((item) => {
+      const end = nativeTimedEnd(item.scheduledStart as string, item.blocks);
+      if (!end) return [];
+      return [{
+        id: item.id,
+        start: item.scheduledStart as string,
+        end,
+        zone: null,
+        kind: "work" as const,
+        nativePin: true,
+        wire: {
+          id: item.id,
+          start: item.scheduledStart,
+          end,
+          zone: null,
+        },
+      }];
+    });
+}
+
+/** Native pins are same-day intervals. Never wrap a late positive duration
+    through midnight: cap representable intervals at 23:59, while 23:59 has
+    no positive HH:MM representation and therefore has no client auto-pin. */
+function nativeTimedEnd(start: string, blocks: number): string | null {
+  const startMinutes = toMin(start);
+  if (startMinutes >= 24 * 60 - 1) return null;
+  const durationMinutes = Math.max(1, Math.round(blocks * 30));
+  const endMinutes = Math.min(startMinutes + durationMinutes, 24 * 60 - 1);
+  if (endMinutes <= startMinutes) return null;
+  return `${String(Math.floor(endMinutes / 60)).padStart(2, "0")}:${String(endMinutes % 60).padStart(2, "0")}`;
+}
+
+function removeNativeAutoPin(
+  current: SequenceRow[],
+  item: PlanInputs["assigned"][number],
+): SequenceRow[] {
+  return current.filter(
+    (row) =>
+      !(row.id === item.id &&
+        (row.nativePin === true ||
+          (row.nativePin !== false && row.start === item.scheduledStart))),
+  );
+}
+
+export function mergeNativeTimedPins(
+  current: SequenceRow[],
+  inputs: PlanInputs,
+  timeAdjustmentOptIns: Record<string, boolean>,
+  includedIds: ReadonlySet<string> = allAssignedIds(inputs),
+): SequenceRow[] {
+  const nativeItems = new Map(
+    inputs.assigned
+      .filter(isNativeTimedTodoist)
+      .map((item) => [item.id, item]),
+  );
+  const assignedIds = allAssignedIds(inputs);
+  const withoutNative = current.filter((row) => {
+    if (assignedIds.has(row.id) && !includedIds.has(row.id)) return false;
+    const item = nativeItems.get(row.id);
+    if (!item) return row.nativePin !== true;
+    if (row.nativePin === true) return false;
+    // Explicit manual placement wins even when it happens to match the
+    // source-native start; only an unmarked legacy pin needs the start check.
+    if (row.nativePin === false) return true;
+    return row.start !== item.scheduledStart;
+  });
   return [
-    ...current.filter((row) => !recurringIds.has(row.id)),
-    ...recurringPinnedRows(inputs),
+    ...withoutNative,
+    ...nativeTimedPins(inputs, timeAdjustmentOptIns, includedIds).filter(
+      (pin) => !withoutNative.some((row) => row.id === pin.id),
+    ),
   ];
+}
+
+function pruneTimeAdjustmentOptIns(
+  optIns: Record<string, boolean>,
+  inputs: PlanInputs,
+): Record<string, boolean> {
+  const timedIds = new Set(
+    inputs.assigned.filter(isNativeTimedTodoist).map((item) => item.id),
+  );
+  return Object.fromEntries(
+    Object.entries(optIns).filter(([id, value]) => timedIds.has(id) && value === true),
+  );
 }
 
 function upsertPinnedRow(
@@ -827,8 +1000,10 @@ export function queueState(s: AppState, id: string): QueueState {
   if (override && !override.included) return "excluded";
   const blocks = override?.blocks ?? item.blocks;
   if (blocks === 0) return "background";
-  // T27: a timed recurring row is placement-immune — never offered for
-  // placement even if its pin was cleared (the server re-pins it anyway).
+  // Native Todoist times are protected by default. Opting in removes that
+  // automatic pin for the next sequence. Recurring rows remain pattern-owned
+  // in the manual queue, while both row kinds use the same wire permission.
+  if (isNativeTimedTodoist(item) && !s.timeAdjustmentOptIns[item.id]) return "scheduled";
   if (item.isRecurring && item.scheduledStart) return "scheduled";
   if (s.pendingPinnedRows.some((r) => r.id === id)) return "scheduled";
   if (s.sequence?.some((r) => r.id === id && r.kind === "work")) return "scheduled";

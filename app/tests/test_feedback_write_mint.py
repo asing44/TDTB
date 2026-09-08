@@ -208,6 +208,15 @@ def _today() -> date:
     return gather.effective_date(datetime.now())
 
 
+def _seed_digest_index(vault: Path) -> None:
+    # The live /commit guard accepts the digest row only when today's frozen
+    # server identity index contains it — seed it before the commit call.
+    rs.write_digest_index(vault, date(2026, 7, 12), [
+        {"name": "Garage", "todoist_id": "", "path": "P/Garage.md",
+         "surface": "assigned"},
+    ])
+
+
 class TestSetupGateBlocksExternalWrites:
     """Skeleton runstate (gather materialisation, Drop, ledger, sequence
     side-effects) never confirms Day Setup; write paths fail closed (409)
@@ -231,6 +240,7 @@ class TestSetupGateBlocksExternalWrites:
             "# Journal\n", encoding="utf-8")
         monkeypatch.setattr(gather, "effective_date",
                             lambda now: date(2026, 7, 12))
+        _seed_digest_index(vault)
         before = {p: p.read_bytes() for p in vault.rglob("*") if p.is_file()}
         r = client.post(
             "/commit?mode=live", headers=_auth(client),
@@ -262,6 +272,7 @@ class TestSetupGateBlocksExternalWrites:
             "# Journal\n", encoding="utf-8")
         monkeypatch.setattr(gather, "effective_date",
                             lambda now: date(2026, 7, 12))
+        _seed_digest_index(vault)
         monkeypatch.setattr(shadow, "gather_live_state", _fake_live_state)
         client.app.state.build_commit_clients = (
             lambda v, cfg: (FakeLiveTodoist(), FakeLiveStore())

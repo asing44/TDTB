@@ -66,6 +66,50 @@ def _id(item: dict[str, Any]) -> str:
     return str(item.get("id") or item.get("name") or "")
 
 
+def _time_frame_identity(frame: dict[str, Any] | None) -> dict[str, Any]:
+    """Keep only stable frame fields when comparing a planning snapshot."""
+    canonical = sequence.canonicalize_time_frame(frame)
+    return {
+        key: canonical[key]
+        for key in ("anchor", "effective_eod", "config_eod")
+        if key in canonical
+    }
+
+
+def _snapshot_projection(snapshot: dict[str, Any]) -> dict[str, Any]:
+    """Canonicalize snapshot metadata without comparing volatile clock fields."""
+    projection: dict[str, Any] = {
+        "overlap_grants": sequence.canonicalize_overlap_grants(
+            snapshot.get("overlap_grants", [])
+        ),
+        "pinned_rows": sequence.canonicalize_pinned_rows(
+            snapshot.get("pinned_rows", [])
+        ),
+        "planning_config_fingerprint": snapshot.get(
+            "planning_config_fingerprint", ""
+        ),
+    }
+    if "time_frame" in snapshot:
+        projection["time_frame"] = _time_frame_identity(snapshot.get("time_frame"))
+    return projection
+
+
+def _diagnostic(
+    rule: str,
+    detail: str,
+    *,
+    affected_rows: list[str] | None = None,
+    intervals: list[dict[str, str]] | None = None,
+) -> dict[str, Any]:
+    return {
+        "rule": rule,
+        "severity": "error",
+        "affected_rows": affected_rows or [],
+        "intervals": intervals or [],
+        "detail": detail,
+    }
+
+
 def _effective_blocks(
     inputs: dict[str, Any],
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[str]]:
@@ -83,20 +127,27 @@ def _effective_blocks(
 def _recurring_pin_errors(
     assigned: list[dict[str, Any]], pinned_rows: list[dict[str, Any]]
 ) -> list[str]:
-    """Reject client pins that move a timed recurring row off its native slot."""
+    """Reject client pins that move a timed recurring row off its native slot.
+
+    This legacy diagnostic remains separate so existing callers still receive
+    the recurring-specific error wording; generalized native-timed enforcement
+    happens immediately afterward for both recurring and one-off rows.
+    """
     expected = {
         _id(pin): pin
         for item in assigned
-        for pin in sequence.recurring_auto_pins([item])
+        for pin in sequence.timed_auto_pins([item])
+        if item.get("is_recurring")
     }
     errors: list[str] = []
     for pin in pinned_rows:
         expected_pin = expected.get(_id(pin))
         if expected_pin is None:
             continue
+        canonical_pin = sequence.canonicalize_pinned_row(pin)
         if (
-            pin.get("start") != expected_pin["start"]
-            or pin.get("end") != expected_pin["end"]
+            canonical_pin.get("start") != expected_pin["start"]
+            or canonical_pin.get("end") != expected_pin["end"]
         ):
             errors.append(
                 f"recurring pinned row {_id(pin)!r} must remain at "
@@ -120,19 +171,28 @@ def prepare_sequence(inputs: dict[str, Any], *, mode: str) -> PreparedSequence:
     config = dict(data.get("config") or {})
     anchored = list(data.get("anchored_blocks") or [])
     pins = list(data.get("pinned_rows") or [])
+    effective_pins = pins
 
-    if mode == "proposal":
-        pin_errors = sequence.validate_pinned_rows(pins, assigned_input)
-        if pin_errors:
-            raise PlanningError(
-                "pinned-row validation failed", hard_errors=pin_errors
-            )
-        recurring_pin_errors = _recurring_pin_errors(assigned_input, pins)
-        if recurring_pin_errors:
-            raise PlanningError(
-                "recurring pinned row validation failed",
-                hard_errors=recurring_pin_errors,
-            )
+    pin_errors = sequence.validate_pinned_rows(pins, assigned_input)
+    if pin_errors:
+        raise PlanningError(
+            "pinned-row validation failed", hard_errors=pin_errors
+        )
+    recurring_pin_errors = _recurring_pin_errors(assigned_input, pins)
+    if recurring_pin_errors:
+        raise PlanningError(
+            "recurring pinned row validation failed",
+            hard_errors=recurring_pin_errors,
+        )
+
+    effective_pins, native_pin_errors = sequence.enforce_native_pins(
+        assigned_input, pins
+    )
+    if native_pin_errors:
+        raise PlanningError(
+            "native timed pin validation failed",
+            hard_errors=native_pin_errors,
+        )
 
     blocks, zone_rows, block_notes = _effective_blocks(data)
     conflicts = external_sources.stale_mint_conflicts(blocks, anchored)
@@ -142,21 +202,11 @@ def prepare_sequence(inputs: dict[str, Any], *, mode: str) -> PreparedSequence:
             conflicts=conflicts,
         )
 
-    if mode == "proposal":
-        auto_pins = sequence.recurring_auto_pins(
-            assigned_input, exclude_ids={_id(pin) for pin in pins}
+    pin_errors = sequence.validate_pinned_rows(effective_pins, assigned_input)
+    if pin_errors:
+        raise PlanningError(
+            "pinned-row validation failed", hard_errors=pin_errors
         )
-        effective_pins = pins + auto_pins
-        if auto_pins:
-            pin_errors = sequence.validate_pinned_rows(effective_pins, assigned_input)
-            if pin_errors:
-                raise PlanningError(
-                    "pinned-row validation failed", hard_errors=pin_errors
-                )
-    else:
-        # Revalidation must not manufacture or restore pins.  Client changes
-        # are observable through snapshot and immutable-row checks below.
-        effective_pins = pins
 
     defaults = dict(config.get("Defaults") or {})
     try:
@@ -207,7 +257,7 @@ def prepare_sequence(inputs: dict[str, Any], *, mode: str) -> PreparedSequence:
         time_frame=copy.deepcopy(data["time_frame"]),
         day_semantics=data.get("day_semantics") or {},
         planning_config_fingerprint=str(data.get("planning_config_fingerprint") or ""),
-        pinned_rows=pins,
+        pinned_rows=copy.deepcopy(effective_pins),
         overlap_grants=list(data.get("overlap_grants") or []),
         effective_pins=effective_pins,
         blocks=blocks,
@@ -265,6 +315,13 @@ def run_proposal(
         ctx=ctx,
     )
     proposal = copy.deepcopy(proposal)
+    proposal["sequence"] = [
+        sequence.canonicalize_pinned_row(row) if isinstance(row, dict) else row
+        for row in (proposal.get("sequence") or [])
+    ]
+    proposal["overlap_grants"] = sequence.canonicalize_overlap_grants(
+        proposal.get("overlap_grants") or []
+    )
     proposal = sequence.canonicalize_sequence_ids(
         proposal,
         prepared.assigned + [
@@ -286,9 +343,12 @@ def run_proposal(
         planning_config_fingerprint=prepared.planning_config_fingerprint,
     )
     snapshot = {
-        "overlap_grants": list(proposal.get("overlap_grants") or []),
+        "overlap_grants": sequence.canonicalize_overlap_grants(
+            proposal.get("overlap_grants") or []
+        ),
         "pinned_rows": copy.deepcopy(prepared.effective_pins),
         "planning_config_fingerprint": prepared.planning_config_fingerprint,
+        "time_frame": _time_frame_identity(prepared.time_frame),
     }
     if not validation.ok:
         return PlanningOutcome(
@@ -297,6 +357,9 @@ def run_proposal(
         )
 
     proposal["warnings"] = validation.warnings + prepared.block_notes
+    diagnostics = getattr(validation, "diagnostics", [])
+    if diagnostics:
+        proposal["diagnostics"] = copy.deepcopy(diagnostics)
     proposal["sequence"] = list(proposal.get("sequence") or []) + copy.deepcopy(prepared.zone_rows)
     if prepared.qt_contents:
         proposal["qt_contents"] = prepared.qt_contents
@@ -305,36 +368,57 @@ def run_proposal(
 
 
 def validate_revalidation(prepared: PreparedSequence) -> sequence.ValidationResult:
-    """Validate the client layout without sorting, merging, or deriving pins."""
+    """Validate the client layout without sorting or merging rows.
+
+    Native timed pins have already been canonically derived during preparation
+    and are used for snapshot comparison, immutable-row checks, and validation
+    walls just as they are for proposal preparation.
+    """
     if prepared.mode != "revalidation":
         raise ValueError("validate_revalidation requires revalidation preparation")
-    expected_snapshot = {
-        "overlap_grants": prepared.snapshot.get("overlap_grants", []),
-        "pinned_rows": prepared.snapshot.get("pinned_rows", []),
-        "planning_config_fingerprint": prepared.snapshot.get(
-            "planning_config_fingerprint", ""
-        ),
-    }
+    expected_snapshot = _snapshot_projection(prepared.snapshot)
     actual_snapshot = {
-        "overlap_grants": prepared.overlap_grants,
-        "pinned_rows": prepared.pinned_rows,
+        "overlap_grants": sequence.canonicalize_overlap_grants(
+            prepared.overlap_grants
+        ),
+        "pinned_rows": sequence.canonicalize_pinned_rows(prepared.effective_pins),
         "planning_config_fingerprint": prepared.planning_config_fingerprint,
     }
+    if "time_frame" in expected_snapshot:
+        actual_snapshot["time_frame"] = _time_frame_identity(prepared.time_frame)
     if actual_snapshot != expected_snapshot and prepared.snapshot:
+        detail = "planning snapshot is stale"
         return sequence.ValidationResult(
-            ok=False, hard_errors=["planning snapshot is stale"]
+            ok=False,
+            hard_errors=[detail],
+            diagnostics=[_diagnostic("planning_snapshot", detail)],
         )
 
-    pin_errors = sequence.validate_pinned_rows(prepared.pinned_rows, prepared.assigned)
+    pin_errors = sequence.validate_pinned_rows(
+        prepared.effective_pins, prepared.assigned
+    )
     if pin_errors:
-        return sequence.ValidationResult(ok=False, hard_errors=pin_errors)
-    expected = {_id(pin): pin for pin in prepared.pinned_rows}
+        return sequence.ValidationResult(
+            ok=False,
+            hard_errors=pin_errors,
+            diagnostics=[_diagnostic("pinned_row", error) for error in pin_errors],
+        )
+    expected = {
+        _id(pin): sequence.canonicalize_pinned_row(pin)
+        for pin in prepared.effective_pins
+    }
     actual = {
-        _id(row): row for row in prepared.sequence if _id(row) in expected
+        _id(row): sequence.canonicalize_pinned_row(row)
+        for row in prepared.sequence if _id(row) in expected
     }
     if actual != expected:
+        detail = "pinned rows changed from immutable snapshot"
+        affected = sorted(set(expected) | set(actual))
         return sequence.ValidationResult(
-            ok=False, hard_errors=["pinned rows changed from immutable snapshot"]
+            ok=False,
+            hard_errors=[detail],
+            diagnostics=[_diagnostic("pinned_snapshot", detail,
+                                     affected_rows=affected)],
         )
 
     if prepared.preflight_conflicts:
@@ -348,7 +432,7 @@ def validate_revalidation(prepared: PreparedSequence) -> sequence.ValidationResu
         {"sequence": copy.deepcopy(prepared.sequence),
          "overlap_grants": copy.deepcopy(prepared.overlap_grants)},
         prepared.assigned,
-        prepared.anchored_blocks + _pinned_walls(prepared.pinned_rows),
+        prepared.anchored_blocks + _pinned_walls(prepared.effective_pins),
         prepared.config,
         time_frame=prepared.time_frame,
         optional_ids=prepared.optional_ids,

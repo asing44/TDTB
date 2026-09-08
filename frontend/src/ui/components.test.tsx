@@ -268,6 +268,22 @@ describe("Queue", () => {
     expect(container.textContent).not.toMatch(/complete/i);
   });
 
+  it("shows parent-child and related-tag context without duplicate rows", () => {
+    const { ui, store } = makeHarness("ready");
+    const inputs = store.getState().inputs!;
+    const base = inputs.assigned[0];
+    const parent = { ...base, id: "Zeta parent", name: "Zeta parent", identity: "vault:zeta-parent", tags: ["systems"], relatesTo: null };
+    const child = { ...base, id: "Alpha child", name: "Alpha child", identity: "vault:alpha-child", tags: ["systems"], relatesTo: "[[Zeta parent]]" };
+    const sibling = { ...base, id: "Systems sibling", name: "Systems sibling", identity: "vault:systems-sibling", tags: ["systems"], relatesTo: null };
+    store.dispatch({ type: "INPUTS_LOADED", inputs: { ...inputs, assigned: [child, sibling, parent] }, ledger: store.getState().ledger! });
+
+    const { container, getByText } = ui(<Queue />);
+    expect(getByText("Related · #systems")).toBeTruthy();
+    expect(getByText("child of Zeta parent")).toBeTruthy();
+    expect(container.querySelectorAll(".qrow")).toHaveLength(3);
+    expect(container.querySelector('[data-hierarchy-depth="1"]')).toBeTruthy();
+  });
+
   it("exclude control moves an item to Excluded today", () => {
     const { ui, store } = makeHarness("ready");
     const { getByLabelText } = ui(<Queue />);
@@ -834,6 +850,46 @@ describe("T13 canvas deletion", () => {
     expect(getByText("6:10 AM – 6:55 AM")).toBeTruthy();
   });
 
+  it("keeps parent-child context visible in the committed schedule", () => {
+    const h = makeHarness("verified");
+    const inputs = h.store.getState().inputs!;
+    const parent = inputs.assigned.find((item) => item.name === "Magic Mirror")!;
+    const child = inputs.assigned.find((item) => item.name === "Review AWS module 4")!;
+    h.store.dispatch({
+      type: "INPUTS_LOADED",
+      inputs: {
+        ...inputs,
+        time: { ...inputs.time, now: "06:20" },
+        assigned: [
+          ...inputs.assigned.map((item) =>
+            item.id === parent.id
+              ? { ...item, tags: ["morning systems"] }
+              : item.id === child.id
+                ? { ...item, relatesTo: "[[Magic Mirror]]", tags: ["morning systems"] }
+                : item,
+          ),
+        ],
+      },
+      ledger: h.store.getState().ledger!,
+    });
+    h.store.dispatch({
+      type: "SEQUENCE_OK",
+      sequence: [
+        { id: parent.id, start: "06:10", end: "06:55", zone: null, kind: "work" },
+        { id: child.id, start: "07:00", end: "07:30", zone: null, kind: "work" },
+      ],
+      warnings: [],
+      fingerprint: "fixed",
+      anchoredSourceFingerprint: inputs.anchoredSourceFingerprint,
+      planningConfigFingerprint: inputs.planningConfigFingerprint,
+      ledger: h.store.getState().ledger!,
+    });
+    h.store.dispatch({ type: "COMMIT_DONE", report: { status: "ok", surfaces: [], verifyFailures: [] } });
+
+    const { getByText } = h.ui(<ExecutionView />);
+    expect(getByText(/child of Magic Mirror/)).toBeTruthy();
+  });
+
   it("T20: runtime verbs absent before a live commit", () => {
     const { ui } = makeHarness("sequenced");
     const { container } = ui(<ExecutionView />);
@@ -959,6 +1015,37 @@ describe("FooterBanners alerts (T12i: floating pills own the roll-up)", () => {
     expect(getByText(/overlaps movable work 'Reading'/)).toBeTruthy();
   });
 
+  it("renders structured validation diagnostics with affected rows and exact quarter-hour intervals", () => {
+    const { ui, store } = makeHarness("ready");
+    store.dispatch({
+      type: "VALIDATED",
+      validation: {
+        ok: false,
+        hardErrors: ["A overlaps Dentist"],
+        warnings: [],
+        diagnostics: [{
+          rule: "calendar_overlap",
+          severity: "error",
+          detail: "A overlaps Dentist",
+          affectedRows: ["A", "Dentist"],
+          intervals: [
+            { id: "A", start: "09:15", end: "10:30" },
+            { id: "Dentist", start: "09:00", end: "10:00" },
+          ],
+        }],
+      },
+    });
+    const { container, getByText } = ui(<FooterBanners />);
+    fireEvent.click(container.querySelector(".alert-pill--error") as Element);
+
+    expect(getByText("A overlaps Dentist")).toBeTruthy();
+    expect(getByText(/affected rows: A, Dentist/)).toBeTruthy();
+    expect(getByText(/A 9:15 AM–10:30 AM/)).toBeTruthy();
+    expect(getByText(/Dentist 9 AM–10 AM/)).toBeTruthy();
+    // The flattened hard-error string is replaced, not rendered twice.
+    expect(container.querySelectorAll(".alert-pills__item").length).toBe(1);
+  });
+
   it("a granted overlap renders as a non-blocking info item (T29)", () => {
     const { ui, store } = makeHarness("ready");
     store.dispatch({
@@ -1048,6 +1135,68 @@ describe("T25 recurring duration shaping", () => {
     expect(h.store.getState().overrides["LOOTS"].included).toBe(false);
   });
 
+  it("shows a protected-by-default, keyboard-accessible time-movement opt-in per timed row", () => {
+    const h = makeHarness("ready");
+    withRecurring(h);
+    const { getByLabelText } = h.ui(<Queue />);
+    const optIn = getByLabelText("Allow scheduler to move existing time for LOOTS") as HTMLInputElement;
+    expect(optIn.type).toBe("checkbox");
+    expect(optIn.checked).toBe(false);
+    expect(optIn.getAttribute("aria-label")).toContain("existing time");
+
+    // A native checkbox keeps Space/Enter activation in the browser's normal
+    // keyboard path; the click here is the testing-library activation event.
+    optIn.focus();
+    fireEvent.keyDown(optIn, { key: " " });
+    fireEvent.click(optIn);
+    expect(optIn.checked).toBe(true);
+    expect(h.store.getState().timeAdjustmentOptIns).toEqual({ LOOTS: true });
+  });
+
+  it("shows time adjustment only for Todoist rows with a native start", () => {
+    const h = makeHarness("ready");
+    const inputs = structuredClone(h.store.getState().inputs!);
+    const base = inputs.assigned.find((item) => item.source === "todoist")!;
+    inputs.assigned.push(
+      {
+        ...base,
+        id: "Timed Todoist",
+        name: "Timed Todoist",
+        todoistId: "timed-todoist",
+        scheduledStart: "14:00",
+        blocks: 1,
+        durationLabel: "30min",
+      },
+      {
+        ...base,
+        id: "Untimed Todoist",
+        name: "Untimed Todoist",
+        todoistId: "untimed-todoist",
+        scheduledStart: null,
+        blocks: 1,
+        durationLabel: "30min",
+      },
+      {
+        ...base,
+        id: "All-day Todoist",
+        name: "All-day Todoist",
+        todoistId: "all-day-todoist",
+        scheduledStart: null,
+        blocks: 0,
+        durationLabel: "All day",
+      },
+    );
+    h.store.dispatch({
+      type: "INPUTS_LOADED",
+      inputs,
+      ledger: { today: inputs.validDate, spent: 0, cap: 7, remaining: 7 },
+    });
+    const { getByLabelText, queryByLabelText } = h.ui(<Queue />);
+    expect(getByLabelText("Allow scheduler to move existing time for Timed Todoist")).toBeTruthy();
+    expect(queryByLabelText("Allow scheduler to move existing time for Untimed Todoist")).toBeNull();
+    expect(queryByLabelText("Allow scheduler to move existing time for All-day Todoist")).toBeNull();
+  });
+
   it("block editor accepts a 5-minute exact value and snaps stray input (LD22 amendment)", () => {
     const h = makeHarness("ready");
     withRecurring(h);
@@ -1120,5 +1269,56 @@ describe("T26 queue legibility", () => {
     for (const el of overdue) {
       expect((el as HTMLElement).textContent).toMatch(/^overdue \d+d$/);
     }
+  });
+});
+
+describe("P6-01 grouping relationship fixtures", () => {
+  it("keeps a related infeasible child visible once, ordered after its parent", () => {
+    const h = makeHarness("ready");
+    const inputs = structuredClone(h.store.getState().inputs!);
+    const base = inputs.assigned[0];
+    const parent = {
+      ...base,
+      id: "Zeta parent",
+      name: "Zeta parent",
+      path: "50 - Operations/Projects/Zeta parent.md",
+      urgency: null,
+      deadline: null,
+      blocks: 2,
+      durationLabel: "1hr",
+      tags: ["systems"],
+    };
+    const child = {
+      ...base,
+      id: "Alpha child",
+      name: "Alpha child",
+      path: "50 - Operations/Projects/Alpha child.md",
+      urgency: null,
+      deadline: null,
+      blocks: 1,
+      durationLabel: "30min",
+      relatesTo: "[[Zeta parent]]",
+      tags: ["systems"],
+    };
+    inputs.assigned = [child, parent];
+    h.store.dispatch({
+      type: "INPUTS_LOADED",
+      inputs,
+      ledger: { today: inputs.validDate, spent: 0, cap: 3, remaining: 3 },
+    });
+    h.store.dispatch({
+      type: "VALIDATED",
+      validation: {
+        ok: true,
+        hardErrors: [],
+        warnings: ["⚠ overflow infeasible — Alpha child: no free gap"],
+      },
+    });
+
+    const { container } = h.ui(<Queue />);
+    const names = [...(container as HTMLElement).querySelectorAll<HTMLElement>(".qrow__name")]
+      .map((node) => node.textContent);
+    expect(names).toEqual(["Zeta parent", "Alpha child"]);
+    expect(new Set(names).size).toBe(2);
   });
 });

@@ -26,6 +26,8 @@ from shadow import (  # noqa: E402
     ManifestEntry,
     ShadowDiff,
     ShadowDiffEntry,
+    build_plan_manifest,
+    diff_against_live,
 )
 
 TODAY = date(2026, 7, 12)
@@ -515,11 +517,14 @@ class TestDailyNote:
         assert "- 09:00 new" in text and "- old" not in text
         assert "# Journal" in text and "keep" in text
 
-    def test_missing_note_surfaces_failure(self, tmp_path):
+    def test_missing_note_is_bounded_noop(self, tmp_path):
         (tmp_path / "30 - Daily").mkdir(parents=True)
         intents = [commit.WriteIntent("B", "vault", "update", "# TDTB Plan")]
         r = commit.write_daily_note(intents, tmp_path, "- x", today=TODAY)
-        assert not r.ok and "not found" in r.error
+        assert r.ok
+        assert r.error is None
+        assert r.created == [] and r.updated == []
+        assert not list((tmp_path / "30 - Daily").iterdir())
 
 
 # ---------------------------------------------------------------------------
@@ -581,6 +586,18 @@ class RecurrenceFakeTodoist(FakeTodoist):
         return self._tasks[task_id]
 
 
+class ReadbackTrackingTodoist(RecurrenceFakeTodoist):
+    """Recurrence fake that counts the one final readback per intent."""
+
+    def __init__(self, tasks=None, date_only_first_n=0):
+        super().__init__(tasks, date_only_first_n=date_only_first_n)
+        self.readback_calls = 0
+
+    def get_task(self, task_id):
+        self.readback_calls += 1
+        return super().get_task(task_id)
+
+
 def _recurring_update_diff(name="Upper", tid="t42", time="09:00"):
     return _diff(_entry("A", "todoist", "schedule", name, UPDATE, time=time,
                         detail={"task_id": tid, "is_recurring": True}))
@@ -603,6 +620,38 @@ class TestRecurrencePreservingRetime:
             "due": {"date": "2026-07-12T11:00:00", "is_recurring": True}}])
         intents = commit.plan_writes(_recurring_update_diff(), CAL_IDS, today=TODAY)
         res = commit.write_todoist(intents, client)
+        assert res.ok, res.error
+        assert client.datetime_calls == 1 and client.due_string_calls == 0
+        assert client._tasks["t42"]["due"]["is_recurring"] is True
+        assert client._tasks["t42"]["due"]["date"] == "2026-07-12T09:00:00"
+
+    def test_opted_in_recurring_shadow_update_uses_datetime(self):
+        digest = {"assigned": [{
+            "name": "Upper",
+            "path": "todoist://t42",
+            "source": "todoist",
+            "blocks": 1,
+            "scheduled_start": "11:00",
+            "allow_time_adjustment": True,
+            "is_recurring": True,
+        }]}
+        sequence = {"sequence": [{
+            "id": "Upper", "start": "09:00", "end": "09:30",
+        }]}
+        manifest = build_plan_manifest(digest, sequence, {})
+        diff = diff_against_live(manifest, {"todoist_tasks": [{
+            "id": "t42", "content": "Upper",
+            "due": {"date": "2026-07-12T11:00:00", "is_recurring": True},
+        }], "daily_note_text": "# TDTB Plan\n"})
+        client = RecurrenceFakeTodoist([{"id": "t42", "content": "Upper",
+            "due": {"date": "2026-07-12T11:00:00", "is_recurring": True}}])
+
+        intents = commit.plan_writes(diff, CAL_IDS, today=TODAY)
+        assert intents[0].native_start == "11:00"
+        assert intents[0].pinned is False
+        assert intents[0].retiming_authorized is True
+        res = commit.write_todoist(intents, client)
+
         assert res.ok, res.error
         assert client.datetime_calls == 1 and client.due_string_calls == 0
         assert client._tasks["t42"]["due"]["is_recurring"] is True
@@ -635,6 +684,155 @@ class TestRecurrencePreservingRetime:
             commit.plan_writes(_recurring_update_diff(), CAL_IDS, today=TODAY), client)
         assert res.ok is False
         assert "due mismatch" in (res.error or "")
+
+
+class TestNativeProtectionWriteBoundary:
+    def test_protected_native_update_has_no_reschedule_action(self):
+        # Contract: protected native timing produces no Todoist retime action.
+        client = RecurrenceFakeTodoist([{
+            "id": "t42", "content": "Native",
+            "due": {"date": "2026-07-12T12:30:00"},
+        }])
+        intent = commit.WriteIntent(
+            "A", "todoist", "update", "Native", task_id="t42",
+            due_time="13:00", pinned=True, native_start="12:30",
+        )
+        result = commit.write_todoist([intent], client)
+        assert result.ok, result.error
+        assert client.due_string_calls == 0
+        assert client.datetime_calls == 0
+
+    def test_protected_native_noop_reads_back_drift_once(self):
+        client = ReadbackTrackingTodoist([{
+            "id": "t42", "content": "Native",
+            "due": {"date": "2026-07-12T12:30:00"},
+        }])
+        intent = commit.WriteIntent(
+            "A", "todoist", "noop", "Native", task_id="t42",
+            due_time="09:00", pinned=True, native_start="12:30",
+        )
+
+        result = commit.write_todoist([intent], client)
+
+        assert result.ok, result.error
+        assert result.noops == ["t42"]
+        assert result.reconciliation == {"count_expected": 1, "count_found": 1}
+        assert client.readback_calls == 1
+
+        client._tasks["t42"]["due"]["date"] = "2026-07-12T13:00:00"
+        result = commit.write_todoist([intent], client)
+        assert result.ok is False
+        assert result.reconciliation == {"count_expected": 1, "count_found": 1}
+        assert client.readback_calls == 2
+        [detail] = result.verify_details
+        assert detail["reason"] == "native mismatch"
+
+    def test_manifest_native_start_is_carried_and_drift_fails_closed(self):
+        row = ManifestEntry(
+            step="A", system="todoist", action="schedule", name="Native",
+            id_or_path="todoist://t42", time="09:00", duration_min=30,
+            native_protected=True,
+        )
+        diff = diff_against_live([row], {"todoist_tasks": [{
+            "id": "t42", "content": "Native",
+            "due": {"date": "2026-07-12T11:00:00"},
+        }]})
+        [intent] = commit.plan_writes(diff, CAL_IDS, today=TODAY)
+        assert intent.native_start == "11:00"
+        assert intent.pinned is True
+
+        client = RecurrenceFakeTodoist([{
+            "id": "t42", "content": "Native",
+            "due": {"date": "2026-07-12T12:30:00"},
+        }])
+        result = commit.write_todoist([intent], client)
+
+        assert result.ok is False
+        [detail] = result.verify_details
+        assert detail["kind"] == "due"
+        assert detail["reason"] == "native mismatch"
+        assert detail["intent"] == "11:00"
+        assert detail["live"] == "12:30"
+        assert client.due_string_calls == 0
+        assert client.datetime_calls == 0
+
+    def test_protected_native_missing_time_fails_closed_with_details(self):
+        client = RecurrenceFakeTodoist([{
+            "id": "t42", "content": "Native", "due": {},
+        }])
+        intent = commit.WriteIntent(
+            "A", "todoist", "update", "Native", task_id="t42",
+            due_time="13:00", pinned=True, native_start="12:30",
+        )
+
+        result = commit.write_todoist([intent], client)
+
+        assert result.ok is False
+        [detail] = result.verify_details
+        assert detail["kind"] == "due"
+        assert detail["reason"] == "missing due time"
+        assert detail["live"] is None
+        assert client.due_string_calls == 0
+        assert client.datetime_calls == 0
+
+    def test_opted_in_native_row_can_be_retimed(self):
+        # Contract: an explicitly movable row may use the normal retime path.
+        client = RecurrenceFakeTodoist([{
+            "id": "t42", "content": "Opted in",
+            "due": {"date": "2026-07-12T08:00:00"},
+        }])
+        intent = commit.WriteIntent(
+            "A", "todoist", "update", "Opted in", task_id="t42",
+            due_time="10:00", pinned=False,
+        )
+        result = commit.write_todoist([intent], client)
+        assert result.ok, result.error
+        assert client.due_string_calls == 1
+        assert client.datetime_calls == 0
+        assert client._tasks["t42"]["due"]["date"] == "2026-07-12T10:00:00"
+
+    def test_recurring_readback_missing_recurrence_is_not_success(self):
+        # Contract: a timed recurrence retime is successful only when both the
+        # canonical local time and recurrence marker read back intact.
+        class MissingRecurrence(RecurrenceFakeTodoist):
+            def reschedule_task_datetime(self, task_id, due_datetime):
+                result = super().reschedule_task_datetime(task_id, due_datetime)
+                result["due"].pop("is_recurring", None)
+                return result
+
+        client = MissingRecurrence([{
+            "id": "t42", "content": "Upper",
+            "due": {"date": "2026-07-12T11:00:00", "is_recurring": True},
+        }])
+        result = commit.write_todoist(
+            commit.plan_writes(_recurring_update_diff(), CAL_IDS, today=TODAY),
+            client,
+        )
+        assert result.ok is False
+        assert "recurr" in (result.error or "").lower()
+        assert client.datetime_calls == 1 and client.due_string_calls == 0
+        [detail] = result.verify_details
+        assert detail["kind"] == "due"
+        assert detail["reason"] == "missing recurrence"
+
+    def test_recurring_readback_missing_time_is_not_success(self):
+        # Contract: a provider response without a comparable time fails closed.
+        class MissingTime(RecurrenceFakeTodoist):
+            def reschedule_task_datetime(self, task_id, due_datetime):
+                self.datetime_calls += 1
+                self._tasks[task_id]["due"] = {"is_recurring": True}
+                return self._tasks[task_id]
+
+        client = MissingTime([{
+            "id": "t42", "content": "Upper",
+            "due": {"date": "2026-07-12T11:00:00", "is_recurring": True},
+        }])
+        result = commit.write_todoist(
+            commit.plan_writes(_recurring_update_diff(), CAL_IDS, today=TODAY),
+            client,
+        )
+        assert result.ok is False
+        assert "due" in (result.error or "").lower()
 
 
 # ---------------------------------------------------------------------------
@@ -696,9 +894,12 @@ class TestCapturesPlanAndWrite:
         assert res.ok and res.noops
         assert note.read_text(encoding="utf-8") == before  # bytes untouched
 
-    def test_writer_missing_note_fails_honestly(self, tmp_path):
+    def test_writer_missing_note_is_bounded_noop(self, tmp_path):
         res = commit.write_captures_frontmatter([self._b6_intent()], tmp_path, TODAY)
-        assert res.ok is False and "daily note" in res.error
+        assert res.ok
+        assert res.error is None
+        assert res.created == [] and res.updated == []
+        assert not (tmp_path / "30 - Daily").exists()
 
 
 # ---------------------------------------------------------------------------

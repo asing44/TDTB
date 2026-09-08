@@ -54,6 +54,78 @@ class TestBuildPlanManifest:
         assert row.action == "schedule-all-day"
         assert row.id_or_path == "todoist://t42"
 
+    def test_manifest_keeps_native_todoist_facts_internal(self):
+        digest = {"assigned": [
+            {
+                "name": "Native Task",
+                "path": "todoist://native",
+                "source": "todoist",
+                "blocks": 1,
+                "scheduled_start": "08:30",
+                "allow_time_adjustment": False,
+                "is_recurring": True,
+            },
+            {
+                "name": "Opted In",
+                "path": "todoist://opted-in",
+                "source": "todoist",
+                "blocks": 1,
+                "scheduled_start": "08:30",
+                "allow_time_adjustment": True,
+            },
+            {
+                "name": "Vault Task",
+                "path": "P/Vault Task.md",
+                "blocks": 1,
+                "scheduled_start": "08:30",
+            },
+            {
+                "name": "Native All Day",
+                "path": "todoist://all-day",
+                "source": "todoist",
+                "blocks": 0,
+                "scheduled_start": "08:30",
+            },
+            {
+                "name": "Native Blocks",
+                "path": "todoist://native-blocks",
+                "source": "todoist",
+                "blocks": 0,
+                "native_blocks": 1,
+                "scheduled_start": "08:30",
+            },
+        ]}
+        sequence = {"sequence": [
+            {"id": "Native Task", "start": "09:00", "end": "09:30"},
+            {"id": "Opted In", "start": "09:00", "end": "09:30"},
+            {"id": "Vault Task", "start": "09:00", "end": "09:30"},
+            {"id": "Native Blocks", "start": "09:00", "end": "09:30"},
+        ]}
+
+        manifest = shadow.build_plan_manifest(digest, sequence, {})
+        rows = {row.name: row for row in manifest if row.step == "A"}
+        assert rows["Native Task"].native_protected is True
+        assert rows["Native Task"].is_recurring is True
+        assert rows["Native Task"].native_start == "08:30"
+        assert rows["Native Task"].retiming_authorized is False
+        assert rows["Opted In"].native_protected is False
+        assert rows["Opted In"].allow_time_adjustment is True
+        assert rows["Opted In"].native_start == "08:30"
+        assert rows["Opted In"].retiming_authorized is True
+        assert rows["Vault Task"].native_protected is False
+
+        all_day = next(row for row in manifest if row.name == "Native All Day")
+        assert all_day.native_protected is False
+        assert all_day.native_start is None
+        native_blocks = next(row for row in manifest if row.name == "Native Blocks")
+        assert native_blocks.native_protected is True
+        assert native_blocks.native_start == "08:30"
+        assert "native_protected" not in rows["Native Task"].as_dict()
+        assert "allow_time_adjustment" not in rows["Native Task"].as_dict()
+        assert "is_recurring" not in rows["Native Task"].as_dict()
+        assert "native_start" not in rows["Native Task"].as_dict()
+        assert "retiming_authorized" not in rows["Native Task"].as_dict()
+
     def test_all_day_diff_updates_timed_task_but_noops_date_only_task(self):
         manifest = [shadow.ManifestEntry(
             step="A", system="todoist", action="schedule-all-day",
@@ -373,7 +445,11 @@ class TestPopulatedTitleCaseConfig:
 # diff_against_live — classification
 # ---------------------------------------------------------------------------
 
-def _todoist_row(name="Garage Buildout", time="09:00", path="P/Garage.md"):
+def _todoist_row(
+    name: str = "Garage Buildout",
+    time: str | None = "09:00",
+    path: str = "P/Garage.md",
+):
     return shadow.ManifestEntry(
         step="A", system="todoist", action="schedule",
         name=name, id_or_path=path, time=time, duration_min=60, routing="PHEP",
@@ -409,9 +485,35 @@ class TestDiffClassification:
 
     def test_todoist_matching_time_is_no_op(self):
         live = {"todoist_tasks": [{"id": "1", "content": "Garage Buildout",
-                                    "due": {"datetime": "2026-07-12T09:00:00Z"}}]}
+                                    "due": {"datetime": "2026-07-12T09:00:00"}}]}
         diff = shadow.diff_against_live([_todoist_row()], live)
         assert diff.entries[0].classification == shadow.NOOP
+
+    def test_fixed_due_equivalent_instant_is_no_op(self):
+        live = {"todoist_tasks": [{"id": "1", "content": "Garage Buildout",
+                                    "due": {
+                                        "date": "2026-07-12T23:00:00Z",
+                                        "timezone": "America/New_York",
+                                    }}]}
+        diff = shadow.diff_against_live([_todoist_row(time="19:00")], live)
+        entry = diff.entries[0]
+        assert entry.classification == shadow.NOOP
+
+    @pytest.mark.parametrize("due, reason", [
+        ({"date": "2026-07-12T23:00:00Z"}, "missing timezone"),
+        ({"date": "2026-07-12T23:00:00Z", "timezone": "Mars/Olympus"},
+         "unknown timezone"),
+        ({"date": "2026-07-12Tnot-a-time", "timezone": "UTC"},
+         "unparseable due datetime"),
+    ])
+    def test_unreadable_fixed_due_is_conflict(self, due, reason):
+        live = {"todoist_tasks": [{"id": "1", "content": "Garage Buildout",
+                                    "due": due}]}
+        diff = shadow.diff_against_live([_todoist_row()], live)
+        entry = diff.entries[0]
+        assert entry.classification == shadow.CONFLICT
+        assert reason in entry.detail["reason"]
+        assert "old" not in entry.detail["due_time"]
 
     def test_todoist_v1_due_date_timed_is_no_op(self):
         # ISS-5: live Todoist unified-API v1 task carries the timed value under
@@ -444,12 +546,96 @@ class TestDiffClassification:
 
     def test_todoist_different_time_is_would_update_with_delta(self):
         live = {"todoist_tasks": [{"id": "1", "content": "Garage Buildout",
-                                    "due": {"datetime": "2026-07-12T11:00:00Z"}}]}
+                                    "due": {"datetime": "2026-07-12T11:00:00"}}]}
         diff = shadow.diff_against_live([_todoist_row()], live)
         entry = diff.entries[0]
         assert entry.classification == shadow.UPDATE
         assert entry.detail["due_time"] == {"old": "11:00", "new": "09:00"}
         assert entry.detail["task_id"] == "1"
+
+    def test_protected_native_time_mismatch_is_pinned_no_op(self):
+        row = shadow.ManifestEntry(
+            step="A", system="todoist", action="schedule",
+            name="Native", id_or_path="todoist://native",
+            time="09:00", duration_min=30, native_protected=True,
+        )
+        live = {"todoist_tasks": [{
+            "id": "native", "content": "Native",
+            "due": {"date": "2026-07-12T11:00:00"},
+        }]}
+
+        [entry] = shadow.diff_against_live([row], live).entries
+
+        assert entry.classification == shadow.NOOP
+        assert entry.detail["pinned"] is True
+        assert entry.detail["native_protected"] is True
+        assert entry.detail["due_time"] == {"live": "11:00", "planned": "09:00"}
+
+    def test_server_native_protected_drift_is_conflict(self):
+        row = shadow.ManifestEntry(
+            step="A", system="todoist", action="schedule",
+            name="Native", id_or_path="todoist://native",
+            time="09:00", duration_min=30, native_protected=True,
+            native_start="08:30",
+        )
+        live = {"todoist_tasks": [{
+            "id": "native", "content": "Native",
+            "due": {"date": "2026-07-12T11:00:00"},
+        }]}
+
+        [entry] = shadow.diff_against_live([row], live).entries
+
+        assert entry.classification == shadow.CONFLICT
+        assert entry.detail["native_start"] == "08:30"
+        assert entry.detail["native_time"] == {
+            "live": "11:00", "planned": "09:00", "native": "08:30",
+        }
+        assert entry.detail["retiming_authorized"] is False
+
+    def test_server_native_missing_task_is_conflict_not_create(self):
+        row = shadow.ManifestEntry(
+            step="A", system="todoist", action="schedule",
+            name="Native", id_or_path="todoist://native",
+            time="09:00", duration_min=30, native_protected=True,
+            native_start="08:30",
+        )
+
+        [entry] = shadow.diff_against_live([row], {"todoist_tasks": []}).entries
+
+        assert entry.classification == shadow.CONFLICT
+        assert entry.detail["native_start"] == "08:30"
+        assert entry.detail["retiming_authorized"] is False
+
+    def test_opted_in_recurring_time_mismatch_is_update(self):
+        row = shadow.ManifestEntry(
+            step="A", system="todoist", action="schedule",
+            name="Recurring", id_or_path="todoist://recurring",
+            time="09:00", duration_min=30, is_recurring=True,
+            allow_time_adjustment=True, native_start="11:00",
+        )
+        live = {"todoist_tasks": [{
+            "id": "recurring", "content": "Recurring",
+            "due": {"date": "2026-07-12T11:00:00", "is_recurring": True},
+        }]}
+
+        [entry] = shadow.diff_against_live([row], live).entries
+
+        assert entry.classification == shadow.UPDATE
+        assert entry.detail["is_recurring"] is True
+        assert entry.detail["retiming_authorized"] is True
+        assert entry.detail["native_readback"] == {
+            "live": "11:00", "planned": "09:00", "native": "11:00",
+        }
+        assert "native_start" not in entry.detail
+        assert "native_time" not in entry.detail
+        assert "pinned" not in entry.detail
+        assert entry.detail["due_time"] == {"old": "11:00", "new": "09:00"}
+
+    def test_genuinely_new_untimed_task_still_creates(self):
+        row = _todoist_row(name="New untimed", time=None, path="P/New untimed.md")
+        [entry] = shadow.diff_against_live([row], {"todoist_tasks": []}).entries
+        assert entry.classification == shadow.CREATE
+        assert entry.detail == {"content": "New untimed", "due_time": None}
 
     def test_vault_flag_already_true_is_no_op(self):
         live = {"vault_frontmatter": {"P/Garage.md": {"assigned": True}}}
@@ -521,7 +707,7 @@ class TestDiffClassification:
     def test_counts_tally_correctly(self):
         live = {
             "todoist_tasks": [{"id": "1", "content": "Garage Buildout",
-                                "due": {"datetime": "2026-07-12T09:00:00Z"}}],
+                                "due": {"datetime": "2026-07-12T09:00:00"}}],
             "vault_frontmatter": {"P/Garage.md": {"assigned": False}},
             "calendar_events": [],
         }
@@ -1242,16 +1428,9 @@ class TestOutOfFrameAnchoredBlocks:
             digest, sequence, config, time_frame=self.FRAME)
         assert self._written(manifest) == ["Night Routine"]
 
-    def test_sequenced_anchored_row_before_anchor_emits_nothing(self):
-        """T12a (2026-07-26): this path — NOT the parity loop above — is what
-        an auto-sequenced day actually takes, and it was still unguarded after
-        the first fix. judgment.py's prompt requires every anchored_block it
-        is handed to appear in the proposal, ``_judged_anchored`` drops only
-        off/skip_today blocks (never elapsed ones), and validate_sequence
-        demoted a pre-anchor row to a soft ``placement_past`` warning — so an
-        elapsed anchored block rides the commit payload as an ordinary
-        sequence row and published a back-dated create-event. Proven live
-        against a scratch shadow route by ``t12a_frame_filter_proof.py``."""
+    def test_sequenced_anchored_row_before_anchor_is_retained(self):
+        """An accepted sequence keeps a past-start row in the commit
+        representation; validation surfaces ``placement_past`` separately."""
         digest = {"assigned": []}
         sequence = {"sequence": [
             {"id": "Sudsing", "start": "17:45", "end": "18:15", "zone": "any"},
@@ -1263,7 +1442,7 @@ class TestOutOfFrameAnchoredBlocks:
         ])
         manifest = shadow.build_plan_manifest(
             digest, sequence, config, time_frame=self.FRAME)
-        assert self._written(manifest) == ["Night Routine"]
+        assert self._written(manifest) == ["Sudsing", "Night Routine"]
 
     def test_sequenced_elapsed_block_moved_forward_still_emits(self):
         """The filter reads the PROPOSED start, not the spec's configured one:
@@ -1281,9 +1460,9 @@ class TestOutOfFrameAnchoredBlocks:
         assert e_rows[0].name == "Sudsing"
         assert e_rows[0].time == "22:00"
 
-    def test_sequenced_out_of_frame_live_does_not_reroute_to_todoist(self):
-        """Same gate ahead of the Live branch on the in-sequence path — the
-        shakedown's back-dated set included Live at 12:00."""
+    def test_sequenced_out_of_frame_live_is_retained_and_reroutes(self):
+        """A selected past-start Live row remains visible and follows the
+        normal server-side micro-adventure reroute."""
         digest = {"assigned": []}
         sequence = {"sequence": [
             {"id": "Live", "start": "12:00", "end": "12:30", "zone": "any"},
@@ -1294,4 +1473,4 @@ class TestOutOfFrameAnchoredBlocks:
         }
         manifest = shadow.build_plan_manifest(
             digest, sequence, config, time_frame=self.FRAME)
-        assert self._written(manifest) == []
+        assert self._written(manifest) == ["🌱 Write a handwritten note"]

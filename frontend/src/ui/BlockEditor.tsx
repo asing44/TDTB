@@ -24,7 +24,16 @@ export function BlockEditor() {
   const id = s.ui.editorItem;
   const item = s.inputs?.assigned.find((i) => i.id === id);
   const row = s.sequence?.find((r) => r.id === id && r.kind === "work");
-  const pinned = s.pendingPinnedRows.some((r) => r.id === id);
+  // Native Todoist times are protected by default: their auto-pin is server-
+  // enforced, so it is not a client placement the editor may reset or unplace.
+  // Only the explicit opt-in (Queue row → TimeAdjustmentOptIn) frees the time.
+  const nativeProtected =
+    item != null &&
+    item.source === "todoist" &&
+    typeof item.scheduledStart === "string" &&
+    /^(?:[01]\d|2[0-3]):[0-5]\d$/.test(item.scheduledStart) &&
+    !s.timeAdjustmentOptIns[item.id];
+  const pinned = s.pendingPinnedRows.some((r) => r.id === id && r.nativePin !== true);
   const [start, setStart] = useState(row?.start ?? s.inputs?.time.anchor ?? "");
   const [blocks, setBlocks] = useState(id ? effectiveBlocks(s, id) : 1);
   /** Exact minutes as typed — kept verbatim so the durable save can apply
@@ -67,7 +76,7 @@ export function BlockEditor() {
   // mention. ⤵ asked for placement — start is the field that matters.
   // null intent = legacy both-fields behaviour (timeline block edit).
   const intent = s.ui.editorIntent;
-  const showStart = intent !== "duration" && !item.isRecurring;
+  const showStart = intent !== "duration" && !item.isRecurring && !nativeProtected;
 
   const apply = () => {
     const included = s.overrides[id]?.included ?? true;
@@ -79,8 +88,9 @@ export function BlockEditor() {
       return;
     }
     // T25: recurring rows are duration-shapeable only — their wall time is
-    // pinned by the recurrence pattern, never moved from here.
-    if (item?.isRecurring) {
+    // pinned by the recurrence pattern, never moved from here. Native Todoist
+    // times are protected the same way: only the explicit opt-in frees them.
+    if (item?.isRecurring || nativeProtected) {
       close();
       return;
     }
@@ -198,7 +208,9 @@ export function BlockEditor() {
         <div class="editor__hint">
           {blocks === 0
             ? "All day — included, unscheduled, and uses no capacity."
-            : "Today only — never changes the vault assignment or preset."}
+            : nativeProtected
+              ? "Protected — keeps the Todoist start fixed. Allow the scheduler to move it in the row's time control."
+              : "Today only — never changes the vault assignment or preset."}
         </div>
         {saveError && (
           <p class="editor__error" role="alert">
@@ -206,7 +218,7 @@ export function BlockEditor() {
           </p>
         )}
         <div class="editor__actions">
-          {row && pinned && (
+          {row && pinned && !nativeProtected && (
             <button
               class="btn"
               onClick={() => {
@@ -217,7 +229,7 @@ export function BlockEditor() {
               Reset placement
             </button>
           )}
-          {row && !pinned && (
+          {row && !pinned && !nativeProtected && (
             <button
               class="btn"
               onClick={() => {

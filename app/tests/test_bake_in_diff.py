@@ -273,7 +273,7 @@ class TestRun:
         manifest = [_todoist_row(), _patch_row(), _flag_row()]
         live_state = {
             "todoist_tasks": [{"id": "1", "content": "Garage Buildout",
-                                "due": {"datetime": "2026-07-20T09:00:00Z"}}],
+                                "due": {"datetime": "2026-07-20T09:00:00Z", "timezone": "UTC"}}],
             "vault_frontmatter": {"P/Garage.md": {"assigned": True}},
             "daily_note_text": "# TDTB Plan\nold content",
         }
@@ -309,7 +309,7 @@ class TestRun:
         manifest = [_todoist_row()]
         live_state = {
             "todoist_tasks": [{"id": "1", "content": "Garage Buildout",
-                                "due": {"datetime": "2026-07-22T09:00:00Z"}}],
+                                "due": {"datetime": "2026-07-22T09:00:00Z", "timezone": "UTC"}}],
         }
         row, verdict = bake_in_run.run(
             tmp_path, dt.date(2026, 7, 22), "app", manifest, live_state,
@@ -333,7 +333,7 @@ class TestRun:
         def live_state_source(vault_root, today):
             calls.append(("live_state", vault_root, today))
             return {"todoist_tasks": [{"id": "1", "content": "Garage Buildout",
-                                        "due": {"datetime": "2026-07-23T09:00:00Z"}}]}
+                                        "due": {"datetime": "2026-07-23T09:00:00Z", "timezone": "UTC"}}]}
 
         row, verdict = bake_in_run.run(
             tmp_path, dt.date(2026, 7, 23), "skill", manifest_source, live_state_source,
@@ -417,8 +417,8 @@ class TestByIdReconcile:
             lambda config, vault: {"todoist_tasks": [], "vault_frontmatter": {}, "daily_note_text": None},
         )
         live = {
-            "T1": {"id": "T1", "content": "Garage Buildout", "due": {"datetime": "2026-07-13T09:00:00Z"}},
-            "T2": {"id": "T2", "content": "Volunteering", "due": {"datetime": "2026-07-13T11:30:00Z"}},
+            "T1": {"id": "T1", "content": "Garage Buildout", "due": {"datetime": "2026-07-13T09:00:00Z", "timezone": "UTC"}},
+            "T2": {"id": "T2", "content": "Volunteering", "due": {"datetime": "2026-07-13T11:30:00Z", "timezone": "UTC"}},
         }
         state = bake_in_run.gather_live_state_by_id(tmp_path, today, {}, fetch_task=lambda tid: live[tid])
         assert not state.get("todoist_unavailable")
@@ -429,7 +429,7 @@ class TestByIdReconcile:
 
     def test_no_ledger_keeps_filter_read(self, tmp_path, monkeypatch):
         import datetime as dt
-        base_tasks = [{"id": "F", "content": "FromFilter", "due": {"datetime": "2026-07-13T08:00:00Z"}}]
+        base_tasks = [{"id": "F", "content": "FromFilter", "due": {"datetime": "2026-07-13T08:00:00Z", "timezone": "UTC"}}]
         monkeypatch.setattr(shadow, "gather_live_state", lambda config, vault: {"todoist_tasks": list(base_tasks)})
         state = bake_in_run.gather_live_state_by_id(
             tmp_path, dt.date(2026, 7, 13), {}, fetch_task=lambda tid: {},
@@ -446,7 +446,7 @@ class TestByIdReconcile:
         def fetch(tid):
             if tid == "GONE":
                 raise todoist_client.TodoistError(404, "not found")
-            return {"id": "T1", "content": "Garage Buildout", "due": {"datetime": "2026-07-13T09:00:00Z"}}
+            return {"id": "T1", "content": "Garage Buildout", "due": {"datetime": "2026-07-13T09:00:00Z", "timezone": "UTC"}}
 
         state = bake_in_run.gather_live_state_by_id(tmp_path, today, {}, fetch_task=fetch)
         assert [t["id"] for t in state["todoist_tasks"]] == ["T1"]

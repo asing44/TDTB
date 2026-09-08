@@ -34,7 +34,7 @@ export function App() {
   }, [s.theme]);
 
   if (!s.loaded) {
-    return <div class="center-note">Loading plan inputs…</div>;
+    return <div class="center-note" role="status" aria-live="polite">Loading plan inputs…</div>;
   }
   if (s.loadError) {
     return (
@@ -48,9 +48,9 @@ export function App() {
   return (
     <div class="cockpit">
       <Rail />
-      <main class="cockpit__main">
+      <main class="cockpit__main" aria-label="Today's planning evidence">
         {s.commitPhase === "done" && (
-          <section class="verified" aria-label="Day committed">
+          <section class="verified" aria-label="Day committed" role="status">
             <h2>✅ Day committed and verified</h2>
             <div class="verified__meta">
               All surfaces ok · zero verification failures · {s.inputs.validDate}

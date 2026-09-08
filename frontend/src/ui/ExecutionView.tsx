@@ -75,12 +75,19 @@ function MomentCard({ label, moment }: { label: string; moment: ExecutionMoment 
         {display12h(moment.start)} – {display12h(moment.end)}
       </div>
       {moment.entries.map((entry, index) => (
-        <div class="execution-card__entry" key={entry.id}>
+        <div
+          class={`execution-card__entry${entry.hierarchyDepth > 0 ? " execution-card__entry--nested" : ""}`}
+          key={entry.id}
+        >
           <div class="execution-card__name">
-            {index === 0 || !moment.allowedOverlap ? entry.name : `↳ ${entry.name}`}
+            {entry.hierarchyDepth > 0 || (index > 0 && moment.allowedOverlap)
+              ? `↳ ${entry.name}`
+              : entry.name}
           </div>
           <div class="execution-card__meta">
             {entry.kind === "calendar" ? "Calendar · immutable" : entry.kind}
+            {entry.parentName ? ` · child of ${entry.parentName}` : ""}
+            {!entry.parentName && entry.groupLabel ? ` · ${entry.groupLabel}` : ""}
           </div>
           {entry.kind === "work" && <EntryActions entryId={entry.id} />}
         </div>

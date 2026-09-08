@@ -37,6 +37,7 @@ the orchestrator after a clean run.
 from __future__ import annotations
 
 import json
+import stat
 import sys
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
@@ -117,6 +118,14 @@ class WriteIntent:
     # pinned recurring no-op: live time intentionally differs from the planned
     # slot (the pattern owns the time) — reconciliation must not assert due
     pinned: bool = False
+    # Server-derived native time for protected Todoist rows. When present,
+    # reconciliation verifies the native due rather than the planned slot.
+    native_start: str | None = None
+    # Internal provenance/authorization markers.  ``native_start`` is also
+    # carried on explicitly authorized rows so planning can retain the
+    # server-derived source value without making the row immutable.
+    native_provenance: bool = False
+    retiming_authorized: bool | None = None
     # calendar
     calendar_id: str | None = None
     start: datetime | None = None
@@ -133,7 +142,7 @@ class WriteIntent:
             "name": self.name, "task_id": self.task_id, "project_id": self.project_id,
             "due_time": self.due_time, "duration_min": self.duration_min,
             "is_recurring": self.is_recurring, "due_datetime": self.due_datetime,
-            "pinned": self.pinned,
+            "pinned": self.pinned, "native_start": self.native_start,
             "calendar_id": self.calendar_id,
             "start": self.start.isoformat() if self.start else None,
             "end": self.end.isoformat() if self.end else None,
@@ -277,6 +286,59 @@ def _due_string(hhmm: str | None) -> str | None:
     return f"today at {hhmm}" if hhmm else None
 
 
+def _canonical_hhmm(value: Any) -> str | None:
+    """Return a canonical local ``HH:MM`` value when ``value`` is parseable."""
+    if isinstance(value, datetime):
+        return value.strftime("%H:%M")
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    if "T" in text:
+        try:
+            parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+        return parsed.strftime("%H:%M")
+    parts = text.split(":")
+    if len(parts) != 2:
+        return None
+    try:
+        hour, minute = (int(part) for part in parts)
+    except ValueError:
+        return None
+    if not (0 <= hour <= 23 and 0 <= minute <= 59):
+        return None
+    return f"{hour:02d}:{minute:02d}"
+
+
+def _native_start_value(value: Any) -> str | None:
+    """Keep an invalid native value visible so verification can fail closed."""
+    if value is None:
+        return None
+    return _canonical_hhmm(value) or str(value).strip()
+
+
+def _native_start_from_detail(detail: dict[str, Any]) -> str | None:
+    """Recover the server-derived native start from current diff shapes.
+
+    The active shadow contract carries a protected row's native time as
+    ``detail['due_time']['live']``. Newer callers may expose the same value as
+    ``native_start`` (or an equivalent live/native key), so accept both forms
+    without treating an ordinary update's planned due as native timing.
+    """
+    for key in ("native_start", "native_time", "native_due_time", "live_start"):
+        if detail.get(key) is not None:
+            value = detail[key]
+            return _native_start_value(value)
+    due_time = detail.get("due_time")
+    if isinstance(due_time, dict) and due_time.get("live") is not None:
+        value = due_time["live"]
+        return _native_start_value(value)
+    return None
+
+
 def _config_phep_project_id(config: Any) -> str:
     """PHEP project id, config-first with the FALLBACK_TODOIST_PROJECTS default.
 
@@ -384,8 +446,59 @@ def plan_writes(
 
 def _plan_todoist(m: ManifestEntry, e: ShadowDiffEntry, config: Any, today: date) -> WriteIntent:
     all_day = m.action in ("capture-nicety", "schedule-all-day")
+    detail_recurring = e.detail.get("is_recurring")
+    recurring = (
+        bool(detail_recurring)
+        if detail_recurring is not None
+        else bool(m.is_recurring)
+    )
+    native_marker = bool(
+        e.detail.get("pinned_native")
+        or e.detail.get("native_protected")
+        or m.native_protected
+        or m.native_start is not None
+        or any(
+            key in e.detail
+            for key in ("native_start", "native_time", "native_due_time", "live_start")
+        )
+    )
+    native_provenance = native_marker
+    # ManifestEntry.native_start is server-derived and outranks the live
+    # diagnostic copy in detail['due_time']['live'].  The latter is only a
+    # compatibility fallback for older diff shapes.
+    native_start = (
+        _native_start_value(m.native_start)
+        if m.native_start is not None
+        else (_native_start_from_detail(e.detail) if native_marker else None)
+    )
+    if native_marker and native_start is None:
+        # A protected no-op with no mismatch detail has no separate live-time
+        # field. Its server-derived manifest time is the native time in that
+        # diff shape; retain it as an explicit verification target.
+        native_start = _canonical_hhmm(m.time) or (
+            str(m.time).strip() if m.time is not None else None
+        )
+    authorization = e.detail.get("retiming_authorized")
+    if authorization is None:
+        authorization = m.retiming_authorized
+    if authorization is None:
+        authorization = e.detail.get("allow_time_adjustment")
+    if authorization is None:
+        authorization = m.allow_time_adjustment
+    retiming_authorized = authorization is True
+    native_protected = bool(
+        e.detail.get("pinned_native")
+        or e.detail.get("native_protected")
+        or m.native_protected
+        or (native_provenance and not retiming_authorized)
+    )
+    legacy_pinned = bool(
+        e.detail.get("pinned") or e.detail.get("pinned_recurring")
+    )
+    pinned = bool(
+        native_protected or (legacy_pinned and not native_provenance)
+    )
     if e.classification == UPDATE:
-        recurring = bool(e.detail.get("is_recurring"))
         dt = _hhmm_to_dt(today, m.time) if recurring else None
         return WriteIntent(
             step=m.step, surface="todoist", op="update", name=m.name,
@@ -393,6 +506,10 @@ def _plan_todoist(m: ManifestEntry, e: ShadowDiffEntry, config: Any, today: date
             due_time=m.time, duration_min=m.duration_min,
             is_recurring=recurring,
             due_datetime=dt.strftime("%Y-%m-%dT%H:%M:%S") if dt else None,
+            pinned=pinned,
+            native_start=native_start,
+            native_provenance=native_provenance,
+            retiming_authorized=retiming_authorized,
             due_all_day_today=all_day,
         )
     if e.classification == NOOP:
@@ -402,7 +519,11 @@ def _plan_todoist(m: ManifestEntry, e: ShadowDiffEntry, config: Any, today: date
             # ("X (Todoist)") resolve by id at write time, not by content.
             task_id=e.detail.get("task_id"),
             due_time=m.time, duration_min=m.duration_min,
-            pinned=bool(e.detail.get("pinned_recurring")),
+            is_recurring=recurring,
+            pinned=pinned,
+            native_start=native_start,
+            native_provenance=native_provenance,
+            retiming_authorized=retiming_authorized,
             due_all_day_today=all_day,
         )
     # CREATE: route to PHEP project (vault efforts) or Todoist Inbox (None).
@@ -510,18 +631,28 @@ def _todoist_due_reading(task: dict[str, Any]) -> DueReading:
     local dues (no offset) carry their own wall time and are compared as-is.
     All-day dues (no time component) have no comparable time.
     """
-    due = task.get("due") or {}
+    if not isinstance(task, dict):
+        return DueReading(error="invalid task readback")
+    due = task.get("due")
+    if due is None:
+        due = {}
+    elif not isinstance(due, dict):
+        return DueReading(raw=due, error="invalid due")
     raw = due.get("date") or due.get("datetime")
     tz = due.get("timezone") or None
     if not raw:
         return DueReading(raw=raw, timezone=tz)
-    text = str(raw)
+    text = str(raw).strip()
     if "T" not in text:  # all-day due — no time component
+        try:
+            date.fromisoformat(text)
+        except ValueError:
+            return DueReading(raw=raw, timezone=tz, error="unparseable due date")
         return DueReading(raw=raw, timezone=tz)
     try:
         tz_text = text[:-1] + "+00:00" if text.endswith("Z") else text
         dt = datetime.fromisoformat(tz_text)
-    except ValueError:
+    except (TypeError, ValueError, OverflowError):
         return DueReading(raw=raw, timezone=tz, error="unparseable due datetime")
     if dt.tzinfo is None:
         # floating local due — the wall time IS the user's local time
@@ -532,10 +663,14 @@ def _todoist_due_reading(task: dict[str, Any]) -> DueReading:
                           error="missing timezone for UTC due")
     try:
         zone = ZoneInfo(tz)
-    except (KeyError, ValueError):
+    except (KeyError, TypeError, ValueError):
         return DueReading(raw=raw, timezone=tz,
                           error=f"unknown timezone {tz!r}")
-    local = dt.astimezone(zone)
+    try:
+        local = dt.astimezone(zone)
+    except (OverflowError, ValueError):
+        return DueReading(raw=raw, timezone=tz,
+                          error="unparseable due datetime")
     return DueReading(local_hhmm=local.strftime("%H:%M"), raw=raw, timezone=tz)
 
 
@@ -547,6 +682,37 @@ def _todoist_due_hhmm(task: dict[str, Any]) -> str | None:
     or when the required timezone data is missing — the caller's structured
     reading carries the actionable reason for the fail-closed case."""
     return _todoist_due_reading(task).local_hhmm
+
+
+def _is_date_only_landing(reading: DueReading) -> bool:
+    """True only for the provider's date-only reschedule landing."""
+    if not reading.raw or "T" in str(reading.raw):
+        return False
+    try:
+        date.fromisoformat(str(reading.raw))
+    except ValueError:
+        return False
+    return reading.error is None
+
+
+def _has_native_provenance(intent: WriteIntent) -> bool:
+    """Whether an intent came from server-native timing metadata."""
+    return intent.native_provenance or intent.native_start is not None
+
+
+def _is_protected_native_intent(intent: WriteIntent) -> bool:
+    """Whether the write boundary must leave the native due untouched."""
+    if intent.pinned:
+        return True
+    return (
+        _has_native_provenance(intent)
+        and intent.retiming_authorized is not True
+    )
+
+
+def _todoist_is_recurring(task: dict[str, Any]) -> bool:
+    due = task.get("due") if isinstance(task, dict) else None
+    return isinstance(due, dict) and bool(due.get("is_recurring"))
 
 
 def _match_by_content(
@@ -584,6 +750,15 @@ def write_todoist(intents: list[WriteIntent], client: TodoistLike) -> WriterResu
     # misclassify as would-create and get DUPLICATED on live commit.
     live = client.get_filter_tasks("today | overdue")
     touched = result.touched  # intent name -> task_id we expect to read back
+    landed: dict[int, str] = {}
+
+    def record_landing(intent: WriteIntent, task_id: Any) -> None:
+        """Record one landed task for this intent and its public name map."""
+        if task_id is None or str(task_id) == "":
+            return
+        tid = str(task_id)
+        landed[id(intent)] = tid
+        touched[intent.name] = tid
 
     # T21: tasks with a live handle in this run are claimed up front; content
     # matching (noop resolution, create idempotency) never touches them.
@@ -593,16 +768,24 @@ def write_todoist(intents: list[WriteIntent], client: TodoistLike) -> WriterResu
         if i.op == "noop":
             if i.task_id:
                 result.noops.append(i.task_id)
-                touched[i.name] = i.task_id
+                record_landing(i, i.task_id)
                 continue
             match = _match_by_content(i.name, live, claimed)
             if match:
                 mid = str(match.get("id", ""))
                 claimed.add(mid)
                 result.noops.append(mid)
-                touched[i.name] = mid
+                record_landing(i, mid)
             continue
         if i.op == "update":
+            if _is_protected_native_intent(i):
+                # Protected native timing is an intentional write no-op.  It
+                # still enters the single reconciliation pass below; do not
+                # read it here as well or result accounting would double-count.
+                if i.task_id:
+                    result.noops.append(i.task_id)
+                    record_landing(i, i.task_id)
+                continue
             if i.is_recurring:
                 # T27: a recurring due is pattern-owned — due_string in any
                 # form (incl. "today") wipes the recurrence. Time moves use
@@ -613,14 +796,15 @@ def write_todoist(intents: list[WriteIntent], client: TodoistLike) -> WriterResu
                     # reschedule can return success yet land date-only —
                     # verify the TIME landed and retry once with datetime
                     back = client.get_task(i.task_id)
-                    if i.due_time and _todoist_due_hhmm(back) != i.due_time:
+                    first_reading = _todoist_due_reading(back)
+                    if i.due_time and _is_date_only_landing(first_reading):
                         client.reschedule_task_datetime(i.task_id, i.due_datetime)
             elif i.due_all_day_today:
                 client.reschedule_task(i.task_id, "today")
             else:
                 client.reschedule_task(i.task_id, _due_string(i.due_time))
             result.updated.append(i.task_id)
-            touched[i.name] = i.task_id
+            record_landing(i, i.task_id)
             continue
         # create — check-before-write for idempotency (claimed tasks excluded)
         existing = _match_by_content(i.name, live, claimed)
@@ -628,7 +812,7 @@ def write_todoist(intents: list[WriteIntent], client: TodoistLike) -> WriterResu
             eid = str(existing.get("id", ""))
             claimed.add(eid)
             result.noops.append(eid)
-            touched[i.name] = eid
+            record_landing(i, eid)
             continue
         created = client.create_task(
             i.name, i.project_id,
@@ -639,13 +823,16 @@ def write_todoist(intents: list[WriteIntent], client: TodoistLike) -> WriterResu
         cid = created.get("id", "")
         claimed.add(cid)
         result.created.append(cid)
-        touched[i.name] = cid
+        record_landing(i, cid)
 
     # -- reconciliation: read back, assert count + due time -------------------
     expected = len(todo)
     found = 0
     for i in todo:
-        tid = touched.get(i.name)
+        # Use the intent identity rather than only its display name.  This
+        # keeps one no-op/readback accounting record per planned row even when
+        # two rows happen to share a name.
+        tid = landed.get(id(i))
         if not tid:
             result.fail(f"todoist: no task landed for {i.name!r} (silent drop)")
             continue
@@ -655,19 +842,86 @@ def write_todoist(intents: list[WriteIntent], client: TodoistLike) -> WriterResu
             result.fail(f"todoist: readback failed for {i.name!r}: {exc}")
             continue
         found += 1
+        protected = _is_protected_native_intent(i)
+        if protected and not _has_native_provenance(i):
+            # Legacy direct pinned intents did not carry the native time. Keep
+            # their existence-only reconciliation only when no native
+            # provenance is present. Planned manifest-native rows never take
+            # this path.
+            continue
         reading = _todoist_due_reading(back)
         got = reading.local_hhmm
+
         if reading.error:
             # FEEDBACK-23 fail closed: no timezone/parse data, cannot compare
             # safely — actionable structured reason, never a guessed zone.
+            prefix = "native due" if protected else "due"
             result.fail_due(
-                i.name, i.due_time, reading, reason=reading.error,
+                i.name,
+                _canonical_hhmm(i.native_start) if protected else i.due_time,
+                reading,
+                reason=reading.error,
                 message=(
-                    f"todoist: {i.name!r} due cannot be verified "
+                    f"todoist: {i.name!r} {prefix} cannot be verified "
                     f"({reading.error})"
                 ),
             )
             continue
+
+        if protected:
+            expected_native = _canonical_hhmm(i.native_start)
+            if expected_native is None:
+                result.fail_due(
+                    i.name, i.native_start, reading,
+                    reason="unparseable native start",
+                    message=(
+                        f"todoist: {i.name!r} native due cannot be verified "
+                        "(unparseable native start)"
+                    ),
+                )
+                continue
+            if got is None:
+                result.fail_due(
+                    i.name, expected_native, reading,
+                    reason="missing due time",
+                    message=(
+                        f"todoist: {i.name!r} native due mismatch "
+                        f"(intent {_display12h(expected_native)}, live {_display12h(got)})"
+                    ),
+                )
+                continue
+            if i.is_recurring and not _todoist_is_recurring(back):
+                result.fail_due(
+                    i.name, expected_native, reading,
+                    reason="missing recurrence",
+                    message=(
+                        f"todoist: {i.name!r} recurrence marker missing "
+                        "for protected native due"
+                    ),
+                )
+                continue
+            if got != expected_native:
+                result.fail_due(
+                    i.name, expected_native, reading,
+                    reason="native mismatch",
+                    message=(
+                        f"todoist: {i.name!r} native due mismatch "
+                        f"(intent {_display12h(expected_native)}, live {_display12h(got)})"
+                    ),
+                )
+            continue
+
+        if i.is_recurring and i.due_datetime:
+            if not _todoist_is_recurring(back):
+                result.fail_due(
+                    i.name, i.due_time, reading,
+                    reason="missing recurrence",
+                    message=(
+                        f"todoist: {i.name!r} recurrence marker missing "
+                        "after datetime retime"
+                    ),
+                )
+                continue
         if (i.due_all_day_today and got is not None and not i.pinned
                 and not i.is_recurring):
             # T27: an all-day-shaped recurring row keeps its live pattern
@@ -679,8 +933,24 @@ def write_todoist(intents: list[WriteIntent], client: TodoistLike) -> WriterResu
                     f"(intent all-day, live {_display12h(got)})"
                 ),
             )
-        if i.due_time and got != i.due_time and not i.pinned:
-            # pinned recurring no-ops legitimately keep their own live time
+        if i.due_time and got is None:
+            # A timed intent must not pass when the provider silently lands an
+            # all-day/absent due. Keep the established mismatch wording while
+            # preserving a machine-readable fail-closed reason.
+            result.fail_due(
+                i.name, i.due_time, reading,
+                reason=(
+                    "missing due time"
+                    if i.is_recurring or _has_native_provenance(i)
+                    else "mismatch"
+                ),
+                message=(
+                    f"todoist: {i.name!r} due mismatch "
+                    f"(intent {_display12h(i.due_time)}, live {_display12h(got)})"
+                ),
+            )
+            continue
+        if i.due_time and got != i.due_time:
             result.fail_due(
                 i.name, i.due_time, reading, reason="mismatch",
                 message=(
@@ -954,11 +1224,19 @@ def _patch_plan_section(text: str, plan_body: str) -> str:
 
 def _resolve_daily_note(vault_root: Path, today: date) -> Path | None:
     daily_dir = vault_root / "30 - Daily"
-    if not daily_dir.is_dir():
+    try:
+        directory_mode = daily_dir.stat().st_mode
+    except FileNotFoundError:
+        return None
+    if not stat.S_ISDIR(directory_mode):
         return None
     for candidate in (f"{today.isoformat()}.md", today.strftime("%b %d, %Y") + ".md"):
         p = daily_dir / candidate
-        if p.is_file():
+        try:
+            candidate_mode = p.stat().st_mode
+        except FileNotFoundError:
+            continue
+        if stat.S_ISREG(candidate_mode):
             return p
     return None
 
@@ -983,20 +1261,41 @@ def write_daily_note(
     if not patch:
         return result
 
-    note = _resolve_daily_note(vault_root, today)
+    try:
+        note = _resolve_daily_note(vault_root, today)
+    except OSError as exc:
+        result.fail(f"vault: today's daily note lookup failed: {exc}")
+        return result
     if note is None:
-        result.fail("vault: today's daily note not found")
+        result.reconciliation = {
+            "daily_note_present": False,
+            "skipped": True,
+            "reason": "optional daily note absent",
+            "date": today.isoformat(),
+        }
         return result
 
-    text = note.read_text(encoding="utf-8")
+    try:
+        text = note.read_text(encoding="utf-8")
+    except OSError as exc:
+        result.fail(f"vault: today's daily note read failed: {exc}")
+        return result
     new_text = _patch_plan_section(text, plan_body)
     already = new_text == text
     if not already:
-        note.write_text(new_text, encoding="utf-8")
+        try:
+            note.write_text(new_text, encoding="utf-8")
+        except OSError as exc:
+            result.fail(f"vault: today's daily note write failed: {exc}")
+            return result
     (result.noops if already else result.updated).append(str(note.name))
 
     # -- reconciliation: section present with intended body -------------------
-    back = note.read_text(encoding="utf-8")
+    try:
+        back = note.read_text(encoding="utf-8")
+    except OSError as exc:
+        result.fail(f"vault: today's daily note readback failed: {exc}")
+        return result
     expected_section = f"{_PLAN_HEADER}\n{plan_body}".rstrip()
     if expected_section in back and back.count(_PLAN_HEADER) == 1:
         result.reconciliation = {"section_present": True, "count": 1}
@@ -1060,23 +1359,44 @@ def write_captures_frontmatter(
     if not rows:
         return result
 
-    note = _resolve_daily_note(vault_root, today)
+    try:
+        note = _resolve_daily_note(vault_root, today)
+    except OSError as exc:
+        result.fail(f"vault: today's daily note lookup failed: {exc}")
+        return result
     if note is None:
-        result.fail("vault: today's daily note not found (B6 captures skipped)")
+        result.reconciliation = {
+            "daily_note_present": False,
+            "skipped": True,
+            "reason": "optional daily note absent; B6 captures skipped",
+            "date": today.isoformat(),
+        }
         return result
 
     captures = {k: v for i in rows for k, v in (i.payload or {}).items()
-                if k in _CAPTURE_KEYS and str(v).strip()}
-    text = note.read_text(encoding="utf-8")
+                 if k in _CAPTURE_KEYS and str(v).strip()}
+    try:
+        text = note.read_text(encoding="utf-8")
+    except OSError as exc:
+        result.fail(f"vault: today's daily note read failed: {exc}")
+        return result
     new_text, added = _merge_frontmatter_keys(text, captures)
     if added:
-        note.write_text(new_text, encoding="utf-8")
+        try:
+            note.write_text(new_text, encoding="utf-8")
+        except OSError as exc:
+            result.fail(f"vault: today's daily note write failed: {exc}")
+            return result
         result.updated.append(str(note.name))
     else:
         result.noops.append(str(note.name))
 
     # -- reconciliation: every intended key present in frontmatter ------------
-    back = note.read_text(encoding="utf-8")
+    try:
+        back = note.read_text(encoding="utf-8")
+    except OSError as exc:
+        result.fail(f"vault: today's daily note readback failed: {exc}")
+        return result
     back_fm = back.split("\n---\n")[0] if back.startswith("---") else ""
     missing = [k for k in captures if f"{k}:" not in back_fm]
     result.reconciliation = {"keys_added": added, "keys_missing": missing}
