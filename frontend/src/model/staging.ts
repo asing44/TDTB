@@ -29,8 +29,14 @@ export interface StagingVerbSpec {
   label: string;
   /** Accessible name — verbs read out of context in a dense row. */
   aria: string;
+  /** Visible scope note shown with the verb, so source writes never rely on
+      an icon, tooltip, or inferred server behavior. */
+  detail: string;
   /** True when the verb destroys a source and deserves a confirm step. */
   destructive: boolean;
+  /** True when applying this verb writes to the upstream Obsidian or Todoist
+      record rather than only changing today's local plan. */
+  sourceMutation: boolean;
   /** Rendered directly on the row (Done / Drop from plan). False verbs
       (Unassign / Delete) live behind the per-row More menu. */
   direct: boolean;
@@ -39,30 +45,38 @@ export interface StagingVerbSpec {
 export const STAGING_VERBS: readonly StagingVerbSpec[] = [
   {
     verb: "done",
-    label: "Done",
-    aria: "Mark done",
+    label: "Mark complete",
+    aria: "Mark complete in source",
+    detail: "updates source",
     destructive: false,
+    sourceMutation: true,
     direct: true,
   },
   {
     verb: "drop_from_plan",
-    label: "Drop from plan",
-    aria: "Drop from plan today",
+    label: "Leave as-is",
+    aria: "Leave as-is today without changing source",
+    detail: "today only · source unchanged",
     destructive: false,
+    sourceMutation: false,
     direct: true,
   },
   {
     verb: "unassign",
-    label: "Unassign",
-    aria: "Unassign from today",
+    label: "Remove from planning",
+    aria: "Remove from planning and update source",
+    detail: "updates Obsidian or Todoist source",
     destructive: false,
+    sourceMutation: true,
     direct: false,
   },
   {
     verb: "delete",
     label: "Delete",
     aria: "Delete permanently",
+    detail: "permanently deletes source",
     destructive: true,
+    sourceMutation: true,
     direct: false,
   },
 ] as const;
