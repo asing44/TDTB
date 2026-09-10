@@ -259,13 +259,13 @@ describe("Queue", () => {
     expect(getByText("Charge GoPro")).toBeTruthy();
   });
 
-  it("has no add/deassign/complete/suggested affordances (assigned-only)", () => {
+  it("keeps assignment controls upstream while retaining explicit row completion", () => {
     const { ui } = makeHarness("ready");
     const { queryByText, container } = ui(<Queue />);
     expect(queryByText(/Suggested/i)).toBeNull();
     expect(queryByText(/Add item/i)).toBeNull();
     expect(queryByText(/Deassign/i)).toBeNull();
-    expect(container.textContent).not.toMatch(/complete/i);
+    expect(container.textContent).toMatch(/Mark complete/i);
   });
 
   it("shows parent-child and related-tag context without duplicate rows", () => {
@@ -367,10 +367,10 @@ describe("T13 retained exact-placement paths", () => {
       </>,
     );
     expect(container.querySelector('[draggable="true"]')).toBeNull();
-    // FEEDBACK-10 (A13): placement moved into the More menu — the row stays
+    // FEEDBACK-10 (A13): time adjustment moved into the More menu — the row stays
     // clean, the exact-placement path is unchanged.
     fireEvent.click(getAllByRole("button", { name: /^More actions for Magic Mirror$/ })[0]);
-    fireEvent.click(getByLabelText("Place Magic Mirror at a specific time"));
+    fireEvent.click(getByLabelText("Adjust time for Magic Mirror"));
     expect(store.getState().ui.editorIntent).toBe("place");
     const start = getByLabelText("Start") as HTMLInputElement;
     fireEvent.input(start, { target: { value: "10:15" } });

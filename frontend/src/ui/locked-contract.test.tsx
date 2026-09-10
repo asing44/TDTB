@@ -22,17 +22,18 @@ describe("locked contract: Today's work language (item 1)", () => {
   });
 });
 
-describe("locked contract: direct Done/Drop plus More (item 3)", () => {
-  it("rows show direct Done and Drop; Unassign and Delete live behind More; no Defer", () => {
+describe("locked contract: explicit direct actions plus More (item 3)", () => {
+  it("rows show direct Mark complete and Leave as-is; source removal and Delete live behind More", () => {
     const h = makeHarness("ready");
     const r = h.ui(<Queue />);
     // A persistent action column is prohibited.
     expect(r.queryByText("Actions")).toBeNull();
-    // Direct Done (row action) with the final intent vocabulary — every
+    // Direct completion with the final intent vocabulary — every
     // row renders one, so the query is a set (getByRole would throw on
     // the multi-row surface).
-    expect(r.getAllByRole("button", { name: /^Mark done:/ }).length).toBeGreaterThan(0);
-    // Old deferral verb is gone; Drop from plan replaces it.
+    expect(r.getAllByRole("button", { name: /^Mark complete in source:/ }).length).toBeGreaterThan(0);
+    expect(r.getAllByRole("button", { name: /^Leave as-is today without changing source:/ }).length).toBeGreaterThan(0);
+    // Old deferral verb is gone; Leave as-is replaces it without an upstream write.
     expect(r.queryByRole("button", { name: /^Defer/ })).toBeNull();
     // Unassign and Delete are reachable only through a More menu.
     expect(r.getAllByRole("button", { name: /^More/ }).length).toBeGreaterThan(0);

@@ -70,14 +70,20 @@ describe("staging verb catalogue", () => {
     }
   });
 
-  it("Drop from plan uses the final intent wording, never skip/defer/remove", () => {
+  it("uses explicit labels for completion, source-safe leave, and source removal", () => {
+    expect(stagingVerbSpec("done")?.label).toBe("Mark complete");
     const drop = stagingVerbSpec("drop_from_plan");
-    expect(drop?.label).toBe("Drop from plan");
+    expect(drop?.label).toBe("Leave as-is");
+    expect(drop?.aria).toContain("without changing source");
+    expect(drop?.detail).toContain("source unchanged");
+    expect(stagingVerbSpec("unassign")?.label).toBe("Remove from planning");
+    expect(stagingVerbSpec("unassign")?.aria).toContain("update source");
+    expect(stagingVerbSpec("unassign")?.detail).toContain("Obsidian or Todoist");
   });
 
   it("spec lookup is null for an unknown verb", () => {
     expect(stagingVerbSpec("nope")).toBeNull();
-    expect(stagingVerbSpec("done")?.label).toBe("Done");
+    expect(stagingVerbSpec("done")?.label).toBe("Mark complete");
   });
 });
 

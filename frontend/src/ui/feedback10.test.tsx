@@ -149,16 +149,16 @@ describe("FEEDBACK-10 More menu carries secondary actions (A13)", () => {
     const { container } = h.ui(<Queue />);
     const buttons = Array.from(container.querySelectorAll("button")) as HTMLElement[];
     const direct = buttons.some(
-      (b) => b.getAttribute("aria-label") === "Place Magic Mirror at a specific time",
+      (b) => b.getAttribute("aria-label") === "Adjust time for Magic Mirror",
     );
     expect(direct).toBe(false);
   });
 
-  it("Place at a specific time lives in the More menu and opens the exact editor", () => {
+  it("Adjust time lives in the More menu and opens the exact editor", () => {
     const h = makeHarness("ready");
     const { container } = openMore(h, "Magic Mirror");
     const item = menuItems(container).find(
-      (b) => b.getAttribute("aria-label") === "Place Magic Mirror at a specific time",
+      (b) => b.getAttribute("aria-label") === "Adjust time for Magic Mirror",
     );
     expect(item).toBeTruthy();
     fireEvent.click(item as Element);
@@ -181,12 +181,15 @@ describe("FEEDBACK-10 More menu carries secondary actions (A13)", () => {
     ).toBe(false);
   });
 
-  it("Unassign and Delete stay in the More menu (frozen verb model)", () => {
+  it("source removal and Delete stay in the More menu (frozen verb model)", () => {
     const h = makeHarness("ready");
     const { container } = openMore(h, "Magic Mirror");
     const labels = menuItems(container).map((b) => b.getAttribute("aria-label"));
-    expect(labels.some((l) => l?.startsWith("Unassign"))).toBe(true);
+    expect(labels.some((l) => l?.startsWith("Remove from planning and update source"))).toBe(true);
     expect(labels.some((l) => l?.startsWith("Delete permanently"))).toBe(true);
+    const remove = menuItems(container).find((b) => b.textContent?.includes("Remove from planning"));
+    expect(remove?.getAttribute("data-source-mutation")).toBe("true");
+    expect(remove?.textContent).toContain("updates Obsidian or Todoist source");
   });
 });
 
