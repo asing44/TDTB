@@ -1613,6 +1613,9 @@
 
 /* -- staging verbs (T12e, brief problem 4 → IMP-07) -------------------------- */
 .alloc-verb {
+  display: inline-grid;
+  place-content: center;
+  text-align: center;
   min-width: 52px;
   min-height: 44px;
   padding: 0 10px;
@@ -1623,6 +1626,14 @@
   background: transparent;
   color: var(--t-text);
   cursor: pointer;
+}
+.alloc-verb__detail {
+  display: block;
+  margin-top: 2px;
+  font-size: 9px;
+  font-weight: 400;
+  line-height: 1.1;
+  opacity: 0.86;
 }
 /* Done — the filled primary among the direct verbs */
 .alloc-verb--done {
@@ -1640,6 +1651,9 @@
 }
 .alloc-verb--drop_from_plan:hover {
   border-color: var(--t-accent);
+}
+.alloc-verb--more {
+  border-color: var(--t-border);
 }
 /* Unassign — quiet outline in the More menu */
 .alloc-verb--unassign {
@@ -1693,6 +1707,17 @@
 }
 .row-more__item[role="menuitem"] {
   min-width: 0;
+}
+.row-more__item {
+  display: grid;
+  place-content: center start;
+}
+.row-more__item-detail {
+  display: block;
+  margin-top: 2px;
+  font-size: 10px;
+  font-weight: 400;
+  color: var(--t-muted);
 }
 
 .iconbtn {
@@ -2590,7 +2615,13 @@
   .qrow__actions {
     grid-column: 1 / -1;
     flex-wrap: wrap;
-    justify-content: flex-end;
+    justify-content: flex-start;
+  }
+  .row-more__menu {
+    min-width: min(260px, calc(100vw - 28px));
+  }
+  .row-more {
+    flex-basis: 100%;
   }
   .band__note,
   .band__bar,
