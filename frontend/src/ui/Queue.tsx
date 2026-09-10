@@ -130,7 +130,7 @@ function StagingVerbs({ item, busy }: { item: AssignedItem; busy: boolean }) {
             }}
             onBlur={() => armed && setConfirming(null)}
           >
-            {armed ? "Sure?" : spec.label}
+            {armed ? "Sure?" : <><span>{spec.label}</span><span class="alloc-verb__detail">{spec.detail}</span></>}
           </button>
         );
       })}
@@ -139,8 +139,8 @@ function StagingVerbs({ item, busy }: { item: AssignedItem; busy: boolean }) {
 }
 
 /** IMP-07: per-row More disclosure exposing the frozen staging verbs
-    (Unassign, Delete) plus — FEEDBACK-10 (A13) — the row-shaping actions that
-    used to crowd the row (Place at a specific time, Unschedule). Menu-button
+    (Remove from planning, Delete) plus — FEEDBACK-10 (A13) — the row-shaping
+    actions that used to crowd the row (Adjust time, Unschedule). Menu-button
     pattern: aria-haspopup, aria-expanded, aria-controls; Arrow keys move
     between items; Escape closes and returns focus to the trigger; outside
     click closes. Delete arms to "Sure?" before it fires (permanent). */
@@ -148,10 +148,12 @@ function MoreMenu({
   item,
   busy,
   state,
+  allowTimeAdjustment,
 }: {
   item: AssignedItem;
   busy: boolean;
   state: QueueState;
+  allowTimeAdjustment: boolean;
 }) {
   const { controller, store } = useApp();
   const [open, setOpen] = useState(false);
@@ -204,23 +206,21 @@ function MoreMenu({
 
   return (
     <div class="row-more" ref={wrapRef}>
-      <Tooltip label="More actions" align="end">
-        <button
-          ref={triggerRef}
-          class="iconbtn row-more__trigger"
-          aria-haspopup="menu"
-          aria-expanded={open}
-          aria-controls={menuId}
-          aria-label={`More actions for ${item.name}`}
-          disabled={busy}
-          onClick={() => {
-            setOpen((o) => !o);
-            setConfirming(null);
-          }}
-        >
-          ⋯
-        </button>
-      </Tooltip>
+      <button
+        ref={triggerRef}
+        class="alloc-verb alloc-verb--more row-more__trigger"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        aria-controls={menuId}
+        aria-label={`More actions for ${item.name}`}
+        disabled={busy}
+        onClick={() => {
+          setOpen((o) => !o);
+          setConfirming(null);
+        }}
+      >
+        More
+      </button>
       {open && (
         <div
           class="row-more__menu"
@@ -229,11 +229,11 @@ function MoreMenu({
           aria-label={`Actions for ${item.name}`}
           onKeyDown={onMenuKeyDown}
         >
-          {state === "needs-placement" && (
+          {allowTimeAdjustment && (state === "needs-placement" || state === "scheduled") && (
             <button
               role="menuitem"
               class="row-more__item"
-              aria-label={`Place ${item.name} at a specific time`}
+              aria-label={`Adjust time for ${item.name}`}
               onClick={() => {
                 close(false);
                 store.dispatch({
@@ -242,7 +242,8 @@ function MoreMenu({
                 });
               }}
             >
-              Place at a specific time
+              <span>Adjust time</span>
+              <span class="row-more__item-detail">Today’s plan only</span>
             </button>
           )}
           {state === "scheduled" && !item.isRecurring && (
@@ -265,6 +266,7 @@ function MoreMenu({
                 key={spec.verb}
                 role="menuitem"
                 class={`alloc-verb alloc-verb--${spec.verb} row-more__item${armed ? " alloc-verb--armed" : ""}`}
+                data-source-mutation={spec.sourceMutation ? "true" : undefined}
                 aria-label={
                   armed
                     ? `Confirm ${spec.aria.toLowerCase()}: ${item.name}`
@@ -279,7 +281,7 @@ function MoreMenu({
                   void controller.stagingAction(spec.verb, item.id);
                 }}
               >
-                {armed ? "Sure?" : spec.label}
+                {armed ? "Sure?" : <><span>{spec.label}</span><span class="row-more__item-detail">{spec.detail}</span></>}
               </button>
             );
           })}
@@ -593,12 +595,20 @@ function Row({
             </button>
           </Tooltip>
         )}
-        {/* FEEDBACK-10 (A13): the row-shaping actions (Place, Unschedule)
-            moved into the More menu — the row keeps Done/Drop and the two
+        {/* FEEDBACK-10 (A13): the row-shaping actions (Adjust time, Unschedule)
+            moved into the More menu — the row keeps its source-safe and
             shaping icons, and the cluster no longer overlaps. */}
         <span class="qrow__divider" />
         <StagingVerbs item={item} busy={s.runtimeBusy} />
-        <MoreMenu item={item} busy={s.runtimeBusy} state={state} />
+        <MoreMenu
+          item={item}
+          busy={s.runtimeBusy}
+          state={state}
+          allowTimeAdjustment={
+            !item.isRecurring &&
+            (!hasAdjustableNativeTime(item) || s.timeAdjustmentOptIns[item.id] === true)
+          }
+        />
       </div>
     </div>
   );
