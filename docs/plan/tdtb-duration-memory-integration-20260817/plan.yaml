@@ -275,7 +275,7 @@ tasks:
     result:
       status: completed
       commit_hash: c73f04a0c364e96960fc71cccc23aecf6aa88232
-      commit_message: feat: duration-memory MVP (backend contract, frontend adapters, bundle rebuild)
+      commit_message: 'feat: duration-memory MVP (backend contract, frontend adapters, bundle rebuild)'
       committed_paths: 25
       docs_plan_paths_in_commit: 0
       index_empty: true

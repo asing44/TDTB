@@ -1157,9 +1157,10 @@ tasks:
       - Hard-wall, quarantine, zero-writer, local-projection, and commit-gate contracts remain green.
       - Repository readiness is not represented as deployment, restart, or commit authorization.
     handoff:
-      known_context: [This review closes the repository plan only; it does not deploy.]
-      target_files:
-        - docs/plan/2026-08-12-tdtb-feedback-follow-up/evidence/FEEDBACK-20-handoff.json
+      known_context:
+        - This review closes the repository plan only; it does not deploy.
+        - No standalone FEEDBACK-20 handoff artifact was produced; acceptance is recorded in this plan's result and the existing FEEDBACK-19 requalification evidence.
+      target_files: []
       constraints: [Review only; do not mutate source, runtime, external state, or Git history.]
     requires_review: false
     review_depth: full
@@ -1167,6 +1168,8 @@ tasks:
     result:
       status: completed
       files_changed: []
+      evidence:
+        - docs/plan/2026-08-12-tdtb-feedback-follow-up/evidence/FEEDBACK-19-ui-requalification.json
       output: >-
         Final reviewer passed implementation and found no material UI or security issue; 148 focused
         checks, typecheck, and diff check passed. The only needs-revision item was plan bookkeeping.

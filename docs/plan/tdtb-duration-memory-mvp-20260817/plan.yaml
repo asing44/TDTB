@@ -3,7 +3,8 @@ objective: Implement a usable duration-memory MVP in an isolated features/durati
 complexity: MEDIUM
 created_at: '2026-08-17T00:00:00Z'
 created_by: gem-planner
-status: pending
+status: completed
+superseded_by: docs/plan/tdtb-duration-memory-integration-20260817/plan.yaml
 tldr: |
   - Ship vault-scoped duration memory with locked atomic writes and planner rehydration.
   - Add explicit save and per-item reset without changing same-day browser restore behavior.
@@ -178,6 +179,18 @@ deferred_hardening:
   - Exhaustive adversarial race matrices.
   - Cross-process browser OS-process proof beyond the scratch fresh-run smoke test.
 
+closure:
+  declared_complete: true
+  superseded_by: docs/plan/tdtb-duration-memory-integration-20260817/plan.yaml
+  evidence:
+    - docs/plan/tdtb-duration-memory-integration-20260817/plan.yaml
+    - docs/plan/2026-09-04-tdtb-feedback-implementation/plan.yaml
+    - docs/plan/2026-08-12-tdtb-feedback-follow-up/evidence/FEEDBACK-19-ui-requalification.json
+  disposition: >-
+    The MVP was implemented, verified, reviewed, and integrated. This plan is
+    retained as historical task lineage; the integration and later feedback
+    plans are authoritative for merged-product and UI verification.
+
 learn:
   - app/duration_memory.py already provides stable identity and remembered-first resolution seams.
   - Existing cache modules establish vault-relative locking and atomic replacement conventions.
@@ -190,7 +203,7 @@ tasks:
     description: Create or verify the approved worktree and branch and activate this plan copy.
     wave: 0
     agent: gem-devops
-    status: pending
+    status: completed
     covers:
       - Dedicated worktree and branch
       - Active plan transfer
@@ -234,7 +247,7 @@ tasks:
     description: Add vault cache persistence, guarded save/reset APIs, and GET rehydration with tests.
     wave: 1
     agent: gem-implementer
-    status: pending
+    status: completed
     covers:
       - Vault-scoped versioned JSON cache
       - Locked atomic save and per-item reset
@@ -296,7 +309,7 @@ tasks:
     description: Wire server memory into the model and add explicit save/reset behavior with tests.
     wave: 1
     agent: gem-implementer
-    status: pending
+    status: completed
     covers:
       - Duration-memory wire and model projection
       - Explicit save and per-item reset controls
@@ -358,7 +371,7 @@ tasks:
     description: Run required gates and a scratch fresh-run smoke test, then record bounded evidence.
     wave: 2
     agent: gem-implementer
-    status: pending
+    status: completed
     covers:
       - Complete backend and frontend verification
       - Generated bundle readback
@@ -407,7 +420,7 @@ tasks:
     description: Review the diff and evidence against the MVP and deferred boundary without writes.
     wave: 3
     agent: gem-reviewer
-    status: pending
+    status: completed
     covers:
       - MVP acceptance traceability
       - Safety and regression boundary
