@@ -195,6 +195,43 @@ class TestCommitEligibility:
         after = {p: p.read_bytes() for p in vault.rglob("*") if p.is_file()}
         assert before == after
 
+    def test_capacities_rows_are_not_misrouted_into_commit(self, client, vault):
+        today = main_mod.gather.effective_date(main_mod.datetime.now())
+        runstate.write_digest_index(vault, today, [{
+            "name": "Ship project",
+            "path": "capacities://space-1/object-1",
+            "identity": "capacities:space-1:RootTask:object-1",
+            "source": "capacities",
+            "capacities_id": "object-1",
+            "capacities_space_id": "space-1",
+            "capacities_structure_id": "RootTask",
+            "capacities_completion_supported": True,
+            "source_fingerprint": "fingerprint-1",
+            "surface": "assigned",
+        }])
+        before = {p: p.read_bytes() for p in vault.rglob("*") if p.is_file()}
+
+        response = client.post(
+            "/commit?mode=shadow",
+            headers=_auth(client),
+            json={
+                "digest": {"assigned": [{
+                    "name": "Ship project",
+                    "path": "capacities://space-1/object-1",
+                }]},
+                "sequence": {"sequence": [{
+                    "id": "Ship project", "start": "09:00", "end": "10:00",
+                }]},
+                "config": {},
+            },
+        )
+
+        assert response.status_code == 422
+        assert "plan-only" in response.json()["detail"]
+        assert "Ship project" in response.json()["detail"]
+        after = {p: p.read_bytes() for p in vault.rglob("*") if p.is_file()}
+        assert before == after
+
     def test_stale_sequence_row_is_422(self, client, vault, monkeypatch):
         def fake_gather(config, vault_root):
             return {

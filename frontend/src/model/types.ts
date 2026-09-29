@@ -11,7 +11,7 @@
    Sequence identity is name-keyed — `id` = the digest item's `name`
    (T1 contract in main.py). */
 
-export type Source = "vault" | "todoist";
+export type Source = "vault" | "todoist" | "capacities";
 
 /** Resolved duration source label (mirrors the backend resolver's
     source_label). "remembered" means a durable server-side memory entry won;
@@ -46,8 +46,13 @@ export interface AssignedItem {
   /** Canonical stable source identity (todoist:<id> or normalized vault
       path) — the key the duration-memory mutation API operates on. Absent
       only when the wire carries neither; a display name alone is never an
-      identity. */
+      identity. Capacities keeps its source identity in the fields below so it
+      cannot fall into the vault/Todoist duration-memory cache. */
   identity?: string | null;
+  capacitiesIdentity?: string | null;
+  capacitiesId?: string | null;
+  capacitiesSpaceId?: string | null;
+  capacitiesStructureId?: string | null;
   /** Where the row's effective duration came from: "remembered" (durable
       server memory) or a deterministic source label. Absent for legacy
       payloads without duration-memory metadata = source-resolved behavior. */

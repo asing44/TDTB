@@ -35,6 +35,21 @@ def test_memory_keyed_by_stable_identity_not_name():
         store_memory("Some Name", 90)  # name alone is not an identity
 
 
+def test_capacities_identity_is_not_accepted_as_duration_memory_key():
+    from duration_memory import item_identity, normalize_identity
+
+    row = {
+        "source": "capacities",
+        "path": "capacities://space-1/object-1",
+        "identity": "capacities:space-1:RootTask:object-1",
+    }
+    assert item_identity(row) is None
+    with pytest.raises(ValueError, match="Capacities source identity"):
+        normalize_identity(row["identity"])
+    with pytest.raises(ValueError, match="Capacities source identity"):
+        normalize_identity(row["path"])
+
+
 def test_duration_precedence_memory_first_with_source_label():
     from duration_memory import resolve_duration
 
@@ -76,6 +91,34 @@ def test_tag_source_case_insensitive_single_match():
         memory={},
     )
     assert (value, source) == (45, "tag:DUR45")
+
+
+def test_quick_task_tag_resolves_as_a_ten_minute_duration():
+    from duration_memory import resolve_duration
+
+    value, source = resolve_duration(
+        {
+            "name": "Water plants",
+            "labels": ["🚀10min"],
+            "duration": {"unit": "minute", "amount": 30},
+        },
+        presets=[],
+        fm={},
+        memory={},
+    )
+    assert (value, source) == (10, "tag:🚀10min")
+
+
+def test_quick_task_tag_allows_human_spacing_without_changing_its_identity():
+    from duration_memory import resolve_duration
+
+    value, source = resolve_duration(
+        {"name": "Water plants", "labels": ["🚀 10 min"]},
+        presets=[],
+        fm={},
+        memory={},
+    )
+    assert (value, source) == (10, "tag:🚀 10 min")
 
 
 def test_tag_collision_fails_visibly():

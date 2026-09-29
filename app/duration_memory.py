@@ -4,7 +4,8 @@ Frozen plan items 10-12 (``Plans Link/2026-08-09-tdtb-planning-ui-reliability.md
 
 - Precedence (item 11): saved user memory -> deterministic tag mapping ->
   Todoist native or exact named preset -> contract-defined type field ->
-  default. Same-precedence tag collisions fail visibly.
+  default. ``dur<N>`` and QuickTask labels such as ``🚀10min`` are duration
+  tags. Same-precedence tag collisions fail visibly.
 - The resolver returns ``(value_minutes, source_label)`` where source_label is
   one of ``remembered`` / ``tag:<name>`` / ``native`` / ``preset`` / ``type`` /
   ``default``.
@@ -35,7 +36,6 @@ from __future__ import annotations
 
 import json
 import os
-import re
 import tempfile
 import threading
 from pathlib import Path
@@ -47,9 +47,7 @@ except ImportError:  # pragma: no cover — non-POSIX fallback
     _fcntl = None
 
 import runstate
-
-# Deterministic tag mapping: a label matching ``dur<N>`` means N minutes.
-_TAG_DURATION_RE = re.compile(r"^dur(\d+)$", re.IGNORECASE)
+from duration_tags import duration_tag_minutes
 
 # Contract-defined per-type duration fields (the vault FileClass owns the
 # contract; press notes carry ``duration_min`` in minutes). Mirrors
@@ -328,6 +326,10 @@ def normalize_identity(identity: str) -> str:
         tail = text[len("vault:"):].strip()
         if tail:
             return f"vault:{tail}"
+    if text.startswith("capacities:") or text.casefold().startswith("capacities://"):
+        raise ValueError(
+            f"{identity!r} is a Capacities source identity, not a duration-memory key"
+        )
     if "/" in text:
         return text
     raise ValueError(
@@ -337,11 +339,19 @@ def normalize_identity(identity: str) -> str:
 
 
 def item_identity(item: dict[str, Any]) -> str | None:
-    """Canonical identity for a digest/assigned row, or None when absent."""
+    """Canonical duration-memory identity for a digest/assigned row.
+
+    Capacities owns its source duration and keeps its namespaced identity out of
+    the existing vault/Todoist duration-memory cache until a separate mapping
+    contract authorizes that behavior.
+    """
+    source = str(item.get("source") or "").strip().casefold()
+    path = item.get("path")
+    if source == "capacities" or str(path or "").casefold().startswith("capacities://"):
+        return None
     todoist_id = item.get("todoist_id")
     if todoist_id not in (None, ""):
         return f"todoist:{todoist_id}"
-    path = item.get("path")
     if path and not str(path).startswith("todoist://"):
         return str(path)
     return None
@@ -419,9 +429,9 @@ def _duration_tag(item: dict[str, Any]) -> tuple[str | None, int | None]:
     """
     matches: list[tuple[str, int]] = []
     for label in item.get("labels") or []:
-        m = _TAG_DURATION_RE.match(str(label).strip())
-        if m:
-            matches.append((str(label).strip(), int(m.group(1))))
+        minutes = duration_tag_minutes(label)
+        if minutes is not None:
+            matches.append((str(label).strip(), minutes))
     if not matches:
         return None, None
     distinct = {minutes for _, minutes in matches}

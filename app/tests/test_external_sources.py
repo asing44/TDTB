@@ -821,3 +821,11 @@ class TestQtAbsorption:
         remaining, contents = ext.absorb_quick_tasks(
             self.ASSIGNED, qt_on=False)
         assert len(remaining) == 3 and contents == []
+
+    def test_absorbs_quick_labeled_items_with_human_spacing(self):
+        remaining, contents = ext.absorb_quick_tasks(
+            [{"id": "Water plants", "name": "Water plants", "labels": ["🚀 10 min"]}],
+            qt_on=True,
+        )
+        assert remaining == []
+        assert contents == ["Water plants"]

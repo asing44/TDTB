@@ -313,8 +313,10 @@ def build_digest_index(digest: dict[str, Any]) -> list[dict[str, Any]]:
                 "surface": surface,
             }
             for key in (
-                "source", "blocks", "native_blocks", "duration",
-                "scheduled_start", "is_recurring",
+                "identity", "source", "blocks", "native_blocks", "duration",
+                "duration_minutes", "scheduled_start", "is_recurring",
+                "capacities_id", "capacities_space_id", "capacities_structure_id",
+                "capacities_completion_supported", "source_fingerprint",
             ):
                 if key in row and row.get(key) is not None:
                     entry[key] = row[key]
@@ -326,7 +328,9 @@ def build_digest_index(digest: dict[str, Any]) -> list[dict[str, Any]]:
                     and (str(row.get("source") or "").strip().casefold() == "todoist"
                          or str(row.get("todoist_id") or "").strip())):
                 entry["native_blocks"] = entry["blocks"]
-            if not entry["name"] or not (entry["todoist_id"] or entry["path"]):
+            if not entry["name"] or not (
+                entry["todoist_id"] or entry["path"] or entry.get("identity")
+            ):
                 continue
             key = (entry["name"], entry["todoist_id"], entry["path"])
             if key in seen:
@@ -337,15 +341,19 @@ def build_digest_index(digest: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 _ROUTE_TIMING_FIELDS = frozenset({
-    "id", "name", "todoist_id", "path", "source", "scheduled_start",
+    "id", "name", "identity", "todoist_id", "path", "source", "scheduled_start",
     "is_recurring", "duration", "blocks", "duration_minutes",
     "duration_source", "placement_window", "latest_start", "latest_end",
-    "zone", "native_blocks", "allow_time_adjustment",
+    "zone", "native_blocks", "allow_time_adjustment", "source_fingerprint",
+    "capacities_id", "capacities_space_id", "capacities_structure_id",
+    "capacities_completion_supported",
 })
 
 _ROUTE_NATIVE_CLAIM_FIELDS = frozenset({
-    "source", "scheduled_start", "is_recurring", "native_blocks",
-    "allow_time_adjustment",
+    "identity", "source", "scheduled_start", "is_recurring", "native_blocks",
+    "allow_time_adjustment", "capacities_id", "capacities_space_id",
+    "capacities_structure_id", "capacities_completion_supported",
+    "source_fingerprint",
 })
 
 
@@ -357,10 +365,18 @@ def _route_name(value: Any) -> str:
 def _route_source_identity(
     row: dict[str, Any],
 ) -> tuple[str, str] | None:
-    """Return a stable Todoist or vault identity, rejecting contradictions."""
+    """Return a stable source identity, rejecting contradictions."""
+    source = str(row.get("source") or "").strip().casefold()
     todoist_id = str(row.get("todoist_id") or "").strip()
     path = str(row.get("path") or "").strip()
+    identity = str(row.get("identity") or "").strip()
     todoist_path = path.casefold().startswith("todoist://")
+    capacities_path = path.casefold().startswith("capacities://")
+
+    if source == "capacities" or capacities_path:
+        if not capacities_path or (identity and not identity.casefold().startswith("capacities:")):
+            return None
+        return "capacities", identity or path
 
     if todoist_id:
         if path:
@@ -458,6 +474,7 @@ def _canonicalize_route_assigned(
         return bool(
             str(row.get("todoist_id") or "").strip()
             or str(row.get("path") or "").strip()
+            or str(row.get("identity") or "").strip()
         )
 
     def _has_native_claim(row: dict[str, Any]) -> bool:
@@ -1278,6 +1295,10 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
     # live token/EventKit; the real-server module bottom swaps in
     # build_real_read_clients. Tests inject fakes here.
     app.state.build_read_clients = None
+    # Capacities is separately injected because its application-owned adapter
+    # has a different provider contract and must remain opt-in until the
+    # space/structure mappings and credential route are explicitly configured.
+    app.state.build_capacities_adapter = None
     # G25: in-flight guard on POST /commit?mode=live — two racing live commits
     # both pass check-before-write against the same snapshot and double-write.
     app.state.live_commit_lock = threading.Lock()
@@ -1478,6 +1499,21 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
         }
         build_clients = app.state.build_read_clients or (lambda v, c: (None, None))
         todoist_c, store = build_clients(vault, config)
+        capacities_items: list[dict[str, Any]] = []
+        w_capacities: list[str] = []
+        build_capacities = app.state.build_capacities_adapter
+        if build_capacities is not None:
+            try:
+                capacities_client = build_capacities(vault, config)
+            except Exception as exc:  # noqa: BLE001 — source boundary degrades
+                capacities_client = None
+                w_capacities = [
+                    f"Capacities adapter setup failed ({exc}) — source is unavailable"
+                ]
+            if capacities_client is not None:
+                capacities_items, w_capacities = external_sources.fetch_capacities_items(
+                    capacities_client, today
+                )
         try:
             t_assigned, t_pool, w_todo = external_sources.fetch_todoist_items(
                 todoist_c, ext_cfg
@@ -1513,9 +1549,13 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
         vault_all = run_data["pool_items"] + run_data["assigned_items"]
         t_assigned = external_sources.disambiguate_names(vault_all, t_assigned)
         t_pool = external_sources.disambiguate_names(vault_all + t_assigned, t_pool)
+        capacities_items = external_sources.disambiguate_names(
+            vault_all + t_assigned + t_pool,
+            capacities_items,
+        )
         digest = build_digest(
             run_data["pool_items"] + t_pool,
-            run_data["assigned_items"] + t_assigned,
+            run_data["assigned_items"] + t_assigned + capacities_items,
             today,
             order,
             ignore=(
@@ -1655,10 +1695,11 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
             "micro_adventure": micro_payload,
             "dropped_today": dropped_rows,
             "calendar_decisions": calendar_decisions,
-            "source_warnings": w_todo + w_cal + w_hab,
+            "source_warnings": w_todo + w_cal + w_hab + w_capacities,
             "source_counts": {
                 "vault": len(run_data["pool_items"]) + len(run_data["assigned_items"]),
                 "todoist": len(t_assigned) + len(t_pool),
+                "capacities": len(capacities_items),
                 "calendar": len(busy_blocks),
             },
         }
@@ -2692,6 +2733,25 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
                 authorized_rows.append(match)
                 authorized_matches.append((match, row))
 
+        capacities_names = sorted({
+            str(candidate.get("name") or "<unnamed>")
+            for candidate, _submitted in authorized_matches
+            if (
+                str(candidate.get("source") or "").strip().casefold() == "capacities"
+                or str(candidate.get("path") or "").strip().casefold().startswith("capacities://")
+            )
+        })
+        if capacities_names:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "commit refused: Capacities rows are plan-only in this "
+                    "integration slice; completion uses /runtime-actions: "
+                    + ", ".join(capacities_names)
+                    + " — nothing was written"
+                ),
+            )
+
         # Effective-blocks overlays are validated BEFORE any write decision:
         # a malformed or extreme value is collected here and fails the commit
         # closed, never silently accepted as the manifest duration.
@@ -3129,26 +3189,47 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
 
     # -- runtime item actions (T20) -------------------------------------------
 
-    def _runtime_clients() -> tuple[Any, Any, bool]:
-        """(todoist, store, owns_todoist) — injected builder first (tests),
-        else live clients; each surface degrades to None and the verb
-        planner fails closed per surface before any write."""
+    def _runtime_clients() -> tuple[Any, Any, Any, bool]:
+        """(todoist, store, capacities, owns_todoist) for runtime actions.
+
+        Injected builders are used first in tests. Each source surface degrades
+        to None and the verb planner fails closed before any write. The
+        Capacities builder remains opt-in; no live credential route is created
+        here by default.
+        """
         vault = resolve_vault_root()
+        owns_todoist = False
         if app.state.build_commit_clients:
             todoist_c, store = app.state.build_commit_clients(vault, None)
-            return todoist_c, store, False
-        todoist_c = None
-        try:
-            token = shadow.todoist_client.load_token(shadow.TOKEN_ENV_PATH)
-            todoist_c = shadow.todoist_client.TodoistClient(token)
-        except Exception:  # noqa: BLE001 — absence degrades, fail-closed later
-            pass
-        store = None
-        try:
-            store = calendar_bridge.shared_store()
-        except Exception:  # noqa: BLE001
-            pass
-        return todoist_c, store, todoist_c is not None
+            capacities_c = None
+        else:
+            todoist_c = None
+            try:
+                token = shadow.todoist_client.load_token(shadow.TOKEN_ENV_PATH)
+                todoist_c = shadow.todoist_client.TodoistClient(token)
+            except Exception:  # noqa: BLE001 — absence degrades, fail-closed later
+                pass
+            owns_todoist = todoist_c is not None
+            store = None
+            try:
+                store = calendar_bridge.shared_store()
+            except Exception:  # noqa: BLE001
+                pass
+            capacities_c = None
+
+        build_capacities = app.state.build_capacities_adapter
+        if build_capacities is not None:
+            try:
+                result = config_reader.read_config(vault)
+                config = (
+                    dict(result.config.sections)
+                    if result.config is not None
+                    else {}
+                )
+                capacities_c = build_capacities(vault, config)
+            except Exception:  # noqa: BLE001 — action boundary fails closed
+                capacities_c = None
+        return todoist_c, store, capacities_c, owns_todoist
 
     def _raise_runtime_error(exc: runtime_actions.RuntimeActionError) -> None:
         code = 503 if "surface unavailable" in str(exc) else 422
@@ -3161,17 +3242,19 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
         # FEEDBACK-24: runtime verbs write external state (Todoist/vault) —
         # fail closed until Day Setup is explicitly confirmed for today.
         _require_day_setup(vault, today, "applying runtime actions")
-        todoist_c, store, owns = _runtime_clients()
+        todoist_c, store, capacities_c, owns = _runtime_clients()
         try:
             return runtime_actions.apply_action(
                 vault, today, body.verb, body.target, body.args,
-                todoist=todoist_c, store=store,
+                todoist=todoist_c, store=store, capacities=capacities_c,
             )
         except runtime_actions.RuntimeActionError as exc:
             _raise_runtime_error(exc)
         finally:
             if owns:
                 todoist_c.close()
+            if capacities_c is not None and hasattr(capacities_c, "close"):
+                capacities_c.close()
 
     @app.post("/runtime-actions/{action_id}/undo",
               dependencies=[Depends(require_token)])
@@ -3180,15 +3263,19 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
         today = gather.effective_date(datetime.now())
         # FEEDBACK-24: undo writes external state too — same closed gate.
         _require_day_setup(vault, today, "undoing runtime actions")
-        todoist_c, store, owns = _runtime_clients()
+        todoist_c, store, capacities_c, owns = _runtime_clients()
         try:
             return runtime_actions.undo_action(
-                vault, today, action_id, todoist=todoist_c, store=store)
+                vault, today, action_id,
+                todoist=todoist_c, store=store, capacities=capacities_c,
+            )
         except runtime_actions.RuntimeActionError as exc:
             _raise_runtime_error(exc)
         finally:
             if owns:
                 todoist_c.close()
+            if capacities_c is not None and hasattr(capacities_c, "close"):
+                capacities_c.close()
 
     @app.get("/runtime-actions", dependencies=[Depends(require_token)])
     def get_runtime_actions() -> Any:

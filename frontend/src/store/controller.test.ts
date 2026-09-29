@@ -6,7 +6,7 @@ import { canLiveCommit, defectsResolved, dockState, effectiveAnchoredBlocks, sou
 import { calendarWalls, mintWalls } from "../model/overflow";
 import { ApiError } from "../adapters/api";
 import type { ScenarioName } from "../fixtures/scenarios";
-import type { ShadowDiff } from "../model/types";
+import type { ShadowDiff, Source } from "../model/types";
 
 function toMin(hhmm: string): number {
   const [h, m] = hhmm.split(":").map(Number);
@@ -946,7 +946,7 @@ describe("FEEDBACK-25 overflow avoids Mint walls (controller wiring)", () => {  
   }, 15000);
 });
 describe("explicit duration memory (MVP)", () => {
-  const identityOf = (i: { id: string; path: string | null; todoistId: string | null; source: "vault" | "todoist" }) =>
+  const identityOf = (i: { id: string; path: string | null; todoistId: string | null; source: Source }) =>
     i.source === "todoist" && i.todoistId ? `todoist:${i.todoistId}` : i.path;
 
   it("save refuses invalid values with NO adapter call and surfaces an error", async () => {

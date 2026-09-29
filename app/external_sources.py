@@ -21,6 +21,8 @@ from pathlib import Path
 from dataclasses import dataclass
 from typing import Any
 
+from duration_tags import is_quick_task_tag
+
 # v1 /tasks/filter takes filter QUERY strings, not saved-filter IDs (the app's
 # existing live callers pass "today" — shadow.py). Saved-filter IDs from the
 # config Schema Reference stay write-path-only.
@@ -116,14 +118,43 @@ def fetch_todoist_items(
     return assigned_items, pool_items, []
 
 
+def fetch_capacities_items(
+    adapter: Any, logical_day: date
+) -> tuple[list[dict[str, Any]], list[str]]:
+    """Read accepted Capacities objects through an injected adapter.
+
+    The route never constructs a provider implicitly. This keeps tests and
+    shadow/scratch runs offline while allowing an attended runtime to inject a
+    configured application-owned REST adapter. Any provider or contract error
+    degrades to a visible warning and an empty source, never to partial rows.
+    """
+    if adapter is None:
+        return [], []
+    try:
+        result = adapter.items_for_day(logical_day)
+        items = list(result.items)
+        warnings = list(result.warnings)
+        return items, warnings
+    except Exception as exc:  # noqa: BLE001 — source boundary degrades
+        return [], [f"Capacities read failed ({exc}) — source is unavailable"]
+    finally:
+        close = getattr(adapter, "close", None)
+        if callable(close):
+            try:
+                close()
+            except Exception:  # noqa: BLE001 — cleanup must not mask read result
+                pass
+
+
 def disambiguate_names(
     vault_items: list[dict[str, Any]], ext_items: list[dict[str, Any]]
 ) -> list[dict[str, Any]]:
     """Rename external items whose name collides with a vault item (or an
     earlier external item). Sequence identity is name-keyed downstream
     (timeline sets id = name), so duplicate names break never-bump and
-    duplicate-row validation. Vault names stay canonical; collisions get
-    " (Todoist)" then " (2)", " (3)"… Mutates copies, not inputs.
+    duplicate-row validation. Vault names stay canonical; collisions get a
+    source-specific suffix such as ``(Todoist)`` or ``(Capacities)``. Mutates
+    copies, not inputs.
     """
     vault_taken = {str(i.get("name", "")).casefold() for i in vault_items}
     taken = set(vault_taken)
@@ -132,9 +163,17 @@ def disambiguate_names(
         copy = dict(item)
         name = str(copy.get("name", ""))
         if name.casefold() in taken:
-            # vault collision reads best as a source tag; a same-source
+            # A vault collision reads best as a source tag; a same-source
             # duplicate just numbers up.
-            candidates = [f"{name} (Todoist)"] if name.casefold() in vault_taken else []
+            source_label = {
+                "todoist": "Todoist",
+                "capacities": "Capacities",
+            }.get(str(copy.get("source") or "").strip().casefold(), "Source")
+            candidates = (
+                [f"{name} ({source_label})"]
+                if name.casefold() in vault_taken
+                else []
+            )
             candidates += [f"{name} ({n})" for n in range(2, len(ext_items) + 2)]
             copy["name"] = next(c for c in candidates if c.casefold() not in taken)
         taken.add(str(copy["name"]).casefold())
@@ -1176,7 +1215,7 @@ def absorb_quick_tasks(
         return list(assigned), []
     remaining, contents = [], []
     for item in assigned:
-        if QUICK_LABEL in (item.get("labels") or []):
+        if any(is_quick_task_tag(label) for label in (item.get("labels") or [])):
             contents.append(str(item.get("name") or item.get("id") or ""))
         else:
             remaining.append(item)

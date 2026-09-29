@@ -111,9 +111,11 @@ export function durationSourceOf(label: unknown): DurationSourceLabel {
     never an identity. */
 export function itemIdentity(item: {
   source?: string;
+  identity?: string | null;
   todoistId?: string | null;
   path?: string | null;
 }): string | null {
+  if (item.source === "capacities" && item.identity) return String(item.identity);
   if (item.source === "todoist" && item.todoistId) return `todoist:${item.todoistId}`;
   if (item.path && !String(item.path).startsWith("todoist://")) return String(item.path);
   return null;
@@ -161,7 +163,12 @@ export function projectDurationMemoryReset(wire: Wire): DurationMemoryResetResul
 // -- per-endpoint projections ------------------------------------------------
 
 export function projectAssigned(row: Wire): AssignedItem {
-  const source = row.source === "todoist" ? "todoist" : "vault";
+  const source =
+    row.source === "todoist"
+      ? "todoist"
+      : row.source === "capacities"
+        ? "capacities"
+        : "vault";
   const blocks =
     typeof row.blocks === "number" && Number.isFinite(row.blocks) ? row.blocks : 1;
   // FT-05 F1: exact remembered minutes win for the user-visible label —
@@ -193,6 +200,7 @@ export function projectAssigned(row: Wire): AssignedItem {
     // "default" so legacy payloads keep source-resolved behavior.
     identity: itemIdentity({
       source,
+      identity: row.identity ?? null,
       todoistId:
         source === "todoist" && row.todoist_id != null && String(row.todoist_id) !== ""
           ? String(row.todoist_id)

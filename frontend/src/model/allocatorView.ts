@@ -8,6 +8,7 @@
 
 import { bandOf } from "./bands";
 import { importanceKey } from "./allocator";
+import { isDurationTag } from "./durationTags";
 import type { AssignedItem, QueueState } from "./types";
 import { queueState, type AppState } from "../store/store";
 
@@ -94,6 +95,7 @@ function sharedTags(items: AssignedItem[]): Map<string, string[]> {
   for (const item of items) {
     const itemTags = (item.tags ?? []).map((tag) => String(tag).trim()).filter(Boolean);
     for (const tag of new Set<string>(itemTags)) {
+      if (isDurationTag(tag)) continue;
       const key = normalized(tag);
       const list = owners.get(key) ?? [];
       if (!list.includes(item.id)) list.push(item.id);

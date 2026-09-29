@@ -14,6 +14,7 @@ import pytest
 
 import runstate
 import runtime_actions as ra
+from capacities_adapter import CompletionOutcome
 
 
 TODAY = date(2026, 7, 25)
@@ -103,6 +104,42 @@ class FakeStore:
         if end is not None:
             ev["end"] = end.isoformat()
         return True
+
+
+class FakeCapacities:
+    def __init__(self) -> None:
+        self.calls: list[tuple] = []
+        self.closed = False
+
+    def complete(self, object_id: str, *, expected_fingerprint: str | None = None):
+        self.calls.append(("complete", object_id, expected_fingerprint))
+        return CompletionOutcome(
+            "completed",
+            object_id,
+            completion_property="status",
+            before_property={"type": "label", "label": [{"id": "open"}]},
+            after_fingerprint="after-fingerprint",
+        )
+
+    def restore_completion(
+        self,
+        object_id: str,
+        *,
+        completion_property,
+        before_property,
+        expected_fingerprint,
+    ):
+        self.calls.append((
+            "restore",
+            object_id,
+            completion_property,
+            before_property,
+            expected_fingerprint,
+        ))
+        return CompletionOutcome("restored", object_id)
+
+    def close(self) -> None:
+        self.closed = True
 
 
 # ---------------------------------------------------------------------------
@@ -211,6 +248,60 @@ class TestJournalCore:
 # ---------------------------------------------------------------------------
 
 class TestComplete:
+    def test_complete_routes_a_capacities_item_through_the_journal(self, vault: Path):
+        runstate.write_digest_index(vault, TODAY, [{
+            "name": "Ship project",
+            "path": "capacities://space-1/object-1",
+            "identity": "capacities:space-1:custom-project:object-1",
+            "source": "capacities",
+            "capacities_id": "object-1",
+            "capacities_space_id": "space-1",
+            "capacities_structure_id": "custom-project",
+            "capacities_completion_supported": True,
+            "source_fingerprint": "before-fingerprint",
+        }])
+        capacities = FakeCapacities()
+
+        action = ra.apply_action(
+            vault,
+            TODAY,
+            "complete",
+            "Ship project",
+            {},
+            capacities=capacities,
+        )
+
+        assert action["status"] == "applied"
+        assert capacities.calls == [
+            ("complete", "object-1", "before-fingerprint"),
+        ]
+        undone = ra.undo_action(
+            vault, TODAY, action["id"], capacities=capacities
+        )
+        assert undone["status"] == "undone"
+        assert capacities.calls[-1][0:3] == (
+            "restore", "object-1", "status"
+        )
+
+    def test_complete_refuses_capacities_without_a_fingerprint_baseline(self, vault: Path):
+        runstate.write_digest_index(vault, TODAY, [{
+            "name": "Ship project",
+            "path": "capacities://space-1/object-1",
+            "identity": "capacities:space-1:custom-project:object-1",
+            "source": "capacities",
+            "capacities_id": "object-1",
+            "capacities_completion_supported": True,
+        }])
+        capacities = FakeCapacities()
+
+        with pytest.raises(ra.RuntimeActionError, match="fingerprint baseline"):
+            ra.apply_action(
+                vault, TODAY, "complete", "Ship project", {}, capacities=capacities
+            )
+
+        assert capacities.calls == []
+        assert ra.load_journal(vault, TODAY)["actions"] == []
+
     def test_complete_closes_todoist_and_flips_vault(self, vault: Path):
         todoist, store = fresh_clients()
         action = ra.apply_action(

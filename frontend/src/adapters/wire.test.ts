@@ -118,6 +118,21 @@ describe("projectPlanInputs (contract: plan-inputs.json)", () => {
     expect(t.todoistId).toBe("9001");
   });
 
+  it("preserves a namespaced Capacities identity without treating it as vault", () => {
+    const item = projectAssigned({
+      name: "Ship project",
+      source: "capacities",
+      path: "capacities://space-1/object-1",
+      identity: "capacities:space-1:custom-project:object-1",
+      duration_minutes: 60,
+      blocks: 2,
+    });
+    expect(item.source).toBe("capacities");
+    expect(item.path).toBe("capacities://space-1/object-1");
+    expect(item.identity).toBe("capacities:space-1:custom-project:object-1");
+    expect(item.todoistId).toBeNull();
+  });
+
   it("maps todoist rows: source, null path, native-duration blocks", () => {
     const t = p.assigned.find((i) => i.name === "Sample Todoist Task")!;
     expect(t.source).toBe("todoist");

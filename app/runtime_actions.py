@@ -104,6 +104,7 @@ STAGING_VERBS = (
 # `external_sources` gives every Todoist row this synthetic path. It is an
 # identity, not a location — nothing may join it to a vault root.
 TODOIST_PATH_PREFIX = "todoist://"
+CAPACITIES_PATH_PREFIX = "capacities://"
 
 # FileClass → completion status value. FileClass enums are vault-defined
 # (Propsec/MetadataMenu, `00 - META/Schemas/FileClasses/<type>.md`).
@@ -226,6 +227,20 @@ def _resolve_from_digest_index(
     out: dict[str, Any] = {"name": name, "phase": "staging"}
     for row in rows:
         path = str(row.get("path") or "")
+        source = str(row.get("source") or "").strip().casefold()
+        if source == "capacities" or path.startswith(CAPACITIES_PATH_PREFIX):
+            # A Capacities URI is a source identity, never a vault path. Copy
+            # only server-derived provider metadata into the guarded action.
+            if path.startswith(CAPACITIES_PATH_PREFIX) and "capacities_id" not in out:
+                for key in (
+                    "identity", "capacities_id", "capacities_space_id",
+                    "capacities_structure_id", "capacities_completion_supported",
+                    "source_fingerprint",
+                ):
+                    if row.get(key) is not None:
+                        out[key] = row[key]
+                out["source"] = "capacities"
+            continue
         if row.get("todoist_id") and "todoist_id" not in out:
             out["todoist_id"] = str(row["todoist_id"])
         elif path.startswith(TODOIST_PATH_PREFIX) and "todoist_id" not in out:
@@ -266,6 +281,15 @@ def resolve_target(vault_root: Path | str, valid_date: date, name: str) -> dict[
             out["event_duration_min"] = int(row.get("duration_min") or 0)
         elif system == "vault" and "vault_path" not in out:
             out["vault_path"] = str(row.get("id_or_path"))
+        elif system == "capacities" and "capacities_id" not in out:
+            out["source"] = "capacities"
+            out["capacities_id"] = str(row.get("id_or_path"))
+            for key in (
+                "identity", "capacities_space_id", "capacities_structure_id",
+                "capacities_completion_supported", "source_fingerprint",
+            ):
+                if row.get(key) is not None:
+                    out[key] = row[key]
     return out
 
 
@@ -347,7 +371,11 @@ def drop_identity_of(target_or_row: dict[str, Any]) -> str:
     tid = target_or_row.get("todoist_id")
     if tid not in (None, ""):
         return f"todoist:{tid}"
+    source = str(target_or_row.get("source") or "").strip().casefold()
+    identity = str(target_or_row.get("identity") or "").strip()
     path = str(target_or_row.get("vault_path") or target_or_row.get("path") or "")
+    if source == "capacities" or path.startswith(CAPACITIES_PATH_PREFIX):
+        return identity or path
     if path and not path.startswith(TODOIST_PATH_PREFIX):
         return path
     return str(target_or_row.get("name") or target_or_row.get("id") or "")
@@ -387,6 +415,18 @@ def plan_steps(verb: str, target: dict, args: dict, valid_date: date) -> list[di
         if target.get("vault_path"):
             steps.append({"kind": "vault.complete", "surface": "vault",
                           "path": target["vault_path"]})
+        if target.get("capacities_id") and target.get("capacities_completion_supported") is True:
+            fingerprint = str(target.get("source_fingerprint") or "").strip()
+            if not fingerprint:
+                raise RuntimeActionError(
+                    f"{target['name']!r}: Capacities completion requires "
+                    "a source fingerprint baseline"
+                )
+            steps.append({
+                "kind": "capacities.complete", "surface": "capacities",
+                "object_id": str(target["capacities_id"]),
+                "expected_fingerprint": fingerprint,
+            })
         if not steps:
             raise RuntimeActionError(
                 f"{target['name']!r}: no completable source in today's manifest")
@@ -503,11 +543,28 @@ def plan_steps(verb: str, target: dict, args: dict, valid_date: date) -> list[di
 # ---------------------------------------------------------------------------
 
 def _apply_step(step: dict, vault_root: Path, valid_date: date,
-                todoist: Any, store: Any) -> None:
+                todoist: Any, store: Any, capacities: Any) -> None:
     kind = step["kind"]
     if kind == "todoist.close":
         step["before"] = {"task": todoist.get_task(step["task_id"])}
         todoist.close_task(step["task_id"])
+    elif kind == "capacities.complete":
+        outcome = capacities.complete(
+            step["object_id"],
+            expected_fingerprint=step.get("expected_fingerprint"),
+        )
+        status = getattr(outcome, "status", None)
+        if status not in {"already_complete", "completed", "completed_after_timeout"}:
+            raise RuntimeActionError(
+                f"Capacities completion returned unsupported status {status!r}"
+            )
+        step["outcome"] = {
+            "status": status,
+            "object_id": getattr(outcome, "object_id", step["object_id"]),
+            "completion_property": getattr(outcome, "completion_property", None),
+            "before_property": getattr(outcome, "before_property", None),
+            "after_fingerprint": getattr(outcome, "after_fingerprint", None),
+        }
     elif kind == "todoist.clear_time":
         task = todoist.get_task(step["task_id"])
         step["before"] = {"task": task}
@@ -670,12 +727,26 @@ def _apply_step(step: dict, vault_root: Path, valid_date: date,
 
 
 def _reverse_step(step: dict, vault_root: Path, valid_date: date,
-                  todoist: Any, store: Any) -> None:
+                  todoist: Any, store: Any, capacities: Any) -> None:
     """Exact reverse of one applied step, from its before-image."""
     kind = step["kind"]
     before = step.get("before") or {}
     if kind == "todoist.close":
         todoist.reopen_task(step["task_id"])
+    elif kind == "capacities.complete":
+        outcome = step.get("outcome") or {}
+        if outcome.get("status") == "already_complete":
+            return
+        restored = capacities.restore_completion(
+            step["object_id"],
+            completion_property=outcome.get("completion_property"),
+            before_property=outcome.get("before_property"),
+            expected_fingerprint=outcome.get("after_fingerprint"),
+        )
+        step["undo_outcome"] = {
+            "status": getattr(restored, "status", None),
+            "object_id": getattr(restored, "object_id", step["object_id"]),
+        }
     elif kind == "todoist.clear_time":
         if step.get("skipped_recurring"):
             return  # nothing was written — nothing to reverse
@@ -913,10 +984,12 @@ def _locked_runstate_rmw(vault_root: Path, valid_date: date,
 
 
 _SURFACE_CLIENT = {"todoist": "todoist", "calendar": "store",
-                   "vault": None, "runstate": None}
+                   "capacities": "capacities", "vault": None, "runstate": None}
 
 
-def _check_surfaces(steps: list[dict], todoist: Any, store: Any) -> None:
+def _check_surfaces(
+    steps: list[dict], todoist: Any, store: Any, capacities: Any
+) -> None:
     missing: list[str] = []
     for step in steps:
         surface = step["surface"]
@@ -924,6 +997,8 @@ def _check_surfaces(steps: list[dict], todoist: Any, store: Any) -> None:
             missing.append("todoist")
         elif surface == "calendar" and store is None:
             missing.append("calendar")
+        elif surface == "capacities" and capacities is None:
+            missing.append("capacities")
     if missing:
         raise RuntimeActionError(
             "surface unavailable: " + ", ".join(sorted(set(missing))))
@@ -942,6 +1017,7 @@ def apply_action(
     *,
     todoist: Any = None,
     store: Any = None,
+    capacities: Any = None,
     now: datetime | None = None,
 ) -> dict[str, Any]:
     """Apply one runtime verb to one plan item; returns the journal entry.
@@ -956,7 +1032,7 @@ def apply_action(
         raise RuntimeActionError(f"unknown verb {verb!r}")
     target = resolve_target(vault_root, valid_date, target_name)
     steps = plan_steps(verb, target, args, valid_date)
-    _check_surfaces(steps, todoist, store)
+    _check_surfaces(steps, todoist, store, capacities)
 
     with runstate.day_lock(valid_date):
         journal = load_journal(vault_root, valid_date)
@@ -987,7 +1063,9 @@ def apply_action(
 
         try:
             for step in steps:
-                _apply_step(step, vault_root, valid_date, todoist, store)
+                _apply_step(
+                    step, vault_root, valid_date, todoist, store, capacities
+                )
                 _write_journal(vault_root, valid_date, journal)
             action["status"] = "applied"
         except Exception as exc:  # noqa: BLE001 — every failure is journaled
@@ -996,7 +1074,9 @@ def apply_action(
             comp_failed = False
             for step in reversed(applied):
                 try:
-                    _reverse_step(step, vault_root, valid_date, todoist, store)
+                    _reverse_step(
+                        step, vault_root, valid_date, todoist, store, capacities
+                    )
                     step["compensated"] = True
                 except Exception as comp_exc:  # noqa: BLE001
                     step["compensation_error"] = str(comp_exc)
@@ -1019,6 +1099,7 @@ def undo_action(
     *,
     todoist: Any = None,
     store: Any = None,
+    capacities: Any = None,
     now: datetime | None = None,
 ) -> dict[str, Any]:
     """Reverse one previously applied action from its exact before-images."""
@@ -1033,11 +1114,13 @@ def undo_action(
                 f"action {action_id!r} is not undoable "
                 f"(status {action.get('status')!r})")
         steps = [s for s in action["steps"] if s.get("applied")]
-        _check_surfaces(steps, todoist, store)
+        _check_surfaces(steps, todoist, store, capacities)
         undo_failed = False
         for step in reversed(steps):
             try:
-                _reverse_step(step, vault_root, valid_date, todoist, store)
+                _reverse_step(
+                    step, vault_root, valid_date, todoist, store, capacities
+                )
             except Exception as exc:  # noqa: BLE001
                 step["undo_error"] = str(exc)
                 undo_failed = True

@@ -191,6 +191,17 @@ describe("P6-01 relationship-aware allocator projection", () => {
     expect(rows[2].groupKey).toBeNull();
   });
 
+  it("does not group duration tags as shared relationships", () => {
+    const rows = hierarchyRows([
+      item("Water plants", { tags: ["🚀10min"] }),
+      item("Weigh self", { tags: ["🚀 10 min"] }),
+      item("Quick cleanup", { tags: ["dur10"] }),
+    ], TODAY);
+
+    expect(rows.every((row) => row.groupKey === null)).toBe(true);
+    expect(rows.every((row) => row.groupLabel === null)).toBe(true);
+  });
+
   it("uses stable source identity as the final tie-break", () => {
     const rows = hierarchyRows([
       item("Beta", { identity: "vault:z" }),

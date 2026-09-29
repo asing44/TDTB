@@ -16,7 +16,7 @@ import tdtb_gather as gather  # noqa: E402
 
 sys.path.insert(0, str(Path(__file__).parent))
 from test_runtime_actions import (  # noqa: E402
-    FakeStore, FakeTodoist, NOTE_TEXT, fresh_clients, manifest_rows,
+    FakeCapacities, FakeStore, FakeTodoist, NOTE_TEXT, fresh_clients, manifest_rows,
 )
 
 
@@ -50,6 +50,45 @@ def _auth(client: TestClient) -> dict:
 
 
 class TestRuntimeActionRoutes:
+    def test_capacities_completion_uses_the_guarded_runtime_action_route(self, vault):
+        today = gather.effective_date(datetime.now())
+        runstate.write_digest_index(vault, today, [{
+            "name": "Ship project",
+            "path": "capacities://space-1/object-1",
+            "identity": "capacities:space-1:custom-project:object-1",
+            "source": "capacities",
+            "capacities_id": "object-1",
+            "capacities_space_id": "space-1",
+            "capacities_structure_id": "custom-project",
+            "capacities_completion_supported": True,
+            "source_fingerprint": "before-fingerprint",
+        }])
+        capacities = FakeCapacities()
+        app = main_mod.create_app(vault_root=vault)
+        app.state.build_commit_clients = lambda v, config: (None, None)
+        app.state.build_capacities_adapter = lambda v, config: capacities
+        client = TestClient(app)
+        client.app_token = app.state.token
+
+        applied = client.post(
+            "/runtime-actions",
+            headers=_auth(client),
+            json={"verb": "complete", "target": "Ship project"},
+        )
+        assert applied.status_code == 200
+        action = applied.json()
+        assert action["status"] == "applied"
+        assert capacities.calls[0][:2] == ("complete", "object-1")
+
+        undone = client.post(
+            f"/runtime-actions/{action['id']}/undo",
+            headers=_auth(client),
+        )
+        assert undone.status_code == 200
+        assert undone.json()["status"] == "undone"
+        assert capacities.calls[-1][0:2] == ("restore", "object-1")
+        assert capacities.closed is True
+
     def test_token_required(self, harness):
         client, _, _ = harness
         assert client.post("/runtime-actions",

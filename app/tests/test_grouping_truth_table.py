@@ -234,6 +234,18 @@ def test_related_non_system_tag_forms_a_shared_start_group_and_validates_grants(
     )
 
 
+def test_duration_tags_do_not_form_shared_start_groups():
+    assigned = [
+        {"id": "Water plants", "name": "Water plants", "tags": ["🚀10min"]},
+        {"id": "Weigh self", "name": "Weigh self", "labels": ["🚀 10 min"]},
+        {"id": "Quick cleanup", "name": "Quick cleanup", "tags": ["dur10"]},
+    ]
+
+    constraints = placement_rules.derive_constraints(assigned, [])
+
+    assert not any(constraint["kind"] == "related_group" for constraint in constraints)
+
+
 def test_multi_kind_item_has_one_constraint_per_kind_one_sequence_row_and_one_pair_grant():
     parent = {"id": "Parent project", "name": "Parent project", "blocks": 4}
     child = {

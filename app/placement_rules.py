@@ -9,6 +9,8 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from duration_tags import is_duration_tag
+
 
 _ACTIVITY_STOPWORDS = frozenset({
     "a", "an", "and", "at", "for", "in", "of", "on", "the", "to", "with",
@@ -202,7 +204,11 @@ def derive_constraints(
         if not current_id:
             continue
         for tag in item_labels(item):
-            if tag in _PERSON_TOKENS or tag in _ACTIVITY_STOPWORDS:
+            if (
+                is_duration_tag(tag)
+                or tag in _PERSON_TOKENS
+                or tag in _ACTIVITY_STOPWORDS
+            ):
                 continue
             if tag == "systems":
                 continue
