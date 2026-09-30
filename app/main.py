@@ -1395,10 +1395,13 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
     # live token/EventKit; the real-server module bottom swaps in
     # build_real_read_clients. Tests inject fakes here.
     app.state.build_read_clients = None
-    # Capacities is separately injected because its application-owned adapter
-    # has a different provider contract and must remain opt-in until the
-    # space/structure mappings and credential route are explicitly configured.
-    app.state.build_capacities_adapter = None
+    # Capacities stays opt-in by configuration, not by code: the production
+    # builder returns None when no vault-local mapping record exists, so an
+    # unconfigured machine sees no Capacities source and no warning, while a
+    # configured-but-broken one (malformed record, or a mapping record with no
+    # usable credential) raises and surfaces as a source warning instead of
+    # silently ingesting nothing. Tests still inject fakes here.
+    app.state.build_capacities_adapter = capacities_builder.build_capacities_adapter
     # G25: in-flight guard on POST /commit?mode=live — two racing live commits
     # both pass check-before-write against the same snapshot and double-write.
     app.state.live_commit_lock = threading.Lock()
