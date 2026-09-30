@@ -38,6 +38,17 @@ class CapacitiesWriteError(RuntimeError):
     """A guarded completion update could not be verified."""
 
 
+class CapacitiesRateLimited(RuntimeError):
+    """The provider refused the request because a rate limit was exceeded.
+
+    The live API allows 30 requests per minute, and because its structure
+    listing carries no typed properties, every property-based decision costs a
+    per-object content read. Exceeding the limit is an expected operating
+    condition rather than a defect, so it is modelled separately: the read
+    degrades to the objects already evaluated instead of failing outright.
+    """
+
+
 class CapacitiesProvider(Protocol):
     """Small provider seam used by both the REST client and deterministic fakes."""
 
@@ -92,12 +103,19 @@ class CapacitiesConfig:
     space_id: str
     mappings: tuple[StructureMapping, ...]
     max_pages: int = 20
+    #: Shared object-content cache. Content already cached is reused without
+    #: spending the read budget, so repeated refreshes converge on full
+    #: coverage instead of re-reading the same first N objects every time and
+    #: starving the rest.
+    content_cache: Any = None
     #: Content-read budget for one read. The live API allows 30 requests per
     #: minute and its structure listing carries no typed properties, so every
-    #: property-based decision costs one content read. This bound keeps a
-    #: single read inside the published rate limit instead of bursting into
-    #: 429s; objects left unevaluated are reported, never silently dropped.
-    max_content_reads: int = 25
+    #: property-based decision costs one content read. A cold read spends this
+    #: plus one listing per structure (20 + 3 = 23), leaving room for a second
+    #: refresh inside the same minute before the window fills; objects left
+    #: unevaluated are reported, never silently dropped. Warm reads are nearly
+    #: free because content is served from the shared cache.
+    max_content_reads: int = 20
     #: Assignment policy seam. Defaults to the default-enabled policy; the
     #: settings store owns persistence and the caller passes it in. The adapter
     #: never reads vault files or credentials itself.
@@ -336,6 +354,7 @@ class CapacitiesAdapter:
         # Per-read hydration budget, reset by ``items_for_day``.
         self._content_reads_left = config.max_content_reads
         self._hydration_skipped = 0
+        self._rate_limited = False
 
     def close(self) -> None:
         """Close an injected transport when it owns a closeable client."""
@@ -489,16 +508,35 @@ class CapacitiesAdapter:
         object_id = _text(row.get("id"))
         if not object_id:
             return row
+        # Content already cached is free: reuse it without spending budget.
+        # Without this, every read spends its budget on the same first N
+        # objects and the remainder is never evaluated.
+        cache = self.config.content_cache
+        if cache is not None:
+            cached = cache.get(object_id)
+            if isinstance(cached, dict) and isinstance(cached.get("properties"), dict):
+                return {**row, **cached}
         if self._content_reads_left <= 0:
             # Out of budget: report the row as unevaluated rather than letting
             # the provider rate-limit the whole read.
             return None
+        if self._rate_limited:
+            # Already refused once this read; do not spend more requests.
+            return None
         self._content_reads_left -= 1
-        content = self.provider.get_object(object_id)
+        try:
+            content = self.provider.get_object(object_id)
+        except CapacitiesRateLimited:
+            # Degrade the read instead of discarding every object evaluated so
+            # far: the caller reports the remainder as unevaluated.
+            self._rate_limited = True
+            return None
         if not isinstance(content, dict) or not isinstance(content.get("properties"), dict):
             # Return the row unchanged so the projection rejects it as malformed
             # and the failure stays scoped to this one object.
             return row
+        if cache is not None:
+            cache.put(object_id, content)
         # Content wins for the fields it owns; the listing still supplies
         # anything it alone carried (for example the title).
         return {**row, **content}
@@ -694,6 +732,7 @@ class CapacitiesAdapter:
         assert self._mappings is not None
         self._content_reads_left = self.config.max_content_reads
         self._hydration_skipped = 0
+        self._rate_limited = False
         all_items: list[dict[str, Any]] = []
         warnings: list[str] = []
         page_count = 0
@@ -705,7 +744,14 @@ class CapacitiesAdapter:
             projected = self.items_for_day_from_objects(logical_day, objects)
             all_items.extend(projected.items)
             warnings.extend(projected.warnings)
-        if self._hydration_skipped:
+        if self._rate_limited:
+            warnings.append(
+                f"Capacities: the provider rate limit (30 requests per minute) "
+                f"was reached, so {self._hydration_skipped} object(s) were not "
+                "evaluated this run; the objects read so far are shown and a "
+                "later refresh will pick up the remainder"
+            )
+        elif self._hydration_skipped:
             warnings.append(
                 f"Capacities: {self._hydration_skipped} object(s) were not "
                 f"evaluated this run — content-read budget of "
@@ -880,6 +926,7 @@ class CapacitiesRestClient:
         timeout: float = 10.0,
         headers: dict[str, str] | None = None,
         transport: Any = None,
+        content_cache: Any = None,
     ) -> None:
         if not _text(token):
             raise ValueError("Capacities API token is required")
@@ -893,6 +940,7 @@ class CapacitiesRestClient:
             **(headers or {}),
         }
         self._space_id = _text(space_id)
+        self._content_cache = content_cache
         self._client = httpx.Client(
             base_url=base_url.rstrip("/"),
             headers=request_headers,
@@ -904,6 +952,10 @@ class CapacitiesRestClient:
         self._client.close()
 
     def _json(self, response: Any) -> dict[str, Any]:
+        if getattr(response, "status_code", None) == 429:
+            raise CapacitiesRateLimited(
+                "the Capacities API rate limit (30 requests per minute) was exceeded"
+            )
         response.raise_for_status()
         payload = response.json()
         if not isinstance(payload, dict):
@@ -944,7 +996,21 @@ class CapacitiesRestClient:
         }
 
     def get_object(self, object_id: str) -> dict[str, Any]:
-        return self._json(self._client.get("/object", params={"id": object_id}))
+        """Read one object's typed content, reusing a recent cached read.
+
+        The listing carries no properties, so this is the only source of typed
+        data and it costs one request against a 30-per-minute budget. A short
+        cache keeps repeated refreshes affordable: without it, two refreshes in
+        the same minute would exceed the limit before any content changed.
+        """
+        if self._content_cache is not None:
+            cached = self._content_cache.get(object_id)
+            if cached is not None:
+                return cached
+        content = self._json(self._client.get("/object", params={"id": object_id}))
+        if self._content_cache is not None:
+            self._content_cache.put(object_id, content)
+        return content
 
     def patch_object(self, object_id: str, properties: dict[str, Any]) -> dict[str, Any]:
         return self._json(

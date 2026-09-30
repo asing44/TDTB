@@ -15,6 +15,7 @@ from capacities_adapter import (  # noqa: E402
     CapacitiesAdapter,
     CapacitiesConfig,
     CapacitiesContractError,
+    CapacitiesRateLimited,
     CapacitiesWriteError,
     CapacitiesRestClient,
     StructureMapping,
@@ -1225,3 +1226,156 @@ def test_contradictory_payload_space_is_rejected():
 
     assert result.items == []
     assert any("not in the configured space" in w for w in result.warnings)
+
+
+class _RateLimitedProvider:
+    """Lists every row, then refuses content reads past a budget of ``allow``."""
+
+    def __init__(self, structure_id, object_ids, allow):
+        self._structure_id = structure_id
+        self._object_ids = list(object_ids)
+        self._allow = allow
+        self.reads = 0
+
+    def fetch_structures(self):
+        return _native_structures()
+
+    def list_objects(self, structure_id, cursor=None):
+        rows = [
+            {"id": oid, "structureId": self._structure_id, "title": f"Task {oid}"}
+            for oid in self._object_ids
+        ]
+        return {"objects": rows, "next_cursor": None}
+
+    def get_object(self, object_id):
+        if self.reads >= self._allow:
+            self.reads += 1
+            raise CapacitiesRateLimited("rate limit (30 requests per minute) exceeded")
+        self.reads += 1
+        return _native_object(object_id, status="active")
+
+    def patch_object(self, object_id, properties):
+        raise AssertionError("the read path must not write")
+
+
+def test_rate_limited_read_keeps_what_it_already_read():
+    """A 429 must degrade, not discard the whole read.
+
+    The provider allows 30 requests per minute, so a rate limit is a normal
+    operating condition. Failing the source outright threw away every object
+    already evaluated; the read now returns those and reports the remainder.
+    """
+    provider = _RateLimitedProvider("RootTask", ["a", "b", "c", "d"], allow=2)
+
+    result = _adapter(
+        provider,
+        mappings=(_native_mapping(),),
+        max_content_reads=10,
+    ).items_for_day(TODAY)
+
+    assert len(result.items) == 2
+    assert any("rate limit" in w for w in result.warnings)
+    assert any("not evaluated this run" in w for w in result.warnings)
+
+
+def _object_transport(calls):
+    def handler(request):
+        calls.append(str(request.url))
+        return httpx.Response(200, json={"id": "x", "properties": {}})
+
+    return httpx.MockTransport(handler)
+
+
+def test_repeated_content_reads_reuse_the_cache():
+    calls = []
+    cache = _Cache()
+    client = CapacitiesRestClient(
+        "token",
+        space_id=SPACE,
+        transport=_object_transport(calls),
+        content_cache=cache,
+    )
+    try:
+        first = client.get_object("a")
+        second = client.get_object("a")
+    finally:
+        client.close()
+
+    assert first == second
+    assert len(calls) == 1, calls
+
+
+def test_content_cache_expires_so_edits_converge():
+    calls = []
+    cache = _Cache(ttl=0.0)
+    client = CapacitiesRestClient(
+        "token",
+        space_id=SPACE,
+        transport=_object_transport(calls),
+        content_cache=cache,
+    )
+    try:
+        client.get_object("a")
+        client.get_object("a")
+    finally:
+        client.close()
+
+    assert len(calls) == 2, calls
+
+
+def test_client_raises_a_typed_error_on_a_rate_limit():
+    def handler(request):
+        return httpx.Response(429, json={"code": "cap_rate_limited"})
+
+    client = CapacitiesRestClient(
+        "token", space_id=SPACE, transport=httpx.MockTransport(handler)
+    )
+    try:
+        with pytest.raises(CapacitiesRateLimited):
+            client.get_object("a")
+    finally:
+        client.close()
+
+
+class _Cache:
+    """Minimal cache double mirroring ``capacities_builder``'s contract."""
+
+    def __init__(self, ttl=300.0):
+        self._ttl = ttl
+        self._entries = {}
+
+    def get(self, key):
+        entry = self._entries.get(key)
+        if entry is None or self._ttl <= 0:
+            return None
+        return entry
+
+    def put(self, key, value):
+        self._entries[key] = value
+
+
+def test_cached_content_does_not_consume_the_read_budget():
+    """Refreshes must converge on full coverage, not starve the tail.
+
+    Budgeting cached content starved whatever fell outside the first N objects:
+    every read spent its allowance on the same rows and the remainder was never
+    evaluated. Cached content is free, so a second read reaches the rest.
+    """
+    provider = _RateLimitedProvider("RootTask", ["a", "b", "c", "d"], allow=99)
+    cache = _Cache()
+    adapter = _adapter(
+        provider,
+        mappings=(_native_mapping(),),
+        max_content_reads=2,
+        content_cache=cache,
+    )
+
+    first = adapter.items_for_day(TODAY)
+    assert len(first.items) == 2
+    assert any("not evaluated this run" in w for w in first.warnings)
+
+    # The two already-fetched objects are now cached, so the same budget
+    # reaches the rows that were skipped.
+    second = adapter.items_for_day(TODAY)
+    assert len(second.items) == 4
+    assert not any("not evaluated this run" in w for w in second.warnings)

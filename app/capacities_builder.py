@@ -39,6 +39,7 @@ import json
 import os
 import tempfile
 import threading
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable
@@ -68,6 +69,11 @@ from shadow import TOKEN_ENV_PATH
 # (mkstemp), so it cannot collide with another writer.
 
 SOURCE_REL_PATH = f"{runstate.CACHE_DIR_REL}/tdtb-capacities-source.json"
+
+#: How long a per-object content read stays reusable. The provider allows 30
+#: requests per minute; this TTL is what lets consecutive refreshes inside one
+#: minute reuse content instead of spending the budget again.
+CONTENT_CACHE_TTL_SECONDS = 300.0
 LOCK_REL_PATH = f"{runstate.CACHE_DIR_REL}/tdtb-capacities-source.lock"
 SCHEMA_VERSION = 1
 
@@ -599,6 +605,63 @@ def save_source(
 # Factory
 # ---------------------------------------------------------------------------
 
+class _ContentCache:
+    """Process-wide TTL cache for per-object content reads.
+
+    The provider allows 30 requests per minute and its structure listing
+    carries no typed properties, so every property-based decision costs a
+    per-object content read. Without a cache, two refreshes inside the same
+    minute exhaust the budget and the second read degrades — even though
+    nothing changed. Entries expire so a planning surface still converges on
+    edits within the TTL rather than serving stale content indefinitely.
+    """
+
+    def __init__(self, ttl_seconds: float, max_entries: int = 4096) -> None:
+        self._ttl = float(ttl_seconds)
+        self._max_entries = int(max_entries)
+        self._entries: dict[str, tuple[float, dict[str, Any]]] = {}
+        self._lock = threading.Lock()
+
+    def get(self, object_id: str) -> dict[str, Any] | None:
+        now = time.monotonic()
+        with self._lock:
+            entry = self._entries.get(object_id)
+            if entry is None:
+                return None
+            stored_at, content = entry
+            if now - stored_at >= self._ttl:
+                self._entries.pop(object_id, None)
+                return None
+            return content
+
+    def put(self, object_id: str, content: dict[str, Any]) -> None:
+        now = time.monotonic()
+        with self._lock:
+            if len(self._entries) >= self._max_entries:
+                self._prune(now)
+            self._entries[object_id] = (now, content)
+
+    def _prune(self, now: float) -> None:
+        expired = [
+            key for key, (stored_at, _) in self._entries.items()
+            if now - stored_at >= self._ttl
+        ]
+        for key in expired:
+            self._entries.pop(key, None)
+        if len(self._entries) >= self._max_entries:
+            # Bound memory even when everything is still fresh: drop the
+            # oldest half rather than growing without limit.
+            ordered = sorted(self._entries.items(), key=lambda item: item[1][0])
+            for key, _ in ordered[: max(1, len(ordered) // 2)]:
+                self._entries.pop(key, None)
+
+
+#: Shared across adapters in one process so consecutive refreshes inside the
+#: provider's one-minute window reuse what they already read. A fresh service
+#: starts empty, which only costs the first read.
+_CONTENT_CACHE = _ContentCache(CONTENT_CACHE_TTL_SECONDS)
+
+
 @dataclass(frozen=True)
 class CapacitiesBuilderConfig:
     """Explicit, injectable builder configuration.
@@ -613,6 +676,9 @@ class CapacitiesBuilderConfig:
     base_url: str = CAPACITIES_BASE_URL
     timeout: float = DEFAULT_TIMEOUT
     transport: Any = None
+    #: Object-content cache. Defaults to the shared process-wide cache; tests
+    #: pass ``None`` or a private instance to keep reads deterministic.
+    content_cache: Any = _CONTENT_CACHE
 
 
 def build_capacities_adapter(
@@ -655,6 +721,7 @@ def build_capacities_adapter(
         base_url=cfg.base_url,
         timeout=cfg.timeout,
         transport=effective_transport,
+        content_cache=cfg.content_cache,
     )
     return CapacitiesAdapter(
         client,
@@ -663,5 +730,6 @@ def build_capacities_adapter(
             mappings=record.to_mappings(),
             max_pages=cfg.max_pages,
             assignment_settings=assignment_settings,
+            content_cache=cfg.content_cache,
         ),
     )

@@ -448,3 +448,70 @@ class TestStatusValueVocabulary:
                 structure_id="RootTask",
                 open_status_values=("On Hold", "on  hold"),
             )
+
+
+# ---------------------------------------------------------------------------
+# Content cache — the provider allows 30 requests per minute
+# ---------------------------------------------------------------------------
+
+class _ObjectTransport(httpx.MockTransport):
+    """Answers per-object content reads and counts them."""
+
+    def __init__(self):
+        self.reads: list[str] = []
+        super().__init__(self._handler)
+
+    def _handler(self, request: httpx.Request) -> httpx.Response:
+        self.reads.append(request.url.params.get("id", ""))
+        return httpx.Response(200, json={"id": "task-1", "properties": {}})
+
+
+def _cached_adapter(tmp_path, transport, cache):
+    _write_source(tmp_path, _valid_payload())
+    token = _valid_token_file(tmp_path)
+    return cb.build_capacities_adapter(
+        tmp_path,
+        cb.CapacitiesBuilderConfig(
+            token_path=token, transport=transport, content_cache=cache
+        ),
+    )
+
+
+def test_builder_defaults_to_a_shared_content_cache(tmp_path):
+    """Consecutive refreshes must not re-spend the request budget.
+
+    The adapter is rebuilt per read, so the cache has to outlive it; otherwise
+    two refreshes inside the provider's one-minute window each pay for every
+    object and the second degrades.
+    """
+    transport = _ObjectTransport()
+    cache = cb._ContentCache(ttl_seconds=300.0)
+
+    first = _cached_adapter(tmp_path, transport, cache)
+    first.provider.get_object("task-1")
+    second = _cached_adapter(tmp_path, transport, cache)
+    second.provider.get_object("task-1")
+
+    assert transport.reads == ["task-1"], transport.reads
+    assert cb.CapacitiesBuilderConfig().content_cache is cb._CONTENT_CACHE
+
+
+def test_content_cache_is_optional(tmp_path):
+    transport = _ObjectTransport()
+    adapter = _cached_adapter(tmp_path, transport, None)
+    adapter.provider.get_object("task-1")
+    adapter.provider.get_object("task-1")
+
+    assert transport.reads == ["task-1", "task-1"], transport.reads
+
+
+def test_content_cache_expires_and_stays_bounded():
+    cache = cb._ContentCache(ttl_seconds=0.0, max_entries=2)
+    cache.put("a", {"id": "a"})
+    assert cache.get("a") is None  # expired immediately
+
+    fresh = cb._ContentCache(ttl_seconds=300.0, max_entries=2)
+    for key in ("a", "b", "c"):
+        fresh.put(key, {"id": key})
+    # The bound holds: older entries are dropped rather than growing forever.
+    assert sum(1 for key in ("a", "b", "c") if fresh.get(key) is not None) <= 2
