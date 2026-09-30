@@ -651,6 +651,7 @@ def build_capacities_adapter(
 
     client = CapacitiesRestClient(
         token,
+        space_id=record.space_id,
         base_url=cfg.base_url,
         timeout=cfg.timeout,
         transport=effective_transport,

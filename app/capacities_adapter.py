@@ -56,13 +56,15 @@ class StructureMapping:
 
     A custom structure normally requires ``assignment_property`` plus a
     non-empty ``assignment_values`` so an object cannot enter TDTB merely
-    because it exists in a Capacities space. As the sole exception, a custom
-    structure the caller explicitly Active-enables may instead provide a
-    mapped status property (its typed ``Active`` label NAME is then the
-    inclusion signal). Native ``RootTask``/``Task`` structures have
-    no writable source Assigned marker, so they may omit both and rely on the
-    native Auto rule; a mapping that still supplies ``assignment_property``
-    keeps the legacy explicit-marker seam.
+    because it exists in a Capacities space. Alternatively — and this is what
+    lets a structure be *offered* in Settings before it is enabled — a custom
+    structure may map ``open_status_property`` instead. Mapping a status
+    property includes nothing by itself: the evaluator still requires an
+    Active-enabled structure or a source assignment, so an enumerated custom
+    structure stays silent until the user enables it. Native ``RootTask``/``Task``
+    structures have no writable source Assigned marker, so they rely on the
+    native Auto rule and must map their status property. A mapping that still
+    supplies ``assignment_property`` keeps the legacy explicit-marker seam.
 
     ``date_property`` maps the source due date and stays a day-projection
     filter. ``deadline_property`` maps the source deadline the evaluator
@@ -90,6 +92,12 @@ class CapacitiesConfig:
     space_id: str
     mappings: tuple[StructureMapping, ...]
     max_pages: int = 20
+    #: Content-read budget for one read. The live API allows 30 requests per
+    #: minute and its structure listing carries no typed properties, so every
+    #: property-based decision costs one content read. This bound keeps a
+    #: single read inside the published rate limit instead of bursting into
+    #: 429s; objects left unevaluated are reported, never silently dropped.
+    max_content_reads: int = 25
     #: Assignment policy seam. Defaults to the default-enabled policy; the
     #: settings store owns persistence and the caller passes it in. The adapter
     #: never reads vault files or credentials itself.
@@ -319,10 +327,15 @@ class CapacitiesAdapter:
             raise CapacitiesContractError("at least one Capacities structure mapping is required")
         if config.max_pages < 1:
             raise CapacitiesContractError("max_pages must be positive")
+        if config.max_content_reads < 0:
+            raise CapacitiesContractError("max_content_reads must be non-negative")
         self.provider = provider
         self.config = config
         self._structure_defs: dict[str, dict[str, Any]] | None = None
         self._mappings: dict[str, StructureMapping] | None = None
+        # Per-read hydration budget, reset by ``items_for_day``.
+        self._content_reads_left = config.max_content_reads
+        self._hydration_skipped = 0
 
     def close(self) -> None:
         """Close an injected transport when it owns a closeable client."""
@@ -356,28 +369,22 @@ class CapacitiesAdapter:
             if structure is None:
                 raise CapacitiesContractError(f"configured Capacities structure {sid!r} is unavailable")
             definitions = structure["_definitions"]
-            # A native RootTask/Task may omit the source Assigned marker but
-            # must then map a status property (its Auto policy reads it). A
-            # custom structure must own its inclusion: either an explicit
-            # assignment property, or — ONLY when the structure is explicitly
-            # Active-enabled by the caller — a mapped status property. Every
-            # other custom mapping fails closed.
-            if not mapping.assignment_property:
+            # Any mapping without a source Assigned marker must map a status
+            # property. For a custom structure that mapping does NOT include
+            # anything on its own: the evaluator still requires the structure
+            # to be Active-enabled (or the object source-assigned). Requiring
+            # Active-enabled membership here would be circular, because a
+            # structure has to be enumerable before the Settings drawer can
+            # offer it for enabling.
+            if not mapping.assignment_property and not mapping.open_status_property:
                 if sid in NATIVE_TASK_STRUCTURES:
-                    if not mapping.open_status_property:
-                        raise CapacitiesContractError(
-                            f"native mapping {sid!r} requires a mapped status property"
-                        )
-                elif (
-                    sid in self.config.assignment_settings.active_structures
-                    and mapping.open_status_property
-                ):
-                    pass  # Active-enabled custom structure satisfied by status
-                else:
                     raise CapacitiesContractError(
-                        f"mapping {sid!r} requires an assignment property or a "
-                        "mapped status property"
+                        f"native mapping {sid!r} requires a mapped status property"
                     )
+                raise CapacitiesContractError(
+                    f"mapping {sid!r} requires an assignment property or a "
+                    "mapped status property"
+                )
             if mapping.assignment_property and not mapping.assignment_values:
                 raise CapacitiesContractError(f"mapping {sid!r} has no assignment values")
             if mapping.assignment_values and not mapping.assignment_property:
@@ -443,7 +450,12 @@ class CapacitiesAdapter:
                 raise CapacitiesContractError(
                     f"Capacities object page for {structure_id!r} is malformed"
                 )
-            objects.extend(page["objects"])
+            for row in page["objects"]:
+                hydrated = self._hydrate_object(row)
+                if hydrated is None:
+                    self._hydration_skipped += 1
+                    continue
+                objects.append(hydrated)
             pages += 1
             next_cursor = page.get("next_cursor", page.get("nextCursor"))
             if next_cursor in (None, ""):
@@ -456,6 +468,41 @@ class CapacitiesAdapter:
             seen_cursors.add(next_cursor)
             cursor = next_cursor
 
+    def _hydrate_object(self, row: Any) -> dict[str, Any] | None:
+        """Fill typed properties into a listed object row.
+
+        The current API's structure listing returns only ``id``,
+        ``structureId``, and ``title`` — no typed properties — so every
+        property-based eligibility decision needs one content read per listed
+        object. That is an inherent N+1 for a scoped listing, bounded by the
+        same ``max_pages`` limit as the enumeration itself. A row that already
+        carries properties (test fakes, or a future listing that includes them)
+        is returned untouched, so no extra call is made.
+        """
+        if not isinstance(row, dict):
+            return row
+        # Hydrate only when the listing omitted properties entirely. A row that
+        # *has* a properties key is left alone so a malformed payload still
+        # fails closed as a malformed object rather than triggering a fetch.
+        if "properties" in row:
+            return row
+        object_id = _text(row.get("id"))
+        if not object_id:
+            return row
+        if self._content_reads_left <= 0:
+            # Out of budget: report the row as unevaluated rather than letting
+            # the provider rate-limit the whole read.
+            return None
+        self._content_reads_left -= 1
+        content = self.provider.get_object(object_id)
+        if not isinstance(content, dict) or not isinstance(content.get("properties"), dict):
+            # Return the row unchanged so the projection rejects it as malformed
+            # and the failure stays scoped to this one object.
+            return row
+        # Content wins for the fields it owns; the listing still supplies
+        # anything it alone carried (for example the title).
+        return {**row, **content}
+
     def _project_object(
         self, obj: dict[str, Any], mapping: StructureMapping, logical_day: date
     ) -> dict[str, Any] | None:
@@ -466,8 +513,12 @@ class CapacitiesAdapter:
             raise _MalformedObject("object has no id")
         if _text(obj.get("structureId")) != mapping.structure_id:
             raise _MalformedObject(f"object {object_id!r} has the wrong structure")
-        space_id = _text(obj.get("spaceId"))
-        if space_id != self.config.space_id:
+        # The space guarantee comes from the space-scoped enumeration, not from
+        # the payload: neither the scoped listing nor the object-content read
+        # returns ``spaceId``. A row that *does* carry one must agree, so a
+        # cross-space row is still rejected rather than trusted.
+        payload_space = _text(obj.get("spaceId"))
+        if payload_space and payload_space != self.config.space_id:
             raise _MalformedObject(f"object {object_id!r} is not in the configured space")
         properties = obj.get("properties")
         if not isinstance(properties, dict):
@@ -619,18 +670,46 @@ class CapacitiesAdapter:
         result.items.sort(key=lambda row: (_normalized(row["name"]), row["identity"]))
         return result
 
+    def _structure_can_contribute(self, mapping: StructureMapping) -> bool:
+        """Whether any object from this structure could ever be eligible.
+
+        A native structure is always evaluated (its Auto rules are the only
+        inclusion path). A custom structure with a source assignment property
+        can contribute a source-assigned row. A custom structure with neither
+        an assignment property nor an Active enable can never include
+        anything, so it is not enumerated and its objects are never hydrated —
+        which matters because the live API allows 30 requests per minute and
+        enumeration plus hydration is otherwise an N+1 burst.
+        """
+        if mapping.structure_id in NATIVE_TASK_STRUCTURES:
+            return True
+        if mapping.assignment_property:
+            return True
+        return mapping.structure_id in self.config.assignment_settings.active_structures
+
     def items_for_day(self, logical_day: date) -> CapacitiesReadResult:
         self._ensure_contract()
         assert self._mappings is not None
+        self._content_reads_left = self.config.max_content_reads
+        self._hydration_skipped = 0
         all_items: list[dict[str, Any]] = []
         warnings: list[str] = []
         page_count = 0
-        for structure_id in self._mappings:
+        for structure_id, mapping in self._mappings.items():
+            if not self._structure_can_contribute(mapping):
+                continue
             objects, pages = self._list_objects(structure_id)
             page_count += pages
             projected = self.items_for_day_from_objects(logical_day, objects)
             all_items.extend(projected.items)
             warnings.extend(projected.warnings)
+        if self._hydration_skipped:
+            warnings.append(
+                f"Capacities: {self._hydration_skipped} object(s) were not "
+                f"evaluated this run — content-read budget of "
+                f"{self.config.max_content_reads} exhausted to stay within the "
+                "provider rate limit; refresh again to evaluate the remainder"
+            )
         all_items.sort(key=lambda row: (_normalized(row["name"]), row["identity"]))
         return CapacitiesReadResult(all_items, warnings, page_count)
 
@@ -794,6 +873,7 @@ class CapacitiesRestClient:
         self,
         token: str,
         *,
+        space_id: str,
         base_url: str = "https://api.capacities.io",
         timeout: float = 10.0,
         headers: dict[str, str] | None = None,
@@ -801,6 +881,8 @@ class CapacitiesRestClient:
     ) -> None:
         if not _text(token):
             raise ValueError("Capacities API token is required")
+        if not _text(space_id):
+            raise ValueError("Capacities space id is required")
         import httpx
 
         request_headers = {
@@ -808,6 +890,7 @@ class CapacitiesRestClient:
             "Authorization": f"Bearer {token}",
             **(headers or {}),
         }
+        self._space_id = _text(space_id)
         self._client = httpx.Client(
             base_url=base_url.rstrip("/"),
             headers=request_headers,
@@ -829,12 +912,32 @@ class CapacitiesRestClient:
         return self._json(self._client.get("/space/structures"))
 
     def list_objects(self, structure_id: str, cursor: str | None = None) -> dict[str, Any]:
-        params: dict[str, str] = {"id": structure_id}
+        """List one structure's objects inside the configured space.
+
+        Object listing is space-scoped. That scoping is load-bearing twice
+        over, and both facts were established against the live API rather than
+        from documentation:
+
+        * Without ``spaceId`` the current API answers with a legacy envelope
+          whose ``objects`` list is empty, so a listing that omits the space
+          silently reports zero objects for every structure.
+        * Neither the scoped listing nor the object-content endpoint returns
+          ``spaceId``, so the space guarantee has to come from the request
+          scope; the payload cannot be used to verify it.
+
+        The scoped response uses the modern ``{results, nextCursor, hasMore}``
+        envelope, so ``results`` is preferred with the legacy ``objects`` key
+        kept as a fallback for older or faked providers.
+        """
+        params: dict[str, str] = {"id": structure_id, "spaceId": self._space_id}
         if cursor:
             params["cursor"] = cursor
         payload = self._json(self._client.get("/objects/structure", params=params))
+        results = payload.get("results")
+        if results is None:
+            results = payload.get("objects", [])
         return {
-            "objects": payload.get("objects", []),
+            "objects": results,
             "next_cursor": payload.get("nextCursor", payload.get("next_cursor")),
         }
 

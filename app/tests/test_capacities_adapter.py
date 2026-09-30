@@ -7,6 +7,8 @@ from pathlib import Path
 
 import pytest
 
+import httpx
+
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from capacities_adapter import (  # noqa: E402
@@ -455,6 +457,7 @@ def test_rest_client_uses_current_object_endpoints_and_bearer_auth():
 
     client = CapacitiesRestClient(
         "token-value",
+        space_id="space-1",
         base_url="https://example.test",
         transport=httpx.MockTransport(handler),
     )
@@ -474,6 +477,9 @@ def test_rest_client_uses_current_object_endpoints_and_bearer_auth():
     assert all(request.headers["authorization"] == "Bearer token-value" for request in calls)
     assert calls[1].url.params["id"] == "RootTask"
     assert calls[1].url.params["cursor"] == "cursor-1"
+    # Space scoping is load-bearing: an unscoped listing silently reports zero
+    # objects for every structure on the live API.
+    assert calls[1].url.params["spaceId"] == "space-1"
     assert calls[3].content == b'{"id":"object-1","properties":{"status":{"type":"label"}}}'
 
 
@@ -782,20 +788,29 @@ def test_native_mapping_without_assignment_marker_requires_status_mapping():
     assert provider.list_calls == []
 
 
-def test_missing_space_identity_is_skipped_fail_closed():
+def test_missing_space_identity_is_accepted_because_enumeration_is_scoped():
+    """A row without ``spaceId`` is legitimate on the live API.
+
+    Neither the scoped structure listing nor the object-content read returns
+    ``spaceId``, so the space guarantee comes from the scoped request rather
+    than the payload. Requiring the field made every live row look
+    cross-space and emptied the source. A payload that *does* carry a
+    disagreeing value is still rejected; see
+    ``test_contradictory_payload_space_is_rejected``.
+    """
     provider = _native_provider([{
-        "id": "missing-space",
+        "id": "scoped-row",
         "structureId": "RootTask",
         "properties": {
-            "title": _prop("title", "title", {"value": "Missing space"}),
+            "title": _prop("title", "title", {"value": "Scoped row"}),
             "status": _prop("label", "label", [{"id": "active"}]),
         },
     }])
 
     result = _adapter(provider, mappings=(_native_mapping(),)).items_for_day(TODAY)
 
-    assert result.items == []
-    assert any("missing-space" in warning for warning in result.warnings)
+    assert [item["name"] for item in result.items] == ["Scoped row"]
+    assert result.warnings == []
 
 
 def test_non_native_mapping_without_assignment_property_fails_closed():
@@ -1065,3 +1080,148 @@ def test_custom_excluded_active_enabled_object_is_not_projected():
     ).items_for_day(TODAY)
 
     assert result.items == []
+
+
+def test_custom_status_mapping_is_not_enumerated_before_it_is_active_enabled():
+    """A custom structure with no assignment property cannot contribute.
+
+    Nothing from it can ever be eligible until Settings Active-enables it, so
+    it is not enumerated and its objects are never hydrated. That matters
+    because the live API allows 30 requests per minute and enumeration plus
+    hydration is an N+1 burst. The Settings drawer learns which structures
+    exist from the mapping record, not from enumeration, so nothing is lost.
+    """
+    provider = _custom_provider(
+        [
+            _object(
+                "project-1",
+                ACTIVE_STRUCTURE,
+                {
+                    "title": _prop("title", "title", {"value": "Active project"}),
+                    "state": _prop("label", "label", [{"id": "active", "name": "Active"}]),
+                },
+            ),
+        ]
+    )
+
+    result = _adapter(
+        provider,
+        mappings=(_native_mapping(deadline_property=None), _active_mapping()),
+    ).items_for_day(TODAY)
+
+    assert result.items == []
+    assert result.warnings == []
+    assert ("custom-project", None) not in provider.list_calls
+
+
+def test_content_read_budget_bounds_hydration_and_reports_the_remainder():
+    """A read must not exceed the provider's rate limit.
+
+    Unevaluated objects are reported, never silently dropped.
+    """
+    listed = [
+        {"id": f"task-{n}", "structureId": "RootTask", "title": f"Task {n}"}
+        for n in range(1, 4)
+    ]
+    provider = FakeProvider(
+        _native_structures(),
+        {("RootTask", None): {"objects": listed, "next_cursor": None}},
+        objects={
+            f"task-{n}": _native_object(f"task-{n}", status="active")
+            for n in range(1, 4)
+        },
+    )
+
+    result = _adapter(
+        provider,
+        mappings=(_native_mapping(),),
+        max_content_reads=1,
+    ).items_for_day(TODAY)
+
+    assert len(result.items) == 1
+    assert any("not evaluated this run" in w for w in result.warnings)
+    assert any("budget of 1" in w for w in result.warnings)
+
+
+# --------------------------------------------------------------------------
+# Live REST contract: space scoping and per-object property hydration
+# --------------------------------------------------------------------------
+
+def test_rest_client_requires_a_space_id():
+    with pytest.raises(ValueError):
+        CapacitiesRestClient("token-value", space_id="   ")
+
+
+def test_rest_client_prefers_the_modern_results_envelope():
+    """The scoped live endpoint answers with ``results``/``nextCursor``."""
+    calls = []
+
+    def handler(request):
+        calls.append(request)
+        return httpx.Response(
+            200,
+            json={"results": [{"id": "a"}], "nextCursor": "c2", "hasMore": True},
+        )
+
+    client = CapacitiesRestClient(
+        "token-value",
+        space_id="space-9",
+        base_url="https://example.test",
+        transport=httpx.MockTransport(handler),
+    )
+    try:
+        assert client.list_objects("RootTask") == {
+            "objects": [{"id": "a"}],
+            "next_cursor": "c2",
+        }
+    finally:
+        client.close()
+
+    assert calls[0].url.path == "/objects/structure"
+    assert calls[0].url.params["spaceId"] == "space-9"
+
+
+def test_property_less_listing_rows_are_hydrated_from_object_content():
+    """The live listing carries id/structureId/title only.
+
+    Eligibility needs typed properties, so the adapter must fetch each listed
+    object's content. Without hydration every live row would look malformed and
+    the source would report nothing.
+    """
+    listed = [{"id": "task-1", "structureId": "RootTask", "title": "Hydrated"}]
+    provider = FakeProvider(
+        _native_structures(),
+        {("RootTask", None): {"objects": listed, "next_cursor": None}},
+        objects={"task-1": _native_object("task-1", status="active")},
+    )
+
+    result = _adapter(provider, mappings=(_native_mapping(),)).items_for_day(TODAY)
+
+    assert [row["capacities_id"] for row in result.items] == ["task-1"]
+    assert result.warnings == []
+
+
+def test_contradictory_payload_space_is_rejected():
+    """A payload space that disagrees with the configured one is not trusted."""
+    provider = _custom_provider(
+        [
+            _object(
+                "project-1",
+                ACTIVE_STRUCTURE,
+                {
+                    "title": _prop("title", "title", {"value": "Elsewhere"}),
+                    "state": _prop("label", "label", [{"id": "active", "name": "Active"}]),
+                },
+                space="some-other-space",
+            ),
+        ]
+    )
+
+    result = _adapter(
+        provider,
+        mappings=(_native_mapping(deadline_property=None), _active_mapping()),
+        assignment_settings=_active_settings(),
+    ).items_for_day(TODAY)
+
+    assert result.items == []
+    assert any("not in the configured space" in w for w in result.warnings)
