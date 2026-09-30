@@ -1401,7 +1401,7 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
     # configured-but-broken one (malformed record, or a mapping record with no
     # usable credential) raises and surfaces as a source warning instead of
     # silently ingesting nothing. Tests still inject fakes here.
-    app.state.build_capacities_adapter = capacities_builder.build_capacities_adapter
+    app.state.build_capacities_adapter = build_real_capacities_adapter
     # G25: in-flight guard on POST /commit?mode=live — two racing live commits
     # both pass check-before-write against the same snapshot and double-write.
     app.state.live_commit_lock = threading.Lock()
@@ -3499,6 +3499,21 @@ def build_real_read_clients(vault: Path, config: dict[str, Any]) -> tuple[Any, A
     except Exception:  # noqa: BLE001
         pass
     return todoist_c, store
+
+
+def build_real_capacities_adapter(vault: Path, config: dict[str, Any]) -> Any:
+    """Live Capacities adapter for the source seam.
+
+    The seam's shape is ``(vault, config) -> adapter|None``, matching
+    ``build_real_read_clients``; the builder underneath instead takes an
+    optional ``CapacitiesBuilderConfig`` for injection, so this adapter is the
+    boundary between the two conventions.
+
+    ``config`` (the parsed vault config) is unused: Capacities reads its own
+    vault-local mapping record and assignment settings, and the builder
+    supplies the credential slot, page bound, and content-read budget.
+    """
+    return capacities_builder.build_capacities_adapter(vault)
 
 
 app = create_app()

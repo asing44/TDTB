@@ -66,3 +66,23 @@ def test_plan_inputs_projects_injected_capacities_items_and_indexes_identity(tmp
     index = runstate.read_digest_index(vault, date(2026, 9, 29))
     assert index[0]["identity"] == "capacities:space-1:custom-project:object-1"
     assert index[0]["capacities_id"] == "object-1"
+
+
+def test_production_seam_honours_the_vault_and_config_call_convention(tmp_path):
+    """The seam is called as ``(vault, config_dict)``.
+
+    Regression: the production value used to be the builder itself, whose
+    second parameter means an injected ``CapacitiesBuilderConfig``. The app
+    passes the parsed vault config dict, so every live read failed with
+    "'dict' object has no attribute 'token_path'" and Capacities reported
+    itself unavailable instead of loading.
+    """
+    vault = tmp_path / "vault"
+    vault.mkdir()
+
+    # Unconfigured vault: the seam must answer None (no Capacities source)
+    # rather than raising, and must accept the app's argument shape.
+    assert main.build_real_capacities_adapter(vault, {}) is None
+    assert main.create_app(vault_root=vault).state.build_capacities_adapter is (
+        main.build_real_capacities_adapter
+    )

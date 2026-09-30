@@ -663,7 +663,9 @@ class CapacitiesAdapter:
                 row = self._project_object(obj, mapping, logical_day)
             except _MalformedObject as exc:
                 object_id = _text(obj.get("id")) if isinstance(obj, dict) else "<unknown>"
-                result.warnings.append(f"skipped malformed Capacities object {object_id}: {exc}")
+                result.warnings.append(
+                    f"skipped Capacities object {object_id} — not plannable: {exc}"
+                )
                 continue
             if row is not None:
                 result.items.append(row)
