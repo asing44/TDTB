@@ -993,6 +993,51 @@ describe("capacities settings active_structures (additive schema v1)", () => {
     ).toThrow(/invalid structure id/);
   });
 
+  it("projects an absent available_structures key to [] (older backend)", () => {
+    const projected = projectCapacitiesSettings({ persisted: false, settings: baseSettings() });
+    expect(projected.availableStructures).toEqual([]);
+  });
+
+  it("parses a well-formed available_structures array, deduplicated and sorted", () => {
+    const projected = projectCapacitiesSettings({
+      persisted: false,
+      settings: baseSettings(),
+      available_structures: [
+        "custom-project",
+        "0d194525-c5a1-4af5-bb62-202b83006b5e",
+        "custom-project",
+      ],
+    });
+    expect(projected.availableStructures).toEqual([
+      "0d194525-c5a1-4af5-bb62-202b83006b5e",
+      "custom-project",
+    ]);
+  });
+
+  it("throws when available_structures is not an array", () => {
+    for (const bad of [{ "custom-project": true }, "custom-project", null, 1]) {
+      expect(() =>
+        projectCapacitiesSettings({
+          persisted: false,
+          settings: baseSettings(),
+          available_structures: bad,
+        }),
+      ).toThrow(/available_structures/);
+    }
+  });
+
+  it("throws when available_structures contains an invalid id", () => {
+    for (const bad of [[""], [" x "], ["x y"], [1], ["custom-project", null]]) {
+      expect(() =>
+        projectCapacitiesSettings({
+          persisted: false,
+          settings: baseSettings(),
+          available_structures: bad,
+        }),
+      ).toThrow(/available_structures/);
+    }
+  });
+
   it("recognizes canonical structure ids", () => {
     expect(isCanonicalCapacitiesStructureId("custom-project")).toBe(true);
     expect(isCanonicalCapacitiesStructureId("0d194525-c5a1-4af5-bb62-202b83006b5e")).toBe(true);

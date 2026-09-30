@@ -101,6 +101,7 @@ describe("CapacitiesSettingsDrawer", () => {
       },
       excluded: [],
       activeStructures: ["custom-project", "0d194525-c5a1-4af5-bb62-202b83006b5e"],
+      availableStructures: ["custom-project", "0d194525-c5a1-4af5-bb62-202b83006b5e"],
     });
     h.store.dispatch({ type: "UI", patch: { capacitiesSettingsOpen: true } });
     const rendered = h.ui(<CapacitiesSettingsDrawer />);
@@ -128,6 +129,119 @@ describe("CapacitiesSettingsDrawer", () => {
     // Regression guard: before the fix draftOf dropped the field, so the body
     // would have carried an empty active_structures object here.
     expect(Object.keys(body.active_structures).length).toBeGreaterThan(0);
+  });
+
+  it("adds a checked available structure to the outgoing save body", async () => {
+    const { h, rendered } = openWithCapacityRow();
+    await waitFor(() => expect(rendered.getByText("Active pull")).toBeTruthy());
+
+    const custom = rendered.getByRole("checkbox", {
+      name: "Active pull for custom-project",
+    }) as HTMLInputElement;
+    expect(custom.checked).toBe(false);
+    fireEvent.click(custom);
+    expect(custom.checked).toBe(true);
+
+    const save = vi.spyOn(h.controller, "saveCapacitiesSettings");
+    fireEvent.click(rendered.getByRole("button", { name: "Save Capacities settings" }));
+    await waitFor(() => expect(save).toHaveBeenCalledTimes(1));
+
+    expect(capacitiesSettingsToWire(save.mock.calls[0][0]).active_structures).toEqual({
+      "custom-project": true,
+    });
+  });
+
+  it("unchecking an active structure removes it from the outgoing save body", async () => {
+    const h = makeHarness("ready");
+    vi.spyOn(h.controller, "loadCapacitiesSettings").mockResolvedValue({
+      version: 1,
+      revision: 0,
+      persisted: true,
+      nativeTaskAuto: {
+        activeEnabled: true,
+        dueEnabled: true,
+        deadlineEnabled: true,
+        deadlineHorizonDays: 2,
+      },
+      excluded: [],
+      activeStructures: ["custom-project"],
+      availableStructures: ["custom-project", "0d194525-c5a1-4af5-bb62-202b83006b5e"],
+    });
+    h.store.dispatch({ type: "UI", patch: { capacitiesSettingsOpen: true } });
+    const rendered = h.ui(<CapacitiesSettingsDrawer />);
+    await waitFor(() => expect(rendered.getByText("Active pull")).toBeTruthy());
+
+    const custom = rendered.getByRole("checkbox", {
+      name: "Active pull for custom-project",
+    }) as HTMLInputElement;
+    expect(custom.checked).toBe(true);
+    fireEvent.click(custom);
+    expect(custom.checked).toBe(false);
+
+    const save = vi.spyOn(h.controller, "saveCapacitiesSettings");
+    fireEvent.click(rendered.getByRole("button", { name: "Save Capacities settings" }));
+    await waitFor(() => expect(save).toHaveBeenCalledTimes(1));
+
+    expect(capacitiesSettingsToWire(save.mock.calls[0][0]).active_structures).toEqual({});
+  });
+
+  it("preserves a stale active structure not present in availableStructures across a save", async () => {
+    const h = makeHarness("ready");
+    vi.spyOn(h.controller, "loadCapacitiesSettings").mockResolvedValue({
+      version: 1,
+      revision: 0,
+      persisted: true,
+      nativeTaskAuto: {
+        activeEnabled: true,
+        dueEnabled: true,
+        deadlineEnabled: true,
+        deadlineHorizonDays: 2,
+      },
+      excluded: [],
+      activeStructures: ["legacy-structure", "custom-project"],
+      availableStructures: ["custom-project"],
+    });
+    h.store.dispatch({ type: "UI", patch: { capacitiesSettingsOpen: true } });
+    const rendered = h.ui(<CapacitiesSettingsDrawer />);
+    await waitFor(() => expect(rendered.getByText("Active pull")).toBeTruthy());
+
+    // The stale id is surfaced rather than hidden.
+    expect(rendered.getByText(/Active structures outside this vault's mapping/)).toBeTruthy();
+    expect(rendered.getByText("legacy-structure")).toBeTruthy();
+
+    const save = vi.spyOn(h.controller, "saveCapacitiesSettings");
+    fireEvent.click(rendered.getByRole("button", { name: "Save Capacities settings" }));
+    await waitFor(() => expect(save).toHaveBeenCalledTimes(1));
+
+    expect(save.mock.calls[0][0].activeStructures).toEqual(["legacy-structure", "custom-project"]);
+    expect(capacitiesSettingsToWire(save.mock.calls[0][0]).active_structures).toEqual({
+      "legacy-structure": true,
+      "custom-project": true,
+    });
+  });
+
+  it("renders an explicit empty state when no structures are available", async () => {
+    const h = makeHarness("ready");
+    vi.spyOn(h.controller, "loadCapacitiesSettings").mockResolvedValue({
+      version: 1,
+      revision: 0,
+      persisted: true,
+      nativeTaskAuto: {
+        activeEnabled: true,
+        dueEnabled: true,
+        deadlineEnabled: true,
+        deadlineHorizonDays: 2,
+      },
+      excluded: [],
+      activeStructures: [],
+      availableStructures: [],
+    });
+    h.store.dispatch({ type: "UI", patch: { capacitiesSettingsOpen: true } });
+    const rendered = h.ui(<CapacitiesSettingsDrawer />);
+    await waitFor(() => expect(rendered.getByText("Active pull")).toBeTruthy());
+
+    expect(rendered.getByText(/No Capacities structures are configured/)).toBeTruthy();
+    expect(rendered.queryByRole("checkbox", { name: /Active pull for/ })).toBeNull();
   });
 
   it("shows load failures and offers an explicit reload", async () => {

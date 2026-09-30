@@ -17,6 +17,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import main as main_mod  # noqa: E402
 import capacities_settings as cs  # noqa: E402
+import capacities_builder as cb  # noqa: E402
 
 
 SPACE = "space-1"
@@ -60,6 +61,22 @@ def _body(expected_revision: int = 0, **overrides) -> dict:
 
 def _settings_bytes(vault: Path) -> bytes:
     return cs.settings_path(vault).read_bytes()
+
+
+def _write_source_record(vault: Path, structure_ids: list[str]) -> Path:
+    """Write a minimal valid Capacities source-mapping record (vault-local)."""
+    path = cb.source_path(vault)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps({
+            "version": 1,
+            "revision": 0,
+            "space_id": SPACE,
+            "structures": [{"structure_id": sid} for sid in structure_ids],
+        }),
+        encoding="utf-8",
+    )
+    return path
 
 
 class TestGet:
@@ -108,6 +125,39 @@ class TestGet:
         assert detail["code"] == "capacities_settings_storage_error"
         assert "preserved" in detail["message"]
         assert _settings_bytes(vault) == b"{not json!!"
+
+    def test_get_reports_no_available_structures_when_unconfigured(self, client, vault):
+        body = client.get("/settings/capacities").json()
+
+        assert body["available_structures"] == []
+        # Advisory only: reading the settings route never creates a record.
+        assert not cb.source_path(vault).exists()
+
+    def test_get_reports_configured_structures_sorted(self, client, vault):
+        _write_source_record(vault, ["b-structure", "a-structure"])
+
+        body = client.get("/settings/capacities").json()
+
+        assert body["available_structures"] == ["a-structure", "b-structure"]
+        # The source record and the settings policy are independent stores.
+        assert body["persisted"] is False
+        assert body["settings"]["revision"] == 0
+
+    def test_get_malformed_source_record_degrades_to_empty(self, client, vault):
+        path = cb.source_path(vault)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("{not json!!", encoding="utf-8")
+
+        response = client.get("/settings/capacities")
+
+        # The advisory list fails soft; the settings route itself still works
+        # and the malformed source bytes are left untouched for the builder to
+        # report loudly when an adapter is next built.
+        assert response.status_code == 200
+        body = response.json()
+        assert body["available_structures"] == []
+        assert body["settings"]["version"] == 1
+        assert path.read_bytes() == b"{not json!!"
 
 
 class TestPostAuth:

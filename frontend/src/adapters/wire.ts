@@ -245,6 +245,23 @@ export function projectCapacitiesSettings(wire: Wire): CapacitiesSettings {
       return structureId;
     });
   }
+  // ``available_structures`` is read-only advisory metadata added at the top
+  // level of the settings response. It is tolerant when absent (an older
+  // backend) and strict when present.
+  const availableRaw = wire.available_structures;
+  let availableStructures: string[] = [];
+  if (availableRaw !== undefined) {
+    if (!Array.isArray(availableRaw)) {
+      throw capacitiesSettingsError("available_structures must be an array");
+    }
+    const usable = availableRaw.map((structureId) => {
+      if (!isCanonicalCapacitiesStructureId(structureId)) {
+        throw capacitiesSettingsError("available_structures contains an invalid structure id");
+      }
+      return structureId;
+    });
+    availableStructures = [...new Set(usable)].sort();
+  }
   return {
     version: raw.version,
     revision: raw.revision,
@@ -257,6 +274,7 @@ export function projectCapacitiesSettings(wire: Wire): CapacitiesSettings {
     },
     excluded: identities.sort(),
     activeStructures: activeStructures.sort(),
+    availableStructures,
   };
 }
 

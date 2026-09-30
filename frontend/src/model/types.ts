@@ -33,6 +33,10 @@ export interface CapacitiesSettings {
   /** Structure ids whose typed `Active` status label is an inclusion signal
       for the Capacities builder. Additive to schema version 1. */
   activeStructures: string[];
+  /** Read-only, vault-local structure ids the drawer offers as Active-pull
+      choices. Advisory UI metadata sourced from the Capacities source mapping;
+      empty when none are configured or the record is unreadable. */
+  availableStructures: string[];
 }
 
 /** Full replacement body for the settings save route. */

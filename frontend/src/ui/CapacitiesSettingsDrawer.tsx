@@ -79,6 +79,15 @@ export function CapacitiesSettingsDrawer() {
   const known = knownCapacitiesItems(s.inputs?.assigned ?? []);
   const knownIds = new Set(known.map(identityOf).filter((id): id is string => id !== null));
   const hiddenExclusions = (draft?.excluded ?? []).filter((identity) => !knownIds.has(identity));
+  // The vault-local source mapping is the only non-circular inventory of
+  // structures to offer. Ids the server already honours but this vault no
+  // longer lists are preserved on save, mirroring hiddenExclusions — and
+  // surfaced rather than silently dropped.
+  const availableStructures = settings?.availableStructures ?? [];
+  const availableStructureIds = new Set(availableStructures);
+  const staleActiveStructures = (draft?.activeStructures ?? []).filter(
+    (structureId) => !availableStructureIds.has(structureId),
+  );
   const horizonValue = Number(horizonText);
   const horizonTextValid = /^\d+$/.test(horizonText) && Number.isSafeInteger(horizonValue);
   const policy = draft?.nativeTaskAuto;
@@ -99,6 +108,16 @@ export function CapacitiesSettingsDrawer() {
         ? current.excluded.filter((value) => value !== identity)
         : [...current.excluded, identity].sort();
       return { ...current, excluded };
+    });
+  };
+
+  const toggleActiveStructure = (structureId: string) => {
+    setDraft((current) => {
+      if (!current) return current;
+      const activeStructures = current.activeStructures.includes(structureId)
+        ? current.activeStructures.filter((value) => value !== structureId)
+        : [...current.activeStructures, structureId].sort();
+      return { ...current, activeStructures };
     });
   };
 
@@ -281,6 +300,63 @@ export function CapacitiesSettingsDrawer() {
                       <div class="capacities-exclusion-row" key={identity}>
                         <code>{identity}</code>
                         <button class="btn" onClick={() => toggleExclusion(identity)}>Remove</button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </section>
+
+            <section class="setup-section capacities-settings__section" aria-labelledby="capacities-sec-active-pull">
+              <div class="setup-section__head">
+                <h3 id="capacities-sec-active-pull">Active pull</h3>
+                {staleActiveStructures.length > 0 && (
+                  <span class="capacities-settings__revision">
+                    {staleActiveStructures.length} saved {staleActiveStructures.length === 1 ? "structure" : "structures"} outside this vault
+                  </span>
+                )}
+              </div>
+              <div class="setup-section__body">
+                <p class="capacities-settings__hint">
+                  Choose which Capacities structures honour an Active status pull. The list is read from this vault's Capacities source mapping, not from the current plan inputs.
+                </p>
+                {availableStructures.length === 0 ? (
+                  <p class="capacities-settings__empty">
+                    No Capacities structures are configured for this vault yet. Add a Capacities source mapping before choosing which structures honour an Active status pull.
+                  </p>
+                ) : (
+                  <div class="capacities-object-list" role="group" aria-label="Capacities structures honouring an Active status pull">
+                    {availableStructures.map((structureId) => {
+                      const active = draft.activeStructures.includes(structureId);
+                      return (
+                        <div class="capacities-object-row" key={structureId}>
+                          <div class="capacities-object-row__identity">
+                            <code>{structureId}</code>
+                          </div>
+                          <label class="capacities-object-row__toggle">
+                            <input
+                              type="checkbox"
+                              checked={active}
+                              aria-label={`Active pull for ${structureId}`}
+                              onChange={() => toggleActiveStructure(structureId)}
+                            />
+                            <span>{active ? "Active pull on" : "Active pull off"}</span>
+                          </label>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+                {staleActiveStructures.length > 0 && (
+                  <div class="capacities-exclusion-list">
+                    <h4>Active structures outside this vault's mapping</h4>
+                    <p class="capacities-settings__hint">
+                      These {staleActiveStructures.length} saved {staleActiveStructures.length === 1 ? "id is" : "ids are"} not in this vault's Capacities source mapping. They are retained unchanged on save.
+                    </p>
+                    {staleActiveStructures.map((structureId) => (
+                      <div class="capacities-exclusion-row" key={structureId}>
+                        <code>{structureId}</code>
+                        <button class="btn" onClick={() => toggleActiveStructure(structureId)}>Remove</button>
                       </div>
                     ))}
                   </div>

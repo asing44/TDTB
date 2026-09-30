@@ -67,6 +67,7 @@ import orchestrate  # noqa: E402
 import time_engine  # noqa: E402
 import capacity as capacity_mod  # noqa: E402
 import capacities_settings  # noqa: E402
+import capacities_builder  # noqa: E402
 
 VAULT_ROOT_ENV = "TDTB_VAULT_ROOT"
 
@@ -588,6 +589,26 @@ def _canonicalize_route_assigned(
             ),
         )
     return canonical
+
+
+def _available_capacities_structures(vault: Path) -> list[str]:
+    """Advisory list of configured Capacities structure ids from the vault-local
+    source mapping record (``capacities_builder``).
+
+    This is UI metadata for the settings drawer, so it is deliberately
+    fail-soft: a missing, malformed, or unreadable record yields ``[]`` and
+    never changes the settings route's own error behaviour. The builder still
+    reports a malformed record loudly when an adapter is built. No adapter is
+    constructed, no credential is read, and no provider is contacted here.
+    """
+    try:
+        record = capacities_builder.read_source(vault)
+    except (capacities_builder.CapacitiesSourceStoreError, OSError) as exc:
+        print(f"capacities source read failed: {exc}", file=sys.stderr)
+        return []
+    if record is None:
+        return []
+    return sorted({structure.structure_id for structure in record.structures})
 
 
 # ---------------------------------------------------------------------------
@@ -1565,6 +1586,7 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
         return {
             "settings": result.settings.as_dict(),
             "persisted": result.persisted,
+            "available_structures": _available_capacities_structures(vault),
         }
 
     @app.post("/settings/capacities/save", dependencies=[Depends(require_token)])
