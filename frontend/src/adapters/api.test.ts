@@ -398,6 +398,20 @@ describe("explicit source refresh (locked decision 20)", () => {
       /source refresh degraded/,
     );
   });
+
+  it("keeps a successful refresh when a reminder-style marker is omitted", async () => {
+    const warning = "Calendar omission: 2.0M: zero or negative duration (reminder-style marker)";
+    route("/plan-inputs", {
+      ...planInputs,
+      source_warnings: [warning],
+    });
+    const r = await new ApiAdapter().refreshSources();
+    expect(r.inputs.sourceWarnings).toEqual([warning]);
+    expect(calls.map((c) => c.path.split("?")[0])).toEqual([
+      "/plan-inputs",
+      "/billed-ledger",
+    ]);
+  });
 });
 
 describe("T12 qualification: token rotation + error detail", () => {

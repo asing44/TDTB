@@ -21,6 +21,7 @@ import {
   projectPlanInputs,
   projectSequenceResult,
   projectShadow,
+  sourceHealthOf,
   projectValidation,
   rowToWire,
   shapeAssignedWire,
@@ -337,8 +338,20 @@ describe("degraded sources (plan-inputs-degraded.json)", () => {
     expect(p.sourceHealth).toBe("degraded");
   });
 
-  it("flags calendar warnings for the fixed-input gate", () => {
+  it("flags calendar read failures for the fixed-input gate", () => {
     expect(calendarWarnings(p.sourceWarnings).length).toBeGreaterThan(0);
+  });
+
+  it("treats the known reminder omission as advisory, not degraded", () => {
+    const warning = "Calendar omission: 2.0M: zero or negative duration (reminder-style marker)";
+    expect(calendarWarnings([warning])).toEqual([]);
+    expect(sourceHealthOf([warning])).toBe("ok");
+  });
+
+  it("keeps other calendar diagnostics on the fixed-input gate", () => {
+    const warning = "Calendar: 1 duplicate event representation(s) merged by canonical identity";
+    expect(calendarWarnings([warning])).toEqual([warning]);
+    expect(sourceHealthOf([warning])).toBe("degraded");
   });
 });
 

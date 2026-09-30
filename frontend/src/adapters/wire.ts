@@ -548,14 +548,23 @@ export function projectDaySemantics(wire: Wire): DaySemantics {
   };
 }
 
+const advisoryReminderOmission =
+  /^\s*calendar omission: .*zero or negative duration \(reminder-style marker\)\s*$/i;
+
 export function sourceHealthOf(warnings: string[]): SourceHealth {
-  return warnings.length > 0 ? "degraded" : "ok";
+  return warnings.some((warning) => !advisoryReminderOmission.test(warning))
+    ? "degraded"
+    : "ok";
 }
 
-/** Calendar is a FIXED input: a calendar degrade warning means the fixed-input
-    read cannot be trusted (locked decision 17). */
+/** Calendar is a FIXED input: the known zero-duration reminder marker is an
+    intentional non-busy omission, not a failed read. Keep that diagnostic in
+    sourceWarnings, but do not invalidate the fresh fixed-input snapshot; all
+    other calendar warnings retain the locked decision-17 gate. */
 export function calendarWarnings(warnings: string[]): string[] {
-  return warnings.filter((w) => /calendar/i.test(w));
+  return warnings.filter(
+    (warning) => /calendar/i.test(warning) && !advisoryReminderOmission.test(warning),
+  );
 }
 
 /** T19: micro_adventure projection — tolerant of the field's absence (older
