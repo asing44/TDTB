@@ -191,6 +191,67 @@ def test_native_auto_conditions_are_or_ed_and_report_every_match():
     )
 
 
+def test_native_active_rule_can_be_disabled_without_affecting_other_rules():
+    decision = _eval(
+        _native(status="active", status_is_open=True),
+        settings=AssignmentSettings(active_enabled=False),
+    )
+
+    assert decision.mode is AssignmentMode.NONE
+    assert decision.provenance.auto_conditions == ()
+
+
+def test_native_due_rule_can_be_disabled_without_affecting_other_rules():
+    decision = _eval(
+        _native(status="open", status_is_open=True, due=TODAY),
+        settings=AssignmentSettings(due_enabled=False),
+    )
+
+    assert decision.mode is AssignmentMode.NONE
+    assert decision.provenance.auto_conditions == ()
+
+
+def test_native_deadline_rule_can_be_disabled_without_affecting_other_rules():
+    decision = _eval(
+        _native(status="open", status_is_open=True, deadline=TODAY + timedelta(days=2)),
+        settings=AssignmentSettings(deadline_enabled=False),
+    )
+
+    assert decision.mode is AssignmentMode.NONE
+    assert decision.provenance.auto_conditions == ()
+
+
+def test_all_native_auto_rules_disabled_preserve_assignment_precedence():
+    settings = AssignmentSettings(
+        active_enabled=False,
+        due_enabled=False,
+        deadline_enabled=False,
+        excluded_identities=frozenset({NATIVE}),
+    )
+
+    assigned = _eval(
+        _custom(source_assigned=True, status_is_open=True),
+        settings=settings,
+    )
+    excluded = _eval(_native(status="active", status_is_open=True), settings=settings)
+
+    assert assigned.mode is AssignmentMode.ASSIGNED
+    assert assigned.eligible is True
+    assert excluded.mode is AssignmentMode.EXCLUDED
+    assert excluded.eligible is False
+
+
+def test_native_deadline_horizon_handles_large_values_without_date_overflow():
+    decision = _eval(
+        _native(status="open", status_is_open=True, deadline=date.max),
+        day=date.min,
+        settings=AssignmentSettings(deadline_horizon_days=10**12),
+    )
+
+    assert decision.mode is AssignmentMode.AUTO
+    assert decision.provenance.auto_conditions == ("deadline-within-horizon",)
+
+
 def test_native_active_status_matches_even_with_a_future_due_date():
     decision = _eval(
         _native(status="active", status_is_open=True, due=TODAY + timedelta(days=9))

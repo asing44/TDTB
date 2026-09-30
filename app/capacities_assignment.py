@@ -40,7 +40,7 @@ source-qualified identity the source adapter already emits
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date, timedelta
+from datetime import date
 from enum import Enum
 from typing import Any, Iterable
 
@@ -105,16 +105,23 @@ class AssignmentCandidate:
 class AssignmentSettings:
     """Minimal evaluator settings seam.
 
-    Persistence, the settings API, and the UI are later slices. This object
-    deliberately carries only what the decision needs today: it has no custom
-    Auto switch because custom Auto is not yet specified. A later slice adds
-    the explicit custom policy here rather than in the decision precedence.
+    The vault-scoped persistence and the settings API (``capacities_settings``)
+    build this object; the cockpit UI is a later slice. This object deliberately
+    carries only what the decision needs today: it has no custom Auto switch
+    because custom Auto is not yet specified. A later slice adds the explicit
+    custom policy here rather than in the decision precedence.
     """
 
     excluded_identities: frozenset[str] = frozenset()
     native_task_structures: frozenset[str] = NATIVE_TASK_STRUCTURES
     active_statuses: frozenset[str] = DEFAULT_ACTIVE_STATUSES
     deadline_horizon_days: int = DEFAULT_DEADLINE_HORIZON_DAYS
+    #: Native Auto rule toggles. Each gates exactly one native Auto condition;
+    #: all three default enabled. Disabling every rule never blocks explicit
+    #: source assignment or a TDTB exclusion.
+    active_enabled: bool = True
+    due_enabled: bool = True
+    deadline_enabled: bool = True
 
 
 @dataclass(frozen=True)
@@ -211,6 +218,21 @@ def _reason(code: str, detail: str, origin: str) -> AssignmentReason:
     return AssignmentReason(code=code, detail=detail, origin=origin)
 
 
+def _deadline_within_horizon(
+    deadline: date, logical_day: date, horizon_days: int
+) -> bool:
+    """True when ``deadline <= logical_day + horizon_days`` (inclusive).
+
+    Compares day offsets instead of adding a ``timedelta`` to the logical day,
+    so an arbitrarily large horizon cannot overflow ``date`` and no arbitrary
+    product cap has to be invented. A malformed horizon fails closed.
+    """
+    try:
+        return (deadline - logical_day).days <= horizon_days
+    except (OverflowError, TypeError):
+        return False
+
+
 def _auto_conditions(
     candidate: AssignmentCandidate,
     *,
@@ -222,7 +244,8 @@ def _auto_conditions(
 
     Only native ``RootTask``/``Task`` objects have a settled Auto policy, and
     it is an OR set: status == Active, due <= logical day, or deadline <=
-    logical day + horizon. A missing date never matches.
+    logical day + horizon. A missing date never matches. Each condition is
+    additionally gated by its native Auto toggle.
 
     Custom-object Auto is not yet specified, so a non-native object matches no
     condition here and falls through to ``no-effective-assignment``. Open
@@ -231,14 +254,23 @@ def _auto_conditions(
     """
     if not native_task:
         return ()
-    horizon = logical_day + timedelta(days=settings.deadline_horizon_days)
     matched: list[str] = []
     active = {_normalized_status(value) for value in settings.active_statuses}
-    if _normalized_status(candidate.status) in active:
+    if settings.active_enabled and _normalized_status(candidate.status) in active:
         matched.append("status-active")
-    if candidate.due is not None and candidate.due <= logical_day:
+    if (
+        settings.due_enabled
+        and candidate.due is not None
+        and candidate.due <= logical_day
+    ):
         matched.append("due-today-or-overdue")
-    if candidate.deadline is not None and candidate.deadline <= horizon:
+    if (
+        settings.deadline_enabled
+        and candidate.deadline is not None
+        and _deadline_within_horizon(
+            candidate.deadline, logical_day, settings.deadline_horizon_days
+        )
+    ):
         matched.append("deadline-within-horizon")
     return tuple(matched)
 

@@ -39,7 +39,7 @@ from typing import Any
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field, StrictInt, field_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, field_validator
 
 _STATIC_DIR = Path(__file__).parent / "static"
 
@@ -66,6 +66,7 @@ import micro_adventure  # noqa: E402
 import orchestrate  # noqa: E402
 import time_engine  # noqa: E402
 import capacity as capacity_mod  # noqa: E402
+import capacities_settings  # noqa: E402
 
 VAULT_ROOT_ENV = "TDTB_VAULT_ROOT"
 
@@ -730,6 +731,66 @@ class DaySetupRequest(BaseModel):
                 "work_allotment_minutes must be a nonnegative integer "
                 "divisible by 15"
             )
+        return value
+
+
+class CapacitiesNativeTaskAutoRequest(BaseModel):
+    """Editable native ``RootTask``/``Task`` Auto policy for the save body.
+
+    ``StrictBool`` rejects 0/1 and strings; the horizon is a ``StrictInt`` so
+    bools and floats are rejected at the JSON boundary, with the nonnegative
+    rule checked here and re-checked by ``capacities_settings`` before any file
+    access."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    active_enabled: StrictBool
+    due_enabled: StrictBool
+    deadline_enabled: StrictBool
+    deadline_horizon_days: StrictInt
+
+    @field_validator("deadline_horizon_days")
+    @classmethod
+    def _horizon_nonnegative(cls, value: int) -> int:
+        if value < 0:
+            raise ValueError("deadline_horizon_days must be a nonnegative integer")
+        return value
+
+
+class CapacitiesSettingsSaveRequest(BaseModel):
+    """Full-replacement body for POST /settings/capacities/save.
+
+    ``expected_revision`` drives the server-side stale-write check; ``version``
+    and the new ``revision`` are server-owned and deliberately absent. The
+    ``excluded`` object mirrors the persisted shape — canonical stable
+    Capacities identities mapped to ``true`` — and each key is validated by the
+    same parser the evaluator uses."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    expected_revision: StrictInt
+    native_task_auto: CapacitiesNativeTaskAutoRequest
+    excluded: dict[str, StrictBool]
+
+    @field_validator("expected_revision")
+    @classmethod
+    def _revision_nonnegative(cls, value: int) -> int:
+        if value < 0:
+            raise ValueError("expected_revision must be a nonnegative integer")
+        return value
+
+    @field_validator("excluded")
+    @classmethod
+    def _excluded_canonical(cls, value: dict[str, bool]) -> dict[str, bool]:
+        for identity, flag in value.items():
+            try:
+                capacities_settings.canonical_exclusion_identity(identity)
+            except ValueError as exc:
+                raise ValueError(
+                    f"invalid Capacities exclusion identity: {identity!r}"
+                ) from exc
+            if flag is not True:
+                raise ValueError("exclusion flags must be true")
         return value
 
 
@@ -1458,6 +1519,95 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
                 "malformed_rows": result.validation.malformed_rows,
             },
         }
+
+    @app.get("/settings/capacities")
+    def get_capacities_settings() -> dict:
+        """Tokenless local read of the persisted Capacities assignment policy.
+
+        Reads exactly one vault cache file (or reports the default-enabled
+        policy when it is absent) and never builds a Capacities adapter, calls
+        a provider, or touches runstate. Malformed/unsupported storage fails
+        closed with a bounded error and leaves the bytes untouched."""
+        vault = resolve_vault_root()
+        try:
+            result = capacities_settings.read_settings(vault)
+        except (capacities_settings.SettingsStoreError, OSError) as exc:
+            # Bounded client-safe message — no absolute vault/cache path.
+            print(f"capacities settings read failed: {exc}", file=sys.stderr)
+            raise HTTPException(
+                status_code=500,
+                detail={
+                    "code": "capacities_settings_storage_error",
+                    "message": (
+                        "Capacities settings storage could not be read; "
+                        "the existing file was preserved."
+                    ),
+                },
+            ) from exc
+        return {
+            "settings": result.settings.as_dict(),
+            "persisted": result.persisted,
+        }
+
+    @app.post("/settings/capacities/save", dependencies=[Depends(require_token)])
+    def post_capacities_settings_save(body: CapacitiesSettingsSaveRequest) -> dict:
+        """Explicit, full-replacement save of the Capacities assignment policy.
+
+        The complete editable policy is supplied; ``version`` and the new
+        ``revision`` are server-owned. The current revision is compared under
+        the vault lock: a stale ``expected_revision`` is a 409, malformed
+        existing storage is a 409, and a lock/read/write failure is a 500 —
+        every failure path preserves the original bytes."""
+        vault = resolve_vault_root()
+        policy = capacities_settings.NativeTaskAutoPolicy(
+            active_enabled=body.native_task_auto.active_enabled,
+            due_enabled=body.native_task_auto.due_enabled,
+            deadline_enabled=body.native_task_auto.deadline_enabled,
+            deadline_horizon_days=body.native_task_auto.deadline_horizon_days,
+        )
+        try:
+            saved = capacities_settings.save_settings(
+                vault,
+                expected_revision=body.expected_revision,
+                native_task_auto=policy,
+                excluded=body.excluded.keys(),
+            )
+        except capacities_settings.SettingsConflictError as exc:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "capacities_settings_conflict",
+                    "message": (
+                        "Capacities settings changed since they were read; "
+                        "reload and retry."
+                    ),
+                },
+            ) from exc
+        except capacities_settings.SettingsFormatError as exc:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "capacities_settings_storage_error",
+                    "message": (
+                        "Capacities settings storage is malformed or "
+                        "unsupported; the existing file was preserved."
+                    ),
+                },
+            ) from exc
+        except (capacities_settings.SettingsStoreError, OSError) as exc:
+            # Bounded client-safe message — no absolute vault/cache path.
+            print(f"capacities settings save failed: {exc}", file=sys.stderr)
+            raise HTTPException(
+                status_code=500,
+                detail={
+                    "code": "capacities_settings_storage_error",
+                    "message": (
+                        "Capacities settings could not be saved; "
+                        "the existing file was preserved."
+                    ),
+                },
+            ) from exc
+        return {"settings": saved.as_dict(), "persisted": True}
 
     @app.get("/plan-inputs")
     def get_plan_inputs() -> dict:
