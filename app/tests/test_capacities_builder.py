@@ -403,3 +403,48 @@ def test_save_source_round_trips_and_conflicts_preserve_bytes(tmp_path):
             structures=record.structures,
         )
     assert cb.source_path(tmp_path).read_bytes() == before
+
+
+class TestStatusValueVocabulary:
+    """``open_status_values`` must accept real multi-word status names.
+
+    Values are compared after casefold plus collapsed internal whitespace, so a
+    vocabulary containing ``On Hold`` has to be storable. Rejecting it would
+    silently classify every ``On Hold`` object as closed and drop it before any
+    inclusion signal was even considered.
+    """
+
+    def test_multi_word_status_value_round_trips(self, tmp_path):
+        record = cb.save_source(
+            tmp_path,
+            expected_revision=0,
+            space_id="space-1",
+            structures=(
+                cb.SourceStructureRecord(
+                    structure_id="RootTask",
+                    status_property="status",
+                    open_status_values=("Todo", "Started", "Active", "On Hold"),
+                ),
+            ),
+        )
+
+        assert record.structures[0].open_status_values == (
+            "Todo", "Started", "Active", "On Hold",
+        )
+        assert cb.read_source(tmp_path) == record
+
+    @pytest.mark.parametrize(
+        "bad", ["", " ", " Active", "Active ", "On\tHold", "On\nHold"]
+    )
+    def test_invalid_status_values_are_rejected(self, bad):
+        with pytest.raises(ValueError):
+            cb.SourceStructureRecord(
+                structure_id="RootTask", open_status_values=(bad,)
+            )
+
+    def test_duplicate_after_normalization_is_rejected(self):
+        with pytest.raises(ValueError):
+            cb.SourceStructureRecord(
+                structure_id="RootTask",
+                open_status_values=("On Hold", "on  hold"),
+            )

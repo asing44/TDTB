@@ -204,18 +204,32 @@ def _valid_optional_property(value: Any) -> str | None:
 
 
 def _valid_value_list(value: Any) -> tuple[str, ...]:
-    """Validate a list of non-empty, whitespace-free string values."""
+    """Validate a list of non-empty status/property values.
+
+    Values are compared after normalization (casefold plus collapsed internal
+    whitespace), and real Capacities status vocabularies contain multi-word
+    names such as ``On Hold``, so a single internal space is allowed. Empty,
+    whitespace-only, and leading/trailing-whitespace values are rejected, other
+    whitespace characters (tabs, newlines) are rejected, and duplicates are
+    rejected after normalization so two spellings of one status cannot both be
+    stored.
+    """
     if not isinstance(value, (list, tuple)):
         raise ValueError(f"{value!r} is not a list of values")
     result: list[str] = []
+    seen: set[str] = set()
     for item in value:
-        if not isinstance(item, str) or not item:
+        if not isinstance(item, str) or not item.strip():
             raise ValueError(f"{item!r} is not a valid value")
-        if item != item.strip() or any(char.isspace() for char in item):
+        if item != item.strip():
             raise ValueError(f"{item!r} is not a valid value")
+        if any(char.isspace() and char != " " for char in item):
+            raise ValueError(f"{item!r} is not a valid value")
+        normalized = " ".join(item.casefold().split())
+        if normalized in seen:
+            raise ValueError("value list contains duplicates")
+        seen.add(normalized)
         result.append(item)
-    if len(set(result)) != len(result):
-        raise ValueError("value list contains duplicates")
     return tuple(result)
 
 
