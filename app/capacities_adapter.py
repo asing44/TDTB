@@ -15,6 +15,13 @@ import hashlib
 import json
 from typing import Any, Protocol, Sequence
 
+from capacities_assignment import (
+    NATIVE_TASK_STRUCTURES,
+    AssignmentCandidate,
+    AssignmentSettings,
+    evaluate_assignment,
+)
+
 try:
     import httpx as _httpx
 except ImportError:  # pragma: no cover — the app declares httpx as a dependency
@@ -47,17 +54,27 @@ class CapacitiesProvider(Protocol):
 class StructureMapping:
     """Explicit property ownership for one Capacities structure.
 
-    ``assignment_property`` and ``assignment_values`` are required so an
-    object cannot enter TDTB merely because it exists in a Capacities space.
+    A custom structure requires ``assignment_property`` plus a non-empty
+    ``assignment_values`` so an object cannot enter TDTB merely because it
+    exists in a Capacities space. Native ``RootTask``/``Task`` structures have
+    no writable source Assigned marker, so they may omit both and rely on the
+    native Auto rule; a mapping that still supplies ``assignment_property``
+    keeps the legacy explicit-marker seam.
+
+    ``date_property`` maps the source due date and stays a day-projection
+    filter. ``deadline_property`` maps the source deadline the evaluator
+    horizon-checks. The mapped ``open_status_property`` supplies both the
+    open/closed safety signal and the status token the native Auto rule reads.
     Optional fields are capabilities, not guesses: absent mappings never cause
     TDTB to write a similarly named source field.
     """
 
     structure_id: str
-    assignment_property: str
-    assignment_values: frozenset[str]
+    assignment_property: str | None = None
+    assignment_values: frozenset[str] = frozenset()
     title_property: str = "title"
     date_property: str | None = None
+    deadline_property: str | None = None
     open_status_property: str | None = None
     open_status_values: frozenset[str] = frozenset()
     duration_property: str | None = None
@@ -70,6 +87,10 @@ class CapacitiesConfig:
     space_id: str
     mappings: tuple[StructureMapping, ...]
     max_pages: int = 20
+    #: Assignment policy seam. Defaults to the default-enabled policy; the
+    #: settings store owns persistence and the caller passes it in. The adapter
+    #: never reads vault files or credentials itself.
+    assignment_settings: AssignmentSettings = field(default_factory=AssignmentSettings)
 
 
 @dataclass
@@ -98,6 +119,23 @@ def _text(value: Any) -> str:
 
 def _normalized(value: Any) -> str:
     return " ".join(_text(value).casefold().split())
+
+
+def _status_token(tokens: set[str], settings: AssignmentSettings) -> str | None:
+    """Pick the normalized status token the native Auto rule reads.
+
+    Prefers a token the evaluator treats as Active so a multi-value label still
+    matches; otherwise returns the lexicographically first token so the value
+    is deterministic rather than set-order dependent.
+    """
+    if not tokens:
+        return None
+    active = {_normalized(value) for value in settings.active_statuses}
+    ordered = sorted(tokens)
+    for token in ordered:
+        if token in active:
+            return token
+    return ordered[0]
 
 
 def _structure_id(row: dict[str, Any]) -> str:
@@ -287,9 +325,33 @@ class CapacitiesAdapter:
             if structure is None:
                 raise CapacitiesContractError(f"configured Capacities structure {sid!r} is unavailable")
             definitions = structure["_definitions"]
-            required = [mapping.title_property, mapping.assignment_property]
+            # Only a native RootTask/Task may omit the source Assigned marker;
+            # a custom structure must own its inclusion via an explicit
+            # assignment property and value set.
+            if not mapping.assignment_property and sid not in NATIVE_TASK_STRUCTURES:
+                raise CapacitiesContractError(
+                    f"mapping {sid!r} requires an assignment property"
+                )
+            if mapping.assignment_property and not mapping.assignment_values:
+                raise CapacitiesContractError(f"mapping {sid!r} has no assignment values")
+            if mapping.assignment_values and not mapping.assignment_property:
+                raise CapacitiesContractError(
+                    f"mapping {sid!r} has assignment values without an assignment property"
+                )
+            if (
+                sid in NATIVE_TASK_STRUCTURES
+                and not mapping.assignment_property
+                and not mapping.open_status_property
+            ):
+                raise CapacitiesContractError(
+                    f"native mapping {sid!r} requires a mapped status property"
+                )
+            required = [mapping.title_property]
+            if mapping.assignment_property:
+                required.append(mapping.assignment_property)
             optional = [
                 mapping.date_property,
+                mapping.deadline_property,
                 mapping.open_status_property,
                 mapping.duration_property,
                 mapping.completion_property,
@@ -299,8 +361,6 @@ class CapacitiesAdapter:
                     raise CapacitiesContractError(
                         f"mapping {sid!r} references unknown property {prop_id!r}"
                     )
-            if not mapping.assignment_values:
-                raise CapacitiesContractError(f"mapping {sid!r} has no assignment values")
             if mapping.open_status_property and not mapping.open_status_values:
                 raise CapacitiesContractError(f"mapping {sid!r} has no open status values")
             if mapping.completion_property:
@@ -364,38 +424,64 @@ class CapacitiesAdapter:
         if _text(obj.get("structureId")) != mapping.structure_id:
             raise _MalformedObject(f"object {object_id!r} has the wrong structure")
         space_id = _text(obj.get("spaceId"))
-        if space_id and space_id != self.config.space_id:
-            raise _MalformedObject(f"object {object_id!r} belongs to another space")
+        if space_id != self.config.space_id:
+            raise _MalformedObject(f"object {object_id!r} is not in the configured space")
         properties = obj.get("properties")
         if not isinstance(properties, dict):
             raise _MalformedObject(f"object {object_id!r} has malformed properties")
 
-        assignment = properties.get(mapping.assignment_property)
-        if assignment is None:
-            return None
-        assignment_values = _property_tokens(assignment, mapping.assignment_property)
-        if not assignment_values.intersection(
-            {_normalized(value) for value in mapping.assignment_values}
-        ):
-            return None
+        identity = f"capacities:{self.config.space_id}:{mapping.structure_id}:{object_id}"
 
+        # Source-assigned signal. A mapped assignment property that is present
+        # is a definitive source boolean; a missing property is neutral, not a
+        # negative. Native structures may omit the mapping entirely and rely on
+        # the native Auto rule. The evaluator, not this projection, decides
+        # precedence and eligibility.
+        source_assigned: bool | None = None
+        if mapping.assignment_property:
+            assignment = properties.get(mapping.assignment_property)
+            if assignment is not None:
+                tokens = _property_tokens(assignment, mapping.assignment_property)
+                source_assigned = bool(
+                    tokens.intersection(
+                        {_normalized(value) for value in mapping.assignment_values}
+                    )
+                )
+
+        # Open/closed status is a shared safety signal. A missing mapped status
+        # property fails closed rather than silently opening; the mapped status
+        # property also supplies the token the native Auto rule checks.
+        status: str | None = None
+        status_is_open: bool | None = None
         if mapping.open_status_property:
-            status = properties.get(mapping.open_status_property)
-            if status is None:
-                return None
-            status_values = _property_tokens(status, mapping.open_status_property)
-            if not status_values.intersection(
-                {_normalized(value) for value in mapping.open_status_values}
-            ):
-                return None
+            status_prop = properties.get(mapping.open_status_property)
+            if status_prop is None:
+                status_is_open = False
+            else:
+                status_tokens = _property_tokens(status_prop, mapping.open_status_property)
+                status = _status_token(status_tokens, self.config.assignment_settings)
+                status_is_open = bool(
+                    status_tokens.intersection(
+                        {_normalized(value) for value in mapping.open_status_values}
+                    )
+                )
 
-        logical_date: date | None = None
+        # ``date_property`` remains a day-projection filter: a future date means
+        # the object is not part of today's candidate set. The evaluator owns
+        # the native deadline horizon from ``deadline_property``.
+        due: date | None = None
         if mapping.date_property:
             date_prop = properties.get(mapping.date_property)
             if date_prop is not None:
-                logical_date = _property_date(date_prop, mapping.date_property)
-                if logical_date is not None and logical_date > logical_day:
+                due = _property_date(date_prop, mapping.date_property)
+                if due is not None and due > logical_day:
                     return None
+
+        deadline: date | None = None
+        if mapping.deadline_property:
+            deadline_prop = properties.get(mapping.deadline_property)
+            if deadline_prop is not None:
+                deadline = _property_date(deadline_prop, mapping.deadline_property)
 
         title_prop = properties.get(mapping.title_property)
         if title_prop is None:
@@ -404,13 +490,27 @@ class CapacitiesAdapter:
         if not title:
             raise _MalformedObject(f"object {object_id!r} has an empty title")
 
+        decision = evaluate_assignment(
+            AssignmentCandidate(
+                identity=identity,
+                source_assigned=source_assigned,
+                status=status,
+                status_is_open=status_is_open,
+                due=due,
+                deadline=deadline,
+            ),
+            logical_day=logical_day,
+            settings=self.config.assignment_settings,
+        )
+        if not decision.eligible:
+            return None
+
         duration: int | float = 30
         if mapping.duration_property:
             duration_prop = properties.get(mapping.duration_property)
             if duration_prop is not None:
                 duration = _property_number(duration_prop, mapping.duration_property)
 
-        identity = f"capacities:{self.config.space_id}:{mapping.structure_id}:{object_id}"
         path = f"capacities://{self.config.space_id}/{object_id}"
         blocks = duration / 30
         if isinstance(blocks, float) and blocks.is_integer():
@@ -423,9 +523,9 @@ class CapacitiesAdapter:
             "source": "capacities",
             "types": [mapping.structure_id],
             "urgency": None,
-            "deadline": logical_date.isoformat() if logical_date else None,
+            "deadline": due.isoformat() if due else None,
             "priority_score": 0,
-            "assigned": True,
+            "assigned": decision.eligible,
             "duration": duration,
             "duration_minutes": duration,
             "blocks": blocks,
@@ -434,6 +534,14 @@ class CapacitiesAdapter:
             "capacities_structure_id": mapping.structure_id,
             "capacities_completion_supported": bool(mapping.completion_property),
             "source_fingerprint": _fingerprint(obj),
+            # Compact serialization of the evaluator decision, never a title or
+            # a policy key. Downstream index allowlists may ignore it.
+            "capacities_assignment": {
+                "mode": decision.mode.value,
+                "reasons": list(decision.reason_codes),
+                "source_assigned": decision.provenance.source_assigned,
+                "excluded": decision.provenance.exclusion_matched,
+            },
         }
 
     def items_for_day_from_objects(

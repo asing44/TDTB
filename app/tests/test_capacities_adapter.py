@@ -1,7 +1,7 @@
 """Contract tests for the application-owned Capacities source adapter."""
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 import sys
 from pathlib import Path
 
@@ -17,6 +17,7 @@ from capacities_adapter import (  # noqa: E402
     CapacitiesRestClient,
     StructureMapping,
 )
+from capacities_assignment import AssignmentSettings  # noqa: E402
 
 
 SPACE = "space-1"
@@ -474,3 +475,339 @@ def test_rest_client_uses_current_object_endpoints_and_bearer_auth():
     assert calls[1].url.params["id"] == "RootTask"
     assert calls[1].url.params["cursor"] == "cursor-1"
     assert calls[3].content == b'{"id":"object-1","properties":{"status":{"type":"label"}}}'
+
+
+# --------------------------------------------------------------------------
+# Native Auto projection: no source assignment property required
+# --------------------------------------------------------------------------
+
+CUSTOM_IDENTITY = f"capacities:{SPACE}:custom-project:project-1"
+
+
+def _native_structures():
+    return [
+        {
+            "id": "RootTask",
+            "title": "Task",
+            "propertyDefinitions": [
+                _definition("title", "title"),
+                _definition("assigned", "boolean"),
+                _definition(
+                    "status",
+                    "label",
+                    labels=[
+                        ("active", "Active"),
+                        ("open", "Open"),
+                        ("done", "Done"),
+                        ("dropped", "Dropped"),
+                    ],
+                ),
+                _definition("due", "date"),
+                _definition("deadline", "date"),
+                _definition("duration", "number"),
+            ],
+        },
+    ]
+
+
+def _native_mapping(**overrides):
+    base = dict(
+        structure_id="RootTask",
+        title_property="title",
+        date_property="due",
+        deadline_property="deadline",
+        open_status_property="status",
+        open_status_values=frozenset({"active", "open"}),
+        duration_property="duration",
+    )
+    base.update(overrides)
+    return StructureMapping(**base)
+
+
+def _native_object(object_id, *, status="open", due=None, deadline=None, title=None):
+    properties = {
+        "title": _prop("title", "title", {"value": title or object_id}),
+        "status": _prop("label", "label", [{"id": status}]),
+    }
+    if due is not None:
+        properties["due"] = _prop(
+            "date", "date",
+            {"dateResolution": "day", "start": f"{due.isoformat()}T00:00:00.000Z"},
+        )
+    if deadline is not None:
+        properties["deadline"] = _prop(
+            "date", "date",
+            {"dateResolution": "day", "start": f"{deadline.isoformat()}T00:00:00.000Z"},
+        )
+    return _object(object_id, "RootTask", properties)
+
+
+def _native_provider(objects):
+    return FakeProvider(
+        _native_structures(),
+        {("RootTask", None): {"objects": list(objects), "next_cursor": None}},
+    )
+
+
+def _custom_provider(objects):
+    return FakeProvider(
+        _structures(),
+        {("custom-project", None): {"objects": list(objects), "next_cursor": None}},
+    )
+
+
+def test_native_mapping_without_assignment_property_projects_auto_candidates():
+    provider = _native_provider(
+        [
+            _native_object("active", status="active"),
+            _native_object("due-today", due=TODAY),
+            _native_object("overdue", due=TODAY - timedelta(days=5)),
+            _native_object("deadline-edge", deadline=TODAY + timedelta(days=2)),
+        ]
+    )
+
+    result = _adapter(provider, mappings=(_native_mapping(),)).items_for_day(TODAY)
+
+    assert [row["capacities_id"] for row in result.items] == [
+        "active",
+        "deadline-edge",
+        "due-today",
+        "overdue",
+    ]
+    assert all(row["capacities_assignment"]["mode"] == "auto" for row in result.items)
+
+
+def test_native_mapping_rejects_future_out_of_horizon_and_closed_rows():
+    provider = _native_provider(
+        [
+            _native_object("future-due", due=TODAY + timedelta(days=1)),
+            _native_object("out-of-horizon", deadline=TODAY + timedelta(days=3)),
+            _native_object("completed", status="done"),
+            _native_object("dropped", status="dropped"),
+            _native_object("no-signal"),
+        ]
+    )
+
+    result = _adapter(provider, mappings=(_native_mapping(),)).items_for_day(TODAY)
+
+    assert result.items == []
+    assert result.warnings == []
+
+
+def test_native_mapping_all_rules_disabled_projects_nothing():
+    provider = _native_provider(
+        [
+            _native_object("active", status="active"),
+            _native_object("due-today", due=TODAY),
+            _native_object("deadline-edge", deadline=TODAY + timedelta(days=2)),
+        ]
+    )
+    settings = AssignmentSettings(
+        active_enabled=False, due_enabled=False, deadline_enabled=False
+    )
+
+    result = _adapter(
+        provider, mappings=(_native_mapping(),), assignment_settings=settings
+    ).items_for_day(TODAY)
+
+    assert result.items == []
+
+
+def test_native_deadline_horizon_is_settings_driven_and_inclusive():
+    provider = _native_provider(
+        [_native_object("deadline-edge", deadline=TODAY + timedelta(days=2))]
+    )
+    settings = AssignmentSettings(deadline_horizon_days=1)
+
+    result = _adapter(
+        provider, mappings=(_native_mapping(),), assignment_settings=settings
+    ).items_for_day(TODAY)
+
+    assert result.items == []
+
+
+def test_legacy_native_marker_is_positive_but_absent_marker_uses_native_auto():
+    provider = _native_provider(
+        [
+            _object(
+                "marked",
+                "RootTask",
+                {
+                    "title": _prop("title", "title", {"value": "Marked"}),
+                    "assigned": _prop("boolean", "boolean", True),
+                    "status": _prop("label", "label", [{"id": "open"}]),
+                },
+            ),
+            _native_object("active-no-marker", status="active"),
+        ]
+    )
+    mapping = _native_mapping(
+        assignment_property="assigned",
+        assignment_values=frozenset({"true"}),
+    )
+
+    result = _adapter(provider, mappings=(mapping,)).items_for_day(TODAY)
+
+    modes = {
+        row["capacities_id"]: row["capacities_assignment"]["mode"]
+        for row in result.items
+    }
+    assert modes == {"marked": "assigned", "active-no-marker": "auto"}
+
+
+def test_native_projection_preserves_stable_identity_and_decision_metadata():
+    provider = _native_provider(
+        [_native_object("task-42", status="active", title="Active task")]
+    )
+
+    result = _adapter(provider, mappings=(_native_mapping(),)).items_for_day(TODAY)
+
+    row = result.items[0]
+    assert row["identity"] == "capacities:space-1:RootTask:task-42"
+    assert row["path"] == "capacities://space-1/task-42"
+    assert row["name"] == "Active task"
+    assert row["assigned"] is True
+    assert row["capacities_assignment"] == {
+        "mode": "auto",
+        "reasons": ["auto-status-active"],
+        "source_assigned": None,
+        "excluded": False,
+    }
+
+
+def test_reads_never_patch_or_mutate_the_provider():
+    provider = _native_provider([_native_object("task-1", status="active")])
+
+    result = _adapter(provider, mappings=(_native_mapping(),)).items_for_day(TODAY)
+
+    assert len(result.items) == 1
+    assert provider.patch_calls == []
+    assert provider.list_calls == [("RootTask", None)]
+
+
+# --------------------------------------------------------------------------
+# Custom inclusion: explicit source assignment, no implicit Auto
+# --------------------------------------------------------------------------
+
+
+def test_custom_assigned_true_is_accepted_even_when_tdtb_excluded():
+    provider = _custom_provider(
+        [
+            _object(
+                "project-1",
+                "custom-project",
+                {
+                    "title": _prop("title", "title", {"value": "Assigned despite exclusion"}),
+                    "tdtb": _prop("label", "label", [{"id": "yes"}]),
+                    "date": _prop("date", "date", {"start": "2026-09-29T00:00:00.000Z"}),
+                    "state": _prop("label", "label", [{"id": "active"}]),
+                },
+            ),
+        ]
+    )
+    settings = AssignmentSettings(excluded_identities=frozenset({CUSTOM_IDENTITY}))
+
+    result = _adapter(provider, assignment_settings=settings).items_for_day(TODAY)
+
+    assert [row["capacities_id"] for row in result.items] == ["project-1"]
+    row = result.items[0]
+    assert row["identity"] == CUSTOM_IDENTITY
+    assert row["capacities_assignment"] == {
+        "mode": "assigned",
+        "reasons": ["source-assigned"],
+        "source_assigned": True,
+        "excluded": False,
+    }
+
+
+def test_custom_unassigned_or_absent_is_not_projected_even_when_open_and_due():
+    provider = _custom_provider(
+        [
+            _object(
+                "project-false",
+                "custom-project",
+                {
+                    "title": _prop("title", "title", {"value": "Explicitly not assigned"}),
+                    "tdtb": _prop("label", "label", [{"id": "no"}]),
+                    "date": _prop("date", "date", {"start": "2026-09-29T00:00:00.000Z"}),
+                    "state": _prop("label", "label", [{"id": "active"}]),
+                },
+            ),
+            _object(
+                "project-absent",
+                "custom-project",
+                {
+                    "title": _prop("title", "title", {"value": "No assignment marker"}),
+                    "date": _prop("date", "date", {"start": "2026-09-29T00:00:00.000Z"}),
+                    "state": _prop("label", "label", [{"id": "active"}]),
+                },
+            ),
+        ]
+    )
+
+    result = _adapter(provider).items_for_day(TODAY)
+
+    assert result.items == []
+    assert result.warnings == []
+
+
+def test_custom_excluded_but_unassigned_is_not_projected():
+    provider = _custom_provider(
+        [
+            _object(
+                "project-1",
+                "custom-project",
+                {
+                    "title": _prop("title", "title", {"value": "Excluded"}),
+                    "tdtb": _prop("label", "label", [{"id": "no"}]),
+                    "state": _prop("label", "label", [{"id": "active"}]),
+                },
+            ),
+        ]
+    )
+    settings = AssignmentSettings(excluded_identities=frozenset({CUSTOM_IDENTITY}))
+
+    result = _adapter(provider, assignment_settings=settings).items_for_day(TODAY)
+
+    assert result.items == []
+
+
+def test_native_mapping_without_assignment_marker_requires_status_mapping():
+    provider = _native_provider([])
+    mapping = _native_mapping(open_status_property=None, open_status_values=frozenset())
+
+    with pytest.raises(CapacitiesContractError, match="mapped status property"):
+        _adapter(provider, mappings=(mapping,)).items_for_day(TODAY)
+
+    assert provider.list_calls == []
+
+
+def test_missing_space_identity_is_skipped_fail_closed():
+    provider = _native_provider([{
+        "id": "missing-space",
+        "structureId": "RootTask",
+        "properties": {
+            "title": _prop("title", "title", {"value": "Missing space"}),
+            "status": _prop("label", "label", [{"id": "active"}]),
+        },
+    }])
+
+    result = _adapter(provider, mappings=(_native_mapping(),)).items_for_day(TODAY)
+
+    assert result.items == []
+    assert any("missing-space" in warning for warning in result.warnings)
+
+
+def test_non_native_mapping_without_assignment_property_fails_closed():
+    provider = FakeProvider(_structures(), {})
+
+    with pytest.raises(CapacitiesContractError, match="assignment property"):
+        _adapter(
+            provider,
+            mappings=(
+                _mapping()[0],
+                StructureMapping(structure_id="custom-project", title_property="title"),
+            ),
+        ).items_for_day(TODAY)
+
+    assert provider.list_calls == []
