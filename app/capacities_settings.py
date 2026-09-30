@@ -67,7 +67,17 @@ SETTINGS_REL_PATH = f"{runstate.CACHE_DIR_REL}/tdtb-capacities-settings.json"
 LOCK_REL_PATH = f"{runstate.CACHE_DIR_REL}/tdtb-capacities-settings.lock"
 SCHEMA_VERSION = 1
 
-_TOP_KEYS = frozenset({"version", "revision", "native_task_auto", "excluded"})
+# ``active_structures`` was added ADDITIVELY to schema version 1, deliberately
+# without bumping SCHEMA_VERSION. A version bump would make every already-saved
+# version-1 file "unsupported" and fail closed (reads would raise and writes
+# would refuse), locking a user out of the settings they already own. Instead
+# the key is optional on read — a legacy version-1 file without it means "no
+# custom structure is Active-enabled" — while every freshly written file emits
+# it. Strictness is unchanged: the key, when present, is validated exactly.
+_TOP_KEYS = frozenset(
+    {"version", "revision", "native_task_auto", "excluded", "active_structures"}
+)
+_REQUIRED_TOP_KEYS = _TOP_KEYS - {"active_structures"}
 _NATIVE_KEYS = frozenset(
     {"active_enabled", "due_enabled", "deadline_enabled", "deadline_horizon_days"}
 )
@@ -133,16 +143,29 @@ class CapacitiesSettings:
     revision: int = 0
     native_task_auto: NativeTaskAutoPolicy = field(default_factory=NativeTaskAutoPolicy)
     excluded: frozenset[str] = frozenset()
+    #: Custom structures whose ``Active`` typed status label is an inclusion
+    #: signal (additive to schema version 1; absence means the empty set).
+    active_structures: frozenset[str] = frozenset()
 
     def __post_init__(self) -> None:
         if type(self.revision) is not int or self.revision < 0:
             raise ValueError("revision must be a nonnegative integer")
         if not isinstance(self.native_task_auto, NativeTaskAutoPolicy):
             raise ValueError("native_task_auto must be a NativeTaskAutoPolicy")
+        if isinstance(self.active_structures, (str, bytes)):
+            raise ValueError("active_structures must be a collection of structure ids")
         object.__setattr__(
             self,
             "excluded",
             frozenset(canonical_exclusion_identity(value) for value in self.excluded),
+        )
+        object.__setattr__(
+            self,
+            "active_structures",
+            frozenset(
+                canonical_active_structure_id(value)
+                for value in self.active_structures
+            ),
         )
 
     def as_dict(self) -> dict[str, Any]:
@@ -152,6 +175,9 @@ class CapacitiesSettings:
             "revision": self.revision,
             "native_task_auto": self.native_task_auto.as_dict(),
             "excluded": {identity: True for identity in sorted(self.excluded)},
+            "active_structures": {
+                structure_id: True for structure_id in sorted(self.active_structures)
+            },
         }
 
     def to_assignment_settings(self) -> AssignmentSettings:
@@ -162,6 +188,7 @@ class CapacitiesSettings:
             active_enabled=self.native_task_auto.active_enabled,
             due_enabled=self.native_task_auto.due_enabled,
             deadline_enabled=self.native_task_auto.deadline_enabled,
+            active_structures=self.active_structures,
         )
 
 
@@ -197,6 +224,20 @@ def canonical_exclusion_identity(value: Any) -> str:
     return parsed.qualified
 
 
+def canonical_active_structure_id(value: Any) -> str:
+    """Validate and return an Active-enabled custom structure id.
+
+    A structure id must be a non-empty, whitespace-free string so the
+    Active-enabled set can never be populated by an empty id, a whitespace
+    alias, or a non-string value. Any violation raises ``ValueError``.
+    """
+    if not isinstance(value, str) or not value:
+        raise ValueError(f"{value!r} is not a valid structure id")
+    if value != value.strip() or any(char.isspace() for char in value):
+        raise ValueError(f"{value!r} is not a valid structure id")
+    return value
+
+
 # ---------------------------------------------------------------------------
 # Strict decoding
 # ---------------------------------------------------------------------------
@@ -219,7 +260,7 @@ def _decode(data: Any) -> CapacitiesSettings:
     """
     if not isinstance(data, dict):
         raise SettingsFormatError("capacities settings must be a JSON object")
-    if set(data) != _TOP_KEYS:
+    if set(data) - _TOP_KEYS or not _REQUIRED_TOP_KEYS <= set(data):
         raise SettingsFormatError(
             "capacities settings has unknown or missing top-level keys"
         )
@@ -267,6 +308,26 @@ def _decode(data: Any) -> CapacitiesSettings:
                 "capacities settings has an invalid exclusion identity"
             ) from exc
 
+    # ``active_structures`` is optional on read: a legacy version-1 file that
+    # predates the additive key means the empty set.
+    active_raw = data.get("active_structures", {})
+    if not isinstance(active_raw, dict):
+        raise SettingsFormatError(
+            "capacities settings active_structures must be an object"
+        )
+    active: set[str] = set()
+    for key, flag in active_raw.items():
+        if flag is not True:
+            raise SettingsFormatError(
+                "capacities settings active structure flags must be true"
+            )
+        try:
+            active.add(canonical_active_structure_id(key))
+        except ValueError as exc:
+            raise SettingsFormatError(
+                "capacities settings has an invalid active structure id"
+            ) from exc
+
     return CapacitiesSettings(
         revision=revision,
         native_task_auto=NativeTaskAutoPolicy(
@@ -276,6 +337,7 @@ def _decode(data: Any) -> CapacitiesSettings:
             deadline_horizon_days=horizon,
         ),
         excluded=frozenset(excluded),
+        active_structures=frozenset(active),
     )
 
 
@@ -389,6 +451,7 @@ def save_settings(
     expected_revision: int,
     native_task_auto: NativeTaskAutoPolicy,
     excluded: Any = (),
+    active_structures: Any = (),
 ) -> CapacitiesSettings:
     """Explicitly replace the whole Capacities assignment policy.
 
@@ -406,7 +469,12 @@ def save_settings(
         raise ValueError("expected_revision must be a nonnegative integer")
     if not isinstance(native_task_auto, NativeTaskAutoPolicy):
         raise ValueError("native_task_auto must be a NativeTaskAutoPolicy")
+    if isinstance(active_structures, (str, bytes)):
+        raise ValueError("active_structures must be a collection of structure ids")
     identities = frozenset(canonical_exclusion_identity(value) for value in excluded)
+    active_ids = frozenset(
+        canonical_active_structure_id(value) for value in active_structures
+    )
 
     root = Path(vault_root)
     with _store_lock(root):
@@ -423,6 +491,7 @@ def save_settings(
                 revision=current.revision + 1,
                 native_task_auto=native_task_auto,
                 excluded=identities,
+                active_structures=active_ids,
             )
             _atomic_write_json(settings_path(root), saved.as_dict())
         finally:

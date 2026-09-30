@@ -641,3 +641,153 @@ def test_decision_is_compatible_with_an_adapter_projected_row():
     assert decision.provenance.structure_id == row["capacities_structure_id"]
     assert decision.provenance.object_id == row["capacities_id"]
     assert decision.provenance.structure_id == row["types"][0]
+
+
+# --------------------------------------------------------------------------
+# Custom Active pull: an Active-enabled custom structure + typed label name
+# --------------------------------------------------------------------------
+# This is the ONLY custom Auto inference TDTB permits. It keys on the typed
+# label *name* (``Active``), never the label id (the native Task's Active
+# option is id ``in-progress``) and never raw frontmatter text. A structure
+# must be explicitly Active-enabled by the caller's settings; every other
+# custom signal stays a precondition/display value and never implies inclusion.
+
+
+CUSTOM_STRUCTURE = "custom-project"
+
+
+def _active_settings(**kwargs) -> AssignmentSettings:
+    return AssignmentSettings(
+        active_structures=frozenset({CUSTOM_STRUCTURE}), **kwargs
+    )
+
+
+def test_custom_active_pull_includes_an_enabled_structure():
+    decision = _eval(
+        _custom(status="Active", status_is_open=True),
+        settings=_active_settings(),
+    )
+
+    assert decision.mode is AssignmentMode.AUTO
+    assert decision.eligible is True
+    assert decision.provenance.native_task is False
+    assert decision.provenance.auto_conditions == ("custom-status-active",)
+    assert decision.reason_codes == ("auto-custom-status-active",)
+
+
+def test_custom_active_pull_requires_the_structure_to_be_enabled():
+    decision = _eval(_custom(status="Active", status_is_open=True))
+
+    assert decision.mode is AssignmentMode.NONE
+    assert decision.eligible is False
+    assert decision.reason_codes == ("no-effective-assignment",)
+    assert decision.provenance.auto_conditions == ()
+
+
+@pytest.mark.parametrize(
+    "status", ["In Progress", "Started", "Todo", "in-progress", "Planning"]
+)
+def test_custom_active_pull_requires_the_typed_label_name_active(status):
+    decision = _eval(
+        _custom(status=status, status_is_open=True),
+        settings=_active_settings(),
+    )
+
+    assert decision.mode is AssignmentMode.NONE
+    assert decision.eligible is False
+    assert decision.provenance.auto_conditions == ()
+
+
+def test_custom_active_pull_matches_the_label_name_even_when_the_id_differs():
+    # The native Task's Active option has label id ``in-progress`` but display
+    # name ``Active``. The custom pull keys on the typed label name, not id.
+    decision = _eval(
+        _custom(status="Active", status_is_open=True),
+        settings=_active_settings(),
+    )
+
+    assert decision.mode is AssignmentMode.AUTO
+    assert decision.reason_codes == ("auto-custom-status-active",)
+
+
+def test_custom_active_pull_does_not_apply_to_native_structures():
+    # A native structure always uses the native Auto rules, never the custom
+    # pull — even if its id appears in the Active-enabled set.
+    settings = AssignmentSettings(active_structures=frozenset({"RootTask"}))
+
+    decision = _eval(_native(status="Active", status_is_open=True), settings=settings)
+
+    assert decision.provenance.auto_conditions == ("status-active",)
+    assert decision.reason_codes == ("auto-status-active",)
+
+
+def test_custom_active_pull_yields_to_exclusion():
+    decision = _eval(
+        _custom(status="Active", status_is_open=True),
+        settings=AssignmentSettings(
+            excluded_identities=frozenset({CUSTOM}),
+            active_structures=frozenset({CUSTOM_STRUCTURE}),
+        ),
+    )
+
+    assert decision.mode is AssignmentMode.EXCLUDED
+    assert decision.eligible is False
+    assert decision.reason_codes == ("tdtb-excluded",)
+
+
+def test_custom_active_pull_yields_to_source_assigned():
+    decision = _eval(
+        _custom(source_assigned=True, status="Active", status_is_open=True),
+        settings=_active_settings(),
+    )
+
+    assert decision.mode is AssignmentMode.ASSIGNED
+    assert decision.reason_codes == ("source-assigned",)
+
+
+def test_custom_active_pull_is_blocked_by_a_closed_source_status():
+    decision = _eval(
+        _custom(status="Active", status_is_open=False),
+        settings=_active_settings(),
+    )
+
+    assert decision.mode is AssignmentMode.NONE
+    assert decision.reason_codes == ("closed-source-status",)
+
+
+def test_custom_active_pull_requires_a_status_signal():
+    decision = _eval(_custom(status_is_open=True), settings=_active_settings())
+
+    assert decision.mode is AssignmentMode.NONE
+    assert decision.reason_codes == ("no-effective-assignment",)
+
+
+def test_custom_active_pull_cannot_include_a_structure_without_an_active_option():
+    # Adventure offers Inbox/Planning/Scheduled/Completed/Dropped and no Active
+    # option, so no value can satisfy the rule even if the structure is (mis)
+    # enabled.
+    identity = f"capacities:{SPACE}:adventure:adv-1"
+    settings = AssignmentSettings(active_structures=frozenset({"adventure"}))
+
+    for status in ("Inbox", "Planning", "Scheduled", "Completed", "Dropped"):
+        decision = _eval(
+            AssignmentCandidate(identity=identity, status=status, status_is_open=True),
+            settings=settings,
+        )
+        assert decision.mode is AssignmentMode.NONE
+        assert decision.provenance.auto_conditions == ()
+
+
+def test_native_auto_rules_are_unchanged_when_active_structures_is_set():
+    settings = AssignmentSettings(active_structures=frozenset({CUSTOM_STRUCTURE}))
+
+    active = _eval(_native(status="Active", status_is_open=True), settings=settings)
+    due = _eval(_native(status="open", status_is_open=True, due=TODAY), settings=settings)
+    deadline = _eval(
+        _native(status="open", status_is_open=True, deadline=TODAY + timedelta(days=2)),
+        settings=settings,
+    )
+
+    assert active.reason_codes == ("auto-status-active",)
+    assert due.reason_codes == ("auto-due-today-or-overdue",)
+    assert deadline.reason_codes == ("auto-deadline-within-horizon",)

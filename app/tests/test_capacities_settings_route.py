@@ -79,6 +79,7 @@ class TestGet:
                 "deadline_horizon_days": 2,
             },
             "excluded": {},
+            "active_structures": {},
         }
         assert not cs.settings_path(vault).exists()
 
@@ -324,3 +325,66 @@ class TestNoProviderCalls:
         assert response.status_code == 200
         data = json.loads(_settings_bytes(vault).decode("utf-8"))
         assert data["excluded"] == {NATIVE: True}
+
+
+PROJECT_STRUCTURE = "0d194525-c5a1-4af5-bb62-202b83006b5e"
+
+
+class TestActiveStructures:
+    def test_post_persists_and_get_reports_active_structures(self, client, vault):
+        response = client.post(
+            "/settings/capacities/save",
+            headers=_auth(client),
+            json=_body(active_structures={"custom-project": True, PROJECT_STRUCTURE: True}),
+        )
+
+        assert response.status_code == 200
+        assert response.json()["settings"]["active_structures"] == {
+            "custom-project": True,
+            PROJECT_STRUCTURE: True,
+        }
+        body = client.get("/settings/capacities").json()
+        assert body["settings"]["active_structures"] == {
+            "custom-project": True,
+            PROJECT_STRUCTURE: True,
+        }
+
+    def test_omitting_active_structures_is_a_full_replacement_to_empty(
+        self, client, vault
+    ):
+        client.post(
+            "/settings/capacities/save",
+            headers=_auth(client),
+            json=_body(active_structures={"custom-project": True}),
+        )
+        second = client.post(
+            "/settings/capacities/save",
+            headers=_auth(client),
+            json=_body(expected_revision=1),
+        )
+
+        assert second.status_code == 200
+        assert second.json()["settings"]["active_structures"] == {}
+
+    @pytest.mark.parametrize(
+        "bad",
+        [
+            {"custom-project": False},
+            {"custom-project": 1},
+            {"custom-project": None},
+            {"": True},
+            {" custom-project ": True},
+            {"custom project": True},
+            [],
+            "custom-project",
+        ],
+    )
+    def test_post_rejects_malformed_active_structures_422(self, client, vault, bad):
+        response = client.post(
+            "/settings/capacities/save",
+            headers=_auth(client),
+            json=_body(active_structures=bad),
+        )
+
+        assert response.status_code == 422
+        assert not cs.settings_path(vault).exists()

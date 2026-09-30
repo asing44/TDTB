@@ -54,9 +54,12 @@ class CapacitiesProvider(Protocol):
 class StructureMapping:
     """Explicit property ownership for one Capacities structure.
 
-    A custom structure requires ``assignment_property`` plus a non-empty
-    ``assignment_values`` so an object cannot enter TDTB merely because it
-    exists in a Capacities space. Native ``RootTask``/``Task`` structures have
+    A custom structure normally requires ``assignment_property`` plus a
+    non-empty ``assignment_values`` so an object cannot enter TDTB merely
+    because it exists in a Capacities space. As the sole exception, a custom
+    structure the caller explicitly Active-enables may instead provide a
+    mapped status property (its typed ``Active`` label NAME is then the
+    inclusion signal). Native ``RootTask``/``Task`` structures have
     no writable source Assigned marker, so they may omit both and rely on the
     native Auto rule; a mapping that still supplies ``assignment_property``
     keeps the legacy explicit-marker seam.
@@ -220,6 +223,34 @@ def _property_tokens(prop: Any, prop_id: str) -> set[str]:
     return {_normalized(value) for value in values if value is not None and _text(value)}
 
 
+def _status_display_tokens(prop: Any, prop_id: str) -> set[str]:
+    """Normalized status tokens keyed on the label display NAME.
+
+    For a label/entity payload each option contributes its ``name``; the
+    ``id`` is used ONLY when no name is present. This is what lets the native
+    Active rule and the custom Active pull match ``Active`` even when the
+    label id differs (the native Task's Active option is id ``in-progress``
+    with name ``Active``). Non-label payloads fall back to the generic token
+    extractor.
+    """
+    kind, payload = _property_payload(prop, prop_id)
+    if kind not in {"label", "entity"}:
+        return _property_tokens(prop, prop_id)
+    if not isinstance(payload, list):
+        raise _MalformedObject(f"property {prop_id!r} has a non-list {kind} payload")
+    values: list[Any] = []
+    for value in payload:
+        if isinstance(value, dict):
+            name = value.get("name")
+            if name is not None and _text(name):
+                values.append(name)
+            elif value.get("id") is not None:
+                values.append(value.get("id"))
+        else:
+            values.append(value)
+    return {_normalized(value) for value in values if value is not None and _text(value)}
+
+
 def _property_text(prop: Any, prop_id: str) -> str:
     kind, payload = _property_payload(prop, prop_id)
     if kind not in {"title", "text", "richText"}:
@@ -325,26 +356,33 @@ class CapacitiesAdapter:
             if structure is None:
                 raise CapacitiesContractError(f"configured Capacities structure {sid!r} is unavailable")
             definitions = structure["_definitions"]
-            # Only a native RootTask/Task may omit the source Assigned marker;
-            # a custom structure must own its inclusion via an explicit
-            # assignment property and value set.
-            if not mapping.assignment_property and sid not in NATIVE_TASK_STRUCTURES:
-                raise CapacitiesContractError(
-                    f"mapping {sid!r} requires an assignment property"
-                )
+            # A native RootTask/Task may omit the source Assigned marker but
+            # must then map a status property (its Auto policy reads it). A
+            # custom structure must own its inclusion: either an explicit
+            # assignment property, or — ONLY when the structure is explicitly
+            # Active-enabled by the caller — a mapped status property. Every
+            # other custom mapping fails closed.
+            if not mapping.assignment_property:
+                if sid in NATIVE_TASK_STRUCTURES:
+                    if not mapping.open_status_property:
+                        raise CapacitiesContractError(
+                            f"native mapping {sid!r} requires a mapped status property"
+                        )
+                elif (
+                    sid in self.config.assignment_settings.active_structures
+                    and mapping.open_status_property
+                ):
+                    pass  # Active-enabled custom structure satisfied by status
+                else:
+                    raise CapacitiesContractError(
+                        f"mapping {sid!r} requires an assignment property or a "
+                        "mapped status property"
+                    )
             if mapping.assignment_property and not mapping.assignment_values:
                 raise CapacitiesContractError(f"mapping {sid!r} has no assignment values")
             if mapping.assignment_values and not mapping.assignment_property:
                 raise CapacitiesContractError(
                     f"mapping {sid!r} has assignment values without an assignment property"
-                )
-            if (
-                sid in NATIVE_TASK_STRUCTURES
-                and not mapping.assignment_property
-                and not mapping.open_status_property
-            ):
-                raise CapacitiesContractError(
-                    f"native mapping {sid!r} requires a mapped status property"
                 )
             required = [mapping.title_property]
             if mapping.assignment_property:
@@ -380,6 +418,11 @@ class CapacitiesAdapter:
                         f"completion value {mapping.completion_value!r} is not defined for {sid!r}"
                     )
             mappings[sid] = mapping
+        # Fail closed on an allowlist that silently omits the canonical native
+        # structure: without it every native Capacities Task would vanish with
+        # no warning, which is exactly the silent-absence failure this adapter
+        # exists to prevent. A deliberate native-free configuration must be an
+        # explicit, reviewed decision rather than an omission.
         if "RootTask" not in mappings:
             raise CapacitiesContractError("RootTask must be explicitly mapped")
         self._structure_defs = structures
@@ -458,8 +501,15 @@ class CapacitiesAdapter:
             if status_prop is None:
                 status_is_open = False
             else:
+                # The open/closed safety classification keeps matching the
+                # mixed id+name tokens; the status token the evaluator reads
+                # is keyed on the label display NAME (id only when absent), so
+                # ``Active`` matches by name even when the id differs.
                 status_tokens = _property_tokens(status_prop, mapping.open_status_property)
-                status = _status_token(status_tokens, self.config.assignment_settings)
+                display_tokens = _status_display_tokens(
+                    status_prop, mapping.open_status_property
+                )
+                status = _status_token(display_tokens, self.config.assignment_settings)
                 status_is_open = bool(
                     status_tokens.intersection(
                         {_normalized(value) for value in mapping.open_status_values}

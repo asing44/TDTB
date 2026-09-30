@@ -771,6 +771,10 @@ class CapacitiesSettingsSaveRequest(BaseModel):
     expected_revision: StrictInt
     native_task_auto: CapacitiesNativeTaskAutoRequest
     excluded: dict[str, StrictBool]
+    #: Optional Active-enabled custom structure ids. Omission means full
+    #: replacement to the empty set, consistent with the full-replacement
+    #: contract. Keys are validated as non-empty, whitespace-free ids.
+    active_structures: dict[str, StrictBool] = Field(default_factory=dict)
 
     @field_validator("expected_revision")
     @classmethod
@@ -791,6 +795,20 @@ class CapacitiesSettingsSaveRequest(BaseModel):
                 ) from exc
             if flag is not True:
                 raise ValueError("exclusion flags must be true")
+        return value
+
+    @field_validator("active_structures")
+    @classmethod
+    def _active_structures_valid(cls, value: dict[str, bool]) -> dict[str, bool]:
+        for structure_id, flag in value.items():
+            try:
+                capacities_settings.canonical_active_structure_id(structure_id)
+            except ValueError as exc:
+                raise ValueError(
+                    f"invalid Capacities active structure id: {structure_id!r}"
+                ) from exc
+            if flag is not True:
+                raise ValueError("active structure flags must be true")
         return value
 
 
@@ -1571,6 +1589,7 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
                 expected_revision=body.expected_revision,
                 native_task_auto=policy,
                 excluded=body.excluded.keys(),
+                active_structures=body.active_structures.keys(),
             )
         except capacities_settings.SettingsConflictError as exc:
             raise HTTPException(

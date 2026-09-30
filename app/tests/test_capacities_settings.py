@@ -49,6 +49,7 @@ def _valid_payload(**overrides) -> dict:
             "deadline_horizon_days": 2,
         },
         "excluded": {},
+        "active_structures": {},
     }
     payload.update(overrides)
     return payload
@@ -153,6 +154,7 @@ class TestRoundTrip:
                 "deadline_horizon_days": 2,
             },
             "excluded": {NATIVE: True},
+            "active_structures": {},
         }
 
     def test_saved_settings_bridge_to_the_evaluator_seam(self, tmp_path):
@@ -523,3 +525,126 @@ class TestFailClosedWrites:
             native_task_auto=_default_policy(), excluded=[],
         )
         assert cs.lock_path(tmp_path).is_file()
+
+
+# ---------------------------------------------------------------------------
+# Active-enabled custom structures (additive version-1 key)
+# ---------------------------------------------------------------------------
+
+
+PROJECT_STRUCTURE = "0d194525-c5a1-4af5-bb62-202b83006b5e"
+PRESS_STRUCTURE = "6aa7b02a-4315-47d1-9cfb-0c0cdac0950c"
+
+
+class TestActiveStructures:
+    def test_default_has_no_active_structures(self, tmp_path):
+        assert cs.read_settings(tmp_path).settings.active_structures == frozenset()
+
+    def test_active_structures_round_trip(self, tmp_path):
+        saved = cs.save_settings(
+            tmp_path,
+            expected_revision=0,
+            native_task_auto=_default_policy(),
+            excluded=[],
+            active_structures=[PROJECT_STRUCTURE, "custom-project"],
+        )
+
+        assert saved.active_structures == frozenset({PROJECT_STRUCTURE, "custom-project"})
+        result = cs.read_settings(tmp_path)
+        assert result.settings.active_structures == frozenset(
+            {PROJECT_STRUCTURE, "custom-project"}
+        )
+
+    def test_active_structures_are_written_sorted_and_deterministic(self, tmp_path):
+        cs.save_settings(
+            tmp_path, expected_revision=0,
+            native_task_auto=_default_policy(), excluded=[],
+            active_structures=["zeta", "alpha"],
+        )
+        data = json.loads(_bytes(tmp_path).decode("utf-8"))
+        assert list(data["active_structures"]) == ["alpha", "zeta"]
+
+    def test_version_1_file_without_the_key_reads_as_empty(self, tmp_path):
+        # An existing on-disk version-1 file written before the additive key
+        # existed must stay readable; its absence means "no custom structure
+        # is Active-enabled".
+        legacy = {
+            "version": 1,
+            "revision": 0,
+            "native_task_auto": {
+                "active_enabled": True,
+                "due_enabled": True,
+                "deadline_enabled": True,
+                "deadline_horizon_days": 2,
+            },
+            "excluded": {},
+        }
+        _write_json(tmp_path, legacy)
+
+        result = cs.read_settings(tmp_path)
+
+        assert result.persisted is True
+        assert result.settings.active_structures == frozenset()
+        assert result.settings.as_dict()["active_structures"] == {}
+
+    def test_saved_settings_bridge_active_structures_to_the_evaluator(self, tmp_path):
+        saved = cs.save_settings(
+            tmp_path, expected_revision=0,
+            native_task_auto=_default_policy(), excluded=[],
+            active_structures=[PROJECT_STRUCTURE],
+        )
+        assert saved.to_assignment_settings().active_structures == frozenset(
+            {PROJECT_STRUCTURE}
+        )
+
+    @pytest.mark.parametrize(
+        "active",
+        [
+            [],                                             # not an object
+            "custom-project",                               # string
+            1,                                              # number
+            None,                                           # null
+            {"custom-project": False},                      # flag false
+            {"custom-project": 1},                          # flag int
+            {"custom-project": None},                       # flag null
+            {"": True},                                     # empty id
+            {" custom-project ": True},                     # whitespace alias
+            {"custom project": True},                       # inner whitespace
+        ],
+    )
+    def test_malformed_active_structures_fail_closed(self, tmp_path, active):
+        _write_json(tmp_path, _valid_payload(active_structures=active))
+        before = _bytes(tmp_path)
+
+        with pytest.raises(cs.SettingsFormatError):
+            cs.read_settings(tmp_path)
+
+        assert _bytes(tmp_path) == before
+
+    def test_duplicate_active_structure_keys_are_rejected(self, tmp_path):
+        _write_raw(
+            tmp_path,
+            '{"version": 1, "revision": 0, '
+            '"native_task_auto": {"active_enabled": true, "due_enabled": true, '
+            '"deadline_enabled": true, "deadline_horizon_days": 2}, '
+            '"excluded": {}, "active_structures": {"alpha": true, "alpha": true}}',
+        )
+        with pytest.raises(cs.SettingsFormatError):
+            cs.read_settings(tmp_path)
+
+    def test_save_rejects_invalid_structure_before_any_file_access(self, tmp_path):
+        with pytest.raises(ValueError):
+            cs.save_settings(
+                tmp_path, expected_revision=0,
+                native_task_auto=_default_policy(), excluded=[],
+                active_structures=["custom-project", "  "],
+            )
+        assert not cs.settings_path(tmp_path).exists()
+
+    def test_constructed_model_is_strict_about_active_structures(self):
+        with pytest.raises(ValueError):
+            cs.CapacitiesSettings(active_structures=[""])
+        with pytest.raises(ValueError):
+            cs.CapacitiesSettings(active_structures=[None])
+        with pytest.raises(ValueError):
+            cs.CapacitiesSettings(active_structures=["a b"])

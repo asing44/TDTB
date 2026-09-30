@@ -811,3 +811,257 @@ def test_non_native_mapping_without_assignment_property_fails_closed():
         ).items_for_day(TODAY)
 
     assert provider.list_calls == []
+
+
+# --------------------------------------------------------------------------
+# Custom Active pull: an Active-enabled custom structure can be satisfied by
+# either an assignment property or a mapped status property.
+# --------------------------------------------------------------------------
+
+
+ACTIVE_STRUCTURE = "custom-project"
+
+
+def _active_mapping(**overrides):
+    base = dict(
+        structure_id=ACTIVE_STRUCTURE,
+        title_property="title",
+        open_status_property="state",
+        open_status_values=frozenset({"active"}),
+        duration_property="minutes",
+    )
+    base.update(overrides)
+    return StructureMapping(**base)
+
+
+def _active_settings():
+    return AssignmentSettings(active_structures=frozenset({ACTIVE_STRUCTURE}))
+
+
+def test_custom_active_enabled_mapping_without_assignment_projects_active_object():
+    provider = _custom_provider(
+        [
+            _object(
+                "project-1",
+                ACTIVE_STRUCTURE,
+                {
+                    "title": _prop("title", "title", {"value": "Active project"}),
+                    "state": _prop("label", "label", [{"id": "active", "name": "Active"}]),
+                },
+            ),
+        ]
+    )
+
+    result = _adapter(
+        provider, mappings=(_native_mapping(deadline_property=None), _active_mapping()), assignment_settings=_active_settings()
+    ).items_for_day(TODAY)
+
+    assert [row["capacities_id"] for row in result.items] == ["project-1"]
+    assert result.items[0]["capacities_assignment"] == {
+        "mode": "auto",
+        "reasons": ["auto-custom-status-active"],
+        "source_assigned": None,
+        "excluded": False,
+    }
+
+
+def test_custom_active_enabled_mapping_requires_the_active_status():
+    provider = _custom_provider(
+        [
+            _object(
+                "project-1",
+                ACTIVE_STRUCTURE,
+                {
+                    "title": _prop("title", "title", {"value": "Planning"}),
+                    "state": _prop("label", "label", [{"id": "planning", "name": "Planning"}]),
+                },
+            ),
+        ]
+    )
+
+    result = _adapter(
+        provider,
+        mappings=(_native_mapping(deadline_property=None), _active_mapping(open_status_values=frozenset({"planning"}))),
+        assignment_settings=_active_settings(),
+    ).items_for_day(TODAY)
+
+    assert result.items == []
+    assert result.warnings == []
+
+
+def test_custom_active_pull_respects_the_label_name_not_the_label_id():
+    # ``named-active`` carries label id ``in-progress`` but name ``Active`` and
+    # must match. ``named-progress`` carries label id ``active`` but name
+    # ``In Progress`` and must NOT match: the rule keys on the typed label
+    # name, never the id and never frontmatter text.
+    provider = _custom_provider(
+        [
+            _object(
+                "named-active",
+                ACTIVE_STRUCTURE,
+                {
+                    "title": _prop("title", "title", {"value": "Named Active"}),
+                    "state": _prop("label", "label", [{"id": "in-progress", "name": "Active"}]),
+                },
+            ),
+            _object(
+                "named-progress",
+                ACTIVE_STRUCTURE,
+                {
+                    "title": _prop("title", "title", {"value": "Named Progress"}),
+                    "state": _prop("label", "label", [{"id": "active", "name": "In Progress"}]),
+                },
+            ),
+        ]
+    )
+    mapping = _active_mapping(open_status_values=frozenset({"active", "in progress"}))
+
+    result = _adapter(
+        provider, mappings=(_native_mapping(deadline_property=None), mapping), assignment_settings=_active_settings()
+    ).items_for_day(TODAY)
+
+    assert [row["capacities_id"] for row in result.items] == ["named-active"]
+    assert result.items[0]["capacities_assignment"]["reasons"] == [
+        "auto-custom-status-active"
+    ]
+
+
+def test_native_active_label_matches_by_name_not_id():
+    provider = _native_provider(
+        [
+            _object(
+                "task-active",
+                "RootTask",
+                {
+                    "title": _prop("title", "title", {"value": "Active task"}),
+                    "status": _prop("label", "label", [{"id": "in-progress", "name": "Active"}]),
+                },
+            ),
+            _object(
+                "task-progress",
+                "RootTask",
+                {
+                    "title": _prop("title", "title", {"value": "In progress task"}),
+                    "status": _prop("label", "label", [{"id": "active", "name": "In Progress"}]),
+                },
+            ),
+        ]
+    )
+
+    result = _adapter(provider, mappings=(_native_mapping(),)).items_for_day(TODAY)
+
+    assert [row["capacities_id"] for row in result.items] == ["task-active"]
+    assert result.items[0]["capacities_assignment"]["reasons"] == ["auto-status-active"]
+
+
+def test_active_enabled_mapping_without_assignment_or_status_property_fails_closed():
+    provider = FakeProvider(_structures(), {})
+    mapping = StructureMapping(structure_id=ACTIVE_STRUCTURE, title_property="title")
+
+    with pytest.raises(CapacitiesContractError, match="assignment property"):
+        _adapter(
+            provider,
+            mappings=(_mapping()[0], mapping),
+            assignment_settings=_active_settings(),
+        ).items_for_day(TODAY)
+
+    assert provider.list_calls == []
+
+
+def test_structure_without_an_active_option_is_never_included_by_the_active_pull():
+    # Adventure offers Inbox/Planning/Scheduled/Completed/Dropped and no Active
+    # option, so even when (mis)enabled no value satisfies the Active pull.
+    structures = [
+        {
+            "id": "RootTask",
+            "title": "Task",
+            "propertyDefinitions": [
+                _definition("title", "title"),
+                _definition("status", "label", labels=[("active", "Active")]),
+            ],
+        },
+        {
+            "id": "adventure",
+            "title": "Adventure",
+            "propertyDefinitions": [
+                _definition("title", "title"),
+                _definition(
+                    "state",
+                    "label",
+                    labels=[
+                        ("inbox", "Inbox"),
+                        ("planning", "Planning"),
+                        ("scheduled", "Scheduled"),
+                        ("done", "Completed"),
+                        ("dropped", "Dropped"),
+                    ],
+                ),
+            ],
+        },
+    ]
+    provider = FakeProvider(
+        structures,
+        {
+            ("adventure", None): {
+                "objects": [
+                    _object(
+                        "adv-1",
+                        "adventure",
+                        {
+                            "title": _prop("title", "title", {"value": "Trip"}),
+                            "state": _prop(
+                                "label", "label", [{"id": "scheduled", "name": "Scheduled"}]
+                            ),
+                        },
+                    )
+                ],
+                "next_cursor": None,
+            }
+        },
+    )
+    mappings = (
+        StructureMapping(
+            structure_id="RootTask",
+            title_property="title",
+            open_status_property="status",
+            open_status_values=frozenset({"active"}),
+        ),
+        StructureMapping(
+            structure_id="adventure",
+            title_property="title",
+            open_status_property="state",
+            open_status_values=frozenset({"inbox", "planning", "scheduled"}),
+        ),
+    )
+    settings = AssignmentSettings(active_structures=frozenset({"adventure"}))
+
+    result = _adapter(
+        provider, mappings=mappings, assignment_settings=settings
+    ).items_for_day(TODAY)
+
+    assert result.items == []
+
+
+def test_custom_excluded_active_enabled_object_is_not_projected():
+    provider = _custom_provider(
+        [
+            _object(
+                "project-1",
+                ACTIVE_STRUCTURE,
+                {
+                    "title": _prop("title", "title", {"value": "Excluded Active"}),
+                    "state": _prop("label", "label", [{"id": "active", "name": "Active"}]),
+                },
+            ),
+        ]
+    )
+    settings = AssignmentSettings(
+        excluded_identities=frozenset({CUSTOM_IDENTITY}),
+        active_structures=frozenset({ACTIVE_STRUCTURE}),
+    )
+
+    result = _adapter(
+        provider, mappings=(_native_mapping(deadline_property=None), _active_mapping()), assignment_settings=settings
+    ).items_for_day(TODAY)
+
+    assert result.items == []

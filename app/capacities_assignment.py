@@ -25,13 +25,13 @@ Auto rule. Custom objects may expose a source boolean Assigned marker:
 TDTB exclusion; ``assigned=false``/absent encodes neither Auto nor Excluded and
 falls through to exclusion and then to ``no-effective-assignment``.
 
-Custom-object Auto is deliberately not implemented yet. The governing plan
-leaves its policy unspecified, so a non-native object is never Auto-eligible
-from an open status or from custom dates; only native ``RootTask``/``Task``
-Auto applies. Open status stays a safety precondition (a closed row is never
-eligible) and custom dates are display signals, not implicit inclusion. The
-settings seam is shaped so a later explicit custom Auto policy can be added
-without changing this precedence.
+Custom-object Auto has exactly one settled inference: when the object's
+structure is explicitly Active-enabled by the caller's settings AND its typed
+status label NAME is ``Active``, the object is Auto-eligible (reason
+``auto-custom-status-active``). This is independent of the native
+``active_enabled`` toggle and never applies to a native structure. No other
+custom Auto inference exists: an open status is otherwise a safety
+precondition, and custom dates are display signals, not implicit inclusion.
 
 Nothing here matches on title. Exclusion and Auto both key on the stable
 source-qualified identity the source adapter already emits
@@ -52,6 +52,10 @@ NATIVE_TASK_STRUCTURES = frozenset({"RootTask", "Task"})
 
 #: Native task status that satisfies the native Auto status condition.
 DEFAULT_ACTIVE_STATUSES = frozenset({"active"})
+
+#: Custom-structure Auto pull: the typed status label NAME (not id) that, for a
+#: structure explicitly Active-enabled by the caller, is an inclusion signal.
+CUSTOM_ACTIVE_STATUS = "active"
 
 #: ``deadline <= logical_day + N calendar days`` (inclusive), per contract.
 DEFAULT_DEADLINE_HORIZON_DAYS = 2
@@ -107,9 +111,8 @@ class AssignmentSettings:
 
     The vault-scoped persistence and the settings API (``capacities_settings``)
     build this object; the cockpit UI is a later slice. This object deliberately
-    carries only what the decision needs today: it has no custom Auto switch
-    because custom Auto is not yet specified. A later slice adds the explicit
-    custom policy here rather than in the decision precedence.
+    carries only what the decision needs today, including the explicit
+    ``active_structures`` custom Auto policy.
     """
 
     excluded_identities: frozenset[str] = frozenset()
@@ -122,6 +125,11 @@ class AssignmentSettings:
     active_enabled: bool = True
     due_enabled: bool = True
     deadline_enabled: bool = True
+    #: Custom structures whose typed ``Active`` status label NAME is an
+    #: inclusion signal. This is the ONLY custom Auto inference TDTB permits;
+    #: it is independent of the native ``active_enabled`` toggle. Empty by
+    #: default, so custom objects keep failing closed.
+    active_structures: frozenset[str] = frozenset()
 
 
 @dataclass(frozen=True)
@@ -237,22 +245,31 @@ def _auto_conditions(
     candidate: AssignmentCandidate,
     *,
     native_task: bool,
+    structure_id: str | None,
     logical_day: date,
     settings: AssignmentSettings,
 ) -> tuple[str, ...]:
     """Return the Auto conditions that matched, in deterministic order.
 
-    Only native ``RootTask``/``Task`` objects have a settled Auto policy, and
-    it is an OR set: status == Active, due <= logical day, or deadline <=
-    logical day + horizon. A missing date never matches. Each condition is
-    additionally gated by its native Auto toggle.
+    Native ``RootTask``/``Task`` objects have an OR Auto policy: status ==
+    Active, due <= logical day, or deadline <= logical day + horizon. A missing
+    date never matches. Each condition is additionally gated by its native Auto
+    toggle.
 
-    Custom-object Auto is not yet specified, so a non-native object matches no
-    condition here and falls through to ``no-effective-assignment``. Open
-    status and custom dates are not implicit inclusion. The settings seam can
-    grow an explicit custom Auto policy later without changing precedence.
+    A non-native object has exactly ONE settled custom Auto inference: when its
+    structure is explicitly in ``settings.active_structures`` and its typed
+    status label NAME is ``Active``. That pull is independent of
+    ``active_enabled`` and never applies to a native structure. Every other
+    custom signal stays a precondition/display value and never implies
+    inclusion.
     """
     if not native_task:
+        if (
+            structure_id is not None
+            and structure_id in settings.active_structures
+            and _normalized_status(candidate.status) == CUSTOM_ACTIVE_STATUS
+        ):
+            return ("custom-status-active",)
         return ()
     matched: list[str] = []
     active = {_normalized_status(value) for value in settings.active_statuses}
@@ -286,6 +303,10 @@ def _auto_reason(condition: str, settings: AssignmentSettings) -> AssignmentReas
         "deadline-within-horizon": (
             "auto-deadline-within-horizon",
             f"Deadline is within {horizon} calendar days of the logical day.",
+        ),
+        "custom-status-active": (
+            "auto-custom-status-active",
+            "Custom structure is Active-enabled and its status label name is Active.",
         ),
     }
     code, detail = details[condition]
@@ -406,6 +427,7 @@ def evaluate_assignment(
     conditions = _auto_conditions(
         candidate,
         native_task=native_task,
+        structure_id=parsed.structure_id if parsed else None,
         logical_day=logical_day,
         settings=resolved,
     )
