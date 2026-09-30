@@ -5,6 +5,8 @@
 
 import type {
   Capacity,
+  CapacitiesSettings,
+  CapacitiesSettingsDraft,
   CommitReport,
   DaySetup,
   FixedInputs,
@@ -84,6 +86,11 @@ export interface Adapter {
       pick / custom); null clears the dated override back to the auto-pick.
       Never billed, never a history write. */
   saveMicroAdventure(pick: import("../model/types").MicroIdea | null): Promise<void>;
+  /** GET /settings/capacities — local versioned policy, no provider call. */
+  loadCapacitiesSettings(): Promise<CapacitiesSettings>;
+  /** POST /settings/capacities/save — one token-guarded non-billed full
+      replacement of the local policy. */
+  saveCapacitiesSettings(draft: CapacitiesSettingsDraft): Promise<CapacitiesSettings>;
   /** POST /duration-memory/save — one token-guarded non-billed mutation
       (duration-memory MVP). Strict value validation happens BEFORE the call;
       the adapter never rounds, truncates, snaps, or coerces. */

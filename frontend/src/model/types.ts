@@ -13,6 +13,32 @@
 
 export type Source = "vault" | "todoist" | "capacities";
 
+/** TDTB-owned native Capacities Task Auto policy. Each condition is an
+    independent OR rule; the backend persists the exact policy and revision. */
+export interface CapacitiesNativeTaskAutoPolicy {
+  activeEnabled: boolean;
+  dueEnabled: boolean;
+  deadlineEnabled: boolean;
+  deadlineHorizonDays: number;
+}
+
+/** The local, versioned Capacities policy returned by the settings API. */
+export interface CapacitiesSettings {
+  version: number;
+  revision: number;
+  persisted: boolean;
+  nativeTaskAuto: CapacitiesNativeTaskAutoPolicy;
+  /** Canonical capacities:{space}:{structure}:{object} identities. */
+  excluded: string[];
+}
+
+/** Full replacement body for the settings save route. */
+export interface CapacitiesSettingsDraft {
+  expectedRevision: number;
+  nativeTaskAuto: CapacitiesNativeTaskAutoPolicy;
+  excluded: string[];
+}
+
 /** Resolved duration source label (mirrors the backend resolver's
     source_label). "remembered" means a durable server-side memory entry won;
     every other value is a deterministic source resolution. */

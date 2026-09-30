@@ -24,6 +24,8 @@ import type {
 } from "./adapter";
 import type {
   Capacity,
+  CapacitiesSettings,
+  CapacitiesSettingsDraft,
   CommitReport,
   DaySetup,
   FixedInputs,
@@ -38,6 +40,8 @@ import type {
 import {
   calendarWarnings,
   daySetupToWire,
+  capacitiesSettingsToWire,
+  projectCapacitiesSettings,
   projectCapacity,
   projectCommitReport,
   projectDurationMemoryReset,
@@ -197,6 +201,16 @@ export class ApiAdapter implements Adapter {
           ? null
           : { id: pick.id, idea: pick.idea, category: pick.category },
     });
+  }
+
+  async loadCapacitiesSettings(): Promise<CapacitiesSettings> {
+    return projectCapacitiesSettings(await this.request("/settings/capacities"));
+  }
+
+  async saveCapacitiesSettings(draft: CapacitiesSettingsDraft): Promise<CapacitiesSettings> {
+    return projectCapacitiesSettings(
+      await this.post("/settings/capacities/save", capacitiesSettingsToWire(draft)),
+    );
   }
 
   /** Explicit durable save (duration-memory MVP): exactly ONE token-guarded

@@ -69,6 +69,55 @@ function postBody(path: string): any {
 }
 
 describe("reads", () => {
+  it("loads local Capacities settings without a session token", async () => {
+    route("/settings/capacities", {
+      persisted: true,
+      settings: {
+        version: 1,
+        revision: 3,
+        native_task_auto: {
+          active_enabled: false,
+          due_enabled: true,
+          deadline_enabled: true,
+          deadline_horizon_days: 4,
+        },
+        excluded: { "capacities:space-1:RootTask:task-1": true },
+      },
+    });
+    const settings = await new ApiAdapter().loadCapacitiesSettings();
+    expect(settings).toEqual({
+      version: 1,
+      revision: 3,
+      persisted: true,
+      nativeTaskAuto: {
+        activeEnabled: false,
+        dueEnabled: true,
+        deadlineEnabled: true,
+        deadlineHorizonDays: 4,
+      },
+      excluded: ["capacities:space-1:RootTask:task-1"],
+    });
+    expect(calls.map((c) => c.path)).toEqual(["/settings/capacities"]);
+  });
+
+  it("rejects malformed settings instead of applying a client default", async () => {
+    route("/settings/capacities", {
+      persisted: true,
+      settings: {
+        version: 99,
+        revision: 0,
+        native_task_auto: {
+          active_enabled: true,
+          due_enabled: true,
+          deadline_enabled: true,
+          deadline_horizon_days: 2,
+        },
+        excluded: {},
+      },
+    });
+    await expect(new ApiAdapter().loadCapacitiesSettings()).rejects.toThrow(/unsupported/);
+  });
+
   it("loadPlanInputs projects and needs no token", async () => {
     const a = new ApiAdapter();
     const p = await a.loadPlanInputs();
@@ -201,6 +250,71 @@ describe("token + POST bodies", () => {
   it("POSTs before loadPlanInputs are refused client-side", async () => {
     const a = new ApiAdapter();
     await expect(a.autoSequence(CTX)).rejects.toThrow("plan inputs not loaded");
+  });
+});
+
+describe("Capacities settings save", () => {
+  it("sends one token-guarded full-replacement body", async () => {
+    route("/settings/capacities/save", {
+      persisted: true,
+      settings: {
+        version: 1,
+        revision: 1,
+        native_task_auto: {
+          active_enabled: true,
+          due_enabled: false,
+          deadline_enabled: true,
+          deadline_horizon_days: 5,
+        },
+        excluded: { "capacities:space-1:custom:object-1": true },
+      },
+    });
+    const result = await new ApiAdapter().saveCapacitiesSettings({
+      expectedRevision: 0,
+      nativeTaskAuto: {
+        activeEnabled: true,
+        dueEnabled: false,
+        deadlineEnabled: true,
+        deadlineHorizonDays: 5,
+      },
+      excluded: ["capacities:space-1:custom:object-1"],
+    });
+    expect(result.revision).toBe(1);
+    expect(calls.filter((call) => call.init?.method === "POST")).toHaveLength(1);
+    const call = calls.find((candidate) => candidate.path === "/settings/capacities/save")!;
+    expect((call.init!.headers as any)["X-TDTB-Token"]).toBe("tok-123");
+    expect(JSON.parse(call.init!.body as string)).toEqual({
+      expected_revision: 0,
+      native_task_auto: {
+        active_enabled: true,
+        due_enabled: false,
+        deadline_enabled: true,
+        deadline_horizon_days: 5,
+      },
+      excluded: { "capacities:space-1:custom:object-1": true },
+    });
+  });
+
+  it("surfaces a settings revision conflict as ApiError", async () => {
+    route("/settings/capacities/save", {
+      detail: {
+        code: "capacities_settings_conflict",
+        message: "Capacities settings changed since they were read; reload and retry.",
+      },
+    }, 409);
+    const error = await new ApiAdapter().saveCapacitiesSettings({
+      expectedRevision: 0,
+      nativeTaskAuto: {
+        activeEnabled: true,
+        dueEnabled: true,
+        deadlineEnabled: true,
+        deadlineHorizonDays: 2,
+      },
+      excluded: [],
+    }).catch((e) => e);
+    expect(error).toBeInstanceOf(ApiError);
+    expect(error.status).toBe(409);
+    expect(error.message).toContain("reload and retry");
   });
 });
 

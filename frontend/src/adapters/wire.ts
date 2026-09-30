@@ -16,6 +16,9 @@ import type {
   AnchoredKind,
   AssignedItem,
   Capacity,
+  CapacitiesSettings,
+  CapacitiesSettingsDraft,
+  CapacitiesNativeTaskAutoPolicy,
   CommitReport,
   CommitSurface,
   DaySetup,
@@ -142,6 +145,124 @@ function projectDurationMemoryResult(wire: Wire): {
     // `minutes`. Read both so the two routes share one projection.
     minutes: projectDurationMemoryMinutes(wire),
     source: durationSourceOf(wire.duration_source ?? (wire.source ?? "default")),
+  };
+}
+
+/** Stable Capacities identities are the only object keys the settings route
+    accepts. Keep this check at the frontend boundary too, so a malformed
+    response or a hand-built fixture cannot become a title/id exclusion. */
+export function isCanonicalCapacitiesIdentity(value: unknown): value is string {
+  if (typeof value !== "string" || value !== value.trim()) return false;
+  const parts = value.split(":");
+  return (
+    parts.length >= 4 &&
+    parts[0] === "capacities" &&
+    parts.slice(1).every((part) => part.length > 0 && part === part.trim())
+  );
+}
+
+const CAPACITIES_SETTINGS_NATIVE_KEYS = [
+  "active_enabled",
+  "due_enabled",
+  "deadline_enabled",
+  "deadline_horizon_days",
+] as const;
+
+function capacitiesSettingsError(detail: string): Error {
+  return new Error(`invalid Capacities settings response: ${detail}`);
+}
+
+/** Project the strict local settings response. The backend is fail-closed;
+    the client must not turn a malformed response into a plausible default. */
+export function projectCapacitiesSettings(wire: Wire): CapacitiesSettings {
+  const raw = wire?.settings;
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    throw capacitiesSettingsError("missing settings object");
+  }
+  if (typeof wire.persisted !== "boolean") {
+    throw capacitiesSettingsError("persisted must be a boolean");
+  }
+  if (raw.version !== 1) {
+    throw capacitiesSettingsError("version is unsupported");
+  }
+  if (typeof raw.revision !== "number" || !Number.isSafeInteger(raw.revision) || raw.revision < 0) {
+    throw capacitiesSettingsError("revision must be a nonnegative safe integer");
+  }
+  const native = raw.native_task_auto;
+  if (!native || typeof native !== "object" || Array.isArray(native)) {
+    throw capacitiesSettingsError("native_task_auto is malformed");
+  }
+  if (
+    Object.keys(native).some((key) => !(CAPACITIES_SETTINGS_NATIVE_KEYS as readonly string[]).includes(key)) ||
+    CAPACITIES_SETTINGS_NATIVE_KEYS.some((key) => !Object.prototype.hasOwnProperty.call(native, key))
+  ) {
+    throw capacitiesSettingsError("native_task_auto has unknown or missing keys");
+  }
+  const boolKeys = ["active_enabled", "due_enabled", "deadline_enabled"] as const;
+  for (const key of boolKeys) {
+    if (typeof native[key] !== "boolean") {
+      throw capacitiesSettingsError(`${key} must be a boolean`);
+    }
+  }
+  if (
+    typeof native.deadline_horizon_days !== "number" ||
+    !Number.isSafeInteger(native.deadline_horizon_days) ||
+    native.deadline_horizon_days < 0
+  ) {
+    throw capacitiesSettingsError("deadline_horizon_days must be a nonnegative integer");
+  }
+  const excluded = raw.excluded;
+  if (!excluded || typeof excluded !== "object" || Array.isArray(excluded)) {
+    throw capacitiesSettingsError("excluded must be an object");
+  }
+  const identities = Object.entries(excluded).map(([identity, flag]) => {
+    if (!isCanonicalCapacitiesIdentity(identity) || flag !== true) {
+      throw capacitiesSettingsError("excluded contains an invalid identity");
+    }
+    return identity;
+  });
+  return {
+    version: raw.version,
+    revision: raw.revision,
+    persisted: wire.persisted,
+    nativeTaskAuto: {
+      activeEnabled: native.active_enabled,
+      dueEnabled: native.due_enabled,
+      deadlineEnabled: native.deadline_enabled,
+      deadlineHorizonDays: native.deadline_horizon_days,
+    },
+    excluded: identities.sort(),
+  };
+}
+
+/** Build the full-replacement body expected by POST /settings/capacities/save. */
+export function capacitiesSettingsToWire(draft: CapacitiesSettingsDraft): Wire {
+  if (!Number.isSafeInteger(draft.expectedRevision) || draft.expectedRevision < 0) {
+    throw new Error("expectedRevision must be a nonnegative safe integer");
+  }
+  const policy: CapacitiesNativeTaskAutoPolicy = draft.nativeTaskAuto;
+  if (
+    typeof policy.activeEnabled !== "boolean" ||
+    typeof policy.dueEnabled !== "boolean" ||
+    typeof policy.deadlineEnabled !== "boolean" ||
+    !Number.isSafeInteger(policy.deadlineHorizonDays) ||
+    policy.deadlineHorizonDays < 0
+  ) {
+    throw new Error("native Capacities Task Auto policy is malformed");
+  }
+  const identities = [...new Set(draft.excluded)].sort();
+  if (!identities.every((identity) => isCanonicalCapacitiesIdentity(identity))) {
+    throw new Error("excluded contains an invalid Capacities identity");
+  }
+  return {
+    expected_revision: draft.expectedRevision,
+    native_task_auto: {
+      active_enabled: policy.activeEnabled,
+      due_enabled: policy.dueEnabled,
+      deadline_enabled: policy.deadlineEnabled,
+      deadline_horizon_days: policy.deadlineHorizonDays,
+    },
+    excluded: Object.fromEntries(identities.map((identity) => [identity, true])),
   };
 }
 

@@ -33,6 +33,8 @@ import {
 } from "./store";
 import type {
   AnchoredOverride,
+  CapacitiesSettings,
+  CapacitiesSettingsDraft,
   DaySetup,
   MicroIdea,
   PlanInputs,
@@ -265,6 +267,14 @@ export class Controller {
         error: String(e instanceof Error ? e.message : e),
       });
     }
+  }
+
+  async loadCapacitiesSettings(): Promise<CapacitiesSettings> {
+    return this.adapter.loadCapacitiesSettings();
+  }
+
+  async saveCapacitiesSettings(draft: CapacitiesSettingsDraft): Promise<CapacitiesSettings> {
+    return this.adapter.saveCapacitiesSettings(draft);
   }
 
   async saveDaySetup(daySetup: AppState["daySetup"]): Promise<void> {

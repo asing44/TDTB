@@ -76,6 +76,13 @@ export function ReadinessStrip() {
         Captures {captureCount}/3
       </button>
       <button
+        class="chip chip--btn"
+        onClick={() => store.dispatch({ type: "UI", patch: { capacitiesSettingsOpen: true } })}
+        aria-label="Open Capacities settings"
+      >
+        Capacities settings
+      </button>
+      <button
         class={`chip chip--btn ${
           refresh.error
             ? "chip--err"

@@ -121,6 +121,7 @@ export interface AppState {
   theme: Theme;
   ui: {
     setupOpen: boolean;
+    capacitiesSettingsOpen: boolean;
     approvalOpen: boolean;
     editorItem: string | null; // exact block editor target
     /** T12e (brief problem 7): what the editor's caller wanted — "duration"
@@ -181,7 +182,7 @@ export const initialState: AppState = {
   refresh: { phase: "idle", error: null, lastRefreshed: null, summary: null },
   ledger: null,
   theme: "system",
-  ui: { setupOpen: false, approvalOpen: false, editorItem: null, editorIntent: null, editorAnchor: null, capacityDetail: false, trimUndo: null },
+  ui: { setupOpen: false, capacitiesSettingsOpen: false, approvalOpen: false, editorItem: null, editorIntent: null, editorAnchor: null, capacityDetail: false, trimUndo: null },
 };
 
 export type Action =

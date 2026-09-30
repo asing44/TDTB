@@ -14,6 +14,8 @@ import type {
 } from "./adapter";
 import type {
   Capacity,
+  CapacitiesSettings,
+  CapacitiesSettingsDraft,
   CommitReport,
   DaySetup,
   FixedInputs,
@@ -131,6 +133,18 @@ export class FixtureAdapter implements Adapter {
   private anchoredSourceDrifted = false;
   private sourceDown = false;
   private assignedDrifted = false;
+  private capacitiesSettings: CapacitiesSettings = {
+    version: 1,
+    revision: 0,
+    persisted: false,
+    nativeTaskAuto: {
+      activeEnabled: true,
+      dueEnabled: true,
+      deadlineEnabled: true,
+      deadlineHorizonDays: 2,
+    },
+    excluded: [],
+  };
 
   constructor(name: ScenarioName) {
     this.scenario = makeScenario(name);
@@ -253,6 +267,28 @@ export class FixtureAdapter implements Adapter {
 
   async saveDaySetup(_daySetup: DaySetup): Promise<void> {
     await wait(LATENCY_MS);
+  }
+
+  async loadCapacitiesSettings(): Promise<CapacitiesSettings> {
+    await wait(LATENCY_MS);
+    return structuredClone(this.capacitiesSettings);
+  }
+
+  async saveCapacitiesSettings(draft: CapacitiesSettingsDraft): Promise<CapacitiesSettings> {
+    await wait(LATENCY_MS);
+    if (draft.expectedRevision !== this.capacitiesSettings.revision) {
+      throw new Error(
+        `Capacities settings changed since they were read (stored revision ${this.capacitiesSettings.revision}, expected ${draft.expectedRevision})`,
+      );
+    }
+    this.capacitiesSettings = {
+      version: 1,
+      revision: this.capacitiesSettings.revision + 1,
+      persisted: true,
+      nativeTaskAuto: { ...draft.nativeTaskAuto },
+      excluded: [...draft.excluded].sort(),
+    };
+    return structuredClone(this.capacitiesSettings);
   }
 
   async saveMicroAdventure(_pick: MicroIdea | null): Promise<void> {
