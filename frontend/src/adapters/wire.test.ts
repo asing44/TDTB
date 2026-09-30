@@ -7,11 +7,14 @@ import { describe, expect, it } from "vitest";
 import {
   blocksLabel,
   calendarWarnings,
+  capacitiesSettingsToWire,
   daySetupToWire,
   durationMinutes,
   durationSourceOf,
+  isCanonicalCapacitiesStructureId,
   itemIdentity,
   projectAssigned,
+  projectCapacitiesSettings,
   projectCommitReport,
   projectDaySetup,
   projectDaySemantics,
@@ -906,5 +909,96 @@ describe("duration-memory wire projection (MVP)", () => {
     });
     expect(roundedBlocks.blocks).toBe(2);
     expect(roundedBlocks.durationLabel).toBe("45min");
+  });
+});
+
+describe("capacities settings active_structures (additive schema v1)", () => {
+  const baseSettings = () => ({
+    version: 1,
+    revision: 0,
+    native_task_auto: {
+      active_enabled: true,
+      due_enabled: true,
+      deadline_enabled: true,
+      deadline_horizon_days: 2,
+    },
+    excluded: {},
+  });
+
+  it("projects an absent active_structures key to [] (older backend)", () => {
+    const projected = projectCapacitiesSettings({ persisted: false, settings: baseSettings() });
+    expect(projected.activeStructures).toEqual([]);
+  });
+
+  it("parses a well-formed active_structures object and sorts the ids", () => {
+    const projected = projectCapacitiesSettings({
+      persisted: false,
+      settings: { ...baseSettings(), active_structures: { b: true, a: true, "custom-project": true } },
+    });
+    expect(projected.activeStructures).toEqual(["a", "b", "custom-project"]);
+  });
+
+  const malformedObjects: Array<[string, unknown]> = [
+    ["an array", []],
+    ["a string", "custom-project"],
+    ["null", null],
+  ];
+  for (const [label, bad] of malformedObjects) {
+    it(`throws when active_structures is ${label}`, () => {
+      expect(() =>
+        projectCapacitiesSettings({
+          persisted: false,
+          settings: { ...baseSettings(), active_structures: bad },
+        }),
+      ).toThrow(/active_structures/);
+    });
+  }
+
+  const malformedEntries: Array<[string, Record<string, unknown>]> = [
+    ["a non-true flag", { "custom-project": 1 }],
+    ["a false flag", { "custom-project": false }],
+    ["an empty id", { "": true }],
+    ["a whitespace-padded id", { " custom-project ": true }],
+    ["an embedded-whitespace id", { "custom project": true }],
+  ];
+  for (const [label, bad] of malformedEntries) {
+    it(`throws when active_structures contains ${label}`, () => {
+      expect(() =>
+        projectCapacitiesSettings({
+          persisted: false,
+          settings: { ...baseSettings(), active_structures: bad },
+        }),
+      ).toThrow(/invalid structure id/);
+    });
+  }
+
+  it("emits a sorted, deduplicated active_structures object in the save body", () => {
+    const wire = capacitiesSettingsToWire({
+      expectedRevision: 0,
+      nativeTaskAuto: { activeEnabled: true, dueEnabled: true, deadlineEnabled: true, deadlineHorizonDays: 2 },
+      excluded: [],
+      activeStructures: ["b", "a", "a"],
+    });
+    expect(wire.active_structures).toEqual({ a: true, b: true });
+  });
+
+  it("throws on an invalid active-structure id in the save draft", () => {
+    expect(() =>
+      capacitiesSettingsToWire({
+        expectedRevision: 0,
+        nativeTaskAuto: { activeEnabled: true, dueEnabled: true, deadlineEnabled: true, deadlineHorizonDays: 2 },
+        excluded: [],
+        activeStructures: ["bad id"],
+      }),
+    ).toThrow(/invalid structure id/);
+  });
+
+  it("recognizes canonical structure ids", () => {
+    expect(isCanonicalCapacitiesStructureId("custom-project")).toBe(true);
+    expect(isCanonicalCapacitiesStructureId("0d194525-c5a1-4af5-bb62-202b83006b5e")).toBe(true);
+    expect(isCanonicalCapacitiesStructureId("")).toBe(false);
+    expect(isCanonicalCapacitiesStructureId(" x ")).toBe(false);
+    expect(isCanonicalCapacitiesStructureId("x y")).toBe(false);
+    expect(isCanonicalCapacitiesStructureId(1)).toBe(false);
   });
 });

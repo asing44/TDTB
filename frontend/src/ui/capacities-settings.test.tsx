@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, waitFor } from "@testing-library/preact";
 import { CapacitiesSettingsDrawer } from "./CapacitiesSettingsDrawer";
 import { makeHarness } from "./test-harness";
+import { capacitiesSettingsToWire } from "../adapters/wire";
 import type { AssignedItem } from "../model/types";
 
 afterEach(() => {
@@ -65,8 +66,68 @@ describe("CapacitiesSettingsDrawer", () => {
         deadlineHorizonDays: 5,
       },
       excluded: ["capacities:space-1:RootTask:task-1"],
+      activeStructures: [],
     });
     await waitFor(() => expect(h.store.getState().ui.capacitiesSettingsOpen).toBe(false));
+  });
+
+  it("preserves non-empty activeStructures across a native Task Auto save (round-trip regression)", async () => {
+    const h = makeHarness("ready");
+    const inputs = h.store.getState().inputs!;
+    const capacityItem: AssignedItem = {
+      ...inputs.assigned[0],
+      id: "Capacity task",
+      name: "Capacity task",
+      source: "capacities",
+      path: "capacities://space-1/task-1",
+      identity: "capacities:space-1:RootTask:task-1",
+      types: ["RootTask"],
+    };
+    h.store.dispatch({
+      type: "INPUTS_LOADED",
+      inputs: { ...inputs, assigned: [...inputs.assigned, capacityItem] },
+      ledger: h.store.getState().ledger!,
+    });
+    // The server returns a non-empty inclusion set the drawer has no editor for.
+    vi.spyOn(h.controller, "loadCapacitiesSettings").mockResolvedValue({
+      version: 1,
+      revision: 0,
+      persisted: true,
+      nativeTaskAuto: {
+        activeEnabled: true,
+        dueEnabled: true,
+        deadlineEnabled: true,
+        deadlineHorizonDays: 2,
+      },
+      excluded: [],
+      activeStructures: ["custom-project", "0d194525-c5a1-4af5-bb62-202b83006b5e"],
+    });
+    h.store.dispatch({ type: "UI", patch: { capacitiesSettingsOpen: true } });
+    const rendered = h.ui(<CapacitiesSettingsDrawer />);
+    await waitFor(() => expect(rendered.getByText("Native Task Auto rules")).toBeTruthy());
+
+    // Toggle a native Task Auto control — the save path that, before the fix,
+    // silently cleared active_structures via the full-replacement body.
+    fireEvent.click(rendered.getByRole("checkbox", { name: /Active status/ }));
+    const save = vi.spyOn(h.controller, "saveCapacitiesSettings");
+    fireEvent.click(rendered.getByRole("button", { name: "Save Capacities settings" }));
+    await waitFor(() => expect(save).toHaveBeenCalledTimes(1));
+
+    const draft = save.mock.calls[0][0];
+    expect(draft.nativeTaskAuto.activeEnabled).toBe(false); // the toggle landed
+    expect(draft.activeStructures).toEqual([
+      "custom-project",
+      "0d194525-c5a1-4af5-bb62-202b83006b5e",
+    ]);
+    // The outgoing full-replacement body keeps the server's inclusion set.
+    const body = capacitiesSettingsToWire(draft);
+    expect(body.active_structures).toEqual({
+      "custom-project": true,
+      "0d194525-c5a1-4af5-bb62-202b83006b5e": true,
+    });
+    // Regression guard: before the fix draftOf dropped the field, so the body
+    // would have carried an empty active_structures object here.
+    expect(Object.keys(body.active_structures).length).toBeGreaterThan(0);
   });
 
   it("shows load failures and offers an explicit reload", async () => {

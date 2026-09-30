@@ -22,6 +22,9 @@ function draftOf(settings: CapacitiesSettings): CapacitiesSettingsDraft {
     expectedRevision: settings.revision,
     nativeTaskAuto: { ...settings.nativeTaskAuto },
     excluded: [...settings.excluded],
+    // Round-tripped verbatim: this slice adds no editor, but a save must not
+    // silently clear the server's active-structure inclusion set.
+    activeStructures: [...settings.activeStructures],
   };
 }
 

@@ -96,6 +96,7 @@ describe("reads", () => {
         deadlineHorizonDays: 4,
       },
       excluded: ["capacities:space-1:RootTask:task-1"],
+      activeStructures: [],
     });
     expect(calls.map((c) => c.path)).toEqual(["/settings/capacities"]);
   });
@@ -116,6 +117,53 @@ describe("reads", () => {
       },
     });
     await expect(new ApiAdapter().loadCapacitiesSettings()).rejects.toThrow(/unsupported/);
+  });
+
+  it("round-trips activeStructures through a settings read and save", async () => {
+    route("/settings/capacities", {
+      persisted: true,
+      settings: {
+        version: 1,
+        revision: 2,
+        native_task_auto: {
+          active_enabled: true,
+          due_enabled: true,
+          deadline_enabled: true,
+          deadline_horizon_days: 2,
+        },
+        excluded: {},
+        active_structures: { "custom-project": true },
+      },
+    });
+    const adapter = new ApiAdapter();
+    const loaded = await adapter.loadCapacitiesSettings();
+    expect(loaded.activeStructures).toEqual(["custom-project"]);
+
+    route("/settings/capacities/save", {
+      persisted: true,
+      settings: {
+        version: 1,
+        revision: 3,
+        native_task_auto: {
+          active_enabled: true,
+          due_enabled: true,
+          deadline_enabled: true,
+          deadline_horizon_days: 2,
+        },
+        excluded: {},
+        active_structures: { "custom-project": true },
+      },
+    });
+    const saved = await adapter.saveCapacitiesSettings({
+      expectedRevision: loaded.revision,
+      nativeTaskAuto: { ...loaded.nativeTaskAuto },
+      excluded: [...loaded.excluded],
+      activeStructures: [...loaded.activeStructures],
+    });
+    expect(saved.activeStructures).toEqual(["custom-project"]);
+    expect(postBody("/settings/capacities/save").active_structures).toEqual({
+      "custom-project": true,
+    });
   });
 
   it("loadPlanInputs projects and needs no token", async () => {
@@ -267,6 +315,7 @@ describe("Capacities settings save", () => {
           deadline_horizon_days: 5,
         },
         excluded: { "capacities:space-1:custom:object-1": true },
+        active_structures: { "custom-project": true },
       },
     });
     const result = await new ApiAdapter().saveCapacitiesSettings({
@@ -278,6 +327,7 @@ describe("Capacities settings save", () => {
         deadlineHorizonDays: 5,
       },
       excluded: ["capacities:space-1:custom:object-1"],
+      activeStructures: ["custom-project"],
     });
     expect(result.revision).toBe(1);
     expect(calls.filter((call) => call.init?.method === "POST")).toHaveLength(1);
@@ -292,6 +342,7 @@ describe("Capacities settings save", () => {
         deadline_horizon_days: 5,
       },
       excluded: { "capacities:space-1:custom:object-1": true },
+      active_structures: { "custom-project": true },
     });
   });
 
@@ -311,6 +362,7 @@ describe("Capacities settings save", () => {
         deadlineHorizonDays: 2,
       },
       excluded: [],
+      activeStructures: [],
     }).catch((e) => e);
     expect(error).toBeInstanceOf(ApiError);
     expect(error.status).toBe(409);

@@ -144,6 +144,7 @@ export class FixtureAdapter implements Adapter {
       deadlineHorizonDays: 2,
     },
     excluded: [],
+    activeStructures: [],
   };
 
   constructor(name: ScenarioName) {
@@ -287,6 +288,7 @@ export class FixtureAdapter implements Adapter {
       persisted: true,
       nativeTaskAuto: { ...draft.nativeTaskAuto },
       excluded: [...draft.excluded].sort(),
+      activeStructures: [...draft.activeStructures].sort(),
     };
     return structuredClone(this.capacitiesSettings);
   }

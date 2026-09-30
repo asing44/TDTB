@@ -30,6 +30,9 @@ export interface CapacitiesSettings {
   nativeTaskAuto: CapacitiesNativeTaskAutoPolicy;
   /** Canonical capacities:{space}:{structure}:{object} identities. */
   excluded: string[];
+  /** Structure ids whose typed `Active` status label is an inclusion signal
+      for the Capacities builder. Additive to schema version 1. */
+  activeStructures: string[];
 }
 
 /** Full replacement body for the settings save route. */
@@ -37,6 +40,8 @@ export interface CapacitiesSettingsDraft {
   expectedRevision: number;
   nativeTaskAuto: CapacitiesNativeTaskAutoPolicy;
   excluded: string[];
+  /** Round-tripped from the settings read; the drawer owns no editor yet. */
+  activeStructures: string[];
 }
 
 /** Resolved duration source label (mirrors the backend resolver's

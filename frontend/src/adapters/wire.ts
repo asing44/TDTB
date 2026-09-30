@@ -168,6 +168,14 @@ const CAPACITIES_SETTINGS_NATIVE_KEYS = [
   "deadline_horizon_days",
 ] as const;
 
+/** Validate and return an Active-enabled custom structure id, mirroring the
+    backend's ``canonical_active_structure_id``: a non-empty, whitespace-free
+    string with no leading or trailing whitespace. */
+export function isCanonicalCapacitiesStructureId(value: unknown): value is string {
+  if (typeof value !== "string" || value.length === 0) return false;
+  return value === value.trim() && !/\s/.test(value);
+}
+
 function capacitiesSettingsError(detail: string): Error {
   return new Error(`invalid Capacities settings response: ${detail}`);
 }
@@ -221,6 +229,22 @@ export function projectCapacitiesSettings(wire: Wire): CapacitiesSettings {
     }
     return identity;
   });
+  // ``active_structures`` was added additively to schema version 1: an older
+  // backend/response that omits the key means the empty set. When present it
+  // is strict, matching the excluded-object treatment above.
+  const activeRaw = raw.active_structures;
+  let activeStructures: string[] = [];
+  if (activeRaw !== undefined) {
+    if (!activeRaw || typeof activeRaw !== "object" || Array.isArray(activeRaw)) {
+      throw capacitiesSettingsError("active_structures must be an object");
+    }
+    activeStructures = Object.entries(activeRaw).map(([structureId, flag]) => {
+      if (!isCanonicalCapacitiesStructureId(structureId) || flag !== true) {
+        throw capacitiesSettingsError("active_structures contains an invalid structure id");
+      }
+      return structureId;
+    });
+  }
   return {
     version: raw.version,
     revision: raw.revision,
@@ -232,6 +256,7 @@ export function projectCapacitiesSettings(wire: Wire): CapacitiesSettings {
       deadlineHorizonDays: native.deadline_horizon_days,
     },
     excluded: identities.sort(),
+    activeStructures: activeStructures.sort(),
   };
 }
 
@@ -254,6 +279,10 @@ export function capacitiesSettingsToWire(draft: CapacitiesSettingsDraft): Wire {
   if (!identities.every((identity) => isCanonicalCapacitiesIdentity(identity))) {
     throw new Error("excluded contains an invalid Capacities identity");
   }
+  const activeStructures = [...new Set(draft.activeStructures)].sort();
+  if (!activeStructures.every((structureId) => isCanonicalCapacitiesStructureId(structureId))) {
+    throw new Error("activeStructures contains an invalid structure id");
+  }
   return {
     expected_revision: draft.expectedRevision,
     native_task_auto: {
@@ -263,6 +292,7 @@ export function capacitiesSettingsToWire(draft: CapacitiesSettingsDraft): Wire {
       deadline_horizon_days: policy.deadlineHorizonDays,
     },
     excluded: Object.fromEntries(identities.map((identity) => [identity, true])),
+    active_structures: Object.fromEntries(activeStructures.map((structureId) => [structureId, true])),
   };
 }
 
