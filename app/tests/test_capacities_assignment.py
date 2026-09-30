@@ -84,12 +84,13 @@ def test_source_assigned_absent_with_exclusion_is_excluded():
     assert decision.provenance.source_assigned is None
 
 
-def test_source_assigned_false_without_exclusion_falls_through_to_auto():
+def test_source_assigned_false_without_exclusion_is_not_eligible():
     decision = _eval(_custom(source_assigned=False, status_is_open=True))
 
-    assert decision.mode is AssignmentMode.AUTO
-    assert decision.eligible is True
-    assert decision.provenance.auto_conditions == ("open-status",)
+    assert decision.mode is AssignmentMode.NONE
+    assert decision.eligible is False
+    assert decision.reason_codes == ("no-effective-assignment",)
+    assert decision.provenance.auto_conditions == ()
 
 
 def test_exclusion_set_is_accepted_directly_as_the_settings_seam():
@@ -348,14 +349,6 @@ def test_parse_capacities_identity_round_trips_components():
 # --------------------------------------------------------------------------
 
 
-def test_custom_object_auto_matches_on_mapped_open_status():
-    decision = _eval(_custom(status="active", status_is_open=True))
-
-    assert decision.mode is AssignmentMode.AUTO
-    assert decision.provenance.native_task is False
-    assert decision.provenance.auto_conditions == ("open-status",)
-
-
 def test_custom_object_without_open_status_or_dates_is_not_eligible():
     decision = _eval(_custom())
 
@@ -363,11 +356,49 @@ def test_custom_object_without_open_status_or_dates_is_not_eligible():
     assert decision.reason_codes == ("no-effective-assignment",)
 
 
-def test_custom_object_auto_uses_mapped_dates_when_status_is_unmapped():
-    decision = _eval(_custom(due=TODAY))
+def test_custom_open_status_does_not_implicitly_assign():
+    # Custom-object Auto is not yet specified: an open status is a safety
+    # pass-through, not an inclusion signal.
+    decision = _eval(_custom(status="active", status_is_open=True))
 
-    assert decision.mode is AssignmentMode.AUTO
-    assert decision.provenance.auto_conditions == ("due-today-or-overdue",)
+    assert decision.mode is AssignmentMode.NONE
+    assert decision.eligible is False
+    assert decision.reason_codes == ("no-effective-assignment",)
+    assert decision.provenance.native_task is False
+    assert decision.provenance.auto_conditions == ()
+
+
+def test_custom_dates_do_not_implicitly_assign():
+    candidates = (
+        _custom(due=TODAY),
+        _custom(deadline=TODAY),
+        _custom(
+            status="active",
+            status_is_open=True,
+            due=TODAY - timedelta(days=5),
+            deadline=TODAY + timedelta(days=1),
+        ),
+    )
+
+    for candidate in candidates:
+        decision = _eval(candidate)
+        assert decision.mode is AssignmentMode.NONE
+        assert decision.eligible is False
+        assert decision.reason_codes == ("no-effective-assignment",)
+        assert decision.provenance.auto_conditions == ()
+
+
+def test_custom_dates_and_open_status_still_yield_to_exclusion():
+    # Precedence is unchanged: exclusion is evaluated before the (absent)
+    # custom Auto policy, so an excluded custom row is Excluded, not None.
+    decision = _eval(
+        _custom(status="active", status_is_open=True, due=TODAY),
+        settings=frozenset({CUSTOM}),
+    )
+
+    assert decision.mode is AssignmentMode.EXCLUDED
+    assert decision.eligible is False
+    assert decision.provenance.exclusion_matched is True
 
 
 def test_settings_can_override_the_native_task_structures():

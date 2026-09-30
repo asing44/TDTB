@@ -23,7 +23,15 @@ properties, so they carry no source Assigned marker and rely on the native
 Auto rule. Custom objects may expose a source boolean Assigned marker:
 ``assigned=true`` is intentional explicit Assigned input and wins over any
 TDTB exclusion; ``assigned=false``/absent encodes neither Auto nor Excluded and
-falls through to exclusion and then the type-specific Auto policy.
+falls through to exclusion and then to ``no-effective-assignment``.
+
+Custom-object Auto is deliberately not implemented yet. The governing plan
+leaves its policy unspecified, so a non-native object is never Auto-eligible
+from an open status or from custom dates; only native ``RootTask``/``Task``
+Auto applies. Open status stays a safety precondition (a closed row is never
+eligible) and custom dates are display signals, not implicit inclusion. The
+settings seam is shaped so a later explicit custom Auto policy can be added
+without changing this precedence.
 
 Nothing here matches on title. Exclusion and Auto both key on the stable
 source-qualified identity the source adapter already emits
@@ -77,9 +85,10 @@ class AssignmentCandidate:
 
     ``status_is_open`` is the mapped open/closed classification the source
     adapter derives from the structure's open-status filter: ``True`` open,
-    ``False`` completed/dropped, ``None`` when no status filter is mapped.
-    ``status`` is the normalized source status token used by the native Auto
-    status condition.
+    ``False`` completed/dropped, ``None`` when no status filter is mapped. It
+    is a safety signal only: ``False`` blocks every mode, and ``True`` never
+    implies Auto for a custom object. ``status`` is the normalized source
+    status token used by the native Auto status condition.
     """
 
     identity: str
@@ -97,7 +106,9 @@ class AssignmentSettings:
     """Minimal evaluator settings seam.
 
     Persistence, the settings API, and the UI are later slices. This object
-    deliberately carries only what the decision needs today.
+    deliberately carries only what the decision needs today: it has no custom
+    Auto switch because custom Auto is not yet specified. A later slice adds
+    the explicit custom policy here rather than in the decision precedence.
     """
 
     excluded_identities: frozenset[str] = frozenset()
@@ -209,18 +220,22 @@ def _auto_conditions(
 ) -> tuple[str, ...]:
     """Return the Auto conditions that matched, in deterministic order.
 
-    Native Task Auto is an OR set: status == Active, due <= today, or
-    deadline <= today + horizon. Custom objects use their mapped open status in
-    place of the native Active status. A missing date never matches.
+    Only native ``RootTask``/``Task`` objects have a settled Auto policy, and
+    it is an OR set: status == Active, due <= logical day, or deadline <=
+    logical day + horizon. A missing date never matches.
+
+    Custom-object Auto is not yet specified, so a non-native object matches no
+    condition here and falls through to ``no-effective-assignment``. Open
+    status and custom dates are not implicit inclusion. The settings seam can
+    grow an explicit custom Auto policy later without changing precedence.
     """
+    if not native_task:
+        return ()
     horizon = logical_day + timedelta(days=settings.deadline_horizon_days)
     matched: list[str] = []
-    if native_task:
-        active = {_normalized_status(value) for value in settings.active_statuses}
-        if _normalized_status(candidate.status) in active:
-            matched.append("status-active")
-    elif candidate.status_is_open is True:
-        matched.append("open-status")
+    active = {_normalized_status(value) for value in settings.active_statuses}
+    if _normalized_status(candidate.status) in active:
+        matched.append("status-active")
     if candidate.due is not None and candidate.due <= logical_day:
         matched.append("due-today-or-overdue")
     if candidate.deadline is not None and candidate.deadline <= horizon:
@@ -232,7 +247,6 @@ def _auto_reason(condition: str, settings: AssignmentSettings) -> AssignmentReas
     horizon = settings.deadline_horizon_days
     details = {
         "status-active": ("auto-status-active", "Source status is Active."),
-        "open-status": ("auto-open-status", "Source status is open."),
         "due-today-or-overdue": (
             "auto-due-today-or-overdue",
             "Due date is today or overdue.",
@@ -355,7 +369,8 @@ def evaluate_assignment(
             exclusion_matched=True,
         )
 
-    # 4. Type-specific Auto policy.
+    # 4. Native Auto policy. Custom Auto is not yet specified, so a non-native
+    #    object falls through to no-effective-assignment below.
     conditions = _auto_conditions(
         candidate,
         native_task=native_task,
@@ -374,7 +389,7 @@ def evaluate_assignment(
         reasons=(
             _reason(
                 "no-effective-assignment",
-                "No explicit assignment, exclusion, or Auto match.",
+                "No explicit assignment, exclusion, or native Auto match.",
                 "tdtb",
             ),
         ),
