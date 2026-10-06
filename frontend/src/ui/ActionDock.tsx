@@ -12,7 +12,7 @@ import {
   defectsResolved,
   dockState,
 } from "../store/store";
-import { budgetTotal, localSelected, trimForState } from "../store/allocatorView";
+import { budgetTotal, localSelected } from "../store/allocatorView";
 import { buildDayPrompt } from "../store/exportPrompt";
 import { formatBlockAmount } from "../model/time";
 
@@ -107,7 +107,7 @@ export function ActionDock() {
   // billed button is reachable.
   const spend = localSelected(s);
   const budget = budgetTotal(s);
-  const trim = trimForState(s);
+  const over = Math.max(0, spend - budget);
   // FEEDBACK-18: the entry point names the live count of writes the preview
   // will produce (shadow is current in preview state, so this is exact).
   const activeWrites = s.shadow
@@ -120,9 +120,13 @@ export function ActionDock() {
 
   const statusText: Record<string, string> = {
     setup: "Confirm your day frame, blocks, and captures to begin.",
+    /* 2026-10-06 cockpit feedback item 2: report the day's actual numbers. The
+       old line offered a hypothetical accepted trim ("Accept the trim and you
+       sequence …"), describing a thing the operator never does — they keep a
+       row, or they exclude / complete / delete it. */
     sequence:
-      trim.drop.length > 0
-        ? `Accept the trim and you sequence ${formatBlockAmount(trim.after)} of ${formatBlockAmount(budget)}.`
+      over > 0
+        ? `${formatBlockAmount(spend)} selected of ${formatBlockAmount(budget)} capacity - ${formatBlockAmount(over)} over.`
         : `Setup confirmed. Sequence ${formatBlockAmount(spend)} of ${formatBlockAmount(budget)} when ready.`,
     sequencing: "Sequencing — one billed judgment call in flight…",
     review: defectsPending

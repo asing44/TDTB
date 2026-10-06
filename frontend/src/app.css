@@ -1164,18 +1164,11 @@
 .qrow--background .qrow__stripe {
   opacity: 0.4;
 }
-/* Would-drop rows are still part of the plan, so they keep full contrast —
-   a soft overflow tint plus the explicit badge carry "trim me", instead of
-   the old whole-row opacity gray-out. */
-.queue__band .qrow--flagged {
-  background: color-mix(in srgb, var(--c-overflow) 8%, var(--t-surface));
-}
-.qrow--flagged .qrow__drop {
-  background: color-mix(in srgb, var(--c-overflow) 14%, transparent);
-  border: 0.5px solid color-mix(in srgb, var(--c-overflow) 45%, transparent);
-  padding: 1px 5px;
-  border-radius: 3px;
-}
+/* 2026-10-06 cockpit feedback item 2: the would-drop tint and its badge are
+   gone. Over-allotment is reported as the day's actual selected / budget /
+   overage, and a row leaves the plan only when the operator keeps, excludes,
+   completes, or deletes it — the cockpit never proposes an automatic drop.
+   Excluded rows keep the muted name below; no state washes a whole row out. */
 .qrow__stripe {
   align-self: stretch;
   min-height: 40px;
@@ -1241,14 +1234,6 @@
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   line-height: 1.25;
-}
-.qrow__drop {
-  flex: none;
-  font-size: 9px;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: var(--c-overflow);
 }
 /* All-day rows band with everything else now, so the state has to be legible
    in place — this badge is the whole signal that a row stopped consuming

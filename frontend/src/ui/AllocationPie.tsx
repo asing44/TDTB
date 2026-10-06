@@ -158,10 +158,12 @@ export function AllocationPie() {
       </div>
       {/* FEEDBACK-10 (A09): overflow is explicit and actionable, not only a
           red number in the readout. Own status region so the state is
-          announced without waiting on the readout's polite live region. */}
+          announced without waiting on the readout's polite live region.
+          2026-10-06 cockpit feedback item 2: name the operator's own choices.
+          The cockpit reports over-allotment; it never proposes a drop. */}
       {over > 0 && (
         <p class="pie__over-caption" role="status">
-          Over by {formatBlockAmount(over)} - trim or drop
+          Over by {formatBlockAmount(over)} - reduce durations or exclude
         </p>
       )}
       {inspection && (

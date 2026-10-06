@@ -5,6 +5,13 @@
    A12 (tooltip affordances), A13 (More menu carries secondary actions),
    A14 (opaque layered menu), A15 (band wording).
 
+   SUPERSEDED 2026-10-06 (cockpit feedback item 2, operator-approved): LP-01's
+   would-drop badge and A09's "trim or drop" wording are gone. The cockpit
+   reports actual over-allotment and the operator's own keep / exclude /
+   complete decisions; it never proposes an automatic drop. The checks in the
+   over-allotment describe below replace the old badge expectation with
+   strictly stronger guarantees.
+
    jsdom does no real style resolution, so the CSS-level guards read app.css
    off disk the same way the a11y/responsive suites read tokens.css/app.css.
 
@@ -20,8 +27,13 @@ afterEach(cleanup);
 
 import { Queue } from "./Queue";
 import { AllocationPie } from "./AllocationPie";
+import { ActionDock } from "./ActionDock";
 import { makeHarness, type Harness } from "./test-harness";
 import { BANDS } from "../model/bands";
+import { pieSlices } from "../model/pie";
+import { effectiveBlocks, includedItems } from "../store/store";
+import { budgetTotal, localSelected } from "../store/allocatorView";
+import { formatBlockAmount } from "../model/time";
 
 const appCss = readFileSync(resolve(process.cwd(), "src/app.css"), "utf8");
 
@@ -114,25 +126,113 @@ describe("FEEDBACK-10 over-capacity hierarchy (A10)", () => {
   });
 });
 
-describe("FEEDBACK-10 flagged rows keep a readable hierarchy (LP-01)", () => {
-  it("would-drop rows carry an explicit badge and keep their name readable", () => {
+/* FEEDBACK-10 LP-01's would-drop badge is SUPERSEDED (operator-approved,
+   2026-10-06 cockpit feedback item 2). These checks replace the badge
+   expectation with strictly stronger guarantees: nothing is marked for
+   removal, no hypothetical acceptance instruction is shown, overbooking
+   leaves inclusion exactly as the operator left it, the reported overage is
+   the arithmetic the chart draws, and excluded rows stay readable. */
+describe("over-allotment is reported, never converted into a proposed drop (supersedes FEEDBACK-10 LP-01)", () => {
+  it("marks no candidate row and renders no would-drop badge", () => {
     const h = makeHarness("conflict");
     const { container } = h.ui(<Queue />);
-    const flagged = Array.from(container.querySelectorAll(".qrow--flagged")) as HTMLElement[];
-    expect(flagged.length).toBeGreaterThan(0);
-    for (const row of flagged) {
-      expect(row.querySelector(".qrow__drop")?.textContent).toBe("would drop");
+    expect(container.querySelector(".qrow--flagged")).toBeNull();
+    expect(container.querySelector(".qrow__drop")).toBeNull();
+    expect(container.textContent).not.toMatch(/would drop/i);
+    // The concept is gone from the stylesheet too, so it cannot come back as
+    // a colour-only cue that a glance (or a screen reader) would miss.
+    expect(appCss).not.toMatch(/qrow--flagged/);
+    expect(appCss).not.toMatch(/qrow__drop/);
+    // Names stay readable on every rendered row.
+    const rows = Array.from(container.querySelectorAll(".qrow")) as HTMLElement[];
+    expect(rows.length).toBeGreaterThan(0);
+    for (const row of rows) {
       const name = row.querySelector(".qrow__name");
-      expect(name?.textContent?.trim().length).toBeGreaterThan(0);
+      expect((name?.textContent ?? "").trim().length).toBeGreaterThan(0);
     }
   });
 
-  it("flagged and excluded rows never wash out via whole-row opacity", () => {
-    // LP-01: gray washout made over-capacity rows hard to read. The state
-    // must come from hierarchy (tint + badge + muted-but-readable text), not
-    // a blanket opacity drop on the whole row.
-    expect(cssBlock("qrow--flagged")).not.toMatch(/opacity\s*:/);
+  it("leaves inclusion untouched when the day is overbooked", () => {
+    const h = makeHarness("conflict");
+    const assigned = h.store.getState().inputs!.assigned.map((i) => i.id);
+    expect(includedItems(h.store.getState()).map((i) => i.id)).toEqual(assigned);
+    // A local duration edit pushes the day further over. That is an overage
+    // to report, not a row to drop.
+    h.store.dispatch({
+      type: "OVERRIDE_SET",
+      id: "Magic Mirror",
+      override: { included: true, blocks: 12 },
+    });
+    const s = h.store.getState();
+    expect(includedItems(s).map((i) => i.id)).toEqual(assigned);
+    expect(s.overrides["Magic Mirror"]).toEqual({ included: true, blocks: 12 });
+
+    const { container } = h.ui(<Queue />);
+    const over = localSelected(s) - budgetTotal(s);
+    expect(over).toBeGreaterThan(0);
+    const summary = container.querySelector(".queue__remaining") as HTMLElement;
+    expect(summary.textContent).toBe(
+      `${formatBlockAmount(localSelected(s))} selected of ${formatBlockAmount(budgetTotal(s))} capacity - ${formatBlockAmount(over)} over`,
+    );
+    // Every assigned row still renders: nothing was quietly removed.
+    expect(container.querySelectorAll(".qrow").length).toBeGreaterThanOrEqual(
+      assigned.length,
+    );
+  });
+
+  it("reports actual selected/budget/overage instead of a hypothetical acceptance", () => {
+    // `ready` + extra load = confirmed setup, no sequence staged, over budget:
+    // the dock state that used to offer "Accept the trim…".
+    const h = makeHarness("ready", (sc) => {
+      sc.inputs.assigned.push({
+        id: "Deep CWEAN", name: "Deep CWEAN",
+        path: "50 - Operations/Pursuits/Deep CWEAN.md",
+        source: "vault", types: ["interval"], urgency: null, deadline: null,
+        priorityScore: 47, blocks: 4, durationLabel: "2hr", todoistId: null,
+      });
+    });
+    const { container } = h.ui(<ActionDock />);
+    const s = h.store.getState();
+    expect(includedItems(s).map((i) => i.id)).toEqual(s.inputs!.assigned.map((i) => i.id));
+    const over = localSelected(s) - budgetTotal(s);
+    expect(over).toBeGreaterThan(0);
+    const status = container.querySelector(".dock__status") as HTMLElement;
+    expect(status.textContent).toBe(
+      `${formatBlockAmount(localSelected(s))} selected of ${formatBlockAmount(budgetTotal(s))} capacity - ${formatBlockAmount(over)} over.`,
+    );
+    expect(status.textContent).not.toMatch(/accept/i);
+    expect(status.textContent).not.toMatch(/trim/i);
+    expect(status.textContent).not.toMatch(/drop/i);
+  });
+
+  it("still names the actual selected blocks and capacity on a balanced day", () => {
+    const h = makeHarness("ready");
+    const { container } = h.ui(<ActionDock />);
+    const s = h.store.getState();
+    const status = container.querySelector(".dock__status") as HTMLElement;
+    expect(status.textContent).toBe(
+      `Setup confirmed. Sequence ${formatBlockAmount(localSelected(s))} of ${formatBlockAmount(budgetTotal(s))} when ready.`,
+    );
+  });
+
+  it("excluded rows stay readable: the state is marked by name, never washed out", () => {
+    const h = makeHarness("conflict");
+    h.store.dispatch({
+      type: "OVERRIDE_SET",
+      id: "Press",
+      override: { included: false, blocks: null },
+    });
+    const { container } = h.ui(<Queue />);
+    const rows = Array.from(container.querySelectorAll(".qrow")) as HTMLElement[];
+    const press = rows.find(
+      (r) => r.className.includes("qrow--excluded") && r.textContent?.includes("Press"),
+    );
+    expect(press).toBeTruthy();
+    expect(press!.querySelector(".qrow__name")?.textContent).toBe("Press");
+    // LP-01 safety, kept: state comes from the muted name, never a blanket
+    // opacity drop on the whole row.
     expect(cssBlock("qrow--excluded")).not.toMatch(/opacity\s*:/);
+    expect(appCss).toMatch(/\.qrow--excluded \.qrow__name\s*\{[^}]*var\(--t-muted\)/);
   });
 });
 
@@ -298,11 +398,29 @@ describe("FEEDBACK-10 remembered duration is visible (A08)", () => {
 });
 
 describe("FEEDBACK-10 allocation overflow is explicit in the pie (A09)", () => {
-  it("renders an over-capacity caption when allocation exceeds the day", () => {
+  it("names the exact overage and the operator's own choices, never a proposed drop", () => {
     const h = makeHarness("conflict");
     const { container } = h.ui(<AllocationPie />);
-    const caption = container.querySelector(".pie__over-caption");
-    expect(caption?.textContent).toMatch(/Over by \d+ blk/);
+    const s = h.store.getState();
+    const selectedNow = includedItems(s).reduce(
+      (sum, i) => sum + effectiveBlocks(s, i.id),
+      0,
+    );
+    // The caption's number must be the same allocation the wedges draw.
+    const slices = pieSlices(s.capacity, 0, 0, 0, selectedNow);
+    const allocated = slices
+      .filter((x) => x.key !== "unallocated")
+      .reduce((sum, x) => sum + x.blocks, 0);
+    const over = Math.max(0, allocated - (s.capacity?.total ?? 0));
+    expect(over).toBeGreaterThan(0);
+    const caption = container.querySelector(".pie__over-caption") as HTMLElement;
+    expect(caption.textContent).toBe(
+      `Over by ${formatBlockAmount(over)} - reduce durations or exclude`,
+    );
+    // Explicit choices, not a hypothetical automatic drop.
+    expect(caption.textContent).not.toMatch(/drop/i);
+    expect(caption.textContent).not.toMatch(/trim/i);
+    expect(caption.getAttribute("role")).toBe("status");
   });
 
   it("renders no over caption on a balanced day", () => {
@@ -329,8 +447,10 @@ describe("PI-CHART-02: exhausted day renders the pie with explicit overage", () 
     expect(readout?.textContent).toMatch(/over/i);
     // Zero-capacity state is named in blocks, never as 24-hour clock examples.
     expect(readout?.textContent).not.toMatch(/\d{1,2}:\d{2}/);
-    const caption = container.querySelector(".pie__over-caption");
-    expect(caption?.textContent).toMatch(/Over by \d+ blk/);
+    const caption = container.querySelector(".pie__over-caption") as HTMLElement;
+    expect(caption.textContent).toMatch(/Over by \d+ blk/);
+    expect(caption.textContent).toMatch(/reduce durations or exclude/i);
+    expect(caption.textContent).not.toMatch(/drop/i);
   });
 
   it("keeps the pie absent when an exhausted day has no allocations", () => {

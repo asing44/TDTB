@@ -47,7 +47,6 @@ import {
   hierarchyBandedRows,
   includedDisplayOrder,
   localSelected,
-  trimForState,
   type HierarchyRow,
 } from "../model/allocatorView";
 import { blocksLabel, display12h, formatBlockAmount } from "../model/time";
@@ -386,13 +385,11 @@ function Row({
   item,
   s,
   cumBefore,
-  flagged,
   hierarchy,
 }: {
   item: AssignedItem;
   s: AppState;
   cumBefore: number;
-  flagged: boolean;
   hierarchy?: HierarchyRow;
 }) {
   const { controller, store } = useApp();
@@ -415,7 +412,7 @@ function Row({
 
   return (
     <div
-      class={`qrow ${state === "excluded" ? "qrow--excluded" : ""} ${state === "background" ? "qrow--background" : ""} ${flagged ? "qrow--flagged" : ""} ${hierarchy?.depth ? "qrow--nested" : ""} ${hierarchy?.groupKey ? "qrow--grouped" : ""}`}
+      class={`qrow ${state === "excluded" ? "qrow--excluded" : ""} ${state === "background" ? "qrow--background" : ""} ${hierarchy?.depth ? "qrow--nested" : ""} ${hierarchy?.groupKey ? "qrow--grouped" : ""}`}
       data-hierarchy-depth={hierarchy?.depth ?? 0}
       data-group-key={hierarchy?.groupKey ?? undefined}
       tabIndex={0}
@@ -439,10 +436,11 @@ function Row({
         {hierarchy?.depth && hierarchy.parentName ? (
           <span class="qrow__relationship">child of {hierarchy.parentName}</span>
         ) : null}
-        {/* The would-drop flag rides the source line, not the name line: on
-            the name line it stole width from a 2-line-clamped title, so a row
-            gaining or losing the flag mid-drag changed its own height and
-            shoved everything below it. */}
+        {/* 2026-10-06 cockpit feedback item 2: no would-drop flag rides this
+            line any more. Over-allotment is reported as the day's actual
+            selected/budget/overage (queue header, rail, dock); a row leaves
+            the plan only when the operator excludes, completes, or deletes
+            it. */}
         <span class="qrow__source" title={item.path ?? undefined}>
           {/* The kind of thing leads the line as a coloured chip — scanning 19
               rows for "which of these are projects" was a read-every-word job
@@ -463,7 +461,6 @@ function Row({
               all day
             </span>
           )}
-          {flagged && <span class="qrow__drop">would drop</span>}
         </span>
       </div>
       <div class="qrow__due">
@@ -803,8 +800,6 @@ export function Queue() {
     cumBefore.set(r.id, cum);
     cum += r.blocks;
   }
-  const trim = trimForState(s);
-  const flagged = new Set(trim.drop);
 
   // FEEDBACK-10 (A10): one scan-distance readout of the day's balance — over
   // capacity gets a strong overflow line above the bands; a balanced day
@@ -823,7 +818,6 @@ export function Queue() {
       item={i}
       s={s}
       cumBefore={cumBefore.get(i.id) ?? cum}
-      flagged={flagged.has(i.id)}
       hierarchy={hierarchyById.get(i.id)}
     />
   );
