@@ -9,9 +9,7 @@ import { Rail } from "./Rail";
 import { Queue } from "./Queue";
 import { ActionDock } from "./ActionDock";
 import { FooterBanners } from "./FooterBanners";
-import { SetupDrawer } from "./SetupDrawer";
-import { CapacitiesSettingsDrawer } from "./CapacitiesSettingsDrawer";
-import { TagExclusionSettingsDrawer } from "./TagExclusionSettingsDrawer";
+import { SettingsShell } from "./SettingsShell";
 import { ApprovalDrawer } from "./ApprovalDrawer";
 import { BlockEditor } from "./BlockEditor";
 import { AnchoredEditor } from "./AnchoredEditor";
@@ -73,10 +71,10 @@ export function App() {
         <ActionDock />
       </div>
       {/* Drawers mount on open so their local draft state initializes from
-          the CURRENT store state each time. */}
-      {s.ui.setupOpen && <SetupDrawer />}
-      {s.ui.capacitiesSettingsOpen && <CapacitiesSettingsDrawer />}
-      {s.ui.tagExclusionSettingsOpen && <TagExclusionSettingsDrawer />}
+          the CURRENT store state each time. One settings host covers the
+          three settings-like panels; the Approval gate and the contextual
+          editors stay distinct surfaces. */}
+      {s.ui.settingsPanel !== null && <SettingsShell />}
       {s.ui.approvalOpen && <ApprovalDrawer />}
       {/* key remounts the editor when the target changes while open (keyboard
           Enter on a timeline block can retarget without an intermediate close) */}

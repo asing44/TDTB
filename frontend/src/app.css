@@ -3227,6 +3227,43 @@ body {
   background: var(--t-accent);
 }
 
+/* -- consolidated settings shell (approved variant A) ---------------------- */
+/* One drawer hosts the three settings-like panels. The shell reuses the
+   .setup-drawer canvas so every panel keeps the same field treatment, and
+   adds the panel tab bar; only the active panel's body is rendered. */
+.settings-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 2px 0 16px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid color-mix(in srgb, var(--t-border) 70%, transparent);
+}
+.settings-tab {
+  min-height: 44px;
+  padding: 0 14px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--t-muted);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.settings-tab:hover {
+  border-color: color-mix(in srgb, var(--t-accent) 65%, var(--t-border));
+  color: var(--t-text);
+}
+.settings-tab--active {
+  background: var(--t-surface);
+  border-color: var(--t-border);
+  color: var(--t-text);
+}
+.settings-tab:focus-visible {
+  outline: 2px solid var(--t-accent);
+  outline-offset: 2px;
+}
+
 .drawer__close {
   top: 16px;
   right: 18px;

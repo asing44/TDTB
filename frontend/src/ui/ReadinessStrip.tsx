@@ -59,7 +59,7 @@ export function ReadinessStrip() {
         class={`chip chip--btn ${
           s.daySetup.confirmed ? "chip--ok" : "chip--warn chip--setup-pending"
         }`}
-        onClick={() => store.dispatch({ type: "UI", patch: { setupOpen: true } })}
+        onClick={() => store.dispatch({ type: "UI", patch: { settingsPanel: "day" } })}
         aria-label={
           s.daySetup.confirmed
             ? "Open day setup"
@@ -70,26 +70,25 @@ export function ReadinessStrip() {
       </button>
       <button
         class={`chip chip--btn ${captureCount === 3 ? "chip--ok" : ""}`}
-        onClick={() => store.dispatch({ type: "UI", patch: { setupOpen: true } })}
+        onClick={() =>
+          store.dispatch({
+            type: "UI",
+            patch: { settingsPanel: "day", settingsSection: "captures" },
+          })
+        }
         aria-label="Open captures in day setup"
       >
         Captures {captureCount}/3
       </button>
+      {/* One settings entry replaces the two policy chips: it opens the
+          shared shell on Day setup, and the shell's tabs reach Capacities
+          and Tag exclusions without mounting a second drawer. */}
       <button
         class="chip chip--btn"
-        onClick={() => store.dispatch({ type: "UI", patch: { capacitiesSettingsOpen: true } })}
-        aria-label="Open Capacities settings"
+        onClick={() => store.dispatch({ type: "UI", patch: { settingsPanel: "day" } })}
+        aria-label="Open settings"
       >
-        Capacities settings
-      </button>
-      <button
-        class="chip chip--btn"
-        onClick={() =>
-          store.dispatch({ type: "UI", patch: { tagExclusionSettingsOpen: true } })
-        }
-        aria-label="Open tag exclusion settings"
-      >
-        Tag exclusions
+        Settings
       </button>
       <button
         class={`chip chip--btn ${

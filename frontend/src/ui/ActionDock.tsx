@@ -98,7 +98,7 @@ export function ActionDock() {
   const state = dockState(s);
   const defects = acceptableDefects(s);
   const defectsPending = state === "review" && !defectsResolved(s);
-  const openSetup = () => store.dispatch({ type: "UI", patch: { setupOpen: true } });
+  const openSetup = () => store.dispatch({ type: "UI", patch: { settingsPanel: "day" } });
   const openApproval = () =>
     store.dispatch({ type: "UI", patch: { approvalOpen: true } });
 
