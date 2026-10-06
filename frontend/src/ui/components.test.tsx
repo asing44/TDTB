@@ -144,6 +144,74 @@ describe("ActionDock", () => {
     }
   });
 
+  it("confirms a successful clipboard write and keeps the manual fallback hidden", async () => {
+    const clipboardDescriptor = Object.getOwnPropertyDescriptor(navigator, "clipboard");
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    try {
+      Object.defineProperty(navigator, "clipboard", {
+        configurable: true,
+        value: { writeText },
+      });
+
+      const { ui, store } = makeHarness("ready");
+      const { getByRole, getByText, queryByLabelText } = ui(<ActionDock />);
+      await act(async () => {
+        fireEvent.click(getByRole("button", { name: "Copy plan prompt for an external LLM" }));
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+
+      expect(writeText).toHaveBeenCalledWith(buildDayPrompt(store.getState()));
+      expect(getByText("Copied ✓")).toBeTruthy();
+      expect(queryByLabelText("Prompt text to copy manually")).toBeNull();
+    } finally {
+      if (clipboardDescriptor) {
+        Object.defineProperty(navigator, "clipboard", clipboardDescriptor);
+      } else {
+        Reflect.deleteProperty(navigator, "clipboard");
+      }
+    }
+  });
+
+  it("copies the prompt built from click-time state after a local edit", async () => {
+    const clipboardDescriptor = Object.getOwnPropertyDescriptor(navigator, "clipboard");
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    try {
+      Object.defineProperty(navigator, "clipboard", {
+        configurable: true,
+        value: { writeText },
+      });
+
+      const { ui, store } = makeHarness("ready");
+      const { getByRole } = ui(<ActionDock />);
+      // The user changes a duration after the button first rendered; the
+      // prompt handed to the clipboard must describe the edited state.
+      const first = store.getState().inputs!.assigned[0];
+      store.dispatch({
+        type: "OVERRIDE_SET",
+        id: first.id,
+        override: { included: true, blocks: 1 },
+      });
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+      await act(async () => {
+        fireEvent.click(getByRole("button", { name: "Copy plan prompt for an external LLM" }));
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+
+      expect(writeText).toHaveBeenCalledWith(buildDayPrompt(store.getState()));
+      const copied = writeText.mock.calls[0][0] as string;
+      expect(copied).toContain("Chosen tasks (my local selection): 11 blk");
+      expect(copied).not.toContain("Chosen tasks (my local selection): 13 blk");
+    } finally {
+      if (clipboardDescriptor) {
+        Object.defineProperty(navigator, "clipboard", clipboardDescriptor);
+      } else {
+        Reflect.deleteProperty(navigator, "clipboard");
+      }
+    }
+  });
+
   it("never renders a live-commit control — that lives behind the approval drawer", () => {
     for (const name of ["fresh", "ready", "sequenced", "commit-preview"] as const) {
       const { ui } = makeHarness(name);

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { buildDayPrompt } from "./exportPrompt";
 import { createStore } from "./createStore";
 import { makeScenario } from "../fixtures/scenarios";
+import type { AssignedItem } from "../model/types";
 
 function stateFor(
   name: Parameters<typeof makeScenario>[0],
@@ -12,6 +13,38 @@ function stateFor(
   store.dispatch({ type: "INPUTS_LOADED", inputs: sc.inputs, ledger: { ...sc.ledger } });
   stage?.(store);
   return store.getState();
+}
+
+/** One native-timed Todoist task. Native times are protected by default;
+    `scheduledStart: null` and `isRecurring` cover the other S1 cases. */
+function timedTodoist(overrides: Partial<AssignedItem> = {}): AssignedItem {
+  return {
+    id: "Native task",
+    name: "Native task",
+    path: null,
+    source: "todoist",
+    types: ["task"],
+    urgency: null,
+    deadline: null,
+    priorityScore: 10,
+    blocks: 1,
+    durationLabel: "30min",
+    todoistId: "native-1",
+    scheduledStart: "14:00",
+    ...overrides,
+  };
+}
+
+function withAssigned(
+  store: ReturnType<typeof createStore>,
+  items: AssignedItem[],
+): void {
+  const s = store.getState();
+  store.dispatch({
+    type: "INPUTS_LOADED",
+    inputs: { ...s.inputs!, assigned: [...s.inputs!.assigned, ...items] },
+    ledger: s.ledger!,
+  });
 }
 
 describe("buildDayPrompt (manual LLM fallback)", () => {
@@ -280,5 +313,248 @@ describe("FEEDBACK-28 prompt surfacing for real calendar commitments", () => {
     expect(fixedSection).toContain("Meegy cooking");
     expect(fixedSection).toContain("(calendar event)");
     expect(fixedSection).toMatch(/skipped today/i);
+  });
+});
+
+/* S1 (2026-10-06): Copy prompt must carry the full external scheduling
+   handoff — live capacity arithmetic, recurrence identity, native-time
+   permission, sequence freshness, and source identity — without widening the
+   app's external-write contract. */
+describe("S1 external scheduling handoff", () => {
+  it("exports live capacity components, task room, local selection, and signed remaining", () => {
+    const p = buildDayPrompt(stateFor("ready"));
+    expect(p).toContain("## Capacity");
+    expect(p).toContain("Day capacity: 31 blk");
+    expect(p).toContain("Task room (budget for chosen tasks): 15 blk");
+    expect(p).toContain("Chosen tasks (my local selection): 13 blk");
+    expect(p).toContain("Remaining: 2 blk left");
+    expect(p).toContain("fixed 3 blk");
+    expect(p).toContain("buffer 4 blk");
+  });
+
+  it("recomputes capacity from local edits instead of stale server arithmetic", () => {
+    const p = buildDayPrompt(
+      stateFor("ready", (store) => {
+        const first = store.getState().inputs!.assigned[0];
+        store.dispatch({
+          type: "OVERRIDE_SET",
+          id: first.id,
+          override: { included: true, blocks: 1 },
+        });
+      }),
+    );
+    expect(p).toContain("Chosen tasks (my local selection): 11 blk");
+    expect(p).toContain("Remaining: 4 blk left");
+    expect(p).not.toContain("Chosen tasks (my local selection): 13 blk");
+  });
+
+  it("shows a signed overage when the local selection exceeds task room", () => {
+    const p = buildDayPrompt(stateFor("conflict"));
+    expect(p).toContain("Chosen tasks (my local selection): 17 blk");
+    expect(p).toContain("Over by: 2 blk");
+    expect(p).not.toContain("Remaining:");
+  });
+
+  it("does not invent capacity numbers when the capacity read is missing", () => {
+    const p = buildDayPrompt({ ...stateFor("ready"), capacity: null });
+    expect(p).toContain("## Capacity");
+    expect(p).toMatch(/capacity read unavailable/i);
+    expect(p).not.toContain("Task room (budget for chosen tasks)");
+    expect(p).not.toContain("Day capacity:");
+  });
+
+  it("exports the resolved preset and effective allotment as context, not capacity", () => {
+    const p = buildDayPrompt(
+      stateFor("ready", (store) => {
+        const s = store.getState();
+        store.dispatch({
+          type: "INPUTS_LOADED",
+          inputs: {
+            ...s.inputs!,
+            daySemantics: {
+              ...s.inputs!.daySemantics,
+              selectedPreset: {
+                name: "Ninja",
+                days: [],
+                enabledZones: [],
+                workAllotmentMinutes: 240,
+              },
+              resolutionSource: "today override",
+              effectiveAllotmentMinutes: 240,
+            },
+          },
+          ledger: s.ledger!,
+        });
+      }),
+    );
+    expect(p).toMatch(/Day preset: Ninja \(today override\).*4hr/);
+    expect(p).toMatch(/context/i);
+    // The resolved preset is context; the live task room is unchanged.
+    expect(p).toContain("Task room (budget for chosen tasks): 15 blk");
+  });
+
+  it("identifies recurring commitments, locks their native time, and keeps them placed", () => {
+    const p = buildDayPrompt(
+      stateFor("ready", (store) => {
+        withAssigned(store, [
+          timedTodoist({
+            id: "LOOTS",
+            name: "LOOTS",
+            todoistId: "loots-1",
+            isRecurring: true,
+            scheduledStart: "12:30",
+          }),
+          timedTodoist({
+            id: "Untimed recurring",
+            name: "Untimed recurring",
+            todoistId: "loots-2",
+            isRecurring: true,
+            scheduledStart: null,
+          }),
+        ]);
+      }),
+    );
+    const placed = p.split("## Already placed")[1].split("##")[0];
+    expect(placed).toContain("LOOTS");
+    expect(placed).toContain("recurring");
+    expect(placed).toContain("12:30 PM");
+    expect(placed).toContain("time locked");
+    const toPlace = p.split("## Tasks to place")[1].split("##")[0];
+    expect(toPlace).toContain("Untimed recurring");
+    expect(toPlace).toContain("recurring");
+    expect(p).not.toMatch(
+      /Review AWS module 4 — 1hr \(todoist · id 6fx001AWS\) · recurring/,
+    );
+  });
+
+  it("exports native-time permission: protected by default, adjustable after opt-in", () => {
+    const protectedPrompt = buildDayPrompt(
+      stateFor("ready", (store) => {
+        withAssigned(store, [timedTodoist()]);
+      }),
+    );
+    const protectedPlaced = protectedPrompt
+      .split("## Already placed")[1]
+      .split("##")[0];
+    expect(protectedPlaced).toContain("Native task");
+    expect(protectedPlaced).toContain("native 2 PM");
+    expect(protectedPlaced).toContain("protected");
+    expect(protectedPlaced).not.toContain("adjustable");
+
+    const optedPrompt = buildDayPrompt(
+      stateFor("ready", (store) => {
+        withAssigned(store, [timedTodoist()]);
+        store.dispatch({
+          type: "TIME_ADJUSTMENT_SET",
+          id: "Native task",
+          allow: true,
+        });
+      }),
+    );
+    const optedToPlace = optedPrompt.split("## Tasks to place")[1].split("##")[0];
+    expect(optedToPlace).toContain("Native task");
+    expect(optedToPlace).toContain("adjustable");
+  });
+
+  it("exports the locally chosen duration for a recurring commitment", () => {
+    const p = buildDayPrompt(
+      stateFor("ready", (store) => {
+        withAssigned(store, [
+          timedTodoist({
+            id: "LOOTS",
+            name: "LOOTS",
+            todoistId: "loots-1",
+            isRecurring: true,
+            scheduledStart: "12:30",
+          }),
+        ]);
+        store.dispatch({
+          type: "OVERRIDE_SET",
+          id: "LOOTS",
+          override: { included: true, blocks: 3 },
+        });
+      }),
+    );
+    const placed = p.split("## Already placed")[1].split("##")[0];
+    expect(placed).toContain("LOOTS — 1hr 30min");
+    expect(placed).not.toContain("LOOTS — 30min");
+    expect(placed).toContain("12:30 PM");
+    expect(placed).toContain("2 PM");
+  });
+
+  it("marks the staged sequence current or dirty without changing placement precedence", () => {
+    const stage = (store: ReturnType<typeof createStore>) => {
+      const s = store.getState();
+      store.dispatch({
+        type: "SEQUENCE_OK",
+        sequence: makeScenario("ready").proposal!.sequence.map((r) => ({ ...r })),
+        warnings: [],
+        fingerprint: "s1-test",
+        anchoredSourceFingerprint: s.inputs!.anchoredSourceFingerprint,
+        ledger: s.ledger!,
+      });
+    };
+    const current = buildDayPrompt(stateFor("ready", stage));
+    const currentPlaced = current.split("## Already placed")[1].split("##")[0];
+    expect(currentPlaced).toContain("Sequence status: current");
+    expect(currentPlaced).toContain("9:45 AM");
+    expect(currentPlaced).toContain("10:45 AM");
+
+    const dirty = buildDayPrompt(
+      stateFor("ready", (store) => {
+        stage(store);
+        const first = store.getState().inputs!.assigned[0];
+        store.dispatch({
+          type: "OVERRIDE_SET",
+          id: first.id,
+          override: { included: true, blocks: 1 },
+        });
+      }),
+    );
+    const dirtyPlaced = dirty.split("## Already placed")[1].split("##")[0];
+    expect(dirtyPlaced).toContain("Sequence status: dirty");
+    expect(dirtyPlaced).toContain("9:45 AM");
+    expect(dirtyPlaced).toContain("10:45 AM");
+  });
+
+  it("preserves source identity and path metadata, and invents no write route", () => {
+    const p = buildDayPrompt(
+      stateFor("ready", (store) => {
+        withAssigned(store, [
+          {
+            id: "Capacities idea",
+            name: "Capacities idea",
+            path: null,
+            source: "capacities",
+            types: ["task"],
+            urgency: null,
+            deadline: null,
+            priorityScore: 5,
+            blocks: 1,
+            durationLabel: "30min",
+            todoistId: null,
+            identity: "capacities:space-1:structure-2:object-3",
+          },
+          {
+            id: "No identity",
+            name: "No identity",
+            path: null,
+            source: "todoist",
+            types: ["task"],
+            urgency: null,
+            deadline: null,
+            priorityScore: 4,
+            blocks: 1,
+            durationLabel: "30min",
+            todoistId: null,
+          },
+        ]);
+      }),
+    );
+    expect(p).toContain("(vault · 50 - Operations/Projects/Magic Mirror.md)");
+    expect(p).toContain("(capacities · capacities:space-1:structure-2:object-3)");
+    expect(p).toContain("(todoist · unidentified)");
+    expect(p).toMatch(/no write route from this prompt/i);
+    expect(p).toMatch(/unidentified[\s\S]*do not write/i);
   });
 });
