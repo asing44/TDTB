@@ -8,7 +8,9 @@ from __future__ import annotations
 
 import json
 import os
+import stat
 import sys
+import threading
 from datetime import date
 from pathlib import Path
 
@@ -29,6 +31,19 @@ from capacities_adapter import (  # noqa: E402
 SPACE = "space-1"
 TODAY = date(2026, 9, 29)
 EXCLUDED = f"capacities:{SPACE}:RootTask:task-1"
+
+#: Captured before the autouse isolation fixture runs, so the production
+#: default stays pinned to the operator-chosen machine-local root.
+_MACHINE_LOCAL_DEFAULT = getattr(cb, "DEFAULT_CONTENT_CACHE_PATH", None)
+
+
+@pytest.fixture(autouse=True)
+def _isolate_machine_local_cache(tmp_path, monkeypatch):
+    """No test may read or write the real ``~/.config/tdtb`` cache."""
+    monkeypatch.setattr(
+        cb, "DEFAULT_CONTENT_CACHE_PATH", tmp_path / "machine-content-cache.json"
+    )
+    monkeypatch.setattr(cb, "_CACHE_REGISTRY", {})
 
 
 # ---------------------------------------------------------------------------
@@ -477,23 +492,38 @@ def _cached_adapter(tmp_path, transport, cache):
     )
 
 
-def test_builder_defaults_to_a_shared_content_cache(tmp_path):
+def test_builder_default_resolves_a_namespace_scoped_durable_cache(tmp_path):
     """Consecutive refreshes must not re-spend the request budget.
 
-    The adapter is rebuilt per read, so the cache has to outlive it; otherwise
-    two refreshes inside the provider's one-minute window each pay for every
-    object and the second degrades.
+    The adapter is rebuilt per read, so the factory resolves the default
+    sentinel to one namespace-scoped cache per vault + space + provider and
+    keeps it for every rebuild. That cache is durable, so the progress also
+    survives a process restart. The adapter is rebuilt per read, so the cache
+    has to outlive it; otherwise two refreshes inside the provider's
+    one-minute window each pay for every object and the second degrades.
     """
     transport = _ObjectTransport()
-    cache = cb._ContentCache(ttl_seconds=300.0)
+    _write_source(tmp_path, _valid_payload())
+    token = _valid_token_file(tmp_path)
+    cache_path = tmp_path / "content-cache.json"
 
-    first = _cached_adapter(tmp_path, transport, cache)
+    assert cb.CapacitiesBuilderConfig().content_cache is cb._DEFAULT_CONTENT_CACHE
+
+    config = cb.CapacitiesBuilderConfig(
+        token_path=token, transport=transport, cache_path=cache_path
+    )
+    first = cb.build_capacities_adapter(tmp_path, config)
     first.provider.get_object("task-1")
-    second = _cached_adapter(tmp_path, transport, cache)
+    second = cb.build_capacities_adapter(tmp_path, config)
     second.provider.get_object("task-1")
 
+    assert first.config.content_cache is second.config.content_cache
     assert transport.reads == ["task-1"], transport.reads
-    assert cb.CapacitiesBuilderConfig().content_cache is cb._CONTENT_CACHE
+    assert cache_path.exists()
+    document = json.loads(cache_path.read_text(encoding="utf-8"))
+    assert document["namespace"] == cb._content_cache_namespace(
+        tmp_path, SPACE, cb.CAPACITIES_BASE_URL
+    )
 
 
 def test_content_cache_is_optional(tmp_path):
@@ -515,3 +545,511 @@ def test_content_cache_expires_and_stays_bounded():
         fresh.put(key, {"id": key})
     # The bound holds: older entries are dropped rather than growing forever.
     assert sum(1 for key in ("a", "b", "c") if fresh.get(key) is not None) <= 2
+
+
+def test_default_content_cache_path_is_machine_local():
+    assert _MACHINE_LOCAL_DEFAULT == (
+        Path.home() / ".config" / "tdtb" / "tdtb-capacities-content-cache.json"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Content cache — durable, machine-local backing
+# ---------------------------------------------------------------------------
+
+class _Clock:
+    """Deterministic stand-in for the module's wall / monotonic clock seams."""
+
+    def __init__(self, value: float = 0.0) -> None:
+        self.value = float(value)
+
+    def __call__(self) -> float:
+        return self.value
+
+    def advance(self, seconds: float) -> None:
+        self.value += float(seconds)
+
+
+def _durable_cache(
+    tmp_path,
+    *,
+    namespace="ns-a",
+    ttl=cb.CONTENT_CACHE_TTL_SECONDS,
+    max_entries=cb.CONTENT_CACHE_MAX_ENTRIES,
+    max_bytes=cb.CONTENT_CACHE_MAX_BYTES,
+    wall=None,
+    monotonic=None,
+    name="content-cache.json",
+):
+    return cb._ContentCache(
+        ttl_seconds=ttl,
+        max_entries=max_entries,
+        persist_path=tmp_path / name,
+        namespace=namespace,
+        max_bytes=max_bytes,
+        epoch_clock=wall if wall is not None else _Clock(),
+        monotonic_clock=monotonic if monotonic is not None else _Clock(),
+    )
+
+
+def _cache_document(tmp_path, name="content-cache.json"):
+    return json.loads((tmp_path / name).read_text(encoding="utf-8"))
+
+
+def test_content_cache_survives_a_reconstructed_cache(tmp_path):
+    wall, mono = _Clock(1000.0), _Clock(10.0)
+    first = _durable_cache(tmp_path, wall=wall, monotonic=mono)
+    first.put("task-1", {"id": "task-1", "properties": {"status": "open"}})
+    assert first.drain_warnings() == []
+
+    wall.advance(10.0)
+    mono.advance(10.0)
+    rebuilt = _durable_cache(tmp_path, wall=wall, monotonic=mono)
+
+    assert rebuilt.get("task-1") == {
+        "id": "task-1",
+        "properties": {"status": "open"},
+    }
+    document = _cache_document(tmp_path)
+    assert document["version"] == cb.CONTENT_CACHE_SCHEMA_VERSION
+    assert document["entries"][0]["object_id"] == "task-1"
+    assert document["entries"][0]["fetched_at"] == 1000.0
+
+
+def test_content_cache_honours_remaining_ttl_after_a_restart(tmp_path):
+    wall, mono = _Clock(1000.0), _Clock(10.0)
+    first = _durable_cache(tmp_path, wall=wall, monotonic=mono)
+    first.put("task-1", {"id": "task-1"})
+
+    wall.advance(250.0)
+    mono.advance(250.0)
+    rebuilt = _durable_cache(tmp_path, wall=wall, monotonic=mono)
+    assert rebuilt.get("task-1") == {"id": "task-1"}  # 50s left
+
+    wall.advance(49.0)
+    assert rebuilt.get("task-1") == {"id": "task-1"}  # 1s left
+    wall.advance(1.0)
+    assert rebuilt.get("task-1") is None  # exactly 300s: expired
+
+
+def test_content_cache_monotonic_deadline_bounds_in_use_freshness(tmp_path):
+    wall, mono = _Clock(1000.0), _Clock(10.0)
+    first = _durable_cache(tmp_path, wall=wall, monotonic=mono)
+    first.put("task-1", {"id": "task-1"})
+
+    wall.advance(100.0)  # age 100 -> 200s of lifetime left
+    mono.advance(100.0)
+    rebuilt = _durable_cache(tmp_path, wall=wall, monotonic=mono)
+
+    mono.advance(199.0)
+    assert rebuilt.get("task-1") == {"id": "task-1"}
+    mono.advance(1.0)
+    # The wall clock never moved; only the derived monotonic deadline expired.
+    assert rebuilt.get("task-1") is None
+
+
+def test_content_cache_rewrite_does_not_renew_an_entry(tmp_path):
+    wall, mono = _Clock(1000.0), _Clock(10.0)
+    first = _durable_cache(tmp_path, wall=wall, monotonic=mono)
+    first.put("old", {"id": "old"})
+
+    wall.advance(200.0)
+    mono.advance(200.0)
+    rebuilt = _durable_cache(tmp_path, wall=wall, monotonic=mono)
+    assert rebuilt.get("old") == {"id": "old"}  # 100s left
+
+    rebuilt.put("new", {"id": "new"})  # rewrite while both are fresh
+    entries = {
+        entry["object_id"]: entry for entry in _cache_document(tmp_path)["entries"]
+    }
+    assert entries["old"]["fetched_at"] == 1000.0  # anchored to the real fetch
+    assert entries["new"]["fetched_at"] == 1200.0
+
+    wall.advance(100.0)
+    mono.advance(100.0)
+    third = _durable_cache(tmp_path, wall=wall, monotonic=mono)
+    assert third.get("old") is None  # expired despite the rewrite
+    assert third.get("new") == {"id": "new"}
+
+
+def test_content_cache_rejects_future_and_invalid_fetch_times(tmp_path):
+    path = tmp_path / "content-cache.json"
+    path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "namespace": "ns-a",
+                "entries": [
+                    {
+                        "object_id": "future",
+                        "fetched_at": 1010.0,
+                        "content": {"id": "future"},
+                    },
+                    {
+                        "object_id": "text",
+                        "fetched_at": "soon",
+                        "content": {"id": "text"},
+                    },
+                    {
+                        "object_id": "nan",
+                        "fetched_at": float("nan"),
+                        "content": {"id": "nan"},
+                    },
+                    {
+                        "object_id": "bool",
+                        "fetched_at": True,
+                        "content": {"id": "bool"},
+                    },
+                    {
+                        "object_id": "good",
+                        "fetched_at": 1000.0,
+                        "content": {"id": "good"},
+                    },
+                ],
+            },
+            allow_nan=True,
+        ),
+        encoding="utf-8",
+    )
+    cache = _durable_cache(tmp_path, wall=_Clock(1005.0), monotonic=_Clock(5.0))
+    for object_id in ("future", "text", "nan", "bool"):
+        assert cache.get(object_id) is None
+    assert cache.get("good") == {"id": "good"}
+    warnings = cache.drain_warnings()
+    assert warnings and all(str(tmp_path) not in warning for warning in warnings)
+    assert any("invalid" in warning for warning in warnings)
+
+
+def test_expired_entries_are_dropped_silently_on_load(tmp_path):
+    wall, mono = _Clock(1000.0), _Clock(10.0)
+    first = _durable_cache(tmp_path, wall=wall, monotonic=mono)
+    first.put("task-1", {"id": "task-1"})
+
+    wall.advance(400.0)
+    mono.advance(400.0)
+    rebuilt = _durable_cache(tmp_path, wall=wall, monotonic=mono)
+    assert rebuilt.get("task-1") is None
+    # Aging is routine, not a diagnostic: a restart after the TTL is silence.
+    assert rebuilt.drain_warnings() == []
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        pytest.param("{not json", id="unreadable"),
+        pytest.param(
+            json.dumps({"version": 99, "namespace": "ns-a", "entries": []}),
+            id="unsupported-version",
+        ),
+        pytest.param(
+            json.dumps({"version": 1, "namespace": "other", "entries": []}),
+            id="wrong-namespace",
+        ),
+        pytest.param(
+            json.dumps({"version": 1, "namespace": "ns-a", "entries": "nope"}),
+            id="bad-entries",
+        ),
+    ],
+)
+def test_content_cache_never_serves_unusable_bytes(tmp_path, payload):
+    path = tmp_path / "content-cache.json"
+    path.write_text(payload, encoding="utf-8")
+    cache = _durable_cache(tmp_path, wall=_Clock(1000.0), monotonic=_Clock(10.0))
+
+    assert cache.get("task-1") is None
+    warnings = cache.drain_warnings()
+    joined = " ".join(warnings)
+    assert warnings
+    assert "content cache" in joined.lower()
+    assert str(tmp_path) not in joined
+
+    # Fresh validated data atomically replaces the unusable bytes.
+    cache.put("task-1", {"id": "task-1"})
+    document = _cache_document(tmp_path)
+    assert document["namespace"] == "ns-a"
+    assert [entry["object_id"] for entry in document["entries"]] == ["task-1"]
+
+
+def test_content_cache_ignores_an_oversized_file_before_loading(tmp_path):
+    path = tmp_path / "content-cache.json"
+    path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "namespace": "ns-a",
+                "entries": [
+                    {
+                        "object_id": "task-1",
+                        "fetched_at": 1000.0,
+                        "content": {"id": "task-1"},
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    cache = _durable_cache(
+        tmp_path, max_bytes=10, wall=_Clock(1005.0), monotonic=_Clock(5.0)
+    )
+    assert cache.get("task-1") is None
+    assert any("size limit" in warning for warning in cache.drain_warnings())
+
+
+def test_content_cache_skips_entries_that_exceed_the_file_cap(tmp_path):
+    cache = _durable_cache(tmp_path, max_bytes=2048)
+    cache.put("huge", {"id": "huge", "blob": "x" * 8192})
+    cache.put("small", {"id": "small"})
+
+    raw = (tmp_path / "content-cache.json").read_bytes()
+    assert len(raw) <= 2048
+    ids = [entry["object_id"] for entry in _cache_document(tmp_path)["entries"]]
+    assert "huge" not in ids
+    assert "small" in ids
+
+    rebuilt = _durable_cache(tmp_path, max_bytes=2048)
+    assert rebuilt.get("small") == {"id": "small"}
+    assert rebuilt.get("huge") is None  # skipped, never resurrected from disk
+
+
+def test_content_cache_never_writes_a_document_over_the_cap(tmp_path):
+    cache = _durable_cache(tmp_path, max_bytes=1)
+    cache.put("task-1", {"id": "task-1"})
+
+    assert not (tmp_path / "content-cache.json").exists()
+    assert cache.get("task-1") == {"id": "task-1"}  # memory still works
+    assert "not durable" in " ".join(cache.drain_warnings())
+
+
+def test_content_cache_prunes_expired_entries_before_fresh_ones(tmp_path):
+    wall, mono = _Clock(1000.0), _Clock(10.0)
+    cache = _durable_cache(tmp_path, max_entries=2, wall=wall, monotonic=mono)
+    cache.put("stale", {"id": "stale"})
+
+    wall.advance(301.0)
+    mono.advance(301.0)
+    cache.put("a", {"id": "a"})
+    cache.put("b", {"id": "b"})
+    cache.put("c", {"id": "c"})  # bound reached: "stale" is expired and goes first
+
+    ids = {entry["object_id"] for entry in _cache_document(tmp_path)["entries"]}
+    assert "stale" not in ids
+    assert "b" in ids and "c" in ids
+
+
+def test_content_cache_prunes_oldest_entries_at_the_entry_bound(tmp_path):
+    wall, mono = _Clock(1000.0), _Clock(10.0)
+    cache = _durable_cache(tmp_path, max_entries=2, wall=wall, monotonic=mono)
+    cache.put("old-1", {"id": "old-1"})
+    cache.put("old-2", {"id": "old-2"})
+
+    wall.advance(100.0)
+    mono.advance(100.0)
+    cache.put("fresh", {"id": "fresh"})
+
+    ids = {entry["object_id"] for entry in _cache_document(tmp_path)["entries"]}
+    assert len(ids) <= 2
+    assert "fresh" in ids
+    assert "old-1" not in ids  # oldest first
+
+
+def test_content_cache_write_failure_preserves_file_and_memory(
+    tmp_path, monkeypatch
+):
+    wall, mono = _Clock(1000.0), _Clock(10.0)
+    cache = _durable_cache(tmp_path, wall=wall, monotonic=mono)
+    cache.put("task-1", {"id": "task-1"})
+    path = tmp_path / "content-cache.json"
+    before = path.read_bytes()
+
+    def _boom(_path, _data):
+        raise OSError(
+            "/Users/walle-mini/.config/tdtb/tdtb-capacities-content-cache.json: "
+            "permission denied"
+        )
+
+    monkeypatch.setattr(cb, "_atomic_write_json", _boom)
+    cache.put("task-2", {"id": "task-2"})
+
+    assert path.read_bytes() == before
+    assert cache.get("task-1") == {"id": "task-1"}
+    assert cache.get("task-2") == {"id": "task-2"}
+    joined = " ".join(cache.drain_warnings())
+    assert "not durable" in joined
+    assert "OSError" in joined
+    assert "/Users/" not in joined
+    assert str(tmp_path) not in joined
+
+
+def test_content_cache_concurrent_puts_do_not_lose_progress(tmp_path):
+    cache = _durable_cache(tmp_path)
+    errors = []
+
+    def worker(index):
+        try:
+            cache.put(f"task-{index}", {"id": f"task-{index}"})
+        except Exception as exc:  # noqa: BLE001 — surfaced through the assertion
+            errors.append(exc)
+
+    threads = [threading.Thread(target=worker, args=(index,)) for index in range(16)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert errors == []
+    rebuilt = _durable_cache(tmp_path)
+    assert all(rebuilt.get(f"task-{index}") is not None for index in range(16))
+
+
+def test_content_cache_merges_newer_progress_from_another_writer(tmp_path):
+    wall, mono = _Clock(1000.0), _Clock(10.0)
+    first = _durable_cache(tmp_path, wall=wall, monotonic=mono)  # stale snapshot
+    second = _durable_cache(tmp_path, wall=wall, monotonic=mono)  # stale snapshot
+
+    first.put("task-1", {"id": "task-1"})
+    # The second writer must read/merge what is already on disk, not clobber it.
+    second.put("task-2", {"id": "task-2"})
+
+    rebuilt = _durable_cache(tmp_path, wall=wall, monotonic=mono)
+    assert rebuilt.get("task-1") is not None
+    assert rebuilt.get("task-2") is not None
+
+
+def test_content_cache_file_is_versioned_and_owner_only(tmp_path):
+    cache = _durable_cache(tmp_path)
+    cache.put("task-1", {"id": "task-1", "properties": {"status": "open"}})
+
+    path = tmp_path / "content-cache.json"
+    document = json.loads(path.read_text(encoding="utf-8"))
+    assert document["version"] == cb.CONTENT_CACHE_SCHEMA_VERSION
+    assert set(document) == {"version", "namespace", "entries"}
+    assert set(document["entries"][0]) == {"object_id", "fetched_at", "content"}
+    assert stat.S_IMODE(path.stat().st_mode) == 0o600
+
+
+def test_cache_namespace_separates_vault_space_and_base_url(tmp_path):
+    base = cb._content_cache_namespace(tmp_path, "space-1", "https://api.capacities.io")
+    assert base != cb._content_cache_namespace(
+        tmp_path, "space-2", "https://api.capacities.io"
+    )
+    assert base != cb._content_cache_namespace(
+        tmp_path, "space-1", "https://other.example"
+    )
+    assert base != cb._content_cache_namespace(
+        tmp_path / "elsewhere", "space-1", "https://api.capacities.io"
+    )
+
+
+def test_content_cache_namespace_isolation_between_writers(tmp_path):
+    wall, mono = _Clock(1000.0), _Clock(10.0)
+    first = _durable_cache(
+        tmp_path, namespace="vault-a|space-1|https://api", wall=wall, monotonic=mono
+    )
+    first.put("task-1", {"id": "task-1"})
+
+    other = _durable_cache(
+        tmp_path, namespace="vault-b|space-1|https://api", wall=wall, monotonic=mono
+    )
+    assert other.get("task-1") is None
+    warnings = other.drain_warnings()
+    assert warnings
+    assert any("different vault or space" in warning for warning in warnings)
+    assert all(str(tmp_path) not in warning for warning in warnings)
+
+    other.put("task-2", {"id": "task-2"})
+    assert _cache_document(tmp_path)["namespace"] == "vault-b|space-1|https://api"
+
+
+def test_builder_namespace_separates_vaults_spaces_and_base_urls(tmp_path):
+    vault_a = tmp_path / "a"
+    vault_b = tmp_path / "b"
+    vault_c = tmp_path / "c"
+    for root, payload in (
+        (vault_a, _valid_payload()),
+        (vault_b, _valid_payload()),
+        (vault_c, _valid_payload(space_id="space-2")),
+    ):
+        root.mkdir()
+        _write_source(root, payload)
+    token = _valid_token_file(tmp_path)
+    cache_path = tmp_path / "content-cache.json"
+
+    def build(root, **overrides):
+        config = cb.CapacitiesBuilderConfig(
+            token_path=token,
+            transport=_ObjectTransport(),
+            cache_path=cache_path,
+            **overrides,
+        )
+        return cb.build_capacities_adapter(root, config)
+
+    first = build(vault_a)
+    first.config.content_cache.put("task-1", {"id": "task-1"})
+    assert build(vault_a).config.content_cache.get("task-1") is not None
+
+    # A different vault, a different space, and a different provider base URL
+    # each resolve to their own namespace, so object-id-only entries never leak.
+    assert build(vault_b).config.content_cache.get("task-1") is None
+    assert build(vault_c).config.content_cache.get("task-1") is None
+    assert (
+        build(vault_a, base_url="https://other.example").config.content_cache.get(
+            "task-1"
+        )
+        is None
+    )
+
+
+def _contract_structure_rows():
+    def definitions(*ids):
+        return [{"id": prop_id, "name": prop_id, "type": "text"} for prop_id in ids]
+
+    return [
+        {
+            "id": "RootTask",
+            "title": "RootTask",
+            "propertyDefinitions": definitions("title", "status"),
+        },
+        {
+            "id": "custom-project",
+            "title": "custom-project",
+            "propertyDefinitions": definitions(
+                "title", "tdtb", "date", "state", "minutes"
+            ),
+        },
+    ]
+
+
+def test_cache_diagnostics_reach_adapter_warnings_without_leaks(tmp_path):
+    cache_path = tmp_path / "content-cache.json"
+    cache_path.write_text("{not json", encoding="utf-8")
+    _write_source(tmp_path, _valid_payload())
+    _write_settings(tmp_path)
+    token = _valid_token_file(tmp_path)
+
+    adapter = cb.build_capacities_adapter(
+        tmp_path,
+        cb.CapacitiesBuilderConfig(
+            token_path=token, transport=_RecordingTransport(), cache_path=cache_path
+        ),
+    )
+    result = CapacitiesAdapter(
+        _FakeProvider(_contract_structure_rows()), adapter.config
+    ).items_for_day(TODAY)
+
+    joined = " ".join(result.warnings)
+    assert "content cache" in joined.lower()
+    assert "rebuilt from fresh reads" in joined
+    assert str(tmp_path) not in joined
+    assert "/Users/" not in joined
+
+
+def test_default_builder_writes_only_to_the_isolated_cache_path(tmp_path):
+    _write_source(tmp_path, _valid_payload())
+    token = _valid_token_file(tmp_path)
+    adapter = cb.build_capacities_adapter(
+        tmp_path, cb.CapacitiesBuilderConfig(token_path=token, transport=_ObjectTransport())
+    )
+    adapter.provider.get_object("task-1")
+
+    assert cb.DEFAULT_CONTENT_CACHE_PATH.exists()
+    assert cb.DEFAULT_CONTENT_CACHE_PATH.parent == tmp_path

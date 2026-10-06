@@ -856,6 +856,26 @@ class CapacitiesAdapter:
             return True
         return mapping.structure_id in self.config.assignment_settings.active_structures
 
+    def _drain_cache_warnings(self) -> list[str]:
+        """Collect content-cache diagnostics recorded since the last read.
+
+        The cache is factory-owned and outlives one adapter instance, so it
+        carries its diagnostics; the adapter's warnings list is how they reach
+        ``source_warnings``. A cache without this seam (explicit ``None`` or a
+        test double) contributes nothing.
+        """
+        cache = self.config.content_cache
+        drain = getattr(cache, "drain_warnings", None)
+        if not callable(drain):
+            return []
+        try:
+            messages = drain()
+        except Exception:  # noqa: BLE001 — diagnostics must not break a read
+            return []
+        if not isinstance(messages, (list, tuple)):
+            return []
+        return [str(message) for message in messages if message]
+
     def items_for_day(self, logical_day: date) -> CapacitiesReadResult:
         self._ensure_contract()
         assert self._mappings is not None
@@ -900,6 +920,7 @@ class CapacitiesAdapter:
                 "contributing structures. Content-read budget reached. Wait at "
                 "least a minute, then Refresh sources to continue."
             )
+        warnings.extend(self._drain_cache_warnings())
         all_items.sort(key=lambda row: (_normalized(row["name"]), row["identity"]))
         return CapacitiesReadResult(
             items=all_items,

@@ -24,6 +24,14 @@ Two persisted surfaces feed the factory:
    path constant is imported rather than duplicated so the two credentials
    cannot drift.
 
+A third persisted surface is cache state, not configuration: the durable
+object-content cache at
+``~/.config/tdtb/tdtb-capacities-content-cache.json``. It is machine-local so
+raw task content never enters a synced or backed-up vault, is namespaced by
+vault root + space + provider base URL, stores raw content with the
+wall-clock UTC fetch time (never assignment decisions, and never a monotonic
+reading), and is treated as disposable and silently replaced when unusable.
+
 Error semantics are the point of this slice: an ABSENT mapping record means
 "Capacities is not configured" and the factory returns ``None`` silently — a
 user who does not use Capacities must see no warning. A PRESENT but broken
@@ -35,14 +43,17 @@ exercise the whole path with a deterministic fake.
 """
 from __future__ import annotations
 
+import hashlib
 import json
+import math
 import os
 import tempfile
 import threading
 import time
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Callable, Iterable, Iterator
 
 try:
     import fcntl as _fcntl  # POSIX advisory file locks (macOS/Linux)
@@ -74,6 +85,23 @@ SOURCE_REL_PATH = f"{runstate.CACHE_DIR_REL}/tdtb-capacities-source.json"
 #: requests per minute; this TTL is what lets consecutive refreshes inside one
 #: minute reuse content instead of spending the budget again.
 CONTENT_CACHE_TTL_SECONDS = 300.0
+#: Durable content-cache bounds. The entry bound matches the in-memory cache;
+#: the byte bound caps the serialized machine-local file. Bounds are enforced
+#: by pruning expired entries first and then the oldest ones; an individually
+#: oversized entry is skipped instead of growing the file past the cap.
+CONTENT_CACHE_MAX_ENTRIES = 4096
+CONTENT_CACHE_MAX_BYTES = 16 * 1024 * 1024
+CONTENT_CACHE_SCHEMA_VERSION = 1
+#: Machine-local (never vault-local) so raw task content stays out of any
+#: synced or backed-up tree. Same established machine-local root as the
+#: credential slot (``shadow.TOKEN_ENV_PATH`` -> ``~/.config/tdtb/env``).
+DEFAULT_CONTENT_CACHE_PATH = (
+    Path.home() / ".config" / "tdtb" / "tdtb-capacities-content-cache.json"
+)
+#: Sentinel selecting the factory-managed, namespace-scoped durable cache.
+#: Keeping a distinct identity lets an explicit ``None`` (or any test cache)
+#: keep its exact current meaning.
+_DEFAULT_CONTENT_CACHE = object()
 LOCK_REL_PATH = f"{runstate.CACHE_DIR_REL}/tdtb-capacities-source.lock"
 SCHEMA_VERSION = 1
 
@@ -514,10 +542,11 @@ def _store_lock(vault_root: str | Path) -> threading.Lock:
         return _LOCKS.setdefault(key, threading.Lock())
 
 
-def _acquire_lock_file(vault_root: str | Path) -> Any:
-    path = lock_path(vault_root)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fh = open(path, "a+", encoding="utf-8")
+def _acquire_path_lock(path: str | Path) -> Any:
+    """Open ``path`` and take the POSIX advisory lock (no-op off POSIX)."""
+    p = Path(path)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    fh = open(p, "a+", encoding="utf-8")
     try:
         if _fcntl is not None:
             _fcntl.flock(fh.fileno(), _fcntl.LOCK_EX)
@@ -525,6 +554,10 @@ def _acquire_lock_file(vault_root: str | Path) -> Any:
         fh.close()
         raise
     return fh
+
+
+def _acquire_lock_file(vault_root: str | Path) -> Any:
+    return _acquire_path_lock(lock_path(vault_root))
 
 
 def _release_lock_file(fh: Any) -> None:
@@ -606,7 +639,7 @@ def save_source(
 # ---------------------------------------------------------------------------
 
 class _ContentCache:
-    """Process-wide TTL cache for per-object content reads.
+    """TTL cache for per-object content reads, with optional durable backing.
 
     The provider allows 30 requests per minute and its structure listing
     carries no typed properties, so every property-based decision costs a
@@ -614,37 +647,104 @@ class _ContentCache:
     minute exhaust the budget and the second read degrades — even though
     nothing changed. Entries expire so a planning surface still converges on
     edits within the TTL rather than serving stale content indefinitely.
+
+    With ``persist_path`` + ``namespace`` the cache also survives a process
+    restart: successful inserts are serialized to a versioned, machine-local
+    JSON document through the same atomic-write primitive as the structural
+    mapping record. Freshness is anchored to the wall-clock UTC epoch of the
+    actual fetch, never to a monotonic reading: ``time.monotonic`` does not
+    survive a restart, so persisting it would make every entry read as
+    expired. On load an entry is accepted only when ``0 <= age < ttl``; the
+    in-memory deadline is derived from the remaining lifetime, and both the
+    absolute age and that monotonic deadline are checked while the entry is in
+    use. A restart, a cache hit, or a disk rewrite therefore never renews an
+    entry's freshness.
+
+    Diagnostics are recorded once each and drained by the adapter into its
+    read warnings, so a degraded cache is visible without ever embedding
+    content, credentials, or machine paths.
     """
 
-    def __init__(self, ttl_seconds: float, max_entries: int = 4096) -> None:
+    def __init__(
+        self,
+        ttl_seconds: float,
+        max_entries: int = CONTENT_CACHE_MAX_ENTRIES,
+        *,
+        persist_path: str | Path | None = None,
+        namespace: str | None = None,
+        max_bytes: int = CONTENT_CACHE_MAX_BYTES,
+        monotonic_clock: Callable[[], float] = time.monotonic,
+        epoch_clock: Callable[[], float] = time.time,
+    ) -> None:
+        if persist_path is not None and not namespace:
+            raise ValueError("a durable content cache requires a namespace")
         self._ttl = float(ttl_seconds)
         self._max_entries = int(max_entries)
-        self._entries: dict[str, tuple[float, dict[str, Any]]] = {}
+        self._max_bytes = int(max_bytes)
+        self._persist_path = (
+            Path(persist_path) if persist_path is not None else None
+        )
+        self._namespace = str(namespace) if namespace else ""
+        self._monotonic_clock = monotonic_clock
+        self._epoch_clock = epoch_clock
+        # object_id -> (fetched_at UTC epoch, monotonic deadline, raw content)
+        self._entries: dict[str, tuple[float, float, dict[str, Any]]] = {}
         self._lock = threading.Lock()
+        self._persist_lock = threading.Lock()
+        self._warnings: list[str] = []
+        self._warning_keys: set[str] = set()
+        self._warn_lock = threading.Lock()
+        if self._persist_path is not None:
+            self._merge_entries(self._read_disk_entries())
+
+    # -- reads ----------------------------------------------------------
 
     def get(self, object_id: str) -> dict[str, Any] | None:
-        now = time.monotonic()
+        now_mono = self._monotonic_clock()
+        now_epoch = self._epoch_clock()
         with self._lock:
             entry = self._entries.get(object_id)
             if entry is None:
                 return None
-            stored_at, content = entry
-            if now - stored_at >= self._ttl:
+            fetched_at, deadline, content = entry
+            if not self._is_fresh(fetched_at, deadline, now_epoch, now_mono):
                 self._entries.pop(object_id, None)
                 return None
             return content
 
-    def put(self, object_id: str, content: dict[str, Any]) -> None:
-        now = time.monotonic()
-        with self._lock:
-            if len(self._entries) >= self._max_entries:
-                self._prune(now)
-            self._entries[object_id] = (now, content)
+    def _is_fresh(
+        self, fetched_at: float, deadline: float, now_epoch: float, now_mono: float
+    ) -> bool:
+        age = now_epoch - fetched_at
+        # Reject future timestamps (clock moved backwards, or a tampered file)
+        # and anything at/over the TTL. The monotonic deadline derived from the
+        # remaining lifetime guards the in-use window when the wall clock moves.
+        if age < 0.0 or age >= self._ttl:
+            return False
+        return now_mono < deadline
 
-    def _prune(self, now: float) -> None:
+    # -- writes ---------------------------------------------------------
+
+    def put(self, object_id: str, content: dict[str, Any]) -> None:
+        now_epoch = self._epoch_clock()
+        now_mono = self._monotonic_clock()
+        with self._persist_lock:
+            with self._lock:
+                if len(self._entries) >= self._max_entries:
+                    self._prune(now_epoch, now_mono)
+                self._entries[object_id] = (
+                    now_epoch,
+                    now_mono + self._ttl,
+                    content,
+                )
+            if self._persist_path is not None:
+                self._persist(now_epoch, now_mono)
+
+    def _prune(self, now_epoch: float, now_mono: float) -> None:
         expired = [
-            key for key, (stored_at, _) in self._entries.items()
-            if now - stored_at >= self._ttl
+            key
+            for key, (fetched_at, deadline, _) in self._entries.items()
+            if not self._is_fresh(fetched_at, deadline, now_epoch, now_mono)
         ]
         for key in expired:
             self._entries.pop(key, None)
@@ -655,11 +755,306 @@ class _ContentCache:
             for key, _ in ordered[: max(1, len(ordered) // 2)]:
                 self._entries.pop(key, None)
 
+    # -- durability -----------------------------------------------------
 
-#: Shared across adapters in one process so consecutive refreshes inside the
-#: provider's one-minute window reuse what they already read. A fresh service
-#: starts empty, which only costs the first read.
-_CONTENT_CACHE = _ContentCache(CONTENT_CACHE_TTL_SECONDS)
+    def _persist(self, now_epoch: float, now_mono: float) -> None:
+        """Read/merge/prune/write under the content-cache lock.
+
+        The on-disk document is read back and merged so a writer working from
+        a stale snapshot (another process, or a request that raced) cannot
+        clobber newer progress. A failure keeps the prior file and the working
+        in-memory cache, and reports that restart progress is not durable.
+        """
+        try:
+            with self._file_lock():
+                self._merge_entries(self._read_disk_entries())
+                document = self._document(now_epoch, now_mono)
+                if self._serialized_size(document["entries"]) > self._max_bytes:
+                    # Only reachable when the document frame alone exceeds the
+                    # cap; never write over it.
+                    self._warn(
+                        "persist-oversize",
+                        "Capacities content cache: could not persist progress "
+                        "because the size limit is smaller than the cache "
+                        "document; restart progress is not durable, but cached "
+                        "reads still work in this process.",
+                    )
+                    return
+                _atomic_write_json(self._persist_path, document)
+        except Exception as exc:  # noqa: BLE001 — cache IO must never break a read
+            self._warn(
+                "persist-failed",
+                "Capacities content cache: could not persist progress "
+                f"({type(exc).__name__}); restart progress is not durable, but "
+                "cached reads still work in this process.",
+            )
+
+    @contextmanager
+    def _file_lock(self) -> Iterator[None]:
+        """A dedicated cross-process lock, separate from the store lock."""
+        path = self._persist_path.with_name(self._persist_path.name + ".lock")
+        handle = _acquire_path_lock(path)
+        try:
+            yield
+        finally:
+            _release_lock_file(handle)
+
+    def _merge_entries(
+        self, entries: list[tuple[str, float, float, dict[str, Any]]]
+    ) -> None:
+        if not entries:
+            return
+        with self._lock:
+            for object_id, fetched_at, deadline, content in entries:
+                existing = self._entries.get(object_id)
+                if existing is not None and existing[0] >= fetched_at:
+                    continue
+                self._entries[object_id] = (fetched_at, deadline, content)
+            if len(self._entries) > self._max_entries:
+                ordered = sorted(
+                    self._entries.items(), key=lambda item: item[1][0], reverse=True
+                )
+                for key, _ in ordered[self._max_entries :]:
+                    self._entries.pop(key, None)
+
+    def _read_disk_entries(self) -> list[tuple[str, float, float, dict[str, Any]]]:
+        """Validated, still-fresh entries from the persisted document.
+
+        Absent file = cold start (no warning). Unusable data (unreadable,
+        unsupported version, another namespace, oversized, malformed) is never
+        served and is reported once with a sanitized diagnostic; the next
+        successful insert atomically replaces it with fresh validated data.
+        """
+        path = self._persist_path
+        try:
+            size = path.stat().st_size
+        except FileNotFoundError:
+            return []
+        except OSError as exc:
+            self._warn(
+                "read-failed",
+                "Capacities content cache: could not read the stored cache "
+                f"({type(exc).__name__}); restart progress will be rebuilt "
+                "from fresh reads.",
+            )
+            return []
+        if size > self._max_bytes:
+            self._warn(
+                "oversize",
+                "Capacities content cache: ignored a stored cache over the "
+                "size limit; restart progress will be rebuilt from fresh reads.",
+            )
+            return []
+        try:
+            raw = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as exc:
+            self._warn(
+                "read-failed",
+                "Capacities content cache: could not read the stored cache "
+                f"({type(exc).__name__}); restart progress will be rebuilt "
+                "from fresh reads.",
+            )
+            return []
+        try:
+            document = json.loads(raw)
+        except ValueError:
+            document = None
+        if not isinstance(document, dict):
+            self._warn(
+                "corrupt",
+                "Capacities content cache: ignored an unreadable stored cache; "
+                "restart progress will be rebuilt from fresh reads.",
+            )
+            return []
+        if document.get("version") != CONTENT_CACHE_SCHEMA_VERSION:
+            self._warn(
+                "version",
+                "Capacities content cache: ignored a stored cache with an "
+                "unsupported format version; restart progress will be rebuilt "
+                "from fresh reads.",
+            )
+            return []
+        if document.get("namespace") != self._namespace:
+            self._warn(
+                "namespace",
+                "Capacities content cache: ignored a stored cache for a "
+                "different vault or space; restart progress will be rebuilt "
+                "from fresh reads.",
+            )
+            return []
+        raw_entries = document.get("entries")
+        if not isinstance(raw_entries, list):
+            self._warn(
+                "corrupt",
+                "Capacities content cache: ignored an unreadable stored cache; "
+                "restart progress will be rebuilt from fresh reads.",
+            )
+            return []
+        now_epoch = self._epoch_clock()
+        now_mono = self._monotonic_clock()
+        valid: list[tuple[str, float, float, dict[str, Any]]] = []
+        rejected = 0
+        for raw_entry in raw_entries:
+            parsed = self._validate_entry(raw_entry)
+            if parsed is None:
+                rejected += 1
+                continue
+            object_id, fetched_at, content = parsed
+            age = now_epoch - fetched_at
+            if age < 0.0:
+                # A future fetch time is a clock anomaly or tampering, not aging.
+                rejected += 1
+                continue
+            if age >= self._ttl:
+                continue  # routinely expired: silence, not a diagnostic
+            valid.append(
+                (object_id, fetched_at, now_mono + (self._ttl - age), content)
+            )
+        if rejected:
+            self._warn(
+                "invalid-entries",
+                "Capacities content cache: ignored invalid stored entries; "
+                "those objects will be re-read.",
+            )
+        return valid
+
+    @staticmethod
+    def _validate_entry(raw: Any) -> tuple[str, float, dict[str, Any]] | None:
+        if not isinstance(raw, dict):
+            return None
+        object_id = raw.get("object_id")
+        if not isinstance(object_id, str) or not object_id.strip():
+            return None
+        fetched_at = raw.get("fetched_at")
+        if isinstance(fetched_at, bool) or not isinstance(fetched_at, (int, float)):
+            return None
+        fetched_at = float(fetched_at)
+        if not math.isfinite(fetched_at):
+            return None
+        content = raw.get("content")
+        if not isinstance(content, dict):
+            return None
+        return object_id, fetched_at, content
+
+    def _document(self, now_epoch: float, now_mono: float) -> dict[str, Any]:
+        with self._lock:
+            snapshot = list(self._entries.items())
+        fresh = [
+            (object_id, fetched_at, content)
+            for object_id, (fetched_at, deadline, content) in snapshot
+            if self._is_fresh(fetched_at, deadline, now_epoch, now_mono)
+        ]
+        fresh.sort(key=lambda item: item[1], reverse=True)
+        del fresh[self._max_entries :]
+        return {
+            "version": CONTENT_CACHE_SCHEMA_VERSION,
+            "namespace": self._namespace,
+            "entries": self._entries_within_byte_cap(fresh),
+        }
+
+    def _entries_within_byte_cap(
+        self, fresh: list[tuple[str, float, dict[str, Any]]]
+    ) -> list[dict[str, Any]]:
+        kept: list[dict[str, Any]] = []
+        used = self._serialized_size([])
+        for object_id, fetched_at, content in fresh:
+            entry = {
+                "object_id": object_id,
+                "fetched_at": fetched_at,
+                "content": content,
+            }
+            blob = json.dumps(entry, indent=2, sort_keys=True).encode("utf-8")
+            # Conservative per-entry cost: the nested document adds indentation
+            # the top-level serialization lacks, plus the array separator.
+            cost = len(blob) + 2 * blob.count(b"\n") + 64
+            if used + cost > self._max_bytes:
+                # Skip an individually oversized entry instead of letting the
+                # file grow without bound; older smaller entries may still fit.
+                continue
+            kept.append(entry)
+            used += cost
+        while kept and self._serialized_size(kept) > self._max_bytes:
+            if len(kept) == 1:
+                kept = []
+                break
+            kept = kept[: len(kept) // 2]
+        return kept
+
+    def _serialized_size(self, entries: list[dict[str, Any]]) -> int:
+        document = {
+            "version": CONTENT_CACHE_SCHEMA_VERSION,
+            "namespace": self._namespace,
+            "entries": entries,
+        }
+        return len(json.dumps(document, indent=2, sort_keys=True).encode("utf-8"))
+
+    # -- diagnostics ----------------------------------------------------
+
+    def _warn(self, key: str, message: str) -> None:
+        with self._warn_lock:
+            if key in self._warning_keys:
+                return
+            self._warning_keys.add(key)
+            self._warnings.append(message)
+
+    def drain_warnings(self) -> list[str]:
+        """Return (and clear) diagnostics recorded since the last drain."""
+        with self._warn_lock:
+            drained = list(self._warnings)
+            self._warnings.clear()
+            self._warning_keys.clear()
+        return drained
+
+
+def _content_cache_namespace(
+    vault_root: str | Path, space_id: str, base_url: str
+) -> str:
+    """Stable digest identifying the vault + space + provider scope.
+
+    Stored instead of the raw triple so the machine-local file and every
+    diagnostic stay free of absolute paths; equality is all the cache needs.
+    """
+    material = "\x1f".join(
+        (str(Path(vault_root).resolve()), str(space_id), str(base_url).rstrip("/"))
+    )
+    return hashlib.sha256(material.encode("utf-8")).hexdigest()
+
+
+#: Namespace -> shared cache, so every adapter rebuild for the same vault +
+#: space + provider reuses the same durable cache instance. The cache must
+#: outlive one adapter: every request builds and closes its own adapter.
+_CACHE_REGISTRY: dict[str, _ContentCache] = {}
+_CACHE_REGISTRY_LOCK = threading.Lock()
+
+
+def _resolve_content_cache(
+    config: CapacitiesBuilderConfig, vault_root: str | Path, space_id: str
+) -> Any:
+    """Resolve the configured cache seam.
+
+    The default sentinel means "the factory-managed, namespace-scoped durable
+    cache"; an explicit instance (or ``None``) is used exactly as given, which
+    keeps tests and private caches deterministic.
+    """
+    if config.content_cache is not _DEFAULT_CONTENT_CACHE:
+        return config.content_cache
+    namespace = _content_cache_namespace(vault_root, space_id, config.base_url)
+    persist_path = (
+        Path(config.cache_path)
+        if config.cache_path is not None
+        else DEFAULT_CONTENT_CACHE_PATH
+    )
+    with _CACHE_REGISTRY_LOCK:
+        cache = _CACHE_REGISTRY.get(namespace)
+        if cache is None:
+            cache = _ContentCache(
+                CONTENT_CACHE_TTL_SECONDS,
+                CONTENT_CACHE_MAX_ENTRIES,
+                persist_path=persist_path,
+                namespace=namespace,
+            )
+            _CACHE_REGISTRY[namespace] = cache
+        return cache
 
 
 @dataclass(frozen=True)
@@ -676,9 +1071,13 @@ class CapacitiesBuilderConfig:
     base_url: str = CAPACITIES_BASE_URL
     timeout: float = DEFAULT_TIMEOUT
     transport: Any = None
-    #: Object-content cache. Defaults to the shared process-wide cache; tests
-    #: pass ``None`` or a private instance to keep reads deterministic.
-    content_cache: Any = _CONTENT_CACHE
+    #: Object-content cache. The default sentinel resolves to the
+    #: factory-managed namespace-scoped durable cache; an explicit instance or
+    #: ``None`` is used as-is so tests can keep reads deterministic.
+    content_cache: Any = _DEFAULT_CONTENT_CACHE
+    #: Machine-local durable-cache path. ``None`` uses
+    #: ``DEFAULT_CONTENT_CACHE_PATH``; tests inject a ``tmp_path``.
+    cache_path: Path | None = None
 
 
 def build_capacities_adapter(
@@ -714,6 +1113,7 @@ def build_capacities_adapter(
     )
     token = load_capacities_token(cfg.token_path)
     effective_transport = transport if transport is not None else cfg.transport
+    content_cache = _resolve_content_cache(cfg, vault_root, record.space_id)
 
     client = CapacitiesRestClient(
         token,
@@ -721,7 +1121,7 @@ def build_capacities_adapter(
         base_url=cfg.base_url,
         timeout=cfg.timeout,
         transport=effective_transport,
-        content_cache=cfg.content_cache,
+        content_cache=content_cache,
     )
     return CapacitiesAdapter(
         client,
@@ -730,6 +1130,6 @@ def build_capacities_adapter(
             mappings=record.to_mappings(),
             max_pages=cfg.max_pages,
             assignment_settings=assignment_settings,
-            content_cache=cfg.content_cache,
+            content_cache=content_cache,
         ),
     )
