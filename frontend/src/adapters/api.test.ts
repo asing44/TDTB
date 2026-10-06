@@ -611,3 +611,123 @@ describe("duration-memory mutations (MVP)", () => {
     expect(calls.filter((c) => c.path === "/duration-memory/reset" && c.init?.method === "POST").length).toBe(2);
   });
 });
+
+describe("tag exclusion settings routes", () => {
+  const TAG_A = "5a25370b-f9a0-40cf-bc3a-0cab4744913c";
+  const TAG_B = "0d194525-c5a1-4af5-bb62-202b83006b5e";
+
+  function exclusionWire(revision = 2) {
+    return {
+      persisted: true,
+      settings: {
+        version: 1,
+        revision,
+        exclusions: {
+          tags: [{ source: "capacities", space_id: "space-1", tag_id: TAG_A }],
+        },
+      },
+      tag_catalog: {
+        status: "complete",
+        space_id: "space-1",
+        tags: [
+          { id: TAG_A, title: "habituals" },
+          { id: TAG_B, title: "chores" },
+        ],
+        warnings: [],
+      },
+    };
+  }
+
+  it("loads the policy and catalog without a session token", async () => {
+    route("/settings/exclusions", exclusionWire());
+    const a = new ApiAdapter();
+
+    const loaded = await a.loadTagExclusionSettings();
+
+    expect(loaded.revision).toBe(2);
+    expect(loaded.tags).toEqual([
+      { source: "capacities", spaceId: "space-1", tagId: TAG_A },
+    ]);
+    expect(loaded.catalog.tags).toEqual([
+      { id: TAG_A, title: "habituals" },
+      { id: TAG_B, title: "chores" },
+    ]);
+    expect(calls.map((c) => c.path)).toEqual(["/settings/exclusions"]);
+    expect(calls.every((c) => c.init?.method === undefined)).toBe(true);
+  });
+
+  it("saves the full replacement and keeps the loaded catalog on the response", async () => {
+    route("/settings/exclusions", exclusionWire());
+    route("/settings/exclusions/save", {
+      persisted: true,
+      settings: {
+        version: 1,
+        revision: 3,
+        exclusions: {
+          tags: [
+            { source: "capacities", space_id: "space-1", tag_id: TAG_A },
+            { source: "capacities", space_id: "space-1", tag_id: TAG_B },
+          ],
+        },
+      },
+    });
+    const a = new ApiAdapter();
+    const loaded = await a.loadTagExclusionSettings();
+
+    const saved = await a.saveTagExclusionSettings({
+      expectedRevision: loaded.revision,
+      tags: [
+        { source: "capacities", spaceId: "space-1", tagId: TAG_B },
+        { source: "capacities", spaceId: "space-1", tagId: TAG_A },
+      ],
+    });
+
+    expect(saved.revision).toBe(3);
+    // The projection sorts by stable identity: (source, space, tag id).
+    expect(saved.tags).toEqual([
+      { source: "capacities", spaceId: "space-1", tagId: TAG_B },
+      { source: "capacities", spaceId: "space-1", tagId: TAG_A },
+    ]);
+    // The save response carries no catalog; the last loaded inventory stands.
+    expect(saved.catalog.tags).toHaveLength(2);
+    expect(postBody("/settings/exclusions/save")).toEqual({
+      expected_revision: 2,
+      exclusions: {
+        tags: [
+          { source: "capacities", space_id: "space-1", tag_id: TAG_B },
+          { source: "capacities", space_id: "space-1", tag_id: TAG_A },
+        ],
+      },
+    });
+    const post = calls.find((c) => c.path === "/settings/exclusions/save");
+    expect((post!.init!.headers as any)["X-TDTB-Token"]).toBe("tok-123");
+  });
+
+  it("surfaces a stale revision as ApiError with the server detail", async () => {
+    route(
+      "/settings/exclusions/save",
+      { detail: { code: "exclusion_settings_conflict", message: "changed since read" } },
+      409,
+    );
+    const a = new ApiAdapter();
+
+    const err = await a
+      .saveTagExclusionSettings({ expectedRevision: 0, tags: [] })
+      .catch((e) => e);
+
+    expect(err).toBeInstanceOf(ApiError);
+    expect(err.status).toBe(409);
+    expect(err.message).toContain("changed since read");
+  });
+
+  it("rejects a malformed settings response instead of defaulting it", async () => {
+    route("/settings/exclusions", {
+      persisted: true,
+      settings: { version: 1, revision: 0, exclusions: { tags: [], labels: [] } },
+      tag_catalog: { status: "complete", space_id: "space-1", tags: [], warnings: [] },
+    });
+    const a = new ApiAdapter();
+
+    await expect(a.loadTagExclusionSettings()).rejects.toThrow(/dimension/);
+  });
+});

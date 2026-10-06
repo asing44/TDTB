@@ -9,6 +9,10 @@ import {
   calendarWarnings,
   capacitiesSettingsToWire,
   daySetupToWire,
+  emptyTagCatalog,
+  isCanonicalTagId,
+  projectTagExclusionSettings,
+  tagExclusionSettingsToWire,
   durationMinutes,
   durationSourceOf,
   isCanonicalCapacitiesStructureId,
@@ -1045,5 +1049,165 @@ describe("capacities settings active_structures (additive schema v1)", () => {
     expect(isCanonicalCapacitiesStructureId(" x ")).toBe(false);
     expect(isCanonicalCapacitiesStructureId("x y")).toBe(false);
     expect(isCanonicalCapacitiesStructureId(1)).toBe(false);
+  });
+});
+
+describe("tag exclusion settings", () => {
+  const TAG_A = "5a25370b-f9a0-40cf-bc3a-0cab4744913c";
+  const TAG_B = "0d194525-c5a1-4af5-bb62-202b83006b5e";
+
+  function settingsWire(overrides: Record<string, any> = {}) {
+    return {
+      persisted: true,
+      settings: {
+        version: 1,
+        revision: 2,
+        exclusions: {
+          tags: [{ source: "capacities", space_id: "space-1", tag_id: TAG_A }],
+        },
+      },
+      tag_catalog: {
+        status: "complete",
+        space_id: "space-1",
+        tags: [{ id: TAG_A, title: "habituals" }],
+        warnings: [],
+      },
+      ...overrides,
+    };
+  }
+
+  it("projects stable identities and the advisory catalog", () => {
+    const projected = projectTagExclusionSettings(settingsWire());
+    expect(projected).toEqual({
+      version: 1,
+      revision: 2,
+      persisted: true,
+      tags: [{ source: "capacities", spaceId: "space-1", tagId: TAG_A }],
+      catalog: {
+        status: "complete",
+        spaceId: "space-1",
+        tags: [{ id: TAG_A, title: "habituals" }],
+        warnings: [],
+      },
+    });
+  });
+
+  it("rejects unknown dimensions, malformed entries, and duplicates", () => {
+    const withExclusions = (exclusions: any) =>
+      settingsWire({ settings: { version: 1, revision: 0, exclusions } });
+    expect(() =>
+      projectTagExclusionSettings(withExclusions({ tags: [], labels: [] })),
+    ).toThrow(/dimension/);
+    expect(() =>
+      projectTagExclusionSettings(withExclusions({ tags: "habituals" })),
+    ).toThrow(/tags/);
+    expect(() =>
+      projectTagExclusionSettings(
+        withExclusions({ tags: [{ source: "todoist", space_id: "s", tag_id: TAG_A }] }),
+      ),
+    ).toThrow(/source/);
+    expect(() =>
+      projectTagExclusionSettings(
+        withExclusions({ tags: [{ source: "capacities", space_id: " s", tag_id: TAG_A }] }),
+      ),
+    ).toThrow(/space_id/);
+    expect(() =>
+      projectTagExclusionSettings(
+        withExclusions({ tags: [{ source: "capacities", space_id: "s", tag_id: TAG_A.toUpperCase() }] }),
+      ),
+    ).toThrow(/UUID/);
+    expect(() =>
+      projectTagExclusionSettings(
+        withExclusions({ tags: [
+          { source: "capacities", space_id: "s", tag_id: TAG_A },
+          { source: "capacities", space_id: "s", tag_id: TAG_A },
+        ] }),
+      ),
+    ).toThrow(/duplicate/);
+    expect(() =>
+      projectTagExclusionSettings(
+        withExclusions({ tags: [{ source: "capacities", space_id: "s", tag_id: TAG_A, title: "x" }] }),
+      ),
+    ).toThrow(/keys/);
+    expect(() => projectTagExclusionSettings({ persisted: "yes", settings: {} })).toThrow(
+      /persisted/,
+    );
+  });
+
+  it("keeps a save response (no catalog) on the supplied inventory", () => {
+    const loaded = projectTagExclusionSettings(settingsWire());
+    const saved = projectTagExclusionSettings(
+      { persisted: true, settings: { version: 1, revision: 3, exclusions: { tags: [] } } },
+      loaded.catalog,
+    );
+    expect(saved.catalog).toEqual(loaded.catalog);
+
+    // Without a supplied catalog the projection uses the empty advisory
+    // catalog rather than inventing tags.
+    const bare = projectTagExclusionSettings({
+      persisted: true,
+      settings: { version: 1, revision: 3, exclusions: { tags: [] } },
+    });
+    expect(bare.catalog).toEqual(emptyTagCatalog());
+  });
+
+  it("rejects a malformed catalog instead of rendering it", () => {
+    expect(() =>
+      projectTagExclusionSettings(
+        settingsWire({ tag_catalog: { status: "weird", space_id: null, tags: [], warnings: [] } }),
+      ),
+    ).toThrow(/status/);
+    expect(() =>
+      projectTagExclusionSettings(
+        settingsWire({ tag_catalog: { status: "complete", space_id: null, tags: [{ id: "x" }], warnings: [] } }),
+      ),
+    ).toThrow(/id and title/);
+  });
+
+  it("builds the strict full-replacement body", () => {
+    expect(
+      tagExclusionSettingsToWire({
+        expectedRevision: 2,
+        tags: [
+          { source: "capacities", spaceId: "space-1", tagId: TAG_B },
+          { source: "capacities", spaceId: "space-1", tagId: TAG_A },
+        ],
+      }),
+    ).toEqual({
+      expected_revision: 2,
+      exclusions: {
+        tags: [
+          { source: "capacities", space_id: "space-1", tag_id: TAG_B },
+          { source: "capacities", space_id: "space-1", tag_id: TAG_A },
+        ],
+      },
+    });
+    expect(() => tagExclusionSettingsToWire({ expectedRevision: -1, tags: [] })).toThrow(
+      /expectedRevision/,
+    );
+    expect(() =>
+      tagExclusionSettingsToWire({
+        expectedRevision: 0,
+        tags: [{ source: "capacities", spaceId: "space-1", tagId: "nope" }],
+      }),
+    ).toThrow(/UUID/);
+    expect(() =>
+      tagExclusionSettingsToWire({
+        expectedRevision: 0,
+        tags: [
+          { source: "capacities", spaceId: "space-1", tagId: TAG_A },
+          { source: "capacities", spaceId: "space-1", tagId: TAG_A },
+        ],
+      }),
+    ).toThrow(/duplicate/);
+  });
+
+  it("recognizes canonical tag ids", () => {
+    expect(isCanonicalTagId(TAG_A)).toBe(true);
+    expect(isCanonicalTagId(TAG_A.toUpperCase())).toBe(false);
+    expect(isCanonicalTagId(`{${TAG_A}}`)).toBe(false);
+    expect(isCanonicalTagId(TAG_A.replace(/-/g, ""))).toBe(false);
+    expect(isCanonicalTagId("habituals")).toBe(false);
+    expect(isCanonicalTagId(null)).toBe(false);
   });
 });

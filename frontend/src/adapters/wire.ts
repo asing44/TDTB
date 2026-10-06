@@ -28,6 +28,11 @@ import type {
   Ledger,
   PlanInputs,
   SequenceRow,
+  TagCatalog,
+  TagCatalogTag,
+  TagExclusionIdentity,
+  TagExclusionSettings,
+  TagExclusionSettingsDraft,
   ShadowDiff,
   ShadowClassification,
   ShadowEntry,
@@ -311,6 +316,187 @@ export function capacitiesSettingsToWire(draft: CapacitiesSettingsDraft): Wire {
     },
     excluded: Object.fromEntries(identities.map((identity) => [identity, true])),
     active_structures: Object.fromEntries(activeStructures.map((structureId) => [structureId, true])),
+  };
+}
+
+// -- tag exclusion policy (stable-identity tag filter) -----------------------
+
+const TAG_CATALOG_STATUSES = ["complete", "partial", "unavailable", "unconfigured"] as const;
+const TAG_ENTRY_KEYS = ["source", "space_id", "tag_id"] as const;
+
+/** Canonical UUID tag ids only — the same strictness the backend store
+    applies. A non-canonical spelling is a different identity and never
+    silently normalized. */
+export function isCanonicalTagId(value: unknown): value is string {
+  return (
+    typeof value === "string" &&
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(value)
+  );
+}
+
+/** The empty catalog used when a save response (which carries no catalog)
+    must be projected without a previously loaded inventory. */
+export function emptyTagCatalog(): TagCatalog {
+  return { status: "unconfigured", spaceId: null, tags: [], warnings: [] };
+}
+
+function tagExclusionError(detail: string): Error {
+  return new Error(`invalid tag exclusion settings response: ${detail}`);
+}
+
+function tagIdentityKey(identity: TagExclusionIdentity): string {
+  return `${identity.source}:${identity.spaceId}:${identity.tagId}`;
+}
+
+function projectTagCatalog(raw: unknown): TagCatalog {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    throw tagExclusionError("tag_catalog is malformed");
+  }
+  const catalog = raw as Wire;
+  const status = catalog.status;
+  if (!(TAG_CATALOG_STATUSES as readonly string[]).includes(status)) {
+    throw tagExclusionError("tag_catalog status is unsupported");
+  }
+  const spaceRaw = catalog.space_id;
+  if (spaceRaw !== null && spaceRaw !== undefined && typeof spaceRaw !== "string") {
+    throw tagExclusionError("tag_catalog space_id is malformed");
+  }
+  const spaceId = typeof spaceRaw === "string" && spaceRaw !== "" ? spaceRaw : null;
+  if (!Array.isArray(catalog.tags)) {
+    throw tagExclusionError("tag_catalog tags must be an array");
+  }
+  const tags: TagCatalogTag[] = catalog.tags.map((row: unknown) => {
+    if (!row || typeof row !== "object" || Array.isArray(row)) {
+      throw tagExclusionError("tag_catalog contains a malformed tag row");
+    }
+    const tag = row as Wire;
+    if (typeof tag.id !== "string" || tag.id === "" || typeof tag.title !== "string" || tag.title === "") {
+      throw tagExclusionError("tag_catalog tag rows require id and title");
+    }
+    return { id: tag.id, title: tag.title };
+  });
+  if (!Array.isArray(catalog.warnings)) {
+    throw tagExclusionError("tag_catalog warnings must be an array");
+  }
+  return {
+    status: status as TagCatalog["status"],
+    spaceId,
+    tags,
+    warnings: catalog.warnings.map((warning: unknown) => String(warning)),
+  };
+}
+
+/** Project the strict local tag-exclusion settings response. The backend is
+    fail-closed; the client must not turn a malformed response into a
+    plausible default. A response without ``tag_catalog`` (the save route)
+    uses the caller-supplied previously loaded catalog, or the empty one. */
+export function projectTagExclusionSettings(
+  wire: Wire,
+  catalog?: TagCatalog,
+): TagExclusionSettings {
+  const raw = wire?.settings;
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    throw tagExclusionError("missing settings object");
+  }
+  if (typeof wire.persisted !== "boolean") {
+    throw tagExclusionError("persisted must be a boolean");
+  }
+  if (raw.version !== 1) {
+    throw tagExclusionError("version is unsupported");
+  }
+  if (typeof raw.revision !== "number" || !Number.isSafeInteger(raw.revision) || raw.revision < 0) {
+    throw tagExclusionError("revision must be a nonnegative safe integer");
+  }
+  const exclusions = raw.exclusions;
+  if (!exclusions || typeof exclusions !== "object" || Array.isArray(exclusions)) {
+    throw tagExclusionError("exclusions must be an object");
+  }
+  const dimensionKeys = Object.keys(exclusions);
+  if (dimensionKeys.length !== 1 || dimensionKeys[0] !== "tags") {
+    throw tagExclusionError("exclusions has an unknown or missing dimension");
+  }
+  if (!Array.isArray(exclusions.tags)) {
+    throw tagExclusionError("exclusions.tags must be an array");
+  }
+  const tags: TagExclusionIdentity[] = exclusions.tags.map((entry: unknown) => {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+      throw tagExclusionError("exclusions.tags contains a malformed entry");
+    }
+    const row = entry as Wire;
+    const keys = Object.keys(row).sort().join(",");
+    if (keys !== [...TAG_ENTRY_KEYS].sort().join(",")) {
+      throw tagExclusionError("tag entries have unknown or missing keys");
+    }
+    if (row.source !== "capacities") {
+      throw tagExclusionError("tag entry source is unsupported");
+    }
+    if (
+      typeof row.space_id !== "string" ||
+      row.space_id === "" ||
+      row.space_id !== row.space_id.trim() ||
+      /\s/.test(row.space_id)
+    ) {
+      throw tagExclusionError("tag entry space_id is malformed");
+    }
+    if (!isCanonicalTagId(row.tag_id)) {
+      throw tagExclusionError("tag entry tag_id is not a canonical UUID");
+    }
+    return { source: "capacities" as const, spaceId: row.space_id, tagId: row.tag_id };
+  });
+  const seen = new Set<string>();
+  for (const tag of tags) {
+    const key = tagIdentityKey(tag);
+    if (seen.has(key)) {
+      throw tagExclusionError("duplicate tag exclusion identity");
+    }
+    seen.add(key);
+  }
+  tags.sort((a, b) => (tagIdentityKey(a) < tagIdentityKey(b) ? -1 : 1));
+  return {
+    version: raw.version,
+    revision: raw.revision,
+    persisted: wire.persisted,
+    tags,
+    catalog:
+      wire.tag_catalog !== undefined
+        ? projectTagCatalog(wire.tag_catalog)
+        : (catalog ?? emptyTagCatalog()),
+  };
+}
+
+/** Build the full-replacement body expected by POST /settings/exclusions/save. */
+export function tagExclusionSettingsToWire(draft: TagExclusionSettingsDraft): Wire {
+  if (!Number.isSafeInteger(draft.expectedRevision) || draft.expectedRevision < 0) {
+    throw new Error("expectedRevision must be a nonnegative safe integer");
+  }
+  const tags = draft.tags.map((tag) => {
+    if (tag.source !== "capacities") {
+      throw new Error("tag exclusion source is unsupported");
+    }
+    if (
+      typeof tag.spaceId !== "string" ||
+      tag.spaceId === "" ||
+      tag.spaceId !== tag.spaceId.trim() ||
+      /\s/.test(tag.spaceId)
+    ) {
+      throw new Error("tag exclusion spaceId is malformed");
+    }
+    if (!isCanonicalTagId(tag.tagId)) {
+      throw new Error("tag exclusion tagId is not a canonical UUID");
+    }
+    return { source: tag.source, space_id: tag.spaceId, tag_id: tag.tagId };
+  });
+  const seen = new Set<string>();
+  for (const tag of tags) {
+    const key = `${tag.source}:${tag.space_id}:${tag.tag_id}`;
+    if (seen.has(key)) {
+      throw new Error("duplicate tag exclusion identity");
+    }
+    seen.add(key);
+  }
+  return {
+    expected_revision: draft.expectedRevision,
+    exclusions: { tags },
   };
 }
 

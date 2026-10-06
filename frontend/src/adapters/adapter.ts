@@ -13,6 +13,8 @@ import type {
   Ledger,
   PlanInputs,
   SequenceRow,
+  TagExclusionSettings,
+  TagExclusionSettingsDraft,
   Validation,
   OverlapGrant,
 } from "../model/types";
@@ -91,6 +93,13 @@ export interface Adapter {
   /** POST /settings/capacities/save — one token-guarded non-billed full
       replacement of the local policy. */
   saveCapacitiesSettings(draft: CapacitiesSettingsDraft): Promise<CapacitiesSettings>;
+  /** GET /settings/exclusions — local tag-exclusion policy plus the advisory
+      RootTag catalog. No provider call for the policy itself; a degraded
+      catalog still returns the saved settings. */
+  loadTagExclusionSettings(): Promise<TagExclusionSettings>;
+  /** POST /settings/exclusions/save — one token-guarded non-billed full
+      replacement of the local tag-exclusion policy. */
+  saveTagExclusionSettings(draft: TagExclusionSettingsDraft): Promise<TagExclusionSettings>;
   /** POST /duration-memory/save — one token-guarded non-billed mutation
       (duration-memory MVP). Strict value validation happens BEFORE the call;
       the adapter never rounds, truncates, snaps, or coerces. */

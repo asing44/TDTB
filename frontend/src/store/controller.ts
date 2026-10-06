@@ -39,6 +39,8 @@ import type {
   MicroIdea,
   PlanInputs,
   SequenceRow,
+  TagExclusionSettings,
+  TagExclusionSettingsDraft,
 } from "../model/types";
 
 export type Dispatch = (a: Action) => void;
@@ -275,6 +277,24 @@ export class Controller {
 
   async saveCapacitiesSettings(draft: CapacitiesSettingsDraft): Promise<CapacitiesSettings> {
     return this.adapter.saveCapacitiesSettings(draft);
+  }
+
+  async loadTagExclusionSettings(): Promise<TagExclusionSettings> {
+    return this.adapter.loadTagExclusionSettings();
+  }
+
+  /** Save the tag exclusion policy, then re-earn planning inputs through the
+      SAME refresh/reconcile path as an explicit source refresh (locked
+      decision 20). Returns the saved policy plus the refresh outcome so the
+      drawer can report "Saved; planning refresh failed" instead of
+      presenting stale eligibility as current. A save that throws never
+      refreshes and never mutates store state. */
+  async saveTagExclusionSettings(
+    draft: TagExclusionSettingsDraft,
+  ): Promise<{ settings: TagExclusionSettings; refreshError: string | null }> {
+    const settings = await this.adapter.saveTagExclusionSettings(draft);
+    await this.refreshSources();
+    return { settings, refreshError: this.getState().refresh.error };
   }
 
   async saveDaySetup(daySetup: AppState["daySetup"]): Promise<void> {

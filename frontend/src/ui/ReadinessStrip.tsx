@@ -83,6 +83,15 @@ export function ReadinessStrip() {
         Capacities settings
       </button>
       <button
+        class="chip chip--btn"
+        onClick={() =>
+          store.dispatch({ type: "UI", patch: { tagExclusionSettingsOpen: true } })
+        }
+        aria-label="Open tag exclusion settings"
+      >
+        Tag exclusions
+      </button>
+      <button
         class={`chip chip--btn ${
           refresh.error
             ? "chip--err"

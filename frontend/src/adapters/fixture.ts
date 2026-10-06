@@ -24,6 +24,8 @@ import type {
   PlanInputs,
   SequenceRow,
   ShadowDiff,
+  TagExclusionSettings,
+  TagExclusionSettingsDraft,
   Validation,
 } from "../model/types";
 import { makeScenario, fixedInputsOf, type Scenario, type ScenarioName } from "../fixtures/scenarios";
@@ -149,6 +151,21 @@ export class FixtureAdapter implements Adapter {
       "custom-project",
       "0d194525-c5a1-4af5-bb62-202b83006b5e",
     ],
+  };
+  private tagExclusionSettings: TagExclusionSettings = {
+    version: 1,
+    revision: 0,
+    persisted: false,
+    tags: [],
+    catalog: {
+      status: "complete",
+      spaceId: "space-1",
+      tags: [
+        { id: "5a25370b-f9a0-40cf-bc3a-0cab4744913c", title: "habituals" },
+        { id: "0d194525-c5a1-4af5-bb62-202b83006b5e", title: "chores" },
+      ],
+      warnings: [],
+    },
   };
 
   constructor(name: ScenarioName) {
@@ -296,6 +313,30 @@ export class FixtureAdapter implements Adapter {
       availableStructures: [...this.capacitiesSettings.availableStructures],
     };
     return structuredClone(this.capacitiesSettings);
+  }
+
+  async loadTagExclusionSettings(): Promise<TagExclusionSettings> {
+    await wait(LATENCY_MS);
+    return structuredClone(this.tagExclusionSettings);
+  }
+
+  async saveTagExclusionSettings(
+    draft: TagExclusionSettingsDraft,
+  ): Promise<TagExclusionSettings> {
+    await wait(LATENCY_MS);
+    if (draft.expectedRevision !== this.tagExclusionSettings.revision) {
+      throw new Error(
+        `Tag exclusion settings changed since they were read (stored revision ${this.tagExclusionSettings.revision}, expected ${draft.expectedRevision})`,
+      );
+    }
+    this.tagExclusionSettings = {
+      version: 1,
+      revision: this.tagExclusionSettings.revision + 1,
+      persisted: true,
+      tags: draft.tags.map((tag) => ({ ...tag })),
+      catalog: structuredClone(this.tagExclusionSettings.catalog),
+    };
+    return structuredClone(this.tagExclusionSettings);
   }
 
   async saveMicroAdventure(_pick: MicroIdea | null): Promise<void> {

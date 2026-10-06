@@ -35,6 +35,9 @@ import type {
   RuntimeAction,
   SequenceRow,
   ShadowDiff,
+  TagCatalog,
+  TagExclusionSettings,
+  TagExclusionSettingsDraft,
   Validation,
 } from "../model/types";
 import {
@@ -42,6 +45,9 @@ import {
   daySetupToWire,
   capacitiesSettingsToWire,
   projectCapacitiesSettings,
+  projectTagExclusionSettings,
+  tagExclusionSettingsToWire,
+  emptyTagCatalog,
   projectCapacity,
   projectCommitReport,
   projectDurationMemoryReset,
@@ -210,6 +216,28 @@ export class ApiAdapter implements Adapter {
   async saveCapacitiesSettings(draft: CapacitiesSettingsDraft): Promise<CapacitiesSettings> {
     return projectCapacitiesSettings(
       await this.post("/settings/capacities/save", capacitiesSettingsToWire(draft)),
+    );
+  }
+
+  /** Last-loaded advisory tag catalog. The save response carries no catalog,
+      so a save projects against the most recent inventory rather than
+      inventing one. */
+  private tagCatalog: TagCatalog | null = null;
+
+  async loadTagExclusionSettings(): Promise<TagExclusionSettings> {
+    const settings = projectTagExclusionSettings(
+      await this.request("/settings/exclusions"),
+    );
+    this.tagCatalog = settings.catalog;
+    return settings;
+  }
+
+  async saveTagExclusionSettings(
+    draft: TagExclusionSettingsDraft,
+  ): Promise<TagExclusionSettings> {
+    return projectTagExclusionSettings(
+      await this.post("/settings/exclusions/save", tagExclusionSettingsToWire(draft)),
+      this.tagCatalog ?? emptyTagCatalog(),
     );
   }
 

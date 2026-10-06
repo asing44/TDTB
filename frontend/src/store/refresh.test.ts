@@ -264,3 +264,83 @@ describe("controller: refreshSources against the fixture adapter", () => {
     expect(store.getState().refresh.lastRefreshed).toBeNull();
   }, 15000);
 });
+
+describe("controller: tag exclusion save refreshes planning inputs", () => {
+  function harness() {
+    const store = createStore();
+    const adapter = new FixtureAdapter("ready");
+    const controller = new Controller(adapter, store.dispatch, store.getState);
+    return { store, adapter, controller };
+  }
+
+  it("saves, then reconciles inputs through the explicit refresh path", async () => {
+    const { store, controller } = harness();
+    await controller.load();
+    const loaded = await controller.loadTagExclusionSettings();
+    expect(loaded.catalog.status).toBe("complete");
+    const tagId = loaded.catalog.tags[0].id;
+
+    const result = await controller.saveTagExclusionSettings({
+      expectedRevision: loaded.revision,
+      tags: [{ source: "capacities", spaceId: loaded.catalog.spaceId!, tagId }],
+    });
+
+    expect(result.settings.revision).toBe(1);
+    expect(result.settings.tags).toEqual([
+      { source: "capacities", spaceId: "space-1", tagId },
+    ]);
+    expect(result.refreshError).toBeNull();
+    const s = store.getState();
+    expect(s.refresh.error).toBeNull();
+    expect(s.refresh.lastRefreshed).not.toBeNull();
+  }, 15000);
+
+  it("round-trips a save: reopening the settings returns the saved policy", async () => {
+    const { controller } = harness();
+    const loaded = await controller.loadTagExclusionSettings();
+    const tagId = loaded.catalog.tags[1].id;
+    await controller.saveTagExclusionSettings({
+      expectedRevision: loaded.revision,
+      tags: [{ source: "capacities", spaceId: "space-1", tagId }],
+    });
+
+    const reopened = await controller.loadTagExclusionSettings();
+
+    expect(reopened.persisted).toBe(true);
+    expect(reopened.revision).toBe(1);
+    expect(reopened.tags).toEqual([
+      { source: "capacities", spaceId: "space-1", tagId },
+    ]);
+  }, 15000);
+
+  it("reports the refresh failure instead of pretending eligibility is current", async () => {
+    const { store, adapter, controller } = harness();
+    await controller.load();
+    const loaded = await controller.loadTagExclusionSettings();
+    adapter.simulateSourceFailure();
+
+    const result = await controller.saveTagExclusionSettings({
+      expectedRevision: loaded.revision,
+      tags: [],
+    });
+
+    // The save itself landed; only the planning refresh failed, and the
+    // caller is told so explicitly.
+    expect(result.settings.revision).toBe(1);
+    expect(result.refreshError).toBeTruthy();
+    expect(store.getState().refresh.error).toBeTruthy();
+  }, 15000);
+
+  it("a stale save rejects, never refreshes, and leaves store state alone", async () => {
+    const { store, controller } = harness();
+    await controller.load();
+
+    await expect(
+      controller.saveTagExclusionSettings({ expectedRevision: 99, tags: [] }),
+    ).rejects.toThrow(/changed since they were read/);
+
+    const s = store.getState();
+    expect(s.refresh.lastRefreshed).toBeNull();
+    expect(s.refresh.error).toBeNull();
+  }, 15000);
+});

@@ -48,6 +48,47 @@ export interface CapacitiesSettingsDraft {
   activeStructures: string[];
 }
 
+/** One stable tag identity in the app-managed exclusion policy. The title is
+    display metadata only; matching is `(source, spaceId, tagId)` exactly. */
+export interface TagExclusionIdentity {
+  source: "capacities";
+  spaceId: string;
+  tagId: string;
+}
+
+/** Advisory RootTag catalog status. `partial`/`unavailable`/`unconfigured`
+    all mean "do not infer deletion from absence". */
+export type TagCatalogStatus = "complete" | "partial" | "unavailable" | "unconfigured";
+
+export interface TagCatalogTag {
+  id: string;
+  title: string;
+}
+
+/** Read-only advisory inventory of the space's canonical RootTag objects.
+    Never persisted as policy; a catalog failure must not hide saved settings. */
+export interface TagCatalog {
+  status: TagCatalogStatus;
+  spaceId: string | null;
+  tags: TagCatalogTag[];
+  warnings: string[];
+}
+
+/** The local, versioned tag-exclusion policy returned by the settings API. */
+export interface TagExclusionSettings {
+  version: number;
+  revision: number;
+  persisted: boolean;
+  tags: TagExclusionIdentity[];
+  catalog: TagCatalog;
+}
+
+/** Full replacement body for the tag-exclusion save route. */
+export interface TagExclusionSettingsDraft {
+  expectedRevision: number;
+  tags: TagExclusionIdentity[];
+}
+
 /** Resolved duration source label (mirrors the backend resolver's
     source_label). "remembered" means a durable server-side memory entry won;
     every other value is a deterministic source resolution. */

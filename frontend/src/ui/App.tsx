@@ -11,6 +11,7 @@ import { ActionDock } from "./ActionDock";
 import { FooterBanners } from "./FooterBanners";
 import { SetupDrawer } from "./SetupDrawer";
 import { CapacitiesSettingsDrawer } from "./CapacitiesSettingsDrawer";
+import { TagExclusionSettingsDrawer } from "./TagExclusionSettingsDrawer";
 import { ApprovalDrawer } from "./ApprovalDrawer";
 import { BlockEditor } from "./BlockEditor";
 import { AnchoredEditor } from "./AnchoredEditor";
@@ -75,6 +76,7 @@ export function App() {
           the CURRENT store state each time. */}
       {s.ui.setupOpen && <SetupDrawer />}
       {s.ui.capacitiesSettingsOpen && <CapacitiesSettingsDrawer />}
+      {s.ui.tagExclusionSettingsOpen && <TagExclusionSettingsDrawer />}
       {s.ui.approvalOpen && <ApprovalDrawer />}
       {/* key remounts the editor when the target changes while open (keyboard
           Enter on a timeline block can retarget without an intermediate close) */}
