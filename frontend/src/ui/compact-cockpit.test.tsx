@@ -6,7 +6,6 @@ afterEach(cleanup);
 import { App } from "./App";
 import { ActionDock } from "./ActionDock";
 import { ApprovalDrawer } from "./ApprovalDrawer";
-import { CalendarImpact } from "./CalendarImpact";
 import { makeHarness } from "./test-harness";
 
 describe("compact planning cockpit", () => {
@@ -21,19 +20,42 @@ describe("compact planning cockpit", () => {
     expect(r.container.querySelector(".placement")).toBeNull();
   });
 
-  it("keeps calendar evidence compact in the default shell while retaining the review disclosure", () => {
+  it("renders calendar evidence inline inside the work surface with visible rows (S5)", () => {
     const h = makeHarness("ready");
     const r = h.ui(<App />);
-    const calendar = r.container.querySelector(".calendar-impact--compact");
+    const queue = r.container.querySelector(".queue")!;
+    const calendar = queue.querySelector(".calendar-impact")!;
 
+    // Containment: the compact sibling mount is replaced — calendar evidence
+    // is a band of the work surface, never a separate section beside it.
     expect(calendar).toBeTruthy();
-    expect(calendar?.querySelector(".calendar-impact__summary")).toBeTruthy();
-    expect(calendar?.querySelector(".calendar-impact__review summary")?.textContent).toBe(
-      "Review calendar impact",
-    );
+    expect(r.container.querySelector(".cockpit__main > .calendar-impact")).toBeNull();
+    expect(calendar.classList.contains("calendar-impact--inline")).toBe(true);
+
+    // Visible rows: the review disclosure is gone; the list renders directly.
+    expect(calendar.querySelector(".calendar-impact__review")).toBeNull();
+    expect(calendar.querySelector(".calendar-impact__list")).toBeTruthy();
+    expect(queue.querySelectorAll(".calendar-impact__row").length).toBe(2);
+    expect(r.getByText("Trinoor Standup")).toBeTruthy();
+    expect(r.getByText("PHEP sync (Vlad)")).toBeTruthy();
   });
 
-  it("keeps ignored-only calendar evidence compact without rendering an empty list", () => {
+  it("keeps the inline calendar band in chronological order (S5)", () => {
+    const h = makeHarness("ready", (scenario) => {
+      scenario.inputs.anchored = [...scenario.inputs.anchored].reverse();
+    });
+    const r = h.ui(<App />);
+    const queue = r.container.querySelector(".queue")!;
+    const names = (
+      Array.from(
+        queue.querySelectorAll(".calendar-impact__row .calendar-impact__event strong"),
+      ) as HTMLElement[]
+    ).map((el) => el.textContent);
+
+    expect(names).toEqual(["Trinoor Standup", "PHEP sync (Vlad)"]);
+  });
+
+  it("keeps ignored-only calendar evidence inline without rendering an empty list", () => {
     const h = makeHarness("ready", (scenario) => {
       scenario.inputs.anchored = [
         {
@@ -52,33 +74,51 @@ describe("compact planning cockpit", () => {
         },
       ];
     });
-    const r = h.ui(<CalendarImpact compact />);
-    const calendar = r.container.querySelector(".calendar-impact");
+    const r = h.ui(<App />);
+    const queue = r.container.querySelector(".queue")!;
+    const calendar = queue.querySelector(".calendar-impact")!;
 
-    expect(calendar?.classList.contains("calendar-impact--compact")).toBe(true);
+    expect(calendar.classList.contains("calendar-impact--inline")).toBe(true);
     expect(r.getByText("1 ignored calendar source excluded")).toBeTruthy();
-    expect(calendar?.querySelector(".calendar-impact__list")).toBeNull();
+    expect(calendar.querySelector(".calendar-impact__list")).toBeNull();
   });
 
-  it("keeps a truly empty calendar frame absent", () => {
+  it("keeps a truly empty calendar frame absent from the work surface", () => {
     const h = makeHarness("ready", (scenario) => {
       scenario.inputs.anchored = [];
     });
-    const r = h.ui(<CalendarImpact compact />);
+    const r = h.ui(<App />);
+    const queue = r.container.querySelector(".queue")!;
 
-    expect(r.container.querySelector(".calendar-impact")).toBeNull();
+    expect(queue.querySelector(".calendar-impact")).toBeNull();
   });
 
-  it("puts the committed execution view before planning evidence", () => {
+  it("keeps inline calendar evidence in the empty-assigned branch", () => {
+    const h = makeHarness("ready", (scenario) => {
+      scenario.inputs.assigned = [];
+    });
+    const r = h.ui(<App />);
+    const queue = r.container.querySelector(".queue")!;
+
+    expect(queue.querySelector(".center-note")).toBeTruthy();
+    const calendar = queue.querySelector(".calendar-impact")!;
+    expect(calendar.classList.contains("calendar-impact--inline")).toBe(true);
+    expect(queue.querySelectorAll(".calendar-impact__row").length).toBe(2);
+  });
+
+  it("puts the committed execution view before the planning surface", () => {
     const h = makeHarness("verified");
     const r = h.ui(<App />);
     const main = r.container.querySelector(".cockpit__main")!;
     const execution = main.querySelector(".execution")!;
-    const calendar = main.querySelector(".calendar-impact")!;
     const queue = main.querySelector(".queue")!;
+    const calendar = queue.querySelector(".calendar-impact")!;
 
+    // Committed execution stays ahead of every planning surface; the calendar
+    // band now lives inside the work surface it precedes.
+    expect(execution.compareDocumentPosition(queue) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(execution.compareDocumentPosition(calendar) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(calendar.compareDocumentPosition(queue) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(queue.contains(calendar)).toBe(true);
   });
 
   it("keeps source-degraded planning on the no-write fallback path", () => {

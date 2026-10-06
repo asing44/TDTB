@@ -459,57 +459,6 @@
   color: var(--t-text);
   cursor: pointer;
 }
-.calendar-impact--compact {
-  padding-block: 10px 12px;
-  background: var(--t-surface);
-}
-.calendar-impact--compact .calendar-impact__head {
-  margin-bottom: 6px;
-}
-.calendar-impact__summary {
-  display: flex;
-  align-items: baseline;
-  flex-wrap: wrap;
-  gap: 6px 12px;
-  padding: 8px 10px;
-  border-left: 3px solid var(--c-event);
-  background: color-mix(in srgb, var(--c-event) 8%, var(--t-surface-2));
-  font-size: 12px;
-}
-.calendar-impact__summary strong {
-  font-weight: 600;
-}
-.calendar-impact__summary span {
-  color: var(--t-muted);
-  font-size: 11px;
-}
-.calendar-impact__review {
-  margin-top: 7px;
-  border-top: 0.5px solid var(--t-border);
-}
-.calendar-impact__review summary {
-  display: flex;
-  align-items: center;
-  min-height: 36px;
-  padding: 4px 0;
-  color: var(--t-accent-text);
-  cursor: pointer;
-  font-size: 11px;
-  font-weight: 600;
-  list-style: none;
-}
-.calendar-impact__review summary::-webkit-details-marker {
-  display: none;
-}
-.calendar-impact__review summary::before {
-  content: "＋";
-  width: 18px;
-  color: var(--t-accent);
-  font-size: 14px;
-}
-.calendar-impact__review[open] summary::before {
-  content: "−";
-}
 .queue__subtractive {
   margin: 0;
   padding: 9px 0;
@@ -2986,8 +2935,8 @@ body {
   align-items: center;
 }
 
-/* Calendar is evidence before action: make its summary feel like a deliberate
-   audit band and keep the compact disclosure easy to find. */
+/* Calendar is evidence before action: a deliberate audit band whose rows
+   stay visible (S5 renders it inline inside the work surface). */
 .calendar-impact {
   padding: 18px 28px 16px;
   background: var(--t-surface-2);
@@ -3016,32 +2965,6 @@ body {
   border-radius: var(--radius-sm);
   background: var(--t-surface);
   line-height: 1.35;
-}
-
-.calendar-impact__summary {
-  min-height: 44px;
-  padding: 10px 12px;
-  border: 1px solid color-mix(in srgb, var(--c-event) 38%, var(--t-border));
-  border-left: 3px solid var(--c-event);
-  border-radius: var(--radius-sm);
-  background: color-mix(in srgb, var(--c-event) 9%, var(--t-surface));
-}
-
-.calendar-impact__review {
-  margin-top: 9px;
-  padding-top: 1px;
-  border-top-color: color-mix(in srgb, var(--t-border) 75%, transparent);
-}
-
-.calendar-impact__review summary {
-  min-height: 44px;
-  padding-inline: 4px;
-  border-radius: var(--radius-sm);
-  transition: background-color 120ms ease;
-}
-
-.calendar-impact__review summary:hover {
-  background: var(--t-surface);
 }
 
 .calendar-impact__row {
@@ -3699,6 +3622,16 @@ body {
   .calendar-impact__attend {
     grid-column: 1 / -1;
   }
+}
+
+/* S5 (cockpit UI feedback item 3): calendar evidence lives inside the work
+   surface, so the queue owns the horizontal padding and the day surface. The
+   inline band keeps the row cards and a hairline separator; the compact
+   summary and its review disclosure are replaced by the visible rows. */
+.calendar-impact--inline {
+  padding: 16px 0 14px;
+  background: transparent;
+  border-bottom: 0.5px solid var(--t-border);
 }
 
 /* -- Capacities settings --------------------------------------------------- */

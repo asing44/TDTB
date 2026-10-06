@@ -4,7 +4,13 @@
    (FEEDBACK-07 A04 / FEEDBACK-09): Exclude from plan / Count (per-day
    participation) plus a local accounted-duration stepper — both projection-
    only, never event or attendance/source mutation (LD19). Ignored calendar
-   sources (TickTick-style) are hidden from the impact list entirely. */
+   sources (TickTick-style) are hidden from the impact list entirely.
+
+   S5 (cockpit UI feedback item 3): the cockpit wants this evidence formatted
+   with the other planning items, not as a separate-feeling section. Inline
+   mode renders the same rows inside the work surface (Queue) with shared
+   surface styling — no compact summary and no review disclosure. Calendar
+   records stay distinct from assigned-task state; this is presentation only. */
 
 import { useApp, useAppState } from "./context";
 import { effectiveAnchoredBlocks } from "../store/store";
@@ -59,10 +65,11 @@ function countedBlocks(row: AnchoredBlock): number {
   return Math.ceil(row.durationMin / 30);
 }
 
-export function CalendarImpact({ compact = false }: { compact?: boolean }) {
+export function CalendarImpact({ inline = false }: { inline?: boolean }) {
   const s = useAppState();
   const { controller } = useApp();
   if (!s.inputs) return null;
+  const modifier = inline ? " calendar-impact--inline" : "";
 
   const rows = effectiveAnchoredBlocks(s)
     .filter((row) => row.kind === "calendar")
@@ -107,15 +114,12 @@ export function CalendarImpact({ compact = false }: { compact?: boolean }) {
   if (visible.length === 0) {
     if (hiddenIgnored === 0) return null;
     return (
-      <section class={`calendar-impact${compact ? " calendar-impact--compact" : ""}`} aria-label="Calendar impact">
+      <section class={`calendar-impact${modifier}`} aria-label="Calendar impact">
         {header}
         {ignoredNote}
       </section>
     );
   }
-
-  const hardWalls = visible.filter((row) => isWallClass(capacityClass(row))).length;
-  const quarantined = visible.filter((row) => capacityClass(row) === "quarantined").length;
 
   const list = (
     <ul class="calendar-impact__list">
@@ -206,21 +210,10 @@ export function CalendarImpact({ compact = false }: { compact?: boolean }) {
   );
 
   return (
-    <section class={`calendar-impact${compact ? " calendar-impact--compact" : ""}`} aria-label="Calendar impact">
+    <section class={`calendar-impact${modifier}`} aria-label="Calendar impact">
       {header}
       {ignoredNote}
-      {compact ? (
-        <>
-          <div class="calendar-impact__summary" role="status">
-            <strong>{visible.length} calendar commitment{visible.length === 1 ? "" : "s"} in frame</strong>
-            <span>{hardWalls} hard wall{hardWalls === 1 ? "" : "s"}{quarantined > 0 ? ` · ${quarantined} awaiting review` : ""}</span>
-          </div>
-          <details class="calendar-impact__review">
-            <summary>Review calendar impact</summary>
-            {list}
-          </details>
-        </>
-      ) : list}
+      {list}
     </section>
   );
 }

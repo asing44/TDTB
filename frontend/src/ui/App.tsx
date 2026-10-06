@@ -14,7 +14,6 @@ import { ApprovalDrawer } from "./ApprovalDrawer";
 import { BlockEditor } from "./BlockEditor";
 import { AnchoredEditor } from "./AnchoredEditor";
 import { ExecutionView } from "./ExecutionView";
-import { CalendarImpact } from "./CalendarImpact";
 
 const THEME_KEY = "tdtb-cockpit-theme";
 
@@ -72,9 +71,8 @@ export function App() {
               execution ahead of planning evidence after a commit: the first
               question then is what to do next, not how the plan was built. */}
           <ExecutionView />
-          {/* Calendar review is compact in the default cockpit. The full
-              projection-only rows remain one disclosure away. */}
-          <CalendarImpact compact />
+          {/* S5: calendar evidence is no longer a sibling section — the Queue
+              renders it inline inside the work surface. */}
           <Queue />
         </main>
         <div class="cockpit__footer">

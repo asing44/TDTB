@@ -68,6 +68,7 @@ import { DIRECT_VERBS, MORE_VERBS } from "../model/staging";
 import { sourceDetail, typeToken } from "../model/sourceContext";
 import { dueLabel, normalizeUrgency } from "../model/urgency";
 import type { AssignedItem } from "../model/types";
+import { CalendarImpact } from "./CalendarImpact";
 import { Tooltip } from "./Tooltip";
 
 function sourceDot(item: AssignedItem): string {
@@ -772,6 +773,9 @@ export function Queue() {
   if (items.length === 0) {
     return (
       <section class="queue" aria-label="Today's work">
+        {/* S5: calendar evidence stays with the work surface even on a quiet
+            day — the empty-assigned branch keeps the inline band. */}
+        <CalendarImpact inline />
         <div class="center-note">
           No assigned items today. Assignment happens upstream — Obsidian
           `daily-assigned` and Todoist Today. A quiet day is a valid day.
@@ -837,6 +841,9 @@ export function Queue() {
         chosen task effort stays additive until Commit live.
       </p>
       <AllocationMeter s={s} />
+      {/* S5 (cockpit UI feedback item 3): calendar commitments render inline
+          with the work rows — same surface, visible rows, no disclosure. */}
+      <CalendarImpact inline />
       <div class="queue__cols" aria-hidden="true">
         <span />
         <span>Needs placement · {needsPlacement}</span>
