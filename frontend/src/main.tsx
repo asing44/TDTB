@@ -16,6 +16,7 @@ import { ApiAdapter } from "./adapters/api";
 import { attachSessionPersistence } from "./store/persist";
 import { installSourceRefreshLifecycle } from "./store/refreshLifecycle";
 import { applyStagedState } from "./fixtures/boot";
+import { SettingsUrlSync } from "./ui/settingsUrl";
 import type { ScenarioName } from "./fixtures/scenarios";
 import type { Theme } from "./store/store";
 
@@ -70,6 +71,7 @@ function FixtureRoot() {
 
   return (
     <Ctx.Provider value={{ store, controller }}>
+      <SettingsUrlSync />
       <App />
     </Ctx.Provider>
   );
@@ -122,6 +124,7 @@ function ProductionRoot() {
 
   return (
     <Ctx.Provider value={{ store, controller }}>
+      <SettingsUrlSync />
       <App />
     </Ctx.Provider>
   );

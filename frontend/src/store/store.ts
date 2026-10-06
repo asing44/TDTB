@@ -38,6 +38,69 @@ import { remainingLabel } from "../model/allocator";
 import { durationSourceOf } from "../adapters/wire";
 
 export type SeqPhase = "none" | "sequencing" | "valid" | "dirty" | "failed";
+
+/** The three settings-like surfaces share one canonical destination. */
+export type SettingsPanel = "day" | "capacities" | "tags";
+
+export function isSettingsPanel(value: unknown): value is SettingsPanel {
+  return value === "day" || value === "capacities" || value === "tags";
+}
+
+/** Legacy drawer flags, in fixed precedence for a single normalizing write. */
+const LEGACY_SETTINGS_FLAGS: ReadonlyArray<readonly ["setupOpen" | "capacitiesSettingsOpen" | "tagExclusionSettingsOpen", SettingsPanel]> = [
+  ["setupOpen", "day"],
+  ["capacitiesSettingsOpen", "capacities"],
+  ["tagExclusionSettingsOpen", "tags"],
+];
+
+/**
+ * One settings destination: normalize a UI patch into the canonical
+ * `settingsPanel`/`settingsSection` pair and project it back as one-hot
+ * compatibility flags. Legacy `*Open` writes keep working; a legacy `true`
+ * replaces any open panel, while a legacy `false` closes only the panel it
+ * names. Unknown canonical values open nothing.
+ */
+function normalizeSettingsUi(
+  current: AppState["ui"],
+  next: AppState["ui"],
+  patch: Partial<AppState["ui"]>,
+): AppState["ui"] {
+  const has = (key: keyof AppState["ui"]) =>
+    Object.prototype.hasOwnProperty.call(patch, key);
+  let panel = current.settingsPanel;
+  let section = current.settingsSection;
+
+  if (has("settingsPanel")) {
+    panel = isSettingsPanel(patch.settingsPanel) ? patch.settingsPanel : null;
+    if (panel === null) section = null;
+    else if (has("settingsSection")) section = patch.settingsSection ?? null;
+    else if (panel !== current.settingsPanel) section = null;
+  } else {
+    const opened = LEGACY_SETTINGS_FLAGS.find(([key]) => has(key) && patch[key] === true);
+    if (opened) {
+      panel = opened[1];
+      if (has("settingsSection")) section = patch.settingsSection ?? null;
+      else if (panel !== current.settingsPanel) section = null;
+    } else {
+      const closed = LEGACY_SETTINGS_FLAGS.find(
+        ([key, id]) => has(key) && patch[key] === false && current.settingsPanel === id,
+      );
+      if (closed) {
+        panel = null;
+        section = null;
+      }
+    }
+  }
+
+  return {
+    ...next,
+    settingsPanel: panel,
+    settingsSection: panel === null ? null : section,
+    setupOpen: panel === "day",
+    capacitiesSettingsOpen: panel === "capacities",
+    tagExclusionSettingsOpen: panel === "tags",
+  };
+}
 export type ShadowPhase = "none" | "loading" | "current" | "stale";
 export type CommitPhase = "idle" | "committing" | "done" | "partial" | "failed";
 export type RefreshPhase = "idle" | "loading";
@@ -120,6 +183,11 @@ export interface AppState {
   ledger: Ledger | null;
   theme: Theme;
   ui: {
+    /** Canonical settings destination — one settings host, at most one panel. */
+    settingsPanel: SettingsPanel | null;
+    /** Optional in-panel destination (e.g. "captures") for programmatic opens. */
+    settingsSection: string | null;
+    /** Legacy facades: one-hot projections of `settingsPanel`. */
     setupOpen: boolean;
     capacitiesSettingsOpen: boolean;
     tagExclusionSettingsOpen: boolean;
@@ -183,7 +251,7 @@ export const initialState: AppState = {
   refresh: { phase: "idle", error: null, lastRefreshed: null, summary: null },
   ledger: null,
   theme: "system",
-  ui: { setupOpen: false, capacitiesSettingsOpen: false, tagExclusionSettingsOpen: false, approvalOpen: false, editorItem: null, editorIntent: null, editorAnchor: null, capacityDetail: false, trimUndo: null },
+  ui: { settingsPanel: null, settingsSection: null, setupOpen: false, capacitiesSettingsOpen: false, tagExclusionSettingsOpen: false, approvalOpen: false, editorItem: null, editorIntent: null, editorAnchor: null, capacityDetail: false, trimUndo: null },
 };
 
 export type Action =
@@ -844,7 +912,7 @@ export function reducer(s: AppState, a: Action): AppState {
     case "THEME_SET":
       return { ...s, theme: a.theme };
     case "UI":
-      return { ...s, ui: { ...s.ui, ...a.patch } };
+      return { ...s, ui: normalizeSettingsUi(s.ui, { ...s.ui, ...a.patch }, a.patch) };
     default:
       return s;
   }
