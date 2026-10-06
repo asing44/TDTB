@@ -679,7 +679,22 @@ class CapacitiesAdapter:
         title_prop = properties.get(mapping.title_property)
         if title_prop is None:
             raise _MalformedObject(f"object {object_id!r} has no title")
-        title = _property_text(title_prop, mapping.title_property)
+        try:
+            title = _property_text(title_prop, mapping.title_property)
+        except _MalformedObject:
+            # Live Capacities objects can carry an empty typed title while the
+            # object's own top-level ``title`` holds the real name; hydration
+            # already preserved it, so no extra provider request is spent.
+            # Only the canonical ``title`` property falls back: a custom mapped
+            # title property stays authoritative and its emptiness still fails
+            # closed instead of silently borrowing another field.
+            if mapping.title_property != "title":
+                raise
+            title = _text(obj.get("title"))
+            if not title:
+                # Neither source has usable text: keep the original failure
+                # and its diagnostic rather than projecting an empty name.
+                raise
         if not title:
             raise _MalformedObject(f"object {object_id!r} has an empty title")
 

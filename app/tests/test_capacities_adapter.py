@@ -1202,6 +1202,69 @@ def test_property_less_listing_rows_are_hydrated_from_object_content():
     assert result.warnings == []
 
 
+def test_empty_typed_title_falls_back_to_the_top_level_listing_title():
+    """Live objects can carry the name at top level while the typed title is empty.
+
+    Verified against live objects whose ``properties.title.title.value`` is an
+    empty string while the object's top-level ``title`` holds the real name
+    (for example ``Habit``). The listing row preserves that top-level title
+    through hydration, so the projection must read it instead of dropping the
+    whole object as malformed.
+    """
+    listed = [{"id": "task-1", "structureId": "RootTask", "title": "Habit"}]
+    content = _native_object("task-1", status="active")
+    content["properties"]["title"] = _prop("title", "title", {"value": ""})
+    provider = FakeProvider(
+        _native_structures(),
+        {("RootTask", None): {"objects": listed, "next_cursor": None}},
+        objects={"task-1": content},
+    )
+
+    result = _adapter(provider, mappings=(_native_mapping(),)).items_for_day(TODAY)
+
+    assert [row["name"] for row in result.items] == ["Habit"]
+    assert result.warnings == []
+    assert not any("not plannable" in warning for warning in result.warnings)
+
+
+def test_custom_title_property_stays_authoritative_when_empty():
+    """A custom mapped title property must fail closed, not borrow the listing title.
+
+    The top-level fallback is scoped to the canonical ``title`` property. A
+    mapping that deliberately points elsewhere must not silently substitute a
+    different field when its own title property is empty.
+    """
+    structures = _native_structures()
+    structures[0]["propertyDefinitions"].append(_definition("headline", "title"))
+    provider = FakeProvider(structures, {})
+    obj = _native_object("task-1", status="active")
+    obj["title"] = "Listing name"
+    obj["properties"]["headline"] = _prop("title", "headline", {"value": ""})
+
+    result = _adapter(
+        provider, mappings=(_native_mapping(title_property="headline"),)
+    ).items_for_day_from_objects(TODAY, [obj])
+
+    assert result.items == []
+    assert any("not plannable" in w and "headline" in w for w in result.warnings)
+
+
+def test_missing_typed_and_top_level_title_still_skips_as_malformed():
+    """With neither source usable, the original malformed reason is preserved."""
+    provider = FakeProvider(_native_structures(), {})
+    obj = _native_object("task-1", status="active")
+    obj["properties"]["title"] = _prop("title", "title", {"value": ""})
+
+    result = _adapter(provider, mappings=(_native_mapping(),)).items_for_day_from_objects(
+        TODAY, [obj]
+    )
+
+    assert result.items == []
+    assert any(
+        "not plannable" in w and "no usable value" in w for w in result.warnings
+    )
+
+
 def test_contradictory_payload_space_is_rejected():
     """A payload space that disagrees with the configured one is not trusted."""
     provider = _custom_provider(
