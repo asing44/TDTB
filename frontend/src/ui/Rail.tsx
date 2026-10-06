@@ -1,7 +1,17 @@
-/* Rail — compact day overview. The capacity story lives here beside the
-   assigned work it describes: budget number + segmented bar, the inspectable
-   pie, keyboard reference, and readiness chips pinned to the bottom. The main
-   surface stays focused on assigned rows and their local controls.
+/* Rail — compact day overview. The scheduling answer is pinned: a compact
+   task-room status sits outside the scroll region showing selected / task
+   room and either the available amount or the over-allotment instruction.
+   The capacity story it summarizes scrolls beneath it as supporting evidence
+   — the five-quantity ledger, the inspectable pie with its legend and
+   complete readout, and the keyboard reference — and the readiness chips
+   stay pinned to the bottom. The main surface stays focused on assigned rows
+   and their local controls.
+
+   2026-10-06 cockpit feedback item 4: the pie and remaining readouts are
+   re-presented, not removed. The status carries the always-visible signal;
+   the pie keeps its full inspection contract at reduced emphasis. Aggregate
+   task room is not a contiguous free calendar window, and the status wording
+   says so by naming task room rather than calendar space.
 
    Numbers follow the same live substitution as the table (localSelected in,
    server capacity authoritative on refresh) so the rail and the rows answer
@@ -115,6 +125,40 @@ function BudgetCard() {
   );
 }
 
+/** S4 (feedback item 4): the pinned scheduling answer. Selected and task room
+    are the same arithmetic the ledger and the table use (localSelected in,
+    budgetTotal out), so a local duration or inclusion edit moves this status
+    on the same frame. The over branch repeats the operator's own remedy
+    (reduce durations or exclude) instead of proposing an automatic trim. */
+function TaskRoomStatus() {
+  const s = useAppState();
+  if (!s.capacity) return null;
+
+  const selected = localSelected(s);
+  const taskRoom = budgetTotal(s);
+  const over = Math.max(0, selected - taskRoom);
+  const available = Math.max(0, taskRoom - selected);
+
+  return (
+    <section class="rail__status" aria-label="Room left">
+      <div class="rail__status-head">
+        <span class="rail__label">Room left</span>
+        <p
+          class={`rail__status-state ${over > 0 ? "rail__status-state--over" : ""}`}
+          role="status"
+        >
+          {over > 0
+            ? `${formatBlockAmount(over)} over — reduce durations or exclude`
+            : `${formatBlockAmount(available)} available`}
+        </p>
+      </div>
+      <p class="rail__status-ratio">
+        {formatBlockAmount(selected)} selected / {formatBlockAmount(taskRoom)} task room
+      </p>
+    </section>
+  );
+}
+
 function KeysCard() {
   const keys: Array<[string, string]> = [
     ["↑ ↓", "move row"],
@@ -160,21 +204,18 @@ export function Rail() {
           {display12h(t.effectiveEod)}
         </div>
       </div>
-      {/* Everything below the date scrolls, and only the date and the chips are
-          pinned — the chips carry the Sources refresh, and on a busy day the
-          budget card, pie, and keys grew tall enough to push them off the
-          bottom of the rail. A control you have to go looking for is a control
-          that is missing.
-          The donut's CHART is `position: sticky` inside this region, so the
-          crucial visual is on screen at every point of staging (Adam,
-          2026-07-27 21:11) while costing its height only once. It is second,
-          not first: the budget card reads before it and scrolls away under it.
-          Pinning either one OUTSIDE this box (two earlier attempts) starved the
-          scroll region on a short window — first clipping the keys card, then
-          leaving the legend as a single peeking row. CSS flattens the pie
-          wrapper (`display: contents`) so the chart is a direct child here:
-          sticky is bounded by its parent, and only a direct child spans the
-          whole scroll length. */}
+      <TaskRoomStatus />
+      {/* Everything below the status scrolls; the date, the status, and the
+          chips are pinned — the chips carry the Sources refresh, and on a
+          busy day the ledger, pie, and keys grew tall enough to push them off
+          the bottom of the rail. A control you have to go looking for is a
+          control that is missing.
+          S4 (feedback item 4): the pinned status now owns the always-visible
+          scheduling signal, so the donut no longer sticks inside this region.
+          The chart scrolls with the evidence it supports instead of
+          competing with the status for the eye. CSS still flattens the pie
+          wrapper (`display: contents`) so the chart and legend are direct
+          children of this box; that is layout, not emphasis. */}
       <div class="rail__scroll">
         <BudgetCard />
         <div class="rail__pie">

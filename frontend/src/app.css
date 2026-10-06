@@ -69,6 +69,43 @@
   font-size: 12px;
   color: var(--t-muted);
 }
+/* S4 (2026-10-06 feedback item 4): the pinned scheduling answer. It sits
+   outside .rail__scroll so the current task-room arithmetic stays on screen
+   at every scroll position; the ledger, pie, and keys below it are the
+   supporting evidence. The label and ratio name task room explicitly —
+   aggregate selectable capacity, never a contiguous free calendar window. */
+.rail__status {
+  flex: none;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--t-border) 80%, transparent);
+  border-radius: var(--radius);
+  background: var(--t-surface);
+}
+.rail__status-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+.rail__status-head .rail__label {
+  margin-bottom: 0;
+}
+.rail__status-state {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--t-text);
+  font-variant-numeric: tabular-nums;
+}
+.rail__status-state--over {
+  color: var(--c-overflow);
+}
+.rail__status-ratio {
+  margin: 2px 0 0;
+  font-size: 11px;
+  color: var(--t-muted);
+  font-variant-numeric: tabular-nums;
+}
 .rail__label {
   font-size: 11px;
   font-weight: 600;
@@ -198,25 +235,21 @@
 .rail__scroll > .rail__section {
   flex-shrink: 0;
 }
-/* The pie wrapper and the pie itself are flattened away so the CHART is a
-   direct child of .rail__scroll — position: sticky is bounded by its parent,
-   so only a direct child of the scrolling box stays put for the whole scroll.
-   The legend follows as its own flex row and scrolls under the donut. */
+/* The pie wrapper and the pie itself are flattened away so the chart and the
+   legend are direct children of .rail__scroll; the rail's column flex layout
+   then stacks them with the ledger and keys. Flattening is layout only now —
+   S4 (feedback item 4) moved the always-visible signal to the pinned
+   .rail__status, so the chart no longer sticks over the cards. */
 .rail__pie,
 .rail__pie .pie {
   display: contents;
 }
-/* Stretched full-rail-width, not donut-width: the backdrop has to hide the
-   cards sliding under it, and an intrinsic-width chart let them show through
-   on both sides. The readout stays centred on the donut because both are
-   centred in the same box. */
+/* Stretched full-rail-width, not donut-width, so the readout stays centred on
+   the donut in the same box. Quiet supporting evidence: the chart scrolls
+   with the cards it describes instead of overlaying them. */
 .rail__pie .pie__chart {
-  position: sticky;
-  top: 0;
-  z-index: 1;
   align-self: stretch;
   justify-content: center;
-  background: var(--t-surface-2);
   padding-bottom: 8px;
 }
 /* The rail is the pie's only home, so this override IS its size — the SIZE
