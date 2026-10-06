@@ -287,7 +287,7 @@ export function DaySetupPanel({ active }: { active: boolean }) {
     <div class="settings-panel settings-panel--day">
       {/* FEEDBACK-16: each section is a distinct card (setup-section) in a
           fixed scan order; Frame groups every day-frame field together. */}
-        <section class="setup-section" aria-labelledby="setup-sec-frame">
+        <section class="setup-section" data-settings-section="frame" aria-labelledby="setup-sec-frame">
           <div class="setup-section__head">
             <h3 id="setup-sec-frame">Frame</h3>
           </div>
@@ -406,7 +406,7 @@ export function DaySetupPanel({ active }: { active: boolean }) {
           </div>
         </section>
         {availableMintSessions.length > 0 && (
-          <section class="setup-section" aria-labelledby="setup-sec-mint">
+          <section class="setup-section" data-settings-section="mint" aria-labelledby="setup-sec-mint">
             <div class="setup-section__head">
               <h3 id="setup-sec-mint">Mint sessions</h3>
             </div>
@@ -450,7 +450,7 @@ export function DaySetupPanel({ active }: { active: boolean }) {
           </section>
         )}
 
-        <section class="setup-section" aria-labelledby="setup-sec-anchored">
+        <section class="setup-section" data-settings-section="anchored" aria-labelledby="setup-sec-anchored">
           <div class="setup-section__head">
             <h3 id="setup-sec-anchored">Anchored blocks</h3>
           </div>
@@ -512,7 +512,7 @@ export function DaySetupPanel({ active }: { active: boolean }) {
           </div>
         </section>
 
-        <section class="setup-section" aria-labelledby="setup-sec-live">
+        <section class="setup-section" data-settings-section="live" aria-labelledby="setup-sec-live">
           <div class="setup-section__head">
             <h3 id="setup-sec-live">Live micro-adventure</h3>
           </div>
@@ -595,7 +595,7 @@ export function DaySetupPanel({ active }: { active: boolean }) {
           </div>
         </section>
 
-        <section class="setup-section" aria-labelledby="setup-sec-captures">
+        <section class="setup-section" data-settings-section="captures" aria-labelledby="setup-sec-captures">
           <div class="setup-section__head">
             <h3 id="setup-sec-captures">Captures</h3>
           </div>

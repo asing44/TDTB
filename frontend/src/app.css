@@ -9,6 +9,13 @@
   min-height: 100vh;
   align-items: start;
 }
+
+/* Settings-shell isolation wrapper. `display: contents` keeps the rail, main,
+   and footer as the grid's layout children while the shell marks everything
+   behind it inert/aria-hidden. */
+.cockpit__background {
+  display: contents;
+}
 .cockpit__main {
   min-width: 0;
   display: flex;
