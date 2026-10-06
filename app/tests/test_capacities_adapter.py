@@ -1379,3 +1379,263 @@ def test_cached_content_does_not_consume_the_read_budget():
     second = adapter.items_for_day(TODAY)
     assert len(second.items) == 4
     assert not any("not evaluated this run" in w for w in second.warnings)
+
+
+# ---------------------------------------------------------------------------
+# Typed tag projection + RootTag catalog (tag-exclusion slice)
+# ---------------------------------------------------------------------------
+# ASSUMPTION RECORD (do not claim live REST parity): no fixture or recorded
+# response in this repo proves that the live REST ``/object`` response carries
+# the typed ``tags`` property, or that ``/objects/structure`` returns usable
+# ``id``+``title`` rows for ``RootTag``. The fixtures below assert the
+# EXPECTED shape from the live contract description
+# (``properties.tags.entity = [{"id", "title"}]`` plus a flat top-level
+# ``tags`` title array); live parity remains unproven until a recorded
+# response lands.
+
+TAG_A = "5a25370b-f9a0-40cf-bc3a-0cab4744913c"
+TAG_B = "0d194525-c5a1-4af5-bb62-202b83006b5e"
+
+
+def _tagged_native_object(object_id, *, tags=None, flat_tags=None, **kwargs):
+    obj = _native_object(object_id, status="active", **kwargs)
+    if tags is not None:
+        obj["properties"]["tags"] = _prop("entity", "entity", tags)
+    if flat_tags is not None:
+        obj["tags"] = flat_tags
+    return obj
+
+
+def test_typed_entity_tags_project_structured_identity_and_title():
+    provider = _native_provider([
+        _tagged_native_object(
+            "task-1",
+            tags=[{"id": TAG_A, "title": "habituals"}],
+            flat_tags=["habituals"],
+        ),
+    ])
+
+    result = _adapter(provider, mappings=(_native_mapping(),)).items_for_day(TODAY)
+
+    row = result.items[0]
+    assert row["capacities_tags"] == [
+        {"space_id": SPACE, "tag_id": TAG_A, "title": "habituals"},
+    ]
+    assert "capacities_tags_error" not in row
+
+
+def test_tag_projection_keeps_the_typed_title_and_ignores_flat_titles():
+    """The trap: the generic token helper drops ``title``; identity must come
+    from the typed entity pair, never from the flat title array."""
+    provider = _native_provider([
+        _tagged_native_object(
+            "task-1",
+            tags=[{"id": TAG_A, "title": "habituals"}],
+            flat_tags=["stale display", "habituals"],
+        ),
+    ])
+
+    row = _adapter(provider, mappings=(_native_mapping(),)).items_for_day(TODAY).items[0]
+
+    assert row["capacities_tags"] == [
+        {"space_id": SPACE, "tag_id": TAG_A, "title": "habituals"},
+    ]
+
+
+def test_empty_typed_tags_project_an_empty_list():
+    provider = _native_provider([
+        _tagged_native_object("task-1", tags=[], flat_tags=[]),
+    ])
+
+    row = _adapter(provider, mappings=(_native_mapping(),)).items_for_day(TODAY).items[0]
+
+    assert row["capacities_tags"] == []
+    assert "capacities_tags_error" not in row
+
+
+def test_no_tag_property_at_all_projects_an_empty_list():
+    provider = _native_provider([_native_object("task-1", status="active")])
+
+    row = _adapter(provider, mappings=(_native_mapping(),)).items_for_day(TODAY).items[0]
+
+    assert row["capacities_tags"] == []
+
+
+def test_title_only_flat_tags_are_unusable_not_identity():
+    provider = _native_provider([
+        _tagged_native_object("task-1", flat_tags=["habituals"]),
+    ])
+
+    result = _adapter(provider, mappings=(_native_mapping(),)).items_for_day(TODAY)
+
+    row = result.items[0]
+    assert row["capacities_tags"] is None
+    assert "title-only" in row["capacities_tags_error"]
+
+
+def test_malformed_entity_payload_is_unusable_without_dropping_the_row():
+    provider = _native_provider([
+        _tagged_native_object("task-1", tags=[{"title": "no id"}]),
+    ])
+
+    result = _adapter(provider, mappings=(_native_mapping(),)).items_for_day(TODAY)
+
+    assert len(result.items) == 1
+    assert result.items[0]["capacities_tags"] is None
+    assert "without an id" in result.items[0]["capacities_tags_error"]
+
+
+def test_non_entity_tags_property_is_unusable():
+    provider = _native_provider([
+        _tagged_native_object("task-1", flat_tags=["habituals"]),
+    ])
+    # A label-typed ``tags`` property cannot carry RootTag identity.
+    provider._pages[("RootTask", None)]["objects"][0]["properties"]["tags"] = _prop(
+        "label", "label", [{"id": "x", "name": "habituals"}]
+    )
+
+    row = _adapter(provider, mappings=(_native_mapping(),)).items_for_day(TODAY).items[0]
+
+    assert row["capacities_tags"] is None
+    assert "not an entity" in row["capacities_tags_error"]
+
+
+def test_duplicate_tag_references_deduplicate_by_stable_id():
+    provider = _native_provider([
+        _tagged_native_object(
+            "task-1",
+            tags=[
+                {"id": TAG_A, "title": "habituals"},
+                {"id": TAG_A, "title": "habituals renamed"},
+            ],
+        ),
+    ])
+
+    row = _adapter(provider, mappings=(_native_mapping(),)).items_for_day(TODAY).items[0]
+
+    assert row["capacities_tags"] == [
+        {"space_id": SPACE, "tag_id": TAG_A, "title": "habituals"},
+    ]
+
+
+class _RootTagProvider(FakeProvider):
+    """FakeProvider whose RootTag listing is scripted per page."""
+
+    def __init__(self, pages):
+        super().__init__(_native_structures(), pages)
+
+
+class _RateLimitedListProvider(_RootTagProvider):
+    def list_objects(self, structure_id, cursor=None):
+        raise CapacitiesRateLimited("the Capacities API rate limit was exceeded")
+
+
+def test_root_tag_catalog_paginates_dedupes_and_sorts():
+    provider = _RootTagProvider({
+        ("RootTag", None): {
+            "objects": [
+                {"id": "b-tag", "structureId": "RootTag", "title": "zeta"},
+                {"id": "a-tag", "structureId": "RootTag", "title": "Alpha"},
+            ],
+            "next_cursor": "page-2",
+        },
+        ("RootTag", "page-2"): {
+            "objects": [
+                {"id": "c-tag", "structureId": "RootTag", "title": "habituals"},
+            ],
+            "next_cursor": None,
+        },
+    })
+
+    result = _adapter(provider).list_tags()
+
+    assert result == {
+        "status": "complete",
+        "space_id": SPACE,
+        "tags": [
+            {"id": "a-tag", "title": "Alpha"},
+            {"id": "c-tag", "title": "habituals"},
+            {"id": "b-tag", "title": "zeta"},
+        ],
+        "warnings": [],
+    }
+    assert ("RootTag", None) in provider.list_calls
+    assert ("RootTag", "page-2") in provider.list_calls
+
+
+def test_root_tag_catalog_is_bounded_by_max_pages():
+    provider = _RootTagProvider({
+        ("RootTag", None): {
+            "objects": [{"id": "a-tag", "title": "A"}],
+            "next_cursor": "more",
+        },
+    })
+
+    result = _adapter(provider, max_pages=1).list_tags()
+
+    assert result["status"] == "partial"
+    assert result["tags"] == [{"id": "a-tag", "title": "A"}]
+    assert any("incomplete" in w for w in result["warnings"])
+
+
+def test_root_tag_catalog_degrades_on_a_rate_limit():
+    result = _adapter(_RateLimitedListProvider({})).list_tags()
+
+    assert result["status"] == "partial"
+    assert result["tags"] == []
+    assert any("rate limit" in w for w in result["warnings"])
+
+
+def test_root_tag_catalog_skips_malformed_rows_and_reports_partial():
+    provider = _RootTagProvider({
+        ("RootTag", None): {
+            "objects": [
+                "junk",
+                {"id": "", "title": "no id"},
+                {"id": "a-tag", "title": ""},
+                {"id": "b-tag", "title": "Beta"},
+            ],
+            "next_cursor": None,
+        },
+    })
+
+    result = _adapter(provider).list_tags()
+
+    assert result["status"] == "partial"
+    assert result["tags"] == [{"id": "b-tag", "title": "Beta"}]
+    assert len(result["warnings"]) >= 2
+
+
+def test_root_tag_catalog_raises_when_the_first_page_is_malformed():
+    provider = _RootTagProvider({("RootTag", None): {"objects": "nope"}})
+
+    with pytest.raises(CapacitiesContractError):
+        _adapter(provider).list_tags()
+
+
+def test_root_tag_catalog_raises_when_the_first_page_fails():
+    class _BoomProvider(_RootTagProvider):
+        def list_objects(self, structure_id, cursor=None):
+            raise RuntimeError("provider down")
+
+    with pytest.raises(RuntimeError):
+        _adapter(_BoomProvider({})).list_tags()
+
+
+def test_root_tag_catalog_stops_on_a_repeated_cursor():
+    provider = _RootTagProvider({
+        ("RootTag", None): {
+            "objects": [{"id": "a-tag", "title": "A"}],
+            "next_cursor": "same",
+        },
+        ("RootTag", "same"): {
+            "objects": [{"id": "b-tag", "title": "B"}],
+            "next_cursor": "same",
+        },
+    })
+
+    result = _adapter(provider).list_tags()
+
+    assert result["status"] == "partial"
+    assert [t["id"] for t in result["tags"]] == ["a-tag", "b-tag"]
+    assert any("cursor" in w for w in result["warnings"])

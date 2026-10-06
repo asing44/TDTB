@@ -236,14 +236,32 @@ def write_digest_index(
     vault_root: Path | str,
     valid_date: date,
     index: list[dict[str, str]],
+    *,
+    exclusion_settings_revision: int | None = None,
 ) -> Path:
-    """Atomically write today's ``[{name, todoist_id, path}]`` identity index."""
+    """Atomically write today's ``[{name, todoist_id, path}]`` identity index.
+
+    ``exclusion_settings_revision`` is the server-owned tag-exclusion policy
+    revision the digest was built under. It is stamped into this envelope (not
+    the run-state note) so a later slice can detect a planning read made
+    against a stale policy; this slice records it only and adds no rejection.
+    ``None`` (legacy callers) omits the key.
+    """
+    if exclusion_settings_revision is not None and (
+        type(exclusion_settings_revision) is not int
+        or exclusion_settings_revision < 0
+    ):
+        raise ValueError(
+            "exclusion_settings_revision must be a nonnegative integer"
+        )
+    payload: dict[str, Any] = {"valid_date": str(valid_date), "items": index}
+    if exclusion_settings_revision is not None:
+        payload["exclusion_settings_revision"] = exclusion_settings_revision
     out_path = Path(vault_root) / digest_index_rel_path(valid_date)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     tmp = out_path.with_suffix(".json.tmp")
     tmp.write_text(
-        json.dumps({"valid_date": str(valid_date), "items": index},
-                   indent=2, ensure_ascii=False, default=str),
+        json.dumps(payload, indent=2, ensure_ascii=False, default=str),
         encoding="utf-8",
     )
     os.replace(tmp, out_path)

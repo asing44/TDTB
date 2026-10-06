@@ -6,16 +6,23 @@ habits ride as a capacity summary, and every degrade path surfaces in
 """
 from __future__ import annotations
 
+import json
 import sys
 from datetime import datetime
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 import main as main_mod  # noqa: E402
+import exclusion_settings as es  # noqa: E402
+import runstate as runstate_mod  # noqa: E402
 from calendar_bridge import CalendarInfo  # noqa: E402
+
+sys.path.insert(0, str(Path(__file__).parent.parent / "gather"))
+import tdtb_gather as gather  # noqa: E402
 
 CONFIG_REL_PATH = "00 - META/Skill-Configs/tdtb-bridger.md"
 
@@ -90,6 +97,141 @@ def _client(vault, todoist=None, store=None) -> TestClient:
     app = main_mod.create_app(vault_root=vault)
     app.state.build_read_clients = lambda v, cfg: (todoist, store)
     return TestClient(app)
+
+
+# ---------------------------------------------------------------------------
+# Tag-exclusion slice: the policy runs before selection on /plan-inputs
+# ---------------------------------------------------------------------------
+
+SPACE = "space-1"
+TAG_A = "5a25370b-f9a0-40cf-bc3a-0cab4744913c"
+TAG_B = "0d194525-c5a1-4af5-bb62-202b83006b5e"
+
+
+class FakeCapacitiesAdapter:
+    """Deterministic adapter double: rows in, rows out, no provider call."""
+
+    def __init__(self, items):
+        self._items = items
+        self.closed = False
+
+    def items_for_day(self, logical_day):
+        return SimpleNamespace(items=list(self._items), warnings=[])
+
+    def close(self):
+        self.closed = True
+
+
+def _capacities_row(name, tags, *, space=SPACE):
+    return {
+        "id": name, "name": name,
+        "path": f"capacities://{space}/{name}",
+        "identity": f"capacities:{space}:RootTask:{name}",
+        "source": "capacities",
+        "types": ["RootTask"],
+        "urgency": None, "deadline": None, "priority_score": 0,
+        "assigned": True, "blocks": 1, "duration": 30, "duration_minutes": 30,
+        "capacities_id": name, "capacities_space_id": space,
+        "capacities_structure_id": "RootTask",
+        "capacities_tags": tags,
+    }
+
+
+def _client_with_capacities(vault, items, todoist=None, store=None) -> TestClient:
+    app = main_mod.create_app(vault_root=vault)
+    app.state.build_read_clients = lambda v, cfg: (todoist, store)
+    app.state.build_capacities_adapter = lambda v, cfg: FakeCapacitiesAdapter(items)
+    return TestClient(app)
+
+
+def _save_tag_exclusion(vault: Path, tag_id: str = TAG_A) -> None:
+    es.save_settings(
+        vault,
+        expected_revision=0,
+        exclusions=[{"source": "capacities", "space_id": SPACE, "tag_id": tag_id}],
+    )
+
+
+def test_plan_inputs_applies_tag_exclusions_and_stamps_the_revision(vault):
+    _save_tag_exclusion(vault)
+    items = [
+        _capacities_row("Keep", [{"space_id": SPACE, "tag_id": TAG_B, "title": "chores"}]),
+        _capacities_row("Drop", [{"space_id": SPACE, "tag_id": TAG_A, "title": "habituals"}]),
+    ]
+    client = _client_with_capacities(vault, items)
+
+    body = client.get("/plan-inputs").json()
+
+    names = [r["name"] for r in body["digest"]["assigned"]]
+    assert "Keep" in names
+    assert "Drop" not in names
+    report = body["digest"]["exclusion_policy"]
+    assert report["revision"] == 1
+    assert report["mode"] == "exclude_any"
+    assert report["excluded_counts"] == {"assigned": 1, "pool": 0, "total": 1}
+    assert report["decisions"] == [{
+        "identity": f"capacities:{SPACE}:RootTask:Drop",
+        "name": "Drop",
+        "surface": "assigned",
+        "matched_tags": [{"space_id": SPACE, "tag_id": TAG_A, "title": "habituals"}],
+        "reason": "excluded_tag",
+    }]
+
+    # The dated index carries the server-owned policy stamp and retains the
+    # canonical tag identities on indexed rows.
+    today = gather.effective_date(datetime.now())
+    raw = json.loads(
+        (vault / runstate_mod.digest_index_rel_path(today)).read_text(encoding="utf-8")
+    )
+    assert raw["exclusion_settings_revision"] == 1
+    keep = next(i for i in raw["items"] if i["name"] == "Keep")
+    assert keep["capacities_tags"] == [
+        {"space_id": SPACE, "tag_id": TAG_B, "title": "chores"}
+    ]
+    assert all(i["name"] != "Drop" for i in raw["items"])
+
+
+def test_plan_inputs_tolerates_unusable_tags_when_no_policy_applies(vault):
+    row = _capacities_row("Unusable", None)
+    row["capacities_tags_error"] = "tags are title-only without typed identities"
+    client = _client_with_capacities(vault, [row])
+
+    body = client.get("/plan-inputs").json()
+
+    assert "Unusable" in [r["name"] for r in body["digest"]["assigned"]]
+    assert body["digest"]["exclusion_policy"]["warnings"]
+
+
+def test_plan_inputs_blocks_on_unusable_tag_payload_when_a_policy_applies(vault):
+    _save_tag_exclusion(vault)
+    row = _capacities_row("TitleOnly", None)
+    row["capacities_tags_error"] = "tags are title-only without typed identities"
+    client = _client_with_capacities(vault, [row])
+
+    response = client.get("/plan-inputs")
+
+    assert response.status_code == 503
+    detail = response.json()["detail"]
+    assert detail["code"] == "exclusion_policy_unusable_tags"
+    assert detail["tasks"] == [{
+        "identity": f"capacities:{SPACE}:RootTask:TitleOnly",
+        "name": "TitleOnly",
+        "surface": "assigned",
+        "reason": "tags are title-only without typed identities",
+    }]
+
+
+def test_plan_inputs_blocks_when_settings_storage_is_malformed(vault):
+    path = es.settings_path(vault)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("garbage", encoding="utf-8")
+    client = _client(vault)
+
+    response = client.get("/plan-inputs")
+
+    assert response.status_code == 503
+    assert response.json()["detail"]["code"] == "exclusion_settings_storage_error"
+    assert path.read_text(encoding="utf-8") == "garbage"
 
 
 def test_todoist_items_merge_into_digest(vault):

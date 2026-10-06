@@ -35,7 +35,7 @@ import sys
 import threading
 from datetime import date, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.staticfiles import StaticFiles
@@ -68,6 +68,8 @@ import time_engine  # noqa: E402
 import capacity as capacity_mod  # noqa: E402
 import capacities_settings  # noqa: E402
 import capacities_builder  # noqa: E402
+import exclusion_settings  # noqa: E402
+import tag_exclusions  # noqa: E402
 
 VAULT_ROOT_ENV = "TDTB_VAULT_ROOT"
 
@@ -165,6 +167,7 @@ def build_digest(
     order: list[str],
     ignore: dict[str, set[str]] | None = None,
     bias: dict[str, int] | None = None,
+    exclusion_policy: tag_exclusions.ExclusionPolicy | None = None,
 ) -> dict[str, Any]:
     """Two-surface digest per SKILL.md Phase 2/3: Assigned + ranked Suggested.
 
@@ -172,6 +175,14 @@ def build_digest(
     every surface: Todoist rows by ``todoist_id``, vault rows by relative
     ``path``, any row by case-insensitive name. The user-editable permanent
     hide list; counts reflect the post-filter sets.
+
+    ``exclusion_policy`` (the app-managed tag exclusion list) runs at ONE
+    stage, immediately AFTER the Ignore List and BEFORE assigned sorting, pool
+    dedup, ranking, and forgot-list derivation, and filters BOTH surfaces —
+    an excluded task must never reach the brief, and a source Assigned marker
+    must not override the policy. The stage's observability envelope rides the
+    digest as ``exclusion_policy``. Ignore List matches keep their earlier
+    attribution; only rows removed at this stage are reported.
 
     Assigned rows sort alphabetically (stable identity list, not a ranking);
     Suggested rows are the pool minus already-assigned paths, ranked per
@@ -187,13 +198,20 @@ def build_digest(
 
         assigned_items = [i for i in assigned_items if _kept(i)]
         pool_items = [i for i in pool_items if _kept(i)]
+    exclusion_report: dict[str, Any] | None = None
+    if exclusion_policy is not None:
+        assigned_items, pool_items, exclusion_report = (
+            tag_exclusions.apply_tag_exclusions(
+                assigned_items, pool_items, exclusion_policy
+            )
+        )
     assigned = sorted(assigned_items, key=lambda i: (i.get("name") or "", i.get("path") or ""))
     assigned_paths = {i.get("path") for i in assigned}
     suggestable = [i for i in pool_items if i.get("path") not in assigned_paths]
     suggested = rank_pool(suggestable, today, order, bias)
     unassigned_candidates, stale_assigned = build_forgot_lists(
         assigned, suggested, today, bias)
-    return {
+    digest = {
         "valid_date": str(today),
         "ranking_order": order,
         "assigned_count": len(assigned),
@@ -205,6 +223,9 @@ def build_digest(
         "unassigned_candidates": unassigned_candidates,
         "stale_assigned": stale_assigned,
     }
+    if exclusion_report is not None:
+        digest["exclusion_policy"] = exclusion_report
+    return digest
 
 
 FORGOT_LIST_CAP = 5
@@ -319,6 +340,10 @@ def build_digest_index(digest: dict[str, Any]) -> list[dict[str, Any]]:
                 "duration_minutes", "scheduled_start", "is_recurring",
                 "capacities_id", "capacities_space_id", "capacities_structure_id",
                 "capacities_completion_supported", "source_fingerprint",
+                # Tag-exclusion slice: canonical tag identities are retained
+                # on the indexed row so a later staleness guard can re-check
+                # the policy that produced this index without a provider read.
+                "capacities_tags",
             ):
                 if key in row and row.get(key) is not None:
                     entry[key] = row[key]
@@ -611,6 +636,43 @@ def _available_capacities_structures(vault: Path) -> list[str]:
     return sorted({structure.structure_id for structure in record.structures})
 
 
+def _exclusion_policy_or_block(vault: Path) -> tag_exclusions.ExclusionPolicy:
+    """Read the tag-exclusion policy for a planning surface, failing closed.
+
+    Malformed or unreadable storage blocks planning with a structured 503
+    rather than silently evaluating an empty policy — an empty brief would be
+    indistinguishable from "nothing is excluded". The settings routes keep
+    their own storage error semantics; this is the planning boundary only.
+    """
+    try:
+        read = exclusion_settings.read_settings(vault)
+    except exclusion_settings.ExclusionSettingsFormatError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "code": "exclusion_settings_storage_error",
+                "message": (
+                    "Tag exclusion settings storage is malformed or "
+                    "unsupported; planning is blocked until it is repaired."
+                ),
+            },
+        ) from exc
+    except (exclusion_settings.ExclusionSettingsStoreError, OSError) as exc:
+        # Bounded client-safe message — no absolute vault/cache path.
+        print(f"exclusion settings read failed: {exc}", file=sys.stderr)
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "code": "exclusion_settings_storage_error",
+                "message": (
+                    "Tag exclusion settings storage could not be read; "
+                    "planning is blocked until it is repaired."
+                ),
+            },
+        ) from exc
+    return tag_exclusions.ExclusionPolicy.from_read(read)
+
+
 # ---------------------------------------------------------------------------
 # App factory + security
 # ---------------------------------------------------------------------------
@@ -830,6 +892,83 @@ class CapacitiesSettingsSaveRequest(BaseModel):
                 ) from exc
             if flag is not True:
                 raise ValueError("active structure flags must be true")
+        return value
+
+
+class TagExclusionEntryRequest(BaseModel):
+    """One stable tag identity in the tag-exclusion save body.
+
+    ``source`` is a closed literal, the space id must be a non-empty
+    whitespace-free string, and ``tag_id`` must be a canonical UUID — the
+    same strictness the store re-checks before any file access. Titles and
+    ``#``-prefixed display names are never identities and never appear here.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    source: Literal["capacities"]
+    space_id: str
+    tag_id: str
+
+    @field_validator("space_id")
+    @classmethod
+    def _space_valid(cls, value: str) -> str:
+        try:
+            return exclusion_settings.canonical_space_id(value)
+        except ValueError as exc:
+            raise ValueError(f"invalid exclusion space id: {value!r}") from exc
+
+    @field_validator("tag_id")
+    @classmethod
+    def _tag_valid(cls, value: str) -> str:
+        try:
+            return exclusion_settings.canonical_tag_id(value)
+        except ValueError as exc:
+            raise ValueError(f"invalid exclusion tag id: {value!r}") from exc
+
+
+class TagExclusionDimensionsRequest(BaseModel):
+    """The exclusion dimension object for the save body.
+
+    Closed on purpose: the only supported dimension today is ``tags``. An
+    unknown dimension (``labels``, ...) is rejected here rather than silently
+    accepted — adding one later must be an explicit schema change.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    tags: list[TagExclusionEntryRequest]
+
+    @field_validator("tags")
+    @classmethod
+    def _unique(
+        cls, value: list[TagExclusionEntryRequest]
+    ) -> list[TagExclusionEntryRequest]:
+        seen: set[tuple[str, str, str]] = set()
+        for entry in value:
+            key = (entry.source, entry.space_id, entry.tag_id)
+            if key in seen:
+                raise ValueError("duplicate tag exclusion identity")
+            seen.add(key)
+        return value
+
+
+class ExclusionSettingsSaveRequest(BaseModel):
+    """Full-replacement body for POST /settings/exclusions/save.
+
+    ``expected_revision`` drives the server-side stale-write check; ``version``
+    and the new ``revision`` are server-owned and deliberately absent."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    expected_revision: StrictInt
+    exclusions: TagExclusionDimensionsRequest
+
+    @field_validator("expected_revision")
+    @classmethod
+    def _revision_nonnegative(cls, value: int) -> int:
+        if value < 0:
+            raise ValueError("expected_revision must be a nonnegative integer")
         return value
 
 
@@ -1653,6 +1792,165 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
             ) from exc
         return {"settings": saved.as_dict(), "persisted": True}
 
+    def _tag_catalog(vault: Path) -> dict[str, Any]:
+        """Advisory RootTag catalog for the exclusion drawer.
+
+        Degrades instead of hiding saved settings: an unconfigured source, a
+        broken mapping/credential, or a provider failure yields a bounded
+        status + warning while the settings themselves still answer. The
+        catalog is advisory UI metadata — never persisted as policy and never
+        derived from filtered digest rows.
+        """
+        unconfigured: dict[str, Any] = {
+            "status": "unconfigured", "space_id": None, "tags": [], "warnings": [],
+        }
+        build = app.state.build_capacities_adapter
+        if build is None:
+            return unconfigured
+        try:
+            adapter = build(vault, {})
+        except Exception as exc:  # noqa: BLE001 — advisory boundary degrades
+            return {
+                "status": "unavailable", "space_id": None, "tags": [],
+                "warnings": [f"Capacities tag catalog unavailable ({exc})"],
+            }
+        if adapter is None:
+            return unconfigured
+        try:
+            list_tags = getattr(adapter, "list_tags", None)
+            if not callable(list_tags):
+                return {
+                    "status": "unavailable", "space_id": None, "tags": [],
+                    "warnings": ["Capacities adapter exposes no tag catalog"],
+                }
+            result = list_tags()
+        except Exception as exc:  # noqa: BLE001 — advisory boundary degrades
+            return {
+                "status": "unavailable", "space_id": None, "tags": [],
+                "warnings": [f"Capacities tag catalog unavailable ({exc})"],
+            }
+        finally:
+            close = getattr(adapter, "close", None)
+            if callable(close):
+                try:
+                    close()
+                except Exception:  # noqa: BLE001 — cleanup must not mask the read
+                    pass
+        if not isinstance(result, dict):
+            return {
+                "status": "unavailable", "space_id": None, "tags": [],
+                "warnings": ["Capacities tag catalog returned a malformed result"],
+            }
+        status = str(result.get("status") or "")
+        if status not in {"complete", "partial", "unavailable", "unconfigured"}:
+            status = "unavailable"
+        tags: list[dict[str, str]] = []
+        for row in result.get("tags") or []:
+            if (
+                isinstance(row, dict)
+                and isinstance(row.get("id"), str) and row["id"]
+                and isinstance(row.get("title"), str) and row["title"]
+            ):
+                tags.append({"id": row["id"], "title": row["title"]})
+        space_id = result.get("space_id")
+        return {
+            "status": status,
+            "space_id": space_id if isinstance(space_id, str) and space_id else None,
+            "tags": tags,
+            "warnings": [str(w) for w in (result.get("warnings") or []) if str(w)],
+        }
+
+    @app.get("/settings/exclusions")
+    def get_exclusion_settings() -> dict:
+        """Tokenless local read of the persisted tag-exclusion policy.
+
+        Reads exactly one vault cache file (or reports the empty default when
+        it is absent); the advisory tag catalog may build a provider adapter,
+        but its failure degrades to a status + warning and never hides the
+        saved settings. Malformed/unsupported storage fails closed with a
+        bounded 500 and leaves the bytes untouched."""
+        vault = resolve_vault_root()
+        try:
+            result = exclusion_settings.read_settings(vault)
+        except (exclusion_settings.ExclusionSettingsStoreError, OSError) as exc:
+            # Bounded client-safe message — no absolute vault/cache path.
+            print(f"exclusion settings read failed: {exc}", file=sys.stderr)
+            raise HTTPException(
+                status_code=500,
+                detail={
+                    "code": "exclusion_settings_storage_error",
+                    "message": (
+                        "Tag exclusion settings storage could not be read; "
+                        "the existing file was preserved."
+                    ),
+                },
+            ) from exc
+        return {
+            "settings": result.settings.as_dict(),
+            "persisted": result.persisted,
+            "tag_catalog": _tag_catalog(vault),
+        }
+
+    @app.post("/settings/exclusions/save", dependencies=[Depends(require_token)])
+    def post_exclusion_settings_save(body: ExclusionSettingsSaveRequest) -> dict:
+        """Explicit, full-replacement save of the tag-exclusion policy.
+
+        The complete editable policy is supplied; ``version`` and the new
+        ``revision`` are server-owned. The current revision is compared under
+        the vault lock: a stale ``expected_revision`` is a 409, malformed
+        existing storage is a 409, and a lock/read/write failure is a 500 —
+        every failure path preserves the original bytes."""
+        vault = resolve_vault_root()
+        try:
+            saved = exclusion_settings.save_settings(
+                vault,
+                expected_revision=body.expected_revision,
+                exclusions=[
+                    exclusion_settings.TagExclusion(
+                        source=entry.source,
+                        space_id=entry.space_id,
+                        tag_id=entry.tag_id,
+                    )
+                    for entry in body.exclusions.tags
+                ],
+            )
+        except exclusion_settings.ExclusionSettingsConflictError as exc:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "exclusion_settings_conflict",
+                    "message": (
+                        "Tag exclusion settings changed since they were read; "
+                        "reload and retry."
+                    ),
+                },
+            ) from exc
+        except exclusion_settings.ExclusionSettingsFormatError as exc:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "exclusion_settings_storage_error",
+                    "message": (
+                        "Tag exclusion settings storage is malformed or "
+                        "unsupported; the existing file was preserved."
+                    ),
+                },
+            ) from exc
+        except (exclusion_settings.ExclusionSettingsStoreError, OSError) as exc:
+            # Bounded client-safe message — no absolute vault/cache path.
+            print(f"exclusion settings save failed: {exc}", file=sys.stderr)
+            raise HTTPException(
+                status_code=500,
+                detail={
+                    "code": "exclusion_settings_storage_error",
+                    "message": (
+                        "Tag exclusion settings could not be saved; "
+                        "the existing file was preserved."
+                    ),
+                },
+            ) from exc
+        return {"settings": saved.as_dict(), "persisted": True}
+
     @app.get("/plan-inputs")
     def get_plan_inputs() -> dict:
         """T16: read-only assembly of the {digest, config, anchored_blocks}
@@ -1747,16 +2045,21 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
             vault_all + t_assigned + t_pool,
             capacities_items,
         )
-        digest = build_digest(
-            run_data["pool_items"] + t_pool,
-            run_data["assigned_items"] + t_assigned + capacities_items,
-            today,
-            order,
-            ignore=(
-                result.config.get_ignore_list() if result.config is not None else None
-            ),
-            bias=deferrals.bias_map(vault, today),  # T1 defer-with-memory
-        )
+        exclusion_policy = _exclusion_policy_or_block(vault)
+        try:
+            digest = build_digest(
+                run_data["pool_items"] + t_pool,
+                run_data["assigned_items"] + t_assigned + capacities_items,
+                today,
+                order,
+                ignore=(
+                    result.config.get_ignore_list() if result.config is not None else None
+                ),
+                bias=deferrals.bias_map(vault, today),  # T1 defer-with-memory
+                exclusion_policy=exclusion_policy,
+            )
+        except tag_exclusions.TagExclusionBlocked as exc:
+            raise HTTPException(status_code=503, detail=exc.diagnostics) from exc
 
         # T4 (cockpit-overhaul): assigned rows gain resolved `blocks` per the
         # locked precedence (Todoist-native → Preset → press duration_min → 1).
@@ -1869,7 +2172,15 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
         # Its own dated file, NOT a run-state key: writing run-state here would
         # materialise the dated note, after which every later day_setup read
         # treats the skeleton's empty defaults as user-confirmed.
-        runstate.write_digest_index(vault, today, build_digest_index(digest))
+        runstate.write_digest_index(
+            vault,
+            today,
+            build_digest_index(digest),
+            # Server-owned policy stamp: the revision this digest was built
+            # under. Recorded for a later staleness guard; this slice adds no
+            # refresh rejection.
+            exclusion_settings_revision=exclusion_policy.revision,
+        )
 
         return {
             "digest": digest,
@@ -2442,16 +2753,21 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
                 if runtime_actions.drop_identity_of(i) not in dropped_ids
             ]
         cfg_result = config_reader.read_config(vault)
-        return build_digest(
-            pool_items,
-            assigned_items,
-            today,
-            order,
-            ignore=(
-                cfg_result.config.get_ignore_list() if cfg_result.config is not None else None
-            ),
-            bias=deferrals.bias_map(vault, today),  # T1 defer-with-memory
-        )
+        exclusion_policy = _exclusion_policy_or_block(vault)
+        try:
+            return build_digest(
+                pool_items,
+                assigned_items,
+                today,
+                order,
+                ignore=(
+                    cfg_result.config.get_ignore_list() if cfg_result.config is not None else None
+                ),
+                bias=deferrals.bias_map(vault, today),  # T1 defer-with-memory
+                exclusion_policy=exclusion_policy,
+            )
+        except tag_exclusions.TagExclusionBlocked as exc:
+            raise HTTPException(status_code=503, detail=exc.diagnostics) from exc
 
     @app.post("/adjust", dependencies=[Depends(require_token)])
     def post_adjust(body: AdjustRequest) -> dict:

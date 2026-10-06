@@ -228,6 +228,77 @@ class TestDigestDeterminism:
         assert r1.json() == r2.json()
 
 
+class TestDigestTagExclusions:
+    """Tag-exclusion slice: /digest is the second caller and must apply the
+    same pre-selection policy and block identically on malformed storage."""
+
+    SPACE = "space-1"
+    TAG_A = "5a25370b-f9a0-40cf-bc3a-0cab4744913c"
+    TAG_B = "0d194525-c5a1-4af5-bb62-202b83006b5e"
+
+    @staticmethod
+    def _row(name: str, tag_id: str, title: str) -> dict:
+        return {
+            "id": name, "name": name,
+            "path": f"capacities://space-1/{name}",
+            "identity": f"capacities:space-1:RootTask:{name}",
+            "source": "capacities",
+            "types": ["RootTask"],
+            "assigned": True,
+            "capacities_space_id": "space-1",
+            "capacities_tags": [
+                {"space_id": "space-1", "tag_id": tag_id, "title": title}
+            ],
+        }
+
+    def _save(self, vault) -> None:
+        import exclusion_settings as es_mod
+        es_mod.save_settings(
+            vault,
+            expected_revision=0,
+            exclusions=[
+                {"source": "capacities", "space_id": self.SPACE, "tag_id": self.TAG_A}
+            ],
+        )
+
+    def test_digest_applies_tag_exclusions_on_both_surfaces(self, client, vault):
+        self._save(vault)
+        assigned = self._row("Assigned Drop", self.TAG_A, "habituals")
+        pool_drop = self._row("Pool Drop", self.TAG_A, "habituals")
+        keep = self._row("Keep", self.TAG_B, "chores")
+
+        response = client.post("/digest", headers=_auth(client), json={
+            "pool_items": [pool_drop, keep],
+            "assigned_items": [assigned],
+            "today": "2026-07-12",
+        })
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["assigned"] == []
+        assert [r["name"] for r in body["suggested"]] == ["Keep"]
+        report = body["exclusion_policy"]
+        assert report["revision"] == 1
+        assert report["mode"] == "exclude_any"
+        assert report["excluded_counts"] == {"assigned": 1, "pool": 1, "total": 2}
+        assert [d["surface"] for d in report["decisions"]] == ["assigned", "pool"]
+        assert report["decisions"][0]["reason"] == "excluded_tag"
+
+    def test_digest_blocks_when_settings_storage_is_malformed(self, client, vault):
+        import exclusion_settings as es_mod
+        path = es_mod.settings_path(vault)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("garbage", encoding="utf-8")
+
+        response = client.post("/digest", headers=_auth(client), json={
+            "pool_items": POOL_ITEMS, "assigned_items": [], "today": "2026-07-12",
+        })
+
+        assert response.status_code == 503
+        assert response.json()["detail"]["code"] == "exclusion_settings_storage_error"
+        assert path.read_text(encoding="utf-8") == "garbage"
+
+
 class TestRecentSelections:
     SEL = [{"id": "t1", "path": "50 - Operations/Projects/Alpha.md", "blocks": 2}]
 

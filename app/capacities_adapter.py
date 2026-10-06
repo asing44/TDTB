@@ -277,6 +277,60 @@ def _status_display_tokens(prop: Any, prop_id: str) -> set[str]:
     return {_normalized(value) for value in values if value is not None and _text(value)}
 
 
+#: Capacities' tag property id on task-like structures. Tags are typed
+#: ``entity`` references to ``RootTag`` objects; the flat top-level ``tags``
+#: title array the API also returns is presentation only and never identity.
+#: A mapping-driven tag property name is a later concern — this slice reads
+#: the canonical property directly, exactly like the live contract does.
+TAGS_PROPERTY = "tags"
+
+#: Capacities' canonical tag-object structure. Enumerated for the settings
+#: catalog with bounded pagination; it is not a planning mapping and never
+#: contributes candidate rows.
+ROOT_TAG_STRUCTURE = "RootTag"
+
+
+def _capacities_tag_refs(
+    prop: Any, flat_tags: Any, space_id: str
+) -> tuple[list[dict[str, str]] | None, str | None]:
+    """Extract structured tag references from a hydrated object.
+
+    Returns ``(refs, None)`` when the payload is usable (possibly empty), or
+    ``(None, reason)`` when it cannot be evaluated by identity. The typed
+    entity's ``id`` AND ``title`` are preserved directly — the generic
+    ``_property_tokens`` helper flattens the pair into loose tokens and drops
+    the title, which would destroy structured identity. The flat top-level
+    ``tags`` title array is never used to derive identity: a non-empty array
+    without a typed property is title-only metadata.
+    """
+    if prop is None:
+        if flat_tags is None or (isinstance(flat_tags, list) and not flat_tags):
+            return [], None
+        return None, "tags are title-only without typed identities"
+    if not isinstance(prop, dict):
+        return None, "tags property is malformed"
+    kind = _text(prop.get("type"))
+    if kind != "entity":
+        return None, "tags property is not an entity property"
+    payload = prop.get("entity")
+    if not isinstance(payload, list):
+        return None, "tags property has a non-list entity payload"
+    refs: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for entry in payload:
+        if not isinstance(entry, dict):
+            return None, "tags property contains a malformed reference"
+        tag_id = _text(entry.get("id"))
+        if not tag_id:
+            return None, "tags property contains a reference without an id"
+        if tag_id in seen:
+            continue
+        seen.add(tag_id)
+        title = _text(entry.get("title")) or _text(entry.get("name"))
+        refs.append({"space_id": space_id, "tag_id": tag_id, "title": title})
+    return refs, None
+
+
 def _property_text(prop: Any, prop_id: str) -> str:
     kind, payload = _property_payload(prop, prop_id)
     if kind not in {"title", "text", "richText"}:
@@ -654,7 +708,15 @@ class CapacitiesAdapter:
         blocks = duration / 30
         if isinstance(blocks, float) and blocks.is_integer():
             blocks = int(blocks)
-        return {
+        # Structured tag references ride the candidate row for the
+        # pre-selection exclusion matcher. Identity is (space_id, tag_id);
+        # ``title`` is current display metadata only. ``None`` means the
+        # payload could not be evaluated by identity and the matcher decides
+        # (blocking while an applicable exclusion is active).
+        tag_refs, tag_error = _capacities_tag_refs(
+            properties.get(TAGS_PROPERTY), obj.get("tags"), self.config.space_id
+        )
+        row = {
             "id": title,
             "name": title,
             "path": path,
@@ -681,7 +743,11 @@ class CapacitiesAdapter:
                 "source_assigned": decision.provenance.source_assigned,
                 "excluded": decision.provenance.exclusion_matched,
             },
+            "capacities_tags": tag_refs,
         }
+        if tag_error is not None:
+            row["capacities_tags_error"] = tag_error
+        return row
 
     def items_for_day_from_objects(
         self, logical_day: date, objects: Sequence[dict[str, Any]]
@@ -760,6 +826,94 @@ class CapacitiesAdapter:
             )
         all_items.sort(key=lambda row: (_normalized(row["name"]), row["identity"]))
         return CapacitiesReadResult(all_items, warnings, page_count)
+
+    def list_tags(self) -> dict[str, Any]:
+        """Enumerate the space's canonical ``RootTag`` objects for the catalog.
+
+        Deliberately independent of the configured structure mappings: the
+        settings drawer's tag catalog must be able to answer even while a
+        mapping is broken, and it is never derived from filtered digest rows.
+        Pagination is cursor-based and bounded by ``max_pages``; a partial
+        listing reports ``status="partial"`` with bounded warnings rather
+        than silently truncating. The first page failing raises so the caller
+        can degrade the whole catalog; later failures keep what was read.
+        """
+        tags: list[dict[str, str]] = []
+        warnings: list[str] = []
+        seen_ids: set[str] = set()
+        seen_cursors: set[str] = set()
+        cursor: str | None = None
+        pages = 0
+        status = "complete"
+        while True:
+            if pages >= self.config.max_pages:
+                status = "partial"
+                warnings.append(
+                    f"tag catalog stopped after {self.config.max_pages} page(s) "
+                    "— the listing is incomplete"
+                )
+                break
+            try:
+                page = self.provider.list_objects(ROOT_TAG_STRUCTURE, cursor)
+            except CapacitiesRateLimited:
+                status = "partial"
+                warnings.append(
+                    "tag catalog hit the provider rate limit — the listing is "
+                    "incomplete"
+                )
+                break
+            except Exception as exc:  # noqa: BLE001 — provider boundary
+                if not tags and pages == 0:
+                    raise
+                status = "partial"
+                warnings.append(
+                    f"tag catalog read failed ({exc}) — the listing is incomplete"
+                )
+                break
+            if not isinstance(page, dict) or not isinstance(page.get("objects"), list):
+                if not tags and pages == 0:
+                    raise CapacitiesContractError("Capacities tag catalog page is malformed")
+                status = "partial"
+                warnings.append(
+                    "tag catalog page is malformed — the listing is incomplete"
+                )
+                break
+            for row in page["objects"]:
+                if not isinstance(row, dict):
+                    status = "partial"
+                    warnings.append("skipped a malformed Capacities tag row")
+                    continue
+                tag_id = _text(row.get("id"))
+                title = _text(row.get("title"))
+                if not tag_id or not title:
+                    status = "partial"
+                    warnings.append("skipped a Capacities tag row without an id and title")
+                    continue
+                if tag_id in seen_ids:
+                    continue
+                seen_ids.add(tag_id)
+                tags.append({"id": tag_id, "title": title})
+            pages += 1
+            next_cursor = page.get("next_cursor", page.get("nextCursor"))
+            if next_cursor in (None, ""):
+                break
+            next_cursor = _text(next_cursor)
+            if next_cursor in seen_cursors:
+                status = "partial"
+                warnings.append(
+                    "tag catalog repeated a pagination cursor — the listing is "
+                    "incomplete"
+                )
+                break
+            seen_cursors.add(next_cursor)
+            cursor = next_cursor
+        tags.sort(key=lambda row: (_normalized(row["title"]), row["id"]))
+        return {
+            "status": status,
+            "space_id": self.config.space_id,
+            "tags": tags,
+            "warnings": warnings,
+        }
 
     def complete(
         self, object_id: str, *, expected_fingerprint: str | None = None
