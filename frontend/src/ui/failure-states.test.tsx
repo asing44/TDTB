@@ -4,7 +4,7 @@
    semantics are covered in store.test.ts; these assert the UI says the
    right thing. */
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent } from "@testing-library/preact";
 
 afterEach(cleanup);
@@ -17,6 +17,9 @@ import { ReadinessStrip } from "./ReadinessStrip";
 import { ApprovalDrawer } from "./ApprovalDrawer";
 import { CalendarImpact } from "./CalendarImpact";
 import { makeHarness } from "./test-harness";
+import { fingerprintFixedInputs } from "../model/fingerprint";
+import { fixedInputsOf } from "../fixtures/scenarios";
+import type { PlanInputs } from "../model/types";
 
 describe("empty day", () => {
   it("queue explains the upstream contract instead of claiming everything placed", () => {
@@ -40,6 +43,128 @@ describe("source degradation", () => {
     // T12i: the roll-up floats as pills; details open on demand.
     fireEvent.click(alertsView.container.querySelector(".alert-pill--warning") as Element);
     expect(alertsView.getByText(/Todoist read failed \(timeout\)/)).toBeTruthy();
+  });
+});
+
+// -- Capacities partial coverage (always-visible surface) --------------------
+
+const capacitiesBudgetWarning = (evaluated: number, deferred: number): string =>
+  `Capacities partial — ${evaluated} evaluated · ${deferred} deferred across ` +
+  "contributing structures. Content-read budget reached. Wait at least a " +
+  "minute, then Refresh sources to continue.";
+
+function withDeferred(inputs: PlanInputs, deferred: number): PlanInputs {
+  return {
+    ...inputs,
+    sourceWarnings: [capacitiesBudgetWarning(20, deferred)],
+    sourceHealth: "degraded",
+  };
+}
+
+/** Dispatch a completed refresh whose read model was `inputs`. */
+function refreshOk(
+  h: ReturnType<typeof makeHarness>,
+  inputs: PlanInputs,
+  at = "2026-07-18T09:15:00.000Z",
+): void {
+  h.store.dispatch({
+    type: "SOURCE_REFRESH_OK",
+    inputs,
+    ledger: h.store.getState().ledger!,
+    fingerprint: fingerprintFixedInputs(fixedInputsOf(inputs)),
+    anchoredSourceFingerprint: inputs.anchoredSourceFingerprint,
+    planningConfigFingerprint: inputs.planningConfigFingerprint,
+    at,
+  });
+}
+
+describe("Capacities partial coverage", () => {
+  it("shows the verbatim warning beside Sources on initial load, without opening anything", () => {
+    const h = makeHarness("ready", (sc) => {
+      sc.inputs = withDeferred(sc.inputs, 51);
+    });
+    const { getByText, container } = h.ui(<ReadinessStrip />);
+    const readiness = container.querySelector('[aria-label="Readiness"]') as HTMLElement;
+    expect(readiness.textContent).toContain(capacitiesBudgetWarning(20, 51));
+    expect(getByText(/Content-read budget reached/)).toBeTruthy();
+    // The 5-minute cache and what "wait at least a minute" means are explained
+    // where the operator would otherwise ask why a repeat refresh helps.
+    expect(readiness.textContent).toMatch(/cached machine-locally for 5 minutes/);
+    expect(readiness.textContent).toMatch(/provider's request window/);
+  });
+
+  it("stays visible while a refresh is loading", () => {
+    const h = makeHarness("ready", (sc) => {
+      sc.inputs = withDeferred(sc.inputs, 51);
+    });
+    const { getByText } = h.ui(<ReadinessStrip />);
+    act(() => {
+      h.store.dispatch({ type: "SOURCE_REFRESH_START" });
+    });
+    expect(getByText(/51 deferred across contributing structures/)).toBeTruthy();
+    expect(getByText(/Sources ⟳ refreshing…/)).toBeTruthy();
+  });
+
+  it("keeps the last read's warning when a refresh fails", () => {
+    const h = makeHarness("ready", (sc) => {
+      sc.inputs = withDeferred(sc.inputs, 51);
+    });
+    const { getByText } = h.ui(<ReadinessStrip />);
+    act(() => {
+      h.store.dispatch({ type: "SOURCE_REFRESH_FAIL", error: "provider timeout" });
+    });
+    expect(getByText(/51 deferred across contributing structures/)).toBeTruthy();
+    expect(
+      getByText(/Refresh failed: provider timeout — showing last good data/),
+    ).toBeTruthy();
+  });
+
+  it("a completed 'no changes' refresh still reports the remaining deferrals", () => {
+    const h = makeHarness("ready", (sc) => {
+      sc.inputs = withDeferred(sc.inputs, 51);
+    });
+    const { container, getByText } = h.ui(<ReadinessStrip />);
+    act(() => {
+      refreshOk(h, h.store.getState().inputs!);
+    });
+    const status = container.querySelector(".rail__refresh") as HTMLElement;
+    expect(status.textContent).toContain("no changes");
+    expect(status.textContent).toContain("Capacities partial: 51 deferred");
+    expect(getByText(/51 deferred across contributing structures/)).toBeTruthy();
+  });
+
+  it("successive refreshes show the deferral count shrinking", () => {
+    const h = makeHarness("ready", (sc) => {
+      sc.inputs = withDeferred(sc.inputs, 51);
+    });
+    const { queryByText, container } = h.ui(<ReadinessStrip />);
+    const warning = () =>
+      (container.querySelector(".rail__partial-warning") as HTMLElement).textContent!;
+    expect(warning()).toContain("51 deferred");
+    act(() => {
+      refreshOk(h, withDeferred(h.store.getState().inputs!, 30), "2026-07-18T09:20:00.000Z");
+    });
+    expect(warning()).toContain("30 deferred");
+    expect(queryByText(/51 deferred/)).toBeNull();
+  });
+
+  it("never auto-continues: a partial state schedules no refresh and no retry", () => {
+    vi.useFakeTimers();
+    try {
+      const h = makeHarness("ready", (sc) => {
+        sc.inputs = withDeferred(sc.inputs, 51);
+      });
+      const spy = vi.spyOn(h.controller, "refreshSources");
+      const { getByText } = h.ui(<ReadinessStrip />);
+      expect(vi.getTimerCount()).toBe(0);
+      vi.advanceTimersByTime(15 * 60 * 1000);
+      expect(spy).not.toHaveBeenCalled();
+      // The warning survives the wait: it is not a transient toast, and the
+      // surface never self-clears or self-retries.
+      expect(getByText(/51 deferred/)).toBeTruthy();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

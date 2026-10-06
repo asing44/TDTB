@@ -135,6 +135,9 @@ export class FixtureAdapter implements Adapter {
   private anchoredSourceDrifted = false;
   private sourceDown = false;
   private assignedDrifted = false;
+  /** Pending Capacities partial-coverage state for the next reads: null means
+      the scenario's own health, 0 means a full-coverage read. */
+  private capacitiesDeferred: number | null = null;
   private capacitiesSettings: CapacitiesSettings = {
     version: 1,
     revision: 0,
@@ -193,6 +196,33 @@ export class FixtureAdapter implements Adapter {
   simulateAssignedDrift(): void {
     this.assignedDrifted = true;
   }
+  /** Simulate a Capacities partial-coverage read: every read reports this many
+      rows still deferred (0 restores full coverage), so repeated refreshes can
+      model the cache converging on the remainder. */
+  simulateCapacitiesCoverage(deferred: number): void {
+    this.capacitiesDeferred = deferred;
+  }
+
+  /** Project the simulated Capacities coverage onto a read model, mirroring
+      the adapter's budget-variant warning verbatim. */
+  private applyCapacitiesCoverage(inputs: PlanInputs): PlanInputs {
+    const deferred = this.capacitiesDeferred;
+    if (deferred === null) return inputs;
+    const others = inputs.sourceWarnings.filter(
+      (warning) => !warning.startsWith("Capacities partial"),
+    );
+    if (deferred <= 0) return { ...inputs, sourceWarnings: others, sourceHealth: "ok" };
+    return {
+      ...inputs,
+      sourceWarnings: [
+        ...others,
+        `Capacities partial — 20 evaluated · ${deferred} deferred across contributing ` +
+          "structures. Content-read budget reached. Wait at least a minute, then " +
+          "Refresh sources to continue.",
+      ],
+      sourceHealth: "degraded",
+    };
+  }
 
   /** Fold pending simulated drift into the canonical inputs so a refresh
       observes it the way production observes real upstream change. */
@@ -250,7 +280,7 @@ export class FixtureAdapter implements Adapter {
     if (this.anchoredSourceDrifted) {
       fixed.anchoredSourceFingerprint += "-drifted";
     }
-    const inputs = structuredClone(this.inputs);
+    const inputs = this.applyCapacitiesCoverage(structuredClone(this.inputs));
     if (this.anchoredSourceDrifted) {
       inputs.anchoredSourceFingerprint += "-drifted";
     }
@@ -259,7 +289,7 @@ export class FixtureAdapter implements Adapter {
 
   async loadPlanInputs(): Promise<PlanInputs> {
     await wait(LATENCY_MS);
-    return structuredClone(this.inputs);
+    return this.applyCapacitiesCoverage(structuredClone(this.inputs));
   }
 
   async billedLedger(): Promise<Ledger> {

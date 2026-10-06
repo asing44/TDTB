@@ -472,6 +472,23 @@ describe("explicit source refresh (locked decision 20)", () => {
       "/billed-ledger",
     ]);
   });
+
+  it("returns a partial Capacities read as data — warning verbatim, GET-only, no retry", async () => {
+    const warning =
+      "Capacities partial — 20 evaluated · 51 deferred across contributing " +
+      "structures. Content-read budget reached. Wait at least a minute, then " +
+      "Refresh sources to continue.";
+    route("/plan-inputs", { ...planInputs, source_warnings: [warning] });
+    const r = await new ApiAdapter().refreshSources();
+    expect(r.inputs.sourceWarnings).toEqual([warning]);
+    expect(r.inputs.sourceHealth).toBe("degraded");
+    // One read per endpoint; a partial source is not retried behind the user's back.
+    expect(calls.map((c) => c.path.split("?")[0])).toEqual([
+      "/plan-inputs",
+      "/billed-ledger",
+    ]);
+    expect(calls.every((c) => (c.init?.method ?? "GET") === "GET")).toBe(true);
+  });
 });
 
 describe("T12 qualification: token rotation + error detail", () => {

@@ -7,6 +7,7 @@ import { describe, expect, it } from "vitest";
 import {
   blocksLabel,
   calendarWarnings,
+  capacitiesCoverageOf,
   capacitiesSettingsToWire,
   daySetupToWire,
   emptyTagCatalog,
@@ -359,6 +360,54 @@ describe("degraded sources (plan-inputs-degraded.json)", () => {
     const warning = "Calendar: 1 duplicate event representation(s) merged by canonical identity";
     expect(calendarWarnings([warning])).toEqual([warning]);
     expect(sourceHealthOf([warning])).toBe("degraded");
+  });
+});
+
+describe("Capacities partial coverage (source_warnings)", () => {
+  const budgetWarning =
+    "Capacities partial — 20 evaluated · 51 deferred across contributing " +
+    "structures. Content-read budget reached. Wait at least a minute, then " +
+    "Refresh sources to continue.";
+  const rateWarning =
+    "Capacities partial — 2 evaluated · 2 deferred across contributing " +
+    "structures. Provider rate limit (30 requests per minute) reached. Wait " +
+    "at least a minute, then Refresh sources to continue.";
+
+  it("parses the evaluated/deferred counts and keeps the warning verbatim", () => {
+    expect(capacitiesCoverageOf([budgetWarning])).toEqual({
+      warnings: [budgetWarning],
+      evaluated: 20,
+      deferred: 51,
+      limit: "content-read budget",
+    });
+  });
+
+  it("distinguishes the provider rate-limit variant", () => {
+    const c = capacitiesCoverageOf([rateWarning]);
+    expect(c!.limit).toBe("provider rate limit");
+    expect(c!.deferred).toBe(2);
+    expect(c!.warnings).toEqual([rateWarning]);
+  });
+
+  it("is null when no Capacities partial warning is present", () => {
+    expect(capacitiesCoverageOf([])).toBeNull();
+    expect(capacitiesCoverageOf(["Calendar read failed (timeout)"])).toBeNull();
+  });
+
+  it("keeps an unparsable Capacities warning visible with unknown counts", () => {
+    const warning = "Capacities partial — details unavailable";
+    const c = capacitiesCoverageOf([warning]);
+    expect(c!.warnings).toEqual([warning]);
+    expect(c!.evaluated).toBeNull();
+    expect(c!.deferred).toBeNull();
+    expect(c!.limit).toBe("unknown");
+  });
+
+  it("a Capacities partial read is degraded health but not a calendar gate", () => {
+    const p = projectPlanInputs({ ...planInputs, source_warnings: [budgetWarning] });
+    expect(p.sourceWarnings).toEqual([budgetWarning]);
+    expect(p.sourceHealth).toBe("degraded");
+    expect(calendarWarnings(p.sourceWarnings)).toEqual([]);
   });
 });
 

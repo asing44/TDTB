@@ -16,6 +16,8 @@ import type {
   AnchoredKind,
   AssignedItem,
   Capacity,
+  CapacitiesCoverage,
+  CapacitiesLimit,
   CapacitiesSettings,
   CapacitiesSettingsDraft,
   CapacitiesNativeTaskAutoPolicy,
@@ -784,6 +786,35 @@ export function projectDaySemantics(wire: Wire): DaySemantics {
 
 const advisoryReminderOmission =
   /^\s*calendar omission: .*zero or negative duration \(reminder-style marker\)\s*$/i;
+
+const capacitiesPartialPrefix = "Capacities partial";
+const capacitiesPartialCounts = /^Capacities partial — (\d+) evaluated · (\d+) deferred\b/;
+
+/** Capacities partial-coverage projection over the VERBATIM source warnings.
+    The adapter owns the wording (content-read budget vs provider rate limit)
+    and this projection only parses counts/reason so the refresh summary can
+    say a completed refresh did not mean complete coverage. `warnings` stays
+    authoritative for display — it is never rewritten from these fields.
+    Null means the read had full coverage. */
+export function capacitiesCoverageOf(warnings: string[]): CapacitiesCoverage | null {
+  const rows = warnings.filter((warning) => warning.startsWith(capacitiesPartialPrefix));
+  if (rows.length === 0) return null;
+  let evaluated: number | null = null;
+  let deferred: number | null = null;
+  let limit: CapacitiesLimit = "unknown";
+  for (const row of rows) {
+    const counts = capacitiesPartialCounts.exec(row);
+    if (counts && evaluated === null) {
+      evaluated = Number(counts[1]);
+      deferred = Number(counts[2]);
+    }
+    if (limit === "unknown") {
+      if (/provider rate limit/i.test(row)) limit = "provider rate limit";
+      else if (/content-read budget/i.test(row)) limit = "content-read budget";
+    }
+  }
+  return { warnings: rows, evaluated, deferred, limit };
+}
 
 export function sourceHealthOf(warnings: string[]): SourceHealth {
   return warnings.some((warning) => !advisoryReminderOmission.test(warning))

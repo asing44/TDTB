@@ -558,6 +558,30 @@
   font-size: 11px;
   color: var(--t-muted);
 }
+/* The always-visible Capacities partial-coverage surface beside Sources: the
+   adapter's verbatim warning plus the cache/window explanation. A partial read
+   must not make the plan look wrong for no visible reason. */
+.rail__partial {
+  flex-basis: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 8px;
+  border: 1px solid color-mix(in srgb, var(--c-minting) 45%, transparent);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--c-minting) 10%, transparent);
+  font-size: 11px;
+  line-height: 1.4;
+}
+.rail__partial-warning {
+  margin: 0;
+  color: var(--t-text);
+  font-weight: 600;
+}
+.rail__partial-note {
+  margin: 0;
+  color: var(--t-muted);
+}
 
 /* -- readiness chips -------------------------------------------------------- */
 .chip {

@@ -10,7 +10,7 @@ import { Controller } from "./controller";
 import { FixtureAdapter } from "../adapters/fixture";
 import { makeScenario, fixedInputsOf } from "../fixtures/scenarios";
 import { fingerprintFixedInputs } from "../model/fingerprint";
-import type { Ledger, PlanInputs } from "../model/types";
+import type { CapacitiesCoverage, Ledger, PlanInputs } from "../model/types";
 import { refreshSummaryText } from "../ui/ReadinessStrip";
 
 const ledger: Ledger = { today: "2026-07-18", spent: 0, cap: 4, remaining: 4 };
@@ -52,6 +52,24 @@ function refreshOk(
   });
 }
 
+/** The backend's budget-variant partial-coverage warning, verbatim. */
+function capacitiesBudgetWarning(evaluated: number, deferred: number): string {
+  return (
+    `Capacities partial — ${evaluated} evaluated · ${deferred} deferred across ` +
+    "contributing structures. Content-read budget reached. Wait at least a " +
+    "minute, then Refresh sources to continue."
+  );
+}
+
+/** A read with `deferred` Capacities rows still outstanding. */
+function withDeferred(inputs: PlanInputs, deferred: number): PlanInputs {
+  return {
+    ...inputs,
+    sourceWarnings: [capacitiesBudgetWarning(20, deferred)],
+    sourceHealth: "degraded",
+  };
+}
+
 describe("reducer: refresh lifecycle", () => {
   it("START sets loading; FAIL keeps the last good view and reports the error", () => {
     let s = sequenced();
@@ -85,6 +103,41 @@ describe("reducer: refresh lifecycle", () => {
     expect(s.overrides).toEqual({});
     expect(s.refresh.lastRefreshed).toBe(AT);
     expect(s.refresh.summary).toBeNull();
+  });
+});
+
+describe("reducer: Capacities coverage rides the refresh envelope", () => {
+  it("a completed refresh with deferrals is not full coverage", () => {
+    const inputs = withDeferred(makeScenario("ready").inputs, 51);
+    const s = refreshOk(sequenced(), inputs);
+    expect(s.refresh.phase).toBe("idle");
+    expect(s.refresh.lastRefreshed).toBe(AT);
+    expect(s.refresh.coverage).not.toBeNull();
+    expect(s.refresh.coverage!.deferred).toBe(51);
+    expect(s.refresh.coverage!.limit).toBe("content-read budget");
+    expect(s.refresh.coverage!.warnings).toEqual(inputs.sourceWarnings);
+    // The refresh itself did complete; only coverage is outstanding.
+    expect(s.refresh.summary).not.toBeNull();
+  });
+
+  it("successive refreshes shrink the deferral count, then clear it on full coverage", () => {
+    let s = sequenced();
+    s = refreshOk(s, withDeferred(s.inputs!, 51));
+    expect(s.refresh.coverage!.deferred).toBe(51);
+    s = refreshOk(s, withDeferred(s.inputs!, 30));
+    expect(s.refresh.coverage!.deferred).toBe(30);
+    s = refreshOk(s, { ...s.inputs!, sourceWarnings: [], sourceHealth: "ok" });
+    expect(s.refresh.coverage).toBeNull();
+  });
+
+  it("loading and failure keep the last completed refresh's coverage readable", () => {
+    let s = refreshOk(sequenced(), withDeferred(makeScenario("ready").inputs, 51));
+    s = reducer(s, { type: "SOURCE_REFRESH_START" });
+    expect(s.refresh.phase).toBe("loading");
+    expect(s.refresh.coverage!.deferred).toBe(51);
+    s = reducer(s, { type: "SOURCE_REFRESH_FAIL", error: "provider timeout" });
+    expect(s.refresh.error).toBe("provider timeout");
+    expect(s.refresh.coverage!.deferred).toBe(51);
   });
 });
 
@@ -181,6 +234,39 @@ describe("refresh summary text", () => {
       }),
     ).toBe("1 added · 2 removed · override retained: Gym");
   });
+  it("a no-changes refresh still reports remaining Capacities deferrals", () => {
+    const coverage: CapacitiesCoverage = {
+      warnings: [capacitiesBudgetWarning(20, 51)],
+      evaluated: 20,
+      deferred: 51,
+      limit: "content-read budget",
+    };
+    expect(refreshSummaryText(empty, coverage)).toBe(
+      "no changes · Capacities partial: 51 deferred",
+    );
+  });
+  it("a changed refresh keeps its counts and appends the deferrals", () => {
+    const coverage: CapacitiesCoverage = {
+      warnings: [capacitiesBudgetWarning(20, 51)],
+      evaluated: 20,
+      deferred: 51,
+      limit: "content-read budget",
+    };
+    expect(refreshSummaryText({ ...empty, added: ["A"] }, coverage)).toBe(
+      "1 added · Capacities partial: 51 deferred",
+    );
+  });
+  it("full coverage (or no coverage record) leaves the summary unchanged", () => {
+    expect(refreshSummaryText(empty, null)).toBe("no changes");
+    expect(
+      refreshSummaryText(empty, {
+        warnings: [],
+        evaluated: 71,
+        deferred: 0,
+        limit: "unknown",
+      }),
+    ).toBe("no changes");
+  });
 });
 
 describe("controller: refreshSources against the fixture adapter", () => {
@@ -262,6 +348,50 @@ describe("controller: refreshSources against the fixture adapter", () => {
     store.dispatch({ type: "SEQUENCE_START" });
     await controller.refreshSources();
     expect(store.getState().refresh.lastRefreshed).toBeNull();
+  }, 15000);
+});
+
+describe("controller: Capacities partial coverage across refreshes", () => {
+  function harness() {
+    const store = createStore();
+    const adapter = new FixtureAdapter("ready");
+    const controller = new Controller(adapter, store.dispatch, store.getState);
+    return { store, adapter, controller };
+  }
+
+  it("deferrals shrink across explicit refreshes and clear on full coverage", async () => {
+    const { store, adapter, controller } = harness();
+    await controller.load();
+    adapter.simulateCapacitiesCoverage(51);
+    await controller.refreshSources();
+    expect(store.getState().refresh.coverage!.deferred).toBe(51);
+    adapter.simulateCapacitiesCoverage(30);
+    await controller.refreshSources();
+    expect(store.getState().refresh.coverage!.deferred).toBe(30);
+    adapter.simulateCapacitiesCoverage(0);
+    await controller.refreshSources();
+    expect(store.getState().refresh.coverage).toBeNull();
+  }, 15000);
+
+  it("a partial refresh never schedules the next read by itself", async () => {
+    const { store, adapter, controller } = harness();
+    await controller.load();
+    vi.spyOn(controller, "refreshCapacity").mockResolvedValue(undefined);
+    vi.spyOn(controller, "revalidate").mockResolvedValue(undefined);
+    adapter.simulateCapacitiesCoverage(51);
+    const spy = vi.spyOn(adapter, "refreshSources");
+    await controller.refreshSources();
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(store.getState().refresh.coverage!.deferred).toBe(51);
+    vi.useFakeTimers();
+    try {
+      await vi.advanceTimersByTimeAsync(15 * 60 * 1000);
+      expect(spy).toHaveBeenCalledTimes(1);
+      expect(store.getState().refresh.lastRefreshed).not.toBeNull();
+      expect(store.getState().refresh.coverage!.deferred).toBe(51);
+    } finally {
+      vi.useRealTimers();
+    }
   }, 15000);
 });
 

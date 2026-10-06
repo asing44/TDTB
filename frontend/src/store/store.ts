@@ -15,6 +15,7 @@
 import type {
   RuntimeAction,
   Capacity,
+  CapacitiesCoverage,
   CommitReport,
   DaySetup,
   Ledger,
@@ -35,7 +36,7 @@ import {
 import { allowedOverlaps, defectsCovered, workOverlaps } from "../model/findings";
 import { blocksLabel } from "../model/time";
 import { remainingLabel } from "../model/allocator";
-import { durationSourceOf } from "../adapters/wire";
+import { capacitiesCoverageOf, durationSourceOf } from "../adapters/wire";
 
 export type SeqPhase = "none" | "sequencing" | "valid" | "dirty" | "failed";
 
@@ -106,12 +107,16 @@ export type CommitPhase = "idle" | "committing" | "done" | "partial" | "failed";
 export type RefreshPhase = "idle" | "loading";
 
 /** Explicit source refresh (locked decision 20): loading/error/last-refreshed
-    feedback plus the compact reconciliation summary of the last success. */
+    feedback plus the compact reconciliation summary of the last success.
+    `coverage` is the last COMPLETED read's Capacities partial-coverage state:
+    a completed refresh with deferrals is not complete coverage, so the
+    summary line must be able to say so. */
 export interface RefreshState {
   phase: RefreshPhase;
   error: string | null;
   lastRefreshed: string | null; // ISO timestamp of last successful refresh
   summary: RefreshSummary | null;
+  coverage: CapacitiesCoverage | null;
 }
 export type Theme = "system" | "light" | "dark";
 
@@ -248,7 +253,7 @@ export const initialState: AppState = {
   commitError: null,
   driftNotice: null,
   acceptedDefects: null,
-  refresh: { phase: "idle", error: null, lastRefreshed: null, summary: null },
+  refresh: { phase: "idle", error: null, lastRefreshed: null, summary: null, coverage: null },
   ledger: null,
   theme: "system",
   ui: { settingsPanel: null, settingsSection: null, setupOpen: false, capacitiesSettingsOpen: false, tagExclusionSettingsOpen: false, approvalOpen: false, editorItem: null, editorIntent: null, editorAnchor: null, capacityDetail: false, trimUndo: null },
@@ -819,6 +824,7 @@ export function reducer(s: AppState, a: Action): AppState {
       // only the refresh feedback surface changes.
       return { ...s, refresh: { ...s.refresh, phase: "idle", error: a.error } };
     case "SOURCE_REFRESH_OK": {
+      const coverage = capacitiesCoverageOf(a.inputs.sourceWarnings);
       if (s.validDate !== null && s.validDate !== a.inputs.validDate) {
         // Date rollover mid-session: full reset (locked decisions 16/20).
         return {
@@ -831,7 +837,13 @@ export function reducer(s: AppState, a: Action): AppState {
           daySetup: a.inputs.daySetup,
           pendingPinnedRows: nativeTimedPins(a.inputs, {}, allAssignedIds(a.inputs)),
           ledger: a.ledger,
-          refresh: { phase: "idle", error: null, lastRefreshed: a.at, summary: null },
+          refresh: {
+            phase: "idle",
+            error: null,
+            lastRefreshed: a.at,
+            summary: null,
+            coverage,
+          },
         };
       }
       const r = reconcileRefresh({
@@ -878,7 +890,7 @@ export function reducer(s: AppState, a: Action): AppState {
           timeAdjustmentOptIns,
           includedIdsForInputs(a.inputs, r.overrides),
         ),
-        refresh: { phase: "idle", error: null, lastRefreshed: a.at, summary },
+        refresh: { phase: "idle", error: null, lastRefreshed: a.at, summary, coverage },
       };
       if (drift) {
         return {

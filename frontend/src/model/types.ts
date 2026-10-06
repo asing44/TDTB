@@ -408,6 +408,25 @@ export interface DueVerificationDetail {
 
 export type SourceHealth = "ok" | "degraded" | "failed";
 
+/** Why a Capacities read stopped short of full coverage: the local
+    content-read budget or the provider's request window. */
+export type CapacitiesLimit = "content-read budget" | "provider rate limit" | "unknown";
+
+/** Parsed Capacities partial-coverage state, derived from the adapter's
+    verbatim `Capacities partial — …` source warnings. `warnings` is what the
+    UI renders; the counts only let the refresh summary say that a completed
+    refresh did not mean complete coverage. The warning text is never rewritten
+    from these fields. */
+export interface CapacitiesCoverage {
+  /** Verbatim adapter warnings, in server order. */
+  warnings: string[];
+  /** Distinct listed identities evaluated this read; null if unparsable. */
+  evaluated: number | null;
+  /** Distinct listed identities still outstanding; null if unparsable. */
+  deferred: number | null;
+  limit: CapacitiesLimit;
+}
+
 /** T19 — deterministic Live micro-adventure state (locked decision 25). */
 export interface MicroIdea {
   id: string;
