@@ -10,10 +10,14 @@
    IMP-07 final verb model (frozen action table): direct Done and
    Drop from plan on the row; Unassign and Delete live behind a per-row More
    disclosure menu. FEEDBACK-10 (A13): the row-shaping actions (Place at a
-   specific time, Unschedule) also moved into More, so the row action cluster
-   stays Done / Drop / two shaping icons. Defer is not a product verb and is
-   not rendered. The surface is named "Today's work" — "Queue" is never
-   user-facing language.
+   specific time, Unschedule) also moved into More. S2 (cockpit UI feedback
+   items 1 + 5): the cluster is one labelled affordance — planning
+   adjustments (Exclude/Include today, Exact duration) sit in their own named
+   group with visible scope notes, and item handling (direct Done and Leave
+   as-is, then More) sits in theirs. The ⊘/✎ icon-only controls are gone; the
+   frozen verb model (which actions are direct, and their IDs) is unchanged.
+   Defer is not a product verb and is not rendered. The surface is named
+   "Today's work" — "Queue" is never user-facing language.
 
    Band headers are disclosure buttons (contract item 6): keyboard-accessible,
    stateful (session) collapse/expand with row counts; collapsed bands keep
@@ -567,48 +571,73 @@ function Row({
         <TimeAdjustmentOptIn item={item} s={s} />
       </div>
       <div class="qrow__actions">
-        <Tooltip label={included ? "Exclude today" : "Include today"}>
-          <button
-            class="iconbtn"
-            aria-label={`${included ? "Exclude" : "Include"} ${item.name} today`}
-            onClick={() => controller.setOverride(item.id, !included, s.overrides[item.id]?.blocks ?? null)}
-          >
-            {included ? "⊘" : "＋"}
-          </button>
-        </Tooltip>
-        {/* T7: fine shaping on EVERY included row — the slider's 30-minute
-            notches can't express 15/5-minute shaping. T12e: this editor is
-            duration-only now; placement is its own More-menu action. */}
-        {included && (
-          <Tooltip label="Exact duration">
+        {/* S2 (feedback 1+5): the unlabelled ⊘/✎ pair left the operator
+            guessing. Planning adjustments are labelled controls in a named
+            group: both are today-only local selection/shaping and neither
+            writes source, so they read as planning — not as verbs. The
+            scope note spells the reversibility out. */}
+        <div
+          class="qrow__action-group qrow__action-group--plan"
+          role="group"
+          aria-label={`Planning adjustments for ${item.name}`}
+        >
+          <Tooltip label={included ? "Exclude today" : "Include today"}>
             <button
-              class="iconbtn"
-              aria-label={`Exact duration for ${item.name}`}
-              onClick={() =>
-                store.dispatch({
-                  type: "UI",
-                  patch: { editorItem: item.id, editorIntent: "duration" },
-                })
-              }
+              class="planbtn"
+              aria-label={`${included ? "Exclude" : "Include"} ${item.name} today`}
+              onClick={() => controller.setOverride(item.id, !included, s.overrides[item.id]?.blocks ?? null)}
             >
-              ✎
+              <span class="planbtn__label">
+                {included ? "Exclude today" : "Include today"}
+              </span>
+              <span class="planbtn__detail">
+                today only · reversible · source unchanged
+              </span>
             </button>
           </Tooltip>
-        )}
-        {/* FEEDBACK-10 (A13): the row-shaping actions (Adjust time, Unschedule)
-            moved into the More menu — the row keeps its source-safe and
-            shaping icons, and the cluster no longer overlaps. */}
+          {/* T7: fine shaping on EVERY included row — the slider's 30-minute
+              notches can't express 15/5-minute shaping. T12e: this editor is
+              duration-only now; placement is its own More-menu action. */}
+          {included && (
+            <Tooltip label="Exact duration">
+              <button
+                class="planbtn"
+                aria-label={`Exact duration for ${item.name}`}
+                onClick={() =>
+                  store.dispatch({
+                    type: "UI",
+                    patch: { editorItem: item.id, editorIntent: "duration" },
+                  })
+                }
+              >
+                <span class="planbtn__label">Exact duration</span>
+                <span class="planbtn__detail">
+                  today only · source unchanged
+                </span>
+              </button>
+            </Tooltip>
+          )}
+        </div>
         <span class="qrow__divider" />
-        <StagingVerbs item={item} busy={s.runtimeBusy} />
-        <MoreMenu
-          item={item}
-          busy={s.runtimeBusy}
-          state={state}
-          allowTimeAdjustment={
-            !item.isRecurring &&
-            (!hasAdjustableNativeTime(item) || s.timeAdjustmentOptIns[item.id] === true)
-          }
-        />
+        {/* Item handling keeps the frozen IMP-07 directness: Mark complete
+            and Leave as-is fire in one click; source removal/Delete and the
+            placement actions stay behind More (FEEDBACK-10 A13). */}
+        <div
+          class="qrow__action-group qrow__action-group--item"
+          role="group"
+          aria-label={`Item handling for ${item.name}`}
+        >
+          <StagingVerbs item={item} busy={s.runtimeBusy} />
+          <MoreMenu
+            item={item}
+            busy={s.runtimeBusy}
+            state={state}
+            allowTimeAdjustment={
+              !item.isRecurring &&
+              (!hasAdjustableNativeTime(item) || s.timeAdjustmentOptIns[item.id] === true)
+            }
+          />
+        </div>
       </div>
     </div>
   );

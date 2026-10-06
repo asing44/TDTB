@@ -1413,6 +1413,53 @@
   gap: 6px;
   min-width: 0;
   flex-wrap: wrap;
+  align-content: center;
+}
+/* S2 (feedback 1+5): the cluster is two labelled groups — planning
+   adjustments (Exclude/Include today, Exact duration) and item handling
+   (Mark complete, Leave as-is, More). Each group wraps internally and the
+   cluster wraps between them, so the wider labelled controls stay reachable
+   at every width without spilling out of the row. */
+.qrow__action-group {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+}
+/* Planning adjustments carry a visible label and scope note — the old
+   icon-only ⊘/✎ pair left the operator guessing. Same 44px floor as the row
+   verbs (T12 qualification); a quieter surface keeps Mark complete primary. */
+.planbtn {
+  display: inline-grid;
+  place-content: center;
+  text-align: center;
+  min-width: 44px;
+  min-height: 44px;
+  max-width: 100%;
+  padding: 0 10px;
+  font-size: 12px;
+  font-weight: 500;
+  border-radius: var(--radius-sm);
+  border: 0.5px solid color-mix(in srgb, var(--t-border) 85%, transparent);
+  background: var(--t-surface-2);
+  color: var(--t-text);
+  cursor: pointer;
+}
+.planbtn:hover {
+  border-color: var(--t-accent);
+}
+.planbtn__label {
+  display: block;
+}
+.planbtn__detail {
+  display: block;
+  margin-top: 2px;
+  font-size: 9px;
+  font-weight: 400;
+  line-height: 1.1;
+  opacity: 0.86;
+  overflow-wrap: anywhere;
 }
 .qrow__divider {
   flex: none;
@@ -2507,6 +2554,7 @@
     grid-column: 1 / -1;
     justify-content: flex-start;
     flex-wrap: wrap;
+    align-content: center;
   }
   .band__note,
   .band__bar,
@@ -2623,6 +2671,11 @@
     grid-column: 1 / -1;
     flex-wrap: wrap;
     justify-content: flex-start;
+  }
+  /* S2: the labelled item-handling group takes its own phone-width line, so
+     More's existing full-width rule resolves inside a predictable box. */
+  .qrow__action-group--item {
+    flex-basis: 100%;
   }
   .row-more__menu {
     min-width: min(260px, calc(100vw - 28px));
@@ -3580,6 +3633,11 @@ body {
 
   .qrow__actions {
     justify-content: flex-start;
+  }
+  /* S2: at phone width the two labelled groups stack full-width so neither
+     the planning toggle nor a scope note is squeezed off the line. */
+  .qrow__action-group {
+    flex-basis: 100%;
   }
 
   .row-more__menu {
