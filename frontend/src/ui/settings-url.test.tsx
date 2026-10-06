@@ -104,16 +104,24 @@ describe("settings URL sync", () => {
     expect(h.r.container.querySelector('[role="dialog"]')).toBeNull();
   });
 
-  it("pushes one owned entry on open and replaces it on panel navigation", () => {
+  it("pushes one owned entry on open and replaces it on panel navigation", async () => {
     const h = mountRoot();
-    const before = window.history.length;
     h.store.dispatch({ type: "UI", patch: { settingsPanel: "day" } });
     expect(window.location.search).toBe("?settings=day");
-    expect(window.history.length).toBe(before + 1);
 
     h.store.dispatch({ type: "UI", patch: { settingsPanel: "tags" } });
     expect(window.location.search).toBe("?settings=tags");
-    expect(window.history.length).toBe(before + 1);
+
+    // Assert the navigation contract, not `window.history.length`. History is
+    // global state shared with the other tests in this file, so a length delta
+    // is order-dependent: a prior `back()` leaves the index short of the end,
+    // and the next pushState then truncates the forward entry instead of
+    // growing the stack, so `before + 1` fails even though the push happened.
+    // One Back returning to the pre-open URL proves exactly one owned entry
+    // was pushed and that the panel switch replaced it rather than pushing a
+    // second — the behaviour this test is named for.
+    window.history.back();
+    await waitFor(() => expect(window.location.search).toBe(""));
   });
 
   it("closes the panel and cleans the parameter (owned entry)", async () => {
