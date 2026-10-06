@@ -1140,8 +1140,13 @@ def test_content_read_budget_bounds_hydration_and_reports_the_remainder():
     ).items_for_day(TODAY)
 
     assert len(result.items) == 1
-    assert any("not evaluated this run" in w for w in result.warnings)
-    assert any("budget of 1" in w for w in result.warnings)
+    assert result.evaluated == 1
+    assert result.deferred == 2
+    assert result.warnings == [
+        "Capacities partial — 1 evaluated · 2 deferred across contributing "
+        "structures. Content-read budget reached. Wait at least a minute, then "
+        "Refresh sources to continue."
+    ]
 
 
 # --------------------------------------------------------------------------
@@ -1337,8 +1342,13 @@ def test_rate_limited_read_keeps_what_it_already_read():
     ).items_for_day(TODAY)
 
     assert len(result.items) == 2
-    assert any("rate limit" in w for w in result.warnings)
-    assert any("not evaluated this run" in w for w in result.warnings)
+    assert result.evaluated == 2
+    assert result.deferred == 2
+    assert result.warnings == [
+        "Capacities partial — 2 evaluated · 2 deferred across contributing "
+        "structures. Provider rate limit (30 requests per minute) reached. "
+        "Wait at least a minute, then Refresh sources to continue."
+    ]
 
 
 def _object_transport(calls):
@@ -1435,13 +1445,204 @@ def test_cached_content_does_not_consume_the_read_budget():
 
     first = adapter.items_for_day(TODAY)
     assert len(first.items) == 2
-    assert any("not evaluated this run" in w for w in first.warnings)
+    assert first.evaluated == 2
+    assert first.deferred == 2
+    assert any("2 evaluated · 2 deferred" in w for w in first.warnings)
 
     # The two already-fetched objects are now cached, so the same budget
     # reaches the rows that were skipped.
     second = adapter.items_for_day(TODAY)
     assert len(second.items) == 4
-    assert not any("not evaluated this run" in w for w in second.warnings)
+    assert second.evaluated == 4
+    assert second.deferred == 0
+    assert not any("Capacities partial" in w for w in second.warnings)
+
+
+# ---------------------------------------------------------------------------
+# Coverage accounting over distinct listed identities
+# ---------------------------------------------------------------------------
+# The cockpit warning must state how much of the source was covered, not only
+# how much was deferred. Accounting is run-local and identity-keyed: repeated
+# listed rows never inflate a count, and malformed rows are reported
+# separately instead of being folded into evaluated or deferred. ``evaluated``
+# counts successfully projected objects — including ones the projection then
+# filtered out as ineligible — so it is deliberately NOT the accepted-item
+# count that ``source_counts.capacities`` reports.
+
+
+def _unhydrated_rows(object_ids):
+    """Listing rows as the live API returns them: no typed properties."""
+    return [
+        {"id": object_id, "structureId": "RootTask", "title": f"Task {object_id}"}
+        for object_id in object_ids
+    ]
+
+
+def _native_contents(object_ids):
+    return {
+        object_id: _native_object(object_id, status="active")
+        for object_id in object_ids
+    }
+
+
+def test_many_object_cold_run_reports_evaluated_and_deferred_separately():
+    """A cold run spends one read per listed row; the warning names both counts.
+
+    With the 20-read default budget, 24 rows evaluate 20 and defer 4, and the
+    warning says so instead of only naming the deferred remainder.
+    """
+    object_ids = [f"task-{n}" for n in range(1, 25)]
+    provider = FakeProvider(
+        _native_structures(),
+        {
+            ("RootTask", None): {
+                "objects": _unhydrated_rows(object_ids),
+                "next_cursor": None,
+            }
+        },
+        objects=_native_contents(object_ids),
+    )
+
+    result = _adapter(provider, mappings=(_native_mapping(),)).items_for_day(TODAY)
+
+    assert result.evaluated == 20
+    assert result.deferred == 4
+    assert result.malformed == 0
+    assert len(result.items) == 20
+    assert result.warnings == [
+        "Capacities partial — 20 evaluated · 4 deferred across contributing "
+        "structures. Content-read budget reached. Wait at least a minute, then "
+        "Refresh sources to continue."
+    ]
+
+
+def test_pagination_across_pages_aggregates_coverage():
+    provider = FakeProvider(
+        _native_structures(),
+        {
+            ("RootTask", None): {
+                "objects": _unhydrated_rows(["a", "b"]),
+                "next_cursor": "page-2",
+            },
+            ("RootTask", "page-2"): {
+                "objects": _unhydrated_rows(["c", "d"]),
+                "next_cursor": None,
+            },
+        },
+        objects=_native_contents(["a", "b", "c", "d"]),
+    )
+
+    result = _adapter(
+        provider, mappings=(_native_mapping(),), max_content_reads=3
+    ).items_for_day(TODAY)
+
+    assert result.pages == 2
+    assert result.evaluated == 3
+    assert result.deferred == 1
+    assert any("3 evaluated · 1 deferred" in w for w in result.warnings)
+
+
+def test_duplicate_listed_rows_do_not_inflate_coverage():
+    """A repeated row is one identity, even when the budget splits its outcome.
+
+    ``a`` is evaluated on its first row; the duplicate and ``b`` are deferred
+    once the budget is spent. ``a`` must not also count as deferred.
+    """
+    provider = FakeProvider(
+        _native_structures(),
+        {
+            ("RootTask", None): {
+                "objects": _unhydrated_rows(["a", "a", "b"]),
+                "next_cursor": None,
+            }
+        },
+        objects=_native_contents(["a", "b"]),
+    )
+
+    result = _adapter(
+        provider, mappings=(_native_mapping(),), max_content_reads=1
+    ).items_for_day(TODAY)
+
+    assert result.evaluated == 1
+    assert result.deferred == 1
+    assert any("1 evaluated · 1 deferred" in w for w in result.warnings)
+
+
+def test_duplicate_rows_carrying_properties_count_one_evaluated_identity():
+    provider = _native_provider([
+        _native_object("a", status="active"),
+        _native_object("a", status="active"),
+        _native_object("b", status="active"),
+    ])
+
+    result = _adapter(provider, mappings=(_native_mapping(),)).items_for_day(TODAY)
+
+    assert result.evaluated == 2
+    assert result.deferred == 0
+    assert result.warnings == []
+
+
+def test_malformed_rows_are_counted_separately_from_coverage():
+    """Malformed rows never inflate coverage, and identity-less rows only warn."""
+    provider = FakeProvider(
+        _native_structures(),
+        {
+            ("RootTask", None): {
+                "objects": [
+                    {"id": "broken", "structureId": "RootTask", "properties": []},
+                    {"structureId": "RootTask", "properties": []},
+                    "junk",
+                    _native_object("valid", status="active"),
+                ],
+                "next_cursor": None,
+            }
+        },
+    )
+
+    result = _adapter(provider, mappings=(_native_mapping(),)).items_for_day(TODAY)
+
+    assert result.evaluated == 1
+    assert result.deferred == 0
+    assert result.malformed == 1
+    assert [row["capacities_id"] for row in result.items] == ["valid"]
+    assert any("broken" in w and "not plannable" in w for w in result.warnings)
+    assert any("<unknown>" in w and "not plannable" in w for w in result.warnings)
+    assert any("without an allowlisted structure" in w for w in result.warnings)
+    assert not any("Capacities partial" in w for w in result.warnings)
+
+
+def test_evaluated_objects_are_distinct_from_the_eligible_item_count():
+    """Filtered-out objects are evaluated; only eligible ones become items."""
+    provider = _native_provider([
+        _native_object("active", status="active"),
+        _native_object("done", status="done"),
+        _native_object("dropped", status="dropped"),
+    ])
+
+    result = _adapter(provider, mappings=(_native_mapping(),)).items_for_day(TODAY)
+
+    assert [row["capacities_id"] for row in result.items] == ["active"]
+    assert result.evaluated == 3
+    assert result.deferred == 0
+    assert result.malformed == 0
+    assert result.warnings == []
+
+
+def test_batch_projection_reports_evaluated_and_malformed_counts():
+    provider = FakeProvider(_native_structures(), {})
+
+    result = _adapter(provider, mappings=(_native_mapping(),)).items_for_day_from_objects(
+        TODAY,
+        [
+            _native_object("active", status="active"),
+            _native_object("done", status="done"),
+            {"id": "broken", "structureId": "RootTask", "properties": []},
+        ],
+    )
+
+    assert result.evaluated == 2
+    assert result.deferred == 0
+    assert result.malformed == 1
 
 
 # ---------------------------------------------------------------------------

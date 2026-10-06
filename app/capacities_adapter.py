@@ -127,6 +127,16 @@ class CapacitiesReadResult:
     items: list[dict[str, Any]] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     pages: int = 0
+    #: Run-local coverage accounting over *distinct* listed identities. These
+    #: are deliberately not item counts: an evaluated object may still be
+    #: filtered out as ineligible, and ``source_counts.capacities`` keeps
+    #: counting accepted items only. ``deferred`` covers rows skipped by the
+    #: content-read budget or a provider refusal; ``malformed`` covers rows
+    #: that were read but could not be projected, and is never folded into
+    #: either of the other two.
+    evaluated: int = 0
+    deferred: int = 0
+    malformed: int = 0
 
 
 @dataclass(frozen=True)
@@ -407,7 +417,10 @@ class CapacitiesAdapter:
         self._mappings: dict[str, StructureMapping] | None = None
         # Per-read hydration budget, reset by ``items_for_day``.
         self._content_reads_left = config.max_content_reads
-        self._hydration_skipped = 0
+        #: Distinct listed identities deferred this run (content-read budget
+        #: or provider refusal). Identity-keyed so a repeated row cannot
+        #: inflate coverage.
+        self._deferred_identities: set[str] = set()
         self._rate_limited = False
 
     def close(self) -> None:
@@ -526,7 +539,12 @@ class CapacitiesAdapter:
             for row in page["objects"]:
                 hydrated = self._hydrate_object(row)
                 if hydrated is None:
-                    self._hydration_skipped += 1
+                    # Deferred this run: the content-read budget was spent or
+                    # the provider refused. Record the identity so coverage
+                    # is counted over distinct listed rows.
+                    object_id = _text(row.get("id")) if isinstance(row, dict) else ""
+                    if object_id:
+                        self._deferred_identities.add(f"{structure_id}:{object_id}")
                     continue
                 objects.append(hydrated)
             pages += 1
@@ -764,32 +782,62 @@ class CapacitiesAdapter:
             row["capacities_tags_error"] = tag_error
         return row
 
-    def items_for_day_from_objects(
+    def _project_objects(
         self, logical_day: date, objects: Sequence[dict[str, Any]]
-    ) -> CapacitiesReadResult:
+    ) -> tuple[list[dict[str, Any]], list[str], set[str], set[str]]:
+        """Project listed objects and account for every distinct identity.
+
+        Returns ``(items, warnings, evaluated, malformed)``. ``evaluated``
+        holds the identities that projected successfully — including objects
+        the projection then filtered out as ineligible, which are evaluated
+        even though they never become items. ``malformed`` holds the
+        identities whose projection failed; a malformed row with no usable
+        identity is reported by its warning alone, because there is nothing
+        to count it once by. Both sets are keyed on the listed identity so
+        repeated rows cannot inflate coverage.
+        """
         self._ensure_contract()
         assert self._mappings is not None
-        result = CapacitiesReadResult()
+        items: list[dict[str, Any]] = []
+        warnings: list[str] = []
+        evaluated: set[str] = set()
+        malformed: set[str] = set()
         for obj in objects:
             structure_id = _text(obj.get("structureId")) if isinstance(obj, dict) else ""
             mapping = self._mappings.get(structure_id)
             if mapping is None:
-                result.warnings.append(
+                warnings.append(
                     f"ignored Capacities object without an allowlisted structure: {structure_id or '<missing>'}"
                 )
                 continue
+            listed_id = _text(obj.get("id")) if isinstance(obj, dict) else ""
+            identity = f"{structure_id}:{listed_id}" if listed_id else ""
             try:
                 row = self._project_object(obj, mapping, logical_day)
             except _MalformedObject as exc:
-                object_id = _text(obj.get("id")) if isinstance(obj, dict) else "<unknown>"
-                result.warnings.append(
-                    f"skipped Capacities object {object_id} — not plannable: {exc}"
+                if identity:
+                    malformed.add(identity)
+                warnings.append(
+                    f"skipped Capacities object {listed_id or '<unknown>'} — not plannable: {exc}"
                 )
                 continue
+            if identity:
+                evaluated.add(identity)
             if row is not None:
-                result.items.append(row)
-        result.items.sort(key=lambda row: (_normalized(row["name"]), row["identity"]))
-        return result
+                items.append(row)
+        items.sort(key=lambda row: (_normalized(row["name"]), row["identity"]))
+        return items, warnings, evaluated, malformed
+
+    def items_for_day_from_objects(
+        self, logical_day: date, objects: Sequence[dict[str, Any]]
+    ) -> CapacitiesReadResult:
+        items, warnings, evaluated, malformed = self._project_objects(logical_day, objects)
+        return CapacitiesReadResult(
+            items=items,
+            warnings=warnings,
+            evaluated=len(evaluated),
+            malformed=len(malformed),
+        )
 
     def _structure_can_contribute(self, mapping: StructureMapping) -> bool:
         """Whether any object from this structure could ever be eligible.
@@ -812,35 +860,55 @@ class CapacitiesAdapter:
         self._ensure_contract()
         assert self._mappings is not None
         self._content_reads_left = self.config.max_content_reads
-        self._hydration_skipped = 0
+        self._deferred_identities = set()
         self._rate_limited = False
         all_items: list[dict[str, Any]] = []
         warnings: list[str] = []
+        evaluated: set[str] = set()
+        malformed: set[str] = set()
         page_count = 0
         for structure_id, mapping in self._mappings.items():
             if not self._structure_can_contribute(mapping):
                 continue
             objects, pages = self._list_objects(structure_id)
             page_count += pages
-            projected = self.items_for_day_from_objects(logical_day, objects)
-            all_items.extend(projected.items)
-            warnings.extend(projected.warnings)
+            items, batch_warnings, batch_evaluated, batch_malformed = (
+                self._project_objects(logical_day, objects)
+            )
+            all_items.extend(items)
+            warnings.extend(batch_warnings)
+            evaluated |= batch_evaluated
+            malformed |= batch_malformed
+        # Run-local coverage over distinct listed identities. A duplicate row
+        # can report one identity as evaluated first and deferred later once
+        # the budget ran out; the stronger outcome wins so neither counter is
+        # inflated by the repeat.
+        malformed -= evaluated
+        deferred = self._deferred_identities - evaluated - malformed
         if self._rate_limited:
             warnings.append(
-                f"Capacities: the provider rate limit (30 requests per minute) "
-                f"was reached, so {self._hydration_skipped} object(s) were not "
-                "evaluated this run; the objects read so far are shown and a "
-                "later refresh will pick up the remainder"
+                "Capacities partial — "
+                f"{len(evaluated)} evaluated · {len(deferred)} deferred across "
+                "contributing structures. Provider rate limit (30 requests per "
+                "minute) reached. Wait at least a minute, then Refresh sources "
+                "to continue."
             )
-        elif self._hydration_skipped:
+        elif deferred:
             warnings.append(
-                f"Capacities: {self._hydration_skipped} object(s) were not "
-                f"evaluated this run — content-read budget of "
-                f"{self.config.max_content_reads} exhausted to stay within the "
-                "provider rate limit; refresh again to evaluate the remainder"
+                "Capacities partial — "
+                f"{len(evaluated)} evaluated · {len(deferred)} deferred across "
+                "contributing structures. Content-read budget reached. Wait at "
+                "least a minute, then Refresh sources to continue."
             )
         all_items.sort(key=lambda row: (_normalized(row["name"]), row["identity"]))
-        return CapacitiesReadResult(all_items, warnings, page_count)
+        return CapacitiesReadResult(
+            items=all_items,
+            warnings=warnings,
+            pages=page_count,
+            evaluated=len(evaluated),
+            deferred=len(deferred),
+            malformed=len(malformed),
+        )
 
     def list_tags(self) -> dict[str, Any]:
         """Enumerate the space's canonical ``RootTag`` objects for the catalog.
