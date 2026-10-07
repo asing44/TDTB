@@ -3,7 +3,9 @@
    Covers the read/empty state, the full-replacement save body, the real-409
    conflict contract (retained draft, both revisions, explicit reload only),
    ordinary failures (a 500 and the route's OTHER 409), order-preserving
-   value lists, explicit-only structure removal, and display titles. */
+   value lists, explicit-only structure removal, display titles, and the
+   discovery step: catalog rendering, id-titled structures, add-to-mapping
+   with every role unconfigured, failure classes, and draft/save isolation. */
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, waitFor, within } from "@testing-library/preact";
@@ -12,9 +14,11 @@ import { makeHarness } from "./test-harness";
 import { ApiError } from "../adapters/api";
 import { capacitiesSourceToWire } from "../adapters/wire";
 import type {
+  CapacitiesCatalog,
   CapacitiesSettings,
   CapacitiesSource,
   CapacitiesSourceRead,
+  CapacitiesSourceStructure,
 } from "../model/types";
 
 afterEach(() => {
@@ -541,5 +545,441 @@ describe("CapacitiesSourceEditor", () => {
     expect(
       (rendered.getByLabelText("Structure ID for Task") as HTMLInputElement).value,
     ).toBe("Task");
+  });
+});
+
+/* -- Discovery -------------------------------------------------------------- */
+
+// The operator's real Project structure carries this raw property id.
+const ASSIGNED_PROPERTY = "f779f78a-d434-4099-9448-a90785bc8ae5";
+
+/** Shapes taken from the operator's real space: RootTask is titled "Task",
+    and custom-project is the real no-name case whose reported title is its
+    own structure id. */
+const catalogFixture: CapacitiesCatalog = {
+  spaceId: "space-1",
+  structures: [
+    {
+      structureId: "RootTask",
+      title: "Task",
+      properties: [
+        {
+          propertyId: ASSIGNED_PROPERTY,
+          title: "Assigned",
+          type: "label",
+          writable: true,
+          labelOptions: [
+            { id: "assignee-meegy", title: "Meegy" },
+            { id: "assignee-adam", title: "Adam" },
+          ],
+        },
+        {
+          propertyId: "completed-prop",
+          title: "Completed",
+          type: "checkbox",
+          writable: true,
+          labelOptions: [],
+        },
+      ],
+    },
+    {
+      structureId: "custom-project",
+      title: "custom-project",
+      properties: [
+        {
+          propertyId: "name-prop",
+          title: "Name",
+          type: "title",
+          writable: true,
+          labelOptions: [],
+        },
+        {
+          propertyId: "status-prop",
+          title: "Status",
+          type: "label",
+          writable: true,
+          labelOptions: [{ id: "active", title: "Active" }],
+        },
+        {
+          propertyId: "due-prop",
+          title: "Due",
+          type: "date",
+          writable: false,
+          labelOptions: [],
+        },
+      ],
+    },
+  ],
+  warnings: [],
+};
+
+/** A row with every role unconfigured — what "Add to mapping" must produce
+    when it sets nothing but the structure id. */
+function unconfiguredRow(structureId: string): CapacitiesSourceStructure {
+  return {
+    structureId,
+    titleProperty: "",
+    statusProperty: null,
+    openStatusValues: [],
+    dateProperty: null,
+    deadlineProperty: null,
+    durationProperty: null,
+    assignmentProperty: null,
+    assignmentValues: [],
+    completionProperty: null,
+    completionValue: null,
+  };
+}
+
+describe("CapacitiesSourceEditor discovery", () => {
+  it("renders discovered ids, titles, types, and label options and never saves", async () => {
+    const { h, rendered } = await openEditor({
+      source: recordFixture,
+      persisted: true,
+    });
+    await waitFor(() =>
+      expect(rendered.getByLabelText("Duration property for Project")).toBeTruthy(),
+    );
+    const save = vi.spyOn(h.controller, "saveCapacitiesSource");
+    const discover = vi
+      .spyOn(h.controller, "discoverCapacitiesSource")
+      .mockResolvedValue(catalogFixture);
+
+    fireEvent.click(
+      rendered.getByRole("button", { name: "Discover from Capacities" }),
+    );
+    await waitFor(() => expect(discover).toHaveBeenCalledTimes(1));
+    // Discovery reads the draft's CURRENT space id.
+    expect(discover).toHaveBeenCalledWith("space-1");
+
+    const catalog = await waitFor(() =>
+      rendered.getByRole("region", { name: "Discovered Capacities structures" }),
+    );
+    // Structure identity: the observed title and the raw id the mapping
+    // keys on are both visible.
+    expect(within(catalog).getByText("Task")).toBeTruthy();
+    expect(within(catalog).getByText("RootTask")).toBeTruthy();
+    // Property reference material, verbatim provider values.
+    expect(within(catalog).getByText(ASSIGNED_PROPERTY)).toBeTruthy();
+    expect(within(catalog).getByText("Assigned")).toBeTruthy();
+    // Both label properties report their writability; the checkbox too.
+    expect(within(catalog).getAllByText("label · writable").length).toBe(2);
+    expect(within(catalog).getByText("checkbox · writable")).toBeTruthy();
+    // Label options carry both the stored value id and its display title.
+    expect(within(catalog).getByText("assignee-meegy")).toBeTruthy();
+    expect(within(catalog).getByText("Meegy")).toBeTruthy();
+    expect(within(catalog).getByText("assignee-adam")).toBeTruthy();
+    expect(within(catalog).getByText("Adam")).toBeTruthy();
+    // The second structure's properties too, including a read-only one.
+    expect(within(catalog).getByText("name-prop")).toBeTruthy();
+    expect(within(catalog).getByText("Name")).toBeTruthy();
+    expect(within(catalog).getByText("title · writable")).toBeTruthy();
+    expect(within(catalog).getByText("status-prop")).toBeTruthy();
+    expect(within(catalog).getByText("active")).toBeTruthy();
+    expect(within(catalog).getByText("Active")).toBeTruthy();
+    expect(within(catalog).getByText("due-prop")).toBeTruthy();
+    expect(within(catalog).getByText("Due")).toBeTruthy();
+    expect(within(catalog).getByText("date · read-only")).toBeTruthy();
+
+    // Discovery performs no save and adds no draft row.
+    expect(save).not.toHaveBeenCalled();
+    expect(rendered.getByLabelText("Structure ID for Project")).toBeTruthy();
+    expect(rendered.getByLabelText("Structure ID for Task")).toBeTruthy();
+  });
+
+  it("treats an id-titled structure as a normal entry and adds it with every role unconfigured", async () => {
+    const { h, rendered } = await openEditor({ source: null, persisted: false });
+    await waitFor(() =>
+      expect(
+        rendered.getByText(/No Capacities source mapping has been saved/),
+      ).toBeTruthy(),
+    );
+    fireEvent.input(rendered.getByLabelText("Capacities space id"), {
+      target: { value: "space-1" },
+    });
+    vi.spyOn(h.controller, "discoverCapacitiesSource").mockResolvedValue(
+      catalogFixture,
+    );
+    const save = vi.spyOn(h.controller, "saveCapacitiesSource");
+    fireEvent.click(
+      rendered.getByRole("button", { name: "Discover from Capacities" }),
+    );
+
+    const add = await waitFor(() =>
+      rendered.getByRole("button", { name: "Add custom-project to mapping" }),
+    );
+    // The real no-name case renders as a normal entry: title and id both
+    // visible, no failure reported anywhere.
+    const entry = add.closest("article") as HTMLElement;
+    expect(entry).toBeTruthy();
+    expect(within(entry).getAllByText("custom-project").length).toBe(2);
+    expect(rendered.queryByRole("alert")).toBeNull();
+    expect(save).not.toHaveBeenCalled();
+
+    fireEvent.click(add);
+    await waitFor(() =>
+      expect(
+        rendered.getByLabelText("Structure ID for custom-project"),
+      ).toBeTruthy(),
+    );
+    // The appended row carries the id and nothing else: even though the
+    // catalog offers properties named Name/Status/Due with title/label/date
+    // types, no role was inferred from any name, title, or type.
+    expect(
+      (rendered.getByLabelText("Structure ID for custom-project") as HTMLInputElement)
+        .value,
+    ).toBe("custom-project");
+    expect(
+      (rendered.getByLabelText("Title property for custom-project") as HTMLInputElement)
+        .value,
+    ).toBe("");
+    expect(
+      (rendered.getByLabelText("Status property for custom-project") as HTMLInputElement)
+        .value,
+    ).toBe("");
+    expect(
+      (
+        rendered.getByLabelText("Assignment property for custom-project") as HTMLInputElement
+      ).value,
+    ).toBe("");
+
+    // The strongest proof: the outgoing save body is the raw empty shape
+    // with only the structure id set.
+    save.mockResolvedValue({
+      source: savedRecord(1, [unconfiguredRow("custom-project")]),
+      persisted: true,
+    });
+    fireEvent.click(rendered.getByRole("button", { name: "Save mapping" }));
+    await waitFor(() => expect(save).toHaveBeenCalledTimes(1));
+    expect(save.mock.calls[0][0]).toEqual({
+      expectedRevision: 0,
+      spaceId: "space-1",
+      structures: [unconfiguredRow("custom-project")],
+    });
+  });
+
+  it("keeps the draft byte-identical and saves nothing when discovery fails", async () => {
+    const { h, rendered } = await openEditor({
+      source: recordFixture,
+      persisted: true,
+    });
+    await waitFor(() =>
+      expect(rendered.getByLabelText("Duration property for Project")).toBeTruthy(),
+    );
+    // An unsaved operator edit makes any draft mutation observable.
+    fireEvent.input(rendered.getByLabelText("Duration property for Project"), {
+      target: { value: PROJECT_DURATION },
+    });
+    const save = vi.spyOn(h.controller, "saveCapacitiesSource");
+    vi.spyOn(h.controller, "discoverCapacitiesSource").mockRejectedValue(
+      new ApiError(
+        429,
+        {
+          code: "capacities_discovery_rate_limited",
+          message: "Capacities rate limited discovery; wait and retry.",
+        },
+        "Capacities rate limited discovery; wait and retry.",
+      ),
+    );
+
+    fireEvent.click(
+      rendered.getByRole("button", { name: "Discover from Capacities" }),
+    );
+    const alert = await waitFor(() => rendered.getByRole("alert"));
+    expect(alert.textContent).toContain(
+      "Capacities rate limited discovery; wait and retry.",
+    );
+    expect(alert.textContent).toContain("wait a moment, then try again");
+    // No save, no catalog, no draft mutation.
+    expect(save).not.toHaveBeenCalled();
+    expect(
+      rendered.queryByRole("region", { name: "Discovered Capacities structures" }),
+    ).toBeNull();
+    expect(
+      (rendered.getByLabelText("Duration property for Project") as HTMLInputElement)
+        .value,
+    ).toBe(PROJECT_DURATION);
+    expect(rendered.getByLabelText("Structure ID for Task")).toBeTruthy();
+
+    // A later explicit save carries the byte-identical draft.
+    save.mockResolvedValue({
+      source: savedRecord(5, [
+        { ...recordFixture.structures[0], durationProperty: PROJECT_DURATION },
+        { ...recordFixture.structures[1] },
+      ]),
+      persisted: true,
+    });
+    fireEvent.click(rendered.getByRole("button", { name: "Save mapping" }));
+    await waitFor(() => expect(save).toHaveBeenCalledTimes(1));
+    expect(save.mock.calls[0][0]).toEqual({
+      expectedRevision: 4,
+      spaceId: "space-1",
+      structures: [
+        { ...recordFixture.structures[0], durationProperty: PROJECT_DURATION },
+        { ...recordFixture.structures[1] },
+      ],
+    });
+  });
+
+  it("classifies discovery failures from the ApiError status", async () => {
+    const { h, rendered } = await openEditor({
+      source: recordFixture,
+      persisted: true,
+    });
+    await waitFor(() =>
+      expect(rendered.getByLabelText("Duration property for Project")).toBeTruthy(),
+    );
+    const discover = vi.spyOn(h.controller, "discoverCapacitiesSource");
+
+    // 503: credentials are missing — an operator must fix them, no retry.
+    discover.mockRejectedValueOnce(
+      new ApiError(
+        503,
+        {
+          code: "capacities_discovery_credentials_unavailable",
+          message: "Capacities credential is unavailable; discovery cannot run.",
+        },
+        "Capacities credential is unavailable; discovery cannot run.",
+      ),
+    );
+    fireEvent.click(
+      rendered.getByRole("button", { name: "Discover from Capacities" }),
+    );
+    const credentials = await waitFor(() => {
+      const next = rendered.getByRole("alert");
+      expect(next.textContent).toContain("retrying will not help");
+      return next;
+    });
+    expect(credentials.textContent).toContain(
+      "Capacities credential is unavailable; discovery cannot run.",
+    );
+
+    // 429: rate limited — wait and retry.
+    discover.mockRejectedValueOnce(
+      new ApiError(
+        429,
+        {
+          code: "capacities_discovery_rate_limited",
+          message: "Capacities rate limited discovery; wait and retry.",
+        },
+        "Capacities rate limited discovery; wait and retry.",
+      ),
+    );
+    fireEvent.click(
+      rendered.getByRole("button", { name: "Discover from Capacities" }),
+    );
+    const rateLimited = await waitFor(() => {
+      const next = rendered.getByRole("alert");
+      expect(next.textContent).toContain("wait a moment, then try again");
+      return next;
+    });
+    expect(rateLimited.textContent).toContain(
+      "Capacities rate limited discovery; wait and retry.",
+    );
+
+    // Anything else (here 502) is a generic failure.
+    discover.mockRejectedValueOnce(
+      new ApiError(
+        502,
+        {
+          code: "capacities_discovery_failed",
+          message: "Capacities discovery failed upstream.",
+        },
+        "Capacities discovery failed upstream.",
+      ),
+    );
+    fireEvent.click(
+      rendered.getByRole("button", { name: "Discover from Capacities" }),
+    );
+    const generic = await waitFor(() => {
+      const next = rendered.getByRole("alert");
+      expect(next.textContent).toContain("Discovery failed.");
+      return next;
+    });
+    expect(generic.textContent).toContain("Capacities discovery failed upstream.");
+    expect(generic.textContent).not.toContain("retrying will not help");
+    expect(generic.textContent).not.toContain("wait a moment");
+  });
+
+  it("disables the discovery control while a discovery is running", async () => {
+    const { h, rendered } = await openEditor({
+      source: recordFixture,
+      persisted: true,
+    });
+    await waitFor(() =>
+      expect(rendered.getByLabelText("Duration property for Project")).toBeTruthy(),
+    );
+    let resolveDiscovery!: (catalog: CapacitiesCatalog) => void;
+    vi.spyOn(h.controller, "discoverCapacitiesSource").mockReturnValue(
+      new Promise<CapacitiesCatalog>((resolve) => {
+        resolveDiscovery = resolve;
+      }),
+    );
+
+    fireEvent.click(
+      rendered.getByRole("button", { name: "Discover from Capacities" }),
+    );
+    await waitFor(() =>
+      expect(
+        (
+          rendered.getByRole("button", { name: "Discovering…" }) as HTMLButtonElement
+        ).disabled,
+      ).toBe(true),
+    );
+
+    resolveDiscovery(catalogFixture);
+    await waitFor(() =>
+      expect(
+        (
+          rendered.getByRole("button", {
+            name: "Discover from Capacities",
+          }) as HTMLButtonElement
+        ).disabled,
+      ).toBe(false),
+    );
+    expect(
+      rendered.getByRole("region", { name: "Discovered Capacities structures" }),
+    ).toBeTruthy();
+  });
+
+  it("renders an empty catalog and its warnings without throwing", async () => {
+    const { h, rendered } = await openEditor({
+      source: recordFixture,
+      persisted: true,
+    });
+    await waitFor(() =>
+      expect(rendered.getByLabelText("Duration property for Project")).toBeTruthy(),
+    );
+    // A different space id proves discovery reads the draft's current value.
+    fireEvent.input(rendered.getByLabelText("Capacities space id"), {
+      target: { value: "space-42" },
+    });
+    const discover = vi
+      .spyOn(h.controller, "discoverCapacitiesSource")
+      .mockResolvedValue({
+        spaceId: "space-42",
+        structures: [],
+        warnings: ["Some structures could not be read; this catalog is partial."],
+      });
+
+    fireEvent.click(
+      rendered.getByRole("button", { name: "Discover from Capacities" }),
+    );
+    await waitFor(() => expect(discover).toHaveBeenCalledWith("space-42"));
+    const catalog = await waitFor(() =>
+      rendered.getByRole("region", { name: "Discovered Capacities structures" }),
+    );
+    expect(
+      within(catalog).getByText("Capacities reported no structures in this space."),
+    ).toBeTruthy();
+    expect(
+      within(catalog).getByText(
+        "Some structures could not be read; this catalog is partial.",
+      ),
+    ).toBeTruthy();
+    expect(rendered.queryByRole("alert")).toBeNull();
+    // The draft still holds both rows exactly as loaded.
+    expect(rendered.getByLabelText("Structure ID for Project")).toBeTruthy();
+    expect(rendered.getByLabelText("Structure ID for Task")).toBeTruthy();
   });
 });

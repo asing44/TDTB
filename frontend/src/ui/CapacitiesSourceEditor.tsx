@@ -1,9 +1,9 @@
 /* CapacitiesSourceEditor — the vault-local Capacities source mapping editor.
 
    The mapping record names which Capacities structures TDTB reads and which
-   provider property plays each role on a structure. This surface adds no
-   discovery: every value is declared by the operator, and a property value
-   is an opaque provider id that is kept exactly as typed.
+   provider property plays each role on a structure. Property values are
+   opaque provider ids kept exactly as typed; discovery renders the space's
+   real ids so the operator does not have to guess them.
 
    Contract this surface keeps:
    - An absent record ({source: null, persisted: false}) is an empty state,
@@ -19,11 +19,23 @@
      request, and the save is never retried or re-based automatically.
    - Display titles are advisory metadata from the settings read; identity
      and saving always key on the structure id, and the id is rendered only
-     by its own field. */
+     by its own field.
+   - Discovery is a read-only provider query: it renders what Capacities
+     really has and never writes. It never touches the draft, and the only
+     bridge from the catalog into the draft is the explicit per-structure
+     "Add to mapping" action, which appends the existing empty row shape
+     with the structure id set. No role is ever inferred from a property's
+     name, title, or type. A structure whose reported title equals its own
+     structure id is a real no-name case, not an error.
+   - A failed discovery keeps the draft byte-identical, performs no save,
+     and classifies itself from the ApiError status: 503 credentials (an
+     operator must restore them), 429 rate limit (wait and retry), anything
+     else generic. */
 
 import { useEffect, useState } from "preact/hooks";
-import { capacitiesSourceConflictOf } from "../adapters/api";
+import { ApiError, capacitiesSourceConflictOf } from "../adapters/api";
 import type {
+  CapacitiesCatalog,
   CapacitiesSource,
   CapacitiesSourceDraft,
   CapacitiesSourceRead,
@@ -115,6 +127,34 @@ function reviewText(review: Review): string {
   return `Re-read the record: the server now holds revision ${review.revision} with ${count} ${
     count === 1 ? "structure" : "structures"
   } (${ids}). Your draft is unchanged; saving now replaces the stored record.`;
+}
+
+/** How a failed discovery is actionable, narrowed from the ApiError status
+    (house style: `e instanceof ApiError && e.status === N`). 503 needs an
+    operator because no retry can restore a missing credential; 429 clears
+    on its own; anything else is a generic failure. */
+type DiscoveryFailureKind = "credentials" | "rate_limited" | "failed";
+
+interface DiscoveryFailure {
+  kind: DiscoveryFailureKind;
+  message: string;
+}
+
+const DISCOVERY_FAILURE_LEAD: Record<DiscoveryFailureKind, string> = {
+  credentials:
+    "Capacities credentials are unavailable; retrying will not help until an operator restores them.",
+  rate_limited: "Capacities rate-limited the discovery; wait a moment, then try again.",
+  failed: "Discovery failed.",
+};
+
+function discoveryFailureOf(error: unknown): DiscoveryFailure {
+  if (error instanceof ApiError && error.status === 503) {
+    return { kind: "credentials", message: messageOf(error) };
+  }
+  if (error instanceof ApiError && error.status === 429) {
+    return { kind: "rate_limited", message: messageOf(error) };
+  }
+  return { kind: "failed", message: messageOf(error) };
 }
 
 /** One property field. The input value is the stored value verbatim; an
@@ -314,6 +354,11 @@ export function CapacitiesSourceEditor({
   const [review, setReview] = useState<Review | null>(null);
   const [saving, setSaving] = useState(false);
   const [reloading, setReloading] = useState(false);
+  const [catalog, setCatalog] = useState<CapacitiesCatalog | null>(null);
+  const [discovering, setDiscovering] = useState(false);
+  const [discoveryFailure, setDiscoveryFailure] = useState<DiscoveryFailure | null>(
+    null,
+  );
 
   const loadSource = async () => {
     setLoading(true);
@@ -357,6 +402,41 @@ export function CapacitiesSourceEditor({
       current === null
         ? null
         : { ...current, structures: [...current.structures, emptyStructure()] },
+    );
+  };
+
+  // Discovery is a read-only provider query: it may replace the rendered
+  // catalog or report a failure, but it NEVER saves and NEVER touches the
+  // draft. The catalog it renders is advisory reference material, not a
+  // mapping.
+  const discover = async () => {
+    if (draft === null || discovering) return;
+    setDiscovering(true);
+    setDiscoveryFailure(null);
+    try {
+      setCatalog(await controller.discoverCapacitiesSource(draft.spaceId));
+    } catch (e) {
+      setDiscoveryFailure(discoveryFailureOf(e));
+    } finally {
+      setDiscovering(false);
+    }
+  };
+
+  // The ONLY path that copies a discovered structure into the draft, and it
+  // copies nothing but the identity: every role stays exactly as
+  // emptyStructure() left it. A property named "Title" or a type of "label"
+  // never implies a role.
+  const addDiscoveredStructure = (structureId: string) => {
+    setDraft((current) =>
+      current === null
+        ? null
+        : {
+            ...current,
+            structures: [
+              ...current.structures,
+              { ...emptyStructure(), structureId },
+            ],
+          },
     );
   };
 
@@ -472,6 +552,110 @@ export function CapacitiesSourceEditor({
                 onInput={(e) => patchDraft({ spaceId: e.currentTarget.value })}
               />
             </div>
+
+            <div class="capacities-source-discover">
+              <button
+                class="btn"
+                onClick={() => void discover()}
+                disabled={discovering || draft.spaceId === ""}
+              >
+                {discovering ? "Discovering…" : "Discover from Capacities"}
+              </button>
+              <small>
+                Reads the space's real structures and properties so their ids can
+                be copied instead of guessed. Discovery never saves and never edits
+                the draft.
+              </small>
+            </div>
+
+            {discoveryFailure !== null && (
+              <div class="capacities-source__discovery-error" role="alert">
+                <strong>
+                  {DISCOVERY_FAILURE_LEAD[discoveryFailure.kind]}
+                </strong>
+                <span>{discoveryFailure.message}</span>
+              </div>
+            )}
+
+            {catalog !== null && (
+              <section
+                class="capacities-source-catalog"
+                aria-label="Discovered Capacities structures"
+              >
+                <div class="capacities-source-catalog__head">
+                  <h4>Discovered structures</h4>
+                  <span>{`Space ${catalog.spaceId}`}</span>
+                </div>
+                {catalog.warnings.map((warning) => (
+                  <p
+                    class="capacities-source-catalog__warning"
+                    role="status"
+                    key={warning}
+                  >
+                    {warning}
+                  </p>
+                ))}
+                {catalog.structures.length === 0 ? (
+                  <p class="capacities-source-catalog__empty">
+                    Capacities reported no structures in this space.
+                  </p>
+                ) : (
+                  catalog.structures.map((structure) => (
+                    <article
+                      class="capacities-source-catalog__structure"
+                      key={structure.structureId}
+                    >
+                      <div class="capacities-source-catalog__structure-head">
+                        <div class="capacities-source-catalog__identity">
+                          <strong>{structure.title}</strong>
+                          <code>{structure.structureId}</code>
+                        </div>
+                        <button
+                          class="btn"
+                          onClick={() =>
+                            addDiscoveredStructure(structure.structureId)
+                          }
+                          aria-label={`Add ${structure.structureId} to mapping`}
+                        >
+                          Add to mapping
+                        </button>
+                      </div>
+                      {structure.properties.length === 0 ? (
+                        <p class="capacities-source-catalog__empty">
+                          No properties were discovered for this structure.
+                        </p>
+                      ) : (
+                        <ul class="capacities-source-catalog__properties">
+                          {structure.properties.map((property) => (
+                            <li key={property.propertyId}>
+                              <div class="capacities-source-catalog__property">
+                                <code>{property.propertyId}</code>
+                                <span>{property.title}</span>
+                                <small>
+                                  {property.writable
+                                    ? `${property.type} · writable`
+                                    : `${property.type} · read-only`}
+                                </small>
+                              </div>
+                              {property.labelOptions.length > 0 && (
+                                <ul class="capacities-source-catalog__labels">
+                                  {property.labelOptions.map((option) => (
+                                    <li key={option.id}>
+                                      <code>{option.id}</code>
+                                      <span>{option.title}</span>
+                                    </li>
+                                  ))}
+                                </ul>
+                              )}
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </article>
+                  ))
+                )}
+              </section>
+            )}
 
             {draft.structures.length === 0 ? (
               <p class="capacities-settings__empty">
