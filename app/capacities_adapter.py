@@ -13,7 +13,7 @@ from dataclasses import dataclass, field, replace
 from datetime import date
 import hashlib
 import json
-from typing import Any, Protocol, Sequence
+from typing import Any, Callable, Protocol, Sequence
 
 from capacities_assignment import (
     AssignmentCandidate,
@@ -1227,6 +1227,7 @@ class CapacitiesRestClient:
         headers: dict[str, str] | None = None,
         transport: Any = None,
         content_cache: Any = None,
+        structures_observer: Callable[[dict[str, Any]], None] | None = None,
     ) -> None:
         if not _text(token):
             raise ValueError("Capacities API token is required")
@@ -1241,6 +1242,11 @@ class CapacitiesRestClient:
         }
         self._space_id = _text(space_id)
         self._content_cache = content_cache
+        #: Best-effort sink for the parsed ``/space/structures`` payload. The
+        #: builder binds it to the machine-local title cache; ``None`` means a
+        #: transport-only client. A per-call ``observer`` argument overrides
+        #: it.
+        self._structures_observer = structures_observer
         self._client = httpx.Client(
             base_url=base_url.rstrip("/"),
             headers=request_headers,
@@ -1262,8 +1268,32 @@ class CapacitiesRestClient:
             raise CapacitiesContractError("Capacities API returned a non-object response")
         return payload
 
-    def fetch_structures(self) -> dict[str, Any]:
-        return self._json(self._client.get("/space/structures"))
+    def fetch_structures(
+        self,
+        observer: Callable[[dict[str, Any]], None] | None = None,
+    ) -> dict[str, Any]:
+        """Read the space's structure definitions, best-effort observing them.
+
+        Space scoping is token-implied. Unlike :meth:`list_objects`, this
+        endpoint takes no ``spaceId`` parameter, so the request carries no
+        explicit space scope and the payload cannot be used to verify one.
+        Every current read already relies on that; this call inherits the
+        reliance rather than adding it, and it is recorded here so the next
+        reader sees it before assuming the response is space-verified.
+
+        ``observer`` — or this client's ``structures_observer`` when the call
+        passes none — receives the parsed payload after a successful parse.
+        It is a best-effort sink: any failure inside it is swallowed here,
+        because observation must never change or break a read.
+        """
+        payload = self._json(self._client.get("/space/structures"))
+        sink = observer if observer is not None else self._structures_observer
+        if sink is not None:
+            try:
+                sink(payload)
+            except Exception:  # noqa: BLE001 — observation must never affect a read
+                pass
+        return payload
 
     def list_objects(self, structure_id: str, cursor: str | None = None) -> dict[str, Any]:
         """List one structure's objects inside the configured space.
