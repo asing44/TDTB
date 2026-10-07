@@ -22,6 +22,10 @@ SPACE = "space-1"
 NATIVE = f"capacities:{SPACE}:RootTask:task-1"
 CUSTOM = f"capacities:{SPACE}:custom-project:project-1"
 
+#: Documented defaults for the two additive version-1 admission inputs.
+DEFAULT_NATIVE_STRUCTURES = ["RootTask", "Task"]
+DEFAULT_ACTIVE_STATUSES = ["active"]
+
 
 def _write_raw(vault_root, text: str) -> Path:
     path = cs.settings_path(vault_root)
@@ -90,7 +94,10 @@ class TestPathsAndDefault:
 
     def test_default_settings_match_the_persisted_shape(self, tmp_path):
         result = cs.read_settings(tmp_path)
-        assert result.settings.as_dict() == _valid_payload()
+        expected = _valid_payload()
+        expected["native_task_structures"] = DEFAULT_NATIVE_STRUCTURES
+        expected["active_statuses"] = DEFAULT_ACTIVE_STATUSES
+        assert result.settings.as_dict() == expected
 
     def test_vault_isolation(self, tmp_path):
         a = tmp_path / "vault-a"
@@ -155,6 +162,8 @@ class TestRoundTrip:
             },
             "excluded": {NATIVE: True},
             "active_structures": {},
+            "native_task_structures": DEFAULT_NATIVE_STRUCTURES,
+            "active_statuses": DEFAULT_ACTIVE_STATUSES,
         }
 
     def test_saved_settings_bridge_to_the_evaluator_seam(self, tmp_path):
@@ -648,3 +657,204 @@ class TestActiveStructures:
             cs.CapacitiesSettings(active_structures=[None])
         with pytest.raises(ValueError):
             cs.CapacitiesSettings(active_structures=["a b"])
+
+
+# ---------------------------------------------------------------------------
+# Admission inputs (additive version-1 keys)
+# ---------------------------------------------------------------------------
+# ``native_task_structures`` and ``active_statuses`` were added additively to
+# schema version 1 in the same way as ``active_structures``: absent means the
+# documented default, every fresh write emits them, and a present value is
+# validated strictly. ``SCHEMA_VERSION`` is deliberately unchanged so an
+# existing version-1 file keeps reading instead of failing closed.
+
+
+class TestAdmissionInputs:
+    def test_schema_version_is_unchanged(self):
+        assert cs.SCHEMA_VERSION == 1
+
+    def test_defaults_when_no_file_exists(self, tmp_path):
+        settings = cs.read_settings(tmp_path).settings
+
+        assert settings.native_task_structures == frozenset({"RootTask", "Task"})
+        assert settings.active_statuses == frozenset({"active"})
+
+    def test_legacy_version_1_file_without_either_key_reads_with_the_documented_defaults(
+        self, tmp_path
+    ):
+        _write_json(tmp_path, _valid_payload())
+
+        result = cs.read_settings(tmp_path)
+
+        assert result.persisted is True
+        assert result.settings.native_task_structures == frozenset({"RootTask", "Task"})
+        assert result.settings.active_statuses == frozenset({"active"})
+
+    def test_both_keys_round_trip_through_write_and_read(self, tmp_path):
+        saved = cs.save_settings(
+            tmp_path,
+            expected_revision=0,
+            native_task_auto=_default_policy(),
+            excluded=[],
+            native_task_structures=["RootTask", "custom-project"],
+            active_statuses=["Active", "In Progress"],
+        )
+
+        assert saved.native_task_structures == frozenset({"RootTask", "custom-project"})
+        assert saved.active_statuses == frozenset({"Active", "In Progress"})
+        result = cs.read_settings(tmp_path)
+        assert result.settings == saved
+        assert result.settings.native_task_structures == frozenset(
+            {"RootTask", "custom-project"}
+        )
+        assert result.settings.active_statuses == frozenset({"Active", "In Progress"})
+
+    def test_freshly_written_file_emits_both_keys(self, tmp_path):
+        cs.save_settings(
+            tmp_path,
+            expected_revision=0,
+            native_task_auto=_default_policy(),
+            excluded=[],
+        )
+        data = json.loads(_bytes(tmp_path).decode("utf-8"))
+
+        assert data["native_task_structures"] == DEFAULT_NATIVE_STRUCTURES
+        assert data["active_statuses"] == DEFAULT_ACTIVE_STATUSES
+
+    def test_written_lists_are_sorted_and_deterministic(self, tmp_path):
+        cs.save_settings(
+            tmp_path, expected_revision=0,
+            native_task_auto=_default_policy(), excluded=[],
+            native_task_structures=["zeta", "alpha"],
+            active_statuses=["zeta", "Alpha"],
+        )
+        data = json.loads(_bytes(tmp_path).decode("utf-8"))
+
+        assert data["native_task_structures"] == ["alpha", "zeta"]
+        assert data["active_statuses"] == ["Alpha", "zeta"]
+
+    def test_active_statuses_are_stored_as_given_not_pre_normalized(self, tmp_path):
+        # The evaluator normalizes at comparison time; the persisted form keeps
+        # the operator's exact text.
+        saved = cs.save_settings(
+            tmp_path, expected_revision=0,
+            native_task_auto=_default_policy(), excluded=[],
+            active_statuses=["In Progress"],
+        )
+
+        assert saved.active_statuses == frozenset({"In Progress"})
+        assert cs.read_settings(tmp_path).settings.active_statuses == frozenset(
+            {"In Progress"}
+        )
+
+    def test_empty_native_task_structures_is_a_legitimate_configuration(self, tmp_path):
+        saved = cs.save_settings(
+            tmp_path, expected_revision=0,
+            native_task_auto=_default_policy(), excluded=[],
+            native_task_structures=[],
+        )
+
+        assert saved.native_task_structures == frozenset()
+        result = cs.read_settings(tmp_path)
+        assert result.settings.native_task_structures == frozenset()
+        assert result.settings.as_dict()["native_task_structures"] == []
+
+    def test_empty_active_statuses_is_a_legitimate_configuration(self, tmp_path):
+        saved = cs.save_settings(
+            tmp_path, expected_revision=0,
+            native_task_auto=_default_policy(), excluded=[],
+            active_statuses=[],
+        )
+
+        assert saved.active_statuses == frozenset()
+        assert cs.read_settings(tmp_path).settings.active_statuses == frozenset()
+
+    @pytest.mark.parametrize(
+        "key, bad",
+        [
+            ("native_task_structures", "RootTask"),            # not a list
+            ("native_task_structures", {"RootTask": True}),    # object
+            ("native_task_structures", 1),                     # number
+            ("native_task_structures", None),                  # null
+            ("native_task_structures", [""]),                  # empty entry
+            ("native_task_structures", [None]),                # non-string entry
+            ("native_task_structures", [1]),                   # non-string entry
+            ("native_task_structures", ["RootTask", "RootTask"]),  # duplicate
+            ("active_statuses", "active"),                     # not a list
+            ("active_statuses", {"active": True}),             # object
+            ("active_statuses", None),                         # null
+            ("active_statuses", [""]),                         # empty entry
+            ("active_statuses", [True]),                       # non-string entry
+            ("active_statuses", ["active", "active"]),         # duplicate
+        ],
+    )
+    def test_malformed_stored_values_fail_closed_and_preserve_the_bytes(
+        self, tmp_path, key, bad
+    ):
+        _write_json(tmp_path, _valid_payload(**{key: bad}))
+        before = _bytes(tmp_path)
+
+        with pytest.raises(cs.SettingsFormatError):
+            cs.read_settings(tmp_path)
+        with pytest.raises(cs.SettingsFormatError):
+            cs.save_settings(
+                tmp_path, expected_revision=0,
+                native_task_auto=_default_policy(), excluded=[],
+            )
+        assert _bytes(tmp_path) == before
+
+    @pytest.mark.parametrize(
+        "kwargs",
+        [
+            {"native_task_structures": "RootTask"},
+            {"native_task_structures": [""]},
+            {"native_task_structures": [None]},
+            {"native_task_structures": ["RootTask", "RootTask"]},
+            {"native_task_structures": None},
+            {"active_statuses": "active"},
+            {"active_statuses": [""]},
+            {"active_statuses": [True]},
+            {"active_statuses": ["active", "active"]},
+            {"active_statuses": None},
+        ],
+    )
+    def test_malformed_save_input_is_rejected_before_any_file_access(
+        self, tmp_path, kwargs
+    ):
+        with pytest.raises(ValueError):
+            cs.save_settings(
+                tmp_path, expected_revision=0,
+                native_task_auto=_default_policy(), excluded=[], **kwargs,
+            )
+        assert not cs.settings_path(tmp_path).exists()
+        assert not cs.lock_path(tmp_path).exists()
+
+    def test_constructed_model_is_strict_about_the_admission_inputs(self):
+        for kwargs in (
+            {"native_task_structures": "RootTask"},
+            {"native_task_structures": [""]},
+            {"native_task_structures": [None]},
+            {"native_task_structures": ["RootTask", "RootTask"]},
+            {"native_task_structures": None},
+            {"active_statuses": "active"},
+            {"active_statuses": [""]},
+            {"active_statuses": [True]},
+            {"active_statuses": ["active", "active"]},
+        ):
+            with pytest.raises(ValueError):
+                cs.CapacitiesSettings(**kwargs)
+        assert cs.CapacitiesSettings(
+            native_task_structures=[]
+        ).native_task_structures == frozenset()
+
+    def test_saved_settings_bridge_both_inputs_to_the_evaluator(self, tmp_path):
+        saved = cs.save_settings(
+            tmp_path, expected_revision=0,
+            native_task_auto=_default_policy(), excluded=[],
+            native_task_structures=["custom-project"],
+            active_statuses=["In Progress"],
+        )
+        seam = saved.to_assignment_settings()
+
+        assert seam.native_task_structures == frozenset({"custom-project"})
+        assert seam.active_statuses == frozenset({"In Progress"})

@@ -214,6 +214,37 @@ def test_well_formed_record_returns_configured_adapter(tmp_path):
     assert transport.calls == []
 
 
+def test_settings_admission_inputs_reach_the_adapter_config(tmp_path):
+    """The production path carries both persisted admission inputs from the
+    vault file through ``to_assignment_settings`` into the built adapter."""
+    _write_source(tmp_path, _valid_payload())
+    cs.save_settings(
+        tmp_path,
+        expected_revision=0,
+        native_task_auto=cs.NativeTaskAutoPolicy(),
+        excluded=(),
+        active_structures=(),
+        native_task_structures=("RootTask", "custom-project"),
+        active_statuses=("active", "In Progress"),
+    )
+    token = _valid_token_file(tmp_path)
+    transport = _RecordingTransport()
+
+    adapter = cb.build_capacities_adapter(
+        tmp_path,
+        cb.CapacitiesBuilderConfig(token_path=token),
+        transport=transport,
+    )
+
+    assert adapter.config.assignment_settings.native_task_structures == frozenset(
+        {"RootTask", "custom-project"}
+    )
+    assert adapter.config.assignment_settings.active_statuses == frozenset(
+        {"active", "In Progress"}
+    )
+    assert transport.calls == []
+
+
 def test_transport_is_injected_and_no_network_calls_made(tmp_path):
     _write_source(tmp_path, _valid_payload())
     token = _valid_token_file(tmp_path)

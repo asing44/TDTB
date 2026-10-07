@@ -5,11 +5,15 @@ reads and writes::
 
     00 - META/Cache/tdtb-capacities-settings.json
 
-It persists only the editable assignment policy — the native Auto toggles and
-the stable-identity exclusion set — plus a server-owned schema ``version`` and
-monotonic ``revision``. It deliberately persists no titles, source properties,
-credentials, structure mappings, or effective-assignment results: the evaluator
-in :mod:`capacities_assignment` stays the single source of truth for decisions.
+It persists only the editable assignment policy — the native Auto toggles,
+the stable-identity exclusion set, the custom structures whose ``Active``
+status is an inclusion signal, and the two configured admission inputs (which
+structures participate in the native Auto rules and which status values
+satisfy the native status condition) — plus a server-owned schema ``version``
+and monotonic ``revision``. It deliberately persists no titles, source
+properties, credentials, structure mappings, or effective-assignment results:
+the evaluator in :mod:`capacities_assignment` stays the single source of
+truth for decisions.
 
 Contract:
 
@@ -50,7 +54,9 @@ except ImportError:  # pragma: no cover — non-POSIX fallback
 
 import runstate
 from capacities_assignment import (
+    DEFAULT_ACTIVE_STATUSES,
     DEFAULT_DEADLINE_HORIZON_DAYS,
+    NATIVE_TASK_STRUCTURES,
     AssignmentSettings,
     parse_capacities_identity,
 )
@@ -67,17 +73,23 @@ SETTINGS_REL_PATH = f"{runstate.CACHE_DIR_REL}/tdtb-capacities-settings.json"
 LOCK_REL_PATH = f"{runstate.CACHE_DIR_REL}/tdtb-capacities-settings.lock"
 SCHEMA_VERSION = 1
 
-# ``active_structures`` was added ADDITIVELY to schema version 1, deliberately
-# without bumping SCHEMA_VERSION. A version bump would make every already-saved
-# version-1 file "unsupported" and fail closed (reads would raise and writes
-# would refuse), locking a user out of the settings they already own. Instead
-# the key is optional on read — a legacy version-1 file without it means "no
-# custom structure is Active-enabled" — while every freshly written file emits
-# it. Strictness is unchanged: the key, when present, is validated exactly.
+# ``active_structures``, ``native_task_structures``, and ``active_statuses``
+# were added ADDITIVELY to schema version 1, deliberately without bumping
+# SCHEMA_VERSION. A version bump would make every already-saved version-1 file
+# "unsupported" and fail closed (reads would raise and writes would refuse),
+# locking a user out of the settings they already own. Instead each key is
+# optional on read — a legacy version-1 file without it means the documented
+# default (no custom structure Active-enabled, the built-in native task
+# structures, the single ``active`` status) — while every freshly written file
+# emits it. Strictness is unchanged: each key, when present, is validated
+# exactly.
+_ADDITIVE_KEYS = frozenset(
+    {"active_structures", "native_task_structures", "active_statuses"}
+)
 _TOP_KEYS = frozenset(
     {"version", "revision", "native_task_auto", "excluded", "active_structures"}
-)
-_REQUIRED_TOP_KEYS = _TOP_KEYS - {"active_structures"}
+) | _ADDITIVE_KEYS
+_REQUIRED_TOP_KEYS = _TOP_KEYS - _ADDITIVE_KEYS
 _NATIVE_KEYS = frozenset(
     {"active_enabled", "due_enabled", "deadline_enabled", "deadline_horizon_days"}
 )
@@ -137,7 +149,8 @@ class CapacitiesSettings:
 
     ``revision`` is server-owned and monotonic; ``excluded`` holds canonical
     stable Capacities identities. Construction is strict: an invalid identity,
-    revision, or native policy raises ``ValueError`` before any I/O.
+    revision, native policy, structure id, status value, or duplicate entry
+    raises ``ValueError`` before any I/O.
     """
 
     revision: int = 0
@@ -146,6 +159,16 @@ class CapacitiesSettings:
     #: Custom structures whose ``Active`` typed status label is an inclusion
     #: signal (additive to schema version 1; absence means the empty set).
     active_structures: frozenset[str] = frozenset()
+    #: Structures that participate in the native Auto rules (additive to
+    #: schema version 1; absence means the built-in native task structures).
+    #: An empty set is legitimate: every structure then falls to the custom
+    #: path.
+    native_task_structures: frozenset[str] = NATIVE_TASK_STRUCTURES
+    #: Status values that satisfy the native Auto status condition, stored
+    #: exactly as configured — the evaluator normalizes at comparison time, so
+    #: the persisted form is never pre-normalized (additive to schema version
+    #: 1; absence means ``{"active"}``).
+    active_statuses: frozenset[str] = DEFAULT_ACTIVE_STATUSES
 
     def __post_init__(self) -> None:
         if type(self.revision) is not int or self.revision < 0:
@@ -167,6 +190,9 @@ class CapacitiesSettings:
                 for value in self.active_structures
             ),
         )
+        for name in ("native_task_structures", "active_statuses"):
+            values = canonical_unique_admission_values(getattr(self, name), name)
+            object.__setattr__(self, name, frozenset(values))
 
     def as_dict(self) -> dict[str, Any]:
         """The exact persisted JSON shape (sorted, deterministic)."""
@@ -178,6 +204,8 @@ class CapacitiesSettings:
             "active_structures": {
                 structure_id: True for structure_id in sorted(self.active_structures)
             },
+            "native_task_structures": sorted(self.native_task_structures),
+            "active_statuses": sorted(self.active_statuses),
         }
 
     def to_assignment_settings(self) -> AssignmentSettings:
@@ -189,6 +217,8 @@ class CapacitiesSettings:
             due_enabled=self.native_task_auto.due_enabled,
             deadline_enabled=self.native_task_auto.deadline_enabled,
             active_structures=self.active_structures,
+            native_task_structures=self.native_task_structures,
+            active_statuses=self.active_statuses,
         )
 
 
@@ -236,6 +266,44 @@ def canonical_active_structure_id(value: Any) -> str:
     if value != value.strip() or any(char.isspace() for char in value):
         raise ValueError(f"{value!r} is not a valid structure id")
     return value
+
+
+def canonical_admission_value(value: Any) -> str:
+    """Validate and return one configured native structure id or status name.
+
+    The value must be a non-empty string and is kept exactly as given: a
+    status name may legitimately contain whitespace (``In Progress``), and the
+    evaluator normalizes at comparison time, so the persisted form is never
+    pre-normalized. Any other value raises ``ValueError``.
+    """
+    if not isinstance(value, str) or not value:
+        raise ValueError(f"{value!r} is not a valid configured value")
+    return value
+
+
+def canonical_unique_admission_values(value: Any, key: str) -> tuple[str, ...]:
+    """Validate an iterable of unique, non-empty strings for one additive key.
+
+    A string/bytes value, a non-iterable, an empty or non-string entry, or a
+    duplicate entry raises ``ValueError`` before any file access. Duplicates
+    are rejected rather than silently collapsed so a malformed write can never
+    masquerade as a valid configuration.
+    """
+    if isinstance(value, (str, bytes)):
+        raise ValueError(f"{key} must be a collection of strings")
+    try:
+        items = list(value)
+    except TypeError:
+        raise ValueError(f"{key} must be a collection of strings") from None
+    seen: set[str] = set()
+    result: list[str] = []
+    for item in items:
+        text = canonical_admission_value(item)
+        if text in seen:
+            raise ValueError(f"{key} has a duplicate entry {text!r}")
+        seen.add(text)
+        result.append(text)
+    return tuple(result)
 
 
 # ---------------------------------------------------------------------------
@@ -328,6 +396,43 @@ def _decode(data: Any) -> CapacitiesSettings:
                 "capacities settings has an invalid active structure id"
             ) from exc
 
+    # ``native_task_structures`` and ``active_statuses`` are optional on read:
+    # a legacy version-1 file that predates either additive key means the
+    # documented default. A present value is a JSON list of unique, non-empty
+    # strings and is validated exactly like every other key.
+    native_structures = set(NATIVE_TASK_STRUCTURES)
+    if "native_task_structures" in data:
+        raw_structures = data["native_task_structures"]
+        if not isinstance(raw_structures, list):
+            raise SettingsFormatError(
+                "capacities settings native_task_structures must be a list"
+            )
+        try:
+            native_structures = set(
+                canonical_unique_admission_values(
+                    raw_structures, "native_task_structures"
+                )
+            )
+        except ValueError as exc:
+            raise SettingsFormatError(
+                "capacities settings native_task_structures has an invalid entry"
+            ) from exc
+    statuses = set(DEFAULT_ACTIVE_STATUSES)
+    if "active_statuses" in data:
+        raw_statuses = data["active_statuses"]
+        if not isinstance(raw_statuses, list):
+            raise SettingsFormatError(
+                "capacities settings active_statuses must be a list"
+            )
+        try:
+            statuses = set(
+                canonical_unique_admission_values(raw_statuses, "active_statuses")
+            )
+        except ValueError as exc:
+            raise SettingsFormatError(
+                "capacities settings active_statuses has an invalid entry"
+            ) from exc
+
     return CapacitiesSettings(
         revision=revision,
         native_task_auto=NativeTaskAutoPolicy(
@@ -338,6 +443,8 @@ def _decode(data: Any) -> CapacitiesSettings:
         ),
         excluded=frozenset(excluded),
         active_structures=frozenset(active),
+        native_task_structures=frozenset(native_structures),
+        active_statuses=frozenset(statuses),
     )
 
 
@@ -452,12 +559,21 @@ def save_settings(
     native_task_auto: NativeTaskAutoPolicy,
     excluded: Any = (),
     active_structures: Any = (),
+    native_task_structures: Any = NATIVE_TASK_STRUCTURES,
+    active_statuses: Any = DEFAULT_ACTIVE_STATUSES,
 ) -> CapacitiesSettings:
     """Explicitly replace the whole Capacities assignment policy.
 
     The full editable policy is supplied (full replacement), while ``version``
     and ``revision`` stay server-owned: the saved revision is the stored
     revision plus one. Inputs are validated BEFORE any file access.
+
+    The two additive admission inputs default to the documented policy
+    (the built-in native task structures and the single ``active`` status), so
+    omitting them is a full replacement to that default — exactly like an
+    omitted ``active_structures``. An empty ``native_task_structures`` is a
+    legitimate configuration: nothing is native and every structure falls to
+    the custom path.
 
     Under the per-vault lock the current file is read, its revision compared
     with ``expected_revision``, and only then is the file replaced atomically.
@@ -474,6 +590,14 @@ def save_settings(
     identities = frozenset(canonical_exclusion_identity(value) for value in excluded)
     active_ids = frozenset(
         canonical_active_structure_id(value) for value in active_structures
+    )
+    native_ids = frozenset(
+        canonical_unique_admission_values(
+            native_task_structures, "native_task_structures"
+        )
+    )
+    status_values = frozenset(
+        canonical_unique_admission_values(active_statuses, "active_statuses")
     )
 
     root = Path(vault_root)
@@ -492,6 +616,8 @@ def save_settings(
                 native_task_auto=native_task_auto,
                 excluded=identities,
                 active_structures=active_ids,
+                native_task_structures=native_ids,
+                active_statuses=status_values,
             )
             _atomic_write_json(settings_path(root), saved.as_dict())
         finally:

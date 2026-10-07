@@ -829,6 +829,69 @@ def test_non_native_mapping_without_assignment_property_fails_closed():
     assert provider.list_calls == []
 
 
+def test_configured_native_structure_is_enumerated_and_evaluated_by_the_native_rule():
+    """Moving a structure into ``native_task_structures`` is honoured by both
+    the enumeration gate and the evaluator's native Auto rule."""
+    provider = _custom_provider(
+        [
+            _object(
+                "project-1",
+                "custom-project",
+                {
+                    "title": _prop("title", "title", {"value": "Active project"}),
+                    "state": _prop("label", "label", [{"id": "active"}]),
+                },
+            ),
+        ]
+    )
+    mapping = StructureMapping(
+        structure_id="custom-project",
+        title_property="title",
+        open_status_property="state",
+        open_status_values=frozenset({"active"}),
+    )
+    settings = AssignmentSettings(
+        native_task_structures=frozenset({"RootTask", "custom-project"})
+    )
+
+    result = _adapter(
+        provider,
+        mappings=(_native_mapping(deadline_property=None), mapping),
+        assignment_settings=settings,
+    ).items_for_day(TODAY)
+
+    assert [row["capacities_id"] for row in result.items] == ["project-1"]
+    assert result.items[0]["capacities_assignment"]["mode"] == "auto"
+    assert ("custom-project", None) in provider.list_calls
+
+
+def test_contract_validation_follows_the_configured_native_set():
+    """The native-vs-custom error branch at contract validation follows the
+    configured set. Both branches still fail closed for a mapping with neither
+    an assignment property nor a status property; the configured set decides
+    which requirement the operator is told to satisfy."""
+    bad_mapping = StructureMapping(structure_id="custom-project", title_property="title")
+
+    custom_provider = FakeProvider(_structures(), {})
+    with pytest.raises(CapacitiesContractError, match="assignment property"):
+        _adapter(
+            custom_provider, mappings=(_mapping()[0], bad_mapping)
+        ).items_for_day(TODAY)
+
+    native_provider = FakeProvider(_structures(), {})
+    with pytest.raises(CapacitiesContractError, match="native mapping"):
+        _adapter(
+            native_provider,
+            mappings=(_mapping()[0], bad_mapping),
+            assignment_settings=AssignmentSettings(
+                native_task_structures=frozenset({"RootTask", "custom-project"})
+            ),
+        ).items_for_day(TODAY)
+
+    assert custom_provider.list_calls == []
+    assert native_provider.list_calls == []
+
+
 # --------------------------------------------------------------------------
 # Custom Active pull: an Active-enabled custom structure can be satisfied by
 # either an assignment property or a mapped status property.

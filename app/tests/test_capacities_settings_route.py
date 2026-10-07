@@ -97,6 +97,8 @@ class TestGet:
             },
             "excluded": {},
             "active_structures": {},
+            "native_task_structures": ["RootTask", "Task"],
+            "active_statuses": ["active"],
         }
         assert not cs.settings_path(vault).exists()
 
@@ -197,6 +199,10 @@ class TestPostPersistence:
         assert body["settings"]["native_task_auto"]["active_enabled"] is False
         assert body["settings"]["native_task_auto"]["deadline_horizon_days"] == 4
         assert body["settings"]["excluded"] == {NATIVE: True, CUSTOM: True}
+        # The omitted additive admission inputs are written as the documented
+        # defaults by the full-replacement save.
+        assert body["settings"]["native_task_structures"] == ["RootTask", "Task"]
+        assert body["settings"]["active_statuses"] == ["active"]
         assert cs.settings_path(vault).is_file()
 
     def test_post_is_a_full_replacement(self, client, vault):

@@ -471,6 +471,54 @@ def test_settings_can_override_the_native_task_structures():
     assert decision.provenance.auto_conditions == ("status-active",)
 
 
+def test_settings_can_narrow_the_native_task_structures():
+    # A structure left out of the configured set falls to the custom path even
+    # though it is a default native, so it can never match the native rules.
+    settings = AssignmentSettings(native_task_structures=frozenset({"custom-project"}))
+
+    decision = _eval(_native(status="active", status_is_open=True), settings=settings)
+
+    assert decision.provenance.native_task is False
+    assert decision.mode is AssignmentMode.NONE
+
+
+def test_empty_native_task_structures_sends_every_structure_to_the_custom_path():
+    settings = AssignmentSettings(native_task_structures=frozenset())
+
+    decision = _eval(_native(status="active", status_is_open=True), settings=settings)
+
+    assert decision.provenance.native_task is False
+    assert decision.mode is AssignmentMode.NONE
+
+
+def test_settings_can_extend_the_active_statuses():
+    settings = AssignmentSettings(active_statuses=frozenset({"active", "in progress"}))
+
+    decision = _eval(_native(status="In Progress", status_is_open=True), settings=settings)
+
+    assert decision.mode is AssignmentMode.AUTO
+    assert decision.provenance.auto_conditions == ("status-active",)
+    assert decision.reason_codes == ("auto-status-active",)
+
+
+def test_default_active_statuses_alone_do_not_match_other_statuses():
+    decision = _eval(_native(status="In Progress", status_is_open=True))
+
+    assert decision.mode is AssignmentMode.NONE
+    assert decision.provenance.auto_conditions == ()
+
+
+def test_configured_active_statuses_are_normalized_at_comparison_time():
+    # The configured form keeps the operator's exact text; the comparison still
+    # normalizes case and whitespace, so any equivalent spelling matches.
+    settings = AssignmentSettings(active_statuses=frozenset({"In   Progress"}))
+
+    decision = _eval(_native(status="in progress", status_is_open=True), settings=settings)
+
+    assert decision.mode is AssignmentMode.AUTO
+    assert decision.provenance.auto_conditions == ("status-active",)
+
+
 def test_settings_can_override_the_deadline_horizon():
     settings = AssignmentSettings(deadline_horizon_days=5)
     decision = _eval(
