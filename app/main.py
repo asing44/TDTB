@@ -78,6 +78,7 @@ import time_engine  # noqa: E402
 import capacity as capacity_mod  # noqa: E402
 import capacities_settings  # noqa: E402
 import capacities_builder  # noqa: E402
+import capacities_adapter  # noqa: E402
 import exclusion_settings  # noqa: E402
 import tag_exclusions  # noqa: E402
 
@@ -1090,6 +1091,72 @@ async def _capacities_source_save_request(
         raise _capacities_source_invalid_body() from exc
 
 
+class CapacitiesSourceDiscoverRequest(BaseModel):
+    """Request body for POST /settings/capacities/source/discover.
+
+    Closed and strictly typed like the save body — unknown keys are rejected
+    and ``space_id`` must be a literal JSON string — but the structure list is
+    deliberately absent: discovery reads the provider's structures, it never
+    accepts them. ``space_id`` follows the mapping schema's identifier rule
+    (non-empty and whitespace-free)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    space_id: StrictStr
+
+    @field_validator("space_id")
+    @classmethod
+    def _usable_space_id(cls, value: str) -> str:
+        if not value or any(char.isspace() for char in value):
+            raise ValueError("space_id must be a non-empty whitespace-free id")
+        return value
+
+
+def _capacities_catalog_payload(structures: Any) -> list[dict[str, Any]]:
+    """Serialize a discovery catalog into the pinned editor wire shape.
+
+    Only ids, display strings, types, the writability flag, and label options
+    cross the boundary; the provider payload never does. The wire contract
+    restates the structure-id order the builder's catalog already applies, so
+    the endpoint answers sorted regardless of the seam that supplied it."""
+
+    def _property(prop: Any) -> dict[str, Any]:
+        return {
+            "property_id": prop.property_id,
+            "title": prop.title,
+            "type": prop.type,
+            "writable": prop.writable,
+            "label_options": [
+                {"id": option.id, "title": option.title}
+                for option in prop.label_options
+            ],
+        }
+
+    return [
+        {
+            "structure_id": structure.structure_id,
+            "title": structure.title,
+            "properties": [_property(prop) for prop in structure.properties],
+        }
+        for structure in sorted(structures, key=lambda item: item.structure_id)
+    ]
+
+
+async def _capacities_source_discover_request(
+    request: Request,
+) -> CapacitiesSourceDiscoverRequest:
+    """Strictly parse and validate the discovery body, or answer 422.
+
+    Same HTTP boundary as the save body: duplicate JSON keys are rejected
+    before validation and every invalid body answers the fixed
+    ``{detail: {code, message}}`` shape instead of FastAPI's error list."""
+    try:
+        payload = capacities_builder.parse_source_json(await request.body())
+        return CapacitiesSourceDiscoverRequest.model_validate(payload)
+    except (ValueError, ValidationError) as exc:
+        raise _capacities_source_invalid_body() from exc
+
+
 # Day Setup keys /plan-inputs echoes back from run state (the UI's read side).
 # G24: per-day billed-SDK-call cap, enforced against the persistent runstate
 # ledger (billed_calls) — the same 4-call bound RunContext asserts per run.
@@ -2011,6 +2078,89 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
                 },
             ) from exc
         return {"source": saved.as_dict(), "persisted": True}
+
+    @app.post(
+        "/settings/capacities/source/discover",
+        dependencies=[Depends(require_token)],
+    )
+    def post_capacities_source_discover(
+        body: CapacitiesSourceDiscoverRequest = Depends(
+            _capacities_source_discover_request
+        ),
+    ) -> dict:
+        """Token-guarded discovery of the space's structures for the editor.
+
+        Delegates wholly to ``capacities_builder.discover_capacities_source``:
+        one provider structures request, the client closed either way, and the
+        catalog serialized into the pinned wire shape. Discovery is strictly
+        read-only — it never reads, creates, or modifies the vault-local
+        mapping record, so it cannot change what TDTB ingests.
+
+        Space scoping is token-implied: the provider's structures endpoint
+        carries no space parameter, so the request has no explicit scope and
+        the payload cannot verify one (``CapacitiesRestClient.fetch_structures``
+        records the same fact). The requested ``space_id`` is echoed back, not
+        re-derived from the payload.
+
+        ``warnings`` is a bounded list of sanitized operator-facing notes;
+        discovery has no recoverable conditions to report, so it stays empty.
+        Every failure is bounded too: a missing/unreadable credential is a
+        503, a provider rate limit a 429, and any other provider, contract,
+        or transport failure a 502 — no message carries exception text, the
+        token, or a filesystem path."""
+        vault = resolve_vault_root()
+        try:
+            catalog = capacities_builder.discover_capacities_source(
+                vault, body.space_id
+            )
+        except capacities_builder.CapacitiesTokenError as exc:
+            # Bounded client-safe message — no credential slot or path.
+            print(
+                f"capacities discovery credential failed: {exc}",
+                file=sys.stderr,
+            )
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "code": "capacities_discovery_credentials_unavailable",
+                    "message": (
+                        "Capacities credential is unavailable; "
+                        "discovery cannot run."
+                    ),
+                },
+            ) from exc
+        except capacities_adapter.CapacitiesRateLimited as exc:
+            print(f"capacities discovery rate limited: {exc}", file=sys.stderr)
+            raise HTTPException(
+                status_code=429,
+                detail={
+                    "code": "capacities_discovery_rate_limited",
+                    "message": (
+                        "Capacities rate limit exceeded; "
+                        "retry discovery shortly."
+                    ),
+                },
+            ) from exc
+        except Exception as exc:  # noqa: BLE001 — provider boundary, fixed message
+            # CapacitiesContractError and every other provider, contract, or
+            # transport failure share one bounded 502. The fixed message never
+            # carries exception text, the token, or a path.
+            print(f"capacities discovery failed: {exc}", file=sys.stderr)
+            raise HTTPException(
+                status_code=502,
+                detail={
+                    "code": "capacities_discovery_failed",
+                    "message": (
+                        "Capacities discovery failed before a catalog "
+                        "was read."
+                    ),
+                },
+            ) from exc
+        return {
+            "space_id": body.space_id,
+            "structures": _capacities_catalog_payload(catalog),
+            "warnings": [],
+        }
 
     def _tag_catalog(vault: Path) -> dict[str, Any]:
         """Advisory RootTag catalog for the exclusion drawer.
