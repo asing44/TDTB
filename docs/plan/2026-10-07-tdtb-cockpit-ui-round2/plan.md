@@ -282,3 +282,52 @@ idempotent retry versus smaller slices and a higher turn cap.
    `/tmp` rule rather than the one adopted reactively mid-round; and whether the
    `openai-codex` transport's large-payload closes should steer design agents to
    a different provider or tighter context.
+
+## Acceptance evidence — round 2, first landing
+
+Landed as merge `d3f7c50` and pushed; `main == origin/main` verified.
+
+Delivered commits: W1 `688993a`, W6 `e55f6f1`, W2a `6dd88eb`, W3
+`0d75908`/`a50d795`/`3898caa`, plan docs `1d543ac`/`50e5f27`, bundles `5bcdfb1`.
+
+Gates run on the **landed** state — the first time this round's changes and the
+other session's `judgment.py` change were tested together (backend pytest from
+the repo root, frontend from `frontend/`):
+
+| Gate | Result |
+|---|---|
+| `app/.venv/bin/python -m pytest app/tests -q` | **2315 passed** |
+| `npm run typecheck` | **clean** |
+| `npx vitest run` | **1020 passed / 6 skipped** |
+| Bundle read-back | no superseded hash (`index-Bpkz8NAb`, `index-CXAiTEij`, `index-aSipGF9_`) referenced anywhere; current hashes appear only in the two `index.html` files |
+
+**Independent adversarial review: not refuted.** It reproduced the duration
+behaviour over 35 labels including adversarial variants (`hourly`, `pre-hour`,
+`24hour`, `multi_hour` correctly not tags; no label silently reaching the
+30-minute default), the remembered-memory precedence, the collision path, the
+phantom-`Task` default with explicit `"Task"` input still round-tripping, the
+band ARIA in rendered markup, and the absence of any weakened assertion. It
+confirmed `feedback17.test.tsx` is unmodified and that narrowing
+`feedback10.test.tsx`'s `.band` selector was a necessary update rather than a
+weakening. It also refuted the duplicate-`id` risk outright: the two
+`CalendarImpact` mounts sit in mutually exclusive returns and `Queue` is mounted
+once (`App.tsx:76`).
+
+**Not verified:** that a live Capacities object-type request for `Task` returns
+`objectTypeId: RootTask` (no network access taken; inherited from the session
+handoff). The change is behaviourally inert regardless — the adapter sources
+structure ids from the API's own id fields (`capacities_adapter.py:188-189`), so
+a display name could never have matched.
+
+**Deliberate deviation to revisit:** the rail's short-viewport
+(`max-height: 900px`) scroll gap moved 12px → 15px, retiring a tightening rule.
+The operator expects to tune this interactively; a wireframe was produced for
+that decision at `/tmp/tdtb-rail-rhythm-wireframe.html`.
+
+**Not in this landing** (the next iteration): W5 relabels, W2b calendar row
+controls, W2c the accounting editor, and W4's Day-setup drop-down. Design
+verdicts and `file:line` anchors for each are recorded above.
+
+**Operational note:** backend changes only take effect after an attended
+restart of the live `:8746` service (`zsh restart-live.sh` in the main
+checkout); rebuilt cockpit bundles go live on reload alone.
