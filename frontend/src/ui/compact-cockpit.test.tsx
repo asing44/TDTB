@@ -1,5 +1,5 @@
-import { afterEach, describe, expect, it } from "vitest";
-import { cleanup } from "@testing-library/preact";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { cleanup, fireEvent } from "@testing-library/preact";
 
 afterEach(cleanup);
 
@@ -38,6 +38,64 @@ describe("compact planning cockpit", () => {
     expect(queue.querySelectorAll(".calendar-impact__row").length).toBe(2);
     expect(r.getByText("Trinoor Standup")).toBeTruthy();
     expect(r.getByText("PHEP sync (Vlad)")).toBeTruthy();
+  });
+
+  it("presents the inline calendar as a collapsible band, expanded by default (S5 round 2)", () => {
+    const h = makeHarness("ready");
+    const save = vi.spyOn(h.controller, "saveAnchoredOverride").mockResolvedValue();
+    const r = h.ui(<App />);
+    const queue = r.container.querySelector(".queue")!;
+    const calendar = queue.querySelector(".calendar-impact")!;
+    const header = calendar.querySelector(".band") as HTMLButtonElement;
+
+    // Expanded by default: the header announces the state and the rows render.
+    expect(header).toBeTruthy();
+    expect(header.getAttribute("aria-expanded")).toBe("true");
+    expect(header.getAttribute("aria-label")).toBe(
+      "Band Calendar impact, expanded, 2 rows, activate to collapse",
+    );
+    expect(calendar.querySelector(".calendar-impact__list")).toBeTruthy();
+    expect(queue.querySelectorAll(".calendar-impact__row").length).toBe(2);
+
+    // Collapsing hides the rows and announces the hidden count...
+    fireEvent.click(header);
+    expect(header.getAttribute("aria-expanded")).toBe("false");
+    expect(header.getAttribute("aria-label")).toBe(
+      "Band Calendar impact, collapsed, 2 rows hidden, activate to expand",
+    );
+    expect(header.textContent).toMatch(/collapsed/i);
+    expect(header.textContent).toMatch(/hidden/i);
+    expect(calendar.querySelector(".calendar-impact__list")).toBeNull();
+    expect(queue.querySelectorAll(".calendar-impact__row").length).toBe(0);
+
+    // ...and a disclosure-only collapse never writes accounting state.
+    expect(save).not.toHaveBeenCalled();
+
+    // Expanding restores the rows and the accessible state.
+    fireEvent.click(header);
+    expect(header.getAttribute("aria-expanded")).toBe("true");
+    expect(queue.querySelectorAll(".calendar-impact__row").length).toBe(2);
+    expect(save).not.toHaveBeenCalled();
+  });
+
+  it("leads the priority-band stack with the calendar band, before the urgency bands (S5 round 2)", () => {
+    const h = makeHarness("ready");
+    const r = h.ui(<App />);
+    const queue = r.container.querySelector(".queue")!;
+    const calendarHeader = queue.querySelector(".calendar-impact .band")!;
+    const urgencyHeaders = Array.from(
+      queue.querySelectorAll(".queue__band .band"),
+    ) as Element[];
+
+    // The calendar band is the first band in the priority flow, and every
+    // urgency band follows it in BANDS order.
+    expect(urgencyHeaders.length).toBeGreaterThan(0);
+    for (const band of urgencyHeaders) {
+      expect(
+        calendarHeader.compareDocumentPosition(band) &
+          Node.DOCUMENT_POSITION_FOLLOWING,
+      ).toBeTruthy();
+    }
   });
 
   it("keeps the inline calendar band in chronological order (S5)", () => {

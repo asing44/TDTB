@@ -841,9 +841,6 @@ export function Queue() {
         chosen task effort stays additive until Commit live.
       </p>
       <AllocationMeter s={s} />
-      {/* S5 (cockpit UI feedback item 3): calendar commitments render inline
-          with the work rows — same surface, visible rows, no disclosure. */}
-      <CalendarImpact inline />
       <div class="queue__cols" aria-hidden="true">
         <span />
         <span>Needs placement · {needsPlacement}</span>
@@ -856,6 +853,10 @@ export function Queue() {
           {formatBlockAmount(selected)} selected of {formatBlockAmount(budget)} capacity - {formatBlockAmount(over)} over
         </p>
       )}
+      {/* S5 (cockpit UI feedback item 3) + round 2: the calendar band leads
+          the priority-band stack as a peer disclosure, expanded by default;
+          the urgency bands follow in BANDS order. */}
+      <CalendarImpact inline />
       {BANDS.map((band) => {
         const rows = groups[band.key];
         const open = isOpen(band.key);

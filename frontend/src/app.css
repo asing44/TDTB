@@ -1092,6 +1092,13 @@
 .queue__band--drop .band__tick {
   background: var(--c-overflow);
 }
+/* Round 2 (S5): the calendar band leads the priority stack as a peer
+   disclosure, not an urgency tier — the accent stays the muted token and
+   there is no share bar. The band__* vocabulary and its narrow-width
+   degradation are shared with the urgency band headers. */
+.band--calendar {
+  --band-color: var(--t-muted);
+}
 .queue__dropped {
   margin: 0;
   padding: 0;

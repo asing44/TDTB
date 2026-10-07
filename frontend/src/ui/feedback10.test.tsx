@@ -74,7 +74,10 @@ describe("FEEDBACK-10 collapsed state is unmistakable (A11)", () => {
   it("collapsed band says so in words and announces the hidden count", () => {
     const h = makeHarness("ready");
     const { container } = h.ui(<Queue />);
-    const btn = container.querySelector(".band")?.closest("button") as HTMLButtonElement;
+    // Scope to an urgency band: the calendar band leads the priority stack
+    // and also carries .band, so an unscoped first match would silently
+    // retarget this A11 test away from the band header it pins.
+    const btn = container.querySelector(".queue__band .band")?.closest("button") as HTMLButtonElement;
     expect(btn.getAttribute("aria-expanded")).toBe("true");
     fireEvent.click(btn);
     expect(btn.getAttribute("aria-expanded")).toBe("false");
