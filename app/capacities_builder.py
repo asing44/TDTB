@@ -51,7 +51,7 @@ import tempfile
 import threading
 import time
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Callable, Iterable, Iterator
 
@@ -1080,6 +1080,36 @@ class CapacitiesBuilderConfig:
     cache_path: Path | None = None
 
 
+def _resolve_assigned_structures(
+    mappings: Iterable[StructureMapping],
+    declarations: dict[str, str],
+) -> tuple[StructureMapping, ...]:
+    """Resolve the settings declaration onto the source mappings.
+
+    This is the only place the two persisted surfaces — the vault-local
+    source record and the settings store — meet, so the precedence lives
+    here: a structure declared in ``assigned_structures`` reads the declared
+    raw property id with ``true`` implied, and every other structure keeps
+    the mapping's own ``assignment_property`` / ``assignment_values``
+    untouched. A declaration for a structure the source record does not map
+    is ignored.
+
+    Resolution sets ONLY ``assigned_property``. ``assignment_property`` stays
+    exactly as stored, so the declaration cannot reach the adapter's
+    enumeration gate (``_structure_can_contribute``) — the operator chose an
+    assignment check only, and a misconfiguration must never drop work from
+    the plan.
+    """
+    if not declarations:
+        return tuple(mappings)
+    return tuple(
+        replace(mapping, assigned_property=declarations[mapping.structure_id])
+        if mapping.structure_id in declarations
+        else mapping
+        for mapping in mappings
+    )
+
+
 def build_capacities_adapter(
     vault_root: str | Path,
     config: CapacitiesBuilderConfig | None = None,
@@ -1108,9 +1138,8 @@ def build_capacities_adapter(
     if record is None:
         return None
 
-    assignment_settings = (
-        read_settings(vault_root).settings.to_assignment_settings()
-    )
+    settings = read_settings(vault_root).settings
+    assignment_settings = settings.to_assignment_settings()
     token = load_capacities_token(cfg.token_path)
     effective_transport = transport if transport is not None else cfg.transport
     content_cache = _resolve_content_cache(cfg, vault_root, record.space_id)
@@ -1127,7 +1156,9 @@ def build_capacities_adapter(
         client,
         CapacitiesConfig(
             space_id=record.space_id,
-            mappings=record.to_mappings(),
+            mappings=_resolve_assigned_structures(
+                record.to_mappings(), settings.assigned_structures
+            ),
             max_pages=cfg.max_pages,
             assignment_settings=assignment_settings,
             content_cache=content_cache,

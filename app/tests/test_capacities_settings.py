@@ -97,6 +97,7 @@ class TestPathsAndDefault:
         expected = _valid_payload()
         expected["native_task_structures"] = DEFAULT_NATIVE_STRUCTURES
         expected["active_statuses"] = DEFAULT_ACTIVE_STATUSES
+        expected["assigned_structures"] = {}
         assert result.settings.as_dict() == expected
 
     def test_vault_isolation(self, tmp_path):
@@ -164,6 +165,7 @@ class TestRoundTrip:
             "active_structures": {},
             "native_task_structures": DEFAULT_NATIVE_STRUCTURES,
             "active_statuses": DEFAULT_ACTIVE_STATUSES,
+            "assigned_structures": {},
         }
 
     def test_saved_settings_bridge_to_the_evaluator_seam(self, tmp_path):
@@ -858,3 +860,213 @@ class TestAdmissionInputs:
 
         assert seam.native_task_structures == frozenset({"custom-project"})
         assert seam.active_statuses == frozenset({"In Progress"})
+
+
+# ---------------------------------------------------------------------------
+# Settings-declared source assignment (additive version-1 key)
+# ---------------------------------------------------------------------------
+# ``assigned_structures`` declares, per structure, the RAW Capacities property
+# ID whose boolean ``true`` means "assigned at TDTB level". It is a dict on the
+# wire (like ``active_structures``, not a list like the admission inputs)
+# because the property ID differs per structure and no property is literally
+# named ``assigned`` in the API. ``true`` is implied, so no value list is
+# stored. The key was added additively to schema version 1 in the same way as
+# the two admission inputs: optional on read (absence means "no override"; the
+# per-structure fallback to the source mapping's ``assignment_property`` is
+# resolved by the builder), emitted on every write, strictly validated when
+# present, and ``SCHEMA_VERSION`` is deliberately unchanged so an existing
+# version-1 file keeps reading instead of failing closed.
+
+
+PROJECT_ASSIGNED_PROPERTY = "f779f78a-3b1e-4a2c-9f5d-6a0f0e1d2c3b"
+ADVENTURE_ASSIGNED_PROPERTY = "c19f9b95-7c2d-4e18-8a51-9b0c1d2e3f40"
+
+
+def _legacy_version_1_payload() -> dict:
+    """A version-1 file written before any of the additive keys existed."""
+    return {
+        "version": 1,
+        "revision": 0,
+        "native_task_auto": {
+            "active_enabled": True,
+            "due_enabled": True,
+            "deadline_enabled": True,
+            "deadline_horizon_days": 2,
+        },
+        "excluded": {},
+    }
+
+
+class TestAssignedStructures:
+    def test_schema_version_is_unchanged(self):
+        assert cs.SCHEMA_VERSION == 1
+
+    def test_default_has_no_declarations(self, tmp_path):
+        settings = cs.read_settings(tmp_path).settings
+
+        assert settings.assigned_structures == {}
+        assert settings.as_dict()["assigned_structures"] == {}
+
+    def test_assigned_structures_round_trip(self, tmp_path):
+        declarations = {
+            PROJECT_STRUCTURE: PROJECT_ASSIGNED_PROPERTY,
+            PRESS_STRUCTURE: ADVENTURE_ASSIGNED_PROPERTY,
+        }
+        saved = cs.save_settings(
+            tmp_path,
+            expected_revision=0,
+            native_task_auto=_default_policy(),
+            excluded=[],
+            assigned_structures=declarations,
+        )
+
+        assert saved.assigned_structures == declarations
+        result = cs.read_settings(tmp_path)
+        assert result.settings.assigned_structures == declarations
+        assert result.settings.as_dict()["assigned_structures"] == declarations
+
+    def test_property_ids_are_preserved_exactly_as_declared(self, tmp_path):
+        # The ID is a raw, opaque Capacities property ID: it is never
+        # normalized, case-folded, or trimmed.
+        saved = cs.save_settings(
+            tmp_path, expected_revision=0,
+            native_task_auto=_default_policy(), excluded=[],
+            assigned_structures={"custom-project": "Assigned-ID_CaseSensitive"},
+        )
+
+        assert saved.assigned_structures == {
+            "custom-project": "Assigned-ID_CaseSensitive"
+        }
+        assert cs.read_settings(tmp_path).settings.assigned_structures == {
+            "custom-project": "Assigned-ID_CaseSensitive"
+        }
+
+    def test_every_fresh_write_emits_the_key_even_when_omitted(self, tmp_path):
+        cs.save_settings(
+            tmp_path, expected_revision=0,
+            native_task_auto=_default_policy(), excluded=[],
+        )
+
+        data = json.loads(_bytes(tmp_path).decode("utf-8"))
+        assert data["assigned_structures"] == {}
+
+    def test_assigned_structures_are_written_sorted_and_deterministic(self, tmp_path):
+        cs.save_settings(
+            tmp_path, expected_revision=0,
+            native_task_auto=_default_policy(), excluded=[],
+            assigned_structures={"zeta": "p2", "alpha": "p1"},
+        )
+
+        data = json.loads(_bytes(tmp_path).decode("utf-8"))
+        assert list(data["assigned_structures"]) == ["alpha", "zeta"]
+        assert data["assigned_structures"] == {"alpha": "p1", "zeta": "p2"}
+
+    def test_version_1_file_without_the_key_reads_as_empty(self, tmp_path):
+        _write_json(tmp_path, _legacy_version_1_payload())
+
+        result = cs.read_settings(tmp_path)
+
+        assert result.persisted is True
+        assert result.settings.assigned_structures == {}
+        assert result.settings.as_dict()["assigned_structures"] == {}
+
+    def test_absent_key_does_not_reach_the_evaluator_seam(self, tmp_path):
+        # The declaration is an adapter/mapping input, never an evaluator
+        # input: adding it must not perturb ``AssignmentSettings``.
+        baseline = cs.save_settings(
+            tmp_path, expected_revision=0,
+            native_task_auto=_default_policy(), excluded=[],
+        ).to_assignment_settings()
+        declared = cs.save_settings(
+            tmp_path, expected_revision=1,
+            native_task_auto=_default_policy(), excluded=[],
+            assigned_structures={PROJECT_STRUCTURE: PROJECT_ASSIGNED_PROPERTY},
+        ).to_assignment_settings()
+
+        assert declared == baseline
+
+    @pytest.mark.parametrize(
+        "declarations",
+        [
+            [],                                             # list, not an object
+            "custom-project",                               # string
+            1,                                              # number
+            None,                                           # null
+            True,                                           # bool
+            {PROJECT_STRUCTURE: False},                     # flag, not a property id
+            {PROJECT_STRUCTURE: 1},                         # int property id
+            {PROJECT_STRUCTURE: None},                      # null property id
+            {PROJECT_STRUCTURE: ["prop"]},                  # list property id
+            {"": PROJECT_ASSIGNED_PROPERTY},                # empty structure id
+            {" ": PROJECT_ASSIGNED_PROPERTY},               # whitespace structure id
+            {" custom-project ": PROJECT_ASSIGNED_PROPERTY},  # whitespace alias
+            {"custom project": PROJECT_ASSIGNED_PROPERTY},  # inner whitespace
+            {PROJECT_STRUCTURE: ""},                        # empty property id
+        ],
+    )
+    def test_malformed_stored_declarations_fail_closed(self, tmp_path, declarations):
+        _write_json(tmp_path, _valid_payload(assigned_structures=declarations))
+        before = _bytes(tmp_path)
+
+        with pytest.raises(cs.SettingsFormatError):
+            cs.read_settings(tmp_path)
+        # A strict save over the malformed file also refuses and preserves the
+        # offending bytes rather than repairing them.
+        with pytest.raises(cs.SettingsFormatError):
+            cs.save_settings(
+                tmp_path, expected_revision=0,
+                native_task_auto=_default_policy(), excluded=[],
+                assigned_structures={PROJECT_STRUCTURE: PROJECT_ASSIGNED_PROPERTY},
+            )
+        assert _bytes(tmp_path) == before
+
+    def test_duplicate_declared_structure_keys_are_rejected(self, tmp_path):
+        _write_raw(
+            tmp_path,
+            '{"version": 1, "revision": 0, '
+            '"native_task_auto": {"active_enabled": true, "due_enabled": true, '
+            '"deadline_enabled": true, "deadline_horizon_days": 2}, '
+            '"excluded": {}, '
+            '"assigned_structures": {"alpha": "p1", "alpha": "p2"}}',
+        )
+
+        with pytest.raises(cs.SettingsFormatError):
+            cs.read_settings(tmp_path)
+
+    @pytest.mark.parametrize(
+        "declarations",
+        [
+            "custom-project",
+            [],
+            None,
+            {PROJECT_STRUCTURE: ""},
+            {"": PROJECT_ASSIGNED_PROPERTY},
+            {" custom-project ": PROJECT_ASSIGNED_PROPERTY},
+            {PROJECT_STRUCTURE: 1},
+        ],
+    )
+    def test_save_rejects_invalid_declaration_before_any_file_access(
+        self, tmp_path, declarations
+    ):
+        with pytest.raises(ValueError):
+            cs.save_settings(
+                tmp_path, expected_revision=0,
+                native_task_auto=_default_policy(), excluded=[],
+                assigned_structures=declarations,
+            )
+
+        assert not cs.settings_path(tmp_path).exists()
+        assert not cs.lock_path(tmp_path).exists()
+
+    def test_constructed_model_is_strict_about_assigned_structures(self):
+        for declarations in (
+            "custom-project",
+            None,
+            {PROJECT_STRUCTURE: ""},
+            {"": PROJECT_ASSIGNED_PROPERTY},
+            {" custom-project ": PROJECT_ASSIGNED_PROPERTY},
+            {PROJECT_STRUCTURE: True},
+        ):
+            with pytest.raises(ValueError):
+                cs.CapacitiesSettings(assigned_structures=declarations)
+        assert cs.CapacitiesSettings().assigned_structures == {}

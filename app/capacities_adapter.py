@@ -95,6 +95,13 @@ class StructureMapping:
     duration_property: str | None = None
     completion_property: str | None = None
     completion_value: str | None = None
+    #: Builder-resolved settings declaration: the raw Capacities property id
+    #: whose boolean ``true`` means "assigned at TDTB level". When set, the
+    #: adapter reads this instead of ``assignment_property`` /
+    #: ``assignment_values``. It deliberately does NOT participate in
+    #: ``_structure_can_contribute`` — the declaration is an assignment check
+    #: only and must never gate enumeration.
+    assigned_property: str | None = None
 
 
 @dataclass(frozen=True)
@@ -641,7 +648,19 @@ class CapacitiesAdapter:
         # the native Auto rule. The evaluator, not this projection, decides
         # precedence and eligibility.
         source_assigned: bool | None = None
-        if mapping.assignment_property:
+        if mapping.assigned_property:
+            # A builder-resolved settings declaration names a boolean property
+            # whose ``true`` is the source-assigned signal. This is a separate
+            # read from the mapping's own declaration below, so the declared
+            # property cannot reach ``assignment_property`` and cannot change
+            # the enumeration gate. Present ``true`` is a definitive positive,
+            # present ``false`` a definitive negative, and an absent property
+            # stays neutral.
+            assignment = properties.get(mapping.assigned_property)
+            if assignment is not None:
+                tokens = _property_tokens(assignment, mapping.assigned_property)
+                source_assigned = "true" in tokens
+        elif mapping.assignment_property:
             assignment = properties.get(mapping.assignment_property)
             if assignment is not None:
                 tokens = _property_tokens(assignment, mapping.assignment_property)

@@ -882,6 +882,12 @@ class CapacitiesSettingsSaveRequest(BaseModel):
     active_statuses: list[StrictStr] = Field(
         default_factory=lambda: sorted(capacities_settings.DEFAULT_ACTIVE_STATUSES)
     )
+    #: Settings-declared source assignment: ``{structure_id: property_id}``.
+    #: The property id is a raw, opaque Capacities property id whose boolean
+    #: ``true`` means "assigned at TDTB level". Omission means full
+    #: replacement to the empty map — no override anywhere, so each structure
+    #: keeps the source mapping's own assignment declaration.
+    assigned_structures: dict[str, StrictStr] = Field(default_factory=dict)
 
     @field_validator("expected_revision")
     @classmethod
@@ -917,6 +923,19 @@ class CapacitiesSettingsSaveRequest(BaseModel):
             if flag is not True:
                 raise ValueError("active structure flags must be true")
         return value
+
+    @field_validator("assigned_structures")
+    @classmethod
+    def _assigned_structures_valid(
+        cls, value: dict[str, str]
+    ) -> dict[str, str]:
+        # Apply the same strict parser the store uses before any file access,
+        # so a malformed declaration is a 422 here instead of a 500 raised
+        # deep inside ``save_settings``.
+        try:
+            return capacities_settings.canonical_assignment_declarations(value)
+        except ValueError as exc:
+            raise ValueError(str(exc)) from exc
 
     @field_validator("native_task_structures", "active_statuses")
     @classmethod
@@ -1797,6 +1816,7 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
                 active_structures=body.active_structures.keys(),
                 native_task_structures=body.native_task_structures,
                 active_statuses=body.active_statuses,
+                assigned_structures=body.assigned_structures,
             )
         except capacities_settings.SettingsConflictError as exc:
             raise HTTPException(

@@ -7,13 +7,14 @@ reads and writes::
 
 It persists only the editable assignment policy — the native Auto toggles,
 the stable-identity exclusion set, the custom structures whose ``Active``
-status is an inclusion signal, and the two configured admission inputs (which
+status is an inclusion signal, the two configured admission inputs (which
 structures participate in the native Auto rules and which status values
-satisfy the native status condition) — plus a server-owned schema ``version``
-and monotonic ``revision``. It deliberately persists no titles, source
-properties, credentials, structure mappings, or effective-assignment results:
-the evaluator in :mod:`capacities_assignment` stays the single source of
-truth for decisions.
+satisfy the native status condition), and the settings-declared source
+assignment map (structure id -> raw Capacities property id, ``true`` implied)
+— plus a server-owned schema ``version`` and monotonic ``revision``. It
+deliberately persists no titles, source properties, credentials, structure
+mappings, or effective-assignment results: the evaluator in
+:mod:`capacities_assignment` stays the single source of truth for decisions.
 
 Contract:
 
@@ -43,6 +44,7 @@ import json
 import os
 import tempfile
 import threading
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -73,18 +75,24 @@ SETTINGS_REL_PATH = f"{runstate.CACHE_DIR_REL}/tdtb-capacities-settings.json"
 LOCK_REL_PATH = f"{runstate.CACHE_DIR_REL}/tdtb-capacities-settings.lock"
 SCHEMA_VERSION = 1
 
-# ``active_structures``, ``native_task_structures``, and ``active_statuses``
-# were added ADDITIVELY to schema version 1, deliberately without bumping
-# SCHEMA_VERSION. A version bump would make every already-saved version-1 file
-# "unsupported" and fail closed (reads would raise and writes would refuse),
-# locking a user out of the settings they already own. Instead each key is
-# optional on read — a legacy version-1 file without it means the documented
-# default (no custom structure Active-enabled, the built-in native task
-# structures, the single ``active`` status) — while every freshly written file
+# ``active_structures``, ``native_task_structures``, ``active_statuses``, and
+# ``assigned_structures`` were added ADDITIVELY to schema version 1,
+# deliberately without bumping SCHEMA_VERSION. A version bump would make every
+# already-saved version-1 file "unsupported" and fail closed (reads would
+# raise and writes would refuse), locking a user out of the settings they
+# already own. Instead each key is optional on read — a legacy version-1 file
+# without it means the documented default (no custom structure Active-enabled,
+# the built-in native task structures, the single ``active`` status, no
+# settings-declared assignment property) — while every freshly written file
 # emits it. Strictness is unchanged: each key, when present, is validated
 # exactly.
 _ADDITIVE_KEYS = frozenset(
-    {"active_structures", "native_task_structures", "active_statuses"}
+    {
+        "active_structures",
+        "native_task_structures",
+        "active_statuses",
+        "assigned_structures",
+    }
 )
 _TOP_KEYS = frozenset(
     {"version", "revision", "native_task_auto", "excluded", "active_structures"}
@@ -169,6 +177,16 @@ class CapacitiesSettings:
     #: the persisted form is never pre-normalized (additive to schema version
     #: 1; absence means ``{"active"}``).
     active_statuses: frozenset[str] = DEFAULT_ACTIVE_STATUSES
+    #: Settings-declared source assignment: a ``{structure_id: property_id}``
+    #: map naming the RAW Capacities property whose boolean ``true`` means
+    #: "assigned at TDTB level" (additive to schema version 1; absence means
+    #: no override anywhere). A map, not a list, because the property ID
+    #: differs per structure and no API property is named ``assigned``.
+    #: ``true`` is implied, so no accepted-value list is stored. The
+    #: per-structure precedence against the source mapping's own
+    #: ``assignment_property`` / ``assignment_values`` is resolved by the
+    #: builder — this key is an adapter/mapping input, never an evaluator one.
+    assigned_structures: dict[str, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if type(self.revision) is not int or self.revision < 0:
@@ -190,6 +208,11 @@ class CapacitiesSettings:
                 for value in self.active_structures
             ),
         )
+        object.__setattr__(
+            self,
+            "assigned_structures",
+            canonical_assignment_declarations(self.assigned_structures),
+        )
         for name in ("native_task_structures", "active_statuses"):
             values = canonical_unique_admission_values(getattr(self, name), name)
             object.__setattr__(self, name, frozenset(values))
@@ -206,6 +229,12 @@ class CapacitiesSettings:
             },
             "native_task_structures": sorted(self.native_task_structures),
             "active_statuses": sorted(self.active_statuses),
+            "assigned_structures": {
+                structure_id: property_id
+                for structure_id, property_id in sorted(
+                    self.assigned_structures.items()
+                )
+            },
         }
 
     def to_assignment_settings(self) -> AssignmentSettings:
@@ -304,6 +333,37 @@ def canonical_unique_admission_values(value: Any, key: str) -> tuple[str, ...]:
         seen.add(text)
         result.append(text)
     return tuple(result)
+
+
+def canonical_assignment_declarations(
+    value: Any, key: str = "assigned_structures"
+) -> dict[str, str]:
+    """Validate a ``{structure_id: property_id}`` source-assignment map.
+
+    The declaration is an object, not a list, because the RAW Capacities
+    property ID carrying the boolean assignment marker differs per structure.
+    Every key must be a canonical, non-empty structure id (the rule
+    ``canonical_active_structure_id`` enforces) and every value a non-empty
+    string, kept exactly as declared: the property id is an opaque provider
+    identifier and is never normalized or trimmed here. Any other value raises
+    ``ValueError`` before any file access.
+    """
+    if not isinstance(value, Mapping):
+        raise ValueError(
+            f"{key} must be an object mapping structure ids to property ids"
+        )
+    result: dict[str, str] = {}
+    for structure_id, property_id in value.items():
+        try:
+            canonical_id = canonical_active_structure_id(structure_id)
+        except ValueError as exc:
+            raise ValueError(f"{key} has an invalid structure id") from exc
+        if not isinstance(property_id, str) or not property_id:
+            raise ValueError(
+                f"{key} has an invalid assignment property id for {canonical_id!r}"
+            )
+        result[canonical_id] = property_id
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -433,6 +493,23 @@ def _decode(data: Any) -> CapacitiesSettings:
                 "capacities settings active_statuses has an invalid entry"
             ) from exc
 
+    # ``assigned_structures`` is optional on read in the same way: a legacy
+    # version-1 file that predates the additive key means "no override", so
+    # the builder keeps falling back to the source mapping per structure. A
+    # present value must be an object of canonical structure ids to non-empty
+    # property ids.
+    assigned_raw = data.get("assigned_structures", {})
+    if not isinstance(assigned_raw, dict):
+        raise SettingsFormatError(
+            "capacities settings assigned_structures must be an object"
+        )
+    try:
+        assigned = canonical_assignment_declarations(assigned_raw)
+    except ValueError as exc:
+        raise SettingsFormatError(
+            "capacities settings has an invalid assignment declaration"
+        ) from exc
+
     return CapacitiesSettings(
         revision=revision,
         native_task_auto=NativeTaskAutoPolicy(
@@ -445,6 +522,7 @@ def _decode(data: Any) -> CapacitiesSettings:
         active_structures=frozenset(active),
         native_task_structures=frozenset(native_structures),
         active_statuses=frozenset(statuses),
+        assigned_structures=assigned,
     )
 
 
@@ -561,6 +639,7 @@ def save_settings(
     active_structures: Any = (),
     native_task_structures: Any = NATIVE_TASK_STRUCTURES,
     active_statuses: Any = DEFAULT_ACTIVE_STATUSES,
+    assigned_structures: Any = {},
 ) -> CapacitiesSettings:
     """Explicitly replace the whole Capacities assignment policy.
 
@@ -573,7 +652,9 @@ def save_settings(
     omitting them is a full replacement to that default — exactly like an
     omitted ``active_structures``. An empty ``native_task_structures`` is a
     legitimate configuration: nothing is native and every structure falls to
-    the custom path.
+    the custom path. An omitted ``assigned_structures`` likewise replaces the
+    declaration map with the empty default: no override anywhere, so each
+    structure keeps the source mapping's own assignment declaration.
 
     Under the per-vault lock the current file is read, its revision compared
     with ``expected_revision``, and only then is the file replaced atomically.
@@ -599,6 +680,7 @@ def save_settings(
     status_values = frozenset(
         canonical_unique_admission_values(active_statuses, "active_statuses")
     )
+    declarations = canonical_assignment_declarations(assigned_structures)
 
     root = Path(vault_root)
     with _store_lock(root):
@@ -618,6 +700,7 @@ def save_settings(
                 active_structures=active_ids,
                 native_task_structures=native_ids,
                 active_statuses=status_values,
+                assigned_structures=declarations,
             )
             _atomic_write_json(settings_path(root), saved.as_dict())
         finally:

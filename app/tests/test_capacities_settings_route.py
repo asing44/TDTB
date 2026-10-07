@@ -24,6 +24,11 @@ SPACE = "space-1"
 NATIVE = f"capacities:{SPACE}:RootTask:task-1"
 CUSTOM = f"capacities:{SPACE}:custom-project:project-1"
 
+PROJECT_STRUCTURE = "0d194525-c5a1-4af5-bb62-202b83006b5e"
+PRESS_STRUCTURE = "6aa7b02a-4315-47d1-9cfb-0c0cdac0950c"
+PROJECT_ASSIGNED_PROPERTY = "f779f78a-3b1e-4a2c-9f5d-6a0f0e1d2c3b"
+ADVENTURE_ASSIGNED_PROPERTY = "c19f9b95-7c2d-4e18-8a51-9b0c1d2e3f40"
+
 
 @pytest.fixture
 def vault(tmp_path) -> Path:
@@ -97,6 +102,7 @@ class TestGet:
             },
             "excluded": {},
             "active_structures": {},
+            "assigned_structures": {},
             "native_task_structures": ["RootTask", "Task"],
             "active_statuses": ["active"],
         }
@@ -609,3 +615,123 @@ class TestAdmissionInputs:
         assert response.status_code == 422
         assert any(field in entry["loc"] for entry in response.json()["detail"])
         assert not cs.settings_path(vault).exists()
+
+
+class TestAssignedStructuresRoute:
+    """POST/GET round-trip for the additive ``assigned_structures`` key.
+
+    The declaration must survive the route in BOTH directions — a store change
+    the route cannot carry is not shipped — and omission stays a full
+    replacement to the empty default (no override anywhere, so the mapping's
+    own ``assignment_property`` applies)."""
+
+    def test_get_returns_the_key_and_post_round_trips_it(self, client, vault):
+        declarations = {
+            PROJECT_STRUCTURE: PROJECT_ASSIGNED_PROPERTY,
+            PRESS_STRUCTURE: ADVENTURE_ASSIGNED_PROPERTY,
+        }
+        response = client.post(
+            "/settings/capacities/save",
+            headers=_auth(client),
+            json=_body(assigned_structures=declarations),
+        )
+
+        assert response.status_code == 200
+        assert response.json()["settings"]["assigned_structures"] == declarations
+
+        body = client.get("/settings/capacities").json()
+        assert body["settings"]["assigned_structures"] == declarations
+
+        # The persisted version-1 bytes carry the same additive key.
+        stored = json.loads(_settings_bytes(vault).decode("utf-8"))
+        assert stored["assigned_structures"] == declarations
+
+    def test_omitting_the_key_is_a_full_replacement_to_empty(self, client, vault):
+        first = client.post(
+            "/settings/capacities/save",
+            headers=_auth(client),
+            json=_body(
+                assigned_structures={
+                    PROJECT_STRUCTURE: PROJECT_ASSIGNED_PROPERTY
+                }
+            ),
+        )
+        assert first.status_code == 200
+
+        second = client.post(
+            "/settings/capacities/save",
+            headers=_auth(client),
+            json=_body(expected_revision=1),
+        )
+
+        assert second.status_code == 200
+        assert second.json()["settings"]["assigned_structures"] == {}
+        assert (
+            client.get("/settings/capacities").json()["settings"][
+                "assigned_structures"
+            ]
+            == {}
+        )
+
+    def test_empty_object_is_a_legitimate_replacement(self, client, vault):
+        response = client.post(
+            "/settings/capacities/save",
+            headers=_auth(client),
+            json=_body(assigned_structures={}),
+        )
+
+        assert response.status_code == 200
+        assert response.json()["settings"]["assigned_structures"] == {}
+
+    @pytest.mark.parametrize(
+        "bad",
+        [
+            [],                                                     # list
+            "custom-project",                                       # string
+            None,                                                   # null
+            {PROJECT_STRUCTURE: False},                             # flag
+            {PROJECT_STRUCTURE: 1},                                 # int value
+            {PROJECT_STRUCTURE: None},                              # null value
+            {PROJECT_STRUCTURE: ""},                                # empty property id
+            {"": PROJECT_ASSIGNED_PROPERTY},                        # empty structure id
+            {" custom-project ": PROJECT_ASSIGNED_PROPERTY},        # whitespace alias
+        ],
+    )
+    def test_post_rejects_malformed_declarations_422(self, client, vault, bad):
+        response = client.post(
+            "/settings/capacities/save",
+            headers=_auth(client),
+            json=_body(assigned_structures=bad),
+        )
+
+        assert response.status_code == 422
+        assert any(
+            "assigned_structures" in entry["loc"]
+            for entry in response.json()["detail"]
+        )
+        assert not cs.settings_path(vault).exists()
+
+    def test_malformed_declaration_preserves_existing_bytes(self, client, vault):
+        first = client.post(
+            "/settings/capacities/save",
+            headers=_auth(client),
+            json=_body(
+                assigned_structures={
+                    PROJECT_STRUCTURE: PROJECT_ASSIGNED_PROPERTY
+                }
+            ),
+        )
+        assert first.status_code == 200
+        before = _settings_bytes(vault)
+
+        response = client.post(
+            "/settings/capacities/save",
+            headers=_auth(client),
+            json=_body(
+                expected_revision=1,
+                assigned_structures={PROJECT_STRUCTURE: ""},
+            ),
+        )
+
+        assert response.status_code == 422
+        assert _settings_bytes(vault) == before

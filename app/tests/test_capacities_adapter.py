@@ -1966,3 +1966,221 @@ def test_root_tag_catalog_stops_on_a_repeated_cursor():
     assert result["status"] == "partial"
     assert [t["id"] for t in result["tags"]] == ["a-tag", "b-tag"]
     assert any("cursor" in w for w in result["warnings"])
+
+
+# ---------------------------------------------------------------------------
+# Settings-declared source assignment (``assigned_structures``)
+# ---------------------------------------------------------------------------
+# The builder resolves the settings/mapping precedence and hands the adapter a
+# pre-resolved ``StructureMapping.assigned_property``: the raw property ID whose
+# boolean ``true`` means "assigned at TDTB level", with ``true`` implied. The
+# adapter reads that field INSTEAD of ``assignment_property`` /
+# ``assignment_values`` — a boolean payload needs no new reading logic — while
+# keeping the three-valued source signal: a present ``true`` is a definitive
+# positive, a present ``false`` is a definitive negative (the property yields
+# no tokens), and a MISSING property stays neutral rather than negative. The
+# declaration additionally must not change which structures are enumerated.
+
+SETTINGS_ASSIGNED_PROPERTY = "settings-assigned"
+MAPPING_ASSIGNED_PROPERTY = "tdtb"
+OVERRIDE_STRUCTURE = "custom-project"
+
+
+def _override_structures():
+    """Structure definitions where each row also carries the boolean marker a
+    settings declaration would name."""
+    return [
+        {
+            **row,
+            "propertyDefinitions": [
+                *row["propertyDefinitions"],
+                _definition(SETTINGS_ASSIGNED_PROPERTY, "boolean"),
+            ],
+        }
+        for row in _structures()
+    ]
+
+
+def _override_provider(objects):
+    return FakeProvider(
+        _override_structures(),
+        {(OVERRIDE_STRUCTURE, None): {"objects": list(objects), "next_cursor": None}},
+    )
+
+
+def _override_mapping(**overrides):
+    base = dict(
+        structure_id=OVERRIDE_STRUCTURE,
+        title_property="title",
+        open_status_property="state",
+        open_status_values=frozenset({"active"}),
+        assigned_property=SETTINGS_ASSIGNED_PROPERTY,
+    )
+    base.update(overrides)
+    return StructureMapping(**base)
+
+
+def _override_object(object_id, properties):
+    return _object(
+        object_id,
+        OVERRIDE_STRUCTURE,
+        {
+            "title": _prop("title", "title", {"value": "Declared row"}),
+            **properties,
+        },
+    )
+
+
+def _override_adapter(provider, mapping, **kwargs):
+    return _adapter(
+        provider,
+        mappings=(_native_mapping(deadline_property=None), mapping),
+        **kwargs,
+    )
+
+
+def test_declared_assignment_property_boolean_true_is_source_assigned():
+    # The structure is enumerated because it is Active-enabled, NOT because of
+    # the declaration: the operator chose "assignment check only", so the
+    # declaration must not change which structures are enumerated. The row
+    # carries an open status because a closed/absent mapped status blocks the
+    # evaluator before any assignment signal is considered.
+    provider = _override_provider([
+        _override_object(
+            "project-1",
+            {
+                "state": _prop(
+                    "label", "label", [{"id": "active", "name": "Active"}]
+                ),
+                SETTINGS_ASSIGNED_PROPERTY: _prop("boolean", "boolean", True),
+            },
+        ),
+    ])
+
+    result = _override_adapter(
+        provider, _override_mapping(), assignment_settings=_active_settings()
+    ).items_for_day(TODAY)
+
+    assert [row["capacities_id"] for row in result.items] == ["project-1"]
+    assert result.items[0]["capacities_assignment"] == {
+        "mode": "assigned",
+        "reasons": ["source-assigned"],
+        "source_assigned": True,
+        "excluded": False,
+    }
+
+
+def test_declared_assignment_property_overrides_the_mapping_declaration():
+    # The mapping's own marker MATCHES (``tdtb`` is ``yes``), but the
+    # settings-declared boolean is ``false``: the declaration wins for this
+    # structure, so the object is not source-assigned and nothing else pulls
+    # it in.
+    provider = _override_provider([
+        _override_object(
+            "project-1",
+            {
+                MAPPING_ASSIGNED_PROPERTY: _prop(
+                    "label", "label", [{"id": "yes", "name": "TDTB"}]
+                ),
+                SETTINGS_ASSIGNED_PROPERTY: _prop("boolean", "boolean", False),
+            },
+        ),
+    ])
+    mapping = _override_mapping(
+        assignment_property=MAPPING_ASSIGNED_PROPERTY,
+        assignment_values=frozenset({"yes"}),
+    )
+
+    result = _override_adapter(provider, mapping).items_for_day(TODAY)
+
+    assert result.items == []
+
+
+def test_mapping_declaration_still_applies_when_no_override_is_resolved():
+    # The same object WITHOUT a resolved declaration: the mapping's own marker
+    # is the assignment signal, exactly as before this slice.
+    provider = _override_provider([
+        _override_object(
+            "project-1",
+            {
+                "state": _prop(
+                    "label", "label", [{"id": "active", "name": "Active"}]
+                ),
+                MAPPING_ASSIGNED_PROPERTY: _prop(
+                    "label", "label", [{"id": "yes", "name": "TDTB"}]
+                ),
+                SETTINGS_ASSIGNED_PROPERTY: _prop("boolean", "boolean", False),
+            },
+        ),
+    ])
+    mapping = _override_mapping(
+        assigned_property=None,
+        assignment_property=MAPPING_ASSIGNED_PROPERTY,
+        assignment_values=frozenset({"yes"}),
+    )
+
+    result = _override_adapter(provider, mapping).items_for_day(TODAY)
+
+    assert [row["capacities_id"] for row in result.items] == ["project-1"]
+    assert result.items[0]["capacities_assignment"]["source_assigned"] is True
+
+
+def test_declared_assignment_property_absent_stays_neutral_not_negative():
+    # Active-enabled so the row is projected by the custom Auto pull; the
+    # source signal must then read neutral (``None``), never ``False``.
+    provider = _override_provider([
+        _override_object(
+            "project-1",
+            {"state": _prop("label", "label", [{"id": "active", "name": "Active"}])},
+        ),
+    ])
+
+    result = _override_adapter(
+        provider,
+        _override_mapping(),
+        assignment_settings=_active_settings(),
+    ).items_for_day(TODAY)
+
+    assert [row["capacities_id"] for row in result.items] == ["project-1"]
+    assert result.items[0]["capacities_assignment"] == {
+        "mode": "auto",
+        "reasons": ["auto-custom-status-active"],
+        "source_assigned": None,
+        "excluded": False,
+    }
+
+
+def test_declared_assignment_property_false_is_negative_not_neutral():
+    provider = _override_provider([
+        _override_object(
+            "project-1",
+            {
+                "state": _prop("label", "label", [{"id": "active", "name": "Active"}]),
+                SETTINGS_ASSIGNED_PROPERTY: _prop("boolean", "boolean", False),
+            },
+        ),
+    ])
+
+    result = _override_adapter(
+        provider,
+        _override_mapping(),
+        assignment_settings=_active_settings(),
+    ).items_for_day(TODAY)
+
+    assert [row["capacities_id"] for row in result.items] == ["project-1"]
+    assignment = result.items[0]["capacities_assignment"]
+    assert assignment["source_assigned"] is False
+    assert assignment["mode"] == "auto"
+
+
+@pytest.mark.parametrize("declared", [None, SETTINGS_ASSIGNED_PROPERTY])
+def test_declared_assignment_property_does_not_change_enumeration(declared):
+    # The structure has no assignment property and is not Active-enabled, so
+    # it is never enumerated. Resolving a declaration for it must not add a
+    # listing request: the operator chose "assignment check only".
+    provider = _override_provider([])
+
+    result = _override_adapter(provider, _override_mapping(assigned_property=declared)).items_for_day(TODAY)
+
+    assert provider.list_calls == [("RootTask", None)]
+    assert result.items == []

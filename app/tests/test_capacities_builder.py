@@ -260,6 +260,247 @@ def test_transport_is_injected_and_no_network_calls_made(tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# Settings-declared source assignment (``assigned_structures``)
+# ---------------------------------------------------------------------------
+# The settings store and the vault-local source mapping are two separate
+# persisted surfaces. The builder is where they meet, so the per-structure
+# precedence is resolved HERE: a structure declared in ``assigned_structures``
+# reads the declared property ID with ``true`` implied, and every other
+# structure keeps the mapping's own ``assignment_property`` /
+# ``assignment_values`` untouched. The resolution sets a distinct mapping field
+# (``assigned_property``) precisely so the declaration cannot reach
+# ``assignment_property`` and therefore cannot change which structures the
+# adapter enumerates.
+
+SETTINGS_ASSIGNED_PROPERTY = "f779f78a-settings-assigned"
+ADVENTURE_ASSIGNED_PROPERTY = "c19f9b95-settings-assigned"
+
+
+def _write_settings_with_declarations(vault_root: Path, declarations: dict) -> None:
+    cs.save_settings(
+        vault_root,
+        expected_revision=0,
+        native_task_auto=cs.NativeTaskAutoPolicy(),
+        excluded=(EXCLUDED,),
+        active_structures=(),
+        assigned_structures=declarations,
+    )
+
+
+def _write_legacy_settings(vault_root: Path) -> None:
+    """A pre-existing version-1 file written before the additive key existed."""
+    path = cs.settings_path(vault_root)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps({
+            "version": 1,
+            "revision": 0,
+            "native_task_auto": {
+                "active_enabled": True,
+                "due_enabled": True,
+                "deadline_enabled": True,
+                "deadline_horizon_days": 2,
+            },
+            "excluded": {},
+            "active_structures": {"custom-project": True},
+        }),
+        encoding="utf-8",
+    )
+
+
+def _assignment_payload() -> dict:
+    """A source record where BOTH structures carry a mapping declaration."""
+    return _valid_payload(
+        structures=[
+            {
+                "structure_id": "RootTask",
+                "title_property": "title",
+                "status_property": "status",
+                "open_status_values": ["open"],
+                "assignment_property": "assigned",
+                "assignment_values": ["true"],
+            },
+            {
+                "structure_id": "custom-project",
+                "title_property": "title",
+                "status_property": "state",
+                "open_status_values": ["active"],
+                "assignment_property": "tdtb",
+                "assignment_values": ["yes"],
+                "date_property": "date",
+                "duration_property": "minutes",
+            },
+        ]
+    )
+
+
+def _built_mappings(tmp_path: Path, payload: dict) -> tuple[StructureMapping, ...]:
+    _write_source(tmp_path, payload)
+    token = _valid_token_file(tmp_path)
+    adapter = cb.build_capacities_adapter(
+        tmp_path,
+        cb.CapacitiesBuilderConfig(token_path=token, transport=_RecordingTransport()),
+    )
+    assert adapter is not None
+    return adapter.config.mappings
+
+
+class _StructuresTransport(httpx.MockTransport):
+    """Serves the structure contract the adapter validates; fails loudly on
+    any other request so a real read can never escape the fixture."""
+
+    def __init__(self):
+        self.calls: list[str] = []
+        super().__init__(self._handler)
+
+    def _handler(self, request: httpx.Request) -> httpx.Response:
+        self.calls.append(request.url.path)
+        if request.url.path != "/space/structures":
+            raise AssertionError(f"unexpected network call: {request.url}")
+        return httpx.Response(200, json={"structures": _declared_contract_rows()})
+
+
+def _declared_contract_rows() -> list[dict]:
+    return [
+        {
+            "id": "RootTask",
+            "title": "RootTask",
+            "propertyDefinitions": [
+                {"id": pid, "name": pid, "type": "text"}
+                for pid in ("title", "status", "assigned")
+            ],
+        },
+        {
+            "id": "custom-project",
+            "title": "custom-project",
+            "propertyDefinitions": [
+                {"id": pid, "name": pid, "type": "text"}
+                for pid in ("title", "tdtb", "date", "state", "minutes")
+            ]
+            + [
+                {
+                    "id": SETTINGS_ASSIGNED_PROPERTY,
+                    "name": "Assigned",
+                    "type": "boolean",
+                }
+            ],
+        },
+    ]
+
+
+def _declared_object(object_id: str, *, boolean: bool) -> dict:
+    return {
+        "id": object_id,
+        "structureId": "custom-project",
+        "properties": {
+            "title": {"type": "title", "title": {"value": "Declared row"}},
+            "state": {"type": "label", "label": [{"id": "active", "name": "Active"}]},
+            "tdtb": {"type": "label", "label": [{"id": "no", "name": "No"}]},
+            SETTINGS_ASSIGNED_PROPERTY: {
+                "type": "boolean",
+                "boolean": {"value": boolean},
+            },
+        },
+    }
+
+
+def test_declaration_overrides_only_the_declared_structure(tmp_path):
+    _write_settings_with_declarations(tmp_path, {"custom-project": SETTINGS_ASSIGNED_PROPERTY})
+
+    mappings = {m.structure_id: m for m in _built_mappings(tmp_path, _assignment_payload())}
+
+    # Declared: the settings property ID wins, with ``true`` implied and no
+    # stored value list.
+    assert mappings["custom-project"].assigned_property == SETTINGS_ASSIGNED_PROPERTY
+    # Undeclared: the mapping's own declaration is untouched.
+    assert mappings["RootTask"].assigned_property is None
+    assert mappings["RootTask"].assignment_property == "assigned"
+    assert mappings["RootTask"].assignment_values == frozenset({"true"})
+    # The mapping fields the enumeration gate reads stay exactly as stored,
+    # even for the declared structure.
+    assert mappings["custom-project"].assignment_property == "tdtb"
+    assert mappings["custom-project"].assignment_values == frozenset({"yes"})
+
+
+def test_no_declaration_leaves_every_mapping_at_its_own_default(tmp_path):
+    _write_settings_with_declarations(tmp_path, {})
+
+    mappings = {m.structure_id: m for m in _built_mappings(tmp_path, _assignment_payload())}
+
+    assert all(m.assigned_property is None for m in mappings.values())
+    assert mappings["custom-project"].assignment_property == "tdtb"
+
+
+def test_legacy_settings_file_without_the_key_falls_back_to_the_mapping(tmp_path):
+    _write_legacy_settings(tmp_path)
+
+    mappings = {m.structure_id: m for m in _built_mappings(tmp_path, _assignment_payload())}
+
+    assert all(m.assigned_property is None for m in mappings.values())
+    assert mappings["custom-project"].assignment_property == "tdtb"
+    assert mappings["custom-project"].assignment_values == frozenset({"yes"})
+
+
+def test_declaration_for_an_unmapped_structure_is_ignored(tmp_path):
+    _write_settings_with_declarations(tmp_path, {"Adventure": ADVENTURE_ASSIGNED_PROPERTY})
+
+    mappings = _built_mappings(tmp_path, _valid_payload())
+
+    assert mappings == _expected_mappings()
+
+
+def test_declaration_does_not_supply_a_mapping_assignment_property(tmp_path):
+    # A declared structure that has no mapping declaration must NOT acquire
+    # one: ``assignment_property`` drives ``_structure_can_contribute``, and
+    # the operator chose "assignment check only" — the declaration must not
+    # gate enumeration.
+    _write_settings_with_declarations(tmp_path, {"RootTask": SETTINGS_ASSIGNED_PROPERTY})
+
+    mappings = {m.structure_id: m for m in _built_mappings(tmp_path, _valid_payload())}
+
+    assert mappings["RootTask"].assigned_property == SETTINGS_ASSIGNED_PROPERTY
+    assert mappings["RootTask"].assignment_property is None
+    assert mappings["RootTask"].assignment_values == frozenset()
+
+
+def test_declared_property_reaches_a_real_read_through_the_production_path(tmp_path):
+    """The declaration must survive settings file -> builder -> adapter read."""
+    _write_source(tmp_path, _valid_payload())
+    _write_settings_with_declarations(tmp_path, {"custom-project": SETTINGS_ASSIGNED_PROPERTY})
+    token = _valid_token_file(tmp_path)
+    transport = _StructuresTransport()
+
+    adapter = cb.build_capacities_adapter(
+        tmp_path, cb.CapacitiesBuilderConfig(token_path=token, transport=transport)
+    )
+    result = adapter.items_for_day_from_objects(
+        TODAY,
+        [_declared_object("project-1", boolean=True)],
+    )
+
+    assert [row["capacities_id"] for row in result.items] == ["project-1"]
+    assert result.items[0]["capacities_assignment"]["mode"] == "assigned"
+    assert result.items[0]["capacities_assignment"]["source_assigned"] is True
+
+
+def test_declared_property_false_is_not_assigned_through_the_production_path(tmp_path):
+    _write_source(tmp_path, _valid_payload())
+    _write_settings_with_declarations(tmp_path, {"custom-project": SETTINGS_ASSIGNED_PROPERTY})
+    token = _valid_token_file(tmp_path)
+
+    adapter = cb.build_capacities_adapter(
+        tmp_path,
+        cb.CapacitiesBuilderConfig(token_path=token, transport=_StructuresTransport()),
+    )
+    result = adapter.items_for_day_from_objects(
+        TODAY,
+        [_declared_object("project-1", boolean=False)],
+    )
+
+    assert result.items == []
+
+
+# ---------------------------------------------------------------------------
 # Credential errors — present config must fail visibly
 # ---------------------------------------------------------------------------
 
