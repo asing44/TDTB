@@ -37,7 +37,8 @@
   padding: 16px 16px 18px;
   display: flex;
   flex-direction: column;
-  gap: 15px;
+  /* Rail vertical rhythm (outer container): tune here. */
+  gap: 18px;
   position: sticky;
   top: 0;
   max-height: 100vh;
@@ -51,7 +52,8 @@
   overflow-y: auto;
   display: flex;
   flex-direction: column;
-  gap: 15px;
+  /* Rail vertical rhythm (scroll region): tune here. */
+  gap: 12px;
 }
 .rail__date-day {
   font-size: 16px;
@@ -288,9 +290,6 @@
 @media (max-height: 900px) {
   .rail-budget__spend {
     font-size: 22px;
-  }
-  .rail__scroll {
-    gap: 12px;
   }
   .rail__pie .pie__readout-value {
     font-size: 15px;
@@ -2846,7 +2845,6 @@ body {
    enough structure to remain legible while the main surface does the work. */
 .rail {
   padding: 20px 18px 18px;
-  gap: 18px;
   background: var(--t-surface-2);
   border-right-color: var(--t-border);
 }
