@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, waitFor } from "@testing-library/preact";
+import { cleanup, fireEvent, waitFor, within } from "@testing-library/preact";
 import { CapacitiesSettingsDrawer } from "./CapacitiesSettingsDrawer";
 import { makeHarness } from "./test-harness";
 import { capacitiesSettingsToWire } from "../adapters/wire";
@@ -564,5 +564,109 @@ describe("CapacitiesSettingsDrawer", () => {
     expect(rendered.getByRole("alert").textContent).toContain("reload and retry");
     expect(rendered.getByRole("button", { name: "Reload settings" })).toBeTruthy();
     expect(h.store.getState().ui.capacitiesSettingsOpen).toBe(true);
+  });
+
+  it("shows observed structure titles beside the raw ids in every structure list", async () => {
+    const { rendered } = openWithCapacityRow();
+    const groupNames = [
+      "Capacities structures admitted to the native Task Auto rules",
+      "Capacities structures with a declared assignment property",
+      "Capacities structures honouring an Active status pull",
+    ];
+    await waitFor(() =>
+      expect(rendered.getByRole("group", { name: groupNames[2] })).toBeTruthy(),
+    );
+
+    for (const name of groupNames) {
+      const group = within(rendered.getByRole("group", { name }));
+      // The titled structure leads with its observed title...
+      const title = group.getByText("Project");
+      expect(title.tagName.toLowerCase()).toBe("strong");
+      // ...and the raw id stays visible beside it, in the same row.
+      const titledId = group.getByText("0d194525-c5a1-4af5-bb62-202b83006b5e");
+      expect(titledId.tagName.toLowerCase()).toBe("code");
+      expect(title.parentElement).toBe(titledId.parentElement);
+      expect(titledId.parentElement?.textContent).toBe(
+        "Project0d194525-c5a1-4af5-bb62-202b83006b5e",
+      );
+      // An untitled structure shows its id alone, never a blank label.
+      const untitledId = group.getByText("custom-project");
+      expect(untitledId.parentElement?.querySelector("strong")).toBeNull();
+      expect(untitledId.parentElement?.textContent).toBe("custom-project");
+    }
+    // The title is display-only: the accessible name still keys on the id.
+    expect(
+      rendered.getByRole("checkbox", {
+        name: "Active pull for 0d194525-c5a1-4af5-bb62-202b83006b5e",
+      }),
+    ).toBeTruthy();
+  });
+
+  it("shows the id once when the observed title repeats it", async () => {
+    const h = makeHarness("ready");
+    vi.spyOn(h.controller, "loadCapacitiesSettings").mockResolvedValue({
+      version: 1,
+      revision: 0,
+      persisted: true,
+      nativeTaskAuto: {
+        activeEnabled: true,
+        dueEnabled: true,
+        deadlineEnabled: true,
+        deadlineHorizonDays: 2,
+      },
+      excluded: [],
+      activeStructures: [],
+      nativeTaskStructures: [],
+      activeStatuses: ["active"],
+      assignedStructures: {},
+      availableStructures: ["root-task"],
+      // The server falls back to the id when a structure has no display
+      // name, so the repeated title must render as the id, not twice.
+      structureTitles: { "root-task": "root-task" },
+    });
+    h.store.dispatch({ type: "UI", patch: { capacitiesSettingsOpen: true } });
+    const rendered = h.ui(<CapacitiesSettingsDrawer />);
+    const group = () =>
+      within(
+        rendered.getByRole("group", {
+          name: "Capacities structures admitted to the native Task Auto rules",
+        }),
+      );
+    await waitFor(() => expect(group().getByText("root-task")).toBeTruthy());
+
+    expect(group().getAllByText("root-task").length).toBe(1);
+    expect(group().getByText("root-task").parentElement?.querySelector("strong")).toBeNull();
+  });
+
+  it("keeps raw ids in stale rows even when the title map has an entry", async () => {
+    const h = makeHarness("ready");
+    vi.spyOn(h.controller, "loadCapacitiesSettings").mockResolvedValue({
+      version: 1,
+      revision: 0,
+      persisted: true,
+      nativeTaskAuto: {
+        activeEnabled: true,
+        dueEnabled: true,
+        deadlineEnabled: true,
+        deadlineHorizonDays: 2,
+      },
+      excluded: [],
+      activeStructures: ["legacy-structure"],
+      nativeTaskStructures: [],
+      activeStatuses: ["active"],
+      assignedStructures: {},
+      availableStructures: ["custom-project"],
+      structureTitles: { "legacy-structure": "Legacy Project" },
+    });
+    h.store.dispatch({ type: "UI", patch: { capacitiesSettingsOpen: true } });
+    const rendered = h.ui(<CapacitiesSettingsDrawer />);
+    await waitFor(() =>
+      expect(rendered.getByText(/Active structures outside this vault's mapping/)).toBeTruthy(),
+    );
+
+    // The stale id is outside this vault's mapping, so it keeps the raw id
+    // and never borrows a title the drawer does not consider available.
+    expect(rendered.getByText("legacy-structure")).toBeTruthy();
+    expect(rendered.queryByText("Legacy Project")).toBeNull();
   });
 });

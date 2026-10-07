@@ -97,6 +97,14 @@ export function CapacitiesSettingsPanel({ active }: { active: boolean }) {
   // longer lists are preserved on save, mirroring hiddenExclusions — and
   // surfaced rather than silently dropped.
   const availableStructures = settings?.availableStructures ?? [];
+  // Titles are display-only advisory metadata: identity and saving always
+  // key on the structure id. A title that merely repeats the id (the
+  // server's fallback for a structure with no observed display name) adds
+  // no information, so such a row shows the id once instead of twice.
+  const structureTitleOf = (structureId: string): string | null => {
+    const title = settings?.structureTitles[structureId];
+    return title && title !== structureId ? title : null;
+  };
   const availableStructureIds = new Set(availableStructures);
   const staleActiveStructures = (draft?.activeStructures ?? []).filter(
     (structureId) => !availableStructureIds.has(structureId),
@@ -341,9 +349,11 @@ export function CapacitiesSettingsPanel({ active }: { active: boolean }) {
                   <div class="capacities-object-list" role="group" aria-label="Capacities structures admitted to the native Task Auto rules">
                     {availableStructures.map((structureId) => {
                       const admitted = draft.nativeTaskStructures.includes(structureId);
+                      const title = structureTitleOf(structureId);
                       return (
                         <div class="capacities-object-row" key={structureId}>
                           <div class="capacities-object-row__identity">
+                            {title !== null && <strong>{title}</strong>}
                             <code>{structureId}</code>
                           </div>
                           <label class="capacities-object-row__toggle">
@@ -441,21 +451,25 @@ export function CapacitiesSettingsPanel({ active }: { active: boolean }) {
                   </p>
                 ) : (
                   <div class="capacities-object-list" role="group" aria-label="Capacities structures with a declared assignment property">
-                    {availableStructures.map((structureId) => (
-                      <div class="capacities-object-row" key={structureId}>
-                        <div class="capacities-object-row__identity">
-                          <code>{structureId}</code>
+                    {availableStructures.map((structureId) => {
+                      const title = structureTitleOf(structureId);
+                      return (
+                        <div class="capacities-object-row" key={structureId}>
+                          <div class="capacities-object-row__identity">
+                            {title !== null && <strong>{title}</strong>}
+                            <code>{structureId}</code>
+                          </div>
+                          <input
+                            class="capacities-object-row__property"
+                            type="text"
+                            value={assignedStructures[structureId] ?? ""}
+                            placeholder="property id"
+                            aria-label={`Assigned property for ${structureId}`}
+                            onInput={(e) => setAssignedProperty(structureId, (e.currentTarget as HTMLInputElement).value)}
+                          />
                         </div>
-                        <input
-                          class="capacities-object-row__property"
-                          type="text"
-                          value={assignedStructures[structureId] ?? ""}
-                          placeholder="property id"
-                          aria-label={`Assigned property for ${structureId}`}
-                          onInput={(e) => setAssignedProperty(structureId, (e.currentTarget as HTMLInputElement).value)}
-                        />
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 )}
                 {staleAssignedStructures.length > 0 && (
@@ -549,9 +563,11 @@ export function CapacitiesSettingsPanel({ active }: { active: boolean }) {
                   <div class="capacities-object-list" role="group" aria-label="Capacities structures honouring an Active status pull">
                     {availableStructures.map((structureId) => {
                       const active = draft.activeStructures.includes(structureId);
+                      const title = structureTitleOf(structureId);
                       return (
                         <div class="capacities-object-row" key={structureId}>
                           <div class="capacities-object-row__identity">
+                            {title !== null && <strong>{title}</strong>}
                             <code>{structureId}</code>
                           </div>
                           <label class="capacities-object-row__toggle">
