@@ -290,6 +290,22 @@ export function projectCapacitiesSettings(wire: Wire): CapacitiesSettings {
     statusRaw === undefined
       ? ["active"]
       : projectAdmissionValues(statusRaw, "active_statuses");
+  // ``assigned_structures`` is optional on read like the admission keys; an
+  // absent key means no declarations. When present it is strict: canonical
+  // structure ids with non-empty opaque property ids kept exactly as stored.
+  const assignedRaw = raw.assigned_structures;
+  let assignedStructures: Record<string, string> = {};
+  if (assignedRaw !== undefined) {
+    if (!assignedRaw || typeof assignedRaw !== "object" || Array.isArray(assignedRaw)) {
+      throw capacitiesSettingsError("assigned_structures must be an object");
+    }
+    for (const [structureId, propertyId] of Object.entries(assignedRaw)) {
+      if (!isCanonicalCapacitiesStructureId(structureId) || !isCanonicalAdmissionValue(propertyId)) {
+        throw capacitiesSettingsError("assigned_structures contains an invalid declaration");
+      }
+      assignedStructures[structureId] = propertyId;
+    }
+  }
   // ``available_structures`` is read-only advisory metadata added at the top
   // level of the settings response. It is tolerant when absent (an older
   // backend) and strict when present.
@@ -321,6 +337,7 @@ export function projectCapacitiesSettings(wire: Wire): CapacitiesSettings {
     activeStructures: activeStructures.sort(),
     nativeTaskStructures,
     activeStatuses,
+    assignedStructures,
     availableStructures,
   };
 }
@@ -359,6 +376,17 @@ export function capacitiesSettingsToWire(draft: CapacitiesSettingsDraft): Wire {
   if (!activeStatuses.every(isCanonicalAdmissionValue)) {
     throw new Error("activeStatuses contains an invalid value");
   }
+  // The declaration map is always emitted too: the full-replacement route
+  // replaces it wholesale, so omission would wipe every declaration.
+  const assignedEntries = Object.entries(draft.assignedStructures);
+  for (const [structureId, propertyId] of assignedEntries) {
+    if (!isCanonicalCapacitiesStructureId(structureId) || !isCanonicalAdmissionValue(propertyId)) {
+      throw new Error("assignedStructures contains an invalid declaration");
+    }
+  }
+  const assignedStructures = Object.fromEntries(
+    assignedEntries.sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)),
+  );
   return {
     expected_revision: draft.expectedRevision,
     native_task_auto: {
@@ -371,6 +399,7 @@ export function capacitiesSettingsToWire(draft: CapacitiesSettingsDraft): Wire {
     active_structures: Object.fromEntries(activeStructures.map((structureId) => [structureId, true])),
     native_task_structures: nativeTaskStructures,
     active_statuses: activeStatuses,
+    assigned_structures: assignedStructures,
   };
 }
 
@@ -867,6 +896,19 @@ export function capacitiesCoverageOf(warnings: string[]): CapacitiesCoverage | n
     }
   }
   return { warnings: rows, evaluated, deferred, limit };
+}
+
+/** Capacities assignment-declaration diagnostics over the VERBATIM source
+    warnings. The adapter owns the wording; this filter only projects the
+    rows that report a declared property id the read could not honour, so the
+    settings panel can show them beside the control that declares them. It is
+    deliberately NOT part of the readiness rail (the operator flagged the rail
+    as too verbose, and a configuration fact belongs beside its control).
+    Null-equivalent ([]) means every declaration was honoured. */
+export function capacitiesAssignmentWarnings(warnings: string[]): string[] {
+  return warnings.filter((warning) =>
+    warning.startsWith("ignored Capacities assignment declaration"),
+  );
 }
 
 export function sourceHealthOf(warnings: string[]): SourceHealth {

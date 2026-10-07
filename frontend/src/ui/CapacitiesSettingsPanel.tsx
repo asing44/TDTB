@@ -16,7 +16,7 @@ import type {
   CapacitiesSettings,
   CapacitiesSettingsDraft,
 } from "../model/types";
-import { isCanonicalCapacitiesIdentity } from "../adapters/wire";
+import { capacitiesAssignmentWarnings, isCanonicalCapacitiesIdentity } from "../adapters/wire";
 
 function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -35,6 +35,9 @@ function draftOf(settings: CapacitiesSettings): CapacitiesSettingsDraft {
     // default instead of leaving it unchanged.
     nativeTaskStructures: [...settings.nativeTaskStructures],
     activeStatuses: [...settings.activeStatuses],
+    // The settings-declared assignment map is always sent: the save route is
+    // a full replacement, so omitting it would wipe every declaration.
+    assignedStructures: { ...settings.assignedStructures },
   };
 }
 
@@ -104,6 +107,20 @@ export function CapacitiesSettingsPanel({ active }: { active: boolean }) {
   const staleNativeStructures = (draft?.nativeTaskStructures ?? []).filter(
     (structureId) => !availableStructureIds.has(structureId),
   );
+  // A declaration whose structure the server honours but this vault no longer
+  // lists is retained on save and surfaced, exactly like the stale set above.
+  const assignedStructures = draft?.assignedStructures ?? {};
+  const staleAssignedStructures = Object.keys(assignedStructures)
+    .filter((structureId) => !availableStructureIds.has(structureId))
+    .sort();
+  // The backend emits one warning per declaration it could not honour. The
+  // text is the server's own; the panel shows it verbatim. This is
+  // deliberately NOT part of the readiness rail (the operator flagged the
+  // rail as too verbose, and a configuration fact belongs beside the control
+  // that declares it).
+  const assignmentWarnings = capacitiesAssignmentWarnings(
+    s.inputs?.sourceWarnings ?? [],
+  );
   const horizonValue = Number(horizonText);
   const horizonTextValid = /^\d+$/.test(horizonText) && Number.isSafeInteger(horizonValue);
   const policy = draft?.nativeTaskAuto;
@@ -144,6 +161,19 @@ export function CapacitiesSettingsPanel({ active }: { active: boolean }) {
         ? current.nativeTaskStructures.filter((value) => value !== structureId)
         : [...current.nativeTaskStructures, structureId].sort();
       return { ...current, nativeTaskStructures };
+    });
+  };
+
+  // An emptied field removes the declaration; any other value is kept exactly
+  // as typed (the property id is an opaque provider identifier), matching the
+  // store's validation.
+  const setAssignedProperty = (structureId: string, propertyId: string) => {
+    setDraft((current) => {
+      if (!current) return current;
+      const next = { ...current.assignedStructures };
+      if (propertyId === "") delete next[structureId];
+      else next[structureId] = propertyId;
+      return { ...current, assignedStructures: next };
     });
   };
 
@@ -372,6 +402,73 @@ export function CapacitiesSettingsPanel({ active }: { active: boolean }) {
                       <div class="capacities-exclusion-row" key={status}>
                         <code>{status}</code>
                         <button class="btn" onClick={() => removeStatus(status)} aria-label={`Remove status ${status}`}>Remove</button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </section>
+
+            <section class="setup-section capacities-settings__section" aria-labelledby="capacities-sec-assigned">
+              <div class="setup-section__head">
+                <h3 id="capacities-sec-assigned">Assigned flag declarations</h3>
+                {staleAssignedStructures.length > 0 && (
+                  <span class="capacities-settings__revision">
+                    {staleAssignedStructures.length} saved {staleAssignedStructures.length === 1 ? "structure" : "structures"} outside this vault
+                  </span>
+                )}
+              </div>
+              <div class="setup-section__body">
+                <p class="capacities-settings__hint">
+                  Declare the raw Capacities property id whose boolean true means "assigned at TDTB level" for a structure. The property is read as present true / present false / absent neutral, so a declaration can never change which structures are enumerated. A blank field declares nothing.
+                </p>
+                {assignmentWarnings.length > 0 && (
+                  <div class="capacities-exclusion-list">
+                    <h4>Ignored declarations in the current read</h4>
+                    <p class="capacities-settings__hint">
+                      The server reported that these declarations could not be honoured. The wording is the server's own; correct the property id below and save.
+                    </p>
+                    {assignmentWarnings.map((warning) => (
+                      <div class="capacities-exclusion-row" key={warning}>
+                        <code>{warning}</code>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {availableStructures.length === 0 ? (
+                  <p class="capacities-settings__empty">
+                    This vault's Capacities source mapping lists no structures; saved declarations are preserved on save.
+                  </p>
+                ) : (
+                  <div class="capacities-object-list" role="group" aria-label="Capacities structures with a declared assignment property">
+                    {availableStructures.map((structureId) => (
+                      <div class="capacities-object-row" key={structureId}>
+                        <div class="capacities-object-row__identity">
+                          <code>{structureId}</code>
+                        </div>
+                        <input
+                          class="capacities-object-row__property"
+                          type="text"
+                          value={assignedStructures[structureId] ?? ""}
+                          placeholder="property id"
+                          aria-label={`Assigned property for ${structureId}`}
+                          onInput={(e) => setAssignedProperty(structureId, (e.currentTarget as HTMLInputElement).value)}
+                        />
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {staleAssignedStructures.length > 0 && (
+                  <div class="capacities-exclusion-list">
+                    <h4>Declared structures outside this vault's mapping</h4>
+                    <p class="capacities-settings__hint">
+                      These {staleAssignedStructures.length} saved {staleAssignedStructures.length === 1 ? "id is" : "ids are"} not in this vault's Capacities source mapping. They are retained unchanged on save.
+                    </p>
+                    {staleAssignedStructures.map((structureId) => (
+                      <div class="capacities-exclusion-row" key={structureId}>
+                        <code>{structureId}</code>
+                        <code>{assignedStructures[structureId]}</code>
+                        <button class="btn" onClick={() => setAssignedProperty(structureId, "")}>Remove</button>
                       </div>
                     ))}
                   </div>

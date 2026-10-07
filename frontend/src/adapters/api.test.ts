@@ -84,6 +84,7 @@ describe("reads", () => {
         excluded: { "capacities:space-1:RootTask:task-1": true },
         native_task_structures: ["Task", "RootTask"],
         active_statuses: ["In Progress", "active"],
+        assigned_structures: { "custom-project": "assigned-prop" },
       },
       available_structures: [
         "0d194525-c5a1-4af5-bb62-202b83006b5e",
@@ -105,6 +106,7 @@ describe("reads", () => {
       activeStructures: [],
       nativeTaskStructures: ["RootTask", "Task"],
       activeStatuses: ["In Progress", "active"],
+      assignedStructures: { "custom-project": "assigned-prop" },
       availableStructures: [
         "0d194525-c5a1-4af5-bb62-202b83006b5e",
         "custom-project",
@@ -147,6 +149,7 @@ describe("reads", () => {
         active_structures: { "custom-project": true },
         native_task_structures: ["Task"],
         active_statuses: ["active", "In Progress"],
+        assigned_structures: { "custom-project": "assigned-prop" },
       },
     });
     const adapter = new ApiAdapter();
@@ -154,6 +157,7 @@ describe("reads", () => {
     expect(loaded.activeStructures).toEqual(["custom-project"]);
     expect(loaded.nativeTaskStructures).toEqual(["Task"]);
     expect(loaded.activeStatuses).toEqual(["In Progress", "active"]);
+    expect(loaded.assignedStructures).toEqual({ "custom-project": "assigned-prop" });
 
     route("/settings/capacities/save", {
       persisted: true,
@@ -170,6 +174,7 @@ describe("reads", () => {
         active_structures: { "custom-project": true },
         native_task_structures: ["Task"],
         active_statuses: ["In Progress", "active"],
+        assigned_structures: { "custom-project": "assigned-prop" },
       },
     });
     const saved = await adapter.saveCapacitiesSettings({
@@ -179,7 +184,9 @@ describe("reads", () => {
       activeStructures: [...loaded.activeStructures],
       nativeTaskStructures: [...loaded.nativeTaskStructures],
       activeStatuses: [...loaded.activeStatuses],
+      assignedStructures: { ...loaded.assignedStructures },
     });
+    expect(saved.assignedStructures).toEqual({ "custom-project": "assigned-prop" });
     expect(saved.activeStructures).toEqual(["custom-project"]);
     expect(saved.nativeTaskStructures).toEqual(["Task"]);
     expect(saved.activeStatuses).toEqual(["In Progress", "active"]);
@@ -188,6 +195,9 @@ describe("reads", () => {
     });
     expect(postBody("/settings/capacities/save").native_task_structures).toEqual(["Task"]);
     expect(postBody("/settings/capacities/save").active_statuses).toEqual(["In Progress", "active"]);
+    expect(postBody("/settings/capacities/save").assigned_structures).toEqual({
+      "custom-project": "assigned-prop",
+    });
   });
 
   it("loadPlanInputs projects and needs no token", async () => {
@@ -356,6 +366,7 @@ describe("Capacities settings save", () => {
       activeStructures: ["custom-project"],
       nativeTaskStructures: ["RootTask", "Task"],
       activeStatuses: ["active"],
+      assignedStructures: {},
     });
     expect(result.revision).toBe(1);
     expect(calls.filter((call) => call.init?.method === "POST")).toHaveLength(1);
@@ -373,6 +384,7 @@ describe("Capacities settings save", () => {
       active_structures: { "custom-project": true },
       native_task_structures: ["RootTask", "Task"],
       active_statuses: ["active"],
+      assigned_structures: {},
     });
   });
 
@@ -407,12 +419,15 @@ describe("Capacities settings save", () => {
       // sent, because the route treats omission as "reset to the default".
       nativeTaskStructures: [],
       activeStatuses: [],
+      assignedStructures: {},
     });
     const body = postBody("/settings/capacities/save");
     expect("native_task_structures" in body).toBe(true);
     expect("active_statuses" in body).toBe(true);
+    expect("assigned_structures" in body).toBe(true);
     expect(body.native_task_structures).toEqual([]);
     expect(body.active_statuses).toEqual([]);
+    expect(body.assigned_structures).toEqual({});
   });
 
   it("surfaces a settings revision conflict as ApiError", async () => {
@@ -434,6 +449,7 @@ describe("Capacities settings save", () => {
       activeStructures: [],
       nativeTaskStructures: [],
       activeStatuses: [],
+      assignedStructures: {},
     }).catch((e) => e);
     expect(error).toBeInstanceOf(ApiError);
     expect(error.status).toBe(409);

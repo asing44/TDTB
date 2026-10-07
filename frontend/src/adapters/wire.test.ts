@@ -7,6 +7,7 @@ import { describe, expect, it } from "vitest";
 import {
   blocksLabel,
   calendarWarnings,
+  capacitiesAssignmentWarnings,
   capacitiesCoverageOf,
   capacitiesSettingsToWire,
   daySetupToWire,
@@ -1033,6 +1034,7 @@ describe("capacities settings active_structures (additive schema v1)", () => {
       activeStructures: ["b", "a", "a"],
       nativeTaskStructures: [],
       activeStatuses: [],
+      assignedStructures: {},
     });
     expect(wire.active_structures).toEqual({ a: true, b: true });
   });
@@ -1046,6 +1048,7 @@ describe("capacities settings active_structures (additive schema v1)", () => {
         activeStructures: ["bad id"],
         nativeTaskStructures: [],
         activeStatuses: [],
+        assignedStructures: {},
       }),
     ).toThrow(/invalid structure id/);
   });
@@ -1171,6 +1174,7 @@ describe("capacities settings admission keys (additive schema v1)", () => {
       activeStructures: [],
       nativeTaskStructures: [],
       activeStatuses: [],
+      assignedStructures: {},
     });
     // Full replacement: the key must be present, never omitted — omission
     // would make the server reset it to the documented default.
@@ -1188,6 +1192,7 @@ describe("capacities settings admission keys (additive schema v1)", () => {
       activeStructures: [],
       nativeTaskStructures: ["Task", "RootTask", "Task"],
       activeStatuses: ["active", "In Progress", "active"],
+      assignedStructures: {},
     });
     expect(wire.native_task_structures).toEqual(["RootTask", "Task"]);
     expect(wire.active_statuses).toEqual(["In Progress", "active"]);
@@ -1199,6 +1204,7 @@ describe("capacities settings admission keys (additive schema v1)", () => {
       nativeTaskAuto: { activeEnabled: true, dueEnabled: true, deadlineEnabled: true, deadlineHorizonDays: 2 },
       excluded: [],
       activeStructures: [],
+      assignedStructures: {},
     };
     expect(() =>
       capacitiesSettingsToWire({ ...base, nativeTaskStructures: [""], activeStatuses: [] }),
@@ -1206,6 +1212,163 @@ describe("capacities settings admission keys (additive schema v1)", () => {
     expect(() =>
       capacitiesSettingsToWire({ ...base, nativeTaskStructures: [], activeStatuses: [""] }),
     ).toThrow(/activeStatuses/);
+  });
+});
+
+describe("capacities assigned_structures declarations (additive schema v1)", () => {
+  const baseSettings = () => ({
+    version: 1,
+    revision: 0,
+    native_task_auto: {
+      active_enabled: true,
+      due_enabled: true,
+      deadline_enabled: true,
+      deadline_horizon_days: 2,
+    },
+    excluded: {},
+  });
+  const baseDraft = () => ({
+    expectedRevision: 0,
+    nativeTaskAuto: {
+      activeEnabled: true,
+      dueEnabled: true,
+      deadlineEnabled: true,
+      deadlineHorizonDays: 2,
+    },
+    excluded: [],
+    activeStructures: [],
+    nativeTaskStructures: [],
+    activeStatuses: [],
+    assignedStructures: {},
+  });
+
+  it("projects an absent assigned_structures key to the empty map (older backend)", () => {
+    const projected = projectCapacitiesSettings({ persisted: false, settings: baseSettings() });
+    expect(projected.assignedStructures).toEqual({});
+  });
+
+  it("parses a well-formed map and keeps property ids exactly as declared", () => {
+    const projected = projectCapacitiesSettings({
+      persisted: false,
+      settings: {
+        ...baseSettings(),
+        assigned_structures: {
+          "custom-project": "Assigned-ID_CaseSensitive",
+          b: " padded-is-opaque ",
+        },
+      },
+    });
+    expect(projected.assignedStructures).toEqual({
+      "custom-project": "Assigned-ID_CaseSensitive",
+      b: " padded-is-opaque ",
+    });
+  });
+
+  it("throws when assigned_structures is not an object", () => {
+    for (const bad of [[], "custom-project", null, 1]) {
+      expect(() =>
+        projectCapacitiesSettings({
+          persisted: false,
+          settings: { ...baseSettings(), assigned_structures: bad },
+        }),
+      ).toThrow(/assigned_structures/);
+    }
+  });
+
+  it("throws on an invalid structure id or an empty property id", () => {
+    for (const bad of [
+      { "": "p1" },
+      { " custom-project ": "p1" },
+      { "custom project": "p1" },
+      { "custom-project": "" },
+      { "custom-project": 1 },
+      { "custom-project": null },
+    ]) {
+      expect(() =>
+        projectCapacitiesSettings({
+          persisted: false,
+          settings: { ...baseSettings(), assigned_structures: bad },
+        }),
+      ).toThrow(/assigned_structures/);
+    }
+  });
+
+  it("always emits assigned_structures in the save body, even when empty", () => {
+    const wire = capacitiesSettingsToWire(baseDraft());
+    // Full replacement: an omitted key would wipe every saved declaration.
+    expect("assigned_structures" in wire).toBe(true);
+    expect(wire.assigned_structures).toEqual({});
+  });
+
+  it("emits a sorted declaration map, keeping property ids exactly", () => {
+    const wire = capacitiesSettingsToWire({
+      ...baseDraft(),
+      assignedStructures: { zeta: "p2", alpha: " p1 " },
+    });
+    expect(Object.keys(wire.assigned_structures)).toEqual(["alpha", "zeta"]);
+    expect(wire.assigned_structures).toEqual({ alpha: " p1 ", zeta: "p2" });
+  });
+
+  it("throws on an invalid declaration in the save draft", () => {
+    expect(() =>
+      capacitiesSettingsToWire({ ...baseDraft(), assignedStructures: { "bad id": "p1" } }),
+    ).toThrow(/assignedStructures/);
+    expect(() =>
+      capacitiesSettingsToWire({ ...baseDraft(), assignedStructures: { "custom-project": "" } }),
+    ).toThrow(/assignedStructures/);
+  });
+
+  it("round-trips a declaration through the save body and the GET projection", () => {
+    const wire = capacitiesSettingsToWire({
+      ...baseDraft(),
+      assignedStructures: { "custom-project": "assigned-prop" },
+    });
+    // The stored settings body (minus the revision the route owns) is what
+    // GET returns under `settings`, with `persisted` alongside it.
+    const projected = projectCapacitiesSettings({
+      persisted: true,
+      available_structures: ["custom-project"],
+      settings: {
+        version: 1,
+        revision: 1,
+        native_task_auto: wire.native_task_auto,
+        excluded: wire.excluded,
+        active_structures: wire.active_structures,
+        native_task_structures: wire.native_task_structures,
+        active_statuses: wire.active_statuses,
+        assigned_structures: wire.assigned_structures,
+      },
+    });
+    expect(projected.assignedStructures).toEqual({ "custom-project": "assigned-prop" });
+  });
+});
+
+describe("capacities assignment-declaration diagnostics (source_warnings)", () => {
+  const declarationWarning =
+    "ignored Capacities assignment declaration for structure 'custom-project': " +
+    "unknown property 'assigned-prop'";
+
+  it("matches the backend wording and keeps the text verbatim", () => {
+    expect(capacitiesAssignmentWarnings([declarationWarning])).toEqual([declarationWarning]);
+  });
+
+  it("tolerates a double-quoted Python repr of the ids", () => {
+    const quoted =
+      'ignored Capacities assignment declaration for structure "it\'s": ' +
+      'unknown property "prop\'s"';
+    expect(capacitiesAssignmentWarnings([quoted])).toEqual([quoted]);
+  });
+
+  it("ignores the partial-coverage warning and unrelated warnings", () => {
+    const coverage =
+      "Capacities partial — 20 evaluated · 51 deferred across contributing structures.";
+    expect(
+      capacitiesAssignmentWarnings([coverage, "Calendar read failed (timeout)", ""]),
+    ).toEqual([]);
+  });
+
+  it("is empty when no warnings are present", () => {
+    expect(capacitiesAssignmentWarnings([])).toEqual([]);
   });
 });
 

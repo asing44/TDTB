@@ -69,6 +69,7 @@ describe("CapacitiesSettingsDrawer", () => {
       activeStructures: [],
       nativeTaskStructures: ["RootTask", "Task"],
       activeStatuses: ["active"],
+      assignedStructures: {},
     });
     await waitFor(() => expect(h.store.getState().ui.capacitiesSettingsOpen).toBe(false));
   });
@@ -105,6 +106,7 @@ describe("CapacitiesSettingsDrawer", () => {
       activeStructures: ["custom-project", "0d194525-c5a1-4af5-bb62-202b83006b5e"],
       nativeTaskStructures: ["Task"],
       activeStatuses: ["active", "In Progress"],
+      assignedStructures: {},
       availableStructures: ["custom-project", "0d194525-c5a1-4af5-bb62-202b83006b5e"],
     });
     h.store.dispatch({ type: "UI", patch: { capacitiesSettingsOpen: true } });
@@ -177,6 +179,7 @@ describe("CapacitiesSettingsDrawer", () => {
       activeStructures: ["custom-project"],
       nativeTaskStructures: ["RootTask", "Task"],
       activeStatuses: ["active"],
+      assignedStructures: {},
       availableStructures: ["custom-project", "0d194525-c5a1-4af5-bb62-202b83006b5e"],
     });
     h.store.dispatch({ type: "UI", patch: { capacitiesSettingsOpen: true } });
@@ -213,6 +216,7 @@ describe("CapacitiesSettingsDrawer", () => {
       activeStructures: ["legacy-structure", "custom-project"],
       nativeTaskStructures: ["RootTask", "Task"],
       activeStatuses: ["active"],
+      assignedStructures: {},
       availableStructures: ["custom-project"],
     });
     h.store.dispatch({ type: "UI", patch: { capacitiesSettingsOpen: true } });
@@ -250,6 +254,7 @@ describe("CapacitiesSettingsDrawer", () => {
       activeStructures: [],
       nativeTaskStructures: [],
       activeStatuses: [],
+      assignedStructures: {},
       availableStructures: [],
     });
     h.store.dispatch({ type: "UI", patch: { capacitiesSettingsOpen: true } });
@@ -276,6 +281,7 @@ describe("CapacitiesSettingsDrawer", () => {
       activeStructures: [],
       nativeTaskStructures: ["custom-project"],
       activeStatuses: ["In Progress", "active"],
+      assignedStructures: {},
       availableStructures: ["custom-project", "0d194525-c5a1-4af5-bb62-202b83006b5e"],
     });
     h.store.dispatch({ type: "UI", patch: { capacitiesSettingsOpen: true } });
@@ -310,6 +316,162 @@ describe("CapacitiesSettingsDrawer", () => {
     expect(body.active_statuses).toEqual(["active"]);
   });
 
+  it("always sends the assignment declarations on an untouched save", async () => {
+    const { h, rendered } = openWithCapacityRow();
+    await waitFor(() => expect(rendered.getByText("Assigned flag declarations")).toBeTruthy());
+
+    // Nothing in the declarations section was edited. The save route is a
+    // full replacement, so the key must still ride along or the server would
+    // wipe every previous declaration.
+    const save = vi.spyOn(h.controller, "saveCapacitiesSettings");
+    fireEvent.click(rendered.getByRole("button", { name: "Save Capacities settings" }));
+    await waitFor(() => expect(save).toHaveBeenCalledTimes(1));
+
+    expect(save.mock.calls[0][0].assignedStructures).toEqual({});
+    const body = capacitiesSettingsToWire(save.mock.calls[0][0]);
+    expect("assigned_structures" in body).toBe(true);
+    expect(body.assigned_structures).toEqual({});
+  });
+
+  it("declares a per-structure assignment property with a text input", async () => {
+    const { h, rendered } = openWithCapacityRow();
+    await waitFor(() => expect(rendered.getByText("Assigned flag declarations")).toBeTruthy());
+
+    const input = rendered.getByLabelText("Assigned property for custom-project") as HTMLInputElement;
+    expect(input.value).toBe("");
+    fireEvent.input(input, { target: { value: "assigned-prop-id" } });
+    expect(input.value).toBe("assigned-prop-id");
+
+    const save = vi.spyOn(h.controller, "saveCapacitiesSettings");
+    fireEvent.click(rendered.getByRole("button", { name: "Save Capacities settings" }));
+    await waitFor(() => expect(save).toHaveBeenCalledTimes(1));
+    expect(capacitiesSettingsToWire(save.mock.calls[0][0]).assigned_structures).toEqual({
+      "custom-project": "assigned-prop-id",
+    });
+  });
+
+  it("clears a declaration when its field is emptied", async () => {
+    const h = makeHarness("ready");
+    vi.spyOn(h.controller, "loadCapacitiesSettings").mockResolvedValue({
+      version: 1,
+      revision: 0,
+      persisted: true,
+      nativeTaskAuto: {
+        activeEnabled: true,
+        dueEnabled: true,
+        deadlineEnabled: true,
+        deadlineHorizonDays: 2,
+      },
+      excluded: [],
+      activeStructures: [],
+      nativeTaskStructures: ["RootTask", "Task"],
+      activeStatuses: ["active"],
+      assignedStructures: { "custom-project": "old-prop" },
+      availableStructures: ["custom-project"],
+    });
+    h.store.dispatch({ type: "UI", patch: { capacitiesSettingsOpen: true } });
+    const rendered = h.ui(<CapacitiesSettingsDrawer />);
+    await waitFor(() => expect(rendered.getByText("Assigned flag declarations")).toBeTruthy());
+
+    const input = rendered.getByLabelText("Assigned property for custom-project") as HTMLInputElement;
+    expect(input.value).toBe("old-prop");
+    fireEvent.input(input, { target: { value: "" } });
+
+    const save = vi.spyOn(h.controller, "saveCapacitiesSettings");
+    fireEvent.click(rendered.getByRole("button", { name: "Save Capacities settings" }));
+    await waitFor(() => expect(save).toHaveBeenCalledTimes(1));
+    expect(capacitiesSettingsToWire(save.mock.calls[0][0]).assigned_structures).toEqual({});
+  });
+
+  it("keeps a saved declaration outside the vault mapping and round-trips it", async () => {
+    const h = makeHarness("ready");
+    vi.spyOn(h.controller, "loadCapacitiesSettings").mockResolvedValue({
+      version: 1,
+      revision: 0,
+      persisted: true,
+      nativeTaskAuto: {
+        activeEnabled: true,
+        dueEnabled: true,
+        deadlineEnabled: true,
+        deadlineHorizonDays: 2,
+      },
+      excluded: [],
+      activeStructures: [],
+      nativeTaskStructures: ["RootTask", "Task"],
+      activeStatuses: ["active"],
+      assignedStructures: {
+        "legacy-declared": "legacy-prop",
+        "custom-project": "current-prop",
+      },
+      availableStructures: ["custom-project"],
+    });
+    h.store.dispatch({ type: "UI", patch: { capacitiesSettingsOpen: true } });
+    const rendered = h.ui(<CapacitiesSettingsDrawer />);
+    await waitFor(() => expect(rendered.getByText("Assigned flag declarations")).toBeTruthy());
+
+    // Retained and surfaced, never silently dropped. (The native and active
+    // stale blocks use the same wording, so count rather than pick one.)
+    expect(rendered.getByText(/Declared structures outside this vault's mapping/)).toBeTruthy();
+    expect(rendered.getAllByText(/retained unchanged on save/).length).toBeGreaterThan(0);
+    expect(rendered.getByText("legacy-declared")).toBeTruthy();
+
+    const save = vi.spyOn(h.controller, "saveCapacitiesSettings");
+    fireEvent.click(rendered.getByRole("button", { name: "Save Capacities settings" }));
+    await waitFor(() => expect(save).toHaveBeenCalledTimes(1));
+    expect(save.mock.calls[0][0].assignedStructures).toEqual({
+      "legacy-declared": "legacy-prop",
+      "custom-project": "current-prop",
+    });
+    expect(capacitiesSettingsToWire(save.mock.calls[0][0]).assigned_structures).toEqual({
+      "custom-project": "current-prop",
+      "legacy-declared": "legacy-prop",
+    });
+  });
+
+  it("shows the adapter's ignored-declaration diagnostic verbatim beside the control", async () => {
+    const h = makeHarness("ready");
+    const inputs = h.store.getState().inputs!;
+    const warning =
+      "ignored Capacities assignment declaration for structure 'custom-project': " +
+      "unknown property 'assigned-prop'";
+    const coverage =
+      "Capacities partial — 20 evaluated · 51 deferred across contributing structures.";
+    h.store.dispatch({
+      type: "INPUTS_LOADED",
+      inputs: { ...inputs, sourceWarnings: [warning, coverage] },
+      ledger: h.store.getState().ledger!,
+    });
+    vi.spyOn(h.controller, "loadCapacitiesSettings").mockResolvedValue({
+      version: 1,
+      revision: 0,
+      persisted: true,
+      nativeTaskAuto: {
+        activeEnabled: true,
+        dueEnabled: true,
+        deadlineEnabled: true,
+        deadlineHorizonDays: 2,
+      },
+      excluded: [],
+      activeStructures: [],
+      nativeTaskStructures: ["RootTask", "Task"],
+      activeStatuses: ["active"],
+      assignedStructures: { "custom-project": "assigned-prop" },
+      availableStructures: ["custom-project"],
+    });
+    h.store.dispatch({ type: "UI", patch: { capacitiesSettingsOpen: true } });
+    const rendered = h.ui(<CapacitiesSettingsDrawer />);
+    await waitFor(() => expect(rendered.getByText("Ignored declarations in the current read")).toBeTruthy());
+
+    // The server's own wording, passed through unchanged — never paraphrased.
+    expect(rendered.getByText(warning)).toBeTruthy();
+    // The partial-coverage warning belongs to the readiness rail, not here.
+    expect(rendered.queryByText(coverage)).toBeNull();
+    // The declaration stays editable so the operator can correct it.
+    expect(
+      (rendered.getByLabelText("Assigned property for custom-project") as HTMLInputElement).value,
+    ).toBe("assigned-prop");
+  });
+
   it("keeps a saved native structure outside the vault mapping and round-trips it", async () => {
     const h = makeHarness("ready");
     vi.spyOn(h.controller, "loadCapacitiesSettings").mockResolvedValue({
@@ -326,6 +488,7 @@ describe("CapacitiesSettingsDrawer", () => {
       activeStructures: [],
       nativeTaskStructures: ["legacy-native", "custom-project"],
       activeStatuses: ["active"],
+      assignedStructures: {},
       availableStructures: ["custom-project"],
     });
     h.store.dispatch({ type: "UI", patch: { capacitiesSettingsOpen: true } });

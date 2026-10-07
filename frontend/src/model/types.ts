@@ -41,6 +41,11 @@ export interface CapacitiesSettings {
       strings on the wire, stored exactly as configured; additive to schema
       version 1, and the documented default is the single `active`. */
   activeStatuses: string[];
+  /** Settings-declared source assignment: structure id -> RAW Capacities
+      property id whose boolean `true` means "assigned at TDTB level". The
+      property id is opaque and kept exactly as declared; additive to schema
+      version 1, and an absent key means no declarations. */
+  assignedStructures: Record<string, string>;
   /** Read-only, vault-local structure ids the drawer offers as Active-pull
       choices. Advisory UI metadata sourced from the Capacities source mapping;
       empty when none are configured or the record is unreadable. */
@@ -60,6 +65,10 @@ export interface CapacitiesSettingsDraft {
   /** Always sent on save: omission would make the full-replacement route
       reset the key to its documented default. */
   activeStatuses: string[];
+  /** Always sent on save: the full-replacement route replaces the
+      declaration map wholesale, so omission would wipe the operator's
+      declared assignment properties. */
+  assignedStructures: Record<string, string>;
 }
 
 /** One stable tag identity in the app-managed exclusion policy. The title is

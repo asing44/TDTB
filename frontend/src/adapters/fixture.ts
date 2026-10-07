@@ -152,6 +152,7 @@ export class FixtureAdapter implements Adapter {
     activeStructures: [],
     nativeTaskStructures: ["RootTask", "Task"],
     activeStatuses: ["active"],
+    assignedStructures: {},
     availableStructures: [
       "custom-project",
       "0d194525-c5a1-4af5-bb62-202b83006b5e",
@@ -344,6 +345,7 @@ export class FixtureAdapter implements Adapter {
       activeStructures: [...draft.activeStructures].sort(),
       nativeTaskStructures: [...draft.nativeTaskStructures].sort(),
       activeStatuses: [...draft.activeStatuses].sort(),
+      assignedStructures: { ...draft.assignedStructures },
       availableStructures: [...this.capacitiesSettings.availableStructures],
     };
     return structuredClone(this.capacitiesSettings);

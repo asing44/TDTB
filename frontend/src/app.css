@@ -3850,6 +3850,22 @@ body {
 .capacities-object-row__toggle input:checked + span {
   color: var(--state-danger);
 }
+.capacities-object-row__property {
+  flex: 0 1 260px;
+  min-width: 0;
+  max-width: 100%;
+  min-height: 44px;
+  padding: 8px 10px;
+  border: 0.5px solid var(--t-border);
+  border-radius: var(--radius-sm);
+  background: var(--t-surface);
+  color: var(--t-text);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+.capacities-object-row__property:focus-visible {
+  border-color: var(--t-accent);
+}
 .capacities-exclusion-list {
   margin-top: 14px;
   padding-top: 12px;
