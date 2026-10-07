@@ -9,7 +9,7 @@ matching, or a generic synchronization model.
 from __future__ import annotations
 
 from copy import deepcopy
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date
 import hashlib
 import json
@@ -100,7 +100,9 @@ class StructureMapping:
     #: adapter reads this instead of ``assignment_property`` /
     #: ``assignment_values``. It deliberately does NOT participate in
     #: ``_structure_can_contribute`` — the declaration is an assignment check
-    #: only and must never gate enumeration.
+    #: only and must never gate enumeration. A declaration the structure does
+    #: not define is ignored with one bounded warning; the mapping's own
+    #: marker then applies as the fallback.
     assigned_property: str | None = None
 
 
@@ -421,6 +423,9 @@ class CapacitiesAdapter:
         self.config = config
         self._structure_defs: dict[str, dict[str, Any]] | None = None
         self._mappings: dict[str, StructureMapping] | None = None
+        # Bounded contract diagnostics recorded once when the mappings are
+        # resolved; carried into every read result's warnings.
+        self._contract_warnings: list[str] = []
         # Per-read hydration budget, reset by ``items_for_day``.
         self._content_reads_left = config.max_content_reads
         #: Distinct listed identities deferred this run (content-read budget
@@ -453,6 +458,7 @@ class CapacitiesAdapter:
             structures[sid] = {**row, "_definitions": _definitions(row)}
 
         mappings: dict[str, StructureMapping] = {}
+        declaration_warnings: list[str] = []
         for mapping in self.config.mappings:
             sid = _text(mapping.structure_id)
             if not sid or sid in mappings:
@@ -498,6 +504,22 @@ class CapacitiesAdapter:
                     raise CapacitiesContractError(
                         f"mapping {sid!r} references unknown property {prop_id!r}"
                     )
+            # A settings-declared assignment property the structure does not
+            # define is a mistyped declaration, not a contract failure. Left
+            # in place it would read neutral forever, so assignment would
+            # silently never work for this structure. Record the diagnostic
+            # ONCE here — the contract build runs once per adapter, and the
+            # list carries exactly one entry per (structure, property) — then
+            # ignore the declaration by substitution so the mapping's own
+            # assignment marker / values apply as the fallback. A bad
+            # declaration must never raise, fail the read, or change which
+            # structures are enumerated: it is an assignment check only.
+            if mapping.assigned_property and mapping.assigned_property not in definitions:
+                declaration_warnings.append(
+                    "ignored Capacities assignment declaration for structure "
+                    f"{sid!r}: unknown property {mapping.assigned_property!r}"
+                )
+                mapping = replace(mapping, assigned_property=None)
             if mapping.open_status_property and not mapping.open_status_values:
                 raise CapacitiesContractError(f"mapping {sid!r} has no open status values")
             if mapping.completion_property:
@@ -526,6 +548,7 @@ class CapacitiesAdapter:
             raise CapacitiesContractError("RootTask must be explicitly mapped")
         self._structure_defs = structures
         self._mappings = mappings
+        self._contract_warnings = declaration_warnings
 
     def _list_objects(self, structure_id: str) -> tuple[list[dict[str, Any]], int]:
         objects: list[dict[str, Any]] = []
@@ -850,6 +873,7 @@ class CapacitiesAdapter:
         self, logical_day: date, objects: Sequence[dict[str, Any]]
     ) -> CapacitiesReadResult:
         items, warnings, evaluated, malformed = self._project_objects(logical_day, objects)
+        warnings = [*self._contract_warnings, *warnings]
         return CapacitiesReadResult(
             items=items,
             warnings=warnings,
@@ -901,7 +925,7 @@ class CapacitiesAdapter:
         self._deferred_identities = set()
         self._rate_limited = False
         all_items: list[dict[str, Any]] = []
-        warnings: list[str] = []
+        warnings: list[str] = list(self._contract_warnings)
         evaluated: set[str] = set()
         malformed: set[str] = set()
         page_count = 0

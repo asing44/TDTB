@@ -2184,3 +2184,136 @@ def test_declared_assignment_property_does_not_change_enumeration(declared):
 
     assert provider.list_calls == [("RootTask", None)]
     assert result.items == []
+
+
+# -- a declaration the structure does not define -----------------------------
+# The declaration names a raw property id without the structure's own
+# definition backing it. Left unchecked it would read neutral forever, so a
+# mistyped declaration would silently never mark anything assigned. The
+# adapter reports the undeclared property ONCE per (structure, property) and
+# then ignores the declaration: the mapping's own marker applies as the
+# fallback, and the bad declaration never drops the structure from the read.
+
+UNDEFINED_ASSIGNED_PROPERTY = "ghost-assigned"
+
+
+def _declaration_warning(structure_id=OVERRIDE_STRUCTURE):
+    return (
+        "ignored Capacities assignment declaration for structure "
+        f"{structure_id!r}: unknown property {UNDEFINED_ASSIGNED_PROPERTY!r}"
+    )
+
+
+def test_unknown_declared_assignment_property_warns_and_falls_back_to_mapping():
+    # The declared property is not in the structure definitions, so the
+    # mapping's own ``tdtb`` marker is the assignment signal that applies and
+    # the object is still enumerated and projected exactly as before.
+    provider = _override_provider([
+        _override_object(
+            "project-1",
+            {
+                "state": _prop("label", "label", [{"id": "active", "name": "Active"}]),
+                MAPPING_ASSIGNED_PROPERTY: _prop(
+                    "label", "label", [{"id": "yes", "name": "TDTB"}]
+                ),
+            },
+        ),
+    ])
+    mapping = _override_mapping(
+        assigned_property=UNDEFINED_ASSIGNED_PROPERTY,
+        assignment_property=MAPPING_ASSIGNED_PROPERTY,
+        assignment_values=frozenset({"yes"}),
+    )
+
+    result = _override_adapter(provider, mapping).items_for_day(TODAY)
+
+    assert _declaration_warning() in result.warnings
+    assert ("custom-project", None) in provider.list_calls
+    assert [row["capacities_id"] for row in result.items] == ["project-1"]
+    assert result.items[0]["capacities_assignment"] == {
+        "mode": "assigned",
+        "reasons": ["source-assigned"],
+        "source_assigned": True,
+        "excluded": False,
+    }
+
+
+def test_known_declared_assignment_property_emits_no_diagnostic():
+    # A declaration the structure DOES define stays authoritative and must not
+    # be reported: a false positive here would make every valid declaration
+    # look broken to the operator.
+    provider = _override_provider([
+        _override_object(
+            "project-1",
+            {
+                "state": _prop("label", "label", [{"id": "active", "name": "Active"}]),
+                SETTINGS_ASSIGNED_PROPERTY: _prop("boolean", "boolean", True),
+            },
+        ),
+    ])
+
+    result = _override_adapter(
+        provider, _override_mapping(), assignment_settings=_active_settings()
+    ).items_for_day(TODAY)
+
+    assert result.warnings == []
+    assert result.items[0]["capacities_assignment"]["source_assigned"] is True
+
+
+def test_unknown_declaration_falls_back_to_the_mapping_declaration():
+    # The object's ``tdtb`` label is ``no``: the mapping's own marker is
+    # present and does not match, so the signal is a definitive negative. A
+    # bogus declaration left in place would have read the absent ghost
+    # property and reported neutral (``None``) instead.
+    provider = _override_provider([
+        _override_object(
+            "project-1",
+            {
+                "state": _prop("label", "label", [{"id": "active", "name": "Active"}]),
+                MAPPING_ASSIGNED_PROPERTY: _prop(
+                    "label", "label", [{"id": "no", "name": "No"}]
+                ),
+            },
+        ),
+    ])
+    mapping = _override_mapping(
+        assigned_property=UNDEFINED_ASSIGNED_PROPERTY,
+        assignment_property=MAPPING_ASSIGNED_PROPERTY,
+        assignment_values=frozenset({"yes"}),
+    )
+
+    result = _override_adapter(
+        provider, mapping, assignment_settings=_active_settings()
+    ).items_for_day(TODAY)
+
+    assert [row["capacities_id"] for row in result.items] == ["project-1"]
+    assert result.items[0]["capacities_assignment"]["source_assigned"] is False
+    assert result.warnings == [_declaration_warning()]
+
+
+def test_unknown_declaration_warns_once_for_multiple_projected_objects():
+    # A space can hold dozens of objects of one structure; the diagnostic is
+    # a configuration fact, so it is reported once per (structure, property)
+    # rather than once per projected object.
+    provider = _override_provider([
+        _override_object(
+            f"project-{index}",
+            {
+                "state": _prop("label", "label", [{"id": "active", "name": "Active"}]),
+                MAPPING_ASSIGNED_PROPERTY: _prop(
+                    "label", "label", [{"id": "yes", "name": "TDTB"}]
+                ),
+            },
+        )
+        for index in range(3)
+    ])
+    mapping = _override_mapping(
+        assigned_property=UNDEFINED_ASSIGNED_PROPERTY,
+        assignment_property=MAPPING_ASSIGNED_PROPERTY,
+        assignment_values=frozenset({"yes"}),
+    )
+
+    result = _override_adapter(provider, mapping).items_for_day(TODAY)
+
+    assert len(result.items) == 3
+    assert result.warnings.count(_declaration_warning()) == 1
