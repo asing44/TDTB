@@ -444,3 +444,168 @@ class TestActiveStructures:
 
         assert response.status_code == 422
         assert not cs.settings_path(vault).exists()
+
+
+class TestAdmissionInputs:
+    """POST/GET round-trip for the two additive admission inputs.
+
+    The save stays a full replacement: sending both lists replaces both, and
+    omitting one falls back to its documented default (the built-in native
+    task structures / the single ``active`` status) rather than to an empty
+    set, exactly as ``capacities_settings.save_settings`` documents. An
+    explicit empty list is a legitimate replacement (nothing native / no
+    status satisfies the condition)."""
+
+    def test_post_persists_and_get_round_trips_both_inputs(self, client, vault):
+        response = client.post(
+            "/settings/capacities/save",
+            headers=_auth(client),
+            json=_body(
+                native_task_structures=["Task", "custom-project", "RootTask"],
+                active_statuses=["active", "In Progress"],
+            ),
+        )
+
+        assert response.status_code == 200
+        expected_structures = ["RootTask", "Task", "custom-project"]
+        expected_statuses = ["In Progress", "active"]
+        settings = response.json()["settings"]
+        assert settings["native_task_structures"] == expected_structures
+        assert settings["active_statuses"] == expected_statuses
+
+        body = client.get("/settings/capacities").json()
+        assert body["persisted"] is True
+        assert body["settings"]["native_task_structures"] == expected_structures
+        assert body["settings"]["active_statuses"] == expected_statuses
+
+        # The persisted version-1 bytes carry the same additive keys.
+        stored = json.loads(_settings_bytes(vault).decode("utf-8"))
+        assert stored["native_task_structures"] == expected_structures
+        assert stored["active_statuses"] == expected_statuses
+
+    def test_empty_lists_are_a_legitimate_full_replacement(self, client, vault):
+        response = client.post(
+            "/settings/capacities/save",
+            headers=_auth(client),
+            json=_body(native_task_structures=[], active_statuses=[]),
+        )
+
+        assert response.status_code == 200
+        settings = response.json()["settings"]
+        assert settings["native_task_structures"] == []
+        assert settings["active_statuses"] == []
+        read_back = client.get("/settings/capacities").json()["settings"]
+        assert read_back["native_task_structures"] == []
+        assert read_back["active_statuses"] == []
+
+    def test_omitting_each_input_writes_its_documented_default(self, client, vault):
+        first = client.post(
+            "/settings/capacities/save",
+            headers=_auth(client),
+            json=_body(native_task_structures=["custom-project"]),
+        )
+
+        assert first.status_code == 200
+        # ``active_statuses`` was omitted -> the documented default, not []
+        # (the full-replacement contract, same as an omitted
+        # ``active_structures``).
+        assert first.json()["settings"]["active_statuses"] == ["active"]
+
+        second = client.post(
+            "/settings/capacities/save",
+            headers=_auth(client),
+            json=_body(expected_revision=1, active_statuses=["In Progress"]),
+        )
+
+        assert second.status_code == 200
+        # ``native_task_structures`` was omitted -> the documented default.
+        assert second.json()["settings"]["native_task_structures"] == [
+            "RootTask",
+            "Task",
+        ]
+        assert second.json()["settings"]["active_statuses"] == ["In Progress"]
+
+    def test_stale_revision_with_admission_inputs_still_conflicts(self, client, vault):
+        first = client.post(
+            "/settings/capacities/save",
+            headers=_auth(client),
+            json=_body(
+                native_task_structures=["custom-project"],
+                active_statuses=["In Progress"],
+            ),
+        )
+        assert first.status_code == 200
+        before = _settings_bytes(vault)
+
+        response = client.post(
+            "/settings/capacities/save",
+            headers=_auth(client),
+            json=_body(
+                expected_revision=0,
+                native_task_structures=["other-project"],
+                active_statuses=["active"],
+            ),
+        )
+
+        assert response.status_code == 409
+        assert response.json()["detail"]["code"] == "capacities_settings_conflict"
+        assert _settings_bytes(vault) == before
+
+    def test_malformed_admission_input_preserves_existing_bytes(self, client, vault):
+        first = client.post(
+            "/settings/capacities/save",
+            headers=_auth(client),
+            json=_body(native_task_structures=["custom-project"]),
+        )
+        assert first.status_code == 200
+        before = _settings_bytes(vault)
+
+        response = client.post(
+            "/settings/capacities/save",
+            headers=_auth(client),
+            json=_body(
+                expected_revision=1,
+                active_statuses=["In Progress", "In Progress"],
+            ),
+        )
+
+        assert response.status_code == 422
+        assert any(
+            "active_statuses" in entry["loc"]
+            for entry in response.json()["detail"]
+        )
+        assert _settings_bytes(vault) == before
+
+    @pytest.mark.parametrize(
+        "field,bad",
+        [
+            ("native_task_structures", "RootTask"),               # bare string
+            ("native_task_structures", {"RootTask": True}),       # object
+            ("native_task_structures", None),                     # null
+            ("native_task_structures", [None]),                   # null entry
+            ("native_task_structures", [1]),                      # number entry
+            ("native_task_structures", [True]),                   # bool entry
+            ("native_task_structures", [""]),                     # empty entry
+            ("native_task_structures", ["RootTask", "RootTask"]),  # duplicate
+            ("active_statuses", "active"),                        # bare string
+            ("active_statuses", {"active": True}),                # object
+            ("active_statuses", None),                            # null
+            ("active_statuses", [None]),                          # null entry
+            ("active_statuses", [1]),                             # number entry
+            ("active_statuses", [True]),                          # bool entry
+            ("active_statuses", [""]),                            # empty entry
+            ("active_statuses", ["active", "active"]),            # duplicate
+        ],
+    )
+    def test_post_rejects_malformed_admission_inputs_422(
+        self, client, vault, field, bad
+    ):
+        response = client.post(
+            "/settings/capacities/save",
+            headers=_auth(client),
+            json=_body(**{field: bad}),
+        )
+
+        assert response.status_code == 422
+        assert any(field in entry["loc"] for entry in response.json()["detail"])
+        assert not cs.settings_path(vault).exists()

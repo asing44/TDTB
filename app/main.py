@@ -39,7 +39,16 @@ from typing import Any, Literal
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StrictBool,
+    StrictInt,
+    StrictStr,
+    ValidationInfo,
+    field_validator,
+)
 
 _STATIC_DIR = Path(__file__).parent / "static"
 
@@ -847,7 +856,9 @@ class CapacitiesSettingsSaveRequest(BaseModel):
     and the new ``revision`` are server-owned and deliberately absent. The
     ``excluded`` object mirrors the persisted shape — canonical stable
     Capacities identities mapped to ``true`` — and each key is validated by the
-    same parser the evaluator uses."""
+    same parser the evaluator uses. The two additive admission inputs are
+    lists of unique non-empty strings on the wire; each is validated by the
+    same helper the store uses on load."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -858,6 +869,19 @@ class CapacitiesSettingsSaveRequest(BaseModel):
     #: replacement to the empty set, consistent with the full-replacement
     #: contract. Keys are validated as non-empty, whitespace-free ids.
     active_structures: dict[str, StrictBool] = Field(default_factory=dict)
+    #: Configured native task structures. A plain list on the wire (unlike
+    #: ``active_structures``); omission means full replacement to the
+    #: documented store default (the built-in native task structures) and an
+    #: explicit empty list is a legitimate replacement.
+    native_task_structures: list[StrictStr] = Field(
+        default_factory=lambda: sorted(capacities_settings.NATIVE_TASK_STRUCTURES)
+    )
+    #: Status values satisfying the native status condition, stored exactly as
+    #: given. Omission means full replacement to the documented store default
+    #: (the single ``active`` status); an explicit empty list is legitimate.
+    active_statuses: list[StrictStr] = Field(
+        default_factory=lambda: sorted(capacities_settings.DEFAULT_ACTIVE_STATUSES)
+    )
 
     @field_validator("expected_revision")
     @classmethod
@@ -893,6 +917,23 @@ class CapacitiesSettingsSaveRequest(BaseModel):
             if flag is not True:
                 raise ValueError("active structure flags must be true")
         return value
+
+    @field_validator("native_task_structures", "active_statuses")
+    @classmethod
+    def _admission_values_valid(
+        cls, value: list[str], info: ValidationInfo
+    ) -> list[str]:
+        # Mirror the store's strictness exactly (unique non-empty strings) so a
+        # malformed payload fails here — before any file access — instead of
+        # raising deep inside ``save_settings``.
+        try:
+            return list(
+                capacities_settings.canonical_unique_admission_values(
+                    value, info.field_name
+                )
+            )
+        except ValueError as exc:
+            raise ValueError(str(exc)) from exc
 
 
 class TagExclusionEntryRequest(BaseModel):
@@ -1754,6 +1795,8 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
                 native_task_auto=policy,
                 excluded=body.excluded.keys(),
                 active_structures=body.active_structures.keys(),
+                native_task_structures=body.native_task_structures,
+                active_statuses=body.active_statuses,
             )
         except capacities_settings.SettingsConflictError as exc:
             raise HTTPException(
