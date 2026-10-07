@@ -33,6 +33,14 @@ export interface CapacitiesSettings {
   /** Structure ids whose typed `Active` status label is an inclusion signal
       for the Capacities builder. Additive to schema version 1. */
   activeStructures: string[];
+  /** Structures admitted to the native Task Auto rules. A plain list of
+      strings on the wire (unlike `activeStructures`); additive to schema
+      version 1, and the documented default is `{"RootTask", "Task"}`. */
+  nativeTaskStructures: string[];
+  /** Status values satisfying the native status condition. A plain list of
+      strings on the wire, stored exactly as configured; additive to schema
+      version 1, and the documented default is the single `active`. */
+  activeStatuses: string[];
   /** Read-only, vault-local structure ids the drawer offers as Active-pull
       choices. Advisory UI metadata sourced from the Capacities source mapping;
       empty when none are configured or the record is unreadable. */
@@ -46,6 +54,12 @@ export interface CapacitiesSettingsDraft {
   excluded: string[];
   /** Round-tripped from the settings read; the drawer owns no editor yet. */
   activeStructures: string[];
+  /** Always sent on save: omission would make the full-replacement route
+      reset the key to its documented default. */
+  nativeTaskStructures: string[];
+  /** Always sent on save: omission would make the full-replacement route
+      reset the key to its documented default. */
+  activeStatuses: string[];
 }
 
 /** One stable tag identity in the app-managed exclusion policy. The title is

@@ -82,6 +82,8 @@ describe("reads", () => {
           deadline_horizon_days: 4,
         },
         excluded: { "capacities:space-1:RootTask:task-1": true },
+        native_task_structures: ["Task", "RootTask"],
+        active_statuses: ["In Progress", "active"],
       },
       available_structures: [
         "0d194525-c5a1-4af5-bb62-202b83006b5e",
@@ -101,6 +103,8 @@ describe("reads", () => {
       },
       excluded: ["capacities:space-1:RootTask:task-1"],
       activeStructures: [],
+      nativeTaskStructures: ["RootTask", "Task"],
+      activeStatuses: ["In Progress", "active"],
       availableStructures: [
         "0d194525-c5a1-4af5-bb62-202b83006b5e",
         "custom-project",
@@ -141,11 +145,15 @@ describe("reads", () => {
         },
         excluded: {},
         active_structures: { "custom-project": true },
+        native_task_structures: ["Task"],
+        active_statuses: ["active", "In Progress"],
       },
     });
     const adapter = new ApiAdapter();
     const loaded = await adapter.loadCapacitiesSettings();
     expect(loaded.activeStructures).toEqual(["custom-project"]);
+    expect(loaded.nativeTaskStructures).toEqual(["Task"]);
+    expect(loaded.activeStatuses).toEqual(["In Progress", "active"]);
 
     route("/settings/capacities/save", {
       persisted: true,
@@ -160,6 +168,8 @@ describe("reads", () => {
         },
         excluded: {},
         active_structures: { "custom-project": true },
+        native_task_structures: ["Task"],
+        active_statuses: ["In Progress", "active"],
       },
     });
     const saved = await adapter.saveCapacitiesSettings({
@@ -167,11 +177,17 @@ describe("reads", () => {
       nativeTaskAuto: { ...loaded.nativeTaskAuto },
       excluded: [...loaded.excluded],
       activeStructures: [...loaded.activeStructures],
+      nativeTaskStructures: [...loaded.nativeTaskStructures],
+      activeStatuses: [...loaded.activeStatuses],
     });
     expect(saved.activeStructures).toEqual(["custom-project"]);
+    expect(saved.nativeTaskStructures).toEqual(["Task"]);
+    expect(saved.activeStatuses).toEqual(["In Progress", "active"]);
     expect(postBody("/settings/capacities/save").active_structures).toEqual({
       "custom-project": true,
     });
+    expect(postBody("/settings/capacities/save").native_task_structures).toEqual(["Task"]);
+    expect(postBody("/settings/capacities/save").active_statuses).toEqual(["In Progress", "active"]);
   });
 
   it("loadPlanInputs projects and needs no token", async () => {
@@ -324,6 +340,8 @@ describe("Capacities settings save", () => {
         },
         excluded: { "capacities:space-1:custom:object-1": true },
         active_structures: { "custom-project": true },
+        native_task_structures: ["RootTask", "Task"],
+        active_statuses: ["active"],
       },
     });
     const result = await new ApiAdapter().saveCapacitiesSettings({
@@ -336,6 +354,8 @@ describe("Capacities settings save", () => {
       },
       excluded: ["capacities:space-1:custom:object-1"],
       activeStructures: ["custom-project"],
+      nativeTaskStructures: ["RootTask", "Task"],
+      activeStatuses: ["active"],
     });
     expect(result.revision).toBe(1);
     expect(calls.filter((call) => call.init?.method === "POST")).toHaveLength(1);
@@ -351,7 +371,48 @@ describe("Capacities settings save", () => {
       },
       excluded: { "capacities:space-1:custom:object-1": true },
       active_structures: { "custom-project": true },
+      native_task_structures: ["RootTask", "Task"],
+      active_statuses: ["active"],
     });
+  });
+
+  it("always carries both admission keys so a save cannot reset them by omission", async () => {
+    route("/settings/capacities/save", {
+      persisted: true,
+      settings: {
+        version: 1,
+        revision: 1,
+        native_task_auto: {
+          active_enabled: true,
+          due_enabled: true,
+          deadline_enabled: true,
+          deadline_horizon_days: 2,
+        },
+        excluded: {},
+        native_task_structures: [],
+        active_statuses: [],
+      },
+    });
+    await new ApiAdapter().saveCapacitiesSettings({
+      expectedRevision: 0,
+      nativeTaskAuto: {
+        activeEnabled: true,
+        dueEnabled: true,
+        deadlineEnabled: true,
+        deadlineHorizonDays: 2,
+      },
+      excluded: [],
+      activeStructures: [],
+      // An empty list is a legitimate replacement; the key must still be
+      // sent, because the route treats omission as "reset to the default".
+      nativeTaskStructures: [],
+      activeStatuses: [],
+    });
+    const body = postBody("/settings/capacities/save");
+    expect("native_task_structures" in body).toBe(true);
+    expect("active_statuses" in body).toBe(true);
+    expect(body.native_task_structures).toEqual([]);
+    expect(body.active_statuses).toEqual([]);
   });
 
   it("surfaces a settings revision conflict as ApiError", async () => {
@@ -371,6 +432,8 @@ describe("Capacities settings save", () => {
       },
       excluded: [],
       activeStructures: [],
+      nativeTaskStructures: [],
+      activeStatuses: [],
     }).catch((e) => e);
     expect(error).toBeInstanceOf(ApiError);
     expect(error.status).toBe(409);

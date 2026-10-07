@@ -29,3 +29,22 @@ Use these words as defined here; do not drift to synonyms they exclude.
 - **entity property** — a typed Capacities property whose payload references
   other Capacities objects (`{"type": "entity", "entity": [{id, title}]}`).
   Anchor: `app/capacities_adapter.py` (`_capacities_tag_refs`).
+- **Capacities property payload** — the only trustworthy object surface: custom
+  properties arrive keyed by raw property id, not by name (a Project payload
+  returned `f779f78a…` and `f240c060…`, which the content frontmatter revealed
+  as Assigned/Status/Priority). Anchor: direct probe of the object payload;
+  `app/capacities_adapter.py` (`properties` projection).
+- **Capacities relation visibility** — the API surface is narrower than the
+  app: a relation the app renders can be absent from an object's payload (a
+  `Context` relation was visible in the app while that object's `properties`
+  had no `Context` key). Anchor: direct probe of the object payload vs the app.
+- **Capacities subtask/parentage** — not exposed: no `parent` on objects, no
+  `children` on a parent, no children endpoint. Anchor: direct probe of the
+  object payload. The `hierarchy` field in `readObjectBlocks` is heading level
+  within a document (`{"key":"H2","val":2}`), not object parentage — a
+  dangerous lookalike, never an edge.
+- **Capacities `objectType`** — may be a name or a raw structure id, depending
+  on whether the type has a name. Anchor: direct probe of the object payload.
+- **Capacities payload rule** — trust only what arrives in an object's
+  `properties` and `collections`; anything the app shows but the payload omits
+  is unavailable to TDTB. Anchor: direct probe of the object payload.

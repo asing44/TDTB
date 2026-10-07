@@ -1031,6 +1031,8 @@ describe("capacities settings active_structures (additive schema v1)", () => {
       nativeTaskAuto: { activeEnabled: true, dueEnabled: true, deadlineEnabled: true, deadlineHorizonDays: 2 },
       excluded: [],
       activeStructures: ["b", "a", "a"],
+      nativeTaskStructures: [],
+      activeStatuses: [],
     });
     expect(wire.active_structures).toEqual({ a: true, b: true });
   });
@@ -1042,6 +1044,8 @@ describe("capacities settings active_structures (additive schema v1)", () => {
         nativeTaskAuto: { activeEnabled: true, dueEnabled: true, deadlineEnabled: true, deadlineHorizonDays: 2 },
         excluded: [],
         activeStructures: ["bad id"],
+        nativeTaskStructures: [],
+        activeStatuses: [],
       }),
     ).toThrow(/invalid structure id/);
   });
@@ -1098,6 +1102,110 @@ describe("capacities settings active_structures (additive schema v1)", () => {
     expect(isCanonicalCapacitiesStructureId(" x ")).toBe(false);
     expect(isCanonicalCapacitiesStructureId("x y")).toBe(false);
     expect(isCanonicalCapacitiesStructureId(1)).toBe(false);
+  });
+});
+
+describe("capacities settings admission keys (additive schema v1)", () => {
+  const baseSettings = () => ({
+    version: 1,
+    revision: 0,
+    native_task_auto: {
+      active_enabled: true,
+      due_enabled: true,
+      deadline_enabled: true,
+      deadline_horizon_days: 2,
+    },
+    excluded: {},
+  });
+
+  it("projects absent native_task_structures and active_statuses to the documented defaults", () => {
+    const projected = projectCapacitiesSettings({ persisted: false, settings: baseSettings() });
+    // A legacy version-1 file (or an older backend) has no keys; the store
+    // would read that as the built-in native structures / the single active
+    // status, so the client must project the same documented default rather
+    // than the dangerous empty set.
+    expect(projected.nativeTaskStructures).toEqual(["RootTask", "Task"]);
+    expect(projected.activeStatuses).toEqual(["active"]);
+  });
+
+  it("parses the plain admission lists, deduplicated and sorted", () => {
+    const projected = projectCapacitiesSettings({
+      persisted: false,
+      settings: {
+        ...baseSettings(),
+        native_task_structures: ["Task", "RootTask", "Task"],
+        active_statuses: ["In Progress", "active", "active"],
+      },
+    });
+    expect(projected.nativeTaskStructures).toEqual(["RootTask", "Task"]);
+    expect(projected.activeStatuses).toEqual(["In Progress", "active"]);
+  });
+
+  const malformedAdmissions: Array<[string, string, unknown]> = [
+    ["native_task_structures", "a bare string", "RootTask"],
+    ["native_task_structures", "an object", { RootTask: true }],
+    ["native_task_structures", "an empty entry", [""]],
+    ["native_task_structures", "a non-string entry", ["RootTask", 1]],
+    ["native_task_structures", "null", null],
+    ["active_statuses", "a bare string", "active"],
+    ["active_statuses", "an object", { active: true }],
+    ["active_statuses", "an empty entry", ["active", ""]],
+    ["active_statuses", "a non-string entry", [null]],
+  ];
+  for (const [key, label, bad] of malformedAdmissions) {
+    it(`throws when ${key} is ${label}`, () => {
+      expect(() =>
+        projectCapacitiesSettings({
+          persisted: false,
+          settings: { ...baseSettings(), [key]: bad },
+        }),
+      ).toThrow(new RegExp(key));
+    });
+  }
+
+  it("always emits both admission keys in the save body, even when empty", () => {
+    const wire = capacitiesSettingsToWire({
+      expectedRevision: 0,
+      nativeTaskAuto: { activeEnabled: true, dueEnabled: true, deadlineEnabled: true, deadlineHorizonDays: 2 },
+      excluded: [],
+      activeStructures: [],
+      nativeTaskStructures: [],
+      activeStatuses: [],
+    });
+    // Full replacement: the key must be present, never omitted — omission
+    // would make the server reset it to the documented default.
+    expect("native_task_structures" in wire).toBe(true);
+    expect("active_statuses" in wire).toBe(true);
+    expect(wire.native_task_structures).toEqual([]);
+    expect(wire.active_statuses).toEqual([]);
+  });
+
+  it("emits sorted, deduplicated admission lists in the save body", () => {
+    const wire = capacitiesSettingsToWire({
+      expectedRevision: 0,
+      nativeTaskAuto: { activeEnabled: true, dueEnabled: true, deadlineEnabled: true, deadlineHorizonDays: 2 },
+      excluded: [],
+      activeStructures: [],
+      nativeTaskStructures: ["Task", "RootTask", "Task"],
+      activeStatuses: ["active", "In Progress", "active"],
+    });
+    expect(wire.native_task_structures).toEqual(["RootTask", "Task"]);
+    expect(wire.active_statuses).toEqual(["In Progress", "active"]);
+  });
+
+  it("throws on an empty admission value in the save draft", () => {
+    const base = {
+      expectedRevision: 0,
+      nativeTaskAuto: { activeEnabled: true, dueEnabled: true, deadlineEnabled: true, deadlineHorizonDays: 2 },
+      excluded: [],
+      activeStructures: [],
+    };
+    expect(() =>
+      capacitiesSettingsToWire({ ...base, nativeTaskStructures: [""], activeStatuses: [] }),
+    ).toThrow(/nativeTaskStructures/);
+    expect(() =>
+      capacitiesSettingsToWire({ ...base, nativeTaskStructures: [], activeStatuses: [""] }),
+    ).toThrow(/activeStatuses/);
   });
 });
 

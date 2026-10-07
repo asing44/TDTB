@@ -187,6 +187,29 @@ function capacitiesSettingsError(detail: string): Error {
   return new Error(`invalid Capacities settings response: ${detail}`);
 }
 
+/** One configured admission value, mirroring the backend's
+    ``canonical_admission_value``: a non-empty string kept exactly as given
+    (a status name may legitimately contain whitespace). */
+function isCanonicalAdmissionValue(value: unknown): value is string {
+  return typeof value === "string" && value.length > 0;
+}
+
+/** Project one plain admission list (``native_task_structures`` /
+    ``active_statuses``) — a strict array of non-empty strings, deduplicated
+    and sorted like the advisory ``available_structures`` inventory. */
+function projectAdmissionValues(raw: unknown, key: string): string[] {
+  if (!Array.isArray(raw)) {
+    throw capacitiesSettingsError(`${key} must be an array`);
+  }
+  const values = raw.map((value) => {
+    if (!isCanonicalAdmissionValue(value)) {
+      throw capacitiesSettingsError(`${key} contains an invalid value`);
+    }
+    return value;
+  });
+  return [...new Set(values)].sort();
+}
+
 /** Project the strict local settings response. The backend is fail-closed;
     the client must not turn a malformed response into a plausible default. */
 export function projectCapacitiesSettings(wire: Wire): CapacitiesSettings {
@@ -252,6 +275,21 @@ export function projectCapacitiesSettings(wire: Wire): CapacitiesSettings {
       return structureId;
     });
   }
+  // ``native_task_structures`` and ``active_statuses`` were added additively
+  // to schema version 1 with the same optional-on-read rule as
+  // ``active_structures``. Their documented defaults are non-empty (the store
+  // reads a legacy file that way), so an absent key projects the default
+  // rather than the dangerous empty set.
+  const nativeRaw = raw.native_task_structures;
+  const nativeTaskStructures =
+    nativeRaw === undefined
+      ? ["RootTask", "Task"]
+      : projectAdmissionValues(nativeRaw, "native_task_structures");
+  const statusRaw = raw.active_statuses;
+  const activeStatuses =
+    statusRaw === undefined
+      ? ["active"]
+      : projectAdmissionValues(statusRaw, "active_statuses");
   // ``available_structures`` is read-only advisory metadata added at the top
   // level of the settings response. It is tolerant when absent (an older
   // backend) and strict when present.
@@ -281,6 +319,8 @@ export function projectCapacitiesSettings(wire: Wire): CapacitiesSettings {
     },
     excluded: identities.sort(),
     activeStructures: activeStructures.sort(),
+    nativeTaskStructures,
+    activeStatuses,
     availableStructures,
   };
 }
@@ -308,6 +348,17 @@ export function capacitiesSettingsToWire(draft: CapacitiesSettingsDraft): Wire {
   if (!activeStructures.every((structureId) => isCanonicalCapacitiesStructureId(structureId))) {
     throw new Error("activeStructures contains an invalid structure id");
   }
+  // The admission keys are plain string lists, and every save carries both:
+  // omission would make the full-replacement route reset them to the
+  // documented defaults instead of leaving them unchanged.
+  const nativeTaskStructures = [...new Set(draft.nativeTaskStructures)].sort();
+  if (!nativeTaskStructures.every(isCanonicalAdmissionValue)) {
+    throw new Error("nativeTaskStructures contains an invalid value");
+  }
+  const activeStatuses = [...new Set(draft.activeStatuses)].sort();
+  if (!activeStatuses.every(isCanonicalAdmissionValue)) {
+    throw new Error("activeStatuses contains an invalid value");
+  }
   return {
     expected_revision: draft.expectedRevision,
     native_task_auto: {
@@ -318,6 +369,8 @@ export function capacitiesSettingsToWire(draft: CapacitiesSettingsDraft): Wire {
     },
     excluded: Object.fromEntries(identities.map((identity) => [identity, true])),
     active_structures: Object.fromEntries(activeStructures.map((structureId) => [structureId, true])),
+    native_task_structures: nativeTaskStructures,
+    active_statuses: activeStatuses,
   };
 }
 

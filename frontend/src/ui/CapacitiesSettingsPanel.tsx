@@ -30,6 +30,11 @@ function draftOf(settings: CapacitiesSettings): CapacitiesSettingsDraft {
     // Round-tripped verbatim: this slice adds no editor, but a save must not
     // silently clear the server's active-structure inclusion set.
     activeStructures: [...settings.activeStructures],
+    // Both admission keys are always sent: the save route is a full
+    // replacement, so omitting either would reset it to the documented
+    // default instead of leaving it unchanged.
+    nativeTaskStructures: [...settings.nativeTaskStructures],
+    activeStatuses: [...settings.activeStatuses],
   };
 }
 
@@ -57,6 +62,7 @@ export function CapacitiesSettingsPanel({ active }: { active: boolean }) {
   const [phase, setPhase] = useState<"loading" | "ready" | "saving" | "error">("loading");
   const [error, setError] = useState<string | null>(null);
   const [horizonText, setHorizonText] = useState("");
+  const [statusText, setStatusText] = useState("");
   const close = () => store.dispatch({ type: "UI", patch: { settingsPanel: null } });
 
   const loadSettings = async () => {
@@ -92,6 +98,12 @@ export function CapacitiesSettingsPanel({ active }: { active: boolean }) {
   const staleActiveStructures = (draft?.activeStructures ?? []).filter(
     (structureId) => !availableStructureIds.has(structureId),
   );
+  // Same retention rule as the Active-pull set: an id the server already
+  // honours but this vault no longer lists is preserved on save and surfaced
+  // instead of silently dropped.
+  const staleNativeStructures = (draft?.nativeTaskStructures ?? []).filter(
+    (structureId) => !availableStructureIds.has(structureId),
+  );
   const horizonValue = Number(horizonText);
   const horizonTextValid = /^\d+$/.test(horizonText) && Number.isSafeInteger(horizonValue);
   const policy = draft?.nativeTaskAuto;
@@ -123,6 +135,38 @@ export function CapacitiesSettingsPanel({ active }: { active: boolean }) {
         : [...current.activeStructures, structureId].sort();
       return { ...current, activeStructures };
     });
+  };
+
+  const toggleNativeStructure = (structureId: string) => {
+    setDraft((current) => {
+      if (!current) return current;
+      const nativeTaskStructures = current.nativeTaskStructures.includes(structureId)
+        ? current.nativeTaskStructures.filter((value) => value !== structureId)
+        : [...current.nativeTaskStructures, structureId].sort();
+      return { ...current, nativeTaskStructures };
+    });
+  };
+
+  // ``active_statuses`` is free text: the settings API exposes no status
+  // inventory (the vault source mapping's per-structure status values never
+  // cross the wire), so every saved value is an explicit entry that is kept
+  // verbatim and removed only by hand.
+  const addStatus = () => {
+    const value = statusText.trim();
+    setStatusText("");
+    if (value === "") return;
+    setDraft((current) => {
+      if (!current || current.activeStatuses.includes(value)) return current;
+      return { ...current, activeStatuses: [...current.activeStatuses, value] };
+    });
+  };
+
+  const removeStatus = (status: string) => {
+    setDraft((current) =>
+      current
+        ? { ...current, activeStatuses: current.activeStatuses.filter((value) => value !== status) }
+        : current,
+    );
   };
 
   const save = async () => {
@@ -184,7 +228,7 @@ export function CapacitiesSettingsPanel({ active }: { active: boolean }) {
               </div>
               <div class="setup-section__body">
                 <p class="capacities-settings__hint">
-                  These rules are OR conditions for native RootTask and Task objects. Completed and dropped objects remain excluded.
+                  These rules are OR conditions for the structures admitted below. Completed and dropped objects remain excluded.
                 </p>
                 <label class="capacities-setting-row">
                   <input
@@ -194,7 +238,7 @@ export function CapacitiesSettingsPanel({ active }: { active: boolean }) {
                   />
                   <span>
                     <strong>Active status</strong>
-                    <small>Include a task when its source status is Active.</small>
+                    <small>Include a task when its source status matches a configured status value.</small>
                   </span>
                 </label>
                 <label class="capacities-setting-row">
@@ -242,6 +286,96 @@ export function CapacitiesSettingsPanel({ active }: { active: boolean }) {
                   </div>
                   {horizonInvalid && <span class="field-error" role="alert">Use a nonnegative whole number.</span>}
                 </div>
+              </div>
+            </section>
+
+            <section class="setup-section capacities-settings__section" aria-labelledby="capacities-sec-admission">
+              <div class="setup-section__head">
+                <h3 id="capacities-sec-admission">Admission vocabulary</h3>
+                {staleNativeStructures.length > 0 && (
+                  <span class="capacities-settings__revision">
+                    {staleNativeStructures.length} saved {staleNativeStructures.length === 1 ? "structure" : "structures"} outside this vault
+                  </span>
+                )}
+              </div>
+              <div class="setup-section__body">
+                <h4>Native task structures</h4>
+                <p class="capacities-settings__hint">
+                  Native Task Auto applies only to structures admitted here. The list is read from this vault's Capacities source mapping — the same inventory as Active pull, not from the current plan inputs.
+                </p>
+                {availableStructures.length === 0 ? (
+                  <p class="capacities-settings__empty">
+                    This vault's Capacities source mapping lists no structures; saved admissions are preserved on save.
+                  </p>
+                ) : (
+                  <div class="capacities-object-list" role="group" aria-label="Capacities structures admitted to the native Task Auto rules">
+                    {availableStructures.map((structureId) => {
+                      const admitted = draft.nativeTaskStructures.includes(structureId);
+                      return (
+                        <div class="capacities-object-row" key={structureId}>
+                          <div class="capacities-object-row__identity">
+                            <code>{structureId}</code>
+                          </div>
+                          <label class="capacities-object-row__toggle">
+                            <input
+                              type="checkbox"
+                              checked={admitted}
+                              aria-label={`Native admission for ${structureId}`}
+                              onChange={() => toggleNativeStructure(structureId)}
+                            />
+                            <span>{admitted ? "Native rules on" : "Native rules off"}</span>
+                          </label>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+                {staleNativeStructures.length > 0 && (
+                  <div class="capacities-exclusion-list">
+                    <h4>Native structures outside this vault's mapping</h4>
+                    <p class="capacities-settings__hint">
+                      These {staleNativeStructures.length} saved {staleNativeStructures.length === 1 ? "id is" : "ids are"} not in this vault's Capacities source mapping. They are retained unchanged on save.
+                    </p>
+                    {staleNativeStructures.map((structureId) => (
+                      <div class="capacities-exclusion-row" key={structureId}>
+                        <code>{structureId}</code>
+                        <button class="btn" onClick={() => toggleNativeStructure(structureId)}>Remove</button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                <h4>Status values</h4>
+                <p class="capacities-settings__hint">
+                  A native-structure task is admitted by the Active status rule when its status matches one of these values (case- and whitespace-insensitive). The API exposes no status inventory, so this list is free-text; saved values are kept exactly.
+                </p>
+                <div class="field">
+                  <label for="capacities-status-value">Add a status value</label>
+                  <div class="capacities-settings__horizon-control">
+                    <input
+                      id="capacities-status-value"
+                      type="text"
+                      value={statusText}
+                      placeholder="e.g. In Progress"
+                      onInput={(e) => setStatusText((e.currentTarget as HTMLInputElement).value)}
+                    />
+                    <button class="btn" onClick={addStatus} disabled={statusText.trim() === ""}>Add status</button>
+                  </div>
+                </div>
+                {draft.activeStatuses.length === 0 ? (
+                  <p class="capacities-settings__empty">
+                    No status values are configured, so the Active status rule admits nothing.
+                  </p>
+                ) : (
+                  <div class="capacities-exclusion-list">
+                    {draft.activeStatuses.map((status) => (
+                      <div class="capacities-exclusion-row" key={status}>
+                        <code>{status}</code>
+                        <button class="btn" onClick={() => removeStatus(status)} aria-label={`Remove status ${status}`}>Remove</button>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             </section>
 

@@ -67,6 +67,8 @@ describe("CapacitiesSettingsDrawer", () => {
       },
       excluded: ["capacities:space-1:RootTask:task-1"],
       activeStructures: [],
+      nativeTaskStructures: ["RootTask", "Task"],
+      activeStatuses: ["active"],
     });
     await waitFor(() => expect(h.store.getState().ui.capacitiesSettingsOpen).toBe(false));
   });
@@ -101,6 +103,8 @@ describe("CapacitiesSettingsDrawer", () => {
       },
       excluded: [],
       activeStructures: ["custom-project", "0d194525-c5a1-4af5-bb62-202b83006b5e"],
+      nativeTaskStructures: ["Task"],
+      activeStatuses: ["active", "In Progress"],
       availableStructures: ["custom-project", "0d194525-c5a1-4af5-bb62-202b83006b5e"],
     });
     h.store.dispatch({ type: "UI", patch: { capacitiesSettingsOpen: true } });
@@ -126,6 +130,12 @@ describe("CapacitiesSettingsDrawer", () => {
       "custom-project": true,
       "0d194525-c5a1-4af5-bb62-202b83006b5e": true,
     });
+    // The two admission keys ride along on every save too — omission would
+    // reset them to the documented defaults under full replacement.
+    expect(draft.nativeTaskStructures).toEqual(["Task"]);
+    expect(draft.activeStatuses).toEqual(["active", "In Progress"]);
+    expect(body.native_task_structures).toEqual(["Task"]);
+    expect(body.active_statuses).toEqual(["In Progress", "active"]);
     // Regression guard: before the fix draftOf dropped the field, so the body
     // would have carried an empty active_structures object here.
     expect(Object.keys(body.active_structures).length).toBeGreaterThan(0);
@@ -165,6 +175,8 @@ describe("CapacitiesSettingsDrawer", () => {
       },
       excluded: [],
       activeStructures: ["custom-project"],
+      nativeTaskStructures: ["RootTask", "Task"],
+      activeStatuses: ["active"],
       availableStructures: ["custom-project", "0d194525-c5a1-4af5-bb62-202b83006b5e"],
     });
     h.store.dispatch({ type: "UI", patch: { capacitiesSettingsOpen: true } });
@@ -199,6 +211,8 @@ describe("CapacitiesSettingsDrawer", () => {
       },
       excluded: [],
       activeStructures: ["legacy-structure", "custom-project"],
+      nativeTaskStructures: ["RootTask", "Task"],
+      activeStatuses: ["active"],
       availableStructures: ["custom-project"],
     });
     h.store.dispatch({ type: "UI", patch: { capacitiesSettingsOpen: true } });
@@ -234,6 +248,8 @@ describe("CapacitiesSettingsDrawer", () => {
       },
       excluded: [],
       activeStructures: [],
+      nativeTaskStructures: [],
+      activeStatuses: [],
       availableStructures: [],
     });
     h.store.dispatch({ type: "UI", patch: { capacitiesSettingsOpen: true } });
@@ -242,6 +258,113 @@ describe("CapacitiesSettingsDrawer", () => {
 
     expect(rendered.getByText(/No Capacities structures are configured/)).toBeTruthy();
     expect(rendered.queryByRole("checkbox", { name: /Active pull for/ })).toBeNull();
+  });
+
+  it("renders both admission keys, reusing the available-structure inventory", async () => {
+    const h = makeHarness("ready");
+    vi.spyOn(h.controller, "loadCapacitiesSettings").mockResolvedValue({
+      version: 1,
+      revision: 0,
+      persisted: true,
+      nativeTaskAuto: {
+        activeEnabled: true,
+        dueEnabled: true,
+        deadlineEnabled: true,
+        deadlineHorizonDays: 2,
+      },
+      excluded: [],
+      activeStructures: [],
+      nativeTaskStructures: ["custom-project"],
+      activeStatuses: ["In Progress", "active"],
+      availableStructures: ["custom-project", "0d194525-c5a1-4af5-bb62-202b83006b5e"],
+    });
+    h.store.dispatch({ type: "UI", patch: { capacitiesSettingsOpen: true } });
+    const rendered = h.ui(<CapacitiesSettingsDrawer />);
+    await waitFor(() => expect(rendered.getByText("Admission vocabulary")).toBeTruthy());
+
+    // The structure list is the same vault-local source mapping the Active
+    // pull editor already enumerates — no new discovery path.
+    expect(rendered.getByText(/same inventory as Active pull/)).toBeTruthy();
+    expect(
+      (rendered.getByRole("checkbox", { name: "Native admission for custom-project" }) as HTMLInputElement).checked,
+    ).toBe(true);
+    expect(
+      (rendered.getByRole("checkbox", { name: "Native admission for 0d194525-c5a1-4af5-bb62-202b83006b5e" }) as HTMLInputElement).checked,
+    ).toBe(false);
+    expect(rendered.getByText("In Progress")).toBeTruthy();
+    expect(rendered.getByText("active")).toBeTruthy();
+  });
+
+  it("always sends both admission keys on an untouched save", async () => {
+    const { h, rendered } = openWithCapacityRow();
+    await waitFor(() => expect(rendered.getByText("Admission vocabulary")).toBeTruthy());
+
+    // Nothing in the admission section was edited. Full replacement still
+    // requires both keys to be present, or the server resets them.
+    const save = vi.spyOn(h.controller, "saveCapacitiesSettings");
+    fireEvent.click(rendered.getByRole("button", { name: "Save Capacities settings" }));
+    await waitFor(() => expect(save).toHaveBeenCalledTimes(1));
+
+    const body = capacitiesSettingsToWire(save.mock.calls[0][0]);
+    expect(body.native_task_structures).toEqual(["RootTask", "Task"]);
+    expect(body.active_statuses).toEqual(["active"]);
+  });
+
+  it("keeps a saved native structure outside the vault mapping and round-trips it", async () => {
+    const h = makeHarness("ready");
+    vi.spyOn(h.controller, "loadCapacitiesSettings").mockResolvedValue({
+      version: 1,
+      revision: 0,
+      persisted: true,
+      nativeTaskAuto: {
+        activeEnabled: true,
+        dueEnabled: true,
+        deadlineEnabled: true,
+        deadlineHorizonDays: 2,
+      },
+      excluded: [],
+      activeStructures: [],
+      nativeTaskStructures: ["legacy-native", "custom-project"],
+      activeStatuses: ["active"],
+      availableStructures: ["custom-project"],
+    });
+    h.store.dispatch({ type: "UI", patch: { capacitiesSettingsOpen: true } });
+    const rendered = h.ui(<CapacitiesSettingsDrawer />);
+    await waitFor(() => expect(rendered.getByText("Admission vocabulary")).toBeTruthy());
+
+    // Retained and surfaced, never silently dropped.
+    expect(rendered.getByText(/Native structures outside this vault's mapping/)).toBeTruthy();
+    expect(rendered.getByText("legacy-native")).toBeTruthy();
+
+    const save = vi.spyOn(h.controller, "saveCapacitiesSettings");
+    fireEvent.click(rendered.getByRole("button", { name: "Save Capacities settings" }));
+    await waitFor(() => expect(save).toHaveBeenCalledTimes(1));
+    expect(save.mock.calls[0][0].nativeTaskStructures).toEqual(["legacy-native", "custom-project"]);
+    expect(capacitiesSettingsToWire(save.mock.calls[0][0]).native_task_structures).toEqual([
+      "custom-project",
+      "legacy-native",
+    ]);
+  });
+
+  it("adds and removes status values as a free-text list", async () => {
+    const { h, rendered } = openWithCapacityRow();
+    await waitFor(() => expect(rendered.getByText("Status values")).toBeTruthy());
+
+    fireEvent.input(rendered.getByLabelText("Add a status value"), {
+      target: { value: "In Progress" },
+    });
+    fireEvent.click(rendered.getByRole("button", { name: "Add status" }));
+    expect(rendered.getByText("In Progress")).toBeTruthy();
+
+    fireEvent.click(rendered.getByRole("button", { name: "Remove status active" }));
+    expect(rendered.queryByText("active")).toBeNull();
+
+    const save = vi.spyOn(h.controller, "saveCapacitiesSettings");
+    fireEvent.click(rendered.getByRole("button", { name: "Save Capacities settings" }));
+    await waitFor(() => expect(save).toHaveBeenCalledTimes(1));
+    expect(capacitiesSettingsToWire(save.mock.calls[0][0]).active_statuses).toEqual([
+      "In Progress",
+    ]);
   });
 
   it("shows load failures and offers an explicit reload", async () => {

@@ -41,6 +41,8 @@ function capacitiesFixture(
     },
     excluded: [],
     activeStructures: [],
+    nativeTaskStructures: ["RootTask", "Task"],
+    activeStatuses: ["active"],
     availableStructures: [],
     ...overrides,
   };
