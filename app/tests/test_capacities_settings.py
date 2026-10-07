@@ -23,7 +23,7 @@ NATIVE = f"capacities:{SPACE}:RootTask:task-1"
 CUSTOM = f"capacities:{SPACE}:custom-project:project-1"
 
 #: Documented defaults for the two additive version-1 admission inputs.
-DEFAULT_NATIVE_STRUCTURES = ["RootTask", "Task"]
+DEFAULT_NATIVE_STRUCTURES = ["RootTask"]
 DEFAULT_ACTIVE_STATUSES = ["active"]
 
 
@@ -678,8 +678,18 @@ class TestAdmissionInputs:
     def test_defaults_when_no_file_exists(self, tmp_path):
         settings = cs.read_settings(tmp_path).settings
 
-        assert settings.native_task_structures == frozenset({"RootTask", "Task"})
+        assert settings.native_task_structures == frozenset({"RootTask"})
         assert settings.active_statuses == frozenset({"active"})
+
+    def test_defaults_exclude_the_root_task_display_name(self, tmp_path):
+        # ``Task`` is the DISPLAY NAME of the ``RootTask`` structure, not a
+        # structure id, so it can never satisfy the native admission set.
+        import capacities_assignment as ca
+
+        assert ca.NATIVE_TASK_STRUCTURES == frozenset({"RootTask"})
+        assert "Task" not in ca.NATIVE_TASK_STRUCTURES
+        settings = cs.read_settings(tmp_path).settings
+        assert settings.native_task_structures == frozenset({"RootTask"})
 
     def test_legacy_version_1_file_without_either_key_reads_with_the_documented_defaults(
         self, tmp_path
@@ -689,7 +699,7 @@ class TestAdmissionInputs:
         result = cs.read_settings(tmp_path)
 
         assert result.persisted is True
-        assert result.settings.native_task_structures == frozenset({"RootTask", "Task"})
+        assert result.settings.native_task_structures == frozenset({"RootTask"})
         assert result.settings.active_statuses == frozenset({"active"})
 
     def test_both_keys_round_trip_through_write_and_read(self, tmp_path):

@@ -46,9 +46,13 @@ from typing import Any, Iterable
 
 CAPACITIES_SOURCE = "capacities"
 
-#: Native Capacities task structures. They expose built-in, immutable
-#: properties and therefore no writable Assigned marker.
-NATIVE_TASK_STRUCTURES = frozenset({"RootTask", "Task"})
+#: Native Capacities task structures, keyed by structure ID. They expose
+#: built-in, immutable properties and therefore no writable Assigned marker.
+#: Only structure IDS can satisfy this set: a structure DISPLAY NAME can
+#: never match the adapter's structure ids. ``Task`` is the display name of
+#: the ``RootTask`` structure (an object-type request for ``Task`` returns
+#: ``objectTypeId: RootTask``), so it is intentionally absent.
+NATIVE_TASK_STRUCTURES = frozenset({"RootTask"})
 
 #: Native task status that satisfies the native Auto status condition.
 DEFAULT_ACTIVE_STATUSES = frozenset({"active"})
