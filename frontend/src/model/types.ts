@@ -50,6 +50,13 @@ export interface CapacitiesSettings {
       choices. Advisory UI metadata sourced from the Capacities source mapping;
       empty when none are configured or the record is unreadable. */
   availableStructures: string[];
+  /** Read-only display titles for the `availableStructures` ids: the drawer
+      shows a structure's title when one was observed and falls back to the
+      raw id otherwise, so an untitled structure has no entry. Additive
+      advisory UI metadata from the same Capacities source mapping; optional
+      because an older backend omits it, and the settings projection always
+      carries the key — empty when no title was observed. */
+  structureTitles?: Record<string, string>;
 }
 
 /** Full replacement body for the settings save route. */

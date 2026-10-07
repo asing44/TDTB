@@ -1098,6 +1098,60 @@ describe("capacities settings active_structures (additive schema v1)", () => {
     }
   });
 
+  it("projects an absent structure_titles key to {} (older backend)", () => {
+    const projected = projectCapacitiesSettings({ persisted: false, settings: baseSettings() });
+    expect(projected.structureTitles).toEqual({});
+  });
+
+  it("parses a well-formed structure_titles map, including an id-titled structure", () => {
+    const projected = projectCapacitiesSettings({
+      persisted: false,
+      settings: baseSettings(),
+      structure_titles: {
+        "0d194525-c5a1-4af5-bb62-202b83006b5e": "Project",
+        "6aa7b02a-4315-47d1-9cfb-0c0cdac0950c": "Press",
+        "custom-project": "custom-project",
+      },
+    });
+    expect(projected.structureTitles).toEqual({
+      "0d194525-c5a1-4af5-bb62-202b83006b5e": "Project",
+      "6aa7b02a-4315-47d1-9cfb-0c0cdac0950c": "Press",
+      "custom-project": "custom-project",
+    });
+  });
+
+  it("throws when structure_titles is not an object", () => {
+    for (const bad of [["custom-project", "Project"], "Project", null, 1]) {
+      expect(() =>
+        projectCapacitiesSettings({
+          persisted: false,
+          settings: baseSettings(),
+          structure_titles: bad,
+        }),
+      ).toThrow(/structure_titles/);
+    }
+  });
+
+  it("throws when structure_titles contains an invalid key or title", () => {
+    for (const bad of [
+      { "": "Project" },
+      { " custom-project ": "Project" },
+      { "custom project": "Project" },
+      { "custom-project": "" },
+      { "custom-project": "   " },
+      { "custom-project": 1 },
+      { "custom-project": null },
+    ]) {
+      expect(() =>
+        projectCapacitiesSettings({
+          persisted: false,
+          settings: baseSettings(),
+          structure_titles: bad,
+        }),
+      ).toThrow(/structure_titles/);
+    }
+  });
+
   it("recognizes canonical structure ids", () => {
     expect(isCanonicalCapacitiesStructureId("custom-project")).toBe(true);
     expect(isCanonicalCapacitiesStructureId("0d194525-c5a1-4af5-bb62-202b83006b5e")).toBe(true);

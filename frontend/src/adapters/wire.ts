@@ -194,6 +194,13 @@ function isCanonicalAdmissionValue(value: unknown): value is string {
   return typeof value === "string" && value.length > 0;
 }
 
+/** One display title from the Capacities source mapping: a non-blank string
+    kept exactly as given. Unlike an admission value, whitespace alone is not
+    a usable title, so blank and whitespace-only titles are rejected. */
+function isUsableStructureTitle(value: unknown): value is string {
+  return typeof value === "string" && value.trim().length > 0;
+}
+
 /** Project one plain admission list (``native_task_structures`` /
     ``active_statuses``) — a strict array of non-empty strings, deduplicated
     and sorted like the advisory ``available_structures`` inventory. */
@@ -323,6 +330,23 @@ export function projectCapacitiesSettings(wire: Wire): CapacitiesSettings {
     });
     availableStructures = [...new Set(usable)].sort();
   }
+  // ``structure_titles`` is read-only advisory metadata added at the top
+  // level alongside ``available_structures``: tolerant when absent (an older
+  // backend) and strict when present. Keys share the structure id space;
+  // values must be non-blank display titles kept exactly as observed.
+  const titlesRaw = wire.structure_titles;
+  let structureTitles: Record<string, string> = {};
+  if (titlesRaw !== undefined) {
+    if (!titlesRaw || typeof titlesRaw !== "object" || Array.isArray(titlesRaw)) {
+      throw capacitiesSettingsError("structure_titles must be an object");
+    }
+    for (const [structureId, title] of Object.entries(titlesRaw)) {
+      if (!isCanonicalCapacitiesStructureId(structureId) || !isUsableStructureTitle(title)) {
+        throw capacitiesSettingsError("structure_titles contains an invalid title");
+      }
+      structureTitles[structureId] = title;
+    }
+  }
   return {
     version: raw.version,
     revision: raw.revision,
@@ -339,6 +363,7 @@ export function projectCapacitiesSettings(wire: Wire): CapacitiesSettings {
     activeStatuses,
     assignedStructures,
     availableStructures,
+    structureTitles,
   };
 }
 

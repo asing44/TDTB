@@ -90,6 +90,10 @@ describe("reads", () => {
         "0d194525-c5a1-4af5-bb62-202b83006b5e",
         "custom-project",
       ],
+      structure_titles: {
+        "0d194525-c5a1-4af5-bb62-202b83006b5e": "Project",
+        "custom-project": "custom-project",
+      },
     });
     const settings = await new ApiAdapter().loadCapacitiesSettings();
     expect(settings).toEqual({
@@ -111,6 +115,10 @@ describe("reads", () => {
         "0d194525-c5a1-4af5-bb62-202b83006b5e",
         "custom-project",
       ],
+      structureTitles: {
+        "0d194525-c5a1-4af5-bb62-202b83006b5e": "Project",
+        "custom-project": "custom-project",
+      },
     });
     expect(calls.map((c) => c.path)).toEqual(["/settings/capacities"]);
   });
