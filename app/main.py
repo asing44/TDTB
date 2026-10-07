@@ -79,6 +79,7 @@ import capacity as capacity_mod  # noqa: E402
 import capacities_settings  # noqa: E402
 import capacities_builder  # noqa: E402
 import capacities_adapter  # noqa: E402
+import capacities_structure_titles  # noqa: E402
 import exclusion_settings  # noqa: E402
 import tag_exclusions  # noqa: E402
 
@@ -645,6 +646,45 @@ def _available_capacities_structures(vault: Path) -> list[str]:
     if record is None:
         return []
     return sorted({structure.structure_id for structure in record.structures})
+
+
+def _capacities_structure_titles(
+    vault: Path, available_structures: list[str]
+) -> dict[str, str]:
+    """Last observed display titles for the mapped Capacities structures.
+
+    The settings drawer shows mapped structures only, so the returned map is
+    keyed exactly by ``available_structures``: a cached title for an unmapped
+    structure is dropped rather than offered as a phantom row, and a mapped
+    structure with no cached title is simply absent (the drawer falls back to
+    the structure id).
+
+    The read uses the same (resolved vault root, mapping-record ``space_id``,
+    builder ``base_url``) namespace triple the structure observer writes
+    under, so another vault, space, or provider base URL can never leak a
+    title. ``read_titles`` is machine-local and fail-soft: a missing,
+    unreadable, corrupt, or unsupported cache yields ``{}`` and never raises,
+    so a cache problem can never change the settings route's status code or
+    its other fields. No adapter is constructed, no credential is read, and
+    no provider is contacted.
+    """
+    try:
+        record = capacities_builder.read_source(vault)
+    except (capacities_builder.CapacitiesSourceStoreError, OSError) as exc:
+        print(f"capacities source read failed: {exc}", file=sys.stderr)
+        return {}
+    if record is None:
+        return {}
+    titles = capacities_structure_titles.read_titles(
+        vault,
+        record.space_id,
+        capacities_builder.CapacitiesBuilderConfig().base_url,
+    )
+    return {
+        structure_id: titles[structure_id]
+        for structure_id in available_structures
+        if structure_id in titles
+    }
 
 
 def _exclusion_policy_or_block(vault: Path) -> tag_exclusions.ExclusionPolicy:
@@ -1890,10 +1930,12 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
     def get_capacities_settings() -> dict:
         """Tokenless local read of the persisted Capacities assignment policy.
 
-        Reads exactly one vault cache file (or reports the default-enabled
-        policy when it is absent) and never builds a Capacities adapter, calls
-        a provider, or touches runstate. Malformed/unsupported storage fails
-        closed with a bounded error and leaves the bytes untouched."""
+        Reads the vault-local settings policy (or reports the default-enabled
+        policy when it is absent), the advisory vault-local source mapping
+        record, and the machine-local structure-title cache; it never builds a
+        Capacities adapter, reads a credential, calls a provider, or touches
+        runstate. Malformed/unsupported settings storage fails closed with a
+        bounded error and leaves the bytes untouched."""
         vault = resolve_vault_root()
         try:
             result = capacities_settings.read_settings(vault)
@@ -1910,10 +1952,14 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
                     ),
                 },
             ) from exc
+        available_structures = _available_capacities_structures(vault)
         return {
             "settings": result.settings.as_dict(),
             "persisted": result.persisted,
-            "available_structures": _available_capacities_structures(vault),
+            "available_structures": available_structures,
+            "structure_titles": _capacities_structure_titles(
+                vault, available_structures
+            ),
         }
 
     @app.post("/settings/capacities/save", dependencies=[Depends(require_token)])

@@ -17,7 +17,9 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import main as main_mod  # noqa: E402
 import capacities_settings as cs  # noqa: E402
+import capacities_adapter as ca  # noqa: E402
 import capacities_builder as cb  # noqa: E402
+import capacities_structure_titles as cst  # noqa: E402
 
 
 SPACE = "space-1"
@@ -43,6 +45,21 @@ def client(vault) -> TestClient:
     c = TestClient(app)
     c.app_token = app.state.token
     return c
+
+
+@pytest.fixture(autouse=True)
+def titles_cache(tmp_path, monkeypatch) -> Path:
+    """Point every route under test at an isolated title cache.
+
+    ``GET /settings/capacities`` reads the machine-local title cache through
+    its module default, so each test must be kept off the operator's real
+    file. The monkeypatched path is the same file ``remember_titles`` writes
+    when called with no explicit ``path`` — exactly how the structure
+    observer persists titles in production.
+    """
+    path = tmp_path / "machine-local" / "structure-titles.json"
+    monkeypatch.setattr(cst, "DEFAULT_TITLES_CACHE_PATH", path)
+    return path
 
 
 def _auth(client: TestClient) -> dict:
@@ -735,3 +752,227 @@ class TestAssignedStructuresRoute:
 
         assert response.status_code == 422
         assert _settings_bytes(vault) == before
+
+
+class TestStructureTitles:
+    """The additive ``structure_titles`` map on ``GET /settings/capacities``.
+
+    The drawer shows mapped structures only, so titles are keyed exactly by
+    ``available_structures`` and read under the same (resolved vault root,
+    mapping-record space, builder base URL) namespace the structure observer
+    writes to. The read is machine-local and fail-soft: a cache problem never
+    changes the status code or any neighbouring field."""
+
+    def test_mapped_titles_are_returned_and_unmapped_ones_dropped(
+        self, client, vault, titles_cache
+    ):
+        _write_source_record(vault, [PROJECT_STRUCTURE])
+        assert cst.remember_titles(
+            vault,
+            SPACE,
+            cb.CAPACITIES_BASE_URL,
+            {PROJECT_STRUCTURE: "Project", PRESS_STRUCTURE: "Press"},
+        ) is True
+
+        body = client.get("/settings/capacities").json()
+
+        assert body["available_structures"] == [PROJECT_STRUCTURE]
+        # Press is not mapped, so its cached title must not surface.
+        assert body["structure_titles"] == {PROJECT_STRUCTURE: "Project"}
+
+    def test_mapped_structure_without_a_cached_title_is_absent(
+        self, client, vault, titles_cache
+    ):
+        _write_source_record(vault, [PROJECT_STRUCTURE, PRESS_STRUCTURE])
+        assert cst.remember_titles(
+            vault, SPACE, cb.CAPACITIES_BASE_URL, {PRESS_STRUCTURE: "Press"}
+        ) is True
+
+        body = client.get("/settings/capacities").json()
+
+        # No empty string for the untitled structure: it is simply absent.
+        assert body["structure_titles"] == {PRESS_STRUCTURE: "Press"}
+
+    def test_unmapped_vault_shows_no_titles_even_with_a_cache(
+        self, client, vault, titles_cache
+    ):
+        assert cst.remember_titles(
+            vault, SPACE, cb.CAPACITIES_BASE_URL, {PROJECT_STRUCTURE: "Project"}
+        ) is True
+
+        body = client.get("/settings/capacities").json()
+
+        assert body["available_structures"] == []
+        assert body["structure_titles"] == {}
+
+    @pytest.mark.parametrize("damage", ["missing", "corrupt", "version", "directory"])
+    def test_broken_cache_is_empty_and_changes_nothing_else(
+        self, client, vault, titles_cache, damage
+    ):
+        _write_source_record(vault, [PROJECT_STRUCTURE])
+        assert cst.remember_titles(
+            vault, SPACE, cb.CAPACITIES_BASE_URL, {PROJECT_STRUCTURE: "Project"}
+        ) is True
+        baseline = client.get("/settings/capacities").json()
+        assert baseline["structure_titles"] == {PROJECT_STRUCTURE: "Project"}
+
+        if damage == "missing":
+            titles_cache.unlink()
+        elif damage == "corrupt":
+            titles_cache.write_text("{not json!!", encoding="utf-8")
+        elif damage == "version":
+            titles_cache.write_text(
+                json.dumps({"version": 2, "namespaces": {}}), encoding="utf-8"
+            )
+        else:
+            # An unreadable path that is not a regular file.
+            titles_cache.unlink()
+            titles_cache.mkdir()
+
+        response = client.get("/settings/capacities")
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["structure_titles"] == {}
+        # Every other field is byte-identical to the healthy read.
+        assert {
+            key: value
+            for key, value in body.items()
+            if key != "structure_titles"
+        } == {
+            key: value
+            for key, value in baseline.items()
+            if key != "structure_titles"
+        }
+
+    def test_titles_from_another_vault_space_or_base_url_are_invisible(
+        self, client, vault, titles_cache, tmp_path
+    ):
+        _write_source_record(vault, [PROJECT_STRUCTURE])
+        # The route reads under the builder config's base URL; a different
+        # constant here would silently hide every title.
+        assert cb.CapacitiesBuilderConfig().base_url == cb.CAPACITIES_BASE_URL
+
+        assert cst.remember_titles(
+            tmp_path / "other-vault",
+            SPACE,
+            cb.CAPACITIES_BASE_URL,
+            {PROJECT_STRUCTURE: "Other vault"},
+        ) is True
+        assert cst.remember_titles(
+            vault,
+            "other-space",
+            cb.CAPACITIES_BASE_URL,
+            {PROJECT_STRUCTURE: "Other space"},
+        ) is True
+        assert cst.remember_titles(
+            vault,
+            SPACE,
+            "https://other.example",
+            {PROJECT_STRUCTURE: "Other provider"},
+        ) is True
+
+        assert client.get("/settings/capacities").json()["structure_titles"] == {}
+
+        assert cst.remember_titles(
+            vault, SPACE, cb.CAPACITIES_BASE_URL, {PROJECT_STRUCTURE: "Project"}
+        ) is True
+        assert client.get("/settings/capacities").json()["structure_titles"] == {
+            PROJECT_STRUCTURE: "Project"
+        }
+
+    def test_the_read_stays_additive_and_assigned_structures_round_trips(
+        self, client, vault, titles_cache
+    ):
+        _write_source_record(vault, [PROJECT_STRUCTURE, PRESS_STRUCTURE])
+        assert cst.remember_titles(
+            vault,
+            SPACE,
+            cb.CAPACITIES_BASE_URL,
+            {PROJECT_STRUCTURE: "Project", PRESS_STRUCTURE: "Press"},
+        ) is True
+        declarations = {PROJECT_STRUCTURE: PROJECT_ASSIGNED_PROPERTY}
+        saved = client.post(
+            "/settings/capacities/save",
+            headers=_auth(client),
+            json=_body(assigned_structures=declarations),
+        )
+        assert saved.status_code == 200
+
+        body = client.get("/settings/capacities").json()
+
+        assert set(body) == {
+            "settings",
+            "persisted",
+            "available_structures",
+            "structure_titles",
+        }
+        assert set(body["settings"]) == {
+            "version",
+            "revision",
+            "native_task_auto",
+            "excluded",
+            "active_structures",
+            "assigned_structures",
+            "native_task_structures",
+            "active_statuses",
+        }
+        assert body["persisted"] is True
+        assert body["settings"]["assigned_structures"] == declarations
+        # Untouched settings keys keep their documented values.
+        assert body["settings"]["native_task_auto"] == {
+            "active_enabled": True,
+            "due_enabled": True,
+            "deadline_enabled": True,
+            "deadline_horizon_days": 2,
+        }
+        assert body["settings"]["excluded"] == {}
+        assert body["settings"]["active_structures"] == {}
+        assert body["settings"]["native_task_structures"] == ["RootTask", "Task"]
+        assert body["settings"]["active_statuses"] == ["active"]
+        assert body["structure_titles"] == {
+            PROJECT_STRUCTURE: "Project",
+            PRESS_STRUCTURE: "Press",
+        }
+
+
+class TestStructureTitlesNoProviderContact:
+    def test_the_title_read_touches_no_adapter_credential_or_provider(
+        self, client, vault, monkeypatch, titles_cache
+    ):
+        _write_source_record(vault, [PROJECT_STRUCTURE])
+        assert cst.remember_titles(
+            vault, SPACE, cb.CAPACITIES_BASE_URL, {PROJECT_STRUCTURE: "Project"}
+        ) is True
+        calls: list[str] = []
+
+        def forbidden(label: str):
+            def _fail(*_args, **_kwargs):
+                calls.append(label)
+                raise AssertionError(f"{label} must not be called")
+            return _fail
+
+        client.app.state.build_capacities_adapter = forbidden("app adapter seam")
+        monkeypatch.setattr(cb, "build_capacities_adapter", forbidden("builder"))
+        monkeypatch.setattr(
+            cb, "load_capacities_token", forbidden("credential read")
+        )
+        monkeypatch.setattr(
+            cb, "discover_capacities_source", forbidden("provider discovery")
+        )
+        monkeypatch.setattr(
+            ca.CapacitiesRestClient, "__init__", forbidden("provider client")
+        )
+        monkeypatch.setattr(
+            main_mod.external_sources,
+            "fetch_capacities_items",
+            forbidden("provider fetch"),
+        )
+
+        response = client.get("/settings/capacities")
+
+        assert response.status_code == 200
+        assert response.json()["structure_titles"] == {
+            PROJECT_STRUCTURE: "Project"
+        }
+        assert calls == []
