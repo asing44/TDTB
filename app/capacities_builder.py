@@ -58,10 +58,15 @@ import runstate
 from capacities_adapter import (
     CapacitiesAdapter,
     CapacitiesConfig,
+    CapacitiesContractError,
     CapacitiesRestClient,
     StructureMapping,
+    _definitions,
+    _structure_id,
+    _text,
 )
 from capacities_settings import read_settings
+from capacities_structure_titles import remember_titles
 # The host-local credential slot is owned by shadow.py; import it so the
 # Todoist and Capacities credentials cannot diverge.
 from shadow import TOKEN_ENV_PATH
@@ -1119,6 +1124,49 @@ def _resolve_assigned_structures(
     )
 
 
+def _structure_titles(payload: Any) -> dict[str, str]:
+    """Structure id -> nonblank display title from a structures payload.
+
+    Best-effort by construction: anything that is not a usable row is
+    silently skipped, because this feeds a disposable cache and must never
+    turn into a failure of the read that carried the payload. A blank title
+    is dropped rather than stored, so the consumer keeps its ID fallback.
+    """
+    rows = payload.get("structures") if isinstance(payload, dict) else payload
+    if not isinstance(rows, (list, tuple)):
+        return {}
+    titles: dict[str, str] = {}
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        structure_id = _structure_id(row)
+        title = _text(row.get("title"))
+        if structure_id and title:
+            titles[structure_id] = title
+    return titles
+
+
+def _structure_title_observer(
+    vault_root: str | Path, space_id: str, base_url: str
+) -> Callable[[Any], None]:
+    """Build the best-effort sink that persists observed structure titles.
+
+    The sink calls ``remember_titles``, which never raises and returns
+    ``False`` on any failure, so binding it adds no failure path to a read.
+    The namespace is exactly the (vault root, space, base URL) triple the
+    client was built for, so one vault, space, or provider URL can never see
+    another's titles. It makes no provider call of its own: it only ever
+    sees a payload a read already fetched.
+    """
+
+    def observe(payload: Any) -> None:
+        remember_titles(
+            vault_root, space_id, base_url, _structure_titles(payload)
+        )
+
+    return observe
+
+
 def build_capacities_adapter(
     vault_root: str | Path,
     config: CapacitiesBuilderConfig | None = None,
@@ -1160,6 +1208,9 @@ def build_capacities_adapter(
         timeout=cfg.timeout,
         transport=effective_transport,
         content_cache=content_cache,
+        structures_observer=_structure_title_observer(
+            vault_root, record.space_id, cfg.base_url
+        ),
     )
     return CapacitiesAdapter(
         client,
@@ -1173,3 +1224,182 @@ def build_capacities_adapter(
             content_cache=content_cache,
         ),
     )
+
+
+# ---------------------------------------------------------------------------
+# Structure discovery for the mapping editor
+# ---------------------------------------------------------------------------
+# The mapping record is operator-owned and hand-edited today. Discovery
+# feeds the editor that will replace the hand-editing, so it must work while
+# no valid mapping exists: it reads the provider only, normalizes the space's
+# structures into the catalog below, and returns nothing raw. Titles and
+# property names are display metadata, never identity — every key here is an
+# opaque provider id.
+
+
+@dataclass(frozen=True)
+class CatalogLabelOption:
+    """One selectable value of a label property, for display only."""
+
+    id: str
+    title: str
+
+
+@dataclass(frozen=True)
+class CatalogProperty:
+    """One property definition normalized for the mapping editor.
+
+    ``writable`` is true only for a provider value of literal ``true``; an
+    absent or non-boolean value reads as not writable, because the editor
+    must never offer a write the provider cannot accept.
+    """
+
+    property_id: str
+    title: str
+    type: str
+    writable: bool
+    label_options: tuple[CatalogLabelOption, ...] = ()
+
+
+@dataclass(frozen=True)
+class CatalogStructure:
+    """One Capacities structure and its properties, for the mapping editor."""
+
+    structure_id: str
+    title: str
+    properties: tuple[CatalogProperty, ...] = ()
+
+
+def _catalog_label_options(
+    definition: dict[str, Any], property_id: str
+) -> tuple[CatalogLabelOption, ...]:
+    """Normalize a label property's ``labelSet`` in provider order.
+
+    Provider order is the operator's own option order, so it is preserved.
+    A missing set is an empty set; a malformed one is a contract failure,
+    matching the adapter's own label parsing.
+    """
+    raw = definition.get("labelSet")
+    if raw is None:
+        return ()
+    if not isinstance(raw, list):
+        raise CapacitiesContractError(
+            f"label property {property_id!r} has malformed labelSet"
+        )
+    options: list[CatalogLabelOption] = []
+    for option in raw:
+        if not isinstance(option, dict):
+            raise CapacitiesContractError(
+                f"label property {property_id!r} has malformed option"
+            )
+        option_id = _structure_id(option)
+        if not option_id:
+            raise CapacitiesContractError(
+                f"label property {property_id!r} has malformed option"
+            )
+        options.append(
+            CatalogLabelOption(
+                id=option_id,
+                title=_text(option.get("name")) or option_id,
+            )
+        )
+    return tuple(options)
+
+
+def _catalog_property(
+    property_id: str, definition: dict[str, Any], structure_id: str
+) -> CatalogProperty:
+    """Normalize one property definition; the catalog promises a typed entry."""
+    kind = _text(definition.get("type"))
+    if not kind:
+        raise CapacitiesContractError(
+            f"structure {structure_id!r} property {property_id!r} has no type"
+        )
+    return CatalogProperty(
+        property_id=property_id,
+        title=_text(definition.get("name")) or property_id,
+        type=kind,
+        writable=definition.get("writable") is True,
+        label_options=(
+            _catalog_label_options(definition, property_id)
+            if kind == "label"
+            else ()
+        ),
+    )
+
+
+def _catalog_structures(payload: Any) -> tuple[CatalogStructure, ...]:
+    """Normalize a structures payload into the editor catalog, sorted.
+
+    Works for the current envelope (a dict with a ``structures`` key) and a
+    bare list. Provider documents never leave this function: the catalog
+    carries only ids, display strings, types, a writability flag, and label
+    options. A malformed row, a duplicate structure, or a definition without
+    a type is a contract failure, mirroring the adapter's own checks.
+    """
+    rows = payload.get("structures") if isinstance(payload, dict) else payload
+    if not isinstance(rows, (list, tuple)):
+        raise CapacitiesContractError(
+            "Capacities structures response is malformed"
+        )
+    catalog: list[CatalogStructure] = []
+    seen: set[str] = set()
+    for row in rows:
+        if not isinstance(row, dict) or not _structure_id(row):
+            raise CapacitiesContractError(
+                "Capacities structures response has malformed row"
+            )
+        structure_id = _structure_id(row)
+        if structure_id in seen:
+            raise CapacitiesContractError(
+                f"duplicate Capacities structure {structure_id!r}"
+            )
+        seen.add(structure_id)
+        definitions = _definitions(row)
+        catalog.append(
+            CatalogStructure(
+                structure_id=structure_id,
+                title=_text(row.get("title")) or structure_id,
+                properties=tuple(
+                    _catalog_property(prop_id, definition, structure_id)
+                    for prop_id, definition in definitions.items()
+                ),
+            )
+        )
+    catalog.sort(key=lambda structure: structure.structure_id)
+    return tuple(catalog)
+
+
+def discover_capacities_source(
+    vault_root: str | Path,
+    space_id: str,
+    config: CapacitiesBuilderConfig | None = None,
+) -> tuple[CatalogStructure, ...]:
+    """Read the space's structures for the mapping editor.
+
+    Deliberately independent of the vault-local mapping record and the
+    assignment settings: the editor exists to build a mapping, so discovery
+    has to work while no valid mapping exists. Only the REST client is
+    constructed — the full adapter factory requires the mapping and raises
+    ``RootTask must be explicitly mapped`` without it. Exactly one structures
+    request is made and the client is closed either way. The payload also
+    passes through the same best-effort title sink a normal read uses, so an
+    explicit discovery refreshes the machine-local title cache.
+    """
+    cfg = config if config is not None else CapacitiesBuilderConfig()
+    token = load_capacities_token(cfg.token_path)
+    client = CapacitiesRestClient(
+        token,
+        space_id=space_id,
+        base_url=cfg.base_url,
+        timeout=cfg.timeout,
+        transport=cfg.transport,
+        structures_observer=_structure_title_observer(
+            vault_root, space_id, cfg.base_url
+        ),
+    )
+    try:
+        payload = client.fetch_structures()
+    finally:
+        client.close()
+    return _catalog_structures(payload)

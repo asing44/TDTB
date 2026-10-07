@@ -21,6 +21,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import capacities_builder as cb  # noqa: E402
 import capacities_settings as cs  # noqa: E402
+import capacities_structure_titles as cst  # noqa: E402
 from capacities_adapter import (  # noqa: E402
     CapacitiesAdapter,
     CapacitiesContractError,
@@ -42,6 +43,9 @@ def _isolate_machine_local_cache(tmp_path, monkeypatch):
     """No test may read or write the real ``~/.config/tdtb`` cache."""
     monkeypatch.setattr(
         cb, "DEFAULT_CONTENT_CACHE_PATH", tmp_path / "machine-content-cache.json"
+    )
+    monkeypatch.setattr(
+        cst, "DEFAULT_TITLES_CACHE_PATH", tmp_path / "machine-titles.json"
     )
     monkeypatch.setattr(cb, "_CACHE_REGISTRY", {})
 
@@ -1449,3 +1453,447 @@ def test_default_builder_writes_only_to_the_isolated_cache_path(tmp_path):
 
     assert cb.DEFAULT_CONTENT_CACHE_PATH.exists()
     assert cb.DEFAULT_CONTENT_CACHE_PATH.parent == tmp_path
+
+
+# ---------------------------------------------------------------------------
+# Structure discovery for the mapping editor
+# ---------------------------------------------------------------------------
+
+PROJECT_STRUCTURE = "0d194525-c5a1-4af5-bb62-202b83006b5e"
+PRESS_STRUCTURE = "6aa7b02a-4315-47d1-9cfb-0c0cdac0950c"
+UNTITLED_STRUCTURE = "7a7b7ef0-8eec-4349-8ccd-f2e25e424047"
+
+
+def _probe_structures() -> list[dict]:
+    """The structures shape observed against the operator's real space.
+
+    Deliberately out of order: the catalog is sorted by structure ID, not
+    by provider order.
+    """
+    return [
+        {
+            "id": PRESS_STRUCTURE,
+            "title": "Press",
+            "propertyDefinitions": [
+                {
+                    "id": "press-done",
+                    "name": "done",
+                    "type": "boolean",
+                    "writable": True,
+                },
+                {
+                    "id": "press-status",
+                    "name": "status",
+                    "type": "label",
+                    "writable": True,
+                    "labelSet": [
+                        {"id": "press-active", "name": "Active"},
+                        {"id": "press-dropped", "name": "Dropped"},
+                    ],
+                },
+                {
+                    "id": "press-duration",
+                    "name": "durationMin",
+                    "type": "number",
+                    "writable": True,
+                },
+            ],
+        },
+        {
+            "id": UNTITLED_STRUCTURE,
+            "propertyDefinitions": [
+                {"id": "no-name", "type": "text"},
+                {"id": "blank-name", "name": "   ", "type": "number"},
+            ],
+        },
+        {
+            "id": PROJECT_STRUCTURE,
+            "title": "Project",
+            "propertyDefinitions": [
+                {
+                    "id": "project-assigned",
+                    "name": "assigned",
+                    "type": "boolean",
+                    "writable": True,
+                },
+                {
+                    "id": "project-status",
+                    "name": "status",
+                    "type": "label",
+                    "writable": True,
+                    "labelSet": [
+                        {"id": "idle", "name": "Idle"},
+                        {"id": "active", "name": "Active"},
+                        {"id": "on-hold", "name": "On Hold"},
+                        {"id": "completed", "name": "Completed"},
+                        {"id": "dropped", "name": "Dropped"},
+                    ],
+                },
+                {
+                    "id": "project-timeframe",
+                    "name": "timeFrame",
+                    "type": "date",
+                },
+            ],
+        },
+    ]
+
+
+class _StructuresPayloadTransport(httpx.MockTransport):
+    """Serves one structures payload; any other request fails the test."""
+
+    def __init__(self, structures=None):
+        self.calls: list[str] = []
+        self._structures = (
+            _probe_structures() if structures is None else structures
+        )
+        super().__init__(self._handler)
+
+    def _handler(self, request: httpx.Request) -> httpx.Response:
+        self.calls.append(request.url.path)
+        if request.url.path != "/space/structures":
+            raise AssertionError(f"unexpected network call: {request.url}")
+        return httpx.Response(200, json={"structures": self._structures})
+
+
+def _discovery_config(tmp_path: Path, transport) -> cb.CapacitiesBuilderConfig:
+    return cb.CapacitiesBuilderConfig(
+        token_path=_valid_token_file(tmp_path), transport=transport
+    )
+
+
+def _catalog_ids(catalog) -> list[str]:
+    return [row.structure_id for row in catalog]
+
+
+def test_discovery_succeeds_when_the_mapping_is_absent(tmp_path):
+    transport = _StructuresPayloadTransport()
+
+    catalog = cb.discover_capacities_source(
+        tmp_path, SPACE, _discovery_config(tmp_path, transport)
+    )
+
+    assert _catalog_ids(catalog) == [
+        PROJECT_STRUCTURE,
+        PRESS_STRUCTURE,
+        UNTITLED_STRUCTURE,
+    ]
+    assert transport.calls == ["/space/structures"]
+    # Discovery is a read of the provider, not of the vault: nothing created.
+    assert not cb.source_path(tmp_path).exists()
+
+
+def test_discovery_succeeds_when_the_mapping_is_malformed(tmp_path, monkeypatch):
+    raw = "{ not json"
+    source = _write_source_raw(tmp_path, raw)
+    token = _valid_token_file(tmp_path)
+
+    # The normal factory cannot serve this vault: the stored mapping is
+    # unreadable. Discovery exists precisely to work before a mapping does.
+    with pytest.raises(cb.CapacitiesSourceFormatError):
+        cb.build_capacities_adapter(
+            tmp_path,
+            cb.CapacitiesBuilderConfig(
+                token_path=token, transport=_RecordingTransport()
+            ),
+        )
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("discovery touched the mapping or settings")
+
+    monkeypatch.setattr(cb, "read_source", forbidden)
+    monkeypatch.setattr(cb, "save_source", forbidden)
+    monkeypatch.setattr(cb, "read_settings", forbidden)
+    transport = _StructuresPayloadTransport()
+
+    catalog = cb.discover_capacities_source(
+        tmp_path, SPACE, _discovery_config(tmp_path, transport)
+    )
+
+    assert _catalog_ids(catalog) == [
+        PROJECT_STRUCTURE,
+        PRESS_STRUCTURE,
+        UNTITLED_STRUCTURE,
+    ]
+    assert source.read_text(encoding="utf-8") == raw
+    assert transport.calls == ["/space/structures"]
+
+
+class _FakeDiscoveryClient:
+    """Fake REST client proving discovery's request and lifecycle shape."""
+
+    last: "_FakeDiscoveryClient | None" = None
+
+    def __init__(self, token, **kwargs):
+        self.token = token
+        self.kwargs = kwargs
+        self.structures_calls = 0
+        self.object_calls: list[str] = []
+        self.closed = False
+        _FakeDiscoveryClient.last = self
+
+    def fetch_structures(self, observer=None):
+        self.structures_calls += 1
+        return {"structures": _probe_structures()}
+
+    def list_objects(self, *args, **kwargs):
+        self.object_calls.append("list_objects")
+        raise AssertionError("discovery must not list objects")
+
+    def get_object(self, *args, **kwargs):
+        self.object_calls.append("get_object")
+        raise AssertionError("discovery must not read object content")
+
+    def close(self):
+        self.closed = True
+
+
+def test_discovery_fetches_structures_once_without_other_calls(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(cb, "CapacitiesRestClient", _FakeDiscoveryClient)
+    config = _discovery_config(tmp_path, None)
+
+    catalog = cb.discover_capacities_source(tmp_path, SPACE, config)
+
+    client = _FakeDiscoveryClient.last
+    assert client is not None
+    assert client.structures_calls == 1
+    assert client.object_calls == []
+    assert client.closed is True
+    assert client.kwargs["space_id"] == SPACE
+    assert client.kwargs["base_url"] == config.base_url
+    assert callable(client.kwargs["structures_observer"])
+    assert _catalog_ids(catalog)[0] == PROJECT_STRUCTURE
+
+
+class _FailingDiscoveryClient(_FakeDiscoveryClient):
+    def fetch_structures(self, observer=None):
+        self.structures_calls += 1
+        raise RuntimeError("provider unavailable")
+
+
+def test_discovery_closes_the_client_when_the_fetch_fails(tmp_path, monkeypatch):
+    monkeypatch.setattr(cb, "CapacitiesRestClient", _FailingDiscoveryClient)
+
+    with pytest.raises(RuntimeError, match="provider unavailable"):
+        cb.discover_capacities_source(
+            tmp_path, SPACE, _discovery_config(tmp_path, None)
+        )
+
+    assert _FailingDiscoveryClient.last is not None
+    assert _FailingDiscoveryClient.last.closed is True
+
+
+def test_catalog_shape_matches_the_probed_space(tmp_path):
+    transport = _StructuresPayloadTransport()
+
+    catalog = cb.discover_capacities_source(
+        tmp_path, SPACE, _discovery_config(tmp_path, transport)
+    )
+
+    assert _catalog_ids(catalog) == [
+        PROJECT_STRUCTURE,
+        PRESS_STRUCTURE,
+        UNTITLED_STRUCTURE,
+    ]
+    project, press, untitled = catalog
+
+    assert project.title == "Project"
+    assert project.properties == (
+        cb.CatalogProperty(
+            property_id="project-assigned",
+            title="assigned",
+            type="boolean",
+            writable=True,
+            label_options=(),
+        ),
+        cb.CatalogProperty(
+            property_id="project-status",
+            title="status",
+            type="label",
+            writable=True,
+            label_options=(
+                cb.CatalogLabelOption(id="idle", title="Idle"),
+                cb.CatalogLabelOption(id="active", title="Active"),
+                cb.CatalogLabelOption(id="on-hold", title="On Hold"),
+                cb.CatalogLabelOption(id="completed", title="Completed"),
+                cb.CatalogLabelOption(id="dropped", title="Dropped"),
+            ),
+        ),
+        cb.CatalogProperty(
+            property_id="project-timeframe",
+            title="timeFrame",
+            type="date",
+            writable=False,  # absent in the provider payload
+            label_options=(),
+        ),
+    )
+
+    assert press.title == "Press"
+    assert [prop.type for prop in press.properties] == [
+        "boolean",
+        "label",
+        "number",
+    ]
+
+    # No display name: the structure ID is the title, not a blank.
+    assert untitled.title == UNTITLED_STRUCTURE
+    assert [prop.title for prop in untitled.properties] == [
+        "no-name",
+        "blank-name",
+    ]
+
+
+def test_blank_structure_title_falls_back_to_the_structure_id(tmp_path):
+    rows = [
+        {
+            "id": "structured-blank",
+            "title": "   ",
+            "propertyDefinitions": [
+                {"id": "title", "name": "Title", "type": "title"}
+            ],
+        }
+    ]
+    transport = _StructuresPayloadTransport(rows)
+
+    catalog = cb.discover_capacities_source(
+        tmp_path, SPACE, _discovery_config(tmp_path, transport)
+    )
+
+    assert _catalog_ids(catalog) == ["structured-blank"]
+    assert catalog[0].title == "structured-blank"
+
+
+@pytest.mark.parametrize(
+    "rows",
+    [
+        [{"id": "no-definitions"}],
+        [{"id": "bad-rows", "propertyDefinitions": [{"name": "x"}]}],
+        [{"id": "untyped", "propertyDefinitions": [{"id": "p", "name": "p"}]}],
+        [
+            {"id": "dup", "propertyDefinitions": []},
+            {"id": "dup", "propertyDefinitions": []},
+        ],
+    ],
+)
+def test_discovery_raises_on_a_malformed_catalog_payload(tmp_path, rows):
+    transport = _StructuresPayloadTransport(rows)
+
+    with pytest.raises(CapacitiesContractError):
+        cb.discover_capacities_source(
+            tmp_path, SPACE, _discovery_config(tmp_path, transport)
+        )
+
+
+# ---------------------------------------------------------------------------
+# Title capture on the real read path
+# ---------------------------------------------------------------------------
+
+def _builder_adapter(tmp_path: Path, transport) -> CapacitiesAdapter:
+    _write_source(tmp_path, _valid_payload())
+    _write_settings_with_declarations(
+        tmp_path, {"custom-project": SETTINGS_ASSIGNED_PROPERTY}
+    )
+    token = _valid_token_file(tmp_path)
+    adapter = cb.build_capacities_adapter(
+        tmp_path, cb.CapacitiesBuilderConfig(token_path=token, transport=transport)
+    )
+    assert adapter is not None
+    return adapter
+
+
+def test_a_raising_title_sink_cannot_change_a_read(tmp_path, monkeypatch):
+    adapter = _builder_adapter(tmp_path, _StructuresTransport())
+
+    def _boom(*args, **kwargs):
+        raise RuntimeError("title cache exploded")
+
+    monkeypatch.setattr(cb, "remember_titles", _boom)
+
+    result = adapter.items_for_day_from_objects(
+        TODAY, [_declared_object("project-1", boolean=True)]
+    )
+
+    assert [row["capacities_id"] for row in result.items] == ["project-1"]
+
+
+def test_a_failing_title_sink_cannot_change_a_read(tmp_path, monkeypatch):
+    adapter = _builder_adapter(tmp_path, _StructuresTransport())
+
+    # A path whose parent is a file: remember_titles must return False, not
+    # raise, and the read must be unaffected.
+    blocked = tmp_path / "blocked"
+    blocked.write_text("not a directory", encoding="utf-8")
+    monkeypatch.setattr(cst, "DEFAULT_TITLES_CACHE_PATH", blocked / "titles.json")
+
+    result = adapter.items_for_day_from_objects(
+        TODAY, [_declared_object("project-1", boolean=True)]
+    )
+
+    assert [row["capacities_id"] for row in result.items] == ["project-1"]
+    assert cst.read_titles(tmp_path, SPACE, cb.CAPACITIES_BASE_URL) == {}
+
+
+def test_a_normal_read_captures_titles_for_its_own_namespace(tmp_path):
+    adapter = _builder_adapter(tmp_path, _StructuresTransport())
+
+    result = adapter.items_for_day_from_objects(
+        TODAY, [_declared_object("project-1", boolean=True)]
+    )
+    assert result.items
+
+    assert cst.read_titles(tmp_path, SPACE, cb.CAPACITIES_BASE_URL) == {
+        "RootTask": "RootTask",
+        "custom-project": "custom-project",
+    }
+    # Another space or provider URL is another namespace: no bleed-through.
+    assert cst.read_titles(tmp_path, "other-space", cb.CAPACITIES_BASE_URL) == {}
+    assert cst.read_titles(tmp_path, SPACE, "https://other.example") == {}
+
+
+class _TagsTransport(httpx.MockTransport):
+    """Serves the tag listing; every other request fails the test."""
+
+    def __init__(self):
+        self.calls: list[str] = []
+        super().__init__(self._handler)
+
+    def _handler(self, request: httpx.Request) -> httpx.Response:
+        self.calls.append(request.url.path)
+        if request.url.path != "/objects/structure":
+            raise AssertionError(f"unexpected network call: {request.url}")
+        return httpx.Response(
+            200,
+            json={
+                "results": [{"id": "tag-1", "title": "habituals"}],
+                "nextCursor": None,
+            },
+        )
+
+
+def test_a_read_that_never_fetches_structures_leaves_titles_untouched(tmp_path):
+    _write_source(tmp_path, _valid_payload())
+    token = _valid_token_file(tmp_path)
+    transport = _TagsTransport()
+    adapter = cb.build_capacities_adapter(
+        tmp_path, cb.CapacitiesBuilderConfig(token_path=token, transport=transport)
+    )
+
+    titles_path = cst.DEFAULT_TITLES_CACHE_PATH
+    assert cst.remember_titles(
+        tmp_path, SPACE, cb.CAPACITIES_BASE_URL, {"RootTask": "Task"}
+    )
+    before = titles_path.read_bytes()
+
+    result = adapter.list_tags()
+
+    assert result["status"] == "complete"
+    assert [tag["id"] for tag in result["tags"]] == ["tag-1"]
+    # Exactly the tag listing: the structures observer never fires, so no
+    # extra request is made and the stored titles are byte-identical.
+    assert transport.calls == ["/objects/structure"]
+    assert titles_path.read_bytes() == before
+    assert cst.read_titles(tmp_path, SPACE, cb.CAPACITIES_BASE_URL) == {
+        "RootTask": "Task"
+    }
