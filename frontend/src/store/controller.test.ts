@@ -1340,3 +1340,17 @@ describe("source-health gate (controller entry points)", () => {
     expect(seqSpy).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("capacities discovery delegation", () => {
+  it("delegates discovery to the adapter, echoing the requested space", async () => {
+    const { controller } = harness("ready");
+
+    const catalog = await controller.discoverCapacitiesSource("space-9");
+
+    expect(catalog.spaceId).toBe("space-9");
+    expect(catalog.structures.map((structure) => structure.structureId)).toEqual([
+      "project",
+      "custom-project",
+    ]);
+  });
+});

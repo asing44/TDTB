@@ -21,6 +21,7 @@ import {
   isCanonicalCapacitiesStructureId,
   itemIdentity,
   projectAssigned,
+  projectCapacitiesCatalog,
   projectCapacitiesSettings,
   projectCapacitiesSource,
   projectCommitReport,
@@ -1777,4 +1778,137 @@ describe("Capacities source mapping (wire ↔ model)", () => {
       completionValue: null,
     };
   }
+});
+
+describe("Capacities discovery catalog (wire → model)", () => {
+  const catalogWire = () => ({
+    space_id: "space-1",
+    structures: [
+      {
+        structure_id: "project",
+        title: "Project",
+        properties: [
+          {
+            property_id: "title-prop",
+            title: "Name",
+            type: "title",
+            writable: true,
+            label_options: [],
+          },
+          {
+            property_id: "status-prop",
+            title: "Status",
+            type: "label",
+            writable: true,
+            label_options: [
+              { id: "in-progress", title: "In Progress" },
+              { id: "on-hold", title: "On Hold" },
+            ],
+          },
+          {
+            property_id: "notes-prop",
+            title: "notes-prop",
+            type: "text",
+            writable: false,
+            label_options: [],
+          },
+        ],
+      },
+    ],
+    warnings: [],
+  });
+
+  it("projects every structure, property, and label option faithfully", () => {
+    expect(projectCapacitiesCatalog(catalogWire())).toEqual({
+      spaceId: "space-1",
+      structures: [
+        {
+          structureId: "project",
+          title: "Project",
+          properties: [
+            {
+              propertyId: "title-prop",
+              title: "Name",
+              type: "title",
+              writable: true,
+              labelOptions: [],
+            },
+            {
+              propertyId: "status-prop",
+              title: "Status",
+              type: "label",
+              writable: true,
+              labelOptions: [
+                { id: "in-progress", title: "In Progress" },
+                { id: "on-hold", title: "On Hold" },
+              ],
+            },
+            {
+              // Provider title fallback equals the property id; kept verbatim
+              // (and writable stays false — the catalog never invites a write).
+              propertyId: "notes-prop",
+              title: "notes-prop",
+              type: "text",
+              writable: false,
+              labelOptions: [],
+            },
+          ],
+        },
+      ],
+      warnings: [],
+    });
+  });
+
+  it("preserves the backend's structure order without re-sorting", () => {
+    const first = catalogWire().structures[0];
+    const catalog = projectCapacitiesCatalog({
+      ...catalogWire(),
+      structures: [
+        { ...first, structure_id: "z-custom", title: "Z Custom" },
+        { ...first, structure_id: "a-project", title: "A Project" },
+      ],
+    });
+    expect(catalog.structures.map((s) => s.structureId)).toEqual(["z-custom", "a-project"]);
+  });
+
+  it("keeps an id-titled structure unchanged (the real no-name case)", () => {
+    const first = catalogWire().structures[0];
+    const catalog = projectCapacitiesCatalog({
+      ...catalogWire(),
+      structures: [{ ...first, structure_id: "custom-project", title: "custom-project" }],
+    });
+    expect(catalog.structures[0]).toMatchObject({
+      structureId: "custom-project",
+      title: "custom-project",
+    });
+  });
+
+  it("projects an empty catalog without throwing", () => {
+    expect(
+      projectCapacitiesCatalog({ space_id: "space-1", structures: [], warnings: [] }),
+    ).toEqual({ spaceId: "space-1", structures: [], warnings: [] });
+  });
+
+  it("fails closed on a malformed catalog", () => {
+    expect(() => projectCapacitiesCatalog({ ...catalogWire(), structures: {} })).toThrow(
+      /structures/,
+    );
+    expect(() =>
+      projectCapacitiesCatalog({
+        ...catalogWire(),
+        structures: [{ ...catalogWire().structures[0], title: "" }],
+      }),
+    ).toThrow(/title/);
+    expect(() =>
+      projectCapacitiesCatalog({
+        ...catalogWire(),
+        structures: [
+          {
+            ...catalogWire().structures[0],
+            properties: [{ ...catalogWire().structures[0].properties[0], writable: "true" }],
+          },
+        ],
+      }),
+    ).toThrow(/writable/);
+  });
 });

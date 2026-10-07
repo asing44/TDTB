@@ -5,6 +5,7 @@
 
 import type {
   Capacity,
+  CapacitiesCatalog,
   CapacitiesSettings,
   CapacitiesSettingsDraft,
   CapacitiesSourceDraft,
@@ -102,6 +103,10 @@ export interface Adapter {
   /** POST /settings/capacities/source/save — one token-guarded non-billed
       full replacement of the source mapping record. */
   saveCapacitiesSource(draft: CapacitiesSourceDraft): Promise<CapacitiesSourceRead>;
+  /** POST /settings/capacities/source/discover — one token-guarded non-billed
+      provider read; returns the advisory structure/property catalog. A
+      failure must surface as an error, never as an empty catalog. */
+  discoverCapacitiesSource(spaceId: string): Promise<CapacitiesCatalog>;
   /** GET /settings/exclusions — local tag-exclusion policy plus the advisory
       RootTag catalog. No provider call for the policy itself; a degraded
       catalog still returns the saved settings. */

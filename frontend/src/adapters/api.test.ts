@@ -972,4 +972,116 @@ describe("Capacities source mapping", () => {
 
     expect(capacitiesSourceConflictOf(new Error("nope"))).toBeNull();
   });
+
+  it("discovers the catalog with a token and preserves the wire order", async () => {
+    route("/settings/capacities/source/discover", {
+      space_id: "space-1",
+      structures: [
+        {
+          structure_id: "custom-project",
+          title: "custom-project",
+          properties: [
+            {
+              property_id: "title-prop",
+              title: "Name",
+              type: "title",
+              writable: true,
+              label_options: [],
+            },
+            {
+              property_id: "status-prop",
+              title: "Status",
+              type: "label",
+              writable: true,
+              label_options: [{ id: "in-progress", title: "In Progress" }],
+            },
+          ],
+        },
+      ],
+      warnings: [],
+    });
+
+    const catalog = await new ApiAdapter().discoverCapacitiesSource("space-1");
+
+    expect(catalog).toEqual({
+      spaceId: "space-1",
+      structures: [
+        {
+          structureId: "custom-project",
+          title: "custom-project",
+          properties: [
+            {
+              propertyId: "title-prop",
+              title: "Name",
+              type: "title",
+              writable: true,
+              labelOptions: [],
+            },
+            {
+              propertyId: "status-prop",
+              title: "Status",
+              type: "label",
+              writable: true,
+              labelOptions: [{ id: "in-progress", title: "In Progress" }],
+            },
+          ],
+        },
+      ],
+      warnings: [],
+    });
+    // The discovery POST carries the requested space id and the session token.
+    expect(postBody("/settings/capacities/source/discover")).toEqual({ space_id: "space-1" });
+    const post = calls.find((c) => c.path === "/settings/capacities/source/discover");
+    expect((post!.init!.headers as any)["X-TDTB-Token"]).toBe("tok-123");
+  });
+
+  it("surfaces a failed discovery as ApiError with the detail preserved", async () => {
+    route(
+      "/settings/capacities/source/discover",
+      {
+        detail: {
+          code: "capacities_discovery_credentials_unavailable",
+          message: "Capacities credential is unavailable; discovery cannot run.",
+        },
+      },
+      503,
+    );
+    const unavailable = await new ApiAdapter()
+      .discoverCapacitiesSource("space-1")
+      .catch((e) => e);
+    expect(unavailable).toBeInstanceOf(ApiError);
+    expect(unavailable.status).toBe(503);
+    expect(unavailable.detail).toEqual({
+      code: "capacities_discovery_credentials_unavailable",
+      message: "Capacities credential is unavailable; discovery cannot run.",
+    });
+
+    route(
+      "/settings/capacities/source/discover",
+      { detail: { code: "capacities_discovery_rate_limited", message: "retry shortly" } },
+      429,
+    );
+    const limited = await new ApiAdapter()
+      .discoverCapacitiesSource("space-1")
+      .catch((e) => e);
+    expect(limited).toBeInstanceOf(ApiError);
+    expect(limited.status).toBe(429);
+    expect(limited.detail).toEqual({
+      code: "capacities_discovery_rate_limited",
+      message: "retry shortly",
+    });
+
+    // A genuinely empty catalog is a SUCCESS answer and stays distinguishable
+    // from the failures above.
+    route("/settings/capacities/source/discover", {
+      space_id: "space-1",
+      structures: [],
+      warnings: [],
+    });
+    await expect(new ApiAdapter().discoverCapacitiesSource("space-1")).resolves.toEqual({
+      spaceId: "space-1",
+      structures: [],
+      warnings: [],
+    });
+  });
 });

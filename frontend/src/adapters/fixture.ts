@@ -14,6 +14,7 @@ import type {
 } from "./adapter";
 import type {
   Capacity,
+  CapacitiesCatalog,
   CapacitiesSettings,
   CapacitiesSettingsDraft,
   CapacitiesSource,
@@ -143,6 +144,53 @@ export class FixtureAdapter implements Adapter {
   private capacitiesDeferred: number | null = null;
   /** The vault-local source mapping record; null means none saved yet. */
   private capacitiesSource: CapacitiesSource | null = null;
+  /** Deterministic discovery catalog for the mapping editor. Discovery is a
+      live provider read in production and never touches the mapping record;
+      the fixture stops at fixed data, echoing the requested space id. */
+  private capacitiesCatalog: CapacitiesCatalog = {
+    spaceId: "space-1",
+    structures: [
+      {
+        structureId: "project",
+        title: "Project",
+        properties: [
+          {
+            propertyId: "title-prop",
+            title: "Name",
+            type: "title",
+            writable: true,
+            labelOptions: [],
+          },
+          {
+            propertyId: "status-prop",
+            title: "Status",
+            type: "label",
+            writable: true,
+            labelOptions: [
+              { id: "in-progress", title: "In Progress" },
+              { id: "on-hold", title: "On Hold" },
+            ],
+          },
+        ],
+      },
+      {
+        // Real no-name case: the provider reports no display title, so the
+        // structure id stands in. Never treated as bad data.
+        structureId: "custom-project",
+        title: "custom-project",
+        properties: [
+          {
+            propertyId: "title-prop",
+            title: "Name",
+            type: "title",
+            writable: true,
+            labelOptions: [],
+          },
+        ],
+      },
+    ],
+    warnings: [],
+  };
   private capacitiesSettings: CapacitiesSettings = {
     version: 1,
     revision: 0,
@@ -388,6 +436,11 @@ export class FixtureAdapter implements Adapter {
       structures: structuredClone(draft.structures),
     };
     return { source: structuredClone(this.capacitiesSource), persisted: true };
+  }
+
+  async discoverCapacitiesSource(spaceId: string): Promise<CapacitiesCatalog> {
+    await wait(LATENCY_MS);
+    return structuredClone({ ...this.capacitiesCatalog, spaceId });
   }
 
   async loadTagExclusionSettings(): Promise<TagExclusionSettings> {

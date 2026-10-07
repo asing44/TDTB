@@ -24,6 +24,7 @@ import type {
 } from "./adapter";
 import type {
   Capacity,
+  CapacitiesCatalog,
   CapacitiesSettings,
   CapacitiesSettingsDraft,
   CapacitiesSourceDraft,
@@ -47,6 +48,7 @@ import {
   daySetupToWire,
   capacitiesSettingsToWire,
   capacitiesSourceToWire,
+  projectCapacitiesCatalog,
   projectCapacitiesSettings,
   projectCapacitiesSource,
   projectTagExclusionSettings,
@@ -250,6 +252,16 @@ export class ApiAdapter implements Adapter {
   async saveCapacitiesSource(draft: CapacitiesSourceDraft): Promise<CapacitiesSourceRead> {
     return projectCapacitiesSource(
       await this.post("/settings/capacities/source/save", capacitiesSourceToWire(draft)),
+    );
+  }
+
+  /** POST /settings/capacities/source/discover — one token-guarded non-billed
+      provider read. The returned catalog is advisory and never persisted. A
+      failed discovery surfaces as ApiError (status and detail preserved), so
+      it stays distinguishable from a genuinely empty catalog. */
+  async discoverCapacitiesSource(spaceId: string): Promise<CapacitiesCatalog> {
+    return projectCapacitiesCatalog(
+      await this.post("/settings/capacities/source/discover", { space_id: spaceId }),
     );
   }
 

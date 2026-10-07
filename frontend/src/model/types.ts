@@ -122,6 +122,45 @@ export interface CapacitiesSourceDraft {
   structures: CapacitiesSourceStructure[];
 }
 
+/** One provider label option on a discovery-catalog property, in the
+    provider's own order. `id` is the value a mapping stores; `title` is
+    display metadata only. */
+export interface CapacitiesCatalogLabelOption {
+  id: string;
+  title: string;
+}
+
+/** One real property of a structure, straight from discovery. `propertyId`
+    and `type` are provider values kept verbatim; `writable` means the
+    provider would accept a mapped write to it, and `labelOptions` is empty
+    for every non-label property. */
+export interface CapacitiesCatalogProperty {
+  propertyId: string;
+  title: string;
+  type: string;
+  writable: boolean;
+  labelOptions: CapacitiesCatalogLabelOption[];
+}
+
+/** One discovered structure and its properties. A structure with no display
+    name reports its own `structureId` as `title` — an id-titled structure is
+    a real no-name case, not a malformed row. */
+export interface CapacitiesCatalogStructure {
+  structureId: string;
+  title: string;
+  properties: CapacitiesCatalogProperty[];
+}
+
+/** Read-only advisory discovery catalog for the mapping editor. It is a
+    catalog, never a mapping: nothing here is saved or treated as persisted.
+    The backend's structure order (by structure id) and the provider's
+    property/label order are preserved verbatim. */
+export interface CapacitiesCatalog {
+  spaceId: string;
+  structures: CapacitiesCatalogStructure[];
+  warnings: string[];
+}
+
 /** One stable tag identity in the app-managed exclusion policy. The title is
     display metadata only; matching is `(source, spaceId, tagId)` exactly. */
 export interface TagExclusionIdentity {

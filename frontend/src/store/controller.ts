@@ -33,6 +33,7 @@ import {
 } from "./store";
 import type {
   AnchoredOverride,
+  CapacitiesCatalog,
   CapacitiesSettings,
   CapacitiesSettingsDraft,
   CapacitiesSourceDraft,
@@ -287,6 +288,13 @@ export class Controller {
 
   async saveCapacitiesSource(draft: CapacitiesSourceDraft): Promise<CapacitiesSourceRead> {
     return this.adapter.saveCapacitiesSource(draft);
+  }
+
+  /** Discover the space's real structures and properties for the mapping
+      editor. Read-only and advisory; a failure propagates untouched so the
+      caller can tell it apart from an empty catalog. */
+  async discoverCapacitiesSource(spaceId: string): Promise<CapacitiesCatalog> {
+    return this.adapter.discoverCapacitiesSource(spaceId);
   }
 
   async loadTagExclusionSettings(): Promise<TagExclusionSettings> {

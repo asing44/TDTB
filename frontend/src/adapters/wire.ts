@@ -18,6 +18,10 @@ import type {
   Capacity,
   CapacitiesCoverage,
   CapacitiesLimit,
+  CapacitiesCatalog,
+  CapacitiesCatalogLabelOption,
+  CapacitiesCatalogProperty,
+  CapacitiesCatalogStructure,
   CapacitiesSettings,
   CapacitiesSettingsDraft,
   CapacitiesSourceDraft,
@@ -603,6 +607,99 @@ export function capacitiesSourceToWire(draft: CapacitiesSourceDraft): Wire {
     expected_revision: draft.expectedRevision,
     space_id: draft.spaceId,
     structures,
+  };
+}
+
+// -- Capacities source discovery catalog (read-only, advisory) ---------------
+
+function capacitiesCatalogError(detail: string): Error {
+  return new Error(`invalid Capacities discovery response: ${detail}`);
+}
+
+/** Project the read-only discovery catalog. Nothing here is a mapping and
+    nothing is persisted. The backend's order is the wire order — structures
+    stay sorted by structure id and property/label order is the provider's —
+    so this projection never re-sorts or deduplicates. An id-titled
+    structure is the real no-name case and projects unchanged. */
+export function projectCapacitiesCatalog(wire: Wire): CapacitiesCatalog {
+  if (!wire || typeof wire !== "object" || Array.isArray(wire)) {
+    throw capacitiesCatalogError("catalog must be an object");
+  }
+  const spaceId = wire.space_id;
+  if (!isCanonicalCapacitiesStructureId(spaceId)) {
+    throw capacitiesCatalogError("space_id must be a canonical id");
+  }
+  if (!Array.isArray(wire.structures)) {
+    throw capacitiesCatalogError("structures must be an array");
+  }
+  const structures = wire.structures.map((raw: unknown): CapacitiesCatalogStructure => {
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+      throw capacitiesCatalogError("structures must contain objects");
+    }
+    const structure = raw as Wire;
+    const structureId = structure.structure_id;
+    if (!isCanonicalCapacitiesStructureId(structureId)) {
+      throw capacitiesCatalogError("structure_id must be a canonical id");
+    }
+    if (typeof structure.title !== "string" || structure.title === "") {
+      throw capacitiesCatalogError("structure title must be a non-empty string");
+    }
+    if (!Array.isArray(structure.properties)) {
+      throw capacitiesCatalogError("structure properties must be an array");
+    }
+    const properties = structure.properties.map((entry: unknown): CapacitiesCatalogProperty => {
+      if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+        throw capacitiesCatalogError("properties must contain objects");
+      }
+      const property = entry as Wire;
+      const propertyId = property.property_id;
+      if (!isCanonicalCapacitiesStructureId(propertyId)) {
+        throw capacitiesCatalogError("property_id must be a canonical id");
+      }
+      if (typeof property.title !== "string" || property.title === "") {
+        throw capacitiesCatalogError("property title must be a non-empty string");
+      }
+      if (typeof property.type !== "string" || property.type === "") {
+        throw capacitiesCatalogError("property type must be a non-empty string");
+      }
+      if (typeof property.writable !== "boolean") {
+        throw capacitiesCatalogError("property writable must be a boolean");
+      }
+      if (!Array.isArray(property.label_options)) {
+        throw capacitiesCatalogError("property label_options must be an array");
+      }
+      const labelOptions = property.label_options.map(
+        (optionRaw: unknown): CapacitiesCatalogLabelOption => {
+          if (!optionRaw || typeof optionRaw !== "object" || Array.isArray(optionRaw)) {
+            throw capacitiesCatalogError("label_options must contain objects");
+          }
+          const option = optionRaw as Wire;
+          if (typeof option.id !== "string" || option.id === "") {
+            throw capacitiesCatalogError("label option id must be a non-empty string");
+          }
+          if (typeof option.title !== "string" || option.title === "") {
+            throw capacitiesCatalogError("label option title must be a non-empty string");
+          }
+          return { id: option.id, title: option.title };
+        },
+      );
+      return {
+        propertyId,
+        title: property.title,
+        type: property.type,
+        writable: property.writable,
+        labelOptions,
+      };
+    });
+    return { structureId, title: structure.title, properties };
+  });
+  if (!Array.isArray(wire.warnings)) {
+    throw capacitiesCatalogError("warnings must be an array");
+  }
+  return {
+    spaceId,
+    structures,
+    warnings: wire.warnings.map((warning: unknown) => String(warning)),
   };
 }
 
