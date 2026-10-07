@@ -637,15 +637,15 @@ class TestOpenRouterProvider:
         assert cap["timeout"] == j.QUERY_TIMEOUT_S
 
     def test_missing_model_env_uses_qualified_luna_default(self):
-        assert j._configured_openrouter_model({}) == "openai/gpt-5.6-luna"
+        assert j._configured_openrouter_model({}) == "openai/gpt-6-luna"
         assert j._configured_openrouter_model({
-            "TDTB_JUDGMENT_MODEL": "openrouter/deepseek/deepseek-v4-pro",
-        }) == "openrouter/deepseek/deepseek-v4-pro"
+            "TDTB_JUDGMENT_MODEL": "openrouter/deepseek/deepseek-v4.1-flash",
+        }) == "openrouter/deepseek/deepseek-v4.1-flash"
 
     def test_openrouter_payload_requires_strict_schema_and_provider_support(self, monkeypatch):
         import asyncio
         monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-test")
-        monkeypatch.setattr(j, "OPENROUTER_MODEL", "deepseek/deepseek-v4-pro")
+        monkeypatch.setattr(j, "OPENROUTER_MODEL", "deepseek/deepseek-v4.1-flash")
         cap = self._fake_client(
             monkeypatch,
             {"choices": [{"message": {"content": '{"sequence": []}'}}]},
@@ -664,11 +664,11 @@ class TestOpenRouterProvider:
     def test_openai_models_omit_temperature(self, monkeypatch):
         """GPT-5-family endpoints reject temperature, and require_parameters
         turns that into a 404 "no endpoints found" for the WHOLE request —
-        verified live 2026-07-27 (openai/gpt-5.6-luna succeeds the moment
+        verified live 2026-07-27 (openai/gpt-6-luna succeeds the moment
         temperature is dropped, fails with it present)."""
         import asyncio
         monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-test")
-        monkeypatch.setattr(j, "OPENROUTER_MODEL", "openai/gpt-5.6-luna")
+        monkeypatch.setattr(j, "OPENROUTER_MODEL", "openai/gpt-6-luna")
         cap = self._fake_client(
             monkeypatch,
             {"choices": [{"message": {"content": '{"sequence": []}'}}]},

@@ -57,7 +57,7 @@ PROVIDER = os.environ.get("TDTB_JUDGMENT_PROVIDER", "openrouter")
 # pins this explicitly, but the code default must agree so a missing or stale
 # service environment cannot silently fall back to the retired DeepSeek Flash
 # route. DeepSeek variants remain explicit overrides for qualification only.
-DEFAULT_OPENROUTER_MODEL = "openai/gpt-5.6-luna"
+DEFAULT_OPENROUTER_MODEL = "openai/gpt-6-luna"
 
 
 def _configured_openrouter_model(environ: Mapping[str, str] | None = None) -> str:
@@ -196,7 +196,7 @@ async def _run_query_openrouter(system_prompt: str, user_prompt: str) -> str:
     # structured-JSON transform: near-deterministic output wanted. But GPT-5
     # family endpoints REJECT temperature, and with require_parameters that
     # becomes a 404 "no endpoints found" for the whole request (verified
-    # 2026-07-27: identical payload succeeds on openai/gpt-5.6-luna the moment
+    # 2026-07-27: identical payload succeeds on openai/gpt-6-luna the moment
     # temperature is dropped). Determinism for those models rides on the
     # strict response_format instead.
     if not OPENROUTER_MODEL.startswith("openai/"):

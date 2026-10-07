@@ -57,7 +57,7 @@ class TestRouteShape:
         assert r.status_code == 200
         assert r.json() == {
             "status": "ok",
-            "judgment_model": "openai/gpt-5.6-luna",
+            "judgment_model": "openai/gpt-6-luna",
         }
 
     def test_config_tokenless_bootstrap(self, client):
