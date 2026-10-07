@@ -9,6 +9,7 @@
    shell. */
 
 import { useEffect, useState } from "preact/hooks";
+import { CapacitiesSourceEditor } from "./CapacitiesSourceEditor";
 import { useApp, useAppState } from "./context";
 import type {
   AssignedItem,
@@ -617,6 +618,15 @@ export function CapacitiesSettingsPanel({ active }: { active: boolean }) {
               </button>
             </div>
           </>
+        )}
+        {/* The mapping editor owns its own read/save route and save
+            lifecycle, but it mounts only once the settings read has
+            settled: the shell's destination-focus helper lands on the
+            panel's FIRST h3, and this section must not introduce one (while
+            the settings sections are absent) before the panel's own heading
+            exists. It stays available when the settings read failed. */}
+        {phase !== "loading" && (
+          <CapacitiesSourceEditor structureTitleOf={structureTitleOf} />
         )}
     </div>
   );
