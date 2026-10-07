@@ -5,7 +5,9 @@
    ordinary failures (a 500 and the route's OTHER 409), order-preserving
    value lists, explicit-only structure removal, display titles, and the
    discovery step: catalog rendering, id-titled structures, add-to-mapping
-   with every role unconfigured, failure classes, and draft/save isolation. */
+   with every role unconfigured, failure classes, and draft/save isolation,
+   and field choices: per-structure property datalists, value-list label
+   options, plain free text with no catalog, and no auto-fill. */
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, waitFor, within } from "@testing-library/preact";
@@ -631,6 +633,37 @@ function unconfiguredRow(structureId: string): CapacitiesSourceStructure {
   };
 }
 
+/** Two rows whose structures the fixture catalog really holds: RootTask
+    names the operator's real assignment property, and custom-project names
+    its status property and no assignment property at all. RootTask carries
+    a canonical title id so the full save body can cross the wire projection. */
+const choicesFixture: CapacitiesSource = {
+  version: 1,
+  revision: 2,
+  spaceId: "space-1",
+  structures: [
+    {
+      ...unconfiguredRow("RootTask"),
+      titleProperty: "name",
+      assignmentProperty: ASSIGNED_PROPERTY,
+    },
+    { ...unconfiguredRow("custom-project"), statusProperty: "status-prop" },
+  ],
+};
+
+/** The datalist choices a field offers: [] when it has no datalist, otherwise
+    each option's value and its visible label. */
+function choicesOf(input: HTMLElement): { value: string; label: string }[] {
+  const listId = input.getAttribute("list");
+  if (listId === null) return [];
+  const datalist = document.getElementById(listId);
+  if (datalist === null) return [];
+  return Array.from(datalist.querySelectorAll("option")).map((option) => ({
+    value: option.getAttribute("value") ?? "",
+    label: option.textContent ?? "",
+  }));
+}
+
 describe("CapacitiesSourceEditor discovery", () => {
   it("renders discovered ids, titles, types, and label options and never saves", async () => {
     const { h, rendered } = await openEditor({
@@ -981,5 +1014,297 @@ describe("CapacitiesSourceEditor discovery", () => {
     // The draft still holds both rows exactly as loaded.
     expect(rendered.getByLabelText("Structure ID for Project")).toBeTruthy();
     expect(rendered.getByLabelText("Structure ID for Task")).toBeTruthy();
+  });
+});
+
+/* -- Field choices ----------------------------------------------------------- */
+
+describe("CapacitiesSourceEditor field choices", () => {
+  it("offers each property field its own structure's ids and no other structure's", async () => {
+    const { h, rendered } = await openEditor({ source: null, persisted: false });
+    await waitFor(() =>
+      expect(
+        rendered.getByText(/No Capacities source mapping has been saved/),
+      ).toBeTruthy(),
+    );
+    fireEvent.input(rendered.getByLabelText("Capacities space id"), {
+      target: { value: "space-1" },
+    });
+    vi.spyOn(h.controller, "discoverCapacitiesSource").mockResolvedValue(
+      catalogFixture,
+    );
+    fireEvent.click(
+      rendered.getByRole("button", { name: "Discover from Capacities" }),
+    );
+
+    // Both structures enter the draft through the real per-row action.
+    fireEvent.click(
+      await waitFor(() =>
+        rendered.getByRole("button", { name: "Add custom-project to mapping" }),
+      ),
+    );
+    fireEvent.click(
+      rendered.getByRole("button", { name: "Add RootTask to mapping" }),
+    );
+
+    // The value is the raw property id; the visible label names title/type.
+    const title = rendered.getByLabelText(
+      "Title property for custom-project",
+    ) as HTMLInputElement;
+    expect(choicesOf(title)).toEqual([
+      { value: "name-prop", label: "Name · title" },
+      { value: "status-prop", label: "Status · label" },
+      { value: "due-prop", label: "Due · date" },
+    ]);
+    // The other row's structure contributes nothing to this row.
+    expect(choicesOf(title).map((choice) => choice.value)).not.toContain(
+      ASSIGNED_PROPERTY,
+    );
+    expect(choicesOf(title).map((choice) => choice.value)).not.toContain(
+      "completed-prop",
+    );
+
+    const duration = rendered.getByLabelText(
+      "Duration property for RootTask",
+    ) as HTMLInputElement;
+    expect(choicesOf(duration).map((choice) => choice.value)).toEqual([
+      ASSIGNED_PROPERTY,
+      "completed-prop",
+    ]);
+    expect(choicesOf(duration).map((choice) => choice.value)).not.toContain(
+      "name-prop",
+    );
+
+    // A structure the catalog does not hold offers no choices at all.
+    fireEvent.input(rendered.getByLabelText("Structure ID for custom-project"), {
+      target: { value: "not-in-catalog" },
+    });
+    const unmatched = rendered.getByLabelText(
+      "Title property for not-in-catalog",
+    ) as HTMLInputElement;
+    expect(unmatched.getAttribute("list")).toBeNull();
+    expect(choicesOf(unmatched)).toEqual([]);
+  });
+
+  it("offers each value list its own property's label options and appends the exact id", async () => {
+    const { h, rendered } = await openEditor({
+      source: choicesFixture,
+      persisted: true,
+    });
+    await waitFor(() =>
+      expect(
+        rendered.getByLabelText("Assignment property for RootTask"),
+      ).toBeTruthy(),
+    );
+    vi.spyOn(h.controller, "discoverCapacitiesSource").mockResolvedValue(
+      catalogFixture,
+    );
+    fireEvent.click(
+      rendered.getByRole("button", { name: "Discover from Capacities" }),
+    );
+
+    // The option id is the chip's value; the option title is its label.
+    const assignmentGroup = await waitFor(() =>
+      rendered.getByRole("group", {
+        name: "Discovered assignment values for RootTask",
+      }),
+    );
+    const meegy = within(assignmentGroup).getByRole("button", { name: "Meegy" });
+    const adam = within(assignmentGroup).getByRole("button", { name: "Adam" });
+    expect(meegy.getAttribute("value")).toBe("assignee-meegy");
+    expect(adam.getAttribute("value")).toBe("assignee-adam");
+
+    const openStatusGroup = rendered.getByRole("group", {
+      name: "Discovered open status values for custom-project",
+    });
+    const active = within(openStatusGroup).getByRole("button", { name: "Active" });
+    expect(active.getAttribute("value")).toBe("active");
+
+    // Offering is not filling: both lists stay empty until the operator acts.
+    const assignmentValues = rendered.getByLabelText(
+      "Assignment values for RootTask",
+    ) as HTMLTextAreaElement;
+    const openStatusValues = rendered.getByLabelText(
+      "Open status values for custom-project",
+    ) as HTMLTextAreaElement;
+    expect(assignmentValues.value).toBe("");
+    expect(openStatusValues.value).toBe("");
+
+    fireEvent.click(meegy);
+    expect(assignmentValues.value).toBe("assignee-meegy");
+    fireEvent.click(adam);
+    expect(assignmentValues.value).toBe("assignee-meegy\nassignee-adam");
+    // An id already present is appended only once.
+    fireEvent.click(meegy);
+    expect(assignmentValues.value).toBe("assignee-meegy\nassignee-adam");
+
+    fireEvent.click(active);
+    expect(openStatusValues.value).toBe("active");
+
+    // A property with no label options offers nothing.
+    fireEvent.input(rendered.getByLabelText("Status property for custom-project"), {
+      target: { value: "name-prop" },
+    });
+    expect(
+      rendered.queryByRole("group", {
+        name: "Discovered open status values for custom-project",
+      }),
+    ).toBeNull();
+    fireEvent.input(rendered.getByLabelText("Assignment property for RootTask"), {
+      target: { value: "completed-prop" },
+    });
+    expect(
+      rendered.queryByRole("group", {
+        name: "Discovered assignment values for RootTask",
+      }),
+    ).toBeNull();
+  });
+
+  it("keeps every field a plain free-text field when no catalog exists", async () => {
+    const { h, rendered } = await openEditor({
+      source: recordFixture,
+      persisted: true,
+    });
+    await waitFor(() =>
+      expect(rendered.getByLabelText("Duration property for Project")).toBeTruthy(),
+    );
+    // No discovery has run: no datalist, no list binding, no choice chips.
+    expect(rendered.container.querySelectorAll("datalist").length).toBe(0);
+    expect(rendered.container.querySelectorAll("[list]").length).toBe(0);
+    expect(
+      rendered.container.querySelectorAll(".capacities-source-choices").length,
+    ).toBe(0);
+
+    // The editor is still fully usable without discovery: type and save.
+    fireEvent.input(rendered.getByLabelText("Duration property for Project"), {
+      target: { value: "typed-duration" },
+    });
+    const save = vi.spyOn(h.controller, "saveCapacitiesSource").mockResolvedValue({
+      source: savedRecord(5, [
+        { ...recordFixture.structures[0], durationProperty: "typed-duration" },
+        { ...recordFixture.structures[1] },
+      ]),
+      persisted: true,
+    });
+    fireEvent.click(rendered.getByRole("button", { name: "Save mapping" }));
+    await waitFor(() => expect(save).toHaveBeenCalledTimes(1));
+    expect(save.mock.calls[0][0].structures[0].durationProperty).toBe(
+      "typed-duration",
+    );
+  });
+
+  it("keeps an unlisted value typed into a field that has choices", async () => {
+    const { h, rendered } = await openEditor({
+      source: choicesFixture,
+      persisted: true,
+    });
+    await waitFor(() =>
+      expect(
+        rendered.getByLabelText("Title property for custom-project"),
+      ).toBeTruthy(),
+    );
+    vi.spyOn(h.controller, "discoverCapacitiesSource").mockResolvedValue(
+      catalogFixture,
+    );
+    fireEvent.click(
+      rendered.getByRole("button", { name: "Discover from Capacities" }),
+    );
+    await waitFor(() =>
+      expect(
+        choicesOf(
+          rendered.getByLabelText(
+            "Title property for custom-project",
+          ) as HTMLInputElement,
+        ).length,
+      ).toBe(3),
+    );
+
+    // The catalog does not hold this id; the field still accepts it verbatim.
+    const blind = "blindly-typed-property";
+    fireEvent.input(rendered.getByLabelText("Title property for custom-project"), {
+      target: { value: blind },
+    });
+    expect(
+      (rendered.getByLabelText("Title property for custom-project") as HTMLInputElement)
+        .value,
+    ).toBe(blind);
+
+    const save = vi.spyOn(h.controller, "saveCapacitiesSource").mockResolvedValue({
+      source: { ...choicesFixture, revision: 3 },
+      persisted: true,
+    });
+    fireEvent.click(rendered.getByRole("button", { name: "Save mapping" }));
+    await waitFor(() => expect(save).toHaveBeenCalledTimes(1));
+    expect(save.mock.calls[0][0].structures[1].titleProperty).toBe(blind);
+    expect(
+      capacitiesSourceToWire(save.mock.calls[0][0]).structures[1].title_property,
+    ).toBe(blind);
+  });
+
+  it("fills nothing when discovery returns a catalog matching the rows", async () => {
+    const { h, rendered } = await openEditor({
+      source: choicesFixture,
+      persisted: true,
+    });
+    await waitFor(() =>
+      expect(
+        rendered.getByLabelText("Title property for custom-project"),
+      ).toBeTruthy(),
+    );
+    const save = vi.spyOn(h.controller, "saveCapacitiesSource");
+    vi.spyOn(h.controller, "discoverCapacitiesSource").mockResolvedValue(
+      catalogFixture,
+    );
+    fireEvent.click(
+      rendered.getByRole("button", { name: "Discover from Capacities" }),
+    );
+    await waitFor(() =>
+      expect(
+        rendered.getByRole("region", {
+          name: "Discovered Capacities structures",
+        }),
+      ).toBeTruthy(),
+    );
+
+    // Both rows match the catalog, offers appear, and yet every field still
+    // holds exactly what the loaded record held: nothing was inferred or
+    // populated, including the value lists whose properties offer options.
+    expect(
+      (rendered.getByLabelText("Title property for custom-project") as HTMLInputElement)
+        .value,
+    ).toBe("");
+    expect(
+      (rendered.getByLabelText("Status property for custom-project") as HTMLInputElement)
+        .value,
+    ).toBe("status-prop");
+    expect(
+      (
+        rendered.getByLabelText(
+          "Open status values for custom-project",
+        ) as HTMLTextAreaElement
+      ).value,
+    ).toBe("");
+    expect(
+      (rendered.getByLabelText("Assignment property for RootTask") as HTMLInputElement)
+        .value,
+    ).toBe(ASSIGNED_PROPERTY);
+    expect(
+      (
+        rendered.getByLabelText(
+          "Assignment values for RootTask",
+        ) as HTMLTextAreaElement
+      ).value,
+    ).toBe("");
+    expect(save).not.toHaveBeenCalled();
+
+    // The strongest proof: a save carried no catalog-derived change.
+    save.mockResolvedValue({ source: choicesFixture, persisted: true });
+    fireEvent.click(rendered.getByRole("button", { name: "Save mapping" }));
+    await waitFor(() => expect(save).toHaveBeenCalledTimes(1));
+    expect(save.mock.calls[0][0]).toEqual({
+      expectedRevision: choicesFixture.revision,
+      spaceId: choicesFixture.spaceId,
+      structures: choicesFixture.structures,
+    });
   });
 });

@@ -30,12 +30,23 @@
    - A failed discovery keeps the draft byte-identical, performs no save,
      and classifies itself from the ApiError status: 503 credentials (an
      operator must restore them), 429 rate limit (wait and retry), anything
-     else generic. */
+     else generic.
+   - The catalog is also offered as field choices, and only as suggestions:
+     a property field suggests its row's own structure's property ids
+     through a datalist (id as the value, title and type as the label), and
+     each value list suggests its property's label options as one-click
+     append chips (id as the value, title as the label). Nothing is ever
+     preselected, populated, or inferred from a name, title, or type; a
+     value the catalog does not list can still be typed and saved; and with
+     no catalog every field is exactly the same free-text field it was.
+     Property values stay opaque: nothing is trimmed, normalised, sorted,
+     or case-folded. */
 
-import { useEffect, useState } from "preact/hooks";
+import { useEffect, useId, useState } from "preact/hooks";
 import { ApiError, capacitiesSourceConflictOf } from "../adapters/api";
 import type {
   CapacitiesCatalog,
+  CapacitiesCatalogStructure,
   CapacitiesSource,
   CapacitiesSourceDraft,
   CapacitiesSourceRead,
@@ -157,23 +168,36 @@ function discoveryFailureOf(error: unknown): DiscoveryFailure {
   return { kind: "failed", message: messageOf(error) };
 }
 
+/** One suggested field value: `value` is exactly what a mapping stores and
+    `label` is display metadata. Choices only ever suggest. */
+interface FieldChoice {
+  value: string;
+  label: string;
+}
+
 /** One property field. The input value is the stored value verbatim; an
     emptied field reports null and is the caller's to clear (or, for the
     non-nullable fields, to keep as an empty string, which the server
-    rejects loudly rather than the client guessing a value). */
+    rejects loudly rather than the client guessing a value). An optional
+    `choices` list renders as a datalist: it suggests, never constrains, so
+    any value — listed or not — can still be typed and saved. */
 function PropertyField({
   label,
   ariaLabel,
   value,
   placeholder,
+  choices,
   onChange,
 }: {
   label: string;
   ariaLabel: string;
   value: string | null;
   placeholder: string;
+  choices?: FieldChoice[];
   onChange: (value: string | null) => void;
 }) {
+  const listId = useId();
+  const offered = choices !== undefined && choices.length > 0 ? choices : null;
   return (
     <label class="capacities-source-field">
       <span>{label}</span>
@@ -182,12 +206,77 @@ function PropertyField({
         value={value ?? ""}
         placeholder={placeholder}
         aria-label={ariaLabel}
+        list={offered === null ? undefined : listId}
         onInput={(e) => {
           const text = e.currentTarget.value;
           onChange(text === "" ? null : text);
         }}
       />
+      {offered !== null && (
+        <datalist id={listId}>
+          {offered.map((choice) => (
+            <option key={choice.value} value={choice.value}>
+              {choice.label}
+            </option>
+          ))}
+        </datalist>
+      )}
     </label>
+  );
+}
+
+/** The row's own structure from the discovery catalog, matched on the raw
+    structure id. No catalog, a blank id, or no match means no choices. */
+function discoveredStructureOf(
+  catalog: CapacitiesCatalog | null,
+  structureId: string,
+): CapacitiesCatalogStructure | null {
+  if (catalog === null || structureId === "") return null;
+  return (
+    catalog.structures.find(
+      (structure) => structure.structureId === structureId,
+    ) ?? null
+  );
+}
+
+/** Exact-match append for a value list: an id already present stays put, a
+    new one lands at the end. Order is preserved and nothing is normalised. */
+function withChoice(values: string[], value: string): string[] {
+  return values.includes(value) ? values : [...values, value];
+}
+
+/** A value list's label options as one-click append chips. Each chip carries
+    the option's id as its value and its title as its label; a click appends
+    the exact id as a new line only when it is not already present. Nothing
+    is preselected and nothing is inferred from a property name or type. */
+function ValueChoices({
+  ariaLabel,
+  choices,
+  onAppend,
+}: {
+  ariaLabel: string;
+  choices: FieldChoice[];
+  onAppend: (value: string) => void;
+}) {
+  if (choices.length === 0) return null;
+  return (
+    <div
+      class="capacities-source-choices capacities-source-field--wide"
+      role="group"
+      aria-label={ariaLabel}
+    >
+      <small>Click a discovered value to append it.</small>
+      {choices.map((choice) => (
+        <button
+          class="chip chip--btn"
+          key={choice.value}
+          value={choice.value}
+          onClick={() => onAppend(choice.value)}
+        >
+          {choice.label}
+        </button>
+      ))}
+    </div>
   );
 }
 
@@ -195,12 +284,14 @@ function StructureRow({
   row,
   index,
   title,
+  discovered,
   onEdit,
   onRemove,
 }: {
   row: CapacitiesSourceStructure;
   index: number;
   title: string | null;
+  discovered: CapacitiesCatalogStructure | null;
   onEdit: (
     update: (row: CapacitiesSourceStructure) => CapacitiesSourceStructure,
   ) => void;
@@ -211,6 +302,25 @@ function StructureRow({
   // an observed title leads, and a title that merely repeats the id is
   // dropped by the caller, so the id never renders twice.
   const rowRef = row.structureId === "" ? `structure ${index + 1}` : row.structureId;
+  // Every role field suggests that row's own structure's properties, and
+  // each value list suggests the label options of the property it names.
+  // Both are offers only: nothing here reads a catalog value into the row.
+  const propertyChoices: FieldChoice[] = (discovered?.properties ?? []).map(
+    (property) => ({
+      value: property.propertyId,
+      label: `${property.title} · ${property.type}`,
+    }),
+  );
+  const labelChoicesOf = (propertyId: string | null): FieldChoice[] => {
+    if (propertyId === null) return [];
+    const property = discovered?.properties.find(
+      (candidate) => candidate.propertyId === propertyId,
+    );
+    return (property?.labelOptions ?? []).map((option) => ({
+      value: option.id,
+      label: option.title,
+    }));
+  };
   return (
     <article class="capacities-source-row">
       <div class="capacities-source-row__head">
@@ -241,6 +351,7 @@ function StructureRow({
           ariaLabel={`Title property for ${rowRef}`}
           value={row.titleProperty}
           placeholder="property id"
+          choices={propertyChoices}
           onChange={(next) =>
             onEdit((current) => ({ ...current, titleProperty: next ?? "" }))
           }
@@ -250,6 +361,7 @@ function StructureRow({
           ariaLabel={`Status property for ${rowRef}`}
           value={row.statusProperty}
           placeholder="unset"
+          choices={propertyChoices}
           onChange={(next) =>
             onEdit((current) => ({ ...current, statusProperty: next }))
           }
@@ -268,11 +380,22 @@ function StructureRow({
           />
           <small>One value per line; stored in exactly this order.</small>
         </label>
+        <ValueChoices
+          ariaLabel={`Discovered open status values for ${rowRef}`}
+          choices={labelChoicesOf(row.statusProperty)}
+          onAppend={(value) =>
+            onEdit((current) => ({
+              ...current,
+              openStatusValues: withChoice(current.openStatusValues, value),
+            }))
+          }
+        />
         <PropertyField
           label="Date property"
           ariaLabel={`Date property for ${rowRef}`}
           value={row.dateProperty}
           placeholder="unset"
+          choices={propertyChoices}
           onChange={(next) => onEdit((current) => ({ ...current, dateProperty: next }))}
         />
         <PropertyField
@@ -280,6 +403,7 @@ function StructureRow({
           ariaLabel={`Deadline property for ${rowRef}`}
           value={row.deadlineProperty}
           placeholder="unset"
+          choices={propertyChoices}
           onChange={(next) =>
             onEdit((current) => ({ ...current, deadlineProperty: next }))
           }
@@ -289,6 +413,7 @@ function StructureRow({
           ariaLabel={`Duration property for ${rowRef}`}
           value={row.durationProperty}
           placeholder="unset"
+          choices={propertyChoices}
           onChange={(next) =>
             onEdit((current) => ({ ...current, durationProperty: next }))
           }
@@ -298,6 +423,7 @@ function StructureRow({
           ariaLabel={`Assignment property for ${rowRef}`}
           value={row.assignmentProperty}
           placeholder="unset"
+          choices={propertyChoices}
           onChange={(next) =>
             onEdit((current) => ({ ...current, assignmentProperty: next }))
           }
@@ -316,11 +442,22 @@ function StructureRow({
           />
           <small>One value per line; stored in exactly this order.</small>
         </label>
+        <ValueChoices
+          ariaLabel={`Discovered assignment values for ${rowRef}`}
+          choices={labelChoicesOf(row.assignmentProperty)}
+          onAppend={(value) =>
+            onEdit((current) => ({
+              ...current,
+              assignmentValues: withChoice(current.assignmentValues, value),
+            }))
+          }
+        />
         <PropertyField
           label="Completion property"
           ariaLabel={`Completion property for ${rowRef}`}
           value={row.completionProperty}
           placeholder="unset"
+          choices={propertyChoices}
           onChange={(next) =>
             onEdit((current) => ({ ...current, completionProperty: next }))
           }
@@ -670,6 +807,7 @@ export function CapacitiesSourceEditor({
                     row={row}
                     index={index}
                     title={structureTitleOf(row.structureId)}
+                    discovered={discoveredStructureOf(catalog, row.structureId)}
                     onEdit={(update) => editStructure(index, update)}
                     onRemove={() => removeStructure(index)}
                   />

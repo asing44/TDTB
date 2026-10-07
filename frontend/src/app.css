@@ -4141,6 +4141,21 @@ body {
 .capacities-source-field small {
   font-size: 10px;
 }
+.capacities-source-choices {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.capacities-source-choices small {
+  width: 100%;
+  color: var(--t-muted);
+  font-size: 10px;
+}
+.capacities-source-choices .chip {
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
 .capacities-source-add {
   margin-top: 10px;
 }
