@@ -108,6 +108,7 @@ describe("CapacitiesSettingsDrawer", () => {
       activeStatuses: ["active", "In Progress"],
       assignedStructures: {},
       availableStructures: ["custom-project", "0d194525-c5a1-4af5-bb62-202b83006b5e"],
+      structureTitles: {},
     });
     h.store.dispatch({ type: "UI", patch: { capacitiesSettingsOpen: true } });
     const rendered = h.ui(<CapacitiesSettingsDrawer />);
@@ -181,6 +182,7 @@ describe("CapacitiesSettingsDrawer", () => {
       activeStatuses: ["active"],
       assignedStructures: {},
       availableStructures: ["custom-project", "0d194525-c5a1-4af5-bb62-202b83006b5e"],
+      structureTitles: {},
     });
     h.store.dispatch({ type: "UI", patch: { capacitiesSettingsOpen: true } });
     const rendered = h.ui(<CapacitiesSettingsDrawer />);
@@ -218,6 +220,7 @@ describe("CapacitiesSettingsDrawer", () => {
       activeStatuses: ["active"],
       assignedStructures: {},
       availableStructures: ["custom-project"],
+      structureTitles: {},
     });
     h.store.dispatch({ type: "UI", patch: { capacitiesSettingsOpen: true } });
     const rendered = h.ui(<CapacitiesSettingsDrawer />);
@@ -256,6 +259,7 @@ describe("CapacitiesSettingsDrawer", () => {
       activeStatuses: [],
       assignedStructures: {},
       availableStructures: [],
+      structureTitles: {},
     });
     h.store.dispatch({ type: "UI", patch: { capacitiesSettingsOpen: true } });
     const rendered = h.ui(<CapacitiesSettingsDrawer />);
@@ -283,6 +287,7 @@ describe("CapacitiesSettingsDrawer", () => {
       activeStatuses: ["In Progress", "active"],
       assignedStructures: {},
       availableStructures: ["custom-project", "0d194525-c5a1-4af5-bb62-202b83006b5e"],
+      structureTitles: {},
     });
     h.store.dispatch({ type: "UI", patch: { capacitiesSettingsOpen: true } });
     const rendered = h.ui(<CapacitiesSettingsDrawer />);
@@ -368,6 +373,7 @@ describe("CapacitiesSettingsDrawer", () => {
       activeStatuses: ["active"],
       assignedStructures: { "custom-project": "old-prop" },
       availableStructures: ["custom-project"],
+      structureTitles: {},
     });
     h.store.dispatch({ type: "UI", patch: { capacitiesSettingsOpen: true } });
     const rendered = h.ui(<CapacitiesSettingsDrawer />);
@@ -404,6 +410,7 @@ describe("CapacitiesSettingsDrawer", () => {
         "custom-project": "current-prop",
       },
       availableStructures: ["custom-project"],
+      structureTitles: {},
     });
     h.store.dispatch({ type: "UI", patch: { capacitiesSettingsOpen: true } });
     const rendered = h.ui(<CapacitiesSettingsDrawer />);
@@ -457,6 +464,7 @@ describe("CapacitiesSettingsDrawer", () => {
       activeStatuses: ["active"],
       assignedStructures: { "custom-project": "assigned-prop" },
       availableStructures: ["custom-project"],
+      structureTitles: {},
     });
     h.store.dispatch({ type: "UI", patch: { capacitiesSettingsOpen: true } });
     const rendered = h.ui(<CapacitiesSettingsDrawer />);
@@ -490,6 +498,7 @@ describe("CapacitiesSettingsDrawer", () => {
       activeStatuses: ["active"],
       assignedStructures: {},
       availableStructures: ["custom-project"],
+      structureTitles: {},
     });
     h.store.dispatch({ type: "UI", patch: { capacitiesSettingsOpen: true } });
     const rendered = h.ui(<CapacitiesSettingsDrawer />);

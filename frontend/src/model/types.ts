@@ -53,10 +53,12 @@ export interface CapacitiesSettings {
   /** Read-only display titles for the `availableStructures` ids: the drawer
       shows a structure's title when one was observed and falls back to the
       raw id otherwise, so an untitled structure has no entry. Additive
-      advisory UI metadata from the same Capacities source mapping; optional
-      because an older backend omits it, and the settings projection always
-      carries the key — empty when no title was observed. */
-  structureTitles?: Record<string, string>;
+      advisory UI metadata from the same Capacities source mapping. An older
+      backend omits it on the wire, which the projection tolerates by
+      projecting an empty map — so the projected field is always present and
+      consumers never handle an absent value, exactly like
+      `availableStructures`. */
+  structureTitles: Record<string, string>;
 }
 
 /** Full replacement body for the settings save route. */

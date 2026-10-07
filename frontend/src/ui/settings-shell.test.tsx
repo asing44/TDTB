@@ -45,6 +45,7 @@ function capacitiesFixture(
     activeStatuses: ["active"],
     assignedStructures: {},
     availableStructures: [],
+    structureTitles: {},
     ...overrides,
   };
 }

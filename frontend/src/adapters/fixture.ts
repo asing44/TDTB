@@ -157,6 +157,12 @@ export class FixtureAdapter implements Adapter {
       "custom-project",
       "0d194525-c5a1-4af5-bb62-202b83006b5e",
     ],
+    // Deliberately partial: one structure has an observed title and one does
+    // not, so the title-with-fallback-to-id path is exercised rather than
+    // assumed.
+    structureTitles: {
+      "0d194525-c5a1-4af5-bb62-202b83006b5e": "Project",
+    },
   };
   private tagExclusionSettings: TagExclusionSettings = {
     version: 1,
@@ -347,6 +353,9 @@ export class FixtureAdapter implements Adapter {
       activeStatuses: [...draft.activeStatuses].sort(),
       assignedStructures: { ...draft.assignedStructures },
       availableStructures: [...this.capacitiesSettings.availableStructures],
+      // Titles are read-only advisory metadata, never part of the save
+      // payload, so a save carries the observed ones through unchanged.
+      structureTitles: { ...this.capacitiesSettings.structureTitles },
     };
     return structuredClone(this.capacitiesSettings);
   }
