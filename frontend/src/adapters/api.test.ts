@@ -4,7 +4,7 @@
    fixed-input gate. */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { ApiAdapter, ApiError } from "./api";
+import { ApiAdapter, ApiError, capacitiesSourceConflictOf } from "./api";
 
 import planInputs from "./contract-fixtures/plan-inputs.json";
 import planInputsDegraded from "./contract-fixtures/plan-inputs-degraded.json";
@@ -833,5 +833,143 @@ describe("tag exclusion settings routes", () => {
     const a = new ApiAdapter();
 
     await expect(a.loadTagExclusionSettings()).rejects.toThrow(/dimension/);
+  });
+});
+
+describe("Capacities source mapping", () => {
+  const sourceRecord = {
+    version: 1,
+    revision: 4,
+    space_id: "space-1",
+    structures: [
+      {
+        structure_id: "project",
+        title_property: "title-prop",
+        status_property: "status-prop",
+        open_status_values: ["In Progress", "On Hold"],
+        date_property: null,
+        deadline_property: null,
+        duration_property: "duration-prop",
+        assignment_property: "assignment-prop",
+        assignment_values: ["Adam", "Meegy"],
+        completion_property: null,
+        completion_value: null,
+      },
+    ],
+  };
+
+  it("reads an absent source mapping without a token and without throwing", async () => {
+    route("/settings/capacities/source", { source: null, persisted: false });
+
+    const source = await new ApiAdapter().loadCapacitiesSource();
+
+    expect(source).toEqual({ source: null, persisted: false });
+    expect(calls.map((c) => c.path)).toEqual(["/settings/capacities/source"]);
+    expect(calls[0].init).toBeUndefined();
+  });
+
+  it("round-trips a full record through the read and the save body", async () => {
+    route("/settings/capacities/source", { source: sourceRecord, persisted: true });
+    const adapter = new ApiAdapter();
+    const loaded = await adapter.loadCapacitiesSource();
+    expect(loaded.source).toEqual({
+      version: 1,
+      revision: 4,
+      spaceId: "space-1",
+      structures: [
+        {
+          structureId: "project",
+          titleProperty: "title-prop",
+          statusProperty: "status-prop",
+          openStatusValues: ["In Progress", "On Hold"],
+          dateProperty: null,
+          deadlineProperty: null,
+          durationProperty: "duration-prop",
+          assignmentProperty: "assignment-prop",
+          assignmentValues: ["Adam", "Meegy"],
+          completionProperty: null,
+          completionValue: null,
+        },
+      ],
+    });
+
+    route("/settings/capacities/source/save", {
+      source: { ...sourceRecord, revision: 5 },
+      persisted: true,
+    });
+    const saved = await adapter.saveCapacitiesSource({
+      expectedRevision: loaded.source!.revision,
+      spaceId: loaded.source!.spaceId,
+      structures: loaded.source!.structures,
+    });
+
+    expect(saved.source!.revision).toBe(5);
+    // The full-replacement body carries the expected revision plus the rows
+    // exactly as modeled — nullable ids and value order included.
+    expect(postBody("/settings/capacities/source/save")).toEqual({
+      expected_revision: 4,
+      space_id: "space-1",
+      structures: sourceRecord.structures,
+    });
+  });
+
+  it("extracts both revisions from a real source-save conflict", async () => {
+    route(
+      "/settings/capacities/source/save",
+      {
+        detail: {
+          code: "capacities_source_conflict",
+          message: "Mapping changed; reload and review.",
+          expected_revision: 2,
+          current_revision: 5,
+        },
+      },
+      409,
+    );
+
+    const error = await new ApiAdapter()
+      .saveCapacitiesSource({ expectedRevision: 2, spaceId: "space-1", structures: [] })
+      .catch((e) => e);
+
+    expect(capacitiesSourceConflictOf(error)).toEqual({
+      expectedRevision: 2,
+      currentRevision: 5,
+    });
+  });
+
+  it("returns null from the extractor for any non-conflict failure", async () => {
+    route(
+      "/settings/capacities/source/save",
+      { detail: { code: "capacities_source_validation_error", message: "invalid" } },
+      422,
+    );
+    const invalid = await new ApiAdapter()
+      .saveCapacitiesSource({ expectedRevision: 0, spaceId: "space-1", structures: [] })
+      .catch((e) => e);
+    expect(capacitiesSourceConflictOf(invalid)).toBeNull();
+
+    route(
+      "/settings/capacities/source/save",
+      { detail: { code: "capacities_source_storage_error", message: "unreadable" } },
+      500,
+    );
+    const storage = await new ApiAdapter()
+      .saveCapacitiesSource({ expectedRevision: 0, spaceId: "space-1", structures: [] })
+      .catch((e) => e);
+    expect(capacitiesSourceConflictOf(storage)).toBeNull();
+
+    // The route also answers 409 for unreadable storage; that is not the
+    // stale-write conflict and must not be mistaken for one.
+    route(
+      "/settings/capacities/source/save",
+      { detail: { code: "capacities_source_storage_error", message: "unreadable" } },
+      409,
+    );
+    const storageConflict = await new ApiAdapter()
+      .saveCapacitiesSource({ expectedRevision: 0, spaceId: "space-1", structures: [] })
+      .catch((e) => e);
+    expect(capacitiesSourceConflictOf(storageConflict)).toBeNull();
+
+    expect(capacitiesSourceConflictOf(new Error("nope"))).toBeNull();
   });
 });

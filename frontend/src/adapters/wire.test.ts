@@ -10,6 +10,7 @@ import {
   capacitiesAssignmentWarnings,
   capacitiesCoverageOf,
   capacitiesSettingsToWire,
+  capacitiesSourceToWire,
   daySetupToWire,
   emptyTagCatalog,
   isCanonicalTagId,
@@ -21,6 +22,7 @@ import {
   itemIdentity,
   projectAssigned,
   projectCapacitiesSettings,
+  projectCapacitiesSource,
   projectCommitReport,
   projectDaySetup,
   projectDaySemantics,
@@ -45,6 +47,7 @@ import planInputsAllotmentOmitted from "./contract-fixtures/plan-inputs-allotmen
 import planInputsAllotmentNull from "./contract-fixtures/plan-inputs-allotment-null.json";
 import planInputsAllotmentZero from "./contract-fixtures/plan-inputs-allotment-zero.json";
 import planInputsMalformed from "./contract-fixtures/plan-inputs-malformed.json";
+import type { CapacitiesSource, CapacitiesSourceStructure } from "../model/types";
 import planInputsFingerprintChanged from "./contract-fixtures/plan-inputs-fingerprint-changed.json";
 import sequenceOk from "./contract-fixtures/sequence-ok.json";
 import validateOk from "./contract-fixtures/validate-ok.json";
@@ -1584,4 +1587,194 @@ describe("tag exclusion settings", () => {
     expect(isCanonicalTagId("habituals")).toBe(false);
     expect(isCanonicalTagId(null)).toBe(false);
   });
+});
+
+describe("Capacities source mapping (wire ↔ model)", () => {
+  const sourceWire = () => ({
+    version: 1,
+    revision: 4,
+    space_id: "space-1",
+    structures: [
+      {
+        structure_id: "project",
+        title_property: "title-prop",
+        status_property: "status-prop",
+        open_status_values: ["In Progress", "On Hold"],
+        date_property: "date-prop",
+        deadline_property: "deadline-prop",
+        duration_property: "duration-prop",
+        assignment_property: "assignment-prop",
+        assignment_values: ["Adam", "Meegy"],
+        completion_property: "completion-prop",
+        completion_value: "Done",
+      },
+      {
+        structure_id: "task",
+        title_property: "title",
+        status_property: null,
+        open_status_values: [],
+        date_property: null,
+        deadline_property: null,
+        duration_property: null,
+        assignment_property: null,
+        assignment_values: [],
+        completion_property: null,
+        completion_value: null,
+      },
+    ],
+  });
+
+  it("projects an absent record without throwing", () => {
+    expect(projectCapacitiesSource({ source: null, persisted: false })).toEqual({
+      source: null,
+      persisted: false,
+    });
+  });
+
+  it("projects every row field, including nullable ids and both value lists", () => {
+    const projected = projectCapacitiesSource({ source: sourceWire(), persisted: true });
+    expect(projected.persisted).toBe(true);
+    expect(projected.source).toEqual({
+      version: 1,
+      revision: 4,
+      spaceId: "space-1",
+      structures: [
+        {
+          structureId: "project",
+          titleProperty: "title-prop",
+          statusProperty: "status-prop",
+          openStatusValues: ["In Progress", "On Hold"],
+          dateProperty: "date-prop",
+          deadlineProperty: "deadline-prop",
+          durationProperty: "duration-prop",
+          assignmentProperty: "assignment-prop",
+          assignmentValues: ["Adam", "Meegy"],
+          completionProperty: "completion-prop",
+          completionValue: "Done",
+        },
+        {
+          structureId: "task",
+          titleProperty: "title",
+          statusProperty: null,
+          openStatusValues: [],
+          dateProperty: null,
+          deadlineProperty: null,
+          durationProperty: null,
+          assignmentProperty: null,
+          assignmentValues: [],
+          completionProperty: null,
+          completionValue: null,
+        },
+      ],
+    });
+  });
+
+  it("round-trips model → wire → model faithfully", () => {
+    const structure: CapacitiesSourceStructure = {
+      structureId: "project",
+      titleProperty: "title-prop",
+      statusProperty: "status-prop",
+      // Deliberately unsorted: order-sensitive mapping data is never reordered.
+      openStatusValues: ["On Hold", "In Progress"],
+      dateProperty: "date-prop",
+      deadlineProperty: null,
+      durationProperty: "duration-prop",
+      assignmentProperty: "assignment-prop",
+      assignmentValues: ["Meegy", "Adam"],
+      completionProperty: null,
+      completionValue: "Done",
+    };
+    const model: CapacitiesSource = {
+      version: 1,
+      revision: 7,
+      spaceId: "space-1",
+      structures: [structure],
+    };
+    const wire = capacitiesSourceToWire({
+      expectedRevision: model.revision,
+      spaceId: model.spaceId,
+      structures: model.structures,
+    });
+    expect(wire).toEqual({
+      expected_revision: 7,
+      space_id: "space-1",
+      structures: [
+        {
+          structure_id: "project",
+          title_property: "title-prop",
+          status_property: "status-prop",
+          open_status_values: ["On Hold", "In Progress"],
+          date_property: "date-prop",
+          deadline_property: null,
+          duration_property: "duration-prop",
+          assignment_property: "assignment-prop",
+          assignment_values: ["Meegy", "Adam"],
+          completion_property: null,
+          completion_value: "Done",
+        },
+      ],
+    });
+    // The save response carries the stored body (server-owned version and
+    // revision) under `source`; the projection must land on the exact model.
+    const projected = projectCapacitiesSource({
+      persisted: true,
+      source: {
+        version: model.version,
+        revision: model.revision,
+        space_id: wire.space_id,
+        structures: wire.structures,
+      },
+    });
+    expect(projected.source).toEqual(model);
+  });
+
+  it("fails closed on a malformed record or draft", () => {
+    expect(() =>
+      projectCapacitiesSource({ source: { ...sourceWire(), version: 9 }, persisted: true }),
+    ).toThrow(/unsupported/);
+    expect(() =>
+      projectCapacitiesSource({
+        persisted: true,
+        source: {
+          ...sourceWire(),
+          structures: [{ ...sourceWire().structures[0], title_property: "" }],
+        },
+      }),
+    ).toThrow(/title_property/);
+    expect(() =>
+      projectCapacitiesSource({
+        persisted: true,
+        source: {
+          ...sourceWire(),
+          structures: [{ ...sourceWire().structures[0], open_status_values: "active" }],
+        },
+      }),
+    ).toThrow(/open_status_values/);
+    expect(() =>
+      capacitiesSourceToWire({ expectedRevision: -1, spaceId: "space-1", structures: [] }),
+    ).toThrow(/expectedRevision/);
+    expect(() =>
+      capacitiesSourceToWire({
+        expectedRevision: 0,
+        spaceId: "space-1",
+        structures: [{ ...structureWithBadValue() }],
+      }),
+    ).toThrow(/openStatusValues/);
+  });
+
+  function structureWithBadValue(): CapacitiesSourceStructure {
+    return {
+      structureId: "project",
+      titleProperty: "title-prop",
+      statusProperty: null,
+      openStatusValues: [""],
+      dateProperty: null,
+      deadlineProperty: null,
+      durationProperty: null,
+      assignmentProperty: null,
+      assignmentValues: [],
+      completionProperty: null,
+      completionValue: null,
+    };
+  }
 });

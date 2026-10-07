@@ -80,6 +80,48 @@ export interface CapacitiesSettingsDraft {
   assignedStructures: Record<string, string>;
 }
 
+/** One per-structure row in the Capacities source mapping record. Property
+    ids are opaque and kept exactly as stored; a null property means that
+    role is unconfigured on the structure. The two value lists are
+    order-preserving mapping data, unlike the admission vocabularies. */
+export interface CapacitiesSourceStructure {
+  structureId: string;
+  titleProperty: string;
+  statusProperty: string | null;
+  openStatusValues: string[];
+  dateProperty: string | null;
+  deadlineProperty: string | null;
+  durationProperty: string | null;
+  assignmentProperty: string | null;
+  assignmentValues: string[];
+  completionProperty: string | null;
+  completionValue: string | null;
+}
+
+/** The vault-local Capacities source mapping record. `version` and `revision`
+    are server-owned; a save echoes `revision` as its `expectedRevision`. */
+export interface CapacitiesSource {
+  version: number;
+  revision: number;
+  spaceId: string;
+  structures: CapacitiesSourceStructure[];
+}
+
+/** Source read envelope: an absent record is `{source: null, persisted:
+    false}` and is not an error — it means no mapping has been saved yet. */
+export interface CapacitiesSourceRead {
+  source: CapacitiesSource | null;
+  persisted: boolean;
+}
+
+/** Full-replacement body for POST /settings/capacities/source/save. The
+    expected revision drives the server-side stale-write check. */
+export interface CapacitiesSourceDraft {
+  expectedRevision: number;
+  spaceId: string;
+  structures: CapacitiesSourceStructure[];
+}
+
 /** One stable tag identity in the app-managed exclusion policy. The title is
     display metadata only; matching is `(source, spaceId, tagId)` exactly. */
 export interface TagExclusionIdentity {

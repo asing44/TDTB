@@ -20,6 +20,9 @@ import type {
   CapacitiesLimit,
   CapacitiesSettings,
   CapacitiesSettingsDraft,
+  CapacitiesSourceDraft,
+  CapacitiesSourceRead,
+  CapacitiesSourceStructure,
   CapacitiesNativeTaskAutoPolicy,
   CommitReport,
   CommitSurface,
@@ -425,6 +428,181 @@ export function capacitiesSettingsToWire(draft: CapacitiesSettingsDraft): Wire {
     native_task_structures: nativeTaskStructures,
     active_statuses: activeStatuses,
     assigned_structures: assignedStructures,
+  };
+}
+
+// -- Capacities source mapping (vault-local structural mapping record) -------
+
+function capacitiesSourceError(detail: string): Error {
+  return new Error(`invalid Capacities source response: ${detail}`);
+}
+
+/** One mapping value from ``open_status_values`` / ``assignment_values``:
+    non-empty, no leading or trailing whitespace, and no whitespace other
+    than internal spaces (mirrors the backend's ``_valid_value_list``). */
+function isCapacitiesSourceValue(value: unknown): value is string {
+  if (typeof value !== "string" || value.trim().length === 0) return false;
+  if (value !== value.trim()) return false;
+  return !Array.from(value).some((char) => char !== " " && /\s/.test(char));
+}
+
+/** One value list, kept in stored order — unlike the admission vocabularies
+    these are order-sensitive mapping data and are never sorted. */
+function projectCapacitiesSourceValues(raw: unknown, key: string): string[] {
+  if (!Array.isArray(raw)) {
+    throw capacitiesSourceError(`${key} must be an array`);
+  }
+  return raw.map((value) => {
+    if (!isCapacitiesSourceValue(value)) {
+      throw capacitiesSourceError(`${key} contains an invalid value`);
+    }
+    return value;
+  });
+}
+
+function capacitiesSourceValuesToWire(values: string[], key: string): string[] {
+  if (!Array.isArray(values)) {
+    throw new Error(`${key} must be an array`);
+  }
+  for (const value of values) {
+    if (!isCapacitiesSourceValue(value)) {
+      throw new Error(`${key} contains an invalid value`);
+    }
+  }
+  return [...values];
+}
+
+/** Project one per-structure row. Property ids are opaque: validated for
+    shape only (non-empty, whitespace-free) and otherwise kept verbatim. */
+function projectCapacitiesSourceStructure(raw: unknown): CapacitiesSourceStructure {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    throw capacitiesSourceError("structures must contain objects");
+  }
+  const row = raw as Wire;
+  const propertyId = (key: string): string => {
+    const value = row[key];
+    if (!isCanonicalCapacitiesStructureId(value)) {
+      throw capacitiesSourceError(`${key} must be a canonical id`);
+    }
+    return value;
+  };
+  const optionalPropertyId = (key: string): string | null => {
+    const value = row[key];
+    if (value == null) return null;
+    if (!isCanonicalCapacitiesStructureId(value)) {
+      throw capacitiesSourceError(`${key} must be a canonical id or null`);
+    }
+    return value;
+  };
+  return {
+    structureId: propertyId("structure_id"),
+    titleProperty: propertyId("title_property"),
+    statusProperty: optionalPropertyId("status_property"),
+    openStatusValues: projectCapacitiesSourceValues(row.open_status_values, "open_status_values"),
+    dateProperty: optionalPropertyId("date_property"),
+    deadlineProperty: optionalPropertyId("deadline_property"),
+    durationProperty: optionalPropertyId("duration_property"),
+    assignmentProperty: optionalPropertyId("assignment_property"),
+    assignmentValues: projectCapacitiesSourceValues(row.assignment_values, "assignment_values"),
+    completionProperty: optionalPropertyId("completion_property"),
+    completionValue: optionalPropertyId("completion_value"),
+  };
+}
+
+/** Project the strict source read/save envelope. An absent record projects
+    as ``{source: null, persisted: false}`` — a first visit, not an error —
+    while a malformed record still fails closed. */
+export function projectCapacitiesSource(wire: Wire): CapacitiesSourceRead {
+  if (typeof wire?.persisted !== "boolean") {
+    throw capacitiesSourceError("persisted must be a boolean");
+  }
+  const raw = wire.source;
+  if (raw == null) {
+    return { source: null, persisted: wire.persisted };
+  }
+  if (typeof raw !== "object" || Array.isArray(raw)) {
+    throw capacitiesSourceError("source must be an object or null");
+  }
+  if (raw.version !== 1) {
+    throw capacitiesSourceError("version is unsupported");
+  }
+  if (typeof raw.revision !== "number" || !Number.isSafeInteger(raw.revision) || raw.revision < 0) {
+    throw capacitiesSourceError("revision must be a nonnegative safe integer");
+  }
+  if (!isCanonicalCapacitiesStructureId(raw.space_id)) {
+    throw capacitiesSourceError("space_id must be a canonical id");
+  }
+  if (!Array.isArray(raw.structures)) {
+    throw capacitiesSourceError("structures must be an array");
+  }
+  return {
+    source: {
+      version: raw.version,
+      revision: raw.revision,
+      spaceId: raw.space_id,
+      structures: raw.structures.map(projectCapacitiesSourceStructure),
+    },
+    persisted: wire.persisted,
+  };
+}
+
+/** Build the full-replacement body expected by
+    POST /settings/capacities/source/save. ``version`` and ``revision`` are
+    server-owned and deliberately absent; the expected revision rides
+    alongside the space and the exact modeled rows. */
+export function capacitiesSourceToWire(draft: CapacitiesSourceDraft): Wire {
+  if (!Number.isSafeInteger(draft.expectedRevision) || draft.expectedRevision < 0) {
+    throw new Error("expectedRevision must be a nonnegative safe integer");
+  }
+  if (!isCanonicalCapacitiesStructureId(draft.spaceId)) {
+    throw new Error("spaceId must be a canonical id");
+  }
+  if (!Array.isArray(draft.structures)) {
+    throw new Error("structures must be an array");
+  }
+  const structures = draft.structures.map((structure) => {
+    if (!isCanonicalCapacitiesStructureId(structure.structureId)) {
+      throw new Error("structureId must be a canonical id");
+    }
+    if (!isCanonicalCapacitiesStructureId(structure.titleProperty)) {
+      throw new Error("titleProperty must be a canonical id");
+    }
+    const optionalPropertyId = (value: string | null, key: string): string | null => {
+      if (value != null && !isCanonicalCapacitiesStructureId(value)) {
+        throw new Error(`${key} must be a canonical id or null`);
+      }
+      return value;
+    };
+    return {
+      structure_id: structure.structureId,
+      title_property: structure.titleProperty,
+      status_property: optionalPropertyId(structure.statusProperty, "statusProperty"),
+      open_status_values: capacitiesSourceValuesToWire(
+        structure.openStatusValues,
+        "openStatusValues",
+      ),
+      date_property: optionalPropertyId(structure.dateProperty, "dateProperty"),
+      deadline_property: optionalPropertyId(structure.deadlineProperty, "deadlineProperty"),
+      duration_property: optionalPropertyId(structure.durationProperty, "durationProperty"),
+      assignment_property: optionalPropertyId(
+        structure.assignmentProperty,
+        "assignmentProperty",
+      ),
+      assignment_values: capacitiesSourceValuesToWire(
+        structure.assignmentValues,
+        "assignmentValues",
+      ),
+      completion_property: optionalPropertyId(
+        structure.completionProperty,
+        "completionProperty",
+      ),
+      completion_value: optionalPropertyId(structure.completionValue, "completionValue"),
+    };
+  });
+  return {
+    expected_revision: draft.expectedRevision,
+    space_id: draft.spaceId,
+    structures,
   };
 }
 

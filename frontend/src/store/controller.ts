@@ -35,6 +35,8 @@ import type {
   AnchoredOverride,
   CapacitiesSettings,
   CapacitiesSettingsDraft,
+  CapacitiesSourceDraft,
+  CapacitiesSourceRead,
   DaySetup,
   MicroIdea,
   PlanInputs,
@@ -277,6 +279,14 @@ export class Controller {
 
   async saveCapacitiesSettings(draft: CapacitiesSettingsDraft): Promise<CapacitiesSettings> {
     return this.adapter.saveCapacitiesSettings(draft);
+  }
+
+  async loadCapacitiesSource(): Promise<CapacitiesSourceRead> {
+    return this.adapter.loadCapacitiesSource();
+  }
+
+  async saveCapacitiesSource(draft: CapacitiesSourceDraft): Promise<CapacitiesSourceRead> {
+    return this.adapter.saveCapacitiesSource(draft);
   }
 
   async loadTagExclusionSettings(): Promise<TagExclusionSettings> {

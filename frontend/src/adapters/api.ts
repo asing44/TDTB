@@ -26,6 +26,8 @@ import type {
   Capacity,
   CapacitiesSettings,
   CapacitiesSettingsDraft,
+  CapacitiesSourceDraft,
+  CapacitiesSourceRead,
   CommitReport,
   DaySetup,
   FixedInputs,
@@ -44,7 +46,9 @@ import {
   calendarWarnings,
   daySetupToWire,
   capacitiesSettingsToWire,
+  capacitiesSourceToWire,
   projectCapacitiesSettings,
+  projectCapacitiesSource,
   projectTagExclusionSettings,
   tagExclusionSettingsToWire,
   emptyTagCatalog,
@@ -93,6 +97,26 @@ function detailMessage(status: number, detail: unknown): string {
     return base;
   }
   return `request failed (${status})`;
+}
+
+/** Extract the stale-mapping revisions from a real 409 source-save conflict.
+    Returns null for anything else — another status, another 409 code such as
+    the route's storage error, or a body without both revisions — so callers
+    narrow to a typed value instead of an error subclass (house style:
+    `e instanceof ApiError && e.status === N`). */
+export function capacitiesSourceConflictOf(
+  error: unknown,
+): { expectedRevision: number; currentRevision: number } | null {
+  if (!(error instanceof ApiError) || error.status !== 409) return null;
+  const detail = error.detail;
+  if (!detail || typeof detail !== "object" || Array.isArray(detail)) return null;
+  const record = detail as Wire;
+  if (record.code !== "capacities_source_conflict") return null;
+  const expected = record.expected_revision;
+  const current = record.current_revision;
+  if (!Number.isSafeInteger(expected) || expected < 0) return null;
+  if (!Number.isSafeInteger(current) || current < 0) return null;
+  return { expectedRevision: expected, currentRevision: current };
 }
 
 export class ApiAdapter implements Adapter {
@@ -216,6 +240,16 @@ export class ApiAdapter implements Adapter {
   async saveCapacitiesSettings(draft: CapacitiesSettingsDraft): Promise<CapacitiesSettings> {
     return projectCapacitiesSettings(
       await this.post("/settings/capacities/save", capacitiesSettingsToWire(draft)),
+    );
+  }
+
+  async loadCapacitiesSource(): Promise<CapacitiesSourceRead> {
+    return projectCapacitiesSource(await this.request("/settings/capacities/source"));
+  }
+
+  async saveCapacitiesSource(draft: CapacitiesSourceDraft): Promise<CapacitiesSourceRead> {
+    return projectCapacitiesSource(
+      await this.post("/settings/capacities/source/save", capacitiesSourceToWire(draft)),
     );
   }
 

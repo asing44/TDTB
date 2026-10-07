@@ -7,6 +7,8 @@ import type {
   Capacity,
   CapacitiesSettings,
   CapacitiesSettingsDraft,
+  CapacitiesSourceDraft,
+  CapacitiesSourceRead,
   CommitReport,
   DaySetup,
   FixedInputs,
@@ -93,6 +95,13 @@ export interface Adapter {
   /** POST /settings/capacities/save — one token-guarded non-billed full
       replacement of the local policy. */
   saveCapacitiesSettings(draft: CapacitiesSettingsDraft): Promise<CapacitiesSettings>;
+  /** GET /settings/capacities/source — tokenless read of the vault-local
+      source mapping record; an absent record is `{source: null,
+      persisted: false}`, never an error. */
+  loadCapacitiesSource(): Promise<CapacitiesSourceRead>;
+  /** POST /settings/capacities/source/save — one token-guarded non-billed
+      full replacement of the source mapping record. */
+  saveCapacitiesSource(draft: CapacitiesSourceDraft): Promise<CapacitiesSourceRead>;
   /** GET /settings/exclusions — local tag-exclusion policy plus the advisory
       RootTag catalog. No provider call for the policy itself; a degraded
       catalog still returns the saved settings. */

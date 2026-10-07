@@ -16,6 +16,9 @@ import type {
   Capacity,
   CapacitiesSettings,
   CapacitiesSettingsDraft,
+  CapacitiesSource,
+  CapacitiesSourceDraft,
+  CapacitiesSourceRead,
   CommitReport,
   DaySetup,
   FixedInputs,
@@ -138,6 +141,8 @@ export class FixtureAdapter implements Adapter {
   /** Pending Capacities partial-coverage state for the next reads: null means
       the scenario's own health, 0 means a full-coverage read. */
   private capacitiesDeferred: number | null = null;
+  /** The vault-local source mapping record; null means none saved yet. */
+  private capacitiesSource: CapacitiesSource | null = null;
   private capacitiesSettings: CapacitiesSettings = {
     version: 1,
     revision: 0,
@@ -358,6 +363,31 @@ export class FixtureAdapter implements Adapter {
       structureTitles: { ...this.capacitiesSettings.structureTitles },
     };
     return structuredClone(this.capacitiesSettings);
+  }
+
+  async loadCapacitiesSource(): Promise<CapacitiesSourceRead> {
+    await wait(LATENCY_MS);
+    return {
+      source: structuredClone(this.capacitiesSource),
+      persisted: this.capacitiesSource !== null,
+    };
+  }
+
+  async saveCapacitiesSource(draft: CapacitiesSourceDraft): Promise<CapacitiesSourceRead> {
+    await wait(LATENCY_MS);
+    const currentRevision = this.capacitiesSource?.revision ?? 0;
+    if (draft.expectedRevision !== currentRevision) {
+      throw new Error(
+        `Capacities source mapping changed since it was read (stored revision ${currentRevision}, expected ${draft.expectedRevision})`,
+      );
+    }
+    this.capacitiesSource = {
+      version: 1,
+      revision: currentRevision + 1,
+      spaceId: draft.spaceId,
+      structures: structuredClone(draft.structures),
+    };
+    return { source: structuredClone(this.capacitiesSource), persisted: true };
   }
 
   async loadTagExclusionSettings(): Promise<TagExclusionSettings> {
