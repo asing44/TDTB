@@ -46,6 +46,7 @@ from pydantic import (
     StrictBool,
     StrictInt,
     StrictStr,
+    ValidationError,
     ValidationInfo,
     field_validator,
 )
@@ -1032,6 +1033,63 @@ class ExclusionSettingsSaveRequest(BaseModel):
         return value
 
 
+class CapacitiesSourceSaveRequest(BaseModel):
+    """Full-replacement body for POST /settings/capacities/source/save.
+
+    ``version`` and ``revision`` are server-owned and deliberately absent;
+    ``expected_revision`` drives the locked stale-write check. The top level
+    is closed and strictly typed; each structure row is decoded by
+    ``capacities_builder``'s strict row decoder — the same one the file store
+    uses — so the accepted request shape cannot drift from the stored
+    shape."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    expected_revision: StrictInt
+    space_id: StrictStr
+    #: Raw structure rows; decoded by the store's own strict row decoder
+    #: (``capacities_builder.decode_source_payload``), never re-modeled here.
+    structures: list[Any]
+
+    @field_validator("expected_revision")
+    @classmethod
+    def _revision_nonnegative(cls, value: int) -> int:
+        if value < 0:
+            raise ValueError("expected_revision must be a nonnegative integer")
+        return value
+
+
+def _capacities_source_invalid_body() -> HTTPException:
+    """Bounded 422 for an invalid Capacities source save body.
+
+    The fixed message never echoes parser text, a validation detail, a key
+    name, a payload value, or a path."""
+    return HTTPException(
+        status_code=422,
+        detail={
+            "code": "capacities_source_validation_error",
+            "message": "Capacities source mapping payload is invalid.",
+        },
+    )
+
+
+async def _capacities_source_save_request(
+    request: Request,
+) -> CapacitiesSourceSaveRequest:
+    """Strictly parse and validate the source-save body, or answer 422.
+
+    The body is parsed here rather than as an endpoint parameter because the
+    request must reject duplicate JSON keys — FastAPI's default JSON parse
+    silently keeps the last occurrence — and because every invalid body must
+    answer with the fixed ``{detail: {code, message}}`` shape instead of
+    FastAPI's validation-error list."""
+    try:
+        payload = capacities_builder.parse_source_json(await request.body())
+        return CapacitiesSourceSaveRequest.model_validate(payload)
+    except (ValueError, ValidationError) as exc:
+        raise _capacities_source_invalid_body() from exc
+
+
 # Day Setup keys /plan-inputs echoes back from run state (the UI's read side).
 # G24: per-day billed-SDK-call cap, enforced against the persistent runstate
 # ledger (billed_calls) — the same 4-call bound RunContext asserts per run.
@@ -1854,6 +1912,105 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
                 },
             ) from exc
         return {"settings": saved.as_dict(), "persisted": True}
+
+    @app.get("/settings/capacities/source")
+    def get_capacities_source() -> dict:
+        """Tokenless read of the vault-local Capacities source mapping record.
+
+        Reads exactly one vault cache file and never constructs an adapter,
+        reads a credential, or contacts a provider. An absent record answers
+        ``{source: null, persisted: false}`` and creates no file; malformed or
+        unreadable storage fails closed with a bounded 500 and leaves the
+        existing bytes untouched."""
+        vault = resolve_vault_root()
+        try:
+            record = capacities_builder.read_source(vault)
+        except (capacities_builder.CapacitiesSourceStoreError, OSError) as exc:
+            # Bounded client-safe message — no absolute vault/cache path.
+            print(f"capacities source read failed: {exc}", file=sys.stderr)
+            raise HTTPException(
+                status_code=500,
+                detail={
+                    "code": "capacities_source_storage_error",
+                    "message": (
+                        "Capacities source mapping storage could not be read; "
+                        "the existing file was preserved."
+                    ),
+                },
+            ) from exc
+        return {
+            "source": record.as_dict() if record is not None else None,
+            "persisted": record is not None,
+        }
+
+    @app.post(
+        "/settings/capacities/source/save",
+        dependencies=[Depends(require_token)],
+    )
+    def post_capacities_source_save(
+        body: CapacitiesSourceSaveRequest = Depends(
+            _capacities_source_save_request
+        ),
+    ) -> dict:
+        """Explicit, full-replacement save of the Capacities source mapping.
+
+        The complete editable record is supplied; ``version`` and the new
+        ``revision`` are server-owned. The request goes through the store's
+        strict decoder and its locked compare-and-replace write: a stale
+        ``expected_revision`` is a 409 carrying both revisions, malformed
+        existing storage is a 409, and a lock/read/write failure is a 500 —
+        every failure path preserves the original bytes."""
+        try:
+            candidate = capacities_builder.decode_source_payload(
+                space_id=body.space_id, structures=body.structures
+            )
+        except capacities_builder.CapacitiesSourceFormatError as exc:
+            raise _capacities_source_invalid_body() from exc
+        vault = resolve_vault_root()
+        try:
+            saved = capacities_builder.save_source(
+                vault,
+                expected_revision=body.expected_revision,
+                space_id=candidate.space_id,
+                structures=candidate.structures,
+            )
+        except capacities_builder.CapacitiesSourceConflictError as exc:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "capacities_source_conflict",
+                    "message": "Mapping changed; reload and review.",
+                    "expected_revision": exc.expected_revision,
+                    "current_revision": exc.current_revision,
+                },
+            ) from exc
+        except capacities_builder.CapacitiesSourceFormatError as exc:
+            # Bounded client-safe message — no absolute vault/cache path.
+            print(f"capacities source save failed: {exc}", file=sys.stderr)
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "capacities_source_storage_error",
+                    "message": (
+                        "Capacities source mapping storage is malformed or "
+                        "unsupported; the existing file was preserved."
+                    ),
+                },
+            ) from exc
+        except (capacities_builder.CapacitiesSourceStoreError, OSError) as exc:
+            # Bounded client-safe message — no absolute vault/cache path.
+            print(f"capacities source save failed: {exc}", file=sys.stderr)
+            raise HTTPException(
+                status_code=500,
+                detail={
+                    "code": "capacities_source_storage_error",
+                    "message": (
+                        "Capacities source mapping could not be saved; "
+                        "the existing file was preserved."
+                    ),
+                },
+            ) from exc
+        return {"source": saved.as_dict(), "persisted": True}
 
     def _tag_catalog(vault: Path) -> dict[str, Any]:
         """Advisory RootTag catalog for the exclusion drawer.

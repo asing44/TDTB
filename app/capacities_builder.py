@@ -165,6 +165,25 @@ class CapacitiesSourceFormatError(CapacitiesSourceStoreError):
     overwrite the offending bytes."""
 
 
+class CapacitiesSourceConflictError(CapacitiesSourceStoreError):
+    """The caller's ``expected_revision`` is stale — a concurrent save won.
+
+    Carries both revisions so the caller can answer with them. The message
+    stays bounded and names neither a path nor any payload content.
+    """
+
+    def __init__(
+        self, *, expected_revision: int, current_revision: int
+    ) -> None:
+        self.expected_revision = expected_revision
+        self.current_revision = current_revision
+        super().__init__(
+            "capacities source record changed since it was read "
+            f"(stored revision {current_revision}, expected "
+            f"{expected_revision})"
+        )
+
+
 # ---------------------------------------------------------------------------
 # Credential read
 # ---------------------------------------------------------------------------
@@ -505,6 +524,40 @@ def _load_strict(path: Path) -> SourceRecord:
     return _decode(data)
 
 
+def parse_source_json(raw: str | bytes) -> Any:
+    """Parse JSON text with duplicate-key rejection at every level.
+
+    The same rule the file store applies to persisted bytes, exposed for the
+    HTTP boundary so a duplicate key in a request is rejected before any
+    route validation runs.
+    """
+    return json.loads(raw, object_pairs_hook=_reject_duplicate_keys)
+
+
+def decode_source_payload(*, space_id: Any, structures: Any) -> SourceRecord:
+    """Strictly decode the editable fields of a save request.
+
+    ``version`` and ``revision`` are server-owned and absent from a payload;
+    the returned record therefore carries the default version and revision
+    ``0`` (``save_source`` supplies the stored revision plus one). Structure
+    rows pass through the exact row decoder the file store applies on read,
+    and the record through :class:`SourceRecord`'s strict constructor, so the
+    accepted request shape cannot drift from the stored shape. Raises
+    :class:`CapacitiesSourceFormatError` for any invalid payload.
+    """
+    if not isinstance(structures, (list, tuple)):
+        raise CapacitiesSourceFormatError(
+            "capacities source structures must be a JSON list"
+        )
+    decoded = tuple(_decode_structure(row) for row in structures)
+    try:
+        return SourceRecord(space_id=space_id, structures=decoded)
+    except ValueError as exc:
+        raise CapacitiesSourceFormatError(
+            "capacities source record is malformed"
+        ) from exc
+
+
 def read_source(vault_root: str | Path) -> SourceRecord | None:
     """Read the vault-scoped Capacities structural mapping record.
 
@@ -604,7 +657,8 @@ def save_source(
     The full record is supplied; ``version`` and ``revision`` stay
     server-owned (the saved revision is the stored revision plus one). Inputs
     are validated BEFORE any file access. A stale ``expected_revision`` raises
-    :class:`CapacitiesSourceStoreError` and preserves the original bytes; an
+    :class:`CapacitiesSourceConflictError` (a
+    :class:`CapacitiesSourceStoreError`) and preserves the original bytes; an
     absent file is treated as revision ``0``.
     """
     if type(expected_revision) is not int or expected_revision < 0:
@@ -618,10 +672,9 @@ def save_source(
             current = read_source(root)
             current_revision = current.revision if current is not None else 0
             if current_revision != expected_revision:
-                raise CapacitiesSourceStoreError(
-                    "capacities source record changed since it was read "
-                    f"(stored revision {current_revision}, expected "
-                    f"{expected_revision})"
+                raise CapacitiesSourceConflictError(
+                    expected_revision=expected_revision,
+                    current_revision=current_revision,
                 )
             saved = SourceRecord(
                 space_id=candidate.space_id,

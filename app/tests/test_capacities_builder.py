@@ -619,6 +619,19 @@ def test_unparseable_record_raises(tmp_path):
         cb.read_source(tmp_path)
 
 
+def test_parse_source_json_rejects_duplicate_keys_at_every_level():
+    with pytest.raises(ValueError):
+        cb.parse_source_json('{"a": 1, "a": 2}')
+    with pytest.raises(ValueError):
+        cb.parse_source_json('{"outer": {"a": 1, "a": 2}}')
+    with pytest.raises(ValueError):
+        cb.parse_source_json(b'{"a": [{"b": 1, "b": 2}]}')
+
+
+def test_parse_source_json_parses_a_clean_document():
+    assert cb.parse_source_json('{"a": [1, 2]}') == {"a": [1, 2]}
+
+
 # ---------------------------------------------------------------------------
 # Bare structure: builder round-trips; adapter enforces its contract
 # ---------------------------------------------------------------------------
@@ -690,6 +703,117 @@ def test_save_source_round_trips_and_conflicts_preserve_bytes(tmp_path):
             structures=record.structures,
         )
     assert cb.source_path(tmp_path).read_bytes() == before
+
+
+def test_stale_save_raises_the_typed_conflict_with_both_revisions(tmp_path):
+    record = cb.SourceRecord(
+        space_id=SPACE,
+        structures=(cb.SourceStructureRecord(structure_id="RootTask"),),
+    )
+    cb.save_source(
+        tmp_path, expected_revision=0, space_id=record.space_id,
+        structures=record.structures,
+    )
+    before = cb.source_path(tmp_path).read_bytes()
+
+    with pytest.raises(cb.CapacitiesSourceConflictError) as excinfo:
+        cb.save_source(
+            tmp_path, expected_revision=0, space_id=record.space_id,
+            structures=record.structures,
+        )
+
+    assert excinfo.value.expected_revision == 0
+    assert excinfo.value.current_revision == 1
+    # The typed conflict is still the store error every existing caller
+    # already catches.
+    assert isinstance(excinfo.value, cb.CapacitiesSourceStoreError)
+    assert cb.source_path(tmp_path).read_bytes() == before
+
+
+def test_racing_saves_from_the_same_revision_produce_one_winner(tmp_path):
+    record = cb.SourceRecord(
+        space_id=SPACE,
+        structures=(cb.SourceStructureRecord(structure_id="RootTask"),),
+    )
+    barrier = threading.Barrier(2)
+    results: list[object] = []
+
+    def attempt() -> None:
+        barrier.wait()
+        try:
+            results.append(
+                cb.save_source(
+                    tmp_path, expected_revision=0,
+                    space_id=record.space_id, structures=record.structures,
+                )
+            )
+        except cb.CapacitiesSourceConflictError as exc:
+            results.append(exc)
+
+    threads = [threading.Thread(target=attempt) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    winners = [r for r in results if isinstance(r, cb.SourceRecord)]
+    conflicts = [
+        r for r in results if isinstance(r, cb.CapacitiesSourceConflictError)
+    ]
+    assert len(winners) == 1
+    assert len(conflicts) == 1
+    assert winners[0].revision == 1
+    assert conflicts[0].expected_revision == 0
+    assert conflicts[0].current_revision == 1
+    assert cb.read_source(tmp_path) == winners[0]
+
+
+def test_decode_source_payload_reuses_the_store_decoders():
+    candidate = cb.decode_source_payload(
+        space_id=SPACE,
+        structures=[
+            {
+                "structure_id": "RootTask",
+                "status_property": "status",
+                "open_status_values": ["open", "On Hold"],
+            }
+        ],
+    )
+
+    assert candidate.version == cb.SCHEMA_VERSION
+    assert candidate.revision == 0
+    assert candidate.space_id == SPACE
+    assert candidate.structures == (
+        cb.SourceStructureRecord(
+            structure_id="RootTask",
+            status_property="status",
+            open_status_values=("open", "On Hold"),
+        ),
+    )
+
+
+@pytest.mark.parametrize(
+    "space_id, structures",
+    [
+        (SPACE, "not-a-list"),
+        (SPACE, None),
+        (SPACE, []),
+        (SPACE, ["not-an-object"]),
+        (SPACE, [{"structure_id": "a", "bogus_key": 1}]),
+        (SPACE, [{"structure_id": "a"}, {"structure_id": "a"}]),
+        (SPACE, [{"structure_id": "a", "title_property": None}]),
+        (SPACE, [{"structure_id": "a", "open_status_values": "open"}]),
+        (SPACE, [{"structure_id": "a", "open_status_values": ["open", "OPEN"]}]),
+        (SPACE, [{"structure_id": " padded "}]),
+        (" padded ", [{"structure_id": "a"}]),
+        (123, [{"structure_id": "a"}]),
+    ],
+)
+def test_decode_source_payload_rejects_anything_the_store_would_reject(
+    space_id, structures
+):
+    with pytest.raises(cb.CapacitiesSourceFormatError):
+        cb.decode_source_payload(space_id=space_id, structures=structures)
 
 
 class TestStatusValueVocabulary:
