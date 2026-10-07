@@ -43,11 +43,9 @@ exercise the whole path with a deterministic fake.
 """
 from __future__ import annotations
 
-import hashlib
 import json
 import math
 import os
-import tempfile
 import threading
 import time
 from contextlib import contextmanager
@@ -55,11 +53,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Callable, Iterable, Iterator
 
-try:
-    import fcntl as _fcntl  # POSIX advisory file locks (macOS/Linux)
-except ImportError:  # pragma: no cover — non-POSIX fallback
-    _fcntl = None
-
+import capacities_cache_io
 import runstate
 from capacities_adapter import (
     CapacitiesAdapter,
@@ -581,32 +575,23 @@ def read_source(vault_root: str | Path) -> SourceRecord | None:
 # ---------------------------------------------------------------------------
 # Locking + atomic write
 # ---------------------------------------------------------------------------
+# The primitives live in ``capacities_cache_io`` so cache modules imported by
+# this builder can share them without an import cycle. These wrappers keep
+# every existing caller and test name working unchanged; the behaviour lives
+# in exactly one place.
+#
 # Per-vault-root process-local locks (same single-process convention as
 # ``capacities_settings``); the flock on the vault-scoped lock file adds
 # cross-process serialization for the same bytes.
 
-_LOCKS: dict[str, threading.Lock] = {}
-_LOCKS_GUARD = threading.Lock()
-
 
 def _store_lock(vault_root: str | Path) -> threading.Lock:
-    key = str(Path(vault_root).resolve())
-    with _LOCKS_GUARD:
-        return _LOCKS.setdefault(key, threading.Lock())
+    return capacities_cache_io.store_lock(vault_root)
 
 
 def _acquire_path_lock(path: str | Path) -> Any:
     """Open ``path`` and take the POSIX advisory lock (no-op off POSIX)."""
-    p = Path(path)
-    p.parent.mkdir(parents=True, exist_ok=True)
-    fh = open(p, "a+", encoding="utf-8")
-    try:
-        if _fcntl is not None:
-            _fcntl.flock(fh.fileno(), _fcntl.LOCK_EX)
-    except BaseException:
-        fh.close()
-        raise
-    return fh
+    return capacities_cache_io.acquire_path_lock(path)
 
 
 def _acquire_lock_file(vault_root: str | Path) -> Any:
@@ -614,35 +599,13 @@ def _acquire_lock_file(vault_root: str | Path) -> Any:
 
 
 def _release_lock_file(fh: Any) -> None:
-    try:
-        if _fcntl is not None:
-            _fcntl.flock(fh.fileno(), _fcntl.LOCK_UN)
-    except OSError:
-        pass
-    try:
-        fh.close()
-    except OSError:
-        pass
+    capacities_cache_io.release_lock_file(fh)
 
 
 def _atomic_write_json(path: str | Path, data: dict[str, Any]) -> None:
     """Write ``data`` atomically: a unique temp file in the same directory,
     flushed and fsynced, then ``os.replace``."""
-    p = Path(path)
-    p.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp = tempfile.mkstemp(dir=str(p.parent), prefix=f".{p.name}.", suffix=".tmp")
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as fh:
-            json.dump(data, fh, indent=2, sort_keys=True)
-            fh.flush()
-            os.fsync(fh.fileno())
-        os.replace(tmp, p)
-    except BaseException:
-        try:
-            os.unlink(tmp)
-        except OSError:
-            pass
-        raise
+    capacities_cache_io.atomic_write_json(path, data)
 
 
 def save_source(
@@ -1062,15 +1025,8 @@ class _ContentCache:
 def _content_cache_namespace(
     vault_root: str | Path, space_id: str, base_url: str
 ) -> str:
-    """Stable digest identifying the vault + space + provider scope.
-
-    Stored instead of the raw triple so the machine-local file and every
-    diagnostic stay free of absolute paths; equality is all the cache needs.
-    """
-    material = "\x1f".join(
-        (str(Path(vault_root).resolve()), str(space_id), str(base_url).rstrip("/"))
-    )
-    return hashlib.sha256(material.encode("utf-8")).hexdigest()
+    """Stable digest identifying the vault + space + provider scope."""
+    return capacities_cache_io.cache_namespace(vault_root, space_id, base_url)
 
 
 #: Namespace -> shared cache, so every adapter rebuild for the same vault +
