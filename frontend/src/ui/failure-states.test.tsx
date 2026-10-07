@@ -87,10 +87,12 @@ describe("Capacities partial coverage", () => {
     const readiness = container.querySelector('[aria-label="Readiness"]') as HTMLElement;
     expect(readiness.textContent).toContain(capacitiesBudgetWarning(20, 51));
     expect(getByText(/Content-read budget reached/)).toBeTruthy();
-    // The 5-minute cache and what "wait at least a minute" means are explained
-    // where the operator would otherwise ask why a repeat refresh helps.
-    expect(readiness.textContent).toMatch(/cached machine-locally for 5 minutes/);
-    expect(readiness.textContent).toMatch(/provider's request window/);
+    // The rail carries only the adapter's verbatim warning. The hardcoded
+    // cache/window explainer was removed, so none of its copy may return.
+    expect(readiness.textContent).not.toMatch(
+      /cached machine-locally for 5 minutes/,
+    );
+    expect(readiness.textContent).not.toMatch(/provider's request window/);
   });
 
   it("stays visible while a refresh is loading", () => {

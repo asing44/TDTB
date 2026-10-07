@@ -128,8 +128,7 @@ export function ReadinessStrip() {
       </button>
       {/* A partial source read is a planning-surface fact, not a popover
           secret: the adapter's verbatim warning stays visible beside Sources
-          on initial load and after every refresh, with the cache/window
-          explanation an operator needs to understand why a repeat helps. */}
+          on initial load and after every refresh. */}
       {coverage && (
         <div class="rail__partial" role="status" aria-label="Capacities coverage partial">
           {coverage.warnings.map((warning) => (
@@ -137,13 +136,6 @@ export function ReadinessStrip() {
               {warning}
             </p>
           ))}
-          <p class="rail__partial-note">
-            Content read earlier is cached machine-locally for 5 minutes, so a
-            repeat refresh reuses it instead of re-reading the same rows and the
-            next read reaches the deferred ones. "Wait at least a minute" is the
-            provider's request window: refreshing sooner can hit the same limit
-            and make no progress.
-          </p>
         </div>
       )}
       {ledger && (

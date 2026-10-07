@@ -134,6 +134,201 @@ def test_tag_collision_fails_visibly():
 
 
 # ---------------------------------------------------------------------------
+# Operator label family: recognized duration labels beyond the numeric
+# patterns. ``🍅 Half-hour`` -> 30, ``🏃‍♂️ Hour`` -> 60, and
+# ``🐢 Multi-hour`` is recognized duration metadata that encodes NO minutes —
+# it must fall through to remembered memory and then the default rather than
+# being guessed. Matching is on the word with an optional emoji/space prefix
+# so emoji-form variance (missing ZWJ / variation selector) cannot silently
+# break recognition, and every pattern is fully anchored so ``Multi-hour``
+# cannot resolve as ``Hour`` and vice versa.
+# ---------------------------------------------------------------------------
+
+
+def test_half_hour_label_resolves_as_thirty_minutes():
+    from duration_memory import resolve_duration
+
+    value, source = resolve_duration(
+        {
+            "name": "Laundry",
+            "labels": ["🍅 Half-hour"],
+            "duration": {"unit": "minute", "amount": 45},
+        },
+        presets=[],
+        fm={},
+        memory={},
+    )
+    assert (value, source) == (30, "tag:🍅 Half-hour")
+
+
+def test_half_hour_label_without_human_spacing():
+    from duration_memory import resolve_duration
+
+    value, source = resolve_duration(
+        {"name": "Laundry", "labels": ["🍅Half-hour"]},
+        presets=[],
+        fm={},
+        memory={},
+    )
+    assert (value, source) == (30, "tag:🍅Half-hour")
+
+
+def test_hour_label_resolves_as_sixty_minutes():
+    from duration_memory import resolve_duration
+
+    value, source = resolve_duration(
+        {
+            "name": "Inspect behind dishwasher",
+            "todoist_id": "6hhMxMM27Rf5FcwG",
+            "labels": ["🏃‍♂️ Hour"],
+            "duration": {"unit": "minute", "amount": 30},
+        },
+        presets=[],
+        fm={},
+        memory={},
+    )
+    assert (value, source) == (60, "tag:🏃‍♂️ Hour")
+
+
+def test_hour_label_without_human_spacing():
+    from duration_memory import resolve_duration
+
+    value, source = resolve_duration(
+        {"name": "Inspect behind dishwasher", "labels": ["🏃‍♂️Hour"]},
+        presets=[],
+        fm={},
+        memory={},
+    )
+    assert (value, source) == (60, "tag:🏃‍♂️Hour")
+
+
+def test_hour_label_survives_emoji_form_variance():
+    from duration_memory import resolve_duration
+
+    # Real labels may drop the ZWJ (U+200D) or the variation selector
+    # (U+FE0F) from the 🏃‍♂️ sequence; matching the word keeps this working.
+    value, source = resolve_duration(
+        {"name": "Inspect behind dishwasher", "labels": ["🏃 Hour"]},
+        presets=[],
+        fm={},
+        memory={},
+    )
+    assert (value, source) == (60, "tag:🏃 Hour")
+
+
+def test_multi_hour_label_is_duration_metadata_without_minutes():
+    from duration_memory import resolve_duration
+    from duration_tags import duration_tag_minutes, is_duration_tag
+
+    assert is_duration_tag("🐢 Multi-hour") is True
+    assert duration_tag_minutes("🐢 Multi-hour") is None
+
+    value, source = resolve_duration(
+        {"name": "Garage", "labels": ["🐢 Multi-hour"]},
+        presets=[],
+        fm={},
+        memory={},
+    )
+    assert (value, source) == (30, "default")
+
+
+def test_multi_hour_label_falls_through_to_native_before_default():
+    from duration_memory import resolve_duration
+
+    value, source = resolve_duration(
+        {
+            "name": "Garage",
+            "labels": ["🐢 Multi-hour"],
+            "duration": {"unit": "minute", "amount": 120},
+        },
+        presets=[],
+        fm={},
+        memory={},
+    )
+    assert (value, source) == (120, "native")
+
+
+def test_multi_hour_label_does_not_pre_empt_remembered_memory():
+    from duration_memory import resolve_duration
+
+    value, source = resolve_duration(
+        {"name": "Garage", "todoist_id": "12345", "labels": ["🐢 Multi-hour"]},
+        presets=[],
+        fm={},
+        memory={"todoist:12345": 90},
+    )
+    assert (value, source) == (90, "remembered")
+
+
+def test_recognizer_separates_not_a_tag_from_valueless_metadata():
+    from duration_tags import (
+        duration_tag_minutes,
+        is_duration_tag,
+        recognize_duration_tag,
+    )
+
+    assert recognize_duration_tag("🐢 Multi-hour") == ("🐢 Multi-hour", None)
+    assert recognize_duration_tag("🏃‍♂️ Hour") == ("🏃‍♂️ Hour", 60)
+    assert recognize_duration_tag("🚀 10 min") == ("🚀 10 min", 10)
+    assert recognize_duration_tag("someday") is None
+    assert is_duration_tag("someday") is False
+    assert duration_tag_minutes("someday") is None
+
+
+def test_unrelated_label_is_not_a_duration_tag_and_resolves_to_default():
+    from duration_memory import resolve_duration
+    from duration_tags import is_duration_tag
+
+    assert is_duration_tag("someday") is False
+
+    value, source = resolve_duration(
+        {"name": "Someday maybe", "labels": ["someday"]},
+        presets=[],
+        fm={},
+        memory={},
+    )
+    assert (value, source) == (30, "default")
+
+
+def test_hour_and_multi_hour_labels_do_not_cross_match():
+    from duration_tags import duration_tag_minutes, is_duration_tag
+
+    # Fully anchored, most-specific-first: Multi-hour must not resolve as
+    # Hour, and Hour must not fall into the valueless classification.
+    assert duration_tag_minutes("Hour") == 60
+    assert duration_tag_minutes("Multi-hour") is None
+    assert is_duration_tag("Multi-hour") is True
+    assert duration_tag_minutes("🏃‍♂️ Hour") == 60
+    assert duration_tag_minutes("🐢 Multi-hour") is None
+
+
+def test_valueless_duration_label_is_skipped_by_collision_detection():
+    from duration_memory import resolve_duration
+
+    # A valueless classification label is not a tag source, so it must not
+    # participate in same-precedence collision detection.
+    value, source = resolve_duration(
+        {"name": "Garage", "labels": ["dur30", "🐢 Multi-hour"]},
+        presets=[],
+        fm={},
+        memory={},
+    )
+    assert (value, source) == (30, "tag:dur30")
+
+
+def test_new_duration_labels_still_collide_visibly():
+    from duration_memory import resolve_duration
+
+    with pytest.raises(ValueError):
+        resolve_duration(
+            {"name": "Laundry", "labels": ["🍅 Half-hour", "🏃‍♂️ Hour"]},
+            presets=[],
+            fm={},
+            memory={},
+        )
+
+
+# ---------------------------------------------------------------------------
 # FT-01: vault-scoped versioned duration-memory cache (MVP)
 # ---------------------------------------------------------------------------
 

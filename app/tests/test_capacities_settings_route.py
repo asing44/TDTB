@@ -120,7 +120,7 @@ class TestGet:
             "excluded": {},
             "active_structures": {},
             "assigned_structures": {},
-            "native_task_structures": ["RootTask", "Task"],
+            "native_task_structures": ["RootTask"],
             "active_statuses": ["active"],
         }
         assert not cs.settings_path(vault).exists()
@@ -224,7 +224,7 @@ class TestPostPersistence:
         assert body["settings"]["excluded"] == {NATIVE: True, CUSTOM: True}
         # The omitted additive admission inputs are written as the documented
         # defaults by the full-replacement save.
-        assert body["settings"]["native_task_structures"] == ["RootTask", "Task"]
+        assert body["settings"]["native_task_structures"] == ["RootTask"]
         assert body["settings"]["active_statuses"] == ["active"]
         assert cs.settings_path(vault).is_file()
 
@@ -542,10 +542,7 @@ class TestAdmissionInputs:
 
         assert second.status_code == 200
         # ``native_task_structures`` was omitted -> the documented default.
-        assert second.json()["settings"]["native_task_structures"] == [
-            "RootTask",
-            "Task",
-        ]
+        assert second.json()["settings"]["native_task_structures"] == ["RootTask"]
         assert second.json()["settings"]["active_statuses"] == ["In Progress"]
 
     def test_stale_revision_with_admission_inputs_still_conflicts(self, client, vault):
@@ -928,7 +925,7 @@ class TestStructureTitles:
         }
         assert body["settings"]["excluded"] == {}
         assert body["settings"]["active_structures"] == {}
-        assert body["settings"]["native_task_structures"] == ["RootTask", "Task"]
+        assert body["settings"]["native_task_structures"] == ["RootTask"]
         assert body["settings"]["active_statuses"] == ["active"]
         assert body["structure_titles"] == {
             PROJECT_STRUCTURE: "Project",

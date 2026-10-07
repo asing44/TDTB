@@ -37,6 +37,7 @@
   padding: 16px 16px 18px;
   display: flex;
   flex-direction: column;
+  /* Rail vertical rhythm (outer container): tune here. */
   gap: 15px;
   position: sticky;
   top: 0;
@@ -51,6 +52,7 @@
   overflow-y: auto;
   display: flex;
   flex-direction: column;
+  /* Rail vertical rhythm (scroll region): tune here. */
   gap: 15px;
 }
 .rail__date-day {
@@ -288,9 +290,6 @@
 @media (max-height: 900px) {
   .rail-budget__spend {
     font-size: 22px;
-  }
-  .rail__scroll {
-    gap: 12px;
   }
   .rail__pie .pie__readout-value {
     font-size: 15px;
@@ -559,8 +558,8 @@
   color: var(--t-muted);
 }
 /* The always-visible Capacities partial-coverage surface beside Sources: the
-   adapter's verbatim warning plus the cache/window explanation. A partial read
-   must not make the plan look wrong for no visible reason. */
+   adapter's verbatim warning. A partial read must not make the plan look wrong
+   for no visible reason. */
 .rail__partial {
   flex-basis: 100%;
   display: flex;
@@ -577,10 +576,6 @@
   margin: 0;
   color: var(--t-text);
   font-weight: 600;
-}
-.rail__partial-note {
-  margin: 0;
-  color: var(--t-muted);
 }
 
 /* -- readiness chips -------------------------------------------------------- */
@@ -1091,6 +1086,13 @@
 }
 .queue__band--drop .band__tick {
   background: var(--c-overflow);
+}
+/* Round 2 (S5): the calendar band leads the priority stack as a peer
+   disclosure, not an urgency tier — the accent stays the muted token and
+   there is no share bar. The band__* vocabulary and its narrow-width
+   degradation are shared with the urgency band headers. */
+.band--calendar {
+  --band-color: var(--t-muted);
 }
 .queue__dropped {
   margin: 0;
@@ -2843,7 +2845,6 @@ body {
    enough structure to remain legible while the main surface does the work. */
 .rail {
   padding: 20px 18px 18px;
-  gap: 18px;
   background: var(--t-surface-2);
   border-right-color: var(--t-border);
 }

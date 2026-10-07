@@ -829,3 +829,13 @@ class TestQtAbsorption:
         )
         assert remaining == []
         assert contents == ["Water plants"]
+
+    def test_does_not_absorb_multi_hour_metadata_label(self):
+        # 🐢 Multi-hour is duration metadata, not a QuickTask tag: absorption
+        # must stay limited to the 🚀 pattern.
+        remaining, contents = ext.absorb_quick_tasks(
+            [{"id": "Deep work", "name": "Deep work", "labels": ["🐢 Multi-hour"]}],
+            qt_on=True,
+        )
+        assert [i["id"] for i in remaining] == ["Deep work"]
+        assert contents == []

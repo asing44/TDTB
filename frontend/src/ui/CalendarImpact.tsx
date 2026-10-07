@@ -6,12 +6,15 @@
    only, never event or attendance/source mutation (LD19). Ignored calendar
    sources (TickTick-style) are hidden from the impact list entirely.
 
-   S5 (cockpit UI feedback item 3): the cockpit wants this evidence formatted
-   with the other planning items, not as a separate-feeling section. Inline
-   mode renders the same rows inside the work surface (Queue) with shared
-   surface styling — no compact summary and no review disclosure. Calendar
+   S5 (cockpit UI feedback item 3) + round 2: the cockpit wants this evidence
+   formatted with the other planning items, not as a separate-feeling section.
+   Inline mode renders the same rows inside the work surface (Queue) with
+   shared surface styling — no compact summary — and the evidence is a
+   collapsible band in the priority flow (expanded by default; a
+   disclosure-only control that never writes accounting state). Calendar
    records stay distinct from assigned-task state; this is presentation only. */
 
+import { useState } from "preact/hooks";
 import { useApp, useAppState } from "./context";
 import { effectiveAnchoredBlocks } from "../store/store";
 import { blocksLabel, display12h, formatBlockAmount } from "../model/time";
@@ -68,8 +71,14 @@ function countedBlocks(row: AnchoredBlock): number {
 export function CalendarImpact({ inline = false }: { inline?: boolean }) {
   const s = useAppState();
   const { controller } = useApp();
+  /* Disclosure idiom shared with the queue bands (Queue.tsx): an absent key
+     means open, so the calendar band starts expanded. */
+  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
   if (!s.inputs) return null;
   const modifier = inline ? " calendar-impact--inline" : "";
+  const open = !(collapsed["calendar"] ?? false);
+  const toggle = () =>
+    setCollapsed((c) => ({ ...c, calendar: !(c["calendar"] ?? false) }));
 
   const rows = effectiveAnchoredBlocks(s)
     .filter((row) => row.kind === "calendar")
@@ -80,20 +89,45 @@ export function CalendarImpact({ inline = false }: { inline?: boolean }) {
   // hidden, with a note naming the exclusion. Source data is untouched.
   const visible = rows.filter((row) => capacityClass(row) !== "ignored");
   const hiddenIgnored = rows.length - visible.length;
+  const rowCount = `${visible.length} row${visible.length === 1 ? "" : "s"}`;
+  const regionId = "calendar-band-rows";
 
   const workBusy = s.capacity?.workBusy ?? 0;
   const workEnvelope = s.capacity?.mint ?? 0;
   const workOverflow = s.capacity?.workOverflow ?? 0;
 
+  /* Calendar evidence is a peer of the urgency bands, not an urgency tier:
+     the band vocabulary is shared, but there is no share bar and the accent
+     stays muted (.band--calendar). The explanatory paragraph stays in the
+     region below the header, never inside the toggle button. */
   const header = (
+    <button
+      type="button"
+      class={`band band--calendar${open ? "" : " band--collapsed"}`}
+      aria-expanded={open}
+      aria-controls={regionId}
+      /* FEEDBACK-10 (A11) convention shared with BandHeader: the state and
+         hidden count are announced, not implied by the chevron glyph. */
+      aria-label={`Band Calendar impact, ${open ? "expanded" : "collapsed"}, ${rowCount}${open ? "" : " hidden"}, activate to ${open ? "collapse" : "expand"}`}
+      onClick={toggle}
+    >
+      <span class="band__tick" />
+      <span class="band__label">Calendar impact</span>
+      <span class="band__rule" />
+      <span class="band__count">{rowCount}{open ? "" : " hidden"}</span>
+      <span class={`band__state${open ? "" : " band__state--closed"}`}>
+        {open ? "expanded" : "collapsed"}
+      </span>
+      <span class="band__chevron" aria-hidden="true">{open ? "▾" : "▸"}</span>
+    </button>
+  );
+
+  const head = (
     <div class="calendar-impact__head">
-      <div>
-        <h2>Calendar impact</h2>
-        <p>
-          Work meetings sit inside the work envelope; they are exclusive busy
-          time, not extra task room.
-        </p>
-      </div>
+      <p>
+        Work meetings sit inside the work envelope; they are exclusive busy
+        time, not extra task room.
+      </p>
       {(workEnvelope > 0 || workBusy > 0) && (
         <div class="calendar-impact__work" aria-label="Work envelope summary">
           <strong>{formatBlockAmount(workEnvelope)}</strong> work envelope · {formatBlockAmount(workBusy)}
@@ -111,17 +145,9 @@ export function CalendarImpact({ inline = false }: { inline?: boolean }) {
 
   // An ignored-only frame still needs to explain why Calendar impact is quiet;
   // an actually empty frame keeps the existing null behavior.
-  if (visible.length === 0) {
-    if (hiddenIgnored === 0) return null;
-    return (
-      <section class={`calendar-impact${modifier}`} aria-label="Calendar impact">
-        {header}
-        {ignoredNote}
-      </section>
-    );
-  }
+  if (visible.length === 0 && hiddenIgnored === 0) return null;
 
-  const list = (
+  const list = visible.length === 0 ? null : (
     <ul class="calendar-impact__list">
       {visible.map((row) => {
         const attending = !row.skipToday;
@@ -212,8 +238,13 @@ export function CalendarImpact({ inline = false }: { inline?: boolean }) {
   return (
     <section class={`calendar-impact${modifier}`} aria-label="Calendar impact">
       {header}
-      {ignoredNote}
-      {list}
+      {open && (
+        <div id={regionId} class="calendar-impact__region">
+          {head}
+          {ignoredNote}
+          {list}
+        </div>
+      )}
     </section>
   );
 }

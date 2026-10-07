@@ -246,6 +246,19 @@ def test_duration_tags_do_not_form_shared_start_groups():
     assert not any(constraint["kind"] == "related_group" for constraint in constraints)
 
 
+def test_valueless_duration_label_does_not_form_shared_start_groups():
+    # 🐢 Multi-hour is duration metadata with no minutes, but it is still a
+    # duration label: items sharing it must not become a related_group.
+    assigned = [
+        {"id": "Deep work one", "name": "Deep work one", "tags": ["🐢 Multi-hour"]},
+        {"id": "Deep work two", "name": "Deep work two", "labels": ["🐢 Multi-hour"]},
+    ]
+
+    constraints = placement_rules.derive_constraints(assigned, [])
+
+    assert not any(constraint["kind"] == "related_group" for constraint in constraints)
+
+
 def test_multi_kind_item_has_one_constraint_per_kind_one_sequence_row_and_one_pair_grant():
     parent = {"id": "Parent project", "name": "Parent project", "blocks": 4}
     child = {

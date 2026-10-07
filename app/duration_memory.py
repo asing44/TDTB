@@ -5,7 +5,10 @@ Frozen plan items 10-12 (``Plans Link/2026-08-09-tdtb-planning-ui-reliability.md
 - Precedence (item 11): saved user memory -> deterministic tag mapping ->
   Todoist native or exact named preset -> contract-defined type field ->
   default. ``dur<N>`` and QuickTask labels such as ``🚀10min`` are duration
-  tags. Same-precedence tag collisions fail visibly.
+  tags. Duration labels that encode no minutes (``🐢 Multi-hour``) are
+  metadata, not tag sources: the tag step skips them and resolution falls
+  through to native/preset/type/default. Same-precedence tag collisions fail
+  visibly.
 - The resolver returns ``(value_minutes, source_label)`` where source_label is
   one of ``remembered`` / ``tag:<name>`` / ``native`` / ``preset`` / ``type`` /
   ``default``.
@@ -47,7 +50,7 @@ except ImportError:  # pragma: no cover — non-POSIX fallback
     _fcntl = None
 
 import runstate
-from duration_tags import duration_tag_minutes
+from duration_tags import recognize_duration_tag
 
 # Contract-defined per-type duration fields (the vault FileClass owns the
 # contract; press notes carry ``duration_min`` in minutes). Mirrors
@@ -426,12 +429,18 @@ def _duration_tag(item: dict[str, Any]) -> tuple[str | None, int | None]:
 
     Returns ``(tag_name, minutes)``; more than one DISTINCT duration among
     matching tags raises ``ValueError`` (same-precedence collision, item 11).
+    A recognized label carrying no minutes (``🐢 Multi-hour``) is skipped: it
+    is metadata, not a tag source, so it neither resolves nor collides.
     """
     matches: list[tuple[str, int]] = []
     for label in item.get("labels") or []:
-        minutes = duration_tag_minutes(label)
-        if minutes is not None:
-            matches.append((str(label).strip(), minutes))
+        recognized = recognize_duration_tag(label)
+        if recognized is None:
+            continue
+        tag, minutes = recognized
+        if minutes is None:
+            continue
+        matches.append((tag, minutes))
     if not matches:
         return None, None
     distinct = {minutes for _, minutes in matches}
