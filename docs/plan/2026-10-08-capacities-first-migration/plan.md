@@ -41,6 +41,33 @@ The bar is *not* zero hardcoding — it is that the value lives where the operat
 without an agent. The test: the mapping must be able to express "source by collection" **or**
 "source by tag", so the operator can change their Capacities model without a code change.
 
+## S1 outcome (2026-10-08) — landed, with a found gap
+
+Landed as `7c3e871`. Gate 2361 passed (baseline 2337 + 24 new). Migration run and
+verified: 49 files copied, all byte-identical to the vault originals, idempotent on
+re-run, vault cache still 80 files and untouched.
+
+**The plan's store inventory was INCOMPLETE.** A census of `00 - META/Cache/tdtb-*`
+found four more vault-resident stores that S1 did not move and the design never
+listed:
+
+| Store | Files | Status |
+|---|---|---|
+| `tdtb-duration-memory.json` (+ lock) | 2 | **Real feature store — remembered durations. Genuine gap.** |
+| `tdtb-runtime-journal-*.json` | 25 | Not migrated; ownership unestablished |
+| `tdtb-precompute-cache.md` | 1 | Not migrated; cache |
+| `tdtb-micro-adventure-log.md` | 1 | Not migrated; its write is dropped by D1 |
+
+None of these break anything today — they keep working from the vault — but
+`tdtb-duration-memory.json` must be re-homed before the vault can be retired, or
+"retire all vault reads" is not achieved. Carry this into S6, and audit for further
+vault-relative stores rather than trusting the original five-store list.
+
+**Operational caveat:** the migration tool copies-if-absent (`kept`), not
+copy-if-newer. If the old service writes to the vault after a migration run but
+before the restart, that newer data does NOT carry over on a re-run — the state copy
+must be refreshed deliberately.
+
 ## Scope correction (design finding)
 
 The vault is also **written** to, so retiring reads alone leaves a half-vault app:
