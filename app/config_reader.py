@@ -5,6 +5,10 @@ parameter — never hardcoded) and exposes section/key lookups with the same inl
 fallback contract the tdtb-bridger-vault skill carries (SKILL.md § 0.1 Step 2,
 "Skill-inline fallback values", lines ~399-410).
 
+Dual-read (Capacities-first S0): `~/.config/tdtb/config.json` (see
+``app_config``) is overlaid on the vault parse when present; with no
+config.json the vault file is read exactly as before.
+
 Gate: TDD — tests/test_config_reader.py must pass.
 
 Contract summary (spec § 3.4):
@@ -32,6 +36,8 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+
+import app_config
 
 
 CONFIG_REL_PATH = "00 - META/Skill-Configs/tdtb-bridger.md"
@@ -638,23 +644,54 @@ def parse_config_markdown(text: str) -> dict[str, Any]:
 # Top-level entry point
 # ---------------------------------------------------------------------------
 
-def read_config(vault_root: str | Path) -> ConfigReadResult:
-    """Read and parse the TDTB vault config from `vault_root`.
+def _merge_sections(base: dict[str, Any], overlay: dict[str, Any]) -> dict[str, Any]:
+    """Overlay app-config sections on top of the vault-parsed sections.
 
-    `vault_root` is always a caller-supplied parameter — never hardcoded.
+    A section present in both dicts is merged key-wise (so a config.json that
+    carries only ``Defaults.habits.*`` keeps the vault's other Defaults keys,
+    and one that carries only the micro-adventure Pool keeps the vault's
+    Rotation). Anything else is taken from the overlay, which wins.
+    """
+    merged = dict(base)
+    for key, value in overlay.items():
+        if isinstance(value, dict) and isinstance(merged.get(key), dict):
+            merged[key] = {**merged[key], **value}
+        else:
+            merged[key] = value
+    return merged
+
+
+def read_config(vault_root: str | Path) -> ConfigReadResult:
+    """Read and parse the TDTB config from `vault_root`.
+
+    Dual-read (S0): `~/.config/tdtb/config.json` (see ``app_config``) is the
+    canonical source when present and is overlaid on the vault parse — every
+    section it carries wins, every section it does not still comes from the
+    vault. With no config.json the vault file is read exactly as before, so
+    behaviour is unchanged. `vault_root` is always a caller-supplied
+    parameter — never hardcoded.
+
     Returns a `ConfigReadResult`:
-      - `bootstrap_needed=True`, `config=None`, `validation=None` when the
-        file is missing entirely (caller decides whether to offer writing
-        defaults — this module does not write one).
+      - `bootstrap_needed=True`, `config=None`, `validation=None` when there
+        is neither a config.json nor a vault file (caller decides whether to
+        offer writing defaults — this module does not write one).
       - Otherwise `config` is a populated `TdtbConfig` and `validation` is
         the required-section/key report (never raises on gaps).
     """
+    overlay = app_config.load_sections()
     config_path = Path(vault_root) / CONFIG_REL_PATH
     if not config_path.exists():
+        if overlay:
+            config = TdtbConfig(sections=dict(overlay), raw_text=None)
+            return ConfigReadResult(
+                config=config, bootstrap_needed=False, validation=config.validate()
+            )
         return ConfigReadResult(config=None, bootstrap_needed=True, validation=None)
 
     raw_text = config_path.read_text(encoding="utf-8")
     sections = parse_config_markdown(raw_text)
+    if overlay:
+        sections = _merge_sections(sections, overlay)
     config = TdtbConfig(sections=sections, raw_text=raw_text)
     validation = config.validate()
     return ConfigReadResult(config=config, bootstrap_needed=False, validation=validation)
