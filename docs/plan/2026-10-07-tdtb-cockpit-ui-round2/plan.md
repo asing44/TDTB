@@ -375,3 +375,50 @@ revisit" above (the retired `max-height: 900px` tightening) is now moot: it was
 worth 3px by the wireframe's model, and the real bottleneck is pinned-chip
 height, not rail rhythm. Any future short-viewport work should target
 `.rail__chips` and the pie, not the gaps.
+
+## Correction — W1 does NOT fix the reported symptom
+
+Found by live inspection after landing, and it corrects an overstatement made
+while reporting. **The row chip the operator annotated is not driven by the
+resolver W1 fixed.**
+
+The cockpit's row duration comes from `resolve_assigned_blocks`
+(`app/main.py:1448`), whose documented **locked decision 14** precedence is
+*Todoist-native duration → name-matched Presets → contract type field → 1
+block*. **There is no duration-label step in that ladder**, and it is what
+assigns `row["blocks"]` (`main.py:2486`) that the wire row carries to the chip.
+
+`duration_memory.resolve_duration` — the tag-aware resolver W1 extended — is
+called in exactly one place, `main.py:2882`, inside the **duration-memory save
+fallback** (`_source_resolved_fallback`). Its result never reaches a rendered
+row.
+
+**Measured, not inferred** (`resolve_assigned_blocks` with no presets):
+
+| Label | blocks | chip shows |
+|---|---|---|
+| `🏃‍♂️ Hour` | 1 | 30min |
+| `🍅 Half-hour` | 1 | 30min |
+| `🐢 Multi-hour` | 1 | 30min |
+| `🚀 10min` | 1 | 30min |
+| `dur45` | 1 | 30min |
+| *(none)* | 1 | 30min |
+
+Live corroboration: `Check traps`, labelled `🚀 10min`, arrives with
+`blocks: 1` and no `duration_source`, and `Queue.tsx:405-411` renders the chip
+as `source` for any row that is neither a session override nor remembered —
+which is exactly the operator's literal "30min SOURCE".
+
+**Consequences.**
+
+1. W1 is still correct and necessary — the recognizer and `resolve_duration`
+   now handle the labels, and the QuickTasks/grouping semantics depend on them —
+   but it is **insufficient** for the reported symptom.
+2. Note that `🚀 10min` and `dur45` *have always* been recognized and still show
+   30min, so this is not a regression from W1: duration labels have never
+   influenced a row's displayed minutes.
+3. The fix requires adding a duration-label step to `resolve_assigned_blocks`,
+   which **amends locked decision 14** — a behaviour change affecting every
+   duration-labelled row, not just the three new labels.
+4. That is an operator decision, not an implementation detail, and it has not
+   been taken. **Round 2's headline item is therefore half-delivered.**
