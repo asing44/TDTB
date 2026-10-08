@@ -2481,6 +2481,10 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
         store = None
         t_assigned: list[dict[str, Any]] = []
         t_pool: list[dict[str, Any]] = []
+        # O1: a Capacities rule marked pool:true emits assigned:false, so those
+        # rows must reach the pool rather than being treated as assigned. Empty
+        # in live mode, where every Capacities row keeps its existing routing.
+        c_pool: list[dict[str, Any]] = []
         w_todo: list[str] = []
         if source_mode == app_config.SOURCES_MODE_ARTIFACT:
             # The calendar store is NOT a live plan source the artifact
@@ -2502,9 +2506,11 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
                 r for r in artifact_result.rows
                 if r.get("source") == "todoist" and r.get("assigned") is not True
             ]
-            capacities_items = [
+            capacities_rows = [
                 r for r in artifact_result.rows if r.get("source") == "capacities"
             ]
+            capacities_items = [r for r in capacities_rows if r.get("assigned") is True]
+            c_pool = [r for r in capacities_rows if r.get("assigned") is not True]
             # A producer may fold vault rows into the artifact too; they join
             # the live vault gather's own surfaces rather than a third one.
             artifact_vault = [
@@ -2575,10 +2581,14 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
             vault_all + t_assigned + t_pool,
             capacities_items,
         )
+        c_pool = external_sources.disambiguate_names(
+            vault_all + t_assigned + t_pool + capacities_items,
+            c_pool,
+        )
         exclusion_policy = _exclusion_policy_or_block(vault)
         try:
             digest = build_digest(
-                run_data["pool_items"] + t_pool,
+                run_data["pool_items"] + t_pool + c_pool,
                 run_data["assigned_items"] + t_assigned + capacities_items,
                 today,
                 order,

@@ -426,6 +426,52 @@ def _boom(*_args, **_kwargs):
     raise AssertionError("a live client seam was constructed in artifact mode")
 
 
+def test_capacities_pool_row_reaches_the_pool(vault):
+    """O1: a Capacities rule marked pool:true emits assigned:false, so that row
+    must reach the pool.
+
+    Regression guard: the artifact merge sent EVERY Capacities row to
+    ``assigned_items`` regardless of the flag, which silently demoted pool rows
+    and made a pool:true Capacities rule do nothing.
+    """
+    doc, today = _artifact_for_today()
+    rows = [
+        {
+            "name": "Cap assigned",
+            "source": "capacities",
+            "path": "capacities://space/obj-a",
+            "identity": "capacities:space:st:obj-a",
+            "assigned": True,
+            "capacities_id": "obj-a",
+        },
+        {
+            "name": "Cap pool",
+            "source": "capacities",
+            "path": "capacities://space/obj-b",
+            "identity": "capacities:space:st:obj-b",
+            "assigned": False,
+            "capacities_id": "obj-b",
+        },
+    ]
+    doc["rows"] = rows
+    doc["content_hash"] = art.compute_content_hash(doc["sources"], rows)
+    _enable_artifact_mode()
+    art.atomic_write_artifact(doc)
+
+    app = main_mod.create_app(vault_root=vault)
+    app.state.build_read_clients = _boom
+    app.state.build_capacities_adapter = _boom
+    client = TestClient(app)
+
+    body = client.get("/plan-inputs").json()
+    assigned = [r["name"] for r in body["digest"]["assigned"]]
+    suggested = [r["name"] for r in body["digest"]["suggested"]]
+
+    assert "Cap assigned" in assigned
+    assert "Cap pool" in suggested
+    assert "Cap pool" not in assigned, "a pool:true Capacities row was demoted to assigned"
+
+
 def test_artifact_mode_constructs_no_live_client(vault):
     doc, today = _artifact_for_today()
     _enable_artifact_mode()
