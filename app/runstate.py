@@ -4,13 +4,22 @@ Writes the two Phase-0.8 / Phase-5 cache notes in the EXACT shapes the
 tdtb-bridger-vault skill uses (SKILL.md § 0.8 Run-state persistence and
 § Recent-selections cache layer):
 
-  - ``00 - META/Cache/tdtb-runstate-<YYYY-MM-DD>.md`` — frontmatter
-    ``valid_date`` + ``written_at`` (ISO), then a fenced ```json body block
-    (the shape ``tdtb_gather.load_runstate`` / ``_extract_json_block`` reads
-    back — round-trip compatibility with gather is the format contract).
-  - ``00 - META/Cache/tdtb-recent-selections.md`` — frontmatter ``runs:``
-    list, max 5 entries, newest first; each entry
-    ``{date, selections: [{id, path, blocks}]}``.
+  - ``tdtb-runstate-<YYYY-MM-DD>.md`` — frontmatter ``valid_date`` +
+    ``written_at`` (ISO), then a fenced ```json body block (the shape
+    ``tdtb_gather.load_runstate`` / ``_extract_json_block`` reads back —
+    round-trip compatibility with gather is the format contract).
+  - ``tdtb-recent-selections.md`` — frontmatter ``runs:`` list, max 5 entries,
+    newest first; each entry ``{date, selections: [{id, path, blocks}]}``.
+
+Location (Capacities-first S1): every runstate-owned file — the dated notes,
+``tdtb-recent-selections.md`` and the dated digest indexes — lives under
+``<app home>/state/runstate/`` (``app_config.state_dir()``), beside the rest of
+the app-owned stores. Writes never touch the vault.
+
+Read-new-first with a read-only vault fallback: a read prefers the state-dir
+file and falls back to the frozen pre-S1 copy under ``00 - META/Cache`` when the
+state file is absent, which is what makes S1 reversible (restore the paths and
+the vault copies are authoritative again).
 
 ``vault_root`` is always a caller-supplied parameter — never hardcoded
 (spec locked decision 2). Gate: T9 integration tests.
@@ -26,15 +35,23 @@ from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
+import app_config
+
 _GATHER_DIR = str(Path(__file__).parent / "gather")
 if _GATHER_DIR not in sys.path:
     sys.path.insert(0, _GATHER_DIR)
 
 import tdtb_gather as gather  # noqa: E402  (path-shimmed import, see inventory.py)
 
+#: Legacy vault cache directory. READ-ONLY after S1 — it holds the frozen
+#: pre-migration runstate set (the rollback point) and the read-only fallback,
+#: plus the two stores not yet moved (duration memory, the runtime journal).
 CACHE_DIR_REL = "00 - META/Cache"
 RECENT_SELECTIONS_REL_PATH = f"{CACHE_DIR_REL}/tdtb-recent-selections.md"
 RECENT_SELECTIONS_MAX_RUNS = 5
+
+#: S1: the runstate store's own directory under the app home.
+STATE_RUNSTATE_DIRNAME = "runstate"
 
 # FEEDBACK-24: the only runstate key that records a confirmed Day Setup.
 DAY_SETUP_CONFIRMED_KEY = "day_setup_confirmed"
@@ -101,8 +118,89 @@ def day_lock(valid_date: date | str) -> threading.Lock:
 
 
 def runstate_rel_path(valid_date: date) -> str:
-    """Vault-relative path of the dated run-state note."""
+    """Vault-relative path of the dated run-state note.
+
+    Pre-S1 spelling, kept for the read-only vault fallback and for callers that
+    still compose ``vault_root / <rel>``. The active store path is
+    :func:`state_runstate_path`."""
     return f"{CACHE_DIR_REL}/tdtb-runstate-{valid_date}.md"
+
+
+# ---------------------------------------------------------------------------
+# Store locations (S1): state dir first, frozen vault copy as fallback
+# ---------------------------------------------------------------------------
+
+def state_runstate_dir() -> Path:
+    """``<app home>/state/runstate/`` — the runstate store's directory.
+
+    Computed only: this helper never creates the directory."""
+    return app_config.state_dir() / STATE_RUNSTATE_DIRNAME
+
+
+def state_runstate_path(valid_date: date) -> Path:
+    """The dated run-state note in the app-home state tree."""
+    return state_runstate_dir() / f"tdtb-runstate-{valid_date}.md"
+
+
+def state_recent_selections_path() -> Path:
+    """The recent-selections cache in the app-home state tree."""
+    return state_runstate_dir() / "tdtb-recent-selections.md"
+
+
+def state_digest_index_path(valid_date: date) -> Path:
+    """The dated digest identity index in the app-home state tree."""
+    return state_runstate_dir() / f"tdtb-digest-index-{valid_date}.json"
+
+
+def legacy_runstate_path(vault_root: Path | str, valid_date: date) -> Path:
+    """The frozen pre-S1 vault note — read-only fallback."""
+    return Path(vault_root) / runstate_rel_path(valid_date)
+
+
+def legacy_recent_selections_path(vault_root: Path | str) -> Path:
+    """The frozen pre-S1 vault recent-selections cache."""
+    return Path(vault_root) / RECENT_SELECTIONS_REL_PATH
+
+
+def legacy_digest_index_path(vault_root: Path | str, valid_date: date) -> Path:
+    """The frozen pre-S1 vault digest identity index."""
+    return Path(vault_root) / digest_index_rel_path(valid_date)
+
+
+def _first_existing(*paths: Path) -> Path | None:
+    for path in paths:
+        if path.is_file():
+            return path
+    return None
+
+
+def runstate_read_path(vault_root: Path | str, valid_date: date) -> Path:
+    """New-first read path for the dated note: the state-dir note when it
+    exists, else the frozen vault copy, else the (absent) state-dir path.
+
+    External readers that compose the path themselves must use this instead of
+    ``vault_root / runstate_rel_path(...)`` so they see post-S1 writes."""
+    found = _first_existing(
+        state_runstate_path(valid_date), legacy_runstate_path(vault_root, valid_date)
+    )
+    return found if found is not None else state_runstate_path(valid_date)
+
+
+def recent_selections_read_path(vault_root: Path | str) -> Path:
+    """New-first read path for the recent-selections cache."""
+    found = _first_existing(
+        state_recent_selections_path(), legacy_recent_selections_path(vault_root)
+    )
+    return found if found is not None else state_recent_selections_path()
+
+
+def digest_index_read_path(vault_root: Path | str, valid_date: date) -> Path:
+    """New-first read path for the dated digest identity index."""
+    found = _first_existing(
+        state_digest_index_path(valid_date),
+        legacy_digest_index_path(vault_root, valid_date),
+    )
+    return found if found is not None else state_digest_index_path(valid_date)
 
 
 def build_runstate(overrides: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -126,12 +224,16 @@ def write_runstate(
     skill's trigger-1 rule, stale ``tdtb-runstate-*.md`` notes from earlier
     dates are best-effort deleted so they don't accumulate; same-day writes
     overwrite.
+
+    S1: the note goes to ``<app home>/state/runstate/``. ``vault_root`` is
+    accepted for call-site compatibility and is never written to — the frozen
+    vault notes stay untouched as the rollback point, and the trigger-1
+    cleanup runs only inside the state directory.
     """
-    vault_root = Path(vault_root)
     now = now or datetime.now(timezone.utc)
     written_at = now.strftime("%Y-%m-%dT%H:%M:%SZ")
 
-    cache_dir = vault_root / CACHE_DIR_REL
+    cache_dir = state_runstate_dir()
     cache_dir.mkdir(parents=True, exist_ok=True)
 
     # Best-effort cleanup of earlier-dated run-state notes (trigger 1).
@@ -161,7 +263,7 @@ def write_runstate(
         "```",
         "",
     ])
-    out_path = vault_root / runstate_rel_path(valid_date)
+    out_path = state_runstate_path(valid_date)
     # Atomic replace (T12 audit): routes run in parallel threadpool workers,
     # and a bare write_text lets a concurrent reader see a truncated note.
     tmp_path = out_path.with_suffix(".md.tmp")
@@ -171,8 +273,11 @@ def write_runstate(
 
 
 def read_runstate(vault_root: Path | str, valid_date: date) -> dict[str, Any] | None:
-    """Read the dated run-state note's JSON body. Missing/unparseable → None."""
-    path = Path(vault_root) / runstate_rel_path(valid_date)
+    """Read the dated run-state note's JSON body. Missing/unparseable → None.
+
+    S1: the state-dir note wins; the frozen vault note is the read-only
+    fallback when no state file exists yet."""
+    path = runstate_read_path(vault_root, valid_date)
     if not path.is_file():
         return None
     return gather._extract_json_block(path.read_text(encoding="utf-8", errors="replace"))
@@ -246,6 +351,9 @@ def write_digest_index(
     the run-state note) so a later slice can detect a planning read made
     against a stale policy; this slice records it only and adds no rejection.
     ``None`` (legacy callers) omits the key.
+
+    S1: the index goes to ``<app home>/state/runstate/``; the vault is never
+    written to.
     """
     if exclusion_settings_revision is not None and (
         type(exclusion_settings_revision) is not int
@@ -257,7 +365,7 @@ def write_digest_index(
     payload: dict[str, Any] = {"valid_date": str(valid_date), "items": index}
     if exclusion_settings_revision is not None:
         payload["exclusion_settings_revision"] = exclusion_settings_revision
-    out_path = Path(vault_root) / digest_index_rel_path(valid_date)
+    out_path = state_digest_index_path(valid_date)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     tmp = out_path.with_suffix(".json.tmp")
     tmp.write_text(
@@ -274,8 +382,11 @@ def read_digest_index(vault_root: Path | str, valid_date: date) -> list[dict[str
 
     P3-03: the stored ``valid_date`` is re-checked on read — an index file
     whose own valid_date disagrees with the requested day is treated as
-    missing, so a stale/cross-day cache can never authorize a commit."""
-    path = Path(vault_root) / digest_index_rel_path(valid_date)
+    missing, so a stale/cross-day cache can never authorize a commit.
+
+    S1: the state-dir index wins; the frozen vault index is the read-only
+    fallback."""
+    path = digest_index_read_path(vault_root, valid_date)
     if not path.is_file():
         return []
     try:
@@ -328,9 +439,10 @@ def read_recent_selections(vault_root: Path | str) -> list[dict[str, Any]]:
     """Read the ``runs:`` list from the recent-selections cache.
 
     Missing or unparseable file → empty list (the skill treats this cache as
-    an enhancement, never a dependency — skip silently).
+    an enhancement, never a dependency — skip silently). S1: the state-dir
+    cache wins; the frozen vault cache is the read-only fallback.
     """
-    path = Path(vault_root) / RECENT_SELECTIONS_REL_PATH
+    path = recent_selections_read_path(vault_root)
     if not path.is_file():
         return []
     fm = gather.parse_frontmatter(path.read_text(encoding="utf-8", errors="replace"))
@@ -350,8 +462,10 @@ def append_recent_selection(
     Each selection row is ``{id, path, blocks}`` per the skill's cache-layer
     spec. A same-date entry is replaced rather than duplicated (same-day
     re-commit overwrites, matching the run-state overwrite semantics).
+
+    S1: the cache is written to ``<app home>/state/runstate/``; the vault copy
+    is never written to.
     """
-    vault_root = Path(vault_root)
     runs = [r for r in read_recent_selections(vault_root)
             if str(r.get("date")) != str(run_date)]
     entry = {
@@ -367,7 +481,7 @@ def append_recent_selection(
     lines = ["---"] + _selections_to_yaml_lines(runs) + [
         "---", "", "_Auto-generated by runstate.py. Do not edit manually._", "",
     ]
-    out_path = vault_root / RECENT_SELECTIONS_REL_PATH
+    out_path = state_recent_selections_path()
     out_path.parent.mkdir(parents=True, exist_ok=True)
     tmp_path = out_path.with_suffix(".md.tmp")
     tmp_path.write_text("\n".join(lines), encoding="utf-8")

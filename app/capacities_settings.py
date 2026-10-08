@@ -1,9 +1,10 @@
 """Versioned local persistence for the TDTB Capacities assignment policy.
 
-This module owns the ONE local, vault-scoped store the Capacities settings API
-reads and writes::
-
-    00 - META/Cache/tdtb-capacities-settings.json
+This module owns the ONE app-owned store the Capacities settings API reads and
+writes: ``<app home>/state/capacities-settings.json``
+(``app_config.state_dir()``, Capacities-first S1). It previously lived in the
+vault at ``00 - META/Cache/tdtb-capacities-settings.json``; that path is now
+the frozen, read-only fallback (see :func:`legacy_settings_path`).
 
 It persists only the editable assignment policy — the native Auto toggles,
 the stable-identity exclusion set, the custom structures whose ``Active``
@@ -21,6 +22,11 @@ Contract:
 - Missing file is safe: :func:`read_settings` returns the default policy
   (revision ``0``, every native rule enabled, horizon ``2``, no exclusions) and
   ``persisted=False`` WITHOUT creating a file.
+- Reads prefer the state-dir file and fall back READ-ONLY to the frozen vault
+  copy when the state file is absent, so S1 is reversible.
+- Writes always land at the state-dir path; the vault is never written to. The
+  ``.lock`` file is a runtime artifact created fresh at the new location and is
+  never migrated.
 - Malformed or unsupported existing storage fails closed: reads raise
   :class:`SettingsFormatError`, and writes refuse while preserving the original
   bytes. Nothing is silently defaulted or erased.
@@ -30,9 +36,9 @@ Contract:
   malformed identities, and duplicate JSON keys are rejected.
 - Values are strict: booleans are real booleans, and revision/horizon are
   nonnegative integers (bools, floats, and strings are rejected).
-- Writes serialize read-modify-write under a per-vault process lock plus an
-  advisory ``flock`` on a vault-scoped lock file, then replace atomically
-  (unique same-directory temp + flush/fsync + ``os.replace``). A save whose
+- Writes serialize read-modify-write under a process lock plus an advisory
+  ``flock`` on the app-home lock file, then replace atomically (unique
+  same-directory temp + flush/fsync + ``os.replace``). A save whose
   ``expected_revision`` no longer matches the stored revision raises
   :class:`SettingsConflictError` and leaves the bytes untouched.
 
@@ -54,6 +60,7 @@ try:
 except ImportError:  # pragma: no cover — non-POSIX fallback
     _fcntl = None
 
+import app_config
 import runstate
 from capacities_assignment import (
     DEFAULT_ACTIVE_STATUSES,
@@ -66,11 +73,12 @@ from capacities_assignment import (
 # ---------------------------------------------------------------------------
 # Paths and schema constants
 # ---------------------------------------------------------------------------
-# The cache and lock live beneath ``00 - META/Cache`` under the RESOLVED vault
-# root — paths derive only from the caller-supplied vault_root, never from cwd,
-# env, or display names. The temp name is unique per write (mkstemp), so it can
-# never collide with another writer's runstate/cache temp.
+# S1: the store lives under ``<app home>/state/`` and its lock beside it. The
+# ``*_REL_PATH`` constants below are the frozen pre-S1 vault locations, kept
+# only as the read-only fallback and as the migration tool's source of truth.
 
+STATE_FILENAME = "capacities-settings.json"
+STATE_LOCK_FILENAME = "capacities-settings.lock"
 SETTINGS_REL_PATH = f"{runstate.CACHE_DIR_REL}/tdtb-capacities-settings.json"
 LOCK_REL_PATH = f"{runstate.CACHE_DIR_REL}/tdtb-capacities-settings.lock"
 SCHEMA_VERSION = 1
@@ -259,14 +267,25 @@ class SettingsRead:
     persisted: bool
 
 
-def settings_path(vault_root: str | Path) -> Path:
-    """The versioned JSON settings path beneath the resolved vault root."""
+def settings_path(vault_root: str | Path | None = None) -> Path:
+    """The active store path: ``<app home>/state/capacities-settings.json``.
+
+    ``vault_root`` is accepted for call-site compatibility and deliberately
+    ignored — the store is machine-local after S1 and derives only from
+    ``app_config.state_dir()``, never from the vault."""
+    return app_config.state_dir() / STATE_FILENAME
+
+
+def legacy_settings_path(vault_root: str | Path) -> Path:
+    """The frozen pre-S1 vault path — read-only fallback."""
     return Path(vault_root) / SETTINGS_REL_PATH
 
 
-def lock_path(vault_root: str | Path) -> Path:
-    """The lock-file path beneath the resolved vault root."""
-    return Path(vault_root) / LOCK_REL_PATH
+def lock_path(vault_root: str | Path | None = None) -> Path:
+    """The active lock-file path, beside the store in the app home.
+
+    A 0-byte runtime artifact created on demand; never migrated."""
+    return app_config.state_dir() / STATE_LOCK_FILENAME
 
 
 def canonical_exclusion_identity(value: Any) -> str:
@@ -545,21 +564,27 @@ def _load_strict(path: Path) -> CapacitiesSettings:
 
 
 def read_settings(vault_root: str | Path) -> SettingsRead:
-    """Read the vault-scoped Capacities settings.
+    """Read the app-owned Capacities settings.
 
     A missing file returns the default-enabled policy with ``persisted=False``
     and creates nothing. Malformed/unsupported storage raises
     :class:`SettingsFormatError`; an unreadable file raises
     :class:`SettingsStoreError`. Reads never write.
+
+    S1: the state-dir file wins; the frozen vault copy is the read-only
+    fallback when no state file exists yet.
     """
-    path = settings_path(vault_root)
     try:
-        exists = os.path.lexists(path)
+        path = next(
+            (p for p in (settings_path(), legacy_settings_path(vault_root))
+             if os.path.lexists(p)),
+            None,
+        )
     except (OSError, TypeError, ValueError) as exc:  # pragma: no cover — defensive
         raise SettingsStoreError(
             "capacities settings storage is unreadable"
         ) from exc
-    if not exists:
+    if path is None:
         return SettingsRead(settings=CapacitiesSettings(), persisted=False)
     return SettingsRead(settings=_load_strict(path), persisted=True)
 
@@ -568,24 +593,27 @@ def read_settings(vault_root: str | Path) -> SettingsRead:
 # Locking + atomic write
 # ---------------------------------------------------------------------------
 # Per-vault-root process-local RMW locks (same single-process convention as
-# ``duration_memory`` / ``runstate`` G26); the flock on the vault-scoped lock
-# file adds cross-process serialization for the same bytes.
+# ``duration_memory`` / ``runstate`` G26); the flock on the app-home lock file
+# adds cross-process serialization for the same bytes.
 
 _LOCKS: dict[str, threading.Lock] = {}
 _LOCKS_GUARD = threading.Lock()
 
 
 def _store_lock(vault_root: str | Path) -> threading.Lock:
+    """The process-local RMW lock. Keyed on the resolved vault root so callers
+    that still pass one keep their existing single-process semantics; the
+    durable bytes are shared machine-wide by ``lock_path()`` and the flock."""
     key = str(Path(vault_root).resolve())
     with _LOCKS_GUARD:
         return _LOCKS.setdefault(key, threading.Lock())
 
 
 def _acquire_lock_file(vault_root: str | Path) -> Any:
-    """Advisory exclusive flock on the vault-scoped lock file. Returns the
-    open file handle (released on close). Raises on failure — callers fail
-    closed with no settings mutation."""
-    path = lock_path(vault_root)
+    """Advisory exclusive flock on the app-home lock file. Returns the open
+    file handle (released on close). Raises on failure — callers fail closed
+    with no settings mutation."""
+    path = lock_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     fh = open(path, "a+", encoding="utf-8")
     try:
@@ -702,7 +730,7 @@ def save_settings(
                 active_statuses=status_values,
                 assigned_structures=declarations,
             )
-            _atomic_write_json(settings_path(root), saved.as_dict())
+            _atomic_write_json(settings_path(), saved.as_dict())
         finally:
             _release_lock_file(fh)
     return saved

@@ -67,7 +67,7 @@ def _load_runstate_micro_adventure(vault: Path, today: date) -> dict | None:
     the note's write format contract verbatim. Missing note or absent key -> None
     (the Live reroute then silently stays a Step E calendar block).
     """
-    rs_path = vault / runstate_mod.runstate_rel_path(today)
+    rs_path = runstate_mod.runstate_read_path(vault, today)
     if not rs_path.is_file():
         return None
     data = gather._extract_json_block(rs_path.read_text(encoding="utf-8", errors="replace"))

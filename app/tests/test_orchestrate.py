@@ -132,7 +132,7 @@ def _all_four_intents() -> list[commit.WriteIntent]:
 
 
 def _ledger_from_disk(vault: Path, today: date = TODAY) -> dict:
-    path = vault / runstate_mod.runstate_rel_path(today)
+    path = runstate_mod.runstate_read_path(vault, today)
     data = gather._extract_json_block(path.read_text(encoding="utf-8"))
     assert data is not None
     return data

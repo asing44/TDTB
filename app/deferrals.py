@@ -1,15 +1,19 @@
 """deferrals.py — T1 defer-with-memory (allocator rewrite, locked decision 5).
 
-A rolling, vault-cached record of "I pushed this to another day", used to bias
+A rolling, app-owned record of "I pushed this to another day", used to bias
 the digest's ranked pool upward the next time the item shows up. The locked
 *effect* is one line: **deferred yesterday ⇒ ranks higher today.** Everything
 below is the schema and decay policy chosen to deliver it.
 
 Store
 -----
-``00 - META/Cache/tdtb-deferrals.json`` — rolling (not dated; deferral memory
-is explicitly cross-day), written atomically (tmp + ``os.replace``) under a
-module lock, same single-writer discipline as ``runstate``/the runtime journal.
+``<app home>/state/deferrals.json`` (``app_config.state_dir()``,
+Capacities-first S1) — rolling (not dated; deferral memory is explicitly
+cross-day), written atomically (tmp + ``os.replace``) under a module lock, same
+single-writer discipline as ``runstate``/the runtime journal. It previously
+lived in the vault at ``00 - META/Cache/tdtb-deferrals.json``; that path is now
+the frozen, read-only fallback (see :func:`legacy_deferrals_path`), so reads
+prefer the state file and writes never touch the vault.
 Shape::
 
     {"version": 1,
@@ -51,8 +55,12 @@ from datetime import date
 from pathlib import Path
 from typing import Any
 
+import app_config
 import runstate
 
+#: The active store only; the pre-S1 vault location below is the frozen,
+#: read-only fallback and the migration tool's source of truth.
+STATE_FILENAME = "deferrals.json"
 DEFERRALS_REL_PATH = f"{runstate.CACHE_DIR_REL}/tdtb-deferrals.json"
 SCHEMA_VERSION = 1
 
@@ -91,9 +99,26 @@ def key_for_item(item: dict[str, Any]) -> str:
 # Store
 # ---------------------------------------------------------------------------
 
+def deferrals_path(vault_root: Path | str | None = None) -> Path:
+    """The active store path: ``<app home>/state/deferrals.json``.
+
+    ``vault_root`` is accepted for call-site compatibility and deliberately
+    ignored — the store is machine-local after S1 and derives only from
+    ``app_config.state_dir()``, never from the vault."""
+    return app_config.state_dir() / STATE_FILENAME
+
+
+def legacy_deferrals_path(vault_root: Path | str) -> Path:
+    """The frozen pre-S1 vault path — read-only fallback."""
+    return Path(vault_root) / DEFERRALS_REL_PATH
+
+
 def _read_raw(vault_root: Path | str) -> dict[str, Any]:
-    path = Path(vault_root) / DEFERRALS_REL_PATH
-    if not path.is_file():
+    path = next(
+        (p for p in (deferrals_path(), legacy_deferrals_path(vault_root)) if p.is_file()),
+        None,
+    )
+    if path is None:
         return {}
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
@@ -107,8 +132,8 @@ def _read_raw(vault_root: Path | str) -> dict[str, Any]:
     return {k: v for k, v in items.items() if isinstance(v, dict)}
 
 
-def _write_raw(vault_root: Path | str, items: dict[str, Any]) -> Path:
-    out_path = Path(vault_root) / DEFERRALS_REL_PATH
+def _write_raw(items: dict[str, Any]) -> Path:
+    out_path = deferrals_path()
     out_path.parent.mkdir(parents=True, exist_ok=True)
     tmp = out_path.with_suffix(".json.tmp")
     tmp.write_text(
@@ -170,7 +195,7 @@ def record_deferral(
             "todoist_id": str(item.get("todoist_id") or prior.get("todoist_id") or ""),
         }
         items[key] = entry
-        _write_raw(vault_root, items)
+        _write_raw(items)
         return entry
 
 
@@ -187,7 +212,7 @@ def set_entry(
             items.pop(key, None)
         else:
             items[key] = entry
-        _write_raw(vault_root, items)
+        _write_raw(items)
 
 
 # ---------------------------------------------------------------------------

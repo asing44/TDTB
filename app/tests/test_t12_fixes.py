@@ -244,7 +244,7 @@ class TestGatherPreservesRunstate:
         r = client.post("/gather", headers=_auth(client))
         assert r.status_code == 200
 
-        text = (vault / runstate.runstate_rel_path(today)).read_text(encoding="utf-8")
+        text = runstate.runstate_read_path(vault, today).read_text(encoding="utf-8")
         data = gather._extract_json_block(text)
         assert data["anchor"] == "10:15"
         assert data["buffering"] == "standard"

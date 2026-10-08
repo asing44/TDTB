@@ -118,7 +118,7 @@ class TestGatherAndRunstate:
         assert body["pool_count"] == 0 and body["assigned_count"] == 0
 
         today = gather.effective_date(datetime.now())
-        rs_path = vault / f"00 - META/Cache/tdtb-runstate-{today}.md"
+        rs_path = rs.runstate_read_path(vault, today)
         assert rs_path.is_file()
         text = rs_path.read_text(encoding="utf-8")
         # Frontmatter shape per SKILL.md § 0.8
@@ -136,14 +136,15 @@ class TestGatherAndRunstate:
         assert (vault / gather.CACHE_REL_PATH).is_file()
 
     def test_gather_deletes_stale_runstates(self, client, vault):
-        cache_dir = vault / "00 - META/Cache"
-        cache_dir.mkdir(parents=True)
+        # S1: trigger-1 cleanup prunes earlier-dated notes in the ACTIVE state
+        # directory; the frozen vault cache is never written or pruned.
+        rs.state_runstate_dir().mkdir(parents=True, exist_ok=True)
         today = gather.effective_date(datetime.now())
-        stale = cache_dir / f"tdtb-runstate-{today - timedelta(days=3)}.md"
+        stale = rs.state_runstate_path(today - timedelta(days=3))
         stale.write_text("---\nvalid_date: 'x'\n---\n", encoding="utf-8")
         client.post("/gather", headers=_auth(client))
         assert not stale.exists()
-        assert (cache_dir / f"tdtb-runstate-{today}.md").is_file()
+        assert rs.state_runstate_path(today).is_file()
 
     def test_runstate_loadable_by_gather_load_runstate(self, vault):
         vault.mkdir()
@@ -304,7 +305,7 @@ class TestRecentSelections:
 
     def test_append_creates_file_in_skill_shape(self, tmp_path):
         path = rs.append_recent_selection(tmp_path, date(2026, 7, 12), self.SEL)
-        assert path == tmp_path / "00 - META/Cache/tdtb-recent-selections.md"
+        assert path == rs.state_recent_selections_path()
         fm = gather.parse_frontmatter(path.read_text(encoding="utf-8"))
         assert fm is not None
         runs = fm["runs"]
@@ -574,7 +575,7 @@ class TestDaySetup:
         assert "Sudsing" in body["re_included"]
 
         today = gather.effective_date(datetime.now())
-        note = vault / rs.runstate_rel_path(today)
+        note = rs.runstate_read_path(vault, today)
         assert note.is_file()
         state = gather._extract_json_block(note.read_text(encoding="utf-8"))
         assert state["anchor"] == "18:00" and state["eod"] == "22:00"
@@ -591,7 +592,7 @@ class TestDaySetup:
             {"micro_adventure": {"idea": "stargaze"}}))
         client.post("/day-setup", json={"anchor": "18:00"}, headers=_auth(client))
         state = gather._extract_json_block(
-            (vault / rs.runstate_rel_path(today)).read_text(encoding="utf-8"))
+            (rs.runstate_read_path(vault, today)).read_text(encoding="utf-8"))
         assert state["micro_adventure"] == {"idea": "stargaze"}
         assert state["anchor"] == "18:00"
 
@@ -624,7 +625,7 @@ class TestDaySetup:
 
         today = gather.effective_date(datetime.now())
         state = gather._extract_json_block(
-            (vault / rs.runstate_rel_path(today)).read_text(encoding="utf-8"))
+            (rs.runstate_read_path(vault, today)).read_text(encoding="utf-8"))
         assert state["schedulable"]["minting"] == {
             "on": True,
             "n": 2,
@@ -693,7 +694,7 @@ class TestT18b2TriStatePersistence:
         assert r.status_code == 200, r.text
         today = gather.effective_date(datetime.now())
         state = gather._extract_json_block(
-            (vault / rs.runstate_rel_path(today)).read_text(encoding="utf-8"))
+            (rs.runstate_read_path(vault, today)).read_text(encoding="utf-8"))
         assert state["day_preset"] == "Workday"
 
     def test_preset_omitted_preserves_existing(self, client, vault):
@@ -705,7 +706,7 @@ class TestT18b2TriStatePersistence:
                         headers=_auth(client))
         assert r.status_code == 200, r.text
         state = gather._extract_json_block(
-            (vault / rs.runstate_rel_path(today)).read_text(encoding="utf-8"))
+            (rs.runstate_read_path(vault, today)).read_text(encoding="utf-8"))
         assert state["day_preset"] == "Weekend"
         assert state["anchor"] == "09:00"
 
@@ -718,7 +719,7 @@ class TestT18b2TriStatePersistence:
                         headers=_auth(client))
         assert r.status_code == 200, r.text
         state = gather._extract_json_block(
-            (vault / rs.runstate_rel_path(today)).read_text(encoding="utf-8"))
+            (rs.runstate_read_path(vault, today)).read_text(encoding="utf-8"))
         assert state["day_preset"] is None
 
     def test_allotment_positive_persists(self, client, vault):
@@ -728,7 +729,7 @@ class TestT18b2TriStatePersistence:
         assert r.status_code == 200, r.text
         today = gather.effective_date(datetime.now())
         state = gather._extract_json_block(
-            (vault / rs.runstate_rel_path(today)).read_text(encoding="utf-8"))
+            (rs.runstate_read_path(vault, today)).read_text(encoding="utf-8"))
         assert state["work_allotment_minutes"] == 240
 
     def test_allotment_omitted_preserves_existing(self, client, vault):
@@ -739,7 +740,7 @@ class TestT18b2TriStatePersistence:
                         headers=_auth(client))
         assert r.status_code == 200, r.text
         state = gather._extract_json_block(
-            (vault / rs.runstate_rel_path(today)).read_text(encoding="utf-8"))
+            (rs.runstate_read_path(vault, today)).read_text(encoding="utf-8"))
         assert state["work_allotment_minutes"] == 180
         assert state["anchor"] == "09:00"
 
@@ -751,7 +752,7 @@ class TestT18b2TriStatePersistence:
                         headers=_auth(client))
         assert r.status_code == 200, r.text
         state = gather._extract_json_block(
-            (vault / rs.runstate_rel_path(today)).read_text(encoding="utf-8"))
+            (rs.runstate_read_path(vault, today)).read_text(encoding="utf-8"))
         assert state["work_allotment_minutes"] is None
 
     def test_allotment_zero_persists_as_disable(self, client, vault):
@@ -761,7 +762,7 @@ class TestT18b2TriStatePersistence:
         assert r.status_code == 200, r.text
         today = gather.effective_date(datetime.now())
         state = gather._extract_json_block(
-            (vault / rs.runstate_rel_path(today)).read_text(encoding="utf-8"))
+            (rs.runstate_read_path(vault, today)).read_text(encoding="utf-8"))
         assert state["work_allotment_minutes"] == 0
 
     def test_allotment_not_divisible_by_15_rejected(self, client, vault):
@@ -806,25 +807,25 @@ class TestT18b2TriStatePersistence:
         client.post("/day-setup", json={"work_allotment_minutes": 240},
                     headers=_auth(client))
         state = gather._extract_json_block(
-            (vault / rs.runstate_rel_path(today)).read_text(encoding="utf-8"))
+            (rs.runstate_read_path(vault, today)).read_text(encoding="utf-8"))
         assert state["work_allotment_minutes"] == 240
         # 2) Omitted — must preserve 240
         client.post("/day-setup", json={"anchor": "09:00"},
                     headers=_auth(client))
         state = gather._extract_json_block(
-            (vault / rs.runstate_rel_path(today)).read_text(encoding="utf-8"))
+            (rs.runstate_read_path(vault, today)).read_text(encoding="utf-8"))
         assert state["work_allotment_minutes"] == 240
         # 3) Explicit null — must clear to None
         client.post("/day-setup", json={"work_allotment_minutes": None},
                     headers=_auth(client))
         state = gather._extract_json_block(
-            (vault / rs.runstate_rel_path(today)).read_text(encoding="utf-8"))
+            (rs.runstate_read_path(vault, today)).read_text(encoding="utf-8"))
         assert state["work_allotment_minutes"] is None
         # 4) Explicit 0 — must persist as 0 (distinct from None)
         client.post("/day-setup", json={"work_allotment_minutes": 0},
                     headers=_auth(client))
         state = gather._extract_json_block(
-            (vault / rs.runstate_rel_path(today)).read_text(encoding="utf-8"))
+            (rs.runstate_read_path(vault, today)).read_text(encoding="utf-8"))
         assert state["work_allotment_minutes"] == 0
 
 

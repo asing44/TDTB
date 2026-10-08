@@ -153,7 +153,7 @@ def _prior_state(vault_root: Path, today: date) -> dict[str, Any] | None:
     note doesn't exist yet (still preserves whatever ``/gather`` or a prior
     day left behind, per commit_ledger's "preserves other runstate keys"
     guarantee)."""
-    own_path = vault_root / runstate.runstate_rel_path(today)
+    own_path = runstate.runstate_read_path(vault_root, today)
     if own_path.is_file():
         data = gather._extract_json_block(own_path.read_text(encoding="utf-8", errors="replace"))
         if data is not None:

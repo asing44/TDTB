@@ -15,6 +15,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+import app_config  # noqa: E402
 import capacities_settings as cs  # noqa: E402
 
 
@@ -69,14 +70,17 @@ def _default_policy() -> cs.NativeTaskAutoPolicy:
 
 
 class TestPathsAndDefault:
-    def test_paths_derive_only_from_vault_root(self, tmp_path):
+    def test_paths_derive_only_from_app_home(self, tmp_path):
+        """S1: the store is machine-local. ``vault_root`` is accepted for
+        call-site compatibility and deliberately ignored, so both paths derive
+        only from the app home."""
         v1 = tmp_path / "vault-a"
         v2 = tmp_path / "vault-b"
-        assert cs.settings_path(v1) == v1 / "00 - META/Cache/tdtb-capacities-settings.json"
-        assert cs.lock_path(v1) == v1 / "00 - META/Cache/tdtb-capacities-settings.lock"
-        assert cs.settings_path(v1) != cs.settings_path(v2)
-        assert cs.settings_path(v1).is_relative_to(v1)
-        assert cs.lock_path(v1).is_relative_to(v1)
+        assert cs.settings_path(v1) == app_config.state_dir() / "capacities-settings.json"
+        assert cs.lock_path(v1) == app_config.state_dir() / "capacities-settings.lock"
+        assert cs.settings_path(v1) == cs.settings_path(v2)
+        assert cs.settings_path(v1).is_relative_to(app_config.state_dir())
+        assert cs.lock_path(v1).is_relative_to(app_config.state_dir())
 
     def test_missing_file_returns_default_without_creating_it(self, tmp_path):
         result = cs.read_settings(tmp_path)
@@ -100,18 +104,23 @@ class TestPathsAndDefault:
         expected["assigned_structures"] = {}
         assert result.settings.as_dict() == expected
 
-    def test_vault_isolation(self, tmp_path):
-        a = tmp_path / "vault-a"
-        b = tmp_path / "vault-b"
+    def test_vault_isolation(self, tmp_path, monkeypatch):
+        """S1: the store is machine-local, so isolation is by app home
+        (``TDTB_HOME``), not by vault root."""
+        home_a = tmp_path / "home-a"
+        home_b = tmp_path / "home-b"
+        monkeypatch.setenv("TDTB_HOME", str(home_a))
         cs.save_settings(
-            a,
+            tmp_path,
             expected_revision=0,
             native_task_auto=_default_policy(),
             excluded=[NATIVE],
         )
-        assert cs.read_settings(a).persisted is True
-        assert cs.read_settings(a).settings.excluded == frozenset({NATIVE})
-        assert cs.read_settings(b).persisted is False
+        assert cs.read_settings(tmp_path).persisted is True
+        assert cs.read_settings(tmp_path).settings.excluded == frozenset({NATIVE})
+
+        monkeypatch.setenv("TDTB_HOME", str(home_b))
+        assert cs.read_settings(tmp_path).persisted is False
 
 
 # ---------------------------------------------------------------------------

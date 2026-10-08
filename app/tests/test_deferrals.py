@@ -91,7 +91,7 @@ class TestStore:
 
     def test_file_lands_at_the_cache_dir_path(self, vault: Path):
         deferrals.record_deferral(vault, item("Roof"), TODAY)
-        assert (vault / deferrals.DEFERRALS_REL_PATH).is_file()
+        assert deferrals.deferrals_path().is_file()
 
     def test_no_tmp_file_left_behind(self, vault: Path):
         deferrals.record_deferral(vault, item("Roof"), TODAY)

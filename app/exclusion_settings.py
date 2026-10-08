@@ -1,9 +1,10 @@
 """Versioned local persistence for the TDTB tag-exclusion policy.
 
-This module owns the ONE local, vault-scoped store the tag-exclusion settings
-API reads and writes::
-
-    00 - META/Cache/tdtb-exclusion-settings.json
+This module owns the ONE app-owned store the tag-exclusion settings API reads
+and writes: ``<app home>/state/exclusions.json`` (``app_config.state_dir()``,
+Capacities-first S1). It previously lived in the vault at
+``00 - META/Cache/tdtb-exclusion-settings.json``; that path is now the frozen,
+read-only fallback (see :func:`legacy_settings_path`).
 
 It persists only the editable policy — a set of stable Capacities tag
 identities the planner must exclude before selection — plus a server-owned
@@ -16,6 +17,11 @@ Contract:
 - Missing file is safe: :func:`read_settings` returns the default policy
   (revision ``0``, no tag exclusions) and ``persisted=False`` WITHOUT creating
   a file.
+- Reads prefer the state-dir file and fall back READ-ONLY to the frozen vault
+  copy when the state file is absent, so S1 is reversible.
+- Writes always land at the state-dir path; the vault is never written to.
+- The ``.lock`` file is a runtime artifact created fresh at the new location
+  and is never migrated.
 - Malformed or unsupported existing storage fails closed: reads raise
   :class:`ExclusionSettingsFormatError`, and writes refuse while preserving
   the original bytes. Nothing is silently defaulted or erased.
@@ -28,9 +34,9 @@ Contract:
   case variants, and bare ids are never accepted as identity.
 - Values are strict: revision is a nonnegative integer (bools, floats, and
   strings are rejected) and duplicate JSON keys are rejected at every level.
-- Writes serialize read-modify-write under a per-vault process lock plus an
-  advisory ``flock`` on a vault-scoped lock file, then replace atomically
-  (unique same-directory temp + flush/fsync + ``os.replace``). A save whose
+- Writes serialize read-modify-write under a process lock plus an advisory
+  ``flock`` on the app-home lock file, then replace atomically (unique
+  same-directory temp + flush/fsync + ``os.replace``). A save whose
   ``expected_revision`` no longer matches the stored revision raises
   :class:`ExclusionSettingsConflictError` and leaves the bytes untouched.
 
@@ -52,16 +58,18 @@ try:
 except ImportError:  # pragma: no cover — non-POSIX fallback
     _fcntl = None
 
+import app_config
 import runstate
 
 # ---------------------------------------------------------------------------
 # Paths and schema constants
 # ---------------------------------------------------------------------------
-# The cache and lock live beneath ``00 - META/Cache`` under the RESOLVED vault
-# root — paths derive only from the caller-supplied vault_root, never from cwd,
-# env, or display names. The temp name is unique per write (mkstemp), so it can
-# never collide with another writer's runstate/cache temp.
+# S1: the store lives under ``<app home>/state/`` and its lock beside it. The
+# ``*_REL_PATH`` constants below are the frozen pre-S1 vault locations, kept
+# only as the read-only fallback and as the migration tool's source of truth.
 
+STATE_FILENAME = "exclusions.json"
+STATE_LOCK_FILENAME = "exclusions.lock"
 SETTINGS_REL_PATH = f"{runstate.CACHE_DIR_REL}/tdtb-exclusion-settings.json"
 LOCK_REL_PATH = f"{runstate.CACHE_DIR_REL}/tdtb-exclusion-settings.lock"
 SCHEMA_VERSION = 1
@@ -209,14 +217,25 @@ class ExclusionSettingsRead:
     persisted: bool
 
 
-def settings_path(vault_root: str | Path) -> Path:
-    """The versioned JSON settings path beneath the resolved vault root."""
+def settings_path(vault_root: str | Path | None = None) -> Path:
+    """The active store path: ``<app home>/state/exclusions.json``.
+
+    ``vault_root`` is accepted for call-site compatibility and deliberately
+    ignored — the store is machine-local after S1 and derives only from
+    ``app_config.state_dir()``, never from the vault."""
+    return app_config.state_dir() / STATE_FILENAME
+
+
+def legacy_settings_path(vault_root: str | Path) -> Path:
+    """The frozen pre-S1 vault path — read-only fallback."""
     return Path(vault_root) / SETTINGS_REL_PATH
 
 
-def lock_path(vault_root: str | Path) -> Path:
-    """The lock-file path beneath the resolved vault root."""
-    return Path(vault_root) / LOCK_REL_PATH
+def lock_path(vault_root: str | Path | None = None) -> Path:
+    """The active lock-file path, beside the store in the app home.
+
+    A 0-byte runtime artifact created on demand; never migrated."""
+    return app_config.state_dir() / STATE_LOCK_FILENAME
 
 
 def _tag_exclusion_from_mapping(value: Any) -> TagExclusion:
@@ -317,21 +336,27 @@ def _load_strict(path: Path) -> ExclusionSettings:
 
 
 def read_settings(vault_root: str | Path) -> ExclusionSettingsRead:
-    """Read the vault-scoped tag-exclusion settings.
+    """Read the app-owned tag-exclusion settings.
 
     A missing file returns the default (empty) policy with ``persisted=False``
     and creates nothing. Malformed/unsupported storage raises
     :class:`ExclusionSettingsFormatError`; an unreadable file raises
     :class:`ExclusionSettingsStoreError`. Reads never write.
+
+    S1: the state-dir file wins; the frozen vault copy is the read-only
+    fallback when no state file exists yet.
     """
-    path = settings_path(vault_root)
     try:
-        exists = os.path.lexists(path)
+        path = next(
+            (p for p in (settings_path(), legacy_settings_path(vault_root))
+             if os.path.lexists(p)),
+            None,
+        )
     except (OSError, TypeError, ValueError) as exc:  # pragma: no cover — defensive
         raise ExclusionSettingsStoreError(
             "exclusion settings storage is unreadable"
         ) from exc
-    if not exists:
+    if path is None:
         return ExclusionSettingsRead(settings=ExclusionSettings(), persisted=False)
     return ExclusionSettingsRead(settings=_load_strict(path), persisted=True)
 
@@ -339,25 +364,28 @@ def read_settings(vault_root: str | Path) -> ExclusionSettingsRead:
 # ---------------------------------------------------------------------------
 # Locking + atomic write
 # ---------------------------------------------------------------------------
-# Per-vault-root process-local RMW locks (same single-process convention as
-# ``capacities_settings`` / ``runstate``); the flock on the vault-scoped lock
-# file adds cross-process serialization for the same bytes.
+# Process-local RMW locks (same single-process convention as
+# ``capacities_settings`` / ``runstate``); the flock on the app-home lock file
+# adds cross-process serialization for the same bytes.
 
 _LOCKS: dict[str, threading.Lock] = {}
 _LOCKS_GUARD = threading.Lock()
 
 
 def _store_lock(vault_root: str | Path) -> threading.Lock:
+    """The process-local RMW lock. Keyed on the resolved vault root so callers
+    that still pass one keep their existing single-process semantics; the
+    durable bytes are shared machine-wide by ``lock_path()`` and the flock."""
     key = str(Path(vault_root).resolve())
     with _LOCKS_GUARD:
         return _LOCKS.setdefault(key, threading.Lock())
 
 
 def _acquire_lock_file(vault_root: str | Path) -> Any:
-    """Advisory exclusive flock on the vault-scoped lock file. Returns the
-    open file handle (released on close). Raises on failure — callers fail
-    closed with no settings mutation."""
-    path = lock_path(vault_root)
+    """Advisory exclusive flock on the app-home lock file. Returns the open
+    file handle (released on close). Raises on failure — callers fail closed
+    with no settings mutation."""
+    path = lock_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     fh = open(path, "a+", encoding="utf-8")
     try:
@@ -414,12 +442,12 @@ def save_settings(
     and ``revision`` stay server-owned: the saved revision is the stored
     revision plus one. Inputs are validated BEFORE any file access.
 
-    Under the per-vault lock the current file is read, its revision compared
-    with ``expected_revision``, and only then is the file replaced atomically.
-    A stale revision raises :class:`ExclusionSettingsConflictError`; malformed
+    Under the store lock the current file is read, its revision compared with
+    ``expected_revision``, and only then is the file replaced atomically. A
+    stale revision raises :class:`ExclusionSettingsConflictError`; malformed
     storage raises :class:`ExclusionSettingsFormatError`; both preserve the
     original bytes. Lock and write failures raise and likewise leave the bytes
-    untouched.
+    untouched. S1: the save lands in the app home; the vault is never written.
     """
     if type(expected_revision) is not int or expected_revision < 0:
         raise ValueError("expected_revision must be a nonnegative integer")
@@ -450,7 +478,7 @@ def save_settings(
                 revision=current.revision + 1,
                 tags=tuple(entries),
             )
-            _atomic_write_json(settings_path(root), saved.as_dict())
+            _atomic_write_json(settings_path(), saved.as_dict())
         finally:
             _release_lock_file(fh)
     return saved

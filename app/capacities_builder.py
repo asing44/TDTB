@@ -53,6 +53,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Callable, Iterable, Iterator
 
+import app_config
 import capacities_cache_io
 import runstate
 from capacities_adapter import (
@@ -74,10 +75,15 @@ from shadow import TOKEN_ENV_PATH
 # ---------------------------------------------------------------------------
 # Paths, schema, and credential constants
 # ---------------------------------------------------------------------------
-# The record lives beneath ``00 - META/Cache`` under the caller-supplied vault
-# root — never cwd, env, or a display name. The temp name is unique per write
-# (mkstemp), so it cannot collide with another writer.
+# S1: the record lives at ``<app home>/state/capacities-source.json``
+# (``app_config.state_dir()``) and its lock beside it. The ``*_REL_PATH``
+# constants below are the frozen pre-S1 vault locations, kept only as the
+# read-only fallback and as the migration tool's source of truth. The temp
+# name is unique per write (mkstemp), so it cannot collide with another
+# writer.
 
+STATE_FILENAME = "capacities-source.json"
+STATE_LOCK_FILENAME = "capacities-source.lock"
 SOURCE_REL_PATH = f"{runstate.CACHE_DIR_REL}/tdtb-capacities-source.json"
 
 #: How long a per-object content read stays reusable. The provider allows 30
@@ -409,14 +415,25 @@ class SourceRecord:
         }
 
 
-def source_path(vault_root: str | Path) -> Path:
-    """The versioned JSON source-record path beneath the resolved vault root."""
+def source_path(vault_root: str | Path | None = None) -> Path:
+    """The active store path: ``<app home>/state/capacities-source.json``.
+
+    ``vault_root`` is accepted for call-site compatibility and deliberately
+    ignored — the record is machine-local after S1 and derives only from
+    ``app_config.state_dir()``, never from the vault."""
+    return app_config.state_dir() / STATE_FILENAME
+
+
+def legacy_source_path(vault_root: str | Path) -> Path:
+    """The frozen pre-S1 vault path — read-only fallback."""
     return Path(vault_root) / SOURCE_REL_PATH
 
 
-def lock_path(vault_root: str | Path) -> Path:
-    """The lock-file path beneath the resolved vault root."""
-    return Path(vault_root) / LOCK_REL_PATH
+def lock_path(vault_root: str | Path | None = None) -> Path:
+    """The active lock-file path, beside the record in the app home.
+
+    A 0-byte runtime artifact created on demand; never migrated."""
+    return app_config.state_dir() / STATE_LOCK_FILENAME
 
 
 # ---------------------------------------------------------------------------
@@ -558,21 +575,27 @@ def decode_source_payload(*, space_id: Any, structures: Any) -> SourceRecord:
 
 
 def read_source(vault_root: str | Path) -> SourceRecord | None:
-    """Read the vault-scoped Capacities structural mapping record.
+    """Read the app-owned Capacities structural mapping record.
 
     A missing file returns ``None`` WITHOUT creating anything — that is the
     silent, opt-in "Capacities is not configured" signal. Malformed/unsupported
     storage raises :class:`CapacitiesSourceFormatError`; an unreadable file
     raises :class:`CapacitiesSourceStoreError`. Reads never write.
+
+    S1: the state-dir record wins; the frozen vault copy is the read-only
+    fallback when no state file exists yet.
     """
-    path = source_path(vault_root)
     try:
-        exists = os.path.lexists(path)
+        path = next(
+            (p for p in (source_path(), legacy_source_path(vault_root))
+             if os.path.lexists(p)),
+            None,
+        )
     except (OSError, TypeError, ValueError) as exc:  # pragma: no cover — defensive
         raise CapacitiesSourceStoreError(
             "capacities source record is unreadable"
         ) from exc
-    if not exists:
+    if path is None:
         return None
     return _load_strict(path)
 
@@ -586,7 +609,7 @@ def read_source(vault_root: str | Path) -> SourceRecord | None:
 # in exactly one place.
 #
 # Per-vault-root process-local locks (same single-process convention as
-# ``capacities_settings``); the flock on the vault-scoped lock file adds
+# ``capacities_settings``); the flock on the app-home lock file adds
 # cross-process serialization for the same bytes.
 
 
@@ -600,7 +623,7 @@ def _acquire_path_lock(path: str | Path) -> Any:
 
 
 def _acquire_lock_file(vault_root: str | Path) -> Any:
-    return _acquire_path_lock(lock_path(vault_root))
+    return _acquire_path_lock(lock_path())
 
 
 def _release_lock_file(fh: Any) -> None:
@@ -649,7 +672,7 @@ def save_source(
                 structures=candidate.structures,
                 revision=current_revision + 1,
             )
-            _atomic_write_json(source_path(root), saved.as_dict())
+            _atomic_write_json(source_path(), saved.as_dict())
         finally:
             _release_lock_file(fh)
     return saved

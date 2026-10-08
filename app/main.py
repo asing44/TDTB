@@ -1209,7 +1209,7 @@ _DAY_SETUP_KEYS = ("anchor", "eod", "buffering", "schedulable", "anchored",
 
 def _read_today_runstate(vault: Path, today: date) -> dict[str, Any]:
     """Today's exact-date run-state note as a dict; missing/unparseable → {}."""
-    rs_path = vault / runstate.runstate_rel_path(today)
+    rs_path = runstate.runstate_read_path(vault, today)
     if not rs_path.is_file():
         return {}
     return gather._extract_json_block(
@@ -2557,7 +2557,7 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
         # selected Live micro-adventure reaches the /commit Live→Todoist
         # reroute. Missing note or absent key → no-op. Reads the dated note
         # directly (not load_runstate, which returns the strictly-prior note).
-        rs_path = vault / runstate.runstate_rel_path(today)
+        rs_path = runstate.runstate_read_path(vault, today)
         if rs_path.is_file():
             rs_data = gather._extract_json_block(
                 rs_path.read_text(encoding="utf-8", errors="replace")

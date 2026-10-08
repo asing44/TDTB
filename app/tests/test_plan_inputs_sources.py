@@ -181,7 +181,7 @@ def test_plan_inputs_applies_tag_exclusions_and_stamps_the_revision(vault):
     # canonical tag identities on indexed rows.
     today = gather.effective_date(datetime.now())
     raw = json.loads(
-        (vault / runstate_mod.digest_index_rel_path(today)).read_text(encoding="utf-8")
+        (runstate_mod.digest_index_read_path(vault, today)).read_text(encoding="utf-8")
     )
     assert raw["exclusion_settings_revision"] == 1
     keep = next(i for i in raw["items"] if i["name"] == "Keep")

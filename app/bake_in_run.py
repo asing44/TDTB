@@ -208,7 +208,7 @@ def _ledger_todoist_ids(vault_root: Path, today: date) -> list[str]:
     when no ledger exists yet (skill-days, pre-commit), so the caller falls
     back to the filter read unchanged.
     """
-    path = Path(vault_root) / runstate.runstate_rel_path(today)
+    path = runstate.runstate_read_path(vault_root, today)
     if not path.exists():
         return []
     data = gather._extract_json_block(path.read_text(encoding="utf-8", errors="replace"))
