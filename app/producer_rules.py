@@ -1,11 +1,12 @@
-"""producer_rules.py — the deterministic artifact producer (A2).
+"""producer_rules.py — the deterministic artifact producer (A2/A3).
 
-A2 of the artifact-contract pivot
+A2–A3 of the artifact-contract pivot
 (``docs/plan/2026-10-08-capacities-first-migration/plan.md``, section
 "ARCHITECTURE PIVOT"). A2 is the FIRST REAL PRODUCER: an agent-run skill
-(``skills/tdtb-refresh/SKILL.md``) reads Todoist over MCP and hands the raw
-result to THIS module, which turns it into the normalized planning artifact
-``app/artifact_source.py`` consumes. The agent fetches; this code decides.
+(``skills/tdtb-refresh/SKILL.md``) reads Todoist and Capacities over MCP and
+hands the raw result to THIS module, which turns it into the normalized
+planning artifact ``app/artifact_source.py`` consumes. The agent fetches;
+this code decides.
 
 The split is deliberate and is the whole point of the slice:
 
@@ -47,10 +48,20 @@ rule whose ``source`` matches it and whose ``when`` holds. A matching rule with
 a record no rule matches is dropped too, with no rule id. **O1:** a rule marked
 ``pool: true`` emits ``assigned: false`` rows regardless of its ``assigned``.
 
-The schema already carries Capacities rules (``source: "capacities"``,
-``structure``, ``duration_prop``) so A3 needs no schema migration. A2 evaluates
-Todoist only; a Capacities record arriving now is reported as ignored rather
-than silently converted.
+A3 adds Capacities rules (``source: "capacities"`` with ``structure`` and an
+optional ``duration_prop``) and the PACED READ CURSOR at the bottom of this
+module. A Capacities record is a listed object plus the typed ``properties``
+the agent read for it; ``structure`` scopes the rule, and the predicate reads
+plain values (typed property payloads are flattened deterministically here,
+never by the agent). A Capacities row carries the canonical provider fields
+(``capacities_id``, ``capacities_structure_id``, ``capacities_space_id``) and
+the ``capacities:{space}:{structure}:{object}`` identity the live adapter
+defines.
+
+The cursor is a COVERAGE record, not change detection: Capacities exposes no
+guaranteed ``updatedAt`` (only a property type when the structure happens to
+define one), so the cache records what has been read and lets a partial run
+resume. It cannot tell whether a cached object changed.
 """
 from __future__ import annotations
 
@@ -64,6 +75,7 @@ from typing import Any
 
 import app_config
 import artifact_source
+import capacities_cache_io
 import external_sources
 
 # ---------------------------------------------------------------------------
@@ -76,8 +88,8 @@ PRODUCER_RULES_FILENAME = "producer-rules.json"
 SOURCE_TODOIST = "todoist"
 SOURCE_CAPACITIES = "capacities"
 
-#: A2 evaluates Todoist rules only. Capacities evaluation is A3.
-EVALUATED_SOURCES = frozenset({SOURCE_TODOIST})
+#: A3 evaluates Todoist and Capacities rules.
+EVALUATED_SOURCES = frozenset({SOURCE_TODOIST, SOURCE_CAPACITIES})
 
 OPS = frozenset({
     "eq", "in", "exists", "truthy", "lt", "gt", "before", "after", "matches",
@@ -208,6 +220,13 @@ def validate_rules(document: Any) -> list[str]:
                 f"{rule_label} has an invalid source {rule.get('source')!r} "
                 f"(expected one of {sorted(artifact_source.VALID_ROW_SOURCES)})"
             )
+
+        # A Capacities rule must name the structure it scopes: without it the
+        # rule could silently match an object of any structure.
+        if rule.get("source") == SOURCE_CAPACITIES:
+            structure = rule.get("structure")
+            if not isinstance(structure, str) or not structure.strip():
+                add(f"{rule_label} has source 'capacities' but no non-empty 'structure'")
 
         for key in ("admit", "pool", "assigned"):
             if key in rule and not isinstance(rule[key], bool):
@@ -353,23 +372,29 @@ def evaluate(
             counts["records"] = len(records)
             if records:
                 result.warnings.append(
-                    f"source {source!r} is not evaluated in A2 "
-                    f"({len(records)} record(s) ignored); Capacities evaluation lands in A3"
+                    f"source {source!r} is not evaluated in A3 "
+                    f"({len(records)} record(s) ignored)"
                 )
             continue
+
+        source_space = ""
+        if isinstance(entry, dict):
+            source_space = str(entry.get("space_id") or entry.get("spaceId") or "").strip()
 
         for record in records:
             if not isinstance(record, dict):
                 result.warnings.append(f"source {source!r} carries a non-object record; skipped")
                 continue
-            identity = _record_identity(source, record)
+            space_id = source_space or str(record.get("spaceId") or "").strip()
+            identity = _record_identity(source, record, space_id)
             if identity in seen_identity:
                 result.warnings.append(f"duplicate {source} record {identity!r} ignored")
                 continue
             seen_identity.add(identity)
             counts["records"] += 1
             name = _record_name(source, record)
-            rule = _first_matching_rule(rules, source, record, logical_day)
+            view = _predicate_record(source, record)
+            rule = _first_matching_rule(rules, source, view, logical_day, record)
 
             if rule is None:
                 _record_drop(result, counts, name, identity, source, None, "no rule matched")
@@ -383,7 +408,11 @@ def evaluate(
                 continue
 
             assigned = False if rule.get("pool") is True else bool(rule.get("assigned", True))
-            matched_rows.append(_to_artifact_row(source, record, assigned, identity))
+            matched_rows.append(
+                _to_artifact_row(
+                    source, record, assigned, identity, rule=rule, space_id=space_id
+                )
+            )
             stat.admitted += 1
             counts["admitted"] += 1
 
@@ -400,11 +429,13 @@ def _record_drop(result, counts, name, identity, source, rule_id, reason) -> Non
     counts["dropped"] += 1
 
 
-def _first_matching_rule(rules, source, record, logical_day):
+def _first_matching_rule(rules, source, view, logical_day, record):
     for rule in rules:
         if rule.get("source") != source:
             continue
-        if _matches(rule["when"], record, logical_day):
+        if source == SOURCE_CAPACITIES and not _structure_in_scope(rule, record):
+            continue
+        if _matches(rule["when"], view, logical_day):
             return rule
     return None
 
@@ -459,18 +490,174 @@ def _leaf_matches(node: dict[str, Any], record: dict[str, Any], logical_day: str
 
 
 def _to_artifact_row(
-    source: str, record: dict[str, Any], assigned: bool, identity: str
+    source: str,
+    record: dict[str, Any],
+    assigned: bool,
+    identity: str,
+    *,
+    rule: dict[str, Any] | None = None,
+    space_id: str = "",
 ) -> dict[str, Any]:
     """Convert one source record into the canonical artifact row.
 
     Todoist reuses ``external_sources._to_item`` — the app's own single
     definition of the row shape — and adds the contract-required
-    ``identity``. A3 adds the Capacities converter."""
+    ``identity``. Capacities emits the canonical provider fields the live
+    adapter defines (``capacities_adapter.py`` row projection)."""
     if source == SOURCE_TODOIST:
         row = external_sources._to_item(record, assigned)
         row["identity"] = identity
         return row
+    if source == SOURCE_CAPACITIES:
+        return _capacities_row(record, assigned, identity, rule or {}, space_id)
     raise RulesError([f"no row converter for source {source!r}"])
+
+
+# ---------------------------------------------------------------------------
+# Capacities projection (A3)
+# ---------------------------------------------------------------------------
+
+#: Duration (minutes) the live adapter assumes when a rule names no duration
+#: property or the property is absent. Kept identical so the artifact and the
+#: adapter agree on a default row.
+DEFAULT_CAPACITIES_DURATION = 30
+
+#: A planning block is 30 minutes, exactly as the live adapter computes it.
+MINUTES_PER_BLOCK = 30
+
+
+def _capacities_row(
+    record: dict[str, Any],
+    assigned: bool,
+    identity: str,
+    rule: dict[str, Any],
+    space_id: str,
+) -> dict[str, Any]:
+    """Build the canonical Capacities artifact row.
+
+    ``capacities_id``, ``capacities_structure_id`` and ``capacities_space_id``
+    plus ``identity`` mirror ``capacities_adapter``'s projection so a row
+    produced here is interchangeable with the live reader's."""
+    object_id = str(record.get("id") or record.get("objectId") or "").strip()
+    structure_id = str(
+        record.get("structureId") or record.get("structure") or rule.get("structure") or ""
+    ).strip()
+    title = _record_name(SOURCE_CAPACITIES, record)
+    duration = _capacities_duration(record, rule.get("duration_prop"))
+    blocks: int | float = duration / MINUTES_PER_BLOCK
+    if isinstance(blocks, float) and blocks.is_integer():
+        blocks = int(blocks)
+    return {
+        "id": title,
+        "name": title,
+        "path": f"capacities://{space_id}/{object_id}",
+        "identity": identity,
+        "source": SOURCE_CAPACITIES,
+        "types": [structure_id] if structure_id else [],
+        "urgency": None,
+        "deadline": None,
+        "priority_score": 0,
+        "assigned": assigned,
+        "duration": duration,
+        "duration_minutes": duration,
+        "blocks": blocks,
+        "capacities_id": object_id,
+        "capacities_space_id": space_id,
+        "capacities_structure_id": structure_id,
+    }
+
+
+def _capacities_duration(record: dict[str, Any], duration_prop: Any) -> int | float:
+    """Read the named duration property, flattened, or the default.
+
+    A missing, non-numeric or negative value falls back to
+    :data:`DEFAULT_CAPACITIES_DURATION` (matching the adapter's default), so a
+    malformed property never fails a whole source read."""
+    if not isinstance(duration_prop, str) or not duration_prop.strip():
+        return DEFAULT_CAPACITIES_DURATION
+    properties = record.get("properties")
+    if not isinstance(properties, dict) or duration_prop not in properties:
+        return DEFAULT_CAPACITIES_DURATION
+    number = _as_number(_flatten_property(properties[duration_prop]))
+    if number is None or number < 0:
+        return DEFAULT_CAPACITIES_DURATION
+    return int(number) if float(number).is_integer() else number
+
+
+def _predicate_record(source: str, record: dict[str, Any]) -> dict[str, Any]:
+    """The record the predicate reads. Capacities typed payloads are
+    flattened to plain values so the rule vocabulary stays uniform with
+    Todoist; the raw record is still what the row is built from."""
+    if source == SOURCE_CAPACITIES:
+        return _capacities_predicate_record(record)
+    return record
+
+
+def _capacities_predicate_record(record: dict[str, Any]) -> dict[str, Any]:
+    view: dict[str, Any] = {}
+    properties = record.get("properties")
+    if isinstance(properties, dict):
+        for key, payload in properties.items():
+            view[str(key)] = _flatten_property(payload)
+    for key in ("id", "objectId", "structureId", "spaceId", "title", "name", "path"):
+        if key in record:
+            view[key] = record[key]
+    for key in ("collections", "tags"):
+        if key in record:
+            view[key] = _flatten_members(record[key])
+    return view
+
+
+def _flatten_property(payload: Any) -> Any:
+    """Flatten one Capacities typed property payload to a plain value.
+
+    Mirrors the live adapter's payload semantics for the types a predicate
+    can meaningfully compare: text/number/boolean/url yield their value, a
+    date yields its start, and label/entity yield their names or titles."""
+    if not isinstance(payload, dict):
+        return payload
+    kind = payload.get("type")
+    if not isinstance(kind, str) or kind not in payload:
+        return payload
+    body = payload[kind]
+    if kind in {"title", "text", "richText", "number", "boolean", "url"}:
+        if isinstance(body, dict) and "value" in body:
+            return body["value"]
+        return body
+    if kind == "date":
+        return body.get("start") if isinstance(body, dict) else body
+    if kind in {"label", "entity"}:
+        return _flatten_members(body)
+    return body
+
+
+def _flatten_members(value: Any) -> Any:
+    """Flatten a label/entity/tag/collection list to plain name tokens."""
+    if isinstance(value, dict):
+        value = [value]
+    if not isinstance(value, list):
+        return value
+    tokens: list[Any] = []
+    for entry in value:
+        if isinstance(entry, dict):
+            tokens.append(entry.get("name") or entry.get("title") or entry.get("id"))
+        else:
+            tokens.append(entry)
+    return [token for token in tokens if token is not None]
+
+
+def _structure_in_scope(rule: dict[str, Any], record: dict[str, Any]) -> bool:
+    """Whether a Capacities record belongs to the rule's named structure.
+
+    The rule may name the structure by its id or its title; the record may
+    carry either, so both sides are compared token-normalized."""
+    target = _normalized(rule.get("structure"))
+    if not target:
+        return False
+    for key in ("structureId", "structure", "structureTitle", "structureName"):
+        if _normalized(record.get(key)) == target:
+            return True
+    return False
 
 
 # ---------------------------------------------------------------------------
@@ -548,14 +735,22 @@ def _sources_block(
     """The contract's ``sources`` block, one entry per fetched source.
 
     ``rows``/``dropped`` are post-rule tallies (an A1 fixture uses ``rows`` as
-    the emitted count), ``deferred`` is always 0 until a slice defers."""
+    the emitted count). ``deferred`` rides the source entry: the paced read
+    cursor reports how many listed objects this run could not read, and the
+    agent carries that count (and a ``partial`` status) into the source JSON."""
     block: dict[str, Any] = {}
     for name, entry in source_json.items():
         counts = result.counts.get(name, {"records": 0, "admitted": 0, "dropped": 0})
+        deferred = 0
         if isinstance(entry, dict):
             status = entry.get("status", "ok")
             read_at = entry.get("read_at") or generated_at
             warnings = list(entry.get("warnings") or [])
+            candidate = entry.get("deferred", 0)
+            if isinstance(candidate, int) and not isinstance(candidate, bool) and candidate >= 0:
+                deferred = candidate
+            elif candidate not in (0, None):
+                warnings.append(f"ignored non-integer source deferred {candidate!r}")
         else:
             status = "ok"
             read_at = generated_at
@@ -568,7 +763,7 @@ def _sources_block(
             "read_at": read_at,
             "rows": counts["admitted"],
             "dropped": counts["dropped"],
-            "deferred": 0,
+            "deferred": deferred,
             "warnings": warnings,
         }
     return block
@@ -589,7 +784,7 @@ def _records_for(entry: Any) -> list[Any]:
     return []
 
 
-def _record_identity(source: str, record: dict[str, Any]) -> str:
+def _record_identity(source: str, record: dict[str, Any], space_id: str = "") -> str:
     if source == SOURCE_TODOIST:
         todoist_id = record.get("id")
         if todoist_id is not None and str(todoist_id).strip():
@@ -597,7 +792,8 @@ def _record_identity(source: str, record: dict[str, Any]) -> str:
         return f"todoist:name:{(record.get('content') or '').strip()}"
     object_id = record.get("id") or record.get("objectId")
     if object_id is not None and str(object_id).strip():
-        return f"capacities:{object_id}"
+        structure_id = str(record.get("structureId") or record.get("structure") or "").strip()
+        return f"capacities:{space_id}:{structure_id}:{object_id}"
     return f"capacities:name:{(record.get('title') or record.get('name') or '').strip()}"
 
 
@@ -657,3 +853,235 @@ def _as_text(value: Any) -> str:
     if isinstance(value, (list, tuple)):
         return " ".join(str(item) for item in value)
     return "" if value is None else str(value)
+
+
+def _normalized(value: Any) -> str:
+    return " ".join(_as_text(value).casefold().split())
+
+
+# ---------------------------------------------------------------------------
+# The paced read cursor (A3)
+# ---------------------------------------------------------------------------
+#
+# This is a COVERAGE cursor, NOT change detection. The Capacities API exposes
+# no guaranteed ``updatedAt`` (it is only a property type if the structure
+# happens to define one), so the cache can say only *what has already been
+# read*. It cannot tell whether a cached object changed. An object already in
+# the cursor is skipped on the next listing, which lets a run that exhausted
+# its read budget resume instead of restarting.
+#
+# Pacing is a rate-limit valve, not a tunable: the Capacities API allows 30
+# requests / 60 seconds and the listing plus one shape read per structure
+# spend the remainder, so 24 content reads per window keeps headroom under the
+# limit (see the D5 correction in the plan).
+
+PRODUCER_CACHE_FILENAME = "producer-cache.json"
+PRODUCER_CACHE_VERSION = 1
+
+#: Content reads per window. Headroom under the API's 30 requests / 60s.
+DEFAULT_CONTENT_READ_BUDGET = 24
+DEFAULT_CONTENT_READ_WINDOW_SECONDS = 60
+
+
+class CursorError(ValueError):
+    """Raised by the cursor helpers for an unusable argument (not for a
+    missing/corrupt cache, which degrades to an empty cursor)."""
+
+
+def producer_cache_path() -> Path:
+    """The paced read cursor: ``state_dir()/producer-cache.json``."""
+    return app_config.state_dir() / PRODUCER_CACHE_FILENAME
+
+
+@dataclass
+class ReadPlan:
+    """Which listed objects still need a content read, and what is deferred.
+
+    ``deferred`` counts listed objects that the cursor does not already cover
+    and that did not fit this window's read budget. A non-zero ``deferred``
+    means the source is ``partial`` and the next run resumes from here."""
+
+    need_read: list[str] = field(default_factory=list)
+    already_read: int = 0
+    deferred: int = 0
+    status: str = "ok"
+    budget: int = DEFAULT_CONTENT_READ_BUDGET
+    window_seconds: int = DEFAULT_CONTENT_READ_WINDOW_SECONDS
+    window_remaining: int = DEFAULT_CONTENT_READ_BUDGET
+    listed: int = 0
+    cache_entries: int = 0
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "status": self.status,
+            "need_read": list(self.need_read),
+            "already_read": self.already_read,
+            "deferred": self.deferred,
+            "budget": self.budget,
+            "window_seconds": self.window_seconds,
+            "window_remaining": self.window_remaining,
+            "listed": self.listed,
+            "cache_entries": self.cache_entries,
+        }
+
+
+def _empty_cache() -> dict[str, Any]:
+    return {"version": PRODUCER_CACHE_VERSION, "objects": {}, "window": {}}
+
+
+def load_cache(path: str | Path | None = None) -> dict[str, Any]:
+    """Read the cursor. A missing, unreadable or corrupt file degrades to an
+    empty cursor (a re-read), never a failed run. Never raises."""
+    target = Path(path) if path is not None else producer_cache_path()
+    try:
+        document = json.loads(target.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return _empty_cache()
+    if not isinstance(document, dict):
+        return _empty_cache()
+    objects = document.get("objects")
+    window = document.get("window")
+    return {
+        "version": PRODUCER_CACHE_VERSION,
+        "objects": objects if isinstance(objects, dict) else {},
+        "window": window if isinstance(window, dict) else {},
+    }
+
+
+def save_cache(cache: dict[str, Any], path: str | Path | None = None) -> Path:
+    """Persist the cursor atomically, reusing the shared cache IO helper."""
+    target = Path(path) if path is not None else producer_cache_path()
+    capacities_cache_io.atomic_write_json(target, cache)
+    return target
+
+
+def _listed_entry(entry: Any) -> dict[str, str]:
+    if isinstance(entry, dict):
+        return {
+            "id": str(entry.get("id") or entry.get("objectId") or "").strip(),
+            "space_id": str(entry.get("space_id") or entry.get("spaceId") or "").strip(),
+            "structure_id": str(
+                entry.get("structure_id") or entry.get("structureId") or ""
+            ).strip(),
+        }
+    return {"id": str(entry or "").strip(), "space_id": "", "structure_id": ""}
+
+
+def _parse_iso(value: Any) -> datetime | None:
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.astimezone()
+    return parsed
+
+
+def _window(
+    cache: dict[str, Any], now: datetime, window_seconds: int
+) -> tuple[str, int]:
+    """Return the live window's start (ISO string) and read count, resetting
+    an expired window in place."""
+    window = cache.get("window")
+    if not isinstance(window, dict):
+        window = {}
+    started = _parse_iso(window.get("started_at"))
+    reads = window.get("reads")
+    if not isinstance(reads, int) or isinstance(reads, bool) or reads < 0:
+        reads = 0
+    if started is None or (now - started).total_seconds() >= window_seconds:
+        started = now
+        reads = 0
+    started_at = started.isoformat(timespec="seconds")
+    cache["window"] = {"started_at": started_at, "reads": reads}
+    return started_at, reads
+
+
+def plan_reads(
+    listed: Any,
+    *,
+    path: str | Path | None = None,
+    cache: dict[str, Any] | None = None,
+    now: datetime | None = None,
+    budget: int = DEFAULT_CONTENT_READ_BUDGET,
+    window_seconds: int = DEFAULT_CONTENT_READ_WINDOW_SECONDS,
+) -> ReadPlan:
+    """Plan the content reads this window still affords, given the cursor.
+
+    Already-covered objects are skipped (coverage, not change detection). The
+    first ``budget - reads_in_window`` uncovered objects are returned in
+    ``need_read``; the rest are counted in ``deferred`` and the source is
+    marked ``partial``."""
+    if not isinstance(budget, int) or isinstance(budget, bool) or budget < 0:
+        raise CursorError(f"budget must be a non-negative integer (got {budget!r})")
+    if not isinstance(window_seconds, int) or isinstance(window_seconds, bool) or window_seconds <= 0:
+        raise CursorError(f"window_seconds must be a positive integer (got {window_seconds!r})")
+    now = now or datetime.now().astimezone()
+    if cache is None:
+        cache = load_cache(path)
+    objects = cache.setdefault("objects", {})
+    _, reads = _window(cache, now, window_seconds)
+    remaining = max(0, budget - reads)
+
+    entries = [_listed_entry(item) for item in (listed or [])]
+    plan = ReadPlan(
+        budget=budget,
+        window_seconds=window_seconds,
+        window_remaining=remaining,
+        listed=len(entries),
+        cache_entries=len(objects),
+    )
+    for entry in entries:
+        object_id = entry["id"]
+        if not object_id:
+            continue
+        if object_id in objects:
+            plan.already_read += 1
+            continue
+        if len(plan.need_read) < remaining:
+            plan.need_read.append(object_id)
+        else:
+            plan.deferred += 1
+    plan.status = "partial" if plan.deferred > 0 else "ok"
+    return plan
+
+
+def record_reads(
+    objects_read: Any,
+    *,
+    path: str | Path | None = None,
+    cache: dict[str, Any] | None = None,
+    now: datetime | None = None,
+    window_seconds: int = DEFAULT_CONTENT_READ_WINDOW_SECONDS,
+) -> int:
+    """Record the objects whose content was read and advance the window.
+
+    Returns the number of objects recorded. Persists the cursor atomically.
+    The caller is expected to record only the objects the plan returned; the
+    window therefore advances by exactly the reads the agent performed."""
+    now = now or datetime.now().astimezone()
+    if cache is None:
+        cache = load_cache(path)
+    objects = cache.setdefault("objects", {})
+    _, reads = _window(cache, now, window_seconds)
+
+    recorded = 0
+    for entry in (_listed_entry(item) for item in (objects_read or [])):
+        object_id = entry["id"]
+        if not object_id:
+            continue
+        objects[object_id] = {
+            "space_id": entry["space_id"],
+            "structure_id": entry["structure_id"],
+            "read_at": now.isoformat(timespec="seconds"),
+        }
+        recorded += 1
+    cache["window"] = {
+        "started_at": (cache.get("window") or {}).get("started_at")
+        or now.isoformat(timespec="seconds"),
+        "reads": reads + recorded,
+    }
+    save_cache(cache, path)
+    return recorded

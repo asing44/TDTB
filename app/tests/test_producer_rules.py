@@ -57,6 +57,38 @@ def _source(*tasks: dict) -> dict:
                         "tasks": list(tasks)}}
 
 
+def _cap_object(object_id="c1", title="Inbox thing", structure_id="Project",
+                collections=("Inbox",), properties=None, space_id=None) -> dict:
+    record = {
+        "id": object_id,
+        "structureId": structure_id,
+        "title": title,
+        "collections": list(collections),
+        "tags": [],
+        "properties": dict(properties or {}),
+    }
+    if space_id:
+        record["spaceId"] = space_id
+    return record
+
+
+def _cap_source(*objects: dict, space_id="space-1", **entry_extra) -> dict:
+    entry = {
+        "status": "ok",
+        "read_at": "2026-10-08T09:00:00-07:00",
+        "space_id": space_id,
+        "objects": list(objects),
+    }
+    entry.update(entry_extra)
+    return {"capacities": entry}
+
+
+def _cap_rule(rule_id="cap", structure="Project", when=None, **extra) -> dict:
+    return _rule(rule_id=rule_id, source="capacities", structure=structure,
+                 when=when if when is not None else {"prop": "id", "op": "exists"},
+                 **extra)
+
+
 def _evaluate(rules_document, source, logical_day=LOGICAL_DAY):
     return pr.evaluate(rules_document, source, logical_day=logical_day)
 
@@ -297,19 +329,180 @@ def test_name_collisions_are_disambiguated():
     assert len(set(names)) == 2
 
 
-def test_capacities_records_are_ignored_with_a_warning():
+# ---------------------------------------------------------------------------
+# Capacities evaluation (A3)
+# ---------------------------------------------------------------------------
+
+def test_capacities_rule_requires_a_structure():
+    document = _rules(_rule(rule_id="cap", source="capacities",
+                            when={"prop": "id", "op": "exists"}))
+    violations = pr.validate_rules(document)
+    assert any("structure" in v and "cap" in v for v in violations)
+
+
+def test_capacities_rule_admits_and_emits_the_canonical_row():
+    rules = _rules(_cap_rule(
+        rule_id="cap-inbox",
+        when={"prop": "collections", "op": "in", "values": ["Inbox"]},
+        assigned=True,
+    ))
+    result = _evaluate(rules, _cap_source(_cap_object()))
+
+    assert len(result.rows) == 1
+    row = result.rows[0]
+    assert row["source"] == "capacities"
+    assert row["identity"] == "capacities:space-1:Project:c1"
+    assert row["path"] == "capacities://space-1/c1"
+    assert row["capacities_id"] == "c1"
+    assert row["capacities_structure_id"] == "Project"
+    assert row["capacities_space_id"] == "space-1"
+    assert row["assigned"] is True
+    assert row["duration_minutes"] == 30
+    assert row["blocks"] == 1
+
+
+def test_capacities_duration_prop_is_read():
+    properties = {"Duration": {"type": "number", "number": {"value": 45}}}
+    rules = _rules(_cap_rule(
+        rule_id="cap-duration",
+        duration_prop="Duration",
+        when={"prop": "collections", "op": "in", "values": ["Inbox"]},
+        assigned=True,
+    ))
+    result = _evaluate(rules, _cap_source(_cap_object(properties=properties)))
+
+    assert result.rows[0]["duration_minutes"] == 45
+    assert result.rows[0]["blocks"] == 1.5
+
+
+def test_capacities_duration_prop_absent_falls_back_to_the_default():
+    rules = _rules(_cap_rule(
+        duration_prop="Duration",
+        when={"prop": "id", "op": "exists"},
+        assigned=True,
+    ))
+    result = _evaluate(rules, _cap_source(_cap_object()))
+    assert result.rows[0]["duration_minutes"] == 30
+
+
+def test_capacities_pool_true_emits_assigned_false():
+    rules = _rules(_cap_rule(
+        rule_id="cap-pool",
+        when={"prop": "id", "op": "exists"},
+        assigned=True,
+        pool=True,
+    ))
+    result = _evaluate(rules, _cap_source(_cap_object()))
+    assert result.rows[0]["assigned"] is False
+    assert result.per_rule[0].admitted == 1
+
+
+def test_capacities_admit_false_excludes_and_names_the_rule():
+    rules = _rules(_cap_rule(
+        rule_id="cap-skip",
+        when={"prop": "id", "op": "exists"},
+        admit=False,
+    ))
+    result = _evaluate(rules, _cap_source(_cap_object()))
+    assert result.rows == []
+    assert result.dropped[0].rule == "cap-skip"
+    assert result.per_rule[0].dropped == 1
+
+
+def test_capacities_structure_scope_skips_other_structures():
+    rules = _rules(_cap_rule(
+        rule_id="cap-project",
+        structure="Project",
+        when={"prop": "id", "op": "exists"},
+        assigned=True,
+    ))
+    result = _evaluate(rules, _cap_source(_cap_object(structure_id="Note")))
+    assert result.rows == []
+    assert result.dropped[0].rule is None
+    assert result.dropped[0].reason == "no rule matched"
+
+
+def test_capacities_predicate_reads_flattened_property_values():
+    properties = {
+        "status": {"type": "label", "label": [{"id": "Active", "name": "Active"}]},
+        "Estimate": {"type": "number", "number": {"value": 90}},
+    }
+    rules = _rules(_cap_rule(
+        rule_id="cap-active",
+        when={"all": [
+            {"prop": "status", "op": "in", "values": ["Active"]},
+            {"prop": "Estimate", "op": "gt", "values": [60]},
+        ]},
+        assigned=True,
+    ))
+    result = _evaluate(rules, _cap_source(_cap_object(properties=properties)))
+    assert len(result.rows) == 1
+
+
+def test_capacities_first_match_wins_in_file_order():
+    source = _cap_source(_cap_object(object_id="c9"))
+    when = {"prop": "id", "op": "eq", "values": ["c9"]}
+    result = _evaluate(_rules(
+        _cap_rule(rule_id="first", when=when, admit=False),
+        _cap_rule(rule_id="second", when=when, assigned=True),
+    ), source)
+    assert result.rows == []
+    assert result.dropped[0].rule == "first"
+
+
+def test_capacities_and_todoist_rows_coexist_and_vault_is_ignored():
     source = {
         "todoist": {"status": "ok", "tasks": [_task(task_id="1", content="T")]},
-        "capacities": {"status": "ok", "records": [{"id": "c1", "title": "C"}]},
+        "capacities": _cap_source(_cap_object()) ["capacities"],
+        "vault": {"status": "ok", "records": [{"id": "v1", "title": "V"}]},
     }
     result = _evaluate(_rules(
         _rule(when={"prop": "id", "op": "exists"}),
-        _rule(rule_id="cap", source="capacities",
-              when={"prop": "id", "op": "exists"}, assigned=True),
+        _cap_rule(rule_id="cap", when={"prop": "id", "op": "exists"}, assigned=True),
     ), source)
 
-    assert [r["name"] for r in result.rows] == ["T"]
-    assert any("capacities" in w for w in result.warnings)
+    assert [r["name"] for r in result.rows] == ["Inbox thing", "T"]
+    assert any("vault" in w for w in result.warnings)
+
+
+def test_capacities_source_deferred_rides_the_sources_block():
+    rules = _rules(_cap_rule(when={"prop": "id", "op": "exists"}, assigned=True))
+    source = _cap_source(_cap_object(), status="partial", deferred=7)
+    document = pr.build_artifact(
+        source, rules, logical_day=LOGICAL_DAY,
+        generated_at="2026-10-08T09:00:00-07:00", run_id="deferred",
+    )
+    assert document["sources"]["capacities"]["status"] == "partial"
+    assert document["sources"]["capacities"]["deferred"] == 7
+    assert art.validate_artifact(document) == []
+
+
+def test_capacities_row_passes_a1_and_loads_in_the_app(tmp_path):
+    now = datetime.now().astimezone()
+    logical_day = str(gather.effective_date(now))
+    rules = _rules(_cap_rule(
+        rule_id="cap-inbox",
+        when={"prop": "collections", "op": "in", "values": ["Inbox"]},
+        assigned=True,
+    ))
+    source = _cap_source(_cap_object(space_id="space-1"))
+    document = pr.build_artifact(
+        source, rules, logical_day=logical_day,
+        generated_at=now.isoformat(timespec="seconds"), run_id="cap-load",
+    )
+    assert art.validate_artifact(document) == []
+
+    target = tmp_path / art.ARTIFACT_FILENAME
+    art.atomic_write_artifact(document, path=target)
+    result = art.load_artifact(
+        now, path=target, overlay=tmp_path / "no-overlay.json", max_age_minutes=240,
+    )
+
+    assert result.status == art.STATUS_FRESH
+    row = result.rows[0]
+    assert row["source"] == "capacities"
+    assert row["identity"] == "capacities:space-1:Project:c1"
+    assert row["capacities_id"] == "c1"
 
 
 # ---------------------------------------------------------------------------
