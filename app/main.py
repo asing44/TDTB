@@ -1806,6 +1806,13 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
     # live token/EventKit; the real-server module bottom swaps in
     # build_real_read_clients. Tests inject fakes here.
     app.state.build_read_clients = None
+    # A1 fix: the calendar store has its OWN seam because it must survive in
+    # artifact mode — calendar, habits and anchored blocks stay on their
+    # current readers whether or not the Todoist/Capacities live clients are
+    # constructed. Callable [[Path, dict], store_like|None]; None (offline) →
+    # no store → degrade warnings, exactly like build_read_clients. The
+    # real-server module bottom swaps in build_real_calendar_store.
+    app.state.build_calendar_store = None
     # Capacities stays opt-in by configuration, not by code: the production
     # builder returns None when no vault-local mapping record exists, so an
     # unconfigured machine sees no Capacities source and no warning, while a
@@ -2453,6 +2460,7 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
             "calendar_disabled": config.get("Disabled Calendars"),
         }
         build_clients = app.state.build_read_clients or (lambda v, c: (None, None))
+        build_store = app.state.build_calendar_store or (lambda v, c: None)
         capacities_items: list[dict[str, Any]] = []
         w_capacities: list[str] = []
         # A1 artifact seam: when the operator sets sources.mode=artifact, the
@@ -2475,6 +2483,13 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
         t_pool: list[dict[str, Any]] = []
         w_todo: list[str] = []
         if source_mode == app_config.SOURCES_MODE_ARTIFACT:
+            # The calendar store is NOT a live plan source the artifact
+            # replaces: calendar, habits and anchored blocks keep their
+            # current readers under the artifact seam (A1 fix). Obtain it
+            # through its own seam so the digest's calendar rows survive
+            # artifact mode; Todoist and Capacities stay artifact-only and
+            # construct no live client.
+            store = build_store(vault, config)
             artifact_result = artifact_source.load_artifact(datetime.now())
             artifact_block = artifact_result.as_digest_block()
             if artifact_result.status != artifact_source.STATUS_FRESH:
@@ -4346,6 +4361,19 @@ def build_real_read_clients(vault: Path, config: dict[str, Any]) -> tuple[Any, A
     return todoist_c, store
 
 
+def build_real_calendar_store(vault: Path, config: dict[str, Any]) -> Any:
+    """Live calendar store for the artifact-mode seam; degrades to None.
+
+    Calendar is not a live *plan source* the artifact replaces — it is a
+    read the digest keeps, so it gets its own seam (A1 fix). Mirrors the
+    ``shared_store()`` guard in ``build_real_read_clients`` exactly.
+    """
+    try:
+        return calendar_bridge.shared_store()
+    except Exception:  # noqa: BLE001 — absence degrades, never blocks
+        return None
+
+
 def build_real_capacities_adapter(vault: Path, config: dict[str, Any]) -> Any:
     """Live Capacities adapter for the source seam.
 
@@ -4363,6 +4391,7 @@ def build_real_capacities_adapter(vault: Path, config: dict[str, Any]) -> Any:
 
 app = create_app()
 app.state.build_read_clients = build_real_read_clients
+app.state.build_calendar_store = build_real_calendar_store
 
 
 if __name__ == "__main__":

@@ -23,6 +23,7 @@ import app_config  # noqa: E402
 import artifact_source as art  # noqa: E402
 import main as main_mod  # noqa: E402
 import tdtb_gather as gather  # noqa: E402
+from calendar_bridge import CalendarInfo  # noqa: E402
 
 FIXTURE = Path(__file__).parent / "fixtures" / "planning-artifact.json"
 
@@ -496,6 +497,76 @@ def test_live_mode_still_constructs_the_live_seam(vault):
 
     assert called["n"] == 1
     assert body["artifact"]["state"] == "live"
+
+
+class _FakeCalendarStore:
+    """Minimal EventStore fake: authorized, one calendar, one event."""
+
+    def __init__(self, events, calendars):
+        self._events = events
+        self._calendars = calendars
+
+    def auth_status(self) -> str:
+        return "authorized"
+
+    def calendars(self):
+        return self._calendars
+
+    def query_events(self, start, end, calendar_ids=None):
+        return self._events
+
+
+def test_artifact_mode_still_obtains_the_calendar_store(vault):
+    """A1 fix: the artifact seam replaces the live PLAN sources (Todoist,
+    Capacities), not the calendar. In artifact mode the calendar store is
+    obtained through its own seam, so calendar data keeps reaching the
+    digest — while both live plan-client seams stay untouched."""
+    doc, today = _artifact_for_today()
+    _enable_artifact_mode()
+    art.atomic_write_artifact(doc)
+
+    called = {"n": 0}
+    event = {
+        "title": "Standup", "calendar_id": "CAL-STORE",
+        "start": datetime(today.year, today.month, today.day, 9, 0),
+        "end": datetime(today.year, today.month, today.day, 9, 30),
+    }
+    fake_store = _FakeCalendarStore(
+        [event], [CalendarInfo("Work", "CAL-STORE", True, "Local")]
+    )
+
+    def _store(_v, _c):
+        called["n"] += 1
+        return fake_store
+
+    app = main_mod.create_app(vault_root=vault)
+    app.state.build_read_clients = _boom
+    app.state.build_capacities_adapter = _boom
+    app.state.build_calendar_store = _store
+    client = TestClient(app)
+
+    body = client.get("/plan-inputs").json()
+
+    assert called["n"] == 1                       # the store WAS obtained
+    assert "Call Vlad" in [r["name"] for r in body["digest"]["assigned"]]
+    assert body["artifact"]["state"] == "fresh"
+    assert body["source_counts"]["calendar"] == 1  # calendar reached the digest
+    calendar_blocks = [
+        b for b in body["anchored_blocks"] if b.get("source") == "calendar"
+    ]
+    assert [b["Block"] for b in calendar_blocks] == ["Standup"]
+
+
+def test_real_calendar_store_seam_degrades_to_none(monkeypatch):
+    """The default real implementation mirrors build_real_read_clients:
+    a failing shared_store() degrades to None instead of raising."""
+
+    def _forbidden():
+        raise RuntimeError("no EventKit grant")
+
+    monkeypatch.setattr(main_mod.calendar_bridge, "shared_store", _forbidden)
+
+    assert main_mod.build_real_calendar_store(Path("/vault"), {}) is None
 
 
 # ---------------------------------------------------------------------------
