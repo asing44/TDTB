@@ -422,3 +422,56 @@ which is exactly the operator's literal "30min SOURCE".
    duration-labelled row, not just the three new labels.
 4. That is an operator decision, not an implementation detail, and it has not
    been taken. **Round 2's headline item is therefore half-delivered.**
+
+## Duration labels now drive assigned-row blocks (landed — supersedes the above)
+
+**Operator decision:** the duration-label step goes **before native**, matching
+frozen item 11. This closes the gap identified in the correction above.
+
+**Change.** A fail-open label step (`_assigned_duration_tag`, `app/main.py:1448`)
+is inserted inside `resolve_assigned_blocks` (`app/main.py:1481`) **ahead of the
+native step** (`:1501`), so both callers — the digest (`:2523`) and the route
+projection (`:3770`) — inherit it identically. It reuses the backend recognizer
+through a new public wrapper `duration_memory.duration_tag_resolution`
+(`app/duration_memory.py:455`); no collision or valueless-label logic is
+duplicated.
+
+**Provenance.** Blocks alone are 30-minute-quantised, so `🚀 10min` would still
+render `30min`. The digest site (`app/main.py:2541-2544`) now also sets
+`duration_minutes` and `duration_source = "tag:<label>"`, mirroring what
+`apply_remembered_overlay` already writes — a shape the frontend already
+consumed (`wire.ts:930`, `:121`) but that nothing had ever set. The remembered
+overlay (`:2551`) still runs afterwards and still overwrites both, so
+remembered continues to win.
+
+**Frontend parity.** `frontend/src/model/durationTags.ts` recognized only
+`dur(\d+)` and `🚀` and therefore disagreed with the backend; it now recognizes
+the word-based labels with the same anchoring, most-specific-first ordering and
+emoji-form tolerance. `isDurationTag` feeds shared-work grouping, so a
+disagreement would have grouped work the other half treats as metadata. New
+`frontend/src/model/durationTags.test.ts` pins it.
+
+**Deliberate divergence (documented in the docstring).** `resolve_duration`
+still **raises** on a distinct-minutes collision — that contract is untouched.
+The row ladder **fails open** instead, because it runs inside `build_digest`
+where raising would fail the whole `/plan-inputs` response over one mislabelled
+task; it logs one label-only stderr line and falls through.
+
+**Measured** (`resolve_assigned_blocks`, no presets):
+
+| Item | blocks | chip |
+|---|---|---|
+| `🏃‍♂️ Hour` | 2 | **60min** — the reported bug |
+| `🏃‍♂️ Hour` + native 15 / 240 | 2 | 60min — tag beats native, including a longer one |
+| `🍅 Half-hour` + native 90 | 1 | 30min |
+| `🐢 Multi-hour` + native 90 | 3 | 90min — valueless falls through |
+| `dur45` + native 15 | 2 | 45min |
+| `dur30` + `dur45` | 1 | fails open, no raise |
+
+**Landed:** `51f4333` (backend), `624faef` (frontend parity), `ac4251b`
+(bundles), fast-forwarded to `main` and pushed. Gates on the landed state:
+**2324 backend passed**, **1025 frontend passed / 6 skipped**, typecheck clean,
+bundle read-back clean (JS hash only moved, since `app.css` was untouched).
+
+**Still requires an attended `tdtb-restart`** — the fix is backend-driven, so a
+browser reload alone will not change the chip.
