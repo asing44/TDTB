@@ -102,8 +102,38 @@ The rules schema **already accommodates Capacities rules** (`source`, `structure
 `duration_prop`), so A3 needs no schema migration. The starter rules file ships in-repo; the
 operator installs it to `~/.config/tdtb/producer-rules.json`.
 
-**Still owed:** the WALL-E_PIOS symlink projection and its documentation (root-owned, not yet
-done).
+**WALL-E_PIOS projection: DONE — `8e7cc90`.** `.pi/skills/tdtb-refresh` is a relative symlink to
+`Repos/Projects/TDTB/skills/tdtb-refresh`, documented in `docs/projected-skills.md`. It is the
+first projection in that repo whose target lives outside it, so the doc records the dangling-link
+check and notes that no `wall-e-hq.skills-roots/v1` roots file exists yet — the hygiene doctor will
+report the root as undeclared, which is expected, not a defect.
+
+**A3 landed (2026-10-08) — `d548bf2` plus `30c88d5`.** Capacities rules and the paced read cursor.
+
+- Capacities rules evaluate the same recursive predicates over object properties, with `structure`
+  required and an optional `duration_prop`, emitting the canonical row shape and `identity`.
+- `tools/read_cursor.py` (`plan`/`record`/`status`) over `state_dir()/producer-cache.json`.
+- **The cursor is documented as coverage, NOT change detection** — Capacities exposes no guaranteed
+  `updatedAt`, so the cache skips what was already read and resumes a partial run but cannot tell
+  that a cached object changed. SKILL.md states this and forbids describing it otherwise.
+- **Cost rule recorded in SKILL.md:** a tag or collection rule uses the listing as a free
+  pre-filter — membership IS the tag, so it costs one listing and zero content reads.
+- Pacing: 24 content reads per 60s window (`DEFAULT_CONTENT_READ_BUDGET`), headroom under the limit.
+- Gate: **2471 passed** (baseline 2446 + 24 from A3 + 1 from the fix test).
+
+**BUG FOUND IN A1, FIXED IN A3 (`30c88d5`).** The artifact merge sent **every** Capacities row into
+`assigned_items` regardless of its `assigned` flag (`app/main.py:2582`), while Todoist rows were
+split by it. So a `pool: true` Capacities rule emitted `assigned: false` and was then silently
+demoted to assigned — **O1 did nothing for Capacities**. Rows are now split by the flag in artifact
+mode; live mode is unchanged because `c_pool` stays empty there. The fix was verified to have teeth:
+the new test fails with the merge reverted and passes with it.
+
+**New agent failure mode (2026-10-08).** A3's first attempt died with a provider 400: `The
+reasoning_content in the thinking mode must be passed back to the API`. This is the third distinct
+mode seen in this repo — after turn-limit wraps and the silent stall — and the first that is
+neither the agent running out of road nor a task failure. It died in discovery with a clean tree, so
+nothing was lost; the retry ran with thinking disabled and succeeded. Worth adding to the existing
+termination diagnostic at WALL-E_PIOS `docs/research/2026-10-08-delegated-agent-termination-diagnostic.md`.
 
 ## Operator directive
 
