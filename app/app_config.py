@@ -21,8 +21,15 @@ The document is::
       "colors": [...],
       "micro_adventure_pool": [...],
       "habits": {"source_directory": ..., ...},
-      "todoist": {"read_query": {"assigned": ..., "quick": ...}}
+      "todoist": {"read_query": {"assigned": ..., "quick": ...}},
+      "sources": {"mode": "live" | "artifact",
+                  "artifact": {"max_age_minutes": 240}}
     }
+
+``sources`` is the artifact-contract pivot's source-selection knob (see
+``artifact_source``). It is not markdown-shaped and never appears in
+``sections``. ``mode: "both"`` is rejected at load — the read drift trap —
+so ``load_document`` returns None for it and the app falls back to the vault.
 
 Record sections (presets, anchored_blocks, colors, calendar.titles,
 capacity_classes, micro_adventure_pool) carry the vault config's own row
@@ -57,6 +64,18 @@ DEFAULT_APP_HOME = Path.home() / ".config" / "tdtb"
 CONFIG_FILENAME = "config.json"
 STATE_DIRNAME = "state"
 CONFIG_VERSION = 1
+
+#: ``sources.mode`` — the artifact-contract pivot's source-selection knob.
+#: ``live`` (default) reads Todoist/Capacities live; ``artifact`` consumes the
+#: normalized planning artifact and constructs no live client. ``both`` is
+#: deliberately NOT a mode: two readers coexisting is the drift trap the
+#: operator named, so the whole document is rejected rather than drifted into.
+SOURCES_MODE_LIVE = "live"
+SOURCES_MODE_ARTIFACT = "artifact"
+SOURCES_MODES = frozenset({SOURCES_MODE_LIVE, SOURCES_MODE_ARTIFACT})
+
+#: Default artifact age ceiling (minutes) before a load reports ``aged``.
+DEFAULT_ARTIFACT_MAX_AGE_MINUTES = 240
 
 #: Row fields that name a disabled calendar (mirrors
 #: ``calendar_bridge.normalize_disabled_calendars``).
@@ -108,7 +127,63 @@ def load_document(path: str | Path | None = None) -> dict[str, Any] | None:
         return None
     if not isinstance(data, dict) or data.get("version") != CONFIG_VERSION:
         return None
+    if not _sources_section_ok(data):
+        return None
     return data
+
+
+def _sources_section_ok(document: dict[str, Any]) -> bool:
+    """Validate the optional ``sources`` section, rejecting ``both``.
+
+    An absent section, or one without a ``mode``, is accepted (the default is
+    ``live``). A mode outside :data:`SOURCES_MODES` — most importantly
+    ``both`` — rejects the whole document, so ``load_document`` returns None
+    and the app falls back to the vault rather than running two readers."""
+    sources = document.get("sources")
+    if sources is None:
+        return True
+    if not isinstance(sources, dict):
+        return False
+    mode = sources.get("mode")
+    if mode is None:
+        return True
+    return mode in SOURCES_MODES
+
+
+def sources_mode(path: str | Path | None = None) -> str:
+    """The active source mode: ``artifact`` or ``live`` (the default).
+
+    Any unusable document (missing, corrupt, unsupported version, or a
+    rejected ``sources`` section) resolves to ``live`` — the pivot is opt-in
+    and never silently half-applied."""
+    document = load_document(path)
+    if document is None:
+        return SOURCES_MODE_LIVE
+    sources = document.get("sources")
+    if isinstance(sources, dict) and sources.get("mode") in SOURCES_MODES:
+        return str(sources["mode"])
+    return SOURCES_MODE_LIVE
+
+
+def artifact_max_age_minutes(path: str | Path | None = None) -> int:
+    """The artifact age ceiling, default 240 minutes.
+
+    Reads ``sources.artifact.max_age_minutes`` (or the flat
+    ``sources.max_age_minutes``); anything not a positive integer falls back
+    to the default."""
+    document = load_document(path)
+    if document is None:
+        return DEFAULT_ARTIFACT_MAX_AGE_MINUTES
+    sources = document.get("sources")
+    if not isinstance(sources, dict):
+        return DEFAULT_ARTIFACT_MAX_AGE_MINUTES
+    artifact = sources.get("artifact")
+    value = artifact.get("max_age_minutes") if isinstance(artifact, dict) else None
+    if value is None:
+        value = sources.get("max_age_minutes")
+    if type(value) is int and value > 0:
+        return value
+    return DEFAULT_ARTIFACT_MAX_AGE_MINUTES
 
 
 def load_sections(path: str | Path | None = None) -> dict[str, Any]:

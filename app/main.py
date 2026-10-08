@@ -82,6 +82,8 @@ import capacities_adapter  # noqa: E402
 import capacities_structure_titles  # noqa: E402
 import exclusion_settings  # noqa: E402
 import tag_exclusions  # noqa: E402
+import app_config  # noqa: E402
+import artifact_source  # noqa: E402
 
 VAULT_ROOT_ENV = "TDTB_VAULT_ROOT"
 
@@ -2451,26 +2453,78 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
             "calendar_disabled": config.get("Disabled Calendars"),
         }
         build_clients = app.state.build_read_clients or (lambda v, c: (None, None))
-        todoist_c, store = build_clients(vault, config)
         capacities_items: list[dict[str, Any]] = []
         w_capacities: list[str] = []
-        build_capacities = app.state.build_capacities_adapter
-        if build_capacities is not None:
-            try:
-                capacities_client = build_capacities(vault, config)
-            except Exception as exc:  # noqa: BLE001 — source boundary degrades
-                capacities_client = None
-                w_capacities = [
-                    f"Capacities adapter setup failed ({exc}) — source is unavailable"
-                ]
-            if capacities_client is not None:
-                capacities_items, w_capacities = external_sources.fetch_capacities_items(
-                    capacities_client, today
-                )
+        # A1 artifact seam: when the operator sets sources.mode=artifact, the
+        # Todoist and Capacities rows come ONLY from the normalized artifact
+        # and NEITHER live client is constructed. A live read is never a
+        # fallback (point 7) — the digest degrades with a loud banner instead.
+        source_mode = app_config.sources_mode()
+        artifact_block: dict[str, Any] = {
+            "state": artifact_source.STATUS_LIVE,
+            "generated_at": None,
+            "age_minutes": None,
+            "logical_day": None,
+            "producer": None,
+            "warnings": [],
+        }
+        artifact_warnings: list[str] = []
+        todoist_c = None
+        store = None
+        t_assigned: list[dict[str, Any]] = []
+        t_pool: list[dict[str, Any]] = []
+        w_todo: list[str] = []
+        if source_mode == app_config.SOURCES_MODE_ARTIFACT:
+            artifact_result = artifact_source.load_artifact(datetime.now())
+            artifact_block = artifact_result.as_digest_block()
+            if artifact_result.status != artifact_source.STATUS_FRESH:
+                artifact_warnings = list(artifact_result.warnings)
+            t_assigned = [
+                r for r in artifact_result.rows
+                if r.get("source") == "todoist" and r.get("assigned") is True
+            ]
+            t_pool = [
+                r for r in artifact_result.rows
+                if r.get("source") == "todoist" and r.get("assigned") is not True
+            ]
+            capacities_items = [
+                r for r in artifact_result.rows if r.get("source") == "capacities"
+            ]
+            # A producer may fold vault rows into the artifact too; they join
+            # the live vault gather's own surfaces rather than a third one.
+            artifact_vault = [
+                r for r in artifact_result.rows if r.get("source") == "vault"
+            ]
+            if artifact_vault:
+                run_data = {
+                    **run_data,
+                    "pool_items": run_data["pool_items"] + [
+                        r for r in artifact_vault if r.get("assigned") is not True
+                    ],
+                    "assigned_items": run_data["assigned_items"] + [
+                        r for r in artifact_vault if r.get("assigned") is True
+                    ],
+                }
+        else:
+            todoist_c, store = build_clients(vault, config)
+            build_capacities = app.state.build_capacities_adapter
+            if build_capacities is not None:
+                try:
+                    capacities_client = build_capacities(vault, config)
+                except Exception as exc:  # noqa: BLE001 — source boundary degrades
+                    capacities_client = None
+                    w_capacities = [
+                        f"Capacities adapter setup failed ({exc}) — source is unavailable"
+                    ]
+                if capacities_client is not None:
+                    capacities_items, w_capacities = external_sources.fetch_capacities_items(
+                        capacities_client, today
+                    )
         try:
-            t_assigned, t_pool, w_todo = external_sources.fetch_todoist_items(
-                todoist_c, ext_cfg
-            )
+            if source_mode != app_config.SOURCES_MODE_ARTIFACT:
+                t_assigned, t_pool, w_todo = external_sources.fetch_todoist_items(
+                    todoist_c, ext_cfg
+                )
             if store is not None:
                 try:
                     resolved, _missing = calendar_bridge.resolve_titles_to_ids(
@@ -2672,7 +2726,10 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
             "micro_adventure": micro_payload,
             "dropped_today": dropped_rows,
             "calendar_decisions": calendar_decisions,
-            "source_warnings": w_todo + w_cal + w_hab + w_capacities,
+            "artifact": artifact_block,
+            "source_warnings": (
+                w_todo + w_cal + w_hab + w_capacities + artifact_warnings
+            ),
             "source_counts": {
                 "vault": len(run_data["pool_items"]) + len(run_data["assigned_items"]),
                 "todoist": len(t_assigned) + len(t_pool),

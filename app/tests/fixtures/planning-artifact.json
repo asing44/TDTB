@@ -1,0 +1,95 @@
+{
+  "admission": {
+    "admitted": [
+      "Call Vlad",
+      "Water plants",
+      "Review PR"
+    ],
+    "dropped": [],
+    "rule_set_hash": "fixture-ruleset-a1"
+  },
+  "content_hash": "270729e72aded23e8a519d6834b1e2ef8393d19f8ee7912902602ea2f1b20a45",
+  "generated_at": "2026-10-08T09:00:00-07:00",
+  "logical_day": "2026-10-08",
+  "producer": {
+    "name": "tdtb-planning-artifact-fixture",
+    "run_id": "fixture-a1",
+    "version": "0.1.0"
+  },
+  "rows": [
+    {
+      "assigned": true,
+      "blocks": 1,
+      "deadline": "2026-10-08",
+      "duration_minutes": 30,
+      "identity": "todoist:9001",
+      "is_recurring": false,
+      "labels": [],
+      "name": "Call Vlad",
+      "path": "todoist://9001",
+      "priority_score": 4.0,
+      "scheduled_start": null,
+      "source": "todoist",
+      "todoist_id": "9001",
+      "types": [
+        "todoist"
+      ],
+      "urgency": 4
+    },
+    {
+      "assigned": false,
+      "deadline": null,
+      "identity": "todoist:9002",
+      "is_recurring": false,
+      "labels": [],
+      "name": "Water plants",
+      "path": "todoist://9002",
+      "priority_score": 1.0,
+      "scheduled_start": null,
+      "source": "todoist",
+      "todoist_id": "9002",
+      "types": [
+        "todoist"
+      ],
+      "urgency": 1
+    },
+    {
+      "assigned": false,
+      "blocks": 1,
+      "deadline": null,
+      "identity": "todoist:9003",
+      "is_recurring": false,
+      "labels": [],
+      "name": "Review PR",
+      "path": "todoist://9003",
+      "priority_score": 2.0,
+      "scheduled_start": null,
+      "source": "todoist",
+      "todoist_id": "9003",
+      "types": [
+        "todoist"
+      ],
+      "urgency": 2
+    }
+  ],
+  "schema": "tdtb.planning-artifact",
+  "sources": {
+    "capacities": {
+      "deferred": 0,
+      "dropped": 0,
+      "read_at": "2026-10-08T09:00:00-07:00",
+      "rows": 0,
+      "status": "ok",
+      "warnings": []
+    },
+    "todoist": {
+      "deferred": 0,
+      "dropped": 0,
+      "read_at": "2026-10-08T09:00:00-07:00",
+      "rows": 3,
+      "status": "ok",
+      "warnings": []
+    }
+  },
+  "version": 1
+}
