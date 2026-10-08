@@ -73,9 +73,37 @@ over-applied to the calendar store as well as the Todoist client.
 - **Impact today: none.** `sources.mode` defaults to `live`, so the running service is unaffected.
 - **Impact at A4: the calendar would break**, which is why this is recorded rather than noted in
   passing.
-- **Fix:** split the seam so artifact mode builds the calendar store but not the Todoist client,
-  and narrow the `test_artifact_source.py` "no live client" assertions to the Todoist and
-  Capacities clients only.
+- **Fix: DONE — `e6a111f`.** The calendar store now has its own `build_calendar_store` seam,
+  registered beside `build_read_clients` at `app/main.py:4391` and degrading to `None` the same
+  way; the artifact branch obtains the store while still constructing no Todoist client and no
+  Capacities adapter. **No existing assertion was narrowed** — the four booby-trapped guard tests
+  pass unmodified, and a new test asserts the calendar rows still reach the digest
+  (`source_counts["calendar"] == 1`) with both live plan seams stubbed to raise. Gate 2394.
+
+**A2 landed (2026-10-08).** The first real producer.
+
+- `skills/tdtb-refresh/` — `SKILL.md` plus a starter `producer-rules.json`. Canonical here, per O3.
+- `app/producer_rules.py` — the **deterministic** evaluator: recursive `all`/`any`/`not` over nine
+  ops, `$today` token, first-match-wins, `admit: false` to exclude, and `pool: true` emitting
+  `assigned: false` per O1. Same fetched input always yields byte-identical rows, so
+  `content_hash` is stable.
+- `tools/produce_rows.py` — applies the rules and writes through the A1 atomic helper.
+- `tools/validate_artifact.py` — wraps the A1 validator. Smoke-tested by root: valid → exit 0,
+  malformed → exit 1, missing file → exit 2.
+- Gate: **2446 passed** (baseline 2394 + 52 new).
+
+**The agent/deterministic split is the load-bearing part.** The agent speaks MCP (fetch, resolve
+saved filters and dates); the CLI decides admission. SKILL.md states it explicitly: *"You never
+decide what is admitted... Do not re-rank, filter, rename, or 'improve' rows yourself."* If the
+agent interpreted the rules, identical input would yield different rows — the exact unreliability
+the artifact exists to remove, and it would be invisible until rows went missing.
+
+The rules schema **already accommodates Capacities rules** (`source`, `structure`,
+`duration_prop`), so A3 needs no schema migration. The starter rules file ships in-repo; the
+operator installs it to `~/.config/tdtb/producer-rules.json`.
+
+**Still owed:** the WALL-E_PIOS symlink projection and its documentation (root-owned, not yet
+done).
 
 ## Operator directive
 
