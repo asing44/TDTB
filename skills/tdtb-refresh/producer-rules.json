@@ -1,0 +1,52 @@
+{
+  "version": 1,
+  "rules": [
+    {
+      "id": "todoist-drop-reminders",
+      "source": "todoist",
+      "when": {
+        "any": [
+          {"prop": "labels", "op": "in", "values": ["🔔Reminder"]},
+          {"prop": "content", "op": "matches", "values": ["^🔔 Nudge:"]}
+        ]
+      },
+      "admit": false
+    },
+    {
+      "id": "todoist-assigned-today-or-overdue",
+      "source": "todoist",
+      "when": {
+        "any": [
+          {"prop": "due.date", "op": "eq", "values": ["$today"]},
+          {"prop": "due.date", "op": "before", "values": ["$today"]}
+        ]
+      },
+      "assigned": true,
+      "pool": false
+    },
+    {
+      "id": "todoist-quick-pool",
+      "source": "todoist",
+      "when": {
+        "prop": "labels",
+        "op": "in",
+        "values": ["@🚀10min"]
+      },
+      "assigned": false,
+      "pool": true
+    },
+    {
+      "id": "capacities-inbox-assigned",
+      "source": "capacities",
+      "structure": "Project",
+      "duration_prop": "Duration",
+      "when": {
+        "prop": "collections",
+        "op": "in",
+        "values": ["Inbox"]
+      },
+      "assigned": true,
+      "pool": false
+    }
+  ]
+}
