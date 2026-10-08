@@ -452,6 +452,23 @@ def _duration_tag(item: dict[str, Any]) -> tuple[str | None, int | None]:
     return matches[0][0], distinct.pop()
 
 
+def duration_tag_resolution(
+    item: dict[str, Any],
+) -> tuple[str | None, int | None]:
+    """Public seam over :func:`_duration_tag` for callers that need the
+    deterministic duration-label mapping without the full resolution ladder
+    (the cockpit row ladder, ``main.resolve_assigned_blocks``).
+
+    The contract is exactly :func:`_duration_tag`'s: ``(label, minutes)`` on
+    a match, ``(label, None)`` for a recognized valueless label, and
+    ``ValueError`` on a same-precedence distinct-minutes collision. Callers
+    with a fail-open contract catch that error themselves; the recognizer
+    and collision logic stay single-sourced here so no caller can drift
+    from :func:`resolve_duration`.
+    """
+    return _duration_tag(item)
+
+
 def _native_minutes(item: dict[str, Any]) -> int | None:
     """Todoist-native duration in minutes: raw ``{"unit", "amount"}`` shape
     or the already-parsed bare minutes the read seam emits. None when

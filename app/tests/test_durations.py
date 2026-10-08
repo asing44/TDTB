@@ -105,6 +105,61 @@ class TestDefault:
         assert _resolve({"name": "Anything"}, presets=[]) == 1
 
 
+class TestDurationLabel:
+    """Round-2 operator decision: the frozen item 11 tag step runs BEFORE
+    the Todoist-native step in this ladder. Label semantics (valueless
+    ``🐢 Multi-hour``, same-precedence collision) are reused from
+    ``duration_memory``, never re-derived here."""
+
+    HOUR = "🏃‍♂️ Hour"  # real operator form: ZWJ + variation selector
+    HOUR_STRIPPED = "🏃 Hour"
+
+    def test_hour_label_is_two_blocks(self):
+        assert _resolve({"name": "Inspect dishwasher", "labels": [self.HOUR]}) == 2
+        assert _resolve({
+            "name": "Inspect dishwasher", "labels": [self.HOUR_STRIPPED],
+        }) == 2
+
+    def test_hour_label_beats_native_duration(self):
+        # The precedence decision itself (item 11: tag before native).
+        assert _resolve({
+            "name": "Inspect dishwasher",
+            "labels": [self.HOUR],
+            "duration": 15,
+        }) == 2
+
+    def test_half_hour_label_is_one_block(self):
+        # 30 minutes and the 1-block default quantise identically, so the
+        # block count alone cannot distinguish them; exact provenance is
+        # pinned at the digest level below instead.
+        assert _resolve({"name": "Laundry", "labels": ["🍅 Half-hour"]}) == 1
+
+    def test_multi_hour_label_falls_through(self):
+        # Recognized but valueless: metadata, not a tag source.
+        assert _resolve({
+            "name": "Garage", "labels": ["🐢 Multi-hour"], "duration": 90,
+        }) == 3
+        assert _resolve({"name": "Garage", "labels": ["🐢 Multi-hour"]}) == 1
+
+    def test_dur_label_rounds_up_to_blocks(self):
+        assert _resolve({"name": "Focus", "labels": ["dur45"]}) == 2
+
+    def test_collision_fails_open_without_raising(self, capsys):
+        # resolve_duration raises on this collision (frozen contract, pinned
+        # in test_duration_memory_contract.py); this ladder runs inside
+        # /plan-inputs, so it must not fail the response over one task.
+        assert _resolve({"name": "Laundry", "labels": ["dur30", "dur45"]}) == 1
+        err = capsys.readouterr().err
+        assert "conflicting labels" in err
+        assert "dur30" in err and "dur45" in err
+
+    def test_collision_falls_through_to_the_lower_ladder(self):
+        assert _resolve({
+            "name": "Laundry", "labels": ["dur30", "dur45"], "duration": 90,
+        }) == 3
+        assert _resolve({"name": "Make", "labels": ["dur30", "dur45"]}) == 2
+
+
 # ---------------------------------------------------------------------------
 # /plan-inputs enrichment
 # ---------------------------------------------------------------------------
@@ -296,3 +351,50 @@ def test_plan_inputs_ignores_corrupt_cache_and_serves_source(vault):
     assert rows["Make"]["blocks"] == 2              # fallback to preset
     assert "duration_source" not in rows["Make"]
     assert p.read_text(encoding="utf-8") == "not json"  # no repair
+
+
+# ---------------------------------------------------------------------------
+# Round 2: duration-label provenance on /plan-inputs assigned rows
+# ---------------------------------------------------------------------------
+
+def _labelled_todoist():
+    import external_sources as ext
+
+    return FakeTodoist({
+        ext.ASSIGNED_QUERY_FALLBACK: [
+            {"id": "7", "content": "Inspect dishwasher", "priority": 4,
+             "labels": ["🏃‍♂️ Hour"]},
+            {"id": "8", "content": "Check traps", "priority": 4,
+             "labels": ["🚀 10min"]},
+            {"id": "9", "content": "Laundry", "priority": 4,
+             "labels": ["🍅 Half-hour"]},
+        ],
+        ext.QUICK_QUERY_FALLBACK: [],
+    })
+
+
+def test_plan_inputs_labelled_rows_carry_exact_tag_provenance(vault):
+    body = _client(vault, todoist=_labelled_todoist()).get("/plan-inputs").json()
+    rows = _assigned_by_name(body)
+    hour = rows["Inspect dishwasher"]
+    assert hour["blocks"] == 2
+    assert hour["duration_minutes"] == 60
+    assert hour["duration_source"] == "tag:🏃‍♂️ Hour"
+    traps = rows["Check traps"]
+    assert traps["blocks"] == 1          # 10min would display 30min without
+    assert traps["duration_minutes"] == 10  # the exact-minutes provenance
+    assert traps["duration_source"] == "tag:🚀 10min"
+    laundry = rows["Laundry"]            # Half-hour is 1 block either way;
+    assert laundry["blocks"] == 1        # only provenance distinguishes it
+    assert laundry["duration_minutes"] == 30
+    assert laundry["duration_source"] == "tag:🍅 Half-hour"
+
+
+def test_plan_inputs_remembered_still_wins_over_tag_provenance(vault):
+    client, headers = _auth_client(vault, todoist=_labelled_todoist())
+    _save(client, headers, "todoist:7", 45)
+    rows = _assigned_by_name(client.get("/plan-inputs").json())
+    hour = rows["Inspect dishwasher"]
+    assert hour["duration_source"] == "remembered"
+    assert hour["duration_minutes"] == 45
+    assert hour["blocks"] == 1.5

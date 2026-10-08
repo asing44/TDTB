@@ -1445,17 +1445,62 @@ def _preset_blocks(name: str, presets: list[dict[str, Any]]) -> float | int | No
     return None
 
 
+def _assigned_duration_tag(
+    item: dict[str, Any], *, warn: bool = True
+) -> tuple[str | None, int | None]:
+    """Fail-open duration-label step for the assigned-row blocks ladder.
+
+    Reuses ``duration_memory.duration_tag_resolution`` — the same recognizer
+    and collision rule ``resolve_duration`` uses — instead of re-deriving
+    label semantics here. Returns ``(label, minutes)`` when a label resolves,
+    and ``(None, None)`` when no label resolves or the recognized label
+    encodes no minutes (``🐢 Multi-hour`` is metadata, not a source).
+
+    Deliberate divergence from :func:`duration_memory.resolve_duration`,
+    which raises ``ValueError`` on a same-precedence collision with distinct
+    minutes (``dur30`` + ``dur45``): there the raise stays, because the
+    resolver feeds a user-facing save. This ladder runs inside
+    ``build_digest`` via :func:`resolve_assigned_blocks`, where raising would
+    fail the whole ``/plan-inputs`` response over one mislabelled task, so it
+    fails OPEN — the row gets no label resolution and falls through to
+    native/preset/type/1 block — and emits one short stderr line naming only
+    the conflicting labels. ``warn=False`` is for the digest site's
+    provenance-only call, which must not duplicate that diagnostic.
+    """
+    try:
+        return duration_memory.duration_tag_resolution(item)
+    except ValueError as exc:
+        if warn:
+            print(
+                f"duration-label step ignored conflicting labels: {exc}",
+                file=sys.stderr,
+            )
+        return None, None
+
+
 def resolve_assigned_blocks(
     item: dict[str, Any],
     presets: list[dict[str, Any]],
     fm: dict[str, Any] | None = None,
 ) -> float | int:
-    """Locked decision 14 duration precedence for an assigned row:
+    """Assigned-row duration precedence: locked decision 14 as amended by
+    the round-2 duration-label decision — deterministic duration label
+    (``🏃‍♂️ Hour``, ``🍅 Half-hour``, ``🚀 10min``, ``dur<N>``) →
     Todoist-native duration → name-matched Presets row → contract-defined
     type field (press duration_min) → 1 block. Explicit zero from a matched
     source stays 0 (background rows); only absent/unparseable falls through.
     Pure — no vault writes, no schema fields, no session-override handling
-    (today-only edits are client state, locked decision 14)."""
+    (today-only edits are client state, locked decision 14).
+
+    The label step sits before native per frozen item 11 (remembered → tag →
+    native → preset → type → default). Remembered is applied by the caller
+    after this ladder (:func:`duration_memory.apply_remembered_overlay`), so
+    it still wins. See :func:`_assigned_duration_tag` for the fail-open
+    collision divergence from :func:`duration_memory.resolve_duration`.
+    """
+    _label, tag_minutes = _assigned_duration_tag(item)
+    if tag_minutes is not None:
+        return _blocks_of_minutes(tag_minutes)
     native = item.get("duration")
     if isinstance(native, (int, float)) and not isinstance(native, bool):
         return _blocks_of_minutes(int(native))
@@ -2478,14 +2523,25 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
             raise HTTPException(status_code=503, detail=exc.diagnostics) from exc
 
         # T4 (cockpit-overhaul): assigned rows gain resolved `blocks` per the
-        # locked precedence (Todoist-native → Preset → press duration_min → 1).
-        # Suggested rows stay untouched — the cockpit never consumes them.
+        # locked precedence (duration label → Todoist-native → Preset →
+        # press duration_min → 1). Suggested rows stay untouched — the
+        # cockpit never consumes them.
         presets = result.config.get_presets() if result.config is not None else []
         fm_by_path = {n["path"]: n["fm"] for n in assigned_notes}
         for row in digest["assigned"]:
             row["blocks"] = resolve_assigned_blocks(
                 row, presets, fm_by_path.get(row.get("path"))
             )
+            # Exact-minutes provenance when the duration-label step won:
+            # blocks are 30-minute-quantised, so a 10-minute label would
+            # still render 30min. Same field shape as the remembered overlay
+            # below, which runs afterwards and still overwrites both fields
+            # when a remembered value exists. warn=False: the collision
+            # diagnostic already came from resolve_assigned_blocks above.
+            tag_label, tag_minutes = _assigned_duration_tag(row, warn=False)
+            if tag_minutes is not None:
+                row["duration_minutes"] = tag_minutes
+                row["duration_source"] = f"tag:{tag_label}"
 
         # FT-01: remembered-duration overlay — a valid vault-scoped remembered
         # value wins over the source-derived blocks and is labelled
