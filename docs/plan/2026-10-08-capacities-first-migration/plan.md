@@ -41,6 +41,42 @@ producer:
 - The fate of the existing Capacities adapter and the vault gather must be **decided, not drifted
   into** — two readers coexisting is the main risk.
 
+### Artifact design decisions (operator, 2026-10-08)
+
+- **O1 — Pool rows: assigned plus rules marked `pool: true`.** The artifact carries `assigned: true`
+  rows plus pool rows emitted by rules the operator marks as pool sources. Keeps the artifact small
+  and read cost bounded while preserving a pool to pick from.
+- **O2 — Stale policy: use only when `logical_day` matches today.** A prior day's assignments are
+  *wrong* rows, not merely old ones, so this is the line. Age alone does not disqualify.
+- **O3 — Skill home: the TDTB repo, canonical**, versioned with the consumer and the rules schema.
+  Operator additionally requires a **symlink projection plus documentation in the main
+  (WALL-E_PIOS) repo** — per that repo's convention, `.agents/skills/` is a discovery surface and
+  never an independent canonical source, so the projection must not be a second copy.
+- **O4 — Hand edits: an overlay file merged on load.** `state_dir()/planning-overlay.json`, so
+  hand-added rows survive regeneration. Nothing is silently erased by a refresh.
+
+**Slice A1 scope (next):** `artifact_source.py` with the schema validator and staleness logic, the
+`sources.mode` knob, the digest `artifact` block, and a hand-written fixture artifact with Todoist
+rows only, tested against `build_digest`. Proves the seam with no producer. A1–A3 must precede S5;
+**A3 supersedes S2.**
+
+**A1 landed (2026-10-08).** `app/artifact_source.py` (new), `app/app_config.py` (+77),
+`app/main.py` (+93), plus `app/tests/test_artifact_source.py` and a fixture artifact. Gate:
+**2392 passed** (baseline 2361 + 31). Default mode remains `live`, so nothing changed at runtime.
+
+**GAP FOUND IN A1 — must be fixed before A4 (flip the default).** In artifact mode
+`build_clients()` is never called (`app/main.py:2478` branch), so the EventKit `store` stays
+`None` and **the calendar degrades** with its existing warning. The design says calendar, habits
+and anchored blocks stay on their current readers. The "no live client constructed" rule was
+over-applied to the calendar store as well as the Todoist client.
+
+- **Impact today: none.** `sources.mode` defaults to `live`, so the running service is unaffected.
+- **Impact at A4: the calendar would break**, which is why this is recorded rather than noted in
+  passing.
+- **Fix:** split the seam so artifact mode builds the calendar store but not the Todoist client,
+  and narrow the `test_artifact_source.py` "no live client" assertions to the Todoist and
+  Capacities clients only.
+
 ## Operator directive
 
 1. "Capacities has ENTIRELY replaced Obsidian" — retire **all** vault reads.
