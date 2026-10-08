@@ -331,3 +331,47 @@ verdicts and `file:line` anchors for each are recorded above.
 **Operational note:** backend changes only take effect after an attended
 restart of the live `:8746` service (`zsh restart-live.sh` in the main
 checkout); rebuilt cockpit bundles go live on reload alone.
+
+## Rail rhythm — scroll-dense (landed, and measured)
+
+**Decision:** the operator chose **Scroll-dense** from the rail-rhythm
+wireframe. Applied unconditionally (the wireframe modelled it as `8px / 8px`,
+same at both heights): `.rail__scroll` gap 15px → 8px and `.rail__section`
+padding-bottom 15px → 8px, while the **pinned** groups in `.rail` (date,
+status, chips) stay at 15px. Commits `5bf922b` (CSS) and `5fa2b6e` (bundles),
+fast-forwarded to `main` and pushed.
+
+**Measured on the live cockpit** (Orca embedded browser, `/static/cockpit/`,
+991px viewport, served CSS `index-BzQOP76.css` — the change needs only a reload,
+not a restart):
+
+| | Value |
+|---|---|
+| `.rail` gap (pinned) | 15px |
+| `.rail__scroll` gap (stack) | **8px** |
+| Rail height / scroll region / pinned total | 991 / **413** / 578 |
+| Stack total | **725** |
+
+Stack composition: Capacity section 253 · pie chart 214 · over-caption 32 ·
+legend 88 · Keys 138.
+
+**The wireframe's headline benefit does not transfer, and this matters.**
+
+1. **Real relief is ~42px, not the modelled ~94px** — four stack gaps × 7px plus
+two section paddings × 7px. The wireframe's representative heights understated
+the real rail substantially.
+2. **No gap change can protect the allocation block.** In the real app it is the
+***first*** stack item, so its visibility depends only on whether the scroll
+region exceeds 253px — nothing precedes it for a gap to move. The wireframe
+modelled it as being *cut* by preceding content, which is not the real layout.
+
+**Where the space actually goes:** the pinned `.rail__chips` block is **317px**
+— the single largest consumer, larger than the whole scroll region's capacity at
+this viewport — and the pie block (chart + over-caption + legend) is **334px**.
+The stack gap was never the lever.
+
+**Supersedes the earlier short-viewport note.** The "deliberate deviation to
+revisit" above (the retired `max-height: 900px` tightening) is now moot: it was
+worth 3px by the wireframe's model, and the real bottleneck is pinned-chip
+height, not rail rhythm. Any future short-viewport work should target
+`.rail__chips` and the pie, not the gaps.
