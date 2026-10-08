@@ -313,6 +313,29 @@ after cutover.
   together, which is why D5's paced convergence is a prerequisite for D10 rather than a nicety.
   Lands before cutover (S5), alongside replacing the vault scan roots.
 
+## Verification trap (2026-10-08): `/version` cannot prove a restart
+
+`build_version_fingerprint` (`app/main.py:1763-1789`) reads `_git_head_identity(repo_root)` — the
+repo's **current** HEAD, not the identity of the code the running process loaded. Its own docstring
+calls it "a deterministic read-only fingerprint of the repo's committed identity".
+
+**Consequence:** `GET /version`'s `source_commit` reports whatever HEAD is *now*, so it cannot show
+whether a backend change has been loaded. It reported `cb08de5` seconds after a push, with no
+restart.
+
+**Correction to the S1 acceptance record above.** That entry cited `source_commit: 7c3e871` as proof
+the S1 code was loaded. The reasoning was invalid — the fingerprint would have reported the new
+value whether or not the process had restarted. The S1 conclusion still stands, but on behavioural
+evidence only:
+
+- fresh writes into `~/.config/tdtb/state/` (only S1 code writes there),
+- `day_setup_confirmed: true`, read from the migrated runstate in the new home,
+- the vault cache frozen at 80 files with no post-restart writes.
+
+**Worth fixing:** stamp the loaded code identity (or a process start timestamp) at startup and
+expose it separately, so "did my backend change actually load?" is answerable. Until then, verify a
+backend change by its behaviour, never by `/version`.
+
 ## Not covered
 
 Capacities structure design for unmatched vault rows; the writes in D1; the legacy-static UI.
