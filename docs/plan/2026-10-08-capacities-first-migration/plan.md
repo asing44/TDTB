@@ -3,6 +3,44 @@
 Status: **design complete; operator decisions D1–D4 recorded. Implementation begins at S0.**
 Date: 2026-10-08. Surface: this file (there is no `progress.md` in this repo).
 
+## ARCHITECTURE PIVOT (2026-10-08) — artifact contract + producer skill
+
+Operator decision: *"Worth it, build it."* This supersedes the direct-API approach for source
+reads and reshapes D10.
+
+**Why.** The app speaks REST and can never use MCP; only an agent can. The REST surface is the
+real blocker, and every workaround explored earlier (predicate DSL, tag consumption, budget
+pacing) was a workaround for *that* choice. Verified from the public OpenAPI spec:
+- List endpoints (`/objects/structure|tag|collection`) return only `id`, `structureId`, `title` —
+  **no properties**, so property-based filtering costs one content read per object.
+- Object CRUD is **30 requests / 60 seconds** per token+endpoint, exposed via a `RateLimit` header.
+- There is **no saved-query endpoint**, so Capacities queries cannot be read by the app.
+- Objects have **no tag write path** (`POST`/`PATCH /object` take `properties`/`collections`/
+  `blocks` only), and there is **no `tag` property type** — so "tag removed on read" is not
+  implementable.
+
+By contrast the agent-side MCP servers already expose what the REST clients lack:
+`capacities_listObjectsByTag`, `listObjectsByCollection`, `getObjectTypeShape`,
+`updateObjectViaMD`, and on Todoist `find-completed-tasks` and `find-filters`.
+
+**The seam.** One normalized artifact file, consumed by the app, produced by a *swappable*
+producer:
+
+| Producer | When |
+|---|---|
+| Skill over MCP | Now — richest tools, no new system |
+| n8n workflow | Later, if it should run without an agent |
+| The existing Capacities adapter | Fallback only, or retired |
+
+**Consequences accepted by the operator:**
+- Planning becomes two steps: regenerate the artifact, then plan.
+- The app loses live self-refresh — it no longer talks to Capacities directly.
+- **D10's rule table moves into the skill's config**, where it is just a file the operator edits.
+  The rule vocabulary is no longer constrained by what the app can evaluate cheaply.
+- The artifact is hand-editable, which is the mutability the operator has been asking for.
+- The fate of the existing Capacities adapter and the vault gather must be **decided, not drifted
+  into** — two readers coexisting is the main risk.
+
 ## Operator directive
 
 1. "Capacities has ENTIRELY replaced Obsidian" — retire **all** vault reads.
@@ -137,7 +175,7 @@ Rollback point is any slice before S5.
 |---|---|---|
 | **S0** | `TDTB_HOME`, `app_config.py`, state-dir helper, dual-read with vault fallback, run migration tool. No behaviour change. | delete `config.json` |
 | **S1** | Move the five stores; writes go to new paths; vault copies frozen as backup. | restore paths |
-| **S2** | Raise read budget; add the vault-row diff report. Must land before S5. | config only |
+| **S2** | Make Capacities coverage complete within the rate limit (paced convergence; budget configurable with a safe ceiling); add the vault-row diff report. Must land before S5. | config only |
 | **S3** | Habits via Todoist behind `habits.source = obsidian \| todoist`; fix calendar-disable wiring in the same slice. | flip flag |
 | **S4** | Pick-lists store + UI; fix the exportPrompt leak. Independent of S3. | revert slice |
 | **S5** | Cutover: `vault_enabled=false`. Last reversible point. | flip flag back |
@@ -178,10 +216,34 @@ Rollback point is any slice before S5.
 - **D4 Vault rows — triage then migrate.** Produce the diff report, match against the Capacities
   listing, operator triages keepers into Capacities or Todoist before S5.
 
-Applied as defaults unless overridden: **D5** raise `max_content_reads` to 60, configurable ·
-**D6** seed pick-lists from current vault values via the migration tool · **D7** migrate
-`## Disabled Calendars` into `config.calendar.disabled` · **D8** provide a `tdtb-state export`
-snapshot command rather than syncing `~/.config`.
+Applied as defaults unless overridden: **D6** seed pick-lists from current vault values via the
+migration tool · **D7** migrate `## Disabled Calendars` into `config.calendar.disabled` ·
+**D8** provide a `tdtb-state export` snapshot command rather than syncing `~/.config`.
+
+### D5 CORRECTED (2026-10-08) — the read budget is a rate-limit valve, not a tunable
+
+The original D5 ("raise `max_content_reads` to 60, configurable") was **wrong** and would have
+broken the Capacities read. `app/capacities_adapter.py:119-126` documents why the value is 20:
+
+> The live API allows **30 requests per minute** and its structure listing carries no typed
+> properties, so every property-based decision costs one content read. A cold read spends this
+> plus one listing per structure (**20 + 3 = 23**), leaving room for a second refresh inside the
+> same minute before the window fills; objects left unevaluated are reported, never silently
+> dropped.
+
+60 content reads plus 3 listings would exceed the 30-request window by more than 2x and trigger
+429s. The budget exists so the adapter degrades *deliberately* instead of letting the provider
+rate-limit the whole read (`:621-622`), and 429 handling is already present (`:1261`).
+
+**Revised D5:** keep the budget tied to the rate limit. Make it configurable with a documented
+safe ceiling of `30 - (one listing per contributing structure)`, and prefer paced convergence
+over a larger single-read budget.
+
+**Why this is now a prerequisite, not a nicety:** Capacities supplies only 4 of 117 live rows
+today, but D4 asks it to carry the 96 vault rows. At 30 requests/minute that is multiple minutes
+of paced reading, so a single cold read can never cover the post-migration corpus. The symptom
+("20 evaluated · 30 deferred, budget reached") is therefore by design today and a hard blocker
+after cutover.
 
 - **D9 Pick-list / pool store — an editable config file, NOT a cockpit-edited store.** This
   **supersedes** the earlier cockpit-edited-store choice (which itself superseded the vault config
@@ -193,6 +255,27 @@ snapshot command rather than syncing `~/.config`.
   *collection* on an event, and is undecided between collections and tags. This does not block
   TDTB provided the D9 mapping can express either (see the finish-line bar above). It is a
   Capacities-modelling question for the operator, not a TDTB decision.
+- **D10 Source-inclusion rules must be declarative and operator-editable.** Operator, 2026-10-08:
+  the vault scan roots (`CORE_SCAN_DIRS` / `HATCH_ONLY_SCAN_DIRS`, `app/gather/tdtb_gather.py:59-77`)
+  are hardcoded Python constants, and the Capacities equivalent must not be. Stated today: an
+  object is a planning candidate when its `assigned` boolean is true; some types (e.g. project)
+  qualify when `status = active`. The operator has **not finished** defining the universal rule
+  set, so the requirement is a *mechanism that can express whatever he lands on* — not a specific
+  rule set. He must be able to change it without an agent and without a code edit.
+  **What exists today — a closed shape split across three stores:** which structures participate
+  (`active_structures`), the status values that count as active (`active_statuses`), the native
+  Auto toggles (`NativeTaskAutoPolicy`: active/due/deadline + horizon), and a per-structure
+  assignment marker (`StructureMapping.assignment_property` / `open_status_property`, held in the
+  operator-owned source-mapping record). Individually editable, collectively closed: the predicate
+  vocabulary is fixed and there is no single place to state "this type qualifies when X".
+  **Required:** a declarative per-structure inclusion predicate in `config.json` (structure →
+  `{property, equals|in, values}`), defaulting to today's behaviour, plus a report showing what
+  each rule admits — so the operator can see the effect of a rule before trusting it.
+  **Coupling — read the D5 correction first.** Every admitted object costs one content read and the
+  API allows 30 requests/minute, so broadening the rules broadens the corpus: a rule set admitting
+  ~150 objects cannot be read in one window. Inclusion rules and the read budget must be tuned
+  together, which is why D5's paced convergence is a prerequisite for D10 rather than a nicety.
+  Lands before cutover (S5), alongside replacing the vault scan roots.
 
 ## Not covered
 
