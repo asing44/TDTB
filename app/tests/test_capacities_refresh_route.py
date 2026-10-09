@@ -198,3 +198,116 @@ def test_malformed_start_body_is_422(tmp_path, body):
     )
 
     assert response.status_code == 422
+
+
+# ---------------------------------------------------------------------------
+# Cached-coordinator freshness across a configuration save
+# ---------------------------------------------------------------------------
+
+def _counting_factory(client, builds):
+    """Wrap the injected factory so each build is observable."""
+    inner = client.app.state.build_refresh_coordinator
+
+    def build(vault_path, config):
+        builds.append(vault_path)
+        return inner(vault_path, config)
+
+    return build
+
+
+def _revision_stub(monkeypatch, holder):
+    monkeypatch.setattr(
+        main_mod.capacities_builder,
+        "refresh_config_revision",
+        lambda vault: holder["value"],
+    )
+
+
+def test_start_rebuilds_an_idle_coordinator_when_the_config_revision_changed(
+    tmp_path, monkeypatch
+):
+    """A settings or mapping save between runs must reach the next start.
+
+    The coordinator captures its mappings and evaluation settings at build
+    time. A cached instance would otherwise run the *new* revision with the
+    *old* scope and publish it as current, so start replaces an idle instance
+    whose revision moved, while an unchanged revision reuses it.
+    """
+    builds: list = []
+    revision = {"value": 1}
+    _revision_stub(monkeypatch, revision)
+    client = _client(tmp_path, _paged_provider(objects={"T1": ["a"], "T2": []}))
+    client.app.state.build_refresh_coordinator = _counting_factory(client, builds)
+
+    first = client.post(
+        "/capacities/refresh/start",
+        headers=_auth(client),
+        json={"mode": "refresh", "scope": "all"},
+    )
+    assert first.status_code == 200
+    assert len(builds) == 1
+    client.app.state.refresh_coordinator.wait(timeout=5)
+
+    revision["value"] = 2
+    second = client.post(
+        "/capacities/refresh/start",
+        headers=_auth(client),
+        json={"mode": "refresh", "scope": "all"},
+    )
+    assert second.status_code == 200
+    assert len(builds) == 2
+    client.app.state.refresh_coordinator.wait(timeout=5)
+
+    third = client.post(
+        "/capacities/refresh/start",
+        headers=_auth(client),
+        json={"mode": "refresh", "scope": "all"},
+    )
+    assert third.status_code == 200
+    assert len(builds) == 2
+    client.app.state.refresh_coordinator.wait(timeout=5)
+
+
+def test_a_live_job_keeps_its_coordinator_across_a_config_change(
+    tmp_path, monkeypatch
+):
+    """A live job must keep the instance that owns its thread and locks.
+
+    Rebuilding under a running job would orphan it: cancel and status would
+    reach a second instance with no job, and the live thread would keep
+    running unreachable. The change is instead rejected at publication by the
+    job's own revision guard.
+    """
+    builds: list = []
+    revision = {"value": 1}
+    release = threading.Event()
+    _revision_stub(monkeypatch, revision)
+    client = _client(
+        tmp_path,
+        _paged_provider(objects={"T1": ["a"], "T2": []}),
+        release=release,
+    )
+    client.app.state.build_refresh_coordinator = _counting_factory(client, builds)
+
+    started = client.post(
+        "/capacities/refresh/start",
+        headers=_auth(client),
+        json={"mode": "refresh", "scope": "all"},
+    )
+    assert started.status_code == 200
+
+    revision["value"] = 2
+    again = client.post(
+        "/capacities/refresh/start",
+        headers=_auth(client),
+        json={"mode": "refresh", "scope": "all"},
+    )
+    assert again.status_code == 409
+    assert len(builds) == 1
+
+    cancelled = client.post("/capacities/refresh/cancel", headers=_auth(client))
+    assert cancelled.status_code == 200
+    assert cancelled.json()["phase"] == "cancelled"
+    release.set()
+    # Drain the background thread.
+    client.get("/capacities/refresh/status")

@@ -55,6 +55,7 @@ from typing import Any, Callable, Iterable, Iterator
 
 import app_config
 import capacities_cache_io
+import capacities_refresh
 import capacities_refresh_state
 import runstate
 from capacities_adapter import (
@@ -1296,6 +1297,81 @@ def build_refresh_state(
         origin=capacities_refresh_state.provider_origin(cfg.base_url),
         space_id=space_id,
         vault_root=vault_root,
+    )
+
+
+def refresh_config_revision(vault_root: str | Path) -> int | None:
+    """The current combined source+settings revision, or ``None`` if unconfigured.
+
+    One definition shared by the coordinator's publication guard and the route
+    seam's cached-instance check. It is read fresh on every call so a mapping or
+    settings save during a run cannot publish stale scope, and a save between
+    runs cannot be masked by a coordinator built from the previous scope.
+    """
+    current = read_source(vault_root)
+    if current is None:
+        return None
+    return int(current.revision) + int(read_settings(vault_root).settings.revision)
+
+
+def _refresh_state_root(config: CapacitiesBuilderConfig) -> Path:
+    """The machine-local direct-refresh root shared by the store and job dir."""
+    if config.refresh_state_path is not None:
+        return Path(config.refresh_state_path)
+    return refresh_state_dir()
+
+
+def build_refresh_coordinator(
+    vault_root: str | Path,
+    config: CapacitiesBuilderConfig | None = None,
+) -> capacities_refresh.RefreshCoordinator | None:
+    """Construct the paced direct-refresh coordinator, or ``None`` if unconfigured.
+
+    Mirrors :func:`build_capacities_adapter`'s opt-in semantics and error
+    contract: an ABSENT mapping record returns ``None`` silently (a user who
+    does not use Capacities sees no warning), while a PRESENT record with a
+    broken credential raises visibly. The provider seam is the same
+    :class:`CapacitiesRestClient` (it exposes ``fetch_structures`` /
+    ``list_objects`` / ``get_object`` and the pacer's ``set_rate_observer``
+    sink), so no second transport exists.
+
+    The legacy content cache is deliberately NOT wired here: freshness lives in
+    the U1 refresh store, so a stale legacy cache entry can never stand in for a
+    required content read. The configuration revision the coordinator guards on
+    is the live source revision plus the settings revision, read fresh on every
+    check so a mapping or policy save during a run cannot publish stale scope.
+    """
+    cfg = config if config is not None else CapacitiesBuilderConfig()
+    record = read_source(vault_root)
+    if record is None:
+        return None
+
+    settings = read_settings(vault_root).settings
+    token = load_capacities_token(cfg.token_path)
+    client = CapacitiesRestClient(
+        token,
+        space_id=record.space_id,
+        base_url=cfg.base_url,
+        timeout=cfg.timeout,
+        transport=cfg.transport,
+        content_cache=None,
+        structures_observer=_structure_title_observer(
+            vault_root, record.space_id, cfg.base_url
+        ),
+    )
+    store = build_refresh_state(vault_root, record.space_id, cfg)
+
+    return capacities_refresh.RefreshCoordinator(
+        root=_refresh_state_root(cfg),
+        store=store,
+        provider=client,
+        space_id=record.space_id,
+        mappings=_resolve_assigned_structures(
+            record.to_mappings(), settings.assigned_structures
+        ),
+        revision_supplier=lambda: refresh_config_revision(vault_root),
+        assignment_settings=settings.to_assignment_settings(),
+        max_pages=cfg.max_pages,
     )
 
 

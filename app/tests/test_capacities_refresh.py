@@ -20,10 +20,6 @@ import capacities_adapter as ca  # noqa: E402
 import capacities_builder as cb  # noqa: E402
 import capacities_refresh as rr  # noqa: E402
 
-
-import capacities_adapter as ca  # noqa: E402
-import capacities_refresh as rr  # noqa: E402
-
 sys.path.insert(0, str(Path(__file__).parent))
 from capacities_refresh_helpers import (  # noqa: E402
     PRIMARY,
@@ -418,6 +414,26 @@ def test_two_racing_starts_admit_one_job(tmp_path):
         coordinator.start()
     release.set()
     coordinator.wait(timeout=5)
+
+
+def test_is_running_tracks_the_job_thread(tmp_path):
+    """The route seam's rebuild guard needs a truthful liveness read.
+
+    A cached coordinator may only be replaced while its job thread is dead:
+    swapping the instance under a live job would orphan the thread and leave
+    cancel/status on a second instance that does not own the job.
+    """
+    release = threading.Event()
+    provider = _paged_provider(objects={PRIMARY: ["a"], "T2": []})
+    provider.on_fetch = lambda: release.wait(timeout=5)
+    coordinator, _, _, _ = _coordinator(tmp_path, provider)
+
+    assert coordinator.is_running() is False
+    coordinator.start()
+    assert coordinator.is_running() is True
+    release.set()
+    coordinator.wait(timeout=5)
+    assert coordinator.is_running() is False
 
 
 def test_a_foreign_process_lock_blocks_start(tmp_path):

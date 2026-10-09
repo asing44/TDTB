@@ -79,6 +79,7 @@ import capacity as capacity_mod  # noqa: E402
 import capacities_settings  # noqa: E402
 import capacities_builder  # noqa: E402
 import capacities_adapter  # noqa: E402
+import capacities_refresh  # noqa: E402
 import capacities_structure_titles  # noqa: E402
 import exclusion_settings  # noqa: E402
 import tag_exclusions  # noqa: E402
@@ -86,6 +87,10 @@ import app_config  # noqa: E402
 import artifact_source  # noqa: E402
 
 VAULT_ROOT_ENV = "TDTB_VAULT_ROOT"
+
+#: Sentinel distinguishing "no coordinator built yet" from a built-but-
+#: unconfigured coordinator (``None``) in ``app.state.refresh_coordinator``.
+_REFRESH_COORDINATOR_UNSET = object()
 
 # Distant-future sentinel for deadline sorting: items without a deadline sort
 # after every dated item, deterministically.
@@ -1154,6 +1159,27 @@ class CapacitiesSourceDiscoverRequest(BaseModel):
         return value
 
 
+class CapacitiesRefreshStartRequest(BaseModel):
+    """Request body for POST /capacities/refresh/start.
+
+    Closed and strictly typed: unknown keys are rejected, ``mode`` is one of
+    the two job kinds, and a supplied ``scope`` must be a non-blank literal
+    string (the whole-scope default is ``all``). A malformed body is a 422.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    mode: Literal["refresh", "rescan"]
+    scope: StrictStr = "all"
+
+    @field_validator("scope")
+    @classmethod
+    def _usable_scope(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("scope must be a non-blank string")
+        return value
+
+
 def _capacities_catalog_payload(structures: Any) -> list[dict[str, Any]]:
     """Serialize a discovery catalog into the pinned editor wire shape.
 
@@ -1834,6 +1860,14 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
     # usable credential) raises and surfaces as a source warning instead of
     # silently ingesting nothing. Tests still inject fakes here.
     app.state.build_capacities_adapter = build_real_capacities_adapter
+    # U2: the direct-refresh coordinator is a SEPARATE opt-in seam because it
+    # needs its own machine-local store, credential, and single-flight job —
+    # the same lazy, cache-once contract as the adapter seam above. Tests
+    # inject a Callable[[Path, dict], coordinator|None] here; None from the
+    # builder means "no Capacities source configured".
+    app.state.build_refresh_coordinator = build_real_refresh_coordinator
+    app.state.refresh_coordinator = _REFRESH_COORDINATOR_UNSET
+    app.state.refresh_coordinator_revision = _REFRESH_COORDINATOR_UNSET
     # G25: in-flight guard on POST /commit?mode=live — two racing live commits
     # both pass check-before-write against the same snapshot and double-write.
     app.state.live_commit_lock = threading.Lock()
@@ -2280,6 +2314,179 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
             "structures": _capacities_catalog_payload(catalog),
             "warnings": [],
         }
+
+    # -- U2: paced direct Capacities refresh (status/start/cancel) ----------
+
+    def _refresh_vault_root() -> Path:
+        """Vault root for the refresh routes — resolved, not required to exist.
+
+        Unlike ``resolve_vault_root`` this does NOT require the directory to
+        exist: the refresh store namespaces by the vault-root string and its
+        durable state is machine-local, so an unresolved *path* (``None`` and no
+        env var) is the 503 case, not a not-yet-created directory."""
+        root = app.state.vault_root or os.environ.get(VAULT_ROOT_ENV)
+        if not root:
+            raise HTTPException(
+                status_code=503,
+                detail=f"vault root not configured — set {VAULT_ROOT_ENV}",
+            )
+        return Path(root).expanduser()
+
+    def _refresh_revision(vault: Path) -> Any:
+        """Current combined configuration revision, or ``None`` when unconfigured.
+
+        A malformed or unreadable mapping/settings store is a bounded 503: the
+        seam must never treat broken storage as "unchanged" and run a job
+        against scope it could not read.
+        """
+        try:
+            return capacities_builder.refresh_config_revision(vault)
+        except Exception as exc:  # noqa: BLE001 — bounded source boundary
+            print(f"capacities refresh config read failed: {exc}", file=sys.stderr)
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "code": "capacities_refresh_unavailable",
+                    "message": (
+                        "The Capacities configuration could not be read; "
+                        "the previous complete result is preserved."
+                    ),
+                },
+            ) from exc
+
+    def _refresh_coordinator(*, ensure_current: bool = False) -> Any | None:
+        """Build-once, cache the single-flight coordinator; ``None`` = unconfigured.
+
+        Caching the instance is required for correctness: cancel and status must
+        observe the same in-memory job/thread that start launched, so the seam
+        cannot be rebuilt per request. ``ensure_current`` (start only) replaces
+        an *idle* instance whose configuration revision moved, so a mapping or
+        settings save reaches the next run instead of running the new revision
+        with the previous scope. A live job is never replaced — it keeps the
+        instance that owns its thread and locks, and its own publication guard
+        rejects the stale revision. A build failure is a bounded 503 — a
+        configured-but-broken source is never silently treated as unconfigured.
+        """
+        cached = getattr(app.state, "refresh_coordinator", _REFRESH_COORDINATOR_UNSET)
+        if cached is not _REFRESH_COORDINATOR_UNSET and not ensure_current:
+            return cached
+        vault = _refresh_vault_root()
+        if cached is not _REFRESH_COORDINATOR_UNSET:
+            if cached is not None and cached.is_running():
+                return cached
+            revision = _refresh_revision(vault)
+            if revision == getattr(
+                app.state, "refresh_coordinator_revision", _REFRESH_COORDINATOR_UNSET
+            ):
+                return cached
+        else:
+            revision = _refresh_revision(vault)
+        build = app.state.build_refresh_coordinator
+        coordinator: Any | None = None
+        if build is not None:
+            try:
+                coordinator = build(vault, {})
+            except Exception as exc:  # noqa: BLE001 — bounded source boundary
+                print(
+                    f"capacities refresh coordinator build failed: {exc}",
+                    file=sys.stderr,
+                )
+                raise HTTPException(
+                    status_code=503,
+                    detail={
+                        "code": "capacities_refresh_unavailable",
+                        "message": (
+                            "The Capacities source could not be prepared for a "
+                            "refresh; the previous complete result is preserved."
+                        ),
+                    },
+                ) from exc
+        app.state.refresh_coordinator = coordinator
+        app.state.refresh_coordinator_revision = revision
+        return coordinator
+
+    def _refresh_configured(*, ensure_current: bool = False) -> Any:
+        coordinator = _refresh_coordinator(ensure_current=ensure_current)
+        if coordinator is None:
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "code": "capacities_refresh_unconfigured",
+                    "message": "No Capacities source is configured; nothing to refresh.",
+                },
+            )
+        return coordinator
+
+    @app.get("/capacities/refresh/status")
+    def get_capacities_refresh_status() -> dict:
+        """Tokenless local read of the one refresh job + last complete snapshot.
+
+        Never calls a provider and never spawns work; an unconfigured source
+        answers ``configured: false`` with no job rather than erroring. An
+        unresolved vault root is a 503 (fail closed, like ``/config``)."""
+        coordinator = _refresh_coordinator()
+        if coordinator is None:
+            return {
+                "configured": False,
+                "job": None,
+                "phase": None,
+                "outcome": None,
+                "progress": {},
+                "warnings": [],
+                "coverage": {},
+                "snapshot": {
+                    "present": False,
+                    "generation": 0,
+                    "revision": None,
+                    "installed_at": None,
+                    "member_count": 0,
+                    "type_check_times": {},
+                },
+            }
+        return coordinator.status()
+
+    @app.post(
+        "/capacities/refresh/start",
+        dependencies=[Depends(require_token)],
+    )
+    def post_capacities_refresh_start(body: CapacitiesRefreshStartRequest) -> dict:
+        """Token-guarded start of one paced Refresh/Rescan job.
+
+        The job runs on a background thread; this returns the job's initial
+        truthful status without blocking on completion. A running job is a 409
+        (single-flight), an unconfigured source a 503, and a malformed body a
+        422."""
+        coordinator = _refresh_configured(ensure_current=True)
+        try:
+            return coordinator.start(mode=body.mode, scope=body.scope)
+        except capacities_refresh.RefreshBusyError as exc:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "capacities_refresh_busy",
+                    "message": "A Capacities refresh job is already running.",
+                },
+            ) from exc
+        except capacities_refresh.RefreshUnavailableError as exc:
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "code": "capacities_refresh_unconfigured",
+                    "message": "No Capacities source is configured; nothing to refresh.",
+                },
+            ) from exc
+
+    @app.post(
+        "/capacities/refresh/cancel",
+        dependencies=[Depends(require_token)],
+    )
+    def post_capacities_refresh_cancel() -> dict:
+        """Token-guarded cancellation of the running job.
+
+        Signals the in-flight job, keeps every successful content read, and
+        installs no new generation; returns the current truthful status."""
+        coordinator = _refresh_configured()
+        return coordinator.cancel()
 
     def _tag_catalog(vault: Path) -> dict[str, Any]:
         """Advisory RootTag catalog for the exclusion drawer.
@@ -4440,6 +4647,18 @@ def build_real_capacities_adapter(vault: Path, config: dict[str, Any]) -> Any:
     supplies the credential slot, page bound, and content-read budget.
     """
     return capacities_builder.build_capacities_adapter(vault)
+
+
+def build_real_refresh_coordinator(vault: Path, config: dict[str, Any]) -> Any:
+    """Live paced-refresh coordinator for the direct-refresh seam (U2).
+
+    Mirrors ``build_real_capacities_adapter``: the seam's shape is
+    ``(vault, config) -> coordinator|None`` while the builder owns the
+    credential slot, store root, and page bound. ``config`` (the parsed vault
+    config) is unused — Capacities reads its own vault-local mapping record and
+    settings policy. ``None`` means "no Capacities source configured".
+    """
+    return capacities_builder.build_refresh_coordinator(vault)
 
 
 app = create_app()

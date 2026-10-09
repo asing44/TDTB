@@ -500,6 +500,16 @@ class RefreshCoordinator:
     def _is_live(self) -> bool:
         return self._thread is not None and self._thread.is_alive()
 
+    def is_running(self) -> bool:
+        """Whether a job thread is currently live.
+
+        The route seam may replace a cached coordinator only while this is
+        false: a live job keeps the instance that owns its thread, locks, and
+        in-memory job, so cancel and status reach it and no second instance is
+        built around the same lock files.
+        """
+        return self._is_live()
+
     def reconcile(self) -> None:
         """Report a run whose process died as interrupted; never resume it."""
         if self._is_live():
@@ -603,6 +613,15 @@ class RefreshCoordinator:
     def cancel(self) -> dict[str, Any]:
         if self._is_live():
             self.cancel_event.set()
+            # Reflect the documented ``-> cancelled: cancel`` transition
+            # promptly. The worker unwinds on the event at its next checkpoint,
+            # so a status read between the signal and that unwind must not keep
+            # reporting the pre-cancel phase. A job that already reached a
+            # terminal phase is left alone: cancel never undoes a completed
+            # generation.
+            job = self._job or self._load_job()
+            if job is None or job.get("phase") not in TERMINAL_PHASES:
+                self._finish("cancelled", "cancelled", [CANCEL_WARNING])
         return self.status()
 
     def wait(self, timeout: float | None = None) -> dict[str, Any]:

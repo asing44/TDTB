@@ -45,7 +45,15 @@ class CapacitiesRateLimited(RuntimeError):
     per-object content read. Exceeding the limit is an expected operating
     condition rather than a defect, so it is modelled separately: the read
     degrades to the objects already evaluated instead of failing outright.
+
+    ``retry_after`` carries the transport's ``Retry-After`` value when the
+    provider supplied one; it is pacing metadata only and never a credential
+    or response body.
     """
+
+    def __init__(self, message: str, *, retry_after: float | None = None) -> None:
+        super().__init__(message)
+        self.retry_after = retry_after
 
 
 class CapacitiesProvider(Protocol):
@@ -128,6 +136,23 @@ class CapacitiesConfig:
     #: settings store owns persistence and the caller passes it in. The adapter
     #: never reads vault files or credentials itself.
     assignment_settings: AssignmentSettings = field(default_factory=AssignmentSettings)
+
+
+@dataclass(frozen=True)
+class StructureEnumeration:
+    """One structure's raw listing rows for the paced coordinator.
+
+    ``complete=False`` means pagination did not finish (page bound, repeated
+    cursor, or a malformed page). An incomplete enumeration is explicit
+    evidence that a type's membership cannot be trusted, never a truncated
+    success; the rows collected so far are diagnostic only.
+    """
+
+    structure_id: str
+    rows: tuple[dict[str, Any], ...]
+    pages: int
+    complete: bool
+    reason: str | None = None
 
 
 @dataclass
@@ -550,43 +575,84 @@ class CapacitiesAdapter:
         self._mappings = mappings
         self._contract_warnings = declaration_warnings
 
-    def _list_objects(self, structure_id: str) -> tuple[list[dict[str, Any]], int]:
-        objects: list[dict[str, Any]] = []
+    def _enumerate_listing(
+        self, structure_id: str
+    ) -> tuple[list[dict[str, Any]], int, bool, str | None]:
+        """List one structure's raw rows with explicit pagination outcome.
+
+        Returns ``(rows, pages, complete, reason)``. Pagination rails (the
+        defensive ``max_pages`` bound and repeated-cursor detection) return a
+        non-complete outcome rather than treating a stopped listing as a
+        finished one. Provider/transport exceptions still propagate; only the
+        pagination rails are modelled as an outcome.
+        """
+        rows: list[dict[str, Any]] = []
         cursor: str | None = None
         seen_cursors: set[str] = set()
         pages = 0
         while True:
             if pages >= self.config.max_pages:
-                raise CapacitiesContractError(
-                    f"Capacities pagination exceeded max_pages for {structure_id!r}"
-                )
+                return rows, pages, False, "page_bound"
             page = self.provider.list_objects(structure_id, cursor)
             if not isinstance(page, dict) or not isinstance(page.get("objects"), list):
-                raise CapacitiesContractError(
-                    f"Capacities object page for {structure_id!r} is malformed"
-                )
-            for row in page["objects"]:
-                hydrated = self._hydrate_object(row)
-                if hydrated is None:
-                    # Deferred this run: the content-read budget was spent or
-                    # the provider refused. Record the identity so coverage
-                    # is counted over distinct listed rows.
-                    object_id = _text(row.get("id")) if isinstance(row, dict) else ""
-                    if object_id:
-                        self._deferred_identities.add(f"{structure_id}:{object_id}")
-                    continue
-                objects.append(hydrated)
+                return rows, pages, False, "malformed_page"
+            rows.extend(page["objects"])
             pages += 1
             next_cursor = page.get("next_cursor", page.get("nextCursor"))
             if next_cursor in (None, ""):
-                return objects, pages
+                return rows, pages, True, None
             next_cursor = _text(next_cursor)
             if next_cursor in seen_cursors:
+                return rows, pages, False, "repeated_cursor"
+            seen_cursors.add(next_cursor)
+            cursor = next_cursor
+
+    def enumerate_structure(self, structure_id: str) -> StructureEnumeration:
+        """Public, hydration-free listing seam for the paced coordinator."""
+        rows, pages, complete, reason = self._enumerate_listing(structure_id)
+        return StructureEnumeration(
+            structure_id=structure_id,
+            rows=tuple(rows),
+            pages=pages,
+            complete=complete,
+            reason=reason,
+        )
+
+    def ensure_contract(self) -> None:
+        """Public contract-resolution seam (one paced structures request)."""
+        self._ensure_contract()
+
+    def can_contribute(self, mapping: StructureMapping) -> bool:
+        """Public enumeration-gate seam for the paced coordinator."""
+        return self._structure_can_contribute(mapping)
+
+    def _list_objects(self, structure_id: str) -> tuple[list[dict[str, Any]], int]:
+        rows, pages, complete, reason = self._enumerate_listing(structure_id)
+        if not complete:
+            if reason == "page_bound":
+                raise CapacitiesContractError(
+                    f"Capacities pagination exceeded max_pages for {structure_id!r}"
+                )
+            if reason == "repeated_cursor":
                 raise CapacitiesContractError(
                     f"Capacities pagination repeated cursor for {structure_id!r}"
                 )
-            seen_cursors.add(next_cursor)
-            cursor = next_cursor
+            raise CapacitiesContractError(
+                f"Capacities object page for {structure_id!r} is malformed"
+            )
+        objects: list[dict[str, Any]] = []
+        for row in rows:
+            hydrated = self._hydrate_object(row)
+            if hydrated is None:
+                # Deferred this run: the content-read budget was spent or
+                # the provider refused. Record the identity so coverage
+                # is counted over distinct listed rows.
+                object_id = _text(row.get("id")) if isinstance(row, dict) else ""
+                if object_id:
+                    self._deferred_identities.add(f"{structure_id}:{object_id}")
+                continue
+            objects.append(hydrated)
+        return objects, pages
 
     def _hydrate_object(self, row: Any) -> dict[str, Any] | None:
         """Fill typed properties into a listed object row.
@@ -1242,6 +1308,10 @@ class CapacitiesRestClient:
         }
         self._space_id = _text(space_id)
         self._content_cache = content_cache
+        #: Optional best-effort rate-metadata sink. The paced coordinator
+        #: registers ``(endpoint, headers)`` here; header facts are advisory
+        #: and their absence never fails a read.
+        self._rate_observer: Callable[[str, Any], None] | None = None
         #: Best-effort sink for the parsed ``/space/structures`` payload. The
         #: builder binds it to the machine-local title cache; ``None`` means a
         #: transport-only client. A per-call ``observer`` argument overrides
@@ -1257,10 +1327,33 @@ class CapacitiesRestClient:
     def close(self) -> None:
         self._client.close()
 
+    def set_rate_observer(self, observer: Callable[[str, Any], None] | None) -> None:
+        """Register the paced coordinator's rate-metadata sink (best-effort)."""
+        self._rate_observer = observer if callable(observer) else None
+
+    def _observe(self, endpoint: str, response: Any) -> None:
+        observer = self._rate_observer
+        if observer is None:
+            return
+        try:
+            headers = getattr(response, "headers", None) or {}
+            observer(endpoint, dict(headers))
+        except Exception:  # noqa: BLE001 — observation never changes a read
+            pass
+
     def _json(self, response: Any) -> dict[str, Any]:
         if getattr(response, "status_code", None) == 429:
+            retry_after = None
+            headers = getattr(response, "headers", None) or {}
+            raw = headers.get("Retry-After") or headers.get("retry-after")
+            if raw is not None:
+                try:
+                    retry_after = max(0.0, float(str(raw).strip()))
+                except (TypeError, ValueError):
+                    retry_after = None
             raise CapacitiesRateLimited(
-                "the Capacities API rate limit (30 requests per minute) was exceeded"
+                "the Capacities API rate limit (30 requests per minute) was exceeded",
+                retry_after=retry_after,
             )
         response.raise_for_status()
         payload = response.json()
@@ -1286,7 +1379,9 @@ class CapacitiesRestClient:
         It is a best-effort sink: any failure inside it is swallowed here,
         because observation must never change or break a read.
         """
-        payload = self._json(self._client.get("/space/structures"))
+        response = self._client.get("/space/structures")
+        self._observe("structures", response)
+        payload = self._json(response)
         sink = observer if observer is not None else self._structures_observer
         if sink is not None:
             try:
@@ -1316,7 +1411,9 @@ class CapacitiesRestClient:
         params: dict[str, str] = {"id": structure_id, "spaceId": self._space_id}
         if cursor:
             params["cursor"] = cursor
-        payload = self._json(self._client.get("/objects/structure", params=params))
+        response = self._client.get("/objects/structure", params=params)
+        self._observe("listing", response)
+        payload = self._json(response)
         results = payload.get("results")
         if results is None:
             results = payload.get("objects", [])
@@ -1337,15 +1434,17 @@ class CapacitiesRestClient:
             cached = self._content_cache.get(object_id)
             if cached is not None:
                 return cached
-        content = self._json(self._client.get("/object", params={"id": object_id}))
+        response = self._client.get("/object", params={"id": object_id})
+        self._observe("content", response)
+        content = self._json(response)
         if self._content_cache is not None:
             self._content_cache.put(object_id, content)
         return content
 
     def patch_object(self, object_id: str, properties: dict[str, Any]) -> dict[str, Any]:
-        return self._json(
-            self._client.patch(
-                "/object",
-                json={"id": object_id, "properties": properties},
-            )
+        response = self._client.patch(
+            "/object",
+            json={"id": object_id, "properties": properties},
         )
+        self._observe("content", response)
+        return self._json(response)
