@@ -824,9 +824,23 @@ def test_mcp_priority_string_can_no_longer_reach_int_conversion():
 def test_starter_rules_admit_real_mcp_tasks():
     rules = json.loads(STARTER_RULES.read_text(encoding="utf-8"))
     result = _evaluate(rules, _source(*MCP_TASKS), logical_day="2026-10-08")
-    assert sorted(r["name"] for r in result.rows) == [
-        "Contacts replacement", "M2.0", "plan fishing"
-    ]
+    # ``Contacts replacement`` carries the operator's real ``🔔 Reminder``
+    # label, so the reminder exclusion drops it. This expectation used to list
+    # it as ADMITTED, which pinned the stale-label bug as correct behaviour.
+    assert sorted(r["name"] for r in result.rows) == ["M2.0", "plan fishing"]
+
+
+def test_starter_rules_drop_the_reminder_against_its_own_rule():
+    """A label rename is silent, so the drop must be attributed to its rule."""
+    rules = json.loads(STARTER_RULES.read_text(encoding="utf-8"))
+    document = pr.build_artifact(
+        _source(*MCP_TASKS), rules, logical_day="2026-10-08",
+        generated_at="2026-10-08T09:00:00-07:00", run_id="reminder-drop",
+    )
+    per_rule = {p["id"]: p for p in document["admission"]["per_rule"]}
+    assert per_rule["todoist-drop-reminders"]["matched"] == 1
+    assert per_rule["todoist-drop-reminders"]["dropped"] == 1
+    assert "Contacts replacement" in document["admission"]["dropped"]
 
 
 def test_mcp_rows_pass_the_artifact_contract():
@@ -836,4 +850,97 @@ def test_mcp_rows_pass_the_artifact_contract():
         generated_at="2026-10-08T09:00:00-07:00", run_id="mcp-shape",
     )
     assert art.validate_artifact(document) == []
-    assert document["sources"]["todoist"]["rows"] == 3
+    # 2, not 3: the reminder task is correctly excluded by its rule.
+    assert document["sources"]["todoist"]["rows"] == 2
+
+
+# ---------------------------------------------------------------------------
+# projectName annotation (habits-not-rows)
+# ---------------------------------------------------------------------------
+
+#: The operator's habit project. Readable by name in the rules file; the
+#: producer resolves it from this project list rather than a hardcoded UUID.
+HABITS_PROJECT = {"id": "6hc482XrFwF3RJ6Q", "name": "\U0001F501 Habits"}
+WORK_PROJECT = {"id": "6fgRFQXjcMPw7MCM", "name": "Work"}
+
+
+def _source_with_projects(projects, *tasks) -> dict:
+    entry = {"status": "ok", "read_at": "2026-10-08T09:00:00-07:00",
+             "tasks": list(tasks), "projects": list(projects)}
+    return {"todoist": entry}
+
+
+def test_project_name_is_set_from_project_id():
+    source = _source_with_projects(
+        [{"id": "6fgQFWcFV7pP2q82", "name": "\U0001F501 Habits"}], MCP_TASKS[0]
+    )
+    normalized = pr.normalize_task(
+        MCP_TASKS[0], {"6fgQFWcFV7pP2q82": "\U0001F501 Habits"}
+    )
+    assert normalized["projectName"] == "\U0001F501 Habits"
+    # The annotation keeps the MCP adaptation intact and stays idempotent.
+    assert normalized["due"]["date"] == "2026-10-08"
+    assert pr.normalize_task(normalized, {"6fgQFWcFV7pP2q82": "\U0001F501 Habits"}) == normalized
+    # A rule can now match the readable project name...
+    habits_rule = _rule(when={"prop": "projectName", "op": "eq",
+                              "values": ["\U0001F501 Habits"]})
+    assert [r["name"] for r in _evaluate(_rules(habits_rule), source).rows] == ["plan fishing"]
+    # ...and matches nothing when the list is omitted.
+    assert _evaluate(_rules(habits_rule), _source(MCP_TASKS[0])).rows == []
+
+
+def test_absent_or_unknown_project_id_gains_no_project_name():
+    names = pr._project_names(
+        {"tasks": [], "projects": [HABITS_PROJECT]}
+    )
+    assert names == {"6hc482XrFwF3RJ6Q": "\U0001F501 Habits"}
+    # No projectId at all: unchanged, no error.
+    no_project = {"id": "1", "content": "no project", "priority": 1, "labels": []}
+    assert "projectName" not in pr.normalize_task(no_project, names)
+    # projectId present but absent from the list: unchanged, no error.
+    unknown = {**MCP_TASKS[1]}  # projectId 6fgRFQXjcMPw7MCM, not in names
+    assert "projectName" not in pr.normalize_task(unknown, names)
+    assert pr.normalize_task(unknown, names) == pr.normalize_task(unknown)
+    # A malformed/absent list degrades to an empty map rather than raising.
+    assert pr._project_names({"tasks": []}) == {}
+    assert pr._project_names({"projects": "not-a-list"}) == {}
+    # End to end: the unknown project still evaluates without error.
+    result = _evaluate(_rules(_rule(assigned=True)), _source_with_projects([HABITS_PROJECT], unknown))
+    assert [r["name"] for r in result.rows] == ["M2.0"]
+
+
+def test_source_without_a_project_list_rows_are_unchanged_bytes():
+    """A source JSON with no ``projects`` list must normalize exactly as
+    before the annotation: no ``projectName`` key and byte-identical rows."""
+    task = _task(task_id="77", content="Plain task", priority=2,
+                 due={"date": LOGICAL_DAY})
+    result = _evaluate(_rules(_rule(assigned=True)), _source(task))
+    expected = [{**es._to_item(task, assigned=True), "identity": "todoist:77"}]
+    assert result.rows == expected
+    assert json.dumps(result.rows, sort_keys=True) == json.dumps(expected, sort_keys=True)
+    assert "projectName" not in result.rows[0]
+
+
+def test_starter_drop_habits_excludes_the_habit_project_by_name():
+    rules = json.loads(STARTER_RULES.read_text(encoding="utf-8"))
+    habit = {"id": "h1", "content": "Journal", "priority": "p4",
+             "projectId": HABITS_PROJECT["id"], "dueDate": LOGICAL_DAY, "labels": []}
+    other = {"id": "o1", "content": "Call Vlad", "priority": "p4",
+             "projectId": WORK_PROJECT["id"], "dueDate": LOGICAL_DAY, "labels": []}
+    source = _source_with_projects([HABITS_PROJECT, WORK_PROJECT], habit, other)
+    result = _evaluate(rules, source)
+    # The habit is dropped; the non-habit task is unaffected.
+    assert [r["name"] for r in result.rows] == ["Call Vlad"]
+    assert result.rows[0]["assigned"] is True
+
+    habit_stat = next(s for s in result.per_rule if s.id == "todoist-drop-habits")
+    assert (habit_stat.matched, habit_stat.admitted, habit_stat.dropped) == (1, 0, 1)
+    assert [d.name for d in result.dropped if d.rule == "todoist-drop-habits"] == ["Journal"]
+    # The drop is reported against the rule id, not an anonymous exclusion.
+    assert all(d.rule is not None for d in result.dropped)
+
+
+def test_starter_drop_habits_is_the_first_rule():
+    rules = json.loads(STARTER_RULES.read_text(encoding="utf-8"))
+    assert rules["rules"][0]["id"] == "todoist-drop-habits"
+    assert rules["rules"][0]["admit"] is False

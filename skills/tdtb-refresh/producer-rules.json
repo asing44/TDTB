@@ -2,6 +2,12 @@
   "version": 1,
   "rules": [
     {
+      "id": "todoist-drop-habits",
+      "source": "todoist",
+      "when": {"prop": "projectName", "op": "eq", "values": ["🔁 Habits"]},
+      "admit": false
+    },
+    {
       "id": "todoist-drop-reminders",
       "source": "todoist",
       "when": {

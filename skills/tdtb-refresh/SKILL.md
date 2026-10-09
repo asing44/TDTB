@@ -53,7 +53,11 @@ Resolve the operator's queries with these tools, then collect the raw task
 objects:
 - `todoist_find-filters` — the operator's saved filters (resolve the assigned
   and pool queries by name; do not invent queries).
-- `todoist_find-projects` — project list, so project-scoped rules resolve.
+- `todoist_find-projects` — the full project list. **Carry it into the source
+  JSON** (see step 4) so each task's `projectName` resolves. A rule that
+  matches on `projectName` — the habit exclusion is one — matches nothing if
+  the list is omitted. Match project rules on the readable name, never on a raw
+  `projectId`, which is not hand-editable.
 - `todoist_find-labels` — the operator's real label names. **Required, not
   optional:** it is the only way to catch a renamed label (see below).
 - `todoist_find-tasks` — the open tasks that match the assigned/pool queries.
@@ -184,13 +188,22 @@ scopes. Use
 the cursor deferred objects, and `"failed"` if a source could not be read at
 all.
 
+The Todoist entry also carries the `projects` list from step 2. The producer
+resolves each task's `projectName` from its `projectId` against it, so a rule
+can match a readable project name instead of a UUID. Omitting `projects` is
+safe — the producer simply adds no `projectName` — but every `projectName` rule
+then matches nothing.
+
 ```json
 {
   "todoist": {
     "status": "ok",
     "read_at": "<ISO-8601 with offset>",
     "warnings": [],
-    "tasks": [ "<raw Todoist task objects>" ]
+    "projects": [
+      { "id": "<project id>", "name": "<project name>" }
+    ],
+    "tasks": [ "<raw Todoist task objects, each carrying projectId>" ]
   },
   "capacities": {
     "status": "partial",
@@ -354,6 +367,12 @@ report an inert rule and let the operator edit it.
   the record's structure to match its `structure`.
 - `admit: false` excludes a matching record and records the drop against that
   rule id.
+- **Habits are excluded from rows.** The starter's first rule,
+  `todoist-drop-habits`, drops every task in the `🔁 Habits` project. Habits
+  are counted as time, not planned as rows — the habit time contribution is
+  supplied separately from the row set — so admitting a habit task here would
+  double-count it. It must stay **first**; first-match-wins means an admission
+  rule placed before it wins the record instead.
 - `pool: true` emits the row with `assigned: false` (O1), regardless of
   `assigned`.
 

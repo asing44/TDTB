@@ -380,13 +380,14 @@ def evaluate(
         source_space = ""
         if isinstance(entry, dict):
             source_space = str(entry.get("space_id") or entry.get("spaceId") or "").strip()
+        project_names = _project_names(entry) if source == SOURCE_TODOIST else {}
 
         for record in records:
             if not isinstance(record, dict):
                 result.warnings.append(f"source {source!r} carries a non-object record; skipped")
                 continue
             if source == SOURCE_TODOIST:
-                record = normalize_task(record)
+                record = normalize_task(record, project_names)
             space_id = source_space or str(record.get("spaceId") or "").strip()
             identity = _record_identity(source, record, space_id)
             if identity in seen_identity:
@@ -786,6 +787,33 @@ def _records_for(entry: Any) -> list[Any]:
     return []
 
 
+def _project_names(entry: Any) -> dict[str, str]:
+    """Map Todoist ``projectId -> project name`` from an optional project list.
+
+    A Todoist source entry MAY carry ``projects`` alongside its ``tasks``: the
+    list ``todoist_find-projects`` returns, each entry an object with ``id``
+    and ``name``. The map lets a hand-editable rule match a readable project
+    name instead of a raw UUID. A missing or malformed list yields ``{}``, so a
+    source JSON without a project list normalizes exactly as before."""
+    if not isinstance(entry, dict):
+        return {}
+    projects = entry.get("projects")
+    if not isinstance(projects, list):
+        return {}
+    names: dict[str, str] = {}
+    for project in projects:
+        if not isinstance(project, dict):
+            continue
+        project_id = project.get("id")
+        name = project.get("name")
+        if project_id is None or not isinstance(name, str):
+            continue
+        key = str(project_id).strip()
+        if key:
+            names[key] = name
+    return names
+
+
 def _record_identity(source: str, record: dict[str, Any], space_id: str = "") -> str:
     if source == SOURCE_TODOIST:
         todoist_id = record.get("id")
@@ -857,7 +885,30 @@ def _mcp_duration(value: Any) -> dict[str, Any] | None:
     return {"unit": "minute", "amount": minutes} if minutes > 0 else None
 
 
-def normalize_task(record: dict[str, Any]) -> dict[str, Any]:
+def _annotate_project_name(
+    record: dict[str, Any], projects: dict[str, str]
+) -> dict[str, Any]:
+    """Add ``projectName`` when the task's ``projectId`` resolves in ``projects``.
+
+    Purely additive and deterministic: an empty map or a task whose
+    ``projectId`` is missing or absent from the map returns the record
+    unchanged, so a source JSON without a project list stays byte-identical."""
+    if not projects:
+        return record
+    project_id = record.get("projectId")
+    if project_id is None:
+        return record
+    name = projects.get(str(project_id).strip())
+    if not name:
+        return record
+    annotated = dict(record)
+    annotated["projectName"] = name
+    return annotated
+
+
+def normalize_task(
+    record: dict[str, Any], projects: dict[str, str] | None = None
+) -> dict[str, Any]:
     """Adapt one Todoist task to the stable shape rules and rows both read.
 
     ``skills/tdtb-refresh/SKILL.md`` fetches Todoist over MCP, whose task shape
@@ -868,10 +919,18 @@ def normalize_task(record: dict[str, Any]) -> dict[str, Any]:
     building see one shape while preserving the original flat MCP keys for
     rules that address them directly.
 
+    ``projects`` is the source's optional ``projectId -> name`` map (built by
+    :func:`_project_names`). When supplied, a record whose ``projectId``
+    resolves gains ``projectName`` so a rule can match the readable project
+    name; an absent list or an unknown id leaves the record unchanged.
+
     A REST-shaped record is returned unchanged. Idempotent: normalizing an
     already-normalized record yields an equal record."""
-    if not isinstance(record, dict) or not _is_mcp_task(record):
+    if not isinstance(record, dict):
         return record
+    project_names = projects if isinstance(projects, dict) else {}
+    if not _is_mcp_task(record):
+        return _annotate_project_name(record, project_names)
     normalized = dict(record)
 
     priority = normalized.get("priority")
@@ -904,7 +963,7 @@ def normalize_task(record: dict[str, Any]) -> dict[str, Any]:
 
     if due:
         normalized["due"] = due
-    return normalized
+    return _annotate_project_name(normalized, project_names)
 
 
 def _lookup(record: Any, prop: str) -> Any:
