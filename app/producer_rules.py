@@ -385,6 +385,8 @@ def evaluate(
             if not isinstance(record, dict):
                 result.warnings.append(f"source {source!r} carries a non-object record; skipped")
                 continue
+            if source == SOURCE_TODOIST:
+                record = normalize_task(record)
             space_id = source_space or str(record.get("spaceId") or "").strip()
             identity = _record_identity(source, record, space_id)
             if identity in seen_identity:
@@ -801,6 +803,108 @@ def _record_name(source: str, record: dict[str, Any]) -> str:
     if source == SOURCE_TODOIST:
         return str(record.get("content") or "").strip()
     return str(record.get("title") or record.get("name") or "").strip()
+
+
+# ---------------------------------------------------------------------------
+# Todoist shape adapter (MCP -> REST)
+# ---------------------------------------------------------------------------
+
+#: MCP duration tokens, e.g. ``"5m"``, ``"1h"``, ``"1h30m"``, ``"2d"``.
+_DURATION_TOKEN_RE = re.compile(r"(\d+)\s*([dhm])", re.IGNORECASE)
+#: MCP priority tokens, e.g. ``"p4"`` (4 = highest, matching REST int).
+_PRIORITY_TOKEN_RE = re.compile(r"p(\d+)", re.IGNORECASE)
+
+
+def _is_mcp_task(record: dict[str, Any]) -> bool:
+    """Whether a Todoist record is the MCP shape rather than REST.
+
+    The MCP reader sends flat ``dueDate`` / ``deadlineDate`` / ``recurring``
+    keys and a string ``priority`` (``"p4"``); the REST shape nests due under
+    ``due`` and sends an int priority. A record carrying any of the flat MCP
+    keys — or a string priority — is the MCP shape."""
+    for key in ("dueDate", "deadlineDate", "recurring"):
+        if key in record:
+            return True
+    return isinstance(record.get("priority"), str)
+
+
+def _mcp_duration(value: Any) -> dict[str, Any] | None:
+    """Parse an MCP duration string to the REST ``{unit, amount}`` shape.
+
+    ``"5m"``/``"1h"``/``"1h30m"`` yield ``{unit: "minute", amount: N}``;
+    a pure day token (``"2d"``) keeps the explicit day unit. Any unparseable
+    or non-positive value returns ``None`` so the original is left intact."""
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    if not text:
+        return None
+    tokens = _DURATION_TOKEN_RE.findall(text)
+    if not tokens:
+        return None
+    if len(tokens) == 1 and tokens[0][1].lower() == "d":
+        amount = int(tokens[0][0])
+        return {"unit": "day", "amount": amount} if amount > 0 else None
+    minutes = 0
+    for amount, unit in tokens:
+        unit = unit.lower()
+        if unit == "m":
+            minutes += int(amount)
+        elif unit == "h":
+            minutes += int(amount) * 60
+        elif unit == "d":
+            minutes += int(amount) * 24 * 60
+    return {"unit": "minute", "amount": minutes} if minutes > 0 else None
+
+
+def normalize_task(record: dict[str, Any]) -> dict[str, Any]:
+    """Adapt one Todoist task to the stable shape rules and rows both read.
+
+    ``skills/tdtb-refresh/SKILL.md`` fetches Todoist over MCP, whose task shape
+    differs from the REST shape ``external_sources._to_item`` was written for:
+    flat ``dueDate``/``deadlineDate``, string ``priority`` (``"p4"``), a
+    ``"5m"``/``"1h"`` duration string, and a top-level ``recurring`` flag. This
+    fills the nested REST keys (``due``, ``duration``) so predicate and row
+    building see one shape while preserving the original flat MCP keys for
+    rules that address them directly.
+
+    A REST-shaped record is returned unchanged. Idempotent: normalizing an
+    already-normalized record yields an equal record."""
+    if not isinstance(record, dict) or not _is_mcp_task(record):
+        return record
+    normalized = dict(record)
+
+    priority = normalized.get("priority")
+    if isinstance(priority, str):
+        match = _PRIORITY_TOKEN_RE.fullmatch(priority.strip())
+        if match:
+            normalized["priority"] = int(match.group(1))
+
+    due = dict(normalized.get("due")) if isinstance(normalized.get("due"), dict) else {}
+    due_date = normalized.get("dueDate")
+    deadline = normalized.get("deadlineDate")
+    if isinstance(due_date, str) and due_date.strip():
+        text = due_date.strip()
+        due["date"] = text.split("T", 1)[0][:10]
+        if "T" in text:
+            due["datetime"] = text
+    elif isinstance(deadline, str) and deadline.strip():
+        # TDTB carries a single ``deadline``; a MCP deadline stands in when no
+        # due date is present. The flat key is preserved so a rule can read it.
+        due["date"] = deadline.strip()[:10]
+
+    if "recurring" in normalized:
+        due["is_recurring"] = bool(normalized.get("recurring"))
+
+    duration = normalized.get("duration")
+    if isinstance(duration, str):
+        parsed = _mcp_duration(duration)
+        if parsed is not None:
+            normalized["duration"] = parsed
+
+    if due:
+        normalized["due"] = due
+    return normalized
 
 
 def _lookup(record: Any, prop: str) -> Any:

@@ -21,6 +21,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "gather"))
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "tools"))
 
 import artifact_source as art  # noqa: E402
+import external_sources as es  # noqa: E402
 import producer_rules as pr  # noqa: E402
 import tdtb_gather as gather  # noqa: E402
 
@@ -684,3 +685,155 @@ def test_validate_artifact_cli_rejects_malformed(tmp_path):
     assert result.returncode == 1
     assert "MALFORMED" in result.stdout
     assert "schema" in result.stdout
+
+
+# ---------------------------------------------------------------------------
+# Todoist MCP shape adapter (A2/A3)
+# ---------------------------------------------------------------------------
+
+#: Verbatim live MCP task records (the shape skills/tdtb-refresh/SKILL.md
+#: fetches): flat dueDate/deadlineDate, string priority, "5m" duration,
+#: top-level recurring.
+MCP_TASKS = [
+    {
+        "id": "6hQX7WrMcwCr84Gp", "content": "plan fishing", "description": "",
+        "recurring": False, "deadlineDate": "2026-10-08", "priority": "p1",
+        "projectId": "6fgQFWcFV7pP2q82", "labels": ["\U0001F345 Half-hour"],
+        "duration": "15m", "checked": False,
+    },
+    {
+        "id": "6hF7Rj6jGf8XVxQM", "content": "M2.0", "description": "",
+        "dueDate": "2026-10-07T22:00:00", "recurring": "every day at 10:00 pm",
+        "priority": "p4", "projectId": "6fgRFQXjcMPw7MCM", "labels": [],
+        "duration": "5m", "checked": False,
+    },
+    {
+        "id": "6hQRR9hjfRgMmVrp", "content": "Contacts replacement",
+        "description": "", "dueDate": "2026-10-08", "recurring": "every 8th",
+        "priority": "p4", "projectId": "6fgRFQXjcMPw7MCM",
+        "labels": ["\U0001F514 Reminder"], "checked": False,
+    },
+]
+
+#: A REST-shaped task: nested due/duration, int priority. Pinned so a
+#: regression on the still-live REST path is caught.
+REST_TASK = {
+    "id": "42", "content": "Rest task", "priority": 3, "labels": ["@work"],
+    "due": {"date": "2026-10-08", "datetime": "2026-10-08T09:00:00",
+            "is_recurring": True},
+    "duration": {"unit": "minute", "amount": 45},
+}
+REST_ROW = {
+    "name": "Rest task", "path": "todoist://42", "types": ["todoist"],
+    "urgency": 3, "deadline": "2026-10-08", "priority_score": 3.0,
+    "assigned": True, "source": "todoist", "todoist_id": "42", "duration": 45,
+    "labels": ["@work"], "is_recurring": True, "scheduled_start": "09:00",
+}
+
+
+def _mcp_row(task: dict) -> dict:
+    return es._to_item(pr.normalize_task(task), assigned=True)
+
+
+@pytest.mark.parametrize("task,urgency,deadline,duration,scheduled_start,is_recurring", [
+    (MCP_TASKS[0], 1, "2026-10-08", 15, None, False),
+    (MCP_TASKS[1], 4, "2026-10-07", 5, "22:00", True),
+    (MCP_TASKS[2], 4, "2026-10-08", None, None, True),
+])
+def test_mcp_task_yields_the_expected_row(
+    task, urgency, deadline, duration, scheduled_start, is_recurring
+):
+    row = _mcp_row(task)
+    assert row["urgency"] == urgency
+    assert row["priority_score"] == float(urgency)
+    assert row["deadline"] == deadline
+    assert row["duration"] == duration
+    assert row["scheduled_start"] == scheduled_start
+    assert row["is_recurring"] is is_recurring
+    assert row["name"] == task["content"]
+    assert row["path"] == f"todoist://{task['id']}"
+
+
+def test_mcp_deadline_date_stands_in_only_without_a_due_date():
+    # deadlineDate fills due.date when no dueDate is present...
+    deadline_only = pr.normalize_task(MCP_TASKS[0])
+    assert deadline_only["due"]["date"] == "2026-10-08"
+    # ...and the flat key survives so a rule can address it directly.
+    assert deadline_only["deadlineDate"] == "2026-10-08"
+    # A present dueDate wins; the deadline does not override it.
+    with_both = pr.normalize_task({**MCP_TASKS[2], "deadlineDate": "2026-12-01"})
+    assert with_both["due"]["date"] == "2026-10-08"
+    assert with_both["deadlineDate"] == "2026-12-01"
+
+
+def test_mcp_flat_keys_are_preserved_for_rules():
+    normalized = pr.normalize_task(MCP_TASKS[1])
+    assert normalized["dueDate"] == "2026-10-07T22:00:00"
+    assert normalized["recurring"] == "every day at 10:00 pm"
+
+
+@pytest.mark.parametrize("raw,expected", [
+    ("5m", {"unit": "minute", "amount": 5}),
+    ("1h", {"unit": "minute", "amount": 60}),
+    ("1h30m", {"unit": "minute", "amount": 90}),
+    ("15m", {"unit": "minute", "amount": 15}),
+    ("2d", {"unit": "day", "amount": 2}),
+    ("", None),
+    ("soon", None),
+])
+def test_mcp_duration_forms(raw, expected):
+    assert pr._mcp_duration(raw) == expected
+
+
+def test_mcp_duration_absent_stays_absent():
+    assert "duration" not in pr.normalize_task(MCP_TASKS[2])
+    assert _mcp_row(MCP_TASKS[2])["duration"] is None
+
+
+def test_rest_task_is_untouched_and_its_row_is_pinned():
+    # The REST path is still live and must not regress.
+    assert pr.normalize_task(REST_TASK) is REST_TASK
+    assert es._to_item(REST_TASK, assigned=True) == REST_ROW
+    # Through the producer it is exactly the REST row plus the identity.
+    result = _evaluate(
+        _rules(_rule(when={"prop": "id", "op": "exists"})), _source(REST_TASK)
+    )
+    assert result.rows == [{**REST_ROW, "identity": "todoist:42"}]
+
+
+def test_normalize_task_is_idempotent_and_does_not_mutate():
+    for task in MCP_TASKS:
+        original = json.loads(json.dumps(task))
+        once = pr.normalize_task(task)
+        assert task == original  # input untouched
+        assert pr.normalize_task(once) == once
+
+
+def test_mcp_priority_string_can_no_longer_reach_int_conversion():
+    # int("p4") is the exact crash this adapter removes.
+    with pytest.raises(ValueError):
+        int("p4")
+    assert pr.normalize_task({"id": "x", "content": "c", "priority": "p4"})["priority"] == 4
+    # The verbatim live records evaluate without raising.
+    result = _evaluate(
+        _rules(_rule(when={"prop": "id", "op": "exists"})), _source(*MCP_TASKS)
+    )
+    assert len(result.rows) == 3
+
+
+def test_starter_rules_admit_real_mcp_tasks():
+    rules = json.loads(STARTER_RULES.read_text(encoding="utf-8"))
+    result = _evaluate(rules, _source(*MCP_TASKS), logical_day="2026-10-08")
+    assert sorted(r["name"] for r in result.rows) == [
+        "Contacts replacement", "M2.0", "plan fishing"
+    ]
+
+
+def test_mcp_rows_pass_the_artifact_contract():
+    rules = json.loads(STARTER_RULES.read_text(encoding="utf-8"))
+    document = pr.build_artifact(
+        _source(*MCP_TASKS), rules, logical_day="2026-10-08",
+        generated_at="2026-10-08T09:00:00-07:00", run_id="mcp-shape",
+    )
+    assert art.validate_artifact(document) == []
+    assert document["sources"]["todoist"]["rows"] == 3
