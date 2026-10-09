@@ -372,3 +372,37 @@ def test_migration_writes_only_the_config_json_target(
     assert not (home / "config.json").exists()
     # Only the vault config existed before; the tool adds exactly one file.
     assert sorted(p.name for p in vault.rglob("*") if p.is_file()) == ["tdtb-bridger.md"]
+
+
+# ---------------------------------------------------------------------------
+# Retired defaults must not be carried forward
+# ---------------------------------------------------------------------------
+
+def test_migration_drops_retired_defaults() -> None:
+    """``habits.source_directory`` named the Obsidian folder the habit read
+    used, and that read is gone (habit time rides the artifact). The vault
+    table still lists it, so every migration would keep copying a dead vault
+    path into config.json unless the translation drops it — which is exactly
+    what makes a reader think the vault is still a source."""
+    sections = {
+        "Defaults": {
+            "habits.source_directory": "00 - META/Habituals/",
+            "habits.fallback_minutes_per_habit": 4,
+            "habits.round_to_minutes": 15,
+        }
+    }
+    document = app_config.document_from_sections(sections)
+    assert document["habits"] == {
+        "fallback_minutes_per_habit": 4,
+        "round_to_minutes": 15,
+    }
+    assert "source_directory" not in json.dumps(document)
+
+
+def test_retired_key_is_not_kept_even_alone() -> None:
+    """With only the retired key present there is no habits block at all,
+    rather than an empty one the operator would have to reason about."""
+    document = app_config.document_from_sections(
+        {"Defaults": {"habits.source_directory": "00 - META/Habituals/"}}
+    )
+    assert "habits" not in document

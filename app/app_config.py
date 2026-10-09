@@ -20,7 +20,7 @@ The document is::
       "anchored_blocks": [...],
       "colors": [...],
       "micro_adventure_pool": [...],
-      "habits": {"source_directory": ..., ...},
+      "habits": {"fallback_minutes_per_habit": 4, "round_to_minutes": 15},
       "todoist": {"read_query": {"assigned": ..., "quick": ...}},
       "sources": {"mode": "live" | "artifact",
                   "artifact": {"max_age_minutes": 240},
@@ -77,6 +77,15 @@ SOURCES_MODES = frozenset({SOURCES_MODE_LIVE, SOURCES_MODE_ARTIFACT})
 
 #: Default artifact age ceiling (minutes) before a load reports ``aged``.
 DEFAULT_ARTIFACT_MAX_AGE_MINUTES = 240
+
+#: ``Defaults`` keys that no longer mean anything and must never be carried
+#: into ``config.json``. Kept explicit so a retired key is dropped at the
+#: translation boundary instead of being copied forward forever by every
+#: migration. See the habit-time slice: the vault habit read is gone.
+RETIRED_DEFAULT_KEYS = frozenset({
+    "habits.source_directory",
+})
+
 
 #: ``sources.vault_enabled`` — the S5 cutover knob. When false the vault gather
 #: contributes no rows and a resolvable vault root is no longer required for the
@@ -323,7 +332,15 @@ def document_from_sections(sections: dict[str, Any]) -> dict[str, Any]:
         habits = {
             key.split(".", 1)[1]: value
             for key, value in defaults.items()
-            if key.startswith("habits.") and "." in key
+            if key.startswith("habits.")
+            and "." in key
+            and key not in RETIRED_DEFAULT_KEYS
+            # ``habits.source_directory`` is RETIRED: it named the Obsidian
+            # folder the habit read used, and that read is gone (habit time
+            # now rides the artifact). The vault table still lists it, so
+            # without this drop every migration would keep copying a dead
+            # vault path into config.json — the exact thing that makes a
+            # reader think the vault is still a source. Do not re-add it.
         }
         if habits:
             document["habits"] = habits
