@@ -1703,6 +1703,20 @@ def _capacity_frame(
     return frame, cap
 
 
+def _disabled_vault_root() -> Path:
+    """A path that cannot exist, used as the vault stand-in when
+    ``sources.vault_enabled=false`` and no real vault root resolves.
+
+    The routed store readers (runstate, exclusions, deferrals, duration
+    memory, micro-adventure) accept a ``vault_root`` for call-site
+    compatibility and fall back to it only when their app-home store is
+    absent. Returning a guaranteed-absent path under the app home keeps every
+    ``vault_root / <rel>`` composition safe and lets each reader fall through
+    to the app-home store / its default instead of raising on a missing root.
+    The app never creates this directory."""
+    return app_config.state_dir() / "__vault_disabled__"
+
+
 def create_app(vault_root: str | Path | None = None) -> FastAPI:
     """Build the TDTB FastAPI app.
 
@@ -1840,24 +1854,29 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
         if not x_tdtb_token or not secrets.compare_digest(x_tdtb_token, app.state.token):
             raise HTTPException(status_code=403, detail="missing or invalid X-TDTB-Token")
 
+    def _vault_root_or_none() -> Path | None:
+        """Resolve the vault root WITHOUT raising — ``None`` when unset or not
+        a directory.
+
+        S5 cutover path only: with ``sources.vault_enabled=false`` the digest
+        must serve when no vault root is configured, so the 503-fail-closed
+        `resolve_vault_root` is the wrong helper there. The default (flag true)
+        path still calls `resolve_vault_root` and keeps its 503 contract."""
+        root = app.state.vault_root or os.environ.get(VAULT_ROOT_ENV)
+        if not root:
+            return None
+        path = Path(root).expanduser()
+        return path if path.is_dir() else None
+
     def _run_gather(vault: Path, today: date) -> tuple[list[dict], list[dict]]:
-        pool_notes: list[dict[str, Any]] = []
-        assigned_notes: list[dict[str, Any]] = []
-        for note in gather.walk_vault(vault):
-            name, folder, fm = note["name"], note["folder"], note["fm"]
-            if gather.is_assigned(folder, fm):
-                # Frozen contract 5: future-dated vault work does not appear
-                # as today's work or consume today's capacity. Assigned notes
-                # are never pool-eligible (the base filter rejects the
-                # assigned flag), so excluding them here removes them from
-                # today's digest entirely. Past-due and undated stay.
-                deadline = gather.get_deadline(fm)
-                if deadline is not None and deadline > today:
-                    continue
-                assigned_notes.append(note)
-            if gather.is_in_pool(name, folder, fm, today):
-                pool_notes.append(note)
-        return pool_notes, assigned_notes
+        # S5 cutover: sources.vault_enabled=false stops the vault gather
+        # contributing rows. The gather code is NOT deleted here (S6 does
+        # that) — it is gated, so the flip is reversible by config alone.
+        if not app_config.vault_enabled():
+            return [], []
+        # Selection lives in the gather module so the S5 vault-rows report and
+        # the live digest select exactly the same rows (no drifting copy).
+        return gather.select_digest_notes(vault, today)
 
     def _ranking_order(vault: Path) -> list[str]:
         result = config_reader.read_config(vault)
@@ -2437,11 +2456,27 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
         and is idempotent for identical vault state — so the token boundary
         (which gates external writes and billed calls) is unchanged. The write
         is deliberately LAST, after ``day_setup`` is read back."""
-        vault = resolve_vault_root()
+        vault_rows_on = app_config.vault_enabled()
+        if vault_rows_on:
+            vault = resolve_vault_root()
+        else:
+            # S5 cutover: with vault rows off the digest must serve without a
+            # configured vault root, so the 503-fail-closed resolver is the
+            # wrong helper here. A guaranteed-absent stand-in keeps every
+            # `vault_root / <rel>` composition safe and lets the store readers
+            # fall through to their app-home stores.
+            vault = _vault_root_or_none() or _disabled_vault_root()
         today = gather.effective_date(datetime.now())
         pool_notes, assigned_notes = _run_gather(vault, today)
         run_data = gather.build_run_data(pool_notes, assigned_notes, today)
         order = _ranking_order(vault)
+        w_vault: list[str] = []
+        if not vault_rows_on:
+            w_vault.append(
+                "Vault rows are disabled (sources.vault_enabled=false) — the "
+                "Obsidian gather contributes no pool or assigned rows. Set it "
+                "back to true to restore them."
+            )
 
         result = config_reader.read_config(vault)
         config: dict[str, Any] = (
@@ -2762,7 +2797,7 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
             "calendar_decisions": calendar_decisions,
             "artifact": artifact_block,
             "source_warnings": (
-                w_todo + w_cal + w_hab + w_capacities + artifact_warnings
+                w_todo + w_cal + w_hab + w_capacities + artifact_warnings + w_vault
             ),
             "source_counts": {
                 "vault": len(run_data["pool_items"]) + len(run_data["assigned_items"]),

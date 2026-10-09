@@ -23,7 +23,8 @@ The document is::
       "habits": {"source_directory": ..., ...},
       "todoist": {"read_query": {"assigned": ..., "quick": ...}},
       "sources": {"mode": "live" | "artifact",
-                  "artifact": {"max_age_minutes": 240}}
+                  "artifact": {"max_age_minutes": 240},
+                  "vault_enabled": true}
     }
 
 ``sources`` is the artifact-contract pivot's source-selection knob (see
@@ -76,6 +77,13 @@ SOURCES_MODES = frozenset({SOURCES_MODE_LIVE, SOURCES_MODE_ARTIFACT})
 
 #: Default artifact age ceiling (minutes) before a load reports ``aged``.
 DEFAULT_ARTIFACT_MAX_AGE_MINUTES = 240
+
+#: ``sources.vault_enabled`` — the S5 cutover knob. When false the vault gather
+#: contributes no rows and a resolvable vault root is no longer required for the
+#: digest. The default is **True**: shipping the S5 slice changes nothing, the
+#: cutover IS the operator setting this to false, and the rollback is setting it
+#: back. S6 deletes the flag and the vault gather together.
+DEFAULT_VAULT_ENABLED = True
 
 #: Row fields that name a disabled calendar (mirrors
 #: ``calendar_bridge.normalize_disabled_calendars``).
@@ -171,6 +179,31 @@ def sources_mode(path: str | Path | None = None) -> str:
     if isinstance(sources, dict) and sources.get("mode") in SOURCES_MODES:
         return str(sources["mode"])
     return DEFAULT_SOURCES_MODE
+
+
+def vault_enabled(path: str | Path | None = None) -> bool:
+    """Whether the vault gather contributes rows to the planning digest.
+
+    Reads ``sources.vault_enabled`` from config.json, accepting a top-level
+    ``vault_enabled`` alias for operator convenience (the plan names the flag
+    without a section). Absent, or carried by an unusable document, resolves
+    to :data:`DEFAULT_VAULT_ENABLED` — **True**. The vault config markdown
+    carries no such key, so there is no vault fallback: failing toward "vault
+    on" is deliberate, because a malformed config must never silently drop the
+    ~96 vault rows the migration exists to triage. Only an explicit false
+    disables the gather, per the S5 "loud, not silent" contract.
+
+    ``mode`` and ``vault_enabled`` are independent: an operator can run the
+    live source mode with the vault gather off."""
+    document = load_document(path)
+    if document is None:
+        return DEFAULT_VAULT_ENABLED
+    sources = document.get("sources")
+    value = sources.get("vault_enabled") if isinstance(sources, dict) else None
+    if value is None:
+        value = document.get("vault_enabled")
+    parsed = _coerce_bool(value)
+    return DEFAULT_VAULT_ENABLED if parsed is None else parsed
 
 
 def artifact_max_age_minutes(path: str | Path | None = None) -> int:
@@ -308,6 +341,23 @@ def document_from_sections(sections: dict[str, Any]) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+def _coerce_bool(value: Any) -> bool | None:
+    """Strict-ish boolean coercion for config flags. ``None`` when the value
+    is absent or not an unambiguous boolean — callers then apply their default."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered == "true":
+            return True
+        if lowered == "false":
+            return False
+        return None
+    if type(value) is int and value in (0, 1):
+        return bool(value)
+    return None
+
 
 def _as_list(value: Any) -> list[Any]:
     if isinstance(value, list):

@@ -399,6 +399,33 @@ def is_in_pool(name: str, folder: str, fm: dict[str, Any], today: date) -> bool:
     )
 
 
+def select_digest_notes(
+    vault_root: Path, today: date
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """The digest's own vault row selection: ``(pool_notes, assigned_notes)``.
+
+    Frozen contract 5: future-dated vault work does not appear as today's work
+    or consume today's capacity, so an assigned note whose deadline is after
+    ``today`` is excluded entirely. Assigned notes are never pool-eligible (the
+    base filter rejects the assigned flag), so the two lists are disjoint.
+
+    Extracted from ``main._run_gather`` so the S5 vault-rows report and the
+    live gather select exactly the same rows — the report must not drift from
+    what the digest would drop."""
+    pool_notes: list[dict[str, Any]] = []
+    assigned_notes: list[dict[str, Any]] = []
+    for note in walk_vault(vault_root):
+        name, folder, fm = note["name"], note["folder"], note["fm"]
+        if is_assigned(folder, fm):
+            deadline = get_deadline(fm)
+            if deadline is not None and deadline > today:
+                continue
+            assigned_notes.append(note)
+        if is_in_pool(name, folder, fm, today):
+            pool_notes.append(note)
+    return pool_notes, assigned_notes
+
+
 # ---------------------------------------------------------------------------
 # daily-assigned.base predicate
 # ---------------------------------------------------------------------------
