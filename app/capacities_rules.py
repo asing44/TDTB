@@ -661,8 +661,13 @@ def effective_rule(
 def _current_for_save(space_id: str, target: Path) -> RulesRecord | None:
     """The stored record when it belongs to ``space_id``; else ``None``.
 
-    A document for a different space is treated as absent so a save for the
-    requested space does not read or overwrite another space's rules."""
+    A document for a different space is treated as absent for READ purposes, so
+    this save never merges into another space's rules. It does not preserve
+    them either: the caller's save atomically replaces the document, so a space
+    change discards the previous space's authored rules. That matches
+    ``capacities_builder.save_source``, which is likewise a full replacement
+    carrying one space, and it means the conflict token for a foreign-space
+    save starts at zero rather than at the stored revision."""
     try:
         exists = target.is_file()
     except OSError as exc:
