@@ -197,9 +197,17 @@ TDTB_REPO=/Users/walle-mini/Repos/Projects/TDTB-worktrees/cockpit-ui-round2
 PY=/Users/walle-mini/Repos/Projects/TDTB/app/.venv/bin/python
 "$PY" "$TDTB_REPO/tools/produce_rows.py" \
   --rules ~/.config/tdtb/producer-rules.json \
-  --logical-day "$(date +%F)" \
   --write < /tmp/tdtb-source.json > /tmp/tdtb-artifact.json
 ```
+
+**Do not pass `--logical-day`.** The CLI defaults it to the app's own
+`effective_date`, and TDTB's logical day is **not** the wall-clock date:
+**midnight to 2am still counts as yesterday**. Passing `$(date +%F)` during
+those hours stamps the artifact with tomorrow's date, and the app then rejects
+it — `Planning artifact is for logical day 2026-10-09, not today's 2026-10-08`
+— dropping **every** row while still reporting a `stale` state. Omit the flag
+and let the tool decide; pass it only to deliberately regenerate a named past
+day.
 
 Exit codes: `2` input not JSON, `3` rules invalid (the offending rule id is
 printed), `4` the built artifact failed its own validation (nothing was
