@@ -329,6 +329,49 @@ def _status_display_tokens(prop: Any, prop_id: str) -> set[str]:
     return {_normalized(value) for value in values if value is not None and _text(value)}
 
 
+def _classify_open_status(
+    prop: Any, prop_id: str, open_values: frozenset[str]
+) -> str:
+    """Open / unknown / closed classification for a mapped status.
+
+    Used on the stored-rule path, where an under-evaluated status must keep
+    the object visible as an unassigned candidate instead of failing the
+    object (legacy) or silently excluding it. Absent, empty, and unreadable
+    payloads are UNKNOWN; a readable non-empty payload with no open match is
+    a known-closed hard exclusion.
+    """
+    if prop is None:
+        return "unknown"
+    try:
+        tokens = _property_tokens(prop, prop_id)
+    except _MalformedObject:
+        return "unknown"
+    if not tokens:
+        return "unknown"
+    if tokens.intersection({_normalized(value) for value in open_values}):
+        return "open"
+    return "closed"
+
+
+def _classify_completion(prop: Any, prop_id: str, completion_value: str | None) -> str:
+    """Unknown / closed classification for a distinct completion field.
+
+    Only the configured ``completion_value`` is a known closed state; it does
+    not define the rest of the vocabulary, so every other readable value —
+    and every absent, empty, or unreadable value — is UNKNOWN rather than a
+    guessed exclusion (R27/R29).
+    """
+    if prop is None:
+        return "unknown"
+    try:
+        tokens = _property_tokens(prop, prop_id)
+    except _MalformedObject:
+        return "unknown"
+    if completion_value is not None and _normalized(completion_value) in tokens:
+        return "closed"
+    return "unknown"
+
+
 #: Capacities' tag property id on task-like structures. Tags are typed
 #: ``entity`` references to ``RootTag`` objects; the flat top-level ``tags``
 #: title array the API also returns is presentation only and never identity.
@@ -509,14 +552,22 @@ class CapacitiesAdapter:
             # structure has to be enumerable before the Settings drawer can
             # offer it for enabling.
             if not mapping.assignment_property and not mapping.open_status_property:
-                if sid in self.config.assignment_settings.native_task_structures:
+                # A stored ACTIVE rule is the structure's single eligibility
+                # authority, so neither legacy mapping is required: the rule
+                # (and the operator's explicit selection) can admit objects
+                # the legacy seams cannot describe, and missing mappings are
+                # manual-assignment candidates rather than a contract failure.
+                # No record, a draft-only entry, and a record for another
+                # space keep the legacy requirement unchanged.
+                if self._active_rule(sid) is None:
+                    if sid in self.config.assignment_settings.native_task_structures:
+                        raise CapacitiesContractError(
+                            f"native mapping {sid!r} requires a mapped status property"
+                        )
                     raise CapacitiesContractError(
-                        f"native mapping {sid!r} requires a mapped status property"
+                        f"mapping {sid!r} requires an assignment property or a "
+                        "mapped status property"
                     )
-                raise CapacitiesContractError(
-                    f"mapping {sid!r} requires an assignment property or a "
-                    "mapped status property"
-                )
             if mapping.assignment_property and not mapping.assignment_values:
                 raise CapacitiesContractError(f"mapping {sid!r} has no assignment values")
             if mapping.assignment_values and not mapping.assignment_property:
@@ -740,6 +791,16 @@ class CapacitiesAdapter:
 
         identity = f"capacities:{self.config.space_id}:{mapping.structure_id}:{object_id}"
 
+        # A stored ACTIVE rule is decided up front: on that path the legacy
+        # status/completion classification is replaced by a three-state
+        # classification where an unreadable mapped value is UNKNOWN rather
+        # than a failed object, and a missing assignment mapping is a manual
+        # candidate rather than a contract failure (KTD5, R27/R29).
+        active_rule = self._active_rule(mapping.structure_id)
+        has_assignment_mapping = bool(
+            mapping.assignment_property or mapping.assigned_property
+        )
+
         # Source-assigned signal. A mapped assignment property that is present
         # is a definitive source boolean; a missing property is neutral, not a
         # negative. Native structures may omit the mapping entirely and rely on
@@ -768,14 +829,25 @@ class CapacitiesAdapter:
                     )
                 )
 
-        # Open/closed status is a shared safety signal. A missing mapped status
-        # property fails closed rather than silently opening; the mapped status
-        # property also supplies the token the native Auto rule checks.
+        # Open/closed status is a shared safety signal. On the legacy path a
+        # missing mapped status property fails closed rather than silently
+        # opening, and the mapped status property also supplies the token the
+        # native Auto rule checks. On the stored-rule path the same mapping is
+        # classified open / unknown / closed: an absent, empty, or unreadable
+        # value is UNKNOWN and keeps the row as an unassigned candidate, while
+        # a readable non-open value stays a hard exclusion.
         status: str | None = None
         status_is_open: bool | None = None
+        status_state: str | None = None
         if mapping.open_status_property:
             status_prop = properties.get(mapping.open_status_property)
-            if status_prop is None:
+            if active_rule is not None:
+                status_state = _classify_open_status(
+                    status_prop,
+                    mapping.open_status_property,
+                    mapping.open_status_values,
+                )
+            elif status_prop is None:
                 status_is_open = False
             else:
                 # The open/closed safety classification keeps matching the
@@ -791,6 +863,30 @@ class CapacitiesAdapter:
                     status_tokens.intersection(
                         {_normalized(value) for value in mapping.open_status_values}
                     )
+                )
+        elif active_rule is not None:
+            status_state = "unavailable"
+
+        # Completion availability on the stored-rule path. A mapping that
+        # shares the open-status field mirrors the status classification,
+        # which does carry an open vocabulary; a distinct completion field has
+        # only ``completion_value`` known, so every other readable value — and
+        # every absent, empty, or unreadable value — is UNKNOWN rather than a
+        # guessed closed state (R27/R29).
+        completion_state: str | None = None
+        if active_rule is not None:
+            if not mapping.completion_property:
+                completion_state = "unavailable"
+            elif (
+                mapping.open_status_property
+                and mapping.completion_property == mapping.open_status_property
+            ):
+                completion_state = status_state
+            else:
+                completion_state = _classify_completion(
+                    properties.get(mapping.completion_property),
+                    mapping.completion_property,
+                    mapping.completion_value,
                 )
 
         # ``date_property`` remains a day-projection filter: a future date means
@@ -832,7 +928,6 @@ class CapacitiesAdapter:
         if not title:
             raise _MalformedObject(f"object {object_id!r} has an empty title")
 
-        active_rule = self._active_rule(mapping.structure_id)
         rule_state: capacities_rules.Evaluation | None = None
         if active_rule is not None:
             # A stored active rule is the SINGLE eligibility authority for
@@ -848,7 +943,7 @@ class CapacitiesAdapter:
             )
             if rule_state is capacities_rules.NO_MATCH:
                 return None
-            if status_is_open is False:
+            if status_state == "closed" or completion_state == "closed":
                 return None
             # A TDTB stable-identity exclusion still wins over the stored
             # rule exactly as it wins over Auto on the legacy path: the rule
@@ -860,7 +955,17 @@ class CapacitiesAdapter:
                 and source_assigned is not True
             ):
                 return None
-            assigned = rule_state is capacities_rules.MATCH
+            # A missing assignment mapping is manual assignment: the row is
+            # an eligible candidate, never auto-assigned. An UNKNOWN status
+            # or completion keeps the rule decision truthful but still forces
+            # the row unassigned so the later warning surface can review it
+            # (R27/R29).
+            assigned = (
+                rule_state is capacities_rules.MATCH
+                and has_assignment_mapping
+                and status_state != "unknown"
+                and completion_state != "unknown"
+            )
         else:
             decision = evaluate_assignment(
                 AssignmentCandidate(
@@ -878,7 +983,15 @@ class CapacitiesAdapter:
                 return None
             assigned = True
 
-        duration: int | float = 30
+        # Per-type fallback duration: used when the duration mapping is
+        # absent or the mapped property is not carried; a present mapped
+        # value still wins, and a zero fallback is a real value.
+        fallback_minutes: int | None = None
+        if active_rule is not None and self.config.rules is not None:
+            structure_record = self.config.rules.structure(mapping.structure_id)
+            if structure_record is not None:
+                fallback_minutes = structure_record.fallback_minutes
+        duration: int | float = 30 if fallback_minutes is None else fallback_minutes
         if mapping.duration_property:
             duration_prop = properties.get(mapping.duration_property)
             if duration_prop is not None:
@@ -925,6 +1038,11 @@ class CapacitiesAdapter:
                 "state": rule_state.value,
                 "revision": int(getattr(self.config.rules, "revision", 0)),
             }
+            # Additive adapter-only availability metadata for the later
+            # warning-candidate surface (U3b-3/U4): UNKNOWN is not eligible
+            # but stays visible, and closed values never reach a row.
+            row["capacities_status_state"] = status_state
+            row["capacities_completion_state"] = completion_state
         else:
             # Compact serialization of the evaluator decision, never a title
             # or a policy key. Downstream index allowlists may ignore it.
