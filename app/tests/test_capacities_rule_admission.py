@@ -17,6 +17,7 @@ import pytest
 import capacities_adapter as ca
 import capacities_builder as cb
 import capacities_rules as cr
+from capacities_assignment import AssignmentSettings
 from tests.test_capacities_adapter import (
     FakeProvider,
     _mapping,
@@ -29,6 +30,7 @@ DAY = date(2026, 9, 29)
 SPACE = "space-1"
 RULE = {"prop": "minutes", "op": "gt", "values": [10]}
 DRAFT_RULE = {"prop": "minutes", "op": "gt", "values": [100]}
+EXCLUDED_IDENTITY = "capacities:space-1:custom-project:obj-1"
 
 
 def rules(active=RULE, draft=None, space=SPACE, revision=2):
@@ -39,21 +41,27 @@ def rules(active=RULE, draft=None, space=SPACE, revision=2):
     )
 
 
-def adapter(record):
+def adapter(record, settings=None):
     return ca.CapacitiesAdapter(
         FakeProvider(_structures(), {}),
-        ca.CapacitiesConfig(SPACE, _mapping(), rules=record),
+        ca.CapacitiesConfig(
+            SPACE,
+            _mapping(),
+            rules=record,
+            assignment_settings=settings if settings is not None else AssignmentSettings(),
+        ),
     )
 
 
-def obj(minutes=20, assigned="no", state="active", object_id="obj-1"):
-    props = {
-        "title": _prop("title", "title", "Sample"),
-        "tdtb": _prop("label", "label", [{"id": assigned, "name": assigned}]),
-        "state": _prop("label", "label", [{"id": state, "name": state}]),
-    }
+def obj(minutes=20, assigned="no", state="active", object_id="obj-1", due=None):
+    props = {"title": _prop("title", "title", "Sample")}
+    if assigned is not None:
+        props["tdtb"] = _prop("label", "label", [{"id": assigned, "name": assigned}])
+    props["state"] = _prop("label", "label", [{"id": state, "name": state}])
     if minutes is not None:
         props["minutes"] = _prop("number", "number", minutes)
+    if due is not None:
+        props["date"] = _prop("date", "date", {"start": f"{due.isoformat()}T00:00:00.000Z"})
     return _object(object_id, "custom-project", props)
 
 
@@ -103,6 +111,68 @@ def test_unknown_rule_is_retained_as_unassigned_not_silently_dropped():
     assert row["capacities_rule"] == {"state": "unknown", "revision": 2}
     assert row["identity"] == "capacities:space-1:custom-project:obj-1"
     assert row["path"] == "capacities://space-1/obj-1"
+
+
+# ---------------------------------------------------------------------------
+# Stable-identity exclusions still gate the stored-rule path
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize(
+    "minutes,assigned",
+    [(20, "no"), (20, None), (None, "no"), (None, None)],
+    ids=[
+        "match-source-false",
+        "match-source-absent",
+        "unknown-source-false",
+        "unknown-source-absent",
+    ],
+)
+def test_active_rule_cannot_admit_an_excluded_identity(minutes, assigned):
+    """A rule MATCH or UNKNOWN does not re-admit an excluded identity.
+
+    The stored rule is the single eligibility authority, but the legacy
+    precedence still holds: TDTB Excluded beats rule eligibility unless the
+    source explicitly marks the object assigned.
+    """
+    settings = AssignmentSettings(excluded_identities=frozenset({EXCLUDED_IDENTITY}))
+    result = adapter(rules(), settings).items_for_day_from_objects(
+        DAY, [obj(minutes, assigned)]
+    )
+    assert result.items == []
+
+
+def test_source_assigned_bypasses_identity_exclusion_on_the_rule_path():
+    """Source Assigned still wins over a TDTB exclusion under a stored rule."""
+    settings = AssignmentSettings(excluded_identities=frozenset({EXCLUDED_IDENTITY}))
+    result = adapter(rules(), settings).items_for_day_from_objects(
+        DAY, [obj(20, "yes")]
+    )
+    assert len(result.items) == 1
+    row = result.items[0]
+    assert row["assigned"] is True
+    assert row["capacities_rule"] == {"state": "match", "revision": 2}
+
+
+def test_source_assigned_does_not_override_a_rule_no_match():
+    """Source Assigned bypasses only the exclusion, never the rule decision."""
+    result = adapter(rules()).items_for_day_from_objects(DAY, [obj(5, "yes")])
+    assert result.items == []
+
+
+def test_source_assigned_does_not_override_a_known_closed_status():
+    """Source Assigned bypasses only the exclusion, never closed status."""
+    result = adapter(rules()).items_for_day_from_objects(
+        DAY, [obj(20, "yes", state="done")]
+    )
+    assert result.items == []
+
+
+def test_rule_path_still_filters_a_mapped_future_date():
+    """A mapped date after the logical day excludes even a MATCHing rule."""
+    result = adapter(rules()).items_for_day_from_objects(
+        DAY, [obj(20, "no", due=date(2026, 9, 30))]
+    )
+    assert result.items == []
 
 
 # ---------------------------------------------------------------------------

@@ -850,6 +850,16 @@ class CapacitiesAdapter:
                 return None
             if status_is_open is False:
                 return None
+            # A TDTB stable-identity exclusion still wins over the stored
+            # rule exactly as it wins over Auto on the legacy path: the rule
+            # is not a bypass. Source Assigned remains the only signal that
+            # outranks an exclusion, so an excluded identity is dropped
+            # unless the source explicitly marks it assigned.
+            if (
+                identity in self.config.assignment_settings.excluded_identities
+                and source_assigned is not True
+            ):
+                return None
             assigned = rule_state is capacities_rules.MATCH
         else:
             decision = evaluate_assignment(
