@@ -1,12 +1,14 @@
 """Shared test hygiene for the app suite."""
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 
 import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
+import app_config  # noqa: E402
 import calendar_bridge  # noqa: E402
 
 
@@ -20,6 +22,26 @@ def _isolated_app_home(tmp_path_factory, monkeypatch):
     ``TDTB_HOME`` is read at call time (see ``app_config.app_home``), so
     setting it before the test body is enough."""
     monkeypatch.setenv("TDTB_HOME", str(tmp_path_factory.mktemp("tdtb-home")))
+
+
+@pytest.fixture
+def live_sources_mode(_isolated_app_home):
+    """A4: opt a test into the live source readers.
+
+    Slice A4 flipped the default ``sources.mode`` from ``live`` to
+    ``artifact``. A test that injects a fake live client (a ``FakeTodoist``,
+    a Capacities adapter, or a calendar store) and expects those rows in the
+    digest must request this fixture, which writes an explicit ``live``
+    config into the already-isolated ``TDTB_HOME``. Tests that do not request
+    it keep the artifact default, so the new default stays testable.
+    """
+    path = app_config.config_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps({"version": 1, "sources": {"mode": "live"}}),
+        encoding="utf-8",
+    )
+    return path
 
 
 @pytest.fixture(autouse=True)

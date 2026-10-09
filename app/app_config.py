@@ -150,19 +150,27 @@ def _sources_section_ok(document: dict[str, Any]) -> bool:
     return mode in SOURCES_MODES
 
 
+#: The default source mode. Slice A4 flipped this from ``live`` to
+#: ``artifact``: the artifact contract is now the primary path and the live
+#: readers are what an operator opts back into explicitly.
+DEFAULT_SOURCES_MODE = SOURCES_MODE_ARTIFACT
+
+
 def sources_mode(path: str | Path | None = None) -> str:
-    """The active source mode: ``artifact`` or ``live`` (the default).
+    """The active source mode: ``artifact`` (the default) or ``live``.
 
     Any unusable document (missing, corrupt, unsupported version, or a
-    rejected ``sources`` section) resolves to ``live`` — the pivot is opt-in
-    and never silently half-applied."""
+    rejected ``sources`` section) resolves to ``artifact`` — an unreadable
+    config must never silently re-enable the live readers, because a live
+    read is not a fallback (point 7). An operator who wants the live readers
+    sets ``sources.mode`` to ``live`` deliberately."""
     document = load_document(path)
     if document is None:
-        return SOURCES_MODE_LIVE
+        return DEFAULT_SOURCES_MODE
     sources = document.get("sources")
     if isinstance(sources, dict) and sources.get("mode") in SOURCES_MODES:
         return str(sources["mode"])
-    return SOURCES_MODE_LIVE
+    return DEFAULT_SOURCES_MODE
 
 
 def artifact_max_age_minutes(path: str | Path | None = None) -> int:

@@ -294,7 +294,7 @@ def _decisions_client(vault: Path, store) -> TestClient:
 
 
 class TestPlanInputsCalendarDecisions:
-    def test_disabled_unknown_and_known_calendars(self, vault):
+    def test_disabled_unknown_and_known_calendars(self, vault, live_sources_mode):
         store = _DecisionsStore(
             [
                 {"title": "Yoga", "start": datetime(2026, 7, 14, 9, 0),
@@ -337,7 +337,7 @@ class TestPlanInputsCalendarDecisions:
         assert dentist["reason_code"] == "included_timed"
         assert dentist["all_day"] is False
 
-    def test_missing_calendar_id_single_calendar_fallback(self, vault):
+    def test_missing_calendar_id_single_calendar_fallback(self, vault, live_sources_mode):
         store = _DecisionsStore(
             [
                 {"title": "Errand A", "start": datetime(2026, 7, 14, 9, 0),

@@ -29,7 +29,7 @@ class FakeReadAdapter:
         self.closed = True
 
 
-def test_plan_inputs_projects_injected_capacities_items_and_indexes_identity(tmp_path, monkeypatch):
+def test_plan_inputs_projects_injected_capacities_items_and_indexes_identity(tmp_path, monkeypatch, live_sources_mode):
     vault = tmp_path / "vault"
     vault.mkdir()
     monkeypatch.setattr(main.gather, "effective_date", lambda _now: date(2026, 9, 29))

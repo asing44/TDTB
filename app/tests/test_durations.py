@@ -233,7 +233,7 @@ def _client(vault, todoist=None) -> TestClient:
 def _assigned_by_name(body):
     return {i["name"]: i for i in body["digest"]["assigned"]}
 
-def test_plan_inputs_assigned_rows_carry_resolved_blocks(vault):
+def test_plan_inputs_assigned_rows_carry_resolved_blocks(vault, live_sources_mode):
     import external_sources as ext
 
     todoist = FakeTodoist({
@@ -373,7 +373,7 @@ def _labelled_todoist():
     })
 
 
-def test_plan_inputs_labelled_rows_carry_exact_tag_provenance(vault):
+def test_plan_inputs_labelled_rows_carry_exact_tag_provenance(vault, live_sources_mode):
     body = _client(vault, todoist=_labelled_todoist()).get("/plan-inputs").json()
     rows = _assigned_by_name(body)
     hour = rows["Inspect dishwasher"]
@@ -390,7 +390,7 @@ def test_plan_inputs_labelled_rows_carry_exact_tag_provenance(vault):
     assert laundry["duration_source"] == "tag:🍅 Half-hour"
 
 
-def test_plan_inputs_remembered_still_wins_over_tag_provenance(vault):
+def test_plan_inputs_remembered_still_wins_over_tag_provenance(vault, live_sources_mode):
     client, headers = _auth_client(vault, todoist=_labelled_todoist())
     _save(client, headers, "todoist:7", 45)
     rows = _assigned_by_name(client.get("/plan-inputs").json())

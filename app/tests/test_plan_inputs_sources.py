@@ -152,7 +152,7 @@ def _save_tag_exclusion(vault: Path, tag_id: str = TAG_A) -> None:
     )
 
 
-def test_plan_inputs_applies_tag_exclusions_and_stamps_the_revision(vault):
+def test_plan_inputs_applies_tag_exclusions_and_stamps_the_revision(vault, live_sources_mode):
     _save_tag_exclusion(vault)
     items = [
         _capacities_row("Keep", [{"space_id": SPACE, "tag_id": TAG_B, "title": "chores"}]),
@@ -191,7 +191,7 @@ def test_plan_inputs_applies_tag_exclusions_and_stamps_the_revision(vault):
     assert all(i["name"] != "Drop" for i in raw["items"])
 
 
-def test_plan_inputs_tolerates_unusable_tags_when_no_policy_applies(vault):
+def test_plan_inputs_tolerates_unusable_tags_when_no_policy_applies(vault, live_sources_mode):
     row = _capacities_row("Unusable", None)
     row["capacities_tags_error"] = "tags are title-only without typed identities"
     client = _client_with_capacities(vault, [row])
@@ -202,7 +202,7 @@ def test_plan_inputs_tolerates_unusable_tags_when_no_policy_applies(vault):
     assert body["digest"]["exclusion_policy"]["warnings"]
 
 
-def test_plan_inputs_blocks_on_unusable_tag_payload_when_a_policy_applies(vault):
+def test_plan_inputs_blocks_on_unusable_tag_payload_when_a_policy_applies(vault, live_sources_mode):
     _save_tag_exclusion(vault)
     row = _capacities_row("TitleOnly", None)
     row["capacities_tags_error"] = "tags are title-only without typed identities"
@@ -234,7 +234,7 @@ def test_plan_inputs_blocks_when_settings_storage_is_malformed(vault):
     assert path.read_text(encoding="utf-8") == "garbage"
 
 
-def test_todoist_items_merge_into_digest(vault):
+def test_todoist_items_merge_into_digest(vault, live_sources_mode):
     import external_sources as ext
 
     todoist = FakeTodoist({
@@ -254,7 +254,7 @@ def test_todoist_items_merge_into_digest(vault):
     assert body["source_warnings"] == []
 
 
-def test_calendar_busy_blocks_join_anchored(vault):
+def test_calendar_busy_blocks_join_anchored(vault, live_sources_mode):
     store = FakeStore([{
         "title": "Dentist",
         "start": datetime(2026, 7, 14, 9, 0),
@@ -267,7 +267,7 @@ def test_calendar_busy_blocks_join_anchored(vault):
     assert "Dentist" in names          # calendar busy appended
 
 
-def test_calendar_capacity_metadata_survives_the_plan_inputs_wire(vault):
+def test_calendar_capacity_metadata_survives_the_plan_inputs_wire(vault, live_sources_mode):
     cfg = vault / CONFIG_REL_PATH
     cfg.write_text(
         cfg.read_text(encoding="utf-8")
@@ -333,7 +333,7 @@ def test_missing_clients_degrade_to_warnings_not_500(vault):
     assert body["source_counts"]["todoist"] == 0
 
 
-def test_source_counts_reported(vault):
+def test_source_counts_reported(vault, live_sources_mode):
     import external_sources as ext
 
     todoist = FakeTodoist({
@@ -383,7 +383,7 @@ class TestCalendarDismissal:
         }, headers={"X-TDTB-Token": tc.app_token})
         assert r.status_code == 200, r.text
 
-    def test_dismissal_reaches_emitted_calendar_row(self, vault):
+    def test_dismissal_reaches_emitted_calendar_row(self, vault, live_sources_mode):
         tc = self._client(vault)
         self._dismiss(tc)
         body = tc.get("/plan-inputs").json()
@@ -392,7 +392,7 @@ class TestCalendarDismissal:
         assert row.get("skip_today") is True
         assert row.get("source") == "calendar"
 
-    def test_dismissed_row_leaves_capacity_fixed_segment(self, vault):
+    def test_dismissed_row_leaves_capacity_fixed_segment(self, vault, live_sources_mode):
         tc = self._client(vault)
         before = tc.get("/plan-inputs").json()["capacity"]
         self._dismiss(tc)

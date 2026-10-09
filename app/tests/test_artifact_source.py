@@ -352,8 +352,13 @@ def test_mode_artifact_is_read_from_config(tmp_path):
     assert app_config.sources_mode(path) == "artifact"
 
 
-def test_mode_absent_defaults_to_live(tmp_path):
+def test_mode_absent_defaults_to_artifact(tmp_path):
     path = _write_config(tmp_path, {})
+    assert app_config.sources_mode(path) == "artifact"
+
+
+def test_mode_live_is_read_from_config(tmp_path):
+    path = _write_config(tmp_path, {"mode": "live"})
     assert app_config.sources_mode(path) == "live"
 
 
@@ -361,7 +366,7 @@ def test_mode_both_is_rejected_at_config_load(tmp_path):
     path = _write_config(tmp_path, {"mode": "both"})
 
     assert app_config.load_document(path) is None
-    assert app_config.sources_mode(path) == "live"
+    assert app_config.sources_mode(path) == "artifact"
 
 
 def test_unknown_mode_is_rejected_at_config_load(tmp_path):
@@ -526,8 +531,8 @@ def test_artifact_mode_stale_rows_are_not_used_and_ride_warnings(vault):
     assert any("logical day" in w.lower() for w in body["source_warnings"])
 
 
-def test_live_mode_still_constructs_the_live_seam(vault):
-    # The default is live and unchanged.
+def test_live_mode_still_constructs_the_live_seam(vault, live_sources_mode):
+    # A4 flipped the default to artifact; this test opts back into live.
     called = {"n": 0}
 
     def _clients(_v, _c):

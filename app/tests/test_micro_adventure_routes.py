@@ -83,7 +83,7 @@ class TestPlanInputsMicro:
             "date": "2026-07-11", "id": "ma03", "idea": "Ride bike somewhere",
         }
 
-    def test_todoist_completion_probe_resolves_prior(self, client, vault, monkeypatch):
+    def test_todoist_completion_probe_resolves_prior(self, client, vault, monkeypatch, live_sources_mode):
         monkeypatch.setattr(gather, "effective_date", lambda now: TODAY)
         _write_log(
             vault,
