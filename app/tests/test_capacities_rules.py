@@ -324,6 +324,23 @@ def test_invalid_rule_is_draft_only_and_leaves_active_untouched():
     assert cr.effective_rule(SPACE, "Project") == VALID_RULE
 
 
+def test_activation_requires_a_discovered_schema():
+    """A schema-less save must not activate.
+
+    Activation is validated against the type's discovered shape, so a rule that
+    references a removed property can never become active merely because a
+    caller omitted the schema (AE21)."""
+    result = cr.save_rule(
+        SPACE, "Project", REMOVED_PROPERTY_RULE, expected_revision=0
+    )
+
+    assert result.valid is False
+    assert result.active is None
+    assert result.draft == REMOVED_PROPERTY_RULE
+    assert result.reason is not None
+    assert cr.effective_rule(SPACE, "Project") is None
+
+
 def test_incompatible_operator_rule_cannot_activate():
     result = cr.save_rule(
         SPACE, "Project", INCOMPATIBLE_RULE, expected_revision=0, schema=SCHEMA

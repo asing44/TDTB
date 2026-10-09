@@ -709,7 +709,9 @@ def save_rule(
     INVALID rule is stored as ``draft`` only, the previously active rule is
     untouched, and the returned :class:`RuleSaveResult` names the reason
     (AE21/R33). ``fallback_minutes`` is written as supplied (``None`` clears
-    it).
+    it). Activation requires ``schema``: without the type's discovered shape
+    there is no way to prove the rule's properties still exist, so a
+    schema-less save is draft-only.
 
     A stale ``expected_revision`` raises :class:`RulesConflictError` and
     preserves the original bytes. The saved document's ``revision`` is the
@@ -727,6 +729,12 @@ def save_rule(
 
     problem = validate_rule(rule, schema)
     valid = problem is None
+    if valid and schema is None:
+        # Activation must be validated against the type's discovered shape: a
+        # caller that omits the schema cannot prove the rule's properties still
+        # exist, so a schema-less save stays a draft (AE21/R33).
+        valid = False
+        problem = _reason("no discovered schema was supplied; rule saved as a draft")
 
     target = Path(path) if path is not None else rules_path()
     with _store_lock(target):
