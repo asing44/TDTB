@@ -439,73 +439,10 @@ class TestStaleMintConflicts:
 
 
 # ---------------------------------------------------------------------------
-# T3 — Habit status (capacity summary, NOT digest items — skill § habits)
+# Calendar busy-block degrade (previously nested in the retired habit class)
 # ---------------------------------------------------------------------------
 
-def _habit_note(dirpath: Path, name: str, entries: list[str], duration: int | None = None):
-    dur = f"duration: {duration}\n" if duration is not None else ""
-    dirpath.joinpath(name).write_text(
-        f"---\ntitle: {name[:-3]}\ntype: habit\n{dur}entries:\n"
-        + "".join(f"  - {e}\n" for e in entries)
-        + "---\n\n# x\n",
-        encoding="utf-8",
-    )
-
-
-class TestFetchHabitStatus:
-    def test_done_vs_outstanding_split(self, tmp_path):
-        hab = tmp_path / "00 - META" / "Habituals"
-        hab.mkdir(parents=True)
-        _habit_note(hab, "Water.md", ["2026-07-13", "2026-07-14"])
-        _habit_note(hab, "Stretch.md", ["2026-07-13"])
-        _habit_note(hab, "Timestamped.md", ["2026-07-14T00:00:00.000Z"])
-        status, warnings = ext.fetch_habit_status(tmp_path, {}, TODAY)
-        assert warnings == []
-        assert status["total"] == 3
-        assert status["done"] == 2
-        assert status["outstanding"] == 1
-
-    def test_outstanding_minutes_use_duration_then_fallback_and_round_up(self, tmp_path):
-        hab = tmp_path / "00 - META" / "Habituals"
-        hab.mkdir(parents=True)
-        _habit_note(hab, "Long.md", [], duration=20)     # outstanding, 20 min
-        _habit_note(hab, "NoDur.md", [])                 # outstanding, fallback 4 min
-        status, _ = ext.fetch_habit_status(tmp_path, {}, TODAY)
-        # 24 min rounded up to 15-min grain = 30
-        assert status["est_minutes"] == 30
-
-    def test_zero_duration_falls_back(self, tmp_path):
-        # Live vault has `duration: 0` notes (e.g. Water) — 0 means "unset".
-        hab = tmp_path / "00 - META" / "Habituals"
-        hab.mkdir(parents=True)
-        _habit_note(hab, "Zero.md", [], duration=0)
-        status, _ = ext.fetch_habit_status(tmp_path, {}, TODAY)
-        assert status["est_minutes"] == 15  # fallback 4 → rounds to 15
-
-    def test_archived_subdir_ignored(self, tmp_path):
-        hab = tmp_path / "00 - META" / "Habituals"
-        (hab / "Archived").mkdir(parents=True)
-        _habit_note(hab, "Live.md", [])
-        _habit_note(hab / "Archived", "Old.md", [])
-        status, _ = ext.fetch_habit_status(tmp_path, {}, TODAY)
-        assert status["total"] == 1
-
-    def test_missing_dir_degrades_with_warning(self, tmp_path):
-        status, warnings = ext.fetch_habit_status(tmp_path, {}, TODAY)
-        assert status["total"] == 0 and len(warnings) == 1
-
-    def test_config_dir_and_grain_override(self, tmp_path):
-        custom = tmp_path / "Habits"
-        custom.mkdir()
-        _habit_note(custom, "A.md", [])
-        cfg = {
-            "habits.source_directory": "Habits/",
-            "habits.fallback_minutes_per_habit": 10,
-            "habits.round_to_minutes": 30,
-        }
-        status, _ = ext.fetch_habit_status(tmp_path, cfg, TODAY)
-        assert status["total"] == 1 and status["est_minutes"] == 30
-
+class TestCalendarBusyDegrade:
     def test_unauthorized_store_warns_instead_of_empty_success(self):
         class DeniedStore(FakeStore):
             def auth_status(self):

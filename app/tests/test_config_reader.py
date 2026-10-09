@@ -38,7 +38,6 @@ last_updated: 2026-07-01
 | buffering.off_pct                 | 0.00                  |
 | caps.deep                         | 4                     |
 | caps.mixed                        | 3                     |
-| habits.source_directory           | 00 - META/Habituals/  |
 | habits.fallback_minutes_per_habit | 4                     |
 | habits.round_to_minutes           | 15                    |
 
@@ -296,7 +295,6 @@ MINIMAL_REQUIRED_ONLY = """\
 | buffering.off_pct | 0.00 |
 | caps.deep | 4 |
 | caps.mixed | 3 |
-| habits.source_directory | 00 - META/Habituals/ |
 | habits.fallback_minutes_per_habit | 4 |
 | habits.round_to_minutes | 15 |
 
@@ -403,7 +401,6 @@ def test_missing_required_section_reported_not_raised(tmp_path: Path) -> None:
 | buffering.off_pct | 0.00 |
 | caps.deep | 4 |
 | caps.mixed | 3 |
-| habits.source_directory | 00 - META/Habituals/ |
 | habits.fallback_minutes_per_habit | 4 |
 | habits.round_to_minutes | 15 |
 """

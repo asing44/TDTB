@@ -85,11 +85,6 @@ def vault(tmp_path) -> Path:
     p = v / CONFIG_REL_PATH
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(MINIMAL_CONFIG, encoding="utf-8")
-    hab = v / "00 - META" / "Habituals"
-    hab.mkdir(parents=True)
-    (hab / "Water.md").write_text(
-        "---\ntitle: Water\ntype: habit\nentries:\n  - 2020-01-01\n---\n", encoding="utf-8"
-    )
     return v
 
 
@@ -97,6 +92,36 @@ def _client(vault, todoist=None, store=None) -> TestClient:
     app = main_mod.create_app(vault_root=vault)
     app.state.build_read_clients = lambda v, cfg: (todoist, store)
     return TestClient(app)
+
+
+def _write_habits_artifact(habits) -> None:
+    """Write a minimal fresh artifact carrying a habits block.
+
+    Habit time now rides the artifact (agent-fetched), not Obsidian, in both
+    source modes."""
+    import artifact_source as art
+
+    read_at = datetime.now().astimezone().isoformat(timespec="seconds")
+    rows: list[dict] = []
+    sources = {
+        "todoist": {"status": "ok", "read_at": read_at, "rows": 0,
+                     "dropped": 0, "deferred": 0, "warnings": []}
+    }
+    document = {
+        "schema": art.ARTIFACT_SCHEMA,
+        "version": art.ARTIFACT_VERSION,
+        "generated_at": read_at,
+        "logical_day": str(gather.effective_date(datetime.now())),
+        "producer": {"name": "test", "version": "0.1.0", "run_id": "r1"},
+        "content_hash": art.compute_content_hash(sources, rows),
+        "sources": sources,
+        "rows": rows,
+        "admission": {"rule_set_hash": "rs", "admitted": [], "dropped": []},
+        "habits": habits,
+    }
+    target = art.artifact_path()
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(json.dumps(document), encoding="utf-8")
 
 
 # ---------------------------------------------------------------------------
@@ -237,6 +262,7 @@ def test_plan_inputs_blocks_when_settings_storage_is_malformed(vault):
 def test_todoist_items_merge_into_digest(vault, live_sources_mode):
     import external_sources as ext
 
+    _write_habits_artifact({"total": 0, "done": 0, "outstanding": 0, "est_minutes": 0})
     todoist = FakeTodoist({
         ext.ASSIGNED_QUERY_FALLBACK: [
             {"id": "1", "content": "Call Vlad", "priority": 4,
@@ -320,8 +346,9 @@ def test_calendar_capacity_metadata_survives_the_plan_inputs_wire(vault, live_so
 
 
 def test_habits_summary_present(vault):
+    _write_habits_artifact({"total": 2, "done": 1, "outstanding": 1, "est_minutes": 30})
     body = _client(vault, todoist=FakeTodoist({}), store=FakeStore([])).get("/plan-inputs").json()
-    assert body["habits"]["total"] == 1
+    assert body["habits"]["total"] == 2
     assert body["habits"]["outstanding"] == 1
 
 

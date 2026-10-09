@@ -71,6 +71,15 @@ import app_config
 ARTIFACT_SCHEMA = "tdtb.planning-artifact"
 ARTIFACT_VERSION = 1
 
+#: The optional top-level habit summary. Habits are agent-fetched data (the
+#: REST Todoist client exposes no completed-tasks read), so the producer
+#: computes them and the app reads them from here. The block shape is the
+#: contract the UI and the capacity math already consume; it is NOT part of
+#: the row contract and an artifact without it stays valid.
+HABITS_KEY = "habits"
+HABITS_FIELDS = ("total", "done", "outstanding", "est_minutes")
+HABITS_EMPTY: dict[str, int] = {field: 0 for field in HABITS_FIELDS}
+
 ARTIFACT_FILENAME = "planning-artifact.json"
 PREV_ARTIFACT_FILENAME = "planning-artifact.prev.json"
 OVERLAY_FILENAME = "planning-overlay.json"
@@ -186,6 +195,11 @@ class ArtifactResult:
     path: Path | None = None
     prev_available: bool = False
     overlay_rows: int = 0
+    #: Always a well-typed habit block (zeroed when the artifact carries none).
+    habits: dict[str, int] = field(default_factory=lambda: dict(HABITS_EMPTY))
+    #: Habit-specific degrade notes; separate from ``warnings`` so a fresh
+    #: artifact with no habits block still surfaces loudly.
+    habit_warnings: list[str] = field(default_factory=list)
 
     def as_digest_block(self) -> dict[str, Any]:
         """The ``artifact`` block the digest payload carries (point 6)."""
@@ -376,6 +390,75 @@ def _read_json(path: Path) -> Any:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+# ---------------------------------------------------------------------------
+# Habits (the optional capacity summary)
+# ---------------------------------------------------------------------------
+
+def habit_block_of(document: Any) -> tuple[dict[str, int], list[str]]:
+    """Extract the artifact's optional ``habits`` block. Never raises.
+
+    A missing or ill-typed block yields the zeroed block plus one warning, so
+    a caller always has a well-formed ``total/done/outstanding/est_minutes``
+    summary. An artifact without the block (an older artifact) is valid and
+    loads normally.
+    """
+    missing = "Planning artifact has no habits block — habit capacity treated as zero."
+    if not isinstance(document, dict):
+        return dict(HABITS_EMPTY), [missing]
+    raw = document.get(HABITS_KEY)
+    if raw is None:
+        return dict(HABITS_EMPTY), [missing]
+    if not isinstance(raw, dict):
+        return dict(HABITS_EMPTY), [
+            "Planning artifact habits block is not an object — habit capacity "
+            "treated as zero."
+        ]
+    block: dict[str, int] = {}
+    invalid: list[str] = []
+    for field_name in HABITS_FIELDS:
+        value = raw.get(field_name)
+        if type(value) is int and value >= 0:
+            block[field_name] = value
+        else:
+            block[field_name] = 0
+            if field_name in raw:
+                invalid.append(field_name)
+    warnings: list[str] = []
+    if invalid:
+        warnings.append(
+            "Planning artifact habits block has invalid field(s) "
+            f"{', '.join(invalid)} — treated as 0."
+        )
+    return block, warnings
+
+
+def load_habits(*, path: str | Path | None = None) -> tuple[dict[str, int], list[str]]:
+    """Read ONLY the artifact's habit summary. Never raises.
+
+    Live source mode consumes the artifact for habits too: the REST Todoist
+    client exposes no completed-tasks endpoint, so done-state is agent-fetched
+    data either way. A missing/unreadable/malformed artifact degrades to the
+    zeroed block plus a loud warning — never a vault fallback.
+    """
+    target = Path(path) if path is not None else artifact_path()
+    try:
+        document = _read_json(target)
+    except FileNotFoundError:
+        return dict(HABITS_EMPTY), [
+            f"Planning artifact not found at {target} — no habit data. "
+            f"Regenerate with: {PRODUCER_COMMAND}"
+        ]
+    except (OSError, ValueError) as exc:
+        return dict(HABITS_EMPTY), [
+            f"Planning artifact at {target} is unreadable ({exc}) — no habit data."
+        ]
+    if validate_artifact(document):
+        return dict(HABITS_EMPTY), [
+            f"Planning artifact at {target} is malformed — no habit data."
+        ]
+    return habit_block_of(document)
+
+
 def load_artifact(
     now: datetime,
     *,
@@ -429,6 +512,8 @@ def load_artifact(
             f"Planning artifact at {target} is malformed: {joined}. "
             f"Regenerate with: {PRODUCER_COMMAND}",
         )
+
+    habits, habit_warnings = habit_block_of(document)
 
     sources = document["sources"]
     raw_rows = document["rows"]
@@ -485,6 +570,8 @@ def load_artifact(
         path=target,
         prev_available=prev.is_file(),
         overlay_rows=overlay_count,
+        habits=habits,
+        habit_warnings=habit_warnings,
     )
 
 
@@ -605,12 +692,15 @@ def _degrade(
                 f"A valid prior artifact exists at {prev} — it was NOT applied "
                 "automatically; regenerate to refresh it deliberately."
             )
+    habits, habit_warnings = habit_block_of(None)
     return ArtifactResult(
         rows=[],
         status=status,
         warnings=warnings,
         path=target,
         prev_available=prev.is_file(),
+        habits=habits,
+        habit_warnings=habit_warnings,
     )
 
 

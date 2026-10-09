@@ -21,8 +21,18 @@ A2)::
         "read_at": "2026-10-08T09:00:00-07:00",
         "warnings": [],
         "tasks": [ { ...raw Todoist task objects... } ]
+      },
+      "habits": {
+        "status": "ok",
+        "read_at": "2026-10-08T09:00:00-07:00",
+        "tasks": [ { "id": ..., "content": ..., "duration": "5m" } ],
+        "completed": [ { "task_id": ... } ]
       }
     }
+
+``habits`` is not a row source: the producer folds it into the artifact's
+top-level ``habits`` block (``total/done/outstanding/est_minutes``), the only
+source of habit time now that the vault read is retired.
 
 Usage::
 
@@ -89,6 +99,14 @@ def _print_summary(document: dict, wrote: Path | None) -> None:
         f"logical_day: {document.get('logical_day')}",
         file=sys.stderr,
     )
+    habits = document.get("habits")
+    if isinstance(habits, dict):
+        print(
+            f"  habits: {habits.get('done', 0)} done / "
+            f"{habits.get('total', 0)} total, "
+            f"{habits.get('est_minutes', 0)} min outstanding",
+            file=sys.stderr,
+        )
     if wrote is not None:
         print(f"  wrote {wrote}", file=sys.stderr)
 

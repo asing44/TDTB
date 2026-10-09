@@ -57,7 +57,6 @@ REQUIRED_DEFAULTS_KEYS = (
     "buffering.off_pct",
     "caps.deep",
     "caps.mixed",
-    "habits.source_directory",
     "habits.fallback_minutes_per_habit",
     "habits.round_to_minutes",
 )
@@ -77,7 +76,6 @@ FALLBACK_DEFAULTS: dict[str, Any] = {
     "buffering.off_pct": 0.00,
     "caps.deep": 4,
     "caps.mixed": 3,
-    "habits.source_directory": "00 - META/Habituals/",
     "habits.fallback_minutes_per_habit": 4,
     "habits.round_to_minutes": 15,
     "habits.completion_field": "entries",

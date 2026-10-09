@@ -37,7 +37,6 @@ last_updated: 2026-07-01
 |-----|-------|
 | eod | 11:45 PM |
 | caps.deep | 4 |
-| habits.source_directory | 00 - META/Habituals/ |
 | habits.fallback_minutes_per_habit | 4 |
 | habits.round_to_minutes | 15 |
 
@@ -196,8 +195,8 @@ def test_vault_fallback_is_identical_to_today(
     assert result.config is not None
     assert result.config.sections == parse_config_markdown(VAULT_FIXTURE)
     assert result.config.raw_text == VAULT_FIXTURE
-    assert result.config.get_default("habits.source_directory").source == "config"
-    assert result.config.get_default("habits.source_directory").value == "00 - META/Habituals/"
+    assert result.config.get_default("habits.fallback_minutes_per_habit").source == "config"
+    assert result.config.get_default("habits.fallback_minutes_per_habit").value == 4
 
 
 def test_missing_vault_and_no_config_still_bootstraps(
@@ -253,13 +252,13 @@ def test_config_json_merges_habits_into_defaults(
     _write_vault(vault, VAULT_FIXTURE)
     _write_json(
         home / "config.json",
-        {"version": 1, "habits": {"source_directory": "99 - Elsewhere/"}},
+        {"version": 1, "habits": {"fallback_minutes_per_habit": 7}},
     )
 
     cfg = read_config(vault).config
     assert cfg is not None
     # Overridden key wins...
-    assert cfg.get_default("habits.source_directory").value == "99 - Elsewhere/"
+    assert cfg.get_default("habits.fallback_minutes_per_habit").value == 7
     # ...without dropping the vault's other Defaults keys.
     assert cfg.get_default("eod").value == "11:45 PM"
 
@@ -269,12 +268,12 @@ def test_config_json_only_without_vault(
 ) -> None:
     home = tmp_path / "home"
     monkeypatch.setenv("TDTB_HOME", str(home))
-    _write_json(home / "config.json", {"version": 1, "habits": {"source_directory": "X/"}})
+    _write_json(home / "config.json", {"version": 1, "habits": {"fallback_minutes_per_habit": 9}})
 
     result = read_config(tmp_path / "empty-vault")
     assert result.bootstrap_needed is False
     assert result.config is not None
-    assert result.config.get_default("habits.source_directory").value == "X/"
+    assert result.config.get_default("habits.fallback_minutes_per_habit").value == 9
 
 
 def test_unsupported_version_falls_back_to_vault(
@@ -325,7 +324,6 @@ def test_migration_round_trips_fixture(
         "paths": [],
         "names": [],
     }
-    assert doc["habits"]["source_directory"] == "00 - META/Habituals/"
     assert doc["habits"]["fallback_minutes_per_habit"] == 4
     assert doc["micro_adventure_pool"] == sections["Micro-Adventures"]["Pool"]
 

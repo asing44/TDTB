@@ -2486,6 +2486,12 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
         # in live mode, where every Capacities row keeps its existing routing.
         c_pool: list[dict[str, Any]] = []
         w_todo: list[str] = []
+        # Habits are agent-fetched data either way (the REST Todoist client
+        # exposes no completed-tasks read), so the summary rides the artifact
+        # in BOTH source modes. Never a vault fallback; no data -> zeroed block
+        # plus a loud source_warnings entry.
+        habits: dict[str, Any] = dict(artifact_source.HABITS_EMPTY)
+        w_hab: list[str] = []
         if source_mode == app_config.SOURCES_MODE_ARTIFACT:
             # The calendar store is NOT a live plan source the artifact
             # replaces: calendar, habits and anchored blocks keep their
@@ -2498,6 +2504,8 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
             artifact_block = artifact_result.as_digest_block()
             if artifact_result.status != artifact_source.STATUS_FRESH:
                 artifact_warnings = list(artifact_result.warnings)
+            habits = dict(artifact_result.habits)
+            w_hab = list(artifact_result.habit_warnings)
             t_assigned = [
                 r for r in artifact_result.rows
                 if r.get("source") == "todoist" and r.get("assigned") is True
@@ -2541,6 +2549,8 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
                     capacities_items, w_capacities = external_sources.fetch_capacities_items(
                         capacities_client, today
                     )
+            # Live mode still sources the habit summary from the artifact.
+            habits, w_hab = artifact_source.load_habits()
         try:
             if source_mode != app_config.SOURCES_MODE_ARTIFACT:
                 t_assigned, t_pool, w_todo = external_sources.fetch_todoist_items(
@@ -2560,7 +2570,6 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
             busy_blocks, w_cal, calendar_decisions = (
                 external_sources.fetch_calendar_decisions(store, ext_cfg, today)
             )
-            habits, w_hab = external_sources.fetch_habit_status(vault, ext_cfg, today)
             # T19: deterministic micro-adventure state — pure reads (config
             # section, vault log, prior daily note, Todoist completion probe
             # on the already-open read client). Never writes, never consumes.
@@ -2883,9 +2892,8 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
             busy_blocks, _w_cal = external_sources.fetch_calendar_busy(
                 store, ext_cfg, today
             )
-            habits, _w_hab = external_sources.fetch_habit_status(
-                vault, ext_cfg, today
-            )
+            # Habits ride the artifact here too — no vault read.
+            habits, _w_hab = artifact_source.load_habits()
         finally:
             if todoist_c is not None and hasattr(todoist_c, "close"):
                 try:

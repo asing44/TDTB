@@ -64,10 +64,31 @@ objects:
 - `todoist_find-tasks-by-date` — tasks due the logical day (and any date the
   operator names).
 - `todoist_find-completed-tasks` — completion state, so already-done ids are
-  excluded before you assemble the source JSON.
+  excluded before you assemble the source JSON, and so today's completed
+  habits can be counted (below).
 
 Merge the open results, dedupe by task id, and drop completed ids. The rules
 file decides pooling and assignment — you only supply the candidate tasks.
+
+**Habits are time, not rows — fetch them separately.** The habit tasks live in
+the operator's habit project (`🔁 Habits`, or the operator's equivalent
+filter). Fetch them (the same `todoist_find-tasks` call scoped to that
+project), and call `todoist_find-completed-tasks` for **today's** logical day.
+**Its default window is a WEEK** (`since` → `until`), so pass an explicit day
+range when you can. The producer also scopes every completion by its own
+`completedAt` **local date**, because the fetch alone cannot express "done
+today" — a habit finished earlier in the week must not read as done. An
+undated completion is still counted, so a narrow fetch is still the right
+thing to ask for.
+Do not fold habit tasks into the `tasks` list used for rows — the
+`todoist-drop-habits` rule already excludes them there. Instead emit a
+separate top-level `habits` source entry (step 4): the producer turns it into
+the artifact's top-level `habits` block, which is the ONLY source of habit
+time now that Obsidian is retired. A habit task's `duration` (`"5m"`,
+`"25m"`, or a REST `{"amount": N, "unit": "minute"|"day"}`) is its minutes;
+today's completions are matched to it by `task_id`/`id` or by `content`.
+Omit the entry only if the fetch failed — the app then zeroes habit time and
+reports it loudly.
 
 **Check every label a rule names against the real label list — renames are
 silent.** A rule compares label names as exact strings, so renaming a label in
@@ -194,6 +215,15 @@ can match a readable project name instead of a UUID. Omitting `projects` is
 safe — the producer simply adds no `projectName` — but every `projectName` rule
 then matches nothing.
 
+The `habits` entry is separate from `todoist.tasks` and is NOT a row source.
+The producer computes the artifact's top-level `habits` block from it:
+`total` = habit tasks, `done` = tasks a completion references today,
+`outstanding` = `total - done`, `est_minutes` = the outstanding durations
+(optional `fallback_minutes_per_habit`, default 4, where a duration is unset)
+rounded UP to the `round_to_minutes` grain (default 15). Include
+`fallback_minutes_per_habit` / `round_to_minutes` in the entry if the operator
+configured non-default values; otherwise the defaults apply.
+
 ```json
 {
   "todoist": {
@@ -204,6 +234,18 @@ then matches nothing.
       { "id": "<project id>", "name": "<project name>" }
     ],
     "tasks": [ "<raw Todoist task objects, each carrying projectId>" ]
+  },
+  "habits": {
+    "status": "ok",
+    "read_at": "<ISO-8601 with offset>",
+    "warnings": [],
+    "tasks": [
+      { "id": "<habit task id>", "content": "<habit name>",
+        "duration": "5m" }
+    ],
+    "completed": [
+      { "task_id": "<habit task id completed today>" }
+    ]
   },
   "capacities": {
     "status": "partial",
@@ -367,12 +409,13 @@ report an inert rule and let the operator edit it.
   the record's structure to match its `structure`.
 - `admit: false` excludes a matching record and records the drop against that
   rule id.
-- **Habits are excluded from rows.** The starter's first rule,
-  `todoist-drop-habits`, drops every task in the `🔁 Habits` project. Habits
-  are counted as time, not planned as rows — the habit time contribution is
-  supplied separately from the row set — so admitting a habit task here would
-  double-count it. It must stay **first**; first-match-wins means an admission
-  rule placed before it wins the record instead.
+- **Habits are excluded from rows and counted only as time.** The starter's
+  first rule, `todoist-drop-habits`, drops every task in the `🔁 Habits`
+  project. Habits are counted as time, not planned as rows — their time
+  contribution rides the artifact's top-level `habits` block (see step 4),
+  not the row set — so admitting a habit task here would double-count it. It
+  must stay **first**; first-match-wins means an admission rule placed before
+  it wins the record instead.
 - `pool: true` emits the row with `assigned: false` (O1), regardless of
   `assigned`.
 

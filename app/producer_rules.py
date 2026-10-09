@@ -67,6 +67,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import re
 from dataclasses import dataclass, field
 from datetime import date, datetime
@@ -87,9 +88,21 @@ PRODUCER_RULES_FILENAME = "producer-rules.json"
 
 SOURCE_TODOIST = "todoist"
 SOURCE_CAPACITIES = "capacities"
+#: Agent-fetched habit data (tasks + today's completions). Not a row source:
+#: the producer folds it into the artifact's top-level ``habits`` block.
+SOURCE_HABITS = "habits"
 
 #: A3 evaluates Todoist and Capacities rules.
 EVALUATED_SOURCES = frozenset({SOURCE_TODOIST, SOURCE_CAPACITIES})
+
+#: Sources that are consumed for something other than rows. They contribute no
+#: rows, so they are not reported as an unimplemented row source.
+NON_ROW_SOURCES = frozenset({SOURCE_HABITS})
+
+#: Fallbacks for the habit estimate when the source JSON omits the knobs.
+#: These mirror the app's historical ``habits.*`` defaults.
+DEFAULT_HABIT_MINUTES = 4
+DEFAULT_HABIT_GRAIN_MINUTES = 15
 
 OPS = frozenset({
     "eq", "in", "exists", "truthy", "lt", "gt", "before", "after", "matches",
@@ -370,6 +383,8 @@ def evaluate(
 
         if source not in EVALUATED_SOURCES:
             counts["records"] = len(records)
+            if source in NON_ROW_SOURCES:
+                continue
             if records:
                 result.warnings.append(
                     f"source {source!r} is not evaluated in A3 "
@@ -687,6 +702,9 @@ def build_artifact(
     result = evaluate(rules_document, source_json, logical_day=logical_day)
     sources = _sources_block(source_json, result, generated_at)
     rows = result.rows
+    habits = compute_habit_summary(
+        source_json.get(SOURCE_HABITS), logical_day=logical_day
+    )
 
     admission = {
         "rule_set_hash": rule_set_hash(rules_document),
@@ -727,6 +745,7 @@ def build_artifact(
         "sources": sources,
         "rows": rows,
         "admission": admission,
+        "habits": habits,
     }
     document["content_hash"] = artifact_source.compute_content_hash(sources, rows)
     return document
@@ -770,6 +789,139 @@ def _sources_block(
             "warnings": warnings,
         }
     return block
+
+
+# ---------------------------------------------------------------------------
+# Habit summary (agent-fetched -> deterministic block)
+# ---------------------------------------------------------------------------
+
+def _habit_duration_minutes(task: dict[str, Any]) -> int | None:
+    """Minutes a habit task is worth, or None when unset.
+
+    Accepts the REST ``{"amount": N, "unit": "minute"|"day"}`` shape and the
+    MCP ``"5m"/"1h30m"/"2d"`` string. A zero/absent/unparseable duration is
+    None so the caller applies the per-habit fallback."""
+    duration = task.get("duration")
+    if isinstance(duration, str):
+        duration = _mcp_duration(duration)
+    if isinstance(duration, dict):
+        amount = duration.get("amount")
+        unit = duration.get("unit")
+        if type(amount) is int and amount > 0:
+            if unit == "day":
+                return amount * 24 * 60
+            if unit == "minute":
+                return amount
+    return None
+
+
+def _completion_local_date(item: dict[str, Any]) -> str | None:
+    """The local calendar date a completion happened, when Todoist sent one.
+
+    ``todoist_find-completed-tasks`` defaults to a WEEK-long window, so the
+    fetch alone cannot scope "done today" — the producer has to. A completion
+    carries ``completedAt`` as a UTC instant while the artifact's ``logical_day``
+    is a local date, so the instant is converted to local time first."""
+    raw = item.get("completedAt") or item.get("completed_at")
+    if not isinstance(raw, str) or not raw.strip():
+        return None
+    try:
+        parsed = datetime.fromisoformat(raw.strip().replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is not None:
+        parsed = parsed.astimezone()
+    return parsed.date().isoformat()
+
+
+def _habit_completed_tokens(
+    entry: dict[str, Any], logical_day: str | None = None
+) -> tuple[set[str], set[str]]:
+    """Collect the identifiers of today's completions.
+
+    A completion may be an id-bearing object (``task_id``/``taskId``/``id``)
+    or a bare id/name string; Todoist may report a recurring habit's completed
+    occurrence by content rather than the parent task id, so both ids and
+    names are matched.
+
+    A completion dated to another day is SKIPPED. The fetch window is a week by
+    default, so without this a habit finished on Tuesday would read as done on
+    Friday. An undated completion is still counted, because the skill is
+    instructed to fetch the logical day's completions."""
+    ids: set[str] = set()
+    names: set[str] = set()
+    completed = entry.get("completed")
+    if not isinstance(completed, list):
+        return ids, names
+    for item in completed:
+        if isinstance(item, str):
+            ids.add(item.strip())
+            continue
+        if not isinstance(item, dict):
+            continue
+        day = _completion_local_date(item)
+        if day is not None and logical_day is not None and day != logical_day:
+            continue
+        for key in ("task_id", "taskId", "id"):
+            value = item.get(key)
+            if value is not None:
+                ids.add(str(value).strip())
+        content = item.get("content") or item.get("name")
+        if isinstance(content, str) and content.strip():
+            names.add(content.strip())
+    return ids, names
+
+
+def compute_habit_summary(
+    entry: Any, logical_day: str | None = None
+) -> dict[str, int]:
+    """Compute the ``{total, done, outstanding, est_minutes}`` habit block.
+
+    Deterministic and total: a missing/malformed entry yields the zeroed block
+    rather than raising. ``done`` counts tasks a completion references **on the
+    logical day** (see :func:`_habit_completed_tokens` — the fetch window is a
+    week by default, so the day is scoped here, not by the fetch).
+    ``est_minutes`` sums only the OUTSTANDING tasks' durations (fallback
+    ``fallback_minutes_per_habit`` where unset), rounded UP to the
+    ``round_to_minutes`` grain — the same semantics the vault read used."""
+    empty = dict(artifact_source.HABITS_EMPTY)
+    if not isinstance(entry, dict):
+        return empty
+    tasks = entry.get("tasks")
+    if not isinstance(tasks, list):
+        tasks = _records_for(entry)
+    fallback = entry.get("fallback_minutes_per_habit", DEFAULT_HABIT_MINUTES)
+    if type(fallback) is not int or fallback <= 0:
+        fallback = DEFAULT_HABIT_MINUTES
+    grain = entry.get("round_to_minutes", DEFAULT_HABIT_GRAIN_MINUTES)
+    if type(grain) is not int or grain <= 0:
+        grain = DEFAULT_HABIT_GRAIN_MINUTES
+
+    done_ids, done_names = _habit_completed_tokens(entry, logical_day)
+    total = done = 0
+    outstanding_minutes = 0
+    for task in tasks:
+        if not isinstance(task, dict):
+            continue
+        total += 1
+        task_id = task.get("id")
+        name = task.get("content") or task.get("name") or task.get("title")
+        is_done = (
+            (task_id is not None and str(task_id).strip() in done_ids)
+            or (isinstance(name, str) and name.strip() in done_names)
+        )
+        if is_done:
+            done += 1
+            continue
+        outstanding_minutes += _habit_duration_minutes(task) or fallback
+    outstanding = total - done
+    est = math.ceil(outstanding_minutes / grain) * grain if outstanding_minutes else 0
+    return {
+        "total": total,
+        "done": done,
+        "outstanding": outstanding,
+        "est_minutes": est,
+    }
 
 
 # ---------------------------------------------------------------------------

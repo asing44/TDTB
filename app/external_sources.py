@@ -14,7 +14,6 @@ outstanding-minutes total deducts from capacity (SKILL.md § Habits).
 """
 from __future__ import annotations
 
-import math
 import re
 from datetime import date, datetime, time, timedelta
 from pathlib import Path
@@ -31,8 +30,6 @@ QUICK_QUERY_FALLBACK = "@🚀10min"
 
 _REMINDER_LABEL = "🔔Reminder"
 _NUDGE_PREFIX = "🔔 Nudge:"
-
-_ENTRY_DATE_RE = re.compile(r"^\s*-\s*[\"']?(\d{4}-\d{2}-\d{2})")
 
 
 # ---------------------------------------------------------------------------
@@ -632,83 +629,6 @@ def fetch_calendar_busy(
     """
     blocks, warnings, _decisions = fetch_calendar_decisions(store, config, today)
     return blocks, warnings
-
-
-# ---------------------------------------------------------------------------
-# Habits (capacity summary)
-# ---------------------------------------------------------------------------
-
-def _habit_fields(text: str) -> tuple[list[str], int | None]:
-    """Extract (entry dates, duration) from a habit note's frontmatter.
-
-    Line-based scan — habit frontmatter is machine-written (habit-tracker
-    plugin); full YAML parsing is unnecessary and adds a dependency.
-    """
-    entries: list[str] = []
-    duration: int | None = None
-    in_fm = False
-    in_entries = False
-    for line in text.splitlines():
-        stripped = line.strip()
-        if stripped == "---":
-            if in_fm:
-                break
-            in_fm = True
-            continue
-        if not in_fm:
-            continue
-        if in_entries:
-            m = _ENTRY_DATE_RE.match(line)
-            if m:
-                entries.append(m.group(1))
-                continue
-            if not line.startswith((" ", "\t")):
-                in_entries = False
-        if stripped.startswith("entries:"):
-            in_entries = True
-        elif stripped.startswith("duration:"):
-            raw = stripped.split(":", 1)[1].strip()
-            if raw.isdigit():
-                duration = int(raw)
-    return entries, duration
-
-
-def fetch_habit_status(
-    vault_root: str | Path, config: dict[str, Any], today: date
-) -> tuple[dict[str, Any], list[str]]:
-    """Done/outstanding split + outstanding-minutes estimate (skill § Habits).
-
-    ``duration: 0`` counts as unset (live vault notes carry it); estimate =
-    sum of outstanding durations (fallback per-habit minutes where unset),
-    rounded UP to the ``round_to_minutes`` grain.
-    """
-    rel = str(config.get("habits.source_directory") or "00 - META/Habituals/")
-    fallback_min = int(config.get("habits.fallback_minutes_per_habit") or 4)
-    grain = int(config.get("habits.round_to_minutes") or 15)
-    habits_dir = Path(vault_root) / rel
-    empty = {"total": 0, "done": 0, "outstanding": 0, "est_minutes": 0}
-    if not habits_dir.is_dir():
-        return dict(empty), [f"Habits directory missing ({rel}) — habit capacity unknown"]
-
-    today_str = str(today)
-    total = done = 0
-    outstanding_minutes = 0
-    for note in sorted(habits_dir.glob("*.md")):
-        try:
-            entries, duration = _habit_fields(note.read_text(encoding="utf-8"))
-        except OSError:
-            continue
-        total += 1
-        if today_str in entries:
-            done += 1
-        else:
-            outstanding_minutes += duration if duration else fallback_min
-    outstanding = total - done
-    est = math.ceil(outstanding_minutes / grain) * grain if outstanding_minutes else 0
-    return (
-        {"total": total, "done": done, "outstanding": outstanding, "est_minutes": est},
-        [],
-    )
 
 
 # ---------------------------------------------------------------------------
