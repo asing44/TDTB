@@ -135,6 +135,59 @@ neither the agent running out of road nor a task failure. It died in discovery w
 nothing was lost; the retry ran with thinking disabled and succeeded. Worth adding to the existing
 termination diagnostic at WALL-E_PIOS `docs/research/2026-10-08-delegated-agent-termination-diagnostic.md`.
 
+## A4 landed (2026-10-09) — `59d1a18`, plus three fixes the live run forced
+
+Running the producer for real is what made this slice meaningful. Four defects surfaced that no
+test could have caught, because every one lived in the gap between the MCP's real payload shape
+and what the code assumed.
+
+**1. The Todoist shape adapter (`e00940e`).** The producer was written against the REST task
+shape; the skill fetches over MCP. A live run produced **zero rows** and then **crashed** —
+`external_sources._to_item` did `int(task["priority"])` on the MCP's `"p4"`. `normalize_task` now
+accepts both shapes: `priority "p4"` → `4`, `dueDate`/`deadlineDate` → `due`, `duration "5m"` →
+`{unit, amount}`, `recurring` → `is_recurring`. REST records pass through byte-identically.
+
+**2. The Capacities spec (`0143b45`).** Every Capacities rule matched nothing, for four
+independent reasons, all in the shape the skill told the agent to emit:
+
+- the object carries only `structureId` (a UUID), so a rule naming `"Project"` never scoped →
+  `structureTitle` is now required;
+- properties arrive keyed by **property UUID**, so a rule naming a property never resolved →
+  re-key by `frontmatterKey` from `getObjectTypeShape`;
+- a label property flattens to a **list**, so `eq` silently never matches and `in` is correct;
+- collections arrive as **IDs**, not names.
+
+**3. A false claim corrected.** A3 said the cursor cannot detect change because Capacities
+"exposes no guaranteed `updatedAt`". It does: `getObjectContent` returns `lastUpdated` at top
+level and as a property. The conclusion stands — using it would require the content read the
+cursor exists to avoid — but the stated reason was wrong.
+
+**4. The logical-day override (`285a034`).** The skill told the agent to pass
+`--logical-day "$(date +%F)"`, overriding a CLI default that was already correct. TDTB's logical
+day is not the wall-clock date: **midnight to 2am still counts as yesterday**. Following the skill
+at 00:50 stamped the artifact `2026-10-09` against a logical day of `2026-10-08`; the app rejected
+it as stale and dropped every row. The skill now omits the flag.
+
+**First live artifact.** 14 assigned rows (11 Todoist + 3 Capacities) for logical day 2026-10-08,
+validated, consumed as `fresh`, with the vault's 96 rows and the calendar still gathered live —
+confirming artifact mode **adds** the artifact rather than replacing the day. The operator's two
+Capacities rules (`assigned` truthy, then `status in ["Active"]`) are installed in
+`~/.config/tdtb/producer-rules.json`; the read cursor recorded 8 objects / 8 reads on its first
+live exercise.
+
+**A4's blast radius.** Flipping the default broke 17 tests, every one a test injecting a fake live
+client and expecting its rows in the digest. They now request an explicit `live_sources_mode`
+fixture. No assertion was weakened and no autouse fixture was added, so the artifact default stays
+the tested default.
+
+**Still open:** the starter rules test `🔔Reminder` and `@🚀10min` while the real labels are
+`🔔 Reminder` and `🚀 10min`. Nothing carries those labels today, so no run has been affected —
+but the first reminder task will be planned as real work instead of dropped. The operator declined
+the rules fix once (choosing adapter-only); it remains a two-value edit.
+
+**Restart required.** A4 is inert until the live service restarts, because backend code loads at
+process start. That is an attended operator action.
+
 ## Operator directive
 
 1. "Capacities has ENTIRELY replaced Obsidian" — retire **all** vault reads.
