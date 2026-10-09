@@ -54,6 +54,8 @@ objects:
 - `todoist_find-filters` — the operator's saved filters (resolve the assigned
   and pool queries by name; do not invent queries).
 - `todoist_find-projects` — project list, so project-scoped rules resolve.
+- `todoist_find-labels` — the operator's real label names. **Required, not
+  optional:** it is the only way to catch a renamed label (see below).
 - `todoist_find-tasks` — the open tasks that match the assigned/pool queries.
 - `todoist_find-tasks-by-date` — tasks due the logical day (and any date the
   operator names).
@@ -62,6 +64,27 @@ objects:
 
 Merge the open results, dedupe by task id, and drop completed ids. The rules
 file decides pooling and assignment — you only supply the candidate tasks.
+
+**Check every label a rule names against the real label list — renames are
+silent.** A rule compares label names as exact strings, so renaming a label in
+Todoist quietly changes what gets planned: the rule keeps running, matches
+nothing, and the affected tasks are then admitted by a later rule (or dropped)
+with no error at all. This has already happened once here — a `🔔 Reminder`
+rename left the reminder-exclusion rule matching nothing.
+
+Compare the label values in every `todoist` rule against `todoist_find-labels`
+and **report** any that no longer exist, naming the rule id and the stale
+value. Do not silently rewrite a rule; report the drift and let the operator
+decide.
+
+Two further traps in the same family:
+
+- **Use bare label names.** Rules match against the task's label list, which
+  carries names with no `@` prefix — `"🚀 10min"`, never `"@🚀 10min"`. An
+  `@`-prefixed value matches nothing.
+- **Watch for near-duplicates.** A personal label and a shared label can differ
+  by a single space (`🚀 10min` vs `🚀10min`). Reference the exact one the
+  operator's own filters use.
 
 ### 3. Fetch Capacities over MCP — list for free, read in budget.
 
