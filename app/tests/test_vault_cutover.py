@@ -235,13 +235,33 @@ class TestSourcesConfigWarnings:
         assert "known keys are" in message
         assert "may not be in effect" in message
 
-    def test_reports_a_whitespace_key_as_written(self, tmp_path):
+    def test_whitespace_key_is_tolerated_and_reported_as_a_cleanup(self, tmp_path):
+        # The exact 2026-10-09 key. It IS honoured (the reader trims), so the
+        # warning must not claim it was ignored — that would be false. It is
+        # reported as a cleanup note instead.
         path = self._write(
             tmp_path, {"version": 1, "sources": {" vault_enabled": False}}
         )
         warnings = app_config.sources_config_warnings(path)
         assert len(warnings) == 1
         assert "' vault_enabled'" in warnings[0]
+        assert "setting is in effect" in warnings[0]
+        assert "ignored" not in warnings[0]
+        # And it really is in effect — the warning above must agree with this.
+        assert app_config.vault_enabled(path) is False
+
+    def test_whitespace_and_typo_keys_report_separately(self, tmp_path):
+        # One key works, one does not — opposite meanings, so two messages.
+        path = self._write(
+            tmp_path,
+            {"version": 1, "sources": {" vault_enabled": False, "vault_enabeld": True}},
+        )
+        warnings = app_config.sources_config_warnings(path)
+        assert len(warnings) == 2
+        typo = [w for w in warnings if "may not be in effect" in w]
+        padded = [w for w in warnings if "setting is in effect" in w]
+        assert len(typo) == 1 and "vault_enabeld" in typo[0]
+        assert len(padded) == 1 and "' vault_enabled'" in padded[0]
 
     def test_nested_artifact_typo_is_reported(self, tmp_path):
         path = self._write(

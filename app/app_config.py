@@ -411,22 +411,47 @@ def _trimmed_keys(raw: Any) -> dict[str, Any]:
 def _unrecognized_key_warnings(
     section: dict[str, Any], label: str, known: frozenset[str]
 ) -> list[str]:
-    """One message per unrecognized key, its name reported as written.
+    """Messages for keys in ``section`` that are not doing what they look like.
 
-    Membership is tested against the key **as written** — not its trimmed
-    form. ``_trimmed_keys`` makes ``" vault_enabled"`` work on read, but the
-    key the operator typed is still not one the section recognizes, so it is
-    reported here (with its whitespace) rather than accepted in silence."""
-    unknown = [key for key in section if str(key) not in known]
-    if not unknown:
-        return []
-    written = ", ".join(f"'{key}'" for key in unknown)
-    known_list = ", ".join(sorted(known))
-    return [
-        f"config.json {label} section has unrecognized key(s): {written} — "
-        f"known keys are: {known_list}. Unrecognized keys are ignored, so the "
-        "setting may not be in effect."
-    ]
+    Two cases, reported separately because they mean OPPOSITE things —
+    conflating them would make the warning lie in one direction or the other:
+
+    * **Unrecognized** — the *trimmed* key is not one the section knows, so
+      the value is discarded and the operator's setting is silently not in
+      effect. This is the case the warning exists for.
+    * **Whitespace-padded** — the *trimmed* key IS known, so
+      :func:`_trimmed_keys` made the value take effect. Reported as a cleanup
+      note only. Claiming such a key was ignored would be false: the
+      2026-10-09 key ``" vault_enabled"`` is honoured on read.
+
+    Both report the key as written, so it can be found in the file."""
+    unknown: list[str] = []
+    padded: list[str] = []
+    for key in section:
+        written = str(key)
+        trimmed = written.strip()
+        if trimmed not in known:
+            unknown.append(written)
+        elif written != trimmed:
+            padded.append(written)
+    out: list[str] = []
+    if unknown:
+        written_list = ", ".join(f"'{key}'" for key in unknown)
+        known_list = ", ".join(sorted(known))
+        out.append(
+            f"config.json {label} section has unrecognized key(s): {written_list} — "
+            f"known keys are: {known_list}. Unrecognized keys are ignored, so the "
+            "setting may not be in effect."
+        )
+    if padded:
+        written_list = ", ".join(f"'{key}'" for key in padded)
+        out.append(
+            f"config.json {label} section key(s) {written_list} carry surrounding "
+            "whitespace — the value was read with the whitespace stripped, so the "
+            "setting is in effect, but the key should be renamed to match the "
+            "section's other keys."
+        )
+    return out
 
 
 def _coerce_bool(value: Any) -> bool | None:
