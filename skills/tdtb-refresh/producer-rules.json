@@ -6,7 +6,7 @@
       "source": "todoist",
       "when": {
         "any": [
-          {"prop": "labels", "op": "in", "values": ["🔔Reminder"]},
+          {"prop": "labels", "op": "in", "values": ["🔔 Reminder"]},
           {"prop": "content", "op": "matches", "values": ["^🔔 Nudge:"]}
         ]
       },
@@ -30,7 +30,7 @@
       "when": {
         "prop": "labels",
         "op": "in",
-        "values": ["@🚀10min"]
+        "values": ["🚀 10min"]
       },
       "assigned": false,
       "pool": true
