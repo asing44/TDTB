@@ -72,11 +72,15 @@ seconds**, so spend as few as possible:
    collection, call `capacities_listObjectsByTag` or
    `capacities_listObjectsByCollection`. **Membership IS the tag/collection: one
    listing, ZERO content reads.** Put the membership on each listed object
-   (`collections` / `tags`) so the deterministic predicate can read it without a
-   content read.
+   (`collections` / `tags`) **as the names the operator would write in a rule** —
+   the API returns collection and tag IDs, so resolve each ID to its name before
+   emitting it. If a name cannot be resolved, say so in `warnings` rather than
+   emitting an ID and pretending it is a name.
 2. **Resolve each structure once.** Call `capacities_getObjectTypeShape` once
    per contributing structure before interpreting properties — never per
-   object — so you know each property's name and type.
+   object. The shape reports each property's `propertyId` **and its
+   `frontmatterKey`**; build a `propertyId → frontmatterKey` map that you reuse
+   for every object of that structure.
 3. **Read properties under the cursor, in budget.** Only objects that need
    property values beyond membership cost a content read. Write the listed
    objects (with `id`, `structureId`, `spaceId`, `collections`, `tags`) to a
@@ -103,11 +107,56 @@ seconds**, so spend as few as possible:
    set the source `status` to `partial`; the next run continues from the
    cursor. Do not try to work around the budget.
 
+#### The object shape you MUST emit
+
+The producer's predicate reads plain keys; it cannot see through the raw API
+shape. Re-key every object, or every rule scoped to its structure matches
+nothing:
+
+```json
+{
+  "id": "9a7ee91f-...",
+  "structureId": "0d194525-c5a1-4af5-bb62-202b83006b5e",
+  "structureTitle": "Project",
+  "spaceId": "d584988c-...",
+  "title": "System Improvements",
+  "collections": ["Continuals"],
+  "tags": [],
+  "properties": {
+    "assigned":         {"type": "boolean", "boolean": {"value": true}},
+    "status":           {"type": "label",   "label":   [{"id": "...", "name": "Active", "color": "blue"}]},
+    "continualCadence": {"type": "number",  "number":  {"value": 4}}
+  }
+}
+```
+
+Each field is load-bearing:
+
+- **`structureTitle`** — a Capacities rule's `structure` is matched against the
+  record's `structureId` / `structure` / `structureTitle` / `structureName`.
+  `capacities_getObjectContent` returns only `structureId` (a UUID), so a rule
+  that names `"Project"` matches nothing unless you carry the human title on the
+  object. Do not rely on `objectType`; the predicate does not read it.
+- **`properties` keyed by `frontmatterKey`** — the API keys properties by
+  property *UUID*, so an un-re-keyed record cannot be matched by name. Re-key
+  each entry to the `frontmatterKey` `capacities_getObjectTypeShape` reports for
+  that `propertyId` (`assigned`, `status`, `continualCadence`, …). Leave the
+  typed payload exactly as the API returned it; the producer flattens it.
+- **`collections` / `tags` as names** — supply the operator's vocabulary
+  (`["Continuals"]`), resolved at fetch time.
+  `capacities_listObjectsByCollection` is the listing path; a rule can never
+  match an unresolved UUID.
+- **`id` / `structureId` / `spaceId` / `title`** — keep the API values; they
+  build the row's `capacities:{space}:{structure}:{object}` identity and the
+  provider fields.
+
 ### 4. Assemble the source JSON exactly in the CLI's shape, then produce.
 
 Todoist counts live under `tasks`; Capacities objects under `objects`. A
 Capacities entry carries the space id and each object's typed `properties`
-(a content read), plus `collections`/`tags` (the free listing). Use
+(a content read, **re-keyed by `frontmatterKey`**), plus name-based
+`collections`/`tags` (the free listing) and the `structureTitle` the rule
+scopes. Use
 `"status": "partial"` with an explanation in `warnings` if a fetch degraded or
 the cursor deferred objects, and `"failed"` if a source could not be read at
 all.
@@ -130,10 +179,11 @@ all.
       {
         "id": "<object id>",
         "structureId": "<structure id>",
+        "structureTitle": "Project",
         "title": "...",
-        "collections": ["Inbox"],
+        "collections": ["<collection name>"],
         "tags": [],
-        "properties": { "<Property Name>": "<typed payload>" }
+        "properties": { "<frontmatterKey>": "<typed payload>" }
       }
     ]
   }
@@ -176,12 +226,16 @@ its `warnings` and `deferred` count verbatim.
 
 ## Cursor limitation — read this before trusting the cache
 
-The read cursor is **coverage, not change detection**. Capacities exposes no
-guaranteed `updatedAt` (it is only a property type if the structure happens to
-define one), so the cursor records *what has already been read* and nothing
-else. A cached object is skipped on the next run **even if it changed since it
-was read**, and nothing in this workflow will notice. A stale Capacities row is
-therefore possible and silent.
+The read cursor is **coverage, not change detection**. It records *what has
+already been read* and nothing else, so a cached object is skipped on the next
+run **even if it changed since it was read**, and nothing in this workflow will
+notice. A stale Capacities row is therefore possible and silent.
+
+This is not for lack of a timestamp: Capacities does expose change time — every
+object carries a top-level `lastUpdated`, and a structure may define a
+`lastUpdatedAt` property. The cursor still cannot use it, because detecting
+change from `lastUpdated` would require the content read the cursor exists to
+avoid.
 
 To force a re-read, delete `~/.config/tdtb/state/producer-cache.json` (or the
 one object's entry) before running the plan step. Do not describe or rely on
@@ -202,30 +256,67 @@ the cache as change detection.
 }
 ```
 
-A Capacities rule adds `structure` (required: the structure id or title the
-rule scopes) and an optional `duration_prop` (the property that carries the
-duration in minutes):
+A Capacities rule adds `structure` (required: the structure title or id the
+rule scopes) and an optional `duration_prop` (a property that carries a
+duration in minutes, when the structure defines one):
 
 ```json
 {
-  "id": "capacities-inbox-assigned",
+  "id": "capacities-active-assigned",
   "source": "capacities",
   "structure": "Project",
-  "duration_prop": "Duration",
-  "when": { "prop": "collections", "op": "in", "values": ["Inbox"] },
+  "when": {
+    "all": [
+      { "prop": "assigned", "op": "truthy" },
+      { "prop": "status", "op": "in", "values": ["Active"] }
+    ]
+  },
   "assigned": true,
   "pool": false
 }
 ```
 
+A worked set of leaves in the Project vocabulary root confirmed exists —
+combine them with `{"all": [...]}` / `{"any": [...]}` to form a `when`:
+
+```json
+[
+  {"prop": "assigned", "op": "truthy"},
+  {"prop": "status", "op": "in", "values": ["Active"]},
+  {"prop": "priority", "op": "in", "values": ["P1"]},
+  {"prop": "timeFrame", "op": "before", "values": ["$today"]},
+  {"prop": "continualCadence", "op": "gt", "values": [3]},
+  {"prop": "phase", "op": "in", "values": ["<a phase value>"]}
+]
+```
+
+`assigned truthy` and `status in ["Active"]` are the two concrete examples
+above; neither matches unless the fetched object carries `structureTitle` and
+`frontmatterKey`-keyed properties. `status` is a label property, so it must use
+`in` (see the list gotcha above).
+
+The starter's `capacities-inbox-assigned` rule is inert against this space: no
+collection named `Inbox` exists, and the `Project` structure defines no
+`Duration` property (its number property is `continualCadence`). It matches
+nothing — do not describe it as working. Leave the operator's rules file alone;
+report an inert rule and let the operator edit it.
+
 - `when` is recursive: a combinator `{"all": [...]}`, `{"any": [...]}`,
   `{"not": {...}}`, or a leaf `{"prop", "op", "values"}`.
 - Ops: `eq`, `in`, `exists`, `truthy`, `lt`, `gt`, `before`, `after`,
   `matches`. The value token `"$today"` resolves to the run's logical day.
-- `prop` is a dotted path into the record. For Capacities, the typed property
-  payloads are flattened deterministically by the producer (text/number/boolean
-  to their value, a date to its start, a label/entity to its name), so a rule
-  says `{"prop": "Duration", "op": "gt", "values": [60]}`, not a payload path.
+- **Label/entity properties are lists — use `in`, not `eq`.** A `label` or
+  `entity` property flattens to a *list* of names, so
+  `{"prop": "status", "op": "eq", "values": ["Active"]}` silently never
+  matches while `{"prop": "status", "op": "in", "values": ["Active"]}`
+  does. `eq` is only for scalar properties (text/number/boolean/date).
+- `prop` is a dotted path into the record; for Capacities it is the property's
+  `frontmatterKey` (`assigned`, `status`, `continualCadence`, `timeFrame`,
+  `phase`). The typed property payloads are flattened deterministically by the
+  producer (text/number/boolean to their value, a date to its start, a
+  label/entity to its list of names), so a rule says
+  `{"prop": "continualCadence", "op": "gt", "values": [3]}`, not a payload
+  path.
 - **First-match-wins**: the first rule whose `source` matches and whose `when`
   holds decides the record, so exclusion rules must come before admission
   rules. A record no rule matches is dropped. A Capacities rule also requires
