@@ -55,6 +55,7 @@ from typing import Any, Callable, Iterable, Iterator
 
 import app_config
 import capacities_cache_io
+import capacities_refresh_state
 import runstate
 from capacities_adapter import (
     CapacitiesAdapter,
@@ -103,6 +104,11 @@ CONTENT_CACHE_SCHEMA_VERSION = 1
 DEFAULT_CONTENT_CACHE_PATH = (
     Path.home() / ".config" / "tdtb" / "tdtb-capacities-content-cache.json"
 )
+#: S1-style state directory for the direct-refresh store (U1): per-object
+#: content plus the complete-generation pointer. Machine-local for the same
+#: reason as the legacy cache, but with its own root so the legacy reader's
+#: bytes and lifetime stay untouched.
+REFRESH_STATE_DIRNAME = "capacities-refresh"
 #: Sentinel selecting the factory-managed, namespace-scoped durable cache.
 #: Keeping a distinct identity lets an explicit ``None`` (or any test cache)
 #: keep its exact current meaning.
@@ -1115,6 +1121,9 @@ class CapacitiesBuilderConfig:
     #: Machine-local durable-cache path. ``None`` uses
     #: ``DEFAULT_CONTENT_CACHE_PATH``; tests inject a ``tmp_path``.
     cache_path: Path | None = None
+    #: Machine-local direct-refresh store root. ``None`` uses
+    #: ``refresh_state_dir()``; tests inject a ``tmp_path``.
+    refresh_state_path: Path | None = None
 
 
 def _resolve_assigned_structures(
@@ -1246,6 +1255,80 @@ def build_capacities_adapter(
             assignment_settings=assignment_settings,
             content_cache=content_cache,
         ),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Direct-refresh state store (U1)
+# ---------------------------------------------------------------------------
+# The legacy ``_ContentCache`` above keeps its TTL/bound/merge contract for the
+# read path that already shipped. The direct-refresh coordinator (U2) instead
+# uses ``capacities_refresh_state``: versioned per-object persistence with no
+# TTL, plus a separate atomic complete-generation pointer. These helpers are
+# the only composition seam; they add no behavior to the legacy reader.
+
+
+def refresh_state_dir() -> Path:
+    """``<app home>/state/capacities-refresh/`` — the direct-refresh root."""
+    return app_config.state_dir() / REFRESH_STATE_DIRNAME
+
+
+def build_refresh_state(
+    vault_root: str | Path,
+    space_id: str,
+    config: CapacitiesBuilderConfig | None = None,
+) -> capacities_refresh_state.RefreshStateStore:
+    """Resolve the direct-refresh store for one vault + space + provider.
+
+    Namespacing reuses the same machine-local root convention as the legacy
+    cache (``app_config.state_dir()``) but a distinct directory. The provider
+    origin — not the full base URL — is the identity component, so a path-only
+    base-URL change cannot orphan stored objects.
+    """
+    cfg = config if config is not None else CapacitiesBuilderConfig()
+    root = (
+        Path(cfg.refresh_state_path)
+        if cfg.refresh_state_path is not None
+        else refresh_state_dir()
+    )
+    return capacities_refresh_state.RefreshStateStore(
+        root,
+        origin=capacities_refresh_state.provider_origin(cfg.base_url),
+        space_id=space_id,
+        vault_root=vault_root,
+    )
+
+
+def import_legacy_content_cache(
+    store: capacities_refresh_state.RefreshStateStore,
+    vault_root: str | Path,
+    space_id: str,
+    config: CapacitiesBuilderConfig | None = None,
+    *,
+    object_types: Any,
+    legacy_path: str | Path | None = None,
+) -> capacities_refresh_state.LegacyImport:
+    """Import compatible legacy cache entries into the new store, read-only.
+
+    The legacy namespace digest is computed exactly as
+    :func:`_resolve_content_cache` does, so only a document written for this
+    vault + space + provider is eligible. ``legacy_path`` defaults to the
+    configured cache path (or ``DEFAULT_CONTENT_CACHE_PATH``), matching the
+    legacy reader's own resolution.
+    """
+    cfg = config if config is not None else CapacitiesBuilderConfig()
+    if legacy_path is not None:
+        path = Path(legacy_path)
+    elif cfg.cache_path is not None:
+        path = Path(cfg.cache_path)
+    else:
+        path = DEFAULT_CONTENT_CACHE_PATH
+    expected_namespace = _content_cache_namespace(vault_root, space_id, cfg.base_url)
+    return capacities_refresh_state.import_legacy_entries(
+        store,
+        path,
+        expected_namespace=expected_namespace,
+        object_types=object_types,
     )
 
 

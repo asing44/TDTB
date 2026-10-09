@@ -19,7 +19,9 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+import app_config  # noqa: E402
 import capacities_builder as cb  # noqa: E402
+import capacities_refresh_state as crs  # noqa: E402
 import capacities_settings as cs  # noqa: E402
 import capacities_structure_titles as cst  # noqa: E402
 from capacities_adapter import (  # noqa: E402
@@ -1897,3 +1899,116 @@ def test_a_read_that_never_fetches_structures_leaves_titles_untouched(tmp_path):
     assert cst.read_titles(tmp_path, SPACE, cb.CAPACITIES_BASE_URL) == {
         "RootTask": "Task"
     }
+
+
+# ---------------------------------------------------------------------------
+# Direct-refresh state store (U1) — builder composition seams
+# ---------------------------------------------------------------------------
+
+def test_refresh_state_dir_is_machine_local_beside_the_other_stores():
+    assert cb.REFRESH_STATE_DIRNAME == "capacities-refresh"
+    assert cb.refresh_state_dir() == app_config.state_dir() / "capacities-refresh"
+
+
+def test_builder_resolves_a_namespaced_refresh_state_store(tmp_path):
+    root = tmp_path / "refresh-state"
+    config = cb.CapacitiesBuilderConfig(refresh_state_path=root)
+
+    store = cb.build_refresh_state(tmp_path, SPACE, config)
+    store.put("task-1", "RootTask", {"id": "task-1"}, content_read_at=1234.0)
+
+    document = json.loads(next((root / crs.OBJECTS_DIRNAME).glob("*.json")).read_text())
+    assert document["namespace"] == crs.object_namespace(
+        crs.provider_origin(cb.CAPACITIES_BASE_URL), SPACE, "RootTask", "task-1"
+    )
+    assert document["content_read_at"] == 1234.0
+
+
+def test_refresh_state_dir_defaults_under_the_isolated_app_home(tmp_path):
+    store = cb.build_refresh_state(tmp_path, SPACE)
+    store.put("task-1", "RootTask", {"id": "task-1"}, content_read_at=1.0)
+
+    expected = cb.refresh_state_dir() / crs.OBJECTS_DIRNAME
+    assert expected.exists()
+    assert list(expected.glob("*.json"))
+
+
+def test_legacy_import_wrapper_uses_the_legacy_namespace_and_leaves_it_untouched(
+    tmp_path,
+):
+    legacy = tmp_path / "content-cache.json"
+    legacy.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "namespace": cb._content_cache_namespace(
+                    tmp_path, SPACE, cb.CAPACITIES_BASE_URL
+                ),
+                "entries": [
+                    {
+                        "object_id": "task-1",
+                        "fetched_at": 1000.0,
+                        "content": {"id": "task-1"},
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    before = legacy.read_bytes()
+
+    store = cb.build_refresh_state(
+        tmp_path, SPACE, cb.CapacitiesBuilderConfig(refresh_state_path=tmp_path / "s")
+    )
+    result = cb.import_legacy_content_cache(
+        store,
+        tmp_path,
+        SPACE,
+        cb.CapacitiesBuilderConfig(
+            refresh_state_path=tmp_path / "s", cache_path=legacy
+        ),
+        object_types={"task-1": "RootTask"},
+    )
+
+    assert result.imported == 1
+    assert legacy.read_bytes() == before
+    cached = store.get("task-1", "RootTask")
+    assert cached.content == {"id": "task-1"}
+    assert cached.content_read_at == 1000.0
+
+
+def test_legacy_import_wrapper_refuses_another_providers_document(tmp_path):
+    legacy = tmp_path / "content-cache.json"
+    legacy.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "namespace": cb._content_cache_namespace(
+                    tmp_path, SPACE, "https://other.example.com"
+                ),
+                "entries": [
+                    {
+                        "object_id": "task-1",
+                        "fetched_at": 1000.0,
+                        "content": {"id": "task-1"},
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    store = cb.build_refresh_state(
+        tmp_path, SPACE, cb.CapacitiesBuilderConfig(refresh_state_path=tmp_path / "s")
+    )
+    result = cb.import_legacy_content_cache(
+        store,
+        tmp_path,
+        SPACE,
+        cb.CapacitiesBuilderConfig(cache_path=legacy),
+        object_types={"task-1": "RootTask"},
+    )
+
+    assert result.imported == 0
+    assert result.warnings
+    assert store.get("task-1", "RootTask") is None
