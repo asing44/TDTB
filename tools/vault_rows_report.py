@@ -47,7 +47,18 @@ if str(_GATHER_DIR) not in sys.path:
 import tdtb_gather as gather  # noqa: E402  (path-shimmed import, as main.py does)
 
 
-def _row_view(row: dict) -> dict:
+_URGENCY_RANK = {"4-crit": 4, "3-high": 3, "2-med": 2, "1-low": 1}
+
+
+def _urgency_rank(value) -> int:
+    """Sortable urgency. The vault carries both ``"3-high"`` and
+    ``['3-high']`` for the same thing, and ``None`` for unset."""
+    if isinstance(value, (list, tuple)):
+        value = value[0] if value else None
+    return _URGENCY_RANK.get(str(value).strip(), 0)
+
+
+def _row_view(row: dict, today: date | None = None) -> dict:
     """The triage-relevant fields of one digest row.
 
     ``build_run_data`` rows carry no ``folder`` key — the vault-relative
@@ -59,6 +70,12 @@ def _row_view(row: dict) -> dict:
     folder = row.get("folder")
     if not folder and "/" in str(path):
         folder = str(path).rsplit("/", 1)[0]
+    overdue = False
+    if today is not None and deadline:
+        try:
+            overdue = date.fromisoformat(str(deadline)[:10]) < today
+        except ValueError:
+            overdue = False
     return {
         "name": row.get("name"),
         "path": path or None,
@@ -66,7 +83,9 @@ def _row_view(row: dict) -> dict:
         "types": row.get("types") or [],
         "deadline": deadline,
         "has_deadline": deadline is not None,
+        "overdue": overdue,
         "urgency": row.get("urgency"),
+        "urgency_rank": _urgency_rank(row.get("urgency")),
     }
 
 
@@ -76,11 +95,20 @@ def collect(vault_root: str | Path, today: date) -> dict:
     run_data = gather.build_run_data(pool_notes, assigned_notes, today)
 
     rows = [
-        _row_view(row)
+        _row_view(row, today)
         for row in list(run_data.get("pool_items") or [])
         + list(run_data.get("assigned_items") or [])
     ]
-    rows.sort(key=lambda r: (str(r.get("folder") or ""), str(r.get("name") or "")))
+    # Worklist order: what needs attention first — overdue, then urgency,
+    # then folder/name so the list is stable run to run.
+    rows.sort(
+        key=lambda r: (
+            not r["overdue"],
+            -r["urgency_rank"],
+            str(r.get("folder") or ""),
+            str(r.get("name") or ""),
+        )
+    )
 
     by_folder: dict[str, int] = {}
     for row in rows:
@@ -98,6 +126,8 @@ def collect(vault_root: str | Path, today: date) -> dict:
         "total": len(rows),
         "with_deadline": sum(1 for r in rows if r["has_deadline"]),
         "without_deadline": sum(1 for r in rows if not r["has_deadline"]),
+        "overdue": sum(1 for r in rows if r["overdue"]),
+        "high_urgency": sum(1 for r in rows if r["urgency_rank"] >= 3),
         "by_top_level_folder": dict(
             sorted(top_level.items(), key=lambda kv: (-kv[1], kv[0]))
         ),
@@ -117,6 +147,10 @@ def render_markdown(report: dict) -> str:
         f"({report['with_deadline']} carry a deadline, "
         f"{report['without_deadline']} do not)"
     )
+    out.append(
+        f"- **{report['overdue']} already overdue**, "
+        f"{report['high_urgency']} at urgency 3-high or above"
+    )
     out.append("")
     out.append("Flipping `sources.vault_enabled=false` stops the vault gather, so "
                "these rows leave the digest's candidate pool. Nothing is deleted — "
@@ -129,17 +163,17 @@ def render_markdown(report: dict) -> str:
     for folder, count in report["by_top_level_folder"].items():
         out.append(f"| `{folder}` | {count} |")
     out.append("")
-    out.append("## Every row")
+    out.append("## Every row (worklist order: overdue, then urgency)")
     out.append("")
-    out.append("| Name | Folder | Types | Deadline | Urgency |")
-    out.append("| --- | --- | --- | --- | --- |")
+    out.append("| Name | Folder | Types | Deadline | Urgency | Overdue |")
+    out.append("| --- | --- | --- | --- | --- | :---: |")
     for row in report["rows"]:
         types = ", ".join(str(t) for t in row["types"]) or "—"
         deadline = row["deadline"] or "—"
         urgency = row["urgency"] if row["urgency"] is not None else "—"
         out.append(
             f"| {row['name']} | `{row['folder'] or '—'}` | {types} | "
-            f"{deadline} | {urgency} |"
+            f"{deadline} | {urgency} | {'**yes**' if row['overdue'] else ''} |"
         )
     out.append("")
     return "\n".join(out)
