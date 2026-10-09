@@ -2018,19 +2018,12 @@ def test_legacy_import_wrapper_refuses_another_providers_document(tmp_path):
 # U2: direct-refresh coordinator wiring
 # ---------------------------------------------------------------------------
 
-def test_refresh_coordinator_serializes_publication_with_config_saves(tmp_path):
-    """The builder must wire the coordinator's publication guard to the save locks.
-
-    KTD3 requires that a configuration revision change cannot publish stale
-    scope. The coordinator's check-then-install section is only atomic with
-    respect to savers when its guard holds the same lock pair that
-    ``save_source`` and ``save_settings`` take, so hold the guard and prove a
-    save-like lock pair is excluded until it is released.
-    """
+def _refresh_coordinator_for(tmp_path):
+    """A production-wired coordinator over a well-formed record and settings."""
     _write_source(tmp_path, _valid_payload())
     _write_settings(tmp_path)
     token = _valid_token_file(tmp_path)
-    coordinator = cb.build_refresh_coordinator(
+    return cb.build_refresh_coordinator(
         tmp_path,
         cb.CapacitiesBuilderConfig(
             token_path=token,
@@ -2038,6 +2031,17 @@ def test_refresh_coordinator_serializes_publication_with_config_saves(tmp_path):
             transport=_RecordingTransport(),
         ),
     )
+
+
+def test_refresh_coordinator_serializes_publication_with_source_saves(tmp_path):
+    """The publication guard must exclude a source-record save.
+
+    KTD3 requires that a configuration revision change cannot publish stale
+    scope. The coordinator's check-then-install section is only atomic with
+    respect to savers when its guard holds the same locks they take, so hold
+    the guard and prove the source lock pair is excluded until release.
+    """
+    coordinator = _refresh_coordinator_for(tmp_path)
     assert coordinator is not None
     assert callable(coordinator.config_guard)
 
@@ -2070,3 +2074,52 @@ def test_refresh_coordinator_serializes_publication_with_config_saves(tmp_path):
     holder.join(timeout=5)
     saver.join(timeout=5)
     assert acquired.is_set()
+
+
+def test_refresh_coordinator_serializes_publication_with_settings_saves(tmp_path):
+    """The publication guard must also exclude a real settings save.
+
+    The settings policy keeps its own lock file, and its revision is half of
+    the combined revision the coordinator guards on, so a settings save landing
+    mid-window would publish scope the policy no longer describes. Drive the
+    real ``save_settings`` and prove it cannot complete while the guard is held.
+    """
+    coordinator = _refresh_coordinator_for(tmp_path)
+    assert coordinator is not None
+
+    entered = threading.Event()
+    release = threading.Event()
+
+    def hold_guard():
+        with coordinator.config_guard():
+            entered.set()
+            release.wait(timeout=5)
+
+    holder = threading.Thread(target=hold_guard)
+    holder.start()
+    assert entered.wait(timeout=5)
+
+    current = cs.read_settings(tmp_path).settings.revision
+    finished = threading.Event()
+    errors: list = []
+
+    def settings_save():
+        try:
+            cs.save_settings(
+                tmp_path,
+                expected_revision=current,
+                native_task_auto=cs.NativeTaskAutoPolicy(),
+            )
+        except BaseException as exc:  # noqa: BLE001 — surfaced below
+            errors.append(exc)
+        finally:
+            finished.set()
+
+    saver = threading.Thread(target=settings_save)
+    saver.start()
+    assert not finished.wait(timeout=0.3)
+    release.set()
+    holder.join(timeout=5)
+    assert finished.wait(timeout=5)
+    saver.join(timeout=5)
+    assert errors == []

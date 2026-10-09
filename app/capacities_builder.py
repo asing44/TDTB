@@ -57,6 +57,7 @@ import app_config
 import capacities_cache_io
 import capacities_refresh
 import capacities_refresh_state
+import capacities_settings
 import runstate
 from capacities_adapter import (
     CapacitiesAdapter,
@@ -1325,17 +1326,29 @@ def _refresh_state_root(config: CapacitiesBuilderConfig) -> Path:
 def _config_save_guard(vault_root: str | Path) -> Iterator[None]:
     """Serialize publication against configuration savers (KTD3).
 
-    The same lock pair, in the same order, that ``save_source`` and
-    ``capacities_settings.save_settings`` take: the per-vault process lock and
-    the app-home flock. Held across the coordinator's revision recheck and
-    generation install, a save cannot land between them; a save already in
-    flight forces the recheck to observe its new revision, so the run fails
-    stale instead of publishing scope the configuration no longer describes.
+    Held across the coordinator's revision recheck and generation install, a
+    save cannot land between them; a save already in flight forces the recheck
+    to observe its new revision, so the run fails stale instead of publishing
+    scope the configuration no longer describes.
+
+    Both saver lock files are taken because the two writers keep separate locks
+    today: the source record's (``capacities-source.lock``, this module) and the
+    settings policy's (``capacities-settings.lock``,
+    ``capacities_settings``). The revision is the sum of both stored revisions,
+    so excluding only one writer would leave the other's saves able to land
+    mid-window. The source pair is taken first; only this guard takes both, so
+    the fixed order cannot invert.
     """
     with _store_lock(vault_root):
         handle = _acquire_lock_file(vault_root)
         try:
-            yield
+            settings_handle = capacities_cache_io.acquire_path_lock(
+                capacities_settings.lock_path()
+            )
+            try:
+                yield
+            finally:
+                capacities_cache_io.release_lock_file(settings_handle)
         finally:
             _release_lock_file(handle)
 
