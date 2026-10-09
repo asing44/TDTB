@@ -57,6 +57,7 @@ import app_config
 import capacities_cache_io
 import capacities_refresh
 import capacities_refresh_state
+import capacities_rules
 import capacities_settings
 import runstate
 from capacities_adapter import (
@@ -1302,17 +1303,25 @@ def build_refresh_state(
 
 
 def refresh_config_revision(vault_root: str | Path) -> int | None:
-    """The current combined source+settings revision, or ``None`` if unconfigured.
+    """The current combined source+settings+rules revision, or ``None`` if
+    unconfigured.
 
     One definition shared by the coordinator's publication guard and the route
-    seam's cached-instance check. It is read fresh on every call so a mapping or
-    settings save during a run cannot publish stale scope, and a save between
-    runs cannot be masked by a coordinator built from the previous scope.
+    seam's cached-instance check. It is read fresh on every call so a mapping,
+    settings, or rules save during a run cannot publish stale scope, and a save
+    between runs cannot be masked by a coordinator built from the previous
+    scope. A malformed rules document raises rather than being folded into a
+    silent revision.
     """
     current = read_source(vault_root)
     if current is None:
         return None
-    return int(current.revision) + int(read_settings(vault_root).settings.revision)
+    rules = capacities_rules.load_rules(current.space_id)
+    return (
+        int(current.revision)
+        + int(read_settings(vault_root).settings.revision)
+        + int(rules.revision)
+    )
 
 
 def _refresh_state_root(config: CapacitiesBuilderConfig) -> Path:
@@ -1333,11 +1342,12 @@ def _config_save_guard(vault_root: str | Path) -> Iterator[None]:
 
     Both saver lock files are taken because the two writers keep separate locks
     today: the source record's (``capacities-source.lock``, this module) and the
-    settings policy's (``capacities-settings.lock``,
-    ``capacities_settings``). The revision is the sum of both stored revisions,
-    so excluding only one writer would leave the other's saves able to land
-    mid-window. The source pair is taken first; only this guard takes both, so
-    the fixed order cannot invert.
+    settings policy's (``capacities-settings.lock``, ``capacities_settings``).
+    The rules store's own lock file (``capacities-rules.lock``,
+    ``capacities_rules``) joins them: the rules revision is part of the combined
+    revision, so a rule save landing mid-window would otherwise let stale rules
+    publish. The source pair is taken first, then settings, then rules; only this
+    guard takes all three, so the fixed order cannot invert.
     """
     with _store_lock(vault_root):
         handle = _acquire_lock_file(vault_root)
@@ -1346,7 +1356,13 @@ def _config_save_guard(vault_root: str | Path) -> Iterator[None]:
                 capacities_settings.lock_path()
             )
             try:
-                yield
+                rules_handle = capacities_cache_io.acquire_path_lock(
+                    capacities_rules.lock_path()
+                )
+                try:
+                    yield
+                finally:
+                    capacities_cache_io.release_lock_file(rules_handle)
             finally:
                 capacities_cache_io.release_lock_file(settings_handle)
         finally:
@@ -1370,8 +1386,12 @@ def build_refresh_coordinator(
     The legacy content cache is deliberately NOT wired here: freshness lives in
     the U1 refresh store, so a stale legacy cache entry can never stand in for a
     required content read. The configuration revision the coordinator guards on
-    is the live source revision plus the settings revision, read fresh on every
-    check so a mapping or policy save during a run cannot publish stale scope.
+    is the live source revision plus the settings revision plus the rules
+    revision, read fresh on every check so a mapping, policy, or rule save during
+    a run cannot publish stale scope. The stored rules are loaded for the
+    record's space and handed to the coordinator, which passes them through to
+    its internal adapter config; malformed rules storage raises visibly rather
+    than silently disabling stored-rule eligibility.
     """
     cfg = config if config is not None else CapacitiesBuilderConfig()
     record = read_source(vault_root)
@@ -1379,6 +1399,7 @@ def build_refresh_coordinator(
         return None
 
     settings = read_settings(vault_root).settings
+    rules = capacities_rules.load_rules(record.space_id)
     token = load_capacities_token(cfg.token_path)
     client = CapacitiesRestClient(
         token,
@@ -1404,6 +1425,7 @@ def build_refresh_coordinator(
         revision_supplier=lambda: refresh_config_revision(vault_root),
         config_guard=lambda: _config_save_guard(vault_root),
         assignment_settings=settings.to_assignment_settings(),
+        rules=rules,
         max_pages=cfg.max_pages,
     )
 

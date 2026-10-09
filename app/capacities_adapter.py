@@ -20,6 +20,8 @@ from capacities_assignment import (
     AssignmentSettings,
     evaluate_assignment,
 )
+import capacities_rules
+from producer_rules import _capacities_predicate_record
 
 try:
     import httpx as _httpx
@@ -136,6 +138,13 @@ class CapacitiesConfig:
     #: settings store owns persistence and the caller passes it in. The adapter
     #: never reads vault files or credentials itself.
     assignment_settings: AssignmentSettings = field(default_factory=AssignmentSettings)
+    #: Optional stored per-type rules record (``capacities_rules.RulesRecord``)
+    #: for this space. When a structure has an ACTIVE stored rule, that rule is
+    #: the SINGLE eligibility authority for its objects: the legacy
+    #: ``evaluate_assignment`` decision is not ANDed in. ``None`` — or a record
+    #: for another space, or a draft-only entry — keeps the legacy decision
+    #: unchanged (KTD5).
+    rules: capacities_rules.RulesRecord | None = None
 
 
 @dataclass(frozen=True)
@@ -823,20 +832,41 @@ class CapacitiesAdapter:
         if not title:
             raise _MalformedObject(f"object {object_id!r} has an empty title")
 
-        decision = evaluate_assignment(
-            AssignmentCandidate(
-                identity=identity,
-                source_assigned=source_assigned,
-                status=status,
-                status_is_open=status_is_open,
-                due=due,
-                deadline=deadline,
-            ),
-            logical_day=logical_day,
-            settings=self.config.assignment_settings,
-        )
-        if not decision.eligible:
-            return None
+        active_rule = self._active_rule(mapping.structure_id)
+        rule_state: capacities_rules.Evaluation | None = None
+        if active_rule is not None:
+            # A stored active rule is the SINGLE eligibility authority for
+            # this structure (KTD5): the legacy assignment decision is not
+            # ANDed in, so a matching rule admits an object the source does
+            # not mark assigned. A known-closed mapped status still overrides
+            # inclusion, and an UNKNOWN evaluation is retained as an
+            # unassigned row rather than silently omitted (R29/R31).
+            rule_state = capacities_rules.evaluate(
+                active_rule,
+                _capacities_predicate_record(obj),
+                logical_day=logical_day.isoformat(),
+            )
+            if rule_state is capacities_rules.NO_MATCH:
+                return None
+            if status_is_open is False:
+                return None
+            assigned = rule_state is capacities_rules.MATCH
+        else:
+            decision = evaluate_assignment(
+                AssignmentCandidate(
+                    identity=identity,
+                    source_assigned=source_assigned,
+                    status=status,
+                    status_is_open=status_is_open,
+                    due=due,
+                    deadline=deadline,
+                ),
+                logical_day=logical_day,
+                settings=self.config.assignment_settings,
+            )
+            if not decision.eligible:
+                return None
+            assigned = True
 
         duration: int | float = 30
         if mapping.duration_property:
@@ -866,7 +896,7 @@ class CapacitiesAdapter:
             "urgency": None,
             "deadline": due.isoformat() if due else None,
             "priority_score": 0,
-            "assigned": decision.eligible,
+            "assigned": assigned,
             "duration": duration,
             "duration_minutes": duration,
             "blocks": blocks,
@@ -875,16 +905,25 @@ class CapacitiesAdapter:
             "capacities_structure_id": mapping.structure_id,
             "capacities_completion_supported": bool(mapping.completion_property),
             "source_fingerprint": _fingerprint(obj),
-            # Compact serialization of the evaluator decision, never a title or
-            # a policy key. Downstream index allowlists may ignore it.
-            "capacities_assignment": {
+            "capacities_tags": tag_refs,
+        }
+        if active_rule is not None:
+            # Structured stored-rule state: the tri-state outcome plus the
+            # rules revision it was decided under, so a downstream slice can
+            # surface an unassigned warning candidate without re-deciding.
+            row["capacities_rule"] = {
+                "state": rule_state.value,
+                "revision": int(getattr(self.config.rules, "revision", 0)),
+            }
+        else:
+            # Compact serialization of the evaluator decision, never a title
+            # or a policy key. Downstream index allowlists may ignore it.
+            row["capacities_assignment"] = {
                 "mode": decision.mode.value,
                 "reasons": list(decision.reason_codes),
                 "source_assigned": decision.provenance.source_assigned,
                 "excluded": decision.provenance.exclusion_matched,
-            },
-            "capacities_tags": tag_refs,
-        }
+            }
         if tag_error is not None:
             row["capacities_tags_error"] = tag_error
         return row
@@ -947,22 +986,41 @@ class CapacitiesAdapter:
             malformed=len(malformed),
         )
 
+    def _active_rule(self, structure_id: str) -> dict[str, Any] | None:
+        """The stored ACTIVE rule for one structure, or ``None``.
+
+        ``None`` covers every compatibility case at once: no rules record
+        supplied, a record for a different space (a stale or misrouted
+        document), no entry for this structure, and an entry with no active
+        rule (draft-only). ``{"all": []}`` is a real active rule and is
+        deliberately distinct from ``None``."""
+        record = self.config.rules
+        if record is None:
+            return None
+        if getattr(record, "space_id", None) != self.config.space_id:
+            return None
+        return record.effective_rule(structure_id)
+
     def _structure_can_contribute(self, mapping: StructureMapping) -> bool:
         """Whether any object from this structure could ever be eligible.
 
         A structure configured as native is always evaluated (its Auto rules
         are the only inclusion path). A custom structure with a source
-        assignment property can contribute a source-assigned row. A custom
-        structure with neither an assignment property nor an Active enable can
-        never include anything, so it is not enumerated and its objects are
-        never hydrated — which matters because the live API allows 30 requests
-        per minute and enumeration plus hydration is otherwise an N+1 burst.
+        assignment property can contribute a source-assigned row. A structure
+        with an ACTIVE stored rule contributes even without a legacy
+        assignment property or Active enable, because the rule is its
+        eligibility path. A custom structure with none of those can never
+        include anything, so it is not enumerated and its objects are never
+        hydrated — which matters because the live API allows 30 requests per
+        minute and enumeration plus hydration is otherwise an N+1 burst.
         """
         if mapping.structure_id in self.config.assignment_settings.native_task_structures:
             return True
         if mapping.assignment_property:
             return True
-        return mapping.structure_id in self.config.assignment_settings.active_structures
+        if mapping.structure_id in self.config.assignment_settings.active_structures:
+            return True
+        return self._active_rule(mapping.structure_id) is not None
 
     def _drain_cache_warnings(self) -> list[str]:
         """Collect content-cache diagnostics recorded since the last read.

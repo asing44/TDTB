@@ -400,6 +400,7 @@ class RefreshCoordinator:
         revision_supplier: Callable[[], int | None],
         scope_key: str = DEFAULT_SCOPE_KEY,
         assignment_settings: Any = None,
+        rules: Any = None,
         max_pages: int = 20,
         logical_day: date | None = None,
         clock: Callable[[], float] = time.monotonic,
@@ -447,6 +448,7 @@ class RefreshCoordinator:
                     if assignment_settings is not None
                     else capacities_adapter.AssignmentSettings()
                 ),
+                rules=rules,
                 content_cache=None,
             ),
         )
