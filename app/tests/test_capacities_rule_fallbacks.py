@@ -15,9 +15,16 @@ Test-first for the second U3b slice:
 * a mapped completion excludes only its configured completed value when it
   is a distinct field; every other readable value (and absent, empty, or
   unreadable ones) is UNKNOWN until an open vocabulary is mapped. A
-  same-field completion mirrors the status classification, which does carry
-  an open vocabulary. UNKNOWN status or completion forces ``assigned`` False
-  even when the rule MATCHes and the source marks the object assigned.
+  same-field completion checks its configured completed value BEFORE the
+  open vocabulary, so a mixed ``[active, done]`` payload is excluded even
+  though ``active`` intersects the open values. UNKNOWN status or completion
+  forces ``assigned`` False even when the rule MATCHes and the source marks
+  the object assigned;
+* rule-path status and completion classification validates the declared
+  typed payload shape instead of stringifying arbitrary values with the
+  legacy flattener, so a malformed member (``[{id: {…}}]``, ``[5]``,
+  ``[[…]]``, ``[True]``, ``{foo: active}``) cannot masquerade as a readable
+  non-open token and silently exclude the object.
 """
 from __future__ import annotations
 
@@ -79,6 +86,8 @@ def _fixture_structures():
                     "label",
                     labels=[("complete", "Complete"), ("started", "Started")],
                 ),
+                _definition("flag", "boolean"),
+                _definition("count", "number"),
             ],
         },
     ]
@@ -139,6 +148,8 @@ def _custom_object(
     tdtb="yes",
     state="active",
     completion=None,
+    flag=None,
+    count=None,
     object_id="obj-1",
 ):
     properties = {"title": _prop("title", "title", "Sample")}
@@ -150,6 +161,10 @@ def _custom_object(
         properties["state"] = _payload(state)
     if completion is not None:
         properties["completion"] = _payload(completion)
+    if flag is not None:
+        properties["flag"] = _payload(flag)
+    if count is not None:
+        properties["count"] = _payload(count)
     return _object(object_id, "custom-project", properties)
 
 
@@ -423,3 +438,305 @@ def test_legacy_rows_carry_no_rule_path_state_metadata():
     assert "capacities_rule" not in row
     assert "capacities_status_state" not in row
     assert "capacities_completion_state" not in row
+
+
+# ---------------------------------------------------------------------------
+# Strict rule-only payload extraction
+# ---------------------------------------------------------------------------
+
+#: The malformed payload shapes an independent reviewer reproduced against
+#: the rule path: the legacy ``_property_tokens`` flattener stringified each
+#: member into a readable-looking non-open token and the object was silently
+#: classified closed (items=0, malformed=0).
+MALFORMED_PAYLOADS = [
+    pytest.param(_prop("label", "label", [{"id": {"x": 1}}]), id="dict-id"),
+    pytest.param(_prop("label", "label", [5]), id="numeric-member"),
+    pytest.param(_prop("label", "label", [["active"]]), id="nested-list-member"),
+    pytest.param(_prop("label", "label", [True]), id="boolean-member"),
+    pytest.param(_prop("text", "text", {"foo": "active"}), id="text-without-value"),
+]
+
+
+@pytest.mark.parametrize("payload", MALFORMED_PAYLOADS)
+def test_malformed_status_payload_is_unknown_and_retained(payload):
+    """A malformed mapped status is UNKNOWN on the rule path: the object is
+    retained unassigned instead of being silently excluded, and the malformed
+    count stays zero because the row still projects."""
+    mappings = [_legacy_root_mapping(), _status_mapping()]
+    record = _rules(_custom_rule())
+
+    result = _adapter(mappings, record).items_for_day_from_objects(
+        DAY, [_custom_object(state=payload)]
+    )
+
+    assert len(result.items) == 1
+    row = result.items[0]
+    assert row["assigned"] is False
+    assert row["capacities_rule"] == {"state": "match", "revision": REVISION}
+    assert row["capacities_status_state"] == "unknown"
+    assert row["capacities_completion_state"] == "unavailable"
+    assert result.malformed == 0
+
+
+@pytest.mark.parametrize("payload", MALFORMED_PAYLOADS)
+def test_malformed_distinct_completion_payload_is_unknown_and_retained(payload):
+    """The same malformed shapes on a distinct completion field are UNKNOWN —
+    never a guessed closed state and never a failed object."""
+    mapping = _status_mapping(
+        completion_property="completion", completion_value="complete"
+    )
+    mappings = [_legacy_root_mapping(), mapping]
+    record = _rules(_custom_rule())
+
+    result = _adapter(mappings, record).items_for_day_from_objects(
+        DAY, [_custom_object(completion=payload)]
+    )
+
+    assert len(result.items) == 1
+    row = result.items[0]
+    assert row["assigned"] is False
+    assert row["capacities_status_state"] == "open"
+    assert row["capacities_completion_state"] == "unknown"
+    assert result.malformed == 0
+
+
+@pytest.mark.parametrize(
+    "prop_id,payload,open_values,outcome",
+    [
+        pytest.param(
+            "state",
+            _prop("label", "label", [{"id": "active", "name": "Active"}]),
+            frozenset({"active"}),
+            "open",
+            id="label-open",
+        ),
+        pytest.param(
+            "state",
+            _prop("label", "label", [{"id": "done"}]),
+            frozenset({"active"}),
+            "closed",
+            id="label-closed",
+        ),
+        pytest.param(
+            "state", _prop("text", "text", "active"), frozenset({"active"}), "open",
+            id="text-open",
+        ),
+        pytest.param(
+            "state",
+            _prop("text", "text", {"value": "done"}),
+            frozenset({"active"}),
+            "closed",
+            id="text-closed",
+        ),
+        pytest.param(
+            "flag", _prop("boolean", "boolean", True), frozenset({"true"}), "open",
+            id="boolean-open",
+        ),
+        pytest.param(
+            "flag", _prop("boolean", "boolean", True), frozenset({"false"}), "closed",
+            id="boolean-closed",
+        ),
+        pytest.param(
+            "count",
+            _prop("number", "number", {"value": 5}),
+            frozenset({"5"}),
+            "open",
+            id="number-open",
+        ),
+        pytest.param(
+            "count", _prop("number", "number", 7), frozenset({"5"}), "closed",
+            id="number-closed",
+        ),
+    ],
+)
+def test_valid_status_payloads_still_classify_open_and_closed(
+    prop_id, payload, open_values, outcome
+):
+    """Valid label/text/boolean/number statuses keep the legacy token
+    semantics: a readable open token admits and a readable non-open token
+    stays a hard exclusion."""
+    mapping = _status_mapping(
+        open_status_property=prop_id, open_status_values=open_values
+    )
+    mappings = [_legacy_root_mapping(), mapping]
+    record = _rules(_custom_rule())
+
+    result = _adapter(mappings, record).items_for_day_from_objects(
+        DAY, [_custom_object(**{prop_id: payload})]
+    )
+
+    assert result.malformed == 0
+    if outcome == "open":
+        assert len(result.items) == 1
+        assert result.items[0]["capacities_status_state"] == "open"
+        assert result.items[0]["assigned"] is True
+    else:
+        assert result.items == []
+
+
+@pytest.mark.parametrize(
+    "prop_id,payload,open_values",
+    [
+        pytest.param(
+            "flag", _prop("boolean", "boolean", False), frozenset({"true"}),
+            id="boolean-false",
+        ),
+        pytest.param(
+            "count", _prop("number", "number", 0), frozenset({"0"}),
+            id="number-zero",
+        ),
+    ],
+)
+def test_falsy_scalar_status_stays_unknown_like_the_legacy_token_path(
+    prop_id, payload, open_values
+):
+    """The legacy read path dropped falsy scalars before normalization
+    (``str(False or "")``), so ``False`` and ``0`` never produced a token.
+    The rule path preserves that: UNKNOWN, not a guessed new closed token."""
+    mapping = _status_mapping(
+        open_status_property=prop_id, open_status_values=open_values
+    )
+    mappings = [_legacy_root_mapping(), mapping]
+    record = _rules(_custom_rule())
+
+    result = _adapter(mappings, record).items_for_day_from_objects(
+        DAY, [_custom_object(**{prop_id: payload})]
+    )
+
+    assert len(result.items) == 1
+    row = result.items[0]
+    assert row["assigned"] is False
+    assert row["capacities_status_state"] == "unknown"
+    assert result.malformed == 0
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        pytest.param(_prop("label", "label", [{"id": 5}]), id="label-non-string-id"),
+        pytest.param(
+            _prop("label", "label", [{"name": ["active"]}]),
+            id="label-non-string-name",
+        ),
+        pytest.param(_prop("text", "text", {"value": 5}), id="text-non-string-value"),
+        pytest.param(
+            _prop("number", "number", {"value": True}), id="number-boolean-value"
+        ),
+        pytest.param(
+            _prop("boolean", "boolean", {"value": "true"}), id="boolean-string-value"
+        ),
+        pytest.param(_prop("date", "date", {"start": 5}), id="date-non-string-start"),
+        pytest.param(
+            _prop("date", "date", "2026-09-29"), id="date-non-dict-payload"
+        ),
+    ],
+)
+def test_non_scalar_typed_payloads_stay_unknown(payload):
+    """The strict extractor validates the declared typed shape: a scalar of
+    the wrong type (including a boolean where a number is declared) is
+    unreadable, not stringified into a token."""
+    mapping = _status_mapping(
+        completion_property="completion", completion_value="complete"
+    )
+    mappings = [_legacy_root_mapping(), mapping]
+    record = _rules(_custom_rule())
+
+    result = _adapter(mappings, record).items_for_day_from_objects(
+        DAY, [_custom_object(completion=payload)]
+    )
+
+    assert len(result.items) == 1
+    row = result.items[0]
+    assert row["assigned"] is False
+    assert row["capacities_completion_state"] == "unknown"
+    assert result.malformed == 0
+
+
+# ---------------------------------------------------------------------------
+# Same-field completion checks the completed value before the open vocabulary
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("tdtb", ["yes", "no"])
+def test_same_field_completed_value_excludes_mixed_open_payload(tdtb):
+    """The configured completed value wins over the open vocabulary on a
+    same-field completion: ``[active, done]`` is excluded even though
+    ``active`` intersects the open values, whatever the source says."""
+    mapping = _status_mapping(completion_property="state", completion_value="done")
+    mappings = [_legacy_root_mapping(), mapping]
+    record = _rules(_custom_rule())
+
+    result = _adapter(mappings, record).items_for_day_from_objects(
+        DAY,
+        [
+            _custom_object(
+                state=_prop("label", "label", [{"id": "active"}, {"id": "done"}]),
+                tdtb=tdtb,
+            )
+        ],
+    )
+
+    assert result.items == []
+    assert result.malformed == 0
+
+
+@pytest.mark.parametrize(
+    "payload,excluded",
+    [
+        pytest.param(
+            _prop("label", "label", [{"id": {"x": 1}}, {"id": "done"}]),
+            True,
+            id="malformed-plus-completed",
+        ),
+        pytest.param(
+            _prop("label", "label", [{"id": {"x": 1}}, {"id": "active"}]),
+            False,
+            id="malformed-plus-open-without-completed",
+        ),
+    ],
+)
+def test_same_field_mixed_malformed_payload_keeps_known_completion(payload, excluded):
+    """Readable completed evidence still excludes when another member is
+    unreadable, while a mixed payload without the completed token forces
+    UNKNOWN: the row stays an unassigned warning candidate rather than being
+    excluded on partial evidence."""
+    mapping = _status_mapping(completion_property="state", completion_value="done")
+    mappings = [_legacy_root_mapping(), mapping]
+    record = _rules(_custom_rule())
+
+    result = _adapter(mappings, record).items_for_day_from_objects(
+        DAY, [_custom_object(state=payload)]
+    )
+
+    assert result.malformed == 0
+    if excluded:
+        assert result.items == []
+    else:
+        assert len(result.items) == 1
+        row = result.items[0]
+        assert row["assigned"] is False
+        assert row["capacities_status_state"] == "unknown"
+        assert row["capacities_completion_state"] == "unknown"
+
+
+def test_distinct_completion_malformed_plus_completed_excludes():
+    """A known completed token on a distinct field is read even when another
+    member is malformed, so the hard exclusion still applies."""
+    mapping = _status_mapping(
+        completion_property="completion", completion_value="complete"
+    )
+    mappings = [_legacy_root_mapping(), mapping]
+    record = _rules(_custom_rule())
+
+    result = _adapter(mappings, record).items_for_day_from_objects(
+        DAY,
+        [
+            _custom_object(
+                completion=_prop(
+                    "label", "label", [{"id": {"x": 1}}, {"id": "complete"}]
+                )
+            )
+        ],
+    )
+
+    assert result.items == []
+    assert result.malformed == 0

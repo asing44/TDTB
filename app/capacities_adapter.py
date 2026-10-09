@@ -329,6 +329,109 @@ def _status_display_tokens(prop: Any, prop_id: str) -> set[str]:
     return {_normalized(value) for value in values if value is not None and _text(value)}
 
 
+_RULE_TEXT_KINDS = frozenset({"title", "text", "url", "richText"})
+
+
+def _rule_scalar(payload: Any) -> tuple[Any, bool]:
+    """Unwrap an optional ``{"value": …}`` typed payload for a scalar kind.
+
+    Returns ``(value, malformed)``. A dict without a ``value`` key is
+    malformed; any other payload is used as-is. The rule path never
+    stringifies the wrapper itself.
+    """
+    if isinstance(payload, dict):
+        if "value" not in payload:
+            return None, True
+        return payload["value"], False
+    return payload, False
+
+
+def _rule_status_tokens(prop: Any, prop_id: str) -> tuple[set[str], bool]:
+    """Strict ``(tokens, unreadable)`` extraction for rule-path classification.
+
+    The legacy ``_property_tokens`` flattener normalizes every value with
+    ``str()``, so a malformed member (``[{id: {…}}]``, ``[5]``, ``[[…]]``,
+    ``[True]``, ``{foo: active}``) becomes a readable-looking non-open token
+    and the object is silently classified closed. This rule-only helper
+    validates the declared typed shape instead and reports whether any part
+    of the payload could not be read as its declared type. Tokens keep the
+    legacy normalized forms for valid payloads (``True`` → ``"true"``,
+    ``45`` → ``"45"``), and the falsy scalars the legacy path dropped
+    (``False``, ``0``) still produce no token, so configured vocabularies
+    are never re-guessed.
+    """
+    if not isinstance(prop, dict):
+        return set(), True
+    kind = _text(prop.get("type"))
+    if not kind or kind not in prop:
+        return set(), True
+    payload = prop[kind]
+    tokens: set[str] = set()
+    unreadable = False
+    if kind in {"label", "entity"}:
+        if not isinstance(payload, list):
+            return set(), True
+        for member in payload:
+            if isinstance(member, str):
+                token = _normalized(member)
+                if token:
+                    tokens.add(token)
+            elif isinstance(member, dict):
+                readable = False
+                for key in ("id", "name"):
+                    value = member.get(key)
+                    if isinstance(value, str):
+                        readable = True
+                        token = _normalized(value)
+                        if token:
+                            tokens.add(token)
+                if not readable:
+                    unreadable = True
+            else:
+                unreadable = True
+    elif kind in _RULE_TEXT_KINDS:
+        value, malformed = _rule_scalar(payload)
+        if malformed:
+            unreadable = True
+        elif value is not None:
+            if not isinstance(value, str):
+                unreadable = True
+            else:
+                token = _normalized(value)
+                if token:
+                    tokens.add(token)
+    elif kind == "number":
+        value, malformed = _rule_scalar(payload)
+        if malformed or isinstance(value, bool) or not isinstance(value, (int, float)):
+            unreadable = True
+        else:
+            token = _normalized(value)
+            if token:
+                tokens.add(token)
+    elif kind == "boolean":
+        value, malformed = _rule_scalar(payload)
+        if malformed or not isinstance(value, bool):
+            unreadable = True
+        else:
+            token = _normalized(value)
+            if token:
+                tokens.add(token)
+    elif kind == "date":
+        if not isinstance(payload, dict):
+            return set(), True
+        start = payload.get("start")
+        if start is not None:
+            if not isinstance(start, str):
+                unreadable = True
+            else:
+                token = _normalized(start)
+                if token:
+                    tokens.add(token)
+    else:
+        return set(), True
+    return tokens, unreadable
+
+
 def _classify_open_status(
     prop: Any, prop_id: str, open_values: frozenset[str]
 ) -> str:
@@ -336,40 +439,55 @@ def _classify_open_status(
 
     Used on the stored-rule path, where an under-evaluated status must keep
     the object visible as an unassigned candidate instead of failing the
-    object (legacy) or silently excluding it. Absent, empty, and unreadable
-    payloads are UNKNOWN; a readable non-empty payload with no open match is
-    a known-closed hard exclusion.
+    object (legacy) or silently excluding it. The payload is read strictly
+    (``_rule_status_tokens``): absent, empty, and unreadable payloads are
+    UNKNOWN, and only a fully readable payload with no open match is a
+    known-closed hard exclusion.
     """
     if prop is None:
         return "unknown"
-    try:
-        tokens = _property_tokens(prop, prop_id)
-    except _MalformedObject:
-        return "unknown"
-    if not tokens:
+    tokens, unreadable = _rule_status_tokens(prop, prop_id)
+    if unreadable or not tokens:
         return "unknown"
     if tokens.intersection({_normalized(value) for value in open_values}):
         return "open"
     return "closed"
 
 
-def _classify_completion(prop: Any, prop_id: str, completion_value: str | None) -> str:
-    """Unknown / closed classification for a distinct completion field.
+def _classify_completion(
+    prop: Any,
+    prop_id: str,
+    completion_value: str | None,
+    open_values: frozenset[str] | None = None,
+) -> str:
+    """Unknown / closed classification for a mapped completion.
 
-    Only the configured ``completion_value`` is a known closed state; it does
-    not define the rest of the vocabulary, so every other readable value —
-    and every absent, empty, or unreadable value — is UNKNOWN rather than a
-    guessed exclusion (R27/R29).
+    A distinct completion field (``open_values is None``) has no vocabulary
+    beyond the configured ``completion_value``: only that readable token is a
+    known closed state, and every other value — including an absent, empty,
+    or unreadable payload — is UNKNOWN rather than a guessed exclusion
+    (R27/R29).
+
+    A same-field completion (``open_values`` supplied, because the mapping
+    shares the open-status property) checks the configured completed value
+    FIRST, so a mixed ``[active, done]`` payload is excluded even though
+    ``active`` intersects the open values. Readable completed evidence wins
+    even when another member is unreadable; without it, any unreadable member
+    or an empty payload is UNKNOWN, and only a fully readable payload falls
+    back to the open vocabulary.
     """
     if prop is None:
         return "unknown"
-    try:
-        tokens = _property_tokens(prop, prop_id)
-    except _MalformedObject:
-        return "unknown"
+    tokens, unreadable = _rule_status_tokens(prop, prop_id)
     if completion_value is not None and _normalized(completion_value) in tokens:
         return "closed"
-    return "unknown"
+    if open_values is None:
+        return "unknown"
+    if unreadable or not tokens:
+        return "unknown"
+    if tokens.intersection({_normalized(value) for value in open_values}):
+        return "open"
+    return "closed"
 
 
 #: Capacities' tag property id on task-like structures. Tags are typed
@@ -868,11 +986,13 @@ class CapacitiesAdapter:
             status_state = "unavailable"
 
         # Completion availability on the stored-rule path. A mapping that
-        # shares the open-status field mirrors the status classification,
-        # which does carry an open vocabulary; a distinct completion field has
-        # only ``completion_value`` known, so every other readable value — and
-        # every absent, empty, or unreadable value — is UNKNOWN rather than a
-        # guessed closed state (R27/R29).
+        # shares the open-status field checks the configured completed value
+        # first — a mixed ``[active, done]`` payload is closed — and only
+        # falls back to the open vocabulary when no completed token is
+        # readable; a distinct completion field has only ``completion_value``
+        # known, so every other readable value — and every absent, empty, or
+        # unreadable value — is UNKNOWN rather than a guessed closed state
+        # (R27/R29).
         completion_state: str | None = None
         if active_rule is not None:
             if not mapping.completion_property:
@@ -881,7 +1001,12 @@ class CapacitiesAdapter:
                 mapping.open_status_property
                 and mapping.completion_property == mapping.open_status_property
             ):
-                completion_state = status_state
+                completion_state = _classify_completion(
+                    status_prop,
+                    mapping.completion_property,
+                    mapping.completion_value,
+                    open_values=mapping.open_status_values,
+                )
             else:
                 completion_state = _classify_completion(
                     properties.get(mapping.completion_property),
