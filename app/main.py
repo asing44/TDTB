@@ -1868,6 +1868,10 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
     app.state.build_refresh_coordinator = build_real_refresh_coordinator
     app.state.refresh_coordinator = _REFRESH_COORDINATOR_UNSET
     app.state.refresh_coordinator_revision = _REFRESH_COORDINATOR_UNSET
+    #: Serializes the seam's check-build-assign so two racing starts cannot
+    #: each build an instance (the loser cached last would not own the live
+    #: job and could report it as interrupted).
+    app.state.refresh_coordinator_lock = threading.Lock()
     # G25: in-flight guard on POST /commit?mode=live — two racing live commits
     # both pass check-before-write against the same snapshot and double-write.
     app.state.live_commit_lock = threading.Lock()
@@ -2371,39 +2375,41 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
         if cached is not _REFRESH_COORDINATOR_UNSET and not ensure_current:
             return cached
         vault = _refresh_vault_root()
-        if cached is not _REFRESH_COORDINATOR_UNSET:
-            if cached is not None and cached.is_running():
-                return cached
+        with app.state.refresh_coordinator_lock:
+            # Re-read under the lock: a racing start may have built while this
+            # one waited, and its instance must win over a second build.
+            cached = getattr(app.state, "refresh_coordinator", _REFRESH_COORDINATOR_UNSET)
+            if cached is not _REFRESH_COORDINATOR_UNSET:
+                if cached is not None and cached.is_running():
+                    return cached
             revision = _refresh_revision(vault)
-            if revision == getattr(
+            if cached is not _REFRESH_COORDINATOR_UNSET and revision == getattr(
                 app.state, "refresh_coordinator_revision", _REFRESH_COORDINATOR_UNSET
             ):
                 return cached
-        else:
-            revision = _refresh_revision(vault)
-        build = app.state.build_refresh_coordinator
-        coordinator: Any | None = None
-        if build is not None:
-            try:
-                coordinator = build(vault, {})
-            except Exception as exc:  # noqa: BLE001 — bounded source boundary
-                print(
-                    f"capacities refresh coordinator build failed: {exc}",
-                    file=sys.stderr,
-                )
-                raise HTTPException(
-                    status_code=503,
-                    detail={
-                        "code": "capacities_refresh_unavailable",
-                        "message": (
-                            "The Capacities source could not be prepared for a "
-                            "refresh; the previous complete result is preserved."
-                        ),
-                    },
-                ) from exc
-        app.state.refresh_coordinator = coordinator
-        app.state.refresh_coordinator_revision = revision
-        return coordinator
+            build = app.state.build_refresh_coordinator
+            coordinator: Any | None = None
+            if build is not None:
+                try:
+                    coordinator = build(vault, {})
+                except Exception as exc:  # noqa: BLE001 — bounded source boundary
+                    print(
+                        f"capacities refresh coordinator build failed: {exc}",
+                        file=sys.stderr,
+                    )
+                    raise HTTPException(
+                        status_code=503,
+                        detail={
+                            "code": "capacities_refresh_unavailable",
+                            "message": (
+                                "The Capacities source could not be prepared for a "
+                                "refresh; the previous complete result is preserved."
+                            ),
+                        },
+                    ) from exc
+            app.state.refresh_coordinator = coordinator
+            app.state.refresh_coordinator_revision = revision
+            return coordinator
 
     def _refresh_configured(*, ensure_current: bool = False) -> Any:
         coordinator = _refresh_coordinator(ensure_current=ensure_current)

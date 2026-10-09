@@ -1321,6 +1321,25 @@ def _refresh_state_root(config: CapacitiesBuilderConfig) -> Path:
     return refresh_state_dir()
 
 
+@contextmanager
+def _config_save_guard(vault_root: str | Path) -> Iterator[None]:
+    """Serialize publication against configuration savers (KTD3).
+
+    The same lock pair, in the same order, that ``save_source`` and
+    ``capacities_settings.save_settings`` take: the per-vault process lock and
+    the app-home flock. Held across the coordinator's revision recheck and
+    generation install, a save cannot land between them; a save already in
+    flight forces the recheck to observe its new revision, so the run fails
+    stale instead of publishing scope the configuration no longer describes.
+    """
+    with _store_lock(vault_root):
+        handle = _acquire_lock_file(vault_root)
+        try:
+            yield
+        finally:
+            _release_lock_file(handle)
+
+
 def build_refresh_coordinator(
     vault_root: str | Path,
     config: CapacitiesBuilderConfig | None = None,
@@ -1370,6 +1389,7 @@ def build_refresh_coordinator(
             record.to_mappings(), settings.assigned_structures
         ),
         revision_supplier=lambda: refresh_config_revision(vault_root),
+        config_guard=lambda: _config_save_guard(vault_root),
         assignment_settings=settings.to_assignment_settings(),
         max_pages=cfg.max_pages,
     )

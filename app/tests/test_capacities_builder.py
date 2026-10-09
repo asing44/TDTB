@@ -2012,3 +2012,61 @@ def test_legacy_import_wrapper_refuses_another_providers_document(tmp_path):
     assert result.imported == 0
     assert result.warnings
     assert store.get("task-1", "RootTask") is None
+
+
+# ---------------------------------------------------------------------------
+# U2: direct-refresh coordinator wiring
+# ---------------------------------------------------------------------------
+
+def test_refresh_coordinator_serializes_publication_with_config_saves(tmp_path):
+    """The builder must wire the coordinator's publication guard to the save locks.
+
+    KTD3 requires that a configuration revision change cannot publish stale
+    scope. The coordinator's check-then-install section is only atomic with
+    respect to savers when its guard holds the same lock pair that
+    ``save_source`` and ``save_settings`` take, so hold the guard and prove a
+    save-like lock pair is excluded until it is released.
+    """
+    _write_source(tmp_path, _valid_payload())
+    _write_settings(tmp_path)
+    token = _valid_token_file(tmp_path)
+    coordinator = cb.build_refresh_coordinator(
+        tmp_path,
+        cb.CapacitiesBuilderConfig(
+            token_path=token,
+            refresh_state_path=tmp_path / "state",
+            transport=_RecordingTransport(),
+        ),
+    )
+    assert coordinator is not None
+    assert callable(coordinator.config_guard)
+
+    entered = threading.Event()
+    release = threading.Event()
+
+    def hold_guard():
+        with coordinator.config_guard():
+            entered.set()
+            release.wait(timeout=5)
+
+    holder = threading.Thread(target=hold_guard)
+    holder.start()
+    assert entered.wait(timeout=5)
+
+    acquired = threading.Event()
+
+    def save_like():
+        with cb._store_lock(tmp_path):
+            handle = cb._acquire_lock_file(tmp_path)
+            try:
+                acquired.set()
+            finally:
+                cb._release_lock_file(handle)
+
+    saver = threading.Thread(target=save_like)
+    saver.start()
+    assert not acquired.wait(timeout=0.3)
+    release.set()
+    holder.join(timeout=5)
+    saver.join(timeout=5)
+    assert acquired.is_set()

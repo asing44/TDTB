@@ -311,3 +311,66 @@ def test_a_live_job_keeps_its_coordinator_across_a_config_change(
     release.set()
     # Drain the background thread.
     client.get("/capacities/refresh/status")
+
+
+# ---------------------------------------------------------------------------
+# Seam build serialization
+# ---------------------------------------------------------------------------
+
+def test_racing_starts_build_the_coordinator_once(tmp_path, monkeypatch):
+    """Racing starts must share one coordinator instance.
+
+    Without a seam lock each racing start builds its own instance and the
+    loser is cached last, so status and cancel would target an instance that
+    does not own the live job — and could report it as interrupted while the
+    winner's worker still runs.
+    """
+    builds: list = []
+    first_build = threading.Event()
+    second_build = threading.Event()
+    gate = threading.Event()
+    release = threading.Event()
+    _revision_stub(monkeypatch, {"value": 1})
+    client = _client(
+        tmp_path,
+        _paged_provider(objects={"T1": ["a"], "T2": []}),
+        release=release,
+    )
+    inner = client.app.state.build_refresh_coordinator
+
+    def build(vault_path, config):
+        builds.append(vault_path)
+        if len(builds) == 1:
+            first_build.set()
+            gate.wait(timeout=5)
+        else:
+            second_build.set()
+        return inner(vault_path, config)
+
+    client.app.state.build_refresh_coordinator = build
+
+    results: list = []
+
+    def start():
+        response = client.post(
+            "/capacities/refresh/start",
+            headers=_auth(client),
+            json={"mode": "refresh", "scope": "all"},
+        )
+        results.append(response.status_code)
+
+    threads = [threading.Thread(target=start) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    assert first_build.wait(timeout=5)
+    # A second build here is the defect: the racing start must wait for the
+    # seam instead of building an instance of its own.
+    second_build.wait(timeout=0.3)
+    gate.set()
+    for thread in threads:
+        thread.join(timeout=5)
+
+    assert len(builds) == 1
+    assert sorted(results) == [200, 409]
+    release.set()
+    client.app.state.refresh_coordinator.wait(timeout=5)
