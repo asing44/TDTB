@@ -75,6 +75,12 @@ SOURCES_MODE_LIVE = "live"
 SOURCES_MODE_ARTIFACT = "artifact"
 SOURCES_MODES = frozenset({SOURCES_MODE_LIVE, SOURCES_MODE_ARTIFACT})
 
+#: Keys the ``sources`` section recognizes. Anything else is reported.
+SOURCES_KNOWN_KEYS = frozenset({"mode", "vault_enabled", "artifact", "max_age_minutes"})
+
+#: Keys the nested ``sources.artifact`` section recognizes.
+SOURCES_ARTIFACT_KNOWN_KEYS = frozenset({"max_age_minutes"})
+
 #: Default artifact age ceiling (minutes) before a load reports ``aged``.
 DEFAULT_ARTIFACT_MAX_AGE_MINUTES = 240
 
@@ -161,7 +167,7 @@ def _sources_section_ok(document: dict[str, Any]) -> bool:
         return True
     if not isinstance(sources, dict):
         return False
-    mode = sources.get("mode")
+    mode = _trimmed_keys(sources).get("mode")
     if mode is None:
         return True
     return mode in SOURCES_MODES
@@ -184,8 +190,8 @@ def sources_mode(path: str | Path | None = None) -> str:
     document = load_document(path)
     if document is None:
         return DEFAULT_SOURCES_MODE
-    sources = document.get("sources")
-    if isinstance(sources, dict) and sources.get("mode") in SOURCES_MODES:
+    sources = _trimmed_keys(document.get("sources"))
+    if sources.get("mode") in SOURCES_MODES:
         return str(sources["mode"])
     return DEFAULT_SOURCES_MODE
 
@@ -207,10 +213,10 @@ def vault_enabled(path: str | Path | None = None) -> bool:
     document = load_document(path)
     if document is None:
         return DEFAULT_VAULT_ENABLED
-    sources = document.get("sources")
-    value = sources.get("vault_enabled") if isinstance(sources, dict) else None
+    sources = _trimmed_keys(document.get("sources"))
+    value = sources.get("vault_enabled")
     if value is None:
-        value = document.get("vault_enabled")
+        value = _trimmed_keys(document).get("vault_enabled")
     parsed = _coerce_bool(value)
     return DEFAULT_VAULT_ENABLED if parsed is None else parsed
 
@@ -224,16 +230,44 @@ def artifact_max_age_minutes(path: str | Path | None = None) -> int:
     document = load_document(path)
     if document is None:
         return DEFAULT_ARTIFACT_MAX_AGE_MINUTES
-    sources = document.get("sources")
-    if not isinstance(sources, dict):
-        return DEFAULT_ARTIFACT_MAX_AGE_MINUTES
-    artifact = sources.get("artifact")
-    value = artifact.get("max_age_minutes") if isinstance(artifact, dict) else None
+    sources = _trimmed_keys(document.get("sources"))
+    artifact = _trimmed_keys(sources.get("artifact"))
+    value = artifact.get("max_age_minutes")
     if value is None:
         value = sources.get("max_age_minutes")
     if type(value) is int and value > 0:
         return value
     return DEFAULT_ARTIFACT_MAX_AGE_MINUTES
+
+
+def sources_config_warnings(path: str | Path | None = None) -> list[str]:
+    """Report unrecognized keys in the ``sources`` section of config.json.
+
+    JSON preserves a hand-typed leading/trailing space in a key, so
+    ``" vault_enabled"`` looks correct to the operator while missing every
+    exact-key lookup. :func:`_trimmed_keys` tolerates that on read, but a key
+    the section does not recognize at all is still silently discarded unless
+    it is reported here — the 2026-10-09 S5 flip wrote ``" vault_enabled"``
+    and the vault stayed on with no warning. This is the verdict that makes
+    the tolerance loud: report the key as written (whitespace included) so the
+    operator can find it.
+
+    Returns ``[]`` for an unusable document, an absent ``sources`` section,
+    or a clean section (every key — including an empty ``sources: {}``, which
+    makes no claim — is recognized). Never raises."""
+    document = load_document(path)
+    if document is None:
+        return []
+    sources = document.get("sources")
+    if not isinstance(sources, dict):
+        return []
+    warnings = _unrecognized_key_warnings(sources, "sources", SOURCES_KNOWN_KEYS)
+    artifact = sources.get("artifact")
+    if isinstance(artifact, dict):
+        warnings += _unrecognized_key_warnings(
+            artifact, "sources.artifact", SOURCES_ARTIFACT_KNOWN_KEYS
+        )
+    return warnings
 
 
 def load_sections(path: str | Path | None = None) -> dict[str, Any]:
@@ -358,6 +392,42 @@ def document_from_sections(sections: dict[str, Any]) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+def _trimmed_keys(raw: Any) -> dict[str, Any]:
+    """Return ``raw`` with its keys stripped of surrounding whitespace.
+
+    JSON preserves a hand-typed leading/trailing space in a key, so
+    ``" vault_enabled"`` looks correct to the operator while missing every
+    exact-key lookup. Trimming is deliberate tolerance: the key is
+    unambiguous once trimmed, and NOT trimming silently discards an explicit
+    operator instruction (the S5 flip of 2026-10-09 wrote ``" vault_enabled"``
+    and the vault stayed on with no warning).
+    """
+    if not isinstance(raw, dict):
+        return {}
+    return {str(k).strip(): v for k, v in raw.items()}
+
+
+def _unrecognized_key_warnings(
+    section: dict[str, Any], label: str, known: frozenset[str]
+) -> list[str]:
+    """One message per unrecognized key, its name reported as written.
+
+    Membership is tested against the key **as written** — not its trimmed
+    form. ``_trimmed_keys`` makes ``" vault_enabled"`` work on read, but the
+    key the operator typed is still not one the section recognizes, so it is
+    reported here (with its whitespace) rather than accepted in silence."""
+    unknown = [key for key in section if str(key) not in known]
+    if not unknown:
+        return []
+    written = ", ".join(f"'{key}'" for key in unknown)
+    known_list = ", ".join(sorted(known))
+    return [
+        f"config.json {label} section has unrecognized key(s): {written} — "
+        f"known keys are: {known_list}. Unrecognized keys are ignored, so the "
+        "setting may not be in effect."
+    ]
+
 
 def _coerce_bool(value: Any) -> bool | None:
     """Strict-ish boolean coercion for config flags. ``None`` when the value

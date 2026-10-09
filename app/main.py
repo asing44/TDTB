@@ -2470,7 +2470,7 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
         pool_notes, assigned_notes = _run_gather(vault, today)
         run_data = gather.build_run_data(pool_notes, assigned_notes, today)
         order = _ranking_order(vault)
-        w_vault: list[str] = []
+        w_vault: list[str] = app_config.sources_config_warnings()
         if not vault_rows_on:
             w_vault.append(
                 "Vault rows are disabled (sources.vault_enabled=false) — the "

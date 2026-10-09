@@ -163,6 +163,124 @@ class TestVaultEnabledResolution:
 
 
 # ---------------------------------------------------------------------------
+# Hand-typed key whitespace + unrecognized-key warnings
+# ---------------------------------------------------------------------------
+
+class TestConfigKeyTolerance:
+    """A hand-typed leading/trailing space in a JSON key must not silently
+    discard the operator's instruction. On 2026-10-09 the S5 flip wrote
+    ``" vault_enabled": false`` and the vault stayed on with no warning."""
+
+    def test_vault_enabled_is_read_despite_a_leading_space(self, tmp_path):
+        path = tmp_path / "config.json"
+        path.write_text(
+            json.dumps({"version": 1, "sources": {" vault_enabled": False}}),
+            encoding="utf-8",
+        )
+        assert app_config.vault_enabled(path) is False
+
+    def test_vault_enabled_still_reads_the_canonical_key(self, tmp_path):
+        path = tmp_path / "config.json"
+        path.write_text(
+            json.dumps({"version": 1, "sources": {"vault_enabled": False}}),
+            encoding="utf-8",
+        )
+        assert app_config.vault_enabled(path) is False
+
+    def test_top_level_alias_tolerates_whitespace(self, tmp_path):
+        path = tmp_path / "config.json"
+        path.write_text(
+            json.dumps({"version": 1, " vault_enabled": False}),
+            encoding="utf-8",
+        )
+        assert app_config.vault_enabled(path) is False
+
+    def test_sources_mode_reads_a_whitespace_key(self, tmp_path):
+        path = tmp_path / "config.json"
+        path.write_text(
+            json.dumps({"version": 1, "sources": {" mode": "live"}}),
+            encoding="utf-8",
+        )
+        assert app_config.sources_mode(path) == "live"
+
+    def test_artifact_max_age_tolerates_whitespace_keys(self, tmp_path):
+        path = tmp_path / "config.json"
+        path.write_text(
+            json.dumps(
+                {"version": 1, "sources": {" artifact": {" max_age_minutes": 30}}}
+            ),
+            encoding="utf-8",
+        )
+        assert app_config.artifact_max_age_minutes(path) == 30
+
+
+class TestSourcesConfigWarnings:
+    """Unrecognized keys are reported as written so a misspelled operator
+    instruction is loud, not silently ignored."""
+
+    def _write(self, tmp_path: Path, document: dict) -> Path:
+        path = tmp_path / "config.json"
+        path.write_text(json.dumps(document), encoding="utf-8")
+        return path
+
+    def test_names_an_unrecognized_key_and_never_raises(self, tmp_path):
+        path = self._write(
+            tmp_path,
+            {"version": 1, "sources": {"vault_enabled": False, "vault_enable": True}},
+        )
+        warnings = app_config.sources_config_warnings(path)
+        assert len(warnings) == 1
+        message = warnings[0]
+        assert "vault_enable" in message
+        assert "known keys are" in message
+        assert "may not be in effect" in message
+
+    def test_reports_a_whitespace_key_as_written(self, tmp_path):
+        path = self._write(
+            tmp_path, {"version": 1, "sources": {" vault_enabled": False}}
+        )
+        warnings = app_config.sources_config_warnings(path)
+        assert len(warnings) == 1
+        assert "' vault_enabled'" in warnings[0]
+
+    def test_nested_artifact_typo_is_reported(self, tmp_path):
+        path = self._write(
+            tmp_path, {"version": 1, "sources": {"artifact": {"max_age_minute": 60}}}
+        )
+        warnings = app_config.sources_config_warnings(path)
+        assert len(warnings) == 1
+        assert "max_age_minute" in warnings[0]
+        assert "sources.artifact" in warnings[0]
+
+    def test_clean_section_does_not_warn(self, tmp_path):
+        path = self._write(
+            tmp_path,
+            {
+                "version": 1,
+                "sources": {
+                    "mode": "artifact",
+                    "vault_enabled": True,
+                    "artifact": {"max_age_minutes": 60},
+                },
+            },
+        )
+        assert app_config.sources_config_warnings(path) == []
+
+    def test_empty_section_makes_no_claim(self, tmp_path):
+        path = self._write(tmp_path, {"version": 1, "sources": {}})
+        assert app_config.sources_config_warnings(path) == []
+
+    def test_absent_section_does_not_warn(self, tmp_path):
+        path = self._write(tmp_path, {"version": 1})
+        assert app_config.sources_config_warnings(path) == []
+
+    def test_unusable_document_does_not_warn(self, tmp_path):
+        path = tmp_path / "config.json"
+        path.write_text("{ not json", encoding="utf-8")
+        assert app_config.sources_config_warnings(path) == []
+
+
+# ---------------------------------------------------------------------------
 # The digest, both ways
 # ---------------------------------------------------------------------------
 
