@@ -72,7 +72,7 @@ from capacities_adapter import (
     _structure_id,
     _text,
 )
-from capacities_settings import read_settings
+from capacities_settings import CapacitiesSettings, read_settings
 from capacities_structure_titles import remember_titles
 # The host-local credential slot is owned by shadow.py; import it so the
 # Todoist and Capacities credentials cannot diverge.
@@ -1301,6 +1301,67 @@ def build_refresh_state(
         origin=capacities_refresh_state.provider_origin(cfg.base_url),
         space_id=space_id,
         vault_root=vault_root,
+    )
+
+
+@dataclass(frozen=True)
+class DirectIntakeRead:
+    """A token-free read of everything the offline direct intake projects.
+
+    ``snapshot`` is ``None`` when no complete generation is installed or its
+    pointer is unusable. ``structures`` is ``None`` when no structure contract
+    is stamped with the installed generation. ``objects`` holds one
+    projection-ready payload per member whose cached content read cleanly, and
+    ``unreadable`` counts the members whose content is missing or unreadable.
+    Nothing here reads the credential, builds a client, or calls the provider.
+    """
+
+    space_id: str
+    mappings: tuple[StructureMapping, ...]
+    settings: CapacitiesSettings
+    snapshot: capacities_refresh_state.CompleteSnapshot | None
+    structures: Any
+    objects: tuple[dict[str, Any], ...]
+    unreadable: int
+
+
+def read_direct_intake(vault_root: str | Path) -> DirectIntakeRead | None:
+    """Read the published generation for the offline direct intake.
+
+    ``None`` means Capacities is not configured (no source record), which is
+    silent by design. A malformed record raises
+    :class:`CapacitiesSourceStoreError`, which the caller maps to a refusal.
+    """
+    record = read_source(vault_root)
+    if record is None:
+        return None
+    settings = read_settings(vault_root).settings
+    store = build_refresh_state(vault_root, record.space_id)
+    snapshot = store.load_snapshot(capacities_refresh.DEFAULT_SCOPE_KEY)
+    structures = None
+    objects: list[dict[str, Any]] = []
+    unreadable = 0
+    if snapshot is not None:
+        contract = store.load_structure_contract(snapshot.scope_key)
+        structures = contract.structures if contract is not None else None
+        for member in snapshot.members:
+            cached = store.get(member.object_id, member.type_key)
+            if cached is None:
+                unreadable += 1
+                continue
+            objects.append(
+                {"id": member.object_id, "structureId": member.type_key, **cached.content}
+            )
+    return DirectIntakeRead(
+        space_id=record.space_id,
+        mappings=_resolve_assigned_structures(
+            record.to_mappings(), settings.assigned_structures
+        ),
+        settings=settings,
+        snapshot=snapshot,
+        structures=structures,
+        objects=tuple(objects),
+        unreadable=unreadable,
     )
 
 
