@@ -21,6 +21,8 @@ from capacities_adapter import (  # noqa: E402
     StructureMapping,
 )
 from capacities_assignment import AssignmentSettings  # noqa: E402
+import exclusion_settings as es  # noqa: E402
+import tag_exclusions as tx  # noqa: E402
 
 
 SPACE = "space-1"
@@ -1843,6 +1845,84 @@ def test_duplicate_tag_references_deduplicate_by_stable_id():
     assert row["capacities_tags"] == [
         {"space_id": SPACE, "tag_id": TAG_A, "title": "habituals"},
     ]
+
+
+def _exclusion_policy(*tag_ids):
+    read = es.ExclusionSettingsRead(
+        settings=es.ExclusionSettings(
+            revision=1,
+            tags=tuple(es.TagExclusion("capacities", SPACE, tag_id) for tag_id in tag_ids),
+        ),
+        persisted=True,
+    )
+    return tx.ExclusionPolicy.from_read(read)
+
+
+def test_uppercase_provider_tag_id_matches_a_lowercase_exclusion():
+    """Provider ids may arrive in non-canonical case. The exclusion store only
+    holds lowercase canonical ids, so the seam must normalize before the
+    matcher or the exclusion silently fails to apply."""
+    provider = _native_provider([
+        _tagged_native_object(
+            "task-1",
+            tags=[{"id": TAG_A.upper(), "title": "habituals"}],
+        ),
+    ])
+    mappings = (_native_mapping(),)
+
+    projected = _adapter(provider, mappings=mappings).items_for_day(TODAY).items[0]
+    assert projected["capacities_tags"] == [
+        {"space_id": SPACE, "tag_id": TAG_A, "title": "habituals"},
+    ]
+
+    result = _adapter(
+        provider, mappings=mappings, exclusion_policy=_exclusion_policy(TAG_A)
+    ).items_for_day(TODAY)
+
+    assert result.items == []
+    assert any(w.startswith("Capacities tag exclusions") for w in result.warnings)
+
+
+def test_non_uuid_provider_tag_id_is_kept_as_received_and_matches_nothing():
+    """A non-UUID id is never guessed or normalized. This value is the
+    uppercase canonical form truncated by one character: it is not a UUID, so
+    it must neither be case-folded nor dropped, and it must not match."""
+    raw_id = TAG_A.upper()[:-1]
+    provider = _native_provider([
+        _tagged_native_object("task-1", tags=[{"id": raw_id, "title": "habituals"}]),
+    ])
+    mappings = (_native_mapping(),)
+
+    projected = _adapter(provider, mappings=mappings).items_for_day(TODAY).items[0]
+    assert projected["capacities_tags"] == [
+        {"space_id": SPACE, "tag_id": raw_id, "title": "habituals"},
+    ]
+
+    result = _adapter(
+        provider, mappings=mappings, exclusion_policy=_exclusion_policy(TAG_A)
+    ).items_for_day(TODAY)
+
+    assert len(result.items) == 1
+    assert not any(w.startswith("Capacities tag exclusions") for w in result.warnings)
+
+
+def test_title_only_tags_under_an_applicable_exclusion_still_block_planning():
+    """The title-only path is not an identity source. Normalization must not
+    touch it: it keeps blocking planning when an exclusion applies."""
+    provider = _native_provider([
+        _tagged_native_object("task-1", flat_tags=["habituals"]),
+    ])
+
+    with pytest.raises(tx.TagExclusionBlocked) as blocked:
+        _adapter(
+            provider,
+            mappings=(_native_mapping(),),
+            exclusion_policy=_exclusion_policy(TAG_A),
+        ).items_for_day(TODAY)
+
+    tasks = blocked.value.diagnostics["tasks"]
+    assert len(tasks) == 1
+    assert tasks[0]["reason"] == "tags are title-only without typed identities"
 
 
 class _RootTagProvider(FakeProvider):

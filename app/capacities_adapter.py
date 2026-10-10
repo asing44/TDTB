@@ -14,6 +14,7 @@ from datetime import date
 import hashlib
 import json
 from typing import Any, Callable, Protocol, Sequence
+import uuid
 
 from capacities_assignment import (
     AssignmentCandidate,
@@ -604,7 +605,8 @@ def _capacities_tag_refs(
     ``_property_tokens`` helper flattens the pair into loose tokens and drops
     the title, which would destroy structured identity. The flat top-level
     ``tags`` title array is never used to derive identity: a non-empty array
-    without a typed property is title-only metadata.
+    without a typed property is title-only metadata. An id that parses as a
+    UUID is lowercased; any other id is kept exactly as received.
     """
     if prop is None:
         if flat_tags is None or (isinstance(flat_tags, list) and not flat_tags):
@@ -626,6 +628,14 @@ def _capacities_tag_refs(
         tag_id = _text(entry.get("id"))
         if not tag_id:
             return None, "tags property contains a reference without an id"
+        # Exclusions hold lowercase canonical ids and match exactly. Hex case
+        # never changes a UUID's identity, so lowercasing can only add matches.
+        try:
+            uuid.UUID(tag_id)
+        except ValueError:
+            pass
+        else:
+            tag_id = tag_id.lower()
         if tag_id in seen:
             continue
         seen.add(tag_id)
