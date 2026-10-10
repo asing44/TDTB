@@ -844,25 +844,22 @@ class TestCapturesPlanAndWrite:
     CAPTURES = {"intention": "ship it", "megan_nicety": "Walk outside",
                 "stoic_intention": "Temperance"}
 
-    def test_nicety_create_uses_bare_today_due(self):
+    def test_retired_capture_nicety_action_is_refused(self):
+        # U5 B2: the legacy capture-nicety lane is retired. A crafted or
+        # externally reachable retired capture row must fail the whole commit
+        # closed, never write prompt text to Todoist through the old path.
         d = _diff(_entry("A", "todoist", "capture-nicety", "Walk outside", CREATE,
                          routing="Inbox"))
-        [i] = commit.plan_writes(d, CAL_IDS, config={}, today=TODAY)
-        assert i.op == "create" and i.project_id is None
-        assert i.due_all_day_today is True
-        client = FakeTodoist()
-        res = commit.write_todoist([i], client)
-        assert res.ok, res.error
-        [t] = [t for t in client._tasks.values() if t["content"] == "Walk outside"]
-        assert t.get("due") is None or "T" not in str((t.get("due") or {}).get("date", ""))
+        with pytest.raises(commit.CommitPlanError, match="capture-nicety"):
+            commit.plan_writes(d, CAL_IDS, config={}, today=TODAY)
 
-    def test_b6_intent_carries_captures_payload(self):
+    def test_retired_b6_action_is_refused(self):
+        # U5 B2: the B6 frontmatter-captures writer is retired and carries no
+        # payload; a crafted row is refused rather than reaching the vault.
         d = _diff(_entry("B6", "vault", "frontmatter-captures", "Phase-1 captures",
                          UPDATE, id_or_path="<today's daily note>"))
-        [i] = commit.plan_writes(d, CAL_IDS,
-                                 config={"captures": self.CAPTURES}, today=TODAY)
-        assert i.surface == "vault" and i.step == "B6"
-        assert i.payload == self.CAPTURES
+        with pytest.raises(commit.CommitPlanError, match="frontmatter-captures"):
+            commit.plan_writes(d, CAL_IDS, config={"captures": self.CAPTURES}, today=TODAY)
 
     def test_b6_writer_and_surface_are_retired(self):
         # U5: the legacy B6 prompt writer and its orchestrate surface are gone,

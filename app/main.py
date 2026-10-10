@@ -65,6 +65,7 @@ import deferrals  # noqa: E402
 import duration_memory  # noqa: E402
 import runstate  # noqa: E402
 import prompt_state  # noqa: E402
+import prompt_export  # noqa: E402
 import judgment  # noqa: E402
 import planning  # noqa: E402
 sequence = planning.sequence  # compatibility alias for existing test seams
@@ -4856,7 +4857,19 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
             raise HTTPException(status_code=502, detail=f"shadow state error: {exc}") from exc
 
         diff = shadow.diff_against_live(manifest, live_state)
-        return diff.as_dict()
+        result = diff.as_dict()
+        # B2: a truthful, read-only preview of the planned prompt exports —
+        # server opt-ins + local logical-day drafts only. A shadow build writes
+        # no receipt and performs no provider call; the preview is content-free.
+        preview_drafts, _ = _read_prompt_drafts(shadow_today)
+        preview_optins, _ = _read_prompt_optins()
+        result["prompt_exports"] = prompt_export.preview_prompt_exports(
+            day=shadow_today.isoformat(),
+            civil_date=prompt_export.civil_date_for(datetime.now()).isoformat(),
+            optins=preview_optins,
+            drafts=preview_drafts,
+        )
+        return result
 
     def _frame_for_writes(config: dict[str, Any] | None,
                           day_setup: dict[str, Any]) -> dict[str, Any]:
@@ -5477,10 +5490,17 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
             if row.get("id") not in capacities_ids
         ]
         plan_body = _render_plan_body({**body.sequence, "sequence": body_rows})
+        # B2: the due is the CIVIL calendar date, not the pre-02:00 logical
+        # day that keys the draft store.
+        civil_date = prompt_export.civil_date_for(datetime.now()).isoformat()
         if app.state.build_commit_clients:
             report = orchestrate.run_orchestrated(
                 intents, todoist=injected_todoist, store=store, vault_root=vault,
                 plan_body=plan_body, today=today, resume=resume,
+            )
+            export_outcomes = prompt_export.run_prompt_exports(
+                day=today.isoformat(), civil_date=civil_date,
+                todoist=injected_todoist,
             )
         else:
             with shadow.todoist_client.TodoistClient(token) as todoist:
@@ -5488,6 +5508,11 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
                     intents, todoist=todoist, store=store, vault_root=vault,
                     plan_body=plan_body, today=today, resume=resume,
                 )
+                export_outcomes = prompt_export.run_prompt_exports(
+                    day=today.isoformat(), civil_date=civil_date,
+                    todoist=todoist,
+                )
+        prompt_export.attach_to_report(report, export_outcomes)
         # T19: the authorized commit is the ONLY history-consuming surface —
         # exactly one idempotent log upsert, after every surface reports ok.
         _append_micro_adventure_history(report, config, intents, vault, today)

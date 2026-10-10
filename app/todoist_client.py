@@ -163,12 +163,17 @@ class TodoistClient:
         labels: list[str] | None = None,
         duration: int | None = None,
         duration_unit: str | None = None,
+        due_date: str | None = None,
     ) -> dict:
         payload: dict[str, Any] = {"content": content}
         if project_id is not None:
             # Omit for Inbox routing — v1 POST /tasks lands a project_id-less
             # task in the user's Inbox (a null project_id would be rejected).
             payload["project_id"] = project_id
+        if due_date is not None:
+            # Date-only due (YYYY-MM-DD) for the civil-calendar export lane:
+            # never a time-bearing due_string that a provider could shift.
+            payload["due_date"] = due_date
         if due_string is not None:
             payload["due_string"] = due_string
         if priority is not None:

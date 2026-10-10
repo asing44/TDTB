@@ -452,7 +452,16 @@ def _plan_todoist(m: ManifestEntry, e: ShadowDiffEntry, config: Any, today: date
         raise CommitPlanError(
             f"{m.step}/{m.name}: Capacities row reached the Todoist writer — refusing commit"
         )
-    all_day = m.action in ("capture-nicety", "schedule-all-day")
+    if m.action == "capture-nicety":
+        # U5 B2: the legacy automatic capture-nicety export lane is retired.
+        # The dedicated Commit-only prompt export lane (prompt_export.py) is
+        # the only path that may turn a prompt into a task, so a crafted or
+        # externally reachable retired capture row fails the whole commit
+        # closed rather than silently writing prompt text to Todoist.
+        raise CommitPlanError(
+            f"{m.step}/{m.name}: retired capture-nicety action — refusing commit"
+        )
+    all_day = m.action == "schedule-all-day"
     detail_recurring = e.detail.get("is_recurring")
     recurring = (
         bool(detail_recurring)
@@ -588,13 +597,16 @@ def _plan_calendar(
 
 
 def _plan_vault(m: ManifestEntry, e: ShadowDiffEntry, config: Any = None) -> WriteIntent:
+    if m.action == "frontmatter-captures":
+        # U5 B2: the legacy B6 prompt-capture writer is retired and carries no
+        # payload. A crafted frontmatter-captures row is refused rather than
+        # reaching the vault with prompt text.
+        raise CommitPlanError(
+            f"{m.step}/{m.name}: retired frontmatter-captures action — refusing commit"
+        )
     op = "noop" if e.classification == NOOP else "update" if e.classification == UPDATE else "create"
-    payload = None
-    if m.action == "frontmatter-captures" and isinstance(config, dict):
-        payload = dict(config.get("captures") or {})
     return WriteIntent(
         step=m.step, surface="vault", op=op, name=m.name, path=m.id_or_path,
-        payload=payload,
     )
 
 
