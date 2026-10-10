@@ -17,6 +17,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent))
 import calendar_bridge  # noqa: E402
 import commit  # noqa: E402
+import orchestrate  # noqa: E402
 from shadow import (  # noqa: E402
     CONFLICT,
     CREATE,
@@ -547,7 +548,7 @@ class TestRunCommit:
         ]
         results = commit.run_commit(intents, todoist=client, vault_root=tmp_path,
                                     plan_body="- 09:00 Garage", today=TODAY)
-        assert {r.step for r in results} == {"A", "B", "B6", "C"}
+        assert {r.step for r in results} == {"A", "B", "C"}
         assert all(r.ok for r in results)
 
 
@@ -863,43 +864,11 @@ class TestCapturesPlanAndWrite:
         assert i.surface == "vault" and i.step == "B6"
         assert i.payload == self.CAPTURES
 
-    def _vault_with_daily(self, tmp_path, text):
-        daily = tmp_path / "30 - Daily"
-        daily.mkdir(parents=True)
-        note = daily / f"{TODAY.isoformat()}.md"
-        note.write_text(text, encoding="utf-8")
-        return tmp_path, note
-
-    def _b6_intent(self, payload=None):
-        return commit.WriteIntent(step="B6", surface="vault", op="update",
-                                  name="Phase-1 captures",
-                                  path="<today's daily note>",
-                                  payload=payload or self.CAPTURES)
-
-    def test_writer_merges_missing_keys_never_overwrites(self, tmp_path):
-        vault, note = self._vault_with_daily(
-            tmp_path, "---\ntype: daily\nintention: already here\n---\nbody\n")
-        res = commit.write_captures_frontmatter([self._b6_intent()], vault, TODAY)
-        assert res.ok, res.error
-        text = note.read_text(encoding="utf-8")
-        assert "intention: already here" in text          # never overwritten
-        assert "megan_nicety" in text and "Temperance" in text
-        assert "body" in text
-
-    def test_writer_noop_when_all_present(self, tmp_path):
-        vault, note = self._vault_with_daily(
-            tmp_path, "---\nintention: a\nmegan_nicety: b\nstoic_intention: c\n---\n")
-        before = note.read_text(encoding="utf-8")
-        res = commit.write_captures_frontmatter([self._b6_intent()], vault, TODAY)
-        assert res.ok and res.noops
-        assert note.read_text(encoding="utf-8") == before  # bytes untouched
-
-    def test_writer_missing_note_is_bounded_noop(self, tmp_path):
-        res = commit.write_captures_frontmatter([self._b6_intent()], tmp_path, TODAY)
-        assert res.ok
-        assert res.error is None
-        assert res.created == [] and res.updated == []
-        assert not (tmp_path / "30 - Daily").exists()
+    def test_b6_writer_and_surface_are_retired(self):
+        # U5: the legacy B6 prompt writer and its orchestrate surface are gone,
+        # so a crafted frontmatter-captures manifest cannot invoke it.
+        assert not hasattr(commit, "write_captures_frontmatter")
+        assert "captures" not in orchestrate.SURFACES
 
 
 # ---------------------------------------------------------------------------

@@ -268,11 +268,8 @@ def apply_day_setup(
         blocks.append(nb)
     cfg[key] = blocks
     cfg["re_included"] = sorted(re_inc)
-    captures = {k: day_setup[k]
-                for k in ("intention", "megan_nicety", "stoic_intention")
-                if day_setup.get(k)}
-    if captures:
-        cfg["captures"] = captures
+    # U5: prompts are private local runtime state and are never carried into
+    # config here — the legacy cfg["captures"] export lane is retired.
     return cfg
 
 
@@ -631,27 +628,10 @@ def build_plan_manifest(
             **_todoist_manifest_metadata(item),
         ))
 
-    # Step A captures — niceties to Todoist Inbox (skill 1550–1560): bare
-    # verbatim text, ALL-DAY by design (no time, no duration, no block).
-    # ``intention`` never becomes a task — it lives only in B6 frontmatter.
-    captures = config.get("captures") or {}
-    for cap_key in ("megan_nicety", "stoic_intention"):
-        text = str(captures.get(cap_key) or "").strip()
-        if not text:
-            continue  # skip silently — empty fields never write
-        entries.append(ManifestEntry(
-            step="A", system="todoist", action="capture-nicety",
-            name=text, id_or_path=f"capture://{cap_key}", routing="Inbox",
-        ))
-
-    # B6 — Phase-1 captures into the daily note's frontmatter (skill 1607):
-    # one row when any capture is present; the writer merges only MISSING keys.
-    if any(str(captures.get(k) or "").strip()
-           for k in ("intention", "megan_nicety", "stoic_intention")):
-        entries.append(ManifestEntry(
-            step="B6", system="vault", action="frontmatter-captures",
-            name="Phase-1 captures", id_or_path="<today's daily note>",
-        ))
+    # U5: Phase-1 prompts are private local runtime state (prompt_state.py).
+    # Their legacy automatic exports are RETIRED — no capture-nicety Todoist
+    # rows and no B6 frontmatter-captures rows are emitted, so a manifest can
+    # never carry prompt text to Todoist or the daily note.
 
     # Step B — daily-note "# TDTB Plan" section patch. Always exactly one row
     # (a commit always writes/refreshes the plan section).
@@ -1037,21 +1017,6 @@ def diff_against_live(manifest: list[ManifestEntry], live_state: dict[str, Any])
                 entries.append(ShadowDiffEntry(
                     m, UPDATE, {"assigned": {"old": fm.get("assigned"), "new": True}}
                 ))
-
-        elif m.action == "frontmatter-captures":  # B6
-            if live_state.get("vault_unavailable"):
-                entries.append(ShadowDiffEntry(m, UNAVAILABLE, {"reason": "vault surface unavailable"}))
-                continue
-            if daily_note_text is None:
-                entries.append(ShadowDiffEntry(m, CONFLICT, {"reason": "daily note not found"}))
-                continue
-            fm = gather.parse_frontmatter(daily_note_text) or {}
-            missing = [k for k in ("intention", "megan_nicety", "stoic_intention")
-                       if k not in fm]
-            if missing:
-                entries.append(ShadowDiffEntry(m, UPDATE, {"missing_keys": missing}))
-            else:
-                entries.append(ShadowDiffEntry(m, NOOP, {}))
 
         elif m.action == "patch":  # Step B
             if live_state.get("vault_unavailable"):

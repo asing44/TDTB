@@ -64,6 +64,7 @@ import day_semantics  # noqa: E402
 import deferrals  # noqa: E402
 import duration_memory  # noqa: E402
 import runstate  # noqa: E402
+import prompt_state  # noqa: E402
 import judgment  # noqa: E402
 import planning  # noqa: E402
 sequence = planning.sequence  # compatibility alias for existing test seams
@@ -1319,6 +1320,10 @@ class DaySetupRequest(BaseModel):
     schedulable: dict[str, Any] | None = None   # {minting:{on,n}, qt:{...}, shivery:{...}}
     anchored: list[dict[str, Any]] | None = None  # [{id, on, skip_today, time}]
     captures: dict[str, Any] | None = None  # {intention, megan_nicety, stoic_intention}
+    # U5 additive prompt opt-ins: an undated bool map plus the expected store
+    # revision for optimistic concurrency. Omitted -> no opt-in write.
+    optins: dict[str, StrictBool] | None = None
+    optins_revision: StrictInt | None = None
     day_preset: str | None = None        # dated preset override (T18b.2)
     work_allotment_minutes: StrictInt | None = None  # dated Mint allotment (T18b.2)
     micro_adventure: dict[str, Any] | None = None  # T19 dated Live override; null clears to auto
@@ -1733,6 +1738,172 @@ def _read_today_runstate(vault: Path, today: date) -> dict[str, Any]:
     return gather._extract_json_block(
         rs_path.read_text(encoding="utf-8", errors="replace")
     ) or {}
+
+
+# U5: the morning prompts are private local runtime state (prompt_state.py).
+# The runstate skeleton still carries these key names for compatibility, but
+# they are INERT — reads drop them and overlay today's exact-logical-day local
+# drafts, and the /day-setup writer never writes them.
+_PROMPT_KEYS = prompt_state.PROMPT_KEYS
+_PROMPT_READ_WARNING = "Prompt drafts could not be read; showing empty prompts."
+# Fields that make a /day-setup POST an explicit Day Setup confirmation. A
+# payload carrying ONLY prompt content (captures / opt-ins) updates the local
+# prompt stores without confirming the day.
+_NON_PROMPT_SETUP_FIELDS = frozenset({
+    "anchor", "eod", "buffering", "schedulable", "anchored",
+    "day_preset", "work_allotment_minutes", "micro_adventure",
+})
+_PROMPT_ONLY_FIELDS = frozenset({"captures", "optins", "optins_revision"})
+
+
+def _read_prompt_drafts(today: date) -> tuple[dict[str, str], list[str]]:
+    """Today's local prompt drafts + bounded warnings.
+
+    A failed read never raises into a route: malformed/unreadable local storage
+    degrades to empty prompts, content-free (no prompt text reaches a response
+    or log), exactly as an absent file does."""
+    try:
+        return dict(prompt_state.load_drafts(today.isoformat()).drafts), []
+    except prompt_state.PromptStateError:
+        return {}, [_PROMPT_READ_WARNING]
+
+
+def _day_setup_with_prompts(
+    state: dict[str, Any], today: date
+) -> tuple[dict[str, Any], list[str]]:
+    """Day Setup dict with the legacy prompt keys made INERT.
+
+    Legacy runstate ``intention``/``megan_nicety``/``stoic_intention`` values
+    are dropped (never echoed) and replaced by today's exact-logical-day local
+    prompt_state drafts. Non-prompt keys are unchanged."""
+    setup = {k: v for k, v in state.items()
+             if k in _DAY_SETUP_KEYS and v not in ("", None)}
+    for key in _PROMPT_KEYS:
+        setup.pop(key, None)
+    drafts, warnings = _read_prompt_drafts(today)
+    for key, text in drafts.items():
+        if text:
+            setup[key] = text
+    return setup, warnings
+
+
+def _read_day_setup(vault: Path, today: date) -> tuple[dict[str, Any], list[str]]:
+    """Today's Day Setup (runstate + local prompt drafts) + read warnings."""
+    return _day_setup_with_prompts(_read_today_runstate(vault, today), today)
+
+
+def _read_prompt_optins() -> tuple[dict[str, bool], int]:
+    """The persistent opt-in map + revision; a failed read degrades to
+    all-false at revision 0 (content-free)."""
+    try:
+        record = prompt_state.load_optins()
+    except prompt_state.PromptStateError:
+        return {key: False for key in prompt_state.PROMPT_KEYS}, 0
+    return dict(record.optins), record.revision
+
+
+def _save_prompt_drafts(today: date, captures: dict[str, Any] | None) -> None:
+    """Persist a captures patch into today's local draft store.
+
+    A PATCH: an omitted key preserves, an explicit empty string clears. Typed,
+    content-free failures: 422 invalid input, 409 malformed existing bytes
+    (preserved), 500 unreadable/unwritable (preserved)."""
+    if captures is None:
+        return
+    try:
+        prompt_state.save_drafts(day=today.isoformat(), patch=captures)
+    except prompt_state.PromptValidationError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "prompt_drafts_invalid", "message": str(exc)},
+        ) from exc
+    except prompt_state.PromptFormatError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "prompt_drafts_storage_error",
+                "message": (
+                    "Prompt draft storage is malformed or unsupported; "
+                    "the existing file was preserved."
+                ),
+            },
+        ) from exc
+    except prompt_state.PromptStateError as exc:
+        print(f"prompt drafts save failed: {exc}", file=sys.stderr)
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "code": "prompt_drafts_storage_error",
+                "message": (
+                    "Prompt drafts could not be saved; "
+                    "the existing file was preserved."
+                ),
+            },
+        ) from exc
+
+
+def _save_prompt_optins(body: DaySetupRequest) -> tuple[dict[str, bool], int]:
+    """Persist the additive opt-in map with optimistic concurrency.
+
+    Returns the persisted ``(map, revision)`` to echo; with no opt-ins in the
+    body, echoes the current local store. A missing revision is a 422 and a
+    stale revision is a 409 carrying both revisions. Messages are content-free."""
+    if body.optins is None:
+        return _read_prompt_optins()
+    if body.optins_revision is None:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "prompt_optins_invalid",
+                "message": "optins_revision is required when optins is set",
+            },
+        )
+    try:
+        saved = prompt_state.save_optins(
+            expected_revision=body.optins_revision, optins=body.optins,
+        )
+    except prompt_state.PromptOptinConflict as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "prompt_optins_conflict",
+                "message": (
+                    "Prompt opt-ins changed since they were read; "
+                    "reload and retry."
+                ),
+                "expected_revision": exc.expected_revision,
+                "current_revision": exc.current_revision,
+            },
+        ) from exc
+    except prompt_state.PromptValidationError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "prompt_optins_invalid", "message": str(exc)},
+        ) from exc
+    except prompt_state.PromptFormatError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "prompt_optins_storage_error",
+                "message": (
+                    "Prompt opt-in storage is malformed or unsupported; "
+                    "the existing file was preserved."
+                ),
+            },
+        ) from exc
+    except prompt_state.PromptStateError as exc:
+        print(f"prompt optins save failed: {exc}", file=sys.stderr)
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "code": "prompt_optins_storage_error",
+                "message": (
+                    "Prompt opt-ins could not be saved; "
+                    "the existing file was preserved."
+                ),
+            },
+        ) from exc
+    return dict(saved.optins), saved.revision
 
 
 def _authoritative_day_semantics(
@@ -3693,8 +3864,7 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
         }
 
         # -- Day Setup + time/capacity (ui-parity T4) ------------------------
-        day_setup = {k: v for k, v in _read_today_runstate(vault, today).items()
-                     if k in _DAY_SETUP_KEYS and v not in ("", None)}
+        day_setup, prompt_warnings = _read_day_setup(vault, today)
         resolved_day_semantics = day_semantics.resolve_day_contract(
             result, today, dated_overrides=day_setup,
         )
@@ -3787,7 +3957,8 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
             "calendar_decisions": calendar_decisions,
             "artifact": artifact_block,
             "source_warnings": (
-                w_todo + w_cal + w_hab + w_capacities + artifact_warnings + w_vault
+                w_todo + w_cal + w_hab + w_capacities + artifact_warnings
+                + w_vault + prompt_warnings
             ),
             "source_counts": {
                 "vault": len(run_data["pool_items"]) + len(run_data["assigned_items"]),
@@ -3875,8 +4046,7 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
 
         vault = resolve_vault_root()
         today = gather.effective_date(datetime.now())
-        persisted = {k: v for k, v in _read_today_runstate(vault, today).items()
-                     if k in _DAY_SETUP_KEYS and v not in ("", None)}
+        persisted, _prompt_warnings = _read_day_setup(vault, today)
         merged = {**persisted,
                   **{k: v for k, v in overrides.items() if k in _DAY_SETUP_KEYS}}
 
@@ -4175,10 +4345,17 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
 
         defaults_off = shadow.past_window_defaults(config, anchor, today)
         present = body.model_fields_set
-        existing_setup = {
-            k: v for k, v in _read_today_runstate(vault, today).items()
-            if k in _DAY_SETUP_KEYS and v not in ("", None)
-        }
+        # U5: a payload carrying ONLY prompt content updates the local prompt
+        # stores without confirming the day. Any non-prompt setup field (or a
+        # bare {} save) keeps the existing explicit-confirmation behavior.
+        prompt_only = bool(present & _PROMPT_ONLY_FIELDS) and not bool(
+            present & _NON_PROMPT_SETUP_FIELDS
+        )
+        existing_setup, prompt_warnings = _read_day_setup(vault, today)
+        # Local prompt stores are the only prompt target; the legacy runstate
+        # keys stay INERT and are never written here.
+        _save_prompt_drafts(today, body.captures)
+        optins_map, optins_revision = _save_prompt_optins(body)
         normalization_overrides = dict(existing_setup)
         if "day_preset" in present:
             normalization_overrides["day_preset"] = body.day_preset
@@ -4222,10 +4399,6 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
             updates["schedulable"] = schedulable
         if body.anchored is not None:
             updates["anchored"] = body.anchored
-        for key in ("intention", "megan_nicety", "stoic_intention"):
-            val = (body.captures or {}).get(key)
-            if val is not None:
-                updates[key] = val
         # T18b.2 tri-state: omitted preserves (do not write); explicit null
         # clears (write None); explicit value persists. Field presence is
         # detected via model_fields_set so a default value never counts as
@@ -4292,24 +4465,45 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
                     ),
                 }
             updates["micro_adventure"] = ma
-        # G26: locked RMW — concurrent /day-setup POSTs previously lost updates.
-        # FEEDBACK-24: this successful POST is the ONLY writer of the explicit
-        # confirmation, scoped to today's dated note.
-        updates[runstate.DAY_SETUP_CONFIRMED_KEY] = True
-        def _save_day_setup(state: dict[str, Any]) -> None:
-            state.update(updates)
-            if not explicit_mint_disable:
-                return
-            current_sched = dict(state.get("schedulable") or {})
-            current_mint = dict(current_sched.get("minting") or {})
-            current_mint.update({"on": False, "n": 0, "sessions": []})
-            current_sched["minting"] = current_mint
-            state["schedulable"] = current_sched
+        # U5: a prompt-only save never confirms Day Setup. Any non-prompt field
+        # (or a bare {} save) preserves the existing explicit confirmation.
+        confirmed = True
+        if prompt_only:
+            # No runstate write at all: the local prompt stores are the only
+            # target, so a draft/opt-in edit cannot materialize or alter the
+            # dated runstate note.
+            state = _read_today_runstate(vault, today)
+            confirmed = runstate.is_day_setup_confirmed(vault, today)
+        else:
+            # G26: locked RMW — concurrent /day-setup POSTs previously lost
+            # updates. FEEDBACK-24: this successful POST is the ONLY writer of
+            # the explicit confirmation, scoped to today's dated note.
+            updates[runstate.DAY_SETUP_CONFIRMED_KEY] = True
 
-        state = runstate.update_runstate(vault, today, _save_day_setup)
-        return {"ok": True, "re_included": sorted(re_included),
-                "day_setup_confirmed": True,
-                "day_setup": {k: state.get(k) for k in _DAY_SETUP_KEYS}}
+            def _save_day_setup(state: dict[str, Any]) -> None:
+                state.update(updates)
+                if not explicit_mint_disable:
+                    return
+                current_sched = dict(state.get("schedulable") or {})
+                current_mint = dict(current_sched.get("minting") or {})
+                current_mint.update({"on": False, "n": 0, "sessions": []})
+                current_sched["minting"] = current_mint
+                state["schedulable"] = current_sched
+
+            state = runstate.update_runstate(vault, today, _save_day_setup)
+        day_setup_echo, echo_warnings = _day_setup_with_prompts(state, today)
+        prompt_warnings = [*prompt_warnings, *echo_warnings]
+        response: dict[str, Any] = {
+            "ok": True,
+            "re_included": sorted(re_included),
+            "day_setup_confirmed": confirmed,
+            "day_setup": {k: day_setup_echo.get(k) for k in _DAY_SETUP_KEYS},
+            "optins": optins_map,
+            "optins_revision": optins_revision,
+        }
+        if prompt_warnings:
+            response["prompt_warnings"] = prompt_warnings
+        return response
 
     @app.post("/digest", dependencies=[Depends(require_token)])
     def post_digest(body: DigestRequest | None = None) -> dict:
@@ -4423,8 +4617,7 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
         canonical_assigned = _canonicalize_route_assigned(
             vault, today, body.assigned,
         )
-        day_setup = {k: v for k, v in _read_today_runstate(vault, today).items()
-                     if k in _DAY_SETUP_KEYS and v not in ("", None)}
+        day_setup, _prompt_warnings = _read_day_setup(vault, today)
         defaults: dict[str, Any] = dict((body.config or {}).get("Defaults") or {})
         resolved_day_semantics = _authoritative_day_semantics(
             body.config, day_setup, today,
@@ -4501,8 +4694,7 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
             vault, today, body.assigned,
         )
         snapshot = _read_today_runstate(vault, today)
-        day_setup = {k: v for k, v in snapshot.items()
-                     if k in _DAY_SETUP_KEYS and v not in ("", None)}
+        day_setup, _prompt_warnings = _day_setup_with_prompts(snapshot, today)
         defaults = dict((body.config or {}).get("Defaults") or {})
         resolved_day_semantics = _authoritative_day_semantics(
             body.config, day_setup, today,
@@ -4646,10 +4838,7 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
 
         vault = resolve_vault_root()
         shadow_today = gather.effective_date(datetime.now())
-        shadow_day_setup = {
-            k: v for k, v in _read_today_runstate(vault, shadow_today).items()
-            if k in _DAY_SETUP_KEYS and v not in ("", None)
-        }
+        shadow_day_setup, _prompt_warnings = _read_day_setup(vault, shadow_today)
         # P3-02: eligibility boundary immediately before manifest construction.
         # It returns the same server-authoritative effective config that the
         # validator used, plus the sanitized digest, so the client cannot
@@ -4891,11 +5080,7 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
                 detail=detail + " — nothing was written",
             )
 
-        day_setup = {
-            key: value
-            for key, value in _read_today_runstate(vault, today).items()
-            if key in _DAY_SETUP_KEYS and value not in ("", None)
-        }
+        day_setup, _prompt_warnings = _read_day_setup(vault, today)
         config = _server_commit_config(vault, today, day_setup)
         presets = config.get("Presets") or config.get("presets") or []
 
@@ -5227,10 +5412,7 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
         _require_day_setup(vault, today, "committing")
         # T8: Day Setup state (anchored overrides, re_included, captures)
         # flows into the manifest via config
-        live_day_setup = {
-            k: v for k, v in _read_today_runstate(vault, today).items()
-            if k in _DAY_SETUP_KEYS and v not in ("", None)
-        }
+        live_day_setup, _prompt_warnings = _read_day_setup(vault, today)
         if config_override is None:
             config = _server_commit_config(vault, today, live_day_setup)
         else:

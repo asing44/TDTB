@@ -14,6 +14,7 @@ from fastapi.testclient import TestClient
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 import capacities_selections  # noqa: E402
+import prompt_state  # noqa: E402
 import main as main_mod  # noqa: E402
 import runstate as rs  # noqa: E402
 import shadow  # noqa: E402
@@ -681,8 +682,16 @@ class TestDaySetup:
         state = gather._extract_json_block(note.read_text(encoding="utf-8"))
         assert state["anchor"] == "18:00" and state["eod"] == "22:00"
         assert state["buffering"] == "standard"
-        assert state["intention"] == "ship T4"
-        assert state["megan_nicety"] == "hi Meegy"
+        # U5: legacy runstate prompt keys stay INERT (skeleton empty); the
+        # captures persist to the local prompt draft store instead.
+        assert state["intention"] == ""
+        assert state["megan_nicety"] == ""
+        assert prompt_state.load_drafts(today.isoformat()).drafts == {
+            "intention": "ship T4",
+            "megan_nicety": "hi Meegy",
+            "stoic_intention": "temperance",
+        }
+        assert body["day_setup"]["intention"] == "ship T4"
         assert "Sudsing" in state["re_included"]
         assert state["schedulable"]["qt"]["on"] is True
 
@@ -1310,15 +1319,14 @@ class TestEstimationCorrection:
 
 
 class TestCommitCapturesFlow:
-    """T8 (ui-parity): Day Setup captures reach the /commit shadow diff."""
+    """U5: Day Setup captures are local prompt state — they never reach the
+    /commit shadow diff as capture-nicety or frontmatter-captures rows."""
 
-    def test_shadow_commit_shows_capture_rows(self, client, vault):
+    def test_shadow_commit_has_no_capture_rows(self, client, vault):
         _write_min_config(vault)
         client.post("/day-setup", json={
             "captures": {"intention": "ship it", "megan_nicety": "Walk outside"},
         }, headers=_auth(client))
-        # token file for gather_live_state todoist read isn't present in the
-        # tmp vault — shadow degrades that surface, vault rows still classify
         r = client.post("/commit?mode=shadow", headers=_auth(client),
                         json={"digest": {"assigned": []},
                               "sequence": {"sequence": []}, "config": {}})
@@ -1327,8 +1335,8 @@ class TestCommitCapturesFlow:
             _pytest.skip("shadow state unavailable in this env")
         entries = r.json()["entries"]
         actions = [e["manifest"]["action"] for e in entries]
-        assert "capture-nicety" in actions
-        assert "frontmatter-captures" in actions
+        assert "capture-nicety" not in actions
+        assert "frontmatter-captures" not in actions
 
 
 class TestIgnoreListDigestFilter:

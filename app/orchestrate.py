@@ -55,21 +55,19 @@ import runstate  # noqa: E402
 # crash-consistency reasoning (todoist lands before anything vault-side, so a
 # crash after Step A never leaves an orphaned vault flip with no matching
 # task) and is never reordered by intent content.
-SURFACES: list[str] = ["todoist", "vault_flips", "daily_note", "captures", "calendar"]
+SURFACES: list[str] = ["todoist", "vault_flips", "daily_note", "calendar"]
 
 # surface key -> (WriterResult.step label, the client this surface needs)
 _STEP_FOR: dict[str, str] = {
     "todoist": "A",
     "vault_flips": "C",
     "daily_note": "B",
-    "captures": "B6",
     "calendar": "D/E",
 }
 _CLIENT_NAME_FOR: dict[str, str] = {
     "todoist": "todoist",
     "vault_flips": "vault_root",
     "daily_note": "vault_root",
-    "captures": "vault_root",
     "calendar": "store",
 }
 
@@ -84,8 +82,6 @@ def _subset_for(key: str, intents: list[commit.WriteIntent]) -> list[commit.Writ
         return [i for i in intents if i.surface == "vault" and i.step == "C"]
     if key == "daily_note":
         return [i for i in intents if i.surface == "vault" and i.step == "B"]
-    if key == "captures":
-        return [i for i in intents if i.surface == "vault" and i.step == "B6"]
     if key == "calendar":
         return [i for i in intents if i.surface == "calendar"]
     raise ValueError(f"unknown surface key {key!r}")  # pragma: no cover — SURFACES is closed
@@ -107,8 +103,6 @@ def _dispatch(
         return commit.write_frontmatter_flips(subset, vault_root)
     if key == "daily_note":
         return commit.write_daily_note(subset, vault_root, plan_body, today)
-    if key == "captures":
-        return commit.write_captures_frontmatter(subset, vault_root, today)
     if key == "calendar":
         return commit.write_calendar(subset, store, today)
     raise ValueError(f"unknown surface key {key!r}")  # pragma: no cover — SURFACES is closed
