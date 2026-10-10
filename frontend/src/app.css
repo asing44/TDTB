@@ -6028,3 +6028,105 @@ body {
   align-items: center;
   gap: 10px;
 }
+
+/* ---- U11 density pass: one-line task rows (2026-10-10) ------------------
+   The recomposed table above stacks the name, its source, the due line, and
+   the duration readout into a two-line card (~100px). This final layer folds
+   every one of those sub-lines onto a single dense row (~56px, set by the
+   44px control floor) so a lane scans as a compact table. It sits at the END
+   of app.css so it wins the cascade without editing the blocks above, and it
+   is scoped to the desktop grid (>=1101px): narrower widths keep the two-line
+   wrap from the max-width:1100px block, which is what lets 900px reflow with
+   no horizontal scroll. */
+
+@media (min-width: 1101px) {
+  /* Row: drop the 60px card floor and the extra horizontal inset; the 44px
+     controls now set the height (44 + 6px vertical padding = 56px). The
+     action track is sized so the revealed verb line never overflows. */
+  .qrow {
+    min-height: 0;
+    padding: 6px 8px 6px 0;
+    align-items: center;
+    grid-template-columns: 3px minmax(0, 1fr) 150px 290px 440px;
+  }
+
+  /* Name + source share one line: the body stops stacking. */
+  .qrow__body {
+    flex-direction: row;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: nowrap;
+  }
+
+  .qrow__nameline {
+    flex: 0 1 auto;
+  }
+
+  .qrow__name {
+    -webkit-line-clamp: 1;
+    white-space: nowrap;
+  }
+
+  .qrow__source {
+    margin-top: 0;
+    flex: 0 1 auto;
+  }
+
+  /* Priority chip + due share one line. */
+  .qrow__due {
+    flex-wrap: nowrap;
+  }
+
+  /* Slider and its readout share one line; the track gives up the 140px floor
+     (its 44px hit area and 10px thumb are untouched) so the value sits inline
+     instead of wrapping under the slider. */
+  .qrow__time {
+    flex-wrap: nowrap;
+  }
+
+  .qrow__time .alloc-track {
+    flex: 1 1 auto;
+    min-width: 80px;
+  }
+
+  .qrow__time .alloc-track__value {
+    min-width: 0;
+    white-space: nowrap;
+  }
+
+  /* Row verbs reveal on hover/focus as one compact line on the right. The
+     scope-note sub-line is folded away at this density; every verb keeps its
+     label, its aria-label, and the 44px target, and the cluster stays in the
+     DOM and focusable (opacity only — never display:none). */
+  .qrow__actions {
+    flex-wrap: nowrap;
+    gap: 4px;
+    justify-content: flex-end;
+  }
+
+  .qrow__action-group {
+    flex-wrap: nowrap;
+    gap: 4px;
+  }
+
+  .qrow__actions .planbtn,
+  .qrow__actions .alloc-verb {
+    display: inline-flex;
+    align-items: center;
+    min-width: 0;
+    padding: 0 8px;
+    font-size: 11px;
+    white-space: nowrap;
+  }
+
+  .qrow__actions .planbtn__detail,
+  .qrow__actions .alloc-verb__detail {
+    display: none;
+  }
+
+  /* The uppercase group label repeats the lane header's sub verbatim; with
+     the lane header already carrying it, the second rule is pure noise. */
+  .tasktable__grouplabel {
+    display: none;
+  }
+}
