@@ -337,6 +337,29 @@ describe("token + POST bodies", () => {
     expect(body.digest.assigned.length).toBe(2);
   });
 
+  it("preserves canonical Capacities identity/ids through commit serialization", async () => {
+    const payload = structuredClone(planInputs) as any;
+    payload.digest.assigned = payload.digest.assigned.map((row: any, i: number) => ({
+      ...row,
+      source: "capacities",
+      identity: `capacities:sp:struct-a:obj-${i}`,
+      todoist_id: `td-${i}`,
+    }));
+    route("/plan-inputs", payload);
+    route("/commit", shadowDiff);
+    const a = new ApiAdapter();
+    await a.loadPlanInputs();
+    await a.shadowCommit([], CTX);
+    const body = postBody("/commit");
+    const make = body.digest.assigned.find((r: any) => r.name === "Make");
+    expect(make.identity).toBe("capacities:sp:struct-a:obj-0");
+    expect(make.todoist_id).toBe("td-0");
+    expect(make.source).toBe("capacities");
+    // Today-only shaping still applies alongside the preserved identity.
+    expect(make.id).toBe("Make");
+    expect(make.blocks).toBe(4);
+  });
+
   it("POSTs before loadPlanInputs are refused client-side", async () => {
     const a = new ApiAdapter();
     await expect(a.autoSequence(CTX)).rejects.toThrow("plan inputs not loaded");

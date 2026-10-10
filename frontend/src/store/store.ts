@@ -824,7 +824,7 @@ export function reducer(s: AppState, a: Action): AppState {
       // only the refresh feedback surface changes.
       return { ...s, refresh: { ...s.refresh, phase: "idle", error: a.error } };
     case "SOURCE_REFRESH_OK": {
-      const coverage = capacitiesCoverageOf(a.inputs.sourceWarnings);
+      const coverage = capacitiesCoverageOf(a.inputs.sourceWarnings, a.inputs.capacitiesIntake);
       if (s.validDate !== null && s.validDate !== a.inputs.validDate) {
         // Date rollover mid-session: full reset (locked decisions 16/20).
         return {

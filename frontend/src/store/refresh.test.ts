@@ -120,6 +120,29 @@ describe("reducer: Capacities coverage rides the refresh envelope", () => {
     expect(s.refresh.summary).not.toBeNull();
   });
 
+  it("a structured non-ok intake drives coverage with no warning text", () => {
+    const inputs: PlanInputs = {
+      ...makeScenario("ready").inputs,
+      sourceWarnings: [],
+      sourceHealth: "ok",
+      capacitiesIntake: {
+        mode: "direct",
+        state: "degraded",
+        generation: 3,
+        installedAt: null,
+        typeCheckTimes: {},
+        coverage: { members: 12, evaluated: 10, malformed: 1, unreadable: 1 },
+        unassignedCandidates: [],
+      },
+    };
+    const s = refreshOk(sequenced(), inputs);
+    expect(s.refresh.coverage).not.toBeNull();
+    expect(s.refresh.coverage!.evaluated).toBe(10);
+    expect(s.refresh.coverage!.deferred).toBe(2);
+    expect(s.refresh.coverage!.limit).toBe("unknown");
+    expect(s.refresh.coverage!.warnings).toEqual([]);
+  });
+
   it("successive refreshes shrink the deferral count, then clear it on full coverage", () => {
     let s = sequenced();
     s = refreshOk(s, withDeferred(s.inputs!, 51));

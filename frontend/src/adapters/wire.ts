@@ -1181,8 +1181,24 @@ const capacitiesPartialCounts = /^Capacities partial — (\d+) evaluated · (\d+
     and this projection only parses counts/reason so the refresh summary can
     say a completed refresh did not mean complete coverage. `warnings` stays
     authoritative for display — it is never rewritten from these fields.
-    Null means the read had full coverage. */
-export function capacitiesCoverageOf(warnings: string[]): CapacitiesCoverage | null {
+    Null means the read had full coverage. When a typed ``capacities_intake``
+    block is present it is authoritative: an ``ok`` state is full coverage even
+    if a stale warning lingers, and every other state derives its counts from
+    the structured block rather than the warning text. Absent/null intake keeps
+    the legacy warning-text parser verbatim. */
+export function capacitiesCoverageOf(
+  warnings: string[],
+  intake?: CapacitiesIntake | null,
+): CapacitiesCoverage | null {
+  if (intake) {
+    if (intake.state === "ok") return null;
+    return {
+      warnings: warnings.filter((warning) => warning.startsWith(capacitiesPartialPrefix)),
+      evaluated: intake.coverage.evaluated,
+      deferred: Math.max(0, intake.coverage.members - intake.coverage.evaluated),
+      limit: "unknown",
+    };
+  }
   const rows = warnings.filter((warning) => warning.startsWith(capacitiesPartialPrefix));
   if (rows.length === 0) return null;
   let evaluated: number | null = null;
@@ -1227,14 +1243,30 @@ function finiteNumberOrNull(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
-function projectCapacitiesIntakeCoverage(raw: unknown): CapacitiesIntakeCoverage {
-  const src = raw && typeof raw === "object" && !Array.isArray(raw) ? (raw as Wire) : {};
-  return {
-    members: finiteNumberOrNull(src.members) ?? 0,
-    evaluated: finiteNumberOrNull(src.evaluated) ?? 0,
-    malformed: finiteNumberOrNull(src.malformed) ?? 0,
-    unreadable: finiteNumberOrNull(src.unreadable) ?? 0,
-  };
+function nonNegativeIntegerOrNull(value: unknown): number | null {
+  return typeof value === "number" &&
+    Number.isFinite(value) &&
+    Number.isInteger(value) &&
+    value >= 0
+    ? value
+    : null;
+}
+
+/** All four bounded counts are required to be finite non-negative integers.
+    A missing or malformed count fails closed (null) so the caller can project
+    the conservative ``unavailable`` block — a partial/absent count can never
+    read as success or full coverage. */
+function projectCapacitiesIntakeCoverage(raw: unknown): CapacitiesIntakeCoverage | null {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const src = raw as Wire;
+  const members = nonNegativeIntegerOrNull(src.members);
+  const evaluated = nonNegativeIntegerOrNull(src.evaluated);
+  const malformed = nonNegativeIntegerOrNull(src.malformed);
+  const unreadable = nonNegativeIntegerOrNull(src.unreadable);
+  if (members === null || evaluated === null || malformed === null || unreadable === null) {
+    return null;
+  }
+  return { members, evaluated, malformed, unreadable };
 }
 
 function projectCapacitiesIntakeCandidate(raw: Wire): CapacitiesIntakeCandidate {
@@ -1270,8 +1302,8 @@ export function projectCapacitiesIntake(raw: unknown): CapacitiesIntake | null {
   if (typeof block.state !== "string" || !capacitiesIntakeStates.has(block.state)) {
     return safe;
   }
-  const coverage = block.coverage;
-  if (!coverage || typeof coverage !== "object" || Array.isArray(coverage)) return safe;
+  const coverage = projectCapacitiesIntakeCoverage(block.coverage);
+  if (!coverage) return safe;
   if (!Array.isArray(block.unassigned_candidates)) return safe;
   const typeCheckTimes: Record<string, number> = {};
   const rawTimes = block.type_check_times;
@@ -1287,7 +1319,7 @@ export function projectCapacitiesIntake(raw: unknown): CapacitiesIntake | null {
     generation: finiteNumberOrNull(block.generation),
     installedAt: finiteNumberOrNull(block.installed_at),
     typeCheckTimes,
-    coverage: projectCapacitiesIntakeCoverage(coverage),
+    coverage,
     unassignedCandidates: (block.unassigned_candidates as unknown[])
       .filter(
         (row): row is Wire =>

@@ -53,7 +53,7 @@ export function ReadinessStrip() {
   const health = s.inputs.sourceHealth;
   const ledger = s.ledger;
   const refresh = s.refresh;
-  const coverage = capacitiesCoverageOf(s.inputs.sourceWarnings);
+  const coverage = capacitiesCoverageOf(s.inputs.sourceWarnings, s.inputs.capacitiesIntake);
   const cycleTheme = () => {
     const next: Theme =
       s.theme === "system" ? "light" : s.theme === "light" ? "dark" : "system";
