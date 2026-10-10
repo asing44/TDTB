@@ -78,6 +78,7 @@ import time_engine  # noqa: E402
 import capacity as capacity_mod  # noqa: E402
 import capacities_settings  # noqa: E402
 import capacities_builder  # noqa: E402
+import capacities_intake  # noqa: E402
 import capacities_rules  # noqa: E402
 import capacities_selections  # noqa: E402
 import capacities_adapter  # noqa: E402
@@ -288,6 +289,73 @@ def _promote_selected_capacities(
         for notice in notices
     ]
     return pool_items, [*assigned_items, *promoted], warnings
+
+
+def _capacities_intake_block(
+    vault: Path,
+    digest: dict[str, Any],
+    coverage: capacities_intake.DirectCoverage,
+    direct_warnings: list[str],
+) -> dict[str, Any]:
+    """The additive ``capacities_intake`` block the ``direct`` intake reports.
+
+    Token-free and read-only: the published generation's metadata and the
+    selection store. ``state`` is ``not_configured`` (no source record),
+    ``refresh_required`` (no complete generation, no contract, or a damaged
+    member), ``unavailable`` (warnings and no Capacities rows served),
+    ``degraded`` (rows served with warnings), or ``ok``. Unassigned candidates
+    are the Capacities rows left on the suggested surface.
+    """
+    try:
+        read = capacities_builder.read_direct_intake(vault)
+    except capacities_builder.CapacitiesSourceStoreError:
+        read = None
+    snapshot = read.snapshot if read is not None else None
+    served = [
+        row for row in [*digest["assigned"], *digest["suggested"]]
+        if row.get("source") == "capacities"
+    ]
+    if read is None:
+        state = "unavailable" if direct_warnings else "not_configured"
+    elif snapshot is None or read.structures is None or read.unreadable:
+        state = "refresh_required"
+    elif direct_warnings:
+        state = "degraded" if served else "unavailable"
+    else:
+        state = "ok"
+    selected: set[str] = set()
+    if read is not None:
+        try:
+            selections = capacities_selections.load_selections(read.space_id)
+        except capacities_selections.SelectionStoreError:
+            selections = None
+        if selections is not None:
+            selected = {record.identity for record in selections.selections}
+    return {
+        "mode": app_config.CAPACITIES_INTAKE_DIRECT,
+        "state": state,
+        "generation": snapshot.generation if snapshot is not None else None,
+        "installed_at": snapshot.installed_at if snapshot is not None else None,
+        "type_check_times": (
+            dict(snapshot.type_check_times) if snapshot is not None else {}
+        ),
+        "coverage": {
+            "members": coverage.members,
+            "evaluated": coverage.evaluated,
+            "malformed": coverage.malformed,
+            "unreadable": coverage.unreadable,
+        },
+        "unassigned_candidates": [
+            {
+                "identity": row.get("identity"),
+                "name": row.get("name"),
+                "review_reasons": list(row.get("capacities_review_reasons") or []),
+                "selected": row.get("identity") in selected,
+            }
+            for row in digest["suggested"]
+            if row.get("source") == "capacities"
+        ],
+    }
 
 
 def build_digest(
@@ -2867,6 +2935,13 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
         # and NEITHER live client is constructed. A live read is never a
         # fallback (point 7) — the digest degrades with a loud banner instead.
         source_mode = app_config.sources_mode()
+        # U4 S3: under ``direct`` intake the published Capacities generation is
+        # the only Capacities source, in either source mode. It replaces the
+        # artifact's Capacities rows and the live builder; Todoist and habits
+        # keep their source-mode readers. Refusals never fall back to either.
+        direct_intake = app_config.capacities_intake() == app_config.CAPACITIES_INTAKE_DIRECT
+        direct_coverage = capacities_intake.DirectCoverage()
+        direct_warnings: list[str] = []
         artifact_block: dict[str, Any] = {
             "state": artifact_source.STATUS_LIVE,
             "generated_at": None,
@@ -2916,8 +2991,9 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
             capacities_rows = [
                 r for r in artifact_result.rows if r.get("source") == "capacities"
             ]
-            capacities_items = [r for r in capacities_rows if r.get("assigned") is True]
-            c_pool = [r for r in capacities_rows if r.get("assigned") is not True]
+            if not direct_intake:
+                capacities_items = [r for r in capacities_rows if r.get("assigned") is True]
+                c_pool = [r for r in capacities_rows if r.get("assigned") is not True]
             # A producer may fold vault rows into the artifact too; they join
             # the live vault gather's own surfaces rather than a third one.
             artifact_vault = [
@@ -2936,7 +3012,9 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
         else:
             todoist_c, store = build_clients(vault, config)
             build_capacities = app.state.build_capacities_adapter
-            if build_capacities is not None:
+            # Under direct intake the live builder is never called: no client is
+            # constructed and no provider read happens on this path.
+            if build_capacities is not None and not direct_intake:
                 try:
                     capacities_client = build_capacities(vault, config)
                 except Exception as exc:  # noqa: BLE001 — source boundary degrades
@@ -2945,11 +3023,23 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
                         f"Capacities adapter setup failed ({exc}) — source is unavailable"
                     ]
                 if capacities_client is not None:
-                    capacities_items, w_capacities = external_sources.fetch_capacities_items(
+                    live_capacities, w_capacities = external_sources.fetch_capacities_items(
                         capacities_client, today
                     )
+                    # F2: only rows the rules assign reach the assigned surface.
+                    # A pool:true or UNKNOWN row stays on the pool.
+                    capacities_items = [r for r in live_capacities if r.get("assigned") is True]
+                    c_pool = [r for r in live_capacities if r.get("assigned") is not True]
             # Live mode still sources the habit summary from the artifact.
             habits, w_hab = artifact_source.load_habits()
+        if direct_intake:
+            (
+                capacities_items,
+                c_pool,
+                direct_warnings,
+                direct_coverage,
+            ) = capacities_intake.load_direct_rows(vault)
+            w_capacities = [*w_capacities, *direct_warnings]
         try:
             if source_mode != app_config.SOURCES_MODE_ARTIFACT:
                 t_assigned, t_pool, w_todo = external_sources.fetch_todoist_items(
@@ -3153,7 +3243,7 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
             exclusion_settings_revision=exclusion_policy.revision,
         )
 
-        return {
+        response = {
             "digest": digest,
             "config": config,
             "anchored_blocks": list(anchored) + busy_effective,
@@ -3182,6 +3272,11 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
                 "calendar": len(busy_blocks),
             },
         }
+        if direct_intake:
+            response["capacities_intake"] = _capacities_intake_block(
+                vault, digest, direct_coverage, direct_warnings,
+            )
+        return response
 
     @app.get("/billed-ledger")
     def get_billed_ledger() -> dict:

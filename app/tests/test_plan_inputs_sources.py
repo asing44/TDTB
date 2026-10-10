@@ -6,6 +6,7 @@ habits ride as a capacity summary, and every degrade path surfaces in
 """
 from __future__ import annotations
 
+import dataclasses
 import json
 import sys
 from datetime import datetime
@@ -17,6 +18,10 @@ from fastapi.testclient import TestClient
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 import main as main_mod  # noqa: E402
+import app_config  # noqa: E402
+import artifact_source as art  # noqa: E402
+import capacities_builder as cap_builder  # noqa: E402
+import capacities_refresh_state as crs  # noqa: E402
 import exclusion_settings as es  # noqa: E402
 import runstate as runstate_mod  # noqa: E402
 from calendar_bridge import CalendarInfo  # noqa: E402
@@ -596,3 +601,395 @@ class TestCalendarIdentityAndOmissions:
         assert "omission" in joined
         assert "broken sync" in joined
         assert "reminder marker" in joined
+
+
+# ---------------------------------------------------------------------------
+# U4 S3: direct Capacities intake wired into /plan-inputs
+# ---------------------------------------------------------------------------
+
+DIRECT_SPACE = "space-1"
+DIRECT_ROOT = "RootTask"
+DIRECT_CUSTOM = "T2"
+DIRECT_TS = datetime(2026, 10, 10, 12, 0).timestamp()
+DUPLICATE_IDENTITY = f"capacities:{DIRECT_SPACE}:{DIRECT_ROOT}:obj-a"
+
+
+class _CallRecorder:
+    """A live seam that fails loudly if it is ever constructed or called."""
+
+    def __init__(self):
+        self.calls = 0
+
+    def __call__(self, *_args, **_kwargs):
+        self.calls += 1
+        raise AssertionError("a live Capacities seam was used under direct intake")
+
+
+def _set_sources(**sources):
+    path = app_config.config_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"version": 1, "sources": sources}), encoding="utf-8")
+
+
+def _direct_contract():
+    properties = [
+        {"id": "title", "type": "title"},
+        {"id": "assigned", "type": "boolean"},
+        {"id": "status", "type": "label", "labelSet": [
+            {"id": "active", "name": "Active"}, {"id": "done", "name": "Done"}]},
+        {"id": "due", "type": "date"},
+        {"id": "completion", "type": "label", "writable": True, "labelSet": [
+            {"id": "done", "name": "Done"}]},
+    ]
+    return [
+        {"id": type_id, "title": type_id, "propertyDefinitions": properties}
+        for type_id in (DIRECT_ROOT, DIRECT_CUSTOM)
+    ]
+
+
+def _save_direct_source(vault: Path) -> None:
+    common = dict(
+        title_property="title",
+        status_property="status",
+        open_status_values=("active",),
+        date_property="due",
+        assignment_property="assigned",
+        assignment_values=("true",),
+    )
+    cap_builder.save_source(
+        vault,
+        expected_revision=0,
+        space_id=DIRECT_SPACE,
+        structures=[
+            cap_builder.SourceStructureRecord(structure_id=DIRECT_ROOT, **common),
+            cap_builder.SourceStructureRecord(
+                structure_id=DIRECT_CUSTOM,
+                completion_property="completion",
+                completion_value="done",
+                **common,
+            ),
+        ],
+    )
+
+
+def _direct_object(object_id: str, type_id: str, *, assigned: bool = True) -> dict:
+    return {
+        "id": object_id,
+        "structureId": type_id,
+        "properties": {
+            "title": {"type": "title", "title": {"value": object_id}},
+            "assigned": {"type": "boolean", "boolean": assigned},
+            "status": {"type": "label", "label": [{"id": "active", "name": "Active"}]},
+        },
+    }
+
+
+def _publish_direct(vault: Path, objects: list[dict], *, with_contract: bool = True) -> None:
+    """Install one complete generation; every configured type is checked."""
+    store = cap_builder.build_refresh_state(vault, DIRECT_SPACE)
+    listed = {type_id: [] for type_id in (DIRECT_ROOT, DIRECT_CUSTOM)}
+    for obj in objects:
+        store.put(obj["id"], obj["structureId"], obj)
+        listed[obj["structureId"]].append(obj["id"])
+    evidence = crs.SnapshotEvidence(
+        scope_key="all",
+        revision=1,
+        required_types=tuple(listed),
+        listings=tuple(
+            crs.TypeListing(
+                type_key=type_id,
+                object_ids=tuple(ids),
+                listing_checked_at=DIRECT_TS,
+            )
+            for type_id, ids in listed.items()
+        ),
+    )
+    store.install_generation(
+        evidence,
+        expected_generation=0,
+        structures=_direct_contract() if with_contract else None,
+    )
+
+
+def _artifact_row(name: str, source: str, identity: str, *, assigned: bool) -> dict:
+    return {
+        "name": name,
+        "source": source,
+        "path": f"{source}://{name}",
+        "identity": identity,
+        "assigned": assigned,
+        "duration_minutes": 30,
+        "blocks": 1,
+    }
+
+
+def _write_fresh_artifact(rows: list[dict], habits: dict | None = None) -> None:
+    today = gather.effective_date(datetime.now())
+    generated = datetime.now().astimezone().isoformat()
+    sources = {
+        source: {
+            "status": "ok", "read_at": generated,
+            "rows": sum(1 for r in rows if r["source"] == source),
+            "dropped": 0, "deferred": 0, "warnings": [],
+        }
+        for source in ("todoist", "capacities")
+    }
+    document = {
+        "schema": art.ARTIFACT_SCHEMA,
+        "version": art.ARTIFACT_VERSION,
+        "generated_at": generated,
+        "logical_day": str(today),
+        "producer": {"name": "test", "version": "0.1.0", "run_id": "r1"},
+        "content_hash": art.compute_content_hash(sources, rows),
+        "sources": sources,
+        "rows": rows,
+        "admission": {"rule_set_hash": "rs", "admitted": [], "dropped": []},
+    }
+    if habits is not None:
+        document["habits"] = habits
+    art.atomic_write_artifact(document)
+
+
+def _direct_client(vault: Path, *, build_clients, build_capacities) -> TestClient:
+    app = main_mod.create_app(vault_root=vault)
+    app.state.build_read_clients = build_clients
+    app.state.build_capacities_adapter = build_capacities
+    return TestClient(app)
+
+
+def _surface(body: dict, surface: str) -> list[dict]:
+    return body["digest"][surface]
+
+
+def _names(body: dict, surface: str) -> list[str]:
+    return [row["name"] for row in _surface(body, surface)]
+
+
+def test_direct_duplicate_identity_is_served_as_one_row(vault):
+    """Artifact Capacities rows are discarded under direct, so a row the artifact
+    and the published generation both carry appears once, from the generation."""
+    _set_sources(mode="artifact", capacities_intake="direct")
+    _save_direct_source(vault)
+    _publish_direct(vault, [_direct_object("obj-a", DIRECT_ROOT)])
+    _write_fresh_artifact([
+        _artifact_row("Stale artifact name", "capacities", DUPLICATE_IDENTITY, assigned=True),
+    ])
+    client = _direct_client(
+        vault, build_clients=_CallRecorder(), build_capacities=_CallRecorder(),
+    )
+
+    body = client.get("/plan-inputs").json()
+
+    same = [
+        row for row in _surface(body, "assigned") + _surface(body, "suggested")
+        if row.get("identity") == DUPLICATE_IDENTITY
+    ]
+    assert [row["name"] for row in same] == ["obj-a"]
+    assert body["source_counts"]["capacities"] == 1
+
+
+def test_direct_repeated_projection_rows_are_served_once(vault, monkeypatch):
+    _set_sources(mode="artifact", capacities_intake="direct")
+    _save_direct_source(vault)
+    _publish_direct(vault, [_direct_object("obj-a", DIRECT_ROOT)])
+    real_read = cap_builder.read_direct_intake
+
+    def doubled(root):
+        read = real_read(root)
+        return dataclasses.replace(read, objects=read.objects + read.objects)
+
+    monkeypatch.setattr(cap_builder, "read_direct_intake", doubled)
+    client = _direct_client(
+        vault, build_clients=_CallRecorder(), build_capacities=_CallRecorder(),
+    )
+
+    body = client.get("/plan-inputs").json()
+
+    assert _names(body, "assigned").count("obj-a") == 1
+
+
+def test_direct_keeps_artifact_todoist_and_habits_with_live_readers_stubbed(vault):
+    _set_sources(mode="artifact", capacities_intake="direct")
+    _save_direct_source(vault)
+    _publish_direct(vault, [_direct_object("obj-a", DIRECT_ROOT)])
+    habits = {"total": 3, "done": 1, "outstanding": 2, "est_minutes": 20}
+    _write_fresh_artifact(
+        [
+            _artifact_row("Call Vlad", "todoist", "todoist:9001", assigned=True),
+            _artifact_row("Water plants", "todoist", "todoist:9002", assigned=False),
+        ],
+        habits=habits,
+    )
+    clients = _CallRecorder()
+    builder = _CallRecorder()
+    client = _direct_client(vault, build_clients=clients, build_capacities=builder)
+
+    body = client.get("/plan-inputs").json()
+
+    assert "Call Vlad" in _names(body, "assigned")
+    assert "Water plants" in _names(body, "suggested")
+    assert body["habits"] == habits
+    assert "obj-a" in _names(body, "assigned")
+    assert clients.calls == 0
+    assert builder.calls == 0
+
+
+@pytest.mark.parametrize("published", ["no-generation", "no-contract"])
+def test_direct_missing_snapshot_or_contract_serves_no_rows_and_no_fallback(vault, published):
+    _set_sources(mode="artifact", capacities_intake="direct")
+    _save_direct_source(vault)
+    if published == "no-contract":
+        _publish_direct(vault, [_direct_object("obj-a", DIRECT_ROOT)], with_contract=False)
+    _write_fresh_artifact([
+        _artifact_row("Artifact cap", "capacities", DUPLICATE_IDENTITY, assigned=True),
+        _artifact_row("Call Vlad", "todoist", "todoist:9001", assigned=True),
+    ])
+    clients = _CallRecorder()
+    builder = _CallRecorder()
+    client = _direct_client(vault, build_clients=clients, build_capacities=builder)
+
+    body = client.get("/plan-inputs").json()
+
+    capacities = [
+        row for row in _surface(body, "assigned") + _surface(body, "suggested")
+        if row.get("source") == "capacities"
+    ]
+    assert capacities == []
+    assert "Call Vlad" in _names(body, "assigned")
+    assert body["source_counts"]["capacities"] == 0
+    assert any("Refresh required" in w for w in body["source_warnings"])
+    assert clients.calls == 0
+    assert builder.calls == 0
+
+
+def test_direct_unknown_rows_never_reach_the_assigned_surface(vault):
+    _set_sources(mode="artifact", capacities_intake="direct")
+    _save_direct_source(vault)
+    _publish_direct(vault, [
+        _direct_object("obj-a", DIRECT_ROOT),
+        # The custom type has a completion field this object never sets: UNKNOWN.
+        _direct_object("obj-unknown", DIRECT_CUSTOM),
+    ])
+    client = _direct_client(
+        vault, build_clients=_CallRecorder(), build_capacities=_CallRecorder(),
+    )
+
+    body = client.get("/plan-inputs").json()
+
+    assert "obj-a" in _names(body, "assigned")
+    assert "obj-unknown" not in _names(body, "assigned")
+    unknown = [row for row in _surface(body, "suggested") if row["name"] == "obj-unknown"]
+    assert len(unknown) == 1
+    assert "completion_unknown" in unknown[0]["capacities_review_reasons"]
+    assert any("Capacities review" in w for w in body["source_warnings"])
+
+
+def test_direct_live_branch_never_calls_the_capacities_builder(vault):
+    _set_sources(mode="live", capacities_intake="direct")
+    _save_direct_source(vault)
+    _publish_direct(vault, [_direct_object("obj-a", DIRECT_ROOT)])
+    builder = _CallRecorder()
+    client = _direct_client(
+        vault, build_clients=lambda _v, _c: (None, None), build_capacities=builder,
+    )
+
+    body = client.get("/plan-inputs").json()
+
+    assert builder.calls == 0
+    assert not any("adapter setup failed" in w for w in body["source_warnings"])
+    assert "obj-a" in _names(body, "assigned")
+
+
+def test_direct_intake_block_reports_state_coverage_and_generation(vault):
+    _set_sources(mode="artifact", capacities_intake="direct")
+    _save_direct_source(vault)
+    _publish_direct(vault, [_direct_object("obj-a", DIRECT_ROOT)])
+    client = _direct_client(
+        vault, build_clients=_CallRecorder(), build_capacities=_CallRecorder(),
+    )
+
+    body = client.get("/plan-inputs").json()
+
+    block = body["capacities_intake"]
+    snapshot = cap_builder.read_direct_intake(vault).snapshot
+    assert block["mode"] == "direct"
+    assert block["state"] == "ok"
+    assert block["generation"] == snapshot.generation
+    assert block["installed_at"] == snapshot.installed_at
+    assert block["type_check_times"] == {DIRECT_ROOT: DIRECT_TS, DIRECT_CUSTOM: DIRECT_TS}
+    assert block["coverage"]["members"] == 1
+    assert block["coverage"]["unreadable"] == 0
+    assert block["coverage"]["malformed"] == 0
+    assert block["unassigned_candidates"] == []
+
+
+def test_direct_block_lists_unassigned_candidates_with_review_reasons(vault):
+    _set_sources(mode="artifact", capacities_intake="direct")
+    _save_direct_source(vault)
+    _publish_direct(vault, [
+        _direct_object("obj-a", DIRECT_ROOT),
+        _direct_object("obj-unknown", DIRECT_CUSTOM),
+    ])
+    client = _direct_client(
+        vault, build_clients=_CallRecorder(), build_capacities=_CallRecorder(),
+    )
+
+    body = client.get("/plan-inputs").json()
+
+    block = body["capacities_intake"]
+    assert block["state"] == "degraded"
+    assert block["unassigned_candidates"] == [{
+        "identity": f"capacities:{DIRECT_SPACE}:{DIRECT_CUSTOM}:obj-unknown",
+        "name": "obj-unknown",
+        "review_reasons": ["completion_unknown"],
+        "selected": False,
+    }]
+
+
+def test_live_capacities_split_on_the_assigned_flag(vault, live_sources_mode):
+    """Only rows the rules assign reach the assigned surface in live mode."""
+    assigned_row = _capacities_row("Cap A", [])
+    pool_row = _capacities_row("Cap P", [])
+    pool_row["assigned"] = False
+    client = _client_with_capacities(vault, [assigned_row, pool_row])
+
+    body = client.get("/plan-inputs").json()
+
+    assert _names(body, "assigned") == ["Cap A"]
+    assert _names(body, "suggested") == ["Cap P"]
+    assert body["source_counts"]["capacities"] == 1
+
+
+def test_legacy_intake_response_keeps_todays_shape(vault, live_sources_mode):
+    client = _client_with_capacities(
+        vault, [_capacities_row("Cap A", []), _capacities_row("Cap B", [])],
+    )
+
+    body = client.get("/plan-inputs").json()
+
+    assert sorted(body) == [
+        "anchored_blocks", "anchored_source_fingerprint", "artifact",
+        "calendar_decisions", "capacity", "config", "day_semantics", "day_setup",
+        "day_setup_confirmed", "digest", "dropped_today", "habits", "micro_adventure",
+        "planning_config_fingerprint", "source_counts", "source_warnings", "time",
+    ]
+    assert "capacities_intake" not in body
+    assert body["source_counts"] == {"vault": 0, "todoist": 0, "capacities": 2, "calendar": 0}
+    assert _names(body, "assigned") == ["Cap A", "Cap B"]
+    assert _surface(body, "suggested") == []
+
+
+def test_legacy_artifact_capacities_keep_their_surfaces(vault):
+    _set_sources(mode="artifact")
+    _write_fresh_artifact([
+        _artifact_row("Cap assigned", "capacities", "capacities:space-1:RootTask:obj-a", assigned=True),
+        _artifact_row("Cap pool", "capacities", "capacities:space-1:RootTask:obj-b", assigned=False),
+    ])
+    client = _direct_client(vault, build_clients=_CallRecorder(), build_capacities=_CallRecorder())
+
+    body = client.get("/plan-inputs").json()
+
+    assert _names(body, "assigned") == ["Cap assigned"]
+    assert _names(body, "suggested") == ["Cap pool"]
+    assert body["source_counts"]["capacities"] == 1
+    assert "capacities_intake" not in body
