@@ -76,7 +76,6 @@ export function ActionDock() {
       {!sourcesHealthy && (
         <div class="dock__health" role="alert">
           Sources {s.inputs.sourceHealth} — sequencing and commit are blocked until the read is healthy.
-          <span>Copy prompt remains available as a no-write fallback.</span>
         </div>
       )}
 

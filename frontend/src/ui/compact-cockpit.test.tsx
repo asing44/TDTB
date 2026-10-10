@@ -179,7 +179,7 @@ describe("compact planning cockpit", () => {
     expect(queue.contains(calendar)).toBe(true);
   });
 
-  it("keeps source-degraded planning on the no-write fallback path", () => {
+  it("blocks sequencing and commit while sources are degraded, with no retired fallback copy", () => {
     const h = makeHarness("ready", (scenario) => {
       scenario.inputs.sourceHealth = "degraded";
     });
@@ -187,7 +187,9 @@ describe("compact planning cockpit", () => {
     const sequence = r.getByText(/^Auto sequence \d+ blk$/).closest("button") as HTMLButtonElement;
 
     expect(sequence.disabled).toBe(true);
-    expect(r.getByRole("alert").textContent).toMatch(/Sources degraded/);
+    expect(r.getByRole("alert").textContent).toMatch(/Sources degraded — sequencing and commit are blocked until the read is healthy\./);
+    // The alert must not advertise the retired copy-prompt fallback.
+    expect(r.getByRole("alert").textContent).not.toMatch(/copy prompt|fallback/i);
     // U5: the manual copy-prompt bypass is retired; the dock states that
     // prompts stay local and export only on an opted-in Commit.
     expect(r.queryByRole("button", { name: "Copy plan prompt for an external LLM" })).toBeNull();
