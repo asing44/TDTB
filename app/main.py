@@ -78,6 +78,8 @@ import time_engine  # noqa: E402
 import capacity as capacity_mod  # noqa: E402
 import capacities_settings  # noqa: E402
 import capacities_builder  # noqa: E402
+import capacities_rules  # noqa: E402
+import capacities_selections  # noqa: E402
 import capacities_adapter  # noqa: E402
 import capacities_refresh  # noqa: E402
 import capacities_structure_titles  # noqa: E402
@@ -177,6 +179,115 @@ def rank_pool(
     empty leaves ranking byte-identical to the pre-T1 behaviour.
     """
     return sorted(pool_items, key=lambda i: _rank_key(i, today, order, bias))
+
+
+#: U3c-2 selection notices rendered onto the digest ``source_warnings``. The
+#: canonical identity is the only row reference, so no title or payload leaks.
+_SELECTION_NOTICE_TEXT = {
+    capacities_selections.NOTICE_EXCLUDED:
+        "was not promoted: excluded by the tag exclusions or the drop list",
+    capacities_selections.NOTICE_TYPE_DISABLED:
+        "was not promoted: its Capacities type is no longer mapped",
+    capacities_selections.NOTICE_NOT_CACHED:
+        "was not promoted: no cached Capacities row matches it",
+    capacities_selections.NOTICE_RULE_CHANGED:
+        "was promoted, but its selection predates the current rules revision",
+}
+_SELECTIONS_UNAPPLIED_WARNING = (
+    "Capacities selections were not applied: a Capacities record is "
+    "unreadable or malformed"
+)
+_SOURCE_UNAPPLIED_WARNING = (
+    "Capacities selections were not applied: the source mapping record is "
+    "unreadable"
+)
+
+
+def _promote_selected_capacities(
+    vault: Path,
+    today: date,
+    pool_items: list[dict[str, Any]],
+    assigned_items: list[dict[str, Any]],
+    exclusion_policy: tag_exclusions.ExclusionPolicy | None,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[str]]:
+    """Promote explicitly selected Capacities pool rows onto the assigned surface.
+
+    Shared by both digest-build callers (U3c-2). It runs immediately BEFORE
+    ``build_digest``, so a promoted row passes the same tag-exclusion and
+    Ignore List stages as any pool row. The hard exclusions (the tag exclusion
+    policy and today's drop list) are computed here, so each one yields a
+    visible ``excluded`` notice rather than a silent removal. An identity that
+    is already on the assigned surface keeps its own routing. Returns
+    ``(pool_items, assigned_items, warnings)``; a no-op when nothing is selected.
+    """
+    try:
+        source = capacities_builder.read_source(vault)
+    except (capacities_builder.CapacitiesSourceStoreError, OSError):
+        return pool_items, assigned_items, [_SOURCE_UNAPPLIED_WARNING]
+    if source is None:
+        return pool_items, assigned_items, []
+    try:
+        selections = capacities_selections.load_selections(source.space_id)
+        rules_revision = capacities_rules.load_rules(source.space_id).revision
+    except (
+        capacities_selections.SelectionStoreError,
+        capacities_rules.RulesStoreError,
+    ):
+        return pool_items, assigned_items, [_SELECTIONS_UNAPPLIED_WARNING]
+    if not selections.selections:
+        return pool_items, assigned_items, []
+
+    def _is_capacities(row: dict[str, Any]) -> bool:
+        return str(row.get("source") or "").strip().casefold() == "capacities"
+
+    assigned_identities = {
+        row.get("identity") for row in assigned_items if _is_capacities(row)
+    }
+    pending = tuple(
+        record for record in selections.selections
+        if record.identity not in assigned_identities
+    )
+    pending_identities = {record.identity for record in pending}
+    candidates = [
+        row for row in pool_items
+        if _is_capacities(row) and row.get("identity") in pending_identities
+    ]
+    hard_excluded = {
+        str(entry.get("identity"))
+        for entry in runstate.read_dropped(vault, today)
+        if entry.get("identity")
+    }
+    if exclusion_policy is not None and candidates:
+        # Dry run of the shared matcher; build_digest re-applies it to the
+        # promoted rows, so the two stages cannot disagree.
+        _assigned, kept_pool, _report = tag_exclusions.apply_tag_exclusions(
+            [], candidates, exclusion_policy,
+        )
+        kept = {row.get("identity") for row in kept_pool}
+        hard_excluded |= {
+            row.get("identity") for row in candidates
+            if row.get("identity") not in kept
+        }
+    promoted, notices = capacities_selections.resolve_selections(
+        pending,
+        candidates,
+        rules_revision=rules_revision,
+        mapped_structures={
+            structure.structure_id for structure in source.structures
+        },
+        hard_excluded=frozenset(hard_excluded),
+    )
+    promoted_identities = {row["identity"] for row in promoted}
+    pool_items = [
+        row for row in pool_items
+        if not (_is_capacities(row) and row.get("identity") in promoted_identities)
+    ]
+    warnings = [
+        f"Capacities selection {notice['identity']} "
+        f"{_SELECTION_NOTICE_TEXT[notice['code']]}"
+        for notice in notices
+    ]
+    return pool_items, [*assigned_items, *promoted], warnings
 
 
 def build_digest(
@@ -2884,9 +2995,21 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
         )
         exclusion_policy = _exclusion_policy_or_block(vault)
         try:
+            # U3c-2: selected Capacities rows are promoted BEFORE build_digest,
+            # so they pass the same exclusion stages as every other row.
+            pool_rows, assigned_rows, selection_warnings = (
+                _promote_selected_capacities(
+                    vault,
+                    today,
+                    run_data["pool_items"] + t_pool + c_pool,
+                    run_data["assigned_items"] + t_assigned + capacities_items,
+                    exclusion_policy,
+                )
+            )
+            w_capacities = [*w_capacities, *selection_warnings]
             digest = build_digest(
-                run_data["pool_items"] + t_pool + c_pool,
-                run_data["assigned_items"] + t_assigned + capacities_items,
+                pool_rows,
+                assigned_rows,
                 today,
                 order,
                 ignore=(
@@ -3605,7 +3728,14 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
         cfg_result = config_reader.read_config(vault)
         exclusion_policy = _exclusion_policy_or_block(vault)
         try:
-            return build_digest(
+            # U3c-2: the same promotion as the plan-inputs caller, BEFORE
+            # build_digest.
+            pool_items, assigned_items, selection_warnings = (
+                _promote_selected_capacities(
+                    vault, today, pool_items, assigned_items, exclusion_policy,
+                )
+            )
+            digest = build_digest(
                 pool_items,
                 assigned_items,
                 today,
@@ -3618,6 +3748,12 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
             )
         except tag_exclusions.TagExclusionBlocked as exc:
             raise HTTPException(status_code=503, detail=exc.diagnostics) from exc
+        # /digest has no warnings envelope of its own: selection notices ride
+        # the same ``source_warnings`` key plan-inputs uses, and only when set,
+        # so the response shape is otherwise unchanged.
+        if selection_warnings:
+            digest["source_warnings"] = selection_warnings
+        return digest
 
     @app.post("/adjust", dependencies=[Depends(require_token)])
     def post_adjust(body: AdjustRequest) -> dict:

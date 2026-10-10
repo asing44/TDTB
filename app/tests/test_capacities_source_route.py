@@ -10,6 +10,7 @@ from __future__ import annotations
 import sys
 import threading
 from concurrent.futures import ThreadPoolExecutor
+from datetime import date, datetime
 from pathlib import Path
 
 import pytest
@@ -20,6 +21,10 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 import main as main_mod  # noqa: E402
 import capacities_adapter as ca  # noqa: E402
 import capacities_builder as cb  # noqa: E402
+import artifact_source as art  # noqa: E402
+import capacities_selections as sel  # noqa: E402
+import exclusion_settings as es  # noqa: E402
+import runstate  # noqa: E402
 
 
 SPACE = "space-1"
@@ -493,3 +498,321 @@ class TestNoProviderContact:
         assert client.get("/settings/capacities/source").status_code == 200
 
         assert calls == []
+
+
+# ---------------------------------------------------------------------------
+# U3c-2: explicit selections promote Capacities pool rows on the digest path.
+# Both digest-build callers (GET /plan-inputs and POST /digest) share one
+# promotion helper; these tests pin its behaviour through the routes.
+# ---------------------------------------------------------------------------
+
+TODAY = date(2026, 10, 9)
+TAG_A = "5a25370b-f9a0-40cf-bc3a-0cab4744913c"
+TAG_B = "0d194525-c5a1-4af5-bb62-202b83006b5e"
+
+
+def _identity(object_id, *, structure="RootTask", space=SPACE):
+    return f"capacities:{space}:{structure}:{object_id}"
+
+
+def _cap_row(object_id, *, structure="RootTask", assigned=False, tags=()):
+    return {
+        "id": object_id, "name": object_id,
+        "path": f"capacities://{SPACE}/{object_id}",
+        "identity": _identity(object_id, structure=structure),
+        "source": "capacities",
+        "types": [structure],
+        "urgency": None, "deadline": None, "priority_score": 0,
+        "assigned": assigned, "blocks": 1, "duration": 30, "duration_minutes": 30,
+        "capacities_id": object_id, "capacities_space_id": SPACE,
+        "capacities_structure_id": structure,
+        "capacities_tags": [
+            {"space_id": SPACE, "tag_id": tag_id, "title": "tag"} for tag_id in tags
+        ],
+    }
+
+
+def _seed_source(client) -> None:
+    saved = client.post(
+        "/settings/capacities/source/save", headers=_auth(client), json=_body(),
+    )
+    assert saved.status_code == 200, saved.text
+
+
+def _seed_selections(*records, space=SPACE) -> None:
+    """Seed the selection store directly: ``(identity, rules_revision)`` pairs."""
+    sel.save_selections(
+        space_id=space,
+        expected_revision=0,
+        selections=[
+            {"identity": identity, "rules_revision": revision, "acknowledged": True}
+            for identity, revision in records
+        ],
+    )
+
+
+def _digest(client, *, pool=(), assigned=(), today=TODAY) -> dict:
+    response = client.post(
+        "/digest",
+        headers=_auth(client),
+        json={
+            "today": str(today),
+            "pool_items": list(pool),
+            "assigned_items": list(assigned),
+        },
+    )
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+def _names(rows) -> list[str]:
+    return [row["name"] for row in rows]
+
+
+def _notices_for(digest, identity) -> list[str]:
+    return [w for w in digest.get("source_warnings", []) if identity in w]
+
+
+def _write_artifact(rows, today) -> None:
+    generated = datetime.now().astimezone().isoformat(timespec="seconds")
+    sources = {
+        "todoist": {
+            "status": "ok", "read_at": generated,
+            "rows": 0, "dropped": 0, "deferred": 0, "warnings": [],
+        },
+        "capacities": {
+            "status": "ok", "read_at": generated,
+            "rows": len(rows), "dropped": 0, "deferred": 0, "warnings": [],
+        },
+    }
+    art.atomic_write_artifact({
+        "schema": art.ARTIFACT_SCHEMA,
+        "version": art.ARTIFACT_VERSION,
+        "generated_at": generated,
+        "logical_day": str(today),
+        "producer": {"name": "test", "version": "0.1.0", "run_id": "r1"},
+        "content_hash": art.compute_content_hash(sources, rows),
+        "sources": sources,
+        "rows": rows,
+        "admission": {"rule_set_hash": "rs-1", "admitted": [], "dropped": []},
+    })
+
+
+class TestSelectionPromotionOnDigest:
+    """POST /digest is the second digest-build caller."""
+
+    def test_selected_pool_row_is_promoted_and_leaves_the_pool(self, client, vault):
+        _seed_source(client)
+        _seed_selections((_identity("keep"), 0))
+
+        digest = _digest(client, pool=[_cap_row("keep"), _cap_row("other")])
+
+        assert _names(digest["assigned"]) == ["keep"]
+        assert _names(digest["suggested"]) == ["other"]
+        assert digest["assigned_count"] == 1
+        assert digest["pool_count"] == 1
+        assert "source_warnings" not in digest
+
+    def test_promoted_row_still_hits_the_tag_exclusion_with_an_excluded_notice(
+        self, client, vault
+    ):
+        _seed_source(client)
+        es.save_settings(vault, expected_revision=0, exclusions=[
+            {"source": "capacities", "space_id": SPACE, "tag_id": TAG_A},
+        ])
+        _seed_selections((_identity("keep"), 0), (_identity("drop"), 0))
+
+        digest = _digest(client, pool=[
+            _cap_row("keep", tags=[TAG_B]),
+            _cap_row("drop", tags=[TAG_A]),
+        ])
+
+        assert _names(digest["assigned"]) == ["keep"]
+        assert "drop" not in _names(digest["suggested"])
+        assert _notices_for(digest, _identity("keep")) == []
+        notices = _notices_for(digest, _identity("drop"))
+        assert len(notices) == 1 and "excluded" in notices[0]
+
+    def test_drop_listed_selection_is_not_promoted_and_says_so(self, client, vault):
+        _seed_source(client)
+        _seed_selections((_identity("drop"), 0))
+
+        def _drop(state):
+            state["dropped"] = [{
+                "identity": _identity("drop"),
+                "dropped_at": "2026-10-09T09:00:00-07:00",
+            }]
+
+        runstate.update_runstate(vault, TODAY, _drop)
+
+        digest = _digest(client, pool=[_cap_row("drop")])
+
+        assert digest["assigned"] == []
+        assert digest["suggested"] == []
+        notices = _notices_for(digest, _identity("drop"))
+        assert len(notices) == 1 and "excluded" in notices[0]
+
+    def test_all_four_notice_codes_surface_on_the_digest_warnings(self, client, vault):
+        _seed_source(client)
+        es.save_settings(vault, expected_revision=0, exclusions=[
+            {"source": "capacities", "space_id": SPACE, "tag_id": TAG_A},
+        ])
+        _seed_selections(
+            (_identity("tagged"), 0),
+            (_identity("old", structure="Project"), 0),
+            (_identity("gone"), 0),
+            (_identity("moved"), 3),
+        )
+
+        digest = _digest(client, pool=[
+            _cap_row("tagged", tags=[TAG_A]),
+            _cap_row("moved"),
+        ])
+
+        assert _names(digest["assigned"]) == ["moved"]
+        assert len(digest["source_warnings"]) == 4
+        tagged = _notices_for(digest, _identity("tagged"))
+        old = _notices_for(digest, _identity("old", structure="Project"))
+        gone = _notices_for(digest, _identity("gone"))
+        moved = _notices_for(digest, _identity("moved"))
+        assert len(tagged) == len(old) == len(gone) == len(moved) == 1
+        assert "excluded" in tagged[0]
+        assert "no longer mapped" in old[0]
+        assert "no cached" in gone[0]
+        assert "predates" in moved[0]
+
+    def test_empty_selection_store_changes_nothing(self, client, vault):
+        _seed_source(client)
+
+        digest = _digest(client, pool=[_cap_row("keep")])
+
+        assert digest["assigned"] == []
+        assert _names(digest["suggested"]) == ["keep"]
+        assert "source_warnings" not in digest
+
+    def test_foreign_space_selections_change_nothing(self, client, vault):
+        _seed_source(client)
+        _seed_selections((_identity("keep", space="space-2"), 0), space="space-2")
+
+        digest = _digest(client, pool=[_cap_row("keep")])
+
+        assert digest["assigned"] == []
+        assert _names(digest["suggested"]) == ["keep"]
+        assert "source_warnings" not in digest
+
+    def test_malformed_selection_store_degrades_to_a_visible_warning(self, client, vault):
+        _seed_source(client)
+        sel.selections_path().parent.mkdir(parents=True, exist_ok=True)
+        sel.selections_path().write_text("{not json", encoding="utf-8")
+
+        digest = _digest(client, pool=[_cap_row("keep")])
+
+        assert digest["assigned"] == []
+        assert _names(digest["suggested"]) == ["keep"]
+        assert len(digest["source_warnings"]) == 1
+        assert "not applied" in digest["source_warnings"][0]
+
+    def test_promoted_capacities_row_still_hits_the_plan_only_commit_refusal(
+        self, client, vault
+    ):
+        today = main_mod.gather.effective_date(datetime.now())
+        _seed_source(client)
+        _seed_selections((_identity("keep"), 0))
+        digest = _digest(client, pool=[_cap_row("keep")], today=today)
+        assert _names(digest["assigned"]) == ["keep"]
+        runstate.write_digest_index(vault, today, main_mod.build_digest_index(digest))
+        before = {p: p.read_bytes() for p in vault.rglob("*") if p.is_file()}
+
+        response = client.post(
+            "/commit?mode=shadow",
+            headers=_auth(client),
+            json={
+                "digest": {"assigned": [{
+                    "name": "keep",
+                    "path": f"capacities://{SPACE}/keep",
+                }]},
+                "sequence": {"sequence": [{
+                    "id": "keep", "start": "09:00", "end": "10:00",
+                }]},
+                "config": {},
+            },
+        )
+
+        assert response.status_code == 422
+        assert "plan-only" in response.json()["detail"]
+        assert "keep" in response.json()["detail"]
+        after = {p: p.read_bytes() for p in vault.rglob("*") if p.is_file()}
+        assert before == after
+
+
+class TestSelectionPromotionCallerParity:
+    """GET /plan-inputs (first caller) and POST /digest (second caller)."""
+
+    def test_plan_inputs_and_digest_promote_the_same_pool_row(self, client, vault):
+        today = main_mod.gather.effective_date(datetime.now())
+        _seed_source(client)
+        _seed_selections((_identity("keep"), 0))
+        _write_artifact([
+            {
+                "name": "assigned-one", "source": "capacities",
+                "path": f"capacities://{SPACE}/assigned-one",
+                "identity": _identity("assigned-one"), "assigned": True,
+                "capacities_id": "assigned-one",
+            },
+            {
+                "name": "keep", "source": "capacities",
+                "path": f"capacities://{SPACE}/keep",
+                "identity": _identity("keep"), "assigned": False,
+                "capacities_id": "keep",
+            },
+        ], today)
+
+        plan = client.get("/plan-inputs").json()
+        digest = _digest(client, pool=[_cap_row("keep")], today=today)
+
+        for surface in (plan["digest"], digest):
+            assert "keep" in _names(surface["assigned"])
+            assert "keep" not in _names(surface["suggested"])
+            assert _identity("keep") in {r["identity"] for r in surface["assigned"]}
+        assert "source_warnings" not in digest
+
+    def test_plan_inputs_drop_listed_selection_is_not_promoted_and_says_so(
+        self, client, vault
+    ):
+        today = main_mod.gather.effective_date(datetime.now())
+        _seed_source(client)
+        _seed_selections((_identity("drop"), 0))
+        _write_artifact([{
+            "name": "drop", "source": "capacities",
+            "path": f"capacities://{SPACE}/drop",
+            "identity": _identity("drop"), "assigned": False,
+            "capacities_id": "drop",
+        }], today)
+
+        def _drop(state):
+            state["dropped"] = [{
+                "identity": _identity("drop"),
+                "dropped_at": "2026-10-09T09:00:00-07:00",
+            }]
+
+        runstate.update_runstate(vault, today, _drop)
+
+        body = client.get("/plan-inputs").json()
+
+        digest = body["digest"]
+        assert "drop" not in _names(digest["assigned"]) + _names(digest["suggested"])
+        notices = [w for w in body["source_warnings"] if _identity("drop") in w]
+        assert len(notices) == 1 and "excluded" in notices[0]
+
+    def test_plan_inputs_surfaces_a_selection_notice_in_source_warnings(
+        self, client, vault
+    ):
+        today = main_mod.gather.effective_date(datetime.now())
+        _seed_source(client)
+        _seed_selections((_identity("gone"), 0))
+        _write_artifact([], today)
+
+        body = client.get("/plan-inputs").json()
+
+        notices = [w for w in body["source_warnings"] if _identity("gone") in w]
+        assert len(notices) == 1 and "no cached" in notices[0]
