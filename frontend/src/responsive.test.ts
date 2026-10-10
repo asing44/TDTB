@@ -37,54 +37,60 @@ describe("narrow layout (≤767px) has no calendar-impact overflow (IMP-10 F-1)"
     expect(narrow).toBeTruthy();
   });
 
-  it("calendar-impact row is re-templated to a minmax(0) flexible track", () => {
+  it("the timeline lane label narrows and the track stays shrinkable", () => {
     // Root cause: fixed-sum tracks cannot shrink below 375px (measured
-    // scrollWidth 799 vs clientWidth 375). The narrow override must size the
-    // flexible column from 0 so the grid always fits its container.
+    // scrollWidth 799 vs clientWidth 375). The narrow override narrows the
+    // lane label and the track carries min-width:0, so it fits its container.
     expect(narrow).toMatch(
-      /\.calendar-impact__row\s*\{[^}]*grid-template-columns:\s*116px\s+minmax\(0,\s*1fr\)/,
+      /\.timeline__lane-label\s*\{[^}]*flex-basis:\s*62px/,
+    );
+    expect(appCss).toMatch(/\.timeline__track\s*\{[^}]*min-width:\s*0/);
+  });
+
+  it("the detail actions wrap on narrow screens", () => {
+    expect(narrow).toMatch(
+      /\.timeline__detail-actions\s*\{[^}]*margin-left:\s*0/,
     );
   });
 
-  it("the attend control spans the full row width on narrow screens", () => {
+  it("the timeline head stacks instead of forcing a bleed", () => {
     expect(narrow).toMatch(
-      /\.calendar-impact__attend\s*\{[^}]*grid-column:\s*1\s*\/\s*-1/,
-    );
-  });
-
-  it("the work envelope summary wraps instead of forcing a bleed", () => {
-    expect(narrow).toMatch(
-      /\.calendar-impact__work\s*\{[^}]*white-space:\s*normal/,
+      /\.timeline__head\s*\{[^}]*flex-direction:\s*column/,
     );
   });
 
   it("allocator rows are re-templated to stripe + flexible column", () => {
     // The measured 799px scrollWidth came from the queue grid min
     // (3+128+256+348px + gaps), which no 375px viewport can fit.
-    expect(narrow).toMatch(
-      /\.qrow\s*\{[^}]*grid-template-columns:\s*3px\s+minmax\(0,\s*1fr\)/,
+    expect(appCss).toMatch(
+      /@media\s*\(max-width:\s*767px\)[\s\S]*\.qrow\s*\{[^}]*grid-template-columns:\s*3px\s+minmax\(0,\s*1fr\)/,
     );
   });
 
   it("the aligned column header is hidden on narrow screens", () => {
-    expect(narrow).toMatch(/\.queue__cols\s*\{[^}]*display:\s*none/);
+    expect(appCss).toMatch(
+      /@media\s*\(max-width:\s*767px\)[\s\S]*\.queue__cols\s*\{[^}]*display:\s*none/,
+    );
   });
 
   it("row actions span the full width and wrap on narrow screens", () => {
-    expect(narrow).toMatch(
-      /\.qrow__actions\s*\{[^}]*grid-column:\s*1\s*\/\s*-1/,
+    expect(appCss).toMatch(
+      /@media\s*\(max-width:\s*767px\)[\s\S]*\.qrow__actions\s*\{[^}]*grid-column:\s*1\s*\/\s*-1/,
     );
-    expect(narrow).toMatch(/\.qrow__actions\s*\{[^}]*flex-wrap:\s*wrap/);
+    expect(appCss).toMatch(
+      /@media\s*\(max-width:\s*767px\)[\s\S]*\.qrow__actions\s*\{[^}]*flex-wrap:\s*wrap/,
+    );
   });
 
   it("secondary band readouts are hidden so headers fit 375px", () => {
-    expect(narrow).toMatch(/\.band__over\s*\{[^}]*display:\s*none/);
+    expect(appCss).toMatch(
+      /@media\s*\(max-width:\s*767px\)[\s\S]*\.band__over\s*\{[^}]*display:\s*none/,
+    );
   });
 
-  it("desktop row grid is untouched (7 fixed tracks + auto)", () => {
-    expect(appCss).toMatch(
-      /\.calendar-impact__row\s*\{[^}]*grid-template-columns:\s*116px\s+minmax\(160px,\s*1fr\)\s+64px\s+70px\s+92px\s+124px\s+auto/,
-    );
+  it("the desktop timeline track is flexible and position-relative", () => {
+    expect(appCss).toMatch(/\.timeline__track\s*\{[^}]*position:\s*relative/);
+    expect(appCss).toMatch(/\.timeline__track\s*\{[^}]*flex:\s*1\s+1\s+auto/);
   });
 
   it("desktop allocator grid keeps a shrinkable action track", () => {

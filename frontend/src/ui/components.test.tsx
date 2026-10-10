@@ -728,11 +728,13 @@ describe("T18g Day Setup semantics", () => {
       },
     ];
     store.dispatch({ type: "INPUTS_LOADED", inputs, ledger: store.getState().ledger! });
-    const { getByText, getAllByText } = ui(<CalendarImpact />);
-    expect(getAllByText("A + M Busy Bees").length).toBeGreaterThan(0);
-    expect(getByText("Fixed")).toBeTruthy();
-    expect(getByText("hard block")).toBeTruthy();
-    expect(getByText("1 blk counted")).toBeTruthy();
+    const r = ui(<CalendarImpact />);
+    expect(r.getAllByText("A + M Busy Bees").length).toBeGreaterThan(0);
+    // U10: select the block to open its inline detail row.
+    fireEvent.click(r.getByRole("button", { name: /A \+ M Busy Bees/ }));
+    expect(r.getByText("Fixed")).toBeTruthy();
+    expect(r.getByText("hard block")).toBeTruthy();
+    expect(r.getByText("1 blk counted")).toBeTruthy();
     // And it is a real wall for Mint selection / overflow avoidance.
     const walls = calendarWalls(effectiveAnchoredBlocks(store.getState()));
     expect(walls).toEqual([{ start: 10 * 60 + 30, end: 11 * 60 }]);

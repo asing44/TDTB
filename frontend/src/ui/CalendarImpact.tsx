@@ -1,23 +1,26 @@
-/* CalendarImpact — T12k. Calendar evidence sits before allocator staging so
-   the capacity number can be audited before a billed Send. Imported events
-   remain read-only; the row actions are the task-style accounting model
-   (FEEDBACK-07 A04 / FEEDBACK-09): Exclude from plan / Count (per-day
-   participation) plus a local accounted-duration stepper — both projection-
-   only, never event or attendance/source mutation (LD19). Ignored calendar
-   sources (TickTick-style) are hidden from the impact list entirely.
+/* CalendarImpact — U10. Rebuilt from the T12k card list into the mockup's
+   "Already placed" lane timeline (reference B, docs/plan/2026-10-09-capacities-
+   refresh-ui/reference/B-plan-tasks-1500.png).
 
-   S5 (cockpit UI feedback item 3) + round 2: the cockpit wants this evidence
-   formatted with the other planning items, not as a separate-feeling section.
-   Inline mode renders the same rows inside the work surface (Queue) with
-   shared surface styling — no compact summary — and the evidence is a
-   collapsible band in the priority flow (expanded by default; a
-   disclosure-only control that never writes accounting state). Calendar
-   records stay distinct from assigned-task state; this is presentation only. */
+   The band list is gone; this is now an hour axis over the day frame with
+   three lanes — Calendar, Work, and Anchors. Blocks sit at their proportional
+   start time and span their length; blocks that cross the frame edge are
+   clipped, blocks wholly outside are omitted with a count. Overlapping blocks
+   in one lane stack so no label is covered. Selecting a block (Tab/arrow then
+   Enter) opens ONE inline detail row carrying the existing accounting model:
+   the counted-duration stepper, Exclude from plan / Count, and close. The
+   work window renders as a shaded zone with a header toggle.
 
-import { useState } from "preact/hooks";
+   Data selectors, exclusion (skipToday), duration override (blocks), the
+   native-fixed rules, and the single saveAnchoredOverride path are unchanged
+   from the retired list: this is the view layer only (KTD10). Ignored calendar
+   sources stay hidden with a naming note; a frame with no calendar rows shows
+   an empty-lane message instead of a blank band. */
+
+import { useEffect, useRef, useState } from "preact/hooks";
 import { useApp, useAppState } from "./context";
 import { effectiveAnchoredBlocks } from "../store/store";
-import { blocksLabel, display12h, formatBlockAmount } from "../model/time";
+import { blocksLabel, display12h, formatBlockAmount, toMinutes } from "../model/time";
 import type { AnchoredBlock, CalendarCapacityClass } from "../model/types";
 
 /** Local accounted-duration grid for calendar rows: 30-minute blocks, floor 1
@@ -25,17 +28,18 @@ import type { AnchoredBlock, CalendarCapacityClass } from "../model/types";
 const CAL_BLOCKS_MIN = 1;
 const CAL_BLOCKS_MAX = 12;
 
-function minutesOf(hhmm: string): number {
-  const [h, m] = hhmm.split(":").map(Number);
-  return h * 60 + m;
-}
+/** The mockup's work-hours zone ("Work 9–5"). The frame clamps it, so a
+    1:30 PM workday shades only 1:30–5 PM. Presentation-only: the toggle shows
+    or hides the shading and never writes accounting state. */
+const WORK_START = "09:00";
+const WORK_END = "17:00";
 
-function inFrame(row: AnchoredBlock, start: string, end: string): boolean {
-  if (!row.start) return false;
-  const a = minutesOf(row.start);
-  const b = row.end ? minutesOf(row.end) : a + row.durationMin;
-  return b > minutesOf(start) && a < minutesOf(end);
-}
+type LaneKey = "calendar" | "work" | "anchors";
+const LANES: { key: LaneKey; label: string }[] = [
+  { key: "calendar", label: "Calendar" },
+  { key: "work", label: "Work" },
+  { key: "anchors", label: "Anchors" },
+];
 
 function capacityClass(row: AnchoredBlock): CalendarCapacityClass {
   return row.capacityClass ?? "fixed";
@@ -68,131 +72,275 @@ function countedBlocks(row: AnchoredBlock): number {
   return Math.ceil(row.durationMin / 30);
 }
 
+/** Short axis label: on-the-hour ticks read "2p"/"11p"; the frame start may
+    land on a half hour ("1:30"). */
+function axisLabel(minutes: number): string {
+  const h = Math.floor(minutes / 60);
+  const m = minutes % 60;
+  if (m !== 0) return `${h % 12 === 0 ? 12 : h % 12}:${String(m).padStart(2, "0")}`;
+  return `${h % 12 === 0 ? 12 : h % 12}${h < 12 ? "a" : "p"}`;
+}
+
+interface Placed {
+  row: AnchoredBlock;
+  startMin: number;
+  endMin: number;
+  /** Stack row inside the lane (0-based) so overlaps never cover labels. */
+  stack: number;
+}
+
+/** Place one lane's rows at proportional positions. Rows wholly outside the
+    frame are dropped; partly-outside rows are clipped to the frame edges.
+    Overlapping rows are assigned to the first stack row that is free. */
+function layoutLane(
+  rows: AnchoredBlock[],
+  frameStart: number,
+  frameEnd: number,
+): { placed: Placed[]; omitted: number } {
+  const placed: Placed[] = [];
+  let omitted = 0;
+  const ordered = rows
+    .filter((row) => row.start != null)
+    .map((row) => {
+      const start = toMinutes(row.start!);
+      const end = row.end ? toMinutes(row.end) : start + row.durationMin;
+      return { row, start, end: Math.max(end, start) };
+    })
+    .sort((a, b) => a.start - b.start || a.row.name.localeCompare(b.row.name));
+
+  const stackEnds: number[] = [];
+  for (const entry of ordered) {
+    const startMin = Math.max(entry.start, frameStart);
+    const endMin = Math.min(entry.end, frameEnd);
+    if (endMin <= frameStart || startMin >= frameEnd || endMin <= startMin) {
+      omitted += 1;
+      continue;
+    }
+    let stack = stackEnds.findIndex((end) => end <= startMin);
+    if (stack === -1) {
+      stack = stackEnds.length;
+      stackEnds.push(endMin);
+    } else {
+      stackEnds[stack] = endMin;
+    }
+    placed.push({ row: entry.row, startMin, endMin, stack });
+  }
+  return { placed, omitted };
+}
+
 export function CalendarImpact({ inline = false }: { inline?: boolean }) {
   const s = useAppState();
   const { controller } = useApp();
-  /* Disclosure idiom shared with the queue bands (Queue.tsx): an absent key
-     means open, so the calendar band starts expanded. */
-  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
-  if (!s.inputs) return null;
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [workWindowOn, setWorkWindowOn] = useState(true);
+  const blockRefs = useRef<Record<string, HTMLButtonElement | null>>({});
+  const detailRef = useRef<HTMLDivElement | null>(null);
+
   const modifier = inline ? " calendar-impact--inline" : "";
-  const open = !(collapsed["calendar"] ?? false);
-  const toggle = () =>
-    setCollapsed((c) => ({ ...c, calendar: !(c["calendar"] ?? false) }));
 
-  const rows = effectiveAnchoredBlocks(s)
-    .filter((row) => row.kind === "calendar")
-    .filter((row) => inFrame(row, s.inputs!.time.anchor, s.inputs!.time.effectiveEod))
-    .sort((a, b) => (a.start ?? "").localeCompare(b.start ?? "") || a.name.localeCompare(b.name));
+  // Move focus into the detail row when it opens so Escape is local and
+  // predictable; the block that opened it is remembered for focus return.
+  useEffect(() => {
+    if (selectedId) detailRef.current?.focus();
+  }, [selectedId]);
 
-  // FEEDBACK-09: ignored calendar sources never occupy the impact list —
-  // hidden, with a note naming the exclusion. Source data is untouched.
-  const visible = rows.filter((row) => capacityClass(row) !== "ignored");
-  const hiddenIgnored = rows.length - visible.length;
-  const rowCount = `${visible.length} row${visible.length === 1 ? "" : "s"}`;
-  const regionId = "calendar-band-rows";
+  if (!s.inputs) return null;
+  // A truly empty frame (no rows at all) stays absent from the work surface;
+  // the empty-lane message is for a frame that has other lanes but no calendar
+  // rows.
+  const rowsPresent =
+    (s.inputs.anchored ?? []).length > 0;
+  const frameStart = toMinutes(s.inputs.time.anchor);
+  const frameEnd = toMinutes(s.inputs.time.effectiveEod);
+  const frameLen = Math.max(1, frameEnd - frameStart);
+  const pct = (minutes: number) => `${((minutes - frameStart) / frameLen) * 100}%`;
 
-  const workBusy = s.capacity?.workBusy ?? 0;
-  const workEnvelope = s.capacity?.mint ?? 0;
-  const workOverflow = s.capacity?.workOverflow ?? 0;
-
-  /* Calendar evidence is a peer of the urgency bands, not an urgency tier:
-     the band vocabulary is shared, but there is no share bar and the accent
-     stays muted (.band--calendar). The explanatory paragraph stays in the
-     region below the header, never inside the toggle button. */
-  const header = (
-    <button
-      type="button"
-      class={`band band--calendar${open ? "" : " band--collapsed"}`}
-      aria-expanded={open}
-      aria-controls={regionId}
-      /* FEEDBACK-10 (A11) convention shared with BandHeader: the state and
-         hidden count are announced, not implied by the chevron glyph. */
-      aria-label={`Band Calendar impact, ${open ? "expanded" : "collapsed"}, ${rowCount}${open ? "" : " hidden"}, activate to ${open ? "collapse" : "expand"}`}
-      onClick={toggle}
-    >
-      <span class="band__tick" />
-      <span class="band__label">Calendar impact</span>
-      <span class="band__rule" />
-      <span class="band__count">{rowCount}{open ? "" : " hidden"}</span>
-      <span class={`band__state${open ? "" : " band__state--closed"}`}>
-        {open ? "expanded" : "collapsed"}
-      </span>
-      <span class="band__chevron" aria-hidden="true">{open ? "▾" : "▸"}</span>
-    </button>
+  const all = effectiveAnchoredBlocks(s);
+  const ignored = all.filter(
+    (row) => row.kind === "calendar" && capacityClass(row) === "ignored",
+  );
+  const visible = all.filter(
+    (row) => !(row.kind === "calendar" && capacityClass(row) === "ignored"),
   );
 
-  const head = (
-    <div class="calendar-impact__head">
-      <p>
-        Work meetings sit inside the work envelope; they are exclusive busy
-        time, not extra task room.
-      </p>
-      {(workEnvelope > 0 || workBusy > 0) && (
-        <div class="calendar-impact__work" aria-label="Work envelope summary">
-          <strong>{formatBlockAmount(workEnvelope)}</strong> work envelope · {formatBlockAmount(workBusy)}
-          exclusive busy time
-          {workOverflow > 0 ? ` · ${formatBlockAmount(workOverflow)} overflow` : ""}
+  const laneRows: Record<LaneKey, AnchoredBlock[]> = {
+    calendar: visible.filter(
+      (row) => row.kind === "calendar" && capacityClass(row) !== "work",
+    ),
+    work: visible.filter(
+      (row) => row.kind === "calendar" && capacityClass(row) === "work",
+    ),
+    anchors: visible.filter((row) => row.kind !== "calendar"),
+  };
+
+  const laid = {} as Record<LaneKey, ReturnType<typeof layoutLane>>;
+  for (const lane of LANES) laid[lane.key] = layoutLane(laneRows[lane.key], frameStart, frameEnd);
+  const omittedTotal = LANES.reduce((n, lane) => n + laid[lane.key].omitted, 0);
+  const ignoredCount = ignored.length;
+  if (!rowsPresent) return null;
+
+  const selected =
+    selectedId == null
+      ? null
+      : LANES.flatMap((lane) => laid[lane.key].placed).find(
+          (p) => p.row.id === selectedId,
+        ) ?? null;
+
+  // Axis ticks: an opening tick when the frame starts off the hour, then every
+  // hour boundary inside the frame.
+  const ticks: number[] = [];
+  if (frameStart % 60 !== 0) ticks.push(frameStart);
+  for (let m = Math.ceil(frameStart / 60) * 60; m <= frameEnd; m += 60) ticks.push(m);
+
+  const workFrom = Math.max(frameStart, toMinutes(WORK_START));
+  const workTo = Math.min(frameEnd, toMinutes(WORK_END));
+  const showWorkZone = workWindowOn && workTo > workFrom;
+
+  /** Move focus between blocks in document order (arrow navigation), so a
+    keyboard user reaches a block and Enter opens its detail row. */
+  const moveFocus = (from: HTMLElement, delta: number) => {
+    const blocks = Array.from(
+      from.closest(".timeline")?.querySelectorAll<HTMLButtonElement>("[data-block]") ?? [],
+    );
+    const idx = blocks.indexOf(from as HTMLButtonElement);
+    const next = blocks[idx + delta];
+    next?.focus();
+  };
+
+  const closeDetail = () => {
+    const id = selectedId;
+    setSelectedId(null);
+    if (id) blockRefs.current[id]?.focus();
+  };
+
+  const save = (row: AnchoredBlock, patch: Record<string, unknown>) => {
+    const projectedBlocks = s.daySetup.anchored[row.id]?.blocks ?? null;
+    void controller.saveAnchoredOverride(row.id, {
+      on: true,
+      skipToday: row.skipToday,
+      time: null,
+      ...(projectedBlocks != null ? { blocks: projectedBlocks } : {}),
+      ...patch,
+    });
+  };
+
+  return (
+    <section class={`calendar-impact${modifier}`} aria-label="Calendar impact">
+      <header class="calendar-impact__head timeline__head">
+        <div class="timeline__title">
+          <h2>Already placed</h2>
+          <p class="timeline__sub">Commitments and anchor zones</p>
         </div>
-      )}
-    </div>
-  );
-  const ignoredNote = hiddenIgnored > 0 ? (
-    <p class="calendar-impact__ignored">
-      {hiddenIgnored} ignored calendar source{hiddenIgnored === 1 ? "" : "s"} excluded
-    </p>
-  ) : null;
+        <label class="timeline__worktoggle">
+          <input
+            type="checkbox"
+            checked={workWindowOn}
+            onChange={() => setWorkWindowOn((v) => !v)}
+            aria-label="Show work window"
+          />
+          <span>Work 9–5</span>
+          <span class="timeline__workstate">
+            ({workWindowOn ? "enabled" : "disabled"})
+          </span>
+        </label>
+      </header>
 
-  // An ignored-only frame still needs to explain why Calendar impact is quiet;
-  // an actually empty frame keeps the existing null behavior.
-  if (visible.length === 0 && hiddenIgnored === 0) return null;
+      <div class="timeline">
+        <div class="timeline__axis" aria-hidden="true">
+          <span class="timeline__lane-label" />
+          <div class="timeline__axis-track">
+            {ticks.map((m) => (
+              <span key={m} class="timeline__tick" style={{ left: pct(m) }}>
+                {axisLabel(m)}
+              </span>
+            ))}
+          </div>
+        </div>
 
-  const list = visible.length === 0 ? null : (
-    <ul class="calendar-impact__list">
-      {visible.map((row) => {
-        const attending = !row.skipToday;
+        {LANES.map((lane) => {
+          const { placed } = laid[lane.key];
+          const rows = Math.max(1, ...placed.map((p) => p.stack + 1));
+          return (
+            <div key={lane.key} class={`timeline__lane timeline__lane--${lane.key}`}>
+              <span class="timeline__lane-label">{lane.label}</span>
+              <div class="timeline__track" style={{ height: `${rows * 34}px` }}>
+                {showWorkZone && (
+                  <span
+                    class="timeline__workzone"
+                    style={{ left: pct(workFrom), width: `${((workTo - workFrom) / frameLen) * 100}%` }}
+                    aria-hidden="true"
+                  />
+                )}
+                {lane.key === "calendar" && placed.length === 0 && (
+                  <p class="timeline__empty">No calendar rows today.</p>
+                )}
+                {lane.key === "work" && (
+                  <span class="timeline__note">Mint sessions sit inside work blocks</span>
+                )}
+                {placed.map((p) => {
+                  const row = p.row;
+                  const cls = capacityClass(row);
+                  const isSelected = row.id === selectedId;
+                  return (
+                    <button
+                      key={row.id}
+                      type="button"
+                      data-block={row.id}
+                      ref={(el) => { blockRefs.current[row.id] = el; }}
+                      class={`timeline__block timeline__block--${cls}${isSelected ? " timeline__block--selected" : ""}`}
+                      style={{
+                        left: pct(p.startMin),
+                        width: `${((p.endMin - p.startMin) / frameLen) * 100}%`,
+                        top: `${p.stack * 34}px`,
+                      }}
+                      aria-pressed={isSelected}
+                      aria-label={`${row.name}, ${display12h(row.start)}${row.end ? `–${display12h(row.end)}` : ""}, ${cls}`}
+                      onClick={() => setSelectedId(row.id)}
+                      onKeyDown={(e) => {
+                        if (e.key === "ArrowRight") { e.preventDefault(); moveFocus(e.currentTarget as HTMLElement, 1); }
+                        else if (e.key === "ArrowLeft") { e.preventDefault(); moveFocus(e.currentTarget as HTMLElement, -1); }
+                      }}
+                    >
+                      <span class="timeline__block-name">{row.name}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {selected && (() => {
+        const row = selected.row;
         const cls = capacityClass(row);
+        const attending = !row.skipToday;
         const counted = countedBlocks(row);
         const effectiveBlocks = Math.ceil(row.durationMin / 30);
-        const projectedBlocks = s.daySetup.anchored[row.id]?.blocks ?? null;
-        const projected = projectedBlocks != null;
-        // One accounting save path: participation toggles keep any local
-        // projection; duration steps keep attendance. Never a writer call.
-        const save = (patch: Record<string, unknown>) =>
-          void controller.saveAnchoredOverride(row.id, {
-            on: true,
-            skipToday: row.skipToday,
-            time: null,
-            ...(projectedBlocks != null ? { blocks: projectedBlocks } : {}),
-            ...patch,
-          });
+        const projected = s.daySetup.anchored[row.id]?.blocks != null;
         return (
-          <li key={row.id} class="calendar-impact__row">
-            <span class="calendar-impact__time">
-              {display12h(row.start)}
-              {row.end ? `–${display12h(row.end)}` : ""}
+          <div
+            class="timeline__detail"
+            role="group"
+            aria-label={`Detail for ${row.name}`}
+            tabIndex={-1}
+            ref={detailRef}
+            onKeyDown={(e) => { if (e.key === "Escape") { e.preventDefault(); closeDetail(); } }}
+          >
+            <span class={`timeline__detail-dot timeline__detail-dot--${cls}`} aria-hidden="true" />
+            <span class="timeline__detail-name">{row.name}</span>
+            <span class="timeline__detail-meta">
+              <span class="timeline__detail-time">
+                {display12h(row.start)}{row.end ? `–${display12h(row.end)}` : ""}
+              </span>
+              <span class={`calendar-impact__class calendar-impact__class--${cls}`}>{cls}</span>
+              <span class="timeline__detail-reason">{reason(row)}</span>
+              {isWallClass(cls) && <span class="calendar-impact__wall">hard block</span>}
+              <span class="timeline__detail-count">{formatBlockAmount(counted)} counted</span>
+              {projected && <span class="calendar-impact__projection">projection</span>}
+              {row.skipToday && <span class="calendar-impact__local">today only · event untouched</span>}
             </span>
-            <span class="calendar-impact__event">
-              <strong>{row.name}</strong>
-              <small>
-                {row.calendarTitle ?? "Unknown calendar"}
-                {isWallClass(cls) && (
-                  <span class="calendar-impact__wall">hard block</span>
-                )}
-              </small>
-            </span>
-            <span class={`calendar-impact__class calendar-impact__class--${cls}`}>
-              {cls}
-            </span>
-            <span class="calendar-impact__duration">
-              {blocksLabel(effectiveBlocks)}
-              {projected && (
-                <span class="calendar-impact__projection">projection</span>
-              )}
-            </span>
-            <span class="calendar-impact__count">{formatBlockAmount(counted)} counted</span>
-            <span class="calendar-impact__reason">{reason(row)}</span>
-            <span class="calendar-impact__actions">
+            <span class="timeline__detail-actions">
               {attending && (
                 <span class="calendar-impact__stepper">
                   <button
@@ -200,14 +348,15 @@ export function CalendarImpact({ inline = false }: { inline?: boolean }) {
                     class="iconbtn"
                     aria-label={`Less counted time for ${row.name} (today only)`}
                     disabled={s.runtimeBusy || counted <= CAL_BLOCKS_MIN}
-                    onClick={() => save({ blocks: counted - 1 })}
+                    onClick={() => save(row, { blocks: counted - 1 })}
                   >−</button>
+                  <span class="timeline__detail-dur">{blocksLabel(effectiveBlocks)}</span>
                   <button
                     type="button"
                     class="iconbtn"
                     aria-label={`More counted time for ${row.name} (today only)`}
                     disabled={s.runtimeBusy || counted >= CAL_BLOCKS_MAX}
-                    onClick={() => save({ blocks: counted + 1 })}
+                    onClick={() => save(row, { blocks: counted + 1 })}
                   >+</button>
                 </span>
               )}
@@ -219,32 +368,39 @@ export function CalendarImpact({ inline = false }: { inline?: boolean }) {
                     ? `Do not count ${row.name} toward today's capacity`
                     : `Count ${row.name} toward today's capacity`
                 }
-                onClick={() => save({ skipToday: attending })}
+                onClick={() => save(row, { skipToday: attending })}
               >
                 {attending ? "Exclude from plan" : "Count"}
               </button>
-              {row.skipToday && (
-                <span class="calendar-impact__local">
-                  today only · event untouched
-                </span>
-              )}
+              <button
+                type="button"
+                class="iconbtn timeline__detail-close"
+                aria-label={`Close detail for ${row.name}`}
+                onClick={closeDetail}
+              >×</button>
             </span>
-          </li>
+          </div>
         );
-      })}
-    </ul>
-  );
+      })()}
 
-  return (
-    <section class={`calendar-impact${modifier}`} aria-label="Calendar impact">
-      {header}
-      {open && (
-        <div id={regionId} class="calendar-impact__region">
-          {head}
-          {ignoredNote}
-          {list}
-        </div>
+      {(omittedTotal > 0 || ignoredCount > 0) && (
+        <p class="timeline__foot">
+          {omittedTotal > 0 && (
+            <span class="timeline__omitted">
+              {omittedTotal} {omittedTotal === 1 ? "block" : "blocks"} outside the day frame
+            </span>
+          )}
+          {ignoredCount > 0 && (
+            <span class="calendar-impact__ignored">
+              {ignoredCount} ignored calendar source{ignoredCount === 1 ? "" : "s"} excluded
+            </span>
+          )}
+        </p>
       )}
+      <p class="timeline__foot-note">
+        Tasks and Capacities items aren’t shown here. After commit they’re placed
+        in the calendar as complete items.
+      </p>
     </section>
   );
 }

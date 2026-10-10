@@ -92,29 +92,28 @@ function calendarHarness() {
 }
 
 describe("FEEDBACK-13 obs 3 — calendar hierarchy (desktop + narrow, no overlap)", () => {
-  it("renders the full row hierarchy and keeps the flexible column shrinkable", () => {
+  it("renders the timeline detail hierarchy and keeps the lane shrinkable", () => {
     const h = calendarHarness();
-    const { getByText, getAllByText, container } = h.ui(<CalendarImpact />);
+    const r = h.ui(<CalendarImpact />);
 
-    // Heading + per-row hierarchy: time · event · class · duration · count ·
-    // reason · actions.
-    expect(getByText("Calendar impact")).toBeTruthy();
-    expect(getByText("9:30 AM–10:20 AM")).toBeTruthy();
-    expect(getByText("Work sync")).toBeTruthy();
-    expect(getByText("work")).toBeTruthy();
-    expect(getByText("2 blk counted")).toBeTruthy();
-    expect(getByText("Inside work budget")).toBeTruthy();
-    // Both in-frame rows are attending, so the exclude verb appears per row.
-    expect(getAllByText("Exclude from plan").length).toBeGreaterThan(0);
+    // Heading + a selected block's inline detail: time · class · reason ·
+    // count · actions.
+    expect(r.getByText("Already placed")).toBeTruthy();
+    fireEvent.click(r.getByRole("button", { name: /Work sync/ }));
+    expect(r.getByText("9:30 AM–10:20 AM")).toBeTruthy();
+    expect(r.getByText("work")).toBeTruthy();
+    expect(r.getByText("2 blk counted")).toBeTruthy();
+    expect(r.getByText("Inside work budget")).toBeTruthy();
+    // The in-frame row is attending, so the exclude verb appears.
+    expect(r.getAllByText("Exclude from plan").length).toBeGreaterThan(0);
 
-    // The row uses the documented hierarchy class…
-    expect(container.querySelector(".calendar-impact__row")).toBeTruthy();
-    // …and the flexible event column carries min-width:0 so it truncates
-    // instead of pushing the row past the viewport (no horizontal overlap).
-    expect(container.querySelector(".calendar-impact__event")).toBeTruthy();
-    expect(APP_CSS).toMatch(/\.calendar-impact__event\s*\{[^}]*min-width:\s*0/);
+    // The timeline uses the documented track class…
+    expect(r.container.querySelector(".timeline__track")).toBeTruthy();
+    // …and the lane track carries min-width:0 so it shrinks instead of pushing
+    // the row past the viewport (no horizontal overlap).
+    expect(APP_CSS).toMatch(/\.timeline__track\s*\{[^}]*min-width:\s*0/);
     // …and the narrow-width re-template is defined.
-    expect(APP_CSS).toMatch(/@media\s*\(max-width:\s*767px\)[\s\S]*\.calendar-impact__row/);
+    expect(APP_CSS).toMatch(/@media\s*\(max-width:\s*767px\)[\s\S]*\.timeline__lane-label/);
   });
 });
 

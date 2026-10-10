@@ -58,52 +58,67 @@ function calendarHarness() {
   return h;
 }
 
+/** U10: the timeline selects a block to reveal its inline detail row. */
+function openBlock(
+  r: ReturnType<ReturnType<typeof makeHarness>["ui"]>,
+  name: string,
+) {
+  fireEvent.click(r.getByRole("button", { name: new RegExp(name) }));
+}
+
 describe("CalendarImpact", () => {
-  it("explains every in-frame class, hides ignored sources, and shows hard walls (FEEDBACK-09)", () => {
+  it("places every in-frame class in a lane, hides ignored sources, and shows hard walls (FEEDBACK-09)", () => {
     const h = calendarHarness();
-    const { getByText, queryByText, queryByRole, getAllByText, getByRole, container } =
-      h.ui(<CalendarImpact />);
-    expect(getByText("Fixed appointment")).toBeTruthy();
-    expect(getByText("Work sync")).toBeTruthy();
-    // FEEDBACK-28: the persisted skip stays visible (and counted/walled —
-    // asserted below); the explicit current-run skip is visible too.
-    expect(getByText("Skipped visit")).toBeTruthy();
-    expect(getByText("Declined sync")).toBeTruthy();
+    const r = h.ui(<CalendarImpact />);
+    const { getByText, queryByText, getByRole, queryByRole, getAllByText, container } = r;
+    // Blocks render in their lanes with names visible.
+    for (const name of ["Fixed appointment", "Work sync", "Skipped visit", "Declined sync"]) {
+      expect(getByText(name)).toBeTruthy();
+    }
     // FEEDBACK-09: ignored calendar sources (TickTick-style) are excluded
-    // from Calendar impact — hidden, with a note naming the exclusion.
+    // from the timeline — hidden, with a note naming the exclusion.
     expect(queryByText("Focus timer")).toBeNull();
     expect(getByText("1 ignored calendar source excluded")).toBeTruthy();
-    // Hard-wall affordance renders on fixed/work rows only — including the
-    // persisted skip; only the explicit skip frees its interval from planning
-    // walls (asserted via calendarWalls in the FEEDBACK-28 test below).
-    expect(getAllByText("hard block").length).toBe(4);
+    // Work-class rows land in the Work lane; fixed rows in Calendar.
+    expect(container.querySelector(".timeline__lane--work")?.textContent).toContain("Work sync");
+    expect(container.querySelector(".timeline__lane--calendar")?.textContent).toContain("Fixed appointment");
+
+    // Fixed: wall affordance, reason, count, and 12-hour time in the detail row.
+    openBlock(r, "Fixed appointment");
+    expect(getByText("Fixed")).toBeTruthy();
+    expect(getByText("hard block")).toBeTruthy();
+    expect(getByText("1 blk counted")).toBeTruthy();
+    expect(getByText("10 AM–10:30 AM")).toBeTruthy();
+
+    // Work: inside-budget reason, counted, hard wall.
+    openBlock(r, "Work sync");
     expect(getByText("Inside work budget")).toBeTruthy();
-    // FEEDBACK-28: a persisted skip is counted and walled — reason stays
-    // Fixed, blocks counted, exclude verb offered, no exclusion copy.
-    expect(getAllByText("Fixed").length).toBe(2); // Fixed appointment + Skipped visit
-    expect(getAllByText("2 blk counted").length).toBe(2); // Work sync + Skipped visit
+    expect(getByText("2 blk counted")).toBeTruthy();
+    expect(getAllByText("hard block").length).toBe(1);
+
+    // FEEDBACK-28: a persisted skip stays counted and walled; exclude offered.
+    openBlock(r, "Skipped visit");
+    expect(getByText("2 blk counted")).toBeTruthy();
     expect(getByRole("button", { name: "Do not count Skipped visit toward today's capacity" })).toBeTruthy();
     expect(queryByRole("button", { name: "Count Skipped visit toward today's capacity" })).toBeNull();
+
     // Only the explicit current-run skip renders the excluded-today case.
+    openBlock(r, "Declined sync");
     expect(getByText("Excluded today")).toBeTruthy();
     expect(getByText("today only · event untouched")).toBeTruthy();
     expect(getByText("0 blk counted")).toBeTruthy();
     expect(getByRole("button", { name: "Count Declined sync toward today's capacity" })).toBeTruthy();
-    // Accounting language, never attendance/mutation copy.
-    expect(getByText(/exclusive busy time/i)).toBeTruthy();
-    // FEEDBACK-12: wall-clock readouts are 12-hour with AM/PM (user
-    // preference); FEEDBACK-09/11 24-hour presentation is superseded.
-    expect(getByText("9:30 AM–10:20 AM")).toBeTruthy();
-    expect(getByText("10 AM–10:30 AM")).toBeTruthy();
+    // Wall-clock readouts stay 12-hour with AM/PM (FEEDBACK-12).
     expect(container.textContent).toMatch(/AM|PM/);
   });
 
   it("uses the task-style accounting action model before Send (FEEDBACK-09)", () => {
     const h = calendarHarness();
     const save = vi.spyOn(h.controller, "saveAnchoredOverride").mockResolvedValue();
-    const { getByRole } = h.ui(<CalendarImpact />);
+    const r = h.ui(<CalendarImpact />);
+    openBlock(r, "Work sync");
     fireEvent.click(
-      getByRole("button", { name: "Do not count Work sync toward today's capacity" }),
+      r.getByRole("button", { name: "Do not count Work sync toward today's capacity" }),
     );
     expect(save).toHaveBeenCalledWith(
       "Work sync",
@@ -111,11 +126,13 @@ describe("CalendarImpact", () => {
     );
     // FEEDBACK-28: a persisted skip stays attending — it offers the exclude
     // verb, never the reverse accounting verb.
+    openBlock(r, "Skipped visit");
     expect(
-      getByRole("button", { name: "Do not count Skipped visit toward today's capacity" }),
+      r.getByRole("button", { name: "Do not count Skipped visit toward today's capacity" }),
     ).toBeTruthy();
     // Excluded rows (explicit current-run skip only) offer the reverse verb.
-    fireEvent.click(getByRole("button", { name: "Count Declined sync toward today's capacity" }));
+    openBlock(r, "Declined sync");
+    fireEvent.click(r.getByRole("button", { name: "Count Declined sync toward today's capacity" }));
     expect(save).toHaveBeenLastCalledWith(
       "Declined sync",
       expect.objectContaining({ skipToday: false }),
@@ -124,32 +141,36 @@ describe("CalendarImpact", () => {
 
   // FEEDBACK-28 (2026-08-17): only an EXPLICIT current-run skip frees a
   // calendar interval from planning walls; a persisted skip stays walled —
-  // the impact list mirrors the same gate.
+  // the timeline mirrors the same gate.
   it("writes persisted skips into walls and excludes only the explicit current-run skip (FEEDBACK-28)", () => {
     const h = calendarHarness();
     const eff = effectiveAnchoredBlocks(h.store.getState());
     const walls = calendarWalls(eff);
     expect(walls).toContainEqual({ start: 12 * 60, end: 13 * 60 }); // persisted Skipped visit
     expect(walls).not.toContainEqual({ start: 13 * 60, end: 13 * 60 + 30 }); // explicit Declined sync
-    const { getByText, queryByRole } = h.ui(<CalendarImpact />);
-    expect(getByText("Excluded today")).toBeTruthy(); // Declined sync reason
-    expect(queryByRole("button", { name: "Count Skipped visit toward today's capacity" })).toBeNull();
+    const r = h.ui(<CalendarImpact />);
+    openBlock(r, "Declined sync");
+    expect(r.getByText("Excluded today")).toBeTruthy();
+    openBlock(r, "Skipped visit");
+    expect(r.queryByRole("button", { name: "Count Skipped visit toward today's capacity" })).toBeNull();
   });
 
   it("adjusts counted duration as a local projection, never the event (FEEDBACK-09)", () => {
     const h = calendarHarness();
     const save = vi.spyOn(h.controller, "saveAnchoredOverride").mockResolvedValue();
-    const { getByRole, queryByText } = h.ui(<CalendarImpact />);
+    const r = h.ui(<CalendarImpact />);
     // Work sync is a 50-minute event → 2 blocks counted; + steps to 3.
-    fireEvent.click(getByRole("button", { name: "More counted time for Work sync (today only)" }));
+    openBlock(r, "Work sync");
+    fireEvent.click(r.getByRole("button", { name: "More counted time for Work sync (today only)" }));
     expect(save).toHaveBeenCalledWith(
       "Work sync",
       expect.objectContaining({ on: true, skipToday: false, time: null, blocks: 3 }),
     );
     // A 30-minute event counts 1 block; minus is disabled at the floor.
+    openBlock(r, "Fixed appointment");
     expect(
       (
-        getByRole("button", {
+        r.getByRole("button", {
           name: "Less counted time for Fixed appointment (today only)",
         }) as HTMLButtonElement
       ).disabled,
@@ -169,10 +190,11 @@ describe("CalendarImpact", () => {
         },
       });
     });
-    expect(queryByText("3 blk counted")).toBeTruthy();
-    expect(queryByText("1hr 30min")).toBeTruthy();
-    expect(queryByText("9:30 AM–10:20 AM")).toBeTruthy(); // event time unchanged
-    expect(queryByText("projection")).toBeTruthy();
+    openBlock(r, "Work sync");
+    expect(r.queryByText("3 blk counted")).toBeTruthy();
+    expect(r.queryByText("1hr 30min")).toBeTruthy();
+    expect(r.queryByText("9:30 AM–10:20 AM")).toBeTruthy(); // event time unchanged
+    expect(r.queryByText("projection")).toBeTruthy();
   });
 
   // FEEDBACK-04 (2026-08-14): a quarantined row is a known-but-unreviewed
@@ -196,17 +218,18 @@ describe("CalendarImpact", () => {
       },
     ];
     h.store.dispatch({ type: "INPUTS_LOADED", inputs, ledger: h.store.getState().ledger! });
-    const { getByText, getAllByText } = h.ui(<CalendarImpact />);
-    expect(getByText("Steelers Game")).toBeTruthy();
-    expect(getByText("quarantined")).toBeTruthy(); // class badge, not Fixed
-    expect(getByText("Not counted")).toBeTruthy(); // reason — zero capacity
-    expect(getByText("0 blk counted")).toBeTruthy();
+    const r = h.ui(<CalendarImpact />);
+    openBlock(r, "Steelers Game");
+    expect(r.getByText("quarantined")).toBeTruthy(); // class badge, not Fixed
+    expect(r.getByText("Not counted")).toBeTruthy(); // reason — zero capacity
+    expect(r.getByText("0 blk counted")).toBeTruthy();
+    expect(r.getByText("2hr")).toBeTruthy();
     // The configured fixed row beside it is still accounted exactly once:
-    expect(getByText("Fixed")).toBeTruthy();
-    expect(getByText("1 blk counted")).toBeTruthy();
-    expect(getAllByText("Fixed").length).toBe(1);
+    openBlock(r, "Cooking");
+    expect(r.getByText("Fixed")).toBeTruthy();
+    expect(r.getByText("1 blk counted")).toBeTruthy();
     // FEEDBACK-09: only the fixed row carries the hard-wall affordance.
-    expect(getAllByText("hard block").length).toBe(1);
+    expect(r.getByText("hard block")).toBeTruthy();
   });
 });
 
