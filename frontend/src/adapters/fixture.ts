@@ -12,9 +12,18 @@ import type {
   SequenceResult,
   SourceRefreshResult,
 } from "./adapter";
+import { PromptOptinConflictError } from "./adapter";
 import type {
   Capacity,
   CapacitiesCatalog,
+  CapacitiesRefreshMode,
+  CapacitiesRefreshStatus,
+  CapacitiesRuleCapabilities,
+  CapacitiesRuleNode,
+  CapacitiesRuleSaveResponse,
+  CapacitiesRules,
+  CapacitiesSelections,
+  CapacitiesSelectionsDraft,
   CapacitiesSettings,
   CapacitiesSettingsDraft,
   CapacitiesSource,
@@ -22,6 +31,7 @@ import type {
   CapacitiesSourceRead,
   CommitReport,
   DaySetup,
+  DaySetupSaveResult,
   FixedInputs,
   Ledger,
   MicroIdea,
@@ -40,6 +50,96 @@ const LATENCY_MS = 350;
 
 function wait(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
+}
+
+/** Terminal refresh phases, mirroring ``capacities_refresh.TERMINAL_PHASES``. */
+const REFRESH_TERMINAL_PHASES = new Set(["complete", "failed", "cancelled", "interrupted"]);
+
+/** Fixture mirror of ``capacities_rules.validate_rule``. Returns a bounded
+    reason when the predicate is invalid for ``schema`` (or shape-invalid with
+    ``schema === null``), else null. Kept honest so the mockup exercises the
+    same draft-vs-active behavior the server has. */
+export function fixtureRuleProblem(
+  rule: unknown,
+  schema: Record<string, string> | null,
+  caps: CapacitiesRuleCapabilities,
+): string | null {
+  const ops = new Set(caps.ops);
+  const valueOps = new Set(caps.valueOps);
+  const numberOps = new Set(caps.numberOps);
+  const dateOps = new Set(caps.dateOps);
+  const equalityOps = new Set(caps.equalityOps);
+  const numberKinds = new Set(caps.numberKinds);
+  const dateKinds = new Set(caps.dateKinds);
+  const valueKinds = new Set(caps.valueKinds);
+  const reason = (message: string) => message.replace(/\s+/g, " ").slice(0, 240);
+
+  const validate = (node: unknown, path: string): string | null => {
+    if (!node || typeof node !== "object" || Array.isArray(node)) {
+      return reason(`${path} must be a predicate object`);
+    }
+    const record = node as Record<string, unknown>;
+    const combinators = ["all", "any", "not"].filter((key) => key in record);
+    const hasLeaf = "prop" in record || "op" in record;
+    if (combinators.length && hasLeaf) {
+      return reason(`${path} mixes a combinator with a leaf`);
+    }
+    if (combinators.length > 1) {
+      return reason(`${path} must use exactly one of all/any/not`);
+    }
+    if (combinators.length === 1) {
+      const key = combinators[0];
+      const value = record[key];
+      if (key === "not") {
+        if (!value || typeof value !== "object" || Array.isArray(value)) {
+          return reason(`${path}.not must be a predicate object`);
+        }
+        return validate(value, `${path}.not`);
+      }
+      if (!Array.isArray(value)) return reason(`${path}.${key} must be an array of predicates`);
+      for (let index = 0; index < value.length; index += 1) {
+        const problem = validate(value[index], `${path}.${key}[${index}]`);
+        if (problem) return problem;
+      }
+      return null;
+    }
+    if (!hasLeaf) {
+      return reason(`${path} is not a predicate (needs all/any/not or prop+op)`);
+    }
+    const prop = record.prop;
+    if (typeof prop !== "string" || prop.trim() === "") {
+      return reason(`${path}.prop must be a non-empty string`);
+    }
+    const op = record.op;
+    if (op === "matches") return reason(`${path}.op 'matches' is not supported`);
+    if (typeof op !== "string" || !ops.has(op)) {
+      return reason(`${path}.op must be one of ${[...ops].sort().join(", ")}`);
+    }
+    const values = record.values;
+    if (valueOps.has(op)) {
+      if (!Array.isArray(values) || values.length === 0) {
+        return reason(`${path}.values must be a non-empty array for op '${op}'`);
+      }
+    } else if (values !== undefined && !Array.isArray(values)) {
+      return reason(`${path}.values must be an array when present`);
+    }
+    if (schema) {
+      if (!(prop in schema)) return reason(`${path} references unknown property '${prop}'`);
+      const kind = schema[prop];
+      if (numberOps.has(op) && !numberKinds.has(kind)) {
+        return reason(`${path} op '${op}' requires a numeric property; '${prop}' is '${kind || "unknown"}'`);
+      }
+      if (dateOps.has(op) && !dateKinds.has(kind)) {
+        return reason(`${path} op '${op}' requires a date property; '${prop}' is '${kind || "unknown"}'`);
+      }
+      if (equalityOps.has(op) && !valueKinds.has(kind)) {
+        return reason(`${path} op '${op}' requires a value-bearing property; '${prop}' is '${kind || "unknown"}'`);
+      }
+    }
+    return null;
+  };
+
+  return validate(rule, "rule");
 }
 
 /** capacity.py compute_capacity mirror — fixture-side only. Production renders
@@ -191,6 +291,67 @@ export class FixtureAdapter implements Adapter {
     ],
     warnings: [],
   };
+  /** Deterministic per-type rules record: one schema-available structure and
+      one without a published contract, so the missing-schema draft path is
+      exercised rather than assumed. */
+  private capacitiesRules: CapacitiesRules = {
+    spaceId: "space-1",
+    revision: 0,
+    configured: true,
+    capabilities: {
+      ops: ["after", "before", "eq", "exists", "gt", "in", "lt", "truthy"],
+      valueOps: ["after", "before", "eq", "gt", "in", "lt"],
+      presenceOps: ["exists", "truthy"],
+      numberOps: ["gt", "lt"],
+      dateOps: ["after", "before"],
+      equalityOps: ["eq", "in"],
+      valueKinds: [
+        "boolean", "date", "entity", "label", "number", "richText", "text", "title", "url",
+      ],
+      numberKinds: ["number"],
+      dateKinds: ["date"],
+      matches: false,
+      schemaSource: "structure_contract",
+      contractAvailable: true,
+    },
+    structures: [
+      {
+        structureId: "custom-project",
+        active: null,
+        draft: null,
+        fallbackMinutes: null,
+        mapped: true,
+        schema: { "title-prop": "title", "status-prop": "label" },
+        schemaAvailable: true,
+      },
+      {
+        structureId: "0d194525-c5a1-4af5-bb62-202b83006b5e",
+        active: null,
+        draft: null,
+        fallbackMinutes: null,
+        mapped: true,
+        schema: {},
+        schemaAvailable: false,
+      },
+    ],
+  };
+  /** Deterministic durable selections, revision-guarded like the server. */
+  private capacitiesSelections: CapacitiesSelections = {
+    spaceId: "space-1",
+    revision: 0,
+    rulesRevision: 0,
+    selections: [],
+  };
+  /** One in-memory refresh job. Idle (no job) with no snapshot initially. */
+  private refreshPhase: string | null = null;
+  private refreshOutcome: string | null = null;
+  private refreshMode: CapacitiesRefreshMode | null = null;
+  private refreshScope = "all";
+  private refreshWarnings: string[] = [];
+  private refreshGeneration = 0;
+  private refreshMemberCount = 0;
+  private refreshJobId = "";
+  private refreshJobSeq = 0;
   private capacitiesSettings: CapacitiesSettings = {
     version: 1,
     revision: 0,
@@ -263,6 +424,15 @@ export class FixtureAdapter implements Adapter {
       model the cache converging on the remainder. */
   simulateCapacitiesCoverage(deferred: number): void {
     this.capacitiesDeferred = deferred;
+  }
+  /** Dev-only: finish the running refresh job so the terminal status path
+      (outcome + new generation) is reachable without a real provider. */
+  completeCapacitiesRefresh(outcome = "published"): void {
+    if (this.refreshPhase === null || REFRESH_TERMINAL_PHASES.has(this.refreshPhase)) return;
+    this.refreshPhase = "complete";
+    this.refreshOutcome = outcome;
+    this.refreshGeneration += 1;
+    this.refreshMemberCount = 6;
   }
 
   /** Project the simulated Capacities coverage onto a read model, mirroring
@@ -342,7 +512,9 @@ export class FixtureAdapter implements Adapter {
     if (this.anchoredSourceDrifted) {
       fixed.anchoredSourceFingerprint += "-drifted";
     }
-    const inputs = this.applyCapacitiesCoverage(structuredClone(this.inputs));
+    const inputs = this.applyPromotedSelections(
+      this.applyCapacitiesIntake(this.applyCapacitiesCoverage(structuredClone(this.inputs))),
+    );
     if (this.anchoredSourceDrifted) {
       inputs.anchoredSourceFingerprint += "-drifted";
     }
@@ -351,7 +523,78 @@ export class FixtureAdapter implements Adapter {
 
   async loadPlanInputs(): Promise<PlanInputs> {
     await wait(LATENCY_MS);
-    return this.applyCapacitiesCoverage(structuredClone(this.inputs));
+    const inputs = this.applyCapacitiesCoverage(structuredClone(this.inputs));
+    // U5 fixture mirrors the additive opt-in metadata the real read route will
+    // carry once it lands; production omits it until then, and the store then
+    // reports prefs unavailable rather than assuming false.
+    inputs.promptOptins = {
+      optins: { ...this.promptOptins },
+      revision: this.promptOptinsRevision,
+    };
+    return this.applyPromotedSelections(this.applyCapacitiesIntake(inputs));
+  }
+
+  /** Mirror of the server's selection promotion: a selected canonical
+      candidate becomes an assigned Capacities row on the NEXT read, so the
+      digest (and therefore the Commit body) reflects it — a selection is
+      never a UI-local promotion. */
+  private applyPromotedSelections(inputs: PlanInputs): PlanInputs {
+    const selected = new Set(this.capacitiesSelections.selections.map((s) => s.identity));
+    if (selected.size === 0) return inputs;
+    const existing = new Set(
+      inputs.assigned.map((item) => item.identity).filter((id): id is string => !!id),
+    );
+    const candidates = inputs.capacitiesIntake?.unassignedCandidates ?? [];
+    const added = candidates
+      .filter((candidate) => selected.has(candidate.identity) && !existing.has(candidate.identity))
+      .map((candidate) => ({
+        id: candidate.name || candidate.identity,
+        name: candidate.name || candidate.identity,
+        path: null,
+        source: "capacities" as const,
+        types: ["custom-project"],
+        urgency: null,
+        deadline: null,
+        priorityScore: 1,
+        blocks: 1,
+        durationLabel: "30min",
+        identity: candidate.identity,
+        capacitiesIdentity: candidate.identity,
+        todoistId: null,
+      }));
+    if (added.length === 0) return inputs;
+    return { ...inputs, assigned: [...inputs.assigned, ...added] };
+  }
+
+  /** Deterministic direct-intake block so the Connections review surface has
+      stable canonical candidates in the mockup build. */
+  private applyCapacitiesIntake(inputs: PlanInputs): PlanInputs {
+    // A simulated partial read keeps the legacy warning-text coverage path:
+    // emitting an ``ok`` intake block here would mask the deferrals the
+    // scenario is modelling.
+    if (this.capacitiesDeferred !== null && this.capacitiesDeferred > 0) return inputs;
+    const selected = new Set(this.capacitiesSelections.selections.map((s) => s.identity));
+    const candidate = (identity: string, name: string, reviewReasons: string[]) => ({
+      identity,
+      name,
+      reviewReasons,
+      selected: selected.has(identity),
+    });
+    return {
+      ...inputs,
+      capacitiesIntake: {
+        mode: "direct",
+        state: "ok",
+        generation: this.refreshGeneration > 0 ? this.refreshGeneration : 1,
+        installedAt: null,
+        typeCheckTimes: {},
+        coverage: { members: 6, evaluated: 6, malformed: 0, unreadable: 0 },
+        unassignedCandidates: [
+          candidate("capacities:space-1:custom-project:obj-1", "Draft launch brief", []),
+          candidate("capacities:space-1:custom-project:obj-2", "Renew domain", ["overdue"]),
+        ],
+      },
+    };
   }
 
   async billedLedger(): Promise<Ledger> {
@@ -381,6 +624,57 @@ export class FixtureAdapter implements Adapter {
 
   async saveDaySetup(_daySetup: DaySetup): Promise<void> {
     await wait(LATENCY_MS);
+  }
+
+  /** U5 fixture mirrors the server's prompt-only semantics in memory: a
+      captures PATCH never confirms the day, an opt-in save is a full
+      replacement guarded by the optimistic revision. */
+  private promptDrafts: Record<string, string> = {};
+  private promptOptins: Record<string, boolean> = {
+    intention: false,
+    megan_nicety: false,
+    stoic_intention: false,
+  };
+  private promptOptinsRevision = 0;
+
+  async savePromptDrafts(patch: Record<string, string>): Promise<DaySetupSaveResult> {
+    await wait(LATENCY_MS);
+    for (const [key, value] of Object.entries(patch)) {
+      if (key !== "intention" && key !== "megan_nicety" && key !== "stoic_intention") continue;
+      if (typeof value !== "string") continue;
+      if (value === "") delete this.promptDrafts[key];
+      else this.promptDrafts[key] = value;
+    }
+    return this.promptEcho();
+  }
+
+  async savePromptOptins(
+    optins: Record<string, boolean>,
+    expectedRevision: number,
+  ): Promise<DaySetupSaveResult> {
+    await wait(LATENCY_MS);
+    if (expectedRevision !== this.promptOptinsRevision) {
+      throw new PromptOptinConflictError(expectedRevision, this.promptOptinsRevision);
+    }
+    this.promptOptins = {
+      intention: false,
+      megan_nicety: false,
+      stoic_intention: false,
+      ...optins,
+    };
+    this.promptOptinsRevision += 1;
+    return this.promptEcho();
+  }
+
+  private promptEcho(): DaySetupSaveResult {
+    return {
+      ok: true,
+      daySetupConfirmed: false,
+      optinsAvailable: true,
+      optins: { ...this.promptOptins },
+      optinsRevision: this.promptOptinsRevision,
+      promptWarnings: [],
+    };
   }
 
   async loadCapacitiesSettings(): Promise<CapacitiesSettings> {
@@ -441,6 +735,174 @@ export class FixtureAdapter implements Adapter {
   async discoverCapacitiesSource(spaceId: string): Promise<CapacitiesCatalog> {
     await wait(LATENCY_MS);
     return structuredClone({ ...this.capacitiesCatalog, spaceId });
+  }
+
+  async loadCapacitiesRules(): Promise<CapacitiesRules> {
+    await wait(LATENCY_MS);
+    return structuredClone(this.capacitiesRules);
+  }
+
+  async saveCapacitiesRule(args: {
+    structureId: string;
+    rule: CapacitiesRuleNode;
+    fallbackMinutes: number | null;
+    expectedRevision: number;
+  }): Promise<CapacitiesRuleSaveResponse> {
+    await wait(LATENCY_MS);
+    if (args.expectedRevision !== this.capacitiesRules.revision) {
+      throw new Error(
+        `Capacities rules changed since they were read (stored revision ${this.capacitiesRules.revision}, expected ${args.expectedRevision})`,
+      );
+    }
+    const structure = this.capacitiesRules.structures.find(
+      (s) => s.structureId === args.structureId,
+    );
+    if (!structure) throw new Error(`unknown structure ${args.structureId}`);
+    const schema = structure.schemaAvailable ? structure.schema : null;
+    let problem = fixtureRuleProblem(args.rule, schema, this.capacitiesRules.capabilities);
+    let valid = problem === null;
+    if (valid && schema === null) {
+      valid = false;
+      problem = "no discovered schema was supplied; rule saved as a draft";
+    }
+    const draft = structuredClone(args.rule);
+    const nextStructure = {
+      ...structure,
+      active: valid ? draft : structure.active,
+      draft,
+      fallbackMinutes: args.fallbackMinutes,
+    };
+    this.capacitiesRules = {
+      ...this.capacitiesRules,
+      revision: this.capacitiesRules.revision + 1,
+      structures: this.capacitiesRules.structures.map((s) =>
+        s.structureId === args.structureId ? nextStructure : s,
+      ),
+    };
+    return {
+      ...structuredClone(this.capacitiesRules),
+      save: {
+        structureId: args.structureId,
+        valid,
+        reason: problem,
+        active: structuredClone(nextStructure.active),
+        draft,
+        fallbackMinutes: args.fallbackMinutes,
+        revision: this.capacitiesRules.revision,
+      },
+    };
+  }
+
+  private capacitiesStatus(): CapacitiesRefreshStatus {
+    const terminal =
+      this.refreshPhase === null || REFRESH_TERMINAL_PHASES.has(this.refreshPhase);
+    const job =
+      this.refreshPhase === null
+        ? null
+        : {
+            jobId: this.refreshJobId,
+            mode: this.refreshMode,
+            scope: this.refreshScope,
+            phase: this.refreshPhase,
+            outcome: this.refreshOutcome,
+            revision: 0,
+            generation: this.refreshGeneration,
+            startedAt: 0,
+            updatedAt: 0,
+            finishedAt: terminal ? 0 : null,
+            progress: {
+              listed: this.refreshMemberCount,
+              read: this.refreshMemberCount,
+              types: {} as Record<string, number>,
+            },
+            warnings: [...this.refreshWarnings],
+          };
+    return {
+      configured: true,
+      phase: this.refreshPhase,
+      outcome: this.refreshOutcome,
+      mode: this.refreshMode,
+      scope: this.refreshPhase === null ? null : this.refreshScope,
+      job,
+      progress: job ? { ...job.progress, types: { ...job.progress.types } } : { listed: 0, read: 0, types: {} },
+      warnings: [...this.refreshWarnings],
+      coverage: {},
+      snapshot: {
+        present: this.refreshGeneration > 0,
+        generation: this.refreshGeneration,
+        revision: null,
+        installedAt: null,
+        memberCount: this.refreshMemberCount,
+        typeCheckTimes: {},
+      },
+    };
+  }
+
+  async capacitiesRefreshStatus(): Promise<CapacitiesRefreshStatus> {
+    await wait(40);
+    return this.capacitiesStatus();
+  }
+
+  async startCapacitiesRefresh(
+    mode: CapacitiesRefreshMode,
+    scope: string,
+  ): Promise<CapacitiesRefreshStatus> {
+    await wait(60);
+    if (this.refreshPhase !== null && !REFRESH_TERMINAL_PHASES.has(this.refreshPhase)) {
+      throw new Error("A Capacities refresh job is already running.");
+    }
+    this.refreshJobSeq += 1;
+    this.refreshJobId = `job-fixture-${this.refreshJobSeq}`;
+    this.refreshMode = mode;
+    this.refreshScope = scope;
+    this.refreshPhase = "listing";
+    this.refreshOutcome = null;
+    this.refreshWarnings = [];
+    return this.capacitiesStatus();
+  }
+
+  async cancelCapacitiesRefresh(): Promise<CapacitiesRefreshStatus> {
+    await wait(60);
+    if (this.refreshPhase !== null && !REFRESH_TERMINAL_PHASES.has(this.refreshPhase)) {
+      this.refreshPhase = "cancelled";
+      this.refreshOutcome = "cancelled";
+      this.refreshWarnings = ["Refresh cancelled; partial reads were kept."];
+    }
+    return this.capacitiesStatus();
+  }
+
+  async loadCapacitiesSelections(): Promise<CapacitiesSelections> {
+    await wait(LATENCY_MS);
+    return structuredClone(this.capacitiesSelections);
+  }
+
+  async saveCapacitiesSelections(
+    draft: CapacitiesSelectionsDraft,
+  ): Promise<CapacitiesSelections> {
+    await wait(LATENCY_MS);
+    if (draft.expectedRevision !== this.capacitiesSelections.revision) {
+      throw new Error(
+        `Capacities selections changed since they were read (stored revision ${this.capacitiesSelections.revision}, expected ${draft.expectedRevision})`,
+      );
+    }
+    const merged = new Map(
+      this.capacitiesSelections.selections.map((s) => [s.identity, s]),
+    );
+    for (const identity of draft.deselect) merged.delete(identity);
+    for (const entry of draft.select) {
+      merged.set(entry.identity, {
+        identity: entry.identity,
+        acknowledged: entry.acknowledge,
+        rulesRevision: this.capacitiesRules.revision,
+      });
+    }
+    this.capacitiesSelections = {
+      ...this.capacitiesSelections,
+      revision: this.capacitiesSelections.revision + 1,
+      rulesRevision: this.capacitiesRules.revision,
+      selections: [...merged.values()],
+    };
+    return structuredClone(this.capacitiesSelections);
   }
 
   async loadTagExclusionSettings(): Promise<TagExclusionSettings> {

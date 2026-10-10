@@ -55,7 +55,13 @@ from typing import Any, Callable, Iterable, Iterator
 
 import app_config
 import capacities_cache_io
+import capacities_refresh
+import capacities_refresh_state
+import capacities_rules
+import capacities_settings
+import exclusion_settings
 import runstate
+import tag_exclusions
 from capacities_adapter import (
     CapacitiesAdapter,
     CapacitiesConfig,
@@ -66,7 +72,7 @@ from capacities_adapter import (
     _structure_id,
     _text,
 )
-from capacities_settings import read_settings
+from capacities_settings import CapacitiesSettings, read_settings
 from capacities_structure_titles import remember_titles
 # The host-local credential slot is owned by shadow.py; import it so the
 # Todoist and Capacities credentials cannot diverge.
@@ -103,6 +109,11 @@ CONTENT_CACHE_SCHEMA_VERSION = 1
 DEFAULT_CONTENT_CACHE_PATH = (
     Path.home() / ".config" / "tdtb" / "tdtb-capacities-content-cache.json"
 )
+#: S1-style state directory for the direct-refresh store (U1): per-object
+#: content plus the complete-generation pointer. Machine-local for the same
+#: reason as the legacy cache, but with its own root so the legacy reader's
+#: bytes and lifetime stay untouched.
+REFRESH_STATE_DIRNAME = "capacities-refresh"
 #: Sentinel selecting the factory-managed, namespace-scoped durable cache.
 #: Keeping a distinct identity lets an explicit ``None`` (or any test cache)
 #: keep its exact current meaning.
@@ -1115,6 +1126,9 @@ class CapacitiesBuilderConfig:
     #: Machine-local durable-cache path. ``None`` uses
     #: ``DEFAULT_CONTENT_CACHE_PATH``; tests inject a ``tmp_path``.
     cache_path: Path | None = None
+    #: Machine-local direct-refresh store root. ``None`` uses
+    #: ``refresh_state_dir()``; tests inject a ``tmp_path``.
+    refresh_state_path: Path | None = None
 
 
 def _resolve_assigned_structures(
@@ -1246,6 +1260,333 @@ def build_capacities_adapter(
             assignment_settings=assignment_settings,
             content_cache=content_cache,
         ),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Direct-refresh state store (U1)
+# ---------------------------------------------------------------------------
+# The legacy ``_ContentCache`` above keeps its TTL/bound/merge contract for the
+# read path that already shipped. The direct-refresh coordinator (U2) instead
+# uses ``capacities_refresh_state``: versioned per-object persistence with no
+# TTL, plus a separate atomic complete-generation pointer. These helpers are
+# the only composition seam; they add no behavior to the legacy reader.
+
+
+def refresh_state_dir() -> Path:
+    """``<app home>/state/capacities-refresh/`` — the direct-refresh root."""
+    return app_config.state_dir() / REFRESH_STATE_DIRNAME
+
+
+def build_refresh_state(
+    vault_root: str | Path,
+    space_id: str,
+    config: CapacitiesBuilderConfig | None = None,
+) -> capacities_refresh_state.RefreshStateStore:
+    """Resolve the direct-refresh store for one vault + space + provider.
+
+    Namespacing reuses the same machine-local root convention as the legacy
+    cache (``app_config.state_dir()``) but a distinct directory. The provider
+    origin — not the full base URL — is the identity component, so a path-only
+    base-URL change cannot orphan stored objects.
+    """
+    cfg = config if config is not None else CapacitiesBuilderConfig()
+    root = (
+        Path(cfg.refresh_state_path)
+        if cfg.refresh_state_path is not None
+        else refresh_state_dir()
+    )
+    return capacities_refresh_state.RefreshStateStore(
+        root,
+        origin=capacities_refresh_state.provider_origin(cfg.base_url),
+        space_id=space_id,
+        vault_root=vault_root,
+    )
+
+
+@dataclass(frozen=True)
+class DirectIntakeRead:
+    """A token-free read of everything the offline direct intake projects.
+
+    ``snapshot`` is ``None`` when no complete generation is installed or its
+    pointer is unusable. ``structures`` is ``None`` when no structure contract
+    is stamped with the installed generation. ``objects`` holds one
+    projection-ready payload per member whose cached content read cleanly, and
+    ``unreadable`` counts the members whose content is missing or unreadable.
+    Nothing here reads the credential, builds a client, or calls the provider.
+    """
+
+    space_id: str
+    mappings: tuple[StructureMapping, ...]
+    settings: CapacitiesSettings
+    snapshot: capacities_refresh_state.CompleteSnapshot | None
+    structures: Any
+    objects: tuple[dict[str, Any], ...]
+    unreadable: int
+
+
+def read_direct_intake(vault_root: str | Path) -> DirectIntakeRead | None:
+    """Read the published generation for the offline direct intake.
+
+    ``None`` means Capacities is not configured (no source record), which is
+    silent by design. A malformed record raises
+    :class:`CapacitiesSourceStoreError`, which the caller maps to a refusal.
+    """
+    record = read_source(vault_root)
+    if record is None:
+        return None
+    settings = read_settings(vault_root).settings
+    store = build_refresh_state(vault_root, record.space_id)
+    snapshot = store.load_snapshot(capacities_refresh.DEFAULT_SCOPE_KEY)
+    structures = None
+    objects: list[dict[str, Any]] = []
+    unreadable = 0
+    if snapshot is not None:
+        contract = store.load_structure_contract(snapshot.scope_key)
+        structures = contract.structures if contract is not None else None
+        for member in snapshot.members:
+            cached = store.get(member.object_id, member.type_key)
+            if cached is None:
+                unreadable += 1
+                continue
+            objects.append(
+                {"id": member.object_id, "structureId": member.type_key, **cached.content}
+            )
+    return DirectIntakeRead(
+        space_id=record.space_id,
+        mappings=_resolve_assigned_structures(
+            record.to_mappings(), settings.assigned_structures
+        ),
+        settings=settings,
+        snapshot=snapshot,
+        structures=structures,
+        objects=tuple(objects),
+        unreadable=unreadable,
+    )
+
+
+def refresh_config_revision(vault_root: str | Path) -> int | None:
+    """The current combined source+settings+rules+exclusions revision, or
+    ``None`` if unconfigured.
+
+    One definition shared by the coordinator's publication guard and the route
+    seam's cached-instance check. It is read fresh on every call so a mapping,
+    settings, rules, or exclusions save during a run cannot publish stale
+    scope, and a save between runs cannot be masked by a coordinator built
+    from the previous scope. A malformed rules or exclusions document raises
+    rather than being folded into a silent revision. An absent source record
+    returns ``None`` before the exclusions store is touched, so an
+    unconfigured Capacities source never reads the policy.
+    """
+    current = read_source(vault_root)
+    if current is None:
+        return None
+    rules = capacities_rules.load_rules(current.space_id)
+    exclusions = exclusion_settings.read_settings(vault_root)
+    return (
+        int(current.revision)
+        + int(read_settings(vault_root).settings.revision)
+        + int(rules.revision)
+        + int(exclusions.settings.revision)
+    )
+
+
+def refresh_source_space_id(vault_root: str | Path) -> str | None:
+    """The live source record's space id, or ``None`` if unconfigured.
+
+    One definition shared by the coordinator's publication guard and the route
+    seam's cached-instance check. The combined configuration revision is a sum
+    of per-store revisions, so a source space switch can leave it unchanged
+    while the live source is a different space; this read is the space half of
+    the guard, so a generation built for one space can never publish against
+    another. A malformed or unreadable source record raises, exactly like
+    :func:`refresh_config_revision`.
+    """
+    current = read_source(vault_root)
+    if current is None:
+        return None
+    return current.space_id
+
+
+def _refresh_state_root(config: CapacitiesBuilderConfig) -> Path:
+    """The machine-local direct-refresh root shared by the store and job dir."""
+    if config.refresh_state_path is not None:
+        return Path(config.refresh_state_path)
+    return refresh_state_dir()
+
+
+@contextmanager
+def _config_save_guard(vault_root: str | Path) -> Iterator[None]:
+    """Serialize publication against configuration savers (KTD3).
+
+    Held across the coordinator's revision recheck and generation install, a
+    save cannot land between them; a save already in flight forces the recheck
+    to observe its new revision, so the run fails stale instead of publishing
+    scope the configuration no longer describes.
+
+    Both saver lock files are taken because the two writers keep separate locks
+    today: the source record's (``capacities-source.lock``, this module) and the
+    settings policy's (``capacities-settings.lock``, ``capacities_settings``).
+    The rules store's own lock file (``capacities-rules.lock``,
+    ``capacities_rules``) joins them: the rules revision is part of the combined
+    revision, so a rule save landing mid-window would otherwise let stale rules
+    publish. The exclusions store's lock file (``exclusions.lock``,
+    ``exclusion_settings``) joins innermost for the same reason: its revision is
+    part of the combined revision too. The source pair is taken first, then
+    settings, then rules, then exclusions; only this guard takes all four, so
+    the fixed order cannot invert.
+    """
+    with _store_lock(vault_root):
+        handle = _acquire_lock_file(vault_root)
+        try:
+            settings_handle = capacities_cache_io.acquire_path_lock(
+                capacities_settings.lock_path()
+            )
+            try:
+                rules_handle = capacities_cache_io.acquire_path_lock(
+                    capacities_rules.lock_path()
+                )
+                try:
+                    exclusions_handle = capacities_cache_io.acquire_path_lock(
+                        exclusion_settings.lock_path()
+                    )
+                    try:
+                        yield
+                    finally:
+                        capacities_cache_io.release_lock_file(exclusions_handle)
+                finally:
+                    capacities_cache_io.release_lock_file(rules_handle)
+            finally:
+                capacities_cache_io.release_lock_file(settings_handle)
+        finally:
+            _release_lock_file(handle)
+
+
+def build_refresh_coordinator(
+    vault_root: str | Path,
+    config: CapacitiesBuilderConfig | None = None,
+) -> capacities_refresh.RefreshCoordinator | None:
+    """Construct the paced direct-refresh coordinator, or ``None`` if unconfigured.
+
+    Mirrors :func:`build_capacities_adapter`'s opt-in semantics and error
+    contract: an ABSENT mapping record returns ``None`` silently (a user who
+    does not use Capacities sees no warning), while a PRESENT record with a
+    broken credential raises visibly. The provider seam is the same
+    :class:`CapacitiesRestClient` (it exposes ``fetch_structures`` /
+    ``list_objects`` / ``get_object`` and the pacer's ``set_rate_observer``
+    sink), so no second transport exists.
+
+    The legacy content cache is deliberately NOT wired here: freshness lives in
+    the U1 refresh store, so a stale legacy cache entry can never stand in for a
+    required content read. The configuration revision the coordinator guards on
+    is the live source revision plus the settings revision plus the rules
+    revision plus the exclusions revision, read fresh on every check so a
+    mapping, policy, rule, or exclusion save during a run cannot publish stale
+    scope. The configuration revision is read before the source record and the
+    rest of the configuration so a save during construction makes publication
+    fail stale rather than publish. The source space is read before the
+    revision and re-checked against the record after it, so a switch between
+    those reads fails closed at build instead of arming the publication guard
+    with the post-switch space. The live source space is guarded too: a
+    switch to another space that leaves the combined revision equal fails stale
+    instead of publishing against the previous space.
+    The stored rules are loaded for the record's space and handed to the
+    coordinator, which passes them through to its internal adapter config; the
+    stored tag-exclusion policy is loaded the same way and handed to the
+    coordinator so its internal adapter filters both candidate surfaces.
+    Malformed rules or exclusions storage raises visibly rather than silently
+    disabling stored-rule eligibility or the exclusion policy. The legacy
+    :func:`build_capacities_adapter` path is unchanged and never reads the
+    exclusions store.
+    """
+    cfg = config if config is not None else CapacitiesBuilderConfig()
+    pre_build_space = refresh_source_space_id(vault_root)
+    configuration_revision = refresh_config_revision(vault_root)
+    if configuration_revision is None:
+        return None
+
+    record = read_source(vault_root)
+    if record is None:
+        return None
+    if record.space_id != pre_build_space:
+        # A switch between the space pre-read and the record read would
+        # otherwise arm the publication guard with the post-switch space, so
+        # only the lossy revision sum could catch it. Fail closed at build;
+        # the next start builds cleanly against the new space.
+        raise RuntimeError(
+            "the Capacities source space changed while the refresh "
+            f"coordinator was being built ({pre_build_space!r} -> "
+            f"{record.space_id!r}); start the refresh again"
+        )
+
+    settings = read_settings(vault_root).settings
+    rules = capacities_rules.load_rules(record.space_id)
+    exclusion_policy = tag_exclusions.ExclusionPolicy.from_read(
+        exclusion_settings.read_settings(vault_root)
+    )
+    token = load_capacities_token(cfg.token_path)
+    client = CapacitiesRestClient(
+        token,
+        space_id=record.space_id,
+        base_url=cfg.base_url,
+        timeout=cfg.timeout,
+        transport=cfg.transport,
+        content_cache=None,
+        structures_observer=_structure_title_observer(
+            vault_root, record.space_id, cfg.base_url
+        ),
+    )
+    store = build_refresh_state(vault_root, record.space_id, cfg)
+
+    return capacities_refresh.RefreshCoordinator(
+        root=_refresh_state_root(cfg),
+        store=store,
+        provider=client,
+        space_id=record.space_id,
+        mappings=_resolve_assigned_structures(
+            record.to_mappings(), settings.assigned_structures
+        ),
+        revision_supplier=lambda: refresh_config_revision(vault_root),
+        space_id_supplier=lambda: refresh_source_space_id(vault_root),
+        configuration_revision=configuration_revision,
+        config_guard=lambda: _config_save_guard(vault_root),
+        assignment_settings=settings.to_assignment_settings(),
+        rules=rules,
+        exclusion_policy=exclusion_policy,
+        max_pages=cfg.max_pages,
+    )
+
+
+def import_legacy_content_cache(
+    store: capacities_refresh_state.RefreshStateStore,
+    vault_root: str | Path,
+    space_id: str,
+    config: CapacitiesBuilderConfig | None = None,
+    *,
+    object_types: Any,
+    legacy_path: str | Path | None = None,
+) -> capacities_refresh_state.LegacyImport:
+    """Import compatible legacy cache entries into the new store, read-only.
+
+    The legacy namespace digest is computed exactly as
+    :func:`_resolve_content_cache` does, so only a document written for this
+    vault + space + provider is eligible. ``legacy_path`` defaults to the
+    configured cache path (or ``DEFAULT_CONTENT_CACHE_PATH``), matching the
+    legacy reader's own resolution.
+    """
+    cfg = config if config is not None else CapacitiesBuilderConfig()
+    if legacy_path is not None:
+        path = Path(legacy_path)
+    elif cfg.cache_path is not None:
+        path = Path(cfg.cache_path)
+    else:
+        path = DEFAULT_CONTENT_CACHE_PATH
+    expected_namespace = _content_cache_namespace(vault_root, space_id, cfg.base_url)
+    return capacities_refresh_state.import_legacy_entries(
+        store,
+        path,
+        expected_namespace=expected_namespace,
+        object_types=object_types,
     )
 
 

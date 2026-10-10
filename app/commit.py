@@ -445,7 +445,23 @@ def plan_writes(
 
 
 def _plan_todoist(m: ManifestEntry, e: ShadowDiffEntry, config: Any, today: date) -> WriteIntent:
-    all_day = m.action in ("capture-nicety", "schedule-all-day")
+    if m.capacities:
+        # S6b defense: a Capacities row is plan-only. shadow.build_plan_manifest
+        # emits no Todoist entry for one, so this is unreachable by construction;
+        # if it ever fires, refuse the whole commit rather than create a task.
+        raise CommitPlanError(
+            f"{m.step}/{m.name}: Capacities row reached the Todoist writer — refusing commit"
+        )
+    if m.action == "capture-nicety":
+        # U5 B2: the legacy automatic capture-nicety export lane is retired.
+        # The dedicated Commit-only prompt export lane (prompt_export.py) is
+        # the only path that may turn a prompt into a task, so a crafted or
+        # externally reachable retired capture row fails the whole commit
+        # closed rather than silently writing prompt text to Todoist.
+        raise CommitPlanError(
+            f"{m.step}/{m.name}: retired capture-nicety action — refusing commit"
+        )
+    all_day = m.action == "schedule-all-day"
     detail_recurring = e.detail.get("is_recurring")
     recurring = (
         bool(detail_recurring)
@@ -581,13 +597,16 @@ def _plan_calendar(
 
 
 def _plan_vault(m: ManifestEntry, e: ShadowDiffEntry, config: Any = None) -> WriteIntent:
+    if m.action == "frontmatter-captures":
+        # U5 B2: the legacy B6 prompt-capture writer is retired and carries no
+        # payload. A crafted frontmatter-captures row is refused rather than
+        # reaching the vault with prompt text.
+        raise CommitPlanError(
+            f"{m.step}/{m.name}: retired frontmatter-captures action — refusing commit"
+        )
     op = "noop" if e.classification == NOOP else "update" if e.classification == UPDATE else "create"
-    payload = None
-    if m.action == "frontmatter-captures" and isinstance(config, dict):
-        payload = dict(config.get("captures") or {})
     return WriteIntent(
         step=m.step, surface="vault", op=op, name=m.name, path=m.id_or_path,
-        payload=payload,
     )
 
 
@@ -1307,105 +1326,6 @@ def write_daily_note(
 
 
 # ---------------------------------------------------------------------------
-# 2e. write_captures_frontmatter — B6
-# ---------------------------------------------------------------------------
-
-_CAPTURE_KEYS = ("intention", "megan_nicety", "stoic_intention")
-
-
-def _merge_frontmatter_keys(text: str, additions: dict[str, str]) -> tuple[str, list[str]]:
-    """Add missing keys into the note's YAML frontmatter block. Never
-    overwrites an existing key (skill B6: don't overwrite; merge in one
-    call). Returns (new_text, keys_added). A note with no frontmatter gains
-    a fresh block at the top."""
-    lines = text.split("\n")
-    if lines and lines[0].strip() == "---":
-        try:
-            end = next(i for i in range(1, len(lines)) if lines[i].strip() == "---")
-        except StopIteration:
-            end = None
-    else:
-        end = None
-
-    if end is None:
-        existing_keys: set[str] = set()
-        body = text
-        fm_lines: list[str] = []
-    else:
-        fm_lines = lines[1:end]
-        existing_keys = {ln.split(":", 1)[0].strip() for ln in fm_lines if ":" in ln}
-        body = "\n".join(lines[end + 1:])
-
-    added = [k for k in additions if k not in existing_keys and str(additions[k]).strip()]
-    if not added:
-        return text, []
-    new_fm = fm_lines + [f"{k}: {json.dumps(str(additions[k]))}" for k in added]
-    return "---\n" + "\n".join(new_fm) + "\n---\n" + body, added
-
-
-def write_captures_frontmatter(
-    intents: list[WriteIntent],
-    vault_root: Path | str,
-    today: date | None = None,
-) -> WriterResult:
-    """B6: merge Phase-1 captures (intention / megan_nicety / stoic_intention)
-    into today's daily-note frontmatter. Missing keys only — an existing value
-    is NEVER overwritten; all keys land in one write. Reconciliation: re-read
-    and assert every intended key is present."""
-    vault_root = Path(vault_root)
-    today = today or date.today()
-    rows = [i for i in intents if i.surface == "vault" and i.step == "B6"]
-    result = WriterResult(step="B6", surface="vault")
-    if not rows:
-        return result
-
-    try:
-        note = _resolve_daily_note(vault_root, today)
-    except OSError as exc:
-        result.fail(f"vault: today's daily note lookup failed: {exc}")
-        return result
-    if note is None:
-        result.reconciliation = {
-            "daily_note_present": False,
-            "skipped": True,
-            "reason": "optional daily note absent; B6 captures skipped",
-            "date": today.isoformat(),
-        }
-        return result
-
-    captures = {k: v for i in rows for k, v in (i.payload or {}).items()
-                 if k in _CAPTURE_KEYS and str(v).strip()}
-    try:
-        text = note.read_text(encoding="utf-8")
-    except OSError as exc:
-        result.fail(f"vault: today's daily note read failed: {exc}")
-        return result
-    new_text, added = _merge_frontmatter_keys(text, captures)
-    if added:
-        try:
-            note.write_text(new_text, encoding="utf-8")
-        except OSError as exc:
-            result.fail(f"vault: today's daily note write failed: {exc}")
-            return result
-        result.updated.append(str(note.name))
-    else:
-        result.noops.append(str(note.name))
-
-    # -- reconciliation: every intended key present in frontmatter ------------
-    try:
-        back = note.read_text(encoding="utf-8")
-    except OSError as exc:
-        result.fail(f"vault: today's daily note readback failed: {exc}")
-        return result
-    back_fm = back.split("\n---\n")[0] if back.startswith("---") else ""
-    missing = [k for k in captures if f"{k}:" not in back_fm]
-    result.reconciliation = {"keys_added": added, "keys_missing": missing}
-    if missing:
-        result.fail(f"vault: B6 keys not reconciled: {missing}")
-    return result
-
-
-# ---------------------------------------------------------------------------
 # 3. run_commit — thin sequential driver (T15 replaces with a ledgered,
 #    resumable, partial-failure-honest orchestrator).
 # ---------------------------------------------------------------------------
@@ -1432,7 +1352,6 @@ def run_commit(
     if vault_root is not None:
         results.append(write_frontmatter_flips(intents, vault_root))
         results.append(write_daily_note(intents, vault_root, plan_body, today))
-        results.append(write_captures_frontmatter(intents, vault_root, today))
     if store is not None:
         results.append(write_calendar(intents, store, today))
     return results

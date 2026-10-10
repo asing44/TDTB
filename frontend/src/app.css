@@ -4215,3 +4215,216 @@ body {
     flex-direction: column;
   }
 }
+
+/* U5 prompt exports: opt-in rows + the disabled manual-copy note. */
+.prompt-exports__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+.prompt-optin {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.25rem 0;
+  color: var(--t-text);
+  cursor: pointer;
+}
+.dock__prompt-note {
+  align-self: center;
+  max-width: 16rem;
+  color: var(--t-muted);
+  font-size: 0.8rem;
+  line-height: 1.3;
+}
+
+/* B3 promoted screens: a top-level tablist above the cockpit grid, plus the
+   screen body that reuses the existing panels. */
+.screen-nav {
+  display: flex;
+  justify-content: center;
+  padding: 0.4rem 0.75rem 0;
+}
+.screen-nav__tabs {
+  display: flex;
+  gap: 0.25rem;
+  padding: 0.2rem;
+  border: 1px solid var(--t-border);
+  border-radius: 999px;
+  background: var(--t-surface);
+}
+.screen-nav__tab {
+  border: 0;
+  border-radius: 999px;
+  padding: 0.35rem 0.9rem;
+  background: transparent;
+  color: var(--t-muted);
+  font: inherit;
+  cursor: pointer;
+}
+.screen-nav__tab--active {
+  background: var(--c-selected);
+  color: var(--t-text);
+}
+.screen-nav__tab:focus-visible {
+  outline: 2px solid var(--t-accent, var(--c-selected));
+  outline-offset: 2px;
+}
+.cockpit__screen {
+  overflow-y: auto;
+  padding: 1rem;
+}
+
+/* -- Connections: refresh / rules / unknown review (U5) -------------------- */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+.capacities-status__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 8px;
+  margin: 10px 0;
+}
+.capacities-status__cell {
+  padding: 8px 10px;
+  border: 1px solid var(--t-border);
+  border-radius: var(--radius-sm);
+  background: var(--t-surface-2);
+}
+.capacities-status__cell dt {
+  color: var(--t-muted);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.capacities-status__cell dd {
+  margin: 2px 0 0;
+  font-size: 12px;
+  line-height: 1.4;
+}
+.capacities-snapshot {
+  margin-top: 8px;
+}
+.capacities-rule {
+  padding: 10px 0;
+  border-top: 1px solid var(--t-border);
+}
+.capacities-rule:first-of-type {
+  border-top: 0;
+}
+.capacities-rule__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.capacities-rule__head code {
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+.capacities-rule__badges {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.capacities-rule__badge {
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--t-badge-neutral-bg);
+  color: var(--t-badge-neutral-text);
+  font-size: 11px;
+}
+.capacities-rule__badge--warn {
+  background: var(--state-warning);
+  color: var(--t-text);
+}
+.capacities-rule__editor {
+  margin: 8px 0;
+  padding: 8px 10px;
+  border: 1px solid var(--t-border);
+  border-radius: var(--radius-sm);
+  background: var(--t-surface);
+}
+.capacities-rule__node {
+  margin: 4px 0;
+}
+.capacities-rule__node--group > .capacities-rule__children {
+  margin-left: 12px;
+  padding-left: 10px;
+  border-left: 2px solid var(--t-border);
+}
+.capacities-rule__node--not {
+  padding-left: 8px;
+  border-left: 2px dashed var(--t-border);
+}
+.capacities-rule__row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.capacities-rule__label {
+  color: var(--t-muted);
+  font-size: 12px;
+}
+.capacities-rule__field {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 12px;
+}
+.capacities-rule__field--grow {
+  flex: 1 1 160px;
+}
+.capacities-rule__field select,
+.capacities-rule__field input {
+  padding: 5px 8px;
+  border: 1px solid var(--t-border);
+  border-radius: var(--radius-sm);
+  background: var(--t-surface);
+  color: var(--t-text);
+  font: inherit;
+  font-size: 12px;
+}
+.capacities-rule__actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.capacities-rule__footer {
+  margin-top: 8px;
+}
+.capacities-rule__dirty {
+  color: var(--t-muted);
+  font-size: 11px;
+}
+.capacities-rule__notice {
+  margin: 8px 0;
+  padding: 8px 10px;
+  border: 1px solid var(--t-accent);
+  border-radius: var(--radius-sm);
+  background: var(--t-accent-subtle);
+  color: var(--t-accent-text);
+  font-size: 12px;
+}
+.capacities-rule__notice--draft {
+  border-color: var(--state-warning);
+  background: transparent;
+  color: var(--t-text);
+}
+.capacities-unknown__controls {
+  display: flex;
+  gap: 14px;
+  flex-wrap: wrap;
+}

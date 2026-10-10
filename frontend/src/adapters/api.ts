@@ -22,15 +22,24 @@ import type {
   SequenceResult,
   SourceRefreshResult,
 } from "./adapter";
+import { PromptOptinConflictError } from "./adapter";
 import type {
   Capacity,
   CapacitiesCatalog,
+  CapacitiesRefreshMode,
+  CapacitiesRefreshStatus,
+  CapacitiesRuleNode,
+  CapacitiesRuleSaveResponse,
+  CapacitiesRules,
+  CapacitiesSelections,
+  CapacitiesSelectionsDraft,
   CapacitiesSettings,
   CapacitiesSettingsDraft,
   CapacitiesSourceDraft,
   CapacitiesSourceRead,
   CommitReport,
   DaySetup,
+  DaySetupSaveResult,
   FixedInputs,
   Ledger,
   MicroIdea,
@@ -47,8 +56,18 @@ import {
   calendarWarnings,
   daySetupToWire,
   capacitiesSettingsToWire,
+  projectDaySetupSaveResult,
+  promptDraftsToWire,
+  promptOptinsToWire,
   capacitiesSourceToWire,
+  capacitiesRuleSaveToWire,
+  capacitiesRefreshStartToWire,
+  capacitiesSelectionsToWire,
   projectCapacitiesCatalog,
+  projectCapacitiesRules,
+  projectCapacitiesRuleSaveResponse,
+  projectCapacitiesRefreshStatus,
+  projectCapacitiesSelections,
   projectCapacitiesSettings,
   projectCapacitiesSource,
   projectTagExclusionSettings,
@@ -114,6 +133,60 @@ export function capacitiesSourceConflictOf(
   if (!detail || typeof detail !== "object" || Array.isArray(detail)) return null;
   const record = detail as Wire;
   if (record.code !== "capacities_source_conflict") return null;
+  const expected = record.expected_revision;
+  const current = record.current_revision;
+  if (!Number.isSafeInteger(expected) || expected < 0) return null;
+  if (!Number.isSafeInteger(current) || current < 0) return null;
+  return { expectedRevision: expected, currentRevision: current };
+}
+
+/** Extract both revisions from a real 409 Capacities rules conflict. Returns
+    null for anything else (another status, another 409 code, or a body
+    without both revisions). */
+export function capacitiesRulesConflictOf(
+  error: unknown,
+): { expectedRevision: number; currentRevision: number } | null {
+  if (!(error instanceof ApiError) || error.status !== 409) return null;
+  const detail = error.detail;
+  if (!detail || typeof detail !== "object" || Array.isArray(detail)) return null;
+  const record = detail as Wire;
+  if (record.code !== "capacities_rules_conflict") return null;
+  const expected = record.expected_revision;
+  const current = record.current_revision;
+  if (!Number.isSafeInteger(expected) || expected < 0) return null;
+  if (!Number.isSafeInteger(current) || current < 0) return null;
+  return { expectedRevision: expected, currentRevision: current };
+}
+
+/** Extract both revisions from a real 409 Capacities selections conflict.
+    Returns null for anything else (another status, another 409 code, or a
+    body without both revisions). */
+export function capacitiesSelectionsConflictOf(
+  error: unknown,
+): { expectedRevision: number; currentRevision: number } | null {
+  if (!(error instanceof ApiError) || error.status !== 409) return null;
+  const detail = error.detail;
+  if (!detail || typeof detail !== "object" || Array.isArray(detail)) return null;
+  const record = detail as Wire;
+  if (record.code !== "capacities_selections_conflict") return null;
+  const expected = record.expected_revision;
+  const current = record.current_revision;
+  if (!Number.isSafeInteger(expected) || expected < 0) return null;
+  if (!Number.isSafeInteger(current) || current < 0) return null;
+  return { expectedRevision: expected, currentRevision: current };
+}
+
+/** Extract both revisions from a real 409 prompt opt-in conflict. Returns
+    null for anything else (another status, another 409 code, or a body
+    without both revisions). */
+export function promptOptinConflictOf(
+  error: unknown,
+): { expectedRevision: number; currentRevision: number } | null {
+  if (!(error instanceof ApiError) || error.status !== 409) return null;
+  const detail = error.detail;
+  if (!detail || typeof detail !== "object" || Array.isArray(detail)) return null;
+  const record = detail as Wire;
+  if (record.code !== "prompt_optins_conflict") return null;
   const expected = record.expected_revision;
   const current = record.current_revision;
   if (!Number.isSafeInteger(expected) || expected < 0) return null;
@@ -226,6 +299,37 @@ export class ApiAdapter implements Adapter {
     await this.post("/day-setup", daySetupToWire(daySetup));
   }
 
+  /** U5 prompt-only save: exactly one POST carrying ONLY `captures`. The
+      server treats it as a draft PATCH and never confirms the day. */
+  async savePromptDrafts(patch: Record<string, string>): Promise<DaySetupSaveResult> {
+    return projectDaySetupSaveResult(
+      await this.post("/day-setup", promptDraftsToWire(patch)),
+    );
+  }
+
+  /** U5 opt-in-only save: exactly one POST carrying `optins` + the expected
+      revision. A stale revision (409 prompt_optins_conflict) is a typed
+      PromptOptinConflictError, never silently retried or coerced. */
+  async savePromptOptins(
+    optins: Record<string, boolean>,
+    expectedRevision: number,
+  ): Promise<DaySetupSaveResult> {
+    try {
+      return projectDaySetupSaveResult(
+        await this.post("/day-setup", promptOptinsToWire(optins, expectedRevision)),
+      );
+    } catch (error) {
+      const conflict = promptOptinConflictOf(error);
+      if (conflict) {
+        throw new PromptOptinConflictError(
+          conflict.expectedRevision,
+          conflict.currentRevision,
+        );
+      }
+      throw error;
+    }
+  }
+
   async saveMicroAdventure(pick: MicroIdea | null): Promise<void> {
     await this.post("/day-setup", {
       micro_adventure:
@@ -262,6 +366,50 @@ export class ApiAdapter implements Adapter {
   async discoverCapacitiesSource(spaceId: string): Promise<CapacitiesCatalog> {
     return projectCapacitiesCatalog(
       await this.post("/settings/capacities/source/discover", { space_id: spaceId }),
+    );
+  }
+
+  async loadCapacitiesRules(): Promise<CapacitiesRules> {
+    return projectCapacitiesRules(await this.request("/capacities/rules"));
+  }
+
+  async saveCapacitiesRule(args: {
+    structureId: string;
+    rule: CapacitiesRuleNode;
+    fallbackMinutes: number | null;
+    expectedRevision: number;
+  }): Promise<CapacitiesRuleSaveResponse> {
+    return projectCapacitiesRuleSaveResponse(
+      await this.post("/capacities/rules", capacitiesRuleSaveToWire(args)),
+    );
+  }
+
+  async capacitiesRefreshStatus(): Promise<CapacitiesRefreshStatus> {
+    return projectCapacitiesRefreshStatus(await this.request("/capacities/refresh/status"));
+  }
+
+  async startCapacitiesRefresh(
+    mode: CapacitiesRefreshMode,
+    scope: string,
+  ): Promise<CapacitiesRefreshStatus> {
+    return projectCapacitiesRefreshStatus(
+      await this.post("/capacities/refresh/start", capacitiesRefreshStartToWire(mode, scope)),
+    );
+  }
+
+  async cancelCapacitiesRefresh(): Promise<CapacitiesRefreshStatus> {
+    return projectCapacitiesRefreshStatus(
+      await this.post("/capacities/refresh/cancel", {}),
+    );
+  }
+
+  async loadCapacitiesSelections(): Promise<CapacitiesSelections> {
+    return projectCapacitiesSelections(await this.request("/capacities/selections"));
+  }
+
+  async saveCapacitiesSelections(draft: CapacitiesSelectionsDraft): Promise<CapacitiesSelections> {
+    return projectCapacitiesSelections(
+      await this.post("/capacities/selections", capacitiesSelectionsToWire(draft)),
     );
   }
 

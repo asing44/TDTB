@@ -1087,8 +1087,8 @@ class TestScheduableClassification:
 
 
 class TestCapturesManifest:
-    """T8 (ui-parity): Phase-1 captures — niceties to Todoist Inbox (Step A,
-    bare text, all-day) + daily-note frontmatter patch (B6)."""
+    """U5: Phase-1 prompt capture rows are RETIRED — the manifest never emits
+    capture-nicety Todoist rows or B6 frontmatter-captures vault rows."""
 
     CFG = {"captures": {"intention": "ship it", "megan_nicety": "Walk outside",
                          "stoic_intention": "Temperance"}}
@@ -1097,33 +1097,20 @@ class TestCapturesManifest:
         return shadow.build_plan_manifest({"assigned": []}, {"sequence": []},
                                           cfg if cfg is not None else self.CFG)
 
-    def test_niceties_emit_bare_todoist_creates(self):
-        rows = [m for m in self._manifest() if m.action == "capture-nicety"]
-        names = sorted(r.name for r in rows)
-        assert names == ["Temperance", "Walk outside"]     # verbatim, no prefix
-        for r in rows:
-            assert r.system == "todoist" and r.step == "A"
-            assert r.time is None                          # all-day, intentional
-            assert r.routing == "Inbox"
-
-    def test_intention_never_becomes_a_todoist_task(self):
-        rows = [m for m in self._manifest() if m.action == "capture-nicety"]
-        assert all(r.name != "ship it" for r in rows)
-
-    def test_b6_row_emitted_when_any_capture_present(self):
-        rows = [m for m in self._manifest() if m.action == "frontmatter-captures"]
-        assert len(rows) == 1
-        assert rows[0].step == "B6" and rows[0].system == "vault"
+    def test_no_capture_rows_are_emitted(self):
+        actions = [m.action for m in self._manifest()]
+        assert "capture-nicety" not in actions
+        assert "frontmatter-captures" not in actions
 
     def test_no_captures_no_rows(self):
         m = self._manifest(cfg={})
         assert all(r.action not in ("capture-nicety", "frontmatter-captures")
                    for r in m)
 
-    def test_empty_fields_skip_silently(self):
+    def test_empty_fields_emit_nothing(self):
         m = self._manifest(cfg={"captures": {"megan_nicety": "", "intention": "x"}})
-        assert not [r for r in m if r.action == "capture-nicety"]
-        assert len([r for r in m if r.action == "frontmatter-captures"]) == 1
+        assert all(r.action not in ("capture-nicety", "frontmatter-captures")
+                   for r in m)
 
 
 class TestCapturesDiff:
@@ -1133,20 +1120,12 @@ class TestCapturesDiff:
                                     name="Phase-1 captures",
                                     id_or_path="<today's daily note>")
 
-    def test_missing_daily_note_is_conflict(self):
-        diff = shadow.diff_against_live([self._b6()], {"daily_note_text": None})
+    def test_retired_b6_row_fails_closed_as_conflict(self):
+        # With the B6 writer retired, a crafted frontmatter-captures row is an
+        # unrecognized manifest action and fails closed as a conflict.
+        diff = shadow.diff_against_live(
+            [self._b6()], {"daily_note_text": "---\ntype: daily\n---\nbody"})
         assert diff.entries[0].classification == shadow.CONFLICT
-
-    def test_missing_keys_is_update(self):
-        live = {"daily_note_text": "---\ntype: daily\n---\nbody"}
-        diff = shadow.diff_against_live([self._b6()], live)
-        assert diff.entries[0].classification == shadow.UPDATE
-
-    def test_all_keys_present_is_noop(self):
-        live = {"daily_note_text": "---\nintention: a\nmegan_nicety: b\n"
-                                    "stoic_intention: c\n---\nbody"}
-        diff = shadow.diff_against_live([self._b6()], live)
-        assert diff.entries[0].classification == shadow.NOOP
 
 
 class TestDuplicateNameClaims:

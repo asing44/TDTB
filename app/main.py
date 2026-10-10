@@ -64,6 +64,8 @@ import day_semantics  # noqa: E402
 import deferrals  # noqa: E402
 import duration_memory  # noqa: E402
 import runstate  # noqa: E402
+import prompt_state  # noqa: E402
+import prompt_export  # noqa: E402
 import judgment  # noqa: E402
 import planning  # noqa: E402
 sequence = planning.sequence  # compatibility alias for existing test seams
@@ -78,7 +80,11 @@ import time_engine  # noqa: E402
 import capacity as capacity_mod  # noqa: E402
 import capacities_settings  # noqa: E402
 import capacities_builder  # noqa: E402
+import capacities_intake  # noqa: E402
+import capacities_rules  # noqa: E402
+import capacities_selections  # noqa: E402
 import capacities_adapter  # noqa: E402
+import capacities_refresh  # noqa: E402
 import capacities_structure_titles  # noqa: E402
 import exclusion_settings  # noqa: E402
 import tag_exclusions  # noqa: E402
@@ -86,6 +92,10 @@ import app_config  # noqa: E402
 import artifact_source  # noqa: E402
 
 VAULT_ROOT_ENV = "TDTB_VAULT_ROOT"
+
+#: Sentinel distinguishing "no coordinator built yet" from a built-but-
+#: unconfigured coordinator (``None``) in ``app.state.refresh_coordinator``.
+_REFRESH_COORDINATOR_UNSET = object()
 
 # Distant-future sentinel for deadline sorting: items without a deadline sort
 # after every dated item, deterministically.
@@ -172,6 +182,608 @@ def rank_pool(
     empty leaves ranking byte-identical to the pre-T1 behaviour.
     """
     return sorted(pool_items, key=lambda i: _rank_key(i, today, order, bias))
+
+
+#: U3c-2 selection notices rendered onto the digest ``source_warnings``. The
+#: canonical identity is the only row reference, so no title or payload leaks.
+_SELECTION_NOTICE_TEXT = {
+    capacities_selections.NOTICE_EXCLUDED:
+        "was not promoted: excluded by the tag exclusions or the drop list",
+    capacities_selections.NOTICE_TYPE_DISABLED:
+        "was not promoted: its Capacities type is no longer mapped",
+    capacities_selections.NOTICE_NOT_CACHED:
+        "was not promoted: no cached Capacities row matches it",
+    capacities_selections.NOTICE_RULE_CHANGED:
+        "was promoted, but its selection predates the current rules revision",
+}
+_SELECTIONS_UNAPPLIED_WARNING = (
+    "Capacities selections were not applied: a Capacities record is "
+    "unreadable or malformed"
+)
+_SOURCE_UNAPPLIED_WARNING = (
+    "Capacities selections were not applied: the source mapping record is "
+    "unreadable"
+)
+
+
+def _capacities_hard_excluded(
+    vault: Path,
+    today: date,
+    candidates: list[dict[str, Any]],
+    exclusion_policy: tag_exclusions.ExclusionPolicy | None,
+) -> set[str]:
+    """The identities hard-excluded from Capacities candidates today.
+
+    The one definition of a hard exclusion (U4 S4), shared by the selection
+    promotion path and the select endpoint so the two cannot drift: today's
+    drop list plus the tag-exclusion policy applied to ``candidates``. The tag
+    dry run uses the shared matcher; ``build_digest`` re-applies it to the
+    promoted rows, so the two stages cannot disagree. Raises
+    ``tag_exclusions.TagExclusionBlocked`` when the policy cannot be evaluated.
+    """
+    hard_excluded = {
+        str(entry.get("identity"))
+        for entry in runstate.read_dropped(vault, today)
+        if entry.get("identity")
+    }
+    if exclusion_policy is not None and candidates:
+        _assigned, kept_pool, _report = tag_exclusions.apply_tag_exclusions(
+            [], candidates, exclusion_policy,
+        )
+        kept = {row.get("identity") for row in kept_pool}
+        hard_excluded |= {
+            row.get("identity") for row in candidates
+            if row.get("identity") not in kept
+        }
+    return hard_excluded
+
+
+def _capacities_selection_rejection(
+    status_code: int, code: str, identity: str, message: str,
+) -> HTTPException:
+    """A bounded identity rejection: a stable code, the identity, and fixed text."""
+    return HTTPException(
+        status_code=status_code,
+        detail={"code": code, "message": message, "identity": identity},
+    )
+
+
+def _capacities_selection_identity(value: str, space_id: str) -> str:
+    """The canonical identity of one browser-supplied selection, or a 422.
+
+    The canonicalizer is the store's own (``canonical_exclusion_identity``), so
+    a title, path, bare id, or alias is refused the same way on every surface.
+    An identity from another space is refused too.
+    """
+    message = "Capacities selection is not a canonical identity of this space."
+    try:
+        identity = capacities_settings.canonical_exclusion_identity(value)
+    except ValueError as exc:
+        raise _capacities_selection_rejection(
+            422, "invalid_identity", value, message,
+        ) from exc
+    if identity.split(":", 3)[1] != space_id:
+        raise _capacities_selection_rejection(
+            422, "invalid_identity", value, message,
+        )
+    return identity
+
+
+def _capacities_selections_conflict(
+    expected_revision: int, current_revision: int,
+) -> HTTPException:
+    return HTTPException(
+        status_code=409,
+        detail={
+            "code": "capacities_selections_conflict",
+            "message": (
+                "Capacities selections changed since they were read; "
+                "reload and retry."
+            ),
+            "expected_revision": expected_revision,
+            "current_revision": current_revision,
+        },
+    )
+
+
+def _capacities_selections_storage_error() -> HTTPException:
+    """Bounded 503 for selection storage: fixed text, no path, no payload."""
+    return HTTPException(
+        status_code=503,
+        detail={
+            "code": "capacities_selections_storage_error",
+            "message": (
+                "Capacities selections storage is unavailable; "
+                "the existing selections were preserved."
+            ),
+        },
+    )
+
+
+def _capacities_selections_payload(
+    record: capacities_selections.SelectionsRecord, rules_revision: int,
+) -> dict[str, Any]:
+    """The one wire shape both selection routes answer with."""
+    return {
+        "space_id": record.space_id,
+        "revision": record.revision,
+        "rules_revision": rules_revision,
+        "selections": [
+            {
+                "identity": selection.identity,
+                "acknowledged": selection.acknowledged,
+                "rules_revision": selection.rules_revision,
+            }
+            for selection in record.selections
+        ],
+    }
+
+
+def _capacities_rules_storage_error() -> HTTPException:
+    """Bounded 503 for rules storage: fixed text, no path, no payload."""
+    return HTTPException(
+        status_code=503,
+        detail={
+            "code": "capacities_rules_storage_error",
+            "message": (
+                "Capacities rules storage is unavailable; "
+                "the existing rules were preserved."
+            ),
+        },
+    )
+
+
+def _capacities_rules_conflict(
+    expected_revision: int, current_revision: int,
+) -> HTTPException:
+    return HTTPException(
+        status_code=409,
+        detail={
+            "code": "capacities_rules_conflict",
+            "message": (
+                "Capacities rules changed since they were read; "
+                "reload and retry."
+            ),
+            "expected_revision": expected_revision,
+            "current_revision": current_revision,
+        },
+    )
+
+
+def _capacities_rule_schema_by_structure(
+    structures_payload: Any,
+) -> dict[str, dict[str, str]]:
+    """Per-structure ``{property_id: kind}`` from the published structure
+    contract, with no provider call.
+
+    Accepts the raw structures payload (a list of rows, or a
+    ``{"structures": [...]}`` object). A row's ``propertyDefinitions`` is
+    normalized through :func:`capacities_rules.schema_from_definitions` — the
+    same normalizer the store validates against. Unknown shapes yield no entry,
+    so a missing or partial contract leaves the schema unavailable rather than
+    fabricating one."""
+    rows = structures_payload
+    if isinstance(rows, dict):
+        rows = rows.get("structures")
+    if not isinstance(rows, (list, tuple)):
+        return {}
+    schema: dict[str, dict[str, str]] = {}
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        structure_id = row.get("id") or row.get("structureId")
+        if not isinstance(structure_id, str) or not structure_id:
+            continue
+        schema[structure_id] = capacities_rules.schema_from_definitions(
+            row.get("propertyDefinitions")
+        )
+    return schema
+
+
+def _capacities_rules_contract_schema(
+    vault: Path, space_id: str,
+) -> tuple[dict[str, dict[str, str]], bool]:
+    """``(schema_by_structure, contract_available)`` from the installed
+    generation's structure contract — an offline read, no provider call.
+
+    A missing or unusable contract yields ``({}, False)``: a save is then
+    stored as a draft because there is no discovered shape to validate the
+    rule against, never because a shape was invented."""
+    try:
+        store = capacities_builder.build_refresh_state(vault, space_id)
+        contract = store.load_structure_contract(
+            capacities_refresh.DEFAULT_SCOPE_KEY
+        )
+    except Exception as exc:  # noqa: BLE001 — bounded local boundary
+        print(f"capacities rules contract read failed: {exc}", file=sys.stderr)
+        return {}, False
+    if contract is None:
+        return {}, False
+    return _capacities_rule_schema_by_structure(contract.structures), True
+
+
+def _capacities_rules_payload(
+    *,
+    space_id: str | None,
+    record: capacities_rules.RulesRecord | None,
+    mapped_ids: tuple[str, ...],
+    schema_by_structure: dict[str, dict[str, str]],
+    contract_available: bool,
+) -> dict[str, Any]:
+    """The one wire shape both rules routes answer with.
+
+    ``capabilities`` describes the grammar the editor may build from the
+    store's own operator/kind sets (``matches`` is absent by contract). Each
+    structure carries its persisted ``active``/``draft``/``fallback_minutes``
+    plus the discovered ``schema`` when the published contract supplies one;
+    ``schema_available`` is the honest flag that a save for this type can be
+    validated and therefore activated."""
+    stored = {
+        entry.structure_id: entry
+        for entry in (record.structures if record is not None else ())
+    }
+    ordered: list[str] = list(mapped_ids)
+    for structure_id in stored:
+        if structure_id not in ordered:
+            ordered.append(structure_id)
+    structures: list[dict[str, Any]] = []
+    for structure_id in ordered:
+        entry = stored.get(structure_id)
+        base = (
+            entry.as_dict()
+            if entry is not None
+            else {
+                "structure_id": structure_id,
+                "active": None,
+                "draft": None,
+                "fallback_minutes": None,
+            }
+        )
+        schema = schema_by_structure.get(structure_id)
+        structures.append({
+            **base,
+            "mapped": structure_id in mapped_ids,
+            "schema": schema or {},
+            "schema_available": schema is not None,
+        })
+    return {
+        "space_id": space_id,
+        "revision": 0 if record is None else record.revision,
+        "configured": space_id is not None,
+        "capabilities": {
+            "ops": sorted(capacities_rules.OPS),
+            "value_ops": sorted(capacities_rules.VALUE_OPS),
+            "presence_ops": sorted(capacities_rules.PRESENCE_OPS),
+            "number_ops": sorted(capacities_rules.NUMBER_OPS),
+            "date_ops": sorted(capacities_rules.DATE_OPS),
+            "equality_ops": sorted(capacities_rules.EQUALITY_OPS),
+            "value_kinds": sorted(capacities_rules.VALUE_KINDS),
+            "number_kinds": sorted(capacities_rules.NUMBER_KINDS),
+            "date_kinds": sorted(capacities_rules.DATE_KINDS),
+            "matches": False,
+            "schema_source": "structure_contract",
+            "contract_available": contract_available,
+        },
+        "structures": structures,
+    }
+
+
+def _promote_selected_capacities(
+    vault: Path,
+    today: date,
+    pool_items: list[dict[str, Any]],
+    assigned_items: list[dict[str, Any]],
+    exclusion_policy: tag_exclusions.ExclusionPolicy | None,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[str]]:
+    """Promote explicitly selected Capacities pool rows onto the assigned surface.
+
+    Shared by both digest-build callers (U3c-2). It runs immediately BEFORE
+    ``build_digest``, so a promoted row passes the same tag-exclusion and
+    Ignore List stages as any pool row. The hard exclusions (the tag exclusion
+    policy and today's drop list) are computed here, so each one yields a
+    visible ``excluded`` notice rather than a silent removal. An identity that
+    is already on the assigned surface keeps its own routing. Returns
+    ``(pool_items, assigned_items, warnings)``; a no-op when nothing is selected.
+    """
+    try:
+        source = capacities_builder.read_source(vault)
+    except (capacities_builder.CapacitiesSourceStoreError, OSError):
+        return pool_items, assigned_items, [_SOURCE_UNAPPLIED_WARNING]
+    if source is None:
+        return pool_items, assigned_items, []
+    try:
+        selections = capacities_selections.load_selections(source.space_id)
+        rules_revision = capacities_rules.load_rules(source.space_id).revision
+    except (
+        capacities_selections.SelectionStoreError,
+        capacities_rules.RulesStoreError,
+    ):
+        return pool_items, assigned_items, [_SELECTIONS_UNAPPLIED_WARNING]
+    if not selections.selections:
+        return pool_items, assigned_items, []
+
+    def _is_capacities(row: dict[str, Any]) -> bool:
+        return str(row.get("source") or "").strip().casefold() == "capacities"
+
+    assigned_identities = {
+        row.get("identity") for row in assigned_items if _is_capacities(row)
+    }
+    pending = tuple(
+        record for record in selections.selections
+        if record.identity not in assigned_identities
+    )
+    pending_identities = {record.identity for record in pending}
+    candidates = [
+        row for row in pool_items
+        if _is_capacities(row) and row.get("identity") in pending_identities
+    ]
+    hard_excluded = _capacities_hard_excluded(
+        vault, today, candidates, exclusion_policy,
+    )
+    promoted, notices = capacities_selections.resolve_selections(
+        pending,
+        candidates,
+        rules_revision=rules_revision,
+        mapped_structures={
+            structure.structure_id for structure in source.structures
+        },
+        hard_excluded=frozenset(hard_excluded),
+    )
+    promoted_identities = {row["identity"] for row in promoted}
+    pool_items = [
+        row for row in pool_items
+        if not (_is_capacities(row) and row.get("identity") in promoted_identities)
+    ]
+    warnings = [
+        f"Capacities selection {notice['identity']} "
+        f"{_SELECTION_NOTICE_TEXT[notice['code']]}"
+        for notice in notices
+    ]
+    return pool_items, [*assigned_items, *promoted], warnings
+
+
+#: S5: the Ignore List notice names at most this many promoted identities, the
+#: same bound the Capacities review warning uses; the remainder is counted.
+_IGNORE_NOTICE_MAX_IDENTITIES = 3
+_IGNORE_NOTICE_MARKER = "removed by the Ignore List"
+
+
+def _is_capacities_source_row(row: dict[str, Any]) -> bool:
+    """A Capacities row by its source field or its ``capacities://`` path."""
+    return (
+        str(row.get("source") or "").strip().casefold() == "capacities"
+        or str(row.get("path") or "").strip().casefold().startswith("capacities://")
+    )
+
+
+def _capacities_identity_matches(
+    submitted: dict[str, Any], candidate: dict[str, Any],
+) -> bool:
+    """A Capacities row matches only on its canonical identity.
+
+    A name or a path alone never matches, and a Todoist id on the submitted
+    row contradicts a Capacities identity.
+    """
+    identity = str(candidate.get("identity") or "").strip()
+    if not identity or str(submitted.get("identity") or "").strip() != identity:
+        return False
+    if str(submitted.get("todoist_id") or "").strip():
+        return False
+    submitted_path = str(submitted.get("path") or "").strip()
+    return not submitted_path or submitted_path == str(candidate.get("path") or "").strip()
+
+
+def _capacities_index_complete(row: dict[str, Any]) -> bool:
+    """An indexed Capacities row names itself fully: source, canonical identity,
+    object id, and space id, with the identity inside that same space."""
+    identity_parts = str(row.get("identity") or "").split(":", 3)
+    space_id = str(row.get("capacities_space_id") or "").strip()
+    return bool(
+        str(row.get("source") or "").strip().casefold() == "capacities"
+        and len(identity_parts) == 4
+        and identity_parts[0] == "capacities"
+        and space_id
+        and identity_parts[1] == space_id
+        and str(row.get("capacities_id") or "").strip()
+    )
+
+
+def _capacities_commit_refusals(
+    vault: Path, today: date, matches: list[tuple[dict[str, Any], dict[str, Any]]],
+) -> list[str]:
+    """Commit-time admission of the authorized Capacities rows, one reason each.
+
+    A row is admitted only when its index entry is complete, its identity is
+    still selected in the CURRENT selection store, its review reasons (if any)
+    were acknowledged, and no hard exclusion has caught it since indexing. The
+    selection store and tag-exclusion policy are re-read here, never trusted
+    from the index. A failed read raises 503 and admits nothing. Todoist and
+    vault rows never reach this function.
+    """
+    candidates = [
+        candidate for candidate, _submitted in matches
+        if _is_capacities_source_row(candidate)
+    ]
+    if not candidates:
+        return []
+    refusals: list[str] = []
+    complete: list[dict[str, Any]] = []
+    for candidate in candidates:
+        if _capacities_index_complete(candidate):
+            complete.append(candidate)
+        else:
+            refusals.append(
+                f"{str(candidate.get('name') or '<unnamed>')!r} has no complete "
+                "stable identity in the index"
+            )
+    if not complete:
+        return refusals
+
+    selected: dict[str, Any] = {}
+    try:
+        for space_id in sorted({str(row["capacities_space_id"]).strip() for row in complete}):
+            for record in capacities_selections.load_selections(space_id).selections:
+                selected[record.identity] = record
+    except (capacities_selections.SelectionStoreError, OSError) as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "commit refused: Capacities selections could not be read "
+                "— nothing was written"
+            ),
+        ) from exc
+
+    exclusion_policy = _exclusion_policy_or_block(vault)
+    try:
+        excluded = _capacities_hard_excluded(vault, today, complete, exclusion_policy)
+    except tag_exclusions.TagExclusionBlocked as exc:
+        raise HTTPException(status_code=503, detail=exc.diagnostics) from exc
+
+    for candidate in complete:
+        name = str(candidate.get("name") or "<unnamed>")
+        record = selected.get(candidate.get("identity"))
+        if candidate.get("identity") in excluded:
+            refusals.append(f"{name!r} is excluded since it was indexed")
+        elif record is None:
+            refusals.append(
+                f"{name!r} is not selected (never selected, or withdrawn "
+                "since it was indexed)"
+            )
+        elif candidate.get("capacities_review_reasons") and not record.acknowledged:
+            refusals.append(
+                f"{name!r} is not acknowledged (it carries review reasons)"
+            )
+    return refusals
+
+
+def _build_manifest_or_refuse(
+    digest: dict[str, Any], sequence: Any, config: dict[str, Any] | None, *,
+    time_frame: dict[str, Any],
+) -> Any:
+    """``shadow.build_plan_manifest`` with its refusals as a 422, not a 500.
+
+    The manifest is built before any write, so a ``ValueError`` (for example a
+    Capacities row and a Todoist row sharing a name) is a fail-closed refusal:
+    nothing was written, and the reason is named for the operator.
+    """
+    try:
+        return shadow.build_plan_manifest(
+            digest, sequence, config, time_frame=time_frame)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail=f"commit refused: {exc} — nothing was written",
+        ) from exc
+
+
+def _capacities_identities(rows: list[dict[str, Any]]) -> list[str]:
+    """The Capacities identities on ``rows``, in order, each named once."""
+    return list(dict.fromkeys(
+        str(row["identity"])
+        for row in rows
+        if str(row.get("source") or "").strip().casefold() == "capacities"
+        and row.get("identity")
+    ))
+
+
+def _ignore_list_selection_warnings(
+    assigned_input: list[dict[str, Any]],
+    assigned_rows: list[dict[str, Any]],
+    digest_assigned: list[dict[str, Any]],
+    existing: list[str],
+) -> list[str]:
+    """One bounded notice for promoted selections the Ignore List removed.
+
+    ``build_digest`` applies the Ignore List after promotion and drops matching
+    rows without a notice. Tag-excluded and drop-listed selections are never
+    promoted, so they keep their own notice; a promoted identity missing from
+    the digest's assigned surface was removed by the Ignore List. At most one
+    such notice is emitted per digest build, so no identity is named twice.
+    """
+    if any(_IGNORE_NOTICE_MARKER in warning for warning in existing):
+        return []
+    before = set(_capacities_identities(assigned_input))
+    promoted = [
+        identity for identity in _capacities_identities(assigned_rows)
+        if identity not in before
+    ]
+    surfaced = set(_capacities_identities(digest_assigned))
+    removed = [identity for identity in promoted if identity not in surfaced]
+    if not removed:
+        return []
+    shown = removed[:_IGNORE_NOTICE_MAX_IDENTITIES]
+    remaining = len(removed) - len(shown)
+    named = "; ".join(shown)
+    if remaining > 0:
+        named = f"{named}; +{remaining} more"
+    if len(removed) == 1:
+        return [f"Capacities selection {named} was promoted, then {_IGNORE_NOTICE_MARKER}"]
+    return [f"Capacities selections {named} were promoted, then {_IGNORE_NOTICE_MARKER}"]
+
+
+def _capacities_intake_block(
+    vault: Path,
+    digest: dict[str, Any],
+    coverage: capacities_intake.DirectCoverage,
+    direct_warnings: list[str],
+    read: capacities_builder.DirectIntakeRead | None,
+) -> dict[str, Any]:
+    """The additive ``capacities_intake`` block the ``direct`` intake reports.
+
+    Token-free and read-only: the caller's single generation read (so rows and
+    metadata always describe the same generation) and the selection store.
+    ``state`` is ``not_configured`` (no source record), ``refresh_required``
+    (no complete generation, no contract, or a damaged member),
+    ``unavailable`` (warnings and no Capacities rows served), ``degraded``
+    (rows served with warnings), or ``ok``. Unassigned candidates are the
+    Capacities rows left on the suggested surface.
+    """
+    snapshot = read.snapshot if read is not None else None
+    served = [
+        row for row in [*digest["assigned"], *digest["suggested"]]
+        if row.get("source") == "capacities"
+    ]
+    if read is None:
+        state = "unavailable" if direct_warnings else "not_configured"
+    elif snapshot is None or read.structures is None or read.unreadable:
+        state = "refresh_required"
+    elif direct_warnings:
+        state = "degraded" if served else "unavailable"
+    else:
+        state = "ok"
+    selected: set[str] = set()
+    if read is not None:
+        try:
+            selections = capacities_selections.load_selections(read.space_id)
+        except capacities_selections.SelectionStoreError:
+            selections = None
+        if selections is not None:
+            selected = {record.identity for record in selections.selections}
+    return {
+        "mode": app_config.CAPACITIES_INTAKE_DIRECT,
+        "state": state,
+        "generation": snapshot.generation if snapshot is not None else None,
+        "installed_at": snapshot.installed_at if snapshot is not None else None,
+        "type_check_times": (
+            dict(snapshot.type_check_times) if snapshot is not None else {}
+        ),
+        "coverage": {
+            "members": coverage.members,
+            "evaluated": coverage.evaluated,
+            "malformed": coverage.malformed,
+            "unreadable": coverage.unreadable,
+        },
+        "unassigned_candidates": [
+            {
+                "identity": row.get("identity"),
+                "name": row.get("name"),
+                "review_reasons": list(row.get("capacities_review_reasons") or []),
+                "selected": row.get("identity") in selected,
+            }
+            for row in digest["suggested"]
+            if row.get("source") == "capacities"
+        ],
+    }
 
 
 def build_digest(
@@ -358,6 +970,9 @@ def build_digest_index(digest: dict[str, Any]) -> list[dict[str, Any]]:
                 # on the indexed row so a later staleness guard can re-check
                 # the policy that produced this index without a provider read.
                 "capacities_tags",
+                # U4 S6: the commit boundary refuses an unacknowledged row by
+                # its indexed review reasons; the rule state rides with them.
+                "capacities_review_reasons", "capacities_rule",
             ):
                 if key in row and row.get(key) is not None:
                     entry[key] = row[key]
@@ -855,6 +1470,10 @@ class DaySetupRequest(BaseModel):
     schedulable: dict[str, Any] | None = None   # {minting:{on,n}, qt:{...}, shivery:{...}}
     anchored: list[dict[str, Any]] | None = None  # [{id, on, skip_today, time}]
     captures: dict[str, Any] | None = None  # {intention, megan_nicety, stoic_intention}
+    # U5 additive prompt opt-ins: an undated bool map plus the expected store
+    # revision for optimistic concurrency. Omitted -> no opt-in write.
+    optins: dict[str, StrictBool] | None = None
+    optins_revision: StrictInt | None = None
     day_preset: str | None = None        # dated preset override (T18b.2)
     work_allotment_minutes: StrictInt | None = None  # dated Mint allotment (T18b.2)
     micro_adventure: dict[str, Any] | None = None  # T19 dated Live override; null clears to auto
@@ -1154,6 +1773,96 @@ class CapacitiesSourceDiscoverRequest(BaseModel):
         return value
 
 
+class CapacitiesRefreshStartRequest(BaseModel):
+    """Request body for POST /capacities/refresh/start.
+
+    Closed and strictly typed: unknown keys are rejected, ``mode`` is one of
+    the two job kinds, and a supplied ``scope`` must be a non-blank literal
+    string (the whole-scope default is ``all``). A malformed body is a 422.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    mode: Literal["refresh", "rescan"]
+    scope: StrictStr = "all"
+
+    @field_validator("scope")
+    @classmethod
+    def _usable_scope(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("scope must be a non-blank string")
+        return value
+
+
+class CapacitiesSelectionEntry(BaseModel):
+    """One identity to select. ``acknowledge`` is the operator's R32 flag."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    identity: StrictStr
+    acknowledge: StrictBool = False
+
+
+class CapacitiesSelectionsSaveRequest(BaseModel):
+    """Request body for POST /capacities/selections.
+
+    Closed and strictly typed. ``rules_revision`` is server-owned and is
+    rejected at every depth, so it is never read from the body. Identity
+    validity and candidacy are decided by the route, not by this model.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    expected_revision: StrictInt
+    select: list[CapacitiesSelectionEntry] = Field(default_factory=list)
+    deselect: list[StrictStr] = Field(default_factory=list)
+
+    @field_validator("expected_revision")
+    @classmethod
+    def _revision_nonnegative(cls, value: int) -> int:
+        if value < 0:
+            raise ValueError("expected_revision must be a nonnegative integer")
+        return value
+
+
+class CapacitiesRuleSaveRequest(BaseModel):
+    """Request body for POST /capacities/rules.
+
+    Closed and strictly typed at the boundary: ``version`` and the new
+    ``revision`` are server-owned and never read from the body. The predicate
+    itself is free-form JSON — ``capacities_rules`` validates its grammar and
+    property references, so a syntactically invalid predicate is stored as a
+    draft, not rejected as a request error."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    structure_id: StrictStr
+    rule: dict[str, Any]
+    fallback_minutes: StrictInt | None = None
+    expected_revision: StrictInt
+
+    @field_validator("structure_id")
+    @classmethod
+    def _usable_structure_id(cls, value: str) -> str:
+        if not value or value != value.strip() or any(c.isspace() for c in value):
+            raise ValueError("structure_id must be a non-empty whitespace-free id")
+        return value
+
+    @field_validator("fallback_minutes")
+    @classmethod
+    def _fallback_nonnegative(cls, value: int | None) -> int | None:
+        if value is not None and value < 0:
+            raise ValueError("fallback_minutes must be a nonnegative integer or null")
+        return value
+
+    @field_validator("expected_revision")
+    @classmethod
+    def _revision_nonnegative(cls, value: int) -> int:
+        if value < 0:
+            raise ValueError("expected_revision must be a nonnegative integer")
+        return value
+
+
 def _capacities_catalog_payload(structures: Any) -> list[dict[str, Any]]:
     """Serialize a discovery catalog into the pinned editor wire shape.
 
@@ -1217,6 +1926,204 @@ def _read_today_runstate(vault: Path, today: date) -> dict[str, Any]:
     return gather._extract_json_block(
         rs_path.read_text(encoding="utf-8", errors="replace")
     ) or {}
+
+
+# U5: the morning prompts are private local runtime state (prompt_state.py).
+# The runstate skeleton still carries these key names for compatibility, but
+# they are INERT — reads drop them and overlay today's exact-logical-day local
+# drafts, and the /day-setup writer never writes them.
+_PROMPT_KEYS = prompt_state.PROMPT_KEYS
+_PROMPT_READ_WARNING = "Prompt drafts could not be read; showing empty prompts."
+# U5 read-side: a failed opt-in read is NOT the same as an all-false store. The
+# /plan-inputs metadata is omitted (the UI then shows preferences unavailable)
+# and this bounded, content-free warning is surfaced instead of a fabricated
+# all-false store that would overwrite saved preferences.
+_PROMPT_OPTINS_READ_WARNING = (
+    "Prompt opt-ins could not be read; preferences are shown as unavailable."
+)
+# Fields that make a /day-setup POST an explicit Day Setup confirmation. A
+# payload carrying ONLY prompt content (captures / opt-ins) updates the local
+# prompt stores without confirming the day.
+_NON_PROMPT_SETUP_FIELDS = frozenset({
+    "anchor", "eod", "buffering", "schedulable", "anchored",
+    "day_preset", "work_allotment_minutes", "micro_adventure",
+})
+_PROMPT_ONLY_FIELDS = frozenset({"captures", "optins", "optins_revision"})
+
+
+def _read_prompt_drafts(today: date) -> tuple[dict[str, str], list[str]]:
+    """Today's local prompt drafts + bounded warnings.
+
+    A failed read never raises into a route: malformed/unreadable local storage
+    degrades to empty prompts, content-free (no prompt text reaches a response
+    or log), exactly as an absent file does."""
+    try:
+        return dict(prompt_state.load_drafts(today.isoformat()).drafts), []
+    except prompt_state.PromptStateError:
+        return {}, [_PROMPT_READ_WARNING]
+
+
+def _day_setup_with_prompts(
+    state: dict[str, Any], today: date
+) -> tuple[dict[str, Any], list[str]]:
+    """Day Setup dict with the legacy prompt keys made INERT.
+
+    Legacy runstate ``intention``/``megan_nicety``/``stoic_intention`` values
+    are dropped (never echoed) and replaced by today's exact-logical-day local
+    prompt_state drafts. Non-prompt keys are unchanged."""
+    setup = {k: v for k, v in state.items()
+             if k in _DAY_SETUP_KEYS and v not in ("", None)}
+    for key in _PROMPT_KEYS:
+        setup.pop(key, None)
+    drafts, warnings = _read_prompt_drafts(today)
+    for key, text in drafts.items():
+        if text:
+            setup[key] = text
+    return setup, warnings
+
+
+def _read_day_setup(vault: Path, today: date) -> tuple[dict[str, Any], list[str]]:
+    """Today's Day Setup (runstate + local prompt drafts) + read warnings."""
+    return _day_setup_with_prompts(_read_today_runstate(vault, today), today)
+
+
+def _read_prompt_optins() -> tuple[dict[str, bool], int]:
+    """The persistent opt-in map + revision; a failed read degrades to
+    all-false at revision 0 (content-free)."""
+    try:
+        record = prompt_state.load_optins()
+    except prompt_state.PromptStateError:
+        return {key: False for key in prompt_state.PROMPT_KEYS}, 0
+    return dict(record.optins), record.revision
+
+
+def _read_prompt_optins_metadata() -> tuple[dict[str, Any] | None, list[str]]:
+    """Top-level ``/plan-inputs`` opt-in metadata, or ``None`` when unreadable.
+
+    The frontend's ``projectPromptOptins`` treats an absent block as
+    ``available: false`` and never assumes false, so a malformed/unreadable
+    local store must omit the block and add one bounded, content-free warning
+    instead of reporting an all-false store (which would overwrite saved
+    preferences). A clean read — including an absent file, the all-false
+    default — is exposed truthfully."""
+    try:
+        record = prompt_state.load_optins()
+    except prompt_state.PromptStateError:
+        return None, [_PROMPT_OPTINS_READ_WARNING]
+    return {"optins": dict(record.optins), "revision": record.revision}, []
+
+
+def _save_prompt_drafts(today: date, captures: dict[str, Any] | None) -> None:
+    """Persist a captures patch into today's local draft store.
+
+    A PATCH: an omitted key preserves, an explicit empty string clears. Typed,
+    content-free failures: 422 invalid input, 409 malformed existing bytes
+    (preserved), 500 unreadable/unwritable (preserved)."""
+    if captures is None:
+        return
+    try:
+        prompt_state.save_drafts(day=today.isoformat(), patch=captures)
+    except prompt_state.PromptValidationError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "prompt_drafts_invalid", "message": str(exc)},
+        ) from exc
+    except prompt_state.PromptFormatError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "prompt_drafts_storage_error",
+                "message": (
+                    "Prompt draft storage is malformed or unsupported; "
+                    "the existing file was preserved."
+                ),
+            },
+        ) from exc
+    except prompt_state.PromptStateError as exc:
+        print(f"prompt drafts save failed: {exc}", file=sys.stderr)
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "code": "prompt_drafts_storage_error",
+                "message": (
+                    "Prompt drafts could not be saved; "
+                    "the existing file was preserved."
+                ),
+            },
+        ) from exc
+
+
+def _save_prompt_optins(
+    body: DaySetupRequest,
+) -> tuple[dict[str, bool] | None, int | None, list[str]]:
+    """Persist the additive opt-in map with optimistic concurrency.
+
+    Returns the persisted ``(map, revision, warnings)`` to echo. With no
+    opt-ins in the body, echoes the current local store through the metadata
+    reader: an unreadable store yields ``(None, None, [warning])`` so the echo
+    omits the opt-in block (prefs stay unavailable) instead of fabricating an
+    all-false store that would overwrite saved preferences. A missing revision
+    is a 422 and a stale revision is a 409 carrying both revisions. Messages
+    are content-free."""
+    if body.optins is None:
+        metadata, warnings = _read_prompt_optins_metadata()
+        if metadata is None:
+            return None, None, warnings
+        return dict(metadata["optins"]), int(metadata["revision"]), warnings
+    if body.optins_revision is None:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "prompt_optins_invalid",
+                "message": "optins_revision is required when optins is set",
+            },
+        )
+    try:
+        saved = prompt_state.save_optins(
+            expected_revision=body.optins_revision, optins=body.optins,
+        )
+    except prompt_state.PromptOptinConflict as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "prompt_optins_conflict",
+                "message": (
+                    "Prompt opt-ins changed since they were read; "
+                    "reload and retry."
+                ),
+                "expected_revision": exc.expected_revision,
+                "current_revision": exc.current_revision,
+            },
+        ) from exc
+    except prompt_state.PromptValidationError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "prompt_optins_invalid", "message": str(exc)},
+        ) from exc
+    except prompt_state.PromptFormatError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "prompt_optins_storage_error",
+                "message": (
+                    "Prompt opt-in storage is malformed or unsupported; "
+                    "the existing file was preserved."
+                ),
+            },
+        ) from exc
+    except prompt_state.PromptStateError as exc:
+        print(f"prompt optins save failed: {exc}", file=sys.stderr)
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "code": "prompt_optins_storage_error",
+                "message": (
+                    "Prompt opt-ins could not be saved; "
+                    "the existing file was preserved."
+                ),
+            },
+        ) from exc
+    return dict(saved.optins), saved.revision, []
 
 
 def _authoritative_day_semantics(
@@ -1834,6 +2741,19 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
     # usable credential) raises and surfaces as a source warning instead of
     # silently ingesting nothing. Tests still inject fakes here.
     app.state.build_capacities_adapter = build_real_capacities_adapter
+    # U2: the direct-refresh coordinator is a SEPARATE opt-in seam because it
+    # needs its own machine-local store, credential, and single-flight job —
+    # the same lazy, cache-once contract as the adapter seam above. Tests
+    # inject a Callable[[Path, dict], coordinator|None] here; None from the
+    # builder means "no Capacities source configured".
+    app.state.build_refresh_coordinator = build_real_refresh_coordinator
+    app.state.refresh_coordinator = _REFRESH_COORDINATOR_UNSET
+    app.state.refresh_coordinator_revision = _REFRESH_COORDINATOR_UNSET
+    app.state.refresh_coordinator_space_id = _REFRESH_COORDINATOR_UNSET
+    #: Serializes the seam's check-build-assign so two racing starts cannot
+    #: each build an instance (the loser cached last would not own the live
+    #: job and could report it as interrupted).
+    app.state.refresh_coordinator_lock = threading.Lock()
     # G25: in-flight guard on POST /commit?mode=live — two racing live commits
     # both pass check-before-write against the same snapshot and double-write.
     app.state.live_commit_lock = threading.Lock()
@@ -2281,6 +3201,220 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
             "warnings": [],
         }
 
+    # -- U2: paced direct Capacities refresh (status/start/cancel) ----------
+
+    def _refresh_vault_root() -> Path:
+        """Vault root for the refresh routes — resolved, not required to exist.
+
+        Unlike ``resolve_vault_root`` this does NOT require the directory to
+        exist: the refresh store namespaces by the vault-root string and its
+        durable state is machine-local, so an unresolved *path* (``None`` and no
+        env var) is the 503 case, not a not-yet-created directory."""
+        root = app.state.vault_root or os.environ.get(VAULT_ROOT_ENV)
+        if not root:
+            raise HTTPException(
+                status_code=503,
+                detail=f"vault root not configured — set {VAULT_ROOT_ENV}",
+            )
+        return Path(root).expanduser()
+
+    def _refresh_revision(vault: Path) -> Any:
+        """Current combined configuration revision, or ``None`` when unconfigured.
+
+        A malformed or unreadable mapping/settings store is a bounded 503: the
+        seam must never treat broken storage as "unchanged" and run a job
+        against scope it could not read.
+        """
+        try:
+            return capacities_builder.refresh_config_revision(vault)
+        except Exception as exc:  # noqa: BLE001 — bounded source boundary
+            print(f"capacities refresh config read failed: {exc}", file=sys.stderr)
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "code": "capacities_refresh_unavailable",
+                    "message": (
+                        "The Capacities configuration could not be read; "
+                        "the previous complete result is preserved."
+                    ),
+                },
+            ) from exc
+
+    def _refresh_source_space(vault: Path) -> Any:
+        """Live source space id, or ``None`` when unconfigured.
+
+        The combined revision is a sum, so a source space switch can leave it
+        equal; this read is the space half of the reuse check. A malformed or
+        unreadable mapping store is a bounded 503 for the same reason as
+        ``_refresh_revision``: the seam must never treat broken storage as
+        "unchanged" and reuse a coordinator whose scope it could not verify.
+        """
+        try:
+            return capacities_builder.refresh_source_space_id(vault)
+        except Exception as exc:  # noqa: BLE001 — bounded source boundary
+            print(f"capacities refresh source read failed: {exc}", file=sys.stderr)
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "code": "capacities_refresh_unavailable",
+                    "message": (
+                        "The Capacities source could not be read; "
+                        "the previous complete result is preserved."
+                    ),
+                },
+            ) from exc
+
+    def _refresh_coordinator(*, ensure_current: bool = False) -> Any | None:
+        """Build-once, cache the single-flight coordinator; ``None`` = unconfigured.
+
+        Caching the instance is required for correctness: cancel and status must
+        observe the same in-memory job/thread that start launched, so the seam
+        cannot be rebuilt per request. ``ensure_current`` (start only) replaces
+        an *idle* instance whose configuration revision or source space moved,
+        so a mapping or settings save, or a source space switch, reaches the
+        next run instead of running the new configuration with the previous
+        scope. A live job is never replaced — it keeps the
+        instance that owns its thread and locks, and its own publication guard
+        rejects the stale revision. A build failure is a bounded 503 — a
+        configured-but-broken source is never silently treated as unconfigured.
+        """
+        cached = getattr(app.state, "refresh_coordinator", _REFRESH_COORDINATOR_UNSET)
+        if cached is not _REFRESH_COORDINATOR_UNSET and not ensure_current:
+            return cached
+        vault = _refresh_vault_root()
+        with app.state.refresh_coordinator_lock:
+            # Re-read under the lock: a racing start may have built while this
+            # one waited, and its instance must win over a second build.
+            cached = getattr(app.state, "refresh_coordinator", _REFRESH_COORDINATOR_UNSET)
+            if cached is not _REFRESH_COORDINATOR_UNSET:
+                if cached is not None and cached.is_running():
+                    return cached
+            revision = _refresh_revision(vault)
+            source_space = _refresh_source_space(vault)
+            if (
+                cached is not _REFRESH_COORDINATOR_UNSET
+                and revision
+                == getattr(
+                    app.state,
+                    "refresh_coordinator_revision",
+                    _REFRESH_COORDINATOR_UNSET,
+                )
+                and source_space
+                == getattr(
+                    app.state,
+                    "refresh_coordinator_space_id",
+                    _REFRESH_COORDINATOR_UNSET,
+                )
+            ):
+                return cached
+            build = app.state.build_refresh_coordinator
+            coordinator: Any | None = None
+            if build is not None:
+                try:
+                    coordinator = build(vault, {})
+                except Exception as exc:  # noqa: BLE001 — bounded source boundary
+                    print(
+                        f"capacities refresh coordinator build failed: {exc}",
+                        file=sys.stderr,
+                    )
+                    raise HTTPException(
+                        status_code=503,
+                        detail={
+                            "code": "capacities_refresh_unavailable",
+                            "message": (
+                                "The Capacities source could not be prepared for a "
+                                "refresh; the previous complete result is preserved."
+                            ),
+                        },
+                    ) from exc
+            app.state.refresh_coordinator = coordinator
+            app.state.refresh_coordinator_revision = revision
+            app.state.refresh_coordinator_space_id = source_space
+            return coordinator
+
+    def _refresh_configured(*, ensure_current: bool = False) -> Any:
+        coordinator = _refresh_coordinator(ensure_current=ensure_current)
+        if coordinator is None:
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "code": "capacities_refresh_unconfigured",
+                    "message": "No Capacities source is configured; nothing to refresh.",
+                },
+            )
+        return coordinator
+
+    @app.get("/capacities/refresh/status")
+    def get_capacities_refresh_status() -> dict:
+        """Tokenless local read of the one refresh job + last complete snapshot.
+
+        Never calls a provider and never spawns work; an unconfigured source
+        answers ``configured: false`` with no job rather than erroring. An
+        unresolved vault root is a 503 (fail closed, like ``/config``)."""
+        coordinator = _refresh_coordinator()
+        if coordinator is None:
+            return {
+                "configured": False,
+                "job": None,
+                "phase": None,
+                "outcome": None,
+                "progress": {},
+                "warnings": [],
+                "coverage": {},
+                "snapshot": {
+                    "present": False,
+                    "generation": 0,
+                    "revision": None,
+                    "installed_at": None,
+                    "member_count": 0,
+                    "type_check_times": {},
+                },
+            }
+        return coordinator.status()
+
+    @app.post(
+        "/capacities/refresh/start",
+        dependencies=[Depends(require_token)],
+    )
+    def post_capacities_refresh_start(body: CapacitiesRefreshStartRequest) -> dict:
+        """Token-guarded start of one paced Refresh/Rescan job.
+
+        The job runs on a background thread; this returns the job's initial
+        truthful status without blocking on completion. A running job is a 409
+        (single-flight), an unconfigured source a 503, and a malformed body a
+        422."""
+        coordinator = _refresh_configured(ensure_current=True)
+        try:
+            return coordinator.start(mode=body.mode, scope=body.scope)
+        except capacities_refresh.RefreshBusyError as exc:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "capacities_refresh_busy",
+                    "message": "A Capacities refresh job is already running.",
+                },
+            ) from exc
+        except capacities_refresh.RefreshUnavailableError as exc:
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "code": "capacities_refresh_unconfigured",
+                    "message": "No Capacities source is configured; nothing to refresh.",
+                },
+            ) from exc
+
+    @app.post(
+        "/capacities/refresh/cancel",
+        dependencies=[Depends(require_token)],
+    )
+    def post_capacities_refresh_cancel() -> dict:
+        """Token-guarded cancellation of the running job.
+
+        Signals the in-flight job, keeps every successful content read, and
+        installs no new generation; returns the current truthful status."""
+        coordinator = _refresh_configured()
+        return coordinator.cancel()
+
     def _tag_catalog(vault: Path) -> dict[str, Any]:
         """Advisory RootTag catalog for the exclusion drawer.
 
@@ -2348,6 +3482,344 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
             "tags": tags,
             "warnings": [str(w) for w in (result.get("warnings") or []) if str(w)],
         }
+
+    # -- U4 S4: per-identity Capacities selections (GET/POST) ---------------
+
+    @app.get("/capacities/selections")
+    def get_capacities_selections() -> dict:
+        """Tokenless read of the durable Capacities selections for the source space.
+
+        Reads the source record and the selection store only: no provider call,
+        no credential, no write. No source record answers the documented empty
+        shape with ``space_id: null``. A store for another space answers the
+        empty shape for the source space. Storage failures are a bounded 503.
+        """
+        vault = _refresh_vault_root()
+        try:
+            source = capacities_builder.read_source(vault)
+        except (capacities_builder.CapacitiesSourceStoreError, OSError) as exc:
+            raise _capacities_selections_storage_error() from exc
+        if source is None:
+            return {
+                "space_id": None,
+                "revision": 0,
+                "rules_revision": None,
+                "selections": [],
+            }
+        try:
+            record = capacities_selections.load_selections(source.space_id)
+            rules_revision = capacities_rules.load_rules(source.space_id).revision
+        except (
+            capacities_selections.SelectionStoreError,
+            capacities_rules.RulesStoreError,
+        ) as exc:
+            raise _capacities_selections_storage_error() from exc
+        return _capacities_selections_payload(record, rules_revision)
+
+    @app.post(
+        "/capacities/selections",
+        dependencies=[Depends(require_token)],
+    )
+    def post_capacities_selections(body: CapacitiesSelectionsSaveRequest) -> dict:
+        """Token-guarded merge of Capacities selections for the source space.
+
+        The browser supplies identities and flags only. Each selected identity
+        must be a current direct candidate, not hard-excluded, of a mapped
+        structure, and acknowledged when it carries review reasons. The rules
+        revision is stamped from the server's current rules. The write goes
+        through the store's optimistic revision, so a stale ``expected_revision``
+        is a 409 carrying both revisions. Direct intake only; no provider call
+        and no Capacities write.
+        """
+        if app_config.capacities_intake() != app_config.CAPACITIES_INTAKE_DIRECT:
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "code": "capacities_intake_not_direct",
+                    "message": "Capacities selections apply only under direct intake.",
+                },
+            )
+        vault = _refresh_vault_root()
+        try:
+            source = capacities_builder.read_source(vault)
+        except (capacities_builder.CapacitiesSourceStoreError, OSError) as exc:
+            raise _capacities_selections_storage_error() from exc
+        if source is None:
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "code": "capacities_selections_unconfigured",
+                    "message": "No Capacities source is configured; nothing to select.",
+                },
+            )
+        space_id = source.space_id
+        try:
+            current = capacities_selections.load_selections(space_id)
+            rules_revision = capacities_rules.load_rules(space_id).revision
+        except (
+            capacities_selections.SelectionStoreError,
+            capacities_rules.RulesStoreError,
+        ) as exc:
+            raise _capacities_selections_storage_error() from exc
+        if current.revision != body.expected_revision:
+            raise _capacities_selections_conflict(
+                body.expected_revision, current.revision,
+            )
+
+        # Parse every identity before any candidate or exclusion state, so a
+        # malformed or repeated identity is a request error on its own.
+        seen: set[str] = set()
+        selected: list[tuple[str, bool]] = []
+        for entry in body.select:
+            identity = _capacities_selection_identity(entry.identity, space_id)
+            if identity in seen:
+                raise _capacities_selection_rejection(
+                    422, "duplicate_identity", identity,
+                    "Capacities selection names the same identity more than once.",
+                )
+            seen.add(identity)
+            selected.append((identity, entry.acknowledge))
+        removed = {
+            _capacities_selection_identity(identity, space_id)
+            for identity in body.deselect
+        }
+
+        try:
+            read = capacities_builder.read_direct_intake(vault)
+        except capacities_builder.CapacitiesSourceStoreError as exc:
+            raise _capacities_selections_storage_error() from exc
+        assigned, pool, _warnings, _coverage = capacities_intake.load_direct_rows(
+            vault, read=read,
+        )
+        candidates = {row.get("identity"): row for row in [*assigned, *pool]}
+        exclusion_policy = _exclusion_policy_or_block(vault)
+        try:
+            hard_excluded = _capacities_hard_excluded(
+                vault,
+                gather.effective_date(datetime.now()),
+                list(candidates.values()),
+                exclusion_policy,
+            )
+        except tag_exclusions.TagExclusionBlocked as exc:
+            raise HTTPException(status_code=503, detail=exc.diagnostics) from exc
+        mapped_structures = {
+            structure.structure_id for structure in source.structures
+        }
+
+        # Same order as the resolver: excluded, type_disabled, not_cached, then
+        # the acknowledgement that a review-reason candidate requires.
+        for identity, acknowledge in selected:
+            if identity in hard_excluded:
+                raise _capacities_selection_rejection(
+                    409, "excluded", identity,
+                    "Capacities selection is excluded by the tag exclusions or the drop list.",
+                )
+            # A canonical identity is four-part; its structure is the third part.
+            if identity.split(":", 3)[2] not in mapped_structures:
+                raise _capacities_selection_rejection(
+                    409, "type_disabled", identity,
+                    "Capacities selection's structure is no longer mapped.",
+                )
+            row = candidates.get(identity)
+            if row is None:
+                raise _capacities_selection_rejection(
+                    409, "not_cached", identity,
+                    "Capacities selection is not a current cached candidate; "
+                    "Refresh may be required.",
+                )
+            if row.get("capacities_review_reasons") and not acknowledge:
+                raise _capacities_selection_rejection(
+                    409, "acknowledgement_required", identity,
+                    "Capacities selection carries review reasons; "
+                    "acknowledge it to select it.",
+                )
+
+        # Merge over the current record. Removals run first, then selections, so
+        # a deselect and a re-select of one identity in one call ends selected
+        # exactly once, under the current rules revision.
+        merged = {record.identity: record for record in current.selections}
+        for identity in removed:
+            merged.pop(identity, None)
+        for identity, acknowledge in selected:
+            merged[identity] = capacities_selections.SelectionRecord(
+                identity=identity,
+                rules_revision=rules_revision,
+                acknowledged=acknowledge,
+            )
+        try:
+            saved = capacities_selections.save_selections(
+                space_id=space_id,
+                expected_revision=body.expected_revision,
+                selections=list(merged.values()),
+            )
+        except capacities_selections.SelectionConflict as exc:
+            raise _capacities_selections_conflict(
+                exc.expected_revision, exc.current_revision,
+            ) from exc
+        except capacities_selections.SelectionValidationError as exc:
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "code": "capacities_selections_invalid",
+                    "message": "Capacities selections are invalid; nothing was saved.",
+                },
+            ) from exc
+        except (capacities_selections.SelectionStoreError, OSError) as exc:
+            # Bounded client-safe message: the store's text stays server-side.
+            print(f"capacities selections save failed: {exc}", file=sys.stderr)
+            raise _capacities_selections_storage_error() from exc
+        return _capacities_selections_payload(saved, rules_revision)
+
+    # -- U3a routes: per-type Capacities inclusion rules (GET/POST) ---------
+
+    def _capacities_rules_source(vault: Path) -> Any:
+        """The configured source record, or a bounded fail-closed 503.
+
+        A malformed/unreadable mapping store raises rather than being read as
+        unconfigured; ``None`` means genuinely no source (a documented empty
+        shape, not an error)."""
+        try:
+            return capacities_builder.read_source(vault)
+        except (capacities_builder.CapacitiesSourceStoreError, OSError) as exc:
+            print(f"capacities rules source read failed: {exc}", file=sys.stderr)
+            raise _capacities_rules_storage_error() from exc
+
+    @app.get("/capacities/rules")
+    def get_capacities_rules() -> dict:
+        """Tokenless local read of the per-type Capacities inclusion rules.
+
+        Reads the source mapping, the rules store, and the installed
+        generation's structure contract only: no provider call, no credential,
+        no write, and no external Capacities mutation. No source record answers
+        the documented empty shape with ``space_id: null``. A malformed or
+        unreadable source/rules store fails closed with a bounded 503; a
+        missing or unusable structure contract is reported as
+        ``contract_available: false`` rather than a fabricated schema."""
+        vault = _refresh_vault_root()
+        source = _capacities_rules_source(vault)
+        if source is None:
+            return _capacities_rules_payload(
+                space_id=None,
+                record=None,
+                mapped_ids=(),
+                schema_by_structure={},
+                contract_available=False,
+            )
+        try:
+            record = capacities_rules.load_rules(source.space_id)
+        except (capacities_rules.RulesStoreError, OSError) as exc:
+            print(f"capacities rules read failed: {exc}", file=sys.stderr)
+            raise _capacities_rules_storage_error() from exc
+        schema_by_structure, contract_available = _capacities_rules_contract_schema(
+            vault, source.space_id
+        )
+        return _capacities_rules_payload(
+            space_id=source.space_id,
+            record=record,
+            mapped_ids=tuple(
+                structure.structure_id for structure in source.structures
+            ),
+            schema_by_structure=schema_by_structure,
+            contract_available=contract_available,
+        )
+
+    @app.post("/capacities/rules", dependencies=[Depends(require_token)])
+    def post_capacities_rules(body: CapacitiesRuleSaveRequest) -> dict:
+        """Token-guarded save of ONE per-type Capacities inclusion rule.
+
+        Reuses the rules store's own active/draft + optimistic-revision API: a
+        rule valid for the published type shape becomes ``active`` and replaces
+        the previous active rule; a rule that is invalid — bad syntax, a
+        removed property, or no published schema to validate against — is
+        stored as ``draft`` and the previous active rule is preserved.
+        ``fallback_minutes`` is written as supplied (omitted/null clears it). A
+        stale ``expected_revision`` is a 409 carrying both revisions; malformed
+        existing storage is a 409; a storage failure is a 503 — every failure
+        path preserves the original bytes.
+
+        The rule's structure must be a mapped structure of the current source
+        space (a foreign/unknown type is a 422). Offline and local only: no
+        provider call, no credential, and no write to external Capacities. The
+        rule store's own lock is the only lock taken here — the route
+        deliberately does not nest it inside the publication guard."""
+        vault = _refresh_vault_root()
+        source = _capacities_rules_source(vault)
+        if source is None:
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "code": "capacities_rules_unconfigured",
+                    "message": "No Capacities source is configured; nothing to save.",
+                },
+            )
+        mapped_ids = tuple(
+            structure.structure_id for structure in source.structures
+        )
+        if body.structure_id not in mapped_ids:
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "code": "capacities_rules_unknown_structure",
+                    "message": (
+                        "The rule's structure is not a mapped structure of the "
+                        "configured Capacities source."
+                    ),
+                },
+            )
+        schema_by_structure, contract_available = _capacities_rules_contract_schema(
+            vault, source.space_id
+        )
+        schema = schema_by_structure.get(body.structure_id)
+        try:
+            result = capacities_rules.save_rule(
+                source.space_id,
+                body.structure_id,
+                body.rule,
+                fallback_minutes=body.fallback_minutes,
+                expected_revision=body.expected_revision,
+                schema=schema,
+            )
+        except capacities_rules.RulesConflictError as exc:
+            raise _capacities_rules_conflict(
+                exc.expected_revision, exc.current_revision,
+            ) from exc
+        except capacities_rules.RulesFormatError as exc:
+            print(f"capacities rules save failed: {exc}", file=sys.stderr)
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "capacities_rules_storage_error",
+                    "message": (
+                        "Capacities rules storage is malformed or unsupported; "
+                        "the existing rules were preserved."
+                    ),
+                },
+            ) from exc
+        except (capacities_rules.RulesStoreError, OSError) as exc:
+            print(f"capacities rules save failed: {exc}", file=sys.stderr)
+            raise _capacities_rules_storage_error() from exc
+        try:
+            record = capacities_rules.load_rules(source.space_id)
+        except (capacities_rules.RulesStoreError, OSError) as exc:
+            print(f"capacities rules read failed: {exc}", file=sys.stderr)
+            raise _capacities_rules_storage_error() from exc
+        payload = _capacities_rules_payload(
+            space_id=source.space_id,
+            record=record,
+            mapped_ids=mapped_ids,
+            schema_by_structure=schema_by_structure,
+            contract_available=contract_available,
+        )
+        payload["save"] = {
+            "structure_id": result.structure_id,
+            "valid": result.valid,
+            "reason": result.reason,
+            "active": result.active,
+            "draft": result.draft,
+            "fallback_minutes": result.fallback_minutes,
+            "revision": result.revision,
+        }
+        return payload
 
     @app.get("/settings/exclusions")
     def get_exclusion_settings() -> dict:
@@ -2503,6 +3975,13 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
         # and NEITHER live client is constructed. A live read is never a
         # fallback (point 7) — the digest degrades with a loud banner instead.
         source_mode = app_config.sources_mode()
+        # U4 S3: under ``direct`` intake the published Capacities generation is
+        # the only Capacities source, in either source mode. It replaces the
+        # artifact's Capacities rows and the live builder; Todoist and habits
+        # keep their source-mode readers. Refusals never fall back to either.
+        direct_intake = app_config.capacities_intake() == app_config.CAPACITIES_INTAKE_DIRECT
+        direct_coverage = capacities_intake.DirectCoverage()
+        direct_warnings: list[str] = []
         artifact_block: dict[str, Any] = {
             "state": artifact_source.STATUS_LIVE,
             "generated_at": None,
@@ -2552,8 +4031,12 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
             capacities_rows = [
                 r for r in artifact_result.rows if r.get("source") == "capacities"
             ]
-            capacities_items = [r for r in capacities_rows if r.get("assigned") is True]
-            c_pool = [r for r in capacities_rows if r.get("assigned") is not True]
+            # Defense-in-depth only: under direct intake the override below
+            # discards these rows, so this guard is not the enforcement point
+            # (R-B F2). Removing it survives the discard tests by design.
+            if not direct_intake:
+                capacities_items = [r for r in capacities_rows if r.get("assigned") is True]
+                c_pool = [r for r in capacities_rows if r.get("assigned") is not True]
             # A producer may fold vault rows into the artifact too; they join
             # the live vault gather's own surfaces rather than a third one.
             artifact_vault = [
@@ -2572,7 +4055,9 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
         else:
             todoist_c, store = build_clients(vault, config)
             build_capacities = app.state.build_capacities_adapter
-            if build_capacities is not None:
+            # Under direct intake the live builder is never called: no client is
+            # constructed and no provider read happens on this path.
+            if build_capacities is not None and not direct_intake:
                 try:
                     capacities_client = build_capacities(vault, config)
                 except Exception as exc:  # noqa: BLE001 — source boundary degrades
@@ -2581,11 +4066,37 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
                         f"Capacities adapter setup failed ({exc}) — source is unavailable"
                     ]
                 if capacities_client is not None:
-                    capacities_items, w_capacities = external_sources.fetch_capacities_items(
+                    live_capacities, w_capacities = external_sources.fetch_capacities_items(
                         capacities_client, today
                     )
+                    # F2: only rows the rules assign reach the assigned surface.
+                    # A pool:true or UNKNOWN row stays on the pool.
+                    capacities_items = [r for r in live_capacities if r.get("assigned") is True]
+                    c_pool = [r for r in live_capacities if r.get("assigned") is not True]
             # Live mode still sources the habit summary from the artifact.
             habits, w_hab = artifact_source.load_habits()
+        if direct_intake:
+            # ONE generation read per request: the rows and the intake block
+            # must describe the same generation (R-B F3, adjacent-generation
+            # pairing). On a store error the warning surfaces here and the
+            # rows refuse; load_direct_rows reuses this read as-is.
+            try:
+                intake_read: capacities_builder.DirectIntakeRead | None = (
+                    capacities_builder.read_direct_intake(vault)
+                )
+            except capacities_builder.CapacitiesSourceStoreError:
+                intake_read = None
+                w_capacities = [
+                    *w_capacities,
+                    capacities_intake.SOURCE_UNREADABLE,
+                ]
+            (
+                capacities_items,
+                c_pool,
+                direct_warnings,
+                direct_coverage,
+            ) = capacities_intake.load_direct_rows(vault, read=intake_read)
+            w_capacities = [*w_capacities, *direct_warnings]
         try:
             if source_mode != app_config.SOURCES_MODE_ARTIFACT:
                 t_assigned, t_pool, w_todo = external_sources.fetch_todoist_items(
@@ -2631,9 +4142,22 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
         )
         exclusion_policy = _exclusion_policy_or_block(vault)
         try:
+            # U3c-2: selected Capacities rows are promoted BEFORE build_digest,
+            # so they pass the same exclusion stages as every other row.
+            assigned_input = run_data["assigned_items"] + t_assigned + capacities_items
+            pool_rows, assigned_rows, selection_warnings = (
+                _promote_selected_capacities(
+                    vault,
+                    today,
+                    run_data["pool_items"] + t_pool + c_pool,
+                    assigned_input,
+                    exclusion_policy,
+                )
+            )
+            w_capacities = [*w_capacities, *selection_warnings]
             digest = build_digest(
-                run_data["pool_items"] + t_pool + c_pool,
-                run_data["assigned_items"] + t_assigned + capacities_items,
+                pool_rows,
+                assigned_rows,
                 today,
                 order,
                 ignore=(
@@ -2642,6 +4166,14 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
                 bias=deferrals.bias_map(vault, today),  # T1 defer-with-memory
                 exclusion_policy=exclusion_policy,
             )
+            # S5: a promoted selection that the Ignore List then removed is named
+            # here, since build_digest drops it silently.
+            w_capacities = [
+                *w_capacities,
+                *_ignore_list_selection_warnings(
+                    assigned_input, assigned_rows, digest["assigned"], w_capacities,
+                ),
+            ]
         except tag_exclusions.TagExclusionBlocked as exc:
             raise HTTPException(status_code=503, detail=exc.diagnostics) from exc
 
@@ -2703,8 +4235,7 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
         }
 
         # -- Day Setup + time/capacity (ui-parity T4) ------------------------
-        day_setup = {k: v for k, v in _read_today_runstate(vault, today).items()
-                     if k in _DAY_SETUP_KEYS and v not in ("", None)}
+        day_setup, prompt_warnings = _read_day_setup(vault, today)
         resolved_day_semantics = day_semantics.resolve_day_contract(
             result, today, dated_overrides=day_setup,
         )
@@ -2777,7 +4308,11 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
             exclusion_settings_revision=exclusion_policy.revision,
         )
 
-        return {
+        # U5 read-side: expose the persisted opt-in metadata top-level, exactly
+        # as the frontend's projectPromptOptins expects it. A corrupt store
+        # omits the block (prefs unavailable) and adds one bounded warning.
+        optins_metadata, optins_warnings = _read_prompt_optins_metadata()
+        response = {
             "digest": digest,
             "config": config,
             "anchored_blocks": list(anchored) + busy_effective,
@@ -2797,7 +4332,8 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
             "calendar_decisions": calendar_decisions,
             "artifact": artifact_block,
             "source_warnings": (
-                w_todo + w_cal + w_hab + w_capacities + artifact_warnings + w_vault
+                w_todo + w_cal + w_hab + w_capacities + artifact_warnings
+                + w_vault + prompt_warnings + optins_warnings
             ),
             "source_counts": {
                 "vault": len(run_data["pool_items"]) + len(run_data["assigned_items"]),
@@ -2806,6 +4342,13 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
                 "calendar": len(busy_blocks),
             },
         }
+        if optins_metadata is not None:
+            response["prompt_optins"] = optins_metadata
+        if direct_intake:
+            response["capacities_intake"] = _capacities_intake_block(
+                vault, digest, direct_coverage, direct_warnings, intake_read,
+            )
+        return response
 
     @app.get("/billed-ledger")
     def get_billed_ledger() -> dict:
@@ -2880,8 +4423,7 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
 
         vault = resolve_vault_root()
         today = gather.effective_date(datetime.now())
-        persisted = {k: v for k, v in _read_today_runstate(vault, today).items()
-                     if k in _DAY_SETUP_KEYS and v not in ("", None)}
+        persisted, _prompt_warnings = _read_day_setup(vault, today)
         merged = {**persisted,
                   **{k: v for k, v in overrides.items() if k in _DAY_SETUP_KEYS}}
 
@@ -3180,10 +4722,17 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
 
         defaults_off = shadow.past_window_defaults(config, anchor, today)
         present = body.model_fields_set
-        existing_setup = {
-            k: v for k, v in _read_today_runstate(vault, today).items()
-            if k in _DAY_SETUP_KEYS and v not in ("", None)
-        }
+        # U5: a payload carrying ONLY prompt content updates the local prompt
+        # stores without confirming the day. Any non-prompt setup field (or a
+        # bare {} save) keeps the existing explicit-confirmation behavior.
+        prompt_only = bool(present & _PROMPT_ONLY_FIELDS) and not bool(
+            present & _NON_PROMPT_SETUP_FIELDS
+        )
+        existing_setup, prompt_warnings = _read_day_setup(vault, today)
+        # Local prompt stores are the only prompt target; the legacy runstate
+        # keys stay INERT and are never written here.
+        _save_prompt_drafts(today, body.captures)
+        optins_map, optins_revision, optins_warnings = _save_prompt_optins(body)
         normalization_overrides = dict(existing_setup)
         if "day_preset" in present:
             normalization_overrides["day_preset"] = body.day_preset
@@ -3227,10 +4776,6 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
             updates["schedulable"] = schedulable
         if body.anchored is not None:
             updates["anchored"] = body.anchored
-        for key in ("intention", "megan_nicety", "stoic_intention"):
-            val = (body.captures or {}).get(key)
-            if val is not None:
-                updates[key] = val
         # T18b.2 tri-state: omitted preserves (do not write); explicit null
         # clears (write None); explicit value persists. Field presence is
         # detected via model_fields_set so a default value never counts as
@@ -3297,24 +4842,49 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
                     ),
                 }
             updates["micro_adventure"] = ma
-        # G26: locked RMW — concurrent /day-setup POSTs previously lost updates.
-        # FEEDBACK-24: this successful POST is the ONLY writer of the explicit
-        # confirmation, scoped to today's dated note.
-        updates[runstate.DAY_SETUP_CONFIRMED_KEY] = True
-        def _save_day_setup(state: dict[str, Any]) -> None:
-            state.update(updates)
-            if not explicit_mint_disable:
-                return
-            current_sched = dict(state.get("schedulable") or {})
-            current_mint = dict(current_sched.get("minting") or {})
-            current_mint.update({"on": False, "n": 0, "sessions": []})
-            current_sched["minting"] = current_mint
-            state["schedulable"] = current_sched
+        # U5: a prompt-only save never confirms Day Setup. Any non-prompt field
+        # (or a bare {} save) preserves the existing explicit confirmation.
+        confirmed = True
+        if prompt_only:
+            # No runstate write at all: the local prompt stores are the only
+            # target, so a draft/opt-in edit cannot materialize or alter the
+            # dated runstate note.
+            state = _read_today_runstate(vault, today)
+            confirmed = runstate.is_day_setup_confirmed(vault, today)
+        else:
+            # G26: locked RMW — concurrent /day-setup POSTs previously lost
+            # updates. FEEDBACK-24: this successful POST is the ONLY writer of
+            # the explicit confirmation, scoped to today's dated note.
+            updates[runstate.DAY_SETUP_CONFIRMED_KEY] = True
 
-        state = runstate.update_runstate(vault, today, _save_day_setup)
-        return {"ok": True, "re_included": sorted(re_included),
-                "day_setup_confirmed": True,
-                "day_setup": {k: state.get(k) for k in _DAY_SETUP_KEYS}}
+            def _save_day_setup(state: dict[str, Any]) -> None:
+                state.update(updates)
+                if not explicit_mint_disable:
+                    return
+                current_sched = dict(state.get("schedulable") or {})
+                current_mint = dict(current_sched.get("minting") or {})
+                current_mint.update({"on": False, "n": 0, "sessions": []})
+                current_sched["minting"] = current_mint
+                state["schedulable"] = current_sched
+
+            state = runstate.update_runstate(vault, today, _save_day_setup)
+        day_setup_echo, echo_warnings = _day_setup_with_prompts(state, today)
+        prompt_warnings = [*prompt_warnings, *echo_warnings, *optins_warnings]
+        response: dict[str, Any] = {
+            "ok": True,
+            "re_included": sorted(re_included),
+            "day_setup_confirmed": confirmed,
+            "day_setup": {k: day_setup_echo.get(k) for k in _DAY_SETUP_KEYS},
+        }
+        # U5: an unreadable opt-in store omits the echo block (the frontend then
+        # keeps prefs unavailable) rather than echoing a fabricated all-false
+        # store that would overwrite saved preferences.
+        if optins_map is not None:
+            response["optins"] = optins_map
+            response["optins_revision"] = optins_revision
+        if prompt_warnings:
+            response["prompt_warnings"] = prompt_warnings
+        return response
 
     @app.post("/digest", dependencies=[Depends(require_token)])
     def post_digest(body: DigestRequest | None = None) -> dict:
@@ -3352,7 +4922,14 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
         cfg_result = config_reader.read_config(vault)
         exclusion_policy = _exclusion_policy_or_block(vault)
         try:
-            return build_digest(
+            # U3c-2: the same promotion as the plan-inputs caller, BEFORE
+            # build_digest.
+            pool_items, assigned_items, selection_warnings = (
+                _promote_selected_capacities(
+                    vault, today, pool_items, assigned_items, exclusion_policy,
+                )
+            )
+            digest = build_digest(
                 pool_items,
                 assigned_items,
                 today,
@@ -3365,6 +4942,12 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
             )
         except tag_exclusions.TagExclusionBlocked as exc:
             raise HTTPException(status_code=503, detail=exc.diagnostics) from exc
+        # /digest has no warnings envelope of its own: selection notices ride
+        # the same ``source_warnings`` key plan-inputs uses, and only when set,
+        # so the response shape is otherwise unchanged.
+        if selection_warnings:
+            digest["source_warnings"] = selection_warnings
+        return digest
 
     @app.post("/adjust", dependencies=[Depends(require_token)])
     def post_adjust(body: AdjustRequest) -> dict:
@@ -3415,8 +4998,7 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
         canonical_assigned = _canonicalize_route_assigned(
             vault, today, body.assigned,
         )
-        day_setup = {k: v for k, v in _read_today_runstate(vault, today).items()
-                     if k in _DAY_SETUP_KEYS and v not in ("", None)}
+        day_setup, _prompt_warnings = _read_day_setup(vault, today)
         defaults: dict[str, Any] = dict((body.config or {}).get("Defaults") or {})
         resolved_day_semantics = _authoritative_day_semantics(
             body.config, day_setup, today,
@@ -3493,8 +5075,7 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
             vault, today, body.assigned,
         )
         snapshot = _read_today_runstate(vault, today)
-        day_setup = {k: v for k, v in snapshot.items()
-                     if k in _DAY_SETUP_KEYS and v not in ("", None)}
+        day_setup, _prompt_warnings = _day_setup_with_prompts(snapshot, today)
         defaults = dict((body.config or {}).get("Defaults") or {})
         resolved_day_semantics = _authoritative_day_semantics(
             body.config, day_setup, today,
@@ -3638,17 +5219,14 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
 
         vault = resolve_vault_root()
         shadow_today = gather.effective_date(datetime.now())
-        shadow_day_setup = {
-            k: v for k, v in _read_today_runstate(vault, shadow_today).items()
-            if k in _DAY_SETUP_KEYS and v not in ("", None)
-        }
+        shadow_day_setup, _prompt_warnings = _read_day_setup(vault, shadow_today)
         # P3-02: eligibility boundary immediately before manifest construction.
         # It returns the same server-authoritative effective config that the
         # validator used, plus the sanitized digest, so the client cannot
         # inject or rewrite Step E/D source rows or assigned metadata after
         # the boundary.
         shadow_config, safe_digest = _validate_commit_eligibility(body, vault, shadow_today)
-        manifest = shadow.build_plan_manifest(
+        manifest = _build_manifest_or_refuse(
             safe_digest, body.sequence, shadow_config,
             time_frame=_frame_for_writes(shadow_config, shadow_day_setup))
 
@@ -3659,7 +5237,19 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
             raise HTTPException(status_code=502, detail=f"shadow state error: {exc}") from exc
 
         diff = shadow.diff_against_live(manifest, live_state)
-        return diff.as_dict()
+        result = diff.as_dict()
+        # B2: a truthful, read-only preview of the planned prompt exports —
+        # server opt-ins + local logical-day drafts only. A shadow build writes
+        # no receipt and performs no provider call; the preview is content-free.
+        preview_drafts, _ = _read_prompt_drafts(shadow_today)
+        preview_optins, _ = _read_prompt_optins()
+        result["prompt_exports"] = prompt_export.preview_prompt_exports(
+            day=shadow_today.isoformat(),
+            civil_date=prompt_export.civil_date_for(datetime.now()).isoformat(),
+            optins=preview_optins,
+            drafts=preview_drafts,
+        )
+        return result
 
     def _frame_for_writes(config: dict[str, Any] | None,
                           day_setup: dict[str, Any]) -> dict[str, Any]:
@@ -3712,6 +5302,10 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
         Trinoor zone rows.  The client ``_excluded`` flag and client-only config
         are never authorization. Native timed protection is recomputed from
         the dated server digest index immediately before the manifest boundary.
+
+        Capacities rows (U4 S6) are admitted only by canonical identity, and only
+        while still selected, acknowledged if they carry review reasons, and not
+        hard-excluded since indexing; see ``_capacities_commit_refusals``.
 
         Returns the server-authoritative effective config plus a SANITIZED
         digest whose assigned rows carry only trusted server identity, source,
@@ -3793,8 +5387,12 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
 
             A Todoist id and its ``todoist://`` path are equivalent forms of
             the same source identity. Vault paths remain path-only. In either
-            case a name-only submission is never sufficient.
+            case a name-only submission is never sufficient. A Capacities row
+            matches only on its canonical identity (see
+            ``_capacities_identity_matches``).
             """
+            if _is_capacities_source_row(candidate):
+                return _capacities_identity_matches(submitted, candidate)
             submitted_path = str(submitted.get("path") or "").strip()
             submitted_id = str(submitted.get("todoist_id") or "").strip()
             candidate_path = str(candidate.get("path") or "").strip()
@@ -3832,32 +5430,24 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
         authorized_rows: list[dict[str, Any]] = []
         authorized_matches: list[tuple[dict[str, Any], dict[str, Any]]] = []
         unknown_assigned: list[str] = []
+        capacities_refusals: list[str] = []
         for row in submitted_assigned:
             match = _server_match(row)
-            if match is None:
-                unknown_assigned.append(str(row.get("name") or "<unnamed>"))
-            else:
+            name = str(row.get("name") or "<unnamed>")
+            if match is not None:
                 authorized_rows.append(match)
                 authorized_matches.append((match, row))
-
-        capacities_names = sorted({
-            str(candidate.get("name") or "<unnamed>")
-            for candidate, _submitted in authorized_matches
-            if (
-                str(candidate.get("source") or "").strip().casefold() == "capacities"
-                or str(candidate.get("path") or "").strip().casefold().startswith("capacities://")
-            )
-        })
-        if capacities_names:
-            raise HTTPException(
-                status_code=422,
-                detail=(
-                    "commit refused: Capacities rows are plan-only in this "
-                    "integration slice; completion uses /runtime-actions: "
-                    + ", ".join(capacities_names)
-                    + " — nothing was written"
-                ),
-            )
+            elif _is_capacities_source_row(row) or any(
+                _is_capacities_source_row(candidate)
+                and str(candidate.get("name") or "").strip() == str(row.get("name") or "").strip()
+                for candidate in server_assigned
+            ):
+                capacities_refusals.append(f"{name!r} has no server-indexed identity match")
+            else:
+                unknown_assigned.append(name)
+        capacities_refusals.extend(
+            _capacities_commit_refusals(vault, today, authorized_matches),
+        )
 
         # Effective-blocks overlays are validated BEFORE any write decision:
         # a malformed or extreme value is collected here and fails the commit
@@ -3883,11 +5473,7 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
                 detail=detail + " — nothing was written",
             )
 
-        day_setup = {
-            key: value
-            for key, value in _read_today_runstate(vault, today).items()
-            if key in _DAY_SETUP_KEYS and value not in ("", None)
-        }
+        day_setup, _prompt_warnings = _read_day_setup(vault, today)
         config = _server_commit_config(vault, today, day_setup)
         presets = config.get("Presets") or config.get("presets") or []
 
@@ -4150,11 +5736,14 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
 
         if (unknown_assigned or injected_anchored or malformed_sequence
                 or unknown_sequence or fixed_timing or native_pin_errors
-                or malformed_blocks):
+                or malformed_blocks or capacities_refusals):
             parts: list[str] = []
             if unknown_assigned:
                 parts.append("stale/dropped assigned items: "
                              + ", ".join(repr(name) for name in unknown_assigned))
+            if capacities_refusals:
+                parts.append("Capacities rows not admitted: "
+                             + "; ".join(capacities_refusals))
             if injected_anchored:
                 parts.append("client-only anchored items: "
                              + ", ".join(repr(name) for name in injected_anchored))
@@ -4216,15 +5805,12 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
         _require_day_setup(vault, today, "committing")
         # T8: Day Setup state (anchored overrides, re_included, captures)
         # flows into the manifest via config
-        live_day_setup = {
-            k: v for k, v in _read_today_runstate(vault, today).items()
-            if k in _DAY_SETUP_KEYS and v not in ("", None)
-        }
+        live_day_setup, _prompt_warnings = _read_day_setup(vault, today)
         if config_override is None:
             config = _server_commit_config(vault, today, live_day_setup)
         else:
             config = config_override
-        manifest = shadow.build_plan_manifest(
+        manifest = _build_manifest_or_refuse(
             digest_override if digest_override is not None else body.digest,
             body.sequence, config,
             time_frame=_frame_for_writes(config, live_day_setup))
@@ -4277,11 +5863,24 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
         except commit.CommitPlanError as exc:
             raise HTTPException(status_code=422, detail=f"plan refused: {exc}") from exc
 
-        plan_body = _render_plan_body(body.sequence)
+        # S6b: Capacities rows are calendar-only, so the Step B body omits them.
+        capacities_ids = {e.name for e in manifest if e.capacities}
+        body_rows = [
+            row for row in body.sequence.get("sequence", [])
+            if row.get("id") not in capacities_ids
+        ]
+        plan_body = _render_plan_body({**body.sequence, "sequence": body_rows})
+        # B2: the due is the CIVIL calendar date, not the pre-02:00 logical
+        # day that keys the draft store.
+        civil_date = prompt_export.civil_date_for(datetime.now()).isoformat()
         if app.state.build_commit_clients:
             report = orchestrate.run_orchestrated(
                 intents, todoist=injected_todoist, store=store, vault_root=vault,
                 plan_body=plan_body, today=today, resume=resume,
+            )
+            export_outcomes = prompt_export.run_prompt_exports_for_report(
+                report, day=today.isoformat(), civil_date=civil_date,
+                todoist=injected_todoist,
             )
         else:
             with shadow.todoist_client.TodoistClient(token) as todoist:
@@ -4289,6 +5888,11 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
                     intents, todoist=todoist, store=store, vault_root=vault,
                     plan_body=plan_body, today=today, resume=resume,
                 )
+                export_outcomes = prompt_export.run_prompt_exports_for_report(
+                    report, day=today.isoformat(), civil_date=civil_date,
+                    todoist=todoist,
+                )
+        prompt_export.attach_to_report(report, export_outcomes)
         # T19: the authorized commit is the ONLY history-consuming surface —
         # exactly one idempotent log upsert, after every surface reports ok.
         _append_micro_adventure_history(report, config, intents, vault, today)
@@ -4440,6 +6044,18 @@ def build_real_capacities_adapter(vault: Path, config: dict[str, Any]) -> Any:
     supplies the credential slot, page bound, and content-read budget.
     """
     return capacities_builder.build_capacities_adapter(vault)
+
+
+def build_real_refresh_coordinator(vault: Path, config: dict[str, Any]) -> Any:
+    """Live paced-refresh coordinator for the direct-refresh seam (U2).
+
+    Mirrors ``build_real_capacities_adapter``: the seam's shape is
+    ``(vault, config) -> coordinator|None`` while the builder owns the
+    credential slot, store root, and page bound. ``config`` (the parsed vault
+    config) is unused — Capacities reads its own vault-local mapping record and
+    settings policy. ``None`` means "no Capacities source configured".
+    """
+    return capacities_builder.build_refresh_coordinator(vault)
 
 
 app = create_app()

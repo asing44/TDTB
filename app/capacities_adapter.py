@@ -14,12 +14,16 @@ from datetime import date
 import hashlib
 import json
 from typing import Any, Callable, Protocol, Sequence
+import uuid
 
 from capacities_assignment import (
     AssignmentCandidate,
     AssignmentSettings,
     evaluate_assignment,
 )
+import capacities_rules
+from producer_rules import _capacities_predicate_record
+import tag_exclusions
 
 try:
     import httpx as _httpx
@@ -45,7 +49,15 @@ class CapacitiesRateLimited(RuntimeError):
     per-object content read. Exceeding the limit is an expected operating
     condition rather than a defect, so it is modelled separately: the read
     degrades to the objects already evaluated instead of failing outright.
+
+    ``retry_after`` carries the transport's ``Retry-After`` value when the
+    provider supplied one; it is pacing metadata only and never a credential
+    or response body.
     """
+
+    def __init__(self, message: str, *, retry_after: float | None = None) -> None:
+        super().__init__(message)
+        self.retry_after = retry_after
 
 
 class CapacitiesProvider(Protocol):
@@ -128,6 +140,37 @@ class CapacitiesConfig:
     #: settings store owns persistence and the caller passes it in. The adapter
     #: never reads vault files or credentials itself.
     assignment_settings: AssignmentSettings = field(default_factory=AssignmentSettings)
+    #: Optional stored per-type rules record (``capacities_rules.RulesRecord``)
+    #: for this space. When a structure has an ACTIVE stored rule, that rule is
+    #: the SINGLE eligibility authority for its objects: the legacy
+    #: ``evaluate_assignment`` decision is not ANDed in. ``None`` — or a record
+    #: for another space, or a draft-only entry — keeps the legacy decision
+    #: unchanged (KTD5).
+    rules: capacities_rules.RulesRecord | None = None
+    #: Optional pre-selection tag-exclusion policy
+    #: (``tag_exclusions.ExclusionPolicy``). When supplied, projected
+    #: candidates are filtered through the shared matcher after projection, on
+    #: both the source-assigned and unassigned surfaces; ``None`` keeps the
+    #: legacy projection unchanged. The adapter never reads settings storage or
+    #: a credential itself.
+    exclusion_policy: tag_exclusions.ExclusionPolicy | None = None
+
+
+@dataclass(frozen=True)
+class StructureEnumeration:
+    """One structure's raw listing rows for the paced coordinator.
+
+    ``complete=False`` means pagination did not finish (page bound, repeated
+    cursor, or a malformed page). An incomplete enumeration is explicit
+    evidence that a type's membership cannot be trusted, never a truncated
+    success; the rows collected so far are diagnostic only.
+    """
+
+    structure_id: str
+    rows: tuple[dict[str, Any], ...]
+    pages: int
+    complete: bool
+    reason: str | None = None
 
 
 @dataclass
@@ -295,6 +338,249 @@ def _status_display_tokens(prop: Any, prop_id: str) -> set[str]:
     return {_normalized(value) for value in values if value is not None and _text(value)}
 
 
+_RULE_TEXT_KINDS = frozenset({"title", "text", "url", "richText"})
+
+
+def _rule_scalar(payload: Any) -> tuple[Any, bool]:
+    """Unwrap an optional ``{"value": …}`` typed payload for a scalar kind.
+
+    Returns ``(value, malformed)``. A dict without a ``value`` key is
+    malformed; any other payload is used as-is. The rule path never
+    stringifies the wrapper itself.
+    """
+    if isinstance(payload, dict):
+        if "value" not in payload:
+            return None, True
+        return payload["value"], False
+    return payload, False
+
+
+def _rule_status_tokens(prop: Any, prop_id: str) -> tuple[set[str], bool]:
+    """Strict ``(tokens, unreadable)`` extraction for rule-path classification.
+
+    The legacy ``_property_tokens`` flattener normalizes every value with
+    ``str()``, so a malformed member (``[{id: {…}}]``, ``[5]``, ``[[…]]``,
+    ``[True]``, ``{foo: active}``) becomes a readable-looking non-open token
+    and the object is silently classified closed. This rule-only helper
+    validates the declared typed shape instead and reports whether any part
+    of the payload could not be read as its declared type. A dict member with
+    a present non-null ``id`` or ``name`` that is not a string is unreadable
+    even when its peer is a valid string; valid string tokens are still
+    retained. Tokens keep the
+    legacy normalized forms for valid payloads (``True`` → ``"true"``,
+    ``45`` → ``"45"``), and the falsy scalars the legacy path dropped
+    (``False``, ``0``) still produce no token, so configured vocabularies
+    are never re-guessed.
+    """
+    if not isinstance(prop, dict):
+        return set(), True
+    kind = _text(prop.get("type"))
+    if not kind or kind not in prop:
+        return set(), True
+    payload = prop[kind]
+    tokens: set[str] = set()
+    unreadable = False
+    if kind in {"label", "entity"}:
+        if not isinstance(payload, list):
+            return set(), True
+        for member in payload:
+            if isinstance(member, str):
+                token = _normalized(member)
+                if token:
+                    tokens.add(token)
+            elif isinstance(member, dict):
+                readable = False
+                for key in ("id", "name"):
+                    value = member.get(key)
+                    if isinstance(value, str):
+                        readable = True
+                        token = _normalized(value)
+                        if token:
+                            tokens.add(token)
+                    elif value is not None:
+                        unreadable = True
+                if not readable:
+                    unreadable = True
+            else:
+                unreadable = True
+    elif kind in _RULE_TEXT_KINDS:
+        value, malformed = _rule_scalar(payload)
+        if malformed:
+            unreadable = True
+        elif value is not None:
+            if not isinstance(value, str):
+                unreadable = True
+            else:
+                token = _normalized(value)
+                if token:
+                    tokens.add(token)
+    elif kind == "number":
+        value, malformed = _rule_scalar(payload)
+        if malformed or isinstance(value, bool) or not isinstance(value, (int, float)):
+            unreadable = True
+        else:
+            token = _normalized(value)
+            if token:
+                tokens.add(token)
+    elif kind == "boolean":
+        value, malformed = _rule_scalar(payload)
+        if malformed or not isinstance(value, bool):
+            unreadable = True
+        else:
+            token = _normalized(value)
+            if token:
+                tokens.add(token)
+    elif kind == "date":
+        if not isinstance(payload, dict):
+            return set(), True
+        start = payload.get("start")
+        if start is not None:
+            if not isinstance(start, str):
+                unreadable = True
+            else:
+                token = _normalized(start)
+                if token:
+                    tokens.add(token)
+    else:
+        return set(), True
+    return tokens, unreadable
+
+
+def _classify_open_status(
+    prop: Any, prop_id: str, open_values: frozenset[str]
+) -> str:
+    """Open / unknown / closed classification for a mapped status.
+
+    Used on the stored-rule path, where an under-evaluated status must keep
+    the object visible as an unassigned candidate instead of failing the
+    object (legacy) or silently excluding it. The payload is read strictly
+    (``_rule_status_tokens``): absent, empty, and unreadable payloads are
+    UNKNOWN, and only a fully readable payload with no open match is a
+    known-closed hard exclusion.
+    """
+    if prop is None:
+        return "unknown"
+    tokens, unreadable = _rule_status_tokens(prop, prop_id)
+    if unreadable or not tokens:
+        return "unknown"
+    if tokens.intersection({_normalized(value) for value in open_values}):
+        return "open"
+    return "closed"
+
+
+def _classify_completion(
+    prop: Any,
+    prop_id: str,
+    completion_value: str | None,
+    open_values: frozenset[str] | None = None,
+) -> str:
+    """Unknown / closed classification for a mapped completion.
+
+    A distinct completion field (``open_values is None``) has no vocabulary
+    beyond the configured ``completion_value``: only that readable token is a
+    known closed state, and every other value — including an absent, empty,
+    or unreadable payload — is UNKNOWN rather than a guessed exclusion
+    (R27/R29).
+
+    A same-field completion (``open_values`` supplied, because the mapping
+    shares the open-status property) checks the configured completed value
+    FIRST, so a mixed ``[active, done]`` payload is excluded even though
+    ``active`` intersects the open values. Readable completed evidence wins
+    even when another member is unreadable; without it, any unreadable member
+    or an empty payload is UNKNOWN, and only a fully readable payload falls
+    back to the open vocabulary.
+    """
+    if prop is None:
+        return "unknown"
+    tokens, unreadable = _rule_status_tokens(prop, prop_id)
+    if completion_value is not None and _normalized(completion_value) in tokens:
+        return "closed"
+    if open_values is None:
+        return "unknown"
+    if unreadable or not tokens:
+        return "unknown"
+    if tokens.intersection({_normalized(value) for value in open_values}):
+        return "open"
+    return "closed"
+
+
+#: Stable reason codes for the review-warning surface (U3b-3). One code is
+#: emitted per UNKNOWN tri-state on an active-rule row; ``unavailable`` (no
+#: mapped property) and a manual unassigned candidate are decided states and
+#: never produce a code.
+REVIEW_REASON_RULE_UNKNOWN = "rule_unknown"
+REVIEW_REASON_STATUS_UNKNOWN = "status_unknown"
+REVIEW_REASON_COMPLETION_UNKNOWN = "completion_unknown"
+
+#: Bound on how many review-candidate identities one warning names. The exact
+#: count is always reported; naming every identity would make the warning grow
+#: with the unknown set and flood the job surface.
+MAX_REVIEW_WARNING_IDENTITIES = 3
+
+
+def _review_reasons(
+    rule_state: capacities_rules.Evaluation | None,
+    status_state: str | None,
+    completion_state: str | None,
+) -> list[str]:
+    """Stable review codes for an active-rule row, in a fixed order.
+
+    Only the three UNKNOWN tri-states are review reasons: ``unavailable`` is a
+    decided mapping gap and a manual unassigned candidate is a decided MATCH,
+    so neither fabricates a reason.
+    """
+    reasons: list[str] = []
+    if rule_state is capacities_rules.UNKNOWN:
+        reasons.append(REVIEW_REASON_RULE_UNKNOWN)
+    if status_state == "unknown":
+        reasons.append(REVIEW_REASON_STATUS_UNKNOWN)
+    if completion_state == "unknown":
+        reasons.append(REVIEW_REASON_COMPLETION_UNKNOWN)
+    return reasons
+
+
+def _review_warning(review_rows: Sequence[tuple[str, Sequence[str]]]) -> str:
+    """One bounded, content-free summary of the rows needing review.
+
+    Names the exact count, at most ``MAX_REVIEW_WARNING_IDENTITIES``
+    identities with their reason codes, a ``+N more`` remainder when bounded,
+    and the Rescan suggestion. Identity and reason codes are structured
+    metadata; no property value or raw object content is ever included.
+    """
+    shown = review_rows[:MAX_REVIEW_WARNING_IDENTITIES]
+    parts = [
+        f"{identity} ({', '.join(reasons)})" if reasons else identity
+        for identity, reasons in shown
+    ]
+    remaining = len(review_rows) - len(shown)
+    if remaining > 0:
+        parts.append(f"+{remaining} more")
+    return (
+        f"Capacities review — {len(review_rows)} unassigned candidate(s) not "
+        f"fully evaluated: {'; '.join(parts)}. Rescan Capacities to evaluate "
+        "them fully."
+    )
+
+
+def _tag_exclusion_warning(report: dict[str, Any]) -> str:
+    """One bounded, content-free summary of rows removed by tag exclusions.
+
+    Names the exact removed count and at most ``MAX_REVIEW_WARNING_IDENTITIES``
+    stable identities — never a row title, a tag title, or raw object content.
+    """
+    decisions = report.get("decisions") or []
+    shown = decisions[:MAX_REVIEW_WARNING_IDENTITIES]
+    parts = [str(decision.get("identity") or "<unknown>") for decision in shown]
+    remaining = len(decisions) - len(shown)
+    if remaining > 0:
+        parts.append(f"+{remaining} more")
+    total = int((report.get("excluded_counts") or {}).get("total", 0))
+    return (
+        f"Capacities tag exclusions removed {total} candidate(s) from this "
+        f"refresh: {'; '.join(parts)}."
+    )
+
+
 #: Capacities' tag property id on task-like structures. Tags are typed
 #: ``entity`` references to ``RootTag`` objects; the flat top-level ``tags``
 #: title array the API also returns is presentation only and never identity.
@@ -319,7 +605,8 @@ def _capacities_tag_refs(
     ``_property_tokens`` helper flattens the pair into loose tokens and drops
     the title, which would destroy structured identity. The flat top-level
     ``tags`` title array is never used to derive identity: a non-empty array
-    without a typed property is title-only metadata.
+    without a typed property is title-only metadata. An id that parses as a
+    UUID is lowercased; any other id is kept exactly as received.
     """
     if prop is None:
         if flat_tags is None or (isinstance(flat_tags, list) and not flat_tags):
@@ -341,6 +628,14 @@ def _capacities_tag_refs(
         tag_id = _text(entry.get("id"))
         if not tag_id:
             return None, "tags property contains a reference without an id"
+        # Exclusions hold lowercase canonical ids and match exactly. Hex case
+        # never changes a UUID's identity, so lowercasing can only add matches.
+        try:
+            uuid.UUID(tag_id)
+        except ValueError:
+            pass
+        else:
+            tag_id = tag_id.lower()
         if tag_id in seen:
             continue
         seen.add(tag_id)
@@ -475,14 +770,22 @@ class CapacitiesAdapter:
             # structure has to be enumerable before the Settings drawer can
             # offer it for enabling.
             if not mapping.assignment_property and not mapping.open_status_property:
-                if sid in self.config.assignment_settings.native_task_structures:
+                # A stored ACTIVE rule is the structure's single eligibility
+                # authority, so neither legacy mapping is required: the rule
+                # (and the operator's explicit selection) can admit objects
+                # the legacy seams cannot describe, and missing mappings are
+                # manual-assignment candidates rather than a contract failure.
+                # No record, a draft-only entry, and a record for another
+                # space keep the legacy requirement unchanged.
+                if self._active_rule(sid) is None:
+                    if sid in self.config.assignment_settings.native_task_structures:
+                        raise CapacitiesContractError(
+                            f"native mapping {sid!r} requires a mapped status property"
+                        )
                     raise CapacitiesContractError(
-                        f"native mapping {sid!r} requires a mapped status property"
+                        f"mapping {sid!r} requires an assignment property or a "
+                        "mapped status property"
                     )
-                raise CapacitiesContractError(
-                    f"mapping {sid!r} requires an assignment property or a "
-                    "mapped status property"
-                )
             if mapping.assignment_property and not mapping.assignment_values:
                 raise CapacitiesContractError(f"mapping {sid!r} has no assignment values")
             if mapping.assignment_values and not mapping.assignment_property:
@@ -550,43 +853,84 @@ class CapacitiesAdapter:
         self._mappings = mappings
         self._contract_warnings = declaration_warnings
 
-    def _list_objects(self, structure_id: str) -> tuple[list[dict[str, Any]], int]:
-        objects: list[dict[str, Any]] = []
+    def _enumerate_listing(
+        self, structure_id: str
+    ) -> tuple[list[dict[str, Any]], int, bool, str | None]:
+        """List one structure's raw rows with explicit pagination outcome.
+
+        Returns ``(rows, pages, complete, reason)``. Pagination rails (the
+        defensive ``max_pages`` bound and repeated-cursor detection) return a
+        non-complete outcome rather than treating a stopped listing as a
+        finished one. Provider/transport exceptions still propagate; only the
+        pagination rails are modelled as an outcome.
+        """
+        rows: list[dict[str, Any]] = []
         cursor: str | None = None
         seen_cursors: set[str] = set()
         pages = 0
         while True:
             if pages >= self.config.max_pages:
-                raise CapacitiesContractError(
-                    f"Capacities pagination exceeded max_pages for {structure_id!r}"
-                )
+                return rows, pages, False, "page_bound"
             page = self.provider.list_objects(structure_id, cursor)
             if not isinstance(page, dict) or not isinstance(page.get("objects"), list):
-                raise CapacitiesContractError(
-                    f"Capacities object page for {structure_id!r} is malformed"
-                )
-            for row in page["objects"]:
-                hydrated = self._hydrate_object(row)
-                if hydrated is None:
-                    # Deferred this run: the content-read budget was spent or
-                    # the provider refused. Record the identity so coverage
-                    # is counted over distinct listed rows.
-                    object_id = _text(row.get("id")) if isinstance(row, dict) else ""
-                    if object_id:
-                        self._deferred_identities.add(f"{structure_id}:{object_id}")
-                    continue
-                objects.append(hydrated)
+                return rows, pages, False, "malformed_page"
+            rows.extend(page["objects"])
             pages += 1
             next_cursor = page.get("next_cursor", page.get("nextCursor"))
             if next_cursor in (None, ""):
-                return objects, pages
+                return rows, pages, True, None
             next_cursor = _text(next_cursor)
             if next_cursor in seen_cursors:
+                return rows, pages, False, "repeated_cursor"
+            seen_cursors.add(next_cursor)
+            cursor = next_cursor
+
+    def enumerate_structure(self, structure_id: str) -> StructureEnumeration:
+        """Public, hydration-free listing seam for the paced coordinator."""
+        rows, pages, complete, reason = self._enumerate_listing(structure_id)
+        return StructureEnumeration(
+            structure_id=structure_id,
+            rows=tuple(rows),
+            pages=pages,
+            complete=complete,
+            reason=reason,
+        )
+
+    def ensure_contract(self) -> None:
+        """Public contract-resolution seam (one paced structures request)."""
+        self._ensure_contract()
+
+    def can_contribute(self, mapping: StructureMapping) -> bool:
+        """Public enumeration-gate seam for the paced coordinator."""
+        return self._structure_can_contribute(mapping)
+
+    def _list_objects(self, structure_id: str) -> tuple[list[dict[str, Any]], int]:
+        rows, pages, complete, reason = self._enumerate_listing(structure_id)
+        if not complete:
+            if reason == "page_bound":
+                raise CapacitiesContractError(
+                    f"Capacities pagination exceeded max_pages for {structure_id!r}"
+                )
+            if reason == "repeated_cursor":
                 raise CapacitiesContractError(
                     f"Capacities pagination repeated cursor for {structure_id!r}"
                 )
-            seen_cursors.add(next_cursor)
-            cursor = next_cursor
+            raise CapacitiesContractError(
+                f"Capacities object page for {structure_id!r} is malformed"
+            )
+        objects: list[dict[str, Any]] = []
+        for row in rows:
+            hydrated = self._hydrate_object(row)
+            if hydrated is None:
+                # Deferred this run: the content-read budget was spent or
+                # the provider refused. Record the identity so coverage
+                # is counted over distinct listed rows.
+                object_id = _text(row.get("id")) if isinstance(row, dict) else ""
+                if object_id:
+                    self._deferred_identities.add(f"{structure_id}:{object_id}")
+                continue
+            objects.append(hydrated)
+        return objects, pages
 
     def _hydrate_object(self, row: Any) -> dict[str, Any] | None:
         """Fill typed properties into a listed object row.
@@ -665,6 +1009,16 @@ class CapacitiesAdapter:
 
         identity = f"capacities:{self.config.space_id}:{mapping.structure_id}:{object_id}"
 
+        # A stored ACTIVE rule is decided up front: on that path the legacy
+        # status/completion classification is replaced by a three-state
+        # classification where an unreadable mapped value is UNKNOWN rather
+        # than a failed object, and a missing assignment mapping is a manual
+        # candidate rather than a contract failure (KTD5, R27/R29).
+        active_rule = self._active_rule(mapping.structure_id)
+        has_assignment_mapping = bool(
+            mapping.assignment_property or mapping.assigned_property
+        )
+
         # Source-assigned signal. A mapped assignment property that is present
         # is a definitive source boolean; a missing property is neutral, not a
         # negative. Native structures may omit the mapping entirely and rely on
@@ -693,15 +1047,48 @@ class CapacitiesAdapter:
                     )
                 )
 
-        # Open/closed status is a shared safety signal. A missing mapped status
-        # property fails closed rather than silently opening; the mapped status
-        # property also supplies the token the native Auto rule checks.
+        # Open/closed status is a shared safety signal. On the legacy path a
+        # missing mapped status property fails closed rather than silently
+        # opening, and the mapped status property also supplies the token the
+        # native Auto rule checks. On the stored-rule path the same mapping is
+        # classified open / unknown / closed: an absent, empty, or unreadable
+        # value is UNKNOWN and keeps the row as an unassigned candidate, while
+        # a readable non-open value stays a hard exclusion.
         status: str | None = None
         status_is_open: bool | None = None
+        status_state: str | None = None
+        # Direct refresh with one field shared by status and completion: an
+        # unreadable or empty shared payload is UNKNOWN completion (U3b-4), so
+        # the legacy open read must neither fail the object as malformed nor
+        # treat it as a closed status and drop it silently.
+        shared_direct_field = (
+            active_rule is None
+            and self.config.rules is not None
+            and bool(mapping.open_status_property)
+            and mapping.completion_property == mapping.open_status_property
+        )
         if mapping.open_status_property:
             status_prop = properties.get(mapping.open_status_property)
-            if status_prop is None:
+            if active_rule is not None:
+                status_state = _classify_open_status(
+                    status_prop,
+                    mapping.open_status_property,
+                    mapping.open_status_values,
+                )
+            elif status_prop is None:
                 status_is_open = False
+            elif shared_direct_field and (
+                _classify_open_status(
+                    status_prop,
+                    mapping.open_status_property,
+                    mapping.open_status_values,
+                )
+                == "unknown"
+            ):
+                # Undecided status: admission stays with the legacy evaluator
+                # (``None`` is not closed) and the completion classifier below
+                # reports the same payload as UNKNOWN.
+                status_is_open = None
             else:
                 # The open/closed safety classification keeps matching the
                 # mixed id+name tokens; the status token the evaluator reads
@@ -716,6 +1103,41 @@ class CapacitiesAdapter:
                     status_tokens.intersection(
                         {_normalized(value) for value in mapping.open_status_values}
                     )
+                )
+        elif active_rule is not None:
+            status_state = "unavailable"
+
+        # Completion availability on the stored-rule path. A mapping that
+        # shares the open-status field checks the configured completed value
+        # first — a mixed ``[active, done]`` payload is closed — and only
+        # falls back to the open vocabulary when no completed token is
+        # readable; a distinct completion field has only ``completion_value``
+        # known, so every other readable value — and every absent, empty, or
+        # unreadable value — is UNKNOWN rather than a guessed closed state
+        # (R27/R29).
+        # The direct refresh (rules supplied, no active rule) reuses the same
+        # strict classifier as an override on the legacy admission decision;
+        # the legacy path (``rules is None``) never reads completion here.
+        completion_state: str | None = None
+        direct_completion = active_rule is None and self.config.rules is not None
+        if active_rule is not None or direct_completion:
+            if not mapping.completion_property:
+                completion_state = "unavailable"
+            elif (
+                mapping.open_status_property
+                and mapping.completion_property == mapping.open_status_property
+            ):
+                completion_state = _classify_completion(
+                    status_prop,
+                    mapping.completion_property,
+                    mapping.completion_value,
+                    open_values=mapping.open_status_values,
+                )
+            else:
+                completion_state = _classify_completion(
+                    properties.get(mapping.completion_property),
+                    mapping.completion_property,
+                    mapping.completion_value,
                 )
 
         # ``date_property`` remains a day-projection filter: a future date means
@@ -757,22 +1179,81 @@ class CapacitiesAdapter:
         if not title:
             raise _MalformedObject(f"object {object_id!r} has an empty title")
 
-        decision = evaluate_assignment(
-            AssignmentCandidate(
-                identity=identity,
-                source_assigned=source_assigned,
-                status=status,
-                status_is_open=status_is_open,
-                due=due,
-                deadline=deadline,
-            ),
-            logical_day=logical_day,
-            settings=self.config.assignment_settings,
-        )
-        if not decision.eligible:
-            return None
+        rule_state: capacities_rules.Evaluation | None = None
+        if active_rule is not None:
+            # A stored active rule is the SINGLE eligibility authority for
+            # this structure (KTD5): the legacy assignment decision is not
+            # ANDed in, so a matching rule admits an object the source does
+            # not mark assigned. A known-closed mapped status still overrides
+            # inclusion, and an UNKNOWN evaluation is retained as an
+            # unassigned row rather than silently omitted (R29/R31).
+            rule_state = capacities_rules.evaluate(
+                active_rule,
+                _capacities_predicate_record(obj),
+                logical_day=logical_day.isoformat(),
+            )
+            if rule_state is capacities_rules.NO_MATCH:
+                return None
+            if status_state == "closed" or completion_state == "closed":
+                return None
+            # A TDTB stable-identity exclusion still wins over the stored
+            # rule exactly as it wins over Auto on the legacy path: the rule
+            # is not a bypass. Source Assigned remains the only signal that
+            # outranks an exclusion, so an excluded identity is dropped
+            # unless the source explicitly marks it assigned.
+            if (
+                identity in self.config.assignment_settings.excluded_identities
+                and source_assigned is not True
+            ):
+                return None
+            # A missing assignment mapping is manual assignment: the row is
+            # an eligible candidate, never auto-assigned. An UNKNOWN status
+            # or completion keeps the rule decision truthful but still forces
+            # the row unassigned so the later warning surface can review it
+            # (R27/R29).
+            assigned = (
+                rule_state is capacities_rules.MATCH
+                and has_assignment_mapping
+                and status_state != "unknown"
+                and completion_state != "unknown"
+            )
+        else:
+            decision = evaluate_assignment(
+                AssignmentCandidate(
+                    identity=identity,
+                    source_assigned=source_assigned,
+                    status=status,
+                    status_is_open=status_is_open,
+                    due=due,
+                    deadline=deadline,
+                ),
+                logical_day=logical_day,
+                settings=self.config.assignment_settings,
+            )
+            if not decision.eligible:
+                return None
+            assigned = True
+            if direct_completion:
+                # Direct-refresh completion override (U3b-4). The legacy
+                # decision admitted the row; a readable completed value is a
+                # hard exclusion even when source-assigned, and an UNKNOWN
+                # completion keeps the row as an unassigned warning candidate.
+                # The override only narrows: it never admits a row the legacy
+                # evaluator rejected.
+                if completion_state == "closed":
+                    return None
+                if completion_state == "unknown":
+                    assigned = False
 
-        duration: int | float = 30
+        # Per-type fallback duration: used when the duration mapping is
+        # absent or the mapped property is not carried; a present mapped
+        # value still wins, and a zero fallback is a real value.
+        fallback_minutes: int | None = None
+        if active_rule is not None and self.config.rules is not None:
+            structure_record = self.config.rules.structure(mapping.structure_id)
+            if structure_record is not None:
+                fallback_minutes = structure_record.fallback_minutes
+        duration: int | float = 30 if fallback_minutes is None else fallback_minutes
         if mapping.duration_property:
             duration_prop = properties.get(mapping.duration_property)
             if duration_prop is not None:
@@ -800,7 +1281,7 @@ class CapacitiesAdapter:
             "urgency": None,
             "deadline": due.isoformat() if due else None,
             "priority_score": 0,
-            "assigned": decision.eligible,
+            "assigned": assigned,
             "duration": duration,
             "duration_minutes": duration,
             "blocks": blocks,
@@ -809,16 +1290,42 @@ class CapacitiesAdapter:
             "capacities_structure_id": mapping.structure_id,
             "capacities_completion_supported": bool(mapping.completion_property),
             "source_fingerprint": _fingerprint(obj),
-            # Compact serialization of the evaluator decision, never a title or
-            # a policy key. Downstream index allowlists may ignore it.
-            "capacities_assignment": {
+            "capacities_tags": tag_refs,
+        }
+        if active_rule is not None:
+            # Structured stored-rule state: the tri-state outcome plus the
+            # rules revision it was decided under, so a downstream slice can
+            # surface an unassigned warning candidate without re-deciding.
+            row["capacities_rule"] = {
+                "state": rule_state.value,
+                "revision": int(getattr(self.config.rules, "revision", 0)),
+            }
+            # Additive adapter-only availability metadata for the later
+            # warning-candidate surface (U3b-3/U4): UNKNOWN is not eligible
+            # but stays visible, and closed values never reach a row. The
+            # review reasons are a stable list so a consumer never parses the
+            # warning text to decide whether the row is fully evaluated.
+            row["capacities_status_state"] = status_state
+            row["capacities_completion_state"] = completion_state
+            row["capacities_review_reasons"] = _review_reasons(
+                rule_state, status_state, completion_state
+            )
+        else:
+            # Compact serialization of the evaluator decision, never a title
+            # or a policy key. Downstream index allowlists may ignore it.
+            row["capacities_assignment"] = {
                 "mode": decision.mode.value,
                 "reasons": list(decision.reason_codes),
                 "source_assigned": decision.provenance.source_assigned,
                 "excluded": decision.provenance.exclusion_matched,
-            },
-            "capacities_tags": tag_refs,
-        }
+            }
+            if direct_completion:
+                # Rule-less direct rows carry only the completion availability
+                # and its review reason; no stored rule state is fabricated.
+                row["capacities_completion_state"] = completion_state
+                row["capacities_review_reasons"] = _review_reasons(
+                    None, None, completion_state
+                )
         if tag_error is not None:
             row["capacities_tags_error"] = tag_error
         return row
@@ -866,6 +1373,37 @@ class CapacitiesAdapter:
                 evaluated.add(identity)
             if row is not None:
                 items.append(row)
+        policy = self.config.exclusion_policy
+        if policy is not None:
+            # The shared matcher is the single decision authority; the adapter
+            # only splits the projected candidates into the two digest
+            # surfaces. A match removes a source-assigned MATCH and an UNKNOWN
+            # unassigned candidate alike, and the matcher's structured block
+            # (unusable applicable metadata) propagates rather than being
+            # silently omitted.
+            assigned_items = [row for row in items if row.get("assigned")]
+            pool_items = [row for row in items if not row.get("assigned")]
+            kept_assigned, kept_pool, exclusion_report = (
+                tag_exclusions.apply_tag_exclusions(
+                    assigned_items, pool_items, policy
+                )
+            )
+            items = [*kept_assigned, *kept_pool]
+            warnings.extend(exclusion_report["warnings"])
+            if exclusion_report["excluded_counts"]["total"]:
+                warnings.append(_tag_exclusion_warning(exclusion_report))
+        # Recompute the review surface from the SURVIVING items so an excluded
+        # UNKNOWN row cannot produce a misleading review warning. Every review
+        # row stayed an item, so the warning is a supplementary surface on a
+        # complete result, never a partial success; the summary is bounded and
+        # carries no raw content.
+        review_rows = [
+            (row["identity"], list(row.get("capacities_review_reasons") or ()))
+            for row in items
+            if row.get("capacities_review_reasons")
+        ]
+        if review_rows:
+            warnings.append(_review_warning(review_rows))
         items.sort(key=lambda row: (_normalized(row["name"]), row["identity"]))
         return items, warnings, evaluated, malformed
 
@@ -881,22 +1419,41 @@ class CapacitiesAdapter:
             malformed=len(malformed),
         )
 
+    def _active_rule(self, structure_id: str) -> dict[str, Any] | None:
+        """The stored ACTIVE rule for one structure, or ``None``.
+
+        ``None`` covers every compatibility case at once: no rules record
+        supplied, a record for a different space (a stale or misrouted
+        document), no entry for this structure, and an entry with no active
+        rule (draft-only). ``{"all": []}`` is a real active rule and is
+        deliberately distinct from ``None``."""
+        record = self.config.rules
+        if record is None:
+            return None
+        if getattr(record, "space_id", None) != self.config.space_id:
+            return None
+        return record.effective_rule(structure_id)
+
     def _structure_can_contribute(self, mapping: StructureMapping) -> bool:
         """Whether any object from this structure could ever be eligible.
 
         A structure configured as native is always evaluated (its Auto rules
         are the only inclusion path). A custom structure with a source
-        assignment property can contribute a source-assigned row. A custom
-        structure with neither an assignment property nor an Active enable can
-        never include anything, so it is not enumerated and its objects are
-        never hydrated — which matters because the live API allows 30 requests
-        per minute and enumeration plus hydration is otherwise an N+1 burst.
+        assignment property can contribute a source-assigned row. A structure
+        with an ACTIVE stored rule contributes even without a legacy
+        assignment property or Active enable, because the rule is its
+        eligibility path. A custom structure with none of those can never
+        include anything, so it is not enumerated and its objects are never
+        hydrated — which matters because the live API allows 30 requests per
+        minute and enumeration plus hydration is otherwise an N+1 burst.
         """
         if mapping.structure_id in self.config.assignment_settings.native_task_structures:
             return True
         if mapping.assignment_property:
             return True
-        return mapping.structure_id in self.config.assignment_settings.active_structures
+        if mapping.structure_id in self.config.assignment_settings.active_structures:
+            return True
+        return self._active_rule(mapping.structure_id) is not None
 
     def _drain_cache_warnings(self) -> list[str]:
         """Collect content-cache diagnostics recorded since the last read.
@@ -1242,6 +1799,10 @@ class CapacitiesRestClient:
         }
         self._space_id = _text(space_id)
         self._content_cache = content_cache
+        #: Optional best-effort rate-metadata sink. The paced coordinator
+        #: registers ``(endpoint, headers)`` here; header facts are advisory
+        #: and their absence never fails a read.
+        self._rate_observer: Callable[[str, Any], None] | None = None
         #: Best-effort sink for the parsed ``/space/structures`` payload. The
         #: builder binds it to the machine-local title cache; ``None`` means a
         #: transport-only client. A per-call ``observer`` argument overrides
@@ -1257,10 +1818,33 @@ class CapacitiesRestClient:
     def close(self) -> None:
         self._client.close()
 
+    def set_rate_observer(self, observer: Callable[[str, Any], None] | None) -> None:
+        """Register the paced coordinator's rate-metadata sink (best-effort)."""
+        self._rate_observer = observer if callable(observer) else None
+
+    def _observe(self, endpoint: str, response: Any) -> None:
+        observer = self._rate_observer
+        if observer is None:
+            return
+        try:
+            headers = getattr(response, "headers", None) or {}
+            observer(endpoint, dict(headers))
+        except Exception:  # noqa: BLE001 — observation never changes a read
+            pass
+
     def _json(self, response: Any) -> dict[str, Any]:
         if getattr(response, "status_code", None) == 429:
+            retry_after = None
+            headers = getattr(response, "headers", None) or {}
+            raw = headers.get("Retry-After") or headers.get("retry-after")
+            if raw is not None:
+                try:
+                    retry_after = max(0.0, float(str(raw).strip()))
+                except (TypeError, ValueError):
+                    retry_after = None
             raise CapacitiesRateLimited(
-                "the Capacities API rate limit (30 requests per minute) was exceeded"
+                "the Capacities API rate limit (30 requests per minute) was exceeded",
+                retry_after=retry_after,
             )
         response.raise_for_status()
         payload = response.json()
@@ -1286,7 +1870,9 @@ class CapacitiesRestClient:
         It is a best-effort sink: any failure inside it is swallowed here,
         because observation must never change or break a read.
         """
-        payload = self._json(self._client.get("/space/structures"))
+        response = self._client.get("/space/structures")
+        self._observe("structures", response)
+        payload = self._json(response)
         sink = observer if observer is not None else self._structures_observer
         if sink is not None:
             try:
@@ -1316,7 +1902,9 @@ class CapacitiesRestClient:
         params: dict[str, str] = {"id": structure_id, "spaceId": self._space_id}
         if cursor:
             params["cursor"] = cursor
-        payload = self._json(self._client.get("/objects/structure", params=params))
+        response = self._client.get("/objects/structure", params=params)
+        self._observe("listing", response)
+        payload = self._json(response)
         results = payload.get("results")
         if results is None:
             results = payload.get("objects", [])
@@ -1337,15 +1925,17 @@ class CapacitiesRestClient:
             cached = self._content_cache.get(object_id)
             if cached is not None:
                 return cached
-        content = self._json(self._client.get("/object", params={"id": object_id}))
+        response = self._client.get("/object", params={"id": object_id})
+        self._observe("content", response)
+        content = self._json(response)
         if self._content_cache is not None:
             self._content_cache.put(object_id, content)
         return content
 
     def patch_object(self, object_id: str, properties: dict[str, Any]) -> dict[str, Any]:
-        return self._json(
-            self._client.patch(
-                "/object",
-                json={"id": object_id, "properties": properties},
-            )
+        response = self._client.patch(
+            "/object",
+            json={"id": object_id, "properties": properties},
         )
+        self._observe("content", response)
+        return self._json(response)

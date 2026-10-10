@@ -19,7 +19,9 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+import app_config  # noqa: E402
 import capacities_builder as cb  # noqa: E402
+import capacities_refresh_state as crs  # noqa: E402
 import capacities_settings as cs  # noqa: E402
 import capacities_structure_titles as cst  # noqa: E402
 from capacities_adapter import (  # noqa: E402
@@ -1897,3 +1899,227 @@ def test_a_read_that_never_fetches_structures_leaves_titles_untouched(tmp_path):
     assert cst.read_titles(tmp_path, SPACE, cb.CAPACITIES_BASE_URL) == {
         "RootTask": "Task"
     }
+
+
+# ---------------------------------------------------------------------------
+# Direct-refresh state store (U1) — builder composition seams
+# ---------------------------------------------------------------------------
+
+def test_refresh_state_dir_is_machine_local_beside_the_other_stores():
+    assert cb.REFRESH_STATE_DIRNAME == "capacities-refresh"
+    assert cb.refresh_state_dir() == app_config.state_dir() / "capacities-refresh"
+
+
+def test_builder_resolves_a_namespaced_refresh_state_store(tmp_path):
+    root = tmp_path / "refresh-state"
+    config = cb.CapacitiesBuilderConfig(refresh_state_path=root)
+
+    store = cb.build_refresh_state(tmp_path, SPACE, config)
+    store.put("task-1", "RootTask", {"id": "task-1"}, content_read_at=1234.0)
+
+    document = json.loads(next((root / crs.OBJECTS_DIRNAME).glob("*.json")).read_text())
+    assert document["namespace"] == crs.object_namespace(
+        crs.provider_origin(cb.CAPACITIES_BASE_URL), SPACE, "RootTask", "task-1"
+    )
+    assert document["content_read_at"] == 1234.0
+
+
+def test_refresh_state_dir_defaults_under_the_isolated_app_home(tmp_path):
+    store = cb.build_refresh_state(tmp_path, SPACE)
+    store.put("task-1", "RootTask", {"id": "task-1"}, content_read_at=1.0)
+
+    expected = cb.refresh_state_dir() / crs.OBJECTS_DIRNAME
+    assert expected.exists()
+    assert list(expected.glob("*.json"))
+
+
+def test_legacy_import_wrapper_uses_the_legacy_namespace_and_leaves_it_untouched(
+    tmp_path,
+):
+    legacy = tmp_path / "content-cache.json"
+    legacy.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "namespace": cb._content_cache_namespace(
+                    tmp_path, SPACE, cb.CAPACITIES_BASE_URL
+                ),
+                "entries": [
+                    {
+                        "object_id": "task-1",
+                        "fetched_at": 1000.0,
+                        "content": {"id": "task-1"},
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    before = legacy.read_bytes()
+
+    store = cb.build_refresh_state(
+        tmp_path, SPACE, cb.CapacitiesBuilderConfig(refresh_state_path=tmp_path / "s")
+    )
+    result = cb.import_legacy_content_cache(
+        store,
+        tmp_path,
+        SPACE,
+        cb.CapacitiesBuilderConfig(
+            refresh_state_path=tmp_path / "s", cache_path=legacy
+        ),
+        object_types={"task-1": "RootTask"},
+    )
+
+    assert result.imported == 1
+    assert legacy.read_bytes() == before
+    cached = store.get("task-1", "RootTask")
+    assert cached.content == {"id": "task-1"}
+    assert cached.content_read_at == 1000.0
+
+
+def test_legacy_import_wrapper_refuses_another_providers_document(tmp_path):
+    legacy = tmp_path / "content-cache.json"
+    legacy.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "namespace": cb._content_cache_namespace(
+                    tmp_path, SPACE, "https://other.example.com"
+                ),
+                "entries": [
+                    {
+                        "object_id": "task-1",
+                        "fetched_at": 1000.0,
+                        "content": {"id": "task-1"},
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    store = cb.build_refresh_state(
+        tmp_path, SPACE, cb.CapacitiesBuilderConfig(refresh_state_path=tmp_path / "s")
+    )
+    result = cb.import_legacy_content_cache(
+        store,
+        tmp_path,
+        SPACE,
+        cb.CapacitiesBuilderConfig(cache_path=legacy),
+        object_types={"task-1": "RootTask"},
+    )
+
+    assert result.imported == 0
+    assert result.warnings
+    assert store.get("task-1", "RootTask") is None
+
+
+# ---------------------------------------------------------------------------
+# U2: direct-refresh coordinator wiring
+# ---------------------------------------------------------------------------
+
+def _refresh_coordinator_for(tmp_path):
+    """A production-wired coordinator over a well-formed record and settings."""
+    _write_source(tmp_path, _valid_payload())
+    _write_settings(tmp_path)
+    token = _valid_token_file(tmp_path)
+    return cb.build_refresh_coordinator(
+        tmp_path,
+        cb.CapacitiesBuilderConfig(
+            token_path=token,
+            refresh_state_path=tmp_path / "state",
+            transport=_RecordingTransport(),
+        ),
+    )
+
+
+def test_refresh_coordinator_serializes_publication_with_source_saves(tmp_path):
+    """The publication guard must exclude a source-record save.
+
+    KTD3 requires that a configuration revision change cannot publish stale
+    scope. The coordinator's check-then-install section is only atomic with
+    respect to savers when its guard holds the same locks they take, so hold
+    the guard and prove the source lock pair is excluded until release.
+    """
+    coordinator = _refresh_coordinator_for(tmp_path)
+    assert coordinator is not None
+    assert callable(coordinator.config_guard)
+
+    entered = threading.Event()
+    release = threading.Event()
+
+    def hold_guard():
+        with coordinator.config_guard():
+            entered.set()
+            release.wait(timeout=5)
+
+    holder = threading.Thread(target=hold_guard)
+    holder.start()
+    assert entered.wait(timeout=5)
+
+    acquired = threading.Event()
+
+    def save_like():
+        with cb._store_lock(tmp_path):
+            handle = cb._acquire_lock_file(tmp_path)
+            try:
+                acquired.set()
+            finally:
+                cb._release_lock_file(handle)
+
+    saver = threading.Thread(target=save_like)
+    saver.start()
+    assert not acquired.wait(timeout=0.3)
+    release.set()
+    holder.join(timeout=5)
+    saver.join(timeout=5)
+    assert acquired.is_set()
+
+
+def test_refresh_coordinator_serializes_publication_with_settings_saves(tmp_path):
+    """The publication guard must also exclude a real settings save.
+
+    The settings policy keeps its own lock file, and its revision is half of
+    the combined revision the coordinator guards on, so a settings save landing
+    mid-window would publish scope the policy no longer describes. Drive the
+    real ``save_settings`` and prove it cannot complete while the guard is held.
+    """
+    coordinator = _refresh_coordinator_for(tmp_path)
+    assert coordinator is not None
+
+    entered = threading.Event()
+    release = threading.Event()
+
+    def hold_guard():
+        with coordinator.config_guard():
+            entered.set()
+            release.wait(timeout=5)
+
+    holder = threading.Thread(target=hold_guard)
+    holder.start()
+    assert entered.wait(timeout=5)
+
+    current = cs.read_settings(tmp_path).settings.revision
+    finished = threading.Event()
+    errors: list = []
+
+    def settings_save():
+        try:
+            cs.save_settings(
+                tmp_path,
+                expected_revision=current,
+                native_task_auto=cs.NativeTaskAutoPolicy(),
+            )
+        except BaseException as exc:  # noqa: BLE001 — surfaced below
+            errors.append(exc)
+        finally:
+            finished.set()
+
+    saver = threading.Thread(target=settings_save)
+    saver.start()
+    assert not finished.wait(timeout=0.3)
+    release.set()
+    holder.join(timeout=5)
+    assert finished.wait(timeout=5)
+    saver.join(timeout=5)
+    assert errors == []

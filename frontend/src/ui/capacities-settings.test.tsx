@@ -35,7 +35,7 @@ function openWithCapacityRow() {
 describe("CapacitiesSettingsDrawer", () => {
   it("loads native rules and lists known Capacities identities without inventing inventory", async () => {
     const { rendered } = openWithCapacityRow();
-    expect(rendered.getByRole("status").textContent).toContain("Loading local policy");
+    expect(rendered.getAllByRole("status").some((el: HTMLElement) => el.textContent?.includes("Loading local policy"))).toBe(true);
     await waitFor(() => expect(rendered.getByText("Native Task Auto rules")).toBeTruthy());
 
     expect(rendered.getByText("Known Capacities objects")).toBeTruthy();

@@ -6,12 +6,20 @@
 import type {
   Capacity,
   CapacitiesCatalog,
+  CapacitiesRefreshMode,
+  CapacitiesRefreshStatus,
+  CapacitiesRuleNode,
+  CapacitiesRuleSaveResponse,
+  CapacitiesRules,
+  CapacitiesSelections,
+  CapacitiesSelectionsDraft,
   CapacitiesSettings,
   CapacitiesSettingsDraft,
   CapacitiesSourceDraft,
   CapacitiesSourceRead,
   CommitReport,
   DaySetup,
+  DaySetupSaveResult,
   FixedInputs,
   Ledger,
   PlanInputs,
@@ -29,6 +37,21 @@ export interface SequenceResult {
   /** T27: server's effective pin set (client pins + recurring auto-pins).
       Absent from adapters that don't compute it (fixture mode). */
   pinnedRows?: SequenceRow[];
+}
+
+/** U5: the server's opt-in store changed since it was read. Carries both
+    revisions so the caller can surface the conflict and keep the user's
+    unsaved selection instead of overwriting saved preferences. */
+export class PromptOptinConflictError extends Error {
+  constructor(
+    readonly expectedRevision: number,
+    readonly currentRevision: number,
+  ) {
+    super(
+      `prompt opt-ins changed since they were read (stored revision ${currentRevision}, expected ${expectedRevision})`,
+    );
+    this.name = "PromptOptinConflictError";
+  }
 }
 
 /** Today-only shaping context for POST bodies (locked decision 16): the
@@ -87,6 +110,16 @@ export interface Adapter {
   capacityPreview(daySetup: DaySetup, selectedBlocks: number[]): Promise<Capacity>;
   /** POST /day-setup — persist session/day-scoped setup, never vault config. */
   saveDaySetup(daySetup: DaySetup): Promise<void>;
+  /** U5 POST /day-setup {captures} — PATCH the local prompt drafts.
+      Prompt-only: never confirms the day. */
+  savePromptDrafts(patch: Record<string, string>): Promise<DaySetupSaveResult>;
+  /** U5 POST /day-setup {optins, optins_revision} — persist the undated
+      opt-ins with optimistic concurrency. Never confirms the day. A stale
+      revision throws PromptOptinConflictError. */
+  savePromptOptins(
+    optins: Record<string, boolean>,
+    expectedRevision: number,
+  ): Promise<DaySetupSaveResult>;
   /** POST /day-setup {micro_adventure} — T19 free Live override (shuffle /
       pick / custom); null clears the dated override back to the auto-pick.
       Never billed, never a history write. */
@@ -107,6 +140,36 @@ export interface Adapter {
       provider read; returns the advisory structure/property catalog. A
       failure must surface as an error, never as an empty catalog. */
   discoverCapacitiesSource(spaceId: string): Promise<CapacitiesCatalog>;
+  /** GET /capacities/rules — tokenless local read of the per-type Capacities
+      inclusion rules and the discovered type schema. No provider call. */
+  loadCapacitiesRules(): Promise<CapacitiesRules>;
+  /** POST /capacities/rules — one token-guarded save of ONE per-type rule.
+      The server stores an invalid rule as a draft and preserves the prior
+      active rule; a stale ``expectedRevision`` is a 409. */
+  saveCapacitiesRule(args: {
+    structureId: string;
+    rule: CapacitiesRuleNode;
+    fallbackMinutes: number | null;
+    expectedRevision: number;
+  }): Promise<CapacitiesRuleSaveResponse>;
+  /** GET /capacities/refresh/status — truthful local job + snapshot status.
+      Tokenless and provider-free. */
+  capacitiesRefreshStatus(): Promise<CapacitiesRefreshStatus>;
+  /** POST /capacities/refresh/start — one token-guarded paced job start
+      (``refresh`` or ``rescan``). A running job is a 409. */
+  startCapacitiesRefresh(
+    mode: CapacitiesRefreshMode,
+    scope: string,
+  ): Promise<CapacitiesRefreshStatus>;
+  /** POST /capacities/refresh/cancel — token-guarded cancellation of the
+      running job; returns the current truthful status. */
+  cancelCapacitiesRefresh(): Promise<CapacitiesRefreshStatus>;
+  /** GET /capacities/selections — tokenless local read of the durable
+      per-identity selections for the source space. */
+  loadCapacitiesSelections(): Promise<CapacitiesSelections>;
+  /** POST /capacities/selections — token-guarded merge with optimistic
+      revision; a stale ``expectedRevision`` is a 409. */
+  saveCapacitiesSelections(draft: CapacitiesSelectionsDraft): Promise<CapacitiesSelections>;
   /** GET /settings/exclusions — local tag-exclusion policy plus the advisory
       RootTag catalog. No provider call for the policy itself; a degraded
       catalog still returns the saved settings. */

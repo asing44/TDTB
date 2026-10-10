@@ -9,6 +9,7 @@ import {
   calendarWarnings,
   capacitiesAssignmentWarnings,
   capacitiesCoverageOf,
+  projectCapacitiesIntake,
   capacitiesSettingsToWire,
   capacitiesSourceToWire,
   daySetupToWire,
@@ -48,7 +49,7 @@ import planInputsAllotmentOmitted from "./contract-fixtures/plan-inputs-allotmen
 import planInputsAllotmentNull from "./contract-fixtures/plan-inputs-allotment-null.json";
 import planInputsAllotmentZero from "./contract-fixtures/plan-inputs-allotment-zero.json";
 import planInputsMalformed from "./contract-fixtures/plan-inputs-malformed.json";
-import type { CapacitiesSource, CapacitiesSourceStructure } from "../model/types";
+import type { CapacitiesIntake, CapacitiesSource, CapacitiesSourceStructure } from "../model/types";
 import planInputsFingerprintChanged from "./contract-fixtures/plan-inputs-fingerprint-changed.json";
 import sequenceOk from "./contract-fixtures/sequence-ok.json";
 import validateOk from "./contract-fixtures/validate-ok.json";
@@ -378,6 +379,19 @@ describe("Capacities partial coverage (source_warnings)", () => {
     "structures. Provider rate limit (30 requests per minute) reached. Wait " +
     "at least a minute, then Refresh sources to continue.";
 
+  const structuredIntake = (
+    state: CapacitiesIntake["state"],
+    coverage: CapacitiesIntake["coverage"],
+  ): CapacitiesIntake => ({
+    mode: "direct",
+    state,
+    generation: 3,
+    installedAt: null,
+    typeCheckTimes: {},
+    coverage,
+    unassignedCandidates: [],
+  });
+
   it("parses the evaluated/deferred counts and keeps the warning verbatim", () => {
     expect(capacitiesCoverageOf([budgetWarning])).toEqual({
       warnings: [budgetWarning],
@@ -399,6 +413,53 @@ describe("Capacities partial coverage (source_warnings)", () => {
     expect(capacitiesCoverageOf(["Calendar read failed (timeout)"])).toBeNull();
   });
 
+  it("a non-ok direct intake derives coverage from structured counts, not warning text", () => {
+    const c = capacitiesCoverageOf(
+      [],
+      structuredIntake("degraded", { members: 12, evaluated: 10, malformed: 1, unreadable: 1 }),
+    );
+    expect(c).toEqual({ warnings: [], evaluated: 10, deferred: 2, limit: "unknown" });
+  });
+
+  it("structured counts win over conflicting warning text", () => {
+    const c = capacitiesCoverageOf(
+      [budgetWarning],
+      structuredIntake("degraded", { members: 40, evaluated: 25, malformed: 0, unreadable: 0 }),
+    );
+    expect(c).toEqual({
+      warnings: [budgetWarning],
+      evaluated: 25,
+      deferred: 15,
+      limit: "unknown",
+    });
+  });
+
+  it("an ok direct intake is full coverage even when a Capacities warning is present", () => {
+    expect(
+      capacitiesCoverageOf(
+        [budgetWarning],
+        structuredIntake("ok", { members: 12, evaluated: 12, malformed: 0, unreadable: 0 }),
+      ),
+    ).toBeNull();
+  });
+
+  it("never reports a negative deferral when evaluated exceeds members", () => {
+    const c = capacitiesCoverageOf(
+      [],
+      structuredIntake("degraded", { members: 3, evaluated: 5, malformed: 0, unreadable: 0 }),
+    );
+    expect(c!.deferred).toBe(0);
+  });
+
+  it("null/absent intake keeps the legacy warning-text parser", () => {
+    expect(capacitiesCoverageOf([budgetWarning], null)).toEqual({
+      warnings: [budgetWarning],
+      evaluated: 20,
+      deferred: 51,
+      limit: "content-read budget",
+    });
+  });
+
   it("keeps an unparsable Capacities warning visible with unknown counts", () => {
     const warning = "Capacities partial — details unavailable";
     const c = capacitiesCoverageOf([warning]);
@@ -413,6 +474,168 @@ describe("Capacities partial coverage (source_warnings)", () => {
     expect(p.sourceWarnings).toEqual([budgetWarning]);
     expect(p.sourceHealth).toBe("degraded");
     expect(calendarWarnings(p.sourceWarnings)).toEqual([]);
+  });
+});
+
+describe("S7a typed direct-intake block (capacities_intake)", () => {
+  const directBlock = {
+    mode: "direct",
+    state: "ok",
+    generation: 7,
+    installed_at: 1728480000.5,
+    type_check_times: { "struct-a": 1728480001.25, "struct-b": 1728480002.5 },
+    coverage: { members: 12, evaluated: 10, malformed: 1, unreadable: 1 },
+    unassigned_candidates: [
+      {
+        identity: "capacities:sp:struct-a:obj-1",
+        name: "Obj One",
+        review_reasons: ["unknown"],
+        selected: true,
+      },
+      {
+        identity: "capacities:sp:struct-a:obj-2",
+        name: "Obj Two",
+        review_reasons: [],
+        selected: false,
+      },
+    ],
+  };
+
+  // The safe/conservative projection for a present-but-unusable block. It must
+  // never claim success or full coverage.
+  const safeUnavailable = {
+    mode: "direct",
+    state: "unavailable",
+    generation: null,
+    installedAt: null,
+    typeCheckTimes: {},
+    coverage: { members: 0, evaluated: 0, malformed: 0, unreadable: 0 },
+    unassignedCandidates: [],
+  };
+
+  it("omits the key entirely for a legacy payload with no block", () => {
+    const p = projectPlanInputs(planInputs);
+    expect(p.capacitiesIntake).toBeUndefined();
+    expect("capacitiesIntake" in p).toBe(false);
+    expect(projectCapacitiesIntake(undefined)).toBeNull();
+    expect(projectCapacitiesIntake(null)).toBeNull();
+    expect(
+      "capacitiesIntake" in projectPlanInputs({ ...planInputs, capacities_intake: null }),
+    ).toBe(false);
+  });
+
+  it("projects a valid direct block faithfully", () => {
+    expect(projectCapacitiesIntake(directBlock)).toEqual({
+      mode: "direct",
+      state: "ok",
+      generation: 7,
+      installedAt: 1728480000.5,
+      typeCheckTimes: { "struct-a": 1728480001.25, "struct-b": 1728480002.5 },
+      coverage: { members: 12, evaluated: 10, malformed: 1, unreadable: 1 },
+      unassignedCandidates: [
+        {
+          identity: "capacities:sp:struct-a:obj-1",
+          name: "Obj One",
+          reviewReasons: ["unknown"],
+          selected: true,
+        },
+        {
+          identity: "capacities:sp:struct-a:obj-2",
+          name: "Obj Two",
+          reviewReasons: [],
+          selected: false,
+        },
+      ],
+    });
+    const p = projectPlanInputs({ ...planInputs, capacities_intake: directBlock });
+    expect(p.capacitiesIntake?.state).toBe("ok");
+    expect(p.capacitiesIntake?.coverage).toEqual({
+      members: 12,
+      evaluated: 10,
+      malformed: 1,
+      unreadable: 1,
+    });
+    expect(p.capacitiesIntake?.unassignedCandidates[0].reviewReasons).toEqual(["unknown"]);
+  });
+
+  it("retains each non-success state, generation and installed_at faithfully", () => {
+    for (const state of [
+      "not_configured",
+      "refresh_required",
+      "unavailable",
+      "degraded",
+    ] as const) {
+      const projected = projectCapacitiesIntake({
+        ...directBlock,
+        state,
+        generation: null,
+        installed_at: null,
+        type_check_times: {},
+        unassigned_candidates: [],
+      });
+      expect(projected?.state).toBe(state);
+      expect(projected?.generation).toBeNull();
+      expect(projected?.installedAt).toBeNull();
+    }
+    expect(
+      projectCapacitiesIntake({ ...directBlock, state: "degraded" })?.installedAt,
+    ).toBe(1728480000.5);
+  });
+
+  it("never turns a malformed present block into success or full coverage", () => {
+    const malformed: unknown[] = [
+      "nope",
+      42,
+      [],
+      {},
+      { mode: "legacy", state: "ok" },
+      { mode: "direct", state: "success" },
+      { mode: "direct", state: "ok" },
+      { mode: "direct", state: "ok", coverage: "x", unassigned_candidates: [] },
+      { mode: "direct", state: "ok", coverage: directBlock.coverage },
+    ];
+    for (const raw of malformed) {
+      expect(projectCapacitiesIntake(raw)).toEqual(safeUnavailable);
+      const projected = projectPlanInputs({ ...planInputs, capacities_intake: raw });
+      expect(projected.capacitiesIntake).toEqual(safeUnavailable);
+      expect(projected.capacitiesIntake?.state).not.toBe("ok");
+    }
+  });
+
+  it("treats missing or malformed coverage counts as unavailable, never ok", () => {
+    const malformedCoverages: unknown[] = [
+      {},
+      { members: 12, evaluated: 10, malformed: 1 }, // missing unreadable
+      { members: -1, evaluated: 0, malformed: 0, unreadable: 0 },
+      { members: 1.5, evaluated: 0, malformed: 0, unreadable: 0 },
+      { members: "3", evaluated: 0, malformed: 0, unreadable: 0 },
+      { members: null, evaluated: 0, malformed: 0, unreadable: 0 },
+    ];
+    for (const coverage of malformedCoverages) {
+      const raw = { mode: "direct", state: "ok", coverage, unassigned_candidates: [] };
+      expect(projectCapacitiesIntake(raw)).toEqual(safeUnavailable);
+      expect(projectCapacitiesIntake(raw)?.state).not.toBe("ok");
+    }
+  });
+
+  it("tolerates missing optional scalars inside a structurally valid block", () => {
+    const projected = projectCapacitiesIntake({
+      mode: "direct",
+      state: "not_configured",
+      coverage: { members: 0, evaluated: 0, malformed: 0, unreadable: 0 },
+      unassigned_candidates: [{ identity: "i", name: "n" }],
+    });
+    expect(projected).toEqual({
+      mode: "direct",
+      state: "not_configured",
+      generation: null,
+      installedAt: null,
+      typeCheckTimes: {},
+      coverage: { members: 0, evaluated: 0, malformed: 0, unreadable: 0 },
+      unassignedCandidates: [
+        { identity: "i", name: "n", reviewReasons: [], selected: false },
+      ],
+    });
   });
 });
 
@@ -780,6 +1003,27 @@ describe("model → wire body builders", () => {
     // Upstream truth untouched (locked decision 16):
     expect(shaped.every((r: any) => r.assigned === true)).toBe(true);
     expect(raw[0].blocks).toBe(2); // input not mutated
+  });
+
+  it("preserves canonical Capacities identity and source ids through shaping", () => {
+    const raw = [
+      {
+        name: "Make",
+        path: "50 - Operations/Projects/Make.md",
+        source: "capacities",
+        identity: "capacities:sp:struct-a:obj-1",
+        todoist_id: "td-1",
+        assigned: true,
+        blocks: 2,
+      },
+    ];
+    const shaped = shapeAssignedWire(raw as any, [{ id: "Make", blocks: 4 }]);
+    expect(shaped[0].identity).toBe("capacities:sp:struct-a:obj-1");
+    expect(shaped[0].todoist_id).toBe("td-1");
+    expect(shaped[0].source).toBe("capacities");
+    expect(shaped[0].path).toBe(raw[0].path);
+    expect(shaped[0].id).toBe("Make");
+    expect(shaped[0].blocks).toBe(4);
   });
 
   it("emits an explicit per-item time-adjustment permission", () => {

@@ -24,7 +24,8 @@ The document is::
       "todoist": {"read_query": {"assigned": ..., "quick": ...}},
       "sources": {"mode": "live" | "artifact",
                   "artifact": {"max_age_minutes": 240},
-                  "vault_enabled": true}
+                  "vault_enabled": true,
+                  "capacities_intake": "legacy" | "direct"}
     }
 
 ``sources`` is the artifact-contract pivot's source-selection knob (see
@@ -75,8 +76,22 @@ SOURCES_MODE_LIVE = "live"
 SOURCES_MODE_ARTIFACT = "artifact"
 SOURCES_MODES = frozenset({SOURCES_MODE_LIVE, SOURCES_MODE_ARTIFACT})
 
+#: ``sources.capacities_intake`` — which Capacities intake the planning digest
+#: reads. ``legacy`` (the default) keeps the existing read; ``direct`` projects
+#: the published direct-refresh cache offline with no provider access. Only the
+#: exact ``direct`` value selects it, so a typo can never switch intake by
+#: accident: anything else resolves to ``legacy`` and is reported.
+SOURCES_CAPACITIES_INTAKE_KEY = "capacities_intake"
+CAPACITIES_INTAKE_LEGACY = "legacy"
+CAPACITIES_INTAKE_DIRECT = "direct"
+CAPACITIES_INTAKE_MODES = frozenset({CAPACITIES_INTAKE_LEGACY, CAPACITIES_INTAKE_DIRECT})
+DEFAULT_CAPACITIES_INTAKE = CAPACITIES_INTAKE_LEGACY
+
 #: Keys the ``sources`` section recognizes. Anything else is reported.
-SOURCES_KNOWN_KEYS = frozenset({"mode", "vault_enabled", "artifact", "max_age_minutes"})
+SOURCES_KNOWN_KEYS = frozenset({
+    "mode", "vault_enabled", "artifact", "max_age_minutes",
+    SOURCES_CAPACITIES_INTAKE_KEY,
+})
 
 #: Keys the nested ``sources.artifact`` section recognizes.
 SOURCES_ARTIFACT_KNOWN_KEYS = frozenset({"max_age_minutes"})
@@ -240,6 +255,23 @@ def artifact_max_age_minutes(path: str | Path | None = None) -> int:
     return DEFAULT_ARTIFACT_MAX_AGE_MINUTES
 
 
+def capacities_intake(path: str | Path | None = None) -> str:
+    """The Capacities intake the planning digest reads: ``legacy`` or ``direct``.
+
+    ``direct`` is selected only by the exact string ``"direct"``. Anything else
+    (missing, misspelled, a non-string, or an unusable document) resolves to
+    :data:`DEFAULT_CAPACITIES_INTAKE`. :func:`sources_config_warnings` reports a
+    value that did not resolve, so a misspelling is never a silent switch.
+    """
+    document = load_document(path)
+    if document is None:
+        return DEFAULT_CAPACITIES_INTAKE
+    value = _trimmed_keys(document.get("sources")).get(SOURCES_CAPACITIES_INTAKE_KEY)
+    if isinstance(value, str) and value in CAPACITIES_INTAKE_MODES:
+        return value
+    return DEFAULT_CAPACITIES_INTAKE
+
+
 def sources_config_warnings(path: str | Path | None = None) -> list[str]:
     """Report unrecognized keys in the ``sources`` section of config.json.
 
@@ -262,6 +294,13 @@ def sources_config_warnings(path: str | Path | None = None) -> list[str]:
     if not isinstance(sources, dict):
         return []
     warnings = _unrecognized_key_warnings(sources, "sources", SOURCES_KNOWN_KEYS)
+    intake = _trimmed_keys(sources).get(SOURCES_CAPACITIES_INTAKE_KEY, DEFAULT_CAPACITIES_INTAKE)
+    if not (isinstance(intake, str) and intake in CAPACITIES_INTAKE_MODES):
+        warnings.append(
+            f"config.json sources.{SOURCES_CAPACITIES_INTAKE_KEY} is {intake!r}, "
+            "which is not 'legacy' or 'direct'; using 'legacy' (the Capacities "
+            "intake does not switch on an unrecognized value)."
+        )
     artifact = sources.get("artifact")
     if isinstance(artifact, dict):
         warnings += _unrecognized_key_warnings(

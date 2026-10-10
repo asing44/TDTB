@@ -10,6 +10,7 @@
      canLiveCommit at call time — the second-click gate (locked decision 9). */
 
 import type { Adapter, SequenceContext } from "../adapters/adapter";
+import { PromptOptinConflictError } from "../adapters/adapter";
 import { ApiError } from "../adapters/api";
 import { itemIdentity, projectSequenceRow } from "../adapters/wire";
 import { fingerprintFixedInputs } from "../model/fingerprint";
@@ -34,6 +35,13 @@ import {
 import type {
   AnchoredOverride,
   CapacitiesCatalog,
+  CapacitiesRefreshMode,
+  CapacitiesRefreshStatus,
+  CapacitiesRuleNode,
+  CapacitiesRuleSaveResponse,
+  CapacitiesRules,
+  CapacitiesSelections,
+  CapacitiesSelectionsDraft,
   CapacitiesSettings,
   CapacitiesSettingsDraft,
   CapacitiesSourceDraft,
@@ -297,6 +305,59 @@ export class Controller {
     return this.adapter.discoverCapacitiesSource(spaceId);
   }
 
+  /** Read the per-type Capacities inclusion rules (local; no provider call). */
+  async loadCapacitiesRules(): Promise<CapacitiesRules> {
+    return this.adapter.loadCapacitiesRules();
+  }
+
+  /** Save ONE per-type rule. The server stores an invalid rule as a draft and
+      preserves the prior active rule; a stale revision is a 409. */
+  async saveCapacitiesRule(args: {
+    structureId: string;
+    rule: CapacitiesRuleNode;
+    fallbackMinutes: number | null;
+    expectedRevision: number;
+  }): Promise<CapacitiesRuleSaveResponse> {
+    return this.adapter.saveCapacitiesRule(args);
+  }
+
+  /** Truthful local refresh status (tokenless; no provider call). */
+  async loadCapacitiesRefreshStatus(): Promise<CapacitiesRefreshStatus> {
+    return this.adapter.capacitiesRefreshStatus();
+  }
+
+  /** Start one paced Refresh/Rescan job (explicit user action). */
+  async startCapacitiesRefresh(
+    mode: CapacitiesRefreshMode,
+    scope: string,
+  ): Promise<CapacitiesRefreshStatus> {
+    return this.adapter.startCapacitiesRefresh(mode, scope);
+  }
+
+  /** Cancel the running refresh job; returns the current truthful status. */
+  async cancelCapacitiesRefresh(): Promise<CapacitiesRefreshStatus> {
+    return this.adapter.cancelCapacitiesRefresh();
+  }
+
+  /** Read the durable per-identity Capacities selections (local read). */
+  async loadCapacitiesSelections(): Promise<CapacitiesSelections> {
+    return this.adapter.loadCapacitiesSelections();
+  }
+
+  /** Merge selections with optimistic concurrency; a stale revision is 409.
+      After a successful save the source is re-read through the SAME refresh
+      path an explicit refresh uses, so the promoted selection reaches the
+      server digest (and the Commit body) instead of living only in the UI.
+      Returns the saved record plus the refresh outcome so the caller can say
+      "Saved; planning refresh failed" rather than showing stale eligibility. */
+  async saveCapacitiesSelections(
+    draft: CapacitiesSelectionsDraft,
+  ): Promise<{ selections: CapacitiesSelections; refreshError: string | null }> {
+    const selections = await this.adapter.saveCapacitiesSelections(draft);
+    await this.refreshSources();
+    return { selections, refreshError: this.getState().refresh.error };
+  }
+
   async loadTagExclusionSettings(): Promise<TagExclusionSettings> {
     return this.adapter.loadTagExclusionSettings();
   }
@@ -341,6 +402,64 @@ export class Controller {
     await this.adapter.saveDaySetup(sanitized);
     this.dispatch({ type: "SETUP_SAVED", daySetup: sanitized });
     await this.refreshCapacity();
+  }
+
+  /** U5: PATCH the local prompt drafts. Captures-only, so the server treats
+      it as a prompt-only write that never confirms the day. */
+  async savePromptDrafts(patch: Record<string, string>): Promise<void> {
+    this.dispatch({ type: "PROMPT_SAVE_START" });
+    try {
+      const result = await this.adapter.savePromptDrafts(patch);
+      const captures = {
+        ...this.getState().daySetup.captures,
+        ...(typeof patch.intention === "string" ? { intention: patch.intention } : {}),
+        ...(typeof patch.megan_nicety === "string" ? { forMeegy: patch.megan_nicety } : {}),
+        ...(typeof patch.stoic_intention === "string" ? { stoic: patch.stoic_intention } : {}),
+      };
+      this.dispatch({
+        type: "PROMPT_DRAFTS_SAVED",
+        captures,
+        // An unavailable echo must not overwrite known prefs with a fabricated
+        // all-false map; null tells the reducer to keep them unavailable.
+        optins: result.optinsAvailable ? result.optins : null,
+        revision: result.optinsRevision,
+        warnings: result.promptWarnings,
+      });
+    } catch (e) {
+      this.dispatch({
+        type: "PROMPT_SAVE_ERROR",
+        error: String(e instanceof Error ? e.message : e),
+      });
+    }
+  }
+
+  /** U5: persist the undated opt-ins with the last-known revision. A stale
+      revision keeps the user's unsaved selection — the conflict is surfaced,
+      never resolved by overwriting saved preferences. */
+  async savePromptOptins(optins: Record<string, boolean>): Promise<void> {
+    const revision = this.getState().promptOptins.revision;
+    this.dispatch({ type: "PROMPT_SAVE_START" });
+    try {
+      const result = await this.adapter.savePromptOptins(optins, revision);
+      this.dispatch({
+        type: "PROMPT_OPTINS_SAVED",
+        optins: result.optins,
+        revision: result.optinsRevision,
+      });
+    } catch (e) {
+      if (e instanceof PromptOptinConflictError) {
+        this.dispatch({
+          type: "PROMPT_OPTIN_CONFLICT",
+          expectedRevision: e.expectedRevision,
+          currentRevision: e.currentRevision,
+        });
+        return;
+      }
+      this.dispatch({
+        type: "PROMPT_SAVE_ERROR",
+        error: String(e instanceof Error ? e.message : e),
+      });
+    }
   }
 
   /** T19: persist a Live micro-adventure override (shuffle / pool pick /

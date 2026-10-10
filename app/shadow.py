@@ -97,6 +97,9 @@ class ManifestEntry:
     is_recurring: bool = False
     native_start: str | None = None
     retiming_authorized: bool | None = None
+    # True when the row's identity came from a Capacities assigned row (S6b).
+    # The Todoist writer refuses such an entry; kept out of ``as_dict``.
+    capacities: bool = False
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -265,11 +268,8 @@ def apply_day_setup(
         blocks.append(nb)
     cfg[key] = blocks
     cfg["re_included"] = sorted(re_inc)
-    captures = {k: day_setup[k]
-                for k in ("intention", "megan_nicety", "stoic_intention")
-                if day_setup.get(k)}
-    if captures:
-        cfg["captures"] = captures
+    # U5: prompts are private local runtime state and are never carried into
+    # config here — the legacy cfg["captures"] export lane is retired.
     return cfg
 
 
@@ -354,6 +354,30 @@ def _is_todoist_assigned(item: dict[str, Any]) -> bool:
     todoist_id = str(item.get("todoist_id") or "").strip()
     path = str(item.get("path") or "").strip()
     return source == "todoist" or bool(todoist_id) or path.startswith("todoist://")
+
+
+def _is_capacities_assigned(item: dict[str, Any]) -> bool:
+    """Identify a Capacities assigned row (S6b).
+
+    The sanitized ``source`` field classifies the row. A ``capacities://`` path
+    also counts, as a fail-closed backstop that matches the eligibility gate.
+    A path alone never makes a row Todoist or vault.
+    """
+    source = str(item.get("source") or "").strip().casefold()
+    path = str(item.get("path") or "").strip().casefold()
+    return source == "capacities" or path.startswith("capacities://")
+
+
+def _capacities_name_collisions(assigned_items: list[dict[str, Any]]) -> list[str]:
+    """Names held by both a Capacities row and a non-Capacities row (S6b).
+
+    Sequence rows are name-keyed, so such a name cannot say which identity it
+    means. The builder refuses it rather than let the name cross the Capacities
+    boundary in either direction.
+    """
+    capacities = {item.get("name") for item in assigned_items if _is_capacities_assigned(item)}
+    others = {item.get("name") for item in assigned_items if not _is_capacities_assigned(item)}
+    return sorted(str(name) for name in capacities & others)
 
 
 def _todoist_manifest_metadata(item: dict[str, Any]) -> dict[str, Any]:
@@ -444,7 +468,9 @@ def build_plan_manifest(
     proposal (the /sequence response body: ``{"sequence": [{id,start,end,zone}, ...]}``).
 
     Row partition (SKILL.md Phase 5 semantics):
-      - id matches an Assigned digest item's name -> Step A (Todoist).
+      - id matches an Assigned digest item's name -> Step A (Todoist), unless
+        the item is a Capacities row (S6b): then Step D calendar only. A name
+        shared across the Capacities boundary raises ValueError.
       - id names a Trinoor work zone -> Step D′ (calendar).
       - id matches a ``config["anchored_blocks"]`` entry -> Step E
         (calendar), skipping blocks toggled off / skipped today, and
@@ -453,6 +479,12 @@ def build_plan_manifest(
       - anything else -> Step D (schedulable block: Minting / Shivery Jigs).
     """
     config = config or {}
+    collisions = _capacities_name_collisions(digest.get("assigned") or [])
+    if collisions:
+        raise ValueError(
+            "Capacities and non-Capacities assigned rows share a name; refusing "
+            "to build a manifest that cannot tell them apart: " + ", ".join(collisions)
+        )
     assigned = {item.get("name"): item for item in (digest.get("assigned") or [])}
     anchored = _anchored_specs(config)
     micro_adventure = config.get("micro_adventure")
@@ -469,6 +501,18 @@ def build_plan_manifest(
         if row_id in assigned:
             item = assigned[row_id]
             sequenced_assigned.add(row_id)
+            if _is_capacities_assigned(item):
+                # S6b: plan-only. One calendar block on the ⬜ Blocks class (the
+                # Step D default for non-Mint rows), resolved by plan_writes like
+                # every other calendar row. No Todoist task, no vault flip, and no
+                # name-derived Mint class.
+                entries.append(ManifestEntry(
+                    step="D", system="calendar", action="create-event",
+                    name=str(row_id), id_or_path=str(row_id),
+                    time=start, duration_min=duration, routing="⬜ Blocks",
+                    capacities=True,
+                ))
+                continue
             # Routing reads the digest item's own vault types first (shakedown
             # 2026-07-14, defect: Magic Mirror -> Inbox): _preset_type only
             # knows config Presets rows, but assigned items are vault notes
@@ -574,6 +618,8 @@ def build_plan_manifest(
     for name, item in assigned.items():
         if name in sequenced_assigned or item.get("blocks") != 0:
             continue
+        if _is_capacities_assigned(item):
+            continue  # S6b: no Todoist due; no timeline row means no calendar time
         entries.append(ManifestEntry(
             step="A", system="todoist", action="schedule-all-day",
             name=name, id_or_path=item.get("path") or name,
@@ -582,27 +628,10 @@ def build_plan_manifest(
             **_todoist_manifest_metadata(item),
         ))
 
-    # Step A captures — niceties to Todoist Inbox (skill 1550–1560): bare
-    # verbatim text, ALL-DAY by design (no time, no duration, no block).
-    # ``intention`` never becomes a task — it lives only in B6 frontmatter.
-    captures = config.get("captures") or {}
-    for cap_key in ("megan_nicety", "stoic_intention"):
-        text = str(captures.get(cap_key) or "").strip()
-        if not text:
-            continue  # skip silently — empty fields never write
-        entries.append(ManifestEntry(
-            step="A", system="todoist", action="capture-nicety",
-            name=text, id_or_path=f"capture://{cap_key}", routing="Inbox",
-        ))
-
-    # B6 — Phase-1 captures into the daily note's frontmatter (skill 1607):
-    # one row when any capture is present; the writer merges only MISSING keys.
-    if any(str(captures.get(k) or "").strip()
-           for k in ("intention", "megan_nicety", "stoic_intention")):
-        entries.append(ManifestEntry(
-            step="B6", system="vault", action="frontmatter-captures",
-            name="Phase-1 captures", id_or_path="<today's daily note>",
-        ))
+    # U5: Phase-1 prompts are private local runtime state (prompt_state.py).
+    # Their legacy automatic exports are RETIRED — no capture-nicety Todoist
+    # rows and no B6 frontmatter-captures rows are emitted, so a manifest can
+    # never carry prompt text to Todoist or the daily note.
 
     # Step B — daily-note "# TDTB Plan" section patch. Always exactly one row
     # (a commit always writes/refreshes the plan section).
@@ -616,6 +645,8 @@ def build_plan_manifest(
     # their live surface is the task itself (Step A); skip them or every
     # sourced item shadows as a phantom "target missing" conflict.
     for name, item in assigned.items():
+        if _is_capacities_assigned(item):
+            continue  # S6b: plan-only, no vault flip
         path = item.get("path") or name
         if str(path).startswith("todoist://"):
             continue
@@ -986,21 +1017,6 @@ def diff_against_live(manifest: list[ManifestEntry], live_state: dict[str, Any])
                 entries.append(ShadowDiffEntry(
                     m, UPDATE, {"assigned": {"old": fm.get("assigned"), "new": True}}
                 ))
-
-        elif m.action == "frontmatter-captures":  # B6
-            if live_state.get("vault_unavailable"):
-                entries.append(ShadowDiffEntry(m, UNAVAILABLE, {"reason": "vault surface unavailable"}))
-                continue
-            if daily_note_text is None:
-                entries.append(ShadowDiffEntry(m, CONFLICT, {"reason": "daily note not found"}))
-                continue
-            fm = gather.parse_frontmatter(daily_note_text) or {}
-            missing = [k for k in ("intention", "megan_nicety", "stoic_intention")
-                       if k not in fm]
-            if missing:
-                entries.append(ShadowDiffEntry(m, UPDATE, {"missing_keys": missing}))
-            else:
-                entries.append(ShadowDiffEntry(m, NOOP, {}))
 
         elif m.action == "patch":  # Step B
             if live_state.get("vault_unavailable"):

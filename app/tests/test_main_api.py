@@ -13,6 +13,8 @@ import pytest
 from fastapi.testclient import TestClient
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
+import capacities_selections  # noqa: E402
+import prompt_state  # noqa: E402
 import main as main_mod  # noqa: E402
 import runstate as rs  # noqa: E402
 import shadow  # noqa: E402
@@ -445,7 +447,7 @@ class TestLiveCommit:
         assert body["ok"] is True
         assert body["resumed"] is False
         assert set(body["surfaces"]) == {"todoist", "vault_flips", "daily_note",
-                                          "captures", "calendar"}
+                                          "calendar"}
         # the daily note actually got the plan section patched in
         text = (vault / "30 - Daily/2026-07-12.md").read_text(encoding="utf-8")
         assert "# TDTB Plan" in text
@@ -531,6 +533,106 @@ class TestLiveCommit:
 # T4 (ui-parity) — Day Setup state + /plan-inputs time/capacity blocks
 # ---------------------------------------------------------------------------
 
+class TestCapacitiesMixedPlanCommit:
+    """U4 S6 endpoint: a mixed plan admits its selected Capacities row as one
+    calendar entry, and its Todoist row keeps exactly the manifest it gets alone."""
+
+    CAP_IDENTITY = "capacities:space-1:RootTask:object-1"
+    CAP_DIGEST = {
+        "name": "Ship project", "path": "capacities://space-1/object-1",
+        "identity": CAP_IDENTITY,
+    }
+    TODOIST_DIGEST = {"name": "LOOTS", "path": "todoist://T1", "todoist_id": "T1"}
+    TODOIST_SEQ = {"id": "LOOTS", "start": "10:00", "end": "10:30", "zone": "any"}
+    CAP_SEQ = {"id": "Ship project", "start": "09:00", "end": "10:00", "zone": "any"}
+
+    def _seed(self, vault: Path, today: date) -> None:
+        capacities_selections.save_selections(
+            space_id="space-1", expected_revision=0,
+            selections=[{
+                "identity": self.CAP_IDENTITY,
+                "rules_revision": 0, "acknowledged": True,
+            }],
+        )
+        rs.write_digest_index(vault, today, [
+            {"name": "Ship project", "todoist_id": "",
+             "path": "capacities://space-1/object-1",
+             "identity": self.CAP_IDENTITY, "source": "capacities",
+             "capacities_id": "object-1", "capacities_space_id": "space-1",
+             "capacities_structure_id": "RootTask", "surface": "assigned"},
+            {"name": "LOOTS", "todoist_id": "T1", "path": "todoist://T1",
+             "source": "todoist", "surface": "assigned"},
+        ])
+
+    def _commit(self, client, digest_rows, seq_rows):
+        return client.post(
+            "/commit?mode=shadow",
+            headers=_auth(client),
+            json={
+                "digest": {"assigned": list(digest_rows), "suggested": []},
+                "sequence": {"sequence": list(seq_rows)},
+                "config": {},
+            },
+        )
+
+    def test_mixed_plan_admits_capacities_as_calendar_only_and_todoist_unchanged(
+        self, client, vault, monkeypatch
+    ):
+        today = gather.effective_date(datetime.now())
+        self._seed(vault, today)
+        monkeypatch.setattr(shadow, "gather_live_state", _fake_live_state)
+        before = {p: p.read_bytes() for p in vault.rglob("*") if p.is_file()}
+
+        mixed = self._commit(
+            client, [self.CAP_DIGEST, self.TODOIST_DIGEST],
+            [self.CAP_SEQ, self.TODOIST_SEQ],
+        )
+        alone = self._commit(client, [self.TODOIST_DIGEST], [self.TODOIST_SEQ])
+
+        assert mixed.status_code == 200, mixed.text
+        assert alone.status_code == 200, alone.text
+        mixed_manifest = [e["manifest"] for e in mixed.json()["entries"]]
+        cap = [m for m in mixed_manifest if m["name"] == "Ship project"]
+        assert [(m["system"], m["action"]) for m in cap] == [("calendar", "create-event")]
+        mixed_todoist = [m for m in mixed_manifest if m["system"] == "todoist"]
+        alone_todoist = [
+            e["manifest"] for e in alone.json()["entries"]
+            if e["manifest"]["system"] == "todoist"
+        ]
+        assert alone_todoist, "the Todoist row must plan a Todoist entry on its own"
+        assert mixed_todoist == alone_todoist
+        assert before == {p: p.read_bytes() for p in vault.rglob("*") if p.is_file()}
+
+    def test_cross_boundary_name_collision_is_422_and_writes_nothing(
+        self, client, vault, monkeypatch
+    ):
+        today = gather.effective_date(datetime.now())
+        self._seed(vault, today)
+        rs.write_digest_index(vault, today, [
+            {"name": "Ship project", "todoist_id": "T1", "path": "todoist://T1",
+             "source": "todoist", "surface": "assigned"},
+            {"name": "Ship project", "todoist_id": "",
+             "path": "capacities://space-1/object-1",
+             "identity": self.CAP_IDENTITY, "source": "capacities",
+             "capacities_id": "object-1", "capacities_space_id": "space-1",
+             "capacities_structure_id": "RootTask", "surface": "assigned"},
+        ])
+        monkeypatch.setattr(shadow, "gather_live_state", _fake_live_state)
+        before = {p: p.read_bytes() for p in vault.rglob("*") if p.is_file()}
+
+        response = self._commit(
+            client,
+            [{"name": "Ship project", "path": "todoist://T1", "todoist_id": "T1"},
+             {**self.CAP_DIGEST}],
+            [{"id": "Ship project", "start": "09:00", "end": "10:00", "zone": "any"}],
+        )
+
+        assert response.status_code == 422, response.text
+        assert "Ship project" in response.json()["detail"]
+        assert "nothing was written" in response.json()["detail"]
+        assert before == {p: p.read_bytes() for p in vault.rglob("*") if p.is_file()}
+
+
 def _write_min_config(vault: Path) -> None:
     cfg = vault / "00 - META/Skill-Configs/tdtb-bridger.md"
     cfg.parent.mkdir(parents=True, exist_ok=True)
@@ -580,8 +682,16 @@ class TestDaySetup:
         state = gather._extract_json_block(note.read_text(encoding="utf-8"))
         assert state["anchor"] == "18:00" and state["eod"] == "22:00"
         assert state["buffering"] == "standard"
-        assert state["intention"] == "ship T4"
-        assert state["megan_nicety"] == "hi Meegy"
+        # U5: legacy runstate prompt keys stay INERT (skeleton empty); the
+        # captures persist to the local prompt draft store instead.
+        assert state["intention"] == ""
+        assert state["megan_nicety"] == ""
+        assert prompt_state.load_drafts(today.isoformat()).drafts == {
+            "intention": "ship T4",
+            "megan_nicety": "hi Meegy",
+            "stoic_intention": "temperance",
+        }
+        assert body["day_setup"]["intention"] == "ship T4"
         assert "Sudsing" in state["re_included"]
         assert state["schedulable"]["qt"]["on"] is True
 
@@ -1209,15 +1319,14 @@ class TestEstimationCorrection:
 
 
 class TestCommitCapturesFlow:
-    """T8 (ui-parity): Day Setup captures reach the /commit shadow diff."""
+    """U5: Day Setup captures are local prompt state — they never reach the
+    /commit shadow diff as capture-nicety or frontmatter-captures rows."""
 
-    def test_shadow_commit_shows_capture_rows(self, client, vault):
+    def test_shadow_commit_has_no_capture_rows(self, client, vault):
         _write_min_config(vault)
         client.post("/day-setup", json={
             "captures": {"intention": "ship it", "megan_nicety": "Walk outside"},
         }, headers=_auth(client))
-        # token file for gather_live_state todoist read isn't present in the
-        # tmp vault — shadow degrades that surface, vault rows still classify
         r = client.post("/commit?mode=shadow", headers=_auth(client),
                         json={"digest": {"assigned": []},
                               "sequence": {"sequence": []}, "config": {}})
@@ -1226,8 +1335,8 @@ class TestCommitCapturesFlow:
             _pytest.skip("shadow state unavailable in this env")
         entries = r.json()["entries"]
         actions = [e["manifest"]["action"] for e in entries]
-        assert "capture-nicety" in actions
-        assert "frontmatter-captures" in actions
+        assert "capture-nicety" not in actions
+        assert "frontmatter-captures" not in actions
 
 
 class TestIgnoreListDigestFilter:

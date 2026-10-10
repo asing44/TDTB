@@ -16,12 +16,14 @@ import type {
   RuntimeAction,
   Capacity,
   CapacitiesCoverage,
+  Captures,
   CommitReport,
   DaySetup,
   Ledger,
   MicroIdea,
   OverlapGrant,
   PlanInputs,
+  PromptOptinState,
   QueueState,
   SequenceRow,
   ShadowDiff,
@@ -45,6 +47,14 @@ export type SettingsPanel = "day" | "capacities" | "tags";
 
 export function isSettingsPanel(value: unknown): value is SettingsPanel {
   return value === "day" || value === "capacities" || value === "tags";
+}
+
+/** B3 top-level screens. `settingsPanel` remains the contextual drawer path;
+    `screen` is the promoted full-screen destination. */
+export type Screen = "plan" | "setup" | "connections";
+
+export function isScreen(value: unknown): value is Screen {
+  return value === "plan" || value === "setup" || value === "connections";
 }
 
 /** Legacy drawer flags, in fixed precedence for a single normalizing write. */
@@ -93,6 +103,16 @@ function normalizeSettingsUi(
     }
   }
 
+  // Opening a contextual panel also lands the promoted screen on the matching
+  // destination; an explicit `screen` patch wins. Closing the drawer leaves the
+  // current screen untouched.
+  const explicitScreen = has("screen") && isScreen(patch.screen) ? patch.screen : null;
+  const derivedScreen: Screen | null =
+    panel === "day" ? "setup" : panel === null ? null : "connections";
+  // Closing a contextual drawer returns to planning; a promoted screen the
+  // user selected directly is left untouched (no panel transition).
+  const closedPanel = current.settingsPanel !== null && panel === null;
+
   return {
     ...next,
     settingsPanel: panel,
@@ -100,8 +120,37 @@ function normalizeSettingsUi(
     setupOpen: panel === "day",
     capacitiesSettingsOpen: panel === "capacities",
     tagExclusionSettingsOpen: panel === "tags",
+    screen: explicitScreen ?? derivedScreen ?? (closedPanel ? "plan" : next.screen),
   };
 }
+/** U5: normalize a wire opt-in map into the fixed three-key model shape.
+    Missing keys are false — a fresh local store is legitimately all-false. */
+export function normalizePromptOptins(
+  raw: Record<string, boolean>,
+): PromptOptinState["optins"] {
+  return {
+    intention: raw.intention === true,
+    megan_nicety: raw.megan_nicety === true,
+    stoic_intention: raw.stoic_intention === true,
+  };
+}
+
+/** U5: hydrate prompt opt-ins from optional /plan-inputs metadata. When the
+    server exposes no read, prefs stay `available:false` — the UI must show
+    them as unknown rather than defaulting false and overwriting saved prefs. */
+function hydratePromptOptins(
+  inputs: PlanInputs,
+  current: PromptOptinState,
+): PromptOptinState {
+  const meta = inputs.promptOptins;
+  if (!meta) return { ...current, available: false };
+  return {
+    optins: normalizePromptOptins(meta.optins),
+    revision: meta.revision,
+    available: true,
+  };
+}
+
 export type ShadowPhase = "none" | "loading" | "current" | "stale";
 export type CommitPhase = "idle" | "committing" | "done" | "partial" | "failed";
 export type RefreshPhase = "idle" | "loading";
@@ -127,6 +176,16 @@ export interface AppState {
   inputs: PlanInputs | null;
   capacity: Capacity | null; // live server-verbatim numbers
   daySetup: DaySetup;
+  /** U5 prompt opt-ins. `available:false` until the server exposes a read;
+      the UI then shows preferences as unknown instead of assuming false. */
+  promptOptins: PromptOptinState;
+  /** U5 prompt save lifecycle (drafts + opt-ins share one surface). */
+  promptSave: {
+    phase: "idle" | "saving" | "saved" | "error";
+    error: string | null;
+    conflict: { expectedRevision: number; currentRevision: number } | null;
+    warnings: string[];
+  };
   overrides: Record<string, TodayOverride>;
   /** Sparse opt-in map: absent/false protects a native Todoist time. */
   timeAdjustmentOptIns: Record<string, boolean>;
@@ -188,6 +247,8 @@ export interface AppState {
   ledger: Ledger | null;
   theme: Theme;
   ui: {
+    /** B3 promoted top-level screen (plan / set up day / connections). */
+    screen: Screen;
     /** Canonical settings destination — one settings host, at most one panel. */
     settingsPanel: SettingsPanel | null;
     /** Optional in-panel destination (e.g. "captures") for programmatic opens. */
@@ -225,6 +286,12 @@ export const initialState: AppState = {
   inputs: null,
   capacity: null,
   daySetup: emptyDaySetup,
+  promptOptins: {
+    optins: { intention: false, megan_nicety: false, stoic_intention: false },
+    revision: 0,
+    available: false,
+  },
+  promptSave: { phase: "idle", error: null, conflict: null, warnings: [] },
   overrides: {},
   timeAdjustmentOptIns: {},
   placements: {},
@@ -256,13 +323,34 @@ export const initialState: AppState = {
   refresh: { phase: "idle", error: null, lastRefreshed: null, summary: null, coverage: null },
   ledger: null,
   theme: "system",
-  ui: { settingsPanel: null, settingsSection: null, setupOpen: false, capacitiesSettingsOpen: false, tagExclusionSettingsOpen: false, approvalOpen: false, editorItem: null, editorIntent: null, editorAnchor: null, capacityDetail: false, trimUndo: null },
+  ui: { screen: "plan", settingsPanel: null, settingsSection: null, setupOpen: false, capacitiesSettingsOpen: false, tagExclusionSettingsOpen: false, approvalOpen: false, editorItem: null, editorIntent: null, editorAnchor: null, capacityDetail: false, trimUndo: null },
 };
 
 export type Action =
   | { type: "INPUTS_LOADED"; inputs: PlanInputs; ledger: Ledger }
   | { type: "LOAD_FAILED"; error: string }
   | { type: "SETUP_SAVED"; daySetup: DaySetup }
+  // U5 prompt saves. A prompt-only save never confirms the day: the captured
+  // confirmation flag is the server's explicit one, carried here verbatim.
+  | {
+      type: "PROMPT_DRAFTS_SAVED";
+      captures: Captures;
+      optins: Record<string, boolean> | null;
+      revision: number;
+      warnings: string[];
+    }
+  | {
+      type: "PROMPT_OPTINS_SAVED";
+      optins: Record<string, boolean>;
+      revision: number;
+    }
+  | { type: "PROMPT_SAVE_START" }
+  | { type: "PROMPT_SAVE_ERROR"; error: string }
+  | {
+      type: "PROMPT_OPTIN_CONFLICT";
+      expectedRevision: number;
+      currentRevision: number;
+    }
   | { type: "OVERRIDE_SET"; id: string; override: TodayOverride }
   | { type: "TIME_ADJUSTMENT_SET"; id: string; allow: boolean }
   // FEEDBACK-28 (retry): explicit current-run calendar skip intent recorded
@@ -391,6 +479,7 @@ export function reducer(s: AppState, a: Action): AppState {
           inputs: a.inputs,
           capacity: a.inputs.capacity,
           daySetup: a.inputs.daySetup,
+          promptOptins: hydratePromptOptins(a.inputs, initialState.promptOptins),
           pendingPinnedRows: nativeTimedPins(a.inputs, {}, allAssignedIds(a.inputs)),
           ledger: a.ledger,
         };
@@ -404,6 +493,7 @@ export function reducer(s: AppState, a: Action): AppState {
         inputs: a.inputs,
         capacity: s.capacity ?? a.inputs.capacity,
         daySetup: s.daySetup.confirmed ? s.daySetup : a.inputs.daySetup,
+        promptOptins: hydratePromptOptins(a.inputs, s.promptOptins),
         // FEEDBACK-28 (retry): a fresh inputs load is a fresh run — persisted
         // skip state is authoritative until the user re-expresses it, so any
         // current-run intent from a previous session is cleared.
@@ -432,6 +522,70 @@ export function reducer(s: AppState, a: Action): AppState {
         acceptedDefects: null,
         ...dirtySeq(s),
         ...staleShadow(s),
+      };
+    case "PROMPT_DRAFTS_SAVED":
+      // Prompt-only save: update drafts but NEVER touch the confirmation flag.
+      // The opt-in echo hydrates only when the server exposed a readable
+      // store; a null echo keeps prefs unavailable rather than overwriting
+      // saved preferences with a fabricated all-false map.
+      return {
+        ...s,
+        daySetup: {
+          ...s.daySetup,
+          captures: {
+            intention: a.captures.intention,
+            forMeegy: a.captures.forMeegy,
+            stoic: a.captures.stoic,
+          },
+        },
+        promptOptins: a.optins === null
+          ? { ...s.promptOptins, available: false }
+          : {
+              optins: normalizePromptOptins(a.optins),
+              revision: a.revision,
+              available: true,
+            },
+        promptSave: {
+          phase: "saved",
+          error: null,
+          conflict: null,
+          warnings: a.warnings,
+        },
+      };
+    case "PROMPT_OPTINS_SAVED":
+      return {
+        ...s,
+        promptOptins: {
+          optins: normalizePromptOptins(a.optins),
+          revision: a.revision,
+          available: true,
+        },
+        promptSave: { ...s.promptSave, phase: "saved", error: null, conflict: null },
+      };
+    case "PROMPT_SAVE_START":
+      return {
+        ...s,
+        promptSave: { ...s.promptSave, phase: "saving", error: null, conflict: null },
+      };
+    case "PROMPT_SAVE_ERROR":
+      return {
+        ...s,
+        promptSave: { ...s.promptSave, phase: "error", error: a.error, conflict: null },
+      };
+    case "PROMPT_OPTIN_CONFLICT":
+      // Keep the last-known server opt-ins untouched: the user's unsaved
+      // selection lives in the panel and must not be silently overwritten.
+      return {
+        ...s,
+        promptSave: {
+          ...s.promptSave,
+          phase: "error",
+          error: null,
+          conflict: {
+            expectedRevision: a.expectedRevision,
+            currentRevision: a.currentRevision,
+          },
+        },
       };
     case "CALENDAR_SKIP_EXPLICIT": {
       const rest = s.currentRunCalendarSkips.filter((id) => id !== a.id);
@@ -824,7 +978,7 @@ export function reducer(s: AppState, a: Action): AppState {
       // only the refresh feedback surface changes.
       return { ...s, refresh: { ...s.refresh, phase: "idle", error: a.error } };
     case "SOURCE_REFRESH_OK": {
-      const coverage = capacitiesCoverageOf(a.inputs.sourceWarnings);
+      const coverage = capacitiesCoverageOf(a.inputs.sourceWarnings, a.inputs.capacitiesIntake);
       if (s.validDate !== null && s.validDate !== a.inputs.validDate) {
         // Date rollover mid-session: full reset (locked decisions 16/20).
         return {
@@ -835,6 +989,7 @@ export function reducer(s: AppState, a: Action): AppState {
           inputs: a.inputs,
           capacity: a.inputs.capacity,
           daySetup: a.inputs.daySetup,
+          promptOptins: hydratePromptOptins(a.inputs, initialState.promptOptins),
           pendingPinnedRows: nativeTimedPins(a.inputs, {}, allAssignedIds(a.inputs)),
           ledger: a.ledger,
           refresh: {

@@ -162,7 +162,13 @@ def run(vault: Path, sequence_file: str | None, do_commit: bool) -> int:
 
     # -- LIVE commit ----------------------------------------------------------
     token = shadow.todoist_client.load_token(shadow.TOKEN_ENV_PATH)
-    plan_body = _render_plan_body(sequence)
+    # S6b: Capacities rows are calendar-only, so the Step B body omits them.
+    capacities_ids = {e.name for e in manifest if e.capacities}
+    body_rows = [
+        row for row in sequence.get("sequence", [])
+        if row.get("id") not in capacities_ids
+    ]
+    plan_body = _render_plan_body({**sequence, "sequence": body_rows})
     with shadow.todoist_client.TodoistClient(token) as todoist:
         results = commit.run_commit(
             intents, todoist=todoist, store=store, vault_root=vault,
