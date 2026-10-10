@@ -204,6 +204,119 @@ _SOURCE_UNAPPLIED_WARNING = (
 )
 
 
+def _capacities_hard_excluded(
+    vault: Path,
+    today: date,
+    candidates: list[dict[str, Any]],
+    exclusion_policy: tag_exclusions.ExclusionPolicy | None,
+) -> set[str]:
+    """The identities hard-excluded from Capacities candidates today.
+
+    The one definition of a hard exclusion (U4 S4), shared by the selection
+    promotion path and the select endpoint so the two cannot drift: today's
+    drop list plus the tag-exclusion policy applied to ``candidates``. The tag
+    dry run uses the shared matcher; ``build_digest`` re-applies it to the
+    promoted rows, so the two stages cannot disagree. Raises
+    ``tag_exclusions.TagExclusionBlocked`` when the policy cannot be evaluated.
+    """
+    hard_excluded = {
+        str(entry.get("identity"))
+        for entry in runstate.read_dropped(vault, today)
+        if entry.get("identity")
+    }
+    if exclusion_policy is not None and candidates:
+        _assigned, kept_pool, _report = tag_exclusions.apply_tag_exclusions(
+            [], candidates, exclusion_policy,
+        )
+        kept = {row.get("identity") for row in kept_pool}
+        hard_excluded |= {
+            row.get("identity") for row in candidates
+            if row.get("identity") not in kept
+        }
+    return hard_excluded
+
+
+def _capacities_selection_rejection(
+    status_code: int, code: str, identity: str, message: str,
+) -> HTTPException:
+    """A bounded identity rejection: a stable code, the identity, and fixed text."""
+    return HTTPException(
+        status_code=status_code,
+        detail={"code": code, "message": message, "identity": identity},
+    )
+
+
+def _capacities_selection_identity(value: str, space_id: str) -> str:
+    """The canonical identity of one browser-supplied selection, or a 422.
+
+    The canonicalizer is the store's own (``canonical_exclusion_identity``), so
+    a title, path, bare id, or alias is refused the same way on every surface.
+    An identity from another space is refused too.
+    """
+    message = "Capacities selection is not a canonical identity of this space."
+    try:
+        identity = capacities_settings.canonical_exclusion_identity(value)
+    except ValueError as exc:
+        raise _capacities_selection_rejection(
+            422, "invalid_identity", value, message,
+        ) from exc
+    if identity.split(":", 3)[1] != space_id:
+        raise _capacities_selection_rejection(
+            422, "invalid_identity", value, message,
+        )
+    return identity
+
+
+def _capacities_selections_conflict(
+    expected_revision: int, current_revision: int,
+) -> HTTPException:
+    return HTTPException(
+        status_code=409,
+        detail={
+            "code": "capacities_selections_conflict",
+            "message": (
+                "Capacities selections changed since they were read; "
+                "reload and retry."
+            ),
+            "expected_revision": expected_revision,
+            "current_revision": current_revision,
+        },
+    )
+
+
+def _capacities_selections_storage_error() -> HTTPException:
+    """Bounded 503 for selection storage: fixed text, no path, no payload."""
+    return HTTPException(
+        status_code=503,
+        detail={
+            "code": "capacities_selections_storage_error",
+            "message": (
+                "Capacities selections storage is unavailable; "
+                "the existing selections were preserved."
+            ),
+        },
+    )
+
+
+def _capacities_selections_payload(
+    record: capacities_selections.SelectionsRecord, rules_revision: int,
+) -> dict[str, Any]:
+    """The one wire shape both selection routes answer with."""
+    return {
+        "space_id": record.space_id,
+        "revision": record.revision,
+        "rules_revision": rules_revision,
+        "selections": [
+            {
+                "identity": selection.identity,
+                "acknowledged": selection.acknowledged,
+                "rules_revision": selection.rules_revision,
+            }
+            for selection in record.selections
+        ],
+    }
+
+
 def _promote_selected_capacities(
     vault: Path,
     today: date,
@@ -253,22 +366,9 @@ def _promote_selected_capacities(
         row for row in pool_items
         if _is_capacities(row) and row.get("identity") in pending_identities
     ]
-    hard_excluded = {
-        str(entry.get("identity"))
-        for entry in runstate.read_dropped(vault, today)
-        if entry.get("identity")
-    }
-    if exclusion_policy is not None and candidates:
-        # Dry run of the shared matcher; build_digest re-applies it to the
-        # promoted rows, so the two stages cannot disagree.
-        _assigned, kept_pool, _report = tag_exclusions.apply_tag_exclusions(
-            [], candidates, exclusion_policy,
-        )
-        kept = {row.get("identity") for row in kept_pool}
-        hard_excluded |= {
-            row.get("identity") for row in candidates
-            if row.get("identity") not in kept
-        }
+    hard_excluded = _capacities_hard_excluded(
+        vault, today, candidates, exclusion_policy,
+    )
     promoted, notices = capacities_selections.resolve_selections(
         pending,
         candidates,
@@ -1354,6 +1454,37 @@ class CapacitiesRefreshStartRequest(BaseModel):
     def _usable_scope(cls, value: str) -> str:
         if not value.strip():
             raise ValueError("scope must be a non-blank string")
+        return value
+
+
+class CapacitiesSelectionEntry(BaseModel):
+    """One identity to select. ``acknowledge`` is the operator's R32 flag."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    identity: StrictStr
+    acknowledge: StrictBool = False
+
+
+class CapacitiesSelectionsSaveRequest(BaseModel):
+    """Request body for POST /capacities/selections.
+
+    Closed and strictly typed. ``rules_revision`` is server-owned and is
+    rejected at every depth, so it is never read from the body. Identity
+    validity and candidacy are decided by the route, not by this model.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    expected_revision: StrictInt
+    select: list[CapacitiesSelectionEntry] = Field(default_factory=list)
+    deselect: list[StrictStr] = Field(default_factory=list)
+
+    @field_validator("expected_revision")
+    @classmethod
+    def _revision_nonnegative(cls, value: int) -> int:
+        if value < 0:
+            raise ValueError("expected_revision must be a nonnegative integer")
         return value
 
 
@@ -2778,6 +2909,193 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
             "tags": tags,
             "warnings": [str(w) for w in (result.get("warnings") or []) if str(w)],
         }
+
+    # -- U4 S4: per-identity Capacities selections (GET/POST) ---------------
+
+    @app.get("/capacities/selections")
+    def get_capacities_selections() -> dict:
+        """Tokenless read of the durable Capacities selections for the source space.
+
+        Reads the source record and the selection store only: no provider call,
+        no credential, no write. No source record answers the documented empty
+        shape with ``space_id: null``. A store for another space answers the
+        empty shape for the source space. Storage failures are a bounded 503.
+        """
+        vault = _refresh_vault_root()
+        try:
+            source = capacities_builder.read_source(vault)
+        except (capacities_builder.CapacitiesSourceStoreError, OSError) as exc:
+            raise _capacities_selections_storage_error() from exc
+        if source is None:
+            return {
+                "space_id": None,
+                "revision": 0,
+                "rules_revision": None,
+                "selections": [],
+            }
+        try:
+            record = capacities_selections.load_selections(source.space_id)
+            rules_revision = capacities_rules.load_rules(source.space_id).revision
+        except (
+            capacities_selections.SelectionStoreError,
+            capacities_rules.RulesStoreError,
+        ) as exc:
+            raise _capacities_selections_storage_error() from exc
+        return _capacities_selections_payload(record, rules_revision)
+
+    @app.post(
+        "/capacities/selections",
+        dependencies=[Depends(require_token)],
+    )
+    def post_capacities_selections(body: CapacitiesSelectionsSaveRequest) -> dict:
+        """Token-guarded merge of Capacities selections for the source space.
+
+        The browser supplies identities and flags only. Each selected identity
+        must be a current direct candidate, not hard-excluded, of a mapped
+        structure, and acknowledged when it carries review reasons. The rules
+        revision is stamped from the server's current rules. The write goes
+        through the store's optimistic revision, so a stale ``expected_revision``
+        is a 409 carrying both revisions. Direct intake only; no provider call
+        and no Capacities write.
+        """
+        if app_config.capacities_intake() != app_config.CAPACITIES_INTAKE_DIRECT:
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "code": "capacities_intake_not_direct",
+                    "message": "Capacities selections apply only under direct intake.",
+                },
+            )
+        vault = _refresh_vault_root()
+        try:
+            source = capacities_builder.read_source(vault)
+        except (capacities_builder.CapacitiesSourceStoreError, OSError) as exc:
+            raise _capacities_selections_storage_error() from exc
+        if source is None:
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "code": "capacities_selections_unconfigured",
+                    "message": "No Capacities source is configured; nothing to select.",
+                },
+            )
+        space_id = source.space_id
+        try:
+            current = capacities_selections.load_selections(space_id)
+            rules_revision = capacities_rules.load_rules(space_id).revision
+        except (
+            capacities_selections.SelectionStoreError,
+            capacities_rules.RulesStoreError,
+        ) as exc:
+            raise _capacities_selections_storage_error() from exc
+        if current.revision != body.expected_revision:
+            raise _capacities_selections_conflict(
+                body.expected_revision, current.revision,
+            )
+
+        # Parse every identity before any candidate or exclusion state, so a
+        # malformed or repeated identity is a request error on its own.
+        seen: set[str] = set()
+        selected: list[tuple[str, bool]] = []
+        for entry in body.select:
+            identity = _capacities_selection_identity(entry.identity, space_id)
+            if identity in seen:
+                raise _capacities_selection_rejection(
+                    422, "duplicate_identity", identity,
+                    "Capacities selection names the same identity more than once.",
+                )
+            seen.add(identity)
+            selected.append((identity, entry.acknowledge))
+        removed = {
+            _capacities_selection_identity(identity, space_id)
+            for identity in body.deselect
+        }
+
+        try:
+            read = capacities_builder.read_direct_intake(vault)
+        except capacities_builder.CapacitiesSourceStoreError as exc:
+            raise _capacities_selections_storage_error() from exc
+        assigned, pool, _warnings, _coverage = capacities_intake.load_direct_rows(
+            vault, read=read,
+        )
+        candidates = {row.get("identity"): row for row in [*assigned, *pool]}
+        exclusion_policy = _exclusion_policy_or_block(vault)
+        try:
+            hard_excluded = _capacities_hard_excluded(
+                vault,
+                gather.effective_date(datetime.now()),
+                list(candidates.values()),
+                exclusion_policy,
+            )
+        except tag_exclusions.TagExclusionBlocked as exc:
+            raise HTTPException(status_code=503, detail=exc.diagnostics) from exc
+        mapped_structures = {
+            structure.structure_id for structure in source.structures
+        }
+
+        # Same order as the resolver: excluded, type_disabled, not_cached, then
+        # the acknowledgement that a review-reason candidate requires.
+        for identity, acknowledge in selected:
+            if identity in hard_excluded:
+                raise _capacities_selection_rejection(
+                    409, "excluded", identity,
+                    "Capacities selection is excluded by the tag exclusions or the drop list.",
+                )
+            # A canonical identity is four-part; its structure is the third part.
+            if identity.split(":", 3)[2] not in mapped_structures:
+                raise _capacities_selection_rejection(
+                    409, "type_disabled", identity,
+                    "Capacities selection's structure is no longer mapped.",
+                )
+            row = candidates.get(identity)
+            if row is None:
+                raise _capacities_selection_rejection(
+                    409, "not_cached", identity,
+                    "Capacities selection is not a current cached candidate; "
+                    "Refresh may be required.",
+                )
+            if row.get("capacities_review_reasons") and not acknowledge:
+                raise _capacities_selection_rejection(
+                    409, "acknowledgement_required", identity,
+                    "Capacities selection carries review reasons; "
+                    "acknowledge it to select it.",
+                )
+
+        # Merge over the current record. Removals run first, then selections, so
+        # a deselect and a re-select of one identity in one call ends selected
+        # exactly once, under the current rules revision.
+        merged = {record.identity: record for record in current.selections}
+        for identity in removed:
+            merged.pop(identity, None)
+        for identity, acknowledge in selected:
+            merged[identity] = capacities_selections.SelectionRecord(
+                identity=identity,
+                rules_revision=rules_revision,
+                acknowledged=acknowledge,
+            )
+        try:
+            saved = capacities_selections.save_selections(
+                space_id=space_id,
+                expected_revision=body.expected_revision,
+                selections=list(merged.values()),
+            )
+        except capacities_selections.SelectionConflict as exc:
+            raise _capacities_selections_conflict(
+                exc.expected_revision, exc.current_revision,
+            ) from exc
+        except capacities_selections.SelectionValidationError as exc:
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "code": "capacities_selections_invalid",
+                    "message": "Capacities selections are invalid; nothing was saved.",
+                },
+            ) from exc
+        except (capacities_selections.SelectionStoreError, OSError) as exc:
+            # Bounded client-safe message: the store's text stays server-side.
+            print(f"capacities selections save failed: {exc}", file=sys.stderr)
+            raise _capacities_selections_storage_error() from exc
+        return _capacities_selections_payload(saved, rules_revision)
 
     @app.get("/settings/exclusions")
     def get_exclusion_settings() -> dict:
