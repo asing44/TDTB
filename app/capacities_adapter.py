@@ -1047,6 +1047,16 @@ class CapacitiesAdapter:
         status: str | None = None
         status_is_open: bool | None = None
         status_state: str | None = None
+        # Direct refresh with one field shared by status and completion: an
+        # unreadable or empty shared payload is UNKNOWN completion (U3b-4), so
+        # the legacy open read must neither fail the object as malformed nor
+        # treat it as a closed status and drop it silently.
+        shared_direct_field = (
+            active_rule is None
+            and self.config.rules is not None
+            and bool(mapping.open_status_property)
+            and mapping.completion_property == mapping.open_status_property
+        )
         if mapping.open_status_property:
             status_prop = properties.get(mapping.open_status_property)
             if active_rule is not None:
@@ -1057,6 +1067,18 @@ class CapacitiesAdapter:
                 )
             elif status_prop is None:
                 status_is_open = False
+            elif shared_direct_field and (
+                _classify_open_status(
+                    status_prop,
+                    mapping.open_status_property,
+                    mapping.open_status_values,
+                )
+                == "unknown"
+            ):
+                # Undecided status: admission stays with the legacy evaluator
+                # (``None`` is not closed) and the completion classifier below
+                # reports the same payload as UNKNOWN.
+                status_is_open = None
             else:
                 # The open/closed safety classification keeps matching the
                 # mixed id+name tokens; the status token the evaluator reads

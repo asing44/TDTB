@@ -164,6 +164,33 @@ def test_direct_same_field_completed_token_excludes_alongside_open():
     assert result.malformed == 0
 
 
+@pytest.mark.parametrize(
+    "state",
+    [
+        pytest.param({"type": "label", "label": "active"}, id="non-list-label"),
+        pytest.param({"type": "label", "label": []}, id="empty-label"),
+        pytest.param(
+            {"type": "label", "label": [{"id": {"x": 1}}]},
+            id="unreadable-member",
+        ),
+    ],
+)
+def test_direct_unreadable_shared_field_is_unknown_not_malformed(state):
+    """On a shared status/completion field an unreadable or empty payload is
+    UNKNOWN completion: the row stays an unassigned candidate with its reason,
+    and the object is not failed as malformed by the legacy open read."""
+    result = _direct(_same_field_mapping(), _rules()).items_for_day_from_objects(
+        DAY, [_custom_object(state=state)]
+    )
+
+    assert len(result.items) == 1
+    row = result.items[0]
+    assert row["assigned"] is False
+    assert row["capacities_completion_state"] == "unknown"
+    assert row["capacities_review_reasons"] == ["completion_unknown"]
+    assert result.malformed == 0
+
+
 def test_direct_partial_malformed_completed_token_still_hard_excludes():
     """Readable completed evidence wins over a partly malformed payload, so
     the strict hard exclusion is preserved on the direct path."""
