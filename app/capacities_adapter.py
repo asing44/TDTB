@@ -22,6 +22,7 @@ from capacities_assignment import (
 )
 import capacities_rules
 from producer_rules import _capacities_predicate_record
+import tag_exclusions
 
 try:
     import httpx as _httpx
@@ -145,6 +146,13 @@ class CapacitiesConfig:
     #: for another space, or a draft-only entry — keeps the legacy decision
     #: unchanged (KTD5).
     rules: capacities_rules.RulesRecord | None = None
+    #: Optional pre-selection tag-exclusion policy
+    #: (``tag_exclusions.ExclusionPolicy``). When supplied, projected
+    #: candidates are filtered through the shared matcher after projection, on
+    #: both the source-assigned and unassigned surfaces; ``None`` keeps the
+    #: legacy projection unchanged. The adapter never reads settings storage or
+    #: a credential itself.
+    exclusion_policy: tag_exclusions.ExclusionPolicy | None = None
 
 
 @dataclass(frozen=True)
@@ -550,6 +558,25 @@ def _review_warning(review_rows: Sequence[tuple[str, Sequence[str]]]) -> str:
         f"Capacities review — {len(review_rows)} unassigned candidate(s) not "
         f"fully evaluated: {'; '.join(parts)}. Rescan Capacities to evaluate "
         "them fully."
+    )
+
+
+def _tag_exclusion_warning(report: dict[str, Any]) -> str:
+    """One bounded, content-free summary of rows removed by tag exclusions.
+
+    Names the exact removed count and at most ``MAX_REVIEW_WARNING_IDENTITIES``
+    stable identities — never a row title, a tag title, or raw object content.
+    """
+    decisions = report.get("decisions") or []
+    shown = decisions[:MAX_REVIEW_WARNING_IDENTITIES]
+    parts = [str(decision.get("identity") or "<unknown>") for decision in shown]
+    remaining = len(decisions) - len(shown)
+    if remaining > 0:
+        parts.append(f"+{remaining} more")
+    total = int((report.get("excluded_counts") or {}).get("total", 0))
+    return (
+        f"Capacities tag exclusions removed {total} candidate(s) from this "
+        f"refresh: {'; '.join(parts)}."
     )
 
 
@@ -1269,7 +1296,6 @@ class CapacitiesAdapter:
         warnings: list[str] = []
         evaluated: set[str] = set()
         malformed: set[str] = set()
-        review_rows: list[tuple[str, list[str]]] = []
         for obj in objects:
             structure_id = _text(obj.get("structureId")) if isinstance(obj, dict) else ""
             mapping = self._mappings.get(structure_id)
@@ -1293,13 +1319,36 @@ class CapacitiesAdapter:
                 evaluated.add(identity)
             if row is not None:
                 items.append(row)
-                reasons = row.get("capacities_review_reasons")
-                if reasons:
-                    review_rows.append((row["identity"], list(reasons)))
+        policy = self.config.exclusion_policy
+        if policy is not None:
+            # The shared matcher is the single decision authority; the adapter
+            # only splits the projected candidates into the two digest
+            # surfaces. A match removes a source-assigned MATCH and an UNKNOWN
+            # unassigned candidate alike, and the matcher's structured block
+            # (unusable applicable metadata) propagates rather than being
+            # silently omitted.
+            assigned_items = [row for row in items if row.get("assigned")]
+            pool_items = [row for row in items if not row.get("assigned")]
+            kept_assigned, kept_pool, exclusion_report = (
+                tag_exclusions.apply_tag_exclusions(
+                    assigned_items, pool_items, policy
+                )
+            )
+            items = [*kept_assigned, *kept_pool]
+            warnings.extend(exclusion_report["warnings"])
+            if exclusion_report["excluded_counts"]["total"]:
+                warnings.append(_tag_exclusion_warning(exclusion_report))
+        # Recompute the review surface from the SURVIVING items so an excluded
+        # UNKNOWN row cannot produce a misleading review warning. Every review
+        # row stayed an item, so the warning is a supplementary surface on a
+        # complete result, never a partial success; the summary is bounded and
+        # carries no raw content.
+        review_rows = [
+            (row["identity"], list(row.get("capacities_review_reasons") or ()))
+            for row in items
+            if row.get("capacities_review_reasons")
+        ]
         if review_rows:
-            # Every review row above stayed an item, so this warning is a
-            # supplementary surface on a complete result, never a partial
-            # success. The summary is bounded and carries no raw content.
             warnings.append(_review_warning(review_rows))
         items.sort(key=lambda row: (_normalized(row["name"]), row["identity"]))
         return items, warnings, evaluated, malformed

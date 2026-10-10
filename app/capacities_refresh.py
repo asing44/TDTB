@@ -48,6 +48,7 @@ except ImportError:  # pragma: no cover — non-POSIX fallback
 import capacities_adapter
 import capacities_cache_io
 import capacities_refresh_state as refresh_state
+import tag_exclusions
 
 #: Endpoint identities shared with the adapter's transport observer.
 ENDPOINT_STRUCTURES = "structures"
@@ -86,6 +87,12 @@ CANCEL_WARNING = (
 INTERRUPT_WARNING = (
     "Capacities refresh was interrupted by a restart; the previous complete "
     "result is preserved and successful reads remain available."
+)
+TAG_EXCLUSION_WARNING = (
+    "Capacities planning was blocked by the active tag-exclusion policy: tag "
+    "metadata could not be evaluated by stable identity. Repair the source "
+    "tag payload or clear the exclusions, then retry; the previous complete "
+    "result is preserved."
 )
 
 
@@ -401,6 +408,7 @@ class RefreshCoordinator:
         scope_key: str = DEFAULT_SCOPE_KEY,
         assignment_settings: Any = None,
         rules: Any = None,
+        exclusion_policy: Any = None,
         max_pages: int = 20,
         logical_day: date | None = None,
         clock: Callable[[], float] = time.monotonic,
@@ -449,6 +457,7 @@ class RefreshCoordinator:
                     else capacities_adapter.AssignmentSettings()
                 ),
                 rules=rules,
+                exclusion_policy=exclusion_policy,
                 content_cache=None,
             ),
         )
@@ -668,6 +677,12 @@ class RefreshCoordinator:
                 ["Capacities refresh could not store content; the previous "
                  "complete result is preserved."],
             )
+        except tag_exclusions.TagExclusionBlocked:
+            # The matcher's structured diagnostics stay on the exception (the
+            # route seam renders them); the job warning is the fixed bounded
+            # string, never the payload. Nothing is installed, so the previous
+            # complete generation is retained.
+            self._finish("failed", "noCapacities", [TAG_EXCLUSION_WARNING])
         except (
             capacities_adapter.CapacitiesContractError,
             capacities_adapter.CapacitiesRateLimited,

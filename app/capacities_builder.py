@@ -59,7 +59,9 @@ import capacities_refresh
 import capacities_refresh_state
 import capacities_rules
 import capacities_settings
+import exclusion_settings
 import runstate
+import tag_exclusions
 from capacities_adapter import (
     CapacitiesAdapter,
     CapacitiesConfig,
@@ -1303,24 +1305,28 @@ def build_refresh_state(
 
 
 def refresh_config_revision(vault_root: str | Path) -> int | None:
-    """The current combined source+settings+rules revision, or ``None`` if
-    unconfigured.
+    """The current combined source+settings+rules+exclusions revision, or
+    ``None`` if unconfigured.
 
     One definition shared by the coordinator's publication guard and the route
     seam's cached-instance check. It is read fresh on every call so a mapping,
-    settings, or rules save during a run cannot publish stale scope, and a save
-    between runs cannot be masked by a coordinator built from the previous
-    scope. A malformed rules document raises rather than being folded into a
-    silent revision.
+    settings, rules, or exclusions save during a run cannot publish stale
+    scope, and a save between runs cannot be masked by a coordinator built
+    from the previous scope. A malformed rules or exclusions document raises
+    rather than being folded into a silent revision. An absent source record
+    returns ``None`` before the exclusions store is touched, so an
+    unconfigured Capacities source never reads the policy.
     """
     current = read_source(vault_root)
     if current is None:
         return None
     rules = capacities_rules.load_rules(current.space_id)
+    exclusions = exclusion_settings.read_settings(vault_root)
     return (
         int(current.revision)
         + int(read_settings(vault_root).settings.revision)
         + int(rules.revision)
+        + int(exclusions.settings.revision)
     )
 
 
@@ -1346,8 +1352,11 @@ def _config_save_guard(vault_root: str | Path) -> Iterator[None]:
     The rules store's own lock file (``capacities-rules.lock``,
     ``capacities_rules``) joins them: the rules revision is part of the combined
     revision, so a rule save landing mid-window would otherwise let stale rules
-    publish. The source pair is taken first, then settings, then rules; only this
-    guard takes all three, so the fixed order cannot invert.
+    publish. The exclusions store's lock file (``exclusions.lock``,
+    ``exclusion_settings``) joins innermost for the same reason: its revision is
+    part of the combined revision too. The source pair is taken first, then
+    settings, then rules, then exclusions; only this guard takes all four, so
+    the fixed order cannot invert.
     """
     with _store_lock(vault_root):
         handle = _acquire_lock_file(vault_root)
@@ -1360,7 +1369,13 @@ def _config_save_guard(vault_root: str | Path) -> Iterator[None]:
                     capacities_rules.lock_path()
                 )
                 try:
-                    yield
+                    exclusions_handle = capacities_cache_io.acquire_path_lock(
+                        exclusion_settings.lock_path()
+                    )
+                    try:
+                        yield
+                    finally:
+                        capacities_cache_io.release_lock_file(exclusions_handle)
                 finally:
                     capacities_cache_io.release_lock_file(rules_handle)
             finally:
@@ -1387,11 +1402,16 @@ def build_refresh_coordinator(
     the U1 refresh store, so a stale legacy cache entry can never stand in for a
     required content read. The configuration revision the coordinator guards on
     is the live source revision plus the settings revision plus the rules
-    revision, read fresh on every check so a mapping, policy, or rule save during
-    a run cannot publish stale scope. The stored rules are loaded for the
-    record's space and handed to the coordinator, which passes them through to
-    its internal adapter config; malformed rules storage raises visibly rather
-    than silently disabling stored-rule eligibility.
+    revision plus the exclusions revision, read fresh on every check so a
+    mapping, policy, rule, or exclusion save during a run cannot publish stale
+    scope. The stored rules are loaded for the record's space and handed to the
+    coordinator, which passes them through to its internal adapter config; the
+    stored tag-exclusion policy is loaded the same way and handed to the
+    coordinator so its internal adapter filters both candidate surfaces.
+    Malformed rules or exclusions storage raises visibly rather than silently
+    disabling stored-rule eligibility or the exclusion policy. The legacy
+    :func:`build_capacities_adapter` path is unchanged and never reads the
+    exclusions store.
     """
     cfg = config if config is not None else CapacitiesBuilderConfig()
     record = read_source(vault_root)
@@ -1400,6 +1420,9 @@ def build_refresh_coordinator(
 
     settings = read_settings(vault_root).settings
     rules = capacities_rules.load_rules(record.space_id)
+    exclusion_policy = tag_exclusions.ExclusionPolicy.from_read(
+        exclusion_settings.read_settings(vault_root)
+    )
     token = load_capacities_token(cfg.token_path)
     client = CapacitiesRestClient(
         token,
@@ -1426,6 +1449,7 @@ def build_refresh_coordinator(
         config_guard=lambda: _config_save_guard(vault_root),
         assignment_settings=settings.to_assignment_settings(),
         rules=rules,
+        exclusion_policy=exclusion_policy,
         max_pages=cfg.max_pages,
     )
 
