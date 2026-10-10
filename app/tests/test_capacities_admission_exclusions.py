@@ -629,18 +629,20 @@ def _primary_record_for(space_id, revision, *, open_values=("active",)):
 def test_build_reads_the_revision_before_the_source_record(tmp_path, monkeypatch):
     """A source save between the two build reads must fail stale, not publish.
 
-    ``build_refresh_coordinator`` freezes the combined revision and then reads
-    the source record it derives mappings from. Reading the record first lets a
-    save land between the reads and freeze the NEW revision with the OLD
-    mappings, so the publication guard sees the live revision unchanged and
-    publishes scope the configuration no longer describes. The revision read
-    must come first, leaving the frozen revision behind the live one.
+    ``build_refresh_coordinator`` reads the space, then the combined
+    revision, then the source record it derives mappings from. The first two
+    reads here see the pre-save record (frozen revision 3) and the record
+    read sees the post-save one, so publication compares live 4 against
+    frozen 3 and fails stale. Reading the record before the revision instead
+    lets a save land between those reads and freeze the NEW revision with
+    the OLD mappings, so the publication guard sees the live revision
+    unchanged and publishes scope the configuration no longer describes.
     """
     reads = {"count": 0}
 
     def flipping_read_source(_vault):
         reads["count"] += 1
-        if reads["count"] == 1:
+        if reads["count"] <= 2:
             return _primary_record_for(SPACE, 3, open_values=("active",))
         return _primary_record_for(SPACE, 4, open_values=("done",))
 
@@ -654,8 +656,10 @@ def test_build_reads_the_revision_before_the_source_record(tmp_path, monkeypatch
     )
 
     assert coordinator is not None
-    # The revision read came first and froze 3. Pre-fix the record read came
-    # first and froze the post-save 4 with the pre-save mappings, so the run
+    # The space pre-read and the revision read came before the record read,
+    # so the frozen revision (3) trails the post-save record. Pre-fix the
+    # record read came before the revision read, so the save landed between
+    # them and froze the post-save 4 with the pre-save mappings, and the run
     # published.
     assert coordinator.configuration_revision == 3
 
@@ -719,6 +723,90 @@ def test_source_space_switch_with_an_equal_revision_sum_fails_stale(
     assert cb.refresh_config_revision(vault) == 4
     assert cb.read_source(vault).space_id == "space-B"
 
+    coordinator.start()
+    status = coordinator.wait(timeout=5)
+
+    assert status["phase"] == "failed", status
+    assert status["outcome"] == "staleConfiguration", status
+    assert coordinator.store.load_snapshot("all") is None
+
+
+def test_space_switch_between_the_build_reads_fails_closed(tmp_path, monkeypatch):
+    """A source space switch landing between the build's reads fails closed.
+
+    The coordinator's space and the publication guard's comparison target
+    both come from the record read. If the source switches between the space
+    pre-read and the record read, the guard would compare the live space
+    with the post-switch space and match it, and only the lossy revision sum
+    could still catch the switch; a settings save that restores the sum
+    (the switch adds the new space's source revision while dropping the
+    previous space's rules revision) would then mask it and the job would
+    publish against the wrong space. The build must refuse instead, leaving
+    the next start to build cleanly against the new space.
+    """
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    structures = _primary_record_for(SPACE, 0).structures
+    for expected in range(4):
+        cb.save_source(
+            vault,
+            expected_revision=expected,
+            space_id=SPACE,
+            structures=structures,
+        )
+    cr.save_rule(
+        SPACE,
+        PRIMARY,
+        {"prop": "minutes", "op": "gt", "values": [10]},
+        expected_revision=0,
+    )
+    # Source 4 + settings 0 + rules 1 + exclusions 0.
+    assert cb.refresh_config_revision(vault) == 5
+
+    reads = {"count": 0}
+
+    def switching_read_source(_vault):
+        reads["count"] += 1
+        if reads["count"] >= 3:
+            return _primary_record_for("space-B", 4, open_values=("done",))
+        return _primary_record_for(SPACE, 4, open_values=("active",))
+
+    monkeypatch.setattr(cb, "read_source", switching_read_source)
+
+    with pytest.raises(RuntimeError, match="space changed"):
+        cb.build_refresh_coordinator(
+            vault, cb.CapacitiesBuilderConfig(refresh_state_path=tmp_path / "state")
+        )
+
+
+def test_publication_guard_fails_stale_when_the_space_read_is_unreadable(
+    tmp_path, monkeypatch
+):
+    """A None space read at publication must fail stale, not publish.
+
+    Broken source storage at publish time makes the space read return None;
+    a non-str is never equal to the built space, so the guard must fail
+    closed instead of treating the unreadable space as unchanged.
+    """
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    structures = _primary_record_for(SPACE, 0).structures
+    for expected in range(3):
+        cb.save_source(
+            vault,
+            expected_revision=expected,
+            space_id=SPACE,
+            structures=structures,
+        )
+    monkeypatch.setattr(cb, "load_capacities_token", lambda _: "synthetic-token")
+    provider = _paged_provider(objects={PRIMARY: ["a"]})
+    monkeypatch.setattr(cb, "CapacitiesRestClient", lambda *a, **k: provider)
+    coordinator = cb.build_refresh_coordinator(
+        vault, cb.CapacitiesBuilderConfig(refresh_state_path=tmp_path / "state")
+    )
+    assert coordinator is not None
+
+    coordinator.space_id_supplier = lambda: None
     coordinator.start()
     status = coordinator.wait(timeout=5)
 

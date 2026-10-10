@@ -1423,7 +1423,10 @@ def build_refresh_coordinator(
     mapping, policy, rule, or exclusion save during a run cannot publish stale
     scope. The configuration revision is read before the source record and the
     rest of the configuration so a save during construction makes publication
-    fail stale rather than publish. The live source space is guarded too: a
+    fail stale rather than publish. The source space is read before the
+    revision and re-checked against the record after it, so a switch between
+    those reads fails closed at build instead of arming the publication guard
+    with the post-switch space. The live source space is guarded too: a
     switch to another space that leaves the combined revision equal fails stale
     instead of publishing against the previous space.
     The stored rules are loaded for the record's space and handed to the
@@ -1436,6 +1439,7 @@ def build_refresh_coordinator(
     exclusions store.
     """
     cfg = config if config is not None else CapacitiesBuilderConfig()
+    pre_build_space = refresh_source_space_id(vault_root)
     configuration_revision = refresh_config_revision(vault_root)
     if configuration_revision is None:
         return None
@@ -1443,6 +1447,16 @@ def build_refresh_coordinator(
     record = read_source(vault_root)
     if record is None:
         return None
+    if record.space_id != pre_build_space:
+        # A switch between the space pre-read and the record read would
+        # otherwise arm the publication guard with the post-switch space, so
+        # only the lossy revision sum could catch it. Fail closed at build;
+        # the next start builds cleanly against the new space.
+        raise RuntimeError(
+            "the Capacities source space changed while the refresh "
+            f"coordinator was being built ({pre_build_space!r} -> "
+            f"{record.space_id!r}); start the refresh again"
+        )
 
     settings = read_settings(vault_root).settings
     rules = capacities_rules.load_rules(record.space_id)
