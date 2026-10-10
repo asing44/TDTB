@@ -518,7 +518,7 @@ MAX_REVIEW_WARNING_IDENTITIES = 3
 
 
 def _review_reasons(
-    rule_state: capacities_rules.Evaluation,
+    rule_state: capacities_rules.Evaluation | None,
     status_state: str | None,
     completion_state: str | None,
 ) -> list[str]:
@@ -1083,8 +1083,12 @@ class CapacitiesAdapter:
         # known, so every other readable value — and every absent, empty, or
         # unreadable value — is UNKNOWN rather than a guessed closed state
         # (R27/R29).
+        # The direct refresh (rules supplied, no active rule) reuses the same
+        # strict classifier as an override on the legacy admission decision;
+        # the legacy path (``rules is None``) never reads completion here.
         completion_state: str | None = None
-        if active_rule is not None:
+        direct_completion = active_rule is None and self.config.rules is not None
+        if active_rule is not None or direct_completion:
             if not mapping.completion_property:
                 completion_state = "unavailable"
             elif (
@@ -1197,6 +1201,17 @@ class CapacitiesAdapter:
             if not decision.eligible:
                 return None
             assigned = True
+            if direct_completion:
+                # Direct-refresh completion override (U3b-4). The legacy
+                # decision admitted the row; a readable completed value is a
+                # hard exclusion even when source-assigned, and an UNKNOWN
+                # completion keeps the row as an unassigned warning candidate.
+                # The override only narrows: it never admits a row the legacy
+                # evaluator rejected.
+                if completion_state == "closed":
+                    return None
+                if completion_state == "unknown":
+                    assigned = False
 
         # Per-type fallback duration: used when the duration mapping is
         # absent or the mapped property is not carried; a present mapped
@@ -1272,6 +1287,13 @@ class CapacitiesAdapter:
                 "source_assigned": decision.provenance.source_assigned,
                 "excluded": decision.provenance.exclusion_matched,
             }
+            if direct_completion:
+                # Rule-less direct rows carry only the completion availability
+                # and its review reason; no stored rule state is fabricated.
+                row["capacities_completion_state"] = completion_state
+                row["capacities_review_reasons"] = _review_reasons(
+                    None, None, completion_state
+                )
         if tag_error is not None:
             row["capacities_tags_error"] = tag_error
         return row
