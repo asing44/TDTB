@@ -843,7 +843,10 @@ class RefreshCoordinator:
             )
         job = self._job or {}
         self._job = {**job, "generation": snapshot.generation}
-        self._finish("complete", "published", [])
+        # The projection warnings — including the bounded review surface for
+        # under-evaluated rows — ride the successful finish; the publication
+        # itself stays one complete generation with every candidate retained.
+        self._finish("complete", "published", list(_result.warnings))
 
     def _read_or_reuse(self, object_id: str, type_key: str, *, rescan: bool):
         if not rescan:

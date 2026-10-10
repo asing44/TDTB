@@ -495,6 +495,64 @@ def _classify_completion(
     return "closed"
 
 
+#: Stable reason codes for the review-warning surface (U3b-3). One code is
+#: emitted per UNKNOWN tri-state on an active-rule row; ``unavailable`` (no
+#: mapped property) and a manual unassigned candidate are decided states and
+#: never produce a code.
+REVIEW_REASON_RULE_UNKNOWN = "rule_unknown"
+REVIEW_REASON_STATUS_UNKNOWN = "status_unknown"
+REVIEW_REASON_COMPLETION_UNKNOWN = "completion_unknown"
+
+#: Bound on how many review-candidate identities one warning names. The exact
+#: count is always reported; naming every identity would make the warning grow
+#: with the unknown set and flood the job surface.
+MAX_REVIEW_WARNING_IDENTITIES = 3
+
+
+def _review_reasons(
+    rule_state: capacities_rules.Evaluation,
+    status_state: str | None,
+    completion_state: str | None,
+) -> list[str]:
+    """Stable review codes for an active-rule row, in a fixed order.
+
+    Only the three UNKNOWN tri-states are review reasons: ``unavailable`` is a
+    decided mapping gap and a manual unassigned candidate is a decided MATCH,
+    so neither fabricates a reason.
+    """
+    reasons: list[str] = []
+    if rule_state is capacities_rules.UNKNOWN:
+        reasons.append(REVIEW_REASON_RULE_UNKNOWN)
+    if status_state == "unknown":
+        reasons.append(REVIEW_REASON_STATUS_UNKNOWN)
+    if completion_state == "unknown":
+        reasons.append(REVIEW_REASON_COMPLETION_UNKNOWN)
+    return reasons
+
+
+def _review_warning(review_rows: Sequence[tuple[str, Sequence[str]]]) -> str:
+    """One bounded, content-free summary of the rows needing review.
+
+    Names the exact count, at most ``MAX_REVIEW_WARNING_IDENTITIES``
+    identities with their reason codes, a ``+N more`` remainder when bounded,
+    and the Rescan suggestion. Identity and reason codes are structured
+    metadata; no property value or raw object content is ever included.
+    """
+    shown = review_rows[:MAX_REVIEW_WARNING_IDENTITIES]
+    parts = [
+        f"{identity} ({', '.join(reasons)})" if reasons else identity
+        for identity, reasons in shown
+    ]
+    remaining = len(review_rows) - len(shown)
+    if remaining > 0:
+        parts.append(f"+{remaining} more")
+    return (
+        f"Capacities review — {len(review_rows)} unassigned candidate(s) not "
+        f"fully evaluated: {'; '.join(parts)}. Rescan Capacities to evaluate "
+        "them fully."
+    )
+
+
 #: Capacities' tag property id on task-like structures. Tags are typed
 #: ``entity`` references to ``RootTag`` objects; the flat top-level ``tags``
 #: title array the API also returns is presentation only and never identity.
@@ -1170,9 +1228,14 @@ class CapacitiesAdapter:
             }
             # Additive adapter-only availability metadata for the later
             # warning-candidate surface (U3b-3/U4): UNKNOWN is not eligible
-            # but stays visible, and closed values never reach a row.
+            # but stays visible, and closed values never reach a row. The
+            # review reasons are a stable list so a consumer never parses the
+            # warning text to decide whether the row is fully evaluated.
             row["capacities_status_state"] = status_state
             row["capacities_completion_state"] = completion_state
+            row["capacities_review_reasons"] = _review_reasons(
+                rule_state, status_state, completion_state
+            )
         else:
             # Compact serialization of the evaluator decision, never a title
             # or a policy key. Downstream index allowlists may ignore it.
@@ -1206,6 +1269,7 @@ class CapacitiesAdapter:
         warnings: list[str] = []
         evaluated: set[str] = set()
         malformed: set[str] = set()
+        review_rows: list[tuple[str, list[str]]] = []
         for obj in objects:
             structure_id = _text(obj.get("structureId")) if isinstance(obj, dict) else ""
             mapping = self._mappings.get(structure_id)
@@ -1229,6 +1293,14 @@ class CapacitiesAdapter:
                 evaluated.add(identity)
             if row is not None:
                 items.append(row)
+                reasons = row.get("capacities_review_reasons")
+                if reasons:
+                    review_rows.append((row["identity"], list(reasons)))
+        if review_rows:
+            # Every review row above stayed an item, so this warning is a
+            # supplementary surface on a complete result, never a partial
+            # success. The summary is bounded and carries no raw content.
+            warnings.append(_review_warning(review_rows))
         items.sort(key=lambda row: (_normalized(row["name"]), row["identity"]))
         return items, warnings, evaluated, malformed
 
