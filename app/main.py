@@ -296,20 +296,18 @@ def _capacities_intake_block(
     digest: dict[str, Any],
     coverage: capacities_intake.DirectCoverage,
     direct_warnings: list[str],
+    read: capacities_builder.DirectIntakeRead | None,
 ) -> dict[str, Any]:
     """The additive ``capacities_intake`` block the ``direct`` intake reports.
 
-    Token-free and read-only: the published generation's metadata and the
-    selection store. ``state`` is ``not_configured`` (no source record),
-    ``refresh_required`` (no complete generation, no contract, or a damaged
-    member), ``unavailable`` (warnings and no Capacities rows served),
-    ``degraded`` (rows served with warnings), or ``ok``. Unassigned candidates
-    are the Capacities rows left on the suggested surface.
+    Token-free and read-only: the caller's single generation read (so rows and
+    metadata always describe the same generation) and the selection store.
+    ``state`` is ``not_configured`` (no source record), ``refresh_required``
+    (no complete generation, no contract, or a damaged member),
+    ``unavailable`` (warnings and no Capacities rows served), ``degraded``
+    (rows served with warnings), or ``ok``. Unassigned candidates are the
+    Capacities rows left on the suggested surface.
     """
-    try:
-        read = capacities_builder.read_direct_intake(vault)
-    except capacities_builder.CapacitiesSourceStoreError:
-        read = None
     snapshot = read.snapshot if read is not None else None
     served = [
         row for row in [*digest["assigned"], *digest["suggested"]]
@@ -2991,6 +2989,9 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
             capacities_rows = [
                 r for r in artifact_result.rows if r.get("source") == "capacities"
             ]
+            # Defense-in-depth only: under direct intake the override below
+            # discards these rows, so this guard is not the enforcement point
+            # (R-B F2). Removing it survives the discard tests by design.
             if not direct_intake:
                 capacities_items = [r for r in capacities_rows if r.get("assigned") is True]
                 c_pool = [r for r in capacities_rows if r.get("assigned") is not True]
@@ -3033,12 +3034,26 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
             # Live mode still sources the habit summary from the artifact.
             habits, w_hab = artifact_source.load_habits()
         if direct_intake:
+            # ONE generation read per request: the rows and the intake block
+            # must describe the same generation (R-B F3, adjacent-generation
+            # pairing). On a store error the warning surfaces here and the
+            # rows refuse; load_direct_rows reuses this read as-is.
+            try:
+                intake_read: capacities_builder.DirectIntakeRead | None = (
+                    capacities_builder.read_direct_intake(vault)
+                )
+            except capacities_builder.CapacitiesSourceStoreError:
+                intake_read = None
+                w_capacities = [
+                    *w_capacities,
+                    capacities_intake.SOURCE_UNREADABLE,
+                ]
             (
                 capacities_items,
                 c_pool,
                 direct_warnings,
                 direct_coverage,
-            ) = capacities_intake.load_direct_rows(vault)
+            ) = capacities_intake.load_direct_rows(vault, read=intake_read)
             w_capacities = [*w_capacities, *direct_warnings]
         try:
             if source_mode != app_config.SOURCES_MODE_ARTIFACT:
@@ -3274,7 +3289,7 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
         }
         if direct_intake:
             response["capacities_intake"] = _capacities_intake_block(
-                vault, digest, direct_coverage, direct_warnings,
+                vault, digest, direct_coverage, direct_warnings, intake_read,
             )
         return response
 

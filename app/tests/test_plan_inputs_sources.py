@@ -860,6 +860,23 @@ def test_direct_missing_snapshot_or_contract_serves_no_rows_and_no_fallback(vaul
     assert any("Refresh required" in w for w in body["source_warnings"])
     assert clients.calls == 0
     assert builder.calls == 0
+    # R-B F1: the state machine branch is pinned, not just the warning.
+    assert body["capacities_intake"]["state"] == "refresh_required"
+
+
+def test_direct_block_without_a_source_record_reports_not_configured(vault):
+    _set_sources(mode="artifact", capacities_intake="direct")
+    _write_fresh_artifact([
+        _artifact_row("Call Vlad", "todoist", "todoist:9001", assigned=True),
+    ])
+    client = _direct_client(vault, build_clients=_CallRecorder(),
+                            build_capacities=_CallRecorder())
+
+    body = client.get("/plan-inputs").json()
+
+    assert body["capacities_intake"]["state"] == "not_configured"
+    assert body["capacities_intake"]["generation"] is None
+    assert body["source_counts"]["capacities"] == 0
 
 
 def test_direct_unknown_rows_never_reach_the_assigned_surface(vault):

@@ -102,21 +102,31 @@ class DirectCoverage:
     malformed: int = 0
 
 
+_UNREAD = object()  # sentinel: the caller supplied no preloaded generation read
+
+
 def load_direct_rows(
     vault_root: str | Path,
     *,
     now: datetime | None = None,
+    read: Any = _UNREAD,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[str], DirectCoverage]:
     """Project the published cache into Capacities plan rows, offline.
 
     Returns ``(assigned_rows, pool_rows, warnings, coverage)``. Rows are split
     by ``assigned is True`` after an identity dedupe. ``now`` defaults to the
     wall clock and is folded into the app effective date, never ``date.today()``.
+    ``read`` may carry a preloaded ``read_direct_intake`` result so a caller
+    that already read the generation reuses it instead of racing a second
+    read (adjacent generations could otherwise pair rows with mismatched
+    metadata). ``None`` means the caller already handled a store error and
+    surfaced it; only the sentinel triggers a read here.
     """
-    try:
-        read = capacities_builder.read_direct_intake(vault_root)
-    except capacities_builder.CapacitiesSourceStoreError:
-        return _refused([SOURCE_UNREADABLE])
+    if read is _UNREAD:
+        try:
+            read = capacities_builder.read_direct_intake(vault_root)
+        except capacities_builder.CapacitiesSourceStoreError:
+            return _refused([SOURCE_UNREADABLE])
     if read is None:
         return [], [], [], DirectCoverage()
 
