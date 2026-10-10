@@ -13,8 +13,8 @@ describe("compact planning cockpit", () => {
     const h = makeHarness("ready");
     const r = h.ui(<App />);
 
-    expect(r.getByRole("region", { name: "Today's work" })).toBeTruthy();
-    expect(r.getByText("Assigned items only · shape today's copy here; assignment stays upstream.")).toBeTruthy();
+    expect(r.getByRole("region", { name: "Assigned this morning" })).toBeTruthy();
+    expect(r.getByText("Edits here affect today only. Mark complete writes back to the source.")).toBeTruthy();
     expect(r.container.querySelector(".cap-card")).toBeTruthy();
     expect(r.container.querySelector('[aria-label="Agenda"]')).toBeNull();
     expect(r.container.querySelector(".placement")).toBeNull();
@@ -162,7 +162,7 @@ describe("compact planning cockpit", () => {
     const r = h.ui(<App />);
     const queue = r.container.querySelector(".queue")!;
 
-    expect(queue.querySelector(".center-note")).toBeTruthy();
+    expect(queue.querySelector(".queue__quiet")).toBeTruthy();
     const calendar = queue.querySelector(".calendar-impact")!;
     expect(calendar.classList.contains("calendar-impact--inline")).toBe(true);
     expect(

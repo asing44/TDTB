@@ -9,6 +9,10 @@
 
 import { bandOf, trimPlan, type BandKey, type TrimPlan } from "../model/bands";
 import { orderByImportance } from "../model/allocator";
+import {
+  hierarchyBandedRows,
+  type HierarchyRow,
+} from "../model/allocatorView";
 import type { AssignedItem } from "../model/types";
 import {
   effectiveBlocks,
@@ -79,6 +83,61 @@ export function localSelected(s: AppState): number {
     table renders, so the rail card and the row flags can never disagree. */
 export function trimForState(s: AppState): TrimPlan {
   return trimPlan(includedDisplayOrder(s), budgetTotal(s));
+}
+
+/** KTD12 view grouping: the task table's section membership. This is a
+    DISPLAY projection only — the trim plan and sequencing order in the model
+    are untouched. "Critical" is the Critical band; "When there's room" merges
+    the High and Everything-else bands in their original (trim) order; "Fixed"
+    is the scheduled/native-fixed set; "Out today" combines the Excluded-today
+    rows with the dropped-today ledger so one reversible section owns both. */
+export interface DroppedTodayRow {
+  identity: string;
+  name: string;
+  droppedAt: string | null;
+}
+
+export interface TaskTableSection {
+  key: "critical" | "room" | "fixed" | "out";
+  label: string;
+  sub: string;
+  rows: HierarchyRow[];
+  dropped: DroppedTodayRow[];
+}
+
+export function taskTableSections(s: AppState): TaskTableSection[] {
+  const g = hierarchyBandedRows(s);
+  const dropped = (s.inputs?.droppedToday ?? []) as DroppedTodayRow[];
+  return [
+    {
+      key: "critical",
+      label: "Critical",
+      sub: "Deadline pressure — protect these",
+      rows: g.crit,
+      dropped: [],
+    },
+    {
+      key: "room",
+      label: "When there's room",
+      sub: "High and everything else, in trim order",
+      rows: [...g.high, ...g.else],
+      dropped: [],
+    },
+    {
+      key: "fixed",
+      label: "Fixed",
+      sub: "Scheduled and native times",
+      rows: g.scheduled,
+      dropped: [],
+    },
+    {
+      key: "out",
+      label: "Out today",
+      sub: "Excluded and dropped — Include today restores",
+      rows: g.excluded,
+      dropped,
+    },
+  ];
 }
 
 /** Per-band spend for the band-header share bars. */

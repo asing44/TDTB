@@ -218,9 +218,12 @@ describe("ApprovalDrawer two-gate commit", () => {
 describe("Queue", () => {
   it("groups by planning state with all-day work kept visible", () => {
     const { ui } = makeHarness("sequenced");
-    const { getByText, container } = ui(<Queue />);
-    expect(getByText(/Needs placement/)).toBeTruthy();
-    expect(getByText(/Scheduled \(7\)/)).toBeTruthy();
+    const { getByText, getAllByText, container } = ui(<Queue />);
+    // KTD12 grouping: Critical / When there's room / Fixed / Out today.
+    expect(getByText(/^Critical$/)).toBeTruthy();
+    expect(getByText(/When there's room/)).toBeTruthy();
+    expect(getAllByText(/^Fixed$/).length).toBeGreaterThan(0);
+    expect(getByText(/Out today/)).toBeTruthy();
     // All-day rows band with the rest now — there is no trailing "All day"
     // heading to count, so the badge on the row carries the state.
     expect(getByText("All day")).toBeTruthy();
@@ -748,7 +751,7 @@ describe("T13 canvas deletion", () => {
     // Pre-commit NOW/NEXT is dead space — absent by design (brief problem 5).
     expect(container.querySelector(".execution")).toBeNull();
     // IMP-07: the allocator surface is named "Today's work" (item 1).
-    expect(queryByLabelText("Today's work")).toBeTruthy();
+    expect(queryByLabelText("Assigned this morning")).toBeTruthy();
     expect(queryByLabelText("Timeline")).toBeNull();
     expect(queryByRole("button", { name: "Edit day" })).toBeNull();
     expect(queryByText("Confirm day setup")).toBeTruthy();
@@ -1228,7 +1231,7 @@ describe("T26 queue legibility", () => {
   it("todoist priority int renders as a p-level", () => {
     const h = makeHarness("ready");
     withLegibilityRows(h);
-    expect(h.ui(<Queue />).getByText("p1")).toBeTruthy();
+    expect(h.ui(<Queue />).getAllByText("p1").length).toBeGreaterThan(0);
   });
 
   it("past deadlines render an overdue day count, not a bare date", () => {

@@ -42,13 +42,11 @@ import {
 } from "../store/store";
 import type { QueueState } from "../model/types";
 import {
-  bandSpend,
   budgetTotal,
-  hierarchyBandedRows,
   includedDisplayOrder,
-  localSelected,
   type HierarchyRow,
 } from "../model/allocatorView";
+import { taskTableSections } from "../store/allocatorView";
 import { blocksLabel, display12h, formatBlockAmount } from "../model/time";
 import {
   HALF_BLOCK,
@@ -56,14 +54,7 @@ import {
   MIN_BLOCKS,
   clampHalfBlocks,
 } from "../model/allocator";
-import {
-  BANDS,
-  BAND_COLOR,
-  stripeColor,
-  trackFor,
-  trackGradient,
-  type BandSpec,
-} from "../model/bands";
+import { stripeColor, trackFor, trackGradient } from "../model/bands";
 import { DIRECT_VERBS, MORE_VERBS } from "../model/staging";
 import { sourceDetail, typeToken } from "../model/sourceContext";
 import { dueLabel, normalizeUrgency } from "../model/urgency";
@@ -346,38 +337,71 @@ function TimeAdjustmentOptIn({
   );
 }
 
-/** Keys-card navigation (3a spec): ↑/↓ move between rows, ←/→ shape the
-    focused row's duration, x toggles exclude, ⏎ marks done. Skips when the
-    event originates in a control that owns the key (the range input already
-    handles arrows; buttons own Enter). */
+/** U11: urgency tier → the mockup's priority chip (p1 highest). */
+const PRIORITY_LABEL: Record<string, string> = {
+  crit: "p1",
+  high: "p2",
+  med: "p3",
+  low: "p4",
+};
+
+/** U11 hint row: the shortcuts that actually work on the focused row. */
+function ShortcutHint() {
+  return (
+    <div class="queue__hint" role="note" aria-label="Task table keyboard shortcuts">
+      <span class="queue__hint-keys">
+        Hover a row for actions · <kbd>C</kbd> complete · <kbd>E</kbd> exclude ·{" "}
+        <kbd>D</kbd> exact duration · <kbd>←→</kbd> ±15min · <kbd>↑↓</kbd> move
+      </span>
+      <span class="queue__hint-note">
+        Exclude, Exact, and Leave as-is apply to today only and can be undone.
+        Complete updates the source.
+      </span>
+    </div>
+  );
+}
+
+/** Keys-card navigation (3a spec), re-keyed for U11: ↑/↓ move between rows,
+    ←/→ shape the focused row's duration by ±15min, E toggles today-only
+    exclusion, D opens the exact-duration editor, C marks complete. Skips when
+    the event originates in a control that owns the key (the range input
+    already handles arrows; buttons own Enter). */
 function rowKeydown(
   e: KeyboardEvent,
   item: AssignedItem,
   s: AppState,
-  controller: { setOverride: (id: string, inc: boolean, b: number | null) => void; stagingAction: (v: string, id: string) => Promise<unknown> },
+  controller: {
+    setOverride: (id: string, inc: boolean, b: number | null) => void;
+    stagingAction: (v: string, id: string) => Promise<unknown>;
+  },
+  store: { dispatch: (a: { type: "UI"; patch: { editorItem: string; editorIntent: "duration" } }) => void },
 ) {
   const target = e.target as HTMLElement;
   const inControl = target.tagName === "INPUT" || target.tagName === "BUTTON";
   const row = (target.closest(".qrow") ?? target) as HTMLElement;
   const included = s.overrides[item.id]?.included ?? true;
+  const key = e.key.length === 1 ? e.key.toLowerCase() : e.key;
 
-  if ((e.key === "ArrowDown" || e.key === "ArrowUp") && !inControl) {
+  if ((key === "ArrowDown" || key === "ArrowUp") && !inControl) {
     const rows = Array.from(
       row.closest(".queue")?.querySelectorAll<HTMLElement>(".qrow") ?? [],
     );
     const i = rows.indexOf(row);
-    const next = rows[e.key === "ArrowDown" ? i + 1 : i - 1];
+    const next = rows[key === "ArrowDown" ? i + 1 : i - 1];
     if (next) next.focus();
     e.preventDefault();
-  } else if ((e.key === "ArrowLeft" || e.key === "ArrowRight") && !inControl) {
+  } else if ((key === "ArrowLeft" || key === "ArrowRight") && !inControl) {
     if (!included) return;
-    const delta = e.key === "ArrowRight" ? HALF_BLOCK : -HALF_BLOCK;
+    const delta = key === "ArrowRight" ? HALF_BLOCK : -HALF_BLOCK;
     controller.setOverride(item.id, included, clampHalfBlocks(effectiveBlocks(s, item.id) + delta));
     e.preventDefault();
-  } else if (e.key === "x" && !inControl) {
+  } else if (key === "e" && !inControl) {
     controller.setOverride(item.id, !included, s.overrides[item.id]?.blocks ?? null);
     e.preventDefault();
-  } else if (e.key === "Enter" && !inControl) {
+  } else if (key === "d" && !inControl) {
+    store.dispatch({ type: "UI", patch: { editorItem: item.id, editorIntent: "duration" } });
+    e.preventDefault();
+  } else if (key === "c" && !inControl) {
     void controller.stagingAction("done", item.id);
     e.preventDefault();
   }
@@ -418,11 +442,26 @@ function Row({
       data-hierarchy-depth={hierarchy?.depth ?? 0}
       data-group-key={hierarchy?.groupKey ?? undefined}
       tabIndex={0}
-      onKeyDown={(e) => rowKeydown(e as unknown as KeyboardEvent, item, s, controller)}
+      onKeyDown={(e) => rowKeydown(e as unknown as KeyboardEvent, item, s, controller, store)}
     >
       <span class="qrow__stripe" style={{ background: stripeColor(item) }} />
       <div class="qrow__body">
         <div class="qrow__nameline">
+          <input
+            type="checkbox"
+            class="qrow__check"
+            checked={included}
+            aria-label={`Include ${item.name} in today's plan`}
+            onClick={(e) => e.stopPropagation()}
+            onKeyDown={(e) => e.stopPropagation()}
+            onChange={(e) =>
+              controller.setOverride(
+                item.id,
+                (e.target as HTMLInputElement).checked,
+                s.overrides[item.id]?.blocks ?? null,
+              )
+            }
+          />
           {hierarchy?.depth ? (
             <span class="qrow__branch" aria-hidden="true">↳</span>
           ) : null}
@@ -466,6 +505,14 @@ function Row({
         </span>
       </div>
       <div class="qrow__due">
+        {urgency?.tier && (
+          <span
+            class={`qrow__prio qrow__prio--${urgency.tier}`}
+            title="Priority"
+          >
+            {PRIORITY_LABEL[urgency.tier]}
+          </span>
+        )}
         {urgency && (urgency.tier === "crit" || urgency.tier === "high") && (
           <span class={`badge badge--u${urgency.tier}`}>{urgency.text}</span>
         )}
@@ -642,86 +689,39 @@ function Row({
   );
 }
 
-function BandHeader({
-  band,
-  spend,
+/** U11 lane header: the grouped table's title + sub + total + collapse
+    toggle. Keyboard-accessible disclosure with state announced in words
+    (KTD10/KTD12); the Out today lane keeps the legacy `band--drop` hook. */
+function LaneHeader({
+  label,
+  sub,
   count,
   open,
   onToggle,
   controlsId,
+  drop,
 }: {
-  band: BandSpec;
-  spend: number;
+  label: string;
+  sub: string;
   count: number;
   open: boolean;
   onToggle: () => void;
   controlsId: string;
-}) {
-  const over = spend - band.share;
-  const rows = `${count} row${count === 1 ? "" : "s"}`;
-  return (
-    <button
-      type="button"
-      class={`band${open ? "" : " band--collapsed"}`}
-      aria-expanded={open}
-      aria-controls={controlsId}
-      /* FEEDBACK-10 (A11): the state and hidden count are announced, not
-         implied by a chevron glyph. */
-      aria-label={`Band ${band.label}, ${open ? "expanded" : "collapsed"}, ${rows}${open ? "" : " hidden"}, activate to ${open ? "collapse" : "expand"}`}
-      onClick={onToggle}
-    >
-      <span class="band__tick" />
-      <span class="band__label">{band.label}</span>
-      <span class="band__note">{band.note}</span>
-      <span class="band__rule" />
-      <span class="band__count">{rows}{open ? "" : " hidden"}</span>
-      <span class="band__bar">
-        <span
-          class="band__bar-fill"
-          style={{
-            width: `${Math.min(100, band.share > 0 ? (spend / band.share) * 100 : 100)}%`,
-            background: over > 0 ? "var(--c-overflow)" : BAND_COLOR[band.key],
-          }}
-        />
-      </span>
-      <span class="band__share">
-        {formatBlockAmount(spend)} / {formatBlockAmount(band.share)}
-      </span>
-      <span class={`band__over ${over > 0 ? "band__over--over" : ""}`}>
-        {over > 0 ? `${formatBlockAmount(over)} over share` : "within share"}
-      </span>
-      <span class={`band__state${open ? "" : " band__state--closed"}`}>
-        {open ? "expanded" : "collapsed"}
-      </span>
-      <span class="band__chevron" aria-hidden="true">{open ? "▾" : "▸"}</span>
-    </button>
-  );
-}
-
-function DroppedHeader({
-  count,
-  open,
-  onToggle,
-  controlsId,
-}: {
-  count: number;
-  open: boolean;
-  onToggle: () => void;
-  controlsId: string;
+  drop?: boolean;
 }) {
   const rows = `${count} row${count === 1 ? "" : "s"}`;
   return (
     <button
       type="button"
-      class={`band band--drop${open ? "" : " band--collapsed"}`}
+      class={`band band--lane${drop ? " band--drop" : ""}${open ? "" : " band--collapsed"}`}
       aria-expanded={open}
       aria-controls={controlsId}
-      aria-label={`Dropped today, ${open ? "expanded" : "collapsed"}, ${rows}${open ? "" : " hidden"}, activate to ${open ? "collapse" : "expand"}`}
+      aria-label={`${label}, ${open ? "expanded" : "collapsed"}, ${rows}${open ? "" : " hidden"}, activate to ${open ? "collapse" : "expand"}`}
       onClick={onToggle}
     >
       <span class="band__tick" />
-      <span class="band__label">Dropped today</span>
-      <span class="band__note">excluded from today — eligible again tomorrow</span>
+      <span class="band__label">{label}</span>
+      <span class="band__note">{sub}</span>
       <span class="band__rule" />
       <span class="band__count">{rows}{open ? "" : " hidden"}</span>
       <span class={`band__state${open ? "" : " band__state--closed"}`}>
@@ -744,31 +744,32 @@ export function Queue() {
   const items = s.inputs.assigned;
   if (items.length === 0) {
     return (
-      <section class="queue" aria-label="Today's work">
-        {/* U9: the capacity card heads the body even when nothing is assigned
-            — a quiet day still needs its capacity story named. */}
+      <section class="queue" aria-label="Assigned this morning">
+        {/* U9/U11: the capacity card heads the frame even when nothing is
+            assigned — a quiet day still needs its capacity story named. */}
+        <header class="queue__head">
+          <div>
+            <h1>Assigned this morning</h1>
+            <p>Edits here affect today only. Mark complete writes back to the source.</p>
+          </div>
+          <span class="queue__assigned-chip">assigned only</span>
+        </header>
         <CapacityCard />
         {/* S5: calendar evidence stays with the work surface even on a quiet
             day — the empty-assigned branch keeps the inline band. */}
         <CalendarImpact inline />
-        <div class="center-note">
-          No assigned items today. Assignment happens upstream — Obsidian
-          `daily-assigned` and Todoist Today. A quiet day is a valid day.
+        <div class="queue__quiet" role="status">
+          <p>
+            No assigned items today. Assignment happens upstream — Obsidian
+            `daily-assigned` and Todoist Today. A quiet day is a valid day.
+          </p>
         </div>
       </section>
     );
   }
 
-  const hierarchyGroups = hierarchyBandedRows(s);
-  const groups = {
-    crit: hierarchyGroups.crit.map(({ item }) => item),
-    high: hierarchyGroups.high.map(({ item }) => item),
-    else: hierarchyGroups.else.map(({ item }) => item),
-    scheduled: hierarchyGroups.scheduled.map(({ item }) => item),
-    excluded: hierarchyGroups.excluded.map(({ item }) => item),
-  };
-  const needsPlacement = groups.crit.length + groups.high.length + groups.else.length;
-  const dropped = s.inputs.droppedToday ?? [];
+  // KTD12: section membership is a view projection over the band/state model.
+  const sections = taskTableSections(s);
 
   // One cumulative-spend walk shared with the rail (allocatorView), so the
   // budget line lands on exactly one row's track.
@@ -780,16 +781,8 @@ export function Queue() {
     cum += r.blocks;
   }
 
-  // FEEDBACK-10 (A10): one scan-distance readout of the day's balance — over
-  // capacity gets a strong overflow line above the bands; a balanced day
-  // stays clean (the rail and band bars carry the quiet state).
-  const selected = localSelected(s);
-  const budget = budgetTotal(s);
-  const over = Math.max(0, selected - budget);
-
   const hierarchyById = new Map(
-    [...hierarchyGroups.crit, ...hierarchyGroups.high, ...hierarchyGroups.else,
-      ...hierarchyGroups.scheduled, ...hierarchyGroups.excluded].map((entry) => [entry.item.id, entry]),
+    sections.flatMap((sec) => sec.rows).map((entry) => [entry.item.id, entry]),
   );
   const row = (i: AssignedItem) => (
     <Row
@@ -802,90 +795,72 @@ export function Queue() {
   );
 
   return (
-    <section class="queue" aria-label="Today's work">
+    <section class="queue" aria-label="Assigned this morning">
       <header class="queue__head">
         <div>
-          <span class="queue__eyebrow">Allocation</span>
-          <h1>Today's work</h1>
-          <p>Assigned items only · shape today's copy here; assignment stays upstream.</p>
+          <h1>Assigned this morning</h1>
+          <p>Edits here affect today only. Mark complete writes back to the source.</p>
         </div>
         <span class="queue__assigned-chip">assigned only</span>
       </header>
-      <p class="queue__subtractive">
-        Every assigned row starts selected. Remove or trim what will not fit;
-        chosen task effort stays additive until Commit live.
-      </p>
       <CapacityCard />
-      <div class="queue__cols" aria-hidden="true">
-        <span />
-        <span>Needs placement · {needsPlacement}</span>
-        <span>Due</span>
-        <span>Time today · budget line</span>
-        <span />
-      </div>
-      {over > 0 && (
-        <p class="queue__remaining queue__remaining--over" role="status">
-          {formatBlockAmount(selected)} selected of {formatBlockAmount(budget)} capacity - {formatBlockAmount(over)} over
-        </p>
-      )}
-      {/* S5 (cockpit UI feedback item 3) + round 2: the calendar band leads
-          the priority-band stack as a peer disclosure, expanded by default;
-          the urgency bands follow in BANDS order. */}
       <CalendarImpact inline />
-      {BANDS.map((band) => {
-        const rows = groups[band.key];
-        const open = isOpen(band.key);
-        const regionId = `band-${band.key}`;
+      <ShortcutHint />
+      {sections.map((sec) => {
+        const open = isOpen(sec.key);
+        const regionId = `tasktable-${sec.key}`;
+        const count = sec.rows.length + sec.dropped.length;
+        const blocks = sec.rows
+          .filter((e) => s.overrides[e.item.id]?.included ?? true)
+          .reduce((sum, e) => sum + effectiveBlocks(s, e.item.id), 0);
         return (
           <div
-            key={band.key}
-            class="queue__band"
-            style={{ "--band-color": BAND_COLOR[band.key] }}
+            key={sec.key}
+            class={`queue__band tasktable tasktable--${sec.key}`}
+            data-section={sec.key}
           >
-            <BandHeader
-              band={band}
-              spend={bandSpend(s, band.key)}
-              count={rows.length}
+            <LaneHeader
+              label={sec.label}
+              sub={sec.sub}
+              count={count}
               open={open}
-              onToggle={() => toggle(band.key)}
+              onToggle={() => toggle(sec.key)}
               controlsId={regionId}
+              drop={sec.key === "out"}
             />
             {open && (
-              <div id={regionId} class="queue__band-rows">
-                {rows.map(row)}
-                {rows.length === 0 && <div class="queue__empty">nothing here</div>}
+              <div id={regionId} class="queue__band-rows tasktable__rows">
+                <div class="tasktable__grouplabel">
+                  <span class="tasktable__grouplabel-name">{sec.sub}</span>
+                  <span class="tasktable__grouplabel-total">
+                    {formatBlockAmount(blocks)} selected
+                  </span>
+                </div>
+                {sec.rows.map((e) => row(e.item))}
+                {sec.dropped.map((d) => (
+                  <div key={d.identity} class="qrow qrow--dropped">
+                    <span class="qrow__stripe" />
+                    <div class="qrow__body">
+                      <div class="qrow__nameline">
+                        <span class="qrow__name">{d.name}</span>
+                      </div>
+                      <span class="qrow__source">
+                        dropped{d.droppedAt ? ` · ${droppedTimeLabel(d.droppedAt)}` : ""}
+                      </span>
+                    </div>
+                    <div class="qrow__due" />
+                    <div class="qrow__time">
+                      <span class="qrow__excluded-note">out today</span>
+                    </div>
+                    <div class="qrow__actions" />
+                  </div>
+                ))}
+                {count === 0 && <div class="queue__empty">nothing here</div>}
               </div>
             )}
           </div>
         );
       })}
-      <div class="queue__band queue__band--drop">
-        <DroppedHeader
-          count={dropped.length}
-          open={isOpen("dropped")}
-          onToggle={() => toggle("dropped")}
-          controlsId="queue-dropped"
-        />
-        {isOpen("dropped") && (
-          <ul id="queue-dropped" class="queue__dropped">
-            {dropped.length === 0 && <li class="queue__empty">nothing here</li>}
-            {dropped.map((d) => (
-              <li key={d.identity} class="queue__dropped-row">
-                <span class="queue__dropped-name">{d.name}</span>
-                {d.droppedAt && (
-                  <span class="queue__dropped-at" title={d.droppedAt}>
-                    dropped {droppedTimeLabel(d.droppedAt)}
-                  </span>
-                )}
-              </li>
-            ))}
-          </ul>
-        )}
-      </div>
-      <h2 class="queue__section">Scheduled ({groups.scheduled.length})</h2>
-      {groups.scheduled.map(row)}
-      <h2 class="queue__section">Excluded today ({groups.excluded.length})</h2>
-      {groups.excluded.map(row)}
     </section>
   );
 }
