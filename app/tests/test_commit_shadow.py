@@ -18,6 +18,7 @@ import main as main_mod  # noqa: E402
 import runstate  # noqa: E402
 import commit  # noqa: E402
 import commit_run  # noqa: E402
+import capacities_selections  # noqa: E402
 import shadow  # noqa: E402
 from datetime import date  # noqa: E402
 
@@ -198,12 +199,14 @@ class TestCommitEligibility:
         after = {p: p.read_bytes() for p in vault.rglob("*") if p.is_file()}
         assert before == after
 
-    def test_capacities_rows_are_not_misrouted_into_commit(self, client, vault):
+    SHIP_IDENTITY = "capacities:space-1:RootTask:object-1"
+
+    def _seed_ship_project_index(self, vault):
         today = main_mod.gather.effective_date(main_mod.datetime.now())
         runstate.write_digest_index(vault, today, [{
             "name": "Ship project",
             "path": "capacities://space-1/object-1",
-            "identity": "capacities:space-1:RootTask:object-1",
+            "identity": self.SHIP_IDENTITY,
             "source": "capacities",
             "capacities_id": "object-1",
             "capacities_space_id": "space-1",
@@ -212,6 +215,52 @@ class TestCommitEligibility:
             "source_fingerprint": "fingerprint-1",
             "surface": "assigned",
         }])
+
+    def test_selected_capacities_row_is_admitted_as_calendar_only(
+        self, client, vault, monkeypatch
+    ):
+        self._seed_ship_project_index(vault)
+        capacities_selections.save_selections(
+            space_id="space-1", expected_revision=0,
+            selections=[{
+                "identity": self.SHIP_IDENTITY,
+                "rules_revision": 0, "acknowledged": True,
+            }],
+        )
+        monkeypatch.setattr(shadow, "gather_live_state", lambda config, vault_root: {
+            "todoist_tasks": [], "calendar_events": [], "vault_frontmatter": {},
+            "daily_note_text": "# TDTB Plan\n",
+        })
+        before = {p: p.read_bytes() for p in vault.rglob("*") if p.is_file()}
+
+        response = client.post(
+            "/commit?mode=shadow",
+            headers=_auth(client),
+            json={
+                "digest": {"assigned": [{
+                    "name": "Ship project",
+                    "path": "capacities://space-1/object-1",
+                    "identity": self.SHIP_IDENTITY,
+                }]},
+                "sequence": {"sequence": [{
+                    "id": "Ship project", "start": "09:00", "end": "10:00",
+                }]},
+                "config": {},
+            },
+        )
+
+        assert response.status_code == 200, response.text
+        manifest = [e["manifest"] for e in response.json()["entries"]]
+        ship = [m for m in manifest if m["name"] == "Ship project"]
+        assert [(m["system"], m["action"], m["routing"]) for m in ship] == [
+            ("calendar", "create-event", "⬜ Blocks"),
+        ]
+        assert [m for m in manifest if m["system"] == "todoist"] == []
+        after = {p: p.read_bytes() for p in vault.rglob("*") if p.is_file()}
+        assert before == after
+
+    def test_capacities_row_matched_by_name_and_path_only_is_refused(self, client, vault):
+        self._seed_ship_project_index(vault)
         before = {p: p.read_bytes() for p in vault.rglob("*") if p.is_file()}
 
         response = client.post(
@@ -230,8 +279,9 @@ class TestCommitEligibility:
         )
 
         assert response.status_code == 422
-        assert "plan-only" in response.json()["detail"]
+        assert "server-indexed identity" in response.json()["detail"]
         assert "Ship project" in response.json()["detail"]
+        assert "plan-only" not in response.json()["detail"]
         after = {p: p.read_bytes() for p in vault.rglob("*") if p.is_file()}
         assert before == after
 

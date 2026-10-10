@@ -25,6 +25,7 @@ import artifact_source as art  # noqa: E402
 import capacities_selections as sel  # noqa: E402
 import exclusion_settings as es  # noqa: E402
 import runstate  # noqa: E402
+import shadow  # noqa: E402
 
 
 SPACE = "space-1"
@@ -515,8 +516,11 @@ def _identity(object_id, *, structure="RootTask", space=SPACE):
     return f"capacities:{space}:{structure}:{object_id}"
 
 
-def _cap_row(object_id, *, structure="RootTask", assigned=False, tags=()):
-    return {
+def _cap_row(
+    object_id, *, structure="RootTask", assigned=False, tags=(),
+    review_reasons=None, rule=None,
+):
+    row = {
         "id": object_id, "name": object_id,
         "path": f"capacities://{SPACE}/{object_id}",
         "identity": _identity(object_id, structure=structure),
@@ -530,6 +534,11 @@ def _cap_row(object_id, *, structure="RootTask", assigned=False, tags=()):
             {"space_id": SPACE, "tag_id": tag_id, "title": "tag"} for tag_id in tags
         ],
     }
+    if review_reasons is not None:
+        row["capacities_review_reasons"] = list(review_reasons)
+    if rule is not None:
+        row["capacities_rule"] = dict(rule)
+    return row
 
 
 def _seed_source(client) -> None:
@@ -539,13 +548,13 @@ def _seed_source(client) -> None:
     assert saved.status_code == 200, saved.text
 
 
-def _seed_selections(*records, space=SPACE) -> None:
+def _seed_selections(*records, space=SPACE, acknowledged=True) -> None:
     """Seed the selection store directly: ``(identity, rules_revision)`` pairs."""
     sel.save_selections(
         space_id=space,
         expected_revision=0,
         selections=[
-            {"identity": identity, "rules_revision": revision, "acknowledged": True}
+            {"identity": identity, "rules_revision": revision, "acknowledged": acknowledged}
             for identity, revision in records
         ],
     )
@@ -712,37 +721,260 @@ class TestSelectionPromotionOnDigest:
         assert len(digest["source_warnings"]) == 1
         assert "not applied" in digest["source_warnings"][0]
 
-    def test_promoted_capacities_row_still_hits_the_plan_only_commit_refusal(
-        self, client, vault
+def _snapshot(vault: Path) -> dict[Path, bytes]:
+    return {p: p.read_bytes() for p in vault.rglob("*") if p.is_file()}
+
+
+def _index_assigned(vault: Path, today: date, *rows: dict) -> None:
+    """Persist ``rows`` as today's assigned index with no selection involved.
+
+    The commit boundary reads only the index, so writing it directly models any
+    indexed state, including an assigned row that was never selected."""
+    runstate.write_digest_index(
+        vault, today,
+        main_mod.build_digest_index({"assigned": list(rows), "suggested": []}),
+    )
+
+
+def _submitted(object_id: str) -> dict:
+    """The browser's echo of an indexed Capacities assigned row."""
+    return {
+        "name": object_id,
+        "path": f"capacities://{SPACE}/{object_id}",
+        "identity": _identity(object_id),
+    }
+
+
+def _capacities_commit(client, *assigned: dict):
+    """A shadow commit whose sequence places each submitted assigned row."""
+    return client.post(
+        "/commit?mode=shadow",
+        headers=_auth(client),
+        json={
+            "digest": {"assigned": list(assigned)},
+            "sequence": {"sequence": [
+                {"id": row["name"], "start": "09:00", "end": "10:00"}
+                for row in assigned
+            ]},
+            "config": {},
+        },
+    )
+
+
+class TestCapacitiesCommitAuthorization:
+    """U4 S6: a selected, indexed, acknowledged Capacities row is admitted at
+    Commit as one calendar entry. Each failed check refuses with its own reason
+    and leaves the vault byte-identical."""
+
+    @pytest.fixture(autouse=True)
+    def _no_live_state(self, monkeypatch):
+        monkeypatch.setattr(shadow, "gather_live_state", lambda config, vault_root: {
+            "todoist_tasks": [], "calendar_events": [], "vault_frontmatter": {},
+            "daily_note_text": "# TDTB Plan\n",
+        })
+
+    @pytest.fixture
+    def today(self) -> date:
+        return main_mod.gather.effective_date(datetime.now())
+
+    @staticmethod
+    def _systems(response, name: str) -> list[str]:
+        return [
+            e["manifest"]["system"] for e in response.json()["entries"]
+            if e["manifest"]["name"] == name
+        ]
+
+    @staticmethod
+    def _assert_refused(response, vault, before, *, status, reason) -> None:
+        assert response.status_code == status, response.text
+        detail = response.json()["detail"]
+        text = detail if isinstance(detail, str) else str(detail)
+        assert "plan-only" not in text
+        assert reason in text
+        assert _snapshot(vault) == before
+
+    # -- admitted ------------------------------------------------------------
+
+    def test_selected_indexed_acknowledged_row_is_admitted_as_calendar_only(
+        self, client, vault, today
     ):
-        today = main_mod.gather.effective_date(datetime.now())
         _seed_source(client)
         _seed_selections((_identity("keep"), 0))
         digest = _digest(client, pool=[_cap_row("keep")], today=today)
         assert _names(digest["assigned"]) == ["keep"]
         runstate.write_digest_index(vault, today, main_mod.build_digest_index(digest))
-        before = {p: p.read_bytes() for p in vault.rglob("*") if p.is_file()}
 
-        response = client.post(
-            "/commit?mode=shadow",
-            headers=_auth(client),
-            json={
-                "digest": {"assigned": [{
-                    "name": "keep",
-                    "path": f"capacities://{SPACE}/keep",
-                }]},
-                "sequence": {"sequence": [{
-                    "id": "keep", "start": "09:00", "end": "10:00",
-                }]},
-                "config": {},
-            },
+        response = _capacities_commit(client, _submitted("keep"))
+
+        assert response.status_code == 200, response.text
+        assert self._systems(response, "keep") == ["calendar"]
+        assert [
+            e for e in response.json()["entries"] if e["manifest"]["system"] == "todoist"
+        ] == []
+
+    def test_acknowledged_warning_candidate_is_admitted_with_safe_values(
+        self, client, vault, today
+    ):
+        _seed_source(client)
+        _seed_selections((_identity("keep"), 0), acknowledged=True)
+        _index_assigned(vault, today, _cap_row("keep", review_reasons=["rule_unknown"]))
+
+        response = _capacities_commit(client, _submitted("keep"))
+
+        assert response.status_code == 200, response.text
+        assert self._systems(response, "keep") == ["calendar"]
+
+    # -- refused: submitted shape --------------------------------------------
+
+    def test_name_only_submission_is_refused(self, client, vault, today):
+        _seed_source(client)
+        _seed_selections((_identity("keep"), 0))
+        _index_assigned(vault, today, _cap_row("keep"))
+        before = _snapshot(vault)
+
+        response = _capacities_commit(client, {"name": "keep"})
+
+        self._assert_refused(response, vault, before, status=422, reason="malformed")
+
+    def test_path_only_submission_without_identity_is_refused(self, client, vault, today):
+        _seed_source(client)
+        _seed_selections((_identity("keep"), 0))
+        _index_assigned(vault, today, _cap_row("keep"))
+        before = _snapshot(vault)
+
+        response = _capacities_commit(
+            client, {"name": "keep", "path": f"capacities://{SPACE}/keep"},
         )
 
-        assert response.status_code == 422
-        assert "plan-only" in response.json()["detail"]
-        assert "keep" in response.json()["detail"]
-        after = {p: p.read_bytes() for p in vault.rglob("*") if p.is_file()}
-        assert before == after
+        self._assert_refused(
+            response, vault, before, status=422, reason="server-indexed identity",
+        )
+
+    def test_forged_identity_is_refused(self, client, vault, today):
+        _seed_source(client)
+        _seed_selections((_identity("keep"), 0))
+        _index_assigned(vault, today, _cap_row("keep"))
+        before = _snapshot(vault)
+        forged = {**_submitted("keep"), "identity": _identity("other")}
+
+        response = _capacities_commit(client, forged)
+
+        self._assert_refused(
+            response, vault, before, status=422, reason="server-indexed identity",
+        )
+
+    # -- refused: stored selection -------------------------------------------
+
+    def test_unselected_row_is_refused(self, client, vault, today):
+        _seed_source(client)
+        _index_assigned(vault, today, _cap_row("keep"))
+        before = _snapshot(vault)
+
+        response = _capacities_commit(client, _submitted("keep"))
+
+        self._assert_refused(response, vault, before, status=422, reason="is not selected")
+
+    def test_withdrawn_after_indexing_is_refused(self, client, vault, today):
+        _seed_source(client)
+        _seed_selections((_identity("keep"), 0))
+        _index_assigned(vault, today, _cap_row("keep"))
+        sel.save_selections(space_id=SPACE, expected_revision=1, selections=[])
+        before = _snapshot(vault)
+
+        response = _capacities_commit(client, _submitted("keep"))
+
+        self._assert_refused(response, vault, before, status=422, reason="is not selected")
+
+    def test_unacknowledged_warning_candidate_is_refused(self, client, vault, today):
+        _seed_source(client)
+        _seed_selections((_identity("keep"), 0), acknowledged=False)
+        _index_assigned(vault, today, _cap_row("keep", review_reasons=["rule_unknown"]))
+        before = _snapshot(vault)
+
+        response = _capacities_commit(client, _submitted("keep"))
+
+        self._assert_refused(response, vault, before, status=422, reason="is not acknowledged")
+
+    def test_store_read_failure_fails_closed(self, client, vault, today):
+        _seed_source(client)
+        _seed_selections((_identity("keep"), 0))
+        _index_assigned(vault, today, _cap_row("keep"))
+        sel.selections_path().write_text("{not json", encoding="utf-8")
+        before = _snapshot(vault)
+
+        response = _capacities_commit(client, _submitted("keep"))
+
+        self._assert_refused(response, vault, before, status=503, reason="could not be read")
+
+    # -- refused: current policy vs indexed row -------------------------------
+
+    def test_excluded_after_indexing_is_refused(self, client, vault, today):
+        _seed_source(client)
+        _seed_selections((_identity("keep"), 0))
+        _index_assigned(vault, today, _cap_row("keep", tags=[TAG_A]))
+        es.save_settings(vault, expected_revision=0, exclusions=[
+            {"source": "capacities", "space_id": SPACE, "tag_id": TAG_A},
+        ])
+        before = _snapshot(vault)
+
+        response = _capacities_commit(client, _submitted("keep"))
+
+        self._assert_refused(
+            response, vault, before, status=422, reason="excluded since it was indexed",
+        )
+
+    def test_dropped_after_indexing_is_refused(self, client, vault, today):
+        _seed_source(client)
+        _seed_selections((_identity("keep"), 0))
+        _index_assigned(vault, today, _cap_row("keep"))
+
+        def _drop(state):
+            state["dropped"] = [{
+                "identity": _identity("keep"),
+                "dropped_at": "2026-10-09T09:00:00-07:00",
+            }]
+
+        runstate.update_runstate(vault, today, _drop)
+        before = _snapshot(vault)
+
+        response = _capacities_commit(client, _submitted("keep"))
+
+        self._assert_refused(response, vault, before, status=422, reason="dropped")
+
+    def test_index_row_missing_space_id_is_refused(self, client, vault, today):
+        _seed_source(client)
+        _seed_selections((_identity("keep"), 0))
+        row = _cap_row("keep")
+        del row["capacities_space_id"]
+        _index_assigned(vault, today, row)
+        before = _snapshot(vault)
+
+        response = _capacities_commit(client, _submitted("keep"))
+
+        self._assert_refused(
+            response, vault, before, status=422, reason="complete stable identity",
+        )
+
+
+class TestIndexKeepsReviewState:
+    """The commit boundary can only see review reasons the index retained."""
+
+    def test_index_keeps_review_reasons_and_rule_state(self):
+        row = _cap_row(
+            "keep", review_reasons=["rule_unknown"],
+            rule={"state": "unknown", "revision": 2},
+        )
+
+        (entry,) = main_mod.build_digest_index({"assigned": [row]})
+
+        assert entry["capacities_review_reasons"] == ["rule_unknown"]
+        assert entry["capacities_rule"] == {"state": "unknown", "revision": 2}
+
+    def test_plain_row_gains_no_review_fields(self):
+        (entry,) = main_mod.build_digest_index({"assigned": [_cap_row("keep")]})
+
+        assert "capacities_review_reasons" not in entry
+        assert "capacities_rule" not in entry
 
 
 class TestSelectionPromotionCallerParity:

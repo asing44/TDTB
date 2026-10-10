@@ -397,6 +397,134 @@ _IGNORE_NOTICE_MAX_IDENTITIES = 3
 _IGNORE_NOTICE_MARKER = "removed by the Ignore List"
 
 
+def _is_capacities_source_row(row: dict[str, Any]) -> bool:
+    """A Capacities row by its source field or its ``capacities://`` path."""
+    return (
+        str(row.get("source") or "").strip().casefold() == "capacities"
+        or str(row.get("path") or "").strip().casefold().startswith("capacities://")
+    )
+
+
+def _capacities_identity_matches(
+    submitted: dict[str, Any], candidate: dict[str, Any],
+) -> bool:
+    """A Capacities row matches only on its canonical identity.
+
+    A name or a path alone never matches, and a Todoist id on the submitted
+    row contradicts a Capacities identity.
+    """
+    identity = str(candidate.get("identity") or "").strip()
+    if not identity or str(submitted.get("identity") or "").strip() != identity:
+        return False
+    if str(submitted.get("todoist_id") or "").strip():
+        return False
+    submitted_path = str(submitted.get("path") or "").strip()
+    return not submitted_path or submitted_path == str(candidate.get("path") or "").strip()
+
+
+def _capacities_index_complete(row: dict[str, Any]) -> bool:
+    """An indexed Capacities row names itself fully: source, canonical identity,
+    object id, and space id, with the identity inside that same space."""
+    identity_parts = str(row.get("identity") or "").split(":", 3)
+    space_id = str(row.get("capacities_space_id") or "").strip()
+    return bool(
+        str(row.get("source") or "").strip().casefold() == "capacities"
+        and len(identity_parts) == 4
+        and identity_parts[0] == "capacities"
+        and space_id
+        and identity_parts[1] == space_id
+        and str(row.get("capacities_id") or "").strip()
+    )
+
+
+def _capacities_commit_refusals(
+    vault: Path, today: date, matches: list[tuple[dict[str, Any], dict[str, Any]]],
+) -> list[str]:
+    """Commit-time admission of the authorized Capacities rows, one reason each.
+
+    A row is admitted only when its index entry is complete, its identity is
+    still selected in the CURRENT selection store, its review reasons (if any)
+    were acknowledged, and no hard exclusion has caught it since indexing. The
+    selection store and tag-exclusion policy are re-read here, never trusted
+    from the index. A failed read raises 503 and admits nothing. Todoist and
+    vault rows never reach this function.
+    """
+    candidates = [
+        candidate for candidate, _submitted in matches
+        if _is_capacities_source_row(candidate)
+    ]
+    if not candidates:
+        return []
+    refusals: list[str] = []
+    complete: list[dict[str, Any]] = []
+    for candidate in candidates:
+        if _capacities_index_complete(candidate):
+            complete.append(candidate)
+        else:
+            refusals.append(
+                f"{str(candidate.get('name') or '<unnamed>')!r} has no complete "
+                "stable identity in the index"
+            )
+    if not complete:
+        return refusals
+
+    selected: dict[str, Any] = {}
+    try:
+        for space_id in sorted({str(row["capacities_space_id"]).strip() for row in complete}):
+            for record in capacities_selections.load_selections(space_id).selections:
+                selected[record.identity] = record
+    except (capacities_selections.SelectionStoreError, OSError) as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "commit refused: Capacities selections could not be read "
+                "— nothing was written"
+            ),
+        ) from exc
+
+    exclusion_policy = _exclusion_policy_or_block(vault)
+    try:
+        excluded = _capacities_hard_excluded(vault, today, complete, exclusion_policy)
+    except tag_exclusions.TagExclusionBlocked as exc:
+        raise HTTPException(status_code=503, detail=exc.diagnostics) from exc
+
+    for candidate in complete:
+        name = str(candidate.get("name") or "<unnamed>")
+        record = selected.get(candidate.get("identity"))
+        if candidate.get("identity") in excluded:
+            refusals.append(f"{name!r} is excluded since it was indexed")
+        elif record is None:
+            refusals.append(
+                f"{name!r} is not selected (never selected, or withdrawn "
+                "since it was indexed)"
+            )
+        elif candidate.get("capacities_review_reasons") and not record.acknowledged:
+            refusals.append(
+                f"{name!r} is not acknowledged (it carries review reasons)"
+            )
+    return refusals
+
+
+def _build_manifest_or_refuse(
+    digest: dict[str, Any], sequence: Any, config: dict[str, Any] | None, *,
+    time_frame: dict[str, Any],
+) -> Any:
+    """``shadow.build_plan_manifest`` with its refusals as a 422, not a 500.
+
+    The manifest is built before any write, so a ``ValueError`` (for example a
+    Capacities row and a Todoist row sharing a name) is a fail-closed refusal:
+    nothing was written, and the reason is named for the operator.
+    """
+    try:
+        return shadow.build_plan_manifest(
+            digest, sequence, config, time_frame=time_frame)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail=f"commit refused: {exc} — nothing was written",
+        ) from exc
+
+
 def _capacities_identities(rows: list[dict[str, Any]]) -> list[str]:
     """The Capacities identities on ``rows``, in order, each named once."""
     return list(dict.fromkeys(
@@ -691,6 +819,9 @@ def build_digest_index(digest: dict[str, Any]) -> list[dict[str, Any]]:
                 # on the indexed row so a later staleness guard can re-check
                 # the policy that produced this index without a provider read.
                 "capacities_tags",
+                # U4 S6: the commit boundary refuses an unacknowledged row by
+                # its indexed review reasons; the rule state rides with them.
+                "capacities_review_reasons", "capacities_rule",
             ):
                 if key in row and row.get(key) is not None:
                     entry[key] = row[key]
@@ -4525,7 +4656,7 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
         # inject or rewrite Step E/D source rows or assigned metadata after
         # the boundary.
         shadow_config, safe_digest = _validate_commit_eligibility(body, vault, shadow_today)
-        manifest = shadow.build_plan_manifest(
+        manifest = _build_manifest_or_refuse(
             safe_digest, body.sequence, shadow_config,
             time_frame=_frame_for_writes(shadow_config, shadow_day_setup))
 
@@ -4589,6 +4720,10 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
         Trinoor zone rows.  The client ``_excluded`` flag and client-only config
         are never authorization. Native timed protection is recomputed from
         the dated server digest index immediately before the manifest boundary.
+
+        Capacities rows (U4 S6) are admitted only by canonical identity, and only
+        while still selected, acknowledged if they carry review reasons, and not
+        hard-excluded since indexing; see ``_capacities_commit_refusals``.
 
         Returns the server-authoritative effective config plus a SANITIZED
         digest whose assigned rows carry only trusted server identity, source,
@@ -4670,8 +4805,12 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
 
             A Todoist id and its ``todoist://`` path are equivalent forms of
             the same source identity. Vault paths remain path-only. In either
-            case a name-only submission is never sufficient.
+            case a name-only submission is never sufficient. A Capacities row
+            matches only on its canonical identity (see
+            ``_capacities_identity_matches``).
             """
+            if _is_capacities_source_row(candidate):
+                return _capacities_identity_matches(submitted, candidate)
             submitted_path = str(submitted.get("path") or "").strip()
             submitted_id = str(submitted.get("todoist_id") or "").strip()
             candidate_path = str(candidate.get("path") or "").strip()
@@ -4709,32 +4848,24 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
         authorized_rows: list[dict[str, Any]] = []
         authorized_matches: list[tuple[dict[str, Any], dict[str, Any]]] = []
         unknown_assigned: list[str] = []
+        capacities_refusals: list[str] = []
         for row in submitted_assigned:
             match = _server_match(row)
-            if match is None:
-                unknown_assigned.append(str(row.get("name") or "<unnamed>"))
-            else:
+            name = str(row.get("name") or "<unnamed>")
+            if match is not None:
                 authorized_rows.append(match)
                 authorized_matches.append((match, row))
-
-        capacities_names = sorted({
-            str(candidate.get("name") or "<unnamed>")
-            for candidate, _submitted in authorized_matches
-            if (
-                str(candidate.get("source") or "").strip().casefold() == "capacities"
-                or str(candidate.get("path") or "").strip().casefold().startswith("capacities://")
-            )
-        })
-        if capacities_names:
-            raise HTTPException(
-                status_code=422,
-                detail=(
-                    "commit refused: Capacities rows are plan-only in this "
-                    "integration slice; completion uses /runtime-actions: "
-                    + ", ".join(capacities_names)
-                    + " — nothing was written"
-                ),
-            )
+            elif _is_capacities_source_row(row) or any(
+                _is_capacities_source_row(candidate)
+                and str(candidate.get("name") or "").strip() == str(row.get("name") or "").strip()
+                for candidate in server_assigned
+            ):
+                capacities_refusals.append(f"{name!r} has no server-indexed identity match")
+            else:
+                unknown_assigned.append(name)
+        capacities_refusals.extend(
+            _capacities_commit_refusals(vault, today, authorized_matches),
+        )
 
         # Effective-blocks overlays are validated BEFORE any write decision:
         # a malformed or extreme value is collected here and fails the commit
@@ -5027,11 +5158,14 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
 
         if (unknown_assigned or injected_anchored or malformed_sequence
                 or unknown_sequence or fixed_timing or native_pin_errors
-                or malformed_blocks):
+                or malformed_blocks or capacities_refusals):
             parts: list[str] = []
             if unknown_assigned:
                 parts.append("stale/dropped assigned items: "
                              + ", ".join(repr(name) for name in unknown_assigned))
+            if capacities_refusals:
+                parts.append("Capacities rows not admitted: "
+                             + "; ".join(capacities_refusals))
             if injected_anchored:
                 parts.append("client-only anchored items: "
                              + ", ".join(repr(name) for name in injected_anchored))
@@ -5101,7 +5235,7 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
             config = _server_commit_config(vault, today, live_day_setup)
         else:
             config = config_override
-        manifest = shadow.build_plan_manifest(
+        manifest = _build_manifest_or_refuse(
             digest_override if digest_override is not None else body.digest,
             body.sequence, config,
             time_frame=_frame_for_writes(config, live_day_setup))
