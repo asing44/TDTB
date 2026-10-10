@@ -1404,7 +1404,9 @@ def build_refresh_coordinator(
     is the live source revision plus the settings revision plus the rules
     revision plus the exclusions revision, read fresh on every check so a
     mapping, policy, rule, or exclusion save during a run cannot publish stale
-    scope. The stored rules are loaded for the record's space and handed to the
+    scope. The configuration revision is read before the configuration so a
+    save during construction makes publication fail stale rather than publish.
+    The stored rules are loaded for the record's space and handed to the
     coordinator, which passes them through to its internal adapter config; the
     stored tag-exclusion policy is loaded the same way and handed to the
     coordinator so its internal adapter filters both candidate surfaces.
@@ -1416,6 +1418,10 @@ def build_refresh_coordinator(
     cfg = config if config is not None else CapacitiesBuilderConfig()
     record = read_source(vault_root)
     if record is None:
+        return None
+
+    configuration_revision = refresh_config_revision(vault_root)
+    if configuration_revision is None:
         return None
 
     settings = read_settings(vault_root).settings
@@ -1446,6 +1452,7 @@ def build_refresh_coordinator(
             record.to_mappings(), settings.assigned_structures
         ),
         revision_supplier=lambda: refresh_config_revision(vault_root),
+        configuration_revision=configuration_revision,
         config_guard=lambda: _config_save_guard(vault_root),
         assignment_settings=settings.to_assignment_settings(),
         rules=rules,

@@ -54,10 +54,16 @@ def _coordinator(
     max_pages=20,
     max_retries=3,
     config_guard=None,
+    configuration_revision=None,
 ):
     clock = clock or Clock()
     sleeper = sleeper if sleeper is not None else Sleeper(clock)
     store = _store(tmp_path)
+    frozen = (
+        {}
+        if configuration_revision is None
+        else {"configuration_revision": configuration_revision}
+    )
     return (
         rr.RefreshCoordinator(
             root=tmp_path / "state",
@@ -72,6 +78,7 @@ def _coordinator(
             sleeper=sleeper,
             max_retries=max_retries,
             config_guard=config_guard,
+            **frozen,
         ),
         store,
         clock,
@@ -372,6 +379,24 @@ def test_config_change_mid_job_blocks_stale_publication(tmp_path):
 
     assert status["phase"] == "failed"
     assert status["outcome"] == "staleConfiguration"
+    assert store.load_snapshot("all") is None
+
+
+def test_frozen_configuration_revision_blocks_a_save_between_build_and_start(
+    tmp_path,
+):
+    provider = _paged_provider(objects={PRIMARY: ["a"], "T2": ["c"]})
+    # The coordinator was built against revision 1; a save lands before start,
+    # so the live supplier would report 2.
+    coordinator, store, _, _ = _coordinator(
+        tmp_path, provider, configuration_revision=1, revision=Revision(2)
+    )
+
+    coordinator.start()
+    status = coordinator.wait(timeout=5)
+
+    assert status["phase"] == "failed", status
+    assert status["outcome"] == "staleConfiguration", status
     assert store.load_snapshot("all") is None
 
 

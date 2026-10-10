@@ -57,7 +57,14 @@ from tests.test_capacities_rule_fallbacks import (  # noqa: E402
 )
 
 sys.path.insert(0, str(Path(__file__).parent))
-from capacities_refresh_helpers import Clock, Sleeper, _row, _store  # noqa: E402
+from capacities_refresh_helpers import (  # noqa: E402
+    PRIMARY,
+    Clock,
+    Sleeper,
+    _paged_provider,
+    _row,
+    _store,
+)
 
 TAG_A = "5a25370b-f9a0-40cf-bc3a-0cab4744913c"
 TAG_B = "0d194525-c5a1-4af5-bb62-202b83006b5e"
@@ -460,6 +467,76 @@ def test_refresh_config_revision_tracks_a_real_exclusion_save(tmp_path, monkeypa
     )
     after = cb.refresh_config_revision(tmp_path)
     assert (before, after) == (3, 4)
+
+
+def test_build_freezes_the_configuration_revision_before_config_reads(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(cb, "read_source", lambda _: _source_record())
+    monkeypatch.setattr(cb, "load_capacities_token", lambda _: "synthetic-token")
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+    monkeypatch.setattr(cb, "CapacitiesRestClient", FakeClient)
+    before = cb.refresh_config_revision(tmp_path)
+    coordinator = cb.build_refresh_coordinator(
+        tmp_path, cb.CapacitiesBuilderConfig(refresh_state_path=tmp_path / "state")
+    )
+
+    assert coordinator is not None
+    assert coordinator.configuration_revision == before
+
+    es.save_settings(
+        tmp_path,
+        expected_revision=0,
+        exclusions=[es.TagExclusion("capacities", SPACE, TAG_A)],
+    )
+    assert coordinator.configuration_revision == before
+    assert cb.refresh_config_revision(tmp_path) != before
+
+
+def _primary_source_record(revision=3):
+    return cb.SourceRecord(
+        space_id=SPACE,
+        structures=(
+            cb.SourceStructureRecord(
+                structure_id=PRIMARY,
+                status_property="status",
+                open_status_values=("active",),
+                assignment_property="assigned",
+                assignment_values=("true",),
+            ),
+        ),
+        revision=revision,
+    )
+
+
+def test_build_then_exclusion_save_fails_the_first_start_stale(tmp_path, monkeypatch):
+    monkeypatch.setattr(cb, "read_source", lambda _: _primary_source_record())
+    monkeypatch.setattr(cb, "load_capacities_token", lambda _: "synthetic-token")
+    provider = _paged_provider(objects={PRIMARY: ["a"]})
+    monkeypatch.setattr(cb, "CapacitiesRestClient", lambda *a, **k: provider)
+    coordinator = cb.build_refresh_coordinator(
+        tmp_path, cb.CapacitiesBuilderConfig(refresh_state_path=tmp_path / "state")
+    )
+    assert coordinator is not None
+    frozen = coordinator.configuration_revision
+
+    es.save_settings(
+        tmp_path,
+        expected_revision=0,
+        exclusions=[es.TagExclusion("capacities", SPACE, TAG_A)],
+    )
+    assert cb.refresh_config_revision(tmp_path) == frozen + 1
+
+    coordinator.start()
+    status = coordinator.wait(timeout=5)
+
+    assert status["phase"] == "failed", status
+    assert status["outcome"] == "staleConfiguration", status
+    assert coordinator.store.load_snapshot("all") is None
 
 
 # ---------------------------------------------------------------------------

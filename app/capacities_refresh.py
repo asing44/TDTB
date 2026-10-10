@@ -418,6 +418,7 @@ class RefreshCoordinator:
         namespace: str | None = None,
         config_guard: Callable[[], Any] | None = None,
         wall_clock: Callable[[], float] = time.time,
+        configuration_revision: int | None = None,
     ) -> None:
         if not isinstance(space_id, str) or not space_id.strip():
             raise ValueError("space_id must be a nonblank string")
@@ -432,6 +433,9 @@ class RefreshCoordinator:
         self.space_id = space_id.strip()
         self.mappings = tuple(mappings)
         self.revision_supplier = revision_supplier
+        # The revision read before the adapter configuration was frozen; start
+        # and publication compare against that same snapshot.
+        self.configuration_revision = configuration_revision
         self.logical_day = logical_day
         self.config_guard = config_guard
         self._wall_clock = wall_clock
@@ -588,7 +592,11 @@ class RefreshCoordinator:
                 raise RefreshBusyError(
                     "a Capacities refresh job is already running in another process"
                 )
-            revision = self.revision_supplier()
+            revision = (
+                self.configuration_revision
+                if self.configuration_revision is not None
+                else self.revision_supplier()
+            )
             if type(revision) is not int or revision < 0:
                 raise RefreshUnavailableError("no usable Capacities configuration")
             prior = self.store.load_snapshot(self.scope_key)
