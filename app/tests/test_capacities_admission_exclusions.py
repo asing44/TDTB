@@ -604,3 +604,124 @@ def test_publication_guard_excludes_a_real_exclusion_save(tmp_path):
     stored = es.read_settings(tmp_path).settings
     assert stored.revision == 1
     assert stored.tags[0].tag_id == TAG_A
+
+
+# ---------------------------------------------------------------------------
+# Frozen revision: build read ordering and source-space switches
+# ---------------------------------------------------------------------------
+
+def _primary_record_for(space_id, revision, *, open_values=("active",)):
+    return cb.SourceRecord(
+        space_id=space_id,
+        structures=(
+            cb.SourceStructureRecord(
+                structure_id=PRIMARY,
+                status_property="status",
+                open_status_values=open_values,
+                assignment_property="assigned",
+                assignment_values=("true",),
+            ),
+        ),
+        revision=revision,
+    )
+
+
+def test_build_reads_the_revision_before_the_source_record(tmp_path, monkeypatch):
+    """A source save between the two build reads must fail stale, not publish.
+
+    ``build_refresh_coordinator`` freezes the combined revision and then reads
+    the source record it derives mappings from. Reading the record first lets a
+    save land between the reads and freeze the NEW revision with the OLD
+    mappings, so the publication guard sees the live revision unchanged and
+    publishes scope the configuration no longer describes. The revision read
+    must come first, leaving the frozen revision behind the live one.
+    """
+    reads = {"count": 0}
+
+    def flipping_read_source(_vault):
+        reads["count"] += 1
+        if reads["count"] == 1:
+            return _primary_record_for(SPACE, 3, open_values=("active",))
+        return _primary_record_for(SPACE, 4, open_values=("done",))
+
+    monkeypatch.setattr(cb, "read_source", flipping_read_source)
+    monkeypatch.setattr(cb, "load_capacities_token", lambda _: "synthetic-token")
+    provider = _paged_provider(objects={PRIMARY: ["a"]})
+    monkeypatch.setattr(cb, "CapacitiesRestClient", lambda *a, **k: provider)
+
+    coordinator = cb.build_refresh_coordinator(
+        tmp_path, cb.CapacitiesBuilderConfig(refresh_state_path=tmp_path / "state")
+    )
+
+    assert coordinator is not None
+    # The revision read came first and froze 3. Pre-fix the record read came
+    # first and froze the post-save 4 with the pre-save mappings, so the run
+    # published.
+    assert coordinator.configuration_revision == 3
+
+    coordinator.start()
+    status = coordinator.wait(timeout=5)
+
+    assert status["phase"] == "failed", status
+    assert status["outcome"] == "staleConfiguration", status
+    assert coordinator.store.load_snapshot("all") is None
+
+
+def test_source_space_switch_with_an_equal_revision_sum_fails_stale(
+    tmp_path, monkeypatch
+):
+    """A space switch that keeps the combined revision sum equal must not
+    publish against the previous space.
+
+    The combined revision is a SUM of per-store revisions: moving the source
+    record to another space raises the source revision by one while the
+    previous space's rules document stops applying (revision 0), so the sum can
+    stay equal while the live source is a different space. The publication
+    guard must compare the live source space, not only the revision sum.
+    """
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    structures = _primary_record_for(SPACE, 0).structures
+    for expected in range(3):
+        cb.save_source(
+            vault,
+            expected_revision=expected,
+            space_id=SPACE,
+            structures=structures,
+        )
+    cr.save_rule(
+        SPACE,
+        PRIMARY,
+        {"prop": "minutes", "op": "gt", "values": [10]},
+        expected_revision=0,
+    )
+    # Source 3 + settings 0 + rules 1 + exclusions 0.
+    assert cb.refresh_config_revision(vault) == 4
+
+    monkeypatch.setattr(cb, "load_capacities_token", lambda _: "synthetic-token")
+    provider = _paged_provider(objects={PRIMARY: ["a"]})
+    monkeypatch.setattr(cb, "CapacitiesRestClient", lambda *a, **k: provider)
+    coordinator = cb.build_refresh_coordinator(
+        vault, cb.CapacitiesBuilderConfig(refresh_state_path=tmp_path / "state")
+    )
+    assert coordinator is not None
+    assert coordinator.configuration_revision == 4
+    assert coordinator.space_id == SPACE
+
+    # The switch: source 3 -> 4 in another space; the space-1 rules no longer
+    # apply, so the live sum is unchanged at 4 while the live space moved.
+    cb.save_source(
+        vault,
+        expected_revision=3,
+        space_id="space-B",
+        structures=structures,
+    )
+    assert cb.refresh_config_revision(vault) == 4
+    assert cb.read_source(vault).space_id == "space-B"
+
+    coordinator.start()
+    status = coordinator.wait(timeout=5)
+
+    assert status["phase"] == "failed", status
+    assert status["outcome"] == "staleConfiguration", status
+    assert coordinator.store.load_snapshot("all") is None

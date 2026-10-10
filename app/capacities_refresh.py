@@ -19,8 +19,9 @@ Contract (KTD1–KTD3):
   conservative clock pacing is used when they are absent. Retries are bounded,
   errors stay truthful, and cancellation interrupts backoff.
 * **Complete scope or nothing.** Any incomplete listing, failed required read,
-  or changed configuration revision prevents installation. The previous
-  complete generation and every successful read are preserved.
+  changed configuration revision, or changed source space prevents
+  installation. The previous complete generation and every successful read are
+  preserved.
 * **No secret leakage.** Warnings are bounded fixed strings; exception text,
   tokens, and filesystem paths never reach a warning or a job document.
 
@@ -419,6 +420,7 @@ class RefreshCoordinator:
         config_guard: Callable[[], Any] | None = None,
         wall_clock: Callable[[], float] = time.time,
         configuration_revision: int | None = None,
+        space_id_supplier: Callable[[], str | None] | None = None,
     ) -> None:
         if not isinstance(space_id, str) or not space_id.strip():
             raise ValueError("space_id must be a nonblank string")
@@ -436,6 +438,10 @@ class RefreshCoordinator:
         # The revision read before the adapter configuration was frozen; start
         # and publication compare against that same snapshot.
         self.configuration_revision = configuration_revision
+        # The optional live source-space read for the publication guard: the
+        # combined revision is a sum, so a source space switch can leave it
+        # equal while the adapter was frozen for another space.
+        self.space_id_supplier = space_id_supplier
         self.logical_day = logical_day
         self.config_guard = config_guard
         self._wall_clock = wall_clock
@@ -861,6 +867,13 @@ class RefreshCoordinator:
             current = self.revision_supplier()
             if type(current) is not int or current != evidence.revision:
                 raise RefreshStale()
+            if self.space_id_supplier is not None:
+                current_space = self.space_id_supplier()
+                if (
+                    not isinstance(current_space, str)
+                    or current_space != self.space_id
+                ):
+                    raise RefreshStale()
             snapshot = self.store.install_generation(
                 evidence, expected_generation=int(job.get("generation") or 0)
             )

@@ -1330,6 +1330,23 @@ def refresh_config_revision(vault_root: str | Path) -> int | None:
     )
 
 
+def refresh_source_space_id(vault_root: str | Path) -> str | None:
+    """The live source record's space id, or ``None`` if unconfigured.
+
+    One definition shared by the coordinator's publication guard and the route
+    seam's cached-instance check. The combined configuration revision is a sum
+    of per-store revisions, so a source space switch can leave it unchanged
+    while the live source is a different space; this read is the space half of
+    the guard, so a generation built for one space can never publish against
+    another. A malformed or unreadable source record raises, exactly like
+    :func:`refresh_config_revision`.
+    """
+    current = read_source(vault_root)
+    if current is None:
+        return None
+    return current.space_id
+
+
 def _refresh_state_root(config: CapacitiesBuilderConfig) -> Path:
     """The machine-local direct-refresh root shared by the store and job dir."""
     if config.refresh_state_path is not None:
@@ -1404,8 +1421,11 @@ def build_refresh_coordinator(
     is the live source revision plus the settings revision plus the rules
     revision plus the exclusions revision, read fresh on every check so a
     mapping, policy, rule, or exclusion save during a run cannot publish stale
-    scope. The configuration revision is read before the configuration so a
-    save during construction makes publication fail stale rather than publish.
+    scope. The configuration revision is read before the source record and the
+    rest of the configuration so a save during construction makes publication
+    fail stale rather than publish. The live source space is guarded too: a
+    switch to another space that leaves the combined revision equal fails stale
+    instead of publishing against the previous space.
     The stored rules are loaded for the record's space and handed to the
     coordinator, which passes them through to its internal adapter config; the
     stored tag-exclusion policy is loaded the same way and handed to the
@@ -1416,12 +1436,12 @@ def build_refresh_coordinator(
     exclusions store.
     """
     cfg = config if config is not None else CapacitiesBuilderConfig()
-    record = read_source(vault_root)
-    if record is None:
-        return None
-
     configuration_revision = refresh_config_revision(vault_root)
     if configuration_revision is None:
+        return None
+
+    record = read_source(vault_root)
+    if record is None:
         return None
 
     settings = read_settings(vault_root).settings
@@ -1452,6 +1472,7 @@ def build_refresh_coordinator(
             record.to_mappings(), settings.assigned_structures
         ),
         revision_supplier=lambda: refresh_config_revision(vault_root),
+        space_id_supplier=lambda: refresh_source_space_id(vault_root),
         configuration_revision=configuration_revision,
         config_guard=lambda: _config_save_guard(vault_root),
         assignment_settings=settings.to_assignment_settings(),
