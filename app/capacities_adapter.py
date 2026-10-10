@@ -354,7 +354,10 @@ def _rule_status_tokens(prop: Any, prop_id: str) -> tuple[set[str], bool]:
     ``[True]``, ``{foo: active}``) becomes a readable-looking non-open token
     and the object is silently classified closed. This rule-only helper
     validates the declared typed shape instead and reports whether any part
-    of the payload could not be read as its declared type. Tokens keep the
+    of the payload could not be read as its declared type. A dict member with
+    a present non-null ``id`` or ``name`` that is not a string is unreadable
+    even when its peer is a valid string; valid string tokens are still
+    retained. Tokens keep the
     legacy normalized forms for valid payloads (``True`` → ``"true"``,
     ``45`` → ``"45"``), and the falsy scalars the legacy path dropped
     (``False``, ``0``) still produce no token, so configured vocabularies
@@ -385,6 +388,8 @@ def _rule_status_tokens(prop: Any, prop_id: str) -> tuple[set[str], bool]:
                         token = _normalized(value)
                         if token:
                             tokens.add(token)
+                    elif value is not None:
+                        unreadable = True
                 if not readable:
                     unreadable = True
             else:

@@ -740,3 +740,125 @@ def test_distinct_completion_malformed_plus_completed_excludes():
 
     assert result.items == []
     assert result.malformed == 0
+
+
+# ---------------------------------------------------------------------------
+# Partial label/entity members: a present non-null id/name that is not a
+# string is unreadable even when its peer is a valid string
+# ---------------------------------------------------------------------------
+
+#: Dict members mixing one valid string field with one present non-null
+#: non-string peer. The valid token is retained, but the member is
+#: unreadable, so the payload can never produce a known-closed exclusion on
+#: partial evidence.
+PARTIAL_MEMBER_PAYLOADS = [
+    pytest.param({"id": "active", "name": 5}, id="valid-id-malformed-name"),
+    pytest.param({"id": {"x": 1}, "name": "Active"}, id="malformed-id-valid-name"),
+    pytest.param(
+        {"id": "other-closed", "name": {"x": 1}},
+        id="noncompleted-closed-malformed-name",
+    ),
+    pytest.param({"id": "done", "name": {"x": 1}}, id="done-token-malformed-name"),
+]
+
+
+@pytest.mark.parametrize("member", PARTIAL_MEMBER_PAYLOADS)
+def test_partial_member_status_is_unknown_and_retained(member):
+    """A mapped status member whose id/name pair is partly malformed is
+    UNKNOWN on the rule path — including a non-open token whose peer is
+    malformed, which must not silently exclude the object — and the row is
+    retained unassigned. With no completion mapping the readable ``done``
+    token invents no completed vocabulary either."""
+    mappings = [_legacy_root_mapping(), _status_mapping()]
+    record = _rules(_custom_rule())
+
+    result = _adapter(mappings, record).items_for_day_from_objects(
+        DAY, [_custom_object(state=_prop("label", "label", [member]))]
+    )
+
+    assert len(result.items) == 1
+    row = result.items[0]
+    assert row["assigned"] is False
+    assert row["capacities_rule"] == {"state": "match", "revision": REVISION}
+    assert row["capacities_status_state"] == "unknown"
+    assert row["capacities_completion_state"] == "unavailable"
+    assert result.malformed == 0
+
+
+@pytest.mark.parametrize("tdtb", ["yes", "no"])
+def test_partial_member_completed_token_still_hard_excludes(tdtb):
+    """The configured completed value on a partly malformed same-field
+    member still hard-excludes: readable completed evidence wins over the
+    member's unreadability, whatever the source assignment says."""
+    mapping = _status_mapping(completion_property="state", completion_value="done")
+    mappings = [_legacy_root_mapping(), mapping]
+    record = _rules(_custom_rule())
+
+    result = _adapter(mappings, record).items_for_day_from_objects(
+        DAY,
+        [
+            _custom_object(
+                state=_prop(
+                    "label", "label", [{"id": "done", "name": {"x": 1}}]
+                ),
+                tdtb=tdtb,
+            )
+        ],
+    )
+
+    assert result.items == []
+    assert result.malformed == 0
+
+
+def test_partial_member_distinct_completion_still_hard_excludes():
+    """The configured completed value on a partly malformed distinct
+    completion member still hard-excludes."""
+    mapping = _status_mapping(
+        completion_property="completion", completion_value="complete"
+    )
+    mappings = [_legacy_root_mapping(), mapping]
+    record = _rules(_custom_rule())
+
+    result = _adapter(mappings, record).items_for_day_from_objects(
+        DAY,
+        [
+            _custom_object(
+                completion=_prop(
+                    "label", "label", [{"id": "complete", "name": {"x": 1}}]
+                )
+            )
+        ],
+    )
+
+    assert result.items == []
+    assert result.malformed == 0
+
+
+@pytest.mark.parametrize(
+    "member,outcome",
+    [
+        pytest.param({"id": "active", "name": None}, "open", id="null-name"),
+        pytest.param({"id": None, "name": "active"}, "open", id="null-id"),
+        pytest.param({"id": "active"}, "open", id="absent-name"),
+        pytest.param({"name": "active"}, "open", id="absent-id"),
+        pytest.param({"id": "done"}, "closed", id="absent-name-closed"),
+    ],
+)
+def test_null_or_absent_peer_keeps_valid_member_readable(member, outcome):
+    """A null or missing peer field stays allowed when the other field is a
+    valid string, so the member remains readable and classifies as before."""
+    mappings = [_legacy_root_mapping(), _status_mapping()]
+    record = _rules(_custom_rule())
+
+    result = _adapter(mappings, record).items_for_day_from_objects(
+        DAY, [_custom_object(state=_prop("label", "label", [member]))]
+    )
+
+    assert result.malformed == 0
+    if outcome == "open":
+        assert len(result.items) == 1
+        row = result.items[0]
+        assert row["assigned"] is True
+        assert row["capacities_status_state"] == "open"
+    else:
+        assert result.items == []
