@@ -735,14 +735,14 @@ def test_space_switch_between_the_build_reads_fails_closed(tmp_path, monkeypatch
     """A source space switch landing between the build's reads fails closed.
 
     The coordinator's space and the publication guard's comparison target
-    both come from the record read. If the source switches between the space
-    pre-read and the record read, the guard would compare the live space
-    with the post-switch space and match it, and only the lossy revision sum
-    could still catch the switch; a settings save that restores the sum
-    (the switch adds the new space's source revision while dropping the
-    previous space's rules revision) would then mask it and the job would
-    publish against the wrong space. The build must refuse instead, leaving
-    the next start to build cleanly against the new space.
+    both come from the record read. If the source switches between the
+    revision read and the record read, the guard would compare the live
+    space with the post-switch space and match it, and only the lossy
+    revision sum could still catch the switch; a settings save that restores
+    the sum (the switch adds the new space's source revision while dropping
+    the previous space's rules revision) would then mask it and the job
+    would publish against the wrong space. The build must refuse instead,
+    leaving the next start to build cleanly against the new space.
     """
     vault = tmp_path / "vault"
     vault.mkdir()
@@ -776,6 +776,34 @@ def test_space_switch_between_the_build_reads_fails_closed(tmp_path, monkeypatch
     with pytest.raises(RuntimeError, match="space changed"):
         cb.build_refresh_coordinator(
             vault, cb.CapacitiesBuilderConfig(refresh_state_path=tmp_path / "state")
+        )
+
+
+def test_space_switch_between_the_space_and_revision_reads_fails_closed(
+    tmp_path, monkeypatch
+):
+    """A source space switch landing before the revision read fails closed.
+
+    The mismatch check is only sound if the space is read before the
+    revision: the pre-read space must trail the post-switch record. If the
+    revision read moved above the space pre-read, the pre-read space would
+    already be the post-switch space and the check would pass vacuously, so
+    a later settings save restoring the lossy revision sum would mask the
+    switch and the job would publish against the wrong space.
+    """
+    reads = {"count": 0}
+
+    def switching_read_source(_vault):
+        reads["count"] += 1
+        if reads["count"] == 1:
+            return _primary_record_for(SPACE, 3, open_values=("active",))
+        return _primary_record_for("space-B", 3, open_values=("done",))
+
+    monkeypatch.setattr(cb, "read_source", switching_read_source)
+
+    with pytest.raises(RuntimeError, match="space changed"):
+        cb.build_refresh_coordinator(
+            tmp_path, cb.CapacitiesBuilderConfig(refresh_state_path=tmp_path / "state")
         )
 
 
