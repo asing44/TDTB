@@ -447,7 +447,7 @@ class TestLiveCommit:
         assert body["ok"] is True
         assert body["resumed"] is False
         assert set(body["surfaces"]) == {"todoist", "vault_flips", "daily_note",
-                                          "captures", "calendar"}
+                                          "calendar"}
         # the daily note actually got the plan section patched in
         text = (vault / "30 - Daily/2026-07-12.md").read_text(encoding="utf-8")
         assert "# TDTB Plan" in text
