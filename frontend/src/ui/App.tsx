@@ -1,20 +1,22 @@
-/* App — compact planning cockpit. Desktop keeps a capacity rail beside the
-   assigned-only work list, while the footer owns the final action and recovery
-   affordances. Mobile stacks the same surfaces; it does not render a second
-   planning view. Drawers overlay the shell. */
+/* App — U7 page frame. One bounded, centered column: the stepper header owns
+   the date, step state, source health, and the Connections link; the body
+   swaps the Plan tasks / Set up day / Connections screen; and one footer owns
+   the back link, the blocked reason, and the primary action. The retired left
+   rail is no longer a column — it lives temporarily inside the Plan tasks
+   body as a collapsible "Day summary" region (U7a home; U9–U13 replace it).
+   Drawers overlay the shell. */
 
 import { useEffect } from "preact/hooks";
 import { useAppState } from "./context";
+import { Header } from "./Header";
+import { Footer } from "./Footer";
 import { Rail } from "./Rail";
 import { Queue } from "./Queue";
-import { ActionDock } from "./ActionDock";
-import { FooterBanners } from "./FooterBanners";
 import { SettingsShell } from "./SettingsShell";
 import { ApprovalDrawer } from "./ApprovalDrawer";
 import { BlockEditor } from "./BlockEditor";
 import { AnchoredEditor } from "./AnchoredEditor";
 import { ExecutionView } from "./ExecutionView";
-import { ScreenNav } from "./ScreenNav";
 import { DaySetupPanel } from "./DaySetupPanel";
 import { CapacitiesSettingsPanel } from "./CapacitiesSettingsPanel";
 import { TagExclusionSettingsPanel } from "./TagExclusionSettingsPanel";
@@ -49,9 +51,10 @@ export function App() {
   if (!s.inputs) return null;
 
   // Background isolation (settings accessibility stage): while the one
-  // settings shell owns focus, everything behind it is inert and hidden from
-  // assistive technology. The wrapper is `display: contents`, so the rail,
-  // main, and footer stay the grid's layout children.
+  // settings shell owns focus, everything behind it — header, body, footer —
+  // is inert and hidden from assistive technology. The wrapper is
+  // `display: contents`, so the header, main, and footer stay the column's
+  // layout children.
   const settingsOpen = s.ui.settingsPanel !== null;
   const screen = s.ui.screen;
   // The promoted screen body is used only when no contextual drawer owns the
@@ -59,14 +62,13 @@ export function App() {
   const promotedScreen = !settingsOpen && screen !== "plan";
 
   return (
-    <>
-    <ScreenNav />
     <div class="cockpit">
       <div
         class="cockpit__background"
         inert={settingsOpen ? true : undefined}
         aria-hidden={settingsOpen ? "true" : undefined}
       >
+        <Header />
         {promotedScreen ? (
           <main
             class="cockpit__main cockpit__screen"
@@ -82,31 +84,32 @@ export function App() {
             )}
           </main>
         ) : (
-          <>
-        <Rail />
-        <main class="cockpit__main" aria-label="Today's planning evidence">
-          {s.commitPhase === "done" && (
-            <section class="verified" aria-label="Day committed" role="status">
-              <h2>✅ Day committed and verified</h2>
-              <div class="verified__meta">
-                All surfaces ok · zero verification failures · {s.inputs.validDate}
-              </div>
-            </section>
-          )}
-          {/* T20 runtime surface — renders only once a live commit exists. Keep
-              execution ahead of planning evidence after a commit: the first
-              question then is what to do next, not how the plan was built. */}
-          <ExecutionView />
-          {/* S5: calendar evidence is no longer a sibling section — the Queue
-              renders it inline inside the work surface. */}
-          <Queue />
-        </main>
-        <div class="cockpit__footer">
-          <FooterBanners />
-          <ActionDock />
-        </div>
-          </>
+          <main class="cockpit__main" aria-label="Today's planning evidence">
+            {/* U7a temporary home for the retired rail: no content is lost
+                while U9–U13 rebuild the capacity card, timeline, and table. */}
+            <details class="day-summary" open>
+              <summary class="day-summary__summary">Day summary</summary>
+              <Rail />
+            </details>
+            {s.commitPhase === "done" && (
+              <section class="verified" aria-label="Day committed" role="status">
+                <h2>✅ Day committed and verified</h2>
+                <div class="verified__meta">
+                  All surfaces ok · zero verification failures · {s.inputs.validDate}
+                </div>
+              </section>
+            )}
+            {/* T20 runtime surface — renders only once a live commit exists.
+                Keep execution ahead of planning evidence after a commit: the
+                first question then is what to do next, not how the plan was
+                built. */}
+            <ExecutionView />
+            {/* S5: calendar evidence is no longer a sibling section — the
+                Queue renders it inline inside the work surface. */}
+            <Queue />
+          </main>
         )}
+        <Footer />
       </div>
       {/* Drawers mount on open so their local draft state initializes from
           the CURRENT store state each time. One settings host covers the
@@ -119,7 +122,6 @@ export function App() {
       {s.ui.editorItem && <BlockEditor key={s.ui.editorItem} />}
       {s.ui.editorAnchor && <AnchoredEditor key={s.ui.editorAnchor} />}
     </div>
-    </>
   );
 }
 

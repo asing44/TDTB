@@ -77,7 +77,7 @@ describe("ActionDock", () => {
     const { ui } = makeHarness("ready");
     const { getByText } = ui(<ActionDock />);
     // T12e: the block count being committed is part of the label.
-    expect(getByText(/^Auto sequence \d+ blk$/)).toBeTruthy();
+    expect(getByText(/^Sequence & commit \d+ blk$/)).toBeTruthy();
     expect(getByText(/1 billed call · 4 left today/)).toBeTruthy();
   });
 

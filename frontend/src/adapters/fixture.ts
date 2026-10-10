@@ -573,6 +573,9 @@ export class FixtureAdapter implements Adapter {
     // emitting an ``ok`` intake block here would mask the deferrals the
     // scenario is modelling.
     if (this.capacitiesDeferred !== null && this.capacitiesDeferred > 0) return inputs;
+    // The sparse scenario models the legacy intake: no direct snapshot block
+    // is installed, so the fixture must not fabricate one (KTD13).
+    if (this.scenario.name === "sparse") return inputs;
     const selected = new Set(this.capacitiesSelections.selections.map((s) => s.identity));
     const candidate = (identity: string, name: string, reviewReasons: string[]) => ({
       identity,

@@ -184,7 +184,7 @@ describe("compact planning cockpit", () => {
       scenario.inputs.sourceHealth = "degraded";
     });
     const r = h.ui(<ActionDock />);
-    const sequence = r.getByText(/^Auto sequence \d+ blk$/).closest("button") as HTMLButtonElement;
+    const sequence = r.getByText(/^Sequence & commit \d+ blk$/).closest("button") as HTMLButtonElement;
 
     expect(sequence.disabled).toBe(true);
     expect(r.getByRole("alert").textContent).toMatch(/Sources degraded — sequencing and commit are blocked until the read is healthy\./);

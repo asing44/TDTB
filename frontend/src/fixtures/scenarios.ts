@@ -24,7 +24,8 @@ export type ScenarioName =
   | "sequenced"
   | "conflict"
   | "commit-preview"
-  | "verified";
+  | "verified"
+  | "sparse";
 
 export interface Scenario {
   name: ScenarioName;
@@ -316,6 +317,34 @@ export function makeScenario(name: ScenarioName): Scenario {
       s.ledger = { today: VALID_DATE, spent: 2, cap: 4, remaining: 2 };
       return s;
     }
+    case "sparse": {
+      // KTD13: reproduce the live state Adam saw — a stale artifact, vault
+      // off, no assigned rows, degraded sources, and the legacy Capacities
+      // intake (no direct snapshot block). The fixture adapter must not
+      // inject its synthetic direct intake here (see applyCapacitiesIntake).
+      const s = base("sparse", "Sparse day — stale artifact, degraded sources");
+      s.inputs.assigned = [];
+      s.inputs.staleAssigned = [
+        {
+          name: "Old quarterly review",
+          path: "50 - Operations/Projects/Old quarterly review.md",
+          reason: "no activity in 21 days",
+        },
+        {
+          name: "Draft launch brief",
+          path: "50 - Operations/Pursuits/Draft launch brief.md",
+          reason: "deadline has passed",
+        },
+      ];
+      s.inputs.sourceHealth = "degraded";
+      s.inputs.sourceWarnings = [
+        "Todoist read failed (timeout) — task list may be incomplete",
+        "Capacities refresh required — no direct snapshot is installed",
+      ];
+      s.inputs.sourceCounts = { vault: 0, todoist: 0, calendar: 0 };
+      s.inputs.capacity = cap(0);
+      return s;
+    }
   }
 }
 
@@ -326,4 +355,5 @@ export const SCENARIO_NAMES: ScenarioName[] = [
   "conflict",
   "commit-preview",
   "verified",
+  "sparse",
 ];

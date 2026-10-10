@@ -68,7 +68,7 @@ export function ActionDock() {
   };
 
   return (
-    <footer class="dock" aria-label="Actions">
+    <div class="dock">
       <span class="dock__status" role="status">
         {statusText[state]}
       </span>
@@ -142,7 +142,7 @@ export function ActionDock() {
                   : "Requires confirmed setup and billed budget"
             }
           >
-            Auto sequence {formatBlockAmount(spend)}
+            Sequence & commit {formatBlockAmount(spend)}
             <span class="btn__sub">
               1 billed call · {s.ledger?.remaining ?? 0} left today
             </span>
@@ -205,6 +205,6 @@ export function ActionDock() {
         </button>
       )}
       </div>
-    </footer>
+    </div>
   );
 }

@@ -1,23 +1,27 @@
 /* app.css — cockpit layout + components. Flat bordered surfaces, 400/500
    weights, generous spacing, no gradients/shadows (locked decision 5). */
 
-/* T12e (3a spec): two-column shell — 280px rail beside the table — plus a
-   full-width sticky footer (grid-column 1/-1) so the dock spans rail + table. */
+/* U7 page frame: one bounded, centered column. Header, screen body, and the
+   single footer are the column's children; the body grows so the footer sits
+   at the viewport bottom with no dead area. */
 .cockpit {
-  display: grid;
-  grid-template-columns: 280px minmax(0, 1fr);
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  max-width: 1280px;
+  margin: 0 auto;
   min-height: 100vh;
-  align-items: start;
 }
 
-/* Settings-shell isolation wrapper. `display: contents` keeps the rail, main,
-   and footer as the grid's layout children while the shell marks everything
-   behind it inert/aria-hidden. */
+/* Settings-shell isolation wrapper. `display: contents` keeps the header,
+   main, and footer as the column's layout children while the shell marks
+   everything behind it inert/aria-hidden. */
 .cockpit__background {
   display: contents;
 }
 .cockpit__main {
   min-width: 0;
+  flex: 1;
   display: flex;
   flex-direction: column;
 }
@@ -4278,19 +4282,13 @@ body {
   padding: 1rem;
 }
 
-/* Desktop shell: the cockpit is exactly one viewport under the nav strip.
-   Rail and main scroll inside their own cells and the dock owns the last
-   row, so the rail can never slide under the dock and a sparse day still
-   fills the card to the dock. */
-:root {
-  --nav-h: 44px;
-}
+/* Desktop shell: the column fills the viewport and the body scrolls inside
+   its own cell while the footer owns the last row, so the footer stays at the
+   viewport bottom and a sparse day still fills the body. */
 @media (min-width: 768px) {
   .cockpit {
-    height: calc(100vh - var(--nav-h));
+    height: 100vh;
     min-height: 0;
-    grid-template-rows: minmax(0, 1fr) auto;
-    align-items: stretch;
   }
   .rail {
     position: static;
@@ -4311,9 +4309,6 @@ body {
   .cockpit__main {
     min-height: 0;
     overflow-y: auto;
-  }
-  .cockpit__footer {
-    position: static;
   }
 }
 .rail__scroll > .pie__chart,
@@ -4480,4 +4475,166 @@ body {
   display: flex;
   gap: 14px;
   flex-wrap: wrap;
+}
+
+/* -- U7 page frame: stepper header + single footer (KTD11) ----------------- */
+.app-header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+  padding: 12px 20px;
+  border-bottom: 1px solid var(--t-border);
+  background: var(--t-surface);
+}
+.app-header__date {
+  display: flex;
+  flex-direction: column;
+  min-width: 140px;
+}
+.app-header__day {
+  font-weight: 500;
+}
+.app-header__frame {
+  color: var(--t-muted);
+  font-size: 12px;
+}
+.app-header__right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-left: auto;
+  flex-wrap: wrap;
+}
+
+.stepper {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+.stepper__step {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  padding: 4px 12px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--t-muted);
+  font: inherit;
+  cursor: pointer;
+}
+.stepper__step--active {
+  background: var(--t-surface-2);
+  color: var(--t-text);
+  font-weight: 500;
+}
+.stepper__step--done .stepper__mark {
+  color: var(--t-accent);
+}
+.stepper__step:focus-visible {
+  outline: 2px solid var(--t-accent);
+  outline-offset: 2px;
+}
+.stepper__mark {
+  color: var(--t-muted);
+  font-variant-numeric: tabular-nums;
+}
+.stepper__sep {
+  color: var(--t-border);
+}
+
+.health-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 12px;
+  border: 1px solid var(--t-border);
+  border-radius: 999px;
+  font-size: 12px;
+  color: var(--t-muted);
+}
+.health-pill--healthy {
+  color: var(--t-accent-strong);
+}
+.health-pill--degraded {
+  color: var(--t-text);
+  border-color: var(--state-warning);
+}
+.health-pill__retry {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--t-accent-strong);
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
+.header__connections {
+  padding: 4px;
+  border: 0;
+  background: transparent;
+  color: var(--t-text);
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.footer {
+  position: sticky;
+  bottom: 0;
+  z-index: 10;
+  border-top: 1px solid var(--t-border);
+  background: var(--t-surface);
+}
+.footer__row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+  padding: 8px 20px 12px;
+}
+.footer__left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.footer__right {
+  display: flex;
+  align-items: center;
+  margin-left: auto;
+}
+.footer__back {
+  padding: 4px;
+  border: 0;
+  background: transparent;
+  color: var(--t-muted);
+  font: inherit;
+  cursor: pointer;
+}
+.footer__blocked {
+  color: var(--state-danger);
+  font-size: 13px;
+}
+
+/* U7a temporary home for the retired rail. The rail is no longer a column;
+   inside the Plan tasks body it is a collapsible Day summary region until
+   U9-U13 replace its content. */
+.day-summary {
+  border-bottom: 1px solid var(--t-border);
+}
+.day-summary__summary {
+  padding: 8px 20px;
+  cursor: pointer;
+  color: var(--t-muted);
+}
+.day-summary .rail {
+  position: static;
+  max-height: none;
+  overflow: visible;
+  border-right: 0;
 }
