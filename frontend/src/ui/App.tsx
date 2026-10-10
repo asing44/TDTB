@@ -17,8 +17,7 @@ import { BlockEditor } from "./BlockEditor";
 import { AnchoredEditor } from "./AnchoredEditor";
 import { ExecutionView } from "./ExecutionView";
 import { DaySetupPanel } from "./DaySetupPanel";
-import { CapacitiesSettingsPanel } from "./CapacitiesSettingsPanel";
-import { TagExclusionSettingsPanel } from "./TagExclusionSettingsPanel";
+import { ConnectionsScreen } from "./connections/ConnectionsScreen";
 
 const THEME_KEY = "tdtb-cockpit-theme";
 
@@ -76,10 +75,7 @@ export function App() {
             {screen === "setup" ? (
               <DaySetupPanel active={true} variant="screen" />
             ) : (
-              <>
-                <CapacitiesSettingsPanel active={true} />
-                <TagExclusionSettingsPanel active={true} />
-              </>
+              <ConnectionsScreen />
             )}
           </main>
         ) : (
