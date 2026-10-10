@@ -188,7 +188,10 @@ describe("compact planning cockpit", () => {
 
     expect(sequence.disabled).toBe(true);
     expect(r.getByRole("alert").textContent).toMatch(/Sources degraded/);
-    expect(r.getByRole("button", { name: "Copy plan prompt for an external LLM" })).toBeTruthy();
+    // U5: the manual copy-prompt bypass is retired; the dock states that
+    // prompts stay local and export only on an opted-in Commit.
+    expect(r.queryByRole("button", { name: "Copy plan prompt for an external LLM" })).toBeNull();
+    expect(r.getByText(/export on Commit only/)).toBeTruthy();
   });
 
   it("keeps degraded source health as an approval blocker", () => {
