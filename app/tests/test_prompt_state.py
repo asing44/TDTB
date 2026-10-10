@@ -21,6 +21,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import app_config  # noqa: E402
+import capacities_cache_io  # noqa: E402
 import prompt_state as ps  # noqa: E402
 
 DAY = "2026-10-09"
@@ -431,3 +432,78 @@ def test_prompt_content_never_appears_in_errors():
     assert secret not in str(caught_json.value)
     assert secret not in repr(caught_json.value)
     assert secret not in repr(caught_json.value.__cause__)
+
+
+# ---------------------------------------------------------------------------
+# Storage I/O failure — typed, content-free, bytes preserved
+# ---------------------------------------------------------------------------
+
+def _deny_write(path, data):
+    raise OSError(28, "No space left on device")
+
+
+def _deny_lock(path):
+    raise PermissionError(13, "Permission denied")
+
+
+def test_save_drafts_write_ioerror_is_typed_content_free_and_preserves_bytes(monkeypatch):
+    ps.save_drafts(day=DAY, patch={"intention": "A"})
+    target = ps.drafts_path(DAY)
+    before = target.read_bytes()
+    monkeypatch.setattr(capacities_cache_io, "atomic_write_json", _deny_write)
+    with pytest.raises(ps.PromptStateError) as caught:
+        ps.save_drafts(day=DAY, patch={"intention": "B"})
+    # A write I/O failure maps to the 500 route branch, not the 409 format one.
+    assert not isinstance(caught.value, ps.PromptFormatError)
+    assert caught.value.__cause__ is None
+    assert "No space" not in str(caught.value)
+    assert str(target) not in str(caught.value)
+    assert target.read_bytes() == before
+
+
+def test_save_optins_write_ioerror_is_typed_content_free_and_preserves_bytes(monkeypatch):
+    ps.save_optins(expected_revision=0, optins={"intention": True})
+    target = ps.optins_path()
+    before = target.read_bytes()
+
+    def _deny(path, data):
+        raise PermissionError(13, "Permission denied")
+
+    monkeypatch.setattr(capacities_cache_io, "atomic_write_json", _deny)
+    with pytest.raises(ps.PromptStateError) as caught:
+        ps.save_optins(expected_revision=1, optins={"megan_nicety": True})
+    assert not isinstance(caught.value, ps.PromptFormatError)
+    assert caught.value.__cause__ is None
+    assert "Permission" not in str(caught.value)
+    assert str(target) not in str(caught.value)
+    assert target.read_bytes() == before
+
+
+def test_save_lock_acquisition_ioerror_is_typed_content_free(monkeypatch):
+    monkeypatch.setattr(capacities_cache_io, "acquire_path_lock", _deny_lock)
+    with pytest.raises(ps.PromptStateError) as caught:
+        ps.save_drafts(day=DAY, patch={"intention": "A"})
+    assert caught.value.__cause__ is None
+    assert "Permission" not in str(caught.value)
+    assert not ps.drafts_path(DAY).exists()
+
+
+def test_load_ioerror_is_typed_content_free_and_suppresses_cause(monkeypatch):
+    target = ps.drafts_path(DAY)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(
+        json.dumps({"version": 1, "day": DAY, "drafts": {}}), encoding="utf-8"
+    )
+    real_read_text = Path.read_text
+
+    def _deny(self, *args, **kwargs):
+        if self == target:
+            raise PermissionError(13, "Permission denied")
+        return real_read_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", _deny)
+    with pytest.raises(ps.PromptStateError) as caught:
+        ps.load_drafts(DAY)
+    assert caught.value.__cause__ is None
+    assert "Permission" not in str(caught.value)
+    assert str(target) not in str(caught.value)

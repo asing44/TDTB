@@ -256,8 +256,10 @@ def _reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
 def _load_strict(path: Path) -> ExportReceiptsRecord:
     try:
         raw = path.read_text(encoding="utf-8")
-    except OSError as exc:
-        raise ExportReceiptError("export receipts record is unreadable") from exc
+    except OSError:
+        # The OS error carries the machine-local path; suppress it so no
+        # filename or raw exception text reaches a log, response, or traceback.
+        raise ExportReceiptError("export receipts record is unreadable") from None
     try:
         data = json.loads(raw, object_pairs_hook=_reject_duplicate_keys)
     except ValueError:
@@ -309,8 +311,8 @@ def load_receipts(*, path: str | Path | None = None) -> ExportReceiptsRecord:
     target = Path(path) if path is not None else receipts_path()
     try:
         exists = target.is_file()
-    except OSError as exc:
-        raise ExportReceiptError("export receipts record is unreadable") from exc
+    except OSError:
+        raise ExportReceiptError("export receipts record is unreadable") from None
     if not exists:
         return ExportReceiptsRecord()
     return _load_strict(target)
@@ -321,7 +323,27 @@ def load_receipts(*, path: str | Path | None = None) -> ExportReceiptsRecord:
 # ---------------------------------------------------------------------------
 
 def _write_record(target: Path, record: ExportReceiptsRecord) -> None:
-    capacities_cache_io.atomic_write_json(target, record.as_dict())
+    try:
+        capacities_cache_io.atomic_write_json(target, record.as_dict())
+    except OSError:
+        # A full disk or a permission refusal must fail closed as a typed,
+        # content-free error; the raw OS error (which carries the path) is
+        # never chained. The existing bytes are left untouched by the atomic
+        # write, so a retry never duplicates an already-landed task.
+        raise ExportReceiptError(
+            "export receipts record could not be written"
+        ) from None
+
+
+def _acquire_receipt_lock(lock: Path) -> Any:
+    """Acquire the cross-process receipt lock, mapping storage OSError to a
+    typed, content-free failure so it never escapes as a raw OSError."""
+    try:
+        return capacities_cache_io.acquire_path_lock(lock)
+    except OSError:
+        raise ExportReceiptError(
+            "export receipts store lock is unavailable"
+        ) from None
 
 
 def _validate_inputs(day: Any, prompt_key: Any, action: Any) -> str:
@@ -354,7 +376,7 @@ def begin_export(
     target = Path(path) if path is not None else receipts_path()
     lock = receipts_lock_path()
     with capacities_cache_io.store_lock(lock):
-        fh = capacities_cache_io.acquire_path_lock(lock)
+        fh = _acquire_receipt_lock(lock)
         try:
             record = load_receipts(path=target)
             existing = record.get(valid_day, prompt_key, action)
@@ -389,7 +411,7 @@ def complete_export(
     target = Path(path) if path is not None else receipts_path()
     lock = receipts_lock_path()
     with capacities_cache_io.store_lock(lock):
-        fh = capacities_cache_io.acquire_path_lock(lock)
+        fh = _acquire_receipt_lock(lock)
         try:
             record = load_receipts(path=target)
             done = ExportReceipt(
@@ -420,7 +442,7 @@ def fail_export(
     target = Path(path) if path is not None else receipts_path()
     lock = receipts_lock_path()
     with capacities_cache_io.store_lock(lock):
-        fh = capacities_cache_io.acquire_path_lock(lock)
+        fh = _acquire_receipt_lock(lock)
         try:
             record = load_receipts(path=target)
             review = ExportReceipt(

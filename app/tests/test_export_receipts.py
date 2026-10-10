@@ -25,6 +25,7 @@ from pathlib import Path
 import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
+import capacities_cache_io  # noqa: E402
 import export_receipts as er  # noqa: E402
 
 DAY = "2026-10-09"
@@ -183,3 +184,107 @@ def test_concurrent_begin_elects_one_creator():
     # Exactly one durable record survives.
     record = er.load_receipts()
     assert len(record.receipts) == 1
+
+
+# ---------------------------------------------------------------------------
+# Storage I/O failure — typed, content-free, bytes preserved
+# ---------------------------------------------------------------------------
+
+class _InjectedWriteFailure:
+    """Fail the Nth ``atomic_write_json`` with a real OSError."""
+
+    def __init__(self, real, fail_on: int, error: OSError):
+        self._real = real
+        self._fail_on = fail_on
+        self._error = error
+        self.calls = 0
+
+    def __call__(self, path, data):
+        self.calls += 1
+        if self.calls == self._fail_on:
+            raise self._error
+        return self._real(path, data)
+
+
+@pytest.mark.parametrize("error", [
+    OSError(28, "No space left on device"),
+    PermissionError(13, "Permission denied"),
+])
+def test_begin_write_ioerror_is_typed_content_free(monkeypatch, error):
+    real = capacities_cache_io.atomic_write_json
+    monkeypatch.setattr(
+        capacities_cache_io, "atomic_write_json",
+        _InjectedWriteFailure(real, 1, error),
+    )
+    with pytest.raises(er.ExportReceiptError) as caught:
+        _begin()
+    assert caught.value.__cause__ is None
+    assert type(caught.value) is er.ExportReceiptError
+    assert error.strerror not in str(caught.value)
+    assert str(er.receipts_path()) not in str(caught.value)
+    assert not er.receipts_path().exists()
+
+
+def test_complete_write_ioerror_preserves_pending_bytes(monkeypatch):
+    _begin()
+    target = er.receipts_path()
+    before = target.read_bytes()
+    real = capacities_cache_io.atomic_write_json
+    monkeypatch.setattr(
+        capacities_cache_io, "atomic_write_json",
+        _InjectedWriteFailure(real, 1, OSError(28, "No space left on device")),
+    )
+    with pytest.raises(er.ExportReceiptError) as caught:
+        er.complete_export(day=DAY, prompt_key=KEY, action=ACTION, task_id="t-9")
+    assert caught.value.__cause__ is None
+    assert "No space" not in str(caught.value)
+    assert target.read_bytes() == before
+    assert er.load_receipts().get(DAY, KEY, ACTION).status == er.STATUS_PENDING
+
+
+def test_fail_write_ioerror_preserves_pending_bytes(monkeypatch):
+    _begin()
+    target = er.receipts_path()
+    before = target.read_bytes()
+    real = capacities_cache_io.atomic_write_json
+    monkeypatch.setattr(
+        capacities_cache_io, "atomic_write_json",
+        _InjectedWriteFailure(real, 1, PermissionError(13, "Permission denied")),
+    )
+    with pytest.raises(er.ExportReceiptError) as caught:
+        er.fail_export(day=DAY, prompt_key=KEY, action=ACTION, reason="provider boom")
+    assert caught.value.__cause__ is None
+    assert "Permission" not in str(caught.value)
+    assert target.read_bytes() == before
+    assert er.load_receipts().get(DAY, KEY, ACTION).status == er.STATUS_PENDING
+
+
+def test_lock_acquisition_ioerror_is_typed_content_free(monkeypatch):
+    def _deny(path):
+        raise PermissionError(13, "Permission denied")
+
+    monkeypatch.setattr(capacities_cache_io, "acquire_path_lock", _deny)
+    with pytest.raises(er.ExportReceiptError) as caught:
+        _begin()
+    assert caught.value.__cause__ is None
+    assert "Permission" not in str(caught.value)
+    assert not er.receipts_path().exists()
+
+
+def test_read_ioerror_suppresses_cause(monkeypatch):
+    target = er.receipts_path()
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(json.dumps({"version": 1, "receipts": {}}), encoding="utf-8")
+    real_read_text = Path.read_text
+
+    def _deny(self, *args, **kwargs):
+        if self == target:
+            raise PermissionError(13, "Permission denied")
+        return real_read_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", _deny)
+    with pytest.raises(er.ExportReceiptError) as caught:
+        er.load_receipts()
+    assert caught.value.__cause__ is None
+    assert "Permission" not in str(caught.value)
+    assert str(target) not in str(caught.value)

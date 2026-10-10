@@ -271,8 +271,10 @@ def _reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
 def _load_drafts_strict(path: Path) -> PromptDraftsRecord:
     try:
         raw = path.read_text(encoding="utf-8")
-    except OSError as exc:
-        raise PromptStateError("prompt drafts record is unreadable") from exc
+    except OSError:
+        # The OS error carries the machine-local path; suppress it so no
+        # filename or raw exception text reaches a log, response, or traceback.
+        raise PromptStateError("prompt drafts record is unreadable") from None
     try:
         data = json.loads(raw, object_pairs_hook=_reject_duplicate_keys)
     except ValueError:
@@ -295,8 +297,8 @@ def _load_drafts_strict(path: Path) -> PromptDraftsRecord:
 def _load_optins_strict(path: Path) -> PromptOptinsRecord:
     try:
         raw = path.read_text(encoding="utf-8")
-    except OSError as exc:
-        raise PromptStateError("prompt opt-ins record is unreadable") from exc
+    except OSError:
+        raise PromptStateError("prompt opt-ins record is unreadable") from None
     try:
         data = json.loads(raw, object_pairs_hook=_reject_duplicate_keys)
     except ValueError:
@@ -332,8 +334,8 @@ def _read_current_drafts(target: Path, day: str) -> PromptDraftsRecord:
     than returned, so an exact-day read can never surface another day's text."""
     try:
         exists = target.is_file()
-    except OSError as exc:
-        raise PromptStateError("prompt drafts record is unreadable") from exc
+    except OSError:
+        raise PromptStateError("prompt drafts record is unreadable") from None
     if not exists:
         return PromptDraftsRecord(day=day)
     record = _load_drafts_strict(target)
@@ -384,7 +386,7 @@ def save_drafts(
     target = Path(path) if path is not None else drafts_path(valid_day)
     lock = drafts_lock_path()
     with capacities_cache_io.store_lock(lock):
-        fh = capacities_cache_io.acquire_path_lock(lock)
+        fh = _acquire_store_lock(lock)
         try:
             current = _read_current_drafts(target, valid_day)
             merged = dict(current.drafts)
@@ -394,7 +396,7 @@ def save_drafts(
                 else:
                     merged[key] = text
             saved = PromptDraftsRecord(day=valid_day, drafts=merged)
-            capacities_cache_io.atomic_write_json(target, saved.as_dict())
+            _atomic_write(target, saved.as_dict())
         finally:
             capacities_cache_io.release_lock_file(fh)
 
@@ -445,8 +447,8 @@ def load_optins(*, path: str | Path | None = None) -> PromptOptinsRecord:
     target = Path(path) if path is not None else optins_path()
     try:
         exists = target.is_file()
-    except OSError as exc:
-        raise PromptStateError("prompt opt-ins record is unreadable") from exc
+    except OSError:
+        raise PromptStateError("prompt opt-ins record is unreadable") from None
     if not exists:
         return PromptOptinsRecord()
     return _load_optins_strict(target)
@@ -475,7 +477,7 @@ def save_optins(
     target = Path(path) if path is not None else optins_path()
     lock = optins_lock_path()
     with capacities_cache_io.store_lock(lock):
-        fh = capacities_cache_io.acquire_path_lock(lock)
+        fh = _acquire_store_lock(lock)
         try:
             current_revision = _current_optins_revision(target)
             if current_revision != expected_revision:
@@ -486,7 +488,7 @@ def save_optins(
             saved = PromptOptinsRecord(
                 optins=normalized, revision=current_revision + 1
             )
-            capacities_cache_io.atomic_write_json(target, saved.as_dict())
+            _atomic_write(target, saved.as_dict())
         finally:
             capacities_cache_io.release_lock_file(fh)
 
@@ -496,8 +498,31 @@ def save_optins(
 def _current_optins_revision(target: Path) -> int:
     try:
         exists = target.is_file()
-    except OSError as exc:
-        raise PromptStateError("prompt opt-ins record is unreadable") from exc
+    except OSError:
+        raise PromptStateError("prompt opt-ins record is unreadable") from None
     if not exists:
         return 0
     return _load_optins_strict(target).revision
+
+
+# ---------------------------------------------------------------------------
+# Guarded writes
+# ---------------------------------------------------------------------------
+
+def _atomic_write(target: Path, data: dict[str, Any]) -> None:
+    """Atomically persist ``data``, mapping storage OSError to a typed,
+    content-free error so a full disk or permission refusal never escapes raw.
+    The atomic write leaves the existing bytes untouched on failure."""
+    try:
+        capacities_cache_io.atomic_write_json(target, data)
+    except OSError:
+        raise PromptStateError("prompt state record could not be written") from None
+
+
+def _acquire_store_lock(lock: Path) -> Any:
+    """Acquire the cross-process store lock, mapping storage OSError to a
+    typed, content-free failure so it never escapes as a raw OSError."""
+    try:
+        return capacities_cache_io.acquire_path_lock(lock)
+    except OSError:
+        raise PromptStateError("prompt state store lock is unavailable") from None

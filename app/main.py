@@ -5498,8 +5498,8 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
                 intents, todoist=injected_todoist, store=store, vault_root=vault,
                 plan_body=plan_body, today=today, resume=resume,
             )
-            export_outcomes = prompt_export.run_prompt_exports(
-                day=today.isoformat(), civil_date=civil_date,
+            export_outcomes = prompt_export.run_prompt_exports_for_report(
+                report, day=today.isoformat(), civil_date=civil_date,
                 todoist=injected_todoist,
             )
         else:
@@ -5508,8 +5508,8 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
                     intents, todoist=todoist, store=store, vault_root=vault,
                     plan_body=plan_body, today=today, resume=resume,
                 )
-                export_outcomes = prompt_export.run_prompt_exports(
-                    day=today.isoformat(), civil_date=civil_date,
+                export_outcomes = prompt_export.run_prompt_exports_for_report(
+                    report, day=today.isoformat(), civil_date=civil_date,
                     todoist=todoist,
                 )
         prompt_export.attach_to_report(report, export_outcomes)

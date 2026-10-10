@@ -27,6 +27,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
+import capacities_cache_io  # noqa: E402
 import export_receipts as er  # noqa: E402
 import main as main_mod  # noqa: E402
 import prompt_export as pe  # noqa: E402
@@ -95,6 +96,17 @@ class NoCreateTodoist:
 
     def reschedule_task(self, task_id, due_string):
         return self.tasks[task_id]
+
+
+class NoIdTodoist(RecordingTodoist):
+    """A provider that never returns a task id, so the main todoist surface
+    fails reconciliation without raising — the main report is not ok."""
+
+    def create_task(self, content, project_id=None, due_string=None,
+                    due_date=None, duration=None, duration_unit=None, **_):
+        self.created.append({"content": content, "project_id": project_id,
+                             "due_date": due_date})
+        return {}
 
 
 # ---------------------------------------------------------------------------
@@ -265,6 +277,130 @@ class TestRun:
 
 
 # ---------------------------------------------------------------------------
+# Fail-closed gate: exports only after the main commit landed ok
+# ---------------------------------------------------------------------------
+
+class TestMainFailureGate:
+    def test_failed_report_skips_without_provider_or_receipt(self):
+        client = RecordingTodoist()
+        outcomes = pe.run_prompt_exports_for_report(
+            {"ok": False, "surfaces": {"todoist": {"status": "failed"}}},
+            day=DAY, civil_date="2026-07-13", todoist=client,
+            optins={"megan_nicety": True}, drafts={"megan_nicety": SECRET},
+        )
+        assert [o.status for o in outcomes] == [pe.OUTCOME_SKIPPED_MAIN_FAILURE]
+        assert outcomes[0].prompt_key == pe.SKIPPED_MAIN_FAILURE_KEY
+        assert client.created == []
+        assert not er.receipts_path().exists()
+        assert SECRET not in repr([o.as_dict() for o in outcomes])
+
+    def test_non_mapping_report_also_skips(self):
+        client = RecordingTodoist()
+        outcomes = pe.run_prompt_exports_for_report(
+            None, day=DAY, civil_date="2026-07-13", todoist=client,
+            optins={"megan_nicety": True}, drafts={"megan_nicety": SECRET},
+        )
+        assert [o.status for o in outcomes] == [pe.OUTCOME_SKIPPED_MAIN_FAILURE]
+        assert client.created == []
+        assert not er.receipts_path().exists()
+
+    def test_ok_report_runs_the_lane(self):
+        client = RecordingTodoist()
+        outcomes = pe.run_prompt_exports_for_report(
+            {"ok": True}, day=DAY, civil_date="2026-07-13", todoist=client,
+            optins={"megan_nicety": True}, drafts={"megan_nicety": SECRET},
+        )
+        assert [o.status for o in outcomes] == [pe.OUTCOME_DONE]
+        assert len(client.created) == 1
+
+    def test_attach_marks_skipped_marker_not_ok(self):
+        report = {"ok": False, "surfaces": {}}
+        pe.attach_to_report(report, pe.skipped_main_failure_outcomes(day=DAY))
+        assert report["prompt_exports_ok"] is False
+        assert report["prompt_exports"][0]["status"] == pe.OUTCOME_SKIPPED_MAIN_FAILURE
+        assert SECRET not in repr(report["prompt_exports"])
+
+
+# ---------------------------------------------------------------------------
+# Storage I/O failure — bounded, content-free lane outcomes
+# ---------------------------------------------------------------------------
+
+def _fail_atomic_write_on(monkeypatch, fail_on: int, error: OSError):
+    real = capacities_cache_io.atomic_write_json
+    state = {"calls": 0}
+
+    def _write(path, data):
+        state["calls"] += 1
+        if state["calls"] == fail_on:
+            raise error
+        return real(path, data)
+
+    monkeypatch.setattr(capacities_cache_io, "atomic_write_json", _write)
+    return state
+
+
+class TestStorageFailureLane:
+    def test_begin_write_failure_blocks_without_provider(self, monkeypatch):
+        _fail_atomic_write_on(monkeypatch, 1, OSError(28, "No space left on device"))
+        client = RecordingTodoist()
+        outcomes = pe.run_prompt_exports(
+            day=DAY, civil_date="2026-07-13", todoist=client,
+            optins={"megan_nicety": True}, drafts={"megan_nicety": SECRET},
+        )
+        assert [o.status for o in outcomes] == [pe.OUTCOME_BLOCKED]
+        assert client.created == []
+        assert not er.receipts_path().exists()
+        assert SECRET not in repr(outcomes[0].as_dict())
+        assert "No space" not in repr(outcomes[0].as_dict())
+
+    def test_complete_write_failure_preserves_pending_and_needs_review(self, monkeypatch):
+        client = RecordingTodoist()
+        _fail_atomic_write_on(monkeypatch, 2, OSError(28, "No space left on device"))
+        outcomes = pe.run_prompt_exports(
+            day=DAY, civil_date="2026-07-13", todoist=client,
+            optins={"megan_nicety": True}, drafts={"megan_nicety": SECRET},
+        )
+        assert [o.status for o in outcomes] == [pe.OUTCOME_NEEDS_REVIEW]
+        assert len(client.created) == 1  # provider called exactly once
+        stored = er.load_receipts().get(DAY, "megan_nicety", pe.EXPORT_ACTION)
+        assert stored.status == er.STATUS_PENDING  # pending preserved
+        assert SECRET not in repr(outcomes[0].as_dict())
+
+    def test_complete_write_failure_retry_never_duplicates(self, monkeypatch):
+        client = RecordingTodoist()
+        real = capacities_cache_io.atomic_write_json
+        state = _fail_atomic_write_on(
+            monkeypatch, 2, OSError(28, "No space left on device"))
+        first = pe.run_prompt_exports(
+            day=DAY, civil_date="2026-07-13", todoist=client,
+            optins={"megan_nicety": True}, drafts={"megan_nicety": SECRET},
+        )
+        assert first[0].status == pe.OUTCOME_NEEDS_REVIEW
+        assert len(client.created) == 1
+        monkeypatch.setattr(capacities_cache_io, "atomic_write_json", real)
+        second = pe.run_prompt_exports(
+            day=DAY, civil_date="2026-07-13", todoist=client,
+            optins={"megan_nicety": True}, drafts={"megan_nicety": SECRET},
+        )
+        assert second[0].status == pe.OUTCOME_NEEDS_REVIEW
+        assert len(client.created) == 1  # no duplicate task on retry
+        assert state["calls"] == 2
+
+    def test_fail_export_write_exception_is_safe_bounded(self, monkeypatch):
+        client = RecordingTodoist(raise_on_create=True)
+        _fail_atomic_write_on(monkeypatch, 2, PermissionError(13, "Permission denied"))
+        outcomes = pe.run_prompt_exports(
+            day=DAY, civil_date="2026-07-13", todoist=client,
+            optins={"megan_nicety": True}, drafts={"megan_nicety": SECRET},
+        )
+        assert [o.status for o in outcomes] == [pe.OUTCOME_NEEDS_REVIEW]
+        assert SECRET not in repr(outcomes[0].as_dict())
+        assert "Permission" not in repr(outcomes[0].as_dict())
+        stored = er.load_receipts().get(DAY, "megan_nicety", pe.EXPORT_ACTION)
+        assert stored.status == er.STATUS_PENDING
+
+
+# ---------------------------------------------------------------------------
 # Route level — real POST /commit with a fake injected client
 # ---------------------------------------------------------------------------
 
@@ -432,4 +568,41 @@ class TestPromptExportRoute:
         assert body["ok"] is True  # four surfaces landed
         assert body["prompt_exports_ok"] is False
         assert body["prompt_exports"][0]["status"] == pe.OUTCOME_NEEDS_REVIEW
+        assert SECRET not in r.text
+
+    def test_failed_main_report_skips_exports_and_survives(
+            self, client, vault, monkeypatch):
+        _freeze(monkeypatch)
+        monkeypatch.setattr(shadow, "gather_live_state", _live_state(garage_live=False))
+        ps.save_optins(expected_revision=0, optins={"megan_nicety": True})
+        ps.save_drafts(day=DAY, patch={"megan_nicety": SECRET})
+        todoist = NoIdTodoist()
+        client.app.state.build_commit_clients = lambda v, cfg: (todoist, None)
+        self._confirm(client)
+        r = client.post("/commit?mode=live", headers=_auth(client),
+                        json={"digest": DIGEST, "sequence": SEQUENCE, "config": {}})
+        assert r.status_code == 200, r.text
+        body = r.json()
+        # The partial-failure report survives with its per-surface ledger.
+        assert body["ok"] is False
+        assert body["surfaces"]["todoist"]["status"] == "failed"
+        # No export task, no receipt, explicit content-free skip marker.
+        assert body["prompt_exports_ok"] is False
+        assert body["prompt_exports"][0]["status"] == pe.OUTCOME_SKIPPED_MAIN_FAILURE
+        assert all(c["content"] != SECRET for c in todoist.created)
+        assert len(todoist.created) == 1  # only the main surface, never an export
+        assert not er.receipts_path().exists()
+        assert SECRET not in r.text
+
+    def test_unauthorized_commit_writes_no_export(self, client, vault, monkeypatch):
+        _freeze(monkeypatch)
+        ps.save_optins(expected_revision=0, optins={"megan_nicety": True})
+        ps.save_drafts(day=DAY, patch={"megan_nicety": SECRET})
+        todoist = RecordingTodoist()
+        client.app.state.build_commit_clients = lambda v, cfg: (todoist, None)
+        r = client.post("/commit?mode=live",
+                        json={"digest": DIGEST, "sequence": SEQUENCE, "config": {}})
+        assert r.status_code == 403
+        assert todoist.created == []
+        assert not er.receipts_path().exists()
         assert SECRET not in r.text

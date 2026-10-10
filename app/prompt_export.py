@@ -47,6 +47,12 @@ EXPORT_ROUTING = "Inbox"
 OUTCOME_DONE = "done"
 OUTCOME_NEEDS_REVIEW = "needs_review"
 OUTCOME_BLOCKED = "blocked"
+#: The main commit did not land, so the export lane was skipped fail-closed.
+OUTCOME_SKIPPED_MAIN_FAILURE = "skipped_main_failure"
+
+#: Report-level marker key for a lane skipped by a failed main commit. It is
+#: never a prompt key and never reaches the receipt store.
+SKIPPED_MAIN_FAILURE_KEY = "__main_failure__"
 
 _REASON_ALREADY_EXPORTED = "already exported for this logical day"
 _REASON_PRIOR_UNCONFIRMED = "a prior attempt is unconfirmed — review before retrying"
@@ -54,6 +60,7 @@ _REASON_RECEIPT_STORE = "export receipt store is unavailable — nothing was cre
 _REASON_PROVIDER_ERROR = "provider rejected the export — review before retrying"
 _REASON_NO_TASK_ID = "provider returned no task id — review before retrying"
 _REASON_RECEIPT_WRITE = "provider task created but the receipt could not be confirmed"
+_REASON_MAIN_FAILURE = "main commit did not land — exports skipped"
 
 
 class TodoistExportLike(Protocol):
@@ -292,6 +299,42 @@ def run_prompt_exports(
             for p in plans
         ]
     return [_run_one(plan, todoist) for plan in plans]
+
+
+def skipped_main_failure_outcomes(*, day: str) -> list[PromptExportOutcome]:
+    """The explicit, content-free result when the main commit did not land.
+
+    One lane-level marker so the report shows the skip and
+    ``prompt_exports_ok`` is false rather than vacuously true. No provider
+    call is made and no receipt is written."""
+    return [PromptExportOutcome(
+        day=day, prompt_key=SKIPPED_MAIN_FAILURE_KEY, action=EXPORT_ACTION,
+        status=OUTCOME_SKIPPED_MAIN_FAILURE, reason=_REASON_MAIN_FAILURE,
+    )]
+
+
+def run_prompt_exports_for_report(
+    report: Any,
+    *,
+    day: str,
+    civil_date: str,
+    todoist: TodoistExportLike | None,
+    optins: dict[str, bool] | None = None,
+    drafts: dict[str, str] | None = None,
+) -> list[PromptExportOutcome]:
+    """Fail-closed gate: export ONLY after the main commit landed ok.
+
+    ``orchestrate.run_orchestrated`` reports ``ok`` true only when every write
+    surface landed. When it did not (``report["ok"] is not True``), the lane
+    performs no provider call and mutates no receipt; it returns one explicit
+    content-free skipped outcome so the Commit result stays honest. A report
+    that is not a mapping is treated the same way."""
+    if not (isinstance(report, dict) and report.get("ok") is True):
+        return skipped_main_failure_outcomes(day=day)
+    return run_prompt_exports(
+        day=day, civil_date=civil_date, todoist=todoist,
+        optins=optins, drafts=drafts,
+    )
 
 
 def attach_to_report(report: Any, outcomes: list[PromptExportOutcome]) -> Any:
