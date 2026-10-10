@@ -15,7 +15,7 @@ describe("compact planning cockpit", () => {
 
     expect(r.getByRole("region", { name: "Today's work" })).toBeTruthy();
     expect(r.getByText("Assigned items only · shape today's copy here; assignment stays upstream.")).toBeTruthy();
-    expect(r.container.querySelector(".allocation-meter")).toBeTruthy();
+    expect(r.container.querySelector(".cap-card")).toBeTruthy();
     expect(r.container.querySelector('[aria-label="Agenda"]')).toBeNull();
     expect(r.container.querySelector(".placement")).toBeNull();
   });

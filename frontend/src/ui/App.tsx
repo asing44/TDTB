@@ -10,7 +10,6 @@ import { useEffect } from "preact/hooks";
 import { useAppState } from "./context";
 import { Header } from "./Header";
 import { Footer } from "./Footer";
-import { Rail } from "./Rail";
 import { Queue } from "./Queue";
 import { SettingsShell } from "./SettingsShell";
 import { ApprovalDrawer } from "./ApprovalDrawer";
@@ -85,15 +84,9 @@ export function App() {
           </main>
         ) : (
           <main class="cockpit__main" aria-label="Today's planning evidence">
-            {/* U7a temporary home for the retired rail: no content is lost
-                while U9–U13 rebuild the capacity card, timeline, and table.
-                Closed by default so the task queue is the first thing the
-                Plan tasks body shows (KTD13); the operator opens it to
-                inspect capacity evidence. */}
-            <details class="day-summary">
-              <summary class="day-summary__summary">Day summary</summary>
-              <Rail />
-            </details>
+            {/* U9: the retired rail now lives inside the Queue's capacity
+                card Details disclosure (KTD13) — no capacity evidence is
+                lost, and the task queue still heads the body. */}
             {s.commitPhase === "done" && (
               <section class="verified" aria-label="Day committed" role="status">
                 <h2>✅ Day committed and verified</h2>

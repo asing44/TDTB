@@ -69,6 +69,7 @@ import { sourceDetail, typeToken } from "../model/sourceContext";
 import { dueLabel, normalizeUrgency } from "../model/urgency";
 import type { AssignedItem } from "../model/types";
 import { CalendarImpact } from "./CalendarImpact";
+import { CapacityCard } from "./CapacityCard";
 import { Tooltip } from "./Tooltip";
 
 function sourceDot(item: AssignedItem): string {
@@ -731,35 +732,6 @@ function DroppedHeader({
   );
 }
 
-/** The rail owns the full capacity breakdown; this smaller readout stays with
-    the controls that change it. It makes a slider edit legible without asking
-    the user to look away from the assigned rows. */
-function AllocationMeter({ s }: { s: AppState }) {
-  const selected = localSelected(s);
-  const budget = budgetTotal(s);
-  const basis = Math.max(selected, budget, 1);
-  const selectedPct = Math.min(100, (selected / basis) * 100);
-  const budgetPct = Math.min(100, (budget / basis) * 100);
-  const over = Math.max(0, selected - budget);
-  const state = over > 0
-    ? `${formatBlockAmount(over)} over task room`
-    : `${formatBlockAmount(Math.max(0, budget - selected))} left in task room`;
-
-  return (
-    <div class={`allocation-meter${over > 0 ? " allocation-meter--over" : ""}`} aria-label="Task room">
-      <div class="allocation-meter__head">
-        <span class="allocation-meter__label">Task room</span>
-        <strong>{formatBlockAmount(selected)} / {formatBlockAmount(budget)}</strong>
-      </div>
-      <div class="allocation-meter__track" aria-hidden="true">
-        <span class="allocation-meter__fill" style={{ width: `${selectedPct}%` }} />
-        <span class="allocation-meter__mark" style={{ left: `${budgetPct}%` }} />
-      </div>
-      <span class="allocation-meter__state" role="status">{state}</span>
-    </div>
-  );
-}
-
 export function Queue() {
   const s = useAppState();
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
@@ -773,6 +745,9 @@ export function Queue() {
   if (items.length === 0) {
     return (
       <section class="queue" aria-label="Today's work">
+        {/* U9: the capacity card heads the body even when nothing is assigned
+            — a quiet day still needs its capacity story named. */}
+        <CapacityCard />
         {/* S5: calendar evidence stays with the work surface even on a quiet
             day — the empty-assigned branch keeps the inline band. */}
         <CalendarImpact inline />
@@ -840,7 +815,7 @@ export function Queue() {
         Every assigned row starts selected. Remove or trim what will not fit;
         chosen task effort stays additive until Commit live.
       </p>
-      <AllocationMeter s={s} />
+      <CapacityCard />
       <div class="queue__cols" aria-hidden="true">
         <span />
         <span>Needs placement · {needsPlacement}</span>

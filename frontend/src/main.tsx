@@ -44,6 +44,7 @@ function scenarioFromHash(): ScenarioName {
     "conflict",
     "commit-preview",
     "verified",
+    "over",
     "sparse",
   ];
   return (names as string[]).includes(h) ? (h as ScenarioName) : "fresh";

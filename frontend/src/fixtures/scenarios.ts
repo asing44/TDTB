@@ -25,6 +25,7 @@ export type ScenarioName =
   | "conflict"
   | "commit-preview"
   | "verified"
+  | "over"
   | "sparse";
 
 export interface Scenario {
@@ -317,6 +318,29 @@ export function makeScenario(name: ScenarioName): Scenario {
       s.ledger = { today: VALID_DATE, spent: 2, cap: 4, remaining: 2 };
       return s;
     }
+    case "over": {
+      // U9: an over-capacity day — the fixed commitments (calendar, work,
+      // anchors, habits) already exceed the frame, and the chosen tasks pile
+      // on top. The capacity card must read over (red headline, hatched
+      // overflow tail, marker inside the bar) rather than rescaling.
+      const s = base("over", "Over capacity — fixed time exceeds the day");
+      s.inputs.daySetup = { ...confirmedSetup };
+      s.staged.daySetupConfirmed = true;
+      s.inputs.capacity = {
+        ...cap(13),
+        total: 10,
+        fixed: 8,
+        anchored: 5,
+        habits: 1,
+        buffer: 0,
+        free: -17,
+        overassigned: true,
+        availableForSelection: 0,
+        remaining: "⚠ 8hr 30min over · 17 blk",
+        ratio: "27 / 10 blk",
+      };
+      return s;
+    }
     case "sparse": {
       // KTD13: reproduce the live state Adam saw — a stale artifact, vault
       // off, no assigned rows, degraded sources, and the legacy Capacities
@@ -355,5 +379,6 @@ export const SCENARIO_NAMES: ScenarioName[] = [
   "conflict",
   "commit-preview",
   "verified",
+  "over",
   "sparse",
 ];

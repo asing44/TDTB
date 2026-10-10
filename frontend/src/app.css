@@ -475,62 +475,6 @@
   color: var(--t-muted);
   font-size: 12px;
 }
-.allocation-meter {
-  position: sticky;
-  top: 0;
-  z-index: 4;
-  display: grid;
-  gap: 5px;
-  margin: 10px 0 4px;
-  padding: 9px 10px 8px;
-  border: 0.5px solid var(--t-border);
-  border-left: 3px solid var(--c-free);
-  background: var(--t-surface);
-}
-.allocation-meter--over {
-  border-left-color: var(--c-overflow);
-}
-.allocation-meter__head,
-.allocation-meter__state {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 8px;
-}
-.allocation-meter__label,
-.allocation-meter__state {
-  color: var(--t-muted);
-  font-size: 11px;
-}
-.allocation-meter__head strong {
-  font-size: 12px;
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
-}
-.allocation-meter--over .allocation-meter__head strong,
-.allocation-meter--over .allocation-meter__state {
-  color: var(--c-overflow);
-}
-.allocation-meter__track {
-  position: relative;
-  height: 7px;
-  overflow: hidden;
-  border-radius: 999px;
-  background: var(--t-surface-2);
-}
-.allocation-meter__fill {
-  display: block;
-  height: 100%;
-  border-radius: inherit;
-  background: var(--c-selected);
-}
-.allocation-meter__mark {
-  position: absolute;
-  top: -2px;
-  bottom: -2px;
-  width: 2px;
-  background: var(--t-text);
-}
 .rail-keys__key {
   font-family: var(--font-mono);
   background: var(--t-surface);
@@ -2608,9 +2552,6 @@
   .queue__head p {
     max-width: 240px;
   }
-  .allocation-meter {
-    position: static;
-  }
   .execution__head {
     align-items: center;
   }
@@ -3075,21 +3016,6 @@ body {
   border-radius: var(--radius-sm);
   background: var(--t-surface-2);
   line-height: 1.45;
-}
-
-.allocation-meter {
-  margin: 14px 0 6px;
-  padding: 11px 12px 10px;
-  border-radius: var(--radius-sm);
-  background: var(--t-surface-2);
-}
-
-.allocation-meter__head strong {
-  font-size: 13px;
-}
-
-.allocation-meter__track {
-  height: 8px;
 }
 
 .queue__cols {
@@ -4674,18 +4600,143 @@ body {
   display: none;
 }
 
-/* U7a temporary home for the retired rail. The rail is no longer a column;
-   inside the Plan tasks body it is a collapsible Day summary region until
-   U9-U13 replace its content. */
-.day-summary {
-  border-bottom: 1px solid var(--t-border);
+/* U9 — capacity headline card. One white card heads the Plan tasks body: a
+   bold headline (red when over), one cause sentence, a thin segmented bar
+   with a hatched overflow tail and a day-capacity marker, a legend row, and a
+   "Details" disclosure holding the full ledger the retired rail showed. */
+.cap-card {
+  margin: 14px 0 6px;
+  padding: 14px 16px 12px;
+  border: 1px solid var(--t-border);
+  border-radius: 12px;
+  background: var(--t-surface);
 }
-.day-summary__summary {
-  padding: 8px 20px;
+.cap-card--unknown {
+  border-style: dashed;
+}
+.cap-card__unknown {
+  margin: 0;
+  color: var(--t-muted);
+  font-size: 13px;
+}
+.cap-card__head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: baseline;
+  column-gap: 16px;
+  row-gap: 2px;
+}
+.cap-card__headline {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: var(--t-text);
+}
+.cap-card__headline--over {
+  color: var(--c-overflow);
+}
+.cap-card__cause {
+  grid-column: 1;
+  margin: 0;
+  color: var(--t-muted);
+  font-size: 12px;
+}
+.cap-card__details {
+  grid-column: 2;
+  grid-row: 1;
+  justify-self: end;
+}
+.cap-card__details-summary {
   cursor: pointer;
   color: var(--t-muted);
+  font-size: 12px;
+  list-style: none;
 }
-.day-summary .rail {
+.cap-card__details-summary::-webkit-details-marker {
+  display: none;
+}
+.cap-card__details-summary:hover {
+  color: var(--t-text);
+}
+.cap-card__barwrap {
+  position: relative;
+  margin-top: 12px;
+}
+.cap-card__bar {
+  display: flex;
+  height: 14px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: var(--t-surface-2);
+}
+.cap-card__seg,
+.cap-card__overflow {
+  height: 100%;
+}
+.cap-card__overflow {
+  background: repeating-linear-gradient(
+    135deg,
+    var(--c-overflow),
+    var(--c-overflow) 3px,
+    color-mix(in srgb, var(--c-overflow) 40%, var(--t-surface)) 3px,
+    color-mix(in srgb, var(--c-overflow) 40%, var(--t-surface)) 6px
+  );
+}
+.cap-card__mark {
+  position: absolute;
+  top: -3px;
+  bottom: -3px;
+  width: 2px;
+  background: var(--t-text);
+}
+.cap-card__foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-top: 10px;
+}
+.cap-card__legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 11px;
+  color: var(--t-muted);
+}
+.cap-card__legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.cap-card__swatch {
+  width: 9px;
+  height: 9px;
+  border-radius: 2px;
+}
+.cap-card__legend-value {
+  font-variant-numeric: tabular-nums;
+  color: var(--t-text);
+}
+.cap-card__capacity {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  font-size: 11px;
+  color: var(--t-muted);
+  white-space: nowrap;
+}
+.cap-card__capacity-mark {
+  width: 2px;
+  height: 12px;
+  background: var(--t-text);
+}
+/* The retired rail now lives inside the card's Details disclosure (U9). */
+.cap-card__details .rail {
   position: static;
   max-height: none;
   overflow: visible;
