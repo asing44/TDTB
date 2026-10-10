@@ -6021,3 +6021,10 @@ body {
   }
 }
 
+
+/* U13: keep Discard and Save visibly separate in the Connections footer. */
+.footer--connections .footer__right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
