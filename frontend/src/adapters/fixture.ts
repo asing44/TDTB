@@ -12,6 +12,7 @@ import type {
   SequenceResult,
   SourceRefreshResult,
 } from "./adapter";
+import { PromptOptinConflictError } from "./adapter";
 import type {
   Capacity,
   CapacitiesCatalog,
@@ -22,6 +23,7 @@ import type {
   CapacitiesSourceRead,
   CommitReport,
   DaySetup,
+  DaySetupSaveResult,
   FixedInputs,
   Ledger,
   MicroIdea,
@@ -351,7 +353,15 @@ export class FixtureAdapter implements Adapter {
 
   async loadPlanInputs(): Promise<PlanInputs> {
     await wait(LATENCY_MS);
-    return this.applyCapacitiesCoverage(structuredClone(this.inputs));
+    const inputs = this.applyCapacitiesCoverage(structuredClone(this.inputs));
+    // U5 fixture mirrors the additive opt-in metadata the real read route will
+    // carry once it lands; production omits it until then, and the store then
+    // reports prefs unavailable rather than assuming false.
+    inputs.promptOptins = {
+      optins: { ...this.promptOptins },
+      revision: this.promptOptinsRevision,
+    };
+    return inputs;
   }
 
   async billedLedger(): Promise<Ledger> {
@@ -381,6 +391,56 @@ export class FixtureAdapter implements Adapter {
 
   async saveDaySetup(_daySetup: DaySetup): Promise<void> {
     await wait(LATENCY_MS);
+  }
+
+  /** U5 fixture mirrors the server's prompt-only semantics in memory: a
+      captures PATCH never confirms the day, an opt-in save is a full
+      replacement guarded by the optimistic revision. */
+  private promptDrafts: Record<string, string> = {};
+  private promptOptins: Record<string, boolean> = {
+    intention: false,
+    megan_nicety: false,
+    stoic_intention: false,
+  };
+  private promptOptinsRevision = 0;
+
+  async savePromptDrafts(patch: Record<string, string>): Promise<DaySetupSaveResult> {
+    await wait(LATENCY_MS);
+    for (const [key, value] of Object.entries(patch)) {
+      if (key !== "intention" && key !== "megan_nicety" && key !== "stoic_intention") continue;
+      if (typeof value !== "string") continue;
+      if (value === "") delete this.promptDrafts[key];
+      else this.promptDrafts[key] = value;
+    }
+    return this.promptEcho();
+  }
+
+  async savePromptOptins(
+    optins: Record<string, boolean>,
+    expectedRevision: number,
+  ): Promise<DaySetupSaveResult> {
+    await wait(LATENCY_MS);
+    if (expectedRevision !== this.promptOptinsRevision) {
+      throw new PromptOptinConflictError(expectedRevision, this.promptOptinsRevision);
+    }
+    this.promptOptins = {
+      intention: false,
+      megan_nicety: false,
+      stoic_intention: false,
+      ...optins,
+    };
+    this.promptOptinsRevision += 1;
+    return this.promptEcho();
+  }
+
+  private promptEcho(): DaySetupSaveResult {
+    return {
+      ok: true,
+      daySetupConfirmed: false,
+      optins: { ...this.promptOptins },
+      optinsRevision: this.promptOptinsRevision,
+      promptWarnings: [],
+    };
   }
 
   async loadCapacitiesSettings(): Promise<CapacitiesSettings> {

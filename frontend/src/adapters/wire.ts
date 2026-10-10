@@ -35,6 +35,8 @@ import type {
   CommitReport,
   CommitSurface,
   DaySetup,
+  DaySetupSaveResult,
+  PromptExportOutcome,
   DurationSourceLabel,
   FixedInputs,
   ForgotItem,
@@ -1420,6 +1422,7 @@ export function projectPlanInputs(wire: Wire): PlanInputs {
   const capacitiesIntake = projectCapacitiesIntake(
     wire.capacities_intake ?? wire.digest?.capacities_intake,
   );
+  const promptOptins = projectPromptOptins(wire.prompt_optins);
   return {
     validDate: String(wire.digest?.valid_date ?? ""),
     assigned: (wire.digest?.assigned ?? []).map(projectAssigned),
@@ -1456,6 +1459,7 @@ export function projectPlanInputs(wire: Wire): PlanInputs {
     // fallback is defensive only. Legacy payloads omit it, so the key stays
     // absent rather than being fabricated.
     ...(capacitiesIntake !== null ? { capacitiesIntake } : {}),
+    ...(promptOptins !== null ? { promptOptins } : {}),
   };
 }
 
@@ -1693,10 +1697,27 @@ export function projectCommitReport(wire: Wire): CommitReport {
   );
   const anyOk = surfaces.some((s) => s.status === "ok");
   const anyFailed = surfaces.some((s) => s.status === "failed");
+  // U5: content-free prompt-export outcomes ride alongside the four write
+  // surfaces. `prompt_exports_ok === false` while `ok === true` is a partial
+  // commit, never a success — the export lane did not fully land.
+  const promptExports = Array.isArray(wire.prompt_exports)
+    ? (wire.prompt_exports as Wire[]).map(projectPromptExportOutcome)
+    : undefined;
+  const promptExportsOk =
+    typeof wire.prompt_exports_ok === "boolean" ? wire.prompt_exports_ok : undefined;
+  const exportsUnclean = promptExportsOk === false;
   return {
-    status: wire.ok === true ? "ok" : anyOk && anyFailed ? "partial" : "failed",
+    status: wire.ok === true
+      ? exportsUnclean
+        ? "partial"
+        : "ok"
+      : anyOk && anyFailed
+        ? "partial"
+        : "failed",
     surfaces,
     verifyFailures: (wire.verify_failures ?? []).map(String),
+    ...(promptExports !== undefined ? { promptExports } : {}),
+    ...(promptExportsOk !== undefined ? { promptExportsOk } : {}),
     // FEEDBACK-23: machine-canonical structured detail (24h HH:MM, raw ISO,
     // IANA timezone) travels separate from the 12h display strings — the
     // drawer formats display from these values.
@@ -1718,6 +1739,81 @@ export function projectCommitReport(wire: Wire): CommitReport {
 }
 
 // -- model → wire body builders ----------------------------------------------
+
+const PROMPT_EXPORT_STATUSES = new Set([
+  "done",
+  "needs_review",
+  "blocked",
+  "skipped_main_failure",
+]);
+
+/** U5: one content-free prompt-export outcome. An unknown status degrades to
+    `blocked` so the UI never claims an export succeeded on unrecognized data. */
+export function projectPromptExportOutcome(wire: Wire): PromptExportOutcome {
+  const raw = String(wire.status ?? "");
+  return {
+    promptKey: String(wire.prompt_key ?? ""),
+    action: String(wire.action ?? ""),
+    status: PROMPT_EXPORT_STATUSES.has(raw)
+      ? (raw as PromptExportOutcome["status"])
+      : "blocked",
+    taskId: wire.task_id == null ? null : String(wire.task_id),
+    reason: wire.reason == null ? null : String(wire.reason),
+  };
+}
+
+/** U5: the prompt-only / opt-in-only POST /day-setup echo. `daySetupConfirmed`
+    is the server's explicit flag — a prompt-only save never confirms the day. */
+export function projectDaySetupSaveResult(wire: Wire): DaySetupSaveResult {
+  const optins =
+    wire.optins && typeof wire.optins === "object" ? (wire.optins as Wire) : {};
+  const revision =
+    Number.isSafeInteger(wire.optins_revision) && wire.optins_revision >= 0
+      ? wire.optins_revision
+      : 0;
+  return {
+    ok: wire.ok === true,
+    daySetupConfirmed: wire.day_setup_confirmed === true,
+    optins: Object.fromEntries(
+      Object.entries(optins).map(([key, value]) => [key, value === true]),
+    ),
+    optinsRevision: revision,
+    promptWarnings: Array.isArray(wire.prompt_warnings)
+      ? wire.prompt_warnings.map(String)
+      : [],
+  };
+}
+
+/** U5 additive opt-in metadata. Returns null when the server exposes no read
+    (the UI then shows prefs unavailable rather than assuming false). */
+export function projectPromptOptins(
+  raw: unknown,
+): { optins: Record<string, boolean>; revision: number } | null {
+  if (!raw || typeof raw !== "object") return null;
+  const record = raw as Wire;
+  const source =
+    record.optins && typeof record.optins === "object" ? (record.optins as Wire) : {};
+  const optins: Record<string, boolean> = {};
+  for (const [key, value] of Object.entries(source)) optins[key] = value === true;
+  const revision =
+    Number.isSafeInteger(record.revision) && record.revision >= 0 ? record.revision : 0;
+  return { optins, revision };
+}
+
+/** U5: a captures-only PATCH body. Sending only `captures` makes the save a
+    prompt-only write that never confirms the day. */
+export function promptDraftsToWire(patch: Record<string, string>): Wire {
+  return { captures: { ...patch } };
+}
+
+/** U5: an opt-in-only body with the expected store revision for optimistic
+    concurrency. Sending only these keys never confirms the day. */
+export function promptOptinsToWire(
+  optins: Record<string, boolean>,
+  expectedRevision: number,
+): Wire {
+  return { optins: { ...optins }, optins_revision: expectedRevision };
+}
 
 export function daySetupToWire(d: DaySetup): Wire {
   const wire: Wire = {

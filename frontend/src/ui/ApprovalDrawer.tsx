@@ -8,7 +8,7 @@ import { useApp, useAppState } from "./context";
 import { useDialog } from "./useDialog";
 import { canLiveCommit, shadowBlockers } from "../store/store";
 import { display12h } from "../model/time";
-import type { ShadowEntry } from "../model/types";
+import type { PromptExportOutcome, ShadowEntry } from "../model/types";
 
 /** Where a write lands, in words rather than in the system's own handle.
     `todoist:8899001122` identifies the row to Todoist and to nobody else — the
@@ -45,6 +45,48 @@ function SurfaceTotals({ entries }: { entries: ShadowEntry[] }) {
         );
       })}
     </div>
+  );
+}
+
+/** U5: content-free prompt-export outcomes. The `__main_failure__` sentinel is
+    a lane-level marker, never a prompt name — it renders as a skip, and a
+    `needs_review` outcome carries an actionable non-retry hint (a blind retry
+    would re-create a task whose prior attempt is unconfirmed). */
+function PromptExports({ exports }: { exports: PromptExportOutcome[] }) {
+  if (exports.length === 0) return null;
+  return (
+    <>
+      <h3>Prompt exports</h3>
+      <ul class="verify-list" aria-label="Prompt exports">
+        {exports.map((outcome, index) => {
+          const skipped = outcome.promptKey === "__main_failure__";
+          const label = skipped
+            ? "Prompt exports skipped"
+            : outcome.promptKey.replace(/_/g, " ");
+          const detail = skipped
+            ? outcome.reason ?? "main commit did not land — exports skipped"
+            : outcome.status === "done"
+              ? `exported to Todoist Inbox${outcome.taskId ? ` · task ${outcome.taskId}` : ""}`
+              : outcome.status === "needs_review"
+                ? `${outcome.reason ?? "unconfirmed prior attempt"} — review before retrying`
+                : outcome.reason ?? "blocked";
+          return (
+            <li key={`${outcome.promptKey}-${index}`}>
+              <span aria-hidden="true">
+                {outcome.status === "done"
+                  ? "✅"
+                  : outcome.status === "skipped_main_failure"
+                    ? "⏭"
+                    : "⚠"}
+              </span>
+              <span>
+                {label} — {detail}
+              </span>
+            </li>
+          );
+        })}
+      </ul>
+    </>
   );
 }
 
@@ -263,7 +305,11 @@ export function ApprovalDrawer() {
               <span class="drawer-status__detail">
                 {report.status === "ok"
                   ? "Every surface wrote and read back cleanly."
-                  : `${report.verifyFailures.length} verification failure${report.verifyFailures.length === 1 ? "" : "s"} to review — nothing here rewrites live state.`}
+                  : report.verifyFailures.length > 0
+                    ? `${report.verifyFailures.length} verification failure${report.verifyFailures.length === 1 ? "" : "s"} to review — nothing here rewrites live state.`
+                    : report.promptExportsOk === false
+                      ? "Prompt exports did not all land — review below."
+                      : "Commit did not complete cleanly — review below."}
               </span>
             </div>
             <h3>Verification</h3>
@@ -311,6 +357,9 @@ export function ApprovalDrawer() {
                   );
                 })}
               </ul>
+            )}
+            {report.promptExports && (
+              <PromptExports exports={report.promptExports} />
             )}
             <div class="drawer-done">
               <button

@@ -3,7 +3,6 @@
    deterministic recovery path. Live commit never appears here — it lives
    behind the approval drawer's second gate. */
 
-import { useState } from "preact/hooks";
 import { useApp, useAppState } from "./context";
 import {
   acceptableDefects,
@@ -13,83 +12,11 @@ import {
   dockState,
 } from "../store/store";
 import { budgetTotal, localSelected } from "../store/allocatorView";
-import { buildDayPrompt } from "../store/exportPrompt";
 import { formatBlockAmount } from "../model/time";
 
-async function copyText(text: string): Promise<boolean> {
-  try {
-    if (typeof navigator.clipboard?.writeText === "function") {
-      await navigator.clipboard.writeText(text);
-      return true;
-    }
-  } catch {
-    // Some browsers expose the async API but reject it outside a trusted
-    // gesture or secure context. Try the local legacy path before failing.
-  }
-
-  let ta: HTMLTextAreaElement | null = null;
-  try {
-    ta = document.createElement("textarea");
-    ta.value = text;
-    ta.setAttribute("readonly", "");
-    ta.style.position = "fixed";
-    ta.style.opacity = "0";
-    document.body.appendChild(ta);
-    ta.focus();
-    ta.select();
-    return typeof document.execCommand === "function" && document.execCommand("copy");
-  } catch {
-    return false;
-  } finally {
-    ta?.remove();
-  }
-}
-
-/* Manual fallback: copy today's exact state as a self-contained scheduling
-   prompt for an external LLM. Never disabled — it exists precisely for the
-   states where the cockpit itself is blocked (degraded sources, spent
-   ledger). Clipboard write only; no network, no billed call. */
-function CopyPromptButton() {
-  const s = useAppState();
-  const [copyState, setCopyState] = useState<"idle" | "copied" | "unavailable">("idle");
-  const [fallbackText, setFallbackText] = useState("");
-  const copy = async () => {
-    const text = buildDayPrompt(s);
-    if (await copyText(text)) {
-      setFallbackText("");
-      setCopyState("copied");
-      setTimeout(() => setCopyState("idle"), 2000);
-      return;
-    }
-    setFallbackText(text);
-    setCopyState("unavailable");
-  };
-  return (
-    <>
-      <button class="btn" onClick={() => void copy()} aria-label="Copy plan prompt for an external LLM">
-        {copyState === "copied"
-          ? "Copied ✓"
-          : copyState === "unavailable"
-            ? "Copy unavailable"
-            : "Copy prompt"}
-        <span class="btn__sub">paste into any LLM · fallback</span>
-      </button>
-      {copyState === "unavailable" && (
-        <div class="copy-prompt-fallback" role="alert">
-          <span>Clipboard unavailable — select the prompt below</span>
-          <textarea
-            aria-label="Prompt text to copy manually"
-            value={fallbackText}
-            readOnly
-            onFocus={(event) => event.currentTarget.select()}
-            onClick={(event) => event.currentTarget.select()}
-          />
-        </div>
-      )}
-    </>
-  );
-}
-
+/* U5: the retired manual prompt-export bypass is disabled. Prompts are private
+   local state; the ONLY path to Todoist is an opted-in Commit, so the dock
+   states that instead of offering a copy shortcut. */
 export function ActionDock() {
   const s = useAppState();
   const { controller, store } = useApp();
@@ -154,7 +81,9 @@ export function ActionDock() {
       )}
 
       <div class="dock__controls">
-        <CopyPromptButton />
+        <span class="dock__prompt-note" role="note">
+          Prompts stay local; opted-in prompts export on Commit only.
+        </span>
 
       {/* Day setup reaches the frame, allotment, anchored blocks and the Live
           micro-adventure — all of it editable at any phase, so it belongs in

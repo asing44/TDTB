@@ -4215,3 +4215,27 @@ body {
     flex-direction: column;
   }
 }
+
+/* U5 prompt exports: opt-in rows + the disabled manual-copy note. */
+.prompt-exports__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+.prompt-optin {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.25rem 0;
+  color: var(--t-text);
+  cursor: pointer;
+}
+.dock__prompt-note {
+  align-self: center;
+  max-width: 16rem;
+  color: var(--t-muted);
+  font-size: 0.8rem;
+  line-height: 1.3;
+}

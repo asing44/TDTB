@@ -102,7 +102,33 @@ export function DaySetupPanel({ active }: { active: boolean }) {
   );
   const [saving, setSaving] = useState(false);
   const [liveCustom, setLiveCustom] = useState("");
+  // U5: prompt opt-ins are a local optimistic draft. They persist immediately
+  // on toggle; a stale revision keeps the unsaved choice and surfaces the
+  // conflict instead of overwriting saved preferences.
+  const [optins, setOptins] = useState<Record<string, boolean>>({
+    ...s.promptOptins.optins,
+  });
+  const [promptDirty, setPromptDirty] = useState(false);
   const close = () => store.dispatch({ type: "UI", patch: { settingsPanel: null } });
+
+  const savePrompts = () => {
+    setPromptDirty(false);
+    void controller.savePromptDrafts({
+      intention: draft.captures.intention,
+      megan_nicety: draft.captures.forMeegy,
+      stoic_intention: draft.captures.stoic,
+    });
+  };
+
+  const toggleOptin = (key: "megan_nicety" | "stoic_intention", value: boolean) => {
+    const next = { ...optins, [key]: value };
+    setOptins(next);
+    void controller.savePromptOptins(next);
+  };
+
+  const autosavePrompts = () => {
+    if (promptDirty) savePrompts();
+  };
 
   if (!active || !s.inputs) return null;
 
@@ -611,12 +637,14 @@ export function DaySetupPanel({ active }: { active: boolean }) {
             aria-describedby="cap-intention-hint"
             placeholder="One thing to focus on today"
             value={draft.captures.intention}
-            onInput={(e) =>
+            onInput={(e) => {
+              setPromptDirty(true);
               setDraft({
                 ...draft,
                 captures: { ...draft.captures, intention: (e.target as HTMLTextAreaElement).value },
-              })
-            }
+              });
+            }}
+            onBlur={autosavePrompts}
           />
           <p class="field__hint" id="cap-intention-hint">
             One thing to focus on today.
@@ -627,12 +655,14 @@ export function DaySetupPanel({ active }: { active: boolean }) {
           <textarea
             id="cap-meegy"
             value={draft.captures.forMeegy}
-            onInput={(e) =>
+            onInput={(e) => {
+              setPromptDirty(true);
               setDraft({
                 ...draft,
                 captures: { ...draft.captures, forMeegy: (e.target as HTMLTextAreaElement).value },
-              })
-            }
+              });
+            }}
+            onBlur={autosavePrompts}
           />
         </div>
         <div class="field">
@@ -640,13 +670,78 @@ export function DaySetupPanel({ active }: { active: boolean }) {
           <textarea
             id="cap-stoic"
             value={draft.captures.stoic}
-            onInput={(e) =>
+            onInput={(e) => {
+              setPromptDirty(true);
               setDraft({
                 ...draft,
                 captures: { ...draft.captures, stoic: (e.target as HTMLTextAreaElement).value },
-              })
-            }
+              });
+            }}
+            onBlur={autosavePrompts}
           />
+        </div>
+        {/* U5: prompt drafts save separately from the day confirmation, and
+            opted-in prompts export to Todoist Inbox on Commit only. */}
+        <div class="field prompt-exports" data-settings-section="prompt-exports">
+          <span class="field__label">Prompt exports</span>
+          {!s.promptOptins.available ? (
+            <p class="field__hint" role="status">
+              Export preferences are unavailable — waiting on a server read; no
+              preference is assumed and nothing is overwritten.
+            </p>
+          ) : (
+            <>
+              <p class="field__hint">
+                Opted-in prompts become Todoist Inbox tasks on Commit only.
+                Intention is never exported.
+              </p>
+              <label class="prompt-optin">
+                <input
+                  type="checkbox"
+                  checked={optins.megan_nicety === true}
+                  onChange={(e) =>
+                    toggleOptin("megan_nicety", e.currentTarget.checked)
+                  }
+                />
+                For Meegy — create a Todoist task on Commit
+              </label>
+              <label class="prompt-optin">
+                <input
+                  type="checkbox"
+                  checked={optins.stoic_intention === true}
+                  onChange={(e) =>
+                    toggleOptin("stoic_intention", e.currentTarget.checked)
+                  }
+                />
+                Stoic — create a Todoist task on Commit
+              </label>
+            </>
+          )}
+          {s.promptSave.conflict && (
+            <p class="field-error" role="alert">
+              Export preferences changed elsewhere (stored revision{" "}
+              {s.promptSave.conflict.currentRevision}). Your unsaved choice is
+              kept — reload to reconcile.
+            </p>
+          )}
+          {s.promptSave.error && (
+            <p class="field-error" role="alert">
+              Prompts could not be saved: {s.promptSave.error}
+            </p>
+          )}
+          <div class="prompt-exports__actions">
+            <button
+              type="button"
+              class="btn"
+              onClick={savePrompts}
+              disabled={s.promptSave.phase === "saving"}
+            >
+              {s.promptSave.phase === "saving" ? "Saving prompts…" : "Save prompts"}
+            </button>
+            <span class="field__hint">
+              Drafts save separately — they never confirm the day.
+            </span>
+          </div>
         </div>
           </div>
         </section>

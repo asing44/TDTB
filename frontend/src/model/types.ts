@@ -352,6 +352,38 @@ export interface DaySetup {
   schedulable?: Record<string, SchedulableOverride>;
 }
 
+/** U5 prompt opt-in keys — the server's canonical wire keys. */
+export type PromptOptinKey = "intention" | "megan_nicety" | "stoic_intention";
+
+/** U5 persistent prompt opt-ins plus the optimistic revision.
+    `available: false` means the server exposes no read route yet — the UI
+    must show preferences as unknown rather than defaulting false and then
+    silently overwriting saved opt-ins. */
+export interface PromptOptinState {
+  optins: Record<PromptOptinKey, boolean>;
+  revision: number;
+  available: boolean;
+}
+
+/** One bounded, content-free prompt-export outcome from a live Commit. */
+export interface PromptExportOutcome {
+  promptKey: string;
+  action: string;
+  status: "done" | "needs_review" | "blocked" | "skipped_main_failure";
+  taskId: string | null;
+  reason: string | null;
+}
+
+/** Result of a prompt-only or opt-in-only POST /day-setup. `daySetupConfirmed`
+    is the server's explicit flag — a prompt-only save never confirms. */
+export interface DaySetupSaveResult {
+  ok: boolean;
+  daySetupConfirmed: boolean;
+  optins: Record<string, boolean>;
+  optinsRevision: number;
+  promptWarnings: string[];
+}
+
 export interface MintSession {
   id: string;
   name: string;
@@ -503,6 +535,10 @@ export interface CommitReport {
       payloads or non-due failures (calendar/vault/readback), where the raw
       string in verifyFailures is the display. */
   verifyDetails?: DueVerificationDetail[];
+  /** U5: content-free prompt-export outcomes for this live Commit. */
+  promptExports?: PromptExportOutcome[];
+  /** All planned prompt exports landed `done`. False => partial/failure. */
+  promptExportsOk?: boolean;
 }
 
 /** One structured commit verification failure (FEEDBACK-23). Machine fields
@@ -642,6 +678,9 @@ export interface PlanInputs {
   /** S7a: typed direct-intake block. Absent for legacy payloads or the
       legacy intake mode — the key is omitted, never fabricated. */
   capacitiesIntake?: CapacitiesIntake;
+  /** U5 additive opt-in metadata when the server exposes a read; absent when
+      no read route exists (the UI then shows prefs unavailable). */
+  promptOptins?: { optins: Record<string, boolean>; revision: number };
 }
 
 /** Fixed-input snapshot for the drift fingerprint (locked decision 17):
