@@ -6,6 +6,13 @@
 import type {
   Capacity,
   CapacitiesCatalog,
+  CapacitiesRefreshMode,
+  CapacitiesRefreshStatus,
+  CapacitiesRuleNode,
+  CapacitiesRuleSaveResponse,
+  CapacitiesRules,
+  CapacitiesSelections,
+  CapacitiesSelectionsDraft,
   CapacitiesSettings,
   CapacitiesSettingsDraft,
   CapacitiesSourceDraft,
@@ -133,6 +140,36 @@ export interface Adapter {
       provider read; returns the advisory structure/property catalog. A
       failure must surface as an error, never as an empty catalog. */
   discoverCapacitiesSource(spaceId: string): Promise<CapacitiesCatalog>;
+  /** GET /capacities/rules — tokenless local read of the per-type Capacities
+      inclusion rules and the discovered type schema. No provider call. */
+  loadCapacitiesRules(): Promise<CapacitiesRules>;
+  /** POST /capacities/rules — one token-guarded save of ONE per-type rule.
+      The server stores an invalid rule as a draft and preserves the prior
+      active rule; a stale ``expectedRevision`` is a 409. */
+  saveCapacitiesRule(args: {
+    structureId: string;
+    rule: CapacitiesRuleNode;
+    fallbackMinutes: number | null;
+    expectedRevision: number;
+  }): Promise<CapacitiesRuleSaveResponse>;
+  /** GET /capacities/refresh/status — truthful local job + snapshot status.
+      Tokenless and provider-free. */
+  capacitiesRefreshStatus(): Promise<CapacitiesRefreshStatus>;
+  /** POST /capacities/refresh/start — one token-guarded paced job start
+      (``refresh`` or ``rescan``). A running job is a 409. */
+  startCapacitiesRefresh(
+    mode: CapacitiesRefreshMode,
+    scope: string,
+  ): Promise<CapacitiesRefreshStatus>;
+  /** POST /capacities/refresh/cancel — token-guarded cancellation of the
+      running job; returns the current truthful status. */
+  cancelCapacitiesRefresh(): Promise<CapacitiesRefreshStatus>;
+  /** GET /capacities/selections — tokenless local read of the durable
+      per-identity selections for the source space. */
+  loadCapacitiesSelections(): Promise<CapacitiesSelections>;
+  /** POST /capacities/selections — token-guarded merge with optimistic
+      revision; a stale ``expectedRevision`` is a 409. */
+  saveCapacitiesSelections(draft: CapacitiesSelectionsDraft): Promise<CapacitiesSelections>;
   /** GET /settings/exclusions — local tag-exclusion policy plus the advisory
       RootTag catalog. No provider call for the policy itself; a degraded
       catalog still returns the saved settings. */

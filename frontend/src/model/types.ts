@@ -615,6 +615,166 @@ export interface CapacitiesIntake {
   unassignedCandidates: CapacitiesIntakeCandidate[];
 }
 
+/** One node in a per-type Capacities inclusion-rule predicate tree, mirroring
+    the backend ``capacities_rules`` grammar: ``all``/``any`` (an array of
+    children), ``not`` (one child), or a leaf ``{prop, op, values}``. The
+    ``matches`` operator is deliberately absent (no user regex execution). */
+export type CapacitiesRuleNode =
+  | { all: CapacitiesRuleNode[] }
+  | { any: CapacitiesRuleNode[] }
+  | { not: CapacitiesRuleNode }
+  | { prop: string; op: string; values?: unknown[] };
+
+/** The grammar the editor may build from — the store's own operator/kind sets.
+    ``matches`` is always false by contract; ``schemaSource`` names where the
+    per-structure schema came from. */
+export interface CapacitiesRuleCapabilities {
+  ops: string[];
+  valueOps: string[];
+  presenceOps: string[];
+  numberOps: string[];
+  dateOps: string[];
+  equalityOps: string[];
+  valueKinds: string[];
+  numberKinds: string[];
+  dateKinds: string[];
+  matches: false;
+  schemaSource: string;
+  contractAvailable: boolean;
+}
+
+/** One per-type rule entry: the persisted active rule (eligibility
+    authority), the latest draft (may be shape-invalid), the operator's
+    estimated fallback duration, and the discovered schema for the type. */
+export interface CapacitiesRuleStructure {
+  structureId: string;
+  active: CapacitiesRuleNode | null;
+  draft: CapacitiesRuleNode | null;
+  fallbackMinutes: number | null;
+  /** Whether the structure is still a mapped structure of the source space. */
+  mapped: boolean;
+  /** Discovered ``{propertyId: kind}`` from the installed structure contract. */
+  schema: Record<string, string>;
+  /** Whether a save for this type can be validated (and therefore activated). */
+  schemaAvailable: boolean;
+}
+
+/** The one wire shape both rules routes answer with. */
+export interface CapacitiesRules {
+  spaceId: string | null;
+  revision: number;
+  configured: boolean;
+  capabilities: CapacitiesRuleCapabilities;
+  structures: CapacitiesRuleStructure[];
+}
+
+/** The outcome of one POST /capacities/rules save. ``valid`` false means the
+    rule was stored as a draft and the prior active rule is preserved; the
+    bounded ``reason`` is the server's own text. */
+export interface CapacitiesRuleSaveResult {
+  structureId: string;
+  valid: boolean;
+  reason: string | null;
+  active: CapacitiesRuleNode | null;
+  draft: CapacitiesRuleNode | null;
+  fallbackMinutes: number | null;
+  revision: number;
+}
+
+/** POST /capacities/rules answers the full GET shape plus the save outcome. */
+export interface CapacitiesRuleSaveResponse extends CapacitiesRules {
+  save: CapacitiesRuleSaveResult;
+}
+
+/** The two job kinds an explicit Capacities refresh can start. */
+export type CapacitiesRefreshMode = "refresh" | "rescan";
+
+/** One refresh-job record as persisted by the coordinator. */
+export interface CapacitiesRefreshJob {
+  jobId: string;
+  mode: CapacitiesRefreshMode | null;
+  scope: string | null;
+  phase: string | null;
+  outcome: string | null;
+  revision: number | null;
+  generation: number | null;
+  startedAt: number | null;
+  updatedAt: number | null;
+  finishedAt: number | null;
+  progress: CapacitiesRefreshProgress;
+  warnings: string[];
+}
+
+/** Bounded progress counters for the running job. */
+export interface CapacitiesRefreshProgress {
+  listed: number;
+  read: number;
+  /** Per-type read counters, in server order. */
+  types: Record<string, number>;
+}
+
+/** One per-type coverage entry from the installed snapshot. */
+export interface CapacitiesRefreshCoverage {
+  listingCheckedAt: number | null;
+  members: number;
+  freshlyRead: number;
+}
+
+/** The last complete generation's summary; ``present: false`` means none. */
+export interface CapacitiesRefreshSnapshot {
+  present: boolean;
+  generation: number;
+  revision: string | null;
+  installedAt: number | null;
+  memberCount: number;
+  typeCheckTimes: Record<string, number>;
+}
+
+/** GET /capacities/refresh/status — truthful local status. An unconfigured
+    source answers ``configured: false`` with no job. */
+export interface CapacitiesRefreshStatus {
+  configured: boolean;
+  phase: string | null;
+  outcome: string | null;
+  mode: CapacitiesRefreshMode | null;
+  scope: string | null;
+  job: CapacitiesRefreshJob | null;
+  progress: CapacitiesRefreshProgress;
+  warnings: string[];
+  coverage: Record<string, CapacitiesRefreshCoverage>;
+  snapshot: CapacitiesRefreshSnapshot;
+}
+
+/** One durable per-identity Capacities selection. ``acknowledged`` is the
+    operator's explicit R32 flag for a candidate that carries review reasons. */
+export interface CapacitiesSelection {
+  identity: string;
+  acknowledged: boolean;
+  rulesRevision: number;
+}
+
+/** GET/POST /capacities/selections — the durable selection record for the
+    source space. ``rulesRevision`` is null when no rules record exists. */
+export interface CapacitiesSelections {
+  spaceId: string | null;
+  revision: number;
+  rulesRevision: number | null;
+  selections: CapacitiesSelection[];
+}
+
+/** One identity to select, with the operator's acknowledgement flag. */
+export interface CapacitiesSelectionEntry {
+  identity: string;
+  acknowledge: boolean;
+}
+
+/** Full body for POST /capacities/selections. */
+export interface CapacitiesSelectionsDraft {
+  expectedRevision: number;
+  select: CapacitiesSelectionEntry[];
+  deselect: string[];
+}
+
 /** T19 — deterministic Live micro-adventure state (locked decision 25). */
 export interface MicroIdea {
   id: string;

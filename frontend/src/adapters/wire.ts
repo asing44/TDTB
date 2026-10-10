@@ -22,6 +22,21 @@ import type {
   CapacitiesIntakeCoverage,
   CapacitiesIntakeState,
   CapacitiesLimit,
+  CapacitiesRefreshCoverage,
+  CapacitiesRefreshJob,
+  CapacitiesRefreshMode,
+  CapacitiesRefreshProgress,
+  CapacitiesRefreshSnapshot,
+  CapacitiesRefreshStatus,
+  CapacitiesRuleCapabilities,
+  CapacitiesRuleNode,
+  CapacitiesRuleSaveResponse,
+  CapacitiesRuleSaveResult,
+  CapacitiesRuleStructure,
+  CapacitiesRules,
+  CapacitiesSelection,
+  CapacitiesSelections,
+  CapacitiesSelectionsDraft,
   CapacitiesCatalog,
   CapacitiesCatalogLabelOption,
   CapacitiesCatalogProperty,
@@ -1328,6 +1343,261 @@ export function projectCapacitiesIntake(raw: unknown): CapacitiesIntake | null {
           !!row && typeof row === "object" && !Array.isArray(row),
       )
       .map(projectCapacitiesIntakeCandidate),
+  };
+}
+
+// -- U3a per-type Capacities rules (GET/POST /capacities/rules) -------------
+
+function stringArrayOrEmpty(raw: unknown): string[] {
+  return Array.isArray(raw) ? raw.map(String) : [];
+}
+
+/** Project one persisted predicate tree. Unknown shapes yield null so a
+    malformed stored rule can never be rendered as a fabricated condition. */
+export function projectCapacitiesRuleNode(raw: unknown): CapacitiesRuleNode | null {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const node = raw as Wire;
+  const children = (value: unknown): CapacitiesRuleNode[] =>
+    (Array.isArray(value) ? value : [])
+      .map(projectCapacitiesRuleNode)
+      .filter((child): child is CapacitiesRuleNode => child !== null);
+  if (Array.isArray(node.all)) return { all: children(node.all) };
+  if (Array.isArray(node.any)) return { any: children(node.any) };
+  if (node.not && typeof node.not === "object" && !Array.isArray(node.not)) {
+    const child = projectCapacitiesRuleNode(node.not);
+    return child ? { not: child } : null;
+  }
+  if (typeof node.prop === "string" && node.prop !== "") {
+    const leaf: { prop: string; op: string; values?: unknown[] } = {
+      prop: node.prop,
+      op: typeof node.op === "string" ? node.op : "",
+    };
+    if (Array.isArray(node.values)) leaf.values = node.values;
+    return leaf;
+  }
+  return null;
+}
+
+function projectCapacitiesRuleSchema(raw: unknown): Record<string, string> {
+  const schema: Record<string, string> = {};
+  if (raw && typeof raw === "object" && !Array.isArray(raw)) {
+    for (const [key, value] of Object.entries(raw as Wire)) {
+      if (typeof value === "string") schema[String(key)] = value;
+    }
+  }
+  return schema;
+}
+
+function projectCapacitiesRuleCapabilities(raw: unknown): CapacitiesRuleCapabilities {
+  const block = (raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {}) as Wire;
+  return {
+    ops: stringArrayOrEmpty(block.ops),
+    valueOps: stringArrayOrEmpty(block.value_ops),
+    presenceOps: stringArrayOrEmpty(block.presence_ops),
+    numberOps: stringArrayOrEmpty(block.number_ops),
+    dateOps: stringArrayOrEmpty(block.date_ops),
+    equalityOps: stringArrayOrEmpty(block.equality_ops),
+    valueKinds: stringArrayOrEmpty(block.value_kinds),
+    numberKinds: stringArrayOrEmpty(block.number_kinds),
+    dateKinds: stringArrayOrEmpty(block.date_kinds),
+    matches: false,
+    schemaSource: typeof block.schema_source === "string" ? block.schema_source : "",
+    contractAvailable: block.contract_available === true,
+  };
+}
+
+function projectCapacitiesRuleStructure(raw: Wire): CapacitiesRuleStructure {
+  return {
+    structureId: String(raw.structure_id ?? ""),
+    active: projectCapacitiesRuleNode(raw.active),
+    draft: projectCapacitiesRuleNode(raw.draft),
+    fallbackMinutes: nonNegativeIntegerOrNull(raw.fallback_minutes),
+    mapped: raw.mapped === true,
+    schema: projectCapacitiesRuleSchema(raw.schema),
+    schemaAvailable: raw.schema_available === true,
+  };
+}
+
+/** The one wire shape both rules routes answer with (POST adds ``save``). */
+export function projectCapacitiesRules(raw: Wire): CapacitiesRules {
+  return {
+    spaceId: typeof raw.space_id === "string" ? raw.space_id : null,
+    revision: nonNegativeIntegerOrNull(raw.revision) ?? 0,
+    configured: raw.configured === true,
+    capabilities: projectCapacitiesRuleCapabilities(raw.capabilities),
+    structures: (Array.isArray(raw.structures) ? raw.structures : [])
+      .filter((row): row is Wire => !!row && typeof row === "object" && !Array.isArray(row))
+      .map(projectCapacitiesRuleStructure),
+  };
+}
+
+function projectCapacitiesRuleSave(raw: unknown): CapacitiesRuleSaveResult {
+  const block = (raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {}) as Wire;
+  return {
+    structureId: String(block.structure_id ?? ""),
+    valid: block.valid === true,
+    reason: typeof block.reason === "string" ? block.reason : null,
+    active: projectCapacitiesRuleNode(block.active),
+    draft: projectCapacitiesRuleNode(block.draft),
+    fallbackMinutes: nonNegativeIntegerOrNull(block.fallback_minutes),
+    revision: nonNegativeIntegerOrNull(block.revision) ?? 0,
+  };
+}
+
+export function projectCapacitiesRuleSaveResponse(raw: Wire): CapacitiesRuleSaveResponse {
+  return { ...projectCapacitiesRules(raw), save: projectCapacitiesRuleSave(raw.save) };
+}
+
+/** Body for POST /capacities/rules: the predicate is sent verbatim as JSON;
+    the server owns version and the new revision. */
+export function capacitiesRuleSaveToWire(args: {
+  structureId: string;
+  rule: CapacitiesRuleNode;
+  fallbackMinutes: number | null;
+  expectedRevision: number;
+}): Wire {
+  return {
+    structure_id: args.structureId,
+    rule: args.rule,
+    fallback_minutes: args.fallbackMinutes,
+    expected_revision: args.expectedRevision,
+  };
+}
+
+// -- Capacities refresh status (GET /capacities/refresh/status) -------------
+
+function projectCapacitiesRefreshProgress(raw: unknown): CapacitiesRefreshProgress {
+  const block = (raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {}) as Wire;
+  const types: Record<string, number> = {};
+  if (block.types && typeof block.types === "object" && !Array.isArray(block.types)) {
+    for (const [key, value] of Object.entries(block.types as Wire)) {
+      const count = finiteNumberOrNull(value);
+      if (count !== null) types[String(key)] = count;
+    }
+  }
+  return {
+    listed: nonNegativeIntegerOrNull(block.listed) ?? 0,
+    read: nonNegativeIntegerOrNull(block.read) ?? 0,
+    types,
+  };
+}
+
+function projectCapacitiesRefreshJob(raw: unknown): CapacitiesRefreshJob | null {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const block = raw as Wire;
+  return {
+    jobId: String(block.job_id ?? ""),
+    mode: block.mode === "refresh" || block.mode === "rescan" ? block.mode : null,
+    scope: typeof block.scope === "string" ? block.scope : null,
+    phase: typeof block.phase === "string" ? block.phase : null,
+    outcome: typeof block.outcome === "string" ? block.outcome : null,
+    revision: nonNegativeIntegerOrNull(block.revision),
+    generation: nonNegativeIntegerOrNull(block.generation),
+    startedAt: finiteNumberOrNull(block.started_at),
+    updatedAt: finiteNumberOrNull(block.updated_at),
+    finishedAt: finiteNumberOrNull(block.finished_at),
+    progress: projectCapacitiesRefreshProgress(block.progress),
+    warnings: stringArrayOrEmpty(block.warnings),
+  };
+}
+
+function projectCapacitiesRefreshCoverage(
+  raw: unknown,
+): Record<string, CapacitiesRefreshCoverage> {
+  const out: Record<string, CapacitiesRefreshCoverage> = {};
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return out;
+  for (const [key, value] of Object.entries(raw as Wire)) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) continue;
+    const entry = value as Wire;
+    out[String(key)] = {
+      listingCheckedAt: finiteNumberOrNull(entry.listing_checked_at),
+      members: nonNegativeIntegerOrNull(entry.members) ?? 0,
+      freshlyRead: nonNegativeIntegerOrNull(entry.freshly_read) ?? 0,
+    };
+  }
+  return out;
+}
+
+function projectCapacitiesRefreshSnapshot(raw: unknown): CapacitiesRefreshSnapshot {
+  const block = (raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {}) as Wire;
+  const typeCheckTimes: Record<string, number> = {};
+  if (
+    block.type_check_times &&
+    typeof block.type_check_times === "object" &&
+    !Array.isArray(block.type_check_times)
+  ) {
+    for (const [key, value] of Object.entries(block.type_check_times as Wire)) {
+      const at = finiteNumberOrNull(value);
+      if (at !== null) typeCheckTimes[String(key)] = at;
+    }
+  }
+  return {
+    present: block.present === true,
+    generation: nonNegativeIntegerOrNull(block.generation) ?? 0,
+    revision: typeof block.revision === "string" ? block.revision : null,
+    installedAt: finiteNumberOrNull(block.installed_at),
+    memberCount: nonNegativeIntegerOrNull(block.member_count) ?? 0,
+    typeCheckTimes,
+  };
+}
+
+/** GET /capacities/refresh/status — truthful local status. An unconfigured
+    source carries ``configured: false`` and no job; a present-but-unusable
+    payload projects conservative empties rather than invented progress. */
+export function projectCapacitiesRefreshStatus(raw: Wire): CapacitiesRefreshStatus {
+  return {
+    configured: raw.configured === true,
+    phase: typeof raw.phase === "string" ? raw.phase : null,
+    outcome: typeof raw.outcome === "string" ? raw.outcome : null,
+    mode: raw.mode === "refresh" || raw.mode === "rescan" ? raw.mode : null,
+    scope: typeof raw.scope === "string" ? raw.scope : null,
+    job: projectCapacitiesRefreshJob(raw.job),
+    progress: projectCapacitiesRefreshProgress(raw.progress),
+    warnings: stringArrayOrEmpty(raw.warnings),
+    coverage: projectCapacitiesRefreshCoverage(raw.coverage),
+    snapshot: projectCapacitiesRefreshSnapshot(raw.snapshot),
+  };
+}
+
+/** Body for POST /capacities/refresh/start. */
+export function capacitiesRefreshStartToWire(
+  mode: CapacitiesRefreshMode,
+  scope: string,
+): Wire {
+  return { mode, scope };
+}
+
+// -- Capacities selections (GET/POST /capacities/selections) ---------------
+
+function projectCapacitiesSelection(raw: Wire): CapacitiesSelection {
+  return {
+    identity: String(raw.identity ?? ""),
+    acknowledged: raw.acknowledged === true,
+    rulesRevision: nonNegativeIntegerOrNull(raw.rules_revision) ?? 0,
+  };
+}
+
+/** GET/POST /capacities/selections — the one wire shape both routes answer. */
+export function projectCapacitiesSelections(raw: Wire): CapacitiesSelections {
+  return {
+    spaceId: typeof raw.space_id === "string" ? raw.space_id : null,
+    revision: nonNegativeIntegerOrNull(raw.revision) ?? 0,
+    rulesRevision: nonNegativeIntegerOrNull(raw.rules_revision),
+    selections: (Array.isArray(raw.selections) ? raw.selections : [])
+      .filter((row): row is Wire => !!row && typeof row === "object" && !Array.isArray(row))
+      .map(projectCapacitiesSelection),
+  };
+}
+
+/** Body for POST /capacities/selections. */
+export function capacitiesSelectionsToWire(draft: CapacitiesSelectionsDraft): Wire {
+  return {
+    expected_revision: draft.expectedRevision,
+    select: draft.select.map((entry) => ({
+      identity: entry.identity,
+      acknowledge: entry.acknowledge,
+    })),
+    deselect: [...draft.deselect],
   };
 }
 

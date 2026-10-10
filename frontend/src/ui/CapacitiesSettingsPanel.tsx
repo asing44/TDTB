@@ -10,6 +10,9 @@
 
 import { useEffect, useState } from "preact/hooks";
 import { CapacitiesSourceEditor } from "./CapacitiesSourceEditor";
+import { CapacitiesRefreshPanel } from "./CapacitiesRefreshPanel";
+import { CapacitiesRulesEditor } from "./CapacitiesRulesEditor";
+import { CapacitiesUnknownReview } from "./CapacitiesUnknownReview";
 import { useApp, useAppState } from "./context";
 import type {
   AssignedItem,
@@ -627,6 +630,20 @@ export function CapacitiesSettingsPanel({ active }: { active: boolean }) {
             exists. It stays available when the settings read failed. */}
         {phase !== "loading" && (
           <CapacitiesSourceEditor structureTitleOf={structureTitleOf} />
+        )}
+        {/* Connections surfaces beyond the local policy body. Gated on the
+            settings read settling, exactly like the mapping editor: the
+            shell's destination-focus helper lands on the panel's FIRST h3,
+            so these sections must not introduce one before the policy
+            headings exist. Each owns its own read/save route and lifecycle,
+            and none runs a provider call on mount (only tokenless local
+            status/rule/selection reads). */}
+        {phase !== "loading" && (
+          <>
+            <CapacitiesRefreshPanel active={active} />
+            <CapacitiesRulesEditor active={active} />
+            <CapacitiesUnknownReview active={active} />
+          </>
         )}
     </div>
   );

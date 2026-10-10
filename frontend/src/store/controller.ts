@@ -35,6 +35,13 @@ import {
 import type {
   AnchoredOverride,
   CapacitiesCatalog,
+  CapacitiesRefreshMode,
+  CapacitiesRefreshStatus,
+  CapacitiesRuleNode,
+  CapacitiesRuleSaveResponse,
+  CapacitiesRules,
+  CapacitiesSelections,
+  CapacitiesSelectionsDraft,
   CapacitiesSettings,
   CapacitiesSettingsDraft,
   CapacitiesSourceDraft,
@@ -296,6 +303,59 @@ export class Controller {
       caller can tell it apart from an empty catalog. */
   async discoverCapacitiesSource(spaceId: string): Promise<CapacitiesCatalog> {
     return this.adapter.discoverCapacitiesSource(spaceId);
+  }
+
+  /** Read the per-type Capacities inclusion rules (local; no provider call). */
+  async loadCapacitiesRules(): Promise<CapacitiesRules> {
+    return this.adapter.loadCapacitiesRules();
+  }
+
+  /** Save ONE per-type rule. The server stores an invalid rule as a draft and
+      preserves the prior active rule; a stale revision is a 409. */
+  async saveCapacitiesRule(args: {
+    structureId: string;
+    rule: CapacitiesRuleNode;
+    fallbackMinutes: number | null;
+    expectedRevision: number;
+  }): Promise<CapacitiesRuleSaveResponse> {
+    return this.adapter.saveCapacitiesRule(args);
+  }
+
+  /** Truthful local refresh status (tokenless; no provider call). */
+  async loadCapacitiesRefreshStatus(): Promise<CapacitiesRefreshStatus> {
+    return this.adapter.capacitiesRefreshStatus();
+  }
+
+  /** Start one paced Refresh/Rescan job (explicit user action). */
+  async startCapacitiesRefresh(
+    mode: CapacitiesRefreshMode,
+    scope: string,
+  ): Promise<CapacitiesRefreshStatus> {
+    return this.adapter.startCapacitiesRefresh(mode, scope);
+  }
+
+  /** Cancel the running refresh job; returns the current truthful status. */
+  async cancelCapacitiesRefresh(): Promise<CapacitiesRefreshStatus> {
+    return this.adapter.cancelCapacitiesRefresh();
+  }
+
+  /** Read the durable per-identity Capacities selections (local read). */
+  async loadCapacitiesSelections(): Promise<CapacitiesSelections> {
+    return this.adapter.loadCapacitiesSelections();
+  }
+
+  /** Merge selections with optimistic concurrency; a stale revision is 409.
+      After a successful save the source is re-read through the SAME refresh
+      path an explicit refresh uses, so the promoted selection reaches the
+      server digest (and the Commit body) instead of living only in the UI.
+      Returns the saved record plus the refresh outcome so the caller can say
+      "Saved; planning refresh failed" rather than showing stale eligibility. */
+  async saveCapacitiesSelections(
+    draft: CapacitiesSelectionsDraft,
+  ): Promise<{ selections: CapacitiesSelections; refreshError: string | null }> {
+    const selections = await this.adapter.saveCapacitiesSelections(draft);
+    await this.refreshSources();
+    return { selections, refreshError: this.getState().refresh.error };
   }
 
   async loadTagExclusionSettings(): Promise<TagExclusionSettings> {
