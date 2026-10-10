@@ -103,7 +103,7 @@ export function Header() {
       </div>
 
       <div
-        class="stepper"
+        class="app-stepper"
         role="tablist"
         aria-label="Planning steps"
         onKeyDown={(e) => onKeyDown(e as unknown as KeyboardEvent)}
@@ -112,26 +112,22 @@ export function Header() {
           const selected = selectedStep === step.id;
           return (
             <Fragment key={step.id}>
-              {i > 0 && (
-                <span class="stepper__sep" aria-hidden="true">
-                  —
-                </span>
-              )}
+              {i > 0 && <span class="app-stepper__sep" aria-hidden="true" />}
               <button
                 type="button"
                 role="tab"
                 id={stepId(step.id)}
-                class={`stepper__step${selected ? " stepper__step--active" : ""}${
-                  done[step.id] ? " stepper__step--done" : ""
+                class={`app-stepper__step${selected ? " app-stepper__step--active" : ""}${
+                  done[step.id] ? " app-stepper__step--done" : ""
                 }`}
                 aria-selected={selected}
                 tabIndex={focusStep === step.id ? 0 : -1}
                 onClick={(e) => activate(step.id, e.currentTarget as HTMLElement)}
               >
-                <span class="stepper__mark" aria-hidden="true">
+                <span class="app-stepper__mark" aria-hidden="true">
                   {done[step.id] ? "✓" : i + 1}
                 </span>
-                <span class="stepper__label">{step.label}</span>
+                <span class="app-stepper__label">{step.label}</span>
               </button>
             </Fragment>
           );

@@ -86,8 +86,11 @@ export function App() {
         ) : (
           <main class="cockpit__main" aria-label="Today's planning evidence">
             {/* U7a temporary home for the retired rail: no content is lost
-                while U9–U13 rebuild the capacity card, timeline, and table. */}
-            <details class="day-summary" open>
+                while U9–U13 rebuild the capacity card, timeline, and table.
+                Closed by default so the task queue is the first thing the
+                Plan tasks body shows (KTD13); the operator opens it to
+                inspect capacity evidence. */}
+            <details class="day-summary">
               <summary class="day-summary__summary">Day summary</summary>
               <Rail />
             </details>

@@ -11,6 +11,7 @@
   max-width: 1280px;
   margin: 0 auto;
   min-height: 100vh;
+  background: var(--t-body);
 }
 
 /* Settings-shell isolation wrapper. `display: contents` keeps the header,
@@ -24,6 +25,7 @@
   flex: 1;
   display: flex;
   flex-direction: column;
+  background: var(--t-body);
 }
 .cockpit__footer {
   grid-column: 1 / -1;
@@ -4315,7 +4317,20 @@ body {
 .rail__pie .pie__chart {
   flex-shrink: 0;
 }
-/* Donut hole is ~52% of the chart: keep the readout inside it. */
+/* Donut hole is ~52% of the chart: keep the readout inside it. In the rail
+   the chart box is wider than the donut (align-self: stretch), so match the
+   readout to the donut's own width before capping the lines — otherwise the
+   46% cap is measured against the wide box and the label crosses the ring. */
+.rail__pie .pie__readout {
+  inset: 0 auto 0 50%;
+  transform: translateX(-50%);
+  width: min(200px, 20vh);
+}
+/* Fill each line before wrapping (balance split "of 31 blk capacity" into an
+   awkward "of 31" / "blk capacity"); the cap still keeps it inside the hole. */
+.rail__pie .pie__readout-label {
+  text-wrap: normal;
+}
 .pie__readout > * {
   max-width: 46%;
   text-wrap: balance;
@@ -4507,13 +4522,18 @@ body {
   flex-wrap: wrap;
 }
 
-.stepper {
+/* U7 header stepper. Distinct from the compact editor `.stepper` (± buttons
+   in AnchoredEditor/BlockEditor): those rules set 22px buttons and are scoped
+   below, so this nav owns `app-stepper*` and never collides. The active step
+   is a dark filled pill; done steps are plain green with a ✓; the connectors
+   are thin lines (reference A/B). */
+.app-stepper {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 8px;
   flex-wrap: wrap;
 }
-.stepper__step {
+.app-stepper__step {
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -4524,26 +4544,36 @@ body {
   background: transparent;
   color: var(--t-muted);
   font: inherit;
+  white-space: nowrap;
   cursor: pointer;
 }
-.stepper__step--active {
-  background: var(--t-surface-2);
-  color: var(--t-text);
+.app-stepper__step--done {
+  color: var(--t-accent-strong);
+}
+.app-stepper__step--done .app-stepper__mark {
+  color: var(--t-accent-strong);
+}
+.app-stepper__step--active {
+  background: var(--t-text);
+  color: var(--t-surface);
   font-weight: 500;
 }
-.stepper__step--done .stepper__mark {
-  color: var(--t-accent);
+.app-stepper__step--active .app-stepper__mark {
+  color: inherit;
 }
-.stepper__step:focus-visible {
+.app-stepper__step:focus-visible {
   outline: 2px solid var(--t-accent);
   outline-offset: 2px;
 }
-.stepper__mark {
+.app-stepper__mark {
   color: var(--t-muted);
   font-variant-numeric: tabular-nums;
 }
-.stepper__sep {
-  color: var(--t-border);
+.app-stepper__sep {
+  flex: none;
+  width: 28px;
+  height: 1px;
+  background: var(--t-border);
 }
 
 .health-pill {
@@ -4619,6 +4649,29 @@ body {
 .footer__blocked {
   color: var(--state-danger);
   font-size: 13px;
+}
+/* U7 footer is one row: back link left, blocked reason middle, primary action
+   right (reference A/B). The dock keeps its full standalone presentation, but
+   inside the footer its narration (status line, prompt note, degraded banner)
+   is redundant — the header pill already carries source health and the
+   blocked reason carries the gate — so only the controls show here. */
+.footer__right .dock {
+  padding: 0;
+  background: transparent;
+  gap: 12px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+.footer__right .dock__status,
+.footer__right .dock__prompt-note,
+.footer__right .dock__health {
+  display: none;
+}
+/* The footer keeps one back link at left; the secondary "Day setup" button is
+   the same destination, so it would duplicate it. The primary ("Confirm day
+   setup") stays when setup is still the next action. */
+.footer__right .dock__setup:not(.btn--primary) {
+  display: none;
 }
 
 /* U7a temporary home for the retired rail. The rail is no longer a column;

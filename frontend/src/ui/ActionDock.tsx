@@ -92,7 +92,7 @@ export function ActionDock() {
           the unconfirmed state is called out in the button's own sub-label,
           not only in the status line. */}
       <button
-        class={`btn ${state === "setup" ? "btn--primary" : ""}`}
+        class={`btn dock__setup ${state === "setup" ? "btn--primary" : ""}`}
         onClick={openSetup}
         aria-label="Open day setup"
       >
