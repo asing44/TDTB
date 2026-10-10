@@ -46,25 +46,27 @@ export function PromptsCard(props: PromptsCardProps) {
       </div>
       <div class="setup-section__body">
         <div class="prompts-live">
-          <div class="field field--inline">
+          <div class="field field--stacked">
             <label for="live-pick">Live micro-adventure</label>
-            <select
-              id="live-pick"
-              value={micro.pick?.id ?? ""}
-              onChange={(e) => props.onPickPool((e.target as HTMLSelectElement).value)}
-            >
-              {micro.pick && !micro.pool.some((p) => p.id === micro.pick!.id) && (
-                <option value={micro.pick.id}>{micro.pick.idea}</option>
-              )}
-              {micro.pool.map((idea) => (
-                <option key={idea.id} value={idea.id}>
-                  {idea.idea}
-                </option>
-              ))}
-            </select>
-            <button class="btn" onClick={props.onShuffle} disabled={micro.pool.length < 2}>
-              Shuffle
-            </button>
+            <div class="field__controls">
+              <select
+                id="live-pick"
+                value={micro.pick?.id ?? ""}
+                onChange={(e) => props.onPickPool((e.target as HTMLSelectElement).value)}
+              >
+                {micro.pick && !micro.pool.some((p) => p.id === micro.pick!.id) && (
+                  <option value={micro.pick.id}>{micro.pick.idea}</option>
+                )}
+                {micro.pool.map((idea) => (
+                  <option key={idea.id} value={idea.id}>
+                    {idea.idea}
+                  </option>
+                ))}
+              </select>
+              <button class="btn" onClick={props.onShuffle} disabled={micro.pool.length < 2}>
+                Shuffle
+              </button>
+            </div>
           </div>
           <p class="live-micro__status" aria-live="polite">
             {micro.pick ? (
@@ -84,17 +86,19 @@ export function PromptsCard(props: PromptsCardProps) {
               Todoist task or the daily note's Live box.
             </p>
           )}
-          <div class="field">
+          <div class="field field--stacked">
             <label for="live-custom">Custom idea</label>
-            <input
-              id="live-custom"
-              type="text"
-              value={props.liveCustom}
-              onInput={(e) => props.onLiveCustom((e.target as HTMLInputElement).value)}
-            />
-            <button class="btn" disabled={!props.liveCustom.trim()} onClick={props.onSetCustom}>
-              Set custom
-            </button>
+            <div class="field__controls">
+              <input
+                id="live-custom"
+                type="text"
+                value={props.liveCustom}
+                onInput={(e) => props.onLiveCustom((e.target as HTMLInputElement).value)}
+              />
+              <button class="btn" disabled={!props.liveCustom.trim()} onClick={props.onSetCustom}>
+                Set custom
+              </button>
+            </div>
           </div>
           {micro.source === "override" && (
             <div class="live-micro__actions">
@@ -105,7 +109,7 @@ export function PromptsCard(props: PromptsCardProps) {
           )}
         </div>
 
-        <div class="field">
+        <div class="field field--stacked">
           <label for="cap-intention">Intention</label>
           <textarea
             id="cap-intention"
@@ -122,7 +126,7 @@ export function PromptsCard(props: PromptsCardProps) {
             One thing to focus on today.
           </p>
         </div>
-        <div class="field">
+        <div class="field field--stacked">
           <label for="cap-meegy">For Meegy</label>
           <textarea
             id="cap-meegy"
@@ -131,7 +135,7 @@ export function PromptsCard(props: PromptsCardProps) {
             onBlur={props.onAutosave}
           />
         </div>
-        <div class="field">
+        <div class="field field--stacked">
           <label for="cap-stoic">Stoic</label>
           <textarea
             id="cap-stoic"
@@ -141,7 +145,7 @@ export function PromptsCard(props: PromptsCardProps) {
           />
         </div>
 
-        <div class="field prompt-exports" data-settings-section="prompt-exports">
+        <div class="field field--stacked prompt-exports" data-settings-section="prompt-exports">
           <span class="field__label">Prompt exports</span>
           {!props.optinsAvailable ? (
             <p class="field__hint" role="status">

@@ -5303,16 +5303,40 @@ body {
   }
 }
 
+.day-setup-screen {
+  padding-bottom: 64px;
+}
+
 .setup-section__hint {
   margin: 2px 0 0;
   font-size: 12px;
   color: var(--t-muted);
 }
 
+/* Frame fields: a 4-column grid with labels stacked above their control, so
+   the Preset/Start/End/Buffer row reads like reference A and no control is
+   clipped. Wraps to 2x2 at 900px. */
 .frame-fields {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 12px;
+}
+
+.frame-fields .field {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 4px;
+  margin-bottom: 0;
+}
+
+.frame-fields .field label {
+  min-width: 0;
+}
+
+.frame-fields .field select,
+.frame-fields .field input {
+  flex: none;
+  width: 100%;
 }
 
 @media (max-width: 900px) {
@@ -5342,14 +5366,23 @@ body {
 }
 
 .day-strip__frame {
-  position: absolute;
-  left: 0;
-  right: 0;
-  top: 20px;
-  height: 12px;
+  position: relative;
+  height: 15px;
   border: 1px solid var(--t-border);
   border-radius: 4px;
   background: var(--t-surface-2);
+  box-shadow: inset 2px 0 0 var(--t-border), inset -2px 0 0 var(--t-border);
+}
+
+.day-strip__frame-label {
+  position: absolute;
+  top: 0;
+  left: 6px;
+  font-size: 9px;
+  line-height: 13px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--t-muted);
 }
 
 .day-strip__lane {
@@ -5358,10 +5391,23 @@ body {
   margin-top: 6px;
   border-radius: 4px;
   background: var(--t-surface-2);
+  overflow: hidden;
 }
 
 .day-strip__lane--anchors {
-  background: transparent;
+  background: var(--t-surface-2);
+}
+
+/* Mint off today: the lane still renders so the strip keeps its shape, but it
+   is hatched (unavailable) with a caption instead of a bare text row. */
+.day-strip__lane--mint-off {
+  background: repeating-linear-gradient(
+    45deg,
+    var(--t-surface-2),
+    var(--t-surface-2) 4px,
+    color-mix(in srgb, var(--t-text) 14%, var(--t-surface-2)) 4px,
+    color-mix(in srgb, var(--t-text) 14%, var(--t-surface-2)) 8px
+  );
 }
 
 .day-strip__empty {
@@ -5392,8 +5438,8 @@ body {
     45deg,
     var(--t-surface-2),
     var(--t-surface-2) 4px,
-    var(--t-border) 4px,
-    var(--t-border) 8px
+    color-mix(in srgb, var(--t-text) 14%, var(--t-surface-2)) 4px,
+    color-mix(in srgb, var(--t-text) 14%, var(--t-surface-2)) 8px
   );
   color: var(--t-muted);
   cursor: not-allowed;
@@ -5413,8 +5459,8 @@ body {
 
 .strip-anchor {
   position: absolute;
-  top: 3px;
-  height: 24px;
+  height: 22px;
+  max-width: 110px;
   padding: 0 6px;
   border: 1px solid var(--t-border);
   border-radius: 3px;
@@ -5422,6 +5468,8 @@ body {
   color: var(--t-text);
   font-size: 10px;
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
   cursor: pointer;
 }
 
@@ -5438,27 +5486,45 @@ body {
   margin-top: 12px;
   padding: 8px 12px;
   border-radius: var(--radius);
-  background: var(--t-accent-subtle);
-  color: var(--t-accent-text);
+  background: color-mix(in srgb, var(--c-minting) 16%, var(--t-surface));
+  color: color-mix(in srgb, var(--c-minting) 45%, var(--t-text));
   font-size: 12px;
 }
 
+.frame-summary__mint {
+  font-weight: 600;
+}
+
 .frame-summary__free {
-  color: var(--t-muted);
+  color: color-mix(in srgb, var(--c-minting) 30%, var(--t-text));
 }
 
 .frame-summary__reset {
   margin-left: auto;
+  border: none;
+  background: none;
+  padding: 0;
+  color: inherit;
+  font-size: 12px;
+  text-decoration: underline;
+  cursor: pointer;
 }
 
 .anchor-chips {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
+}
+
+@media (max-width: 900px) {
+  .anchor-chips {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 .anchor-chip {
   display: flex;
+  justify-content: space-between;
   gap: 8px;
   align-items: baseline;
   padding: 8px 12px;
@@ -5468,6 +5534,7 @@ body {
   color: var(--t-text);
   cursor: pointer;
   font-size: 13px;
+  min-width: 0;
 }
 
 .anchor-chip__meta {
@@ -5499,6 +5566,56 @@ body {
   display: flex;
   gap: 8px;
   align-items: center;
+}
+
+/* Prompts card: labels stack above their control so nothing overlaps, and a
+   control row keeps paired select/button on one line. */
+.field--stacked {
+  display: block;
+}
+
+.field--stacked > label,
+.field--stacked > .field__label {
+  display: block;
+  margin-bottom: 4px;
+}
+
+.field--stacked .field__controls {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.field--stacked .field__controls > select,
+.field--stacked .field__controls > input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.prompt-exports {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+}
+
+.prompt-exports .field__hint,
+.prompt-exports .prompt-optin,
+.prompt-exports .field-error,
+.prompt-exports .field-warning {
+  text-align: left;
+}
+
+.setup-section--prompts .setup-section__head h3 {
+  white-space: nowrap;
+}
+
+.prompt-exports .field__hint {
+  margin: 0;
+}
+
+.prompt-exports__actions {
+  margin-top: 4px;
 }
 
 .prompts-live {

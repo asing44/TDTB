@@ -64,6 +64,12 @@ function FixtureRoot() {
     const controller = new Controller(adapter, store.dispatch, store.getState);
     void controller.load().then(() => {
       applyStagedState(adapter.scenario, store.dispatch);
+      // Fixture-only visual review hook: `?screen=setup|connections` lands the
+      // promoted screen without UI interaction (screenshot gate, KTD13).
+      const want = new URLSearchParams(location.search).get("screen");
+      if (want === "setup" || want === "connections" || want === "plan") {
+        store.dispatch({ type: "UI", patch: { screen: want, settingsPanel: null } });
+      }
     });
     // Fixture-build debug handle — lets preview verification drive states
     // from the console. Never present in production builds.

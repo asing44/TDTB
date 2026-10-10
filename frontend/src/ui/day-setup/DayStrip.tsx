@@ -92,6 +92,25 @@ export function DayStrip(props: DayStripProps) {
   const ticks: number[] = [];
   for (let m = Math.ceil(startMin / 120) * 120; m <= endMin; m += 120) ticks.push(m);
 
+  // Anchors are absolutely positioned by time inside the lane. Blocks that
+  // overlap in time are stacked into sub-rows (greedy interval scheduling with
+  // a 45-minute minimum gap) so none of them collide or spill past the frame.
+  const rowEnds: number[] = [];
+  const placedAnchors = props.anchors
+    .map((anchor) => ({ anchor, min: toMinutes(anchor.start) }))
+    .sort((a, b) => a.min - b.min)
+    .map(({ anchor, min }) => {
+      let row = rowEnds.findIndex((end) => end <= min);
+      if (row === -1) {
+        row = rowEnds.length;
+        rowEnds.push(0);
+      }
+      rowEnds[row] = min + 120;
+      return { anchor, min, row };
+    });
+  const anchorRows = Math.max(1, rowEnds.length);
+  const anchorRowH = 24;
+
   return (
     <div class="day-strip" data-testid="day-strip">
       <div class="day-strip__axis" aria-hidden="true">
@@ -101,10 +120,12 @@ export function DayStrip(props: DayStripProps) {
           </span>
         ))}
       </div>
-      <div class="day-strip__frame" aria-hidden="true" />
+      <div class="day-strip__frame" aria-hidden="true">
+        <span class="day-strip__frame-label">frame</span>
+      </div>
       <div class="day-strip__lane day-strip__lane--mint" aria-label="Mint sessions">
         {props.sessions.length === 0 ? (
-          <span class="day-strip__empty">No Mint sessions configured for today.</span>
+          <span class="day-strip__empty">Mint off today</span>
         ) : (
           props.sessions.map((session, index) => {
             const blocked = !props.selectableIds.includes(session.id);
@@ -137,13 +158,18 @@ export function DayStrip(props: DayStripProps) {
           })
         )}
       </div>
-      <div class="day-strip__lane day-strip__lane--anchors" aria-label="Anchors">
-        {props.anchors.map((anchor) => (
+      <div
+        class="day-strip__lane day-strip__lane--anchors"
+        aria-label="Anchors"
+        style={{ height: `${anchorRows * anchorRowH + 6}px` }}
+      >
+        {placedAnchors.map(({ anchor, min, row }) => (
           <button
             type="button"
             class={`strip-anchor${anchor.counted ? "" : " strip-anchor--not-counted"}`}
-            style={{ left: `${pct(toMinutes(anchor.start))}%` }}
+            style={{ left: `${pct(min)}%`, top: `${3 + row * anchorRowH}px` }}
             data-anchor-id={anchor.id}
+            title={`${anchor.name} ${display12h(anchor.start)}`}
             aria-label={`${anchor.name} ${display12h(anchor.start)}${
               anchor.counted ? ` · ${anchor.blocks}` : ` — not counted (${anchor.reason})`
             }`}
