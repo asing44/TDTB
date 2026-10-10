@@ -322,6 +322,8 @@ class PacedProvider:
     def __init__(self, raw: Any, pacer: ProviderPacer) -> None:
         self.raw = raw
         self.pacer = pacer
+        #: The raw structures payload most recently fetched through this seam.
+        self.structures_payload: Any = None
         setter = getattr(raw, "set_rate_observer", None)
         if callable(setter):
             setter(self.observe_headers)
@@ -330,7 +332,11 @@ class PacedProvider:
         self.pacer.observe(endpoint, headers)
 
     def fetch_structures(self):
-        return self.pacer.call(ENDPOINT_STRUCTURES, self.raw.fetch_structures)
+        payload = self.pacer.call(ENDPOINT_STRUCTURES, self.raw.fetch_structures)
+        # The adapter resolves its contract from this exact payload. Keeping it
+        # lets the install persist the contract without another provider read.
+        self.structures_payload = payload
+        return payload
 
     def list_objects(self, structure_id: str, cursor: str | None = None):
         return self.pacer.call(
@@ -760,6 +766,7 @@ class RefreshCoordinator:
     def _acquire(self) -> None:
         job = self._job or {}
         self.adapter.ensure_contract()
+        structures_payload = self.provider.structures_payload
         contributing = [m for m in self.mappings if self.adapter.can_contribute(m)]
         if not contributing:
             raise RefreshIncomplete(
@@ -875,7 +882,9 @@ class RefreshCoordinator:
                 ):
                     raise RefreshStale()
             snapshot = self.store.install_generation(
-                evidence, expected_generation=int(job.get("generation") or 0)
+                evidence,
+                expected_generation=int(job.get("generation") or 0),
+                structures=structures_payload,
             )
         job = self._job or {}
         self._job = {**job, "generation": snapshot.generation}

@@ -59,7 +59,7 @@ def _listing(type_key, object_ids, checked_at, *, complete=True):
 
 
 def _install(store, *, revision=1, expected=0, types=("T",), listings=(),
-             retained=(), unreadable=(), scope=SCOPE):
+             retained=(), unreadable=(), scope=SCOPE, structures=None):
     return store.install_generation(
         rs.SnapshotEvidence(
             scope_key=scope,
@@ -70,6 +70,7 @@ def _install(store, *, revision=1, expected=0, types=("T",), listings=(),
             unreadable_objects=tuple(unreadable),
         ),
         expected_generation=expected,
+        **({} if structures is None else {"structures": structures}),
     )
 
 
@@ -456,3 +457,119 @@ def test_legacy_import_refuses_a_foreign_document_and_never_copies_its_path(
         store, tmp_path / "absent.json", expected_namespace="legacy-ns", object_types={}
     )
     assert absent == rs.LegacyImport()
+
+
+# ---------------------------------------------------------------------------
+# U4 S0 — structure contract stamped with the installed generation
+# ---------------------------------------------------------------------------
+
+_STRUCTURES_V1 = [{"id": "T", "title": "T", "propertyDefinitions": []}]
+_STRUCTURES_V2 = [{"id": "T", "title": "Renamed", "propertyDefinitions": []}]
+
+
+def _contract_files(root: Path) -> list[Path]:
+    return sorted((root / rs.CONTRACTS_DIRNAME).glob("*.json"))
+
+
+def test_a_published_generation_round_trips_its_structure_contract(tmp_path):
+    store = _store(tmp_path)
+    assert store.load_structure_contract(SCOPE) is None
+    store.put("o1", "T", {"a": 1}, content_read_at=1.0)
+
+    snapshot = _install(
+        store, listings=[_listing("T", ["o1"], 10.0)], structures=_STRUCTURES_V1
+    )
+
+    contract = store.load_structure_contract(SCOPE)
+    assert contract is not None
+    assert contract.scope_key == SCOPE
+    assert contract.generation == snapshot.generation == 1
+    assert contract.structures == _STRUCTURES_V1
+    # Only the structures payload is persisted: no token, credential, or
+    # request metadata rides along with it.
+    (stored,) = _contract_files(tmp_path / "refresh-state")
+    assert set(json.loads(stored.read_text(encoding="utf-8"))) == {
+        "version",
+        "namespace",
+        "scope_key",
+        "generation",
+        "structures",
+    }
+
+
+def test_a_refused_installation_keeps_the_previous_generations_contract(tmp_path):
+    store = _store(tmp_path)
+    store.put("o1", "T", {"a": 1}, content_read_at=1.0)
+    _install(store, listings=[_listing("T", ["o1"], 10.0)], structures=_STRUCTURES_V1)
+
+    with pytest.raises(rs.SnapshotConflictError):
+        _install(
+            store,
+            expected=0,
+            listings=[_listing("T", ["o1"], 11.0)],
+            structures=_STRUCTURES_V2,
+        )
+
+    contract = store.load_structure_contract(SCOPE)
+    assert contract is not None
+    assert contract.generation == 1
+    assert contract.structures == _STRUCTURES_V1
+
+
+def test_a_contract_stamped_for_an_earlier_generation_reads_as_missing(tmp_path):
+    store = _store(tmp_path)
+    store.put("o1", "T", {"a": 1}, content_read_at=1.0)
+    _install(store, listings=[_listing("T", ["o1"], 10.0)], structures=_STRUCTURES_V1)
+
+    # A crash between the pointer install and the contract write leaves the
+    # new generation installed while the contract file still carries the
+    # previous stamp. Installing without a contract reproduces that state.
+    second = _install(store, expected=1, listings=[_listing("T", ["o1"], 11.0)])
+    assert second.generation == 2
+
+    assert store.load_structure_contract(SCOPE) is None
+    assert any("contract missing" in w for w in store.drain_warnings())
+
+
+def test_the_next_installation_heals_a_missing_contract(tmp_path):
+    store = _store(tmp_path)
+    store.put("o1", "T", {"a": 1}, content_read_at=1.0)
+    _install(store, listings=[_listing("T", ["o1"], 10.0)], structures=_STRUCTURES_V1)
+    _install(store, expected=1, listings=[_listing("T", ["o1"], 11.0)])
+
+    third = _install(
+        store,
+        expected=2,
+        listings=[_listing("T", ["o1"], 12.0)],
+        structures=_STRUCTURES_V2,
+    )
+
+    contract = store.load_structure_contract(SCOPE)
+    assert contract is not None
+    assert contract.generation == third.generation == 3
+    assert contract.structures == _STRUCTURES_V2
+
+
+def test_a_failed_contract_write_does_not_undo_the_published_generation(
+    tmp_path, monkeypatch
+):
+    store = _store(tmp_path)
+    store.put("o1", "T", {"a": 1}, content_read_at=1.0)
+    real_write = rs.capacities_cache_io.atomic_write_json
+
+    def fail_contract_writes(path, data):
+        if rs.CONTRACTS_DIRNAME in Path(path).parts:
+            raise OSError("disk full")
+        real_write(path, data)
+
+    monkeypatch.setattr(
+        rs.capacities_cache_io, "atomic_write_json", fail_contract_writes
+    )
+    snapshot = _install(
+        store, listings=[_listing("T", ["o1"], 10.0)], structures=_STRUCTURES_V1
+    )
+
+    assert snapshot.generation == 1
+    assert store.load_snapshot(SCOPE).generation == 1
+    assert store.load_structure_contract(SCOPE) is None
+    assert any("contract" in w for w in store.drain_warnings())

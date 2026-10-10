@@ -32,6 +32,7 @@ from capacities_refresh_helpers import (  # noqa: E402
     _paged_provider,
     _row,
     _store,
+    _structures,
 )
 
 
@@ -541,3 +542,99 @@ def test_malformed_required_content_is_not_treated_as_unknown(tmp_path):
 
     assert status["phase"] == "failed"
     assert store.load_snapshot("all") is None
+
+
+# ---------------------------------------------------------------------------
+# U4 S0 — the structure contract rides only a published generation
+# ---------------------------------------------------------------------------
+
+def _renamed_structures():
+    structures = _structures(*TYPES)
+    structures[0]["title"] = "Renamed"
+    return structures
+
+
+def test_a_published_refresh_persists_its_structure_contract(tmp_path):
+    provider = _paged_provider(objects={PRIMARY: ["a"], "T2": ["c"]})
+    coordinator, store, _, _ = _coordinator(tmp_path, provider)
+
+    coordinator.start()
+    status = coordinator.wait(timeout=5)
+
+    assert status["phase"] == "complete", status
+    contract = store.load_structure_contract("all")
+    assert contract is not None
+    assert contract.generation == store.load_snapshot("all").generation == 1
+    assert contract.structures == _structures(*TYPES)
+
+
+def test_a_single_type_rescan_stores_the_full_structure_contract(tmp_path):
+    provider = _paged_provider(objects={PRIMARY: ["a"], "T2": ["c"]})
+    coordinator, store, _, _ = _coordinator(tmp_path, provider)
+    coordinator.start()
+    coordinator.wait(timeout=5)
+
+    # The adapter resolves its contract once, so this rescan reuses it. The
+    # stored payload must still cover every type, not only the rescoped one.
+    coordinator.start(mode="rescan", scope=PRIMARY)
+    status = coordinator.wait(timeout=5)
+
+    assert status["phase"] == "complete", status
+    contract = store.load_structure_contract("all")
+    assert contract is not None
+    assert contract.generation == 2
+    assert contract.structures == _structures(*TYPES)
+
+
+def test_a_cancelled_run_keeps_the_previous_generations_contract(tmp_path):
+    first_provider = _paged_provider(objects={PRIMARY: ["a", "b"], "T2": ["c"]})
+    first, store, _, _ = _coordinator(tmp_path, first_provider)
+    first.start()
+    assert first.wait(timeout=5)["phase"] == "complete"
+    previous = store.load_structure_contract("all")
+    assert previous is not None
+
+    # A later run fetches a changed payload, then is cancelled before
+    # publication: the previous generation's contract must stay in place.
+    changed = _paged_provider(
+        objects={PRIMARY: ["a", "b"], "T2": ["c"]}, structures=_renamed_structures()
+    )
+    second, _, _, _ = _coordinator(tmp_path, changed)
+    changed.on_get = lambda object_id: second.cancel()
+
+    second.start(mode="rescan", scope=PRIMARY)
+    status = second.wait(timeout=5)
+
+    assert status["phase"] == "cancelled", status
+    assert changed.fetch_calls == 1
+    kept = store.load_structure_contract("all")
+    assert kept is not None
+    assert kept.generation == 1
+    assert kept.structures == previous.structures
+
+
+def test_a_refused_refresh_keeps_the_previous_generations_contract(tmp_path):
+    first_provider = _paged_provider(objects={PRIMARY: ["a"], "T2": ["c"]})
+    first, store, _, _ = _coordinator(tmp_path, first_provider)
+    first.start()
+    assert first.wait(timeout=5)["phase"] == "complete"
+    previous = store.load_structure_contract("all")
+    assert previous is not None
+
+    # The configuration moves between start and publication, so the run fetches
+    # a changed payload and is refused before it installs anything.
+    changed = _paged_provider(
+        objects={PRIMARY: ["a"], "T2": ["c"]}, structures=_renamed_structures()
+    )
+    values = iter([1, 2])
+    second, _, _, _ = _coordinator(tmp_path, changed, revision=lambda: next(values, 2))
+
+    second.start()
+    status = second.wait(timeout=5)
+
+    assert status["phase"] == "failed", status
+    assert status["outcome"] == "staleConfiguration", status
+    kept = store.load_structure_contract("all")
+    assert kept is not None
+    assert kept.generation == 1
+    assert kept.structures == previous.structures

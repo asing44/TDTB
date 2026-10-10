@@ -27,6 +27,10 @@ Contract (KTD2/KTD3):
   type + object; pointers are keyed by vault root + origin + space. Stored
   bytes for another scope are never served, and they are never overwritten by
   a blind install.
+* **Stamped structure contract.** A generation's raw structures payload is
+  written after its pointer, stamped with that generation. A reader serves it
+  only while the stamp matches the installed generation; otherwise it reads as
+  missing.
 
 Machine-local only: the caller owns the root (``app_config.state_dir()`` via
 ``capacities_builder.refresh_state_dir``), so raw content never enters a
@@ -50,6 +54,7 @@ import capacities_cache_io
 REFRESH_STATE_SCHEMA_VERSION = 1
 OBJECT_SCHEMA_VERSION = 1
 RUN_MARKER_SCHEMA_VERSION = 1
+STRUCTURE_CONTRACT_SCHEMA_VERSION = 1
 #: The legacy ``_ContentCache`` document version this module can read for an
 #: optional, read-only import. It mirrors ``capacities_builder``'s constant
 #: without importing the builder back (that would be an import cycle).
@@ -58,6 +63,7 @@ LEGACY_CONTENT_CACHE_SCHEMA_VERSION = 1
 OBJECTS_DIRNAME = "objects"
 SNAPSHOTS_DIRNAME = "snapshots"
 RUNS_DIRNAME = "runs"
+CONTRACTS_DIRNAME = "contracts"
 LOCK_FILENAME = "refresh-state.lock"
 
 #: Storage bounds are ceilings, not eviction policies: exceeding one is a
@@ -340,6 +346,15 @@ class SnapshotEvidence:
 
 
 @dataclass(frozen=True)
+class StructureContract:
+    """The raw structures payload installed with one complete generation."""
+
+    scope_key: str
+    generation: int
+    structures: Any
+
+
+@dataclass(frozen=True)
 class RunMarker:
     """An unfinished refresh run, reconciled on restart."""
 
@@ -437,6 +452,10 @@ class RefreshStateStore:
     def _run_path(self, scope_key: str) -> Path:
         digest = _digest(self._snapshot_namespace, "run", _norm(scope_key))
         return self._root / RUNS_DIRNAME / f"{digest}.json"
+
+    def _contract_path(self, scope_key: str) -> Path:
+        digest = _digest(self._snapshot_namespace, "contract", _norm(scope_key))
+        return self._root / CONTRACTS_DIRNAME / f"{digest}.json"
 
     # -- diagnostics ----------------------------------------------------
 
@@ -636,8 +655,74 @@ class RefreshStateStore:
             except RefreshStateFormatError:
                 return None
 
+    def load_structure_contract(self, scope_key: str) -> StructureContract | None:
+        """The structures payload stamped with the installed generation.
+
+        ``None`` means *contract missing*: no installed generation, no stored
+        contract, a contract stamped for another generation (for example after a
+        crash between the pointer install and the contract write), or unusable
+        bytes. A stale contract is never served as the current one.
+        """
+        key = _require_text(scope_key, "scope_key")
+        with self._locked():
+            try:
+                snapshot = self._load_pointer_unlocked(key)
+            except RefreshStateFormatError:
+                return None
+            if snapshot is None:
+                return None
+            return self._load_contract_unlocked(key, snapshot.generation)
+
+    def _load_contract_unlocked(
+        self, scope_key: str, generation: int
+    ) -> StructureContract | None:
+        raw = self._read_document_unlocked(
+            self._contract_path(scope_key), kind="contract"
+        )
+        if raw is None:
+            return None
+        if (
+            raw.get("version") != STRUCTURE_CONTRACT_SCHEMA_VERSION
+            or not isinstance(raw.get("structures"), (dict, list))
+        ):
+            self._warn(
+                "contract-invalid",
+                "Capacities refresh state: ignored an unreadable structure "
+                "contract; contract missing until the next Refresh.",
+            )
+            return None
+        if (
+            raw.get("namespace") != self._snapshot_namespace
+            or raw.get("scope_key") != scope_key
+        ):
+            self._warn(
+                "contract-scope",
+                "Capacities refresh state: the stored structure contract belongs "
+                "to a different vault, provider, space, or scope; contract missing "
+                "until the next Refresh.",
+            )
+            return None
+        stamp = raw.get("generation")
+        if type(stamp) is not int or stamp != generation:
+            self._warn(
+                "contract-stamp",
+                "Capacities refresh state: structure contract missing for the "
+                "installed generation; the stored contract belongs to another "
+                "generation and is not served.",
+            )
+            return None
+        return StructureContract(
+            scope_key=scope_key,
+            generation=generation,
+            structures=raw["structures"],
+        )
+
     def install_generation(
-        self, evidence: SnapshotEvidence, *, expected_generation: int
+        self,
+        evidence: SnapshotEvidence,
+        *,
+        expected_generation: int,
+        structures: Any = None,
     ) -> CompleteSnapshot:
         """Atomically install one complete generation, or refuse.
 
@@ -646,9 +731,15 @@ class RefreshStateStore:
         when a required listing is incomplete, when a required read failed, or
         when any member has no cached read. Removals happen only here, only as
         the difference a complete listing proves.
+
+        When ``structures`` is supplied, the raw payload is stored after the
+        pointer, stamped with the installed generation. A failed contract write
+        keeps the installed generation and leaves its contract reading as missing.
         """
         if not isinstance(evidence, SnapshotEvidence):
             raise ValueError("evidence must be a SnapshotEvidence")
+        if structures is not None and not isinstance(structures, (dict, list, tuple)):
+            raise ValueError("structures must be a JSON object or array")
         expected = _require_int(expected_generation, "expected_generation")
         scope_key = _require_text(evidence.scope_key, "scope_key")
         with self._locked():
@@ -680,7 +771,33 @@ class RefreshStateStore:
             capacities_cache_io.atomic_write_json(
                 self._snapshot_path(scope_key), self._snapshot_document(snapshot)
             )
+            if structures is not None:
+                self._write_contract_unlocked(snapshot, structures)
         return snapshot
+
+    def _write_contract_unlocked(
+        self, snapshot: CompleteSnapshot, structures: Any
+    ) -> None:
+        document = {
+            "version": STRUCTURE_CONTRACT_SCHEMA_VERSION,
+            "namespace": self._snapshot_namespace,
+            "scope_key": snapshot.scope_key,
+            "generation": snapshot.generation,
+            "structures": structures,
+        }
+        try:
+            capacities_cache_io.atomic_write_json(
+                self._contract_path(snapshot.scope_key), document
+            )
+        except (OSError, TypeError, ValueError):
+            # Publication already succeeded; a missing contract heals on the
+            # next Refresh, so this must not fail the installed generation.
+            self._warn(
+                "contract-write-failed",
+                "Capacities refresh state: could not store the structure contract "
+                "for the published generation; contract missing until the next "
+                "Refresh.",
+            )
 
     def clear_unusable_snapshot(self, scope_key: str) -> bool:
         """Drop a present-but-unusable pointer; never touch a readable one.
