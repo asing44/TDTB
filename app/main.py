@@ -1868,6 +1868,7 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
     app.state.build_refresh_coordinator = build_real_refresh_coordinator
     app.state.refresh_coordinator = _REFRESH_COORDINATOR_UNSET
     app.state.refresh_coordinator_revision = _REFRESH_COORDINATOR_UNSET
+    app.state.refresh_coordinator_space_id = _REFRESH_COORDINATOR_UNSET
     #: Serializes the seam's check-build-assign so two racing starts cannot
     #: each build an instance (the loser cached last would not own the live
     #: job and could report it as interrupted).
@@ -2358,15 +2359,40 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
                 },
             ) from exc
 
+    def _refresh_source_space(vault: Path) -> Any:
+        """Live source space id, or ``None`` when unconfigured.
+
+        The combined revision is a sum, so a source space switch can leave it
+        equal; this read is the space half of the reuse check. A malformed or
+        unreadable mapping store is a bounded 503 for the same reason as
+        ``_refresh_revision``: the seam must never treat broken storage as
+        "unchanged" and reuse a coordinator whose scope it could not verify.
+        """
+        try:
+            return capacities_builder.refresh_source_space_id(vault)
+        except Exception as exc:  # noqa: BLE001 — bounded source boundary
+            print(f"capacities refresh source read failed: {exc}", file=sys.stderr)
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "code": "capacities_refresh_unavailable",
+                    "message": (
+                        "The Capacities source could not be read; "
+                        "the previous complete result is preserved."
+                    ),
+                },
+            ) from exc
+
     def _refresh_coordinator(*, ensure_current: bool = False) -> Any | None:
         """Build-once, cache the single-flight coordinator; ``None`` = unconfigured.
 
         Caching the instance is required for correctness: cancel and status must
         observe the same in-memory job/thread that start launched, so the seam
         cannot be rebuilt per request. ``ensure_current`` (start only) replaces
-        an *idle* instance whose configuration revision moved, so a mapping or
-        settings save reaches the next run instead of running the new revision
-        with the previous scope. A live job is never replaced — it keeps the
+        an *idle* instance whose configuration revision or source space moved,
+        so a mapping or settings save, or a source space switch, reaches the
+        next run instead of running the new configuration with the previous
+        scope. A live job is never replaced — it keeps the
         instance that owns its thread and locks, and its own publication guard
         rejects the stale revision. A build failure is a bounded 503 — a
         configured-but-broken source is never silently treated as unconfigured.
@@ -2383,8 +2409,21 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
                 if cached is not None and cached.is_running():
                     return cached
             revision = _refresh_revision(vault)
-            if cached is not _REFRESH_COORDINATOR_UNSET and revision == getattr(
-                app.state, "refresh_coordinator_revision", _REFRESH_COORDINATOR_UNSET
+            source_space = _refresh_source_space(vault)
+            if (
+                cached is not _REFRESH_COORDINATOR_UNSET
+                and revision
+                == getattr(
+                    app.state,
+                    "refresh_coordinator_revision",
+                    _REFRESH_COORDINATOR_UNSET,
+                )
+                and source_space
+                == getattr(
+                    app.state,
+                    "refresh_coordinator_space_id",
+                    _REFRESH_COORDINATOR_UNSET,
+                )
             ):
                 return cached
             build = app.state.build_refresh_coordinator
@@ -2409,6 +2448,7 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
                     ) from exc
             app.state.refresh_coordinator = coordinator
             app.state.refresh_coordinator_revision = revision
+            app.state.refresh_coordinator_space_id = source_space
             return coordinator
 
     def _refresh_configured(*, ensure_current: bool = False) -> Any:

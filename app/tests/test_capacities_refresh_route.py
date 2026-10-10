@@ -223,6 +223,17 @@ def _revision_stub(monkeypatch, holder):
     )
 
 
+def _space_stub(monkeypatch, holder):
+    # ``raising=False`` so the pre-fix module (no such attribute) still sets it
+    # and the test fails on the reuse assertion instead of in setup.
+    monkeypatch.setattr(
+        main_mod.capacities_builder,
+        "refresh_source_space_id",
+        lambda vault: holder["value"],
+        raising=False,
+    )
+
+
 def test_start_rebuilds_an_idle_coordinator_when_the_config_revision_changed(
     tmp_path, monkeypatch
 ):
@@ -264,6 +275,67 @@ def test_start_rebuilds_an_idle_coordinator_when_the_config_revision_changed(
         json={"mode": "refresh", "scope": "all"},
     )
     assert third.status_code == 200
+    assert len(builds) == 2
+    client.app.state.refresh_coordinator.wait(timeout=5)
+
+
+def test_start_rebuilds_an_idle_coordinator_when_the_source_space_changed(
+    tmp_path, monkeypatch
+):
+    """A source space switch must reach the next start even at an equal
+    revision.
+
+    The combined revision is a sum, so moving the source to another space can
+    leave it unchanged while the cached coordinator's mappings, rules, and
+    store all belong to the previous space. Start must compare the live source
+    space too and reuse only when both the revision and the space are
+    unchanged.
+    """
+    builds: list = []
+    revision = {"value": 1}
+    space = {"value": "space-1"}
+    _revision_stub(monkeypatch, revision)
+    _space_stub(monkeypatch, space)
+    client = _client(tmp_path, _paged_provider(objects={"T1": ["a"], "T2": []}))
+    client.app.state.build_refresh_coordinator = _counting_factory(client, builds)
+
+    first = client.post(
+        "/capacities/refresh/start",
+        headers=_auth(client),
+        json={"mode": "refresh", "scope": "all"},
+    )
+    assert first.status_code == 200
+    assert len(builds) == 1
+    client.app.state.refresh_coordinator.wait(timeout=5)
+
+    # Equal revision, same space: the cached instance is reused.
+    second = client.post(
+        "/capacities/refresh/start",
+        headers=_auth(client),
+        json={"mode": "refresh", "scope": "all"},
+    )
+    assert second.status_code == 200
+    assert len(builds) == 1
+    client.app.state.refresh_coordinator.wait(timeout=5)
+
+    # Equal revision, changed space: the cached instance must be replaced.
+    space["value"] = "space-2"
+    third = client.post(
+        "/capacities/refresh/start",
+        headers=_auth(client),
+        json={"mode": "refresh", "scope": "all"},
+    )
+    assert third.status_code == 200
+    assert len(builds) == 2
+    client.app.state.refresh_coordinator.wait(timeout=5)
+
+    # The rebuilt instance is pinned to the new space: reuse again.
+    fourth = client.post(
+        "/capacities/refresh/start",
+        headers=_auth(client),
+        json={"mode": "refresh", "scope": "all"},
+    )
+    assert fourth.status_code == 200
     assert len(builds) == 2
     client.app.state.refresh_coordinator.wait(timeout=5)
 
