@@ -97,6 +97,9 @@ class ManifestEntry:
     is_recurring: bool = False
     native_start: str | None = None
     retiming_authorized: bool | None = None
+    # True when the row's identity came from a Capacities assigned row (S6b).
+    # The Todoist writer refuses such an entry; kept out of ``as_dict``.
+    capacities: bool = False
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -356,6 +359,30 @@ def _is_todoist_assigned(item: dict[str, Any]) -> bool:
     return source == "todoist" or bool(todoist_id) or path.startswith("todoist://")
 
 
+def _is_capacities_assigned(item: dict[str, Any]) -> bool:
+    """Identify a Capacities assigned row (S6b).
+
+    The sanitized ``source`` field classifies the row. A ``capacities://`` path
+    also counts, as a fail-closed backstop that matches the eligibility gate.
+    A path alone never makes a row Todoist or vault.
+    """
+    source = str(item.get("source") or "").strip().casefold()
+    path = str(item.get("path") or "").strip().casefold()
+    return source == "capacities" or path.startswith("capacities://")
+
+
+def _capacities_name_collisions(assigned_items: list[dict[str, Any]]) -> list[str]:
+    """Names held by both a Capacities row and a non-Capacities row (S6b).
+
+    Sequence rows are name-keyed, so such a name cannot say which identity it
+    means. The builder refuses it rather than let the name cross the Capacities
+    boundary in either direction.
+    """
+    capacities = {item.get("name") for item in assigned_items if _is_capacities_assigned(item)}
+    others = {item.get("name") for item in assigned_items if not _is_capacities_assigned(item)}
+    return sorted(str(name) for name in capacities & others)
+
+
 def _todoist_manifest_metadata(item: dict[str, Any]) -> dict[str, Any]:
     """Copy the trusted Todoist timing facts into internal manifest metadata.
 
@@ -444,7 +471,9 @@ def build_plan_manifest(
     proposal (the /sequence response body: ``{"sequence": [{id,start,end,zone}, ...]}``).
 
     Row partition (SKILL.md Phase 5 semantics):
-      - id matches an Assigned digest item's name -> Step A (Todoist).
+      - id matches an Assigned digest item's name -> Step A (Todoist), unless
+        the item is a Capacities row (S6b): then Step D calendar only. A name
+        shared across the Capacities boundary raises ValueError.
       - id names a Trinoor work zone -> Step D′ (calendar).
       - id matches a ``config["anchored_blocks"]`` entry -> Step E
         (calendar), skipping blocks toggled off / skipped today, and
@@ -453,6 +482,12 @@ def build_plan_manifest(
       - anything else -> Step D (schedulable block: Minting / Shivery Jigs).
     """
     config = config or {}
+    collisions = _capacities_name_collisions(digest.get("assigned") or [])
+    if collisions:
+        raise ValueError(
+            "Capacities and non-Capacities assigned rows share a name; refusing "
+            "to build a manifest that cannot tell them apart: " + ", ".join(collisions)
+        )
     assigned = {item.get("name"): item for item in (digest.get("assigned") or [])}
     anchored = _anchored_specs(config)
     micro_adventure = config.get("micro_adventure")
@@ -469,6 +504,18 @@ def build_plan_manifest(
         if row_id in assigned:
             item = assigned[row_id]
             sequenced_assigned.add(row_id)
+            if _is_capacities_assigned(item):
+                # S6b: plan-only. One calendar block on the ⬜ Blocks class (the
+                # Step D default for non-Mint rows), resolved by plan_writes like
+                # every other calendar row. No Todoist task, no vault flip, and no
+                # name-derived Mint class.
+                entries.append(ManifestEntry(
+                    step="D", system="calendar", action="create-event",
+                    name=str(row_id), id_or_path=str(row_id),
+                    time=start, duration_min=duration, routing="⬜ Blocks",
+                    capacities=True,
+                ))
+                continue
             # Routing reads the digest item's own vault types first (shakedown
             # 2026-07-14, defect: Magic Mirror -> Inbox): _preset_type only
             # knows config Presets rows, but assigned items are vault notes
@@ -574,6 +621,8 @@ def build_plan_manifest(
     for name, item in assigned.items():
         if name in sequenced_assigned or item.get("blocks") != 0:
             continue
+        if _is_capacities_assigned(item):
+            continue  # S6b: no Todoist due; no timeline row means no calendar time
         entries.append(ManifestEntry(
             step="A", system="todoist", action="schedule-all-day",
             name=name, id_or_path=item.get("path") or name,
@@ -616,6 +665,8 @@ def build_plan_manifest(
     # their live surface is the task itself (Step A); skip them or every
     # sourced item shadows as a phantom "target missing" conflict.
     for name, item in assigned.items():
+        if _is_capacities_assigned(item):
+            continue  # S6b: plan-only, no vault flip
         path = item.get("path") or name
         if str(path).startswith("todoist://"):
             continue

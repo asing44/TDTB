@@ -15,6 +15,7 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, str(Path(__file__).parent.parent))
 import main as main_mod  # noqa: E402
 import runstate  # noqa: E402
+import commit  # noqa: E402
 import shadow  # noqa: E402
 from datetime import date  # noqa: E402
 
@@ -916,3 +917,100 @@ class TestPlacementPastSurvivesInManifest:
         entries = shadow.build_plan_manifest({}, {"sequence": []}, config,
                                              time_frame=frame)
         assert not [e for e in entries if e.name == "Press"]
+
+
+class TestCapacitiesRowsAreCalendarOnly:
+    """U4 S6b: a Capacities assigned row is plan-only. Its manifest footprint is
+    one calendar create-event on the existing ⬜ Blocks class, with no Todoist
+    intent and no Step C vault flip. Classification reads the sanitized
+    ``source`` field; a name shared with a Todoist or vault row fails closed."""
+
+    CAP_ITEM = {
+        "name": "Ship project",
+        "path": "capacities://space-1/object-1",
+        "source": "capacities",
+        "identity": "capacities:space-1:RootTask:object-1",
+    }
+    SEQ = {"sequence": [{"id": "Ship project", "start": "09:00", "end": "10:00", "zone": "any"}]}
+
+    def test_capacities_row_emits_only_calendar_entry(self):
+        entries = shadow.build_plan_manifest({"assigned": [dict(self.CAP_ITEM)]}, self.SEQ, {})
+        assert [e for e in entries if e.system == "todoist"] == []
+        assert [e.step for e in entries if e.step == "C"] == []
+        # Step B is the commit-level plan section, not a per-row action; its
+        # suppression is an open decision (see the S6b report).
+        assert [e.step for e in entries if e.system == "vault"] == ["B"]
+        calendar = [e for e in entries if e.system == "calendar"]
+        assert len(calendar) == 1
+        cal = calendar[0]
+        assert (cal.step, cal.action, cal.name, cal.id_or_path) == (
+            "D", "create-event", "Ship project", "Ship project")
+        assert (cal.time, cal.duration_min, cal.routing) == ("09:00", 60, "⬜ Blocks")
+        assert cal.capacities is True
+
+    def test_capacities_row_with_mint_like_name_keeps_blocks_class(self):
+        item = dict(self.CAP_ITEM, name="Minting", path="capacities://space-1/object-2")
+        seq = {"sequence": [{"id": "Minting", "start": "09:00", "end": "10:00"}]}
+        cal = [e for e in shadow.build_plan_manifest({"assigned": [item]}, seq, {})
+               if e.system == "calendar"]
+        assert [e.routing for e in cal] == ["⬜ Blocks"]
+
+    def test_capacities_row_named_like_live_todoist_task_does_not_match_it(self):
+        item = dict(self.CAP_ITEM, name="Press")
+        seq = {"sequence": [{"id": "Press", "start": "12:00", "end": "13:00"}]}
+        manifest = shadow.build_plan_manifest({"assigned": [item]}, seq, {})
+        live = {"todoist_tasks": [
+            {"id": "t1", "content": "Press", "due": {"date": "2026-10-10T12:00:00"}},
+        ]}
+        diff = shadow.diff_against_live(manifest, live)
+        assert [e for e in diff.entries if e.manifest.system == "todoist"] == []
+        assert not any(e.detail.get("task_id") == "t1" for e in diff.entries)
+
+    def test_name_shared_across_capacities_boundary_fails_closed(self):
+        todoist = {"name": "Press", "path": "todoist://t1", "source": "todoist"}
+        cap = dict(self.CAP_ITEM, name="Press")
+        seq = {"sequence": [{"id": "Press", "start": "12:00", "end": "13:00"}]}
+        for assigned in ([todoist, cap], [cap, todoist]):
+            with pytest.raises(ValueError, match="Press"):
+                shadow.build_plan_manifest({"assigned": assigned}, seq, {})
+
+    def test_capacities_row_plans_calendar_create_and_no_todoist_intent(self):
+        manifest = shadow.build_plan_manifest({"assigned": [dict(self.CAP_ITEM)]}, self.SEQ, {})
+        live = {"todoist_tasks": [], "calendar_events": [], "vault_frontmatter": {},
+                "daily_note_text": "# TDTB Plan\n"}
+        diff = shadow.diff_against_live(manifest, live)
+        intents = commit.plan_writes(diff, {"⬜ Blocks": "cal-blocks"}, {}, date(2026, 10, 10))
+        assert [i for i in intents if i.surface == "todoist"] == []
+        cal = [i for i in intents if i.surface == "calendar"]
+        assert [(i.op, i.calendar_id, i.name) for i in cal] == [("create", "cal-blocks", "Ship project")]
+        assert [i.step for i in intents if i.surface == "vault"] == ["B"]
+
+    def test_todoist_writer_refuses_capacities_provenance(self):
+        m = shadow.ManifestEntry(
+            step="A", system="todoist", action="schedule", name="Ship project",
+            id_or_path="capacities://space-1/object-1", time="09:00",
+            duration_min=60, routing="Inbox", capacities=True,
+        )
+        diff = shadow.ShadowDiff(entries=[shadow.ShadowDiffEntry(m, shadow.CREATE, {})])
+        with pytest.raises(commit.CommitPlanError, match="Capacities"):
+            commit.plan_writes(diff, {}, {}, date(2026, 10, 10))
+
+
+class TestNonCapacitiesManifestUnchanged:
+    """Characterization for U4 S6b: Todoist and vault assigned rows keep their
+    Step A schedule and Step C flip and emit no calendar entry."""
+
+    def test_todoist_and_vault_assigned_rows_keep_steps_a_and_c(self):
+        digest = {"assigned": [
+            {"name": "LOOTS", "path": "todoist://T1", "source": "todoist", "todoist_id": "T1"},
+            {"name": "Press", "path": "50 - Operations/Intervals/Press.md"},
+        ]}
+        seq = {"sequence": [
+            {"id": "LOOTS", "start": "09:00", "end": "09:30"},
+            {"id": "Press", "start": "09:30", "end": "10:00"},
+        ]}
+        entries = shadow.build_plan_manifest(digest, seq, {})
+        todoist = [(e.step, e.name, e.routing) for e in entries if e.system == "todoist"]
+        assert todoist == [("A", "LOOTS", "Inbox"), ("A", "Press", "Inbox")]
+        assert [e.name for e in entries if e.step == "C"] == ["Press"]
+        assert [e.name for e in entries if e.system == "calendar"] == []

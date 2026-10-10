@@ -445,6 +445,13 @@ def plan_writes(
 
 
 def _plan_todoist(m: ManifestEntry, e: ShadowDiffEntry, config: Any, today: date) -> WriteIntent:
+    if m.capacities:
+        # S6b defense: a Capacities row is plan-only. shadow.build_plan_manifest
+        # emits no Todoist entry for one, so this is unreachable by construction;
+        # if it ever fires, refuse the whole commit rather than create a task.
+        raise CommitPlanError(
+            f"{m.step}/{m.name}: Capacities row reached the Todoist writer — refusing commit"
+        )
     all_day = m.action in ("capture-nicety", "schedule-all-day")
     detail_recurring = e.detail.get("is_recurring")
     recurring = (
