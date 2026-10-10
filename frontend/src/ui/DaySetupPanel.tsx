@@ -729,6 +729,9 @@ export function DaySetupPanel({ active }: { active: boolean }) {
               Prompts could not be saved: {s.promptSave.error}
             </p>
           )}
+          {s.promptSave.warnings.map((warning) => (
+            <p class="field-warning" role="status">{warning}</p>
+          ))}
           <div class="prompt-exports__actions">
             <button
               type="button"

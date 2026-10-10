@@ -88,9 +88,40 @@ describe("U5 prompt wire projection", () => {
       prompt_warnings: ["Prompt drafts could not be read; showing empty prompts."],
     });
     expect(result.daySetupConfirmed).toBe(false);
+    expect(result.optinsAvailable).toBe(true);
     expect(result.optins.megan_nicety).toBe(true);
     expect(result.optinsRevision).toBe(4);
     expect(result.promptWarnings).toHaveLength(1);
+  });
+
+  it("an absent or malformed opt-in echo is unavailable, never all-false", () => {
+    const absent = projectDaySetupSaveResult({
+      ok: true,
+      day_setup_confirmed: false,
+      prompt_warnings: [
+        "Prompt opt-ins could not be read; preferences are shown as unavailable.",
+      ],
+    });
+    expect(absent.optinsAvailable).toBe(false);
+    expect(absent.optins).toEqual({});
+    expect(absent.optinsRevision).toBe(0);
+    expect(absent.promptWarnings).toHaveLength(1);
+
+    // Present but malformed (missing revision / non-object optins) stays
+    // fail-closed rather than being treated as a readable all-false store.
+    const noRevision = projectDaySetupSaveResult({
+      ok: true,
+      optins: { intention: true },
+    });
+    expect(noRevision.optinsAvailable).toBe(false);
+    expect(noRevision.optins).toEqual({});
+
+    const badOptins = projectDaySetupSaveResult({
+      ok: true,
+      optins: ["intention"],
+      optins_revision: 2,
+    });
+    expect(badOptins.optinsAvailable).toBe(false);
   });
 
   it("builders send only prompt keys (prompt-only / opt-in-only bodies)", () => {

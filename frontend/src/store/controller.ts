@@ -419,7 +419,9 @@ export class Controller {
       this.dispatch({
         type: "PROMPT_DRAFTS_SAVED",
         captures,
-        optins: result.optins,
+        // An unavailable echo must not overwrite known prefs with a fabricated
+        // all-false map; null tells the reducer to keep them unavailable.
+        optins: result.optinsAvailable ? result.optins : null,
         revision: result.optinsRevision,
         warnings: result.promptWarnings,
       });

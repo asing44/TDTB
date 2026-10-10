@@ -78,6 +78,47 @@ def test_captures_only_save_does_not_confirm(client, vault):
     assert body["day_setup"]["intention"] == "synthetic intent"
 
 
+def test_captures_only_save_echoes_clean_optins(client):
+    # Backward compatibility: a clean (absent) store still echoes the all-false
+    # default at revision 0, which the UI hydrates as available.
+    r = client.post("/day-setup", json={"captures": {"intention": "x"}},
+                    headers=_auth(client))
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["optins"] == {
+        "intention": False, "megan_nicety": False, "stoic_intention": False,
+    }
+    assert body["optins_revision"] == 0
+
+
+def test_captures_only_save_with_corrupt_optins_echoes_unavailable(client, vault):
+    """A corrupt opt-in store + captures-only save must not confirm the day,
+    must not fabricate an all-false opt-in echo, and must preserve the bytes."""
+    target = prompt_state.optins_path()
+    target.parent.mkdir(parents=True, exist_ok=True)
+    corrupt = (
+        '{"version": 1, "revision": 0, "optins": {"intention": true},'
+        ' "optins": {}}'
+    )
+    target.write_text(corrupt, encoding="utf-8")
+
+    r = client.post("/day-setup", json={
+        "captures": {"intention": "synthetic intent"},
+    }, headers=_auth(client))
+    assert r.status_code == 200, r.text
+    body = r.json()
+    # The echo omits the opt-in block: prefs stay unavailable, never all-false.
+    assert "optins" not in body
+    assert "optins_revision" not in body
+    assert main_mod._PROMPT_OPTINS_READ_WARNING in body.get("prompt_warnings", [])
+    # No day confirmation and no write of the corrupt bytes.
+    assert body["day_setup_confirmed"] is False
+    assert runstate.is_day_setup_confirmed(vault, _today()) is False
+    assert target.read_text(encoding="utf-8") == corrupt
+    # The draft still saved.
+    assert _drafts() == {"intention": "synthetic intent"}
+
+
 def test_optins_only_save_does_not_confirm(client, vault):
     r = client.post("/day-setup", json={
         "optins": {"intention": True, "megan_nicety": False,

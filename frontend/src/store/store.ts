@@ -335,7 +335,7 @@ export type Action =
   | {
       type: "PROMPT_DRAFTS_SAVED";
       captures: Captures;
-      optins: Record<string, boolean>;
+      optins: Record<string, boolean> | null;
       revision: number;
       warnings: string[];
     }
@@ -524,8 +524,10 @@ export function reducer(s: AppState, a: Action): AppState {
         ...staleShadow(s),
       };
     case "PROMPT_DRAFTS_SAVED":
-      // Prompt-only save: update drafts (and the opt-in echo the route always
-      // returns) but NEVER touch the confirmation flag.
+      // Prompt-only save: update drafts but NEVER touch the confirmation flag.
+      // The opt-in echo hydrates only when the server exposed a readable
+      // store; a null echo keeps prefs unavailable rather than overwriting
+      // saved preferences with a fabricated all-false map.
       return {
         ...s,
         daySetup: {
@@ -536,11 +538,13 @@ export function reducer(s: AppState, a: Action): AppState {
             stoic: a.captures.stoic,
           },
         },
-        promptOptins: {
-          optins: normalizePromptOptins(a.optins),
-          revision: a.revision,
-          available: true,
-        },
+        promptOptins: a.optins === null
+          ? { ...s.promptOptins, available: false }
+          : {
+              optins: normalizePromptOptins(a.optins),
+              revision: a.revision,
+              available: true,
+            },
         promptSave: {
           phase: "saved",
           error: null,

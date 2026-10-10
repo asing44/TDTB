@@ -670,6 +670,7 @@ export class FixtureAdapter implements Adapter {
     return {
       ok: true,
       daySetupConfirmed: false,
+      optinsAvailable: true,
       optins: { ...this.promptOptins },
       optinsRevision: this.promptOptinsRevision,
       promptWarnings: [],

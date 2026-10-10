@@ -2053,14 +2053,23 @@ def _save_prompt_drafts(today: date, captures: dict[str, Any] | None) -> None:
         ) from exc
 
 
-def _save_prompt_optins(body: DaySetupRequest) -> tuple[dict[str, bool], int]:
+def _save_prompt_optins(
+    body: DaySetupRequest,
+) -> tuple[dict[str, bool] | None, int | None, list[str]]:
     """Persist the additive opt-in map with optimistic concurrency.
 
-    Returns the persisted ``(map, revision)`` to echo; with no opt-ins in the
-    body, echoes the current local store. A missing revision is a 422 and a
-    stale revision is a 409 carrying both revisions. Messages are content-free."""
+    Returns the persisted ``(map, revision, warnings)`` to echo. With no
+    opt-ins in the body, echoes the current local store through the metadata
+    reader: an unreadable store yields ``(None, None, [warning])`` so the echo
+    omits the opt-in block (prefs stay unavailable) instead of fabricating an
+    all-false store that would overwrite saved preferences. A missing revision
+    is a 422 and a stale revision is a 409 carrying both revisions. Messages
+    are content-free."""
     if body.optins is None:
-        return _read_prompt_optins()
+        metadata, warnings = _read_prompt_optins_metadata()
+        if metadata is None:
+            return None, None, warnings
+        return dict(metadata["optins"]), int(metadata["revision"]), warnings
     if body.optins_revision is None:
         raise HTTPException(
             status_code=422,
@@ -2114,7 +2123,7 @@ def _save_prompt_optins(body: DaySetupRequest) -> tuple[dict[str, bool], int]:
                 ),
             },
         ) from exc
-    return dict(saved.optins), saved.revision
+    return dict(saved.optins), saved.revision, []
 
 
 def _authoritative_day_semantics(
@@ -4723,7 +4732,7 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
         # Local prompt stores are the only prompt target; the legacy runstate
         # keys stay INERT and are never written here.
         _save_prompt_drafts(today, body.captures)
-        optins_map, optins_revision = _save_prompt_optins(body)
+        optins_map, optins_revision, optins_warnings = _save_prompt_optins(body)
         normalization_overrides = dict(existing_setup)
         if "day_preset" in present:
             normalization_overrides["day_preset"] = body.day_preset
@@ -4860,15 +4869,19 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
 
             state = runstate.update_runstate(vault, today, _save_day_setup)
         day_setup_echo, echo_warnings = _day_setup_with_prompts(state, today)
-        prompt_warnings = [*prompt_warnings, *echo_warnings]
+        prompt_warnings = [*prompt_warnings, *echo_warnings, *optins_warnings]
         response: dict[str, Any] = {
             "ok": True,
             "re_included": sorted(re_included),
             "day_setup_confirmed": confirmed,
             "day_setup": {k: day_setup_echo.get(k) for k in _DAY_SETUP_KEYS},
-            "optins": optins_map,
-            "optins_revision": optins_revision,
         }
+        # U5: an unreadable opt-in store omits the echo block (the frontend then
+        # keeps prefs unavailable) rather than echoing a fabricated all-false
+        # store that would overwrite saved preferences.
+        if optins_map is not None:
+            response["optins"] = optins_map
+            response["optins_revision"] = optins_revision
         if prompt_warnings:
             response["prompt_warnings"] = prompt_warnings
         return response

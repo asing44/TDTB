@@ -375,10 +375,13 @@ export interface PromptExportOutcome {
 }
 
 /** Result of a prompt-only or opt-in-only POST /day-setup. `daySetupConfirmed`
-    is the server's explicit flag — a prompt-only save never confirms. */
+    is the server's explicit flag — a prompt-only save never confirms.
+    `optinsAvailable` is false when the server omitted the opt-in block (an
+    unreadable store); the echo must then never be hydrated as all-false. */
 export interface DaySetupSaveResult {
   ok: boolean;
   daySetupConfirmed: boolean;
+  optinsAvailable: boolean;
   optins: Record<string, boolean>;
   optinsRevision: number;
   promptWarnings: string[];
