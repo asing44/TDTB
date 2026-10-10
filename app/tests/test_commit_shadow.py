@@ -6,6 +6,7 @@ dispatch, and — the core no-write guarantee — that the vault tree is
 untouched after a shadow commit call."""
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 
@@ -16,6 +17,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 import main as main_mod  # noqa: E402
 import runstate  # noqa: E402
 import commit  # noqa: E402
+import commit_run  # noqa: E402
 import shadow  # noqa: E402
 from datetime import date  # noqa: E402
 
@@ -919,6 +921,49 @@ class TestPlacementPastSurvivesInManifest:
         assert not [e for e in entries if e.name == "Press"]
 
 
+class _StubTodoistClient:
+    """Context-managed stand-in for TodoistClient; the commit path never calls it."""
+
+    def __init__(self, token):
+        self.token = token
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+
+def _run_commit_run_live(monkeypatch, tmp_path, digest, sequence) -> dict:
+    """Drive ``commit_run.run``'s live commit with every I/O seam stubbed and
+    return the intents and plan body that the commit writer received."""
+    seq_file = tmp_path / "sequence.json"
+    seq_file.write_text(json.dumps(sequence), encoding="utf-8")
+    captured: dict = {}
+
+    def _run_commit(intents, **kwargs):
+        captured["intents"] = intents
+        captured["plan_body"] = kwargs["plan_body"]
+        return []
+
+    monkeypatch.setattr(commit_run.shadow_run, "_gather_pool_and_assigned",
+                        lambda vault, today: ([], []))
+    monkeypatch.setattr(commit_run.main_mod, "build_digest", lambda *a, **k: digest)
+    monkeypatch.setattr(commit_run.shadow, "gather_live_state", lambda config, vault: {
+        "todoist_tasks": [], "calendar_events": [], "vault_frontmatter": {},
+        "daily_note_text": "# TDTB Plan\n",
+    })
+    monkeypatch.setattr(commit_run.calendar_bridge, "shared_store", lambda: None)
+    monkeypatch.setattr(commit_run, "_resolve_calendar_ids",
+                        lambda config, store: {"⬜ Blocks": "cal-blocks"})
+    monkeypatch.setattr(commit_run.shadow.todoist_client, "load_token", lambda path: "token")
+    monkeypatch.setattr(commit_run.shadow.todoist_client, "TodoistClient", _StubTodoistClient)
+    monkeypatch.setattr(commit_run.commit, "run_commit", _run_commit)
+
+    assert commit_run.run(tmp_path, str(seq_file), do_commit=True) == 0
+    return captured
+
+
 class TestCapacitiesRowsAreCalendarOnly:
     """U4 S6b: a Capacities assigned row is plan-only. Its manifest footprint is
     one calendar create-event on the existing ⬜ Blocks class, with no Todoist
@@ -933,12 +978,12 @@ class TestCapacitiesRowsAreCalendarOnly:
     }
     SEQ = {"sequence": [{"id": "Ship project", "start": "09:00", "end": "10:00", "zone": "any"}]}
 
-    def test_capacities_row_emits_only_calendar_entry(self):
+    def test_capacities_row_emits_only_calendar_entry(self, monkeypatch, tmp_path):
         entries = shadow.build_plan_manifest({"assigned": [dict(self.CAP_ITEM)]}, self.SEQ, {})
         assert [e for e in entries if e.system == "todoist"] == []
         assert [e.step for e in entries if e.step == "C"] == []
-        # Step B is the commit-level plan section, not a per-row action; its
-        # suppression is an open decision (see the S6b report).
+        # Step B is the commit-level plan section and is still written; only its
+        # Capacities lines are omitted from the rendered body (asserted below).
         assert [e.step for e in entries if e.system == "vault"] == ["B"]
         calendar = [e for e in entries if e.system == "calendar"]
         assert len(calendar) == 1
@@ -947,6 +992,31 @@ class TestCapacitiesRowsAreCalendarOnly:
             "D", "create-event", "Ship project", "Ship project")
         assert (cal.time, cal.duration_min, cal.routing) == ("09:00", 60, "⬜ Blocks")
         assert cal.capacities is True
+        # Capacities-only plan: Step B keeps its place, its Capacities line is
+        # omitted, and the body matches a plan with zero sequenced rows.
+        captured = _run_commit_run_live(
+            monkeypatch, tmp_path, {"assigned": [dict(self.CAP_ITEM)]}, self.SEQ)
+        assert captured["plan_body"] == "- (no sequenced items)"
+        assert "Ship project" not in captured["plan_body"]
+        assert [i.step for i in captured["intents"] if i.surface == "vault"] == ["B"]
+
+    def test_mixed_plan_body_omits_capacities_row_and_keeps_todoist_row(
+            self, monkeypatch, tmp_path):
+        """S6b Step B leak: the daily-note body must not carry a Capacities line,
+        while a mixed plan still renders its Todoist row and still writes Step B."""
+        digest = {"assigned": [
+            dict(self.CAP_ITEM),
+            {"name": "LOOTS", "path": "todoist://T1", "source": "todoist", "todoist_id": "T1"},
+        ]}
+        sequence = {"sequence": [
+            {"id": "Ship project", "start": "09:00", "end": "10:00", "zone": "any"},
+            {"id": "LOOTS", "start": "10:00", "end": "10:30", "zone": "any"},
+        ]}
+        captured = _run_commit_run_live(monkeypatch, tmp_path, digest, sequence)
+        assert "Ship project" not in captured["plan_body"]
+        assert captured["plan_body"] == "- 10:00–10:30 LOOTS"
+        assert [i.name for i in captured["intents"] if i.surface == "todoist"] == ["LOOTS"]
+        assert [i.step for i in captured["intents"] if i.surface == "vault"] == ["B"]
 
     def test_capacities_row_with_mint_like_name_keeps_blocks_class(self):
         item = dict(self.CAP_ITEM, name="Minting", path="capacities://space-1/object-2")

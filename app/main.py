@@ -5154,7 +5154,13 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
         except commit.CommitPlanError as exc:
             raise HTTPException(status_code=422, detail=f"plan refused: {exc}") from exc
 
-        plan_body = _render_plan_body(body.sequence)
+        # S6b: Capacities rows are calendar-only, so the Step B body omits them.
+        capacities_ids = {e.name for e in manifest if e.capacities}
+        body_rows = [
+            row for row in body.sequence.get("sequence", [])
+            if row.get("id") not in capacities_ids
+        ]
+        plan_body = _render_plan_body({**body.sequence, "sequence": body_rows})
         if app.state.build_commit_clients:
             report = orchestrate.run_orchestrated(
                 intents, todoist=injected_todoist, store=store, vault_root=vault,
