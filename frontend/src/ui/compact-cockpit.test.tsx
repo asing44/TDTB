@@ -13,9 +13,9 @@ describe("compact planning cockpit", () => {
     const h = makeHarness("ready");
     const r = h.ui(<App />);
 
-    expect(r.getByRole("region", { name: "Today's work" })).toBeTruthy();
-    expect(r.getByText("Assigned items only · shape today's copy here; assignment stays upstream.")).toBeTruthy();
-    expect(r.container.querySelector(".allocation-meter")).toBeTruthy();
+    expect(r.getByRole("region", { name: "Assigned this morning" })).toBeTruthy();
+    expect(r.getByText("Edits here affect today only. Mark complete writes back to the source.")).toBeTruthy();
+    expect(r.container.querySelector(".cap-card")).toBeTruthy();
     expect(r.container.querySelector('[aria-label="Agenda"]')).toBeNull();
     expect(r.container.querySelector(".placement")).toBeNull();
   });
@@ -32,85 +32,89 @@ describe("compact planning cockpit", () => {
     expect(r.container.querySelector(".cockpit__main > .calendar-impact")).toBeNull();
     expect(calendar.classList.contains("calendar-impact--inline")).toBe(true);
 
-    // Visible rows: the review disclosure is gone; the list renders directly.
+    // Visible blocks: the review disclosure is gone; the timeline renders
+    // directly with both in-frame rows placed.
     expect(calendar.querySelector(".calendar-impact__review")).toBeNull();
-    expect(calendar.querySelector(".calendar-impact__list")).toBeTruthy();
-    expect(queue.querySelectorAll(".calendar-impact__row").length).toBe(2);
+    expect(calendar.querySelector(".timeline")).toBeTruthy();
+    expect(
+      queue.querySelectorAll(
+        ".timeline__lane--calendar .timeline__block, .timeline__lane--work .timeline__block",
+      ).length,
+    ).toBe(2);
     expect(r.getByText("Trinoor Standup")).toBeTruthy();
     expect(r.getByText("PHEP sync (Vlad)")).toBeTruthy();
   });
 
-  it("presents the inline calendar as a collapsible band, expanded by default (S5 round 2)", () => {
+  it("renders the inline timeline expanded by default and never writes on selection (S5 round 2)", () => {
     const h = makeHarness("ready");
     const save = vi.spyOn(h.controller, "saveAnchoredOverride").mockResolvedValue();
     const r = h.ui(<App />);
     const queue = r.container.querySelector(".queue")!;
     const calendar = queue.querySelector(".calendar-impact")!;
-    const header = calendar.querySelector(".band") as HTMLButtonElement;
 
-    // Expanded by default: the header announces the state and the rows render.
-    expect(header).toBeTruthy();
-    expect(header.getAttribute("aria-expanded")).toBe("true");
-    expect(header.getAttribute("aria-label")).toBe(
-      "Band Calendar impact, expanded, 2 rows, activate to collapse",
-    );
-    expect(calendar.querySelector(".calendar-impact__list")).toBeTruthy();
-    expect(queue.querySelectorAll(".calendar-impact__row").length).toBe(2);
+    // The retired band disclosure is gone; the timeline renders its blocks
+    // directly, expanded by default.
+    expect(calendar.querySelector(".band")).toBeNull();
+    expect(calendar.querySelector(".timeline")).toBeTruthy();
+    expect(
+      queue.querySelectorAll(
+        ".timeline__lane--calendar .timeline__block, .timeline__lane--work .timeline__block",
+      ).length,
+    ).toBe(2);
 
-    // Collapsing hides the rows and announces the hidden count...
-    fireEvent.click(header);
-    expect(header.getAttribute("aria-expanded")).toBe("false");
-    expect(header.getAttribute("aria-label")).toBe(
-      "Band Calendar impact, collapsed, 2 rows hidden, activate to expand",
-    );
-    expect(header.textContent).toMatch(/collapsed/i);
-    expect(header.textContent).toMatch(/hidden/i);
-    expect(calendar.querySelector(".calendar-impact__list")).toBeNull();
-    expect(queue.querySelectorAll(".calendar-impact__row").length).toBe(0);
-
-    // ...and a disclosure-only collapse never writes accounting state.
-    expect(save).not.toHaveBeenCalled();
-
-    // Expanding restores the rows and the accessible state.
-    fireEvent.click(header);
-    expect(header.getAttribute("aria-expanded")).toBe("true");
-    expect(queue.querySelectorAll(".calendar-impact__row").length).toBe(2);
+    // Selecting a block is presentation-only: it opens the detail row but
+    // never writes accounting state.
+    fireEvent.click(r.getByRole("button", { name: /Trinoor Standup/ }));
+    expect(calendar.querySelector(".timeline__detail")).toBeTruthy();
     expect(save).not.toHaveBeenCalled();
   });
 
-  it("leads the priority-band stack with the calendar band, before the urgency bands (S5 round 2)", () => {
+  it("leads the priority-band stack with the calendar timeline, before the urgency bands (S5 round 2)", () => {
     const h = makeHarness("ready");
     const r = h.ui(<App />);
     const queue = r.container.querySelector(".queue")!;
-    const calendarHeader = queue.querySelector(".calendar-impact .band")!;
+    const calendar = queue.querySelector(".calendar-impact")!;
     const urgencyHeaders = Array.from(
       queue.querySelectorAll(".queue__band .band"),
     ) as Element[];
 
-    // The calendar band is the first band in the priority flow, and every
-    // urgency band follows it in BANDS order.
+    // The calendar timeline precedes every urgency band in the priority flow.
     expect(urgencyHeaders.length).toBeGreaterThan(0);
     for (const band of urgencyHeaders) {
       expect(
-        calendarHeader.compareDocumentPosition(band) &
+        calendar.compareDocumentPosition(band) &
           Node.DOCUMENT_POSITION_FOLLOWING,
       ).toBeTruthy();
     }
   });
 
-  it("keeps the inline calendar band in chronological order (S5)", () => {
+  it("keeps blocks in each lane in chronological order (S5)", () => {
     const h = makeHarness("ready", (scenario) => {
-      scenario.inputs.anchored = [...scenario.inputs.anchored].reverse();
+      scenario.inputs.anchored = [
+        ...scenario.inputs.anchored.filter((a) => a.kind !== "calendar"),
+        {
+          id: "Later sync", name: "Later sync", kind: "calendar",
+          start: "15:00", end: "15:30", durationMin: 30, overlapAllowed: false,
+          on: true, skipToday: false, calendarId: "later", calendarTitle: "Personal",
+          capacityClass: "fixed",
+        },
+        {
+          id: "Earlier sync", name: "Earlier sync", kind: "calendar",
+          start: "10:00", end: "10:30", durationMin: 30, overlapAllowed: false,
+          on: true, skipToday: false, calendarId: "earlier", calendarTitle: "Personal",
+          capacityClass: "fixed",
+        },
+      ];
     });
     const r = h.ui(<App />);
     const queue = r.container.querySelector(".queue")!;
     const names = (
       Array.from(
-        queue.querySelectorAll(".calendar-impact__row .calendar-impact__event strong"),
+        queue.querySelectorAll(".timeline__lane--calendar .timeline__block-name"),
       ) as HTMLElement[]
     ).map((el) => el.textContent);
 
-    expect(names).toEqual(["Trinoor Standup", "PHEP sync (Vlad)"]);
+    expect(names).toEqual(["Earlier sync", "Later sync"]);
   });
 
   it("keeps ignored-only calendar evidence inline without rendering an empty list", () => {
@@ -158,10 +162,14 @@ describe("compact planning cockpit", () => {
     const r = h.ui(<App />);
     const queue = r.container.querySelector(".queue")!;
 
-    expect(queue.querySelector(".center-note")).toBeTruthy();
+    expect(queue.querySelector(".queue__quiet")).toBeTruthy();
     const calendar = queue.querySelector(".calendar-impact")!;
     expect(calendar.classList.contains("calendar-impact--inline")).toBe(true);
-    expect(queue.querySelectorAll(".calendar-impact__row").length).toBe(2);
+    expect(
+      queue.querySelectorAll(
+        ".timeline__lane--calendar .timeline__block, .timeline__lane--work .timeline__block",
+      ).length,
+    ).toBe(2);
   });
 
   it("puts the committed execution view before the planning surface", () => {
@@ -179,15 +187,17 @@ describe("compact planning cockpit", () => {
     expect(queue.contains(calendar)).toBe(true);
   });
 
-  it("keeps source-degraded planning on the no-write fallback path", () => {
+  it("blocks sequencing and commit while sources are degraded, with no retired fallback copy", () => {
     const h = makeHarness("ready", (scenario) => {
       scenario.inputs.sourceHealth = "degraded";
     });
     const r = h.ui(<ActionDock />);
-    const sequence = r.getByText(/^Auto sequence \d+ blk$/).closest("button") as HTMLButtonElement;
+    const sequence = r.getByText(/^Sequence & commit \d+ blk$/).closest("button") as HTMLButtonElement;
 
     expect(sequence.disabled).toBe(true);
-    expect(r.getByRole("alert").textContent).toMatch(/Sources degraded/);
+    expect(r.getByRole("alert").textContent).toMatch(/Sources degraded — sequencing and commit are blocked until the read is healthy\./);
+    // The alert must not advertise the retired copy-prompt fallback.
+    expect(r.getByRole("alert").textContent).not.toMatch(/copy prompt|fallback/i);
     // U5: the manual copy-prompt bypass is retired; the dock states that
     // prompts stay local and export only on an opted-in Commit.
     expect(r.queryByRole("button", { name: "Copy plan prompt for an external LLM" })).toBeNull();

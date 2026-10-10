@@ -171,13 +171,13 @@ describe("Capacities partial coverage", () => {
 });
 
 describe("budget spent", () => {
-  it("dock drops to manual-only messaging and disables Auto sequence", () => {
+  it("dock drops to manual-only messaging and disables Sequence & commit", () => {
     const { ui } = makeHarness("ready", (sc) => {
       sc.ledger = { ...sc.ledger, spent: 4, remaining: 0 };
     });
     const { getByText } = ui(<ActionDock />);
     expect(getByText(/Billed budget spent — manual layout stays available/)).toBeTruthy();
-    const btn = getByText(/^Auto sequence \d+ blk$/).closest("button") as HTMLButtonElement;
+    const btn = getByText(/^Sequence & commit \d+ blk$/).closest("button") as HTMLButtonElement;
     expect(btn.disabled).toBe(true);
   });
 
@@ -242,8 +242,8 @@ describe("sequence failure", () => {
     // always-visible signal.
     fireEvent.click(getByText(/1 blocking/).closest("button") as Element);
     expect(getByText(/judgment call timed out after 90s/)).toBeTruthy();
-    // Manual recovery stays available: Auto sequence again, budget permitting.
-    const btn = getByText(/^Auto sequence \d+ blk$/).closest("button") as HTMLButtonElement;
+    // Manual recovery stays available: Sequence & commit again, budget permitting.
+    const btn = getByText(/^Sequence & commit \d+ blk$/).closest("button") as HTMLButtonElement;
     expect(btn.disabled).toBe(false);
   });
 });
@@ -251,7 +251,7 @@ describe("sequence failure", () => {
 describe("stale date rollover", () => {
   it("a new valid_date resets the cockpit to setup with no staged plan", () => {
     const { ui, store, scenario } = makeHarness("sequenced");
-    const { getByText, queryByText } = ui(<App />);
+    const { getByText, getAllByText, queryByText } = ui(<App />);
     expect(queryByText(/Sequence staged and valid|Preview the exact writes/)).toBeTruthy();
     act(() => {
       const rolled = structuredClone(scenario.inputs);
@@ -267,7 +267,7 @@ describe("stale date rollover", () => {
     expect(s.sequence).toBeNull();
     expect(s.shadow).toBeNull();
     expect(s.overrides).toEqual({});
-    expect(getByText(/19 Jul/)).toBeTruthy();
+    expect(getAllByText(/19 Jul/).length).toBeGreaterThan(0);
     expect(getByText(/Confirm your day frame/)).toBeTruthy();
   });
 });

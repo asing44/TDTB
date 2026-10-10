@@ -24,7 +24,9 @@ export type ScenarioName =
   | "sequenced"
   | "conflict"
   | "commit-preview"
-  | "verified";
+  | "verified"
+  | "over"
+  | "sparse";
 
 export interface Scenario {
   name: ScenarioName;
@@ -316,6 +318,57 @@ export function makeScenario(name: ScenarioName): Scenario {
       s.ledger = { today: VALID_DATE, spent: 2, cap: 4, remaining: 2 };
       return s;
     }
+    case "over": {
+      // U9: an over-capacity day — the fixed commitments (calendar, work,
+      // anchors, habits) already exceed the frame, and the chosen tasks pile
+      // on top. The capacity card must read over (red headline, hatched
+      // overflow tail, marker inside the bar) rather than rescaling.
+      const s = base("over", "Over capacity — fixed time exceeds the day");
+      s.inputs.daySetup = { ...confirmedSetup };
+      s.staged.daySetupConfirmed = true;
+      s.inputs.capacity = {
+        ...cap(13),
+        total: 10,
+        fixed: 8,
+        anchored: 5,
+        habits: 1,
+        buffer: 0,
+        free: -17,
+        overassigned: true,
+        availableForSelection: 0,
+        remaining: "⚠ 8hr 30min over · 17 blk",
+        ratio: "27 / 10 blk",
+      };
+      return s;
+    }
+    case "sparse": {
+      // KTD13: reproduce the live state Adam saw — a stale artifact, vault
+      // off, no assigned rows, degraded sources, and the legacy Capacities
+      // intake (no direct snapshot block). The fixture adapter must not
+      // inject its synthetic direct intake here (see applyCapacitiesIntake).
+      const s = base("sparse", "Sparse day — stale artifact, degraded sources");
+      s.inputs.assigned = [];
+      s.inputs.staleAssigned = [
+        {
+          name: "Old quarterly review",
+          path: "50 - Operations/Projects/Old quarterly review.md",
+          reason: "no activity in 21 days",
+        },
+        {
+          name: "Draft launch brief",
+          path: "50 - Operations/Pursuits/Draft launch brief.md",
+          reason: "deadline has passed",
+        },
+      ];
+      s.inputs.sourceHealth = "degraded";
+      s.inputs.sourceWarnings = [
+        "Todoist read failed (timeout) — task list may be incomplete",
+        "Capacities refresh required — no direct snapshot is installed",
+      ];
+      s.inputs.sourceCounts = { vault: 0, todoist: 0, calendar: 0 };
+      s.inputs.capacity = cap(0);
+      return s;
+    }
   }
 }
 
@@ -326,4 +379,6 @@ export const SCENARIO_NAMES: ScenarioName[] = [
   "conflict",
   "commit-preview",
   "verified",
+  "over",
+  "sparse",
 ];

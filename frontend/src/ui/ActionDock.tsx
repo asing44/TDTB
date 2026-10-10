@@ -68,7 +68,7 @@ export function ActionDock() {
   };
 
   return (
-    <footer class="dock" aria-label="Actions">
+    <div class="dock">
       <span class="dock__status" role="status">
         {statusText[state]}
       </span>
@@ -76,7 +76,6 @@ export function ActionDock() {
       {!sourcesHealthy && (
         <div class="dock__health" role="alert">
           Sources {s.inputs.sourceHealth} — sequencing and commit are blocked until the read is healthy.
-          <span>Copy prompt remains available as a no-write fallback.</span>
         </div>
       )}
 
@@ -93,7 +92,7 @@ export function ActionDock() {
           the unconfirmed state is called out in the button's own sub-label,
           not only in the status line. */}
       <button
-        class={`btn ${state === "setup" ? "btn--primary" : ""}`}
+        class={`btn dock__setup ${state === "setup" ? "btn--primary" : ""}`}
         onClick={openSetup}
         aria-label="Open day setup"
       >
@@ -143,7 +142,7 @@ export function ActionDock() {
                   : "Requires confirmed setup and billed budget"
             }
           >
-            Auto sequence {formatBlockAmount(spend)}
+            Sequence & commit {formatBlockAmount(spend)}
             <span class="btn__sub">
               1 billed call · {s.ledger?.remaining ?? 0} left today
             </span>
@@ -206,6 +205,6 @@ export function ActionDock() {
         </button>
       )}
       </div>
-    </footer>
+    </div>
   );
 }

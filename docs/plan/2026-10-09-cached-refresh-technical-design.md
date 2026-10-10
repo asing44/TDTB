@@ -38,11 +38,15 @@ Adopt the source Product Contract's `### Requirements` in full: R1–R18 acquisi
 
 **Confirmed clarification of R22.** Prompt due dates use the operator's local civil calendar date at Commit, even before the 02:00 TDTB planning-day rollover. Prompt draft and task identity remain keyed to the logical planning day. (session-settled: user-approved — chosen over logical-day due dates: exports are due on the current calendar date.) This clarification should be carried into the approved TDTB plan evidence during root materialization.
 
+**Confirmed change to R20b (2026-10-10).** The copy-prompt action ("paste into any LLM") stays retired as U5 (`ae81772`) left it; Plan tasks has no copy-prompt control, despite the mockup footer. (session-settled: user-directed — chosen over restoring it as a secondary footer action.) Product Contract preservation: changed R20b — copy-prompt removed by operator decision; all other R20 behavior unchanged.
+
+**Confirmed reading of R20 (2026-10-10).** "Not final visual design" means mockup example data, names, counters, and pixel values are illustrative. The screen *composition* is binding: stepper header, capacity headline with one segmented bar, Already-placed timeline, grouped compact task table, and one footer for Plan tasks, plus the equivalent regions for Set up day and Connections. A cockpit that passes behavior tests but renders a different composition does not satisfy R20. (session-settled: user-directed — the landed rail-and-card layout was rejected on sight.)
+
 **Preservation interpretation.** R22 explicitly replaces only prompt-bearing daily-note/vault writes; R19 preserves other existing write paths. R27's unmapped Completion means unavailable, not an inferred unknown state. R29's mapped but undetermined completion is unknown. R31/R32 allow explicit warning-candidate selection, not automatic eligibility, and never bypass a known hard exclusion.
 
 ### Scope Boundaries
 
-The source Product Contract's boundaries remain in force. Todoist rows and habit calculations retain their existing artifact intake. No new Capacities writes, autonomous schedule, TickTick integration, complete vault-reader deletion, calendar-class redesign, or general UI redesign is included.
+The source Product Contract's boundaries remain in force. Todoist rows and habit calculations retain their existing artifact intake. No new Capacities writes, autonomous schedule, TickTick integration, complete vault-reader deletion, calendar-class redesign, or general UI redesign is included. Re-composing the three screens to the mockup baseline (R20) is in scope and is not a "general UI redesign"; changing the design tokens, palette, typography scale, or dark-mode theme beyond what that composition needs is out of scope.
 
 #### Deferred to Follow-Up Work
 
@@ -63,7 +67,10 @@ Recurring provider/resumption failures and harness tuning remain separate invest
 - KTD7. **Capacity/source warnings do not become write authorization.** Audit frontend and server gates individually. Apply R24's fallback specifically to Capacities availability and overcapacity; do not waive calendar timing integrity, day-setup confirmation, native pins, overlap grants, snapshot checks, single-flight locking, or source identity validation. Unknown capacity/absent reliable calendar data is not the same as a measured overcapacity day. Applies R24/R25.
 - KTD8. **Prompt draft, preferences, and export receipts have separate machine-local lifecycles.** Add versioned atomic stores under the existing state-directory abstraction. Drafts and receipts use logical day plus prompt key; opt-ins are undated. Use the server's persisted draft and choice at the manifest boundary, not unchecked request text. Remove B6 prompt-frontmatter output without retiring unrelated vault operations. Task creation remains Commit-only and excluded from calendar routing/duration. Applies R22/R23/R36–R39 (instantiates KD6/KD8).
 - KTD9. **Prompt exports have explicit per-action receipts.** A known task ID drives updates, completed/deleted checks, and explicit re-export. Persist success immediately after each confirmed action so retry skips it. An ambiguous create is recorded as uncertain, not successful or deduplicated by content. Offer the operator's immediate retry with duplicate-risk acknowledgment under R39. Store the original civil due date with a confirmed export; a repeat logical-day Commit updates that same task using the current civil due date when permitted. Prompt tasks route to Inbox; apply PHEP to other Todoist export creation without moving existing upstream tasks between projects. Applies R22/R36–R39.
-- KTD10. **UI integration preserves the existing engine.** Build Set up day, Plan tasks, and Connections around current components/controller, with mockups as layout/behavior reference. Retain copy-prompt, drag/accessibility interactions, duration overrides, native fixed timing, completion and undo behavior. Replace warning-text parsing with structured Capacities job/coverage fields in the API adapter. Applies R7/R16/R20/R24/R25.
+- KTD10. **UI integration replaces the view layer, not the engine.** Re-compose Set up day, Plan tasks, and Connections to the mockup baseline. The store, controller, adapters, model selectors, and wire contracts stay the source of truth, and existing behavior tests keep passing or are re-pointed to the new structure, never deleted to make room. Retain drag/accessibility interactions, duration overrides, native fixed timing, completion, and undo. Copy-prompt stays retired (R20b change). Replace warning-text parsing with structured Capacities job/coverage fields in the API adapter. Applies R7/R16/R20/R24/R25.
+- KTD11. **The left rail and the tab strip are retired; a stepper header plus one footer replaces them.** Today the rail carries capacity, keys, setup chips, source health, and call counts, and `ScreenNav` floats above it as a tab pill. In the mockup these move into page regions: the step state (Set up day ✓ / Plan tasks / Commit) and the source-health pill with Retry go in the header, Connections is a header link, capacity becomes the headline card, the keyboard legend becomes a hint row above the task table, and readiness becomes the footer's blocked reason. The existing `ui.screen` state remains the routing source. Step 3 (Commit) maps onto the current approval/commit flow, not a new screen. (session-settled: user-directed — chosen over polishing the rail layout: the 5ad346d polish pass was rejected as the wrong target.) Applies R20/R20a–c.
+- KTD12. **Task grouping maps onto the existing band and state model, without a new allocator.** "Critical" is the Critical band. "When there's room" merges the High and Everything-else bands in the view and keeps their order for trimming. "Fixed" is the scheduled/native-fixed set. "Out today" combines Excluded today and Dropped today, collapsible, with Include today. The trim plan and sequencing order in the model stay unchanged; only grouping labels and section membership change in the view. Applies R20b.
+- KTD13. **Visual acceptance against the mockup is a gate, not a review nicety.** Every UI unit ships with fixture screenshots at 1500×1000 and 900×1000. Each is checked region by region against a reference render of the matching mockup screen, plus a sparse fixture that reproduces the live state Adam saw (stale artifact, vault off, no assigned rows, degraded sources). jsdom tests cannot catch layout, so a unit whose screenshots show a missing region, overlap, clipping, or a dead area fails even when the tests pass. Live acceptance is a GET-only screenshot after an attended `restart-live.sh`. (session-settled: user-directed — the U1–U5 landing passed 4,000+ tests and two reviews without anyone looking at the render.) Applies R20.
 
 ### High-Level Technical Design
 
@@ -149,6 +156,22 @@ flowchart TB
   UPDATE --> RESULT
 ```
 
+**Plan tasks screen composition (directional, top to bottom; KTD11)**
+
+```text
+┌ header ── date · day kind · frame ─ [✓ Set up day]─[2 Plan tasks]─[3 Commit] ─ (source pill · Retry) ─ Connections ┐
+│ section title + scope note ("Edits here affect today only…")                                                       │
+│ CAPACITY CARD   headline (Over by / left) · one-line cause · one segmented bar + capacity marker · legend · Details │
+│ ALREADY PLACED  hour axis over the day frame · lanes: Calendar / Work / Anchors · selected-block detail row · note  │
+│ hint row        hover/focus actions · C E D ←→ ↑↓ · today-only scope note                                          │
+│ FIT TODAY       Critical │ When there's room   (row: Assigned · title+source tag · due · slider+dur · actions)     │
+│ FIXED           native/scheduled rows with Protected · Allow move                                                  │
+│ OUT TODAY       excluded + dropped, collapsible, Include today                                                     │
+└ footer ── ← Day setup · blocked reason ───────────────────────────────── [Sequence & commit <dur> · call budget] ┘
+```
+
+Set up day (U12) and Connections (U13) share the same header and footer frame and swap only the body regions.
+
 ### Implementation Constraints and Risks
 
 The API's content-read limit is 30 requests/60 seconds; listings have separate provider limits and page cost. Use one shared endpoint-aware pacer, honor reset/retry headers and 429 responses, and test with a fake clock. Static per-refresh budgets and producer coverage cursors are not complete-result pacing. Bound retries and surface terminal errors rather than waiting indefinitely. Cache failure must never be represented as a freshly read value.
@@ -157,7 +180,7 @@ The existing server commit path validates source identity from a dated digest in
 
 ### Deferred Implementation Details
 
-Exact route/helper names, safe storage capacity thresholds, retry-count tuning, and detailed visual spacing are determined within units. Measure warm refresh latency rather than claiming the approximate target from mocks. No launch-blocking product question remains; credential provisioning, approved baseline/worktree, and required policy checks must be resolved before implementation begins.
+Exact route/helper names, safe storage capacity thresholds, and retry-count tuning are determined within units. Detailed visual spacing is also settled within units, but always judged against the reference renders (KTD13), not chosen freely. Whether the capacity headline and durations display in blocks (current) or hours and minutes (mockup) is a non-blocking open question. Keep the current block formatter until the operator chooses. Measure warm refresh latency rather than claiming the approximate target from mocks. No launch-blocking product question remains; credential provisioning, approved baseline/worktree, and required policy checks must be resolved before implementation begins.
 
 ---
 
@@ -279,29 +302,107 @@ Exact route/helper names, safe storage capacity thresholds, retry-count tuning, 
 - Forged draft/task ID or malformed receipt fails safely; unrelated existing Todoist tasks are not moved between projects.
 **Verification:** Fake-provider integration demonstrates per-action receipts and zero unintended writer actions.
 
-### U7. Integrate the approved three-screen flow
+### U7. Page frame: stepper header, footer, and visual baseline
 
-**Goal:** Present the new behavior through Set up day, Plan tasks, and Connections without replacing planning engines.
-**Requirements:** R7/R16/R20/R22/R23/R24/R26–R39; KTD10; UI-bearing AE8–AE28.
-**Dependencies:** U2–U6 API contracts.
-**Files:** `frontend/src/ui/DaySetupPanel.tsx`, `SetupDrawer.tsx`, `AnchoredEditor.tsx`, `ExecutionView.tsx`, `Queue.tsx`, `ActionDock.tsx`, `ApprovalDrawer.tsx`, `CapacitiesSourceEditor.tsx`, `CapacitiesSettingsPanel.tsx`, `TagExclusionSettingsPanel.tsx`, `ReadinessStrip.tsx`, `frontend/src/store/controller.ts`, `refreshLifecycle.ts`, UI stylesheet/owning app navigation, matching existing UI/store tests plus new rule-builder/prompt-export tests; approved mockup copies under `docs/plan/2026-10-09-capacities-refresh-ui/` if needed for portable evidence.
+**Goal:** Replace the rail and tab-pill shell with the mockup's page frame, and set up the screenshot gate that every later UI unit uses.
+**Requirements:** R20/R20b, R24 (blocked-reason display only); KTD10, KTD11, KTD13.
+**Dependencies:** U1–U5 (landed). Lands first; U9–U13 build inside this frame.
+**Files:** `frontend/src/ui/App.tsx`, `ScreenNav.tsx` (becomes the stepper header or is replaced by a new header component), `Rail.tsx` (retired once its content has a new home), `ActionDock.tsx`, `FooterBanners.tsx`, `ReadinessStrip.tsx`, `frontend/src/store/store.ts` (screen ↔ step state only), `frontend/src/app.css`, `frontend/src/fixtures/scenarios.ts` (new sparse/degraded scenario), affected UI tests (`compact-cockpit.test.tsx`, `a11y.test.tsx`, `responsive.test.ts`, `settings-shell.test.tsx`, `components.test.tsx`), reference renders under `docs/plan/2026-10-09-capacities-refresh-ui/reference/`.
 **Approach:**
-1. Consolidate navigation and reuse day-frame/Mint/anchor/allocation components against the supplied mockup baseline.
-2. Add typed nested rule editing, mappings/discovery, draft save/discard, admission preview, warning review, and one/all Rescan controls.
-3. Add job progress/cancel, distinct cached freshness, prompts/opt-ins/re-export, and bounded warning-only approval displays.
+1. Render each mockup screen (A Set up day, B Plan tasks, C Connections) headless at 1500 and 900 widths into the reference directory. These are the KTD13 comparison baseline. Keep the operator's mockup file external.
+2. Add a fixture scenario that matches the live data shape: stale artifact, vault off, no assigned rows, degraded sources, legacy intake. Make it selectable in the mockup build.
+3. Build the header: date and frame line, three-step stepper bound to `ui.screen`, source-health pill with Retry wired to the existing refresh lifecycle, and a Connections link. Then build the single footer: back link, blocked reason, and primary action with its billed-call note, with no copy-prompt.
+4. Move rail content to temporary homes that later units replace. Drop the rail column and the floating tab strip, then center the page in a bounded max-width column.
+**Execution note:** Take screenshots before writing CSS, and again after each region lands.
 **Test scenarios:**
-- Set up day honors preset/frame/buffer, drag and keyboard equivalents, outside-frame/skipped anchors, prompts, and micro-adventure.
-- Plan tasks preserves Critical/When there's room/Fixed/Out today, assignment, duration, exclusion/undo, completion/reorder, sequence/commit, and copy-prompt.
-- Connections edits nested predicates, discovers/maps properties, shows stale tags/admission reasons, and saves/discards without hidden eligibility.
-- Cancel, Rescan one/all, no-result/fallback, unknown review, type removal, and partial prompt failure remain actionable and truthful.
-- Responsive narrow layout and keyboard focus retain controls; illustrative mock numbers/counters are not hard-coded.
-**Verification:** UI/controller tests, typecheck, both builds, and mocked browser walkthrough support the approved layout and behavior without billed calls or real writes.
+- Each step activates its screen. Arrow, Home, and End keyboard navigation and visible focus still work. Commit step state reflects the current approval/commit phase and is never a separate screen.
+- With degraded sources, the header pill shows the degraded state with Retry, and the footer shows the blocked reason without any "Copy prompt" text.
+- With healthy sources and a sequenceable plan, the footer primary action is enabled and the blocked reason is absent.
+- Opening and closing the settings drawer still makes the background inert and hidden while the drawer is open.
+- At 900px the header wraps without hiding the stepper or the source pill, and the page has no horizontal scroll.
+**Verification:** npm test, typecheck, both builds, and KTD13 screenshots for the ready and sparse scenarios. The header and footer match the reference composition, and the rail is gone.
+
+### U9. Capacity headline card
+
+**Goal:** Replace the rail capacity ledger and donut with the mockup's capacity card.
+**Requirements:** R20b, R24c; KTD10, KTD13.
+**Dependencies:** U7.
+**Files:** new capacity-card component under `frontend/src/ui/`, `AllocationPie.tsx` (retired, or reduced to the Details view), `frontend/src/model/pie.ts` and `allocator.ts` (read-only reuse of segments), `app.css`, `calendar-capacity.test.tsx`, new card tests.
+**Approach:** The headline states over-by or remaining from the existing allocator summary. One sentence gives the cause (fixed time versus selected tasks). One segmented bar shows calendar, work (Mint), anchors, habits, and tasks, with hatched overflow and a day-capacity marker, followed by a legend. "Details" discloses the full ledger the rail used to show. Dragging a slider still updates the bar in the same frame.
+**Test scenarios:**
+- An over-capacity day shows an over-by headline, the overflow segment, and a capacity marker. Commit is still allowed with a warning (R24c).
+- An under-capacity day shows the remaining amount and no overflow.
+- Unknown capacity (no reliable calendar data) says so explicitly and does not render as zero or overcapacity (KTD7).
+- Dragging a task slider changes the tasks segment and the headline together.
+- The legend and Details are reachable by keyboard, and Details exposes every number the old ledger showed.
+**Verification:** Tests plus KTD13 screenshots, where the card region matches reference B in ready and sparse scenarios.
+
+### U10. Already-placed timeline
+
+**Goal:** Replace the Calendar Impact card list with the mockup's lane timeline.
+**Requirements:** R20b; KTD10, KTD13.
+**Dependencies:** U7.
+**Files:** `CalendarImpact.tsx` (rebuilt as the timeline, or a new component that reuses its data), `BlockEditor.tsx` / `AnchoredEditor.tsx` (reused for edit actions), `app.css`, `calendar-capacity.test.tsx`, `feedback16.test.tsx`/`feedback18.test.tsx` where they pin the list layout, new timeline tests.
+**Approach:** An hour axis spans the day frame. Calendar, Work, and Anchors lanes place blocks by start time and length, and the work window shows as a shaded zone. Selecting a block opens one inline detail row with the existing duration ± control, Exclude from plan, and close. The work-window toggle and the "tasks aren't shown here" note follow the mockup. The existing exclusion, duration override, and native-fixed rules stay as they are.
+**Test scenarios:**
+- Blocks render in the correct lane at proportional positions. Blocks partly outside the frame are clipped, and blocks wholly outside are omitted, with a count.
+- Overlapping calendar blocks stack within the lane without covering each other's labels.
+- Selecting a block with the keyboard (Tab or arrow, then Enter) opens its detail row, and Escape closes it and returns focus.
+- Exclude from plan and duration ± change the capacity card and the sequencing inputs the same way the old list did.
+- A day with zero calendar rows shows an empty-lane message, not a blank band.
+**Verification:** Tests plus KTD13 screenshots. In the sparse scenario the timeline still reads as a timeline and does not collapse to a gap.
+
+### U11. Fit-today task table
+
+**Goal:** Re-compose the Today's work queue into the mockup's grouped, compact task table.
+**Requirements:** R20b; KTD10, KTD12, KTD13.
+**Dependencies:** U7.
+**Files:** `Queue.tsx`, `frontend/src/store/allocatorView.ts` (view grouping only), `app.css`, `row-actions.test.tsx`, `components.test.tsx`, `duration-memory.test.tsx`, `feedback10.test.tsx`, `a11y.test.tsx`, `model/allocatorView.test.ts` where grouping is pinned.
+**Approach:** Group rows as KTD12 maps them. Each row is one dense line: Assigned toggle, title with source tag and meta, priority and due chips, duration slider and value, and actions that appear on hover or focus. Actions are Mark complete, Exclude today, Exact duration, Leave as-is, and More. Right-edge notes show Protected · Allow move or warning counts. A hint row above the table lists the shortcuts with the today-only scope note. The frozen verb model and action IDs stay as they are; only labels and placement change.
+**Test scenarios:**
+- Critical rows group under Critical. High and other rows group under "When there's room" in their original order. Scheduled/native rows group under Fixed, and excluded or dropped rows under Out today.
+- Hover and keyboard focus both reveal the row actions. Each action dispatches the same controller call as before, and undo still restores the row.
+- Shortcuts C, E, D, ←/→, and ↑/↓ act on the focused row, and the hint row lists exactly the shortcuts that work.
+- Out today collapses and expands, announces its state in words, and Include today returns a row to its group.
+- A day with no assigned rows shows the quiet-day message inside the table frame and leaves no dead area.
+**Verification:** Tests plus KTD13 screenshots. Row density and column alignment match reference B at 1500, and actions stay reachable at 900.
+
+### U12. Set up day screen
+
+**Goal:** Re-compose Day setup into the mockup's step-1 screen, including the drag strip that R20a requires.
+**Requirements:** R20a, R22/R23 (opt-in display only); KTD10, KTD13.
+**Dependencies:** U7.
+**Files:** `DaySetupPanel.tsx` (split into frame, strip, anchors, prompts, and loose-end regions), `SetupDrawer.tsx`, `AnchoredEditor.tsx`, `frontend/src/model/mint.ts` and `anchored.ts` (read-only reuse), `app.css`, `panels.test.tsx`, `feedback_write_mint.test.ts`, new strip tests.
+**Approach:** The day frame card holds preset, start, end, and buffer. Below it a strip spans the frame with Mint and Anchors lanes. Dragging on the Mint lane picks sessions, dragging an anchor moves it, and clicking an anchor edits its time and length, each with a keyboard equivalent. A summary line shows Mint sessions and free slots. The anchors list separates counted anchors from "Not counted today" (outside the frame or skipped). The prompts card shows opt-ins and save state from U5, with no copy-prompt. "Continue to tasks →" advances the stepper.
+**Test scenarios:**
+- Dragging across Mint slots selects those sessions. Slots blocked by Wall are not selectable, and the summary updates.
+- The keyboard equivalent (focus a slot, Space to toggle, arrows to move) gives the same result as dragging.
+- Moving an anchor outside the frame moves it to "Not counted today", and skipping does the same.
+- Changing the preset or buffer updates the frame and Mint availability. "Reset to config" restores the defaults.
+- Prompt opt-ins persist the same way U5 tests prove, and no prompt text appears outside the prompts card.
+- Continue moves to Plan tasks and sets step 1 to done.
+**Verification:** Tests plus KTD13 screenshots against reference A.
+
+### U13. Connections screen
+
+**Goal:** Merge the stacked Capacities and Tag-exclusion panels into the mockup's single Connections page.
+**Requirements:** R20c, R26–R33; KTD5, KTD10, KTD13.
+**Dependencies:** U7. The panels' behavior from U3 is already landed.
+**Files:** `CapacitiesSettingsPanel.tsx`, `CapacitiesRulesEditor.tsx`, `CapacitiesSourceEditor.tsx`, `CapacitiesUnknownReview.tsx`, `CapacitiesRefreshPanel.tsx`, `TagExclusionSettingsPanel.tsx`, `App.tsx` (connections body), `app.css`, `capacities-settings.test.tsx`, `capacities-source-editor.test.tsx`, `tag-exclusion-settings.test.tsx`, `settings-shell.test.tsx`.
+**Approach:** One page in mockup order: back link and sync pill, then a structures table, the admit-when rule list, property mapping with Discover, and the tag-exclusion card with the stale-tag notice. An admission preview follows, and a sticky unsaved-changes bar holds Save and Discard. The existing draft revision, validation, and save/discard logic is reused unchanged.
+**Test scenarios:**
+- Editing a rule, a mapping, and the tag list makes the unsaved bar count three changes. Discard restores all three, and Save persists all three under one revision.
+- A stale saved tag shows the notice and can be removed.
+- The preview shows admitted and left-out counts with a reason for each item, and updates as the draft changes.
+- An invalid rule cannot be activated and the error says why (R33).
+- Back to planning returns to Plan tasks without losing unsaved Connections edits until the operator saves or discards.
+**Verification:** Tests plus KTD13 screenshots against reference C.
 
 ### U8. Integrated evidence, rollout, and restartable landing
 
 **Goal:** Prove the full outcome and prepare a reversible, attended cutover.
 **Requirements:** R1–R39 and AE1–AE28; all KTDs.
-**Dependencies:** U1–U7.
+**Dependencies:** U1–U7, U9–U13. U6 is still unbuilt. Its UI surfaces (re-export and uncertain-retry acknowledgment) land with U6, inside the U7 footer and the U12 prompts card.
 **Files:** Existing integration tests, new `app/tests/test_capacities_refresh_end_to_end.py`, frontend fixture walkthrough coverage, scoped acceptance evidence under `docs/plan/2026-10-09-capacities-refresh-ui/`, affected current operator docs.
 **Approach:**
 1. Run an end-to-end fake-provider walkthrough through restart, rule save, Refresh/Rescan, selection, sequence, shadow, and partial export recovery.
@@ -325,10 +426,11 @@ Exact route/helper names, safe storage capacity thresholds, retry-count tuning, 
 | Gate | Applies | Evidence required |
 | --- | --- | --- |
 | Execution-context and ownership guard | Before each writable slice and review/landing | Correct linked worktree/branch/pinned HEAD and owned-path hashes; no foreign changes overwritten |
-| TDD | U1–U7 behavior | Observed failing scenario before implementation, passing scenario after, focused regression evidence |
+| TDD | U1–U7, U9–U13 behavior | Observed failing scenario before implementation, passing scenario after, focused regression evidence |
 | Backend suite | All units | Repository Python environment runs backend pytest, including bootstrap runner tests |
-| Frontend suite/typecheck | U4/U7/U8 | `npm test` and `npm run typecheck` from `frontend/` |
-| Generated builds | U7/U8 | `npm run build:mockup` and `npm run build:prod`, followed by bundle-reference/content read-back |
+| Frontend suite/typecheck | U4, U7, U9–U13, U8 | `npm test` and `npm run typecheck` from `frontend/` |
+| Visual acceptance (KTD13) | U7, U9–U13, U8 | Fixture screenshots at 1500×1000 and 900×1000 for the ready and sparse scenarios, compared region by region with the matching reference render. Every listed region is present, nothing overlaps, clips, or leaves a dead area, and there is no horizontal scroll. The screenshots are attached to the unit report. |
+| Generated builds | U7, U9–U13, U8 | `npm run build:mockup` and `npm run build:prod`, followed by bundle-reference/content read-back |
 | Scratch walkthrough | U8 | Fixture/mocked `:8790` walkthrough, zero billed calls, zero real-source writes |
 | Independent review and diff | Before integration | Accepted review, owned-path `git diff --check`, intended diff and fresh Git/worktree evidence |
 
@@ -342,7 +444,7 @@ Live `:8746` is never a test fixture. No live `POST /commit`, `/sequence`, or `/
 
 Each unit has observed test-first evidence, passing focused scenarios, and independent acceptance before landing. The integrated cockpit delivers the source Product Contract, including explicit warning review rather than partial publication, per-type cache freshness, safe selection and commit authorization, and prompt recovery.
 
-The required suites/builds and fixture walkthrough support the actual outcome. Generated artifacts are read back, no abandoned-attempt code remains, no unrelated work is altered, no secrets/personal drafts enter repository evidence, and all baseline failures or unrun gates are disclosed. Root-approved execution state and TDTB acceptance evidence link to the actual landed commits. Until separately approved deployment and cutover evidence exists, report implementation as locally delivered, not live.
+Each UI unit (U7, U9–U13) is done only when its KTD13 screenshots match the reference composition, not when its tests alone pass. After an attended `restart-live.sh`, a GET-only screenshot of live `:8746` shows the new composition. A sparse live day is data state, not a layout failure, and must not be hidden with CSS. The required suites/builds and fixture walkthrough support the actual outcome. Generated artifacts are read back, no abandoned-attempt code remains, no unrelated work is altered, no secrets/personal drafts enter repository evidence, and all baseline failures or unrun gates are disclosed. Root-approved execution state and TDTB acceptance evidence link to the actual landed commits. Until separately approved deployment and cutover evidence exists, report implementation as locally delivered, not live.
 
 ---
 

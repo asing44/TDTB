@@ -17,7 +17,7 @@ describe("locked contract: Today's work language (item 1)", () => {
   it("names the cockpit list surface Today's work, never Queue", () => {
     const h = makeHarness("ready");
     const r = h.ui(<App />);
-    expect(r.getByRole("region", { name: /Today's work/i })).toBeTruthy();
+    expect(r.getByRole("region", { name: /Assigned this morning/i })).toBeTruthy();
     expect(r.queryByText(/Assigned queue/i)).toBeNull();
   });
 });

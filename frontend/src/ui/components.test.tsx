@@ -77,7 +77,7 @@ describe("ActionDock", () => {
     const { ui } = makeHarness("ready");
     const { getByText } = ui(<ActionDock />);
     // T12e: the block count being committed is part of the label.
-    expect(getByText(/^Auto sequence \d+ blk$/)).toBeTruthy();
+    expect(getByText(/^Sequence & commit \d+ blk$/)).toBeTruthy();
     expect(getByText(/1 billed call · 4 left today/)).toBeTruthy();
   });
 
@@ -218,9 +218,12 @@ describe("ApprovalDrawer two-gate commit", () => {
 describe("Queue", () => {
   it("groups by planning state with all-day work kept visible", () => {
     const { ui } = makeHarness("sequenced");
-    const { getByText, container } = ui(<Queue />);
-    expect(getByText(/Needs placement/)).toBeTruthy();
-    expect(getByText(/Scheduled \(7\)/)).toBeTruthy();
+    const { getByText, getAllByText, container } = ui(<Queue />);
+    // KTD12 grouping: Critical / When there's room / Fixed / Out today.
+    expect(getByText(/^Critical$/)).toBeTruthy();
+    expect(getByText(/When there's room/)).toBeTruthy();
+    expect(getAllByText(/^Fixed$/).length).toBeGreaterThan(0);
+    expect(getByText(/Out today/)).toBeTruthy();
     // All-day rows band with the rest now — there is no trailing "All day"
     // heading to count, so the badge on the row carries the state.
     expect(getByText("All day")).toBeTruthy();
@@ -728,11 +731,13 @@ describe("T18g Day Setup semantics", () => {
       },
     ];
     store.dispatch({ type: "INPUTS_LOADED", inputs, ledger: store.getState().ledger! });
-    const { getByText, getAllByText } = ui(<CalendarImpact />);
-    expect(getAllByText("A + M Busy Bees").length).toBeGreaterThan(0);
-    expect(getByText("Fixed")).toBeTruthy();
-    expect(getByText("hard block")).toBeTruthy();
-    expect(getByText("1 blk counted")).toBeTruthy();
+    const r = ui(<CalendarImpact />);
+    expect(r.getAllByText("A + M Busy Bees").length).toBeGreaterThan(0);
+    // U10: select the block to open its inline detail row.
+    fireEvent.click(r.getByRole("button", { name: /A \+ M Busy Bees/ }));
+    expect(r.getByText("Fixed")).toBeTruthy();
+    expect(r.getByText("hard block")).toBeTruthy();
+    expect(r.getByText("1 blk counted")).toBeTruthy();
     // And it is a real wall for Mint selection / overflow avoidance.
     const walls = calendarWalls(effectiveAnchoredBlocks(store.getState()));
     expect(walls).toEqual([{ start: 10 * 60 + 30, end: 11 * 60 }]);
@@ -746,7 +751,7 @@ describe("T13 canvas deletion", () => {
     // Pre-commit NOW/NEXT is dead space — absent by design (brief problem 5).
     expect(container.querySelector(".execution")).toBeNull();
     // IMP-07: the allocator surface is named "Today's work" (item 1).
-    expect(queryByLabelText("Today's work")).toBeTruthy();
+    expect(queryByLabelText("Assigned this morning")).toBeTruthy();
     expect(queryByLabelText("Timeline")).toBeNull();
     expect(queryByRole("button", { name: "Edit day" })).toBeNull();
     expect(queryByText("Confirm day setup")).toBeTruthy();
@@ -1226,7 +1231,7 @@ describe("T26 queue legibility", () => {
   it("todoist priority int renders as a p-level", () => {
     const h = makeHarness("ready");
     withLegibilityRows(h);
-    expect(h.ui(<Queue />).getByText("p1")).toBeTruthy();
+    expect(h.ui(<Queue />).getAllByText("p1").length).toBeGreaterThan(0);
   });
 
   it("past deadlines render an overdue day count, not a bare date", () => {

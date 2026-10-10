@@ -1,25 +1,31 @@
 /* app.css — cockpit layout + components. Flat bordered surfaces, 400/500
    weights, generous spacing, no gradients/shadows (locked decision 5). */
 
-/* T12e (3a spec): two-column shell — 280px rail beside the table — plus a
-   full-width sticky footer (grid-column 1/-1) so the dock spans rail + table. */
+/* U7 page frame: one bounded, centered column. Header, screen body, and the
+   single footer are the column's children; the body grows so the footer sits
+   at the viewport bottom with no dead area. */
 .cockpit {
-  display: grid;
-  grid-template-columns: 280px minmax(0, 1fr);
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  max-width: 1280px;
+  margin: 0 auto;
   min-height: 100vh;
-  align-items: start;
+  background: var(--t-body);
 }
 
-/* Settings-shell isolation wrapper. `display: contents` keeps the rail, main,
-   and footer as the grid's layout children while the shell marks everything
-   behind it inert/aria-hidden. */
+/* Settings-shell isolation wrapper. `display: contents` keeps the header,
+   main, and footer as the column's layout children while the shell marks
+   everything behind it inert/aria-hidden. */
 .cockpit__background {
   display: contents;
 }
 .cockpit__main {
   min-width: 0;
+  flex: 1;
   display: flex;
   flex-direction: column;
+  background: var(--t-body);
 }
 .cockpit__footer {
   grid-column: 1 / -1;
@@ -462,68 +468,231 @@
   color: var(--t-text);
   cursor: pointer;
 }
+
+/* -- U10 already-placed timeline ----------------------------------------- */
+.timeline__head {
+  align-items: center;
+}
+.calendar-impact .timeline__title h2 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  text-transform: none;
+  letter-spacing: 0;
+}
+.timeline__sub {
+  margin: 1px 0 0;
+  font-size: 12px;
+  color: var(--t-muted);
+}
+.timeline__worktoggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--t-muted);
+  white-space: nowrap;
+}
+.timeline__workstate {
+  color: var(--t-text);
+}
+.timeline {
+  margin-top: 4px;
+}
+.timeline__axis,
+.timeline__lane {
+  display: flex;
+  align-items: stretch;
+  gap: 10px;
+}
+.timeline__lane-label {
+  flex: 0 0 88px;
+  display: flex;
+  align-items: center;
+  font-size: 12px;
+  color: var(--t-muted);
+}
+.timeline__axis-track,
+.timeline__track {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.timeline__axis-track {
+  height: 20px;
+}
+.timeline__tick {
+  position: absolute;
+  top: 0;
+  font-size: 11px;
+  color: var(--t-muted);
+  transform: translateX(-3px);
+  white-space: nowrap;
+}
+.timeline__lane {
+  margin-top: 4px;
+}
+.timeline__track {
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--t-surface) 92%, var(--t-border));
+}
+.timeline__workzone {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  border-left: 1px dashed color-mix(in srgb, var(--t-border) 90%, transparent);
+  border-right: 1px dashed color-mix(in srgb, var(--t-border) 90%, transparent);
+  background: color-mix(in srgb, var(--t-muted) 12%, transparent);
+  pointer-events: none;
+}
+.timeline__block {
+  position: absolute;
+  height: 30px;
+  box-sizing: border-box;
+  padding: 2px 6px;
+  border: 0.5px solid color-mix(in srgb, var(--t-border) 80%, transparent);
+  border-radius: 4px;
+  overflow: hidden;
+  text-align: left;
+  font-size: 11px;
+  line-height: 26px;
+  color: var(--t-text);
+  cursor: pointer;
+}
+.timeline__block--fixed {
+  background: color-mix(in srgb, var(--c-event) 55%, var(--t-surface));
+  border-color: color-mix(in srgb, var(--c-event) 75%, var(--t-border));
+}
+.timeline__block--work {
+  background: color-mix(in srgb, var(--c-minting) 42%, var(--t-surface));
+  border-color: color-mix(in srgb, var(--c-minting) 70%, var(--t-border));
+}
+.timeline__block--quarantined {
+  background: repeating-linear-gradient(
+    45deg,
+    color-mix(in srgb, var(--state-warning) 18%, transparent) 0 6px,
+    transparent 6px 12px
+  );
+  color: var(--t-muted);
+}
+.timeline__block--selected {
+  outline: 2px solid var(--c-selected);
+  outline-offset: -1px;
+  z-index: 2;
+}
+.timeline__block-name {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.timeline__empty,
+.timeline__note {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  margin: 0;
+  font-size: 11px;
+  color: var(--t-muted);
+  pointer-events: none;
+}
+.timeline__empty {
+  left: 8px;
+}
+.timeline__note {
+  right: 8px;
+}
+.timeline__detail {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 12px;
+  padding: 10px 14px;
+  border: 1px solid var(--t-border);
+  border-radius: 8px;
+  background: var(--t-surface);
+}
+.timeline__detail:focus-visible {
+  outline: 2px solid var(--c-selected);
+  outline-offset: 1px;
+}
+.timeline__detail-dot {
+  flex: 0 0 auto;
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+}
+.timeline__detail-dot--fixed { background: var(--c-event); }
+.timeline__detail-dot--work { background: var(--c-minting); }
+.timeline__detail-dot--quarantined { background: var(--state-warning); }
+.timeline__detail-dot--ignored { background: var(--t-muted); }
+.timeline__detail-name {
+  font-weight: 600;
+  white-space: nowrap;
+}
+.timeline__detail-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 12px;
+  color: var(--t-muted);
+}
+.timeline__detail-count {
+  font-variant-numeric: tabular-nums;
+}
+.timeline__detail-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+.timeline__detail-dur {
+  min-width: 44px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+.timeline__detail-close {
+  font-size: 16px;
+  line-height: 1;
+}
+.timeline__foot {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin: 10px 0 0;
+  font-size: 11px;
+  color: var(--t-muted);
+}
+.timeline__foot-note {
+  margin: 4px 0 0;
+  font-size: 11px;
+  color: var(--t-muted);
+}
+@media (max-width: 767px) {
+  .timeline__head {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 6px;
+  }
+  .timeline__lane-label {
+    flex-basis: 62px;
+  }
+  .timeline__detail {
+    flex-wrap: wrap;
+  }
+  .timeline__detail-actions {
+    margin-left: 0;
+  }
+}
 .queue__subtractive {
   margin: 0;
   padding: 9px 0;
   border-bottom: 0.5px solid var(--t-border);
   color: var(--t-muted);
   font-size: 12px;
-}
-.allocation-meter {
-  position: sticky;
-  top: 0;
-  z-index: 4;
-  display: grid;
-  gap: 5px;
-  margin: 10px 0 4px;
-  padding: 9px 10px 8px;
-  border: 0.5px solid var(--t-border);
-  border-left: 3px solid var(--c-free);
-  background: var(--t-surface);
-}
-.allocation-meter--over {
-  border-left-color: var(--c-overflow);
-}
-.allocation-meter__head,
-.allocation-meter__state {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 8px;
-}
-.allocation-meter__label,
-.allocation-meter__state {
-  color: var(--t-muted);
-  font-size: 11px;
-}
-.allocation-meter__head strong {
-  font-size: 12px;
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
-}
-.allocation-meter--over .allocation-meter__head strong,
-.allocation-meter--over .allocation-meter__state {
-  color: var(--c-overflow);
-}
-.allocation-meter__track {
-  position: relative;
-  height: 7px;
-  overflow: hidden;
-  border-radius: 999px;
-  background: var(--t-surface-2);
-}
-.allocation-meter__fill {
-  display: block;
-  height: 100%;
-  border-radius: inherit;
-  background: var(--c-selected);
-}
-.allocation-meter__mark {
-  position: absolute;
-  top: -2px;
-  bottom: -2px;
-  width: 2px;
-  background: var(--t-text);
 }
 .rail-keys__key {
   font-family: var(--font-mono);
@@ -2602,9 +2771,6 @@
   .queue__head p {
     max-width: 240px;
   }
-  .allocation-meter {
-    position: static;
-  }
   .execution__head {
     align-items: center;
   }
@@ -3069,21 +3235,6 @@ body {
   border-radius: var(--radius-sm);
   background: var(--t-surface-2);
   line-height: 1.45;
-}
-
-.allocation-meter {
-  margin: 14px 0 6px;
-  padding: 11px 12px 10px;
-  border-radius: var(--radius-sm);
-  background: var(--t-surface-2);
-}
-
-.allocation-meter__head strong {
-  font-size: 13px;
-}
-
-.allocation-meter__track {
-  height: 8px;
 }
 
 .queue__cols {
@@ -4244,21 +4395,22 @@ body {
    screen body that reuses the existing panels. */
 .screen-nav {
   display: flex;
-  justify-content: center;
-  padding: 0.4rem 0.75rem 0;
+  align-items: center;
+  height: var(--nav-h);
+  box-sizing: border-box;
+  padding: 0 16px;
+  background: var(--t-surface);
+  border-bottom: 1px solid var(--t-border);
 }
 .screen-nav__tabs {
   display: flex;
-  gap: 0.25rem;
-  padding: 0.2rem;
-  border: 1px solid var(--t-border);
-  border-radius: 999px;
-  background: var(--t-surface);
+  gap: 4px;
 }
 .screen-nav__tab {
   border: 0;
-  border-radius: 999px;
-  padding: 0.35rem 0.9rem;
+  border-radius: var(--radius);
+  min-height: 32px;
+  padding: 0 14px;
   background: transparent;
   color: var(--t-muted);
   font: inherit;
@@ -4275,6 +4427,62 @@ body {
 .cockpit__screen {
   overflow-y: auto;
   padding: 1rem;
+}
+
+/* Desktop shell: the column fills the viewport and the body scrolls inside
+   its own cell while the footer owns the last row, so the footer stays at the
+   viewport bottom and a sparse day still fills the body. */
+@media (min-width: 768px) {
+  .cockpit {
+    height: 100vh;
+    min-height: 0;
+  }
+  .rail {
+    position: static;
+    max-height: none;
+    min-height: 0;
+  }
+  /* The pinned chip block is ~230px tall; pinning it left the evidence
+     stack only a third of the rail and clipped the donut. The whole rail
+     scrolls as one column instead. */
+  .rail {
+    overflow-y: auto;
+    scrollbar-gutter: stable;
+  }
+  .rail__scroll {
+    flex: none;
+    overflow: visible;
+  }
+  .cockpit__main {
+    min-height: 0;
+    overflow-y: auto;
+  }
+}
+.rail__scroll > .pie__chart,
+.rail__pie .pie__chart {
+  flex-shrink: 0;
+}
+/* Donut hole is ~52% of the chart: keep the readout inside it. In the rail
+   the chart box is wider than the donut (align-self: stretch), so match the
+   readout to the donut's own width before capping the lines — otherwise the
+   46% cap is measured against the wide box and the label crosses the ring. */
+.rail__pie .pie__readout {
+  inset: 0 auto 0 50%;
+  transform: translateX(-50%);
+  width: min(200px, 20vh);
+}
+/* Fill each line before wrapping (balance split "of 31 blk capacity" into an
+   awkward "of 31" / "blk capacity"); the cap still keeps it inside the hole. */
+.rail__pie .pie__readout-label {
+  text-wrap: normal;
+}
+.pie__readout > * {
+  max-width: 46%;
+  text-wrap: balance;
+  line-height: 1.15;
+}
+.pie__readout-label {
+  letter-spacing: 0.04em;
 }
 
 /* -- Connections: refresh / rules / unknown review (U5) -------------------- */
@@ -4427,4 +4635,1498 @@ body {
   display: flex;
   gap: 14px;
   flex-wrap: wrap;
+}
+
+/* -- U7 page frame: stepper header + single footer (KTD11) ----------------- */
+.app-header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+  padding: 12px 20px;
+  border-bottom: 1px solid var(--t-border);
+  background: var(--t-surface);
+}
+.app-header__date {
+  display: flex;
+  flex-direction: column;
+  min-width: 140px;
+}
+.app-header__day {
+  font-weight: 500;
+}
+.app-header__frame {
+  color: var(--t-muted);
+  font-size: 12px;
+}
+.app-header__right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-left: auto;
+  flex-wrap: wrap;
+}
+
+/* U7 header stepper. Distinct from the compact editor `.stepper` (± buttons
+   in AnchoredEditor/BlockEditor): those rules set 22px buttons and are scoped
+   below, so this nav owns `app-stepper*` and never collides. The active step
+   is a dark filled pill; done steps are plain green with a ✓; the connectors
+   are thin lines (reference A/B). */
+.app-stepper {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.app-stepper__step {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  padding: 4px 12px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--t-muted);
+  font: inherit;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.app-stepper__step--done {
+  color: var(--t-accent-strong);
+}
+.app-stepper__step--done .app-stepper__mark {
+  color: var(--t-accent-strong);
+}
+.app-stepper__step--active {
+  background: var(--t-text);
+  color: var(--t-surface);
+  font-weight: 500;
+}
+.app-stepper__step--active .app-stepper__mark {
+  color: inherit;
+}
+.app-stepper__step:focus-visible {
+  outline: 2px solid var(--t-accent);
+  outline-offset: 2px;
+}
+.app-stepper__mark {
+  color: var(--t-muted);
+  font-variant-numeric: tabular-nums;
+}
+.app-stepper__sep {
+  flex: none;
+  width: 28px;
+  height: 1px;
+  background: var(--t-border);
+}
+
+.health-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 12px;
+  border: 1px solid var(--t-border);
+  border-radius: 999px;
+  font-size: 12px;
+  color: var(--t-muted);
+}
+.health-pill--healthy {
+  color: var(--t-accent-strong);
+}
+.health-pill--degraded {
+  color: var(--t-text);
+  border-color: var(--state-warning);
+}
+.health-pill__retry {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--t-accent-strong);
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
+.header__connections {
+  padding: 4px;
+  border: 0;
+  background: transparent;
+  color: var(--t-text);
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.footer {
+  position: sticky;
+  bottom: 0;
+  z-index: 10;
+  border-top: 1px solid var(--t-border);
+  background: var(--t-surface);
+}
+.footer__row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+  padding: 8px 20px 12px;
+}
+.footer__left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.footer__right {
+  display: flex;
+  align-items: center;
+  margin-left: auto;
+}
+.footer__back {
+  padding: 4px;
+  border: 0;
+  background: transparent;
+  color: var(--t-muted);
+  font: inherit;
+  cursor: pointer;
+}
+.footer__blocked {
+  color: var(--state-danger);
+  font-size: 13px;
+}
+/* U7 footer is one row: back link left, blocked reason middle, primary action
+   right (reference A/B). The dock keeps its full standalone presentation, but
+   inside the footer its narration (status line, prompt note, degraded banner)
+   is redundant — the header pill already carries source health and the
+   blocked reason carries the gate — so only the controls show here. */
+.footer__right .dock {
+  padding: 0;
+  background: transparent;
+  gap: 12px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+.footer__right .dock__status,
+.footer__right .dock__prompt-note,
+.footer__right .dock__health {
+  display: none;
+}
+/* The footer keeps one back link at left; the secondary "Day setup" button is
+   the same destination, so it would duplicate it. The primary ("Confirm day
+   setup") stays when setup is still the next action. */
+.footer__right .dock__setup:not(.btn--primary) {
+  display: none;
+}
+
+/* U9 — capacity headline card. One white card heads the Plan tasks body: a
+   bold headline (red when over), one cause sentence, a thin segmented bar
+   with a hatched overflow tail and a day-capacity marker, a legend row, and a
+   "Details" disclosure holding the full ledger the retired rail showed. */
+.cap-card {
+  margin: 14px 0 6px;
+  padding: 14px 16px 12px;
+  border: 1px solid var(--t-border);
+  border-radius: 12px;
+  background: var(--t-surface);
+}
+.cap-card--unknown {
+  border-style: dashed;
+}
+.cap-card__unknown {
+  margin: 0;
+  color: var(--t-muted);
+  font-size: 13px;
+}
+.cap-card__head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: baseline;
+  column-gap: 16px;
+  row-gap: 2px;
+}
+.cap-card__headline {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: var(--t-text);
+}
+.cap-card__headline--over {
+  color: var(--c-overflow);
+}
+.cap-card__cause {
+  grid-column: 1;
+  margin: 0;
+  color: var(--t-muted);
+  font-size: 12px;
+}
+.cap-card__details {
+  grid-column: 2;
+  grid-row: 1;
+  justify-self: end;
+}
+.cap-card__details-summary {
+  cursor: pointer;
+  color: var(--t-muted);
+  font-size: 12px;
+  list-style: none;
+}
+.cap-card__details-summary::-webkit-details-marker {
+  display: none;
+}
+.cap-card__details-summary:hover {
+  color: var(--t-text);
+}
+.cap-card__barwrap {
+  position: relative;
+  margin-top: 12px;
+}
+.cap-card__bar {
+  display: flex;
+  height: 14px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: var(--t-surface-2);
+}
+.cap-card__seg,
+.cap-card__overflow {
+  height: 100%;
+}
+.cap-card__overflow {
+  background: repeating-linear-gradient(
+    135deg,
+    var(--c-overflow),
+    var(--c-overflow) 3px,
+    color-mix(in srgb, var(--c-overflow) 40%, var(--t-surface)) 3px,
+    color-mix(in srgb, var(--c-overflow) 40%, var(--t-surface)) 6px
+  );
+}
+.cap-card__mark {
+  position: absolute;
+  top: -3px;
+  bottom: -3px;
+  width: 2px;
+  background: var(--t-text);
+}
+.cap-card__foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-top: 10px;
+}
+.cap-card__legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 11px;
+  color: var(--t-muted);
+}
+.cap-card__legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.cap-card__swatch {
+  width: 9px;
+  height: 9px;
+  border-radius: 2px;
+}
+.cap-card__legend-value {
+  font-variant-numeric: tabular-nums;
+  color: var(--t-text);
+}
+.cap-card__capacity {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  font-size: 11px;
+  color: var(--t-muted);
+  white-space: nowrap;
+}
+.cap-card__capacity-mark {
+  width: 2px;
+  height: 12px;
+  background: var(--t-text);
+}
+/* The retired rail now lives inside the card's Details disclosure (U9). */
+.cap-card__details .rail {
+  position: static;
+  max-height: none;
+  overflow: visible;
+  border-right: 0;
+}
+
+/* -- U11 recomposed task table (lanes, hint row, hover actions) -------------
+   Appended override layer for the recomposed Queue: the lane table
+   (tasktable__*), the shortcut hint row, the group-label rule, the
+   hover/focus-revealed row action cluster, and the quiet empty state.
+   Everything here sits at the END of app.css so it wins the cascade over the
+   earlier "frontend-design pass" and the narrow-width blocks above without
+   editing them. The row grid (3px | minmax(0,1fr) | 128px | 256px |
+   minmax(0,1fr)) and the line-anchored `.qrow { padding: 6px 0 }` row-spacing
+   block are deliberately untouched. */
+
+/* U11 lane identity: `--band-color` was undefined for the recomposed lanes,
+   which left `.band__tick`, the closed-state chip, and the row tint without a
+   colour. Reuse the semantic tokens the legacy bands and `.band--calendar`
+   already use rather than inventing a palette. */
+.tasktable {
+  --band-color: var(--t-muted);
+}
+
+.tasktable--critical {
+  --band-color: var(--c-overflow);
+}
+
+.tasktable--room {
+  --band-color: var(--t-accent);
+}
+
+.tasktable--fixed {
+  --band-color: var(--c-event);
+}
+
+.tasktable--out {
+  --band-color: var(--t-muted);
+}
+
+.tasktable + .tasktable {
+  margin-top: 4px;
+}
+
+/* Lane header: bold title, muted sub, hairline rule, right-aligned total, then
+   the collapse state and chevron. The rule is the flex spacer, so the
+   evidence on the right stays flush without an extra wrapper. */
+.band--lane .band__label {
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  color: var(--t-text);
+}
+
+.band--lane .band__note {
+  flex: none;
+  min-width: 0;
+  font-size: 11px;
+  color: var(--t-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.band--lane .band__rule {
+  flex: 1 1 auto;
+  height: 1px;
+  min-width: 12px;
+  background: color-mix(in srgb, var(--t-border) 70%, transparent);
+}
+
+.band--lane .band__count {
+  flex: none;
+  font-size: 11px;
+  color: var(--t-muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.band--lane:hover .band__label {
+  color: var(--t-accent-text);
+}
+
+/* Group label: a small uppercase name on the secondary surface with the
+   lane's selected total on the right — one compact rule, not a second
+   heading. */
+.tasktable__grouplabel {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 4px 0 2px;
+  padding: 5px 10px;
+  border-radius: var(--radius-sm);
+  background: var(--t-surface-2);
+}
+
+.tasktable__grouplabel-name {
+  min-width: 0;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--t-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tasktable__grouplabel-total {
+  flex: none;
+  font-size: 11px;
+  color: var(--t-muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* Hint row: the working shortcuts as small mono key chips on the left, the
+   today-only scope note right-aligned on the same line. It wraps to two
+   lines below 900px. */
+.queue__hint {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 6px 24px;
+  flex-wrap: wrap;
+  padding: 10px 0 10px;
+  border-bottom: 0.5px solid color-mix(in srgb, var(--t-border) 55%, transparent);
+}
+
+.queue__hint-keys {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 3px 5px;
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--t-muted);
+}
+
+.queue__hint-keys kbd {
+  display: inline-block;
+  padding: 1px 5px;
+  border: 0.5px solid color-mix(in srgb, var(--t-border) 85%, transparent);
+  border-radius: 3px;
+  background: var(--t-surface-2);
+  color: var(--t-text);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.queue__hint-note {
+  margin-left: auto;
+  max-width: 100%;
+  text-align: right;
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--t-muted);
+}
+
+@media (max-width: 900px) {
+  .queue__hint-note {
+    flex-basis: 100%;
+    margin-left: 0;
+    max-width: none;
+    text-align: left;
+  }
+}
+
+/* Row controls reveal on hover or keyboard focus. Kept in the DOM and
+   focusable (never display:none / visibility:hidden) so Tab still reaches
+   every verb; opacity alone hides them, and :focus-within is what makes the
+   keyboard path visible. */
+.qrow__actions {
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+
+.qrow:hover .qrow__actions {
+  opacity: 1;
+}
+
+.qrow:focus-within .qrow__actions {
+  opacity: 1;
+}
+
+.qrow--focused .qrow__actions {
+  opacity: 1;
+}
+
+.qrow--focused {
+  background: color-mix(in srgb, var(--band-color) 12%, var(--t-surface));
+  outline: 2px solid var(--t-accent);
+  outline-offset: -2px;
+}
+
+/* Include checkbox: baseline alignment in the name line would sink a native
+   checkbox, so pin it to the optical centre of the row title. */
+.qrow__check {
+  flex: none;
+  align-self: center;
+  width: 16px;
+  height: 16px;
+  margin: 0 2px 0 0;
+  accent-color: var(--t-accent);
+  cursor: pointer;
+}
+
+/* Priority chip (p1..p4) leads the due column. */
+.qrow__prio {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 22px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  line-height: 1.5;
+  white-space: nowrap;
+}
+
+.qrow__prio--crit {
+  background: var(--c-overflow);
+  color: #fff;
+}
+
+.qrow__prio--high {
+  background: var(--c-minting);
+  color: var(--t-text);
+}
+
+.qrow__prio--med {
+  background: color-mix(in srgb, var(--c-event) 45%, var(--t-surface));
+  color: var(--t-text);
+}
+
+.qrow__prio--low {
+  background: var(--t-surface-2);
+  color: var(--t-muted);
+}
+
+/* Dropped-today row: present, quiet, and out of the plan — the empty stripe
+   slot stays to keep the lane's grid aligned with every other row. */
+.qrow--dropped {
+  color: var(--t-muted);
+}
+
+.qrow--dropped .qrow__stripe {
+  background: color-mix(in srgb, var(--t-border) 80%, transparent);
+}
+
+.qrow--dropped .qrow__name {
+  font-weight: 500;
+  color: var(--t-muted);
+}
+
+.qrow--dropped .qrow__actions,
+.qrow--dropped .qrow__due {
+  opacity: 1;
+}
+
+/* Quiet day: one bordered frame that hugs its message — the empty state
+   should read as an answer, not as a large blank area. */
+.queue__quiet {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 16px 0 0;
+  padding: 24px 20px;
+  border: 1px solid color-mix(in srgb, var(--t-border) 70%, transparent);
+  border-radius: var(--radius);
+  background: var(--t-surface-2);
+  text-align: center;
+}
+
+.queue__quiet p {
+  max-width: 56ch;
+  margin: 0;
+  color: var(--t-muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+/* Narrow widths: there is no hover to reveal the action cluster, so it stays
+   visible; the lane header and hint row tighten without dropping evidence. */
+@media (max-width: 767px) {
+  .qrow__actions {
+    opacity: 1;
+  }
+
+  .band--lane .band__note {
+    display: none;
+  }
+
+  .band--lane .band__count {
+    font-size: 10px;
+  }
+
+  .tasktable__grouplabel {
+    padding: 4px 8px;
+  }
+
+  .queue__hint {
+    padding: 8px 0;
+  }
+
+  .queue__hint-keys {
+    font-size: 10px;
+  }
+
+  .queue__quiet {
+    padding: 18px 14px;
+  }
+
+  .queue__quiet p {
+    font-size: 12px;
+  }
+}
+
+/* U12 — Set up day screen (reference A). Two-column composition: the Day frame
+   card with the R20a strip and the Anchors card on the left, Morning prompts
+   on the right. */
+.day-setup-screen__grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 380px);
+  gap: 16px;
+  align-items: start;
+}
+
+.day-setup-screen__main,
+.day-setup-screen__side {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+}
+
+@media (max-width: 900px) {
+  .day-setup-screen__grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.day-setup-screen {
+  padding-bottom: 64px;
+}
+
+.setup-section__hint {
+  margin: 2px 0 0;
+  font-size: 12px;
+  color: var(--t-muted);
+}
+
+/* Frame fields: a 4-column grid with labels stacked above their control, so
+   the Preset/Start/End/Buffer row reads like reference A and no control is
+   clipped. Wraps to 2x2 at 900px. */
+.frame-fields {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.frame-fields .field {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 4px;
+  margin-bottom: 0;
+}
+
+.frame-fields .field label {
+  min-width: 0;
+}
+
+.frame-fields .field select,
+.frame-fields .field input {
+  flex: none;
+  width: 100%;
+}
+
+@media (max-width: 900px) {
+  .frame-fields {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+.day-strip {
+  position: relative;
+  margin-top: 12px;
+  padding-top: 18px;
+}
+
+.day-strip__axis {
+  position: relative;
+  height: 16px;
+}
+
+.day-strip__tick {
+  position: absolute;
+  top: 0;
+  transform: translateX(-50%);
+  font-size: 10px;
+  color: var(--t-muted);
+  white-space: nowrap;
+}
+
+.day-strip__frame {
+  position: relative;
+  height: 15px;
+  border: 1px solid var(--t-border);
+  border-radius: 4px;
+  background: var(--t-surface-2);
+  box-shadow: inset 2px 0 0 var(--t-border), inset -2px 0 0 var(--t-border);
+}
+
+.day-strip__frame-label {
+  position: absolute;
+  top: 0;
+  left: 6px;
+  font-size: 9px;
+  line-height: 13px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--t-muted);
+}
+
+.day-strip__lane {
+  position: relative;
+  height: 34px;
+  margin-top: 6px;
+  border-radius: 4px;
+  background: var(--t-surface-2);
+  overflow: hidden;
+}
+
+.day-strip__lane--anchors {
+  background: var(--t-surface-2);
+}
+
+/* Mint off today: the lane still renders so the strip keeps its shape, but it
+   is hatched (unavailable) with a caption instead of a bare text row. */
+.day-strip__lane--mint-off {
+  background: repeating-linear-gradient(
+    45deg,
+    var(--t-surface-2),
+    var(--t-surface-2) 4px,
+    color-mix(in srgb, var(--t-text) 14%, var(--t-surface-2)) 4px,
+    color-mix(in srgb, var(--t-text) 14%, var(--t-surface-2)) 8px
+  );
+}
+
+.day-strip__empty {
+  display: inline-block;
+  padding: 0 8px;
+  font-size: 11px;
+  line-height: 34px;
+  color: var(--t-muted);
+}
+
+.strip-slot {
+  position: absolute;
+  top: 3px;
+  height: 28px;
+  padding: 0 4px;
+  border: 1px solid var(--t-border);
+  border-radius: 3px;
+  background: var(--t-surface);
+  color: var(--t-text);
+  font-size: 10px;
+  overflow: hidden;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.strip-slot--blocked {
+  background: repeating-linear-gradient(
+    45deg,
+    var(--t-surface-2),
+    var(--t-surface-2) 4px,
+    color-mix(in srgb, var(--t-text) 14%, var(--t-surface-2)) 4px,
+    color-mix(in srgb, var(--t-text) 14%, var(--t-surface-2)) 8px
+  );
+  color: var(--t-muted);
+  cursor: not-allowed;
+}
+
+.strip-slot--selected {
+  background: var(--t-accent);
+  border-color: var(--t-accent-strong);
+  color: var(--t-accent-text);
+}
+
+.strip-slot:focus-visible,
+.strip-anchor:focus-visible {
+  outline: 2px solid var(--t-accent);
+  outline-offset: 1px;
+}
+
+.strip-anchor {
+  position: absolute;
+  height: 22px;
+  max-width: 110px;
+  padding: 0 6px;
+  border: 1px solid var(--t-border);
+  border-radius: 3px;
+  background: var(--t-surface);
+  color: var(--t-text);
+  font-size: 10px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+
+.strip-anchor--not-counted {
+  border-style: dashed;
+  color: var(--t-muted);
+}
+
+.frame-summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-top: 12px;
+  padding: 8px 12px;
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--c-minting) 16%, var(--t-surface));
+  color: color-mix(in srgb, var(--c-minting) 45%, var(--t-text));
+  font-size: 12px;
+}
+
+.frame-summary__mint {
+  font-weight: 600;
+}
+
+.frame-summary__free {
+  color: color-mix(in srgb, var(--c-minting) 30%, var(--t-text));
+}
+
+.frame-summary__reset {
+  margin-left: auto;
+  border: none;
+  background: none;
+  padding: 0;
+  color: inherit;
+  font-size: 12px;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.anchor-chips {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+@media (max-width: 900px) {
+  .anchor-chips {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.anchor-chip {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  align-items: baseline;
+  padding: 8px 12px;
+  border: 1px solid var(--t-border);
+  border-radius: var(--radius);
+  background: var(--t-surface);
+  color: var(--t-text);
+  cursor: pointer;
+  font-size: 13px;
+  min-width: 0;
+}
+
+.anchor-chip__meta {
+  color: var(--t-muted);
+}
+
+.not-counted {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin-top: 12px;
+  font-size: 12px;
+}
+
+.not-counted__label,
+.not-counted__empty {
+  color: var(--t-muted);
+}
+
+.not-counted__chip {
+  padding: 4px 10px;
+  border: 1px dashed var(--t-border);
+  border-radius: 999px;
+  color: var(--t-muted);
+}
+
+.field--inline {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+/* Prompts card: labels stack above their control so nothing overlaps, and a
+   control row keeps paired select/button on one line. */
+.field--stacked {
+  display: block;
+}
+
+.field--stacked > label,
+.field--stacked > .field__label {
+  display: block;
+  margin-bottom: 4px;
+}
+
+.field--stacked .field__controls {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.field--stacked .field__controls > select,
+.field--stacked .field__controls > input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.prompt-exports {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+}
+
+.prompt-exports .field__hint,
+.prompt-exports .prompt-optin,
+.prompt-exports .field-error,
+.prompt-exports .field-warning {
+  text-align: left;
+}
+
+.setup-section--prompts .setup-section__head h3 {
+  white-space: nowrap;
+}
+
+.prompt-exports .field__hint {
+  margin: 0;
+}
+
+.prompt-exports__actions {
+  margin-top: 4px;
+}
+
+.prompts-live {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.footer--setup .footer__saved {
+  color: var(--t-muted);
+  font-size: 12px;
+}
+
+.footer--setup .footer__right {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+
+.footer__undo {
+  border: none;
+  background: none;
+  color: var(--t-accent);
+  cursor: pointer;
+  font-size: 13px;
+  text-decoration: underline;
+}
+
+/* ---- U13 Connections screen (reference C) ----------------------------- */
+
+.connections {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 16px 20px 8px;
+}
+
+.connections__subhead {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.connections__back {
+  border: none;
+  background: none;
+  color: var(--t-muted);
+  cursor: pointer;
+  font-size: 13px;
+  padding: 0;
+}
+
+.connections__back:hover {
+  color: var(--t-text);
+}
+
+.connections__title {
+  font-size: 20px;
+  font-weight: 500;
+  margin: 0;
+  color: var(--t-text);
+}
+
+.connections__sync {
+  margin-left: auto;
+  border: 1px solid var(--t-border);
+  border-radius: 999px;
+  padding: 3px 12px;
+  font-size: 12px;
+  color: var(--t-muted);
+  background: var(--t-surface);
+}
+
+.connections__state {
+  color: var(--t-muted);
+  padding: 24px 0;
+}
+
+.connections__error {
+  border: 1px solid var(--c-overflow);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.connections__body {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(260px, 1fr);
+  gap: 24px;
+  align-items: start;
+}
+
+.connections__left {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+}
+
+.connections__lead {
+  font-size: 17px;
+  font-weight: 500;
+  margin: 0;
+  color: var(--t-text);
+}
+
+.connections__explainer {
+  margin: 0;
+  color: var(--t-muted);
+  font-size: 13px;
+}
+
+.connections-table {
+  width: 100%;
+  border-collapse: collapse;
+  border: 1px solid var(--t-border);
+  border-radius: var(--radius);
+  font-size: 13px;
+}
+
+.connections-table th {
+  text-align: left;
+  font-weight: 500;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--t-muted);
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--t-border);
+}
+
+.connections-table td {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--t-border);
+  color: var(--t-text);
+}
+
+.connections-table tr:last-child td {
+  border-bottom: none;
+}
+
+.connections-table__empty {
+  color: var(--t-muted);
+}
+
+.connections-card {
+  border: 1px solid var(--t-border);
+  border-radius: var(--radius);
+  background: var(--t-surface);
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.connections-card__head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.connections-card__title {
+  font-size: 15px;
+  font-weight: 500;
+  margin: 0;
+  color: var(--t-text);
+}
+
+.connections-card__id,
+.connections-card__note {
+  color: var(--t-muted);
+  font-size: 12px;
+}
+
+.connections-card__remove {
+  margin-left: auto;
+  border: none;
+  background: none;
+  color: var(--t-muted);
+  cursor: pointer;
+  font-size: 12px;
+  text-decoration: underline;
+}
+
+.connections-card__cols {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 24px;
+}
+
+.connections-card__eyebrow {
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--t-muted);
+  font-weight: 500;
+  margin: 0 0 6px;
+}
+
+.connections-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--t-text);
+  padding: 3px 0;
+}
+
+.connections-check__days {
+  width: 52px;
+  padding: 2px 6px;
+}
+
+.connections-active-means {
+  margin-top: 10px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.connections-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border-radius: 999px;
+  background: var(--t-surface-2);
+  color: var(--t-text);
+  font-size: 12px;
+  padding: 2px 8px;
+}
+
+.connections-chip__x {
+  border: none;
+  background: none;
+  cursor: pointer;
+  color: var(--t-muted);
+  font-size: 13px;
+  line-height: 1;
+  padding: 0;
+}
+
+.connections-chip-input {
+  border: none;
+  background: none;
+  font-size: 12px;
+  color: var(--t-text);
+  min-width: 80px;
+  flex: 1;
+}
+
+.connections-mapping__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.connections-mapping__input {
+  width: 100%;
+  padding: 6px 8px;
+  font-size: 13px;
+}
+
+.connections-stale {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: #fef3c7;
+  border-radius: var(--radius-sm);
+  padding: 8px 12px;
+  font-size: 12px;
+  color: var(--t-text);
+}
+
+.connections-stale button {
+  margin-left: auto;
+}
+
+.connections-tags {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--t-border);
+  border-radius: var(--radius-sm);
+  padding: 6px 10px;
+}
+
+.connections-tags__suggestions {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.connections-advanced {
+  border: 1px solid var(--t-border);
+  border-radius: var(--radius);
+  padding: 10px 14px;
+}
+
+.connections-advanced > summary {
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--t-text);
+}
+
+.connections-advanced__body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding-top: 12px;
+}
+
+.connections__right {
+  position: sticky;
+  top: 16px;
+}
+
+.connections-preview {
+  border: 1px solid var(--t-border);
+  border-radius: var(--radius);
+  background: var(--t-surface);
+  padding: 14px 16px;
+}
+
+.connections-preview__eyebrow {
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  color: var(--t-muted);
+  margin-bottom: 8px;
+}
+
+.connections-preview__count {
+  font-size: 19px;
+  font-weight: 500;
+  color: var(--t-text);
+  margin-bottom: 4px;
+}
+
+.connections-preview__split {
+  font-size: 12px;
+  color: var(--t-muted);
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--t-border);
+  margin-bottom: 10px;
+}
+
+.connections-preview__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.connections-preview__list li {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 12px;
+}
+
+.connections-preview__t {
+  color: var(--t-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.connections-preview__why {
+  color: var(--t-muted);
+  flex: none;
+}
+
+.connections__save-error {
+  border: 1px solid var(--c-overflow);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  font-size: 12px;
+  color: var(--t-text);
+}
+
+@media (max-width: 900px) {
+  .connections__body {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .connections__right {
+    position: static;
+  }
+  .connections-card__cols {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+
+/* U13: keep Discard and Save visibly separate in the Connections footer. */
+.footer--connections .footer__right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+/* ---- U11 density pass: one-line task rows (2026-10-10) ------------------
+   The recomposed table above stacks the name, its source, the due line, and
+   the duration readout into a two-line card (~100px). This final layer folds
+   every one of those sub-lines onto a single dense row (~56px, set by the
+   44px control floor) so a lane scans as a compact table. It sits at the END
+   of app.css so it wins the cascade without editing the blocks above, and it
+   is scoped to the desktop grid (>=1101px): narrower widths keep the two-line
+   wrap from the max-width:1100px block, which is what lets 900px reflow with
+   no horizontal scroll. */
+
+@media (min-width: 1101px) {
+  /* Row: drop the 60px card floor and the extra horizontal inset; the 44px
+     controls now set the height (44 + 6px vertical padding = 56px). The
+     action track is sized so the revealed verb line never overflows. */
+  .qrow {
+    min-height: 0;
+    padding: 6px 8px 6px 0;
+    align-items: center;
+    grid-template-columns: 3px minmax(0, 1fr) 150px 290px 440px;
+  }
+
+  /* Name + source share one line: the body stops stacking. */
+  .qrow__body {
+    flex-direction: row;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: nowrap;
+  }
+
+  .qrow__nameline {
+    flex: 0 1 auto;
+  }
+
+  .qrow__name {
+    -webkit-line-clamp: 1;
+    white-space: nowrap;
+  }
+
+  .qrow__source {
+    margin-top: 0;
+    flex: 0 1 auto;
+  }
+
+  /* Priority chip + due share one line. */
+  .qrow__due {
+    flex-wrap: nowrap;
+  }
+
+  /* Slider and its readout share one line; the track gives up the 140px floor
+     (its 44px hit area and 10px thumb are untouched) so the value sits inline
+     instead of wrapping under the slider. */
+  .qrow__time {
+    flex-wrap: nowrap;
+  }
+
+  .qrow__time .alloc-track {
+    flex: 1 1 auto;
+    min-width: 80px;
+  }
+
+  .qrow__time .alloc-track__value {
+    min-width: 0;
+    white-space: nowrap;
+  }
+
+  /* Row verbs reveal on hover/focus as one compact line on the right. The
+     scope-note sub-line is folded away at this density; every verb keeps its
+     label, its aria-label, and the 44px target, and the cluster stays in the
+     DOM and focusable (opacity only — never display:none). */
+  .qrow__actions {
+    flex-wrap: nowrap;
+    gap: 4px;
+    justify-content: flex-end;
+  }
+
+  .qrow__action-group {
+    flex-wrap: nowrap;
+    gap: 4px;
+  }
+
+  .qrow__actions .planbtn,
+  .qrow__actions .alloc-verb {
+    display: inline-flex;
+    align-items: center;
+    min-width: 0;
+    padding: 0 8px;
+    font-size: 11px;
+    white-space: nowrap;
+  }
+
+  .qrow__actions .planbtn__detail,
+  .qrow__actions .alloc-verb__detail {
+    display: none;
+  }
+
+  /* The uppercase group label repeats the lane header's sub verbatim; with
+     the lane header already carrying it, the second rule is pure noise. */
+  .tasktable__grouplabel {
+    display: none;
+  }
 }

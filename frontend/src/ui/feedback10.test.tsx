@@ -115,17 +115,21 @@ describe("FEEDBACK-10 over-capacity hierarchy (A10)", () => {
   it("shows a strong over-capacity summary above the bands when selected exceeds capacity", () => {
     const h = makeHarness("conflict");
     const { container } = h.ui(<Queue />);
-    const summary = container.querySelector(".queue__remaining") as HTMLElement;
+    // U11: the retired .queue__remaining line reported the budget-model
+    // overage (localSelected - budgetTotal). That arithmetic now renders as
+    // the rail's pinned task-room status inside the capacity card.
+    const summary = container.querySelector(".rail__status-state") as HTMLElement;
     expect(summary).toBeTruthy();
-    expect(summary.textContent).toMatch(/blk selected of \d+ blk capacity/);
-    expect(summary.textContent).toMatch(/\d+ blk over/);
-    expect(summary.className).toContain("queue__remaining--over");
+    expect(summary.className).toContain("rail__status-state--over");
+    expect(summary.textContent).toMatch(/\d+ blk over — reduce durations or exclude/);
+    const ratio = container.querySelector(".rail__status-ratio") as HTMLElement;
+    expect(ratio.textContent).toMatch(/\d+ blk selected \/ \d+ blk task room/);
   });
 
   it("renders no over-capacity summary on a balanced day", () => {
     const h = makeHarness("ready");
     const { container } = h.ui(<Queue />);
-    expect(container.querySelector(".queue__remaining")).toBeNull();
+    expect(container.querySelector(".rail__status-state--over")).toBeNull();
   });
 });
 
@@ -173,9 +177,13 @@ describe("over-allotment is reported, never converted into a proposed drop (supe
     const { container } = h.ui(<Queue />);
     const over = localSelected(s) - budgetTotal(s);
     expect(over).toBeGreaterThan(0);
-    const summary = container.querySelector(".queue__remaining") as HTMLElement;
+    const ratio = container.querySelector(".rail__status-ratio") as HTMLElement;
+    expect(ratio.textContent).toBe(
+      `${formatBlockAmount(localSelected(s))} selected / ${formatBlockAmount(budgetTotal(s))} task room`,
+    );
+    const summary = container.querySelector(".rail__status-state") as HTMLElement;
     expect(summary.textContent).toBe(
-      `${formatBlockAmount(localSelected(s))} selected of ${formatBlockAmount(budgetTotal(s))} capacity - ${formatBlockAmount(over)} over`,
+      `${formatBlockAmount(over)} over — reduce durations or exclude`,
     );
     // Every assigned row still renders: nothing was quietly removed.
     expect(container.querySelectorAll(".qrow").length).toBeGreaterThanOrEqual(
@@ -508,7 +516,9 @@ describe("FEEDBACK-12 queue scheduled rows render 12-hour", () => {
       ];
     });
     const { container } = h.ui(<Queue />);
-    const dropped = container.querySelector(".queue__dropped-at");
-    expect(dropped?.textContent).toMatch(/dropped \d{1,2}(:\d{2})? (AM|PM)/);
+    // U11: the dropped ledger row renders inside the "Out today" lane as
+    // .qrow--dropped, with its 12-hour drop time on the source line.
+    const dropped = container.querySelector(".qrow--dropped");
+    expect(dropped?.textContent).toMatch(/dropped · \d{1,2}(:\d{2})? (AM|PM)/);
   });
 });
