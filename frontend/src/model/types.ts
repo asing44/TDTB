@@ -540,6 +540,45 @@ export interface CapacitiesCoverage {
   limit: CapacitiesLimit;
 }
 
+/** S7a: the typed ``direct`` Capacities intake state reported by the
+    additive ``capacities_intake`` block. Absent on legacy payloads. */
+export type CapacitiesIntakeState =
+  | "not_configured"
+  | "refresh_required"
+  | "unavailable"
+  | "degraded"
+  | "ok";
+
+/** Bounded counts for one direct-intake read. */
+export interface CapacitiesIntakeCoverage {
+  members: number;
+  evaluated: number;
+  malformed: number;
+  unreadable: number;
+}
+
+/** One unassigned Capacities candidate surfaced by the direct intake. */
+export interface CapacitiesIntakeCandidate {
+  identity: string;
+  name: string;
+  /** Server review-reason keys; never rewritten by the client. */
+  reviewReasons: string[];
+  selected: boolean;
+}
+
+/** Typed projection of the additive ``capacities_intake`` block. ``mode`` is
+    always ``direct`` (legacy omits the block entirely). Timestamps stay in
+    the server's epoch-seconds form; the UI formats them. */
+export interface CapacitiesIntake {
+  mode: "direct";
+  state: CapacitiesIntakeState;
+  generation: number | null;
+  installedAt: number | null;
+  typeCheckTimes: Record<string, number>;
+  coverage: CapacitiesIntakeCoverage;
+  unassignedCandidates: CapacitiesIntakeCandidate[];
+}
+
 /** T19 — deterministic Live micro-adventure state (locked decision 25). */
 export interface MicroIdea {
   id: string;
@@ -600,6 +639,9 @@ export interface PlanInputs {
   sourceCounts: { vault: number; todoist: number; calendar: number };
   sourceHealth: SourceHealth;
   microAdventure: MicroAdventure;
+  /** S7a: typed direct-intake block. Absent for legacy payloads or the
+      legacy intake mode — the key is omitted, never fabricated. */
+  capacitiesIntake?: CapacitiesIntake;
 }
 
 /** Fixed-input snapshot for the drift fingerprint (locked decision 17):

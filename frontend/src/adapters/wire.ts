@@ -17,6 +17,10 @@ import type {
   AssignedItem,
   Capacity,
   CapacitiesCoverage,
+  CapacitiesIntake,
+  CapacitiesIntakeCandidate,
+  CapacitiesIntakeCoverage,
+  CapacitiesIntakeState,
   CapacitiesLimit,
   CapacitiesCatalog,
   CapacitiesCatalogLabelOption,
@@ -1211,6 +1215,88 @@ export function capacitiesAssignmentWarnings(warnings: string[]): string[] {
   );
 }
 
+const capacitiesIntakeStates = new Set<string>([
+  "not_configured",
+  "refresh_required",
+  "unavailable",
+  "degraded",
+  "ok",
+]);
+
+function finiteNumberOrNull(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function projectCapacitiesIntakeCoverage(raw: unknown): CapacitiesIntakeCoverage {
+  const src = raw && typeof raw === "object" && !Array.isArray(raw) ? (raw as Wire) : {};
+  return {
+    members: finiteNumberOrNull(src.members) ?? 0,
+    evaluated: finiteNumberOrNull(src.evaluated) ?? 0,
+    malformed: finiteNumberOrNull(src.malformed) ?? 0,
+    unreadable: finiteNumberOrNull(src.unreadable) ?? 0,
+  };
+}
+
+function projectCapacitiesIntakeCandidate(raw: Wire): CapacitiesIntakeCandidate {
+  return {
+    identity: String(raw.identity ?? ""),
+    name: String(raw.name ?? ""),
+    reviewReasons: Array.isArray(raw.review_reasons)
+      ? raw.review_reasons.map(String)
+      : [],
+    selected: raw.selected === true,
+  };
+}
+
+/** S7a: typed projection of the additive ``capacities_intake`` block. Returns
+    null only when the block is genuinely absent (legacy payloads or the legacy
+    intake mode), so the caller can omit the key rather than fabricate one. A
+    present-but-unusable block projects to a conservative ``unavailable`` with
+    safe empty metadata — it can never read as success or full coverage. */
+export function projectCapacitiesIntake(raw: unknown): CapacitiesIntake | null {
+  if (raw === undefined || raw === null) return null;
+  const safe: CapacitiesIntake = {
+    mode: "direct",
+    state: "unavailable",
+    generation: null,
+    installedAt: null,
+    typeCheckTimes: {},
+    coverage: { members: 0, evaluated: 0, malformed: 0, unreadable: 0 },
+    unassignedCandidates: [],
+  };
+  if (typeof raw !== "object" || Array.isArray(raw)) return safe;
+  const block = raw as Wire;
+  if (block.mode !== "direct") return safe;
+  if (typeof block.state !== "string" || !capacitiesIntakeStates.has(block.state)) {
+    return safe;
+  }
+  const coverage = block.coverage;
+  if (!coverage || typeof coverage !== "object" || Array.isArray(coverage)) return safe;
+  if (!Array.isArray(block.unassigned_candidates)) return safe;
+  const typeCheckTimes: Record<string, number> = {};
+  const rawTimes = block.type_check_times;
+  if (rawTimes && typeof rawTimes === "object" && !Array.isArray(rawTimes)) {
+    for (const [key, value] of Object.entries(rawTimes as Wire)) {
+      const checkedAt = finiteNumberOrNull(value);
+      if (checkedAt !== null) typeCheckTimes[String(key)] = checkedAt;
+    }
+  }
+  return {
+    mode: "direct",
+    state: block.state as CapacitiesIntakeState,
+    generation: finiteNumberOrNull(block.generation),
+    installedAt: finiteNumberOrNull(block.installed_at),
+    typeCheckTimes,
+    coverage: projectCapacitiesIntakeCoverage(coverage),
+    unassignedCandidates: (block.unassigned_candidates as unknown[])
+      .filter(
+        (row): row is Wire =>
+          !!row && typeof row === "object" && !Array.isArray(row),
+      )
+      .map(projectCapacitiesIntakeCandidate),
+  };
+}
+
 export function sourceHealthOf(warnings: string[]): SourceHealth {
   return warnings.some((warning) => !advisoryReminderOmission.test(warning))
     ? "degraded"
@@ -1299,6 +1385,9 @@ export function projectPlanInputs(wire: Wire): PlanInputs {
     habits.total > 0
       ? `${habits.outstanding} of ${habits.total} habits outstanding · ~${habits.est_minutes}min`
       : null;
+  const capacitiesIntake = projectCapacitiesIntake(
+    wire.capacities_intake ?? wire.digest?.capacities_intake,
+  );
   return {
     validDate: String(wire.digest?.valid_date ?? ""),
     assigned: (wire.digest?.assigned ?? []).map(projectAssigned),
@@ -1331,6 +1420,10 @@ export function projectPlanInputs(wire: Wire): PlanInputs {
     },
     sourceHealth: sourceHealthOf(warnings),
     microAdventure: projectMicroAdventure(wire.micro_adventure),
+    // S7a: the block is top-level on the /plan-inputs response; the digest
+    // fallback is defensive only. Legacy payloads omit it, so the key stays
+    // absent rather than being fabricated.
+    ...(capacitiesIntake !== null ? { capacitiesIntake } : {}),
   };
 }
 

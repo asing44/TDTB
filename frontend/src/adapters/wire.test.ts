@@ -9,6 +9,7 @@ import {
   calendarWarnings,
   capacitiesAssignmentWarnings,
   capacitiesCoverageOf,
+  projectCapacitiesIntake,
   capacitiesSettingsToWire,
   capacitiesSourceToWire,
   daySetupToWire,
@@ -413,6 +414,152 @@ describe("Capacities partial coverage (source_warnings)", () => {
     expect(p.sourceWarnings).toEqual([budgetWarning]);
     expect(p.sourceHealth).toBe("degraded");
     expect(calendarWarnings(p.sourceWarnings)).toEqual([]);
+  });
+});
+
+describe("S7a typed direct-intake block (capacities_intake)", () => {
+  const directBlock = {
+    mode: "direct",
+    state: "ok",
+    generation: 7,
+    installed_at: 1728480000.5,
+    type_check_times: { "struct-a": 1728480001.25, "struct-b": 1728480002.5 },
+    coverage: { members: 12, evaluated: 10, malformed: 1, unreadable: 1 },
+    unassigned_candidates: [
+      {
+        identity: "capacities:sp:struct-a:obj-1",
+        name: "Obj One",
+        review_reasons: ["unknown"],
+        selected: true,
+      },
+      {
+        identity: "capacities:sp:struct-a:obj-2",
+        name: "Obj Two",
+        review_reasons: [],
+        selected: false,
+      },
+    ],
+  };
+
+  // The safe/conservative projection for a present-but-unusable block. It must
+  // never claim success or full coverage.
+  const safeUnavailable = {
+    mode: "direct",
+    state: "unavailable",
+    generation: null,
+    installedAt: null,
+    typeCheckTimes: {},
+    coverage: { members: 0, evaluated: 0, malformed: 0, unreadable: 0 },
+    unassignedCandidates: [],
+  };
+
+  it("omits the key entirely for a legacy payload with no block", () => {
+    const p = projectPlanInputs(planInputs);
+    expect(p.capacitiesIntake).toBeUndefined();
+    expect("capacitiesIntake" in p).toBe(false);
+    expect(projectCapacitiesIntake(undefined)).toBeNull();
+    expect(projectCapacitiesIntake(null)).toBeNull();
+    expect(
+      "capacitiesIntake" in projectPlanInputs({ ...planInputs, capacities_intake: null }),
+    ).toBe(false);
+  });
+
+  it("projects a valid direct block faithfully", () => {
+    expect(projectCapacitiesIntake(directBlock)).toEqual({
+      mode: "direct",
+      state: "ok",
+      generation: 7,
+      installedAt: 1728480000.5,
+      typeCheckTimes: { "struct-a": 1728480001.25, "struct-b": 1728480002.5 },
+      coverage: { members: 12, evaluated: 10, malformed: 1, unreadable: 1 },
+      unassignedCandidates: [
+        {
+          identity: "capacities:sp:struct-a:obj-1",
+          name: "Obj One",
+          reviewReasons: ["unknown"],
+          selected: true,
+        },
+        {
+          identity: "capacities:sp:struct-a:obj-2",
+          name: "Obj Two",
+          reviewReasons: [],
+          selected: false,
+        },
+      ],
+    });
+    const p = projectPlanInputs({ ...planInputs, capacities_intake: directBlock });
+    expect(p.capacitiesIntake?.state).toBe("ok");
+    expect(p.capacitiesIntake?.coverage).toEqual({
+      members: 12,
+      evaluated: 10,
+      malformed: 1,
+      unreadable: 1,
+    });
+    expect(p.capacitiesIntake?.unassignedCandidates[0].reviewReasons).toEqual(["unknown"]);
+  });
+
+  it("retains each non-success state, generation and installed_at faithfully", () => {
+    for (const state of [
+      "not_configured",
+      "refresh_required",
+      "unavailable",
+      "degraded",
+    ] as const) {
+      const projected = projectCapacitiesIntake({
+        ...directBlock,
+        state,
+        generation: null,
+        installed_at: null,
+        type_check_times: {},
+        unassigned_candidates: [],
+      });
+      expect(projected?.state).toBe(state);
+      expect(projected?.generation).toBeNull();
+      expect(projected?.installedAt).toBeNull();
+    }
+    expect(
+      projectCapacitiesIntake({ ...directBlock, state: "degraded" })?.installedAt,
+    ).toBe(1728480000.5);
+  });
+
+  it("never turns a malformed present block into success or full coverage", () => {
+    const malformed: unknown[] = [
+      "nope",
+      42,
+      [],
+      {},
+      { mode: "legacy", state: "ok" },
+      { mode: "direct", state: "success" },
+      { mode: "direct", state: "ok" },
+      { mode: "direct", state: "ok", coverage: "x", unassigned_candidates: [] },
+      { mode: "direct", state: "ok", coverage: directBlock.coverage },
+    ];
+    for (const raw of malformed) {
+      expect(projectCapacitiesIntake(raw)).toEqual(safeUnavailable);
+      const projected = projectPlanInputs({ ...planInputs, capacities_intake: raw });
+      expect(projected.capacitiesIntake).toEqual(safeUnavailable);
+      expect(projected.capacitiesIntake?.state).not.toBe("ok");
+    }
+  });
+
+  it("tolerates missing optional scalars inside a structurally valid block", () => {
+    const projected = projectCapacitiesIntake({
+      mode: "direct",
+      state: "not_configured",
+      coverage: {},
+      unassigned_candidates: [{ identity: "i", name: "n" }],
+    });
+    expect(projected).toEqual({
+      mode: "direct",
+      state: "not_configured",
+      generation: null,
+      installedAt: null,
+      typeCheckTimes: {},
+      coverage: { members: 0, evaluated: 0, malformed: 0, unreadable: 0 },
+      unassignedCandidates: [
+        { identity: "i", name: "n", reviewReasons: [], selected: false },
+      ],
+    });
   });
 });
 
