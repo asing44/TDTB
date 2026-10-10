@@ -5278,3 +5278,251 @@ body {
     font-size: 12px;
   }
 }
+
+/* U12 — Set up day screen (reference A). Two-column composition: the Day frame
+   card with the R20a strip and the Anchors card on the left, Morning prompts
+   on the right. */
+.day-setup-screen__grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 380px);
+  gap: 16px;
+  align-items: start;
+}
+
+.day-setup-screen__main,
+.day-setup-screen__side {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+}
+
+@media (max-width: 900px) {
+  .day-setup-screen__grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.setup-section__hint {
+  margin: 2px 0 0;
+  font-size: 12px;
+  color: var(--t-muted);
+}
+
+.frame-fields {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+@media (max-width: 900px) {
+  .frame-fields {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+.day-strip {
+  position: relative;
+  margin-top: 12px;
+  padding-top: 18px;
+}
+
+.day-strip__axis {
+  position: relative;
+  height: 16px;
+}
+
+.day-strip__tick {
+  position: absolute;
+  top: 0;
+  transform: translateX(-50%);
+  font-size: 10px;
+  color: var(--t-muted);
+  white-space: nowrap;
+}
+
+.day-strip__frame {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 20px;
+  height: 12px;
+  border: 1px solid var(--t-border);
+  border-radius: 4px;
+  background: var(--t-surface-2);
+}
+
+.day-strip__lane {
+  position: relative;
+  height: 34px;
+  margin-top: 6px;
+  border-radius: 4px;
+  background: var(--t-surface-2);
+}
+
+.day-strip__lane--anchors {
+  background: transparent;
+}
+
+.day-strip__empty {
+  display: inline-block;
+  padding: 0 8px;
+  font-size: 11px;
+  line-height: 34px;
+  color: var(--t-muted);
+}
+
+.strip-slot {
+  position: absolute;
+  top: 3px;
+  height: 28px;
+  padding: 0 4px;
+  border: 1px solid var(--t-border);
+  border-radius: 3px;
+  background: var(--t-surface);
+  color: var(--t-text);
+  font-size: 10px;
+  overflow: hidden;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.strip-slot--blocked {
+  background: repeating-linear-gradient(
+    45deg,
+    var(--t-surface-2),
+    var(--t-surface-2) 4px,
+    var(--t-border) 4px,
+    var(--t-border) 8px
+  );
+  color: var(--t-muted);
+  cursor: not-allowed;
+}
+
+.strip-slot--selected {
+  background: var(--t-accent);
+  border-color: var(--t-accent-strong);
+  color: var(--t-accent-text);
+}
+
+.strip-slot:focus-visible,
+.strip-anchor:focus-visible {
+  outline: 2px solid var(--t-accent);
+  outline-offset: 1px;
+}
+
+.strip-anchor {
+  position: absolute;
+  top: 3px;
+  height: 24px;
+  padding: 0 6px;
+  border: 1px solid var(--t-border);
+  border-radius: 3px;
+  background: var(--t-surface);
+  color: var(--t-text);
+  font-size: 10px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.strip-anchor--not-counted {
+  border-style: dashed;
+  color: var(--t-muted);
+}
+
+.frame-summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-top: 12px;
+  padding: 8px 12px;
+  border-radius: var(--radius);
+  background: var(--t-accent-subtle);
+  color: var(--t-accent-text);
+  font-size: 12px;
+}
+
+.frame-summary__free {
+  color: var(--t-muted);
+}
+
+.frame-summary__reset {
+  margin-left: auto;
+}
+
+.anchor-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.anchor-chip {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  padding: 8px 12px;
+  border: 1px solid var(--t-border);
+  border-radius: var(--radius);
+  background: var(--t-surface);
+  color: var(--t-text);
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.anchor-chip__meta {
+  color: var(--t-muted);
+}
+
+.not-counted {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin-top: 12px;
+  font-size: 12px;
+}
+
+.not-counted__label,
+.not-counted__empty {
+  color: var(--t-muted);
+}
+
+.not-counted__chip {
+  padding: 4px 10px;
+  border: 1px dashed var(--t-border);
+  border-radius: 999px;
+  color: var(--t-muted);
+}
+
+.field--inline {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.prompts-live {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.footer--setup .footer__saved {
+  color: var(--t-muted);
+  font-size: 12px;
+}
+
+.footer--setup .footer__right {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+
+.footer__undo {
+  border: none;
+  background: none;
+  color: var(--t-accent);
+  cursor: pointer;
+  font-size: 13px;
+  text-decoration: underline;
+}

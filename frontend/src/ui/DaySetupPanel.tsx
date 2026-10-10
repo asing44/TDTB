@@ -1,6 +1,14 @@
 /* DaySetupPanel — editable day setup: anchor/EOD/buffering, anchored block
-   on/skip/time overrides, and the three captures (Intention, For Meegy,
-   Stoic — locked decision 10). Saves session/day-scoped state only.
+   on/skip/time overrides, the Mint selection, and the three captures
+   (Intention, For Meegy, Stoic — locked decision 10). Saves session/day-scoped
+   state only.
+
+   U12 (KTD10/KTD13): the promoted Set up day screen renders the mockup's
+   two-column composition — a Day frame card with the R20a drag strip, an
+   Anchors card, and a Morning prompts card — while the settings drawer keeps
+   the legacy sectioned composition so its long-standing suites stay intact.
+   `variant` selects the layout; every controller, wire contract, and Mint/wall
+   rule below is shared.
 
    The body is mounted by SettingsShell for the life of the shell (whether or
    not this tab is selected), so unsaved drafts survive panel switches; the
@@ -8,9 +16,9 @@
    The dialog chrome, focus management, and close affordance belong to the
    shell. */
 
-import { useState } from "preact/hooks";
+import { useEffect, useRef, useState } from "preact/hooks";
 import { useApp, useAppState } from "./context";
-import { display12h, formatBlockAmount, formatDurationMinutes } from "../model/time";
+import { display12h, formatBlockAmount, formatDurationMinutes, toMinutes } from "../model/time";
 import {
   initialMintSessionIds as resolveInitialMintSessionIds,
   mintMinutesForSessionIds,
@@ -28,8 +36,18 @@ import {
 } from "../model/anchored";
 import { calendarWalls } from "../model/overflow";
 import { effectiveAnchoredBlocks } from "../store/store";
+import { DayStrip } from "./day-setup/DayStrip";
+import { AnchorsCard } from "./day-setup/AnchorsCard";
+import { PromptsCard } from "./day-setup/PromptsCard";
+import { onSetupContinue, onSetupUndo } from "./day-setup/commands";
 
-export function DaySetupPanel({ active }: { active: boolean }) {
+export function DaySetupPanel({
+  active,
+  variant = "drawer",
+}: {
+  active: boolean;
+  variant?: "drawer" | "screen";
+}) {
   const s = useAppState();
   const { controller, store } = useApp();
   const availableMintSessions = s.inputs?.daySemantics.mintSessions ?? [];
@@ -109,6 +127,21 @@ export function DaySetupPanel({ active }: { active: boolean }) {
     ...s.promptOptins.optins,
   });
   const [promptDirty, setPromptDirty] = useState(false);
+  // U12 Undo restores the uncommitted day-frame edits to the last saved state.
+  const initialRef = useRef({
+    draft: initialDraft,
+    preset: s.daySetup.dayPreset ?? automaticPreset,
+    workAllotment: String(
+      availableMintSessions.length > 0
+        ? initialMintSessionIds.length * MINT_SESSION_MINUTES
+        : savedAllotment,
+    ),
+    mode: Object.prototype.hasOwnProperty.call(s.daySetup, "workAllotmentMinutes")
+      ? s.daySetup.workAllotmentMinutes === null
+        ? ("reset" as const)
+        : ("preserve" as const)
+      : ("preserve" as const),
+  });
   const close = () => store.dispatch({ type: "UI", patch: { settingsPanel: null } });
 
   const savePrompts = () => {
@@ -129,6 +162,20 @@ export function DaySetupPanel({ active }: { active: boolean }) {
   const autosavePrompts = () => {
     if (promptDirty) savePrompts();
   };
+
+  // U12 command refs, declared before any early return so the subscription
+  // hooks keep a stable order; the callbacks below fill them in.
+  const continueRef = useRef<() => void>(() => {});
+  const undoRef = useRef<() => void>(() => {});
+  useEffect(() => {
+    if (variant !== "screen") return;
+    const offContinue = onSetupContinue(() => continueRef.current());
+    const offUndo = onSetupUndo(() => undoRef.current());
+    return () => {
+      offContinue();
+      offUndo();
+    };
+  }, [variant]);
 
   if (!active || !s.inputs) return null;
 
@@ -168,6 +215,16 @@ export function DaySetupPanel({ active }: { active: boolean }) {
     }));
   };
 
+  // R20a: a single slot toggle (click or keyboard Space). Wall-blocked ids are
+  // dropped again by setMintSelection, so a blocked slot never becomes a
+  // commitment.
+  const toggleMintSession = (id: string) => {
+    const next = selectedMintSessionIds.includes(id)
+      ? selectedMintSessionIds.filter((candidate) => candidate !== id)
+      : [...selectedMintSessionIds, id];
+    setMintSelection(next);
+  };
+
   // T19: free Live overrides — each control persists immediately via
   // /day-setup {micro_adventure}; never billed, never a history write.
   const micro = s.inputs.microAdventure;
@@ -183,7 +240,10 @@ export function DaySetupPanel({ active }: { active: boolean }) {
   const sourceAnchor = (id: string) => s.inputs!.anchored.find((a) => a.id === id)!;
   const overrideOf = (id: string): AnchoredOverride => {
     const block = sourceAnchor(id);
-    return anchoredOverrideOf(block, draft.anchored[id]);
+    // U12: the screen edits anchors through the shared AnchoredEditor, which
+    // saves to the store. Prefer an unsaved local patch, then fall back to the
+    // saved override so a just-applied skip/edit is reflected without a remount.
+    return anchoredOverrideOf(block, draft.anchored[id] ?? s.daySetup.anchored[id]);
   };
 
   const patchAnchored = (id: string, patch: Partial<AnchoredOverride>) =>
@@ -277,6 +337,15 @@ export function DaySetupPanel({ active }: { active: boolean }) {
       : semantics.availablePresets.find((candidate) => candidate.name === presetName) ?? null;
     return selected?.workAllotmentMinutes ?? semantics.defaultAllotmentMinutes;
   };
+  const resetAllotment = () => {
+    const configured = configAllotment(preset);
+    if (availableMintSessions.length > 0) {
+      setMintAllotment(configured);
+    } else {
+      setWorkAllotment(String(configured));
+      setAllotmentMode("reset");
+    }
+  };
   const allotmentNumber = availableMintSessions.length > 0
     ? mintMinutesForSessionIds(availableMintSessions, selectedMintSessionIds)
     : Number(workAllotment);
@@ -308,6 +377,225 @@ export function DaySetupPanel({ active }: { active: boolean }) {
       (error) => `${a.name}: ${error}`,
     ),
   );
+
+  const editAnchor = (id: string) =>
+    store.dispatch({ type: "UI", patch: { editorAnchor: id } });
+
+  // U12: the footer's Continue confirms the day frame (preserving the existing
+  // day-setup confirm contract) and then advances the stepper to Plan tasks.
+  continueRef.current = async () => {
+    if (anchorErrors.length > 0 || allotmentError) return;
+    try {
+      await save();
+    } catch {
+      return;
+    }
+    store.dispatch({ type: "UI", patch: { screen: "plan", settingsPanel: null } });
+  };
+  undoRef.current = () => {
+    setDraft(initialRef.current.draft);
+    setPreset(initialRef.current.preset);
+    setWorkAllotment(initialRef.current.workAllotment);
+    setAllotmentMode(initialRef.current.mode);
+  };
+
+  if (variant === "screen") {
+    const frameStart = mintAnchor ?? s.inputs.time.anchor;
+    const frameEnd = draft.eod ?? s.inputs.time.effectiveEod;
+    const frameStartMin = toMinutes(frameStart);
+    const frameEndMin = toMinutes(frameEnd);
+    const stripAnchors = editableAnchors.map((a) => {
+      const o = overrideOf(a.id);
+      const on = o.on && !o.skipToday;
+      const time = o.time ?? a.start ?? frameStart;
+      const startMin = toMinutes(time);
+      const outside = startMin < frameStartMin || startMin > frameEndMin;
+      const counted = on && !outside;
+      return {
+        id: a.id,
+        name: a.name,
+        start: time,
+        counted,
+        reason: !on ? "skipped" : outside ? "outside frame" : null,
+        blocks: anchoredBlocks(sourceAnchor(a.id), o),
+      };
+    });
+    const countedAnchors = stripAnchors.filter((anchor) => anchor.counted);
+    const notCountedAnchors = stripAnchors.filter((anchor) => !anchor.counted);
+    const freeSlots = Math.max(0, selectableMintSessionIds.length - selectedMintSessionIds.length);
+
+    return (
+      <div class="settings-panel settings-panel--day day-setup-screen">
+        <div class="day-setup-screen__grid">
+          <div class="day-setup-screen__main">
+            <section
+              class="setup-section setup-section--frame"
+              data-settings-section="frame"
+              aria-labelledby="setup-sec-frame"
+            >
+              <div class="setup-section__head">
+                <h3 id="setup-sec-frame">Day frame</h3>
+                <p class="setup-section__hint">
+                  Drag on the strip to pick Mint sessions or move anchors
+                </p>
+              </div>
+              <div class="setup-section__body">
+                <div class="frame-fields">
+                  <div class="field">
+                    <label for="setup-preset">Preset</label>
+                    <select
+                      id="setup-preset"
+                      value={preset}
+                      onChange={(e) => {
+                        const value = (e.target as HTMLSelectElement).value;
+                        setPreset(value);
+                        const configured = configAllotment(value);
+                        if (availableMintSessions.length > 0) {
+                          setMintAllotment(configured);
+                        } else {
+                          setWorkAllotment(String(configured));
+                          setAllotmentMode("reset");
+                        }
+                      }}
+                    >
+                      <option value={automaticPreset}>
+                        Automatic — {s.inputs.daySemantics.selectedPreset?.name ?? "config default"}
+                      </option>
+                      {s.inputs.daySemantics.availablePresets.map((candidate) => (
+                        <option value={candidate.name} key={candidate.name}>{candidate.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div class="field">
+                    <label for="setup-anchor">Start</label>
+                    <input
+                      id="setup-anchor"
+                      type="time"
+                      step={900}
+                      value={draft.anchor ?? s.inputs.time.anchor}
+                      onInput={(e) => setMintAnchor((e.target as HTMLInputElement).value)}
+                    />
+                  </div>
+                  <div class="field">
+                    <label for="setup-eod">End</label>
+                    <input
+                      id="setup-eod"
+                      type="time"
+                      step={900}
+                      value={draft.eod ?? s.inputs.time.configEod}
+                      onInput={(e) =>
+                        setDraft({ ...draft, eod: (e.target as HTMLInputElement).value })
+                      }
+                    />
+                  </div>
+                  <div class="field">
+                    <label for="setup-buffering">Buffer</label>
+                    <select
+                      id="setup-buffering"
+                      value={draft.buffering}
+                      onChange={(e) =>
+                        setDraft({
+                          ...draft,
+                          buffering: (e.target as HTMLSelectElement).value as Buffering,
+                        })
+                      }
+                    >
+                      <option value="standard">Standard (20%)</option>
+                      <option value="minimal">Minimal (11%)</option>
+                      <option value="off">Off</option>
+                    </select>
+                  </div>
+                </div>
+
+                <DayStrip
+                  frameStart={frameStart}
+                  frameEnd={frameEnd}
+                  sessions={availableMintSessions}
+                  selectedIds={selectedMintSessionIds}
+                  selectableIds={selectableMintSessionIds}
+                  onSelectIds={(ids) => setMintSelection(ids)}
+                  onToggleSession={toggleMintSession}
+                  anchors={stripAnchors}
+                  onEditAnchor={editAnchor}
+                />
+
+                {availableMintSessions.length > 0 && (
+                  <div class="frame-summary" role="status">
+                    <span class="frame-summary__mint">
+                      Mint {selectedMintSessionIds.length} of {availableMintSessions.length} sessions ·{" "}
+                      {allotmentLabel}
+                    </span>
+                    <span class="frame-summary__free">
+                      Only {freeSlots} free slot{freeSlots === 1 ? "" : "s"} inside the frame today.
+                    </span>
+                    <button type="button" class="btn frame-summary__reset" onClick={resetAllotment}>
+                      Reset to config
+                    </button>
+                  </div>
+                )}
+                {allotmentError && (
+                  <span class="field-error" role="alert">Use nonnegative 15-minute increments.</span>
+                )}
+                {mintWarning && (
+                  <span class="field-warning" role="status">{mintWarning}</span>
+                )}
+              </div>
+            </section>
+
+            <AnchorsCard
+              counted={countedAnchors.map((anchor) => ({
+                id: anchor.id,
+                name: anchor.name,
+                time: anchor.start,
+                blocks: anchor.blocks,
+              }))}
+              notCounted={notCountedAnchors.map((anchor) => ({
+                id: anchor.id,
+                name: anchor.name,
+                time: anchor.start,
+                reason: anchor.reason ?? "outside frame",
+              }))}
+              onEdit={editAnchor}
+            />
+          </div>
+
+          <div class="day-setup-screen__side">
+            <PromptsCard
+              micro={micro}
+              liveCustom={liveCustom}
+              onLiveCustom={setLiveCustom}
+              onPickPool={(id) => {
+                const idea = micro.pool.find((candidate) => candidate.id === id);
+                if (idea) void controller.setMicroAdventure(idea);
+              }}
+              onSetCustom={() => {
+                const text = liveCustom.trim();
+                if (!text) return;
+                void controller.setMicroAdventure({ id: "custom", idea: text, category: "custom" });
+                setLiveCustom("");
+              }}
+              onShuffle={() => void shuffleLive()}
+              onResetAuto={() => void controller.setMicroAdventure(null)}
+              captures={draft.captures}
+              onCapture={(key, value) => {
+                setPromptDirty(true);
+                setDraft((current) => ({
+                  ...current,
+                  captures: { ...current.captures, [key]: value },
+                }));
+              }}
+              onAutosave={autosavePrompts}
+              optinsAvailable={s.promptOptins.available}
+              optins={optins}
+              onToggleOptin={toggleOptin}
+              promptSave={s.promptSave}
+              onSavePrompts={savePrompts}
+            />
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div class="settings-panel settings-panel--day">
@@ -374,19 +662,7 @@ export function DaySetupPanel({ active }: { active: boolean }) {
           {mintWarning && (
             <span class="field-warning" role="status">{mintWarning}</span>
           )}
-          <button
-            type="button"
-            class="btn"
-            onClick={() => {
-              const configured = configAllotment(preset);
-              if (availableMintSessions.length > 0) {
-                setMintAllotment(configured);
-              } else {
-                setWorkAllotment(String(configured));
-                setAllotmentMode("reset");
-              }
-            }}
-          >
+          <button type="button" class="btn" onClick={resetAllotment}>
             Reset to config
           </button>
         </div>

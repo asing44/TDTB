@@ -12,6 +12,8 @@
 import { useApp, useAppState } from "./context";
 import { ActionDock } from "./ActionDock";
 import { FooterBanners } from "./FooterBanners";
+import { requestSetupContinue, requestSetupUndo } from "./day-setup/commands";
+import { display12h } from "../model/time";
 import {
   acceptableDefects,
   defectsResolved,
@@ -42,7 +44,40 @@ export function Footer() {
   const s = useAppState();
   const { store } = useApp();
   const onPlan = s.ui.screen === "plan";
+  const onSetup = s.ui.screen === "setup";
   const blocked = footerBlockedReason(s);
+
+  // U12: the Set up day footer is its own bar — the save state on the left and
+  // Undo + the primary "Continue to tasks" on the right. Continue confirms the
+  // day frame (existing day-setup contract) and advances the stepper to Plan
+  // tasks. No copy-prompt control exists anywhere (R20b).
+  if (onSetup && s.inputs) {
+    return (
+      <footer class="footer footer--setup" aria-label="Actions">
+        <FooterBanners />
+        <div class="footer__row">
+          <div class="footer__left">
+            <span class="footer__saved" role="status">
+              {s.daySetup.confirmed
+                ? `Saved ${display12h(s.inputs.time.now)}`
+                : "Not saved yet"}
+            </span>
+          </div>
+          <div class="footer__right">
+            <button class="footer__undo" onClick={() => requestSetupUndo()}>
+              Undo
+            </button>
+            <button
+              class="btn btn--primary footer__continue"
+              onClick={() => requestSetupContinue()}
+            >
+              Continue to tasks →
+            </button>
+          </div>
+        </div>
+      </footer>
+    );
+  }
 
   return (
     <footer class="footer" aria-label="Actions">

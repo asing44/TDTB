@@ -74,7 +74,7 @@ export function App() {
             aria-label={screen === "setup" ? "Set up day" : "Connections"}
           >
             {screen === "setup" ? (
-              <DaySetupPanel active={true} />
+              <DaySetupPanel active={true} variant="screen" />
             ) : (
               <>
                 <CapacitiesSettingsPanel active={true} />

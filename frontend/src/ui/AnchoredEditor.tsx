@@ -12,12 +12,15 @@ export function AnchoredEditor() {
   const initial = block ? anchoredOverrideOf(block, s.daySetup.anchored[block.id]) : null;
   const [start, setStart] = useState(initial?.time ?? block?.start ?? "");
   const [blocks, setBlocks] = useState(block && initial ? anchoredBlocks(block, initial) : 1);
+  // U12: the Set up day screen edits/skips anchors through this one surface,
+  // so the skip/on choice belongs here too.
+  const [skip, setSkip] = useState(initial ? !initial.on || initial.skipToday : false);
   const [saving, setSaving] = useState(false);
   const close = () => store.dispatch({ type: "UI", patch: { editorAnchor: null } });
   const dialog = useDialog(close);
 
   if (!id || !block || !initial || !s.inputs) return null;
-  const override = { ...initial, time: start, blocks };
+  const override = { ...initial, time: start, blocks, on: !skip, skipToday: skip };
   const { errors, warnings } = validateAnchoredOverride(block, override, s.inputs.time);
   const apply = async () => {
     if (errors.length > 0) return;
@@ -73,6 +76,17 @@ export function AnchoredEditor() {
             Source window: {display12h(block.start)}–{display12h(block.end)}
           </div>
         )}
+        <div class="field">
+          <label>Today</label>
+          <button
+            type="button"
+            class={`toggle ${!skip ? "toggle--on" : ""}`}
+            aria-pressed={!skip}
+            onClick={() => setSkip((value) => !value)}
+          >
+            {skip ? "Skipped" : "On"}
+          </button>
+        </div>
         {errors.map((error) => <div class="field-error" role="alert">{error}</div>)}
         {warnings.map((warning) => <div class="field-warning" role="status">{warning}</div>)}
         <div class="editor__hint">Today only — source config stays unchanged.</div>
