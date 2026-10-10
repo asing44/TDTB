@@ -989,7 +989,8 @@ def test_legacy_intake_response_keeps_todays_shape(vault, live_sources_mode):
         "anchored_blocks", "anchored_source_fingerprint", "artifact",
         "calendar_decisions", "capacity", "config", "day_semantics", "day_setup",
         "day_setup_confirmed", "digest", "dropped_today", "habits", "micro_adventure",
-        "planning_config_fingerprint", "source_counts", "source_warnings", "time",
+        "planning_config_fingerprint", "prompt_optins", "source_counts",
+        "source_warnings", "time",
     ]
     assert "capacities_intake" not in body
     assert body["source_counts"] == {"vault": 0, "todoist": 0, "capacities": 2, "calendar": 0}

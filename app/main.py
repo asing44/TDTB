@@ -319,6 +319,155 @@ def _capacities_selections_payload(
     }
 
 
+def _capacities_rules_storage_error() -> HTTPException:
+    """Bounded 503 for rules storage: fixed text, no path, no payload."""
+    return HTTPException(
+        status_code=503,
+        detail={
+            "code": "capacities_rules_storage_error",
+            "message": (
+                "Capacities rules storage is unavailable; "
+                "the existing rules were preserved."
+            ),
+        },
+    )
+
+
+def _capacities_rules_conflict(
+    expected_revision: int, current_revision: int,
+) -> HTTPException:
+    return HTTPException(
+        status_code=409,
+        detail={
+            "code": "capacities_rules_conflict",
+            "message": (
+                "Capacities rules changed since they were read; "
+                "reload and retry."
+            ),
+            "expected_revision": expected_revision,
+            "current_revision": current_revision,
+        },
+    )
+
+
+def _capacities_rule_schema_by_structure(
+    structures_payload: Any,
+) -> dict[str, dict[str, str]]:
+    """Per-structure ``{property_id: kind}`` from the published structure
+    contract, with no provider call.
+
+    Accepts the raw structures payload (a list of rows, or a
+    ``{"structures": [...]}`` object). A row's ``propertyDefinitions`` is
+    normalized through :func:`capacities_rules.schema_from_definitions` — the
+    same normalizer the store validates against. Unknown shapes yield no entry,
+    so a missing or partial contract leaves the schema unavailable rather than
+    fabricating one."""
+    rows = structures_payload
+    if isinstance(rows, dict):
+        rows = rows.get("structures")
+    if not isinstance(rows, (list, tuple)):
+        return {}
+    schema: dict[str, dict[str, str]] = {}
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        structure_id = row.get("id") or row.get("structureId")
+        if not isinstance(structure_id, str) or not structure_id:
+            continue
+        schema[structure_id] = capacities_rules.schema_from_definitions(
+            row.get("propertyDefinitions")
+        )
+    return schema
+
+
+def _capacities_rules_contract_schema(
+    vault: Path, space_id: str,
+) -> tuple[dict[str, dict[str, str]], bool]:
+    """``(schema_by_structure, contract_available)`` from the installed
+    generation's structure contract — an offline read, no provider call.
+
+    A missing or unusable contract yields ``({}, False)``: a save is then
+    stored as a draft because there is no discovered shape to validate the
+    rule against, never because a shape was invented."""
+    try:
+        store = capacities_builder.build_refresh_state(vault, space_id)
+        contract = store.load_structure_contract(
+            capacities_refresh.DEFAULT_SCOPE_KEY
+        )
+    except Exception as exc:  # noqa: BLE001 — bounded local boundary
+        print(f"capacities rules contract read failed: {exc}", file=sys.stderr)
+        return {}, False
+    if contract is None:
+        return {}, False
+    return _capacities_rule_schema_by_structure(contract.structures), True
+
+
+def _capacities_rules_payload(
+    *,
+    space_id: str | None,
+    record: capacities_rules.RulesRecord | None,
+    mapped_ids: tuple[str, ...],
+    schema_by_structure: dict[str, dict[str, str]],
+    contract_available: bool,
+) -> dict[str, Any]:
+    """The one wire shape both rules routes answer with.
+
+    ``capabilities`` describes the grammar the editor may build from the
+    store's own operator/kind sets (``matches`` is absent by contract). Each
+    structure carries its persisted ``active``/``draft``/``fallback_minutes``
+    plus the discovered ``schema`` when the published contract supplies one;
+    ``schema_available`` is the honest flag that a save for this type can be
+    validated and therefore activated."""
+    stored = {
+        entry.structure_id: entry
+        for entry in (record.structures if record is not None else ())
+    }
+    ordered: list[str] = list(mapped_ids)
+    for structure_id in stored:
+        if structure_id not in ordered:
+            ordered.append(structure_id)
+    structures: list[dict[str, Any]] = []
+    for structure_id in ordered:
+        entry = stored.get(structure_id)
+        base = (
+            entry.as_dict()
+            if entry is not None
+            else {
+                "structure_id": structure_id,
+                "active": None,
+                "draft": None,
+                "fallback_minutes": None,
+            }
+        )
+        schema = schema_by_structure.get(structure_id)
+        structures.append({
+            **base,
+            "mapped": structure_id in mapped_ids,
+            "schema": schema or {},
+            "schema_available": schema is not None,
+        })
+    return {
+        "space_id": space_id,
+        "revision": 0 if record is None else record.revision,
+        "configured": space_id is not None,
+        "capabilities": {
+            "ops": sorted(capacities_rules.OPS),
+            "value_ops": sorted(capacities_rules.VALUE_OPS),
+            "presence_ops": sorted(capacities_rules.PRESENCE_OPS),
+            "number_ops": sorted(capacities_rules.NUMBER_OPS),
+            "date_ops": sorted(capacities_rules.DATE_OPS),
+            "equality_ops": sorted(capacities_rules.EQUALITY_OPS),
+            "value_kinds": sorted(capacities_rules.VALUE_KINDS),
+            "number_kinds": sorted(capacities_rules.NUMBER_KINDS),
+            "date_kinds": sorted(capacities_rules.DATE_KINDS),
+            "matches": False,
+            "schema_source": "structure_contract",
+            "contract_available": contract_available,
+        },
+        "structures": structures,
+    }
+
+
 def _promote_selected_capacities(
     vault: Path,
     today: date,
@@ -1676,6 +1825,44 @@ class CapacitiesSelectionsSaveRequest(BaseModel):
         return value
 
 
+class CapacitiesRuleSaveRequest(BaseModel):
+    """Request body for POST /capacities/rules.
+
+    Closed and strictly typed at the boundary: ``version`` and the new
+    ``revision`` are server-owned and never read from the body. The predicate
+    itself is free-form JSON — ``capacities_rules`` validates its grammar and
+    property references, so a syntactically invalid predicate is stored as a
+    draft, not rejected as a request error."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    structure_id: StrictStr
+    rule: dict[str, Any]
+    fallback_minutes: StrictInt | None = None
+    expected_revision: StrictInt
+
+    @field_validator("structure_id")
+    @classmethod
+    def _usable_structure_id(cls, value: str) -> str:
+        if not value or value != value.strip() or any(c.isspace() for c in value):
+            raise ValueError("structure_id must be a non-empty whitespace-free id")
+        return value
+
+    @field_validator("fallback_minutes")
+    @classmethod
+    def _fallback_nonnegative(cls, value: int | None) -> int | None:
+        if value is not None and value < 0:
+            raise ValueError("fallback_minutes must be a nonnegative integer or null")
+        return value
+
+    @field_validator("expected_revision")
+    @classmethod
+    def _revision_nonnegative(cls, value: int) -> int:
+        if value < 0:
+            raise ValueError("expected_revision must be a nonnegative integer")
+        return value
+
+
 def _capacities_catalog_payload(structures: Any) -> list[dict[str, Any]]:
     """Serialize a discovery catalog into the pinned editor wire shape.
 
@@ -1747,6 +1934,13 @@ def _read_today_runstate(vault: Path, today: date) -> dict[str, Any]:
 # drafts, and the /day-setup writer never writes them.
 _PROMPT_KEYS = prompt_state.PROMPT_KEYS
 _PROMPT_READ_WARNING = "Prompt drafts could not be read; showing empty prompts."
+# U5 read-side: a failed opt-in read is NOT the same as an all-false store. The
+# /plan-inputs metadata is omitted (the UI then shows preferences unavailable)
+# and this bounded, content-free warning is surfaced instead of a fabricated
+# all-false store that would overwrite saved preferences.
+_PROMPT_OPTINS_READ_WARNING = (
+    "Prompt opt-ins could not be read; preferences are shown as unavailable."
+)
 # Fields that make a /day-setup POST an explicit Day Setup confirmation. A
 # payload carrying ONLY prompt content (captures / opt-ins) updates the local
 # prompt stores without confirming the day.
@@ -1801,6 +1995,22 @@ def _read_prompt_optins() -> tuple[dict[str, bool], int]:
     except prompt_state.PromptStateError:
         return {key: False for key in prompt_state.PROMPT_KEYS}, 0
     return dict(record.optins), record.revision
+
+
+def _read_prompt_optins_metadata() -> tuple[dict[str, Any] | None, list[str]]:
+    """Top-level ``/plan-inputs`` opt-in metadata, or ``None`` when unreadable.
+
+    The frontend's ``projectPromptOptins`` treats an absent block as
+    ``available: false`` and never assumes false, so a malformed/unreadable
+    local store must omit the block and add one bounded, content-free warning
+    instead of reporting an all-false store (which would overwrite saved
+    preferences). A clean read — including an absent file, the all-false
+    default — is exposed truthfully."""
+    try:
+        record = prompt_state.load_optins()
+    except prompt_state.PromptStateError:
+        return None, [_PROMPT_OPTINS_READ_WARNING]
+    return {"optins": dict(record.optins), "revision": record.revision}, []
 
 
 def _save_prompt_drafts(today: date, captures: dict[str, Any] | None) -> None:
@@ -3451,6 +3661,157 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
             raise _capacities_selections_storage_error() from exc
         return _capacities_selections_payload(saved, rules_revision)
 
+    # -- U3a routes: per-type Capacities inclusion rules (GET/POST) ---------
+
+    def _capacities_rules_source(vault: Path) -> Any:
+        """The configured source record, or a bounded fail-closed 503.
+
+        A malformed/unreadable mapping store raises rather than being read as
+        unconfigured; ``None`` means genuinely no source (a documented empty
+        shape, not an error)."""
+        try:
+            return capacities_builder.read_source(vault)
+        except (capacities_builder.CapacitiesSourceStoreError, OSError) as exc:
+            print(f"capacities rules source read failed: {exc}", file=sys.stderr)
+            raise _capacities_rules_storage_error() from exc
+
+    @app.get("/capacities/rules")
+    def get_capacities_rules() -> dict:
+        """Tokenless local read of the per-type Capacities inclusion rules.
+
+        Reads the source mapping, the rules store, and the installed
+        generation's structure contract only: no provider call, no credential,
+        no write, and no external Capacities mutation. No source record answers
+        the documented empty shape with ``space_id: null``. A malformed or
+        unreadable source/rules store fails closed with a bounded 503; a
+        missing or unusable structure contract is reported as
+        ``contract_available: false`` rather than a fabricated schema."""
+        vault = _refresh_vault_root()
+        source = _capacities_rules_source(vault)
+        if source is None:
+            return _capacities_rules_payload(
+                space_id=None,
+                record=None,
+                mapped_ids=(),
+                schema_by_structure={},
+                contract_available=False,
+            )
+        try:
+            record = capacities_rules.load_rules(source.space_id)
+        except (capacities_rules.RulesStoreError, OSError) as exc:
+            print(f"capacities rules read failed: {exc}", file=sys.stderr)
+            raise _capacities_rules_storage_error() from exc
+        schema_by_structure, contract_available = _capacities_rules_contract_schema(
+            vault, source.space_id
+        )
+        return _capacities_rules_payload(
+            space_id=source.space_id,
+            record=record,
+            mapped_ids=tuple(
+                structure.structure_id for structure in source.structures
+            ),
+            schema_by_structure=schema_by_structure,
+            contract_available=contract_available,
+        )
+
+    @app.post("/capacities/rules", dependencies=[Depends(require_token)])
+    def post_capacities_rules(body: CapacitiesRuleSaveRequest) -> dict:
+        """Token-guarded save of ONE per-type Capacities inclusion rule.
+
+        Reuses the rules store's own active/draft + optimistic-revision API: a
+        rule valid for the published type shape becomes ``active`` and replaces
+        the previous active rule; a rule that is invalid — bad syntax, a
+        removed property, or no published schema to validate against — is
+        stored as ``draft`` and the previous active rule is preserved.
+        ``fallback_minutes`` is written as supplied (omitted/null clears it). A
+        stale ``expected_revision`` is a 409 carrying both revisions; malformed
+        existing storage is a 409; a storage failure is a 503 — every failure
+        path preserves the original bytes.
+
+        The rule's structure must be a mapped structure of the current source
+        space (a foreign/unknown type is a 422). Offline and local only: no
+        provider call, no credential, and no write to external Capacities. The
+        rule store's own lock is the only lock taken here — the route
+        deliberately does not nest it inside the publication guard."""
+        vault = _refresh_vault_root()
+        source = _capacities_rules_source(vault)
+        if source is None:
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "code": "capacities_rules_unconfigured",
+                    "message": "No Capacities source is configured; nothing to save.",
+                },
+            )
+        mapped_ids = tuple(
+            structure.structure_id for structure in source.structures
+        )
+        if body.structure_id not in mapped_ids:
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "code": "capacities_rules_unknown_structure",
+                    "message": (
+                        "The rule's structure is not a mapped structure of the "
+                        "configured Capacities source."
+                    ),
+                },
+            )
+        schema_by_structure, contract_available = _capacities_rules_contract_schema(
+            vault, source.space_id
+        )
+        schema = schema_by_structure.get(body.structure_id)
+        try:
+            result = capacities_rules.save_rule(
+                source.space_id,
+                body.structure_id,
+                body.rule,
+                fallback_minutes=body.fallback_minutes,
+                expected_revision=body.expected_revision,
+                schema=schema,
+            )
+        except capacities_rules.RulesConflictError as exc:
+            raise _capacities_rules_conflict(
+                exc.expected_revision, exc.current_revision,
+            ) from exc
+        except capacities_rules.RulesFormatError as exc:
+            print(f"capacities rules save failed: {exc}", file=sys.stderr)
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "capacities_rules_storage_error",
+                    "message": (
+                        "Capacities rules storage is malformed or unsupported; "
+                        "the existing rules were preserved."
+                    ),
+                },
+            ) from exc
+        except (capacities_rules.RulesStoreError, OSError) as exc:
+            print(f"capacities rules save failed: {exc}", file=sys.stderr)
+            raise _capacities_rules_storage_error() from exc
+        try:
+            record = capacities_rules.load_rules(source.space_id)
+        except (capacities_rules.RulesStoreError, OSError) as exc:
+            print(f"capacities rules read failed: {exc}", file=sys.stderr)
+            raise _capacities_rules_storage_error() from exc
+        payload = _capacities_rules_payload(
+            space_id=source.space_id,
+            record=record,
+            mapped_ids=mapped_ids,
+            schema_by_structure=schema_by_structure,
+            contract_available=contract_available,
+        )
+        payload["save"] = {
+            "structure_id": result.structure_id,
+            "valid": result.valid,
+            "reason": result.reason,
+            "active": result.active,
+            "draft": result.draft,
+            "fallback_minutes": result.fallback_minutes,
+            "revision": result.revision,
+        }
+        return payload
+
     @app.get("/settings/exclusions")
     def get_exclusion_settings() -> dict:
         """Tokenless local read of the persisted tag-exclusion policy.
@@ -3938,6 +4299,10 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
             exclusion_settings_revision=exclusion_policy.revision,
         )
 
+        # U5 read-side: expose the persisted opt-in metadata top-level, exactly
+        # as the frontend's projectPromptOptins expects it. A corrupt store
+        # omits the block (prefs unavailable) and adds one bounded warning.
+        optins_metadata, optins_warnings = _read_prompt_optins_metadata()
         response = {
             "digest": digest,
             "config": config,
@@ -3959,7 +4324,7 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
             "artifact": artifact_block,
             "source_warnings": (
                 w_todo + w_cal + w_hab + w_capacities + artifact_warnings
-                + w_vault + prompt_warnings
+                + w_vault + prompt_warnings + optins_warnings
             ),
             "source_counts": {
                 "vault": len(run_data["pool_items"]) + len(run_data["assigned_items"]),
@@ -3968,6 +4333,8 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
                 "calendar": len(busy_blocks),
             },
         }
+        if optins_metadata is not None:
+            response["prompt_optins"] = optins_metadata
         if direct_intake:
             response["capacities_intake"] = _capacities_intake_block(
                 vault, digest, direct_coverage, direct_warnings, intake_read,

@@ -65,6 +65,8 @@ VALID_RULE = {
 REMOVED_PROPERTY_RULE = {"prop": "ghost", "op": "eq", "values": ["x"]}
 #: An operator that is incompatible with the named property's kind.
 INCOMPATIBLE_RULE = {"prop": "title", "op": "lt", "values": [3]}
+#: A shape-invalid predicate (the user-regex operator is deliberately absent).
+MALFORMED_RULE = {"prop": "status", "op": "matches", "values": ["a.*"]}
 
 
 def _eval(rule, record=None):
@@ -349,6 +351,27 @@ def test_incompatible_operator_rule_cannot_activate():
     assert result.active is None
     assert result.draft == INCOMPATIBLE_RULE
     assert cr.effective_rule(SPACE, "Project") is None
+
+
+def test_shape_invalid_rule_is_stored_as_a_draft():
+    """A shape-invalid predicate is kept as a draft, not rejected.
+
+    An editor must be able to persist a work-in-progress rule it is still
+    fixing; the previous active rule stays the eligibility authority and the
+    draft never reaches admission."""
+    cr.save_rule(SPACE, "Project", VALID_RULE, expected_revision=0, schema=SCHEMA)
+    result = cr.save_rule(
+        SPACE, "Project", MALFORMED_RULE, expected_revision=1, schema=SCHEMA
+    )
+    assert result.valid is False
+    assert result.reason is not None
+    assert result.draft == MALFORMED_RULE
+    assert result.active == VALID_RULE
+
+    entry = cr.load_rules(SPACE).structure("Project")
+    assert entry.draft == MALFORMED_RULE
+    assert entry.active == VALID_RULE
+    assert cr.effective_rule(SPACE, "Project") == VALID_RULE
 
 
 def test_valid_rule_saves_with_no_cached_content_available():

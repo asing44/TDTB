@@ -135,8 +135,9 @@ class RulesFormatError(RulesStoreError):
     """Existing Capacities rules storage is malformed or unsupported.
 
     Raised for an unparseable file, duplicate JSON keys, unknown/missing keys,
-    strict-type violations, an unsupported version, or a stored predicate that
-    is not a well-formed rule. Callers must never overwrite the offending
+    strict-type violations, an unsupported version, or a stored ACTIVE
+    predicate that is not a well-formed rule. A stored draft may be
+    shape-invalid by design. Callers must never overwrite the offending
     bytes."""
 
 
@@ -158,7 +159,13 @@ class RulesConflictError(RulesStoreError):
 @dataclass(frozen=True)
 class RuleStructureRecord:
     """One per-structure rule entry: the active rule, the latest draft, and
-    the operator's estimated fallback duration (minutes)."""
+    the operator's estimated fallback duration (minutes).
+
+    ``active`` is the eligibility authority and must be a well-formed
+    predicate. ``draft`` is the latest work-in-progress snapshot and may be
+    shape-invalid (a removed property, or syntax the editor is still fixing);
+    it never affects admission because :meth:`RulesRecord.effective_rule`
+    returns only ``active``."""
 
     structure_id: str
     active: dict[str, Any] | None = None
@@ -178,10 +185,15 @@ class RuleStructureRecord:
                 continue
             if not isinstance(rule, dict):
                 raise ValueError(f"{name} must be a predicate object or None")
-            problem = validate_rule(rule, None)
-            if problem:
-                raise ValueError(f"{name} rule is invalid: {problem}")
             object.__setattr__(self, name, copy.deepcopy(rule))
+        # The active rule is the structure's eligibility authority, so it must
+        # be a well-formed predicate. The draft is a work-in-progress snapshot
+        # and may be shape-invalid; it never affects admission because
+        # `effective_rule` returns only `active`.
+        if self.active is not None:
+            problem = validate_rule(self.active, None)
+            if problem:
+                raise ValueError(f"active rule is invalid: {problem}")
 
     def as_dict(self) -> dict[str, Any]:
         return {
