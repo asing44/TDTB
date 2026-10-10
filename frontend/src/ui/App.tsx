@@ -14,6 +14,10 @@ import { ApprovalDrawer } from "./ApprovalDrawer";
 import { BlockEditor } from "./BlockEditor";
 import { AnchoredEditor } from "./AnchoredEditor";
 import { ExecutionView } from "./ExecutionView";
+import { ScreenNav } from "./ScreenNav";
+import { DaySetupPanel } from "./DaySetupPanel";
+import { CapacitiesSettingsPanel } from "./CapacitiesSettingsPanel";
+import { TagExclusionSettingsPanel } from "./TagExclusionSettingsPanel";
 
 const THEME_KEY = "tdtb-cockpit-theme";
 
@@ -49,14 +53,36 @@ export function App() {
   // assistive technology. The wrapper is `display: contents`, so the rail,
   // main, and footer stay the grid's layout children.
   const settingsOpen = s.ui.settingsPanel !== null;
+  const screen = s.ui.screen;
+  // The promoted screen body is used only when no contextual drawer owns the
+  // viewport, so exactly one surface renders at a time.
+  const promotedScreen = !settingsOpen && screen !== "plan";
 
   return (
+    <>
+    <ScreenNav />
     <div class="cockpit">
       <div
         class="cockpit__background"
         inert={settingsOpen ? true : undefined}
         aria-hidden={settingsOpen ? "true" : undefined}
       >
+        {promotedScreen ? (
+          <main
+            class="cockpit__main cockpit__screen"
+            aria-label={screen === "setup" ? "Set up day" : "Connections"}
+          >
+            {screen === "setup" ? (
+              <DaySetupPanel active={true} />
+            ) : (
+              <>
+                <CapacitiesSettingsPanel active={true} />
+                <TagExclusionSettingsPanel active={true} />
+              </>
+            )}
+          </main>
+        ) : (
+          <>
         <Rail />
         <main class="cockpit__main" aria-label="Today's planning evidence">
           {s.commitPhase === "done" && (
@@ -79,6 +105,8 @@ export function App() {
           <FooterBanners />
           <ActionDock />
         </div>
+          </>
+        )}
       </div>
       {/* Drawers mount on open so their local draft state initializes from
           the CURRENT store state each time. One settings host covers the
@@ -91,6 +119,7 @@ export function App() {
       {s.ui.editorItem && <BlockEditor key={s.ui.editorItem} />}
       {s.ui.editorAnchor && <AnchoredEditor key={s.ui.editorAnchor} />}
     </div>
+    </>
   );
 }
 

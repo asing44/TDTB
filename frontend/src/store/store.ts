@@ -49,6 +49,14 @@ export function isSettingsPanel(value: unknown): value is SettingsPanel {
   return value === "day" || value === "capacities" || value === "tags";
 }
 
+/** B3 top-level screens. `settingsPanel` remains the contextual drawer path;
+    `screen` is the promoted full-screen destination. */
+export type Screen = "plan" | "setup" | "connections";
+
+export function isScreen(value: unknown): value is Screen {
+  return value === "plan" || value === "setup" || value === "connections";
+}
+
 /** Legacy drawer flags, in fixed precedence for a single normalizing write. */
 const LEGACY_SETTINGS_FLAGS: ReadonlyArray<readonly ["setupOpen" | "capacitiesSettingsOpen" | "tagExclusionSettingsOpen", SettingsPanel]> = [
   ["setupOpen", "day"],
@@ -95,6 +103,16 @@ function normalizeSettingsUi(
     }
   }
 
+  // Opening a contextual panel also lands the promoted screen on the matching
+  // destination; an explicit `screen` patch wins. Closing the drawer leaves the
+  // current screen untouched.
+  const explicitScreen = has("screen") && isScreen(patch.screen) ? patch.screen : null;
+  const derivedScreen: Screen | null =
+    panel === "day" ? "setup" : panel === null ? null : "connections";
+  // Closing a contextual drawer returns to planning; a promoted screen the
+  // user selected directly is left untouched (no panel transition).
+  const closedPanel = current.settingsPanel !== null && panel === null;
+
   return {
     ...next,
     settingsPanel: panel,
@@ -102,6 +120,7 @@ function normalizeSettingsUi(
     setupOpen: panel === "day",
     capacitiesSettingsOpen: panel === "capacities",
     tagExclusionSettingsOpen: panel === "tags",
+    screen: explicitScreen ?? derivedScreen ?? (closedPanel ? "plan" : next.screen),
   };
 }
 /** U5: normalize a wire opt-in map into the fixed three-key model shape.
@@ -228,6 +247,8 @@ export interface AppState {
   ledger: Ledger | null;
   theme: Theme;
   ui: {
+    /** B3 promoted top-level screen (plan / set up day / connections). */
+    screen: Screen;
     /** Canonical settings destination — one settings host, at most one panel. */
     settingsPanel: SettingsPanel | null;
     /** Optional in-panel destination (e.g. "captures") for programmatic opens. */
@@ -302,7 +323,7 @@ export const initialState: AppState = {
   refresh: { phase: "idle", error: null, lastRefreshed: null, summary: null, coverage: null },
   ledger: null,
   theme: "system",
-  ui: { settingsPanel: null, settingsSection: null, setupOpen: false, capacitiesSettingsOpen: false, tagExclusionSettingsOpen: false, approvalOpen: false, editorItem: null, editorIntent: null, editorAnchor: null, capacityDetail: false, trimUndo: null },
+  ui: { screen: "plan", settingsPanel: null, settingsSection: null, setupOpen: false, capacitiesSettingsOpen: false, tagExclusionSettingsOpen: false, approvalOpen: false, editorItem: null, editorIntent: null, editorAnchor: null, capacityDetail: false, trimUndo: null },
 };
 
 export type Action =
