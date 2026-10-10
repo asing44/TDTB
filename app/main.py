@@ -391,6 +391,57 @@ def _promote_selected_capacities(
     return pool_items, [*assigned_items, *promoted], warnings
 
 
+#: S5: the Ignore List notice names at most this many promoted identities, the
+#: same bound the Capacities review warning uses; the remainder is counted.
+_IGNORE_NOTICE_MAX_IDENTITIES = 3
+_IGNORE_NOTICE_MARKER = "removed by the Ignore List"
+
+
+def _capacities_identities(rows: list[dict[str, Any]]) -> list[str]:
+    """The Capacities identities on ``rows``, in order, each named once."""
+    return list(dict.fromkeys(
+        str(row["identity"])
+        for row in rows
+        if str(row.get("source") or "").strip().casefold() == "capacities"
+        and row.get("identity")
+    ))
+
+
+def _ignore_list_selection_warnings(
+    assigned_input: list[dict[str, Any]],
+    assigned_rows: list[dict[str, Any]],
+    digest_assigned: list[dict[str, Any]],
+    existing: list[str],
+) -> list[str]:
+    """One bounded notice for promoted selections the Ignore List removed.
+
+    ``build_digest`` applies the Ignore List after promotion and drops matching
+    rows without a notice. Tag-excluded and drop-listed selections are never
+    promoted, so they keep their own notice; a promoted identity missing from
+    the digest's assigned surface was removed by the Ignore List. At most one
+    such notice is emitted per digest build, so no identity is named twice.
+    """
+    if any(_IGNORE_NOTICE_MARKER in warning for warning in existing):
+        return []
+    before = set(_capacities_identities(assigned_input))
+    promoted = [
+        identity for identity in _capacities_identities(assigned_rows)
+        if identity not in before
+    ]
+    surfaced = set(_capacities_identities(digest_assigned))
+    removed = [identity for identity in promoted if identity not in surfaced]
+    if not removed:
+        return []
+    shown = removed[:_IGNORE_NOTICE_MAX_IDENTITIES]
+    remaining = len(removed) - len(shown)
+    named = "; ".join(shown)
+    if remaining > 0:
+        named = f"{named}; +{remaining} more"
+    if len(removed) == 1:
+        return [f"Capacities selection {named} was promoted, then {_IGNORE_NOTICE_MARKER}"]
+    return [f"Capacities selections {named} were promoted, then {_IGNORE_NOTICE_MARKER}"]
+
+
 def _capacities_intake_block(
     vault: Path,
     digest: dict[str, Any],
@@ -3420,12 +3471,13 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
         try:
             # U3c-2: selected Capacities rows are promoted BEFORE build_digest,
             # so they pass the same exclusion stages as every other row.
+            assigned_input = run_data["assigned_items"] + t_assigned + capacities_items
             pool_rows, assigned_rows, selection_warnings = (
                 _promote_selected_capacities(
                     vault,
                     today,
                     run_data["pool_items"] + t_pool + c_pool,
-                    run_data["assigned_items"] + t_assigned + capacities_items,
+                    assigned_input,
                     exclusion_policy,
                 )
             )
@@ -3441,6 +3493,14 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
                 bias=deferrals.bias_map(vault, today),  # T1 defer-with-memory
                 exclusion_policy=exclusion_policy,
             )
+            # S5: a promoted selection that the Ignore List then removed is named
+            # here, since build_digest drops it silently.
+            w_capacities = [
+                *w_capacities,
+                *_ignore_list_selection_warnings(
+                    assigned_input, assigned_rows, digest["assigned"], w_capacities,
+                ),
+            ]
         except tag_exclusions.TagExclusionBlocked as exc:
             raise HTTPException(status_code=503, detail=exc.diagnostics) from exc
 

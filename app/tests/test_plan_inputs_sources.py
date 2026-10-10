@@ -22,6 +22,7 @@ import app_config  # noqa: E402
 import artifact_source as art  # noqa: E402
 import capacities_builder as cap_builder  # noqa: E402
 import capacities_refresh_state as crs  # noqa: E402
+import capacities_selections as sel  # noqa: E402
 import exclusion_settings as es  # noqa: E402
 import runstate as runstate_mod  # noqa: E402
 from calendar_bridge import CalendarInfo  # noqa: E402
@@ -1010,3 +1011,114 @@ def test_legacy_artifact_capacities_keep_their_surfaces(vault):
     assert _names(body, "suggested") == ["Cap pool"]
     assert body["source_counts"]["capacities"] == 1
     assert "capacities_intake" not in body
+
+
+# ---------------------------------------------------------------------------
+# S5: a promoted Capacities selection that the Ignore List then removes gets
+# one bounded notice in source_warnings. Tag-excluded and drop-listed
+# selections are never promoted, so they keep their own excluded notice and
+# do not also get an Ignore List notice.
+# ---------------------------------------------------------------------------
+
+IGNORE_NOTICE_MARKER = "removed by the Ignore List"
+
+
+def _save_selection_source(vault: Path) -> None:
+    common = dict(
+        title_property="title",
+        status_property="status",
+        open_status_values=("active",),
+        date_property="due",
+        assignment_property="assigned",
+        assignment_values=("true",),
+    )
+    cap_builder.save_source(
+        vault,
+        expected_revision=0,
+        space_id=SPACE,
+        structures=[cap_builder.SourceStructureRecord(structure_id="RootTask", **common)],
+    )
+
+
+def _seed_selections(*names: str) -> None:
+    sel.save_selections(
+        space_id=SPACE,
+        expected_revision=0,
+        selections=[
+            {"identity": f"capacities:{SPACE}:RootTask:{name}", "rules_revision": 0, "acknowledged": True}
+            for name in names
+        ],
+    )
+
+
+def _write_ignore_names(vault: Path, *names: str) -> None:
+    rows = "".join(f"| {name} | |\n" for name in names)
+    (vault / CONFIG_REL_PATH).write_text(
+        MINIMAL_CONFIG
+        + "\n## Ignore List\n\n### Names\n\n| Name | Notes |\n|------|-------|\n"
+        + rows,
+        encoding="utf-8",
+    )
+
+
+def _selection_row(name: str) -> dict:
+    return _artifact_row(name, "capacities", f"capacities:{SPACE}:RootTask:{name}", assigned=False)
+
+
+def _ignore_notices(body: dict) -> list[str]:
+    return [w for w in body.get("source_warnings", []) if IGNORE_NOTICE_MARKER in w]
+
+
+def test_promoted_selection_removed_by_ignore_list_is_noticed_once(vault):
+    _save_selection_source(vault)
+    _seed_selections("keep")
+    _write_ignore_names(vault, "keep")
+    _write_fresh_artifact([_selection_row("keep"), _selection_row("other")])
+
+    body = _client(vault).get("/plan-inputs").json()
+
+    assert "keep" not in _names(body, "assigned")
+    assert "other" in _names(body, "suggested")
+    notices = _ignore_notices(body)
+    assert len(notices) == 1
+    assert f"capacities:{SPACE}:RootTask:keep" in notices[0]
+
+
+def test_ignore_list_notice_names_at_most_three_identities(vault):
+    names = ["one", "two", "three", "four"]
+    _save_selection_source(vault)
+    _seed_selections(*names)
+    _write_ignore_names(vault, *names)
+    _write_fresh_artifact([_selection_row(name) for name in names])
+
+    body = _client(vault).get("/plan-inputs").json()
+
+    assert _names(body, "assigned") == []
+    notices = _ignore_notices(body)
+    assert len(notices) == 1
+    named = [name for name in names if f"capacities:{SPACE}:RootTask:{name}" in notices[0]]
+    assert len(named) == 3
+    assert "+1 more" in notices[0]
+
+
+def test_selection_excluded_before_promotion_gets_no_ignore_list_notice(vault):
+    today = gather.effective_date(datetime.now())
+    _save_selection_source(vault)
+    _seed_selections("drop")
+    _write_ignore_names(vault, "drop")
+    _write_fresh_artifact([_selection_row("drop")])
+
+    def _drop(state):
+        state["dropped"] = [{
+            "identity": f"capacities:{SPACE}:RootTask:drop",
+            "dropped_at": "2026-10-09T09:00:00-07:00",
+        }]
+
+    runstate_mod.update_runstate(vault, today, _drop)
+
+    body = _client(vault).get("/plan-inputs").json()
+
+    assert "drop" not in _names(body, "assigned") + _names(body, "suggested")
+    assert _ignore_notices(body) == []
+    notices = [w for w in body["source_warnings"] if f"capacities:{SPACE}:RootTask:drop" in w]
+    assert len(notices) == 1 and "excluded" in notices[0]
