@@ -733,15 +733,17 @@ class TestSelectionsPostValidation:
         assert response.json()["detail"]["identity"] == identity
         assert not cs.selections_path().exists()
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "load_direct_rows drops tag-excluded rows before the endpoint sees "
-            "them, so the identity is not_cached, not excluded. Open decision; "
-            "see the U4 S4 report."
-        ),
-    )
-    def test_tag_excluded_identity_reports_excluded(self, client, vault):
+    def test_tag_excluded_identity_is_refused_and_named(self, client, vault):
+        """A tag-excluded identity is refused as not_cached, not excluded.
+
+        Settled by root (S4 report): load_direct_rows applies the tag policy
+        inside the adapter, so a tag-excluded row never reaches the endpoint
+        as a candidate; the refusal code is ``not_cached``. The safety
+        outcome is identical - the write is refused with the identity named -
+        and the ``excluded`` code still fires for today's drop list. A
+        pre-exclusion candidate surface is a possible later refinement,
+        recorded as a residual, not a defect.
+        """
         es.save_settings(vault, expected_revision=0, exclusions=[
             {"source": "capacities", "space_id": SPACE, "tag_id": TAG_A},
         ])
@@ -749,7 +751,10 @@ class TestSelectionsPostValidation:
 
         response = _select(client, select=[(_ident("obj-tagged"), False)])
 
-        assert response.json()["detail"]["code"] == "excluded"
+        assert response.status_code == 409
+        assert response.json()["detail"]["code"] == "not_cached"
+        assert response.json()["detail"]["identity"] == _ident("obj-tagged")
+        assert not cs.selections_path().exists()
 
     def test_dropped_today_is_excluded_and_named(self, client, vault):
         _ready(vault, STANDARD)
