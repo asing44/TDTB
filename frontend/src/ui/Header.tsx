@@ -8,6 +8,7 @@
    Arrow/Home/End, visible focus, ARIA roles). Step 3 (Commit) maps onto the
    existing approval/commit flow — it is never a separate screen. */
 
+import { footerBlockedReason } from "./Footer";
 import { Fragment } from "preact";
 import { useApp, useAppState } from "./context";
 import { display12h } from "../model/time";
@@ -56,6 +57,12 @@ export function Header() {
     commit: s.commitPhase === "done",
   };
   const commitReady = s.seqPhase === "valid" && s.validation?.ok === true;
+  const commitBlockedReason = commitReady
+    ? null
+    : (footerBlockedReason(s) ??
+      (s.inputs.assigned.length === 0
+        ? "Nothing to commit yet — no assigned work to plan today."
+        : "Sequence the plan first — Commit opens once a valid sequence is staged."));
 
   const activate = (step: StepId, focusTarget?: HTMLElement | null) => {
     if (step === "setup") {
@@ -119,8 +126,10 @@ export function Header() {
                 id={stepId(step.id)}
                 class={`app-stepper__step${selected ? " app-stepper__step--active" : ""}${
                   done[step.id] ? " app-stepper__step--done" : ""
-                }`}
+                }${step.id === "commit" && commitBlockedReason !== null ? " app-stepper__step--blocked" : ""}`}
                 aria-selected={selected}
+                aria-disabled={step.id === "commit" && commitBlockedReason !== null ? true : undefined}
+                title={step.id === "commit" && commitBlockedReason !== null ? commitBlockedReason : undefined}
                 tabIndex={focusStep === step.id ? 0 : -1}
                 onClick={(e) => activate(step.id, e.currentTarget as HTMLElement)}
               >
@@ -144,7 +153,7 @@ export function Header() {
         </span>
         {pillState === "degraded" && (
           <button
-            class="health-pill__retry"
+            class="btn health-pill__retry"
             onClick={() => void controller.refreshSources()}
             disabled={refreshing}
             aria-label="Retry source refresh"
@@ -153,7 +162,7 @@ export function Header() {
           </button>
         )}
         <button
-          class="header__connections"
+          class="btn header__connections"
           onClick={() =>
             store.dispatch({ type: "UI", patch: { screen: "connections", settingsPanel: null } })
           }

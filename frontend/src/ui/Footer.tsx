@@ -41,6 +41,7 @@ export function footerBlockedReason(s: AppState): string | null {
   if (s.inputs.sourceHealth !== "ok") return "Can't sequence until sources are healthy.";
   const state = dockState(s);
   if (state === "setup") return "Confirm day setup before sequencing.";
+  if (s.inputs.assigned.length === 0) return "Nothing to plan yet — no assigned work today.";
   if (state === "fix") {
     const n = s.validation?.hardErrors.length ?? 0;
     return `${n} blocking issue${n === 1 ? "" : "s"} — fix rows or resequence.`;

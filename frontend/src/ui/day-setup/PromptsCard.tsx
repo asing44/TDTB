@@ -40,14 +40,11 @@ export function PromptsCard(props: PromptsCardProps) {
     >
       <div class="setup-section__head">
         <h3 id="setup-sec-prompts">Morning prompts</h3>
-        <p class="setup-section__hint">
-          pool → Live block · type a custom idea to override
-        </p>
       </div>
       <div class="setup-section__body">
         <div class="prompts-live">
           <div class="field field--stacked">
-            <label for="live-pick">Live micro-adventure</label>
+            <div class="field__labelrow"><label for="live-pick">Live micro-adventure</label><span class="field__tag">pool → Live block</span></div>
             <div class="field__controls">
               <select
                 id="live-pick"
@@ -87,7 +84,7 @@ export function PromptsCard(props: PromptsCardProps) {
             </p>
           )}
           <div class="field field--stacked">
-            <label for="live-custom">Custom idea</label>
+            <div class="field__labelrow"><label for="live-custom">Custom idea</label><span class="field__tag">overrides the pick</span></div>
             <div class="field__controls">
               <input
                 id="live-custom"
@@ -110,11 +107,10 @@ export function PromptsCard(props: PromptsCardProps) {
         </div>
 
         <div class="field field--stacked">
-          <label for="cap-intention">Intention</label>
+          <div class="field__labelrow"><label for="cap-intention">Intention</label><span class="field__tag">local draft</span></div>
           <textarea
             id="cap-intention"
             class="cap-intention"
-            aria-describedby="cap-intention-hint"
             placeholder="One thing to focus on today"
             value={props.captures.intention}
             onInput={(e) =>
@@ -122,12 +118,9 @@ export function PromptsCard(props: PromptsCardProps) {
             }
             onBlur={props.onAutosave}
           />
-          <p class="field__hint" id="cap-intention-hint">
-            One thing to focus on today.
-          </p>
         </div>
         <div class="field field--stacked">
-          <label for="cap-meegy">For Meegy</label>
+          <div class="field__labelrow"><label for="cap-meegy">For Meegy</label><span class="field__tag">local draft</span></div>
           <textarea
             id="cap-meegy"
             value={props.captures.forMeegy}
@@ -136,7 +129,7 @@ export function PromptsCard(props: PromptsCardProps) {
           />
         </div>
         <div class="field field--stacked">
-          <label for="cap-stoic">Stoic</label>
+          <div class="field__labelrow"><label for="cap-stoic">Stoic</label><span class="field__tag">local draft</span></div>
           <textarea
             id="cap-stoic"
             value={props.captures.stoic}

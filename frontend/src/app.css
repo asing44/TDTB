@@ -6130,3 +6130,70 @@ body {
     display: none;
   }
 }
+
+/* Tweaks (2026-10-10): header actions as buttons, gray anchors, prompts card. */
+.health-pill__retry,
+.header__connections {
+  padding: 4px 12px;
+  border: 1px solid var(--t-border);
+  border-radius: 999px;
+  background: var(--t-surface);
+  color: var(--t-text);
+  text-decoration: none;
+  font-size: 13px;
+}
+.health-pill__retry:hover,
+.header__connections:hover {
+  background: var(--t-surface-2);
+}
+.app-stepper__step--blocked:not(.app-stepper__step--active) {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+.timeline__lane--anchors .timeline__block {
+  background: color-mix(in srgb, var(--t-muted) 22%, var(--t-surface));
+  border-color: color-mix(in srgb, var(--t-muted) 45%, var(--t-border));
+  color: var(--t-text);
+}
+.setup-section--prompts {
+  padding: 18px 20px;
+  border-radius: 12px;
+}
+.setup-section--prompts .field__labelrow {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 6px;
+}
+.setup-section--prompts .field__labelrow label {
+  font-weight: 600;
+}
+.field__tag {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 11px;
+  color: var(--t-muted);
+}
+.setup-section--prompts .field--stacked {
+  margin-bottom: 14px;
+}
+.setup-section--prompts .field__controls {
+  display: flex;
+  gap: 8px;
+}
+.setup-section--prompts .field__controls select,
+.setup-section--prompts .field__controls input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.setup-section--prompts textarea {
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 64px;
+  resize: vertical;
+}
+.setup-section--prompts .prompts-live {
+  padding-bottom: 14px;
+  margin-bottom: 14px;
+  border-bottom: 1px solid var(--t-border);
+}

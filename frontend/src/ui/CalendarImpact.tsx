@@ -31,8 +31,6 @@ const CAL_BLOCKS_MAX = 12;
 /** The mockup's work-hours zone ("Work 9–5"). The frame clamps it, so a
     1:30 PM workday shades only 1:30–5 PM. Presentation-only: the toggle shows
     or hides the shading and never writes accounting state. */
-const WORK_START = "09:00";
-const WORK_END = "17:00";
 
 type LaneKey = "calendar" | "work" | "anchors";
 const LANES: { key: LaneKey; label: string }[] = [
@@ -132,7 +130,6 @@ export function CalendarImpact({ inline = false }: { inline?: boolean }) {
   const s = useAppState();
   const { controller } = useApp();
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [workWindowOn, setWorkWindowOn] = useState(true);
   const blockRefs = useRef<Record<string, HTMLButtonElement | null>>({});
   const detailRef = useRef<HTMLDivElement | null>(null);
 
@@ -192,9 +189,6 @@ export function CalendarImpact({ inline = false }: { inline?: boolean }) {
   if (frameStart % 60 !== 0) ticks.push(frameStart);
   for (let m = Math.ceil(frameStart / 60) * 60; m <= frameEnd; m += 60) ticks.push(m);
 
-  const workFrom = Math.max(frameStart, toMinutes(WORK_START));
-  const workTo = Math.min(frameEnd, toMinutes(WORK_END));
-  const showWorkZone = workWindowOn && workTo > workFrom;
 
   /** Move focus between blocks in document order (arrow navigation), so a
     keyboard user reaches a block and Enter opens its detail row. */
@@ -231,18 +225,6 @@ export function CalendarImpact({ inline = false }: { inline?: boolean }) {
           <h2>Already placed</h2>
           <p class="timeline__sub">Commitments and anchor zones</p>
         </div>
-        <label class="timeline__worktoggle">
-          <input
-            type="checkbox"
-            checked={workWindowOn}
-            onChange={() => setWorkWindowOn((v) => !v)}
-            aria-label="Show work window"
-          />
-          <span>Work 9–5</span>
-          <span class="timeline__workstate">
-            ({workWindowOn ? "enabled" : "disabled"})
-          </span>
-        </label>
       </header>
 
       <div class="timeline">
@@ -264,13 +246,6 @@ export function CalendarImpact({ inline = false }: { inline?: boolean }) {
             <div key={lane.key} class={`timeline__lane timeline__lane--${lane.key}`}>
               <span class="timeline__lane-label">{lane.label}</span>
               <div class="timeline__track" style={{ height: `${rows * 34}px` }}>
-                {showWorkZone && (
-                  <span
-                    class="timeline__workzone"
-                    style={{ left: pct(workFrom), width: `${((workTo - workFrom) / frameLen) * 100}%` }}
-                    aria-hidden="true"
-                  />
-                )}
                 {lane.key === "calendar" && placed.length === 0 && (
                   <p class="timeline__empty">No calendar rows today.</p>
                 )}

@@ -123,13 +123,6 @@ describe("U10 timeline — placement", () => {
     expect(r.container.querySelector(".timeline__lane--calendar .timeline__track")).toBeTruthy();
   });
 
-  it("renders the work window as a shaded zone toggled by the header control", () => {
-    const h = harnessWithCalendar([calendarRow({ id: "Row", name: "Row" })]);
-    const r = h.ui(<CalendarImpact />);
-    expect(r.container.querySelector(".timeline__workzone")).toBeTruthy();
-    fireEvent.click(r.getByLabelText("Show work window"));
-    expect(r.container.querySelector(".timeline__workzone")).toBeNull();
-  });
 });
 
 describe("U10 timeline — keyboard select", () => {
