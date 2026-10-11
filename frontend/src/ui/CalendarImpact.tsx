@@ -17,7 +17,7 @@
    sources stay hidden with a naming note; a frame with no calendar rows shows
    an empty-lane message instead of a blank band. */
 
-import { useEffect, useRef, useState } from "preact/hooks";
+import { useCallback, useEffect, useRef, useState } from "preact/hooks";
 import { useApp, useAppState } from "./context";
 import { effectiveAnchoredBlocks } from "../store/store";
 import { blocksLabel, display12h, formatBlockAmount, toMinutes } from "../model/time";
@@ -87,6 +87,23 @@ interface Placed {
   stack: number;
 }
 
+/** POLISH-3: track width used before (or without) a real measurement — jsdom
+    reports 0 for every getBoundingClientRect, and the first paint has no laid
+    out box yet. */
+const TRACK_FALLBACK_PX = 1000;
+/** Label metrics: the estimate the timeline has always used for hour labels
+    (11px UI text ≈ 6.4px per character) plus the block's own 2×8px padding. */
+const LABEL_CHAR_PX = 6.4;
+const LABEL_PAD_PX = 16;
+/** A widened block is a label affordance, not a claim about duration: it never
+    grows past a third of a 1920px track. */
+const LABEL_MAX_PX = 180;
+
+/** Smallest visual width that shows `name` on one line, in px. */
+function labelMinWidthPx(name: string): number {
+  return Math.min(name.length * LABEL_CHAR_PX + LABEL_PAD_PX, LABEL_MAX_PX);
+}
+
 /** Place one lane's rows at proportional positions. Rows wholly outside the
     frame are dropped; partly-outside rows are clipped to the frame edges.
     Overlapping rows are assigned to the first stack row that is free. */
@@ -94,6 +111,7 @@ function layoutLane(
   rows: AnchoredBlock[],
   frameStart: number,
   frameEnd: number,
+  pxPerMinute: number,
 ): { placed: Placed[]; omitted: number } {
   const placed: Placed[] = [];
   let omitted = 0;
@@ -114,12 +132,20 @@ function layoutLane(
       omitted += 1;
       continue;
     }
+    // POLISH-3: a short block is widened to fit its label, so its VISUAL end
+    // (not its true end) is what the next row has to clear. Using the effective
+    // end keeps the widened label out of its neighbour's box by stacking the
+    // row into the next sub-row instead of letting the boxes overlap.
+    const effectiveEnd = Math.max(
+      endMin,
+      startMin + labelMinWidthPx(entry.row.name) / pxPerMinute,
+    );
     let stack = stackEnds.findIndex((end) => end <= startMin);
     if (stack === -1) {
       stack = stackEnds.length;
-      stackEnds.push(endMin);
+      stackEnds.push(effectiveEnd);
     } else {
-      stackEnds[stack] = endMin;
+      stackEnds[stack] = effectiveEnd;
     }
     placed.push({ row: entry.row, startMin, endMin, stack });
   }
@@ -132,6 +158,26 @@ export function CalendarImpact({ inline = false }: { inline?: boolean }) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const blockRefs = useRef<Record<string, HTMLButtonElement | null>>({});
   const detailRef = useRef<HTMLDivElement | null>(null);
+  // POLISH-3: the timeline's own track width drives the label min-width, so a
+  // short block on a narrow lane widens less than the same block on a wide one.
+  const [trackPx, setTrackPx] = useState<number | null>(null);
+  const trackObserver = useRef<ResizeObserver | null>(null);
+  const measureTrack = useCallback((el: HTMLDivElement | null) => {
+    trackObserver.current?.disconnect();
+    trackObserver.current = null;
+    if (!el) return;
+    const read = () => {
+      const width = el.getBoundingClientRect().width;
+      setTrackPx(width > 0 ? width : null);
+    };
+    read();
+    if (typeof ResizeObserver !== "undefined") {
+      const observer = new ResizeObserver(read);
+      observer.observe(el);
+      trackObserver.current = observer;
+    }
+  }, []);
+  useEffect(() => () => trackObserver.current?.disconnect(), []);
 
   const modifier = inline ? " calendar-impact--inline" : "";
 
@@ -170,8 +216,13 @@ export function CalendarImpact({ inline = false }: { inline?: boolean }) {
     anchors: visible.filter((row) => row.kind !== "calendar"),
   };
 
+  // px per minute inside the lane track (fallback keeps jsdom/first paint
+  // deterministic at 1000px).
+  const pxPerMinute = (trackPx ?? TRACK_FALLBACK_PX) / frameLen;
+
   const laid = {} as Record<LaneKey, ReturnType<typeof layoutLane>>;
-  for (const lane of LANES) laid[lane.key] = layoutLane(laneRows[lane.key], frameStart, frameEnd);
+  for (const lane of LANES)
+    laid[lane.key] = layoutLane(laneRows[lane.key], frameStart, frameEnd, pxPerMinute);
   const omittedTotal = LANES.reduce((n, lane) => n + laid[lane.key].omitted, 0);
   const ignoredCount = ignored.length;
   if (!rowsPresent) return null;
@@ -230,7 +281,7 @@ export function CalendarImpact({ inline = false }: { inline?: boolean }) {
       <div class="timeline">
         <div class="timeline__axis" aria-hidden="true">
           <span class="timeline__lane-label" />
-          <div class="timeline__axis-track">
+          <div class="timeline__axis-track" ref={measureTrack}>
             {ticks.map((m) => (
               <span key={m} class="timeline__tick" style={{ left: pct(m) }}>
                 {axisLabel(m)}
@@ -256,6 +307,8 @@ export function CalendarImpact({ inline = false }: { inline?: boolean }) {
                   const row = p.row;
                   const cls = capacityClass(row);
                   const isSelected = row.id === selectedId;
+                  const blockedRange = `${display12h(row.start)}${row.end ? `–${display12h(row.end)}` : ""}`;
+                  const labelFloor = labelMinWidthPx(row.name);
                   return (
                     <button
                       key={row.id}
@@ -266,10 +319,15 @@ export function CalendarImpact({ inline = false }: { inline?: boolean }) {
                       style={{
                         left: pct(p.startMin),
                         width: `${((p.endMin - p.startMin) / frameLen) * 100}%`,
+                        // A short block keeps its true start and proportional
+                        // width; min-width widens the label area only. The
+                        // exact times stay in the detail row.
+                        minWidth: `${labelFloor}px`,
                         top: `${p.stack * 34}px`,
                       }}
+                      title={`${row.name} · ${blockedRange}`}
                       aria-pressed={isSelected}
-                      aria-label={`${row.name}, ${display12h(row.start)}${row.end ? `–${display12h(row.end)}` : ""}, ${cls}`}
+                      aria-label={`${row.name}, ${blockedRange}, ${cls}`}
                       onClick={() => setSelectedId(row.id)}
                       onKeyDown={(e) => {
                         if (e.key === "ArrowRight") { e.preventDefault(); moveFocus(e.currentTarget as HTMLElement, 1); }

@@ -275,17 +275,20 @@ describe("U11 quiet day keeps the table frame", () => {
    row-action cluster widened the page and squeezed "Mark complete". */
 describe("overflow containment (2026-10-10)", () => {
   it("desktop row actions are never positioned over the duration slider", () => {
-    // >=1500: a real trailing max-content track holds the cluster in flow, so
-    // it can never overlap the slider column.
+    // POLISH-3: ONE action layout at every desktop width. The row is four
+    // tracks (stripe | title + due | slider), so the slider column sits at the
+    // far right and no trailing track reserves a dead band.
     expect(APP_CSS).toMatch(
-      /@media\s*\(min-width:\s*1500px\)[\s\S]*\.qrow\s*\{[^}]*grid-template-columns:\s*3px\s+minmax\(0,\s*1fr\)\s+190px\s+340px\s+max-content/,
+      /@media\s*\(min-width:\s*1101px\)[\s\S]*\.qrow\s*\{[^}]*grid-template-columns:\s*3px\s+minmax\(0,\s*1fr\)\s+190px\s+340px\s*;/, 
     );
-    // 1101-1499: the overlay is anchored LEFT of the 340px slider column
-    // (right: 352px = 340px track + 12px gap), confined to the title+due area.
+    // The overlay is anchored LEFT of the 340px slider column (right: 352px =
+    // 340px track + 12px gap), confined to the title+due area.
     expect(APP_CSS).toMatch(
-      /@media\s*\(min-width:\s*1101px\)\s*and\s*\(max-width:\s*1499px\)[\s\S]*\.qrow__actions\s*\{[^}]*right:\s*352px/,
+      /@media\s*\(min-width:\s*1101px\)[\s\S]*\.qrow__actions\s*\{[^}]*right:\s*352px/,
     );
-    // The old right:8px overlay — which covered the slider on hover — is gone.
+    // The >=1500px trailing max-content track (the dead right-hand band) and
+    // the old right:8px overlay (which covered the slider) are both gone.
+    expect(APP_CSS).not.toMatch(/340px\s+max-content/);
     expect(APP_CSS).not.toMatch(/\.qrow__actions\s*\{[^}]*right:\s*8px/);
   });
 
@@ -337,5 +340,53 @@ describe("overflow containment (2026-10-10)", () => {
     const tokens = readFileSync(resolve(process.cwd(), "src/tokens.css"), "utf8");
     expect(tokens).toMatch(/:root\[data-theme="light"\]\s*\{[^}]*color-scheme:\s*light/);
     expect(tokens).toMatch(/:root\[data-theme="dark"\]\s*\{[^}]*color-scheme:\s*dark/);
+  });
+});
+
+/* POLISH-3 (2026-10-11): three live-screenshot defects pinned as CSS text — the
+   64px strip of rows above the sticky lane header, the sticky footer hiding the
+   last row, and the ~450px dead trailing action track at >=1500px — plus the
+   four-track action layout and the Fixed-row permission line. */
+describe("POLISH-3 lane header, footer clearance, one action layout", () => {
+  it("the lane header sticks at the viewport top with no 64px gap", () => {
+    expect(APP_CSS).toMatch(/:root\s*\{[^}]*--app-header-h:\s*0px/);
+    expect(APP_CSS).toMatch(
+      /\.band\s*\{[^}]*top:\s*var\(--app-header-h,\s*64px\)/,
+    );
+    // Opaque fill + hairline rule + bottom padding: rows slide cleanly under.
+    expect(APP_CSS).toMatch(/\.band\s*\{[^}]*background:\s*var\(--t-surface\)/);
+    expect(APP_CSS).toMatch(
+      /\.band\s*\{[^}]*border-bottom:\s*0\.5px\s+solid\s+var\(--t-border\)/,
+    );
+  });
+
+  it("the sticky footer cannot hide the last row", () => {
+    expect(APP_CSS).toMatch(
+      /\.cockpit__main\s*\{[^}]*padding-bottom:\s*var\(--footer-clearance,\s*112px\)/,
+    );
+  });
+
+  it("no trailing max-content action track reserves a dead band", () => {
+    expect(APP_CSS).not.toMatch(/340px\s+max-content/);
+    expect(APP_CSS).not.toMatch(/grid-template-columns:[^;]*max-content/);
+  });
+
+  it("the timeline detail row keeps its controls apart", () => {
+    expect(APP_CSS).toMatch(/\.timeline__detail\s*\{[^}]*flex-wrap:\s*wrap/);
+    expect(APP_CSS).toMatch(
+      /\.timeline__detail-actions\s*\{[^}]*flex-wrap:\s*nowrap/,
+    );
+    expect(APP_CSS).toMatch(
+      /\.calendar-impact__attend\s*\{[^}]*white-space:\s*nowrap/,
+    );
+    expect(APP_CSS).toMatch(
+      /\.calendar-impact__stepper\s+\.timeline__detail-dur\s*\{[^}]*min-width:\s*72px/,
+    );
+  });
+
+  it("the fixed-row permission rides the meta line", () => {
+    expect(APP_CSS).toMatch(
+      /\.qrow__source\s+\.qrow__time-adjustment\s*\{[^}]*flex:\s*0\s+0\s+auto/,
+    );
   });
 });

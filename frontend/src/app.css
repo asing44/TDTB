@@ -1149,20 +1149,22 @@
   color: var(--c-overflow);
 }
 /* IMP-07: band headers are disclosure buttons (contract item 6) — reset the
-   button chrome so the flex row reads like the old header. */
+   button chrome so the flex row reads like the old header. POLISH-3: the app
+   header does NOT stick, so the lane header sticks at the viewport top
+   (--app-header-h: 0px) with an opaque fill and a hairline rule under it, and
+   the bottom padding lets rows slide cleanly beneath it. */
 .band {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 14px 0 6px;
+  padding: 14px 0 10px;
   position: sticky;
-  /* Stick below the app header, not 33px into it — the offset is the header
-     height (U11 lane-header pass). */
   top: var(--app-header-h, 64px);
   background: var(--t-surface);
   z-index: 4;
   width: 100%;
   border: 0;
+  border-bottom: 0.5px solid var(--t-border);
   margin: 0;
   color: inherit;
   font: inherit;
@@ -6218,11 +6220,11 @@ body {
    end of app.css so these rules win the cascade without rewriting the blocks
    above; the row grid itself is tuned in the (min-width: 1101px) block. */
 
-/* The sticky lane header offsets from the app header's real height, and a
-   hairline makes it read as a header instead of clipping the rows that slide
-   under it. The header keeps an opaque surface background (declared above). */
+/* POLISH-3: the lane header's sticky offset. The app header is not sticky, so
+   this is 0 — the old 64px offset left a 64px strip of half-clipped task rows
+   visible above the lane header at every scroll position. */
 :root {
-  --app-header-h: 64px;
+  --app-header-h: 0px;
 }
 
 .band--lane {
@@ -6364,51 +6366,15 @@ body {
   transform: translateX(-100%);
 }
 
-/* Row actions must never sit over the duration slider. Two width layouts,
-   both keeping every verb at its full label, rows ~56px (44px control floor +
-   6px vertical padding), no layout shift on hover, and the slider always
-   clickable:
-   - >=1500px: a real trailing max-content track. The cluster is in flow but
-     hidden (opacity 0, pointer-events none) until hover/focus, so the row
-     never shifts and the slider column is never overlapped.
-   - 1101-1499px: no trailing track fits, so the cluster is an absolute
-     overlay anchored LEFT of the slider column and constrained to the
-     title+due area. Out of flow => no shift, and it can never reach the
-     slider. */
-@media (min-width: 1500px) {
-  .qrow {
-    position: relative;
-    grid-template-columns: 3px minmax(0, 1fr) 190px 340px max-content;
-  }
-
-  .qrow__actions {
-    grid-column: 5;
-    position: static;
-    opacity: 0;
-    pointer-events: none;
-    flex-wrap: nowrap;
-    align-items: center;
-    justify-content: flex-end;
-    padding-left: 0;
-    background: none;
-    border-radius: 0;
-  }
-
-  .qrow:hover .qrow__actions,
-  .qrow:focus-within .qrow__actions {
-    opacity: 1;
-    pointer-events: auto;
-  }
-
-  /* Labels never squeeze: the cluster sizes to content in its own track. */
-  .qrow__actions .planbtn,
-  .qrow__actions .alloc-verb {
-    min-width: max-content;
-    padding: 0 10px;
-  }
-}
-
-@media (min-width: 1101px) and (max-width: 1499px) {
+/* Row actions must never sit over the duration slider — one layout at every
+   desktop width (>=1101px), keeping every verb at its full label, rows ~56px
+   (44px control floor + 6px vertical padding), no layout shift on hover, and
+   the slider always clickable. POLISH-3: the four tracks are the whole row
+   (stripe | title + due | slider), so the slider column sits at the far right
+   and no trailing track reserves a dead band; the cluster is an absolute
+   overlay anchored LEFT of the slider column and constrained to the title+due
+   area. Out of flow => no shift, and it can never reach the slider. */
+@media (min-width: 1101px) {
   .qrow {
     position: relative;
     grid-template-columns: 3px minmax(0, 1fr) 190px 340px;
@@ -6475,4 +6441,93 @@ body {
   .queue {
     padding-inline: var(--page-pad, clamp(16px, 2.5vw, 40px));
   }
+}
+
+/* ---- POLISH-3 (2026-10-11): sticky lanes, timeline labels, row actions ----
+   Appended at the end of app.css so this layer wins the cascade without
+   rewriting the blocks above. Four operator-reported defects, all measured at
+   >=900px: a 64px strip of rows above the sticky lane header, truncated
+   timeline labels, a cramped selected-block detail row, and a dead ~450px
+   trailing grid track at >=1500px. */
+
+/* (1) The sticky lane header is pinned at the viewport top (above) and the
+   sticky footer must not hide the last row: reserve the footer's height at the
+   end of the scrolling column so the final row can scroll clear of it. The
+   clearance token is shared with the rail's pinned chip row. */
+.cockpit__main {
+  padding-bottom: var(--footer-clearance, 112px);
+}
+
+/* (3) Selected-block detail row: name and time take the remaining space, the
+   stepper reads as one group (− value +), "Exclude from plan" never wraps, and
+   the close × stays at the end. Wrapping is allowed so 900px never collides. */
+.timeline__detail {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.timeline__detail-name {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.timeline__detail-meta {
+  flex: 1 1 240px;
+  min-width: 0;
+}
+
+.timeline__detail-actions {
+  display: inline-flex;
+  flex: 0 0 auto;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 10px;
+  margin-left: auto;
+}
+
+.calendar-impact__stepper {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0 4px;
+  border: 0.5px solid var(--t-border);
+  border-radius: var(--radius-sm);
+}
+
+.calendar-impact__stepper .timeline__detail-dur {
+  min-width: 72px;
+  padding: 0 8px;
+  text-align: center;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.calendar-impact__stepper .iconbtn {
+  min-width: 36px;
+  min-height: 36px;
+}
+
+.calendar-impact__attend {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.timeline__detail-close {
+  flex: 0 0 auto;
+}
+
+/* (4b) Fixed rows: the "🔒 Protected · Allow move" permission rides the meta
+   line (right after `fixed · recurring · 10 PM`) instead of a third line under
+   the slider, so a Fixed row matches every other row's ~60px height. The
+   control keeps its full sentence in title/aria-label. */
+.qrow__source .qrow__time-adjustment {
+  flex: 0 0 auto;
+}
+
+.qrow__source .qrow__time-adjustment-note {
+  flex: none;
 }

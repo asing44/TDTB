@@ -562,6 +562,10 @@ function Row({
               all day
             </span>
           )}
+          {/* POLISH-3: fixed rows carry the permission on the meta line, right
+              after `fixed · recurring · 10 PM`, instead of a third line under
+              the slider — so a Fixed row matches every other row's ~60px. */}
+          <TimeAdjustmentOptIn item={item} s={s} />
         </span>
       </div>
       <div class="qrow__due">
@@ -676,7 +680,6 @@ function Row({
         ) : (
           <span class="qrow__excluded-note">excluded today</span>
         )}
-        <TimeAdjustmentOptIn item={item} s={s} />
       </div>
       <div class="qrow__actions">
         {/* S2 (feedback 1+5): the unlabelled ⊘/✎ pair left the operator
