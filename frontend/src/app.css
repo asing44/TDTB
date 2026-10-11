@@ -1152,9 +1152,11 @@
   gap: 10px;
   padding: 14px 0 6px;
   position: sticky;
-  top: 33px;
+  /* Stick below the app header, not 33px into it — the offset is the header
+     height (U11 lane-header pass). */
+  top: var(--app-header-h, 64px);
   background: var(--t-surface);
-  z-index: 2;
+  z-index: 4;
   width: 100%;
   border: 0;
   margin: 0;
@@ -1505,21 +1507,26 @@
 .qrow__time-adjustment {
   flex: 1 1 100%;
   min-width: 0;
-  min-height: 44px;
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  align-items: start;
-  gap: 2px 7px;
-  padding: 4px 0 2px;
-  border-top: 0.5px solid color-mix(in srgb, var(--t-border) 65%, transparent);
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0;
+  border-top: 0;
 }
 .qrow__time-adjustment-control {
-  grid-column: 1 / -1;
-  min-height: 44px;
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
+  min-width: 0;
+  display: inline-flex;
   align-items: center;
-  gap: 7px;
+  gap: 6px;
+  min-height: 0;
+  cursor: pointer;
+}
+.qrow__time-adjustment-note {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .qrow__time-adjustment input {
   width: 18px;
@@ -1530,11 +1537,14 @@
 }
 .qrow__time-adjustment label {
   min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   color: var(--t-muted);
   font-size: 10px;
   line-height: 1.35;
   cursor: pointer;
-  overflow-wrap: anywhere;
+  white-space: nowrap;
 }
 .qrow__time-adjustment-status {
   grid-column: 2;
@@ -6047,14 +6057,16 @@ body {
     min-height: 0;
     padding: 6px 8px 6px 0;
     align-items: center;
-    grid-template-columns: 3px minmax(0, 1fr) 150px 290px 440px;
+    grid-template-columns: 3px minmax(0, 1fr) 140px 340px 440px;
   }
 
-  /* Name + source share one line: the body stops stacking. */
+  /* Name over source: the body stays a two-line stack (title, then the source
+     chip + meta line) so a title wraps to two lines instead of clipping to a
+     few characters. Rows stay dense — the 2-line stack sets ~58px. */
   .qrow__body {
-    flex-direction: row;
-    align-items: center;
-    gap: 8px;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 1px;
     flex-wrap: nowrap;
   }
 
@@ -6063,8 +6075,8 @@ body {
   }
 
   .qrow__name {
-    -webkit-line-clamp: 1;
-    white-space: nowrap;
+    -webkit-line-clamp: 2;
+    white-space: normal;
   }
 
   .qrow__source {
@@ -6077,16 +6089,16 @@ body {
     flex-wrap: nowrap;
   }
 
-  /* Slider and its readout share one line; the track gives up the 140px floor
-     (its 44px hit area and 10px thumb are untouched) so the value sits inline
-     instead of wrapping under the slider. */
+  /* Slider line keeps its 140px floor; a native-time row wraps its compact
+     permission note onto a second line inside the column rather than
+     squeezing the label to one character per line. */
   .qrow__time {
-    flex-wrap: nowrap;
+    flex-wrap: wrap;
   }
 
   .qrow__time .alloc-track {
     flex: 1 1 auto;
-    min-width: 80px;
+    min-width: 140px;
   }
 
   .qrow__time .alloc-track__value {
@@ -6197,3 +6209,83 @@ body {
   margin-bottom: 14px;
   border-bottom: 1px solid var(--t-border);
 }
+
+/* ---- U11 row-labeling pass (2026-10-10) ---------------------------------
+   Clearer source labeling and a cleaner sticky lane header. Appended at the
+   end of app.css so these rules win the cascade without rewriting the blocks
+   above; the row grid itself is tuned in the (min-width: 1101px) block. */
+
+/* The sticky lane header offsets from the app header's real height, and a
+   hairline makes it read as a header instead of clipping the rows that slide
+   under it. The header keeps an opaque surface background (declared above). */
+:root {
+  --app-header-h: 64px;
+}
+
+.band--lane {
+  box-shadow: 0 1px 0 var(--t-border);
+}
+
+/* Source chip: provenance a scan can read at a glance. One tint per source —
+   todoist red, capacities purple, calendar blue, vault neutral. */
+.qrow__src {
+  flex: none;
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  border: 0.5px solid transparent;
+  background: var(--t-surface-2);
+  color: var(--t-text);
+}
+.qrow__src--todoist {
+  background: color-mix(in srgb, var(--c-tasks) 24%, var(--t-surface));
+  border-color: color-mix(in srgb, var(--c-tasks) 50%, transparent);
+}
+.qrow__src--capacities {
+  background: color-mix(in srgb, var(--c-projects) 26%, var(--t-surface));
+  border-color: color-mix(in srgb, var(--c-projects) 55%, transparent);
+}
+.qrow__src--calendar {
+  background: color-mix(in srgb, var(--c-event) 30%, var(--t-surface));
+  border-color: color-mix(in srgb, var(--c-event) 55%, transparent);
+}
+.qrow__src--vault {
+  background: var(--t-surface-2);
+  border-color: color-mix(in srgb, var(--t-border) 85%, transparent);
+  color: var(--t-muted);
+}
+
+/* A Capacities row's KIND chip carries the human structure title, so it takes
+   the project purple rather than the neutral fallback. */
+.qrow__type--structure {
+  background: color-mix(in srgb, var(--c-projects) 30%, transparent);
+}
+
+/* Plain meta after the chips — never truncates to a few characters because
+   the source line wraps under a two-line title. */
+.qrow__meta {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Duration provenance dot (replaces the uppercase SOURCE/REMEMBERED pill).
+   The state is spoken through aria-label/title on the element itself. */
+.qrow__dur-src {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--state-source);
+}
+.qrow__dur-src--memory {
+  background: var(--state-memory);
+}
+.qrow__dur-src--remembered {
+  background: var(--state-remembered);
+}
+

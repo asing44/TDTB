@@ -1055,19 +1055,21 @@ describe("T25 recurring duration shaping", () => {
     const { ui } = makeHarness("ready");
     const { container } = ui(<Queue />);
     const rows = Array.from(container.querySelectorAll(".qrow__source")) as HTMLElement[];
-    // T23's property, restated for the T12f chip: the line is never just the
-    // bare source name. The note kind LEADS it as a chip now (2026-07-27)
-    // rather than sitting in prose after "vault · ".
+    // U11 labeling (2026-10-10): provenance LEADS the line as a coloured
+    // source chip (TODOIST / CAPACITIES / VAULT), then the human KIND, then
+    // plain meta. The raw uppercase TASK/ROOTTASK/UUID badge is gone.
     expect(rows.length).toBeGreaterThan(0);
     for (const el of rows) {
-      const chip = el.querySelector(".qrow__type");
+      const chip = el.querySelector(".qrow__src");
       expect(chip).toBeTruthy();
-      expect((chip as HTMLElement).textContent).not.toBe("");
-      // …and the source itself is still named beside it.
-      expect((el as HTMLElement).textContent).toMatch(/vault|todoist/);
+      expect((chip as HTMLElement).textContent).toMatch(
+        /^(TODOIST|CAPACITIES|CALENDAR|VAULT)$/,
+      );
     }
+    // The source itself is still named on the line.
+    expect(rows.map((el) => el.textContent).join(" ")).toMatch(/TODOIST|VAULT/);
     const kinds = rows.map((el) => el.querySelector(".qrow__type")?.textContent);
-    expect(new Set(kinds).size).toBeGreaterThan(1);
+    expect(new Set(kinds.filter(Boolean)).size).toBeGreaterThan(1);
   });
 
   function withRecurring(harness: ReturnType<typeof makeHarness>) {

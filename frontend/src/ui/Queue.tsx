@@ -63,8 +63,45 @@ import { CalendarImpact } from "./CalendarImpact";
 import { CapacityCard } from "./CapacityCard";
 import { Tooltip } from "./Tooltip";
 
-function sourceDot(item: AssignedItem): string {
-  return item.source === "vault" ? "var(--c-projects)" : "var(--c-tasks)";
+/** U11 labeling pass: the row's provenance as a chip a scan can read without
+    parsing a sentence — TODOIST / CAPACITIES / VAULT (plus the CALENDAR
+    vocabulary the source counts already use). Colour tints live in app.css. */
+export function sourceChip(item: AssignedItem): { key: string; label: string } {
+  const source = String(item.source);
+  if (source === "todoist") return { key: "todoist", label: "TODOIST" };
+  if (source === "capacities") return { key: "capacities", label: "CAPACITIES" };
+  if (source === "calendar") return { key: "calendar", label: "CALENDAR" };
+  return { key: "vault", label: "VAULT" };
+}
+
+/** The row's KIND as a human label. Capacities rows resolve their structure id
+    through the app's machine-local structure-titles cache; a structure the
+    cache has not titled reads "Capacities item" rather than a raw UUID.
+    Todoist rows carry no kind chip — the TODOIST source chip already says it. */
+export function kindLabel(
+  item: AssignedItem,
+  titles: Record<string, string> | null | undefined,
+): string | null {
+  if (item.source === "todoist") return null;
+  if (item.source === "capacities") {
+    const id = (
+      item.capacitiesStructureId ??
+      item.types.find((t) => t && t !== "todoist") ??
+      ""
+    ).trim();
+    const title = id ? (titles?.[id] ?? "").trim() : "";
+    return title.length > 0 ? title : "Capacities item";
+  }
+  return typeToken(item);
+}
+
+/** Duration provenance, spoken. The uppercase SOURCE/REMEMBERED pill crowded
+    the duration column; the state is now a small dot whose aria-label/title
+    names where the value came from. */
+function srcTagLabel(tag: "memory" | "remembered" | "source"): string {
+  if (tag === "memory") return "Duration: memory (today's session override)";
+  if (tag === "remembered") return "Duration: remembered (durable memory)";
+  return "Duration: source (source-resolved)";
 }
 
 function hasAdjustableNativeTime(item: AssignedItem): boolean {
@@ -309,10 +346,11 @@ function TimeAdjustmentOptIn({
   return (
     <div
       class={`qrow__time-adjustment${checked ? " qrow__time-adjustment--allowed" : ""}`}
+      title={label}
       onClick={(e) => e.stopPropagation()}
       onKeyDown={(e) => e.stopPropagation()}
     >
-      <div class="qrow__time-adjustment-control">
+      <label class="qrow__time-adjustment-control" htmlFor={controlId}>
         <input
           id={controlId}
           type="checkbox"
@@ -326,9 +364,13 @@ function TimeAdjustmentOptIn({
             )
           }
         />
-        <label htmlFor={controlId}>{label}</label>
-      </div>
-      <span id={statusId} class="qrow__time-adjustment-status" role="status">
+        {/* Compact one-line note; the full sentence rides title + aria-label
+            so a dense row never wraps the permission into a one-char column. */}
+        <span class="qrow__time-adjustment-note" aria-hidden="true">
+          {checked ? "🔓 Allow move" : "🔒 Protected · Allow move"}
+        </span>
+      </label>
+      <span id={statusId} class="qrow__time-adjustment-status sr-only" role="status">
         {checked
           ? "Allowed — scheduler may move the Todoist start"
           : "Protected — keeps the Todoist start fixed"}
@@ -412,14 +454,18 @@ function Row({
   s,
   cumBefore,
   hierarchy,
+  structureTitles,
 }: {
   item: AssignedItem;
   s: AppState;
   cumBefore: number;
   hierarchy?: HierarchyRow;
+  structureTitles?: Record<string, string>;
 }) {
   const { controller, store } = useApp();
   const state = queueState(s, item.id);
+  const chip = sourceChip(item);
+  const kind = kindLabel(item, structureTitles);
   const urgency = normalizeUrgency(item);
   const due = dueLabel(item.deadline, s.inputs?.validDate ?? "");
   const blocks = effectiveBlocks(s, item.id);
@@ -483,17 +529,31 @@ function Row({
             the plan only when the operator excludes, completes, or deletes
             it. */}
         <span class="qrow__source" title={item.path ?? undefined}>
-          {/* The kind of thing leads the line as a coloured chip — scanning 19
-              rows for "which of these are projects" was a read-every-word job
-              when the type was prose in the middle of the source string. */}
-          {typeToken(item) && (
-            <span class={`qrow__type qrow__type--${typeToken(item)}`}>{typeToken(item)}</span>
+          {/* U11 labeling: provenance leads as a coloured chip (TODOIST /
+              CAPACITIES / VAULT), then the row's human KIND, then plain meta.
+              The raw uppercase type badge is gone — a Capacities structure id
+              resolves through the structure-titles cache to its title, and an
+              untitled one reads "Capacities item", never a UUID. */}
+          <span class={`qrow__src qrow__src--${chip.key}`}>{chip.label}</span>
+          {kind && (
+            <span
+              class={`qrow__type qrow__type--${item.source === "capacities" ? "structure" : kind}`}
+            >
+              {kind}
+            </span>
           )}
-          <span class="qrow__dot" style={{ background: sourceDot(item) }} />
-          {item.source}
-          {sourceDetail(item) ? ` · ${sourceDetail(item)}` : ""}
-          {scheduledRow && ` · ${display12h(scheduledRow.start)}`}
-          {item.isRecurring && item.scheduledStart && ` · fixed · recurring · ${display12h(item.scheduledStart)}`}
+          <span class="qrow__meta">
+            {[
+              srcTag === "source" ? `est ${blocksLabel(blocks)}` : "",
+              sourceDetail(item),
+              scheduledRow ? display12h(scheduledRow.start) : "",
+              item.isRecurring && item.scheduledStart
+                ? `fixed · recurring · ${display12h(item.scheduledStart)}`
+                : "",
+            ]
+              .filter(Boolean)
+              .join(" · ")}
+          </span>
           {/* A zero-duration row stays exactly where it is and says what it
               became. Previously it jumped to a trailing All-day section the
               moment the slider hit bottom. */}
@@ -601,15 +661,17 @@ function Row({
               {blocksLabel(blocks)}
               {overridden ? "*" : ""}
             </span>
-            {/* FEEDBACK-10 (A08) + duration-memory MVP: provenance chip —
-                "memory" for a session override, "remembered" for durable
-                server memory, "source" otherwise. The * on the value stays as
-                a redundant session-memory signal. */}
+            {/* FEEDBACK-10 (A08) + duration-memory MVP: provenance as a small
+                dot with a spoken label — the uppercase SOURCE/REMEMBERED pill
+                crowded the duration column. The * on the value stays as the
+                redundant session-memory signal. */}
             <span
-              class={`qrow__src-tag qrow__src-tag--${srcTag}`}
-            >
-              {srcTag}
-            </span>
+              class={`qrow__dur-src qrow__dur-src--${srcTag}`}
+              role="img"
+              data-src={srcTag}
+              title={srcTagLabel(srcTag)}
+              aria-label={srcTagLabel(srcTag)}
+            />
           </>
         ) : (
           <span class="qrow__excluded-note">excluded today</span>
@@ -734,7 +796,30 @@ function LaneHeader({
 
 export function Queue() {
   const s = useAppState();
+  const { controller } = useApp();
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
+  // Capacities rows carry a raw structure id; the machine-local
+  // structure-titles cache turns it into a human name. Loaded once, and only
+  // when a Capacities row is actually on the table (most days: never), so the
+  // title is advisory and its absence degrades to "Capacities item".
+  const [structureTitles, setStructureTitles] = useState<Record<string, string>>({});
+  const hasCapacitiesRows =
+    !!s.inputs?.assigned.some((i) => i.source === "capacities");
+  useEffect(() => {
+    if (!hasCapacitiesRows) return;
+    let cancelled = false;
+    void controller
+      .loadCapacitiesSettings()
+      .then((settings) => {
+        if (!cancelled) setStructureTitles(settings.structureTitles ?? {});
+      })
+      .catch(() => {
+        /* Titles are advisory: an unreadable cache falls back per-row. */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [controller, hasCapacitiesRows]);
   if (!s.inputs) return null;
 
   const toggle = (key: string) =>
@@ -791,6 +876,7 @@ export function Queue() {
       s={s}
       cumBefore={cumBefore.get(i.id) ?? cum}
       hierarchy={hierarchyById.get(i.id)}
+      structureTitles={structureTitles}
     />
   );
 
