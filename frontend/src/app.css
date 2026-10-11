@@ -5544,9 +5544,13 @@ body {
   color: var(--t-muted);
 }
 
+/* The Mint blocks slider must not move while it is dragged. Its thumb sat
+   after text whose width changes with every step, so the track shifted under
+   the pointer. The row stays on one line, and the slider group is anchored to
+   the right edge so text width cannot reach it. */
 .frame-summary {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   align-items: center;
   gap: 10px;
   margin-top: 12px;
@@ -5559,10 +5563,12 @@ body {
 
 .frame-summary__mint {
   font-weight: 600;
+  min-width: 0;
 }
 
 .frame-summary__free {
   color: color-mix(in srgb, var(--c-minting) 30%, var(--t-text));
+  min-width: 0;
 }
 
 .frame-summary__blocks {
@@ -5570,6 +5576,10 @@ body {
   align-items: center;
   gap: 8px;
   white-space: nowrap;
+  margin-left: auto;
+  flex-shrink: 0;
+  align-self: flex-start;
+  min-height: 44px;
 }
 
 .frame-summary__blocks .field__range {
@@ -5577,7 +5587,8 @@ body {
 }
 
 .frame-summary__reset {
-  margin-left: auto;
+  flex-shrink: 0;
+  white-space: nowrap;
   border: none;
   background: none;
   padding: 0;
