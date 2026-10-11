@@ -6,6 +6,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent } from "@testing-library/preact";
 import { App } from "./App";
+import { FixtureAdapter } from "../adapters/fixture";
 import { makeHarness } from "./test-harness";
 
 afterEach(cleanup);
@@ -25,7 +26,15 @@ function sessions(count: number) {
   });
 }
 
-function screenHarness(name: "ready" | "fresh" = "ready", count = 8) {
+function screenHarness(
+  name: "ready" | "fresh" = "ready",
+  count = 8,
+  opts: {
+    frameStart?: string;
+    mint?: ReturnType<typeof sessions>;
+    pending?: { date: string; id: string; idea: string } | null;
+  } = {},
+) {
   const h = makeHarness(name);
   const inputs = structuredClone(h.store.getState().inputs!);
   inputs.anchored = inputs.anchored.filter((a) => a.kind !== "calendar");
@@ -34,10 +43,19 @@ function screenHarness(name: "ready" | "fresh" = "ready", count = 8) {
     ...inputs.daySemantics,
     effectiveAllotmentMinutes: 240,
     defaultAllotmentMinutes: 240,
-    mintSessions: sessions(count),
+    mintSessions: opts.mint ?? sessions(count),
   };
   inputs.promptOptins = { optins: {}, revision: 0 };
+  if (opts.pending !== undefined) {
+    inputs.microAdventure = { ...inputs.microAdventure, pendingConfirm: opts.pending };
+  }
   h.store.dispatch({ type: "INPUTS_LOADED", inputs, ledger: h.store.getState().ledger! });
+  if (opts.frameStart) {
+    h.store.dispatch({
+      type: "SETUP_SAVED",
+      daySetup: { ...h.store.getState().daySetup, anchor: opts.frameStart },
+    });
+  }
   h.store.dispatch({ type: "UI", patch: { screen: "setup", settingsPanel: null } });
   return h;
 }
@@ -132,6 +150,67 @@ describe("U12 Set up day composition", () => {
     expect(block).toBeTruthy();
     fireEvent.click(block);
     expect(h.store.getState().ui.editorAnchor).toBe("Sudsing");
+  });
+
+  it("keeps out-of-frame anchors off the strip and opens the editor from their chip", () => {
+    const h = screenHarness("ready", 8, { frameStart: "13:30" });
+    const r = h.ui(<App />);
+    expect(r.container.querySelector('[data-anchor-id="Morning Routine"]')).toBeNull();
+    expect(r.container.querySelector('[data-anchor-id="Sudsing"]')).toBeTruthy();
+    fireEvent.click(r.getByRole("button", { name: /Morning Routine.*outside frame/ }));
+    expect(h.store.getState().ui.editorAnchor).toBe("Morning Routine");
+  });
+
+  it("clips a Mint block that straddles the frame start and counts the hidden ones", () => {
+    const mint = [
+      { id: "mint:early", name: "Early", slot: "Day", start: "13:00", end: "13:30" },
+      { id: "mint:edge", name: "Edge", slot: "Day", start: "13:15", end: "13:45" },
+      { id: "mint:late", name: "Late", slot: "Day", start: "14:00", end: "14:30" },
+    ];
+    const h = screenHarness("ready", 8, { frameStart: "13:30", mint });
+    const r = h.ui(<App />);
+    expect(slotOf(r, "mint:early")).toBeNull();
+    expect(slotOf(r, "mint:edge").style.left).toBe("0%");
+    expect(parseFloat(slotOf(r, "mint:edge").style.width)).toBeCloseTo((15 / 570) * 100, 1);
+    expect(r.getByText("1 Mint block outside the frame")).toBeTruthy();
+  });
+
+  it("answers a loose end from the banner above the frame and clears it", async () => {
+    const h = screenHarness("ready", 8, {
+      pending: { date: "2026-07-11", id: "ma03", idea: "Ride bike somewhere" },
+    });
+    const spy = vi.spyOn(FixtureAdapter.prototype, "resolveLooseEnd");
+    const r = h.ui(<App />);
+    expect(r.getByText("Loose end")).toBeTruthy();
+    expect(r.getByText("11 Jul · Ride bike somewhere")).toBeTruthy();
+    // The inline pending text in the prompts card is replaced by the banner.
+    expect(r.queryByText(/is unconfirmed/)).toBeNull();
+    fireEvent.click(r.getByRole("button", { name: "Dismiss" }));
+    expect(spy).toHaveBeenCalledWith({ date: "2026-07-11", id: "ma03" }, false);
+    await vi.waitFor(() => expect(r.queryByText("Loose end")).toBeNull());
+    spy.mockRestore();
+  });
+
+  it("records Did it as done for the same loose end", async () => {
+    const h = screenHarness("ready", 8, {
+      pending: { date: "2026-07-11", id: "ma03", idea: "Ride bike somewhere" },
+    });
+    const spy = vi.spyOn(FixtureAdapter.prototype, "resolveLooseEnd");
+    const r = h.ui(<App />);
+    fireEvent.click(r.getByRole("button", { name: "Did it" }));
+    expect(spy).toHaveBeenCalledWith({ date: "2026-07-11", id: "ma03" }, true);
+    await vi.waitFor(() => expect(r.queryByText("Loose end")).toBeNull());
+    spy.mockRestore();
+  });
+
+  it("offers Edit prompts and + Add prompt on the Morning prompts card", () => {
+    const h = screenHarness("ready");
+    const r = h.ui(<App />);
+    const edit = r.getByRole("button", { name: "Edit prompts" });
+    expect(edit.getAttribute("aria-pressed")).toBe("false");
+    fireEvent.click(edit);
+    expect(edit.getAttribute("aria-pressed")).toBe("true");
+    expect(r.getByRole("button", { name: "+ Add prompt" })).toBeTruthy();
   });
 
   it("lists skipped and out-of-frame anchors under Not counted today", () => {

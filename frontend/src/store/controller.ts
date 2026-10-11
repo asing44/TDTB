@@ -477,6 +477,14 @@ export class Controller {
     });
   }
 
+  /** Set up day loose-end banner: Did it (done=true) or Dismiss (done=false)
+      for the unconfirmed prior Live block. The banner clears only after the
+      log write succeeds, so a failed answer leaves it in place. */
+  async resolveLooseEnd(pending: { date: string; id: string }, done: boolean): Promise<void> {
+    await this.adapter.resolveLooseEnd(pending, done);
+    this.dispatch({ type: "LOOSE_END_RESOLVED" });
+  }
+
   // -- explicit duration memory (MVP) ---------------------------------------
 
   /** Canonical mutation identity for a row: the model's projected identity,

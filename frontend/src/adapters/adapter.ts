@@ -124,6 +124,10 @@ export interface Adapter {
       pick / custom); null clears the dated override back to the auto-pick.
       Never billed, never a history write. */
   saveMicroAdventure(pick: import("../model/types").MicroIdea | null): Promise<void>;
+  /** POST /micro-adventure/loose-end {date, id, done} — the Set up day banner's
+      Did it (true) / Dismiss (false) for an unconfirmed prior Live block. Writes
+      only the micro-adventure log; never billed, never touches today's plan. */
+  resolveLooseEnd(entry: { date: string; id: string }, done: boolean): Promise<void>;
   /** GET /settings/capacities — local versioned policy, no provider call. */
   loadCapacitiesSettings(): Promise<CapacitiesSettings>;
   /** POST /settings/capacities/save — one token-guarded non-billed full

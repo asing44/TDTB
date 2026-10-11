@@ -361,6 +361,8 @@ export type Action =
   // Free and unbilled, but it changes the commit's Live→Todoist content —
   // any current shadow preview goes stale and acceptance is revoked.
   | { type: "MICRO_SET"; pick: MicroIdea | null; source: "auto" | "override" }
+  // The Set up day banner answered the unconfirmed prior Live block.
+  | { type: "LOOSE_END_RESOLVED" }
   | { type: "CAPACITY_UPDATED"; capacity: Capacity }
   | { type: "SEQUENCE_START" }
   | {
@@ -592,6 +594,16 @@ export function reducer(s: AppState, a: Action): AppState {
       return {
         ...s,
         currentRunCalendarSkips: a.skipToday ? [...rest, a.id] : rest,
+      };
+    }
+    case "LOOSE_END_RESOLVED": {
+      if (!s.inputs) return s;
+      return {
+        ...s,
+        inputs: {
+          ...s.inputs,
+          microAdventure: { ...s.inputs.microAdventure, pendingConfirm: null },
+        },
       };
     }
     case "MICRO_SET": {

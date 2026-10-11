@@ -936,6 +936,10 @@ export class FixtureAdapter implements Adapter {
     await wait(LATENCY_MS);
   }
 
+  async resolveLooseEnd(_entry: { date: string; id: string }, _done: boolean): Promise<void> {
+    await wait(LATENCY_MS);
+  }
+
   /** Duration memory (MVP): in-memory mirror of the token-guarded mutation.
       The store model is updated only from the returned result — the fixture
       never mutates its loaded inputs, matching the server-authoritative

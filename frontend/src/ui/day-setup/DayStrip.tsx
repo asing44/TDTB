@@ -92,12 +92,21 @@ export function DayStrip(props: DayStripProps) {
   const ticks: number[] = [];
   for (let m = Math.ceil(startMin / 120) * 120; m <= endMin; m += 120) ticks.push(m);
 
+  // A Mint block wholly outside the frame has no place on the strip; one that
+  // straddles a frame edge is clipped to it. Hidden blocks are counted in a note.
+  const sessionOutside = (session: StripSession) =>
+    toMinutes(session.end) <= startMin || toMinutes(session.start) >= endMin;
+  const hiddenSessions = props.sessions.filter(sessionOutside).length;
+
   // Anchors are absolutely positioned by time inside the lane. Blocks that
   // overlap in time are stacked into sub-rows (greedy interval scheduling with
   // a 45-minute minimum gap) so none of them collide or spill past the frame.
+  // An anchor outside the frame is not drawn here; its Not counted chip opens
+  // the same editor instead.
   const rowEnds: number[] = [];
   const placedAnchors = props.anchors
     .map((anchor) => ({ anchor, min: toMinutes(anchor.start) }))
+    .filter(({ min }) => min >= startMin && min <= endMin)
     .sort((a, b) => a.min - b.min)
     .map(({ anchor, min }) => {
       let row = rowEnds.findIndex((end) => end <= min);
@@ -128,11 +137,15 @@ export function DayStrip(props: DayStripProps) {
           <span class="day-strip__empty">Mint off today</span>
         ) : (
           props.sessions.map((session, index) => {
+            if (sessionOutside(session)) return null;
             const blocked = !props.selectableIds.includes(session.id);
             const selected = props.selectedIds.includes(session.id);
             const state = blocked ? "blocked" : selected ? "selected" : "available";
-            const left = pct(toMinutes(session.start));
-            const width = Math.max(1.5, pct(toMinutes(session.end)) - left);
+            const left = pct(Math.max(toMinutes(session.start), startMin));
+            const width = Math.max(
+              1.5,
+              pct(Math.min(toMinutes(session.end), endMin)) - left,
+            );
             return (
               <button
                 type="button"
@@ -180,6 +193,11 @@ export function DayStrip(props: DayStripProps) {
           </button>
         ))}
       </div>
+      {hiddenSessions > 0 && (
+        <p class="day-strip__note">
+          {hiddenSessions} Mint block{hiddenSessions === 1 ? "" : "s"} outside the frame
+        </p>
+      )}
     </div>
   );
 }
