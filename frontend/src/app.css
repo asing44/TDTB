@@ -6062,7 +6062,7 @@ body {
     min-height: 0;
     padding: 6px 8px 6px 0;
     align-items: center;
-    grid-template-columns: 3px minmax(0, 1fr) 190px 340px minmax(0, 1fr);
+    grid-template-columns: 3px minmax(0, 1fr) auto 190px 300px;
   }
 
   /* Name over source: the body stays a two-line stack (title, then the source
@@ -6370,50 +6370,113 @@ body {
    desktop width (>=1101px), keeping every verb at its full label, rows ~56px
    (44px control floor + 6px vertical padding), no layout shift on hover, and
    the slider always clickable. POLISH-3: the four tracks are the whole row
-   (stripe | title + due | slider), so the slider column sits at the far right
-   and no trailing track reserves a dead band; the cluster is an absolute
-   overlay anchored LEFT of the slider column and constrained to the title+due
-   area. Out of flow => no shift, and it can never reach the slider. */
+   (stripe | title | actions | due | slider). The actions cell is its own
+   track between the title and the due column: a revealed cluster widens its
+   track and the title truncates; it never paints over the title, the due
+   text, or the slider. At rest the track is 0px, so no dead band. */
 @media (min-width: 1101px) {
   .qrow {
     position: relative;
-    grid-template-columns: 3px minmax(0, 1fr) 190px 340px;
+    grid-template-columns: 3px minmax(0, 1fr) auto 190px 300px;
   }
 
-  /* Anchored LEFT of the slider column (340px track + 12px gap = 352px) and
-     inset 15px (3px stripe + 12px gap), so the overlay is confined to the
-     title+due area and can never cover the slider, its ± steppers, or the
-     duration value. Hidden and pointer-events:none until hover/focus, so it
-     never intercepts a click meant for the slider. */
   .qrow__actions {
-    position: absolute;
-    top: 50%;
-    right: 352px;
-    left: 15px;
-    z-index: 4;
-    transform: translateY(-50%);
-    opacity: 0;
-    pointer-events: none;
+    grid-column: 3;
+    grid-row: 1;
+  }
+
+  .qrow__due {
+    grid-column: 4;
+    grid-row: 1;
+  }
+
+  .qrow__time {
+    grid-column: 5;
+    grid-row: 1;
+  }
+
+  /* Zero-width at rest: the cluster is still in the DOM and focusable
+     (opacity and pointer-events only, never display:none), so Tab reaches
+     every verb. :focus-within widens the track as soon as one takes focus. */
+  .qrow__actions {
+    position: static;
+    top: auto;
+    right: auto;
+    left: auto;
+    z-index: auto;
+    transform: none;
+    width: 0;
+    min-width: 0;
+    overflow: hidden;
     flex-wrap: nowrap;
     align-items: center;
-    justify-content: flex-start;
+    justify-content: flex-end;
     padding-left: 0;
-    border-radius: var(--radius-sm);
-    /* Opaque row-matching fill so the overlay reads as the row it covers. */
-    background: var(--qrow-bg, var(--t-surface));
+    background: none;
+    opacity: 0;
+    pointer-events: none;
     transition: opacity 120ms ease;
   }
 
   .qrow:hover .qrow__actions,
-  .qrow:focus-within .qrow__actions {
+  .qrow:focus-within .qrow__actions,
+  .qrow--focused .qrow__actions,
+  .qrow--dropped .qrow__actions {
+    width: max-content;
+    overflow: visible;
     opacity: 1;
     pointer-events: auto;
+  }
+
+  /* A revealed cluster narrows the title track; clamp a hovered title to one
+     line so the row keeps its height instead of growing to fit the wrap. */
+  .qrow:hover .qrow__name,
+  .qrow:focus-within .qrow__name,
+  .qrow--focused .qrow__name {
+    -webkit-line-clamp: 1;
   }
 
   .qrow__actions .planbtn,
   .qrow__actions .alloc-verb {
     min-width: max-content;
     padding: 0 10px;
+  }
+}
+
+/* Below 1500px the slider narrows to 300px (its value still fits on one
+   line) and the revealed verbs use 6px padding, so a hovered title keeps
+   room beside the cluster. From 1500px the full 340px slider and 10px verb
+   padding apply, with every label on one line. */
+@media (min-width: 1101px) and (max-width: 1499px) {
+  .qrow__actions .planbtn,
+  .qrow__actions .alloc-verb {
+    padding: 0 6px;
+  }
+}
+
+/* 1101-1279px is too narrow for title + verbs + due + slider side by side. A
+   revealed row lets the cluster take the due track and hides the due text
+   for as long as the row is revealed, so the title keeps its room. The
+   slider track is never spanned. */
+@media (min-width: 1101px) and (max-width: 1279px) {
+  .qrow:hover .qrow__actions,
+  .qrow:focus-within .qrow__actions,
+  .qrow--focused .qrow__actions,
+  .qrow--dropped .qrow__actions {
+    grid-column: 3 / 5;
+  }
+
+  .qrow:hover .qrow__due,
+  .qrow:focus-within .qrow__due,
+  .qrow--focused .qrow__due,
+  .qrow--dropped .qrow__due {
+    visibility: hidden;
+  }
+}
+
+@media (min-width: 1500px) {
+  .qrow {
+    grid-template-columns: 3px minmax(0, 1fr) auto 190px 340px;
   }
 }
 

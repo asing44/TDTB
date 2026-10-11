@@ -274,22 +274,47 @@ describe("U11 quiet day keeps the table frame", () => {
    (the same approach as the a11y/responsive suites). The defect: the revealed
    row-action cluster widened the page and squeezed "Mark complete". */
 describe("overflow containment (2026-10-10)", () => {
-  it("desktop row actions are never positioned over the duration slider", () => {
-    // POLISH-3: ONE action layout at every desktop width. The row is four
-    // tracks (stripe | title + due | slider), so the slider column sits at the
-    // far right and no trailing track reserves a dead band.
+  it("desktop row actions never paint over the title or the slider", () => {
+    // Actions are their own grid track between the title and the due column:
+    // stripe | title | actions | due | slider. A revealed cluster widens its
+    // track and the title truncates; nothing is laid over the title text.
+    // Full 340px slider from 1500px; the 1101-1499 band keeps a 300px slider so
+    // the slider value never wraps and the hovered title keeps room.
     expect(APP_CSS).toMatch(
-      /@media\s*\(min-width:\s*1101px\)[\s\S]*\.qrow\s*\{[^}]*grid-template-columns:\s*3px\s+minmax\(0,\s*1fr\)\s+190px\s+340px\s*;/, 
+      /@media\s*\(min-width:\s*1500px\)\s*\{\s*\.qrow\s*\{\s*grid-template-columns:\s*3px\s+minmax\(0,\s*1fr\)\s+auto\s+190px\s+340px\s*;/,
     );
-    // The overlay is anchored LEFT of the 340px slider column (right: 352px =
-    // 340px track + 12px gap), confined to the title+due area.
+    // 1101-1279: a revealed row lets the cluster take the due track and hides
+    // the due text, so the title keeps room and nothing is painted over it.
     expect(APP_CSS).toMatch(
-      /@media\s*\(min-width:\s*1101px\)[\s\S]*\.qrow__actions\s*\{[^}]*right:\s*352px/,
+      /@media\s*\(min-width:\s*1101px\)\s+and\s+\(max-width:\s*1279px\)\s*\{[\s\S]*?\.qrow:hover\s+\.qrow__actions[\s\S]*?grid-column:\s*3\s*\/\s*5;[\s\S]*?\.qrow:hover\s+\.qrow__due[\s\S]*?visibility:\s*hidden;/,
     );
-    // The >=1500px trailing max-content track (the dead right-hand band) and
-    // the old right:8px overlay (which covered the slider) are both gone.
-    expect(APP_CSS).not.toMatch(/340px\s+max-content/);
+    expect(APP_CSS).toMatch(
+      /@media\s*\(min-width:\s*1101px\)[\s\S]*\.qrow\s*\{[^}]*grid-template-columns:\s*3px\s+minmax\(0,\s*1fr\)\s+auto\s+190px\s+300px\s*;/,
+    );
+    // A hovered title clamps to one line so the revealed cluster can't grow the row.
+    expect(APP_CSS).toMatch(
+      /\.qrow:hover\s+\.qrow__name,[\s\S]*?-webkit-line-clamp:\s*1/,
+    );
+    expect(APP_CSS).toMatch(
+      /@media\s*\(min-width:\s*1101px\)[\s\S]*\.qrow__actions\s*\{\s*grid-column:\s*3;/,
+    );
+    expect(APP_CSS).toMatch(
+      /@media\s*\(min-width:\s*1101px\)[\s\S]*\.qrow__due\s*\{\s*grid-column:\s*4;/,
+    );
+    expect(APP_CSS).toMatch(
+      /@media\s*\(min-width:\s*1101px\)[\s\S]*\.qrow__time\s*\{\s*grid-column:\s*5;/,
+    );
+    // The cluster is in flow: no absolute overlay, no right/left anchor.
+    expect(APP_CSS).not.toMatch(/\.qrow__actions\s*\{[^}]*position:\s*absolute/);
+    expect(APP_CSS).not.toMatch(/\.qrow__actions\s*\{[^}]*right:\s*352px/);
     expect(APP_CSS).not.toMatch(/\.qrow__actions\s*\{[^}]*right:\s*8px/);
+    // At rest the track is 0px (no dead band); a hovered, focused, or dropped
+    // row widens it to its natural width.
+    expect(APP_CSS).toMatch(/\.qrow__actions\s*\{[^}]*width:\s*0;/);
+    expect(APP_CSS).toMatch(
+      /\.qrow:hover\s+\.qrow__actions,[\s\S]*?\{[^}]*width:\s*max-content/,
+    );
+    expect(APP_CSS).not.toMatch(/340px\s+max-content/);
   });
 
   it("the hidden actions cluster cannot intercept a slider click", () => {
