@@ -177,3 +177,48 @@ describe("U10 timeline — accounting actions reach the capacity card", () => {
     await waitFor(() => expect(amount()).toBe(before + 1));
   });
 });
+
+/* POLISH-3 (2026-10-11): short blocks read their label instead of "Nigh…".
+   The true start and the proportional width stay; a measured min-width widens
+   the label area, and stacking uses the widened (effective) end so a widened
+   block never covers its neighbour — it takes the next sub-row instead. */
+describe("U10 timeline — short blocks keep a readable label (POLISH-3)", () => {
+  it("widens a 15-minute block to its label and stacks it under its neighbour", () => {
+    const h = harnessWithCalendar([
+      calendarRow({
+        id: "Long",
+        name: "Neighbourhood Planning Review",
+        start: "09:00",
+        end: "09:15",
+        durationMin: 15,
+      }),
+      calendarRow({
+        id: "Next",
+        name: "Next",
+        start: "09:20",
+        end: "09:50",
+        durationMin: 30,
+      }),
+    ]);
+    const r = h.ui(<CalendarImpact />);
+    const long = blockOf(r.container, "Long");
+    const next = blockOf(r.container, "Next");
+
+    // The true start position is untouched...
+    expect(parseFloat(long.style.left)).toBeCloseTo(
+      ((toMinutes("09:00") - FRAME_START) / FRAME_LEN) * 100,
+      3,
+    );
+    // ...the label gets a widened minimum (29 chars × 6.4 + 16 = 201.6px,
+    // capped at 180px)...
+    expect(parseFloat(long.style.minWidth)).toBe(180);
+    // ...and the widened block claims the next stack row instead of covering
+    // its neighbour's label.
+    expect(next.style.top).not.toBe(long.style.top);
+    expect(parseFloat(next.style.top)).toBeCloseTo(34, 3);
+    // The full name and the exact range ride the block's title (the times stay
+    // in the detail row).
+    expect(long.getAttribute("title")).toContain("Neighbourhood Planning Review");
+    expect(long.getAttribute("title")).toMatch(/\d{1,2}:\d{2}/);
+  });
+});
