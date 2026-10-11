@@ -321,7 +321,7 @@ class TestDigestWithVaultRows:
         body = _client(vault).get("/plan-inputs").json()
         assert body["source_counts"]["vault"] == 3
 
-    def test_flag_false_drops_the_rows_and_says_so(self, vault):
+    def test_flag_false_drops_the_rows_without_a_warning(self, vault):
         _set_flag(False)
         body = _client(vault).get("/plan-inputs").json()
 
@@ -329,7 +329,7 @@ class TestDigestWithVaultRows:
         assert body["source_counts"]["vault"] == 0
         warnings = [w for w in body.get("source_warnings") or []
                     if "Vault rows are disabled" in w]
-        assert warnings, "disabling the vault must be loud, not silent"
+        assert warnings == [], "a deliberate vault-off setting is not a warning"
 
     def test_flag_false_serves_without_any_vault_root(self):
         """The cutover must not 503 on a missing vault root."""
