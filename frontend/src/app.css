@@ -5508,10 +5508,13 @@ body {
   cursor: not-allowed;
 }
 
+/* Selected Mint is the minting amber, matching the caption and the approved
+   reference. The label ink is a dark amber-black so it stays readable on the
+   fill in both light and dark mode. */
 .strip-slot--selected {
-  background: var(--t-accent);
-  border-color: var(--t-accent-strong);
-  color: var(--t-accent-text);
+  background: var(--c-minting);
+  border-color: color-mix(in srgb, var(--c-minting) 70%, #000);
+  color: color-mix(in srgb, var(--c-minting) 20%, #000);
 }
 
 .strip-slot:focus-visible,
