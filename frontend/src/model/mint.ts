@@ -53,45 +53,58 @@ export function wallFreeMintSessionIds(
   });
 }
 
-function mintSessionsFromAnchor(
+/** The Mint sessions a row can still take from the anchor: valid, starting at
+    or after the anchor, and wall-free (FEEDBACK-28). The anchor is the lower
+    bound, so a configured gap before it never consumes a session. Without a
+    usable anchor, every valid wall-free session is eligible. */
+export function eligibleMintSessions(
   sessions: MintSession[],
-  minutes: number,
   anchor?: string,
   walls: WallInterval[] = [],
-): MintSession[] | null {
-  if (!anchor) return null;
-  const anchorMinutes = toMinutes(anchor);
-  if (!Number.isFinite(anchorMinutes)) return null;
-
-  const requested = Number.isFinite(minutes) ? Math.max(0, minutes) : 0;
-  const count = Math.min(
-    sessions.length,
-    Math.max(0, Math.round(requested / MINT_SESSION_MINUTES)),
-  );
-  if (count === 0) return [];
-
-  // The anchor is the lower bound. The allotment caps how many available
-  // 30-minute windows can be selected; configured gaps must not consume a
-  // Mint session or force a morning row back into the selection. Wall-
-  // conflicting sessions (FEEDBACK-28) are never candidates: a Mint row must
-  // not be selected over an immutable fixed/work commitment.
+): MintSession[] {
+  const anchorMinutes = anchor ? toMinutes(anchor) : Number.NaN;
+  const lowerBound = Number.isFinite(anchorMinutes) ? anchorMinutes : null;
   return sessions.filter((session) => {
     const start = toMinutes(session.start);
     const end = toMinutes(session.end);
-    return Number.isFinite(start) && Number.isFinite(end)
-      && start >= anchorMinutes
-      && end > start
-      && !sessionOverlapsWall(session, walls);
+    if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) {
+      return false;
+    }
+    if (lowerBound !== null && start < lowerBound) return false;
+    return !sessionOverlapsWall(session, walls);
   });
 }
 
-/** Select the first N configured sessions inside the start-anchor window.
- *
- * Mint session rows are fixed 30-minute windows. The UI therefore snaps a
- * configured 15-minute allotment to the nearest session count and lets the
- * selected-session total becomes the saved daily value. Without an anchor, the
- * historical first-N behavior remains the fallback for older callers.
- * FEEDBACK-28: sessions overlapping a fixed or work wall are skipped first,
+/** The default Mint selection: every eligible session from the anchor through
+    the end of the windows. The allotment does not cap this default. */
+export function fillMintSessionIds(
+  sessions: MintSession[],
+  anchor?: string,
+  walls: WallInterval[] = [],
+): string[] {
+  return eligibleMintSessions(sessions, anchor, walls).map((session) => session.id);
+}
+
+/** The explicit Mint cap in minutes, or null when the default fill applies.
+    Only a saved numeric allotment is an explicit choice. A resolved zero from
+    config or a preset stays a zero, which disables Mint. Any other resolved
+    allotment only gates Mint on or off and never clips the fill. */
+export function explicitMintCapMinutes(
+  saved: { workAllotmentMinutes?: number | null } | undefined,
+  effectiveMinutes?: number | null,
+): number | null {
+  if (typeof saved?.workAllotmentMinutes === "number") {
+    return saved.workAllotmentMinutes;
+  }
+  return effectiveMinutes === 0 ? 0 : null;
+}
+
+/** Select the first N eligible sessions from the anchor, where N is the
+ * requested allotment rounded to whole 30-minute sessions. The count is
+ * bounded by the eligible sessions, so a request beyond the day selects them
+ * all. Without an anchor, the first-N fallback applies to every valid
+ * wall-free session.
+ * FEEDBACK-28: sessions overlapping a fixed or work wall are never candidates,
  * so a wall-conflicting session never becomes a Mint commitment.
  */
 export function mintSessionIdsForMinutes(
@@ -105,10 +118,9 @@ export function mintSessionIdsForMinutes(
     sessions.length,
     Math.max(0, Math.round(requested / MINT_SESSION_MINUTES)),
   );
-  const candidates = (
-    mintSessionsFromAnchor(sessions, requested, anchor, walls) ?? sessions
-  ).filter((session) => !sessionOverlapsWall(session, walls));
-  return candidates.slice(0, count).map((session) => session.id);
+  return eligibleMintSessions(sessions, anchor, walls)
+    .slice(0, count)
+    .map((session) => session.id);
 }
 
 export function mintMinutesForSessionIds(
@@ -118,39 +130,30 @@ export function mintMinutesForSessionIds(
   return validMintSessionIds(sessions, ids).length * MINT_SESSION_MINUTES;
 }
 
-/** Resolve old/inconsistent saved state into one visible session selection.
+/** Resolve saved state into one visible session selection.
  *
- * A partial saved list is treated as an intentional location choice. An old
- * "all sessions" list with a different allotment was produced by the former
- * UI default, so it is rebuilt from the total instead of silently reserving
- * the entire Trinoor day. FEEDBACK-28: saved ids overlapping a fixed or work
- * wall are stale and dropped before the choice is accepted.
+ * Explicit off and an explicit zero allotment both disable Mint. A saved
+ * session list is an exact choice: wall-conflicting ids are dropped, and the
+ * list is kept whole rather than clipped to the allotment. A saved id from
+ * before the anchor is stale, so the selection is rebuilt from the anchor.
+ * With a null allotment (no explicit cap) the rebuild is the default fill; a
+ * numeric allotment caps it. FEEDBACK-28: saved ids overlapping a fixed or
+ * work wall are stale and dropped before the choice is accepted.
  */
 export function initialMintSessionIds(
   sessions: MintSession[],
   override: SchedulableOverride | undefined,
-  allotmentMinutes: number,
+  allotmentMinutes: number | null,
   anchor?: string,
   walls: WallInterval[] = [],
 ): string[] {
   if (override?.on === false) return [];
+  if (allotmentMinutes === 0) return [];
   if (Array.isArray(override?.sessions)) {
-    // Detect the former "all sessions" payload before wall filtering. A
-    // newly-conflicting wall must not make an old all-session payload look
-    // like an intentional partial selection and inflate its allotment.
-    const rawSelected = validMintSessionIds(sessions, override.sessions);
-    const selected = wallFreeMintSessionIds(sessions, rawSelected, walls);
-    const allotment = Number.isFinite(allotmentMinutes) ? Math.max(0, allotmentMinutes) : 0;
-    const isLegacyAll =
-      rawSelected.length === sessions.length &&
-      selected.length > 0 &&
-      allotment !== selected.length * MINT_SESSION_MINUTES;
-    if (!isLegacyAll) {
-      const window = mintSessionsFromAnchor(sessions, allotment, anchor, walls);
-      const inWindow = window === null
-        || selected.every((id) => window.some((session) => session.id === id));
-      if (inWindow) return selected;
-    }
+    const selected = wallFreeMintSessionIds(sessions, override.sessions, walls);
+    const window = eligibleMintSessions(sessions, anchor, walls).map((session) => session.id);
+    if (selected.every((id) => window.includes(id))) return selected;
   }
+  if (allotmentMinutes === null) return fillMintSessionIds(sessions, anchor, walls);
   return mintSessionIdsForMinutes(sessions, allotmentMinutes, anchor, walls);
 }

@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  explicitMintCapMinutes,
+  fillMintSessionIds,
   initialMintSessionIds,
   mintMinutesForSessionIds,
   mintSessionIdsForMinutes,
@@ -58,7 +60,7 @@ describe("Mint session/allotment sync", () => {
     )).toEqual(["mint:afternoon:13:30"]);
   });
 
-  it("classifies raw valid all-session saves before wall filtering", () => {
+  it("keeps a raw all-session save whole after wall filtering", () => {
     const allSessions: MintSession[] = [
       ...sessions,
       { id: "mint:afternoon:14:00", name: "Mint Afternoon · 14:00", slot: "Afternoon", start: "14:00", end: "14:30" },
@@ -72,23 +74,99 @@ describe("Mint session/allotment sync", () => {
       60,
       undefined,
       wall,
-    )).toEqual(["mint:morning:08:30", "mint:afternoon:13:30"]);
+    )).toEqual([
+      "mint:morning:08:30",
+      "mint:afternoon:13:30",
+      "mint:afternoon:14:00",
+      "mint:afternoon:14:30",
+    ]);
   });
 
-  it("rebuilds the former all-session default from the saved total", () => {
+  it("keeps a saved all-session list whole; the allotment does not clip it", () => {
+    // A saved list is an exact choice. The 60-minute allotment must not trim
+    // three saved sessions to two.
     expect(initialMintSessionIds(
       sessions,
       { on: true, sessions: sessions.map((session) => session.id) },
       60,
-    )).toEqual([
-      "mint:morning:08:30",
-      "mint:morning:09:00",
-    ]);
+    )).toEqual(sessions.map((session) => session.id));
     expect(initialMintSessionIds(
       sessions,
       { on: true, sessions: sessions.map((session) => session.id) },
       0,
     )).toEqual([]);
+  });
+});
+
+describe("default Mint fill runs from the anchor to the end of the windows", () => {
+  it("fills every wall-free session from the anchor, not the allotment", () => {
+    expect(fillMintSessionIds(anchoredSessions, "13:00")).toEqual([
+      "mint:afternoon:13:30",
+      "mint:afternoon:14:00",
+      "mint:afternoon:14:30",
+    ]);
+  });
+
+  it("skips a wall-blocked session inside the fill", () => {
+    const wall: WallInterval[] = [{ start: 14 * 60, end: 14 * 60 + 30 }];
+    expect(fillMintSessionIds(anchoredSessions, "13:00", wall)).toEqual([
+      "mint:afternoon:13:30",
+      "mint:afternoon:14:30",
+    ]);
+  });
+
+  it("a null allotment fills from the anchor when nothing is saved", () => {
+    expect(initialMintSessionIds(anchoredSessions, undefined, null, "13:00")).toEqual([
+      "mint:afternoon:13:30",
+      "mint:afternoon:14:00",
+      "mint:afternoon:14:30",
+    ]);
+  });
+
+  it("a stale saved selection from before the anchor refills from the anchor", () => {
+    expect(initialMintSessionIds(
+      anchoredSessions,
+      { on: true, sessions: ["mint:morning:08:30"] },
+      null,
+      "13:00",
+    )).toEqual([
+      "mint:afternoon:13:30",
+      "mint:afternoon:14:00",
+      "mint:afternoon:14:30",
+    ]);
+  });
+
+  it("an anchor after every session leaves nothing to fill", () => {
+    expect(fillMintSessionIds(anchoredSessions, "15:00")).toEqual([]);
+    expect(initialMintSessionIds(anchoredSessions, undefined, null, "15:00")).toEqual([]);
+  });
+
+  it("an explicit numeric allotment still caps the fill", () => {
+    expect(initialMintSessionIds(anchoredSessions, undefined, 60, "13:00")).toEqual([
+      "mint:afternoon:13:30",
+      "mint:afternoon:14:00",
+    ]);
+  });
+
+  it("explicit zero wins over the fill", () => {
+    expect(initialMintSessionIds(anchoredSessions, undefined, 0, "13:00")).toEqual([]);
+  });
+});
+
+describe("explicit Mint cap resolution", () => {
+  it("a saved numeric allotment is the explicit cap, zero included", () => {
+    expect(explicitMintCapMinutes({ workAllotmentMinutes: 90 }, 240)).toBe(90);
+    expect(explicitMintCapMinutes({ workAllotmentMinutes: 0 }, 240)).toBe(0);
+  });
+
+  it("a configured or preset default is not a cap, so it fills", () => {
+    expect(explicitMintCapMinutes({}, 240)).toBeNull();
+    expect(explicitMintCapMinutes({ workAllotmentMinutes: null }, 300)).toBeNull();
+  });
+
+  it("a resolved zero from config or a preset stays an explicit zero", () => {
+    expect(explicitMintCapMinutes({}, 0)).toBe(0);
+    expect(explicitMintCapMinutes({}, undefined)).toBeNull();
   });
 });
 

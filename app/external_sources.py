@@ -739,9 +739,11 @@ MINT_SESSION_MINUTES = 30
 class MintSchedule:
     """Canonical Mint state for one day and one anchor.
 
-    ``active_blocks`` is the amount both schedulable rows and capacity reserve.
-    ``effective_minutes`` remains the source allotment so callers can expose
-    the configured/dated contract separately from a window cap.
+    ``active_blocks`` is the amount both schedulable rows and capacity reserve:
+    the default fill from the anchor to the end of the Trinoor windows, reduced
+    only by an explicit dated allotment. ``remaining_blocks`` is that fill before
+    any explicit cap. ``effective_minutes`` remains the source allotment so
+    callers can expose the configured/dated contract.
     """
 
     effective_minutes: int
@@ -750,8 +752,6 @@ class MintSchedule:
     remaining_blocks: int
     explicit_on: bool
     selected_session_ids: tuple[str, ...]
-    legacy_all_sessions: bool = False
-    capped: bool = False
 
 
 def _effective_mint_minutes(
@@ -771,13 +771,11 @@ def _effective_mint_minutes(
 
 def _canonical_mint_session_ids(
     config: dict[str, Any], raw_sessions: list[Any],
-) -> tuple[list[str], list[dict[str, str]], bool]:
+) -> tuple[list[str], list[dict[str, str]]]:
     """Normalize raw IDs/names before any wall filtering.
 
-    Returns ``(selected_ids, options, legacy_all_sessions)``. Unknown and
-    duplicate values are discarded. The legacy classification intentionally
-    compares the raw normalized set to every available option, before any
-    wall filtering can make an all-session legacy list look partial.
+    Returns ``(selected_ids, options)`` in option order. Unknown and duplicate
+    values are discarded.
     """
     options = mint_session_options(config)
     by_key = {
@@ -795,9 +793,7 @@ def _canonical_mint_session_ids(
         selected.append(canonical)
     option_order = {option["id"]: index for index, option in enumerate(options)}
     selected.sort(key=lambda session_id: (option_order[session_id], session_id))
-    option_ids = {option["id"] for option in options}
-    legacy_all = bool(option_ids) and set(selected) == option_ids and len(selected) == len(option_ids)
-    return selected, options, legacy_all
+    return selected, options
 
 
 def _wall_free_session_ids(
@@ -828,11 +824,11 @@ def normalize_mint_session_override(
 ) -> dict[str, Any]:
     """Return one canonical, persistence-safe Mint override.
 
-    Raw IDs and display names are canonicalized before optional wall filtering.
-    A raw all-session list is recognized before filtering and treated as the
-    legacy UI selection: it is rebuilt to the effective allotment rather than
-    inflating the saved total. Invalid/stale IDs never survive. Explicit zero
-    always wins and produces an empty disabled selection.
+    Raw IDs and display names are canonicalized, then wall-blocked windows are
+    dropped. A saved session list is an exact choice, so the allotment never
+    clips it, including a list that selects every session. Invalid or stale IDs
+    never survive. Explicit zero always wins and produces an empty disabled
+    selection.
     """
     if not isinstance(raw.get("sessions"), list):
         return dict(raw)
@@ -844,17 +840,9 @@ def normalize_mint_session_override(
         if allotment_minutes is not None
         else day_semantics.effective_allotment_minutes(config=config)
     )
-    selected, options, legacy_all = _canonical_mint_session_ids(
-        config, raw["sessions"]
-    )
+    selected, options = _canonical_mint_session_ids(config, raw["sessions"])
     if effective <= 0:
         selected = []
-    elif legacy_all and effective != len(options) * MINT_SESSION_MINUTES:
-        count = min(
-            len(options),
-            max(0, round(effective / MINT_SESSION_MINUTES)),
-        )
-        selected = [option["id"] for option in options[:count]]
     selected = _wall_free_session_ids(selected, options, wall_intervals)
     enabled = bool(raw.get("on", bool(selected))) and bool(selected) and effective > 0
     if not enabled:
@@ -900,6 +888,36 @@ def normalize_mint_day_setup(
     return setup
 
 
+def _fill_session_ids(config: dict[str, Any], anchor_min: int) -> list[str]:
+    """Aligned 30-minute Mint sessions that still start at or after the anchor.
+
+    Counting whole sessions, rather than flooring remaining minutes, keeps a
+    window that starts off the half-hour grid from adding a phantom session.
+    """
+    return [
+        option["id"]
+        for option in mint_session_options(config)
+        if (_hhmm_min(option["start"]) or 0) >= anchor_min
+    ]
+
+
+def _allotment_is_explicit(
+    day_setup: dict[str, Any], resolved_day_semantics: dict[str, Any] | None,
+) -> bool:
+    """Only a dated or saved numeric allotment caps the default fill.
+
+    Configured Defaults, presets, and the implicit default gate Mint on or off
+    but never clip the fill from the anchor to the end of the windows.
+    """
+    raw = day_setup.get("work_allotment_minutes")
+    if isinstance(raw, int) and not isinstance(raw, bool):
+        return True
+    return (
+        isinstance(resolved_day_semantics, dict)
+        and resolved_day_semantics.get("allotment_source") == "dated_override"
+    )
+
+
 def mint_schedule(
     config: dict[str, Any],
     day_setup: dict[str, Any],
@@ -909,71 +927,74 @@ def mint_schedule(
     *,
     wall_intervals: list[tuple[int, int]] | None = None,
 ) -> MintSchedule:
-    """Compute the canonical active/capped Mint amount for a day.
+    """Compute the canonical Mint amount for a day and anchor.
 
-    Default Mint is on only on workdays with remaining Trinoor time when
-    Trinoor windows are configured. With no configured windows, the aggregate
-    allotment remains the source-of-truth for legacy callers. An explicit
-    ``on: true`` is a re-inclusion and remains active on weekends or after the
-    window closes. Selected sessions are exact user choices; an explicit zero
-    disables them before any legacy or wall logic.
+    With Trinoor windows configured, the default is the fill: every aligned
+    30-minute session that still starts at or after the anchor. Default Mint
+    applies on workdays only. An explicit dated allotment caps that fill, while
+    the configured Defaults, presets, and implicit default only gate Mint on or
+    off. An explicit ``on: true`` re-includes Mint on weekends and after the
+    windows close, placing whatever fill remains. Selected sessions are exact
+    user choices; an explicit zero disables them before any wall logic. Without
+    windows, the aggregate allotment remains the source of truth for legacy
+    callers.
     """
     sched = dict(day_setup.get("schedulable") or {})
     user = sched.get("minting") or {}
     effective = _effective_mint_minutes(day_setup, resolved_day_semantics, config)
-    slots = _trinoor_slots(config)
     anchor_min = _hhmm_min(anchor) or 0
     workday = today.weekday() < 5
-    remaining = (
-        sum(max(0, end - max(start, anchor_min)) for start, end in slots) // 30
-        if workday else 0
-    )
+    fill = len(_fill_session_ids(config, anchor_min))
     explicit_on = user.get("on") is True
-    has_sessions = isinstance(user.get("sessions"), list)
-    selected: list[str] = []
-    legacy_all = False
-    if has_sessions:
+    if isinstance(user.get("sessions"), list):
         normalized = normalize_mint_session_override(
             config, user, allotment_minutes=effective,
             wall_intervals=wall_intervals,
         )
         selected = list(normalized.get("sessions") or [])
-        _, _options, legacy_all = _canonical_mint_session_ids(
-            config, user["sessions"]
-        )
         active = normalized.get("on") is True and bool(selected)
         return MintSchedule(
             effective_minutes=effective,
             active=active,
             active_blocks=len(selected) if active else 0,
-            remaining_blocks=remaining,
+            remaining_blocks=fill,
             explicit_on=explicit_on,
             selected_session_ids=tuple(selected),
-            legacy_all_sessions=legacy_all,
         )
 
     if effective <= 0:
-        return MintSchedule(effective, False, 0, remaining, explicit_on, ())
+        return MintSchedule(effective, False, 0, fill, explicit_on, ())
 
-    # A configured window that is already exhausted is default-off; callers
-    # without windows are handled as aggregate-capacity-only by _capacity_frame
-    # and must not synthesize a placement row here.
-    default_on = workday and remaining > 0
+    if not _trinoor_slots(config):
+        # No windows to fill: default is off, and only an explicit re-include
+        # reserves the requested blocks, as the aggregate legacy path always did.
+        if not explicit_on:
+            return MintSchedule(effective, False, 0, fill, explicit_on, ())
+        return MintSchedule(
+            effective_minutes=effective,
+            active=True,
+            active_blocks=effective / MINT_SESSION_MINUTES,
+            remaining_blocks=fill,
+            explicit_on=explicit_on,
+            selected_session_ids=(),
+        )
+
+    default_on = workday and fill > 0
     active = explicit_on or (user.get("on") is not False and default_on)
-    if not active:
-        return MintSchedule(effective, False, 0, remaining, explicit_on, ())
-
-    requested = effective / MINT_SESSION_MINUTES
-    capped = 0 < remaining < requested
-    active_blocks = remaining if capped else requested
+    # Nothing left to fill (window closed or no eligible session): nothing to
+    # place, so an explicit re-include has no session to reserve either.
+    if not active or fill == 0:
+        return MintSchedule(effective, False, 0, fill, explicit_on, ())
+    blocks: int | float = fill
+    if _allotment_is_explicit(day_setup, resolved_day_semantics):
+        blocks = min(effective / MINT_SESSION_MINUTES, fill)
     return MintSchedule(
         effective_minutes=effective,
         active=True,
-        active_blocks=active_blocks,
-        remaining_blocks=remaining,
+        active_blocks=blocks,
+        remaining_blocks=fill,
         explicit_on=explicit_on,
         selected_session_ids=(),
-        capped=capped,
     )
 
 
@@ -1026,13 +1047,6 @@ def build_schedulable_blocks(
                     })
                 continue
             n = schedule.active_blocks
-            if schedule.capped:
-                end = max((end for _, end in _trinoor_slots(config)), default=0)
-                notes.append(
-                    f"Minting: {schedule.remaining_blocks} block"
-                    f"{'s' if schedule.remaining_blocks != 1 else ''} "
-                    f"(work window closes at {end // 60:02d}:{end % 60:02d})"
-                )
             item = {
                 "id": default["name"], "name": default["name"],
                 "blocks": n, "duration": n * MINT_SESSION_MINUTES,

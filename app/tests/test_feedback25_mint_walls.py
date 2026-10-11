@@ -61,14 +61,16 @@ def _mint_item(id_="Mint Morning · 08:30", start="08:30", end="09:00"):
 # ---------------------------------------------------------------------------
 
 class TestMintAllotmentDerivation:
-    def test_aggregate_minting_row_uses_effective_allotment(self):
+    def test_aggregate_minting_row_fills_past_the_configured_allotment(self):
+        # A resolved (non-dated) allotment gates Mint on but does not cap the
+        # default fill: 14 aligned sessions remain from 09:00.
         items, _, _ = ext.build_schedulable_blocks(
             CFG, {}, MONDAY, "09:00",
             resolved_day_semantics={"effective_allotment_minutes": 300},
         )
         [m] = [i for i in items if i["name"] == "Minting"]
-        assert m["blocks"] == 10
-        assert m["duration"] == 300
+        assert m["blocks"] == 14
+        assert m["duration"] == 420
 
     def test_aggregate_minting_row_uses_dated_allotment_override(self):
         items, _, _ = ext.build_schedulable_blocks(
@@ -78,12 +80,12 @@ class TestMintAllotmentDerivation:
         assert m["blocks"] == 10
         assert m["duration"] == 300
 
-    def test_no_allotment_context_uses_healthy_default(self):
-        # No resolved semantics and no dated override: callers without
-        # allotment state use the healthy 8-block default.
+    def test_no_allotment_context_fills_from_the_anchor(self):
+        # No resolved semantics and no dated override: the implicit default
+        # gates Mint on and the default fill runs to the end of the windows.
         items, _, _ = ext.build_schedulable_blocks(CFG, {}, MONDAY, "09:00")
         [m] = [i for i in items if i["name"] == "Minting"]
-        assert m["blocks"] == 8
+        assert m["blocks"] == 14
 
     def test_zero_allotment_suppresses_legacy_aggregate_row(self):
         items, _, _ = ext.build_schedulable_blocks(

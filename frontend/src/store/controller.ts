@@ -17,7 +17,11 @@ import { fingerprintFixedInputs } from "../model/fingerprint";
 import { isStagingVerb } from "../model/staging";
 import { prunePins } from "../model/pins";
 import { planOverflow, calendarWalls, mintWalls } from "../model/overflow";
-import { initialMintSessionIds, MINT_SESSION_MINUTES } from "../model/mint";
+import {
+  explicitMintCapMinutes,
+  initialMintSessionIds,
+  MINT_SESSION_MINUTES,
+} from "../model/mint";
 import type { WallInterval } from "../model/overflow";
 import { toMinutes } from "../model/time";
 import { droppedItems } from "../model/placement";
@@ -145,10 +149,12 @@ function normalizeMintSetup(
     return out;
   }
 
+  // Only a saved numeric allotment (or a resolved zero) caps the default
+  // fill; a configured or preset default gates Mint on and off only.
   const selected = initialMintSessionIds(
     sessions,
     minting,
-    requested,
+    explicitMintCapMinutes(daySetup, inputs.daySemantics.effectiveAllotmentMinutes),
     daySetup.anchor ?? inputs.time.anchor,
     walls,
   );
