@@ -6,6 +6,10 @@
    data-theme on <html>. */
 
 :root {
+  /* Native controls follow the app's own theme, not the OS preference. The
+     page's <meta name="color-scheme" content="light dark"> otherwise renders
+     an unchecked checkbox as a dark square on the light-painted surface. */
+  color-scheme: light;
   /* DATA context accents (artifact-design-system README §1) */
   --t-accent: #1d9e75;
   --t-accent-subtle: #e1f5ee;
@@ -63,6 +67,7 @@
 
 @media (prefers-color-scheme: dark) {
   :root {
+    color-scheme: dark;
     --t-accent: #2fb98c;
     --t-accent-subtle: #10362b;
     --t-accent-strong: #5fd4ae;
@@ -82,6 +87,7 @@
 
 /* Manual override wins over system (persistent toggle) */
 :root[data-theme="light"] {
+  color-scheme: light;
   --t-accent: #1d9e75;
   --t-accent-subtle: #e1f5ee;
   --t-accent-strong: #0f6e56;
@@ -99,6 +105,7 @@
 }
 
 :root[data-theme="dark"] {
+  color-scheme: dark;
   --t-accent: #2fb98c;
   --t-accent-subtle: #10362b;
   --t-accent-strong: #5fd4ae;

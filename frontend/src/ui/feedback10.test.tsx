@@ -300,7 +300,7 @@ describe("FEEDBACK-10 More menu carries secondary actions (A13)", () => {
     expect(labels.some((l) => l?.startsWith("Delete permanently"))).toBe(true);
     const remove = menuItems(container).find((b) => b.textContent?.includes("Remove from planning"));
     expect(remove?.getAttribute("data-source-mutation")).toBe("true");
-    expect(remove?.textContent).toContain("updates Obsidian or Todoist source");
+    expect(remove?.textContent).toContain("updates the Todoist or Capacities source");
   });
 });
 

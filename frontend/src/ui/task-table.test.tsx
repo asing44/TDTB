@@ -269,3 +269,46 @@ describe("U11 quiet day keeps the table frame", () => {
     expect(container.querySelector(".cap-card")).toBeTruthy();
   });
 });
+
+/* jsdom cannot measure layout, so the overflow fixes are pinned as CSS text
+   (the same approach as the a11y/responsive suites). The defect: the revealed
+   row-action cluster widened the page and squeezed "Mark complete". */
+describe("overflow containment (2026-10-10)", () => {
+  it("desktop row actions are an out-of-flow overlay, not a grid track", () => {
+    expect(APP_CSS).toMatch(/\.qrow__actions\s*\{[^}]*position:\s*absolute/);
+    expect(APP_CSS).toMatch(/\.qrow__actions\s*\{[^}]*right:\s*8px/);
+    // The row no longer reserves a trailing flexible track for the cluster.
+    expect(APP_CSS).toMatch(
+      /@media\s*\(min-width:\s*1101px\)[\s\S]*\.qrow\s*\{[^}]*grid-template-columns:\s*3px\s+minmax\(0,\s*1fr\)\s+190px\s+340px/,
+    );
+  });
+
+  it("the page body cannot scroll sideways", () => {
+    expect(APP_CSS).toMatch(
+      /\.cockpit__main,\s*\.queue\s*\{[^}]*overflow-x:\s*clip/,
+    );
+  });
+
+  it("lane tables carry side padding so rows are not flush to the card", () => {
+    expect(APP_CSS).toMatch(/\.tasktable\s*\{[^}]*padding-inline:\s*8px/);
+  });
+
+  it("the More menu stacks title over detail and stays inside the viewport", () => {
+    expect(APP_CSS).toMatch(/\.row-more__menu\s*\{[^}]*min-width:\s*240px/);
+    expect(APP_CSS).toMatch(
+      /\.row-more__menu\s+\.row-more__item\s*\{[^}]*flex-direction:\s*column/,
+    );
+  });
+
+  it("the timeline's last hour label stays inside its track", () => {
+    expect(APP_CSS).toMatch(
+      /\.timeline__tick:last-child\s*\{[^}]*transform:\s*translateX\(-100%\)/,
+    );
+  });
+
+  it("native controls follow the app theme, not the OS preference", () => {
+    const tokens = readFileSync(resolve(process.cwd(), "src/tokens.css"), "utf8");
+    expect(tokens).toMatch(/:root\[data-theme="light"\]\s*\{[^}]*color-scheme:\s*light/);
+    expect(tokens).toMatch(/:root\[data-theme="dark"\]\s*\{[^}]*color-scheme:\s*dark/);
+  });
+});

@@ -6302,3 +6302,124 @@ body {
     align-content: start;
   }
 }
+
+/* ---- Overflow containment pass (2026-10-10) -------------------------------
+   Reported from the live Plan tasks view (~1100-1250px): the hover-revealed
+   row-action cluster widened the page (a horizontal scrollbar appeared) and
+   squeezed "Mark complete" to a green sliver; the More menu ran off the right
+   edge and ran its title into its detail; the timeline's last hour label
+   clipped; and rows sat flush against the lane card edges. This layer sits at
+   the END of app.css so it wins the cascade. The base desktop grid pinned by
+   responsive.test.ts (`.queue__cols, .qrow`) is deliberately untouched. */
+
+/* The page body never scrolls sideways. `clip` (not `hidden`) contains any
+   residual bleed WITHOUT creating a scroll container, so the sticky footer
+   and sticky column header keep working. */
+.cockpit__main,
+.queue {
+  overflow-x: clip;
+}
+
+/* Lane tables carry their own side padding, so rows and their lane header
+   inset from the lane card edge instead of sitting flush against it. The 24px
+   column padding stays on .queue below. */
+.tasktable {
+  padding-inline: 8px;
+}
+
+/* Menu items stack title over detail. `.alloc-verb`'s inline-flex display
+   (used for the row verbs) also matched the menu items and ran the two spans
+   together ("Remove from planningupdates Obsid…"); a column flex resets that
+   for the menu only, and the padding gives the detail a readable inset. */
+.row-more__menu .row-more__item {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  min-width: 0;
+  padding: 6px 10px;
+  text-align: left;
+  white-space: normal;
+}
+
+.row-more__menu .row-more__item > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/* Wider, but capped so the popup stays inside the viewport; it stays anchored
+   to the More button (right: 0) and grows leftward. */
+.row-more__menu {
+  min-width: 240px;
+  max-width: min(320px, calc(100vw - 32px));
+}
+
+/* Axis label inset: the final hour tick sits at the track's right edge and its
+   label spilled past it ("11p" clipped). Right-align the last label to its
+   tick so it stays inside the track. */
+.timeline__tick:last-child {
+  transform: translateX(-100%);
+}
+
+/* Desktop density: the revealed row actions are an OVERLAY anchored to the
+   row's right edge, never a grid track. Taking the cluster out of flow is what
+   stops it widening the page; every verb keeps its full label at the cluster's
+   natural width. Rows stay ~56px (44px control floor + 6px vertical padding). */
+@media (min-width: 1101px) {
+  .qrow {
+    position: relative;
+    grid-template-columns: 3px minmax(0, 1fr) 190px 340px;
+  }
+
+  .qrow__actions {
+    position: absolute;
+    top: 50%;
+    right: 8px;
+    z-index: 4;
+    transform: translateY(-50%);
+    flex-wrap: nowrap;
+    align-items: center;
+    justify-content: flex-end;
+    padding-left: 28px;
+    border-radius: var(--radius-sm);
+    /* Opaque row-matching fill with a left fade so the overlay reads as the
+       row, not as a lighter box over it. */
+    background: linear-gradient(
+      to right,
+      transparent,
+      var(--qrow-bg, var(--t-surface)) 24px
+    );
+  }
+
+  /* Labels never squeeze: the cluster sizes to content and the overlay fits
+     inside the row. */
+  .qrow__actions .planbtn,
+  .qrow__actions .alloc-verb {
+    min-width: max-content;
+    padding: 0 10px;
+  }
+
+  /* Row background matches the overlay so the fade reads as the row. Kept on
+     the row so hover and focus tints stay in sync with the overlay fill. */
+  .queue__band .qrow {
+    --qrow-bg: var(--t-surface);
+  }
+
+  .queue__band .qrow:hover {
+    --qrow-bg: color-mix(in srgb, var(--band-color) 12%, var(--t-surface));
+    background: var(--qrow-bg);
+  }
+
+  .qrow--focused {
+    --qrow-bg: color-mix(in srgb, var(--band-color) 12%, var(--t-surface));
+    background: var(--qrow-bg);
+  }
+}
+
+/* 24px side padding inside the 1280px column at desktop density. Narrower
+   widths keep their own 20px/14px insets from the responsive blocks above. */
+@media (min-width: 1101px) {
+  .queue {
+    padding-inline: 24px;
+  }
+}
