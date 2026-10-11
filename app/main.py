@@ -3945,9 +3945,8 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
         w_vault: list[str] = app_config.sources_config_warnings()
         if not vault_rows_on:
             w_vault.append(
-                "Vault rows are disabled (sources.vault_enabled=false) — the "
-                "Obsidian gather contributes no pool or assigned rows. Set it "
-                "back to true to restore them."
+                "Vault rows are disabled (sources.vault_enabled=false) — no "
+                "vault pool or assigned rows are read."
             )
 
         result = config_reader.read_config(vault)

@@ -760,8 +760,8 @@ export function Queue() {
         <CalendarImpact inline />
         <div class="queue__quiet" role="status">
           <p>
-            No assigned items today. Assignment happens upstream — Obsidian
-            `daily-assigned` and Todoist Today. A quiet day is a valid day.
+            No assigned items today. Assignment happens upstream — Todoist
+            Today and Capacities. A quiet day is a valid day.
           </p>
         </div>
       </section>

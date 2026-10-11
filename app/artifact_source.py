@@ -86,7 +86,10 @@ OVERLAY_FILENAME = "planning-overlay.json"
 
 #: The command that (re)generates the artifact. A1 ships no producer; this
 #: names the intended one so the degrade banner tells the operator what to run.
-PRODUCER_COMMAND = "tdtb planning-artifact build  (the planning-artifact skill over MCP)"
+PRODUCER_COMMAND = (
+    "tdtb planning-artifact build, or set sources.mode to \"live\" in "
+    "~/.config/tdtb/config.json to read Todoist directly"
+)
 
 VALID_ROW_SOURCES = frozenset({"todoist", "capacities", "vault"})
 VALID_SOURCE_STATUS = frozenset({"ok", "partial", "failed"})
