@@ -148,6 +148,22 @@ class TodoistClient:
                 break
         return results
 
+    def get_projects(self) -> list[dict]:
+        """GET /projects, auto-paginated to a flat list of project dicts."""
+        results: list[dict] = []
+        cursor: str | None = None
+        while True:
+            params: dict[str, Any] = {}
+            if cursor is not None:
+                params["cursor"] = cursor
+            body = self._request("GET", "/projects", params=params).json()
+            if isinstance(body, list):
+                return results + body
+            results.extend(body.get("results", []))
+            cursor = body.get("next_cursor")
+            if not cursor:
+                return results
+
     def get_task(self, task_id: str) -> dict:
         response = self._request("GET", f"/tasks/{task_id}")
         return response.json()

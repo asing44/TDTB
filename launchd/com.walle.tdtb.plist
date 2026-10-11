@@ -16,13 +16,12 @@
 
   <key>EnvironmentVariables</key>
   <dict>
-    <!-- Judgment model (2026-07-27): deepseek/deepseek-v4-flash timed out
-         twice in one evening (120s, then 300s). OpenAI equivalent per Adam;
-         gpt-5.6-luna verified live with the strict json_schema +
-         require_parameters payload. NOTE: judgment.py must omit temperature
-         for openai/* models or routing 404s. -->
+    <!-- Judgment model (2026-10-10, Adam): deepseek/deepseek-v4.1-flash via
+         OpenRouter. The older deepseek-v4-flash timed out twice on 2026-07-27
+         (120s, then 300s); revert to openai/gpt-6-luna if V4.1 does too.
+         NOTE: judgment.py omits temperature for openai/* models only. -->
     <key>TDTB_JUDGMENT_MODEL</key>
-    <string>openai/gpt-6-luna</string>
+    <string>deepseek/deepseek-v4.1-flash</string>
     <key>TDTB_VAULT_ROOT</key>
     <string>__TDTB_VAULT_ROOT__</string>
     <!-- launchd children get a bare PATH; the judgment layer's Agent SDK

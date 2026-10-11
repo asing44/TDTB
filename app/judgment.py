@@ -53,11 +53,12 @@ EFFORT = "low"  # judgment calls are structured JSON transforms, not deep reason
 # decouples per-call cost from the Anthropic plan quota. "sdk" restores the
 # old path. The billed-call ledger (G24) charges per attempt either way.
 PROVIDER = os.environ.get("TDTB_JUDGMENT_PROVIDER", "openrouter")
-# The qualified production route is OpenAI GPT-5.6 Luna. The launchd plist
-# pins this explicitly, but the code default must agree so a missing or stale
-# service environment cannot silently fall back to the retired DeepSeek Flash
-# route. DeepSeek variants remain explicit overrides for qualification only.
-DEFAULT_OPENROUTER_MODEL = "openai/gpt-6-luna"
+# Production route (2026-10-10, Adam): DeepSeek V4.1 Flash over OpenRouter.
+# The launchd plist pins this explicitly, but the code default must agree so a
+# missing or stale service environment cannot silently fall back to another
+# route. The earlier deepseek-v4-flash timed out twice on 2026-07-27 (120s,
+# then 300s); if V4.1 Flash does the same, override TDTB_JUDGMENT_MODEL.
+DEFAULT_OPENROUTER_MODEL = "deepseek/deepseek-v4.1-flash"
 
 
 def _configured_openrouter_model(environ: Mapping[str, str] | None = None) -> str:
