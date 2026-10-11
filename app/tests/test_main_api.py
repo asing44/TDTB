@@ -59,7 +59,7 @@ class TestRouteShape:
         assert r.status_code == 200
         assert r.json() == {
             "status": "ok",
-            "judgment_model": "openai/gpt-6-luna",
+            "judgment_model": "deepseek/deepseek-v4.1-flash",
         }
 
     def test_config_tokenless_bootstrap(self, client):

@@ -67,6 +67,35 @@ TODAY = date(2026, 7, 14)
 # ---------------------------------------------------------------------------
 
 class TestFetchTodoistItems:
+    def test_habit_project_tasks_are_not_plannable(self):
+        class WithProjects(FakeTodoist):
+            def get_projects(self):
+                return [{"id": "p-habits", "name": "\U0001F501 Habits"}, {"id": "p-work", "name": "Work"}]
+
+        habit = _task("1", "Messages")
+        habit["project_id"] = "p-habits"
+        work = _task("2", "Ship it")
+        work["project_id"] = "p-work"
+        news = _task("3", "News")
+        news["project_id"] = "p-habits"
+        client = WithProjects({
+            ext.ASSIGNED_QUERY_FALLBACK: [habit, work],
+            ext.QUICK_QUERY_FALLBACK: [news],
+        })
+        assigned, pool, warnings = ext.fetch_todoist_items(client, {})
+        assert warnings == []
+        assert [i["name"] for i in assigned] == ["Ship it"]
+        assert [i["name"] for i in pool] == []
+
+    def test_project_lookup_failure_keeps_rows_visible(self):
+        class Broken(FakeTodoist):
+            def get_projects(self):
+                raise RuntimeError("boom")
+
+        client = Broken({ext.ASSIGNED_QUERY_FALLBACK: [_task("1", "Call Vlad")]})
+        assigned, _, warnings = ext.fetch_todoist_items(client, {})
+        assert warnings == [] and [i["name"] for i in assigned] == ["Call Vlad"]
+
     def test_assigned_and_pool_split_by_query(self):
         client = FakeTodoist({
             ext.ASSIGNED_QUERY_FALLBACK: [_task("1", "Call Vlad")],

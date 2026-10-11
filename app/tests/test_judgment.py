@@ -637,7 +637,7 @@ class TestOpenRouterProvider:
         assert cap["timeout"] == j.QUERY_TIMEOUT_S
 
     def test_missing_model_env_uses_qualified_luna_default(self):
-        assert j._configured_openrouter_model({}) == "openai/gpt-6-luna"
+        assert j._configured_openrouter_model({}) == "deepseek/deepseek-v4.1-flash"
         assert j._configured_openrouter_model({
             "TDTB_JUDGMENT_MODEL": "openrouter/deepseek/deepseek-v4.1-flash",
         }) == "openrouter/deepseek/deepseek-v4.1-flash"

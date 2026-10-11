@@ -58,6 +58,33 @@ def _duration_minutes(task: dict[str, Any]) -> int | None:
         return int(dur["amount"]) * 24 * 60
     return None
 
+#: Todoist projects whose tasks are habit nudges, not plannable work. Habits
+#: reach the plan only as a capacity summary, so their tasks never become rows.
+_HABIT_PROJECT_NAMES = frozenset({"habits"})
+
+
+def _normalize_project_name(name: Any) -> str:
+    """Lowercase letters/digits only, so "🔁 Habits" and "habits" compare equal."""
+    return "".join(ch for ch in str(name or "").lower() if ch.isalnum())
+
+
+def _habit_project_ids(client: Any) -> set[str]:
+    """IDs of the habit projects; empty when the lookup is unavailable."""
+    getter = getattr(client, "get_projects", None)
+    if not callable(getter):
+        return set()
+    try:
+        projects = getter()
+    except Exception:  # noqa: BLE001 — best effort; rows stay visible on failure
+        return set()
+    return {
+        str(p.get("id"))
+        for p in projects
+        if isinstance(p, dict)
+        and _normalize_project_name(p.get("name")) in _HABIT_PROJECT_NAMES
+    }
+
+
 def _is_reminder(task: dict[str, Any]) -> bool:
     if _REMINDER_LABEL in (task.get("labels") or []):
         return True
@@ -100,8 +127,13 @@ def fetch_todoist_items(
     assigned_q = str(config.get("todoist.read_query.assigned") or ASSIGNED_QUERY_FALLBACK)
     quick_q = str(config.get("todoist.read_query.quick") or QUICK_QUERY_FALLBACK)
     try:
-        assigned_tasks = [t for t in client.get_filter_tasks(assigned_q) if not _is_reminder(t)]
-        quick_tasks = [t for t in client.get_filter_tasks(quick_q) if not _is_reminder(t)]
+        habit_projects = _habit_project_ids(client)
+
+        def _plannable(t: dict[str, Any]) -> bool:
+            return not _is_reminder(t) and str(t.get("project_id")) not in habit_projects
+
+        assigned_tasks = [t for t in client.get_filter_tasks(assigned_q) if _plannable(t)]
+        quick_tasks = [t for t in client.get_filter_tasks(quick_q) if _plannable(t)]
     except Exception as exc:  # noqa: BLE001 — degrade contract
         return [], [], [f"Todoist read failed ({exc}) — digest is missing Todoist items"]
 
