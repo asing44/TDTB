@@ -8,9 +8,13 @@
   display: flex;
   flex-direction: column;
   width: 100%;
-  max-width: 1280px;
-  margin: 0 auto;
+  /* Full-viewport frame: no bounded centered column. Every screen (Plan
+     tasks, Set up day, Connections), the header, and the footer span the
+     whole width, inset by one shared side padding. */
+  max-width: none;
+  margin: 0;
   min-height: 100vh;
+  --page-pad: clamp(16px, 2.5vw, 40px);
   background: var(--t-body);
 }
 
@@ -953,7 +957,7 @@
 
 /* -- execution-first view -------------------------------------------------- */
 .execution {
-  padding: 18px 20px;
+  padding: 18px var(--page-pad, clamp(16px, 2.5vw, 40px));
   border-bottom: 0.5px solid var(--t-border);
   background: var(--t-surface);
 }
@@ -1049,7 +1053,7 @@
 }
 /* -- queue (T12e: banded allocator table, 3a spec) -------------------------- */
 .queue {
-  padding: 0 20px 24px 16px;
+  padding: 0 var(--page-pad, clamp(16px, 2.5vw, 40px)) 24px;
 }
 .queue__head {
   display: flex;
@@ -2017,7 +2021,7 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 7px 20px;
+  padding: 7px var(--page-pad, clamp(16px, 2.5vw, 40px));
   font-size: 12px;
   border-bottom: 0.5px solid var(--t-border);
 }
@@ -2766,10 +2770,10 @@
     min-height: auto;
   }
   .execution {
-    padding: 14px;
+    padding: 14px var(--page-pad, clamp(16px, 2.5vw, 40px));
   }
   .queue {
-    padding-inline: 14px;
+    padding-inline: var(--page-pad, clamp(16px, 2.5vw, 40px));
   }
   .queue__head {
     align-items: flex-start;
@@ -3638,7 +3642,7 @@ body {
 @media (max-width: 1100px) {
   .calendar-impact,
   .queue {
-    padding-inline: 20px;
+    padding-inline: var(--page-pad, clamp(16px, 2.5vw, 40px));
   }
 
   .queue__head h1 {
@@ -3646,7 +3650,7 @@ body {
   }
 
   .dock {
-    padding-inline: 20px;
+    padding-inline: var(--page-pad, clamp(16px, 2.5vw, 40px));
   }
 }
 
@@ -3665,7 +3669,7 @@ body {
 
   .calendar-impact,
   .queue {
-    padding-inline: 14px;
+    padding-inline: var(--page-pad, clamp(16px, 2.5vw, 40px));
   }
 
   .calendar-impact__row {
@@ -3686,7 +3690,7 @@ body {
   }
 
   .dock {
-    padding-inline: 14px;
+    padding-inline: var(--page-pad, clamp(16px, 2.5vw, 40px));
   }
 
   .dock__status {
@@ -4653,7 +4657,7 @@ body {
   align-items: center;
   gap: 16px;
   flex-wrap: wrap;
-  padding: 12px 20px;
+  padding: 12px var(--page-pad, clamp(16px, 2.5vw, 40px));
   border-bottom: 1px solid var(--t-border);
   background: var(--t-surface);
 }
@@ -4779,7 +4783,7 @@ body {
   align-items: center;
   gap: 16px;
   flex-wrap: wrap;
-  padding: 8px 20px 12px;
+  padding: 8px var(--page-pad, clamp(16px, 2.5vw, 40px)) 12px;
 }
 .footer__left {
   display: flex;
@@ -5314,6 +5318,7 @@ body {
 }
 
 .day-setup-screen {
+  padding-inline: var(--page-pad, clamp(16px, 2.5vw, 40px));
   padding-bottom: 64px;
 }
 
@@ -5660,9 +5665,7 @@ body {
   display: flex;
   flex-direction: column;
   gap: 12px;
-  max-width: 1200px;
-  margin: 0 auto;
-  padding: 16px 20px 8px;
+  padding: 16px var(--page-pad, clamp(16px, 2.5vw, 40px)) 8px;
 }
 
 .connections__subhead {
@@ -6361,46 +6364,96 @@ body {
   transform: translateX(-100%);
 }
 
-/* Desktop density: the revealed row actions are an OVERLAY anchored to the
-   row's right edge, never a grid track. Taking the cluster out of flow is what
-   stops it widening the page; every verb keeps its full label at the cluster's
-   natural width. Rows stay ~56px (44px control floor + 6px vertical padding). */
-@media (min-width: 1101px) {
+/* Row actions must never sit over the duration slider. Two width layouts,
+   both keeping every verb at its full label, rows ~56px (44px control floor +
+   6px vertical padding), no layout shift on hover, and the slider always
+   clickable:
+   - >=1500px: a real trailing max-content track. The cluster is in flow but
+     hidden (opacity 0, pointer-events none) until hover/focus, so the row
+     never shifts and the slider column is never overlapped.
+   - 1101-1499px: no trailing track fits, so the cluster is an absolute
+     overlay anchored LEFT of the slider column and constrained to the
+     title+due area. Out of flow => no shift, and it can never reach the
+     slider. */
+@media (min-width: 1500px) {
   .qrow {
     position: relative;
-    grid-template-columns: 3px minmax(0, 1fr) 190px 340px;
+    grid-template-columns: 3px minmax(0, 1fr) 190px 340px max-content;
   }
 
   .qrow__actions {
-    position: absolute;
-    top: 50%;
-    right: 8px;
-    z-index: 4;
-    transform: translateY(-50%);
+    grid-column: 5;
+    position: static;
+    opacity: 0;
+    pointer-events: none;
     flex-wrap: nowrap;
     align-items: center;
     justify-content: flex-end;
-    padding-left: 28px;
-    border-radius: var(--radius-sm);
-    /* Opaque row-matching fill with a left fade so the overlay reads as the
-       row, not as a lighter box over it. */
-    background: linear-gradient(
-      to right,
-      transparent,
-      var(--qrow-bg, var(--t-surface)) 24px
-    );
+    padding-left: 0;
+    background: none;
+    border-radius: 0;
   }
 
-  /* Labels never squeeze: the cluster sizes to content and the overlay fits
-     inside the row. */
+  .qrow:hover .qrow__actions,
+  .qrow:focus-within .qrow__actions {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  /* Labels never squeeze: the cluster sizes to content in its own track. */
   .qrow__actions .planbtn,
   .qrow__actions .alloc-verb {
     min-width: max-content;
     padding: 0 10px;
   }
+}
 
-  /* Row background matches the overlay so the fade reads as the row. Kept on
-     the row so hover and focus tints stay in sync with the overlay fill. */
+@media (min-width: 1101px) and (max-width: 1499px) {
+  .qrow {
+    position: relative;
+    grid-template-columns: 3px minmax(0, 1fr) 190px 340px;
+  }
+
+  /* Anchored LEFT of the slider column (340px track + 12px gap = 352px) and
+     inset 15px (3px stripe + 12px gap), so the overlay is confined to the
+     title+due area and can never cover the slider, its ± steppers, or the
+     duration value. Hidden and pointer-events:none until hover/focus, so it
+     never intercepts a click meant for the slider. */
+  .qrow__actions {
+    position: absolute;
+    top: 50%;
+    right: 352px;
+    left: 15px;
+    z-index: 4;
+    transform: translateY(-50%);
+    opacity: 0;
+    pointer-events: none;
+    flex-wrap: nowrap;
+    align-items: center;
+    justify-content: flex-start;
+    padding-left: 0;
+    border-radius: var(--radius-sm);
+    /* Opaque row-matching fill so the overlay reads as the row it covers. */
+    background: var(--qrow-bg, var(--t-surface));
+    transition: opacity 120ms ease;
+  }
+
+  .qrow:hover .qrow__actions,
+  .qrow:focus-within .qrow__actions {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  .qrow__actions .planbtn,
+  .qrow__actions .alloc-verb {
+    min-width: max-content;
+    padding: 0 10px;
+  }
+}
+
+/* Row hover/focus tint, shared by both desktop layouts. The 1101-1499 overlay
+   fill uses --qrow-bg so the tint stays in sync with the row beneath it. */
+@media (min-width: 1101px) {
   .queue__band .qrow {
     --qrow-bg: var(--t-surface);
   }
@@ -6416,10 +6469,10 @@ body {
   }
 }
 
-/* 24px side padding inside the 1280px column at desktop density. Narrower
-   widths keep their own 20px/14px insets from the responsive blocks above. */
+/* One shared side inset inside the full-width frame at desktop density.
+   Narrower widths keep their own responsive insets above. */
 @media (min-width: 1101px) {
   .queue {
-    padding-inline: 24px;
+    padding-inline: var(--page-pad, clamp(16px, 2.5vw, 40px));
   }
 }

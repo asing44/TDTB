@@ -274,13 +274,40 @@ describe("U11 quiet day keeps the table frame", () => {
    (the same approach as the a11y/responsive suites). The defect: the revealed
    row-action cluster widened the page and squeezed "Mark complete". */
 describe("overflow containment (2026-10-10)", () => {
-  it("desktop row actions are an out-of-flow overlay, not a grid track", () => {
-    expect(APP_CSS).toMatch(/\.qrow__actions\s*\{[^}]*position:\s*absolute/);
-    expect(APP_CSS).toMatch(/\.qrow__actions\s*\{[^}]*right:\s*8px/);
-    // The row no longer reserves a trailing flexible track for the cluster.
+  it("desktop row actions are never positioned over the duration slider", () => {
+    // >=1500: a real trailing max-content track holds the cluster in flow, so
+    // it can never overlap the slider column.
     expect(APP_CSS).toMatch(
-      /@media\s*\(min-width:\s*1101px\)[\s\S]*\.qrow\s*\{[^}]*grid-template-columns:\s*3px\s+minmax\(0,\s*1fr\)\s+190px\s+340px/,
+      /@media\s*\(min-width:\s*1500px\)[\s\S]*\.qrow\s*\{[^}]*grid-template-columns:\s*3px\s+minmax\(0,\s*1fr\)\s+190px\s+340px\s+max-content/,
     );
+    // 1101-1499: the overlay is anchored LEFT of the 340px slider column
+    // (right: 352px = 340px track + 12px gap), confined to the title+due area.
+    expect(APP_CSS).toMatch(
+      /@media\s*\(min-width:\s*1101px\)\s*and\s*\(max-width:\s*1499px\)[\s\S]*\.qrow__actions\s*\{[^}]*right:\s*352px/,
+    );
+    // The old right:8px overlay — which covered the slider on hover — is gone.
+    expect(APP_CSS).not.toMatch(/\.qrow__actions\s*\{[^}]*right:\s*8px/);
+  });
+
+  it("the hidden actions cluster cannot intercept a slider click", () => {
+    // Hidden (opacity 0) and inert until hover/focus, so the slider stays
+    // clickable even where the cluster shares the row.
+    expect(APP_CSS).toMatch(/\.qrow__actions\s*\{[^}]*pointer-events:\s*none/);
+    expect(APP_CSS).toMatch(
+      /\.qrow:hover\s+\.qrow__actions[\s\S]*?pointer-events:\s*auto/,
+    );
+    expect(APP_CSS).toMatch(
+      /\.qrow:focus-within\s+\.qrow__actions[\s\S]*?pointer-events:\s*auto/,
+    );
+  });
+
+  it("the page frame is full width with one shared side inset", () => {
+    // No bounded centered column: the frame fills the viewport on every screen.
+    expect(APP_CSS).not.toMatch(/\.cockpit\s*\{[^}]*max-width:\s*1280px/);
+    expect(APP_CSS).toMatch(
+      /\.cockpit\s*\{[^}]*--page-pad:\s*clamp\(16px,\s*2\.5vw,\s*40px\)/,
+    );
+    expect(APP_CSS).toMatch(/\.queue\s*\{[^}]*padding:\s*0\s+var\(--page-pad/);
   });
 
   it("the page body cannot scroll sideways", () => {
