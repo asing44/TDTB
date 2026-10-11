@@ -20,6 +20,8 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import { useApp, useAppState } from "./context";
 import { display12h, formatBlockAmount, formatDurationMinutes, toMinutes } from "../model/time";
 import {
+  explicitMintCapMinutes,
+  fillMintSessionIds,
   initialMintSessionIds as resolveInitialMintSessionIds,
   mintMinutesForSessionIds,
   mintSessionIdsForMinutes,
@@ -57,11 +59,6 @@ export function DaySetupPanel({
     typeof s.daySetup.workAllotmentMinutes === "number"
       ? s.daySetup.workAllotmentMinutes
       : s.inputs?.daySemantics.effectiveAllotmentMinutes ?? 0;
-  const hasExplicitMintChoice =
-    Object.prototype.hasOwnProperty.call(s.daySetup, "workAllotmentMinutes") ||
-    Array.isArray(savedMintOverride?.sessions) ||
-    savedMintOverride?.on === false ||
-    s.daySetup.dayPreset != null;
   // Preserve the resolved backend value exactly, including zero and positive
   // sub-defaults. Only the old shape with no resolution evidence receives the
   // four-hour fallback; a selected preset (including a zero preset) is enough
@@ -71,14 +68,13 @@ export function DaySetupPanel({
     s.inputs?.daySemantics.defaultAllotmentMinutes !== 0 ||
     s.inputs?.daySemantics.selectedPreset != null ||
     s.inputs?.daySemantics.mintBelowDefault !== undefined;
-  const initialMintAllotment =
-    hasExplicitMintChoice || hasResolvedMintContract
-      ? savedAllotment
-      : Math.max(
-          MINT_DEFAULT_MINUTES,
-          savedAllotment,
-          s.inputs?.daySemantics.defaultAllotmentMinutes ?? 0,
-        );
+  // Only a saved numeric allotment, or a resolved zero, caps the Mint fill. A
+  // configured or preset default gates Mint on and off; it does not clip the
+  // default fill from the anchor through the end of the windows.
+  const initialMintAllotment = explicitMintCapMinutes(
+    s.daySetup,
+    hasResolvedMintContract ? s.inputs?.daySemantics.effectiveAllotmentMinutes : null,
+  );
   const initialMintAnchor = s.daySetup.anchor ?? s.inputs?.time.anchor;
   // FEEDBACK-28: Mint choices are filtered against the current effective
   // fixed/work calendar walls — the August 17 incident selected Mint
@@ -338,15 +334,22 @@ export function DaySetupPanel({
       : semantics.availablePresets.find((candidate) => candidate.name === presetName) ?? null;
     return selected?.workAllotmentMinutes ?? semantics.defaultAllotmentMinutes;
   };
-  const resetAllotment = () => {
-    const configured = configAllotment(preset);
+  // The automatic config default fills the day; a named preset or a zero
+  // config is an explicit allotment and caps the selection.
+  const applyConfiguredAllotment = (presetName: string) => {
+    const configured = configAllotment(presetName);
     if (availableMintSessions.length > 0) {
-      setMintAllotment(configured);
+      if (presetName === automaticPreset && configured > 0) {
+        setMintSelection(fillMintSessionIds(availableMintSessions, mintAnchor, effectiveMintWalls));
+      } else {
+        setMintAllotment(configured);
+      }
     } else {
       setWorkAllotment(String(configured));
       setAllotmentMode("reset");
     }
   };
+  const resetAllotment = () => applyConfiguredAllotment(preset);
   const allotmentNumber = availableMintSessions.length > 0
     ? mintMinutesForSessionIds(availableMintSessions, selectedMintSessionIds)
     : Number(workAllotment);
@@ -367,11 +370,18 @@ export function DaySetupPanel({
     Number.isFinite(allotmentNumber) &&
     allotmentNumber > 0 &&
     allotmentNumber < MINT_DEFAULT_MINUTES;
-  const mintWarning = mintBelowDefault
-    ? availableMintSessions.length > 0 && mintSelectionMax < MINT_DEFAULT_BLOCKS
-      ? `Only ${mintSelectionMax} Mint block${mintSelectionMax === 1 ? " is" : "s are"} available today; the 8-block default cannot be reached.`
-      : "Mint is below the 8-block (4-hour) daily default. You can continue with less."
-    : null;
+  // A day with fewer eligible blocks than the default is the day's limit, not
+  // a choice, so session mode warns only on a deliberate reduction below the
+  // default or the eligible count.
+  const belowDefaultCopy = "Mint is below the 8-block (4-hour) daily default. You can continue with less.";
+  const mintWarning = availableMintSessions.length > 0
+    ? selectedMintSessionIds.length > 0 &&
+      selectedMintSessionIds.length < Math.min(mintSelectionMax, MINT_DEFAULT_BLOCKS)
+      ? belowDefaultCopy
+      : null
+    : mintBelowDefault
+      ? belowDefaultCopy
+      : null;
 
   const anchorErrors = editableAnchors.flatMap((a) =>
     validateAnchoredOverride(sourceAnchor(a.id), overrideOf(a.id), s.inputs!.time).errors.map(
@@ -458,13 +468,7 @@ export function DaySetupPanel({
                       onChange={(e) => {
                         const value = (e.target as HTMLSelectElement).value;
                         setPreset(value);
-                        const configured = configAllotment(value);
-                        if (availableMintSessions.length > 0) {
-                          setMintAllotment(configured);
-                        } else {
-                          setWorkAllotment(String(configured));
-                          setAllotmentMode("reset");
-                        }
+                        applyConfiguredAllotment(value);
                       }}
                     >
                       <option value={automaticPreset}>
@@ -537,6 +541,20 @@ export function DaySetupPanel({
                     <span class="frame-summary__free">
                       Only {freeSlots} free slot{freeSlots === 1 ? "" : "s"} inside the frame today.
                     </span>
+                    <label class="frame-summary__blocks" for="setup-mint-blocks">
+                      <span>Mint blocks</span>
+                      <input
+                        id="setup-mint-blocks"
+                        type="range"
+                        class="field__range"
+                        min={0}
+                        max={mintSelectionMax}
+                        step={1}
+                        value={selectedMintSessionIds.length}
+                        aria-valuetext={`${selectedMintSessionIds.length} of ${mintSelectionMax} blocks`}
+                        onInput={(e) => setMintSessionCount(Number((e.target as HTMLInputElement).value))}
+                      />
+                    </label>
                     <button type="button" class="btn frame-summary__reset" onClick={resetAllotment}>
                       Reset to config
                     </button>
@@ -623,13 +641,7 @@ export function DaySetupPanel({
             onChange={(e) => {
               const value = (e.target as HTMLSelectElement).value;
               setPreset(value);
-              const configured = configAllotment(value);
-              if (availableMintSessions.length > 0) {
-                setMintAllotment(configured);
-              } else {
-                setWorkAllotment(String(configured));
-                setAllotmentMode("reset");
-              }
+              applyConfiguredAllotment(value);
             }}
           >
             <option value={automaticPreset}>

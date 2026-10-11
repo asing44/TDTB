@@ -294,3 +294,57 @@ describe("U12 footer and prompt persistence", () => {
     expect(r.getByText(/Mint 8 of 8 sessions/)).toBeTruthy();
   });
 });
+
+describe("default Mint fill and the Mint blocks slider", () => {
+  // Helper: the screen harness with a configured allotment smaller than the
+  // eligible day, so a cap-based default and a fill-based default disagree.
+  function smallAllotmentHarness(minutes: number, count = 8) {
+    const h = screenHarness("ready", count);
+    const inputs = structuredClone(h.store.getState().inputs!);
+    inputs.daySemantics = {
+      ...inputs.daySemantics,
+      effectiveAllotmentMinutes: minutes,
+      defaultAllotmentMinutes: minutes,
+    };
+    h.store.dispatch({ type: "INPUTS_LOADED", inputs, ledger: h.store.getState().ledger! });
+    return h;
+  }
+
+  it("fills every eligible session from the anchor, not the configured allotment", () => {
+    const h = smallAllotmentHarness(60);
+    const r = h.ui(<App />);
+    expect(r.getByText(/Mint 8 of 8 sessions/)).toBeTruthy();
+  });
+
+  it("the Mint blocks slider reduces the count within the eligible sessions", () => {
+    const h = screenHarness("ready", 8);
+    const r = h.ui(<App />);
+    const slider = r.getByLabelText("Mint blocks") as HTMLInputElement;
+    expect(slider.max).toBe("8");
+    fireEvent.input(slider, { target: { value: "3" } });
+    expect(r.getByText(/Mint 3 of 8 sessions/)).toBeTruthy();
+  });
+
+  it("Reset to config restores the fill after the slider reduced it", () => {
+    const h = screenHarness("ready", 8);
+    const r = h.ui(<App />);
+    fireEvent.input(r.getByLabelText("Mint blocks"), { target: { value: "3" } });
+    expect(r.getByText(/Mint 3 of 8 sessions/)).toBeTruthy();
+    fireEvent.click(r.getByText("Reset to config"));
+    expect(r.getByText(/Mint 8 of 8 sessions/)).toBeTruthy();
+  });
+
+  it("a deliberate reduction below the eight-block default still warns", () => {
+    const h = screenHarness("ready", 8);
+    const r = h.ui(<App />);
+    fireEvent.input(r.getByLabelText("Mint blocks"), { target: { value: "3" } });
+    expect(r.getByText(/below the 8-block/)).toBeTruthy();
+  });
+
+  it("a day with fewer than eight eligible sessions does not warn", () => {
+    const h = screenHarness("ready", 5);
+    const r = h.ui(<App />);
+    expect(r.getByText(/Mint 5 of 5 sessions/)).toBeTruthy();
+    expect(r.queryByText(/8-block/)).toBeNull();
+  });
+});
