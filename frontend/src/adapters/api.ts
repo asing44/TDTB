@@ -339,6 +339,10 @@ export class ApiAdapter implements Adapter {
     });
   }
 
+  async resolveLooseEnd(entry: { date: string; id: string }, done: boolean): Promise<void> {
+    await this.post("/micro-adventure/loose-end", { date: entry.date, id: entry.id, done });
+  }
+
   async loadCapacitiesSettings(): Promise<CapacitiesSettings> {
     return projectCapacitiesSettings(await this.request("/settings/capacities"));
   }

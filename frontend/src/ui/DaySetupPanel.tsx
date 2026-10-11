@@ -39,6 +39,7 @@ import { effectiveAnchoredBlocks } from "../store/store";
 import { DayStrip } from "./day-setup/DayStrip";
 import { AnchorsCard } from "./day-setup/AnchorsCard";
 import { PromptsCard } from "./day-setup/PromptsCard";
+import { LooseEndBanner } from "./day-setup/LooseEndBanner";
 import { onSetupContinue, onSetupUndo } from "./day-setup/commands";
 
 export function DaySetupPanel({
@@ -426,6 +427,14 @@ export function DaySetupPanel({
 
     return (
       <div class="settings-panel settings-panel--day day-setup-screen">
+        {micro.pendingConfirm && (
+          <LooseEndBanner
+            pending={micro.pendingConfirm}
+            onAnswer={(entry, done) =>
+              void controller.resolveLooseEnd({ date: entry.date, id: entry.id }, done)
+            }
+          />
+        )}
         <div class="day-setup-screen__grid">
           <div class="day-setup-screen__main">
             <section
@@ -833,10 +842,12 @@ export function DaySetupPanel({
           {micro.streak > 0 && <span> · streak {micro.streak}</span>}
         </p>
         {micro.pendingConfirm && (
-          <p class="live-micro__pending">
-            {micro.pendingConfirm.date}'s 🌱 {micro.pendingConfirm.idea} is
-            unconfirmed — tick its Todoist task or the daily note's Live box.
-          </p>
+          <LooseEndBanner
+            pending={micro.pendingConfirm}
+            onAnswer={(entry, done) =>
+              void controller.resolveLooseEnd({ date: entry.date, id: entry.id }, done)
+            }
+          />
         )}
         <div class="field">
           <label for="live-pick">Pick from pool</label>

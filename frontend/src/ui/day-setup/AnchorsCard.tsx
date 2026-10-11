@@ -58,9 +58,14 @@ export function AnchorsCard(props: AnchorsCardProps) {
             <span class="not-counted__empty">none</span>
           ) : (
             props.notCounted.map((anchor) => (
-              <span class="not-counted__chip" key={anchor.id}>
+              <button
+                type="button"
+                class="not-counted__chip"
+                onClick={() => props.onEdit(anchor.id)}
+                key={anchor.id}
+              >
                 {anchor.name} {display12h(anchor.time)} · {anchor.reason}
-              </span>
+              </button>
             ))
           )}
         </div>

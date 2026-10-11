@@ -388,6 +388,23 @@ def apply_done_update(
     )
 
 
+def resolve_loose_end(
+    history: Iterable[HistoryEntry], *, date_: date, entry_id: str, done: bool,
+) -> tuple[HistoryEntry, ...] | None:
+    """Record the Set up day banner's answer (Did it → True, Dismiss → False)
+    for an unconfirmed prior entry. Only an entry still awaiting confirmation
+    (done is None) matches; anything else returns None and the log is left
+    alone, so an answered entry cannot be silently rewritten."""
+    hist = tuple(history)
+    target = next(
+        (e for e in hist if e.date == date_ and e.id == entry_id and e.done is None),
+        None,
+    )
+    if target is None:
+        return None
+    return apply_done_update(hist, replace(target, done=done))
+
+
 def write_history(path: Path, history: Iterable[HistoryEntry]) -> None:
     """Rewrite the log preserving the standard frontmatter shape. Round-trip:
     read_history(path) after write == the written (newest-first) input."""

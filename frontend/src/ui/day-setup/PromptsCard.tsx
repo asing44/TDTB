@@ -77,12 +77,6 @@ export function PromptsCard(props: PromptsCardProps) {
             )}
             {micro.streak > 0 && <span> · streak {micro.streak}</span>}
           </p>
-          {micro.pendingConfirm && (
-            <p class="live-micro__pending">
-              {micro.pendingConfirm.date}'s 🌱 {micro.pendingConfirm.idea} is unconfirmed — tick its
-              Todoist task or the daily note's Live box.
-            </p>
-          )}
           <div class="field field--stacked">
             <div class="field__labelrow"><label for="live-custom">Custom idea</label><span class="field__tag">overrides the pick</span></div>
             <div class="field__controls">

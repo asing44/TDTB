@@ -5435,6 +5435,12 @@ body {
   color: var(--t-muted);
 }
 
+.day-strip__note {
+  margin: 6px 0 0;
+  font-size: 11px;
+  color: var(--t-muted);
+}
+
 .strip-slot {
   position: absolute;
   top: 3px;
@@ -5577,6 +5583,8 @@ body {
   border: 1px dashed var(--t-border);
   border-radius: 999px;
   color: var(--t-muted);
+  font: inherit;
+  cursor: pointer;
 }
 
 .field--inline {

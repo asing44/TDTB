@@ -1394,6 +1394,12 @@ class ValidateSequenceRequest(BaseModel):
     pinned_rows: list[dict[str, Any]] = Field(default_factory=list)
 
 
+class LooseEndRequest(BaseModel):
+    date: str  # YYYY-MM-DD of the unconfirmed Live block
+    id: str
+    done: StrictBool  # True = Did it, False = Dismiss
+
+
 class CommitRequest(BaseModel):
     """/commit?mode=shadow body: the confirmed digest + sequence to preview.
 
@@ -5158,6 +5164,28 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
                 status_code=409,
                 detail="pinned rows changed from immutable snapshot",
             )
+
+    @app.post("/micro-adventure/loose-end", dependencies=[Depends(require_token)])
+    def post_loose_end(body: LooseEndRequest) -> dict:
+        """Record the Set up day banner's Did it / Dismiss for an unconfirmed
+        prior Live block. Writes only the micro-adventure log: never today's
+        plan, the day frame, or Todoist."""
+        try:
+            entry_date = date.fromisoformat(body.date)
+        except ValueError:
+            raise HTTPException(status_code=422, detail="date must be YYYY-MM-DD")
+        vault = resolve_vault_root()
+        log_path = vault / micro_adventure.HISTORY_REL_PATH
+        updated = micro_adventure.resolve_loose_end(
+            micro_adventure.read_history(log_path),
+            date_=entry_date, entry_id=body.id, done=body.done,
+        )
+        if updated is None:
+            raise HTTPException(
+                status_code=404, detail="no unconfirmed Live block for that date and id",
+            )
+        micro_adventure.write_history(log_path, updated)
+        return {"ok": True, "date": body.date, "id": body.id, "done": body.done}
 
     @app.post("/commit", dependencies=[Depends(require_token)])
     def post_commit(
