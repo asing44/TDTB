@@ -34,7 +34,7 @@ export interface StagingVerbSpec {
   detail: string;
   /** True when the verb destroys a source and deserves a confirm step. */
   destructive: boolean;
-  /** True when applying this verb writes to the upstream Obsidian or Todoist
+  /** True when applying this verb writes to the upstream Todoist or Capacities
       record rather than only changing today's local plan. */
   sourceMutation: boolean;
   /** Rendered directly on the row (Done / Drop from plan). False verbs
@@ -65,7 +65,7 @@ export const STAGING_VERBS: readonly StagingVerbSpec[] = [
     verb: "unassign",
     label: "Remove from planning",
     aria: "Remove from planning and update source",
-    detail: "updates Obsidian or Todoist source",
+    detail: "updates the Todoist or Capacities source",
     destructive: false,
     sourceMutation: true,
     direct: false,

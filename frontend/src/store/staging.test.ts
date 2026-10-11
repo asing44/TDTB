@@ -78,7 +78,7 @@ describe("staging verb catalogue", () => {
     expect(drop?.detail).toContain("source unchanged");
     expect(stagingVerbSpec("unassign")?.label).toBe("Remove from planning");
     expect(stagingVerbSpec("unassign")?.aria).toContain("update source");
-    expect(stagingVerbSpec("unassign")?.detail).toContain("Obsidian or Todoist");
+    expect(stagingVerbSpec("unassign")?.detail).toContain("Todoist or Capacities");
   });
 
   it("spec lookup is null for an unknown verb", () => {
