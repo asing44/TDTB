@@ -107,3 +107,15 @@ describe("U7 stepper header", () => {
     expect(h.store.getState().ui.screen).toBe("connections");
   });
 });
+
+describe("Commit step when nothing is staged", () => {
+  it("is aria-disabled and explains why instead of silently doing nothing", () => {
+    const h = makeHarness("ready");
+    const r = h.ui(<Header />);
+    const commit = r.getByRole("tab", { name: "Commit" });
+    expect(commit.getAttribute("aria-disabled")).toBe("true");
+    expect((commit.getAttribute("title") ?? "").length).toBeGreaterThan(10);
+    fireEvent.click(commit);
+    expect(h.store.getState().ui.approvalOpen).toBe(false);
+  });
+});
