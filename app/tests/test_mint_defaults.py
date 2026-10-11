@@ -49,7 +49,9 @@ def _contract(allotment: int | None = None) -> dict[str, object]:
     )
 
 
-def test_implicit_allotment_is_eight_blocks():
+def test_implicit_allotment_fills_to_end_of_day_not_eight_blocks():
+    # The implicit allotment gates Mint on; it no longer caps the default
+    # count. From 09:00 the two Trinoor windows hold 7 + 7 aligned sessions.
     contract = day_semantics.resolve_day_contract(
         {"Day Presets": []}, "", MONDAY,
     )
@@ -58,7 +60,7 @@ def test_implicit_allotment_is_eight_blocks():
     items, _, _ = ext.build_schedulable_blocks(
         CONFIG, {}, MONDAY, "09:00", resolved_day_semantics=contract,
     )
-    assert next(item for item in items if item["name"] == "Minting")["blocks"] == 8
+    assert next(item for item in items if item["name"] == "Minting")["blocks"] == 14
 
 
 def test_allotment_sources_keep_implicit_configured_preset_and_dated_distinct():
@@ -92,9 +94,11 @@ def test_allotment_sources_keep_implicit_configured_preset_and_dated_distinct():
     assert dated["mint_enabled"] is False
 
 
-def test_configured_300_minutes_is_ten_blocks():
+def test_configured_300_minutes_does_not_cap_the_default_fill():
+    # A configured Defaults allotment is not an explicit choice, so it does not
+    # clip the default fill: 14 aligned sessions remain from 09:00.
     items, _, _ = ext.build_schedulable_blocks(CONFIG, {}, MONDAY, "09:00")
-    assert next(item for item in items if item["name"] == "Minting")["blocks"] == 10
+    assert next(item for item in items if item["name"] == "Minting")["blocks"] == 14
 
 
 def test_explicit_210_minutes_is_seven_blocks_and_warns():
@@ -128,6 +132,11 @@ def test_explicit_zero_disables_mint_and_stale_sessions():
 def test_capacity_preview_and_schedulable_row_use_same_effective_allotment(
     tmp_path, monkeypatch
 ):
+    # One 8:30-5:00 window: the route and the row must read the same windows,
+    # so the row is built from this exact config rather than CONFIG.
+    window_config = {"Template Blocks": {"Trinoor Hours": [
+        {"Slot": "Morning", "Start": "8:30 AM", "End": "5:00 PM"},
+    ]}}
     vault = tmp_path / "vault"
     config_path = vault / "00 - META/Skill-Configs/tdtb-bridger.md"
     config_path.parent.mkdir(parents=True)
@@ -160,11 +169,13 @@ def test_capacity_preview_and_schedulable_row_use_same_effective_allotment(
     assert preview.status_code == 200
     body = preview.json()
     items, _, _ = ext.build_schedulable_blocks(
-        CONFIG, body["day_setup_echo"], MONDAY, body["time"]["anchor"],
+        window_config, body["day_setup_echo"], MONDAY, body["time"]["anchor"],
         resolved_day_semantics=body["day_semantics"],
     )
     mint_row = next(item for item in items if item["name"] == "Minting")
-    assert body["segments"]["mint"] == 10
+    # 08:00 anchor across 08:30-17:00: 17 aligned sessions, uncapped by the
+    # configured 300-minute default.
+    assert body["segments"]["mint"] == 17
     assert mint_row["blocks"] == body["segments"]["mint"]
 
 
@@ -194,7 +205,7 @@ def test_day_setup_zero_clears_persisted_stale_sessions(tmp_path, monkeypatch):
     assert state["schedulable"]["minting"] == {"on": False, "n": 0, "sessions": []}
 
 
-def test_legacy_all_session_detection_happens_before_wall_filtering():
+def test_saved_all_session_list_keeps_every_wall_free_session():
     config = {"Template Blocks": {"Trinoor Hours": [
         {"Slot": "Morning", "Start": "08:00", "End": "12:00"},
     ]}}
@@ -205,9 +216,9 @@ def test_legacy_all_session_detection_happens_before_wall_filtering():
         allotment_minutes=240,
         wall_intervals=[(8 * 60, 8 * 60 + 30)],
     )
-    # There are eight raw options and the first one is wall-blocked. The
-    # legacy all-session list is rebuilt to the requested eight before the
-    # wall filter, rather than preserving the remaining seven as an intent.
+    # There are eight raw options and the first one is wall-blocked. A saved
+    # all-session list is an exact choice: the wall drops the blocked window
+    # and nothing else, so the allotment cannot clip the remaining seven.
     assert normalized["n"] == 7
     assert normalized["sessions"] == [option["id"] for option in options[1:8]]
 
@@ -244,19 +255,19 @@ def test_default_off_and_explicit_reinclusion_have_same_row_capacity_amount():
         {"effective_allotment_minutes": 240},
     )
     assert (weekend.active, weekend.active_blocks) == (False, 0)
-    assert (reincluded.active, reincluded.active_blocks) == (True, 8)
+    assert (reincluded.active, reincluded.active_blocks) == (True, 4)
     assert (late.active, late.active_blocks) == (True, 1)
 
 
 def test_route_capacity_and_rows_share_weekend_and_late_anchor_amounts():
     scenarios = [
-        (MONDAY, {}, datetime(2026, 7, 13, 8, 0), 10),
+        (MONDAY, {}, datetime(2026, 7, 13, 8, 0), 15),
         (date(2026, 7, 11), {}, datetime(2026, 7, 11, 8, 0), 0),
         (
             date(2026, 7, 11),
             {"schedulable": {"minting": {"on": True}}},
             datetime(2026, 7, 11, 8, 0),
-            10,
+            15,
         ),
         (MONDAY, {"anchor": "16:00"}, datetime(2026, 7, 13, 16, 0), 2),
     ]
@@ -274,7 +285,7 @@ def test_route_capacity_and_rows_share_weekend_and_late_anchor_amounts():
         assert capacity.mint == expected
 
 
-def test_route_normalization_discards_stale_ids_and_caps_legacy_all_selection():
+def test_route_normalization_keeps_full_fill_and_discards_stale_ids():
     options = ext.mint_session_options(CONFIG)
     setup = ext.normalize_mint_day_setup(
         CONFIG,
@@ -286,10 +297,10 @@ def test_route_normalization_discards_stale_ids_and_caps_legacy_all_selection():
     )
     minting = setup["schedulable"]["minting"]
     assert minting["on"] is True
-    assert minting["n"] == 10
-    assert len(minting["sessions"]) == 10
+    assert minting["n"] == 15
+    assert len(minting["sessions"]) == 15
     assert "stale-id" not in minting["sessions"]
-    assert setup["work_allotment_minutes"] == 300
+    assert setup["work_allotment_minutes"] == 450
 
 
 def test_mint_wall_preflight_uses_half_open_boundaries_and_exclusions():

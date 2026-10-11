@@ -300,14 +300,16 @@ class TestMintCapacity300:
     2-block _SCHED_DEFAULTS fallback (that survives only for callers with no
     allotment context)."""
 
-    def test_300_minute_allotment_yields_ten_blocks_no_2_block_fallback(self):
+    def test_300_minute_allotment_fills_without_capping_the_default(self):
+        # A resolved allotment gates Mint on; the default fill is not capped by
+        # it. Never the 2-block fallback.
         items, _, _ = ext.build_schedulable_blocks(
             CFG, {}, MONDAY, "09:00",
             resolved_day_semantics={"effective_allotment_minutes": 300},
         )
         [m] = [i for i in items if i["name"] == "Minting"]
-        assert m["blocks"] == 10
-        assert m["duration"] == 300
+        assert m["blocks"] == 14
+        assert m["duration"] == 420
 
     def test_300_minute_dated_override_matches_capacity(self):
         items, _, _ = ext.build_schedulable_blocks(
@@ -317,12 +319,12 @@ class TestMintCapacity300:
         assert m["blocks"] == 10
         assert m["duration"] == 300
 
-    def test_missing_allotment_context_uses_healthy_default(self):
-        # The healthy default is used for callers without an allotment context,
-        # so a missing context cannot silently disable Mint.
+    def test_missing_allotment_context_fills_from_the_anchor(self):
+        # A missing allotment context cannot silently disable Mint, and the
+        # implicit default does not cap the fill.
         items, _, _ = ext.build_schedulable_blocks(CFG, {}, MONDAY, "09:00")
         [m] = [i for i in items if i["name"] == "Minting"]
-        assert m["blocks"] == 8
+        assert m["blocks"] == 14
 
     def test_capacity_frame_reserves_ten_mint_blocks_for_300_minutes(self):
         _time, cap = main_mod._capacity_frame(

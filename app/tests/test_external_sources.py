@@ -697,7 +697,8 @@ class TestBuildSchedulableBlocks:
         items, zones, notes = ext.build_schedulable_blocks(
             CFG_T5, {}, MONDAY, "09:00")
         by_name = {i["name"]: i for i in items}
-        assert by_name["Minting"]["blocks"] == 8
+        # Default fill: every aligned session from 09:00 to the window ends.
+        assert by_name["Minting"]["blocks"] == 14
         assert by_name["Minting"]["zone"] == "work_hours"
         assert by_name["Quick Tasks"]["blocks"] == 1
         assert "Shivery Jigs" not in by_name          # default Off
@@ -716,14 +717,14 @@ class TestBuildSchedulableBlocks:
         assert zones[0]["start"] == "08:30" and zones[0]["end"] == "12:30"
         assert all(z.get("backdrop") is True for z in zones)
 
-    def test_minting_capped_to_window_remainder_with_note(self):
-        # anchor 16:30 -> 1 block left before 17:00
+    def test_minting_late_anchor_fills_the_remaining_window(self):
+        # anchor 16:30 -> only the 16:30-17:00 session is left to fill.
         items, _, notes = ext.build_schedulable_blocks(
             CFG_T5, {"schedulable": {"minting": {"on": True, "n": 2}}},
             MONDAY, "16:30")
         [m] = [i for i in items if i["name"] == "Minting"]
         assert m["blocks"] == 1
-        assert any("window closes" in n for n in notes)
+        assert notes == []
 
     def test_day_setup_toggles_override_defaults(self):
         ds = {"schedulable": {"minting": {"on": False},
@@ -734,12 +735,12 @@ class TestBuildSchedulableBlocks:
         names = [i["name"] for i in items]
         assert names == ["Shivery Jigs"]
 
-    def test_weekend_minting_re_include_keeps_requested_blocks(self):
+    def test_weekend_minting_re_include_places_the_full_fill(self):
         ds = {"schedulable": {"minting": {"on": True, "n": 2}}}
         items, _, _ = ext.build_schedulable_blocks(
             CFG_T5, ds, SATURDAY, "09:00")
         [m] = [i for i in items if i["name"] == "Minting"]
-        assert m["blocks"] == 8                       # re-include: place anyway
+        assert m["blocks"] == 14                      # re-include: full fill
 
     def test_selected_mint_sessions_emit_windowed_rows(self):
         options = ext.mint_session_options(CFG_T5)
