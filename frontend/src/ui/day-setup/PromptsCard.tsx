@@ -3,7 +3,10 @@
    No copy-prompt control exists anywhere (R20b, retired in U5), and no prompt
    text renders outside this card. */
 
+import { useState } from "preact/hooks";
+
 import type { MicroAdventure } from "../../model/types";
+import { CustomPromptList } from "./CustomPromptList";
 
 export interface PromptSaveState {
   phase: string;
@@ -32,6 +35,8 @@ export interface PromptsCardProps {
 
 export function PromptsCard(props: PromptsCardProps) {
   const micro = props.micro;
+  // Edit prompts reveals rename and remove for the local custom prompts.
+  const [editingPrompts, setEditingPrompts] = useState(false);
   return (
     <section
       class="setup-section setup-section--prompts"
@@ -40,6 +45,14 @@ export function PromptsCard(props: PromptsCardProps) {
     >
       <div class="setup-section__head">
         <h3 id="setup-sec-prompts">Morning prompts</h3>
+        <button
+          type="button"
+          class="setup-section__head-action"
+          aria-pressed={editingPrompts}
+          onClick={() => setEditingPrompts(!editingPrompts)}
+        >
+          Edit prompts
+        </button>
       </div>
       <div class="setup-section__body">
         <div class="prompts-live">
@@ -131,6 +144,8 @@ export function PromptsCard(props: PromptsCardProps) {
             onBlur={props.onAutosave}
           />
         </div>
+
+        <CustomPromptList editing={editingPrompts} />
 
         <div class="field field--stacked prompt-exports" data-settings-section="prompt-exports">
           <span class="field__label">Prompt exports</span>

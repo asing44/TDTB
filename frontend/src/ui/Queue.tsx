@@ -493,21 +493,30 @@ function Row({
       <span class="qrow__stripe" style={{ background: stripeColor(item) }} />
       <div class="qrow__body">
         <div class="qrow__nameline">
-          <input
-            type="checkbox"
-            class="qrow__check"
-            checked={included}
-            aria-label={`Include ${item.name} in today's plan`}
+          {/* The native checkbox stays the control (name, toggle, keyboard);
+              the pill is its visual face. The label swallows clicks so the
+              pill never opens the row. */}
+          <label
+            class={`qrow__assign ${included ? "qrow__assign--on" : "qrow__assign--off"}`}
             onClick={(e) => e.stopPropagation()}
-            onKeyDown={(e) => e.stopPropagation()}
-            onChange={(e) =>
-              controller.setOverride(
-                item.id,
-                (e.target as HTMLInputElement).checked,
-                s.overrides[item.id]?.blocks ?? null,
-              )
-            }
-          />
+          >
+            <input
+              type="checkbox"
+              class="qrow__check"
+              checked={included}
+              aria-label={`Include ${item.name} in today's plan`}
+              onClick={(e) => e.stopPropagation()}
+              onKeyDown={(e) => e.stopPropagation()}
+              onChange={(e) =>
+                controller.setOverride(
+                  item.id,
+                  (e.target as HTMLInputElement).checked,
+                  s.overrides[item.id]?.blocks ?? null,
+                )
+              }
+            />
+            <span class="qrow__assign-text">{included ? "Assigned" : "Unassigned"}</span>
+          </label>
           {hierarchy?.depth ? (
             <span class="qrow__branch" aria-hidden="true">↳</span>
           ) : null}

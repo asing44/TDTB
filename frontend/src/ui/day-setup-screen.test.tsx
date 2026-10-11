@@ -203,6 +203,16 @@ describe("U12 Set up day composition", () => {
     spy.mockRestore();
   });
 
+  it("offers Edit prompts and + Add prompt on the Morning prompts card", () => {
+    const h = screenHarness("ready");
+    const r = h.ui(<App />);
+    const edit = r.getByRole("button", { name: "Edit prompts" });
+    expect(edit.getAttribute("aria-pressed")).toBe("false");
+    fireEvent.click(edit);
+    expect(edit.getAttribute("aria-pressed")).toBe("true");
+    expect(r.getByRole("button", { name: "+ Add prompt" })).toBeTruthy();
+  });
+
   it("lists skipped and out-of-frame anchors under Not counted today", () => {
     const h = screenHarness();
     const before = h.store.getState().daySetup;
