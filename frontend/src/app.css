@@ -6729,3 +6729,25 @@ body {
 .qrow__source .qrow__time-adjustment-note {
   flex: none;
 }
+
+/* ---- Row rhythm and plan width (2026-10-11) -------------------------------
+   Two operator asks on the Plan tasks table. (1) Adjacent rows touched: the
+   44px control floor plus 6px padding left about 12px between one row's
+   controls and the next row's. Rows now carry 12px of vertical padding on
+   each side, so the gap between controls is about 24px. (2) The work surface
+   spanned the whole viewport, so a 1500px window stretched every row across
+   about 1400px and the title lost its room. The queue, including the Already
+   placed timeline, is now capped at --plan-max-width and centred. The header
+   and footer stay full width. Tune --plan-max-width here to move the column. */
+.cockpit {
+  --plan-max-width: 1120px;
+}
+
+.qrow {
+  padding-block: 12px;
+}
+
+.queue {
+  max-width: var(--plan-max-width);
+  margin-inline: auto;
+}
