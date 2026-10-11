@@ -5204,7 +5204,7 @@ body {
 .qrow__assign--on {
   background: var(--t-accent);
   border-color: var(--t-accent);
-  color: #fff;
+  color: var(--t-on-accent);
 }
 
 .qrow__assign:focus-within {

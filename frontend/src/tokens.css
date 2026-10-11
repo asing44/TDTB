@@ -15,6 +15,7 @@
   --t-accent-subtle: #e1f5ee;
   --t-accent-strong: #0f6e56;
   --t-accent-text: #085041;
+  --t-on-accent: #fff;
 
   /* Neutral surfaces — light */
   --t-surface: #fdfcf9;
@@ -72,6 +73,7 @@
     --t-accent-subtle: #10362b;
     --t-accent-strong: #5fd4ae;
     --t-accent-text: #a9e8d3;
+    --t-on-accent: #0f0f0e;
     --t-surface: #191917;
     --t-surface-2: #232320;
     --t-page: #0f0f0e;
@@ -92,6 +94,7 @@
   --t-accent-subtle: #e1f5ee;
   --t-accent-strong: #0f6e56;
   --t-accent-text: #085041;
+  --t-on-accent: #fff;
   --t-surface: #fdfcf9;
   --t-surface-2: #f1efe8;
   --t-page: #e9e7e1;
@@ -110,6 +113,7 @@
   --t-accent-subtle: #10362b;
   --t-accent-strong: #5fd4ae;
   --t-accent-text: #a9e8d3;
+  --t-on-accent: #0f0f0e;
   --t-surface: #191917;
   --t-surface-2: #232320;
   --t-page: #0f0f0e;
