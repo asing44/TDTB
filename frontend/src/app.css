@@ -6880,3 +6880,98 @@ body {
     font-size: 13px;
   }
 }
+
+/* ---- Assigned button in its own column (Planning Mockups, >=1500px) --------
+   The mockup row is: stripe | 96px Assigned button | title over source | due |
+   slider | actions. The DOM keeps the label inside the name line (narrower
+   widths still lay it out inline), so the body and name line flatten with
+   display:contents and the pieces take explicit grid cells. The title and the
+   source line share the middle column on two rows; everything else spans
+   both rows and centres. Below 1500px the title column would drop under ~200px and clip the meta line, so
+   the Assigned button stays inline in the name line there. */
+@media (min-width: 1500px) {
+  .cockpit {
+    --plan-max-width: 1440px;
+  }
+
+  .qrow {
+    grid-template-columns: 3px 96px minmax(0, 1fr) 170px 310px 520px;
+    grid-template-rows: auto auto;
+    row-gap: 1px;
+  }
+
+  .qrow__body,
+  .qrow__nameline {
+    display: contents;
+  }
+
+  .qrow__stripe {
+    grid-column: 1;
+    grid-row: 1 / -1;
+    align-self: stretch;
+  }
+
+  .qrow__assign {
+    grid-column: 2;
+    grid-row: 1 / -1;
+    align-self: center;
+    justify-self: stretch;
+    justify-content: center;
+    min-height: 44px;
+    padding: 6px 10px;
+    font-size: 13px;
+    font-weight: 500;
+    box-shadow: 0 1px 0 rgba(0, 0, 0, 0.04);
+  }
+
+  .qrow__assign--off {
+    background: var(--t-surface);
+    color: var(--t-text);
+  }
+
+  .qrow__name,
+  .qrow__branch,
+  .qrow__group,
+  .qrow__relationship,
+  .qrow__source {
+    grid-column: 3;
+    min-width: 0;
+  }
+
+  .qrow__name {
+    grid-row: 1;
+    align-self: end;
+  }
+
+  .qrow__source {
+    grid-row: 2;
+    align-self: start;
+  }
+
+  .qrow__due,
+  .qrow__time,
+  .qrow__actions,
+  .qrow:hover .qrow__actions,
+  .qrow:focus-within .qrow__actions,
+  .qrow--focused .qrow__actions,
+  .qrow--dropped .qrow__actions {
+    grid-row: 1 / -1;
+    align-self: center;
+  }
+
+  .qrow__due {
+    grid-column: 4;
+  }
+
+  .qrow__time {
+    grid-column: 5;
+  }
+
+  .qrow__actions,
+  .qrow:hover .qrow__actions,
+  .qrow:focus-within .qrow__actions,
+  .qrow--focused .qrow__actions,
+  .qrow--dropped .qrow__actions {
+    grid-column: 6;
+  }
+}
