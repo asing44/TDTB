@@ -2007,9 +2007,20 @@
   font-size: 11px;
   font-weight: 500;
   white-space: nowrap;
+  width: max-content;
+  max-width: 260px;
   box-shadow: 0 4px 12px rgb(0 0 0 / 0.12);
   pointer-events: none;
   transition: opacity 120ms ease;
+}
+/* Optional second line: what the control does. Wraps, unlike the label. */
+.tooltip__detail {
+  display: block;
+  margin-top: 2px;
+  font-weight: 400;
+  color: var(--t-muted);
+  white-space: normal;
+  line-height: 1.35;
 }
 .tooltip-anchor--end .tooltip {
   left: auto;
@@ -6856,17 +6867,17 @@ body {
     display: contents;
   }
 
-  .qrow__actions .alloc-verb--done {
+  .qrow__tip--done {
     order: 0;
   }
 
-  /* The plan buttons sit inside Tooltip's anchor span, so the anchor is the
-     flex item that carries the order. */
-  .qrow__actions .tooltip-anchor {
+  /* The buttons sit inside Tooltip's anchor span, so the anchor is the flex
+     item that carries the order. */
+  .qrow__tip--plan {
     order: 1;
   }
 
-  .qrow__actions .alloc-verb--drop_from_plan {
+  .qrow__tip--drop_from_plan {
     order: 2;
   }
 
