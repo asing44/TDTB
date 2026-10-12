@@ -6773,3 +6773,32 @@ body {
   max-width: var(--plan-max-width);
   margin-inline: auto;
 }
+
+/* ---- Row action skin (Planning Mockups) ----------------------------------
+   Outlined 6px-radius buttons on the surface colour with 6px gaps; Mark
+   complete stays the one filled primary. Skin only: sizes, tracks and the
+   hover-reveal layout above are untouched. The mockup's 13px labels need a
+   540px track, which the 1120px plan column cannot give. */
+@media (min-width: 1101px) {
+  .qrow__actions,
+  .qrow__action-group {
+    gap: 6px;
+  }
+
+  .qrow__actions .planbtn,
+  .qrow__actions .alloc-verb {
+    border-width: 1px;
+    border-radius: 6px;
+  }
+
+  .qrow__actions .planbtn,
+  .qrow__actions .alloc-verb--drop_from_plan,
+  .qrow__actions .alloc-verb--more {
+    background: var(--t-surface);
+    border-color: var(--t-border);
+  }
+
+  .qrow__divider {
+    display: none;
+  }
+}
