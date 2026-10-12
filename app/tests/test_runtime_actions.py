@@ -172,7 +172,13 @@ def manifest_rows() -> list[dict]:
          "id_or_path": "task-1", "time": "16:00", "duration_min": 30, "routing": "—"},
         {"step": "E", "system": "calendar", "action": "create-event", "name": "Press",
          "id_or_path": "ev-1", "time": "16:00", "duration_min": 30, "routing": "Blocks"},
-        {"step": "C", "system": "vault", "action": "set-flag", "name": "Press",
+    ]
+
+
+def legacy_vault_rows() -> list[dict]:
+    """A pre-cutover manifest row for a vault note (V3: its verbs are gone)."""
+    return [
+        {"step": "C", "system": "vault", "action": "set-flag", "name": "Legacy",
          "id_or_path": "Projects/Press.md", "time": None, "duration_min": 0, "routing": "—"},
     ]
 
@@ -182,7 +188,8 @@ def vault(tmp_path: Path) -> Path:
     (tmp_path / "Projects").mkdir()
     (tmp_path / "Projects" / "Press.md").write_text(NOTE_TEXT, encoding="utf-8")
     (tmp_path / "Projects" / "Cap.md").write_text(CAPTURE_TEXT, encoding="utf-8")
-    state = runstate.build_runstate({"plan_manifest": manifest_rows()})
+    state = runstate.build_runstate(
+        {"plan_manifest": manifest_rows() + legacy_vault_rows()})
     runstate.write_runstate(tmp_path, TODAY, state)
     return tmp_path
 
@@ -302,39 +309,18 @@ class TestComplete:
         assert capacities.calls == []
         assert ra.load_journal(vault, TODAY)["actions"] == []
 
-    def test_complete_closes_todoist_and_flips_vault(self, vault: Path):
+    def test_complete_closes_todoist_and_never_touches_the_vault(self, vault: Path):
         todoist, store = fresh_clients()
         action = ra.apply_action(
             vault, TODAY, "complete", "Press", {}, todoist=todoist, store=store)
         assert action["status"] == "applied"
         assert todoist.tasks["task-1"]["is_completed"] is True
-        text = (vault / "Projects" / "Press.md").read_text()
-        # T12d: the task FileClass closes to "completed"; "done" was in no enum.
-        assert "status: completed" in text
-        # before-images captured
-        kinds = [s["kind"] for s in action["steps"]]
-        assert "todoist.close" in kinds and "vault.complete" in kinds
-        vault_step = next(s for s in action["steps"] if s["kind"] == "vault.complete")
-        assert vault_step["before"]["text"] == NOTE_TEXT
+        # V3: the only step is the Todoist close (before-image captured)
+        assert [s["kind"] for s in action["steps"]] == ["todoist.close"]
+        assert action["steps"][0]["before"]["task"]["id"] == "task-1"
+        assert (vault / "Projects" / "Press.md").read_text() == NOTE_TEXT
 
-    def test_vault_flip_is_byte_preserving_outside_status(self, vault: Path):
-        todoist, store = fresh_clients()
-        ra.apply_action(vault, TODAY, "complete", "Press", {},
-                        todoist=todoist, store=store)
-        text = (vault / "Projects" / "Press.md").read_text()
-        assert text == NOTE_TEXT.replace("status: in-progress", "status: completed")
-
-    def test_capture_fileclass_completes_to_processed(self, vault: Path):
-        state = runstate.build_runstate({"plan_manifest": [
-            {"step": "C", "system": "vault", "action": "set-flag", "name": "Cap",
-             "id_or_path": "Projects/Cap.md", "time": None, "duration_min": 0,
-             "routing": "—"},
-        ]})
-        runstate.write_runstate(vault, TODAY, state)
-        ra.apply_action(vault, TODAY, "complete", "Cap", {}, todoist=None, store=None)
-        assert "status: processed" in (vault / "Projects" / "Cap.md").read_text()
-
-    def test_undo_complete_restores_exact_bytes_and_reopens(self, vault: Path):
+    def test_undo_complete_reopens_and_leaves_the_vault_alone(self, vault: Path):
         todoist, store = fresh_clients()
         action = ra.apply_action(
             vault, TODAY, "complete", "Press", {}, todoist=todoist, store=store)
@@ -415,7 +401,7 @@ class TestDurationAndMove:
 
 
 class TestDeletePermanent:
-    def test_deletes_todoist_vault_and_event(self, vault: Path):
+    def test_deletes_todoist_and_event_never_the_vault(self, vault: Path):
         todoist, store = fresh_clients()
         action = ra.apply_action(
             vault, TODAY, "delete_permanent", "Press", {},
@@ -423,9 +409,8 @@ class TestDeletePermanent:
         assert action["status"] == "applied"
         assert "task-1" not in todoist.tasks
         assert "ev-1" not in store.events
-        assert not (vault / "Projects" / "Press.md").exists()
-        trashed = list((vault / ".trash").glob("*"))
-        assert len(trashed) == 1 and trashed[0].read_text() == NOTE_TEXT
+        assert (vault / "Projects" / "Press.md").read_text() == NOTE_TEXT
+        assert not (vault / ".trash").exists()
 
     def test_undo_restores_all_surfaces(self, vault: Path):
         todoist, store = fresh_clients()
@@ -439,6 +424,75 @@ class TestDeletePermanent:
         assert any(t["content"] == "Press" for t in todoist.tasks.values())
         assert (vault / "Projects" / "Press.md").read_text() == NOTE_TEXT
         assert any(e["title"] == "Press" for e in store.events.values())
+
+
+class TestVaultVerbsRemoved:
+    """V3: the verbs that wrote Obsidian notes are deleted. A vault-path target
+    gets an explicit error (no journal entry, no side effect), never a silent
+    no-op, and the removed constants/helpers are gone."""
+
+    REMOVED = ["complete", "done", "assign", "unassign", "delete", "delete_permanent"]
+
+    @pytest.mark.parametrize("verb", REMOVED)
+    def test_vault_target_is_refused_with_a_clear_error(self, vault: Path, verb: str):
+        todoist, store = fresh_clients()
+        before = list(todoist.calls)
+        with pytest.raises(ra.RuntimeActionError, match="vault is retired"):
+            ra.apply_action(vault, TODAY, verb, "Legacy", {},
+                            todoist=todoist, store=store)
+        assert todoist.calls == before
+        assert ra.load_journal(vault, TODAY)["actions"] == []
+        assert (vault / "Projects" / "Press.md").read_text() == NOTE_TEXT
+        assert not (vault / ".trash").exists()
+
+    @pytest.mark.parametrize("verb", REMOVED)
+    def test_error_names_the_verb_and_the_note(self, vault: Path, verb: str):
+        with pytest.raises(ra.RuntimeActionError) as exc:
+            ra.apply_action(vault, TODAY, verb, "Legacy", {}, todoist=None, store=None)
+        assert repr(verb) in str(exc.value)
+        assert "Projects/Press.md" in str(exc.value)
+
+    def test_a_target_with_todoist_and_vault_rows_is_refused_whole(self, vault: Path):
+        state = runstate.build_runstate(
+            {"plan_manifest": manifest_rows() + [dict(legacy_vault_rows()[0], name="Press")]})
+        runstate.write_runstate(vault, TODAY, state)
+        todoist, store = fresh_clients()
+        with pytest.raises(ra.RuntimeActionError, match="vault is retired"):
+            ra.apply_action(vault, TODAY, "complete", "Press", {},
+                            todoist=todoist, store=store)
+        assert todoist.tasks["task-1"]["is_completed"] is False  # nothing partially done
+        assert ra.load_journal(vault, TODAY)["actions"] == []
+
+    def test_non_vault_verbs_still_work_on_a_vault_path_target(self, vault: Path):
+        action = ra.apply_action(vault, TODAY, "drop_from_plan", "Legacy", {},
+                                 todoist=None, store=None)
+        assert action["status"] == "applied"
+
+    def test_removed_helpers_and_step_kinds_are_gone(self):
+        for name in ("DONE_VALUE_BY_FILECLASS", "DEFAULT_DONE_VALUE", "TRASH_DIR_REL",
+                     "_set_status", "_set_assigned_false", "_fileclass_of", "_atomic_write"):
+            assert not hasattr(ra, name), name
+
+    def test_an_old_journal_vault_step_cannot_be_applied_or_undone_silently(self, vault: Path):
+        journal = {"valid_date": str(TODAY), "actions": [{
+            "id": "ra-old-1", "date": str(TODAY), "verb": "delete_permanent",
+            "target": {"name": "Legacy"}, "args": {}, "idempotency_key": "k",
+            "status": "applied", "created_at": "x", "finished_at": "x",
+            "undone_at": None, "error": None,
+            "steps": [{"kind": "vault.trash", "surface": "vault",
+                       "path": "Projects/Press.md", "applied": True,
+                       "trash_path": ".trash/Press.md",
+                       "before": {"text": NOTE_TEXT, "path": "Projects/Press.md"}}],
+        }]}
+        ra._write_journal(vault, TODAY, journal)
+        with pytest.raises(ra.RuntimeActionError, match="journal holds per-step errors"):
+            ra.undo_action(vault, TODAY, "ra-old-1", todoist=None, store=None)
+        entry = ra.find_action(ra.load_journal(vault, TODAY), "ra-old-1")
+        assert entry["status"] == "undo_failed"
+        assert "vault is retired" in entry["steps"][0]["undo_error"]
+        assert not (vault / ".trash").exists()
+        with pytest.raises(ra.RuntimeActionError, match="vault is retired"):
+            ra._apply_step({"kind": "vault.trash", "path": "x"}, vault, TODAY, None, None, None)
 
 
 # ---------------------------------------------------------------------------
