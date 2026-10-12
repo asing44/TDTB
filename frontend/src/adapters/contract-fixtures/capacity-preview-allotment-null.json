@@ -16,6 +16,8 @@
   "ratio": "16 / 31 blk",
   "legend": "Fixed 1 \u00b7 Anchored 6 \u00b7 Habits 1 \u00b7 Mint 8 \u00b7 Selected 0 \u00b7 Buffer 0 \u00b7 Free 15 \u00b7 Total 31 (habits: 0 done \u00b7 1 left)",
   "counters": "deep: 0 / 0 \u00b7 mixed: 0 / 0",
+  "work_busy": 0,
+  "work_overflow": 0,
   "time": {
     "now": "08:00",
     "anchor": "07:30",
@@ -97,10 +99,12 @@
     "enabled_zones": [],
     "effective_allotment_minutes": 240,
     "default_allotment_minutes": 180,
+    "allotment_source": "preset",
     "mint_enabled": true,
+    "mint_below_default": false,
     "warnings": [],
     "errors": [],
     "overlap_permissions_raw": "## Overlap Permissions\n\nDefault for everything is no-overlap."
   },
-  "planning_config_fingerprint": "68849880d6c4eba8f2214785640631a035975b78572fb1c5940e3b0438daee1d"
+  "planning_config_fingerprint": "2c32ba219e9e4a16b9b48cbde6d4e30281eabdbf7b1d14eca6f2b51c3b7bb692"
 }

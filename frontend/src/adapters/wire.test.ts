@@ -109,18 +109,19 @@ describe("projectPlanInputs (contract: plan-inputs.json)", () => {
     expect(JSON.stringify(p)).not.toContain("suggested");
   });
 
-  // The committed contract fixture is stale (generated before the vault
-  // source was retired) and still carries `source: "vault"` rows; V5b
-  // regenerates it. A legacy/unknown source projects as a neutral Todoist-like
-  // row: no path, no todoistId, no identity, so no verb can address it.
-  it("maps legacy source:'vault' rows to the neutral todoist fallback", () => {
-    const press = p.assigned.find((i) => i.name === "Sample Press")!;
-    expect(press.source).toBe("todoist");
-    expect(press.blocks).toBe(3); // press duration_min 75 → 3 blocks
-    expect(press.durationLabel).toBe("1hr 30min");
-    expect(press.path).toBeNull();
-    expect(press.todoistId).toBeNull();
-    expect(press.identity).toBeNull();
+  // An unknown source (anything but todoist/capacities) projects as a neutral
+  // Todoist-like row: no path, no todoistId, no identity, so no source-specific
+  // verb can address it.
+  it("maps an unknown source to the neutral todoist fallback", () => {
+    const row = projectAssigned({
+      name: "Odd", source: "mystery", path: "x/odd.md", duration_minutes: 75, blocks: 3,
+    });
+    expect(row.source).toBe("todoist");
+    expect(row.blocks).toBe(3);
+    expect(row.durationLabel).toBe("1hr 15min"); // exact 75 minutes
+    expect(row.path).toBeNull();
+    expect(row.todoistId).toBeNull();
+    expect(row.identity).toBeNull();
   });
 
   it("maps a row with no source at all to the same neutral fallback", () => {
@@ -141,7 +142,7 @@ describe("projectPlanInputs (contract: plan-inputs.json)", () => {
   });
 
   it("carries todoist_id for todoist rows (copy-prompt update-by-id contract)", () => {
-    const t = p.assigned.find((i) => i.todoistId)!;
+    const t = p.assigned.find((i) => i.name === "Sample Todoist Task")!;
     expect(t.todoistId).toBe("9001");
   });
 
@@ -181,7 +182,7 @@ describe("projectPlanInputs (contract: plan-inputs.json)", () => {
     const live = p.anchored.find((a) => a.name === "Live")!;
     expect(live.kind).toBe("template"); // window + overlap_allowed
     expect(live.overlapAllowed).toBe(true);
-    const cal = p.anchored.find((a) => a.name === "Sample Meeting")!;
+    const cal = p.anchored.find((a) => a.name === "Team Standup")!;
     expect(cal.kind).toBe("calendar");
     expect(cal.start).toBe("09:15");
     expect(cal.durationMin).toBe(30); // End − Start
@@ -245,8 +246,7 @@ describe("projectPlanInputs (contract: plan-inputs.json)", () => {
 
   it("valid date + source counts + health", () => {
     expect(p.validDate).toMatch(/^\d{4}-\d{2}-\d{2}$/);
-    // The stale fixture still carries source_counts.vault; it is ignored.
-    expect(p.sourceCounts).toEqual({ todoist: 1, calendar: 1 });
+    expect(p.sourceCounts).toEqual({ todoist: 4, calendar: 1 });
     expect("vault" in p.sourceCounts).toBe(false);
     expect(p.sourceHealth).toBe("ok");
     expect(p.daySetup.confirmed).toBe(false); // no runstate saved yet
@@ -691,7 +691,7 @@ describe("T18b additive read contracts", () => {
 describe("fixed inputs + fingerprint source", () => {
   it("splits calendar commitments from anchored blocks", () => {
     const f = projectFixedInputs(planInputs);
-    expect(f.calendar.map((c) => c.name)).toEqual(["Sample Meeting"]);
+    expect(f.calendar.map((c) => c.name)).toEqual(["Team Standup"]);
     expect(f.anchored.map((a) => a.name)).toContain("Morning Routine");
     expect(f.anchored.every((a) => typeof a.on === "boolean")).toBe(true);
   });
@@ -871,8 +871,7 @@ describe("projectShadow (shadow-diff.json)", () => {
   it("flattens manifest entries with classification", () => {
     expect(d.entries.length).toBeGreaterThan(0);
     for (const e of d.entries) {
-      // "vault" entries on the stale fixture are tolerated, not required.
-      expect(["todoist", "vault", "calendar"]).toContain(e.system);
+      expect(["todoist", "calendar"]).toContain(e.system);
       expect(e.name.length).toBeGreaterThan(0);
       expect(
         ["would-create", "would-update", "no-op", "conflict", "unavailable"],
@@ -891,7 +890,7 @@ describe("projectCommitReport (commit-live-*.json)", () => {
   it("ok report → status ok, all surfaces ok", () => {
     const r = projectCommitReport(commitLiveOk);
     expect(r.status).toBe("ok");
-    expect(r.surfaces.length).toBe(5);
+    expect(r.surfaces.map((s) => s.system)).toEqual(["todoist", "calendar"]);
     expect(r.surfaces.every((s) => s.status === "ok")).toBe(true);
     expect(r.verifyFailures).toEqual([]);
   });
@@ -947,7 +946,8 @@ describe("projectCommitReport (commit-live-*.json)", () => {
   });
 
   it("legacy reports without verify_details still project cleanly", () => {
-    const r = projectCommitReport(commitLivePartial);
+    const { verify_details: _omitted, ...legacy } = commitLivePartial as any;
+    const r = projectCommitReport(legacy);
     expect(r.verifyDetails).toBeUndefined();
     expect(r.verifyFailures).toEqual([]);
   });

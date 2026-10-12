@@ -16,6 +16,8 @@
   "ratio": "8 / 31 blk",
   "legend": "Fixed 1 \u00b7 Anchored 6 \u00b7 Habits 1 \u00b7 Mint 0 \u00b7 Selected 0 \u00b7 Buffer 0 \u00b7 Free 23 \u00b7 Total 31 (habits: 0 done \u00b7 1 left)",
   "counters": "deep: 0 / 0 \u00b7 mixed: 0 / 0",
+  "work_busy": 0,
+  "work_overflow": 0,
   "time": {
     "now": "08:00",
     "anchor": "07:30",
@@ -39,10 +41,10 @@
       }
     ],
     "schedulable": {},
+    "day_preset": "Weekend",
     "intention": "Sample intention",
     "megan_nicety": "Sample nicety",
-    "stoic_intention": "Sample stoic",
-    "day_preset": "Weekend"
+    "stoic_intention": "Sample stoic"
   },
   "day_semantics": {
     "available_presets": [
@@ -95,10 +97,12 @@
     "enabled_zones": [],
     "effective_allotment_minutes": 0,
     "default_allotment_minutes": 180,
+    "allotment_source": "preset",
     "mint_enabled": false,
+    "mint_below_default": false,
     "warnings": [],
     "errors": [],
     "overlap_permissions_raw": "## Overlap Permissions\n\nDefault for everything is no-overlap."
   },
-  "planning_config_fingerprint": "2bd26a84d3c4fed3de0a735cf9a365110a99e42af4c821293747d75bee62791c"
+  "planning_config_fingerprint": "5fd55be87dc5c4b3012c03e208c16466ca54668f76ab049a9ae4c5fd2a4e797a"
 }

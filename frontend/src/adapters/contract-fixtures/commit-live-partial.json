@@ -13,36 +13,6 @@
       "error": "todoist: todoist unavailable",
       "note": null
     },
-    "vault_flips": {
-      "status": "ok",
-      "step": "C",
-      "created": [],
-      "updated": [],
-      "noops": [],
-      "reconciliation": {},
-      "error": null,
-      "note": "no intents"
-    },
-    "daily_note": {
-      "status": "ok",
-      "step": "B",
-      "created": [],
-      "updated": [],
-      "noops": [],
-      "reconciliation": {},
-      "error": null,
-      "note": "no intents"
-    },
-    "captures": {
-      "status": "ok",
-      "step": "B6",
-      "created": [],
-      "updated": [],
-      "noops": [],
-      "reconciliation": {},
-      "error": null,
-      "note": "no intents"
-    },
     "calendar": {
       "status": "ok",
       "step": "D/E",
@@ -58,5 +28,6 @@
   "failed": [
     "todoist: todoist: todoist unavailable"
   ],
-  "verify_failures": []
+  "verify_failures": [],
+  "verify_details": []
 }

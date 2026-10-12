@@ -1,6 +1,7 @@
 {
   "ok": true,
   "re_included": [],
+  "day_setup_confirmed": true,
   "day_setup": {
     "anchor": "07:30",
     "eod": "23:00",
@@ -21,5 +22,10 @@
     "day_preset": "Workday",
     "work_allotment_minutes": 240
   },
-  "day_setup_confirmed": true
+  "optins": {
+    "intention": false,
+    "megan_nicety": false,
+    "stoic_intention": false
+  },
+  "optins_revision": 0
 }

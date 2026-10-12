@@ -4,5 +4,31 @@
     "'Make': end '05:30' not after start '06:00'",
     "assigned item 'Make' missing from sequence (never-bump violated)"
   ],
-  "warnings": []
+  "warnings": [],
+  "diagnostics": [
+    {
+      "rule": "non_positive_interval",
+      "severity": "error",
+      "affected_rows": [
+        "Make"
+      ],
+      "intervals": [
+        {
+          "id": "Make",
+          "start": "06:00",
+          "end": "05:30"
+        }
+      ],
+      "detail": "'Make': end '05:30' not after start '06:00'"
+    },
+    {
+      "rule": "never_bump",
+      "severity": "error",
+      "affected_rows": [
+        "Make"
+      ],
+      "intervals": [],
+      "detail": "assigned item 'Make' missing from sequence (never-bump violated)"
+    }
+  ]
 }
