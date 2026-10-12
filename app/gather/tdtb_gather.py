@@ -607,20 +607,16 @@ def _extract_json_block(text: str) -> dict[str, Any] | None:
 
 
 def _runstate_search_dirs(vault_root: Path) -> list[Path]:
-    """Directories that may hold dated runstate notes, active store first.
+    """Directories that may hold dated runstate notes: the state-dir store
+    only (V2 removed the pre-S1 vault-cache fallback; ``vault_root`` is unused).
 
-    S1: the active store is ``<app home>/state/runstate/``; the pre-S1 vault
-    cache is the read-only fallback. ``runstate`` imports this module, so the
-    import is deferred to call time to avoid a module-load cycle."""
-    vault_cache = vault_root / "00 - META/Cache"
+    ``runstate`` imports this module, so the import is deferred to call time to
+    avoid a module-load cycle."""
     app_dir = Path(__file__).resolve().parent.parent
     if str(app_dir) not in sys.path:
         sys.path.insert(0, str(app_dir))
-    try:
-        import runstate
-    except ImportError:
-        return [vault_cache]
-    return [runstate.state_runstate_dir(), vault_cache]
+    import runstate
+    return [runstate.state_runstate_dir()]
 
 
 def load_runstate(vault_root: Path, valid_date: date) -> tuple[date | None, dict[str, Any] | None]:
@@ -629,9 +625,7 @@ def load_runstate(vault_root: Path, valid_date: date) -> tuple[date | None, dict
     Returns (diff_base, runstate_dict) or (None, None) when no usable prior
     runstate exists — the precompute then degrades to a fresh-pool proposal.
 
-    S1: searches the active state-dir store first, then the frozen vault cache,
-    so post-S1 notes are visible and pre-S1 notes remain the read-only
-    fallback."""
+    V2: searches the state-dir store only."""
     candidates: list[Path] = []
     for directory in _runstate_search_dirs(vault_root):
         if directory.is_dir():

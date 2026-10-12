@@ -84,7 +84,7 @@ from shadow import TOKEN_ENV_PATH
 # S1: the record lives at ``<app home>/state/capacities-source.json``
 # (``app_config.state_dir()``) and its lock beside it. The ``*_REL_PATH``
 # constants below are the frozen pre-S1 vault locations, kept only as the
-# read-only fallback and as the migration tool's source of truth. The temp
+# migration tool's source of truth (the vault is never read). The temp
 # name is unique per write (mkstemp), so it cannot collide with another
 # writer.
 
@@ -435,11 +435,6 @@ def source_path(vault_root: str | Path | None = None) -> Path:
     return app_config.state_dir() / STATE_FILENAME
 
 
-def legacy_source_path(vault_root: str | Path) -> Path:
-    """The frozen pre-S1 vault path — read-only fallback."""
-    return Path(vault_root) / SOURCE_REL_PATH
-
-
 def lock_path(vault_root: str | Path | None = None) -> Path:
     """The active lock-file path, beside the record in the app home.
 
@@ -593,15 +588,11 @@ def read_source(vault_root: str | Path) -> SourceRecord | None:
     storage raises :class:`CapacitiesSourceFormatError`; an unreadable file
     raises :class:`CapacitiesSourceStoreError`. Reads never write.
 
-    S1: the state-dir record wins; the frozen vault copy is the read-only
-    fallback when no state file exists yet.
+    V2: the state-dir record is the only location; there is no vault
+    fallback. ``vault_root`` is accepted for call-site compatibility and ignored.
     """
     try:
-        path = next(
-            (p for p in (source_path(), legacy_source_path(vault_root))
-             if os.path.lexists(p)),
-            None,
-        )
+        path = source_path() if os.path.lexists(source_path()) else None
     except (OSError, TypeError, ValueError) as exc:  # pragma: no cover — defensive
         raise CapacitiesSourceStoreError(
             "capacities source record is unreadable"

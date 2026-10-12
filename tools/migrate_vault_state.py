@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""migrate_vault_state.py — one-shot vault state -> app-home state (S1).
+"""migrate_vault_state.py — one-shot vault state -> app-home state (S1 + V2).
 
-Run EXPLICITLY by a human, once, when moving the five app-owned stores out of
+Run EXPLICITLY by a human, once, when moving the app-owned stores out of
 the vault and into ``<app home>/state/``. This script is NEVER imported or
 called at app startup; nothing in ``app/`` depends on it.
 
-It copies the pre-S1 vault copies of the five stores into the app home:
+It copies the pre-S1 vault copies of the stores into the app home:
 
   - ``tdtb-runstate-<date>.md``         -> ``state/runstate/``
   - ``tdtb-recent-selections.md``       -> ``state/runstate/``
@@ -14,6 +14,12 @@ It copies the pre-S1 vault copies of the five stores into the app home:
   - ``tdtb-capacities-settings.json``   -> ``state/capacities-settings.json``
   - ``tdtb-capacities-source.json``     -> ``state/capacities-source.json``
   - ``tdtb-deferrals.json``             -> ``state/deferrals.json``
+
+and (V2) the three stores that were still vault-resident after S1:
+
+  - ``tdtb-micro-adventure-log.md``     -> ``state/micro-adventure-log.md``
+  - ``tdtb-duration-memory.json``       -> ``state/duration-memory.json``
+  - ``tdtb-runtime-journal-<date>.json`` -> ``state/runtime-journal/<date>.json``
 
 Contract (see ``app/tests/test_migrate_vault_state.py``):
 
@@ -48,17 +54,37 @@ import app_config  # noqa: E402
 import capacities_builder  # noqa: E402
 import capacities_settings  # noqa: E402
 import deferrals  # noqa: E402
+import duration_memory  # noqa: E402
 import exclusion_settings  # noqa: E402
+import micro_adventure  # noqa: E402
 import runstate  # noqa: E402
+import runtime_actions  # noqa: E402
 
 #: Pre-S1 vault cache directory (the source of every migrated store).
 CACHE_REL = runstate.CACHE_DIR_REL
 
-#: Dated runstate-owned stores discovered by glob: file-name glob -> the
-#: ``state/`` subdirectory they migrate into.
+_JOURNAL_PREFIX = "tdtb-runtime-journal-"
+
+
+def _journal_dest_name(vault_name: str) -> str:
+    """``tdtb-runtime-journal-<date>.json`` -> ``<date>.json``."""
+    return vault_name[len(_JOURNAL_PREFIX):]
+
+
+def _same_name(vault_name: str) -> str:
+    return vault_name
+
+
+#: Dated stores discovered by glob: (file-name glob, the ``state/``
+#: subdirectory they migrate into, vault name -> destination file name).
 _DATED_STORES = (
-    ("tdtb-runstate-*.md", "runstate"),
-    ("tdtb-digest-index-*.json", "runstate"),
+    ("tdtb-runstate-*.md", "runstate", _same_name),
+    ("tdtb-digest-index-*.json", "runstate", _same_name),
+    (
+        f"{_JOURNAL_PREFIX}*.json",
+        runtime_actions.STATE_JOURNAL_DIRNAME,
+        _journal_dest_name,
+    ),
 )
 
 #: Fixed-name stores: (source vault file name, destination path under
@@ -78,6 +104,14 @@ _FIXED_STORES = (
         capacities_builder.STATE_FILENAME,
     ),
     (Path(deferrals.DEFERRALS_REL_PATH).name, deferrals.STATE_FILENAME),
+    (
+        Path(micro_adventure.HISTORY_REL_PATH).name,
+        micro_adventure.STATE_FILENAME,
+    ),
+    (
+        Path(duration_memory.CACHE_REL_PATH).name,
+        duration_memory.STATE_FILENAME,
+    ),
     (
         Path(runstate.RECENT_SELECTIONS_REL_PATH).name,
         f"{runstate.STATE_RUNSTATE_DIRNAME}/{Path(runstate.RECENT_SELECTIONS_REL_PATH).name}",
@@ -107,9 +141,9 @@ def _plan(vault_root: Path) -> list[tuple[str, Path, Path]]:
     cache = vault_root / CACHE_REL
     plan: list[tuple[str, Path, Path]] = []
     if cache.is_dir():
-        for pattern, subdir in _DATED_STORES:
+        for pattern, subdir, dest_name in _DATED_STORES:
             for source in sorted(cache.glob(pattern)):
-                plan.append((source.name, source, Path(subdir) / source.name))
+                plan.append((source.name, source, Path(subdir) / dest_name(source.name)))
     for name, dest_rel in _FIXED_STORES:
         plan.append((name, cache / name, Path(dest_rel)))
     return plan

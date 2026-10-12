@@ -6,8 +6,8 @@ the machine-local app home (``app_config.state_dir()``). The contract these
 tests pin:
 
   - every store resolves to the new path by default;
-  - a read prefers the new path and falls back READ-ONLY to the frozen vault
-    copy, so S1 is reversible;
+  - a read uses the new path ONLY (V2 removed the vault fallback: an absent
+    state file reads as empty/default, never from the vault);
   - a write always lands at the new path and leaves every vault byte
     untouched;
   - ``TDTB_HOME`` relocates the whole state tree.
@@ -237,24 +237,29 @@ def test_resolving_a_path_creates_nothing(vault: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# 2 + 3. Reads: new path first, vault fallback (read-only)
+# 2 + 3. Reads: state dir only, no vault fallback (V2)
 # ---------------------------------------------------------------------------
 
-def test_all_stores_read_the_legacy_vault_with_no_state_files(
+def test_all_stores_ignore_the_legacy_vault_with_no_state_files(
     vault: Path, legacy: dict[str, bytes]
 ) -> None:
-    assert runstate.read_runstate(vault, DAY) == {"anchor": "legacy-anchor", "eod": "11:59 PM"}
-    assert runstate.read_recent_selections(vault)[0]["selections"][0]["id"] == "legacy-1"
-    assert runstate.read_digest_index(vault, DAY)[0]["name"] == "Legacy"
-    assert es.read_settings(vault).settings.revision == 3
-    assert cs.read_settings(vault).settings.revision == 5
-    assert cb.read_source(vault).revision == 2
-    assert df.load_deferrals(vault)["todoist:42"]["count"] == 2
+    """V2: a populated vault with no state files reads as empty/default."""
+    before = _snapshot(vault)
 
-    # A fallback read is read-only: the vault snapshot is untouched.
-    assert _snapshot(vault)[str(LEGACY_CACHE_REL / "tdtb-runstate-2026-10-08.md")] == (
-        legacy["tdtb-runstate-2026-10-08.md"]
-    )
+    assert runstate.read_runstate(vault, DAY) is None
+    assert runstate.read_recent_selections(vault) == []
+    assert runstate.read_digest_index(vault, DAY) == []
+    assert runstate.read_dropped(vault, DAY) == []
+    es_read = es.read_settings(vault)
+    assert (es_read.persisted, es_read.settings.revision) == (False, 0)
+    cs_read = cs.read_settings(vault)
+    assert (cs_read.persisted, cs_read.settings.revision) == (False, 0)
+    assert cb.read_source(vault) is None
+    assert df.load_deferrals(vault) == {}
+
+    # Reads are read-only everywhere: no state dir, vault untouched.
+    assert not app_config.state_dir().exists()
+    assert _snapshot(vault) == before
 
 
 def test_all_stores_prefer_the_state_copy_when_both_exist(
@@ -293,15 +298,21 @@ def test_all_stores_prefer_the_state_copy_when_both_exist(
         assert (cache / name).read_bytes() == raw
 
 
-def test_legacy_and_state_path_helpers_point_at_different_files(vault: Path) -> None:
-    assert es.legacy_settings_path(vault) == vault / LEGACY_CACHE_REL / "tdtb-exclusion-settings.json"
-    assert cs.legacy_settings_path(vault) == vault / LEGACY_CACHE_REL / "tdtb-capacities-settings.json"
-    assert cb.legacy_source_path(vault) == vault / LEGACY_CACHE_REL / "tdtb-capacities-source.json"
-    assert df.legacy_deferrals_path(vault) == vault / LEGACY_CACHE_REL / "tdtb-deferrals.json"
-    assert (
-        runstate.legacy_runstate_path(vault, DAY)
-        == vault / LEGACY_CACHE_REL / f"tdtb-runstate-{DAY}.md"
-    )
+def test_vault_fallback_helpers_are_gone() -> None:
+    assert not hasattr(es, "legacy_settings_path")
+    assert not hasattr(cs, "legacy_settings_path")
+    assert not hasattr(cb, "legacy_source_path")
+    assert not hasattr(df, "legacy_deferrals_path")
+    assert not hasattr(runstate, "legacy_runstate_path")
+    assert not hasattr(runstate, "legacy_recent_selections_path")
+    assert not hasattr(runstate, "legacy_digest_index_path")
+
+
+def test_read_path_helpers_resolve_to_the_state_dir(vault: Path) -> None:
+    assert runstate.runstate_read_path(vault, DAY) == runstate.state_runstate_path(DAY)
+    assert runstate.runstate_read_path(None, DAY) == runstate.state_runstate_path(DAY)
+    assert runstate.recent_selections_read_path(vault) == runstate.state_recent_selections_path()
+    assert runstate.digest_index_read_path(vault, DAY) == runstate.state_digest_index_path(DAY)
 
 
 # ---------------------------------------------------------------------------
@@ -353,8 +364,8 @@ def test_recent_selections_write_lands_in_state_and_keeps_the_vault_copy(
     assert written == runstate.state_recent_selections_path()
     runs = runstate.read_recent_selections(vault)
     assert runs[0]["selections"][0]["id"] == "state-1"
-    # The prior vault run is carried forward, not lost.
-    assert runs[1]["selections"][0]["id"] == "legacy-1"
+    # The vault run is not carried forward (V2: no vault reads).
+    assert len(runs) == 1
     assert _snapshot(vault) == before
 
 
@@ -379,13 +390,13 @@ def test_exclusions_write_lands_in_state_and_keeps_the_vault_copy(
 
     saved = es.save_settings(
         vault,
-        expected_revision=3,
+        expected_revision=0,
         exclusions=[es.TagExclusion(source="capacities", space_id=SPACE, tag_id=TAG_A)],
     )
 
-    assert saved.revision == 4
+    assert saved.revision == 1
     assert es.settings_path().is_file()
-    assert es.read_settings(vault).settings.revision == 4
+    assert es.read_settings(vault).settings.revision == 1
     assert es.lock_path().is_file()
     # The vault's own 0-byte lock artifact is left exactly as it was.
     assert (
@@ -401,13 +412,13 @@ def test_capacities_settings_write_lands_in_state_and_keeps_the_vault_copy(
 
     saved = cs.save_settings(
         vault,
-        expected_revision=5,
+        expected_revision=0,
         native_task_auto=cs.NativeTaskAutoPolicy(),
     )
 
-    assert saved.revision == 6
+    assert saved.revision == 1
     assert cs.settings_path().is_file()
-    assert cs.read_settings(vault).settings.revision == 6
+    assert cs.read_settings(vault).settings.revision == 1
     assert _snapshot(vault) == before
 
 
@@ -418,14 +429,14 @@ def test_capacities_source_write_lands_in_state_and_keeps_the_vault_copy(
 
     saved = cb.save_source(
         vault,
-        expected_revision=2,
+        expected_revision=0,
         space_id=SPACE,
         structures=[cb.SourceStructureRecord(structure_id="custom-project")],
     )
 
-    assert saved.revision == 3
+    assert saved.revision == 1
     assert cb.source_path().is_file()
-    assert cb.read_source(vault).revision == 3
+    assert cb.read_source(vault).revision == 1
     assert _snapshot(vault) == before
 
 
@@ -439,8 +450,8 @@ def test_deferrals_write_lands_in_state_and_keeps_the_vault_copy(
     assert df.deferrals_path().is_file()
     items = df.load_deferrals(vault)
     assert items["todoist:99"]["count"] == 1
-    # The vault entry is carried forward into the state copy.
-    assert items["todoist:42"]["count"] == 2
+    # The vault entry is NOT carried forward (V2: no vault reads).
+    assert "todoist:42" not in items
     assert _snapshot(vault) == before
 
 
@@ -458,13 +469,13 @@ def test_tdtb_home_moves_every_store(
     runstate.write_runstate(vault, DAY, {**runstate.build_runstate(), "anchor": "a"})
     es.save_settings(
         vault,
-        expected_revision=3,
+        expected_revision=0,
         exclusions=[es.TagExclusion(source="capacities", space_id=SPACE, tag_id=TAG_A)],
     )
-    cs.save_settings(vault, expected_revision=5, native_task_auto=cs.NativeTaskAutoPolicy())
+    cs.save_settings(vault, expected_revision=0, native_task_auto=cs.NativeTaskAutoPolicy())
     cb.save_source(
         vault,
-        expected_revision=2,
+        expected_revision=0,
         space_id=SPACE,
         structures=[cb.SourceStructureRecord(structure_id="custom-project")],
     )
@@ -480,13 +491,13 @@ def test_tdtb_home_moves_every_store(
         assert path.is_relative_to(home_a / "state")
         assert path.is_file()
 
-    # A different home sees none of it and falls back to the frozen vault.
+    # A different home sees none of it and, with no vault fallback, reads empty.
     monkeypatch.setenv("TDTB_HOME", str(home_b))
-    assert runstate.read_runstate(vault, DAY)["anchor"] == "legacy-anchor"
-    assert es.read_settings(vault).settings.revision == 3
-    assert cs.read_settings(vault).settings.revision == 5
-    assert cb.read_source(vault).revision == 2
-    assert df.load_deferrals(vault)["todoist:42"]["count"] == 2
+    assert runstate.read_runstate(vault, DAY) is None
+    assert es.read_settings(vault).settings.revision == 0
+    assert cs.read_settings(vault).settings.revision == 0
+    assert cb.read_source(vault) is None
+    assert df.load_deferrals(vault) == {}
     assert not (home_b / "state").exists()
 
 

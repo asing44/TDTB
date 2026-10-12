@@ -10,6 +10,7 @@ from datetime import date, datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 import tdtb_gather as g
 
 VALID = date(2026, 7, 2)
@@ -26,7 +27,10 @@ def write_runstate(root: Path, d: str, selections: list, extra: str = "") -> Non
     body = json.dumps({
         "anchor": "10:15", "eod": "23:45", "buffering": "standard",
         "selections": selections})
-    (root / f"00 - META/Cache/tdtb-runstate-{d}.md").write_text(
+    import app_config
+    state = app_config.state_dir() / "runstate"
+    state.mkdir(parents=True, exist_ok=True)
+    (state / f"tdtb-runstate-{d}.md").write_text(
         f"---\nvalid_date: {d}\nwritten_at: {d}T10:00:00-04:00\n---\n\n```json\n{body}\n```\n")
 
 
@@ -54,6 +58,14 @@ class TestLoadRunstate(unittest.TestCase):
             diff_base, rs = g.load_runstate(root, VALID)
             self.assertEqual(diff_base, date(2026, 7, 1))
             self.assertEqual(rs["selections"][0]["id"], "x")
+
+    def test_vault_cache_runstate_is_not_read(self):
+        # V2: the pre-S1 vault copy is no longer a fallback.
+        with tempfile.TemporaryDirectory() as td:
+            root = make_vault(Path(td))
+            (root / "00 - META/Cache/tdtb-runstate-2026-07-01.md").write_text(
+                '---\nvalid_date: 2026-07-01\n---\n\n```json\n{"selections": []}\n```\n')
+            self.assertEqual(g.load_runstate(root, VALID), (None, None))
 
     def test_missing_returns_none(self):
         with tempfile.TemporaryDirectory() as td:

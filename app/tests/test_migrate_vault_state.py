@@ -1,9 +1,10 @@
-"""Gate for the one-shot vault -> app-home store migration (S1).
+"""Gate for the one-shot vault -> app-home store migration (S1 + V2).
 
 `tools/migrate_vault_state.py` is run EXPLICITLY by a human, once, and never at
 startup. Its contract:
 
-  - copy the five app-owned stores into ``<app home>/state/``;
+  - copy the app-owned stores (S1's five plus V2's micro-adventure log,
+    duration memory and runtime journals) into ``<app home>/state/``;
   - leave every vault file byte-identical (the vault stays the rollback point);
   - never copy the 0-byte runtime lock artifacts;
   - never overwrite an existing destination.
@@ -50,6 +51,20 @@ RECENT_SELECTIONS_NOTE = "\n".join([
 ])
 
 
+MICRO_LOG_NOTE = "\n".join([
+    "---",
+    "description: TDTB micro-adventure selection history (newest-first).",
+    "schema_version: 1",
+    "history:",
+    "- date: '2026-10-07'",
+    "  id: ma03",
+    "  idea: Ride bike somewhere",
+    "  done: true",
+    "---",
+    "",
+])
+
+
 def _store_files() -> dict[str, str]:
     """Legacy vault cache name -> exact bytes held by the file."""
     return {
@@ -64,6 +79,17 @@ def _store_files() -> dict[str, str]:
         "tdtb-capacities-settings.json": json.dumps({"version": 1, "revision": 5}),
         "tdtb-capacities-source.json": json.dumps({"version": 1, "revision": 2}),
         "tdtb-deferrals.json": json.dumps({"version": 1, "items": {}}),
+        # V2 stores.
+        "tdtb-micro-adventure-log.md": MICRO_LOG_NOTE,
+        "tdtb-duration-memory.json": json.dumps(
+            {"version": 1, "items": {"todoist:7": 45, "50 - Ops/Press.md": 30}}
+        ),
+        f"tdtb-runtime-journal-{DAY}.json": json.dumps(
+            {"valid_date": str(DAY), "actions": []}
+        ),
+        "tdtb-runtime-journal-2026-10-07.json": json.dumps(
+            {"valid_date": "2026-10-07", "actions": []}
+        ),
     }
 
 
@@ -72,6 +98,7 @@ def _lock_files() -> dict[str, str]:
         "tdtb-exclusion-settings.lock": "",
         "tdtb-capacities-settings.lock": "",
         "tdtb-capacities-source.lock": "",
+        "tdtb-duration-memory.lock": "",
     }
 
 
@@ -100,6 +127,10 @@ def _expected_destinations(state: Path) -> dict[str, Path]:
         "tdtb-capacities-settings.json": state / "capacities-settings.json",
         "tdtb-capacities-source.json": state / "capacities-source.json",
         "tdtb-deferrals.json": state / "deferrals.json",
+        "tdtb-micro-adventure-log.md": state / "micro-adventure-log.md",
+        "tdtb-duration-memory.json": state / "duration-memory.json",
+        f"tdtb-runtime-journal-{DAY}.json": state / "runtime-journal" / f"{DAY}.json",
+        "tdtb-runtime-journal-2026-10-07.json": state / "runtime-journal" / "2026-10-07.json",
     }
 
 
@@ -216,5 +247,45 @@ def test_cli_reports_the_migration(tmp_path: Path, capsys) -> None:
 
     out = capsys.readouterr().out
     assert code == 0
-    assert "copied 7" in out
+    assert "copied 11" in out
     assert str(state) in out
+
+
+def test_migrated_v2_stores_are_readable_by_the_app(tmp_path: Path, monkeypatch) -> None:
+    """The copied files load unchanged through the app's own readers."""
+    import duration_memory
+    import micro_adventure
+    import runtime_actions
+
+    vault = tmp_path / "vault"
+    home = tmp_path / "home"
+    _seed(vault)
+    monkeypatch.setenv("TDTB_HOME", str(home))
+
+    mvs.migrate(vault)
+
+    history = micro_adventure.read_history(micro_adventure.history_path())
+    assert [(e.id, e.done) for e in history] == [("ma03", True)]
+    memory = duration_memory.read_vault_memory(vault)
+    assert memory["todoist:7"] == 45
+    assert runtime_actions.load_journal(vault, DAY)["valid_date"] == str(DAY)
+
+
+def test_migrate_reports_each_missing_v2_store(tmp_path: Path) -> None:
+    vault = tmp_path / "vault"
+    state = tmp_path / "state"
+    _seed(vault)
+    (vault / CACHE_REL / "tdtb-micro-adventure-log.md").unlink()
+    (vault / CACHE_REL / "tdtb-duration-memory.json").unlink()
+    for journal in (vault / CACHE_REL).glob("tdtb-runtime-journal-*.json"):
+        journal.unlink()
+
+    results = mvs.migrate(vault, state_dir=state)
+
+    statuses = {r.name: r.status for r in results}
+    assert statuses["tdtb-micro-adventure-log.md"] == "missing"
+    assert statuses["tdtb-duration-memory.json"] == "missing"
+    assert not (state / "micro-adventure-log.md").exists()
+    assert not (state / "duration-memory.json").exists()
+    assert not (state / "runtime-journal").exists()
+    assert (state / "deferrals.json").is_file()
