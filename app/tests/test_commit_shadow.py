@@ -21,6 +21,7 @@ import commit_run  # noqa: E402
 import capacities_selections  # noqa: E402
 import shadow  # noqa: E402
 from datetime import date  # noqa: E402
+from tests.config_markdown import write_config_note  # noqa: E402
 
 
 @pytest.fixture
@@ -34,7 +35,7 @@ def vault(tmp_path) -> Path:
     )
     config_path = v / "00 - META" / "Skill-Configs" / "tdtb-bridger.md"
     config_path.parent.mkdir(parents=True)
-    config_path.write_text(
+    write_config_note(config_path,
         "## Defaults\n"
         "| Key | Value |\n|---|---|\n| eod | 11:59 PM |\n\n"
         "## Template Blocks\n"
@@ -342,7 +343,7 @@ class TestCommitEligibility:
 
         monkeypatch.setattr(shadow, "gather_live_state", fake_gather)
         config_path = vault / "00 - META" / "Skill-Configs" / "tdtb-bridger.md"
-        config_path.write_text(
+        write_config_note(config_path,
             "## Defaults\n"
             "| Key | Value |\n|---|---|\n| eod | 11:59 PM |\n\n"
             "## Anchored Lifestyle Blocks\n"
@@ -779,7 +780,7 @@ class TestExactSequenceAuthorization:
     def _write_anchored_vault_config(self, vault: Path) -> None:
         config_path = vault / "00 - META" / "Skill-Configs" / "tdtb-bridger.md"
         config_path.parent.mkdir(parents=True, exist_ok=True)
-        config_path.write_text(
+        write_config_note(config_path,
             "## Defaults\n"
             "| Key | Value |\n|---|---|\n| eod | 11:59 PM |\n\n"
             "## Anchored Lifestyle Blocks\n"

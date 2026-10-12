@@ -29,6 +29,7 @@ from calendar_bridge import CalendarInfo  # noqa: E402
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "gather"))
 import tdtb_gather as gather  # noqa: E402
+from tests.config_markdown import read_config_note, write_config_note  # noqa: E402
 
 CONFIG_REL_PATH = "00 - META/Skill-Configs/tdtb-bridger.md"
 
@@ -90,7 +91,7 @@ def vault(tmp_path) -> Path:
     v.mkdir()
     p = v / CONFIG_REL_PATH
     p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(MINIMAL_CONFIG, encoding="utf-8")
+    write_config_note(p, MINIMAL_CONFIG, encoding="utf-8")
     return v
 
 
@@ -301,8 +302,8 @@ def test_calendar_busy_blocks_join_anchored(vault, live_sources_mode):
 
 def test_calendar_capacity_metadata_survives_the_plan_inputs_wire(vault, live_sources_mode):
     cfg = vault / CONFIG_REL_PATH
-    cfg.write_text(
-        cfg.read_text(encoding="utf-8")
+    write_config_note(cfg,
+        read_config_note(cfg)
         + """
 
 ## Calendar Capacity Classes
@@ -1054,7 +1055,7 @@ def _seed_selections(*names: str) -> None:
 
 def _write_ignore_names(vault: Path, *names: str) -> None:
     rows = "".join(f"| {name} | |\n" for name in names)
-    (vault / CONFIG_REL_PATH).write_text(
+    write_config_note(vault / CONFIG_REL_PATH,
         MINIMAL_CONFIG
         + "\n## Ignore List\n\n### Names\n\n| Name | Notes |\n|------|-------|\n"
         + rows,

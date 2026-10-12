@@ -1,11 +1,9 @@
-"""Tests for app_config.py + the S0 vault→config.json migration (TDD gate).
+"""Tests for app_config.py — the repo config + machine-local override (V1).
 
-S0 is plumbing only: a machine-local app home, a `config.json` loader, a
-dual-read in `config_reader.read_config` (config.json wins, vault fallback
-when absent), and a one-shot migration tool. Zero behaviour change.
-
-Every test isolates `TDTB_HOME` to a tmp dir — the operator's real vault and
-real `~/.config/tdtb` are never read or written.
+The hand-editable config is the tracked ``config/tdtb.json`` with
+``$TDTB_HOME/config.json`` layered on top. Every test isolates both paths
+(conftest points ``TDTB_HOME`` and ``TDTB_REPO_CONFIG`` at tmp dirs): the
+operator's real repo file, vault and ``~/.config/tdtb`` are never read.
 """
 from __future__ import annotations
 
@@ -16,130 +14,39 @@ from pathlib import Path
 import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
-sys.path.insert(0, str(Path(__file__).parent.parent.parent / "tools"))
 
 import app_config  # noqa: E402
-import migrate_vault_config  # noqa: E402
-from config_reader import CONFIG_REL_PATH, parse_config_markdown, read_config  # noqa: E402
+from config_reader import read_config  # noqa: E402
 
 
-VAULT_FIXTURE = """\
----
-description: fixture config — never the operator's real vault
-last_updated: 2026-07-01
----
-
-# TDTB Bridger Config
-
-## Defaults
-
-| Key | Value |
-|-----|-------|
-| eod | 11:45 PM |
-| caps.deep | 4 |
-| habits.fallback_minutes_per_habit | 4 |
-| habits.round_to_minutes | 15 |
-
-## Schedulable Defaults
-
-| Block | State | Duration (blocks) | Notes |
-|-------|-------|-------------------|-------|
-| buffering | on | — | mode: standard |
-
-## Anchored Lifestyle Blocks
-
-| Block | Type | Start | End | Duration | Days | overlap_allowed |
-|-------|------|-------|-----|----------|------|-----------------|
-| Sudsing | hard | 5:45 PM | — | 30m | daily | no |
-| Live | window | 12:00 PM | 8:00 PM | 30m | daily | yes |
-
-## Presets
-
-| Name | Type | Blocks | Priority | Zone | Latest Start |
-|------|------|--------|----------|------|--------------|
-| Summits | interval | 1 | 4 | any | — |
-| Make | interval | 2 | 2 | any | — |
-
-## Color Palette
-
-| Token | Color | Hex | Used for |
-|-------|-------|-----|----------|
-| event | Soft blue | 7DD3FC | Calendar fixed events |
-
-## Calendar Titles
-
-| Logical name | BusyCal title | Role |
-|---|---|---|
-| blocks | ⬜ Blocks | Work-window events |
-| mint | 🟡 Mint | Minting |
-
-## Calendar Capacity Classes
-
-| BusyCal title | Class | Reason |
-|---|---|---|
-| Trinoor | work | Work meetings |
-
-## Disabled Calendars
-
-| Title |
-|-------|
-| Personal |
-
-## Ignore List
-
-### Todoist (by ID)
-
-| ID | Name (ref) | Notes |
-|----|------------|-------|
-| 6gJm2CCXM7hgXg9j | Post Move | |
-
-### Obsidian (by path)
-
-| Path | Notes |
-|------|-------|
-| — | populated on demand |
-
-### Names
-
-| Name | Notes |
-|------|-------|
-| — | matches any source |
-
-## Ranking Criteria
-
-| Key | Value | Controls |
-|-----|-------|----------|
-| available_recency_days | 7 | x |
-
-## Micro-Adventures
-
-### Rotation
-
-| Key | Value | Controls |
-|-----|-------|----------|
-| rotation.exclude_window_days | 14 | x |
-| rotation.graduate_offer | yes | x |
-
-### Pool
-
-| ID | Idea | Category | Effort | Active |
-|----|------|----------|--------|--------|
-| ma01 | Walk | nature | low | yes |
-| ma02 | Call a friend | social | low | yes |
-"""
-
-
-def _write_vault(vault_root: Path, text: str) -> Path:
-    config_path = vault_root / CONFIG_REL_PATH
-    config_path.parent.mkdir(parents=True, exist_ok=True)
-    config_path.write_text(text, encoding="utf-8")
-    return config_path
+REPO_DOC = {
+    "version": 1,
+    "defaults": {
+        "eod": "11:45 PM",
+        "caps": {"deep": 4, "mixed": 3},
+        "work_allotment_minutes": 240,
+    },
+    "habits": {"fallback_minutes_per_habit": 4, "round_to_minutes": 15},
+    "presets": [
+        {"Name": "Summits", "Type": "interval", "Blocks": 1, "Priority": 4},
+    ],
+    "micro_adventure_pool": [{"ID": "ma01", "Idea": "Walk", "Active": True}],
+    "micro_adventure_rotation": {"exclude_window_days": 10, "graduate_offer": True},
+}
 
 
 def _write_json(path: Path, doc: dict) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(doc, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     return path
+
+
+def _repo(doc: dict) -> Path:
+    return _write_json(app_config.repo_config_path(), doc)
+
+
+def _local(doc: dict) -> Path:
+    return _write_json(app_config.config_path(), doc)
 
 
 # ---------------------------------------------------------------------------
@@ -179,230 +86,235 @@ def test_state_dir_helper_is_beside_config(
 
 
 # ---------------------------------------------------------------------------
-# 2. Dual-read: absent config.json falls back to the vault, identically
+# 2. Repo path resolver
 # ---------------------------------------------------------------------------
 
-def test_vault_fallback_is_identical_to_today(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    monkeypatch.setenv("TDTB_HOME", str(tmp_path / "home"))  # no config.json
-    vault = tmp_path / "vault"
-    _write_vault(vault, VAULT_FIXTURE)
-
-    result = read_config(vault)
-
-    assert result.bootstrap_needed is False
-    assert result.config is not None
-    assert result.config.sections == parse_config_markdown(VAULT_FIXTURE)
-    assert result.config.raw_text == VAULT_FIXTURE
-    assert result.config.get_default("habits.fallback_minutes_per_habit").source == "config"
-    assert result.config.get_default("habits.fallback_minutes_per_habit").value == 4
+def test_repo_config_defaults_to_tracked_file(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("TDTB_REPO_CONFIG", raising=False)
+    path = app_config.repo_config_path()
+    assert path.name == "tdtb.json"
+    assert path.parent.name == "config"
+    assert path == Path(app_config.__file__).resolve().parent.parent / "config" / "tdtb.json"
 
 
-def test_missing_vault_and_no_config_still_bootstraps(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    monkeypatch.setenv("TDTB_HOME", str(tmp_path / "home"))
-    result = read_config(tmp_path / "no-such-vault")
+def test_repo_config_env_override(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("TDTB_REPO_CONFIG", str(tmp_path / "elsewhere.json"))
+    assert app_config.repo_config_path() == tmp_path / "elsewhere.json"
+
+
+# ---------------------------------------------------------------------------
+# 3. Layering: repo file first, local override on top
+# ---------------------------------------------------------------------------
+
+def test_no_config_anywhere_bootstraps() -> None:
+    assert app_config.load_document() is None
+    assert app_config.load_sections() == {}
+    result = read_config()
     assert result.bootstrap_needed is True
     assert result.config is None
 
 
-# ---------------------------------------------------------------------------
-# 3. Dual-read: config.json wins over the vault when both exist
-# ---------------------------------------------------------------------------
-
-def test_config_json_wins_over_vault(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    home = tmp_path / "home"
-    monkeypatch.setenv("TDTB_HOME", str(home))
-    vault = tmp_path / "vault"
-    _write_vault(vault, VAULT_FIXTURE)
-    _write_json(
-        home / "config.json",
-        {
-            "version": 1,
-            "presets": [
-                {
-                    "Name": "ConfigPreset",
-                    "Type": "interval",
-                    "Blocks": 3,
-                    "Priority": 4,
-                    "Zone": "any",
-                    "Latest Start": None,
-                }
-            ],
-        },
-    )
-
-    result = read_config(vault)
+def test_repo_file_alone_is_the_config() -> None:
+    _repo(REPO_DOC)
+    result = read_config()
+    assert result.bootstrap_needed is False
     assert result.config is not None
-    assert result.config.get_presets()[0]["Name"] == "ConfigPreset"
-    # A section config.json does not carry still comes from the vault.
-    assert "Schedulable Defaults" in result.config.sections
+    assert result.config.get_presets()[0]["Name"] == "Summits"
+    assert result.config.get_default("eod").value == "11:45 PM"
+    assert result.config.get_default("caps.deep").value == 4
+    assert result.config.get_default("habits.fallback_minutes_per_habit").value == 4
 
 
-def test_config_json_merges_habits_into_defaults(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    home = tmp_path / "home"
-    monkeypatch.setenv("TDTB_HOME", str(home))
-    vault = tmp_path / "vault"
-    _write_vault(vault, VAULT_FIXTURE)
-    _write_json(
-        home / "config.json",
-        {"version": 1, "habits": {"fallback_minutes_per_habit": 7}},
-    )
-
-    cfg = read_config(vault).config
+def test_local_file_alone_still_loads() -> None:
+    _local({"version": 1, "habits": {"fallback_minutes_per_habit": 9}})
+    cfg = read_config().config
     assert cfg is not None
-    # Overridden key wins...
+    assert cfg.get_default("habits.fallback_minutes_per_habit").value == 9
+
+
+def test_local_override_wins_and_repo_fills_the_rest() -> None:
+    _repo(REPO_DOC)
+    _local({
+        "version": 1,
+        "habits": {"fallback_minutes_per_habit": 7},
+        "presets": [{"Name": "LocalPreset", "Type": "interval", "Blocks": 3, "Priority": 4}],
+    })
+    cfg = read_config().config
+    assert cfg is not None
+    # Overridden key wins, the repo's other habits key survives (objects merge)...
     assert cfg.get_default("habits.fallback_minutes_per_habit").value == 7
-    # ...without dropping the vault's other Defaults keys.
+    assert cfg.get_default("habits.round_to_minutes").value == 15
+    # ...a list is replaced wholesale, not appended to...
+    assert [p["Name"] for p in cfg.get_presets()] == ["LocalPreset"]
+    # ...and sections the local file does not carry come from the repo.
     assert cfg.get_default("eod").value == "11:45 PM"
 
 
-def test_config_json_only_without_vault(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    home = tmp_path / "home"
-    monkeypatch.setenv("TDTB_HOME", str(home))
-    _write_json(home / "config.json", {"version": 1, "habits": {"fallback_minutes_per_habit": 9}})
-
-    result = read_config(tmp_path / "empty-vault")
-    assert result.bootstrap_needed is False
-    assert result.config is not None
-    assert result.config.get_default("habits.fallback_minutes_per_habit").value == 9
+def test_local_sources_join_repo_without_repo_sources() -> None:
+    _repo(REPO_DOC)
+    _local({"version": 1, "sources": {"mode": "live", "vault_enabled": False}})
+    assert app_config.sources_mode() == "live"
+    assert app_config.vault_enabled() is False
 
 
-def test_unsupported_version_falls_back_to_vault(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    home = tmp_path / "home"
-    monkeypatch.setenv("TDTB_HOME", str(home))
-    vault = tmp_path / "vault"
-    _write_vault(vault, VAULT_FIXTURE)
-    _write_json(
-        home / "config.json",
-        {"version": 99, "presets": [{"Name": "ShouldNotWin"}]},
-    )
-
-    cfg = read_config(vault).config
+def test_unsupported_version_local_is_ignored_repo_still_loads() -> None:
+    _repo(REPO_DOC)
+    _local({"version": 99, "presets": [{"Name": "ShouldNotWin"}]})
+    cfg = read_config().config
     assert cfg is not None
     assert cfg.get_presets()[0]["Name"] == "Summits"
 
 
-# ---------------------------------------------------------------------------
-# 4. Migration tool: fixture round-trip, vault untouched
-# ---------------------------------------------------------------------------
-
-def test_migration_round_trips_fixture(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    home = tmp_path / "home"
-    monkeypatch.setenv("TDTB_HOME", str(home))
-    vault = tmp_path / "vault"
-    cfg_path = _write_vault(vault, VAULT_FIXTURE)
-    before = cfg_path.read_bytes()
-
-    out = migrate_vault_config.migrate(vault)
-
-    assert out == home / "config.json"
-    doc = json.loads(out.read_text(encoding="utf-8"))
-    sections = parse_config_markdown(VAULT_FIXTURE)
-
-    assert doc["version"] == 1
-    assert doc["presets"] == sections["Presets"]
-    assert doc["anchored_blocks"] == sections["Anchored Lifestyle Blocks"]
-    assert doc["colors"] == sections["Color Palette"]
-    assert doc["calendar"]["titles"] == sections["Calendar Titles"]
-    assert doc["calendar"]["capacity_classes"] == sections["Calendar Capacity Classes"]
-    assert doc["calendar"]["disabled"] == ["Personal"]
-    assert doc["ignore"] == {
-        "todoist_ids": ["6gJm2CCXM7hgXg9j"],
-        "paths": [],
-        "names": [],
-    }
-    assert doc["habits"]["fallback_minutes_per_habit"] == 4
-    assert doc["micro_adventure_pool"] == sections["Micro-Adventures"]["Pool"]
-
-    # The migration is read-only with respect to the vault file.
-    assert cfg_path.read_bytes() == before
-
-
-def test_migration_then_read_matches_vault_parse(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    home = tmp_path / "home"
-    monkeypatch.setenv("TDTB_HOME", str(home))
-    vault = tmp_path / "vault"
-    _write_vault(vault, VAULT_FIXTURE)
-
-    migrate_vault_config.migrate(vault)
-    cfg = read_config(vault).config
+def test_corrupt_repo_file_leaves_local_in_play() -> None:
+    app_config.repo_config_path().parent.mkdir(parents=True, exist_ok=True)
+    app_config.repo_config_path().write_text("{not json", encoding="utf-8")
+    _local({"version": 1, "habits": {"fallback_minutes_per_habit": 5}})
+    cfg = read_config().config
     assert cfg is not None
-
-    sections = parse_config_markdown(VAULT_FIXTURE)
-    assert cfg.get_presets() == sections["Presets"]
-    assert cfg.sections["Anchored Lifestyle Blocks"] == sections["Anchored Lifestyle Blocks"]
-    assert cfg.sections["Color Palette"] == sections["Color Palette"]
-    assert cfg.sections["Calendar Titles"] == sections["Calendar Titles"]
-    assert cfg.sections["Calendar Capacity Classes"] == sections["Calendar Capacity Classes"]
-    assert cfg.sections["Micro-Adventures"]["Pool"] == sections["Micro-Adventures"]["Pool"]
-    # Rotation survives the overlay (config.json carries only the Pool).
-    assert cfg.sections["Micro-Adventures"]["Rotation"] == sections["Micro-Adventures"]["Rotation"]
-    assert cfg.get_ignore_list()["todoist_ids"] == {"6gJm2CCXM7hgXg9j"}
-    # Non-migrated sections still read from the vault.
-    assert cfg.sections["Ranking Criteria"] == sections["Ranking Criteria"]
+    assert cfg.get_default("habits.fallback_minutes_per_habit").value == 5
 
 
-def test_migration_writes_only_the_config_json_target(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+def test_both_mode_in_local_rejects_only_the_local_file() -> None:
+    _repo(REPO_DOC)
+    _local({"version": 1, "sources": {"mode": "both"}, "presets": [{"Name": "No"}]})
+    assert app_config.load_document()["presets"][0]["Name"] == "Summits"
+    assert app_config.sources_mode() == app_config.DEFAULT_SOURCES_MODE
+
+
+def test_explicit_path_reads_that_file_only(tmp_path: Path) -> None:
+    _repo(REPO_DOC)
+    only = _write_json(tmp_path / "only.json", {"version": 1, "presets": []})
+    assert app_config.load_document(only) == {"version": 1, "presets": []}
+
+
+def test_sources_warnings_cover_both_layers() -> None:
+    _repo({"version": 1, "sources": {"bogus_repo_key": 1}})
+    _local({"version": 1, "sources": {"bogus_local_key": 1}})
+    joined = " ".join(app_config.sources_config_warnings())
+    assert "bogus_repo_key" in joined
+    assert "bogus_local_key" in joined
+
+
+# ---------------------------------------------------------------------------
+# 4. Document -> sections translation (the sections the app consumes)
+# ---------------------------------------------------------------------------
+
+def test_defaults_habits_and_read_query_share_one_defaults_section() -> None:
+    sections = app_config.sections_from_document({
+        "version": 1,
+        "defaults": {"eod": "11:45 PM", "buffering": {"standard_pct": 0.2}},
+        "habits": {"round_to_minutes": 15},
+        "todoist": {"read_query": {"assigned": "today"}},
+    })
+    defaults = sections["Defaults"]
+    assert defaults["eod"] == "11:45 PM"
+    assert defaults["buffering.standard_pct"] == 0.2
+    assert defaults["buffering"] == {"standard_pct": 0.2}
+    assert defaults["habits.round_to_minutes"] == 15
+    assert defaults["todoist.read_query.assigned"] == "today"
+
+
+def test_vault_note_sections_with_a_home_in_the_document() -> None:
+    sections = app_config.sections_from_document({
+        "version": 1,
+        "schedulable_defaults": [{"Block": "minting", "State": "on"}],
+        "ranking_criteria": {"within_tier_sort": ["urgency", "overdue"]},
+        "placement_context": "No screen-heavy work after 21:00.",
+        "schema_reference": {
+            "todoist_projects": [{"Project": "PHEP", "ID": "P1"}],
+            "todoist_filters": [{"Filter": "⭐ Today", "ID": "F1"}],
+        },
+        "day_presets": [{"Name": "Workday"}],
+        "template_blocks": {"Trinoor Hours": [{"Slot": "Morning"}]},
+        "overlap_permissions": "## Overlap Permissions\n\nNo overlap.",
+        "colors": [{"Token": "event", "Hex": "7DD3FC"}],
+        "micro_adventure_rotation": {"exclude_window_days": 10},
+    })
+    assert sections["Schedulable Defaults"][0]["Block"] == "minting"
+    assert sections["Ranking Criteria"]["within_tier_sort"] == ["urgency", "overdue"]
+    assert sections["Placement Context"] == {"_body": "No screen-heavy work after 21:00."}
+    assert sections["Schema Reference"]["Todoist Projects"][0]["ID"] == "P1"
+    assert sections["Schema Reference"]["Todoist Filters"][0]["ID"] == "F1"
+    assert sections["Day Presets"][0]["Name"] == "Workday"
+    assert sections["Template Blocks"]["Trinoor Hours"][0]["Slot"] == "Morning"
+    assert sections["Overlap Permissions"]["_body"].startswith("## Overlap Permissions")
+    assert sections["Color Palette"][0]["Token"] == "event"
+    assert sections["Micro-Adventures"]["Rotation"]["rotation.exclude_window_days"] == 10
+    assert sections["Micro-Adventures"]["Rotation"]["rotation"] == {"exclude_window_days": 10}
+
+
+def test_read_config_exposes_schema_reference_and_placement_context() -> None:
+    _repo({
+        "version": 1,
+        "placement_context": "Keep evenings light.",
+        "schema_reference": {
+            "todoist_projects": [{"Project": "PHEP", "ID": "ROTATED"}],
+            "todoist_filters": [{"Filter": "⭐ Today", "ID": "9999"}],
+        },
+    })
+    cfg = read_config().config
+    assert cfg.get_placement_context() == "Keep evenings light."
+    assert cfg.get_todoist_project_id("PHEP").value == "ROTATED"
+    assert cfg.get_todoist_filter_id("Today").value == "9999"
+    assert cfg.get_todoist_filter_id("Today").source == "config"
+
+
+def test_micro_adventure_section_feeds_pool_and_window() -> None:
+    import micro_adventure
+
+    _repo(REPO_DOC)
+    section = read_config().config.sections["Micro-Adventures"]
+    pool = micro_adventure.parse_pool(section)
+    assert [p.id for p in pool] == ["ma01"]
+    assert micro_adventure.exclude_window_days(section) == 10
+
+
+# ---------------------------------------------------------------------------
+# 5. The tracked repo file itself
+# ---------------------------------------------------------------------------
+
+REAL_REPO_CONFIG = Path(app_config.__file__).resolve().parent.parent / "config" / "tdtb.json"
+
+
+def test_tracked_repo_config_is_valid_and_complete() -> None:
+    document = app_config.read_document_file(REAL_REPO_CONFIG)
+    assert document is not None
+    for key in ("defaults", "schedulable_defaults", "presets", "anchored_blocks",
+                "ignore", "calendar", "colors", "micro_adventure_pool", "habits",
+                "ranking_criteria", "schema_reference", "day_presets", "template_blocks",
+                "overlap_permissions"):
+        assert key in document, key
+
+
+def test_tracked_repo_config_carries_no_machine_settings_or_secrets() -> None:
+    text = REAL_REPO_CONFIG.read_text(encoding="utf-8")
+    document = json.loads(text)
+    assert "sources" not in document
+    for forbidden in ("vault_enabled", "TDTB_TOKEN", "api_key", "password", "secret"):
+        assert forbidden not in text, forbidden
+
+
+def test_tracked_repo_config_reads_cleanly_through_read_config(
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    home = tmp_path / "home"
-    monkeypatch.setenv("TDTB_HOME", str(home))
-    vault = tmp_path / "vault"
-    _write_vault(vault, VAULT_FIXTURE)
-
-    out = migrate_vault_config.migrate(vault, out_path=tmp_path / "explicit.json")
-
-    assert out == tmp_path / "explicit.json"
-    assert out.exists()
-    assert not (home / "config.json").exists()
-    # Only the vault config existed before; the tool adds exactly one file.
-    assert sorted(p.name for p in vault.rglob("*") if p.is_file()) == ["tdtb-bridger.md"]
-
-
-# ---------------------------------------------------------------------------
-# Retired defaults must not be carried forward
-# ---------------------------------------------------------------------------
-
-def test_migration_drops_retired_defaults() -> None:
-    """``habits.source_directory`` named the Obsidian folder the habit read
-    used, and that read is gone (habit time rides the artifact). The vault
-    table still lists it, so every migration would keep copying a dead vault
-    path into config.json unless the translation drops it — which is exactly
-    what makes a reader think the vault is still a source."""
-    sections = {
-        "Defaults": {
-            "habits.source_directory": "00 - META/Habituals/",
-            "habits.fallback_minutes_per_habit": 4,
-            "habits.round_to_minutes": 15,
-        }
-    }
-    document = app_config.document_from_sections(sections)
-    assert document["habits"] == {
-        "fallback_minutes_per_habit": 4,
-        "round_to_minutes": 15,
-    }
-    assert "source_directory" not in json.dumps(document)
+    monkeypatch.setenv("TDTB_REPO_CONFIG", str(REAL_REPO_CONFIG))
+    result = read_config()
+    assert result.bootstrap_needed is False
+    assert result.validation is not None
+    assert result.validation.valid is True, result.validation
+    cfg = result.config
+    assert cfg.get_todoist_filter_id("Today").source == "config"
+    assert cfg.get_todoist_project_id("PHEP").source == "config"
+    assert cfg.get_ranking_criterion("within_tier_sort").source == "config"
+    assert cfg.get_micro_adventure_setting("rotation.exclude_window_days").source in ("config", "fallback")
+    assert cfg.sections["Overlap Permissions"]["_body"].startswith("## Overlap Permissions")
+    assert "habits.source_directory" not in cfg.sections["Defaults"]
 
 
-def test_retired_key_is_not_kept_even_alone() -> None:
-    """With only the retired key present there is no habits block at all,
-    rather than an empty one the operator would have to reason about."""
-    document = app_config.document_from_sections(
-        {"Defaults": {"habits.source_directory": "00 - META/Habituals/"}}
-    )
-    assert "habits" not in document
+def test_vault_note_is_not_a_config_source(tmp_path: Path) -> None:
+    note = tmp_path / "00 - META" / "Skill-Configs" / "tdtb-bridger.md"
+    note.parent.mkdir(parents=True)
+    note.write_text("## Defaults\n| Key | Value |\n|---|---|\n| eod | 1:00 AM |\n", encoding="utf-8")
+    result = read_config(tmp_path)
+    assert result.bootstrap_needed is True
+    assert result.config is None

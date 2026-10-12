@@ -34,6 +34,7 @@ import main as main_mod  # noqa: E402
 import orchestrate  # noqa: E402
 import runstate  # noqa: E402
 import tdtb_gather as gather  # noqa: E402
+from tests.config_markdown import read_config_note, write_config_note  # noqa: E402
 
 OUT = FRONTEND / "src" / "adapters" / "contract-fixtures"
 
@@ -123,7 +124,7 @@ def build_vault(root: Path) -> Path:
     v.mkdir()
     cfg = v / "00 - META/Skill-Configs/tdtb-bridger.md"
     cfg.parent.mkdir(parents=True, exist_ok=True)
-    cfg.write_text(CONFIG, encoding="utf-8")
+    write_config_note(cfg, CONFIG)  # installed as the repo config (V1)
     proj = v / "50 - Operations/Projects"
     proj.mkdir(parents=True)
     (proj / "Sample Project.md").write_text(
@@ -200,6 +201,11 @@ def dump(name: str, payload) -> None:
 
 def main() -> None:
     tmp = Path(tempfile.mkdtemp(prefix="tdtb-contract-"))
+    # V1: config is JSON (repo file + local override). Isolate both so a capture
+    # never reads the operator's real config; the markdown fixture above is
+    # installed as the repo config by write_config_note.
+    _os.environ["TDTB_HOME"] = str(tmp / "home")
+    _os.environ["TDTB_REPO_CONFIG"] = str(tmp / "repo-config" / "tdtb.json")
     vault = build_vault(tmp)
     app = main_mod.create_app(vault_root=vault)
     app.state.build_read_clients = lambda v, cfg: (todoist_fake(), store_fake())
@@ -256,27 +262,27 @@ def main() -> None:
     dump("capacity-preview-allotment-zero", client.get("/capacity-preview").json())
 
     cfg = vault / "00 - META/Skill-Configs/tdtb-bridger.md"
-    cfg.write_text(
-        cfg.read_text(encoding="utf-8").replace(
+    write_config_note(
+        cfg,
+        read_config_note(cfg).replace(
             "| Workday | workdays |  | 240 | |",
             "| Workday | workdays |  | 300 | |",
         ),
-        encoding="utf-8",
     )
     dump("plan-inputs-fingerprint-changed", client.get("/plan-inputs").json())
     dump("capacity-preview-fingerprint-changed", client.get("/capacity-preview").json())
 
-    cfg.write_text(
+    write_config_note(
+        cfg,
         "## Defaults\n| Key | Value |\n|---|---|\n| work_allotment_minutes | 180 |\n\n"
         "## Day Presets\n| Name | Days | Zones | Work Allotment (min) | Default |\n"
         "|---|---|---|---|---|\n| Workday | workdays |  | 240 | |\n",
-        encoding="utf-8",
     )
     dump("plan-inputs-malformed", client.get("/plan-inputs").json())
     dump("capacity-preview-malformed", client.get("/capacity-preview").json())
 
     # Restore the valid sanitized config before the remaining route fixtures.
-    cfg.write_text(CONFIG, encoding="utf-8")
+    write_config_note(cfg, CONFIG)  # installed as the repo config (V1)
 
     # Degraded sources: real calendar/todoist warning strings.
     app.state.build_read_clients = lambda v, cfg: (None, DeadStore())

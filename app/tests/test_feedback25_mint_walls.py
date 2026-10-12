@@ -32,6 +32,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "gather"))
 import tdtb_gather as gather  # noqa: E402
 
 from sequence import validate_sequence  # noqa: E402
+from tests.config_markdown import write_config_note  # noqa: E402
 
 
 CFG = {
@@ -299,7 +300,7 @@ class TestMintWallsHardValidation:
 def _write_cfg(vault: Path) -> None:
     cfg = vault / "00 - META/Skill-Configs/tdtb-bridger.md"
     cfg.parent.mkdir(parents=True, exist_ok=True)
-    cfg.write_text(
+    write_config_note(cfg,
         "## Defaults\n"
         "| Key | Value |\n|---|---|\n"
         "| eod | 11:59 PM |\n"

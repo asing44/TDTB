@@ -18,6 +18,7 @@ from fastapi.testclient import TestClient
 import artifact_source as art
 import main
 import producer_rules as pr
+from tests.config_markdown import write_config_note  # noqa: E402
 
 
 TODAY = date(2026, 7, 26)
@@ -74,7 +75,7 @@ def _write_artifact(habits, *, logical_day=LOGICAL_DAY, path=None) -> Path:
 def vault(tmp_path: Path) -> Path:
     root = tmp_path / "vault-root"
     (root / "00 - META" / "Skill-Configs").mkdir(parents=True)
-    (root / "00 - META" / "Skill-Configs" / "tdtb-bridger.md").write_text(
+    write_config_note(root / "00 - META" / "Skill-Configs" / "tdtb-bridger.md",
         CONFIG, encoding="utf-8")
     return root
 

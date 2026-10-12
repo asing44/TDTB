@@ -172,7 +172,7 @@ def _minutes_between(start: str | None, end: str | None) -> int:
 
 def _preset_type(name: str, config: dict[str, Any]) -> str | None:
     # Section key dual-handled (ISS-1): real vault config keys this section by
-    # its title-case heading "Presets" (config_reader.parse_config_markdown),
+    # its title-case heading "Presets" (the config sections),
     # the app fixtures use lowercase "presets". Title-case wins; lowercase is the
     # fixture fallback — mirrors the row-level Name/name dual-handling below.
     for preset in config.get("Presets") or config.get("presets") or []:

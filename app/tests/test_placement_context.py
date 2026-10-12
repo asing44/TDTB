@@ -14,6 +14,7 @@ import pytest
 
 import config_reader
 import judgment
+from tests.config_markdown import write_config_note  # noqa: E402
 
 
 CONTEXT_PROSE = (
@@ -57,9 +58,7 @@ last_updated: 2026-07-26
 
 
 def _write_config(tmp_path: Path, text: str) -> Path:
-    p = tmp_path / config_reader.CONFIG_REL_PATH
-    p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(text, encoding="utf-8")
+    write_config_note(tmp_path / "config-note.md", text)
     return tmp_path
 
 

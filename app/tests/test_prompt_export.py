@@ -37,6 +37,7 @@ import shadow  # noqa: E402
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "gather"))
 import tdtb_gather as gather  # noqa: E402
+from tests.config_markdown import write_config_note  # noqa: E402
 
 DAY = "2026-07-12"
 SECRET = "SYNTHETIC-SECRET-7c1f-nicety"
@@ -414,7 +415,7 @@ def vault(tmp_path) -> Path:
     (v / "30 - Daily" / f"{DAY}.md").write_text("# Journal\n", encoding="utf-8")
     cfg = v / "00 - META" / "Skill-Configs" / "tdtb-bridger.md"
     cfg.parent.mkdir(parents=True)
-    cfg.write_text(
+    write_config_note(cfg,
         "## Defaults\n| Key | Value |\n|---|---|\n| eod | 11:59 PM |\n\n"
         "## Template Blocks\n### Trinoor Hours\n"
         "| Slot | Start | End |\n|---|---|---|\n"

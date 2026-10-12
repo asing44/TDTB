@@ -17,8 +17,9 @@ Use these words as defined here; do not drift to synonyms they exclude.
   vault frontmatter tags); not automatically a Capacities tag identity.
   Anchor: `app/todoist_client.py` (`labels`),
   `app/gather/tdtb_gather.py` (`get_tags`).
-- **Ignore List** — the existing vault-configured exclusion list matching
-  Todoist ids, vault paths, or folded names. Anchor: `app/main.py`
+- **Ignore List** — the config-file exclusion list (`ignore` in
+  `config/tdtb.json`, local override on top) matching Todoist ids, vault paths,
+  or folded names. Anchor: `app/main.py`
   (`build_digest`'s `ignore` parameter), `app/config_reader.py`
   (`get_ignore_list`).
 - **tag exclusion list** — the app-managed, persistent, any-match tag policy

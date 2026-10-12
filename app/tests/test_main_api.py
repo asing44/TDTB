@@ -21,6 +21,7 @@ import shadow  # noqa: E402
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "gather"))
 import tdtb_gather as gather  # noqa: E402
+from tests.config_markdown import read_config_note, write_config_note  # noqa: E402
 
 
 MUTATING_ROUTES = ("/gather", "/digest", "/adjust", "/sequence", "/commit")
@@ -70,7 +71,7 @@ class TestRouteShape:
     def test_config_reads_config_file(self, client, vault):
         cfg = vault / "00 - META/Skill-Configs/tdtb-bridger.md"
         cfg.parent.mkdir(parents=True)
-        cfg.write_text(
+        write_config_note(cfg,
             "## Defaults\n| Key | Value |\n|---|---|\n| eod | 11:59 PM |\n",
             encoding="utf-8",
         )
@@ -405,7 +406,7 @@ class TestLiveCommit:
         (vault / "30 - Daily/2026-07-12.md").write_text("# Journal\n", encoding="utf-8")
         config_path = vault / "00 - META" / "Skill-Configs" / "tdtb-bridger.md"
         config_path.parent.mkdir(parents=True, exist_ok=True)
-        config_path.write_text(
+        write_config_note(config_path,
             "## Defaults\n"
             "| Key | Value |\n|---|---|\n| eod | 11:59 PM |\n\n"
             "## Template Blocks\n"
@@ -636,7 +637,7 @@ class TestCapacitiesMixedPlanCommit:
 def _write_min_config(vault: Path) -> None:
     cfg = vault / "00 - META/Skill-Configs/tdtb-bridger.md"
     cfg.parent.mkdir(parents=True, exist_ok=True)
-    cfg.write_text(
+    write_config_note(cfg,
         "## Defaults\n"
         "| Key | Value |\n|---|---|\n"
         "| eod | 11:59 PM |\n"
@@ -709,7 +710,7 @@ class TestDaySetup:
     def test_day_setup_syncs_mint_sessions_and_total(self, client, vault):
         cfg = vault / "00 - META/Skill-Configs/tdtb-bridger.md"
         cfg.parent.mkdir(parents=True, exist_ok=True)
-        cfg.write_text(
+        write_config_note(cfg,
             "## Defaults\n"
             "| Key | Value |\n|---|---|\n"
             "| eod | 11:59 PM |\n\n"
@@ -750,7 +751,7 @@ def _write_day_presets_config(vault: Path) -> None:
     against real preset resolution (T18b.2+)."""
     cfg = vault / "00 - META/Skill-Configs/tdtb-bridger.md"
     cfg.parent.mkdir(parents=True, exist_ok=True)
-    cfg.write_text(
+    write_config_note(cfg,
         "## Defaults\n"
         "| Key | Value |\n|---|---|\n"
         "| eod | 11:59 PM |\n"
@@ -1030,11 +1031,11 @@ class TestT18b5ReadContracts:
         before = client.get("/plan-inputs").json()["planning_config_fingerprint"]
 
         cfg = vault / "00 - META/Skill-Configs/tdtb-bridger.md"
-        text = cfg.read_text(encoding="utf-8").replace(
+        text = read_config_note(cfg).replace(
             "| Workday | workdays | Trinoor Hours | 240 |  |",
             "| Workday | workdays | Trinoor Hours | 300 |  |",
         )
-        cfg.write_text(text, encoding="utf-8")
+        write_config_note(cfg, text, encoding="utf-8")
 
         after = client.get("/plan-inputs").json()["planning_config_fingerprint"]
         assert after != before
@@ -1072,7 +1073,7 @@ class TestT18b5ReadContracts:
     def test_malformed_day_presets_are_reported_not_500(self, client, vault):
         cfg = vault / "00 - META/Skill-Configs/tdtb-bridger.md"
         cfg.parent.mkdir(parents=True, exist_ok=True)
-        cfg.write_text(
+        write_config_note(cfg,
             "## Defaults\n| Key | Value |\n|---|---|\n"
             "| work_allotment_minutes | 240 |\n\n"
             "## Day Presets\n"
@@ -2290,7 +2291,7 @@ def _seed_dm_vault(vault: Path) -> None:
     """Vault with one assigned preset-named note (Make, 2 blocks) + config."""
     cfg = vault / "00 - META/Skill-Configs/tdtb-bridger.md"
     cfg.parent.mkdir(parents=True, exist_ok=True)
-    cfg.write_text(_DM_CONFIG, encoding="utf-8")
+    write_config_note(cfg, _DM_CONFIG, encoding="utf-8")
     proj = vault / "50 - Operations" / "Projects"
     proj.mkdir(parents=True, exist_ok=True)
     (proj / "Make.md").write_text(

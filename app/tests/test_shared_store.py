@@ -26,6 +26,7 @@ import shadow  # noqa: E402
 
 sys.path.insert(0, str(APP_DIR / "gather"))
 import tdtb_gather as gather  # noqa: E402
+from tests.config_markdown import write_config_note  # noqa: E402
 
 
 class FakeCountingStore:
@@ -154,7 +155,7 @@ class TestWritableCalendarPrecondition:
         vault.mkdir()
         config_path = vault / "00 - META" / "Skill-Configs" / "tdtb-bridger.md"
         config_path.parent.mkdir(parents=True, exist_ok=True)
-        config_path.write_text(
+        write_config_note(config_path,
             "## Defaults\n"
             "| Key | Value |\n|---|---|\n| eod | 11:59 PM |\n\n"
             "## Template Blocks\n"
