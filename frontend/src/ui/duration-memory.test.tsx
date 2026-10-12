@@ -26,7 +26,7 @@ function memoryHarness() {
   return { store, controller, adapter, ui };
 }
 
-const PRESS = "Press"; // vault row, path 50 - Operations/Pursuits/Press.md
+const PRESS = "Press"; // todoist row, todoist:6fx00xPRESS
 
 function openEditor(h: ReturnType<typeof memoryHarness>) {
   h.store.dispatch({
@@ -98,7 +98,7 @@ describe("duration-memory MVP: explicit save in the exact editor", () => {
   it("save sends exactly ONE mutation, updates the model, and closes on success", async () => {
     const h = memoryHarness();
     const save = vi.spyOn(h.adapter, "saveDurationMemory").mockResolvedValue({
-      identity: "50 - Operations/Pursuits/Press.md",
+      identity: "todoist:6fx00xPRESS",
       minutes: 90,
       source: "remembered",
     });
@@ -108,7 +108,7 @@ describe("duration-memory MVP: explicit save in the exact editor", () => {
     fireEvent.input(minutes, { target: { value: "90" } });
     fireEvent.click(getByText("Save duration"));
     expect(save).toHaveBeenCalledTimes(1);
-    expect(save).toHaveBeenCalledWith("50 - Operations/Pursuits/Press.md", 90);
+    expect(save).toHaveBeenCalledWith("todoist:6fx00xPRESS", 90);
     await waitFor(() => {
       expect(h.store.getState().ui.editorItem).toBeNull();
     });
@@ -134,7 +134,7 @@ describe("duration-memory MVP: explicit save in the exact editor", () => {
     expect(saveBtn.disabled).toBe(true);
     expect(saveBtn.getAttribute("aria-busy")).toBe("true");
     expect(h.store.getState().durationMemory[PRESS]?.pending).toBe(true);
-    resolve({ identity: "50 - Operations/Pursuits/Press.md", minutes: 60, source: "remembered" });
+    resolve({ identity: "todoist:6fx00xPRESS", minutes: 60, source: "remembered" });
     await waitFor(() => {
       expect(h.store.getState().ui.editorItem).toBeNull();
     });
@@ -173,7 +173,7 @@ describe("duration-memory MVP: per-item reset in the exact editor", () => {
       ledger: h.store.getState().ledger!,
     });
     const reset = vi.spyOn(h.adapter, "resetDurationMemory").mockResolvedValue({
-      identity: "50 - Operations/Pursuits/Press.md",
+      identity: "todoist:6fx00xPRESS",
       minutes: 60,
       source: "default",
     });
@@ -181,7 +181,7 @@ describe("duration-memory MVP: per-item reset in the exact editor", () => {
     const { getByText } = h.ui(<BlockEditor />);
     fireEvent.click(getByText("Reset duration"));
     expect(reset).toHaveBeenCalledTimes(1);
-    expect(reset).toHaveBeenCalledWith("50 - Operations/Pursuits/Press.md");
+    expect(reset).toHaveBeenCalledWith("todoist:6fx00xPRESS");
     await waitFor(() => {
       expect(h.store.getState().ui.editorItem).toBeNull();
     });
@@ -232,7 +232,7 @@ describe("duration-memory MVP: per-item reset in the exact editor", () => {
       ledger: h.store.getState().ledger!,
     });
     vi.spyOn(h.adapter, "resetDurationMemory").mockResolvedValue({
-      identity: "50 - Operations/Pursuits/Press.md",
+      identity: "todoist:6fx00xPRESS",
       minutes: null,
       source: "default",
     });

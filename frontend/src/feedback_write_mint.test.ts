@@ -71,7 +71,7 @@ function fmt(min: number): string {
 
 function item(name: string, blocks: number): AssignedItem {
   return {
-    id: name, name, path: null, source: "vault", types: [], urgency: null,
+    id: name, name, path: null, source: "todoist", types: [], urgency: null,
     deadline: null, priorityScore: 0, blocks, durationLabel: "", todoistId: null,
     labels: [],
   };
@@ -115,9 +115,9 @@ export function mint300Capacity(): Capacity {
 }
 
 export const MINT300_ASSIGNED: AssignedItem[] = [
-  { id: "Deep Work", name: "Deep Work", path: null, source: "vault", types: ["project"], urgency: null, deadline: null, priorityScore: 80, blocks: 4, durationLabel: "2hr", todoistId: null },
-  { id: "Admin", name: "Admin", path: null, source: "vault", types: ["task"], urgency: null, deadline: null, priorityScore: 30, blocks: 2, durationLabel: "1hr", todoistId: null },
-  { id: "Review", name: "Review", path: null, source: "vault", types: ["task"], urgency: null, deadline: null, priorityScore: 50, blocks: 2, durationLabel: "1hr", todoistId: null },
+  { id: "Deep Work", name: "Deep Work", path: null, source: "todoist", types: ["project"], urgency: null, deadline: null, priorityScore: 80, blocks: 4, durationLabel: "2hr", todoistId: null },
+  { id: "Admin", name: "Admin", path: null, source: "todoist", types: ["task"], urgency: null, deadline: null, priorityScore: 30, blocks: 2, durationLabel: "1hr", todoistId: null },
+  { id: "Review", name: "Review", path: null, source: "todoist", types: ["task"], urgency: null, deadline: null, priorityScore: 50, blocks: 2, durationLabel: "1hr", todoistId: null },
 ];
 
 export function mint300Inputs(): PlanInputs {
@@ -161,7 +161,7 @@ export function mint300Inputs(): PlanInputs {
     },
     planningConfigFingerprint: "mint300-planning-v1",
     sourceWarnings: [],
-    sourceCounts: { vault: 3, todoist: 0, calendar: 0 },
+    sourceCounts: { todoist: 0, calendar: 0 },
     sourceHealth: "ok",
     microAdventure: {
       pick: { id: "ma01", idea: "Stretch", category: "health" },

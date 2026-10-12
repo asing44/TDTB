@@ -2,7 +2,7 @@
 
    Origin (2026-07-27): a 5:30 PM frame with 18 blocks of existing commitments
    in 12 blocks of room. The sequencer dropped nine rows, every one read "no
-   slot found", and none of them reached Todoist / vault / calendar — so none
+   slot found", and none of them reached Todoist / calendar — so none
    reached BusyCal. Overflow gives them real times from the frame anchor. */
 
 import { describe, expect, it } from "vitest";
@@ -16,7 +16,7 @@ function toMin(hhmm: string): number {
 
 function item(name: string, blocks: number): AssignedItem {
   return {
-    id: name, name, path: null, source: "vault", types: [], urgency: null,
+    id: name, name, path: null, source: "todoist", types: [], urgency: null,
     deadline: null, priorityScore: 0, blocks, durationLabel: "", todoistId: null,
     labels: [],
   };

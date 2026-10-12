@@ -22,7 +22,7 @@ function item(over: Partial<AssignedItem>): AssignedItem {
     id: "X",
     name: "X",
     path: null,
-    source: "vault",
+    source: "todoist",
     types: [],
     urgency: null,
     deadline: null,
@@ -43,7 +43,7 @@ function rowNamed(container: Element, name: string): HTMLElement {
 }
 
 describe("sourceChip: the provenance vocabulary", () => {
-  it("labels todoist, capacities, and vault rows", () => {
+  it("labels todoist and capacities rows; anything else is a neutral OTHER", () => {
     expect(sourceChip(item({ source: "todoist" }))).toEqual({
       key: "todoist",
       label: "TODOIST",
@@ -52,9 +52,9 @@ describe("sourceChip: the provenance vocabulary", () => {
       key: "capacities",
       label: "CAPACITIES",
     });
-    expect(sourceChip(item({ source: "vault" }))).toEqual({
-      key: "vault",
-      label: "VAULT",
+    expect(sourceChip(item({ source: "legacy" as never }))).toEqual({
+      key: "other",
+      label: "OTHER",
     });
   });
 });
@@ -71,9 +71,8 @@ describe("kindLabel: human KIND, never a raw structure id", () => {
     expect(kindLabel(row, null)).toBe("Capacities item");
   });
 
-  it("drops the redundant chip on todoist rows and keeps vault kinds", () => {
+  it("drops the redundant chip on todoist rows", () => {
     expect(kindLabel(item({ source: "todoist", types: ["todoist"] }), {})).toBeNull();
-    expect(kindLabel(item({ source: "vault", types: ["project"] }), {})).toBe("project");
   });
 });
 
@@ -85,7 +84,8 @@ describe("rendered rows carry the clearer labels", () => {
     expect(chips.length).toBeGreaterThan(0);
     const labels = chips.map((c) => c.textContent);
     expect(labels).toContain("TODOIST");
-    expect(labels).toContain("VAULT");
+    expect(labels).toContain("CAPACITIES");
+    expect(labels).not.toContain("OTHER");
     // A todoist row carries the source chip but no redundant KIND chip.
     const todoistRow = rowNamed(container, "Review AWS module 4");
     expect(todoistRow.querySelector(".qrow__src--todoist")).toBeTruthy();

@@ -109,13 +109,25 @@ describe("projectPlanInputs (contract: plan-inputs.json)", () => {
     expect(JSON.stringify(p)).not.toContain("suggested");
   });
 
-  it("maps vault rows with T4-resolved blocks", () => {
+  // The committed contract fixture is stale (generated before the vault
+  // source was retired) and still carries `source: "vault"` rows; V5b
+  // regenerates it. A legacy/unknown source projects as a neutral Todoist-like
+  // row: no path, no todoistId, no identity, so no verb can address it.
+  it("maps legacy source:'vault' rows to the neutral todoist fallback", () => {
     const press = p.assigned.find((i) => i.name === "Sample Press")!;
-    expect(press.source).toBe("vault");
+    expect(press.source).toBe("todoist");
     expect(press.blocks).toBe(3); // press duration_min 75 → 3 blocks
     expect(press.durationLabel).toBe("1hr 30min");
-    expect(press.path).toBe("50 - Operations/Projects/Sample Press.md");
+    expect(press.path).toBeNull();
     expect(press.todoistId).toBeNull();
+    expect(press.identity).toBeNull();
+  });
+
+  it("maps a row with no source at all to the same neutral fallback", () => {
+    const item = projectAssigned({ name: "No source", path: "anything.md", blocks: 1 });
+    expect(item.source).toBe("todoist");
+    expect(item.path).toBeNull();
+    expect(item.identity).toBeNull();
   });
 
   it("preserves sequencing metadata on assigned rows", () => {
@@ -129,11 +141,11 @@ describe("projectPlanInputs (contract: plan-inputs.json)", () => {
   });
 
   it("carries todoist_id for todoist rows (copy-prompt update-by-id contract)", () => {
-    const t = p.assigned.find((i) => i.source === "todoist")!;
+    const t = p.assigned.find((i) => i.todoistId)!;
     expect(t.todoistId).toBe("9001");
   });
 
-  it("preserves a namespaced Capacities identity without treating it as vault", () => {
+  it("preserves a namespaced Capacities identity without treating it as a path identity", () => {
     const item = projectAssigned({
       name: "Ship project",
       source: "capacities",
@@ -233,7 +245,9 @@ describe("projectPlanInputs (contract: plan-inputs.json)", () => {
 
   it("valid date + source counts + health", () => {
     expect(p.validDate).toMatch(/^\d{4}-\d{2}-\d{2}$/);
-    expect(p.sourceCounts).toEqual({ vault: 3, todoist: 1, calendar: 1 });
+    // The stale fixture still carries source_counts.vault; it is ignored.
+    expect(p.sourceCounts).toEqual({ todoist: 1, calendar: 1 });
+    expect("vault" in p.sourceCounts).toBe(false);
     expect(p.sourceHealth).toBe("ok");
     expect(p.daySetup.confirmed).toBe(false); // no runstate saved yet
   });
@@ -281,9 +295,9 @@ describe("projectPlanInputs with saved Day Setup (plan-inputs-with-setup.json)",
 });
 
 describe("P6-01 grouping metadata projection", () => {
-  it("projects vault tags without losing labels, relatesTo, or source identity", () => {
+  it("projects capacities tags without losing labels, relatesTo, or source identity", () => {
     const digest = (planInputs as any).digest;
-    const vaultPath = "50 - Operations/Projects/Grouped parent.md";
+    const parentIdentity = "capacities:sp:struct-a:grouped-parent";
     const projected = projectPlanInputs({
       ...(planInputs as any),
       digest: {
@@ -292,8 +306,9 @@ describe("P6-01 grouping metadata projection", () => {
           {
             ...digest.assigned[0],
             name: "Grouped parent",
-            path: vaultPath,
-            source: "vault",
+            path: "capacities://sp/grouped-parent",
+            source: "capacities",
+            identity: parentIdentity,
             tags: ["systems", "household"],
             relates_to: "[[Professional Development]]",
           },
@@ -309,16 +324,16 @@ describe("P6-01 grouping metadata projection", () => {
       },
     });
 
-    const vault = projected.assigned[0] as typeof projected.assigned[number] & {
+    const parent = projected.assigned[0] as typeof projected.assigned[number] & {
       tags?: string[];
     };
     const todoist = projected.assigned[1];
     // P6-02 must add this additive field; existing relationship, label, and
     // identity fields remain part of the established AssignedItem contract.
-    expect(vault.tags).toEqual(["systems", "household"]);
-    expect(vault.labels).toEqual([]);
-    expect(vault.relatesTo).toBe("[[Professional Development]]");
-    expect(vault.identity).toBe(vaultPath);
+    expect(parent.tags).toEqual(["systems", "household"]);
+    expect(parent.labels).toEqual([]);
+    expect(parent.relatesTo).toBe("[[Professional Development]]");
+    expect(parent.identity).toBe(parentIdentity);
     expect(todoist.labels).toEqual(["existing-label"]);
     expect(todoist.identity).toBe("todoist:grouped-task");
   });
@@ -856,6 +871,7 @@ describe("projectShadow (shadow-diff.json)", () => {
   it("flattens manifest entries with classification", () => {
     expect(d.entries.length).toBeGreaterThan(0);
     for (const e of d.entries) {
+      // "vault" entries on the stale fixture are tolerated, not required.
       expect(["todoist", "vault", "calendar"]).toContain(e.system);
       expect(e.name.length).toBeGreaterThan(0);
       expect(
@@ -1009,7 +1025,7 @@ describe("model → wire body builders", () => {
     const raw = [
       {
         name: "Make",
-        path: "50 - Operations/Projects/Make.md",
+        path: "todoist://legacy",
         source: "capacities",
         identity: "capacities:sp:struct-a:obj-1",
         todoist_id: "td-1",
@@ -1098,15 +1114,16 @@ describe("duration-memory wire projection (MVP)", () => {
       todoist_id: "9001", blocks: 3,
     });
     expect(todoist.identity).toBe("todoist:9001");
-    const vault = projectAssigned({
-      name: "Make", path: "50 - Operations/Projects/Make.md", blocks: 2,
+    const cap = projectAssigned({
+      name: "Make", source: "capacities", identity: "capacities:sp:struct-a:obj-1",
+      path: "capacities://sp/obj-1", blocks: 2,
     });
-    expect(vault.identity).toBe("50 - Operations/Projects/Make.md");
+    expect(cap.identity).toBe("capacities:sp:struct-a:obj-1");
   });
 
   it("projectAssigned maps duration_source to a remembered/source label", () => {
     const remembered = projectAssigned({
-      name: "Press", path: "50 - Operations/Pursuits/Press.md",
+      name: "Press", path: "todoist://legacy",
       duration_source: "remembered", blocks: 4,
     });
     expect(remembered.durationSource).toBe("remembered");
@@ -1124,11 +1141,11 @@ describe("duration-memory wire projection (MVP)", () => {
 
   it("absent or unknown duration_source projects as default (source-resolved)", () => {
     const row = projectAssigned({
-      name: "Make", path: "50 - Operations/Projects/Make.md", blocks: 2,
+      name: "Make", path: "todoist://legacy", blocks: 2,
     });
     expect(row.durationSource).toBe("default");
     const weird = projectAssigned({
-      name: "Make", path: "50 - Operations/Projects/Make.md",
+      name: "Make", path: "todoist://legacy",
       duration_source: "legacy-label", blocks: 2,
     });
     expect(weird.durationSource).toBe("default");
@@ -1136,8 +1153,8 @@ describe("duration-memory wire projection (MVP)", () => {
 
   it("itemIdentity mirrors the backend canonical identity rule", () => {
     expect(itemIdentity({ source: "todoist", todoistId: "9001", path: "todoist://9001" })).toBe("todoist:9001");
-    expect(itemIdentity({ source: "vault", path: "50 - Operations/Pursuits/Press.md" })).toBe("50 - Operations/Pursuits/Press.md");
-    expect(itemIdentity({ source: "vault", path: null })).toBeNull();
+    expect(itemIdentity({ source: "capacities", identity: "capacities:sp:s:o" })).toBe("capacities:sp:s:o");
+    expect(itemIdentity({ source: "capacities", path: null })).toBeNull();
     expect(itemIdentity({ source: "todoist", todoistId: null, path: null })).toBeNull();
   });
 
@@ -1154,10 +1171,10 @@ describe("duration-memory wire projection (MVP)", () => {
 
   it("save projection preserves identity, minutes, and forces remembered", () => {
     const r = projectDurationMemorySave({
-      identity: "vault:50 - Operations/Pursuits/Press.md", minutes: 90,
+      identity: "todoist:9001", minutes: 90,
     });
     expect(r).toEqual({
-      identity: "vault:50 - Operations/Pursuits/Press.md",
+      identity: "todoist:9001",
       minutes: 90,
       source: "remembered",
     });
@@ -1170,12 +1187,12 @@ describe("duration-memory wire projection (MVP)", () => {
     });
     expect(r).toEqual({ identity: "todoist:9001", minutes: 30, source: "default" });
     const rememberedFallback = projectDurationMemoryReset({
-      identity: "vault:x", duration_minutes: 45, duration_source: "native",
+      identity: "todoist:x", duration_minutes: 45, duration_source: "native",
     });
     expect(rememberedFallback.source).toBe("native");
     // Tolerant of the save-style `minutes` field too.
     const legacy = projectDurationMemoryReset({
-      identity: "vault:x", minutes: 60, duration_source: "default",
+      identity: "todoist:x", minutes: 60, duration_source: "default",
     });
     expect(legacy.minutes).toBe(60);
   });
@@ -1189,7 +1206,7 @@ describe("duration-memory wire projection (MVP)", () => {
     });
     expect(r).toEqual({ identity: "todoist:9001", minutes: null, source: "default" });
     const absent = projectDurationMemoryReset({
-      ok: true, identity: "vault:x", removed: true, found: false,
+      ok: true, identity: "todoist:x", removed: true, found: false,
     });
     expect(absent.minutes).toBeNull();
   });
@@ -1198,7 +1215,7 @@ describe("duration-memory wire projection (MVP)", () => {
   // label renders 45min, never a 30-minute-grid-rounded "1hr".
   it("projectAssigned preserves exact remembered minutes in the label", () => {
     const exact = projectAssigned({
-      name: "Press", path: "50 - Operations/Pursuits/Press.md",
+      name: "Press", path: "todoist://legacy",
       duration_source: "remembered", blocks: 1.5, duration_minutes: 45,
     });
     expect(exact.blocks).toBe(1.5);
@@ -1206,7 +1223,7 @@ describe("duration-memory wire projection (MVP)", () => {
     // Defensive: an exact duration_minutes always wins over a rounded blocks
     // value for the user-visible label.
     const roundedBlocks = projectAssigned({
-      name: "Press", path: "50 - Operations/Pursuits/Press.md",
+      name: "Press", path: "todoist://legacy",
       duration_source: "remembered", blocks: 2, duration_minutes: 45,
     });
     expect(roundedBlocks.blocks).toBe(2);

@@ -244,9 +244,9 @@ describe("Queue", () => {
     const { ui, store } = makeHarness("ready");
     const inputs = store.getState().inputs!;
     const base = inputs.assigned[0];
-    const parent = { ...base, id: "Zeta parent", name: "Zeta parent", identity: "vault:zeta-parent", tags: ["systems"], relatesTo: null };
-    const child = { ...base, id: "Alpha child", name: "Alpha child", identity: "vault:alpha-child", tags: ["systems"], relatesTo: "[[Zeta parent]]" };
-    const sibling = { ...base, id: "Systems sibling", name: "Systems sibling", identity: "vault:systems-sibling", tags: ["systems"], relatesTo: null };
+    const parent = { ...base, id: "Zeta parent", name: "Zeta parent", identity: "todoist:zeta-parent", tags: ["systems"], relatesTo: null };
+    const child = { ...base, id: "Alpha child", name: "Alpha child", identity: "todoist:alpha-child", tags: ["systems"], relatesTo: "[[Zeta parent]]" };
+    const sibling = { ...base, id: "Systems sibling", name: "Systems sibling", identity: "todoist:systems-sibling", tags: ["systems"], relatesTo: null };
     store.dispatch({ type: "INPUTS_LOADED", inputs: { ...inputs, assigned: [child, sibling, parent] }, ledger: store.getState().ledger! });
 
     const { container, getByText } = ui(<Queue />);
@@ -1056,20 +1056,20 @@ describe("T25 recurring duration shaping", () => {
     const { container } = ui(<Queue />);
     const rows = Array.from(container.querySelectorAll(".qrow__source")) as HTMLElement[];
     // U11 labeling (2026-10-10): provenance LEADS the line as a coloured
-    // source chip (TODOIST / CAPACITIES / VAULT), then the human KIND, then
+    // source chip (TODOIST / CAPACITIES), then the human KIND, then
     // plain meta. The raw uppercase TASK/ROOTTASK/UUID badge is gone.
     expect(rows.length).toBeGreaterThan(0);
     for (const el of rows) {
       const chip = el.querySelector(".qrow__src");
       expect(chip).toBeTruthy();
       expect((chip as HTMLElement).textContent).toMatch(
-        /^(TODOIST|CAPACITIES|CALENDAR|VAULT)$/,
+        /^(TODOIST|CAPACITIES|CALENDAR)$/,
       );
     }
     // The source itself is still named on the line.
-    expect(rows.map((el) => el.textContent).join(" ")).toMatch(/TODOIST|VAULT/);
+    expect(rows.map((el) => el.textContent).join(" ")).toMatch(/TODOIST|CAPACITIES/);
     const kinds = rows.map((el) => el.querySelector(".qrow__type")?.textContent);
-    expect(new Set(kinds.filter(Boolean)).size).toBeGreaterThan(1);
+    expect(new Set(kinds.filter(Boolean)).size).toBeGreaterThan(0);
   });
 
   function withRecurring(harness: ReturnType<typeof makeHarness>) {
@@ -1204,9 +1204,9 @@ describe("T26 queue legibility", () => {
       {
         id: "Institute WALL·E-OS timeblock everyday again",
         name: "Institute WALL·E-OS timeblock everyday again",
-        path: "50 - Operations/Tasks/Institute.md", source: "vault",
-        types: ["task"], urgency: "['4-crit']", deadline: null,
-        priorityScore: 20, blocks: 1, durationLabel: "30min", todoistId: null,
+        path: null, source: "todoist",
+        types: ["task"], urgency: "4", deadline: null,
+        priorityScore: 20, blocks: 1, durationLabel: "30min", todoistId: "t8",
       },
       {
         id: "Press overdue", name: "Press overdue", path: null,
@@ -1221,13 +1221,11 @@ describe("T26 queue legibility", () => {
     });
   }
 
-  it("stringified vault urgency renders as a clean tier chip, never the literal", () => {
+  it("a top-priority todoist row renders a crit tier chip, never the raw int", () => {
     const h = makeHarness("ready");
     withLegibilityRows(h);
-    const { container, queryByText, getAllByText } = h.ui(<Queue />);
-    expect(queryByText("['4-crit']")).toBeNull();
-    expect(getAllByText("4-crit").length).toBeGreaterThanOrEqual(1);
-    expect(container.querySelector(".badge--ucrit")).toBeTruthy();
+    const { container } = h.ui(<Queue />);
+    expect(container.querySelector(".qrow__prio--crit")).toBeTruthy();
   });
 
   it("todoist priority int renders as a p-level", () => {
@@ -1257,7 +1255,7 @@ describe("P6-01 grouping relationship fixtures", () => {
       ...base,
       id: "Zeta parent",
       name: "Zeta parent",
-      path: "50 - Operations/Projects/Zeta parent.md",
+      path: null,
       urgency: null,
       deadline: null,
       blocks: 2,
@@ -1268,7 +1266,7 @@ describe("P6-01 grouping relationship fixtures", () => {
       ...base,
       id: "Alpha child",
       name: "Alpha child",
-      path: "50 - Operations/Projects/Alpha child.md",
+      path: null,
       urgency: null,
       deadline: null,
       blocks: 1,

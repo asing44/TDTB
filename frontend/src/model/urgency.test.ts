@@ -5,7 +5,7 @@ import type { AssignedItem } from "./types";
 
 function item(over: Partial<AssignedItem>): AssignedItem {
   return {
-    id: "X", name: "X", path: null, source: "vault", types: [],
+    id: "X", name: "X", path: null, source: "todoist", types: [],
     urgency: null, deadline: null, priorityScore: 0, blocks: 1,
     durationLabel: "30min", todoistId: null,
     ...over,
@@ -13,15 +13,9 @@ function item(over: Partial<AssignedItem>): AssignedItem {
 }
 
 describe("normalizeUrgency", () => {
-  it("unwraps the stringified vault list literal", () => {
-    expect(normalizeUrgency(item({ urgency: "['4-crit']" }))).toEqual({
-      text: "4-crit", tier: "crit",
-    });
-  });
-
-  it("passes clean vault strings through with a tier", () => {
-    expect(normalizeUrgency(item({ urgency: "3-high" }))).toEqual({
-      text: "3-high", tier: "high",
+  it("a legacy tiered literal on a non-todoist row shows verbatim, untiered", () => {
+    expect(normalizeUrgency(item({ source: "capacities", urgency: "['4-crit']" }))).toEqual({
+      text: "['4-crit']", tier: null,
     });
   });
 

@@ -14,7 +14,7 @@ function item(over: Partial<AssignedItem>): AssignedItem {
     id: over.name ?? "x",
     name: over.name ?? "x",
     path: null,
-    source: "vault",
+    source: "todoist",
     types: [],
     urgency: null,
     deadline: null,
@@ -27,26 +27,20 @@ function item(over: Partial<AssignedItem>): AssignedItem {
 }
 
 describe("bandOf", () => {
-  it("routes vault tiers to bands", () => {
-    expect(bandOf(item({ urgency: "4-crit" }))).toBe("crit");
-    expect(bandOf(item({ urgency: "3-high" }))).toBe("high");
-    expect(bandOf(item({ urgency: "2-med" }))).toBe("else");
-    expect(bandOf(item({ urgency: "1-low" }))).toBe("else");
+  it("routes todoist priorities to bands (API int, 4 = highest)", () => {
+    expect(bandOf(item({ urgency: "4" }))).toBe("crit");
+    expect(bandOf(item({ urgency: "3" }))).toBe("high");
+    expect(bandOf(item({ urgency: "2" }))).toBe("else");
+    expect(bandOf(item({ urgency: "1" }))).toBe("else");
     expect(bandOf(item({ urgency: null }))).toBe("else");
   });
 
-  it("routes todoist priorities (API int, 4 = p1 highest)", () => {
-    expect(bandOf(item({ source: "todoist", urgency: "4" }))).toBe("crit");
-    expect(bandOf(item({ source: "todoist", urgency: "3" }))).toBe("high");
-    expect(bandOf(item({ source: "todoist", urgency: "2" }))).toBe("else");
-  });
-
-  it("handles the stringified-list vault shape", () => {
-    expect(bandOf(item({ urgency: "['4-crit']" }))).toBe("crit");
+  it("a Capacities row (no urgency scale) lands in the default band", () => {
+    expect(bandOf(item({ source: "capacities", urgency: "4" }))).toBe("else");
   });
 
   it("stripe colour follows tier, untiered falls to low", () => {
-    expect(stripeColor(item({ urgency: "4-crit" }))).toBe("var(--c-overflow)");
+    expect(stripeColor(item({ urgency: "4" }))).toBe("var(--c-overflow)");
     expect(stripeColor(item({ urgency: null }))).toBe("var(--t-border)");
   });
 
@@ -109,11 +103,11 @@ describe("trackFor", () => {
 
 describe("trimPlan", () => {
   const rows = [
-    { id: "c1", item: item({ name: "c1", urgency: "4-crit" }), blocks: 3 },
-    { id: "h1", item: item({ name: "h1", urgency: "3-high" }), blocks: 3 },
-    { id: "m1", item: item({ name: "m1", urgency: "2-med" }), blocks: 2 },
-    { id: "l1", item: item({ name: "l1", urgency: "1-low" }), blocks: 2 },
-    { id: "l2", item: item({ name: "l2", urgency: "1-low" }), blocks: 2 },
+    { id: "c1", item: item({ name: "c1", urgency: "4" }), blocks: 3 },
+    { id: "h1", item: item({ name: "h1", urgency: "3" }), blocks: 3 },
+    { id: "m1", item: item({ name: "m1", urgency: "2" }), blocks: 2 },
+    { id: "l1", item: item({ name: "l1", urgency: "1" }), blocks: 2 },
+    { id: "l2", item: item({ name: "l2", urgency: "1" }), blocks: 2 },
   ];
 
   it("no-op when within budget", () => {
@@ -131,7 +125,7 @@ describe("trimPlan", () => {
   it("keeps dropping across candidates, skipping all-day rows", () => {
     const withAllDay = [
       ...rows.slice(0, 4),
-      { id: "bg", item: item({ name: "bg", urgency: "1-low" }), blocks: 0 },
+      { id: "bg", item: item({ name: "bg", urgency: "1" }), blocks: 0 },
       rows[4],
     ];
     const p = trimPlan(withAllDay, 8);

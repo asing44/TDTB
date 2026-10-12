@@ -666,14 +666,14 @@ describe("T12 qualification: token rotation + error detail", () => {
 describe("duration-memory mutations (MVP)", () => {
   it("saveDurationMemory sends ONE token-guarded POST and projects the result", async () => {
     route("/duration-memory/save", {
-      identity: "vault:50 - Operations/Pursuits/Press.md",
+      identity: "todoist:9001",
       minutes: 90,
       duration_source: "remembered",
     });
     const a = new ApiAdapter();
-    const r = await a.saveDurationMemory("vault:50 - Operations/Pursuits/Press.md", 90);
+    const r = await a.saveDurationMemory("todoist:9001", 90);
     expect(r).toEqual({
-      identity: "vault:50 - Operations/Pursuits/Press.md",
+      identity: "todoist:9001",
       minutes: 90,
       source: "remembered",
     });
@@ -681,7 +681,7 @@ describe("duration-memory mutations (MVP)", () => {
     expect(post?.init?.method).toBe("POST");
     expect((post!.init!.headers as any)["X-TDTB-Token"]).toBe("tok-123");
     expect(JSON.parse(post!.init!.body as string)).toEqual({
-      identity: "vault:50 - Operations/Pursuits/Press.md",
+      identity: "todoist:9001",
       minutes: 90,
     });
     // exactly one POST, and no billed/ledger/plan-inputs traffic
@@ -710,7 +710,7 @@ describe("duration-memory mutations (MVP)", () => {
     route("/duration-memory/save", { detail: "duration must be divisible by 5" }, 422);
     const a = new ApiAdapter();
     const err = await a
-      .saveDurationMemory("vault:x", 7)
+      .saveDurationMemory("todoist:x", 7)
       .catch((e) => e);
     expect(err).toBeInstanceOf(ApiError);
     expect(err.status).toBe(422);

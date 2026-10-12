@@ -99,7 +99,7 @@ function openConnections(
   const inputs = h.store.getState().inputs!;
   h.store.dispatch({
     type: "INPUTS_LOADED",
-    inputs: { ...inputs, assigned: [...inputs.assigned, ...rows] },
+    inputs: { ...inputs, assigned: [...inputs.assigned.filter((r) => r.source !== "capacities"), ...rows] },
     ledger: h.store.getState().ledger!,
   });
   vi.spyOn(h.controller, "loadCapacitiesSettings").mockResolvedValue(cap);

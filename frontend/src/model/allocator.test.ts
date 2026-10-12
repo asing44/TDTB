@@ -19,7 +19,7 @@ const TODAY = "2026-07-26";
 
 function item(name: string, over: Partial<AssignedItem> = {}): AssignedItem {
   return {
-    id: name, name, path: `p/${name}.md`, source: "vault", types: [],
+    id: name, name, path: `p/${name}.md`, source: "todoist", types: [],
     urgency: null, deadline: null, priorityScore: 0, blocks: 1,
     durationLabel: "30min", todoistId: null, ...over,
   };
@@ -36,32 +36,26 @@ function cap(over: Partial<Capacity> = {}): Capacity {
 describe("orderByImportance", () => {
   it("higher urgency first — names chosen so alphabetical order OPPOSES it", () => {
     const rows = orderByImportance(
-      [item("aaa", { urgency: "2-med" }), item("zzz", { urgency: "4-crit" })],
+      [item("aaa", { urgency: "2" }), item("zzz", { urgency: "4" })],
       TODAY,
     );
     expect(rows.map((r) => r.name)).toEqual(["zzz", "aaa"]);
   });
 
-  it("ranks every vault tier, not just the extremes", () => {
+  it("ranks every todoist tier, not just the extremes", () => {
     const rows = orderByImportance([
-      item("d", { urgency: "1-low" }),
-      item("c", { urgency: "2-med" }),
-      item("b", { urgency: "3-high" }),
-      item("a", { urgency: "4-crit" }),
+      item("d", { urgency: "1" }),
+      item("c", { urgency: "2" }),
+      item("b", { urgency: "3" }),
+      item("a", { urgency: "4" }),
     ], TODAY);
     expect(rows.map((r) => r.name)).toEqual(["a", "b", "c", "d"]);
   });
 
-  it("unwraps the stringified-list urgency shape gather emits", () => {
-    const rows = orderByImportance(
-      [item("aaa"), item("zzz", { urgency: "['4-crit']" })], TODAY);
-    expect(rows[0].name).toBe("zzz");
-  });
-
-  it("ranks a todoist priority row against a vault row", () => {
+  it("ranks a todoist priority row against an untiered Capacities row", () => {
     const rows = orderByImportance([
-      item("aaa", { urgency: "3-high" }),
-      item("zzz", { source: "todoist", urgency: "4" }), // Todoist 4 = p1 = crit
+      item("aaa", { source: "capacities" }),
+      item("zzz", { urgency: "4" }), // Todoist 4 = p1 = crit
     ], TODAY);
     expect(rows[0].name).toBe("zzz");
   });
@@ -96,7 +90,7 @@ describe("orderByImportance", () => {
   });
 
   it("is stable under input shuffle", () => {
-    const set = [item("a"), item("b", { urgency: "4-crit" }), item("c")];
+    const set = [item("a"), item("b", { urgency: "4" }), item("c")];
     const first = orderByImportance(set, TODAY).map((r) => r.name);
     const second = orderByImportance([...set].reverse(), TODAY).map((r) => r.name);
     expect(first).toEqual(second);
@@ -113,7 +107,7 @@ describe("orderByImportance", () => {
   });
 
   it("importanceKey ranks urgency into a comparable number", () => {
-    expect(importanceKey(item("a", { urgency: "4-crit" }), TODAY)[0]).toBe(-4);
+    expect(importanceKey(item("a", { urgency: "4" }), TODAY)[0]).toBe(-4);
     expect(importanceKey(item("b"), TODAY)[0]).toBeCloseTo(0);
   });
 });

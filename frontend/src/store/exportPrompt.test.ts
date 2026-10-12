@@ -173,11 +173,11 @@ describe("buildDayPrompt (manual LLM fallback)", () => {
     expect(p).toContain("UPDATE that task by its id");
     expect(p).toContain("Never create a duplicate");
     expect(p).toMatch(/recurring.*reschedule with.*full datetime/s);
-    expect(p).toContain("create them in my PHEP project, not the Inbox");
+    expect(p).not.toMatch(/vault/i);
   });
 
   /* SUPERSEDES the old "placed work AND fixed blocks" contract (2026-07-27,
-     Adam: vault items route to the PHEP Todoist project; only daily anchors
+     Adam: placed work routes to Todoist; only daily anchors
      belong on ⬜ Blocks). The old wording asked an external scheduler to do
      what the app's own manifest never does — work rows are Step A Todoist
      writes — and following it put eight work blocks on the calendar. */
@@ -551,7 +551,8 @@ describe("S1 external scheduling handoff", () => {
         ]);
       }),
     );
-    expect(p).toContain("(vault · 50 - Operations/Projects/Magic Mirror.md)");
+    expect(p).toContain("(capacities · capacities:fixture-space:custom-project:note-processing)");
+    expect(p).not.toMatch(/vault/i);
     expect(p).toContain("(capacities · capacities:space-1:structure-2:object-3)");
     expect(p).toContain("(todoist · unidentified)");
     expect(p).toMatch(/no write route from this prompt/i);

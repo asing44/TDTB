@@ -428,9 +428,10 @@ describe("priority labels on a row", () => {
     expect(texts.filter((t) => t === "p1")).toHaveLength(1);
   });
 
-  it("keeps the badge when its text adds something beyond the p-level", () => {
+  it("a Todoist p1 row carries no duplicate urgency badge", () => {
     const r = makeHarness("ready").ui(<Queue />);
     const due = rowNamed(r.container, "Rowe's T-shirt Redesign 2026").querySelector(".qrow__due");
-    expect(due?.querySelector(".badge")?.textContent).toBe("4-crit");
+    expect(due?.querySelector(".qrow__prio--crit")?.textContent).toBe("p1");
+    expect(due?.querySelector(".badge")).toBeNull();
   });
 });

@@ -40,7 +40,7 @@ describe("FEEDBACK-18 — Preview writes and Results have distinct headings, sta
     const status = r.container.querySelector(".drawer-status--preview") as HTMLElement;
     expect(status).toBeTruthy();
     expect(status.textContent).toContain("Preview current");
-    expect(status.textContent).toContain("6 exact writes staged");
+    expect(status.textContent).toContain("5 exact writes staged");
     expect(status.textContent).toContain("nothing written yet");
 
     // Totals have their own scan heading.
@@ -85,7 +85,7 @@ describe("FEEDBACK-18 — Preview writes and Results have distinct headings, sta
         surfaces: [
           { system: "todoist", status: "ok", detail: "2 scheduled" },
           { system: "calendar", status: "failed", detail: "BusyCal write refused" },
-          { system: "vault", status: "skipped", detail: "aborted after calendar failure" },
+          { system: "readback", status: "skipped", detail: "aborted after calendar failure" },
         ],
         verifyFailures: ["calendar: 3 expected events, 0 found"],
       },
@@ -118,7 +118,7 @@ describe("FEEDBACK-18 — dock entry point is statusful in every applicable stat
     const r = h.ui(<ActionDock />);
     const results = r.getByRole("button", { name: /^Results/ });
     expect(results.className).toContain("btn--primary");
-    expect(results.textContent).toContain("6 writes ready");
+    expect(results.textContent).toContain("5 writes ready");
   });
 
   it("review state Results says the preview is not built yet", () => {

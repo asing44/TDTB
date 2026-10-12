@@ -28,7 +28,7 @@ function inputs(validDate: string): PlanInputs {
   return {
     validDate,
     assigned: [
-      { id: "A", name: "A", path: "p/A.md", source: "vault", types: [], urgency: null, deadline: null, priorityScore: 1, blocks: 2, durationLabel: "1hr", todoistId: null },
+      { id: "A", name: "A", path: "p/A.md", source: "todoist", types: [], urgency: null, deadline: null, priorityScore: 1, blocks: 2, durationLabel: "1hr", todoistId: null },
     ],
     unassignedCandidates: [],
     staleAssigned: [],
@@ -42,7 +42,7 @@ function inputs(validDate: string): PlanInputs {
     daySemantics: { availablePresets: [], selectedPreset: null, resolutionSource: "", enabledZones: [], effectiveAllotmentMinutes: 0, defaultAllotmentMinutes: 0, mintEnabled: false, warnings: [], errors: [], overlapPermissionsRaw: "" },
     planningConfigFingerprint: "planning-v1",
     sourceWarnings: [],
-    sourceCounts: { vault: 1, todoist: 0, calendar: 0 },
+    sourceCounts: { todoist: 0, calendar: 0 },
     sourceHealth: "ok",
     microAdventure: { pick: null, source: "auto", pool: [], streak: 0, pendingConfirm: null },
   };
