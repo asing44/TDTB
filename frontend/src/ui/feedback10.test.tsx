@@ -341,8 +341,12 @@ describe("FEEDBACK-10 icon actions expose hover/focus tooltips (A12)", () => {
     ) as HTMLElement;
     expect(container.querySelector('[role="tooltip"]')).toBeNull();
     fireEvent.mouseEnter(btn);
-    expect(container.querySelector('[role="tooltip"]')?.textContent).toBe(
+    expect(container.querySelector('[role="tooltip"]')?.textContent).toContain(
       "Exclude today",
+    );
+    // The bubble also says what the button does.
+    expect(container.querySelector('[role="tooltip"]')?.textContent).toContain(
+      "source unchanged",
     );
     fireEvent.mouseLeave(btn);
     expect(container.querySelector('[role="tooltip"]')).toBeNull();
@@ -355,7 +359,7 @@ describe("FEEDBACK-10 icon actions expose hover/focus tooltips (A12)", () => {
       'button[aria-label="Exclude Press today"]',
     ) as HTMLElement;
     fireEvent.focus(btn);
-    expect(container.querySelector('[role="tooltip"]')?.textContent).toBe(
+    expect(container.querySelector('[role="tooltip"]')?.textContent).toContain(
       "Exclude today",
     );
     fireEvent.blur(btn);
@@ -369,7 +373,7 @@ describe("FEEDBACK-10 icon actions expose hover/focus tooltips (A12)", () => {
       'button[aria-label="Exact duration for Magic Mirror"]',
     ) as HTMLElement;
     fireEvent.focus(btn);
-    expect(container.querySelector('[role="tooltip"]')?.textContent).toBe(
+    expect(container.querySelector('[role="tooltip"]')?.textContent).toContain(
       "Exact duration",
     );
   });
@@ -522,5 +526,18 @@ describe("FEEDBACK-12 queue scheduled rows render 12-hour", () => {
     // .qrow--dropped, with its 12-hour drop time on the source line.
     const dropped = container.querySelector(".qrow--dropped");
     expect(dropped?.textContent).toMatch(/dropped · \d{1,2}(:\d{2})? (AM|PM)/);
+  });
+});
+
+describe("row action buttons describe themselves on hover", () => {
+  it.each([
+    ['button[aria-label^="Mark complete in source"]', "Completes it in the source"],
+    ['button[aria-label^="Leave as-is today"]', "leaves the source untouched"],
+    ['button[aria-label^="More actions for"]', "Remove from planning"],
+  ])("%s", (selector, text) => {
+    const { container } = makeHarness("ready").ui(<Queue />);
+    const btn = container.querySelector(selector) as HTMLElement;
+    fireEvent.mouseEnter(btn);
+    expect(container.querySelector('[role="tooltip"]')?.textContent).toContain(text);
   });
 });

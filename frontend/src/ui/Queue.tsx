@@ -132,6 +132,13 @@ function droppedTimeLabel(iso: string | null): string {
   return display12h(hhmm);
 }
 
+/** Hover/focus descriptions for the row buttons, so each one explains itself. */
+const VERB_HINT: Record<string, string> = {
+  done: "Completes it in the source (Todoist or Capacities). Shortcut C.",
+  drop_from_plan:
+    "Takes it out of today's plan and leaves the source untouched. Today only.",
+};
+
 /** IMP-07: direct verbs (Done, Drop from plan) render on the row — one click,
     journaled through the staging path. Unassign and Delete live in MoreMenu. */
 function StagingVerbs({ item, busy }: { item: AssignedItem; busy: boolean }) {
@@ -143,8 +150,13 @@ function StagingVerbs({ item, busy }: { item: AssignedItem; busy: boolean }) {
       {DIRECT_VERBS.map((spec) => {
         const armed = confirming === spec.verb;
         return (
-          <button
+          <Tooltip
             key={spec.verb}
+            label={spec.label}
+            detail={VERB_HINT[spec.verb]}
+            anchorClass={`qrow__tip qrow__tip--${spec.verb}`}
+          >
+          <button
             class={`alloc-verb alloc-verb--${spec.verb}${armed ? " alloc-verb--armed" : ""}`}
             disabled={busy}
             title={`${spec.aria}: ${item.name}`}
@@ -165,6 +177,7 @@ function StagingVerbs({ item, busy }: { item: AssignedItem; busy: boolean }) {
           >
             {armed ? "Sure?" : <><span>{spec.label}</span><span class="alloc-verb__detail">{spec.detail}</span></>}
           </button>
+          </Tooltip>
         );
       })}
     </>
@@ -239,6 +252,11 @@ function MoreMenu({
 
   return (
     <div class="row-more" ref={wrapRef}>
+      <Tooltip
+        label="More"
+        detail="Remove from planning, Delete, adjust time, unschedule."
+        align="end"
+      >
       <button
         ref={triggerRef}
         class="alloc-verb alloc-verb--more row-more__trigger"
@@ -254,6 +272,7 @@ function MoreMenu({
       >
         More
       </button>
+      </Tooltip>
       {open && (
         <div
           class="row-more__menu"
@@ -706,7 +725,15 @@ function Row({
           role="group"
           aria-label={`Planning adjustments for ${item.name}`}
         >
-          <Tooltip label={included ? "Exclude today" : "Include today"}>
+          <Tooltip
+            label={included ? "Exclude today" : "Include today"}
+            detail={
+              included
+                ? "Skips it for today only; reversible, source unchanged. Shortcut E."
+                : "Puts it back in today's plan; source unchanged. Shortcut E."
+            }
+            anchorClass="qrow__tip qrow__tip--plan"
+          >
             <button
               class="planbtn"
               aria-label={`${included ? "Exclude" : "Include"} ${item.name} today`}
@@ -724,7 +751,11 @@ function Row({
               notches can't express 15/5-minute shaping. T12e: this editor is
               duration-only now; placement is its own More-menu action. */}
           {included && (
-            <Tooltip label="Exact duration">
+            <Tooltip
+              label="Exact duration"
+              detail="Sets the minutes precisely for today; source unchanged. Shortcut D."
+              anchorClass="qrow__tip qrow__tip--plan"
+            >
               <button
                 class="planbtn"
                 aria-label={`Exact duration for ${item.name}`}

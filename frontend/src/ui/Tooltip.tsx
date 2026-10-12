@@ -19,10 +19,17 @@ let tooltipSeq = 0;
 
 export function Tooltip({
   label,
+  detail,
+  anchorClass,
   align = "center",
   children,
 }: {
   label: string;
+  /** Optional second line that says what the control does. Rendered inside
+      the same role="tooltip" bubble, after the label. */
+  detail?: string;
+  /** Extra class on the anchor span, for layout hooks (row action order). */
+  anchorClass?: string;
   /** "center" keeps the bubble centred on the trigger; "end" right-aligns it
       so the right-edge row triggers (More) stay in view. */
   align?: "center" | "end";
@@ -53,11 +60,12 @@ export function Tooltip({
   });
 
   return (
-    <span class={`tooltip-anchor tooltip-anchor--${align}`}>
+    <span class={`tooltip-anchor tooltip-anchor--${align}${anchorClass ? ` ${anchorClass}` : ""}`}>
       {trigger}
       {show && (
         <span id={tipId} class="tooltip" role="tooltip">
           {label}
+          {detail && <span class="tooltip__detail">{detail}</span>}
         </span>
       )}
     </span>
