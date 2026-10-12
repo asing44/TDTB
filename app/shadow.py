@@ -2,10 +2,11 @@
 
 Computes the full Phase-5 write contract (``plan_manifest``, per SKILL.md
 § 0.8) from a confirmed digest + sequence, diffs it against the live state of
-every write target (Todoist, calendar, vault), and renders a preview —
-WITHOUT writing anything. This is the first true end-to-end pass against real
-vault data before any live writer exists (T14/T15), and stays a permanent
-feature afterward (bake-in comparison uses it).
+every write target (Todoist, calendar), and renders a preview —
+WITHOUT writing anything. It stays a permanent feature (bake-in comparison
+uses it). The Obsidian-vault steps (daily-note patch, ``assigned: true``
+flips) were deleted in V3 of the vault removal: Commit writes only Todoist
+and the calendar.
 
 Three layers, kept strictly separate so the diff logic is unit-testable
 without touching disk or the network:
@@ -13,7 +14,7 @@ without touching disk or the network:
 1. ``build_plan_manifest`` — pure. digest + sequence + config -> manifest rows.
 2. ``diff_against_live`` — pure. manifest + live_state -> ShadowDiff.
 3. ``gather_live_state`` — the only I/O in this module. Reads Todoist,
-   calendar, and vault state; each surface degrades independently (a marker
+   and calendar state; each surface degrades independently (a marker
    in the returned dict), never crashing the other surfaces.
 
 Step semantics (SKILL.md Phase 5, the skill contract):
@@ -23,8 +24,7 @@ Step semantics (SKILL.md Phase 5, the skill contract):
        runs) — every Step A row is emitted generically; ``diff_against_live``
        resolves the split via its would-update (retime) / would-create
        (create) classification.
-  B  — daily-note "# TDTB Plan" section patch.
-  C  — ``assigned: true`` frontmatter flips (Assigned digest items).
+  B, C — retired (V3): the daily-note patch and ``assigned: true`` flips.
   D  — schedulable block calendar events (Minting / Shivery Jigs — sequence
        rows matched to neither an Assigned digest item, an anchored block,
        nor a Trinoor work zone).
@@ -55,8 +55,6 @@ _GATHER_DIR = str(Path(__file__).parent / "gather")
 if _GATHER_DIR not in sys.path:
     sys.path.insert(0, _GATHER_DIR)
 
-import tdtb_gather as gather  # noqa: E402  (path-shimmed import, see inventory.py)
-
 import todoist_client  # noqa: E402
 import calendar_bridge  # noqa: E402
 import time_engine  # noqa: E402
@@ -81,9 +79,9 @@ class ShadowStateError(Exception):
 
 @dataclass
 class ManifestEntry:
-    step: str            # "A" | "B" | "C" | "D" | "D′" | "E"
-    system: str           # "todoist" | "vault" | "calendar"
-    action: str            # "schedule" | "patch" | "set-flag" | "create-event"
+    step: str            # "A" | "D" | "D′" | "E"
+    system: str           # "todoist" | "calendar"
+    action: str            # "schedule" | "create-event" | ...
     name: str
     id_or_path: str
     time: str | None = None
@@ -631,29 +629,7 @@ def build_plan_manifest(
     # U5: Phase-1 prompts are private local runtime state (prompt_state.py).
     # Their legacy automatic exports are RETIRED — no capture-nicety Todoist
     # rows and no B6 frontmatter-captures rows are emitted, so a manifest can
-    # never carry prompt text to Todoist or the daily note.
-
-    # Step B — daily-note "# TDTB Plan" section patch. Always exactly one row
-    # (a commit always writes/refreshes the plan section).
-    entries.append(ManifestEntry(
-        step="B", system="vault", action="patch",
-        name="# TDTB Plan", id_or_path="<today's daily note>",
-    ))
-
-    # Step C — assigned:true frontmatter flips, one per Assigned digest item.
-    # Todoist-sourced items (todoist:// paths) have no vault note to flip —
-    # their live surface is the task itself (Step A); skip them or every
-    # sourced item shadows as a phantom "target missing" conflict.
-    for name, item in assigned.items():
-        if _is_capacities_assigned(item):
-            continue  # S6b: plan-only, no vault flip
-        path = item.get("path") or name
-        if str(path).startswith("todoist://"):
-            continue
-        entries.append(ManifestEntry(
-            step="C", system="vault", action="set-flag",
-            name=name, id_or_path=path,
-        ))
+    # never carry prompt text to Todoist.
 
     return entries
 
@@ -857,13 +833,9 @@ def diff_against_live(manifest: list[ManifestEntry], live_state: dict[str, Any])
         unavailable.append("todoist")
     if live_state.get("calendar_unavailable"):
         unavailable.append("calendar")
-    if live_state.get("vault_unavailable"):
-        unavailable.append("vault")
 
     todoist_tasks = live_state.get("todoist_tasks") or []
     calendar_events = live_state.get("calendar_events") or []
-    vault_frontmatter = live_state.get("vault_frontmatter") or {}
-    daily_note_text = live_state.get("daily_note_text")
 
     # T21 claim pre-pass: id-ref'd todoist rows own their task outright, in
     # any manifest order — content-fallback rows may only match what's left.
@@ -1003,32 +975,6 @@ def diff_against_live(manifest: list[ManifestEntry], live_state: dict[str, Any])
                     detail["time_mismatch"] = {"live": live_start, "planned": m.time}
                 entries.append(ShadowDiffEntry(m, NOOP, detail))
 
-        elif m.action == "set-flag":  # Step C
-            if live_state.get("vault_unavailable"):
-                entries.append(ShadowDiffEntry(m, UNAVAILABLE, {"reason": "vault surface unavailable"}))
-                continue
-            if m.id_or_path not in vault_frontmatter:
-                entries.append(ShadowDiffEntry(m, CONFLICT, {"reason": f"target missing: {m.id_or_path}"}))
-                continue
-            fm = vault_frontmatter[m.id_or_path] or {}
-            if fm.get("assigned") is True:
-                entries.append(ShadowDiffEntry(m, NOOP, {}))
-            else:
-                entries.append(ShadowDiffEntry(
-                    m, UPDATE, {"assigned": {"old": fm.get("assigned"), "new": True}}
-                ))
-
-        elif m.action == "patch":  # Step B
-            if live_state.get("vault_unavailable"):
-                entries.append(ShadowDiffEntry(m, UNAVAILABLE, {"reason": "vault surface unavailable"}))
-                continue
-            if daily_note_text is None:
-                entries.append(ShadowDiffEntry(m, CONFLICT, {"reason": "daily note not found"}))
-            elif "# TDTB Plan" in daily_note_text:
-                entries.append(ShadowDiffEntry(m, UPDATE, {"reason": "section exists, will be replaced"}))
-            else:
-                entries.append(ShadowDiffEntry(m, CREATE, {"reason": "section absent, will be appended"}))
-
         else:
             entries.append(ShadowDiffEntry(m, CONFLICT, {"reason": f"unrecognized manifest row: {m.step}/{m.action}"}))
 
@@ -1053,15 +999,14 @@ def gather_live_state(config: Any, vault_root: str | Path) -> dict[str, Any]:
     ``config`` is accepted for parity with the live commit-writer's future
     signature (calendar-ID / project-ID resolution) but this shadow pass
     keeps its live reads deliberately broad (today's filter, today's
-    calendar window, all tracked vault frontmatter) rather than
+    calendar window) rather than
     config-scoped — precision narrows once real writers land in T14/T15.
     """
-    vault_root = Path(vault_root)
+    # ``vault_root`` is accepted for signature compatibility only (V4 removes
+    # it): the vault is never read here.
     state: dict[str, Any] = {
         "todoist_tasks": [],
         "calendar_events": [],
-        "vault_frontmatter": {},
-        "daily_note_text": None,
     }
 
     if not TOKEN_ENV_PATH.is_file():
@@ -1098,31 +1043,5 @@ def gather_live_state(config: Any, vault_root: str | Path) -> dict[str, Any]:
     except Exception as exc:  # noqa: BLE001 — consent/import errors degrade, never crash
         state["calendar_unavailable"] = True
         state["calendar_error"] = str(exc)
-
-    # -- Vault frontmatter --------------------------------------------------------
-    try:
-        fm_map: dict[str, Any] = {}
-        for note in gather.walk_vault(vault_root):
-            fm_map[note["path"]] = note["fm"]
-        state["vault_frontmatter"] = fm_map
-    except Exception as exc:  # noqa: BLE001
-        state["vault_unavailable"] = True
-        state["vault_error"] = str(exc)
-
-    # -- Daily note text ----------------------------------------------------------
-    try:
-        today = gather.effective_date(datetime.now())
-        daily_dir = vault_root / "30 - Daily"
-        match: Path | None = None
-        if daily_dir.is_dir():
-            for candidate in (f"{today.isoformat()}.md", today.strftime("%b %d, %Y") + ".md"):
-                p = daily_dir / candidate
-                if p.is_file():
-                    match = p
-                    break
-        if match is not None:
-            state["daily_note_text"] = match.read_text(encoding="utf-8", errors="replace")
-    except Exception:  # noqa: BLE001 — stays None; diff treats a missing note as a conflict, not a crash
-        pass
 
     return state

@@ -366,9 +366,6 @@ def main() -> None:
     shadow_mod.gather_live_state = lambda config, vault_root: {
         "todoist": {"tasks": []},
         "calendar": {"events": [], "unavailable": True},
-        "vault_frontmatter": {
-            "50 - Operations/Projects/Sample Project.md": {"type": "project", "assigned": True},
-        },
         "unavailable_surfaces": ["calendar"],
     }
     try:
@@ -385,8 +382,7 @@ def main() -> None:
     # -- live commit report shapes (real orchestrate code, fake surfaces) -----
     report_ok = orchestrate.run_orchestrated(
         [], todoist=None, store=None, vault_root=vault,
-        plan_body="- 10:00–11:30 Sample Project", today=TODAY,
-        persist_ledger=False,
+        today=TODAY, persist_ledger=False,
     )
     dump("commit-live-ok", report_ok)
 
@@ -397,7 +393,7 @@ def main() -> None:
     )]
     report_partial = orchestrate.run_orchestrated(
         intents, todoist=None, store=None, vault_root=vault,
-        plan_body="", today=TODAY, persist_ledger=False,
+        today=TODAY, persist_ledger=False,
     )
     dump("commit-live-partial", report_partial)
 

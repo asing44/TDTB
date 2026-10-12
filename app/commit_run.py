@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """commit_run.py — T14 manual write-verify gate harness.
 
-Runs the real commit writers (``commit.py``) against the live vault, Todoist,
+Runs the real commit writers (``commit.py``) against the live Todoist,
 and calendar from the CLI — the manual portion of the T14 gate that can't run
 under pytest (calendar TCC binds to the launching process; run this from your
 Terminal so the grant is Terminal's, spec § 3.3).
@@ -75,22 +75,13 @@ def _resolve_calendar_ids(config: dict, store: "calendar_bridge.EventStore | Non
         return {}
 
 
-def _render_plan_body(sequence: dict) -> str:
-    """Trivial ``# TDTB Plan`` body from the sequence rows — a representative
-    render for the write-verify gate (full rendering is a later concern)."""
-    lines = []
-    for row in sequence.get("sequence", []):
-        lines.append(f"- {row.get('start', '??')}–{row.get('end', '??')} {row.get('id', '')}")
-    return "\n".join(lines) or "- (no sequenced items)"
-
-
 def _print_intents(intents: list["commit.WriteIntent"]) -> None:
     print("\n## Planned write intents (PLAN-ONLY — nothing written)\n")
     header = f"{'Step':<4} {'Surface':<9} {'Op':<7} {'Name':<32} {'Time':<6} Target"
     print(header)
     print("-" * len(header))
     for i in intents:
-        target = i.task_id or i.calendar_id or i.path or (i.project_id or "—")
+        target = i.task_id or i.calendar_id or (i.project_id or "—")
         print(f"{i.step:<4} {i.surface:<9} {i.op:<7} {(i.name or '')[:32]:<32} {i.due_time or '—':<6} {target}")
     print()
 
@@ -162,17 +153,10 @@ def run(vault: Path, sequence_file: str | None, do_commit: bool) -> int:
 
     # -- LIVE commit ----------------------------------------------------------
     token = shadow.todoist_client.load_token(shadow.TOKEN_ENV_PATH)
-    # S6b: Capacities rows are calendar-only, so the Step B body omits them.
-    capacities_ids = {e.name for e in manifest if e.capacities}
-    body_rows = [
-        row for row in sequence.get("sequence", [])
-        if row.get("id") not in capacities_ids
-    ]
-    plan_body = _render_plan_body({**sequence, "sequence": body_rows})
     with shadow.todoist_client.TodoistClient(token) as todoist:
         results = commit.run_commit(
             intents, todoist=todoist, store=store, vault_root=vault,
-            plan_body=plan_body, today=today,
+            today=today,
         )
     _print_results(results)
     all_ok = all(r.ok for r in results)
@@ -200,7 +184,7 @@ def main() -> int:
         return 1
 
     if args.commit:
-        print("⚠ --commit: this WILL write to the live vault, Todoist, and calendar.\n")
+        print("⚠ --commit: this WILL write to live Todoist and the calendar.\n")
     return run(vault, args.sequence_file, args.commit)
 
 

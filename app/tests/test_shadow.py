@@ -283,13 +283,6 @@ class TestBuildPlanManifest:
         row = next(m for m in manifest if m.step == "A")
         assert row.routing == "Inbox"
 
-    def test_always_emits_step_b(self):
-        manifest = shadow.build_plan_manifest({"assigned": []}, {"sequence": []}, {})
-        steps = [m.step for m in manifest]
-        assert steps.count("B") == 1
-        b_row = next(m for m in manifest if m.step == "B")
-        assert b_row.system == "vault" and b_row.action == "patch"
-
     def test_recent_selections_is_not_a_manifest_step(self):
         """Recent-selections append is a separate post-commit action
         (runstate.append_recent_selection) — never a manifest row."""
@@ -301,21 +294,23 @@ class TestBuildPlanManifest:
         assert all("recent-selections" not in m.name for m in manifest)
         assert all(m.action != "append" for m in manifest)
 
-    def test_step_c_one_row_per_assigned_item(self):
-        digest = {
-            "assigned": [
-                {"name": "Garage Buildout", "path": "P/Garage.md"},
-                {"name": "Entryway Design", "path": "P/Entryway.md"},
-            ]
-        }
-        manifest = shadow.build_plan_manifest(digest, {"sequence": []}, {})
-        step_c = [m for m in manifest if m.step == "C"]
-        assert {m.id_or_path for m in step_c} == {"P/Garage.md", "P/Entryway.md"}
-        assert all(m.action == "set-flag" and m.system == "vault" for m in step_c)
+    def test_empty_digest_and_sequence_yields_no_rows(self):
+        # V3: the "# TDTB Plan" daily-note patch (Step B) is gone, so an empty
+        # plan has an empty manifest.
+        assert shadow.build_plan_manifest({}, {}, {}) == []
 
-    def test_empty_digest_and_sequence_still_yields_b_only(self):
-        manifest = shadow.build_plan_manifest({}, {}, {})
-        assert [m.step for m in manifest] == ["B"]
+    def test_manifest_never_emits_vault_rows(self):
+        digest = {"assigned": [
+            {"name": "Garage Buildout", "path": "P/Garage.md"},
+            {"name": "Todoist Task", "path": "todoist://t1", "types": ["todoist"]},
+        ]}
+        sequence = {"sequence": [
+            {"id": "Garage Buildout", "start": "09:00", "end": "10:00", "zone": "any"},
+        ]}
+        manifest = shadow.build_plan_manifest(digest, sequence, {})
+        assert manifest
+        assert all(m.system != "vault" for m in manifest)
+        assert {m.step for m in manifest}.isdisjoint({"B", "C"})
 
     def test_manifest_preserves_exact_durations_ids_routing_and_write_ownership(self):
         # FEEDBACK-27 routing contract: exact 15/30-minute durations, existing
@@ -456,10 +451,6 @@ def _todoist_row(
     )
 
 
-def _flag_row(name="Garage Buildout", path="P/Garage.md"):
-    return shadow.ManifestEntry(step="C", system="vault", action="set-flag", name=name, id_or_path=path)
-
-
 def _calendar_row(name="Foods Dinner", time="18:00"):
     return shadow.ManifestEntry(
         step="D", system="calendar", action="create-event",
@@ -467,8 +458,8 @@ def _calendar_row(name="Foods Dinner", time="18:00"):
     )
 
 
-def _patch_row():
-    return shadow.ManifestEntry(step="B", system="vault", action="patch", name="# TDTB Plan", id_or_path="daily")
+def _legacy_vault_row(step="B", action="patch"):
+    return shadow.ManifestEntry(step=step, system="vault", action=action, name="legacy", id_or_path="daily")
 
 
 def _anchored_event_row(name="Sudsing", time="16:00"):
@@ -637,22 +628,6 @@ class TestDiffClassification:
         assert entry.classification == shadow.CREATE
         assert entry.detail == {"content": "New untimed", "due_time": None}
 
-    def test_vault_flag_already_true_is_no_op(self):
-        live = {"vault_frontmatter": {"P/Garage.md": {"assigned": True}}}
-        diff = shadow.diff_against_live([_flag_row()], live)
-        assert diff.entries[0].classification == shadow.NOOP
-
-    def test_vault_flag_false_is_would_update(self):
-        live = {"vault_frontmatter": {"P/Garage.md": {"assigned": False}}}
-        diff = shadow.diff_against_live([_flag_row()], live)
-        entry = diff.entries[0]
-        assert entry.classification == shadow.UPDATE
-        assert entry.detail["assigned"] == {"old": False, "new": True}
-
-    def test_vault_flag_target_missing_is_conflict(self):
-        diff = shadow.diff_against_live([_flag_row()], {"vault_frontmatter": {}})
-        assert diff.entries[0].classification == shadow.CONFLICT
-
     def test_calendar_no_match_is_would_create(self):
         diff = shadow.diff_against_live([_calendar_row()], {"calendar_events": []})
         assert diff.entries[0].classification == shadow.CREATE
@@ -688,17 +663,14 @@ class TestDiffClassification:
         assert entry.detail["event_id"] == "exact"
         assert "time_mismatch" not in entry.detail
 
-    def test_daily_note_missing_is_conflict(self):
-        diff = shadow.diff_against_live([_patch_row()], {"daily_note_text": None})
+    @pytest.mark.parametrize("step,action", [("B", "patch"), ("C", "set-flag")])
+    def test_legacy_vault_rows_fail_closed_as_conflict(self, step, action):
+        # V3: the vault steps are deleted; a crafted/stale vault row is an
+        # unrecognized manifest row, never a silent no-op.
+        diff = shadow.diff_against_live([_legacy_vault_row(step, action)], {})
         assert diff.entries[0].classification == shadow.CONFLICT
-
-    def test_daily_note_without_section_is_would_create(self):
-        diff = shadow.diff_against_live([_patch_row()], {"daily_note_text": "# Captures\n- thing"})
-        assert diff.entries[0].classification == shadow.CREATE
-
-    def test_daily_note_with_section_is_would_update(self):
-        diff = shadow.diff_against_live([_patch_row()], {"daily_note_text": "# TDTB Plan\nold content"})
-        assert diff.entries[0].classification == shadow.UPDATE
+        assert "unrecognized manifest row" in diff.entries[0].detail["reason"]
+        assert diff.unavailable_surfaces == []
 
     def test_anchored_event_row_diffs_like_calendar(self):
         diff = shadow.diff_against_live([_anchored_event_row()], {"calendar_events": []})
@@ -708,14 +680,15 @@ class TestDiffClassification:
         live = {
             "todoist_tasks": [{"id": "1", "content": "Garage Buildout",
                                 "due": {"datetime": "2026-07-12T09:00:00"}}],
-            "vault_frontmatter": {"P/Garage.md": {"assigned": False}},
             "calendar_events": [],
         }
-        diff = shadow.diff_against_live([_todoist_row(), _flag_row(), _anchored_event_row()], live)
+        diff = shadow.diff_against_live(
+            [_todoist_row(), _todoist_row(name="Other", time="10:00"), _anchored_event_row()],
+            live,
+        )
         counts = diff.counts()
         assert counts[shadow.NOOP] == 1
-        assert counts[shadow.UPDATE] == 1
-        assert counts[shadow.CREATE] == 1
+        assert counts[shadow.CREATE] == 2
 
 
 class TestDiffDegradedSurfaces:
@@ -734,11 +707,6 @@ class TestDiffDegradedSurfaces:
         assert todoist_entry.classification == shadow.CREATE
         assert calendar_entry.classification == shadow.UNAVAILABLE
         assert diff.unavailable_surfaces == ["calendar"]
-
-    def test_vault_unavailable_marks_flag_and_patch_rows(self):
-        diff = shadow.diff_against_live([_flag_row(), _patch_row()], {"vault_unavailable": True})
-        assert all(e.classification == shadow.UNAVAILABLE for e in diff.entries)
-        assert diff.unavailable_surfaces == ["vault"]
 
     def test_multiple_unavailable_surfaces_all_listed(self):
         diff = shadow.diff_against_live([], {"todoist_unavailable": True, "calendar_unavailable": True})
@@ -854,7 +822,7 @@ class TestGatherLiveState:
         shadow.gather_live_state({}, vault)
         assert calls == ["today | overdue"]
 
-    def test_vault_frontmatter_gathered_from_walk(self, tmp_path, monkeypatch):
+    def test_state_has_no_vault_keys_and_vault_is_not_read(self, tmp_path, monkeypatch):
         token_path = tmp_path / "env"
         token_path.write_text("TODOIST_TOKEN=abc123\n", encoding="utf-8")
         os.chmod(token_path, stat.S_IRUSR | stat.S_IWUSR)
@@ -867,18 +835,10 @@ class TestGatherLiveState:
             shadow.calendar_bridge, "EventStore",
             lambda: (_ for _ in ()).throw(RuntimeError("skip")),
         )
-
-        vault = tmp_path / "vault"
-        proj_dir = vault / "50 - Operations" / "Projects"
-        proj_dir.mkdir(parents=True)
-        (proj_dir / "Garage Buildout.md").write_text(
-            "---\ntype: project\nassigned: true\n---\nbody\n", encoding="utf-8"
-        )
-
-        state = shadow.gather_live_state({}, vault)
-        rel_path = "50 - Operations/Projects/Garage Buildout.md"
-        assert rel_path in state["vault_frontmatter"]
-        assert state["vault_frontmatter"][rel_path]["assigned"] is True
+        missing_vault = tmp_path / "no-such-vault"
+        state = shadow.gather_live_state({}, missing_vault)
+        assert not any("vault" in k or "daily_note" in k for k in state)
+        assert not missing_vault.exists()
 
     def test_no_writes_performed(self, tmp_path, monkeypatch):
         """Shadow's I/O layer only reads — this asserts the vault tree is

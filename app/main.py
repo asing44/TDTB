@@ -160,17 +160,6 @@ def _rank_key(item: dict[str, Any], today: date, order: list[str],
     return tuple(parts)
 
 
-def _render_plan_body(sequence_body: dict[str, Any]) -> str:
-    """Trivial ``# TDTB Plan`` body from the sequence rows — mirrors
-    ``commit_run.py``'s ``_render_plan_body`` exactly (duplicated rather than
-    imported: commit_run.py imports main.py, so importing back would be
-    circular)."""
-    lines = []
-    for row in sequence_body.get("sequence", []):
-        lines.append(f"- {row.get('start', '??')}–{row.get('end', '??')} {row.get('id', '')}")
-    return "\n".join(lines) or "- (no sequenced items)"
-
-
 def rank_pool(
     pool_items: list[dict[str, Any]],
     today: date,
@@ -5944,20 +5933,13 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
         except commit.CommitPlanError as exc:
             raise HTTPException(status_code=422, detail=f"plan refused: {exc}") from exc
 
-        # S6b: Capacities rows are calendar-only, so the Step B body omits them.
-        capacities_ids = {e.name for e in manifest if e.capacities}
-        body_rows = [
-            row for row in body.sequence.get("sequence", [])
-            if row.get("id") not in capacities_ids
-        ]
-        plan_body = _render_plan_body({**body.sequence, "sequence": body_rows})
         # B2: the due is the CIVIL calendar date, not the pre-02:00 logical
         # day that keys the draft store.
         civil_date = prompt_export.civil_date_for(datetime.now()).isoformat()
         if app.state.build_commit_clients:
             report = orchestrate.run_orchestrated(
                 intents, todoist=injected_todoist, store=store, vault_root=vault,
-                plan_body=plan_body, today=today, resume=resume,
+                today=today, resume=resume,
             )
             export_outcomes = prompt_export.run_prompt_exports_for_report(
                 report, day=today.isoformat(), civil_date=civil_date,
@@ -5967,7 +5949,7 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
             with shadow.todoist_client.TodoistClient(token) as todoist:
                 report = orchestrate.run_orchestrated(
                     intents, todoist=todoist, store=store, vault_root=vault,
-                    plan_body=plan_body, today=today, resume=resume,
+                    today=today, resume=resume,
                 )
                 export_outcomes = prompt_export.run_prompt_exports_for_report(
                     report, day=today.isoformat(), civil_date=civil_date,

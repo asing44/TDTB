@@ -199,12 +199,6 @@ def canned_live_state(config, vault_root):
     return {
         "todoist": {"tasks": []},
         "calendar": {"events": [], "unavailable": False},
-        "vault_frontmatter": {
-            "50 - Operations/Projects/Client Project.md": {"type": "project", "assigned": True},
-            "50 - Operations/Projects/Make.md": {"type": "project", "assigned": True},
-            "50 - Operations/Projects/Press Brief.md": {"type": "press", "assigned": True},
-        },
-        "daily_note_text": "---\ntype: daily\n---\n\n# Notes\n",
         "unavailable_surfaces": [],
     }
 

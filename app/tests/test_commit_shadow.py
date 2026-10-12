@@ -112,10 +112,6 @@ class TestShadowFlow:
             return {
                 "todoist_tasks": [],
                 "calendar_events": [],
-                "vault_frontmatter": {
-                    "50 - Operations/Projects/Garage Buildout.md": {"assigned": False},
-                },
-                "daily_note_text": None,
             }
 
         monkeypatch.setattr(shadow, "gather_live_state", fake_gather)
@@ -131,15 +127,13 @@ class TestShadowFlow:
         body = r.json()
         assert "entries" in body and "counts" in body and "unavailable_surfaces" in body
 
-        # Step A (todoist create, no live task) + Step C (vault update, assigned False->True)
-        # + Step B (patch, no daily note -> conflict). No anchored blocks in
-        # this request's config, so no Step D/E rows; recent-selections is a
+        # Step A only (todoist create, no live task). V3: no Step B daily-note
+        # patch and no Step C vault flip rows. No anchored blocks in this
+        # request's config, so no Step D/E rows; recent-selections is a
         # post-commit action, never a manifest row.
         classifications = {e["manifest"]["step"]: e["classification"] for e in body["entries"]}
-        assert classifications["A"] == shadow.CREATE
-        assert classifications["C"] == shadow.UPDATE
-        assert classifications["B"] == shadow.CONFLICT
-        assert set(classifications) == {"A", "B", "C"}
+        assert classifications == {"A": shadow.CREATE}
+        assert all(e["manifest"]["system"] != "vault" for e in body["entries"])
 
         after = {p: p.read_bytes() for p in vault.rglob("*") if p.is_file()}
         assert before == after
@@ -755,21 +749,6 @@ class TestTodoistIdMatching:
         assert e.classification == shadow.UPDATE
 
 
-class TestStepCSkipsTodoistItems:
-    def test_no_vault_flag_for_todoist_sourced_items(self):
-        digest = {"assigned": [
-            {"name": "LOOTS", "path": "todoist://T1", "source": "todoist"},
-            {"name": "Press", "path": "50 - Operations/Intervals/Press.md"},
-        ]}
-        seq = {"sequence": [
-            {"id": "LOOTS", "start": "09:00", "end": "09:30"},
-            {"id": "Press", "start": "09:30", "end": "10:00"},
-        ]}
-        entries = shadow.build_plan_manifest(digest, seq, {})
-        step_c = [e for e in entries if e.step == "C"]
-        assert [e.name for e in step_c] == ["Press"]
-
-
 class TestExactSequenceAuthorization:
     """P3 BLOCK findings: fixed-lane rows (anchored, Trinoor zones) must carry
     exact server timing; backdrop flag only honored on server zone rows;
@@ -987,22 +966,21 @@ class _StubTodoistClient:
 
 def _run_commit_run_live(monkeypatch, tmp_path, digest, sequence) -> dict:
     """Drive ``commit_run.run``'s live commit with every I/O seam stubbed and
-    return the intents and plan body that the commit writer received."""
+    return the intents and run_commit kwargs that the commit writer received."""
     seq_file = tmp_path / "sequence.json"
     seq_file.write_text(json.dumps(sequence), encoding="utf-8")
     captured: dict = {}
 
     def _run_commit(intents, **kwargs):
         captured["intents"] = intents
-        captured["plan_body"] = kwargs["plan_body"]
+        captured["kwargs"] = kwargs
         return []
 
     monkeypatch.setattr(commit_run.shadow_run, "_gather_pool_and_assigned",
                         lambda vault, today: ([], []))
     monkeypatch.setattr(commit_run.main_mod, "build_digest", lambda *a, **k: digest)
     monkeypatch.setattr(commit_run.shadow, "gather_live_state", lambda config, vault: {
-        "todoist_tasks": [], "calendar_events": [], "vault_frontmatter": {},
-        "daily_note_text": "# TDTB Plan\n",
+        "todoist_tasks": [], "calendar_events": [],
     })
     monkeypatch.setattr(commit_run.calendar_bridge, "shared_store", lambda: None)
     monkeypatch.setattr(commit_run, "_resolve_calendar_ids",
@@ -1033,9 +1011,8 @@ class TestCapacitiesRowsAreCalendarOnly:
         entries = shadow.build_plan_manifest({"assigned": [dict(self.CAP_ITEM)]}, self.SEQ, {})
         assert [e for e in entries if e.system == "todoist"] == []
         assert [e.step for e in entries if e.step == "C"] == []
-        # Step B is the commit-level plan section and is still written; only its
-        # Capacities lines are omitted from the rendered body (asserted below).
-        assert [e.step for e in entries if e.system == "vault"] == ["B"]
+        # V3: no vault rows at all (the Step B daily-note patch is gone).
+        assert [e.step for e in entries if e.system == "vault"] == []
         calendar = [e for e in entries if e.system == "calendar"]
         assert len(calendar) == 1
         cal = calendar[0]
@@ -1043,18 +1020,17 @@ class TestCapacitiesRowsAreCalendarOnly:
             "D", "create-event", "Ship project", "Ship project")
         assert (cal.time, cal.duration_min, cal.routing) == ("09:00", 60, "⬜ Blocks")
         assert cal.capacities is True
-        # Capacities-only plan: Step B keeps its place, its Capacities line is
-        # omitted, and the body matches a plan with zero sequenced rows.
+        # Capacities-only plan: calendar intent only, no vault intent and no
+        # plan body handed to the writers.
         captured = _run_commit_run_live(
             monkeypatch, tmp_path, {"assigned": [dict(self.CAP_ITEM)]}, self.SEQ)
-        assert captured["plan_body"] == "- (no sequenced items)"
-        assert "Ship project" not in captured["plan_body"]
-        assert [i.step for i in captured["intents"] if i.surface == "vault"] == ["B"]
+        assert "plan_body" not in captured["kwargs"]
+        assert [i.surface for i in captured["intents"]] == ["calendar"]
 
-    def test_mixed_plan_body_omits_capacities_row_and_keeps_todoist_row(
+    def test_mixed_plan_keeps_todoist_row_and_writes_no_vault_intent(
             self, monkeypatch, tmp_path):
-        """S6b Step B leak: the daily-note body must not carry a Capacities line,
-        while a mixed plan still renders its Todoist row and still writes Step B."""
+        """S6b: a mixed plan still plans its Todoist row; the Capacities row is
+        calendar-only; nothing targets the vault."""
         digest = {"assigned": [
             dict(self.CAP_ITEM),
             {"name": "LOOTS", "path": "todoist://T1", "source": "todoist", "todoist_id": "T1"},
@@ -1064,10 +1040,8 @@ class TestCapacitiesRowsAreCalendarOnly:
             {"id": "LOOTS", "start": "10:00", "end": "10:30", "zone": "any"},
         ]}
         captured = _run_commit_run_live(monkeypatch, tmp_path, digest, sequence)
-        assert "Ship project" not in captured["plan_body"]
-        assert captured["plan_body"] == "- 10:00–10:30 LOOTS"
         assert [i.name for i in captured["intents"] if i.surface == "todoist"] == ["LOOTS"]
-        assert [i.step for i in captured["intents"] if i.surface == "vault"] == ["B"]
+        assert [i for i in captured["intents"] if i.surface == "vault"] == []
 
     def test_capacities_row_with_mint_like_name_keeps_blocks_class(self):
         item = dict(self.CAP_ITEM, name="Minting", path="capacities://space-1/object-2")
@@ -1097,14 +1071,13 @@ class TestCapacitiesRowsAreCalendarOnly:
 
     def test_capacities_row_plans_calendar_create_and_no_todoist_intent(self):
         manifest = shadow.build_plan_manifest({"assigned": [dict(self.CAP_ITEM)]}, self.SEQ, {})
-        live = {"todoist_tasks": [], "calendar_events": [], "vault_frontmatter": {},
-                "daily_note_text": "# TDTB Plan\n"}
+        live = {"todoist_tasks": [], "calendar_events": []}
         diff = shadow.diff_against_live(manifest, live)
         intents = commit.plan_writes(diff, {"⬜ Blocks": "cal-blocks"}, {}, date(2026, 10, 10))
         assert [i for i in intents if i.surface == "todoist"] == []
         cal = [i for i in intents if i.surface == "calendar"]
         assert [(i.op, i.calendar_id, i.name) for i in cal] == [("create", "cal-blocks", "Ship project")]
-        assert [i.step for i in intents if i.surface == "vault"] == ["B"]
+        assert [i for i in intents if i.surface == "vault"] == []
 
     def test_todoist_writer_refuses_capacities_provenance(self):
         m = shadow.ManifestEntry(
@@ -1118,10 +1091,10 @@ class TestCapacitiesRowsAreCalendarOnly:
 
 
 class TestNonCapacitiesManifestUnchanged:
-    """Characterization for U4 S6b: Todoist and vault assigned rows keep their
-    Step A schedule and Step C flip and emit no calendar entry."""
+    """Characterization for U4 S6b: Todoist and vault-path assigned rows keep
+    their Step A schedule and emit no calendar entry (V3: no Step C flip)."""
 
-    def test_todoist_and_vault_assigned_rows_keep_steps_a_and_c(self):
+    def test_todoist_and_vault_assigned_rows_keep_step_a_only(self):
         digest = {"assigned": [
             {"name": "LOOTS", "path": "todoist://T1", "source": "todoist", "todoist_id": "T1"},
             {"name": "Press", "path": "50 - Operations/Intervals/Press.md"},
@@ -1133,5 +1106,5 @@ class TestNonCapacitiesManifestUnchanged:
         entries = shadow.build_plan_manifest(digest, seq, {})
         todoist = [(e.step, e.name, e.routing) for e in entries if e.system == "todoist"]
         assert todoist == [("A", "LOOTS", "Inbox"), ("A", "Press", "Inbox")]
-        assert [e.name for e in entries if e.step == "C"] == ["Press"]
+        assert [e.name for e in entries if e.step == "C"] == []
         assert [e.name for e in entries if e.system == "calendar"] == []

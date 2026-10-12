@@ -25,7 +25,7 @@ Guarantees (council-mandated, folded from the 2026-07-12 verdict):
 
 Layering mirrors ``calendar_bridge`` / ``shadow``: the pure planner
 (``plan_writes``) is unit-tested with fakes; the writer functions take injected
-clients (``TodoistClient``, ``EventStore``, ``vault_root``) so tests never touch
+clients (``TodoistClient``, ``EventStore``) so tests never touch
 the network or EventKit. Orchestration — ordered dispatch, a persisted success
 ledger, partial-failure honesty, and resume — is **T15's** job (``run_commit``
 here is only a thin sequential driver for the manual-verify gate).
@@ -36,8 +36,6 @@ the orchestrator after a clean run.
 """
 from __future__ import annotations
 
-import json
-import stat
 import sys
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
@@ -48,8 +46,6 @@ from zoneinfo import ZoneInfo
 _GATHER_DIR = str(Path(__file__).parent / "gather")
 if _GATHER_DIR not in sys.path:
     sys.path.insert(0, _GATHER_DIR)
-
-import tdtb_gather as gather  # noqa: E402  (path-shimmed import, see inventory.py)
 
 import calendar_bridge  # noqa: E402
 from shadow import (  # noqa: E402
@@ -104,7 +100,7 @@ class WriteIntent:
     """One concrete write, fully resolved and partitioned. ``op`` is the
     partition axis: exactly one of create/update/noop."""
     step: str            # A | B | C | D | D′ | E
-    surface: str          # todoist | calendar | vault
+    surface: str          # todoist | calendar
     op: str               # create | update | noop
     name: str
     # todoist
@@ -130,8 +126,6 @@ class WriteIntent:
     calendar_id: str | None = None
     start: datetime | None = None
     end: datetime | None = None
-    # vault
-    path: str | None = None
     # date-only Todoist work / captures
     due_all_day_today: bool = False   # due_string "today", no time
     payload: dict[str, Any] | None = None  # B6: the captures key/value map
@@ -146,7 +140,6 @@ class WriteIntent:
             "calendar_id": self.calendar_id,
             "start": self.start.isoformat() if self.start else None,
             "end": self.end.isoformat() if self.end else None,
-            "path": self.path,
         }
         return d
 
@@ -193,7 +186,7 @@ class WriterResult:
     # — 24h HH:MM intent/live, raw ISO due, IANA timezone — so the wire never
     # depends on display-formatted strings; display strings live in
     # verify_failures. "plain" records carry the original message for any
-    # non-due failure (readback/silent-drop/calendar/vault).
+    # non-due failure (readback/silent-drop/calendar).
     verify_details: list[dict[str, Any]] = field(default_factory=list)
     # T19: intent name → landed id, so post-commit consumers (micro-adventure
     # history) can recover a specific row's id without re-querying by content.
@@ -376,7 +369,7 @@ def plan_writes(
     """Turn a classified ``ShadowDiff`` into concrete, partitioned write
     intents. **Pure** — no I/O.
 
-    Partition invariant: every todoist/calendar/vault intent gets
+    Partition invariant: every todoist/calendar intent gets
     ``op ∈ {create, update, noop}`` straight from the diff classification —
     ``CREATE`` → create (no live id), ``UPDATE`` → update (live id present),
     ``NOOP`` → noop. Nothing re-guesses the split.
@@ -422,9 +415,7 @@ def plan_writes(
                 )
                 continue
             intents.append(_plan_calendar(m, e, cal_id, today))
-        elif m.system == "vault":
-            intents.append(_plan_vault(m, e, config))
-        else:  # pragma: no cover — manifest builder only emits the three above
+        else:  # a vault (or any unknown) row: the vault steps no longer exist
             problems.append(f"{m.step}/{m.name}: unknown surface {m.system!r}")
 
     if problems:
@@ -593,20 +584,6 @@ def _plan_calendar(
         step=m.step, surface="calendar", op=op, name=m.name,
         due_time=m.time, duration_min=m.duration_min, start=start, end=end,
         calendar_id=cal_id,
-    )
-
-
-def _plan_vault(m: ManifestEntry, e: ShadowDiffEntry, config: Any = None) -> WriteIntent:
-    if m.action == "frontmatter-captures":
-        # U5 B2: the legacy B6 prompt-capture writer is retired and carries no
-        # payload. A crafted frontmatter-captures row is refused rather than
-        # reaching the vault with prompt text.
-        raise CommitPlanError(
-            f"{m.step}/{m.name}: retired frontmatter-captures action — refusing commit"
-        )
-    op = "noop" if e.classification == NOOP else "update" if e.classification == UPDATE else "create"
-    return WriteIntent(
-        step=m.step, surface="vault", op=op, name=m.name, path=m.id_or_path,
     )
 
 
@@ -1125,207 +1102,6 @@ def write_calendar(
 
 
 # ---------------------------------------------------------------------------
-# 2c. write_frontmatter_flips — Step C
-# ---------------------------------------------------------------------------
-
-def _set_assigned_true(text: str) -> tuple[str, str]:
-    """Return ``(new_text, outcome)`` with ``assigned: true`` set in the
-    frontmatter, preserving key order and every other byte.
-
-    ``outcome`` ∈ ``{"noop", "updated", "created"}``. Operates on raw text — it
-    edits or inserts a single line inside the ``---`` fence and never
-    re-serializes YAML, so unrelated keys, comments, quoting, and the body are
-    byte-identical afterward. Returns ``(text, "conflict")`` if there is no
-    frontmatter fence to edit."""
-    if not text.startswith("---"):
-        return text, "conflict"
-    end = text.find("\n---", 3)
-    if end == -1:
-        return text, "conflict"
-
-    fence = text[3:end]            # between opening --- and closing ---
-    rest = text[end:]              # closing \n--- ... body
-
-    lines = fence.split("\n")
-    for idx, line in enumerate(lines):
-        stripped = line.strip()
-        if stripped.startswith("assigned:"):
-            value = stripped.split(":", 1)[1].strip().lower()
-            if value == "true":
-                return text, "noop"
-            # preserve leading indentation of the original key line
-            indent = line[: len(line) - len(line.lstrip())]
-            lines[idx] = f"{indent}assigned: true"
-            return "---" + "\n".join(lines) + rest, "updated"
-
-    # key absent — insert as the last frontmatter line (append, order-preserving)
-    if lines and lines[-1] == "":
-        lines.insert(len(lines) - 1, "assigned: true")
-    else:
-        lines.append("assigned: true")
-    return "---" + "\n".join(lines) + rest, "created"
-
-
-def write_frontmatter_flips(
-    intents: list[WriteIntent], vault_root: Path | str
-) -> WriterResult:
-    """Step C: flip ``assigned: true`` on each selected vault note.
-
-    Byte-surgical (see ``_set_assigned_true``). Idempotent: a note already
-    ``assigned: true`` is left untouched (no-op, bytes unchanged).
-    Reconciliation: re-parse each note and assert ``assigned is True``; a
-    missing target or a flip that didn't take is ``ok = False``, never a crash.
-    """
-    vault_root = Path(vault_root)
-    flips = [i for i in intents if i.surface == "vault" and i.step == "C"]
-    result = WriterResult(step="C", surface="vault")
-    if not flips:
-        return result
-
-    for i in flips:
-        p = vault_root / i.path
-        if not p.is_file():
-            result.fail(f"vault: target missing: {i.path}")
-            continue
-        text = p.read_text(encoding="utf-8")
-        new_text, outcome = _set_assigned_true(text)
-        if outcome == "conflict":
-            result.fail(f"vault: no frontmatter fence in {i.path}")
-            continue
-        if outcome == "noop":
-            result.noops.append(i.path)
-        else:
-            p.write_text(new_text, encoding="utf-8")
-            (result.updated if outcome == "updated" else result.created).append(i.path)
-
-    # -- reconciliation: re-parse, assert assigned is True --------------------
-    reconciled = 0
-    for i in flips:
-        p = vault_root / i.path
-        if not p.is_file():
-            continue
-        fm = gather.parse_frontmatter(p.read_text(encoding="utf-8")) or {}
-        if fm.get("assigned") is True:
-            reconciled += 1
-        else:
-            result.fail(f"vault: {i.path} not assigned:true after write")
-    result.reconciliation = {"count_expected": len(flips), "count_reconciled": reconciled}
-    if reconciled != len(flips) and result.error is None:
-        result.fail(f"vault: flip count mismatch (expected {len(flips)}, reconciled {reconciled})")
-    return result
-
-
-# ---------------------------------------------------------------------------
-# 2d. write_daily_note — Step B
-# ---------------------------------------------------------------------------
-
-_PLAN_HEADER = "# TDTB Plan"
-
-
-def _patch_plan_section(text: str, plan_body: str) -> str:
-    """Replace the ``# TDTB Plan`` section if present, else append it.
-
-    A present section runs from its ``# TDTB Plan`` header up to the next
-    top-level ``# `` header (or EOF). Idempotent in the sense that re-patching
-    replaces rather than duplicates — never two plan sections."""
-    section = f"{_PLAN_HEADER}\n{plan_body}".rstrip() + "\n"
-    idx = text.find(_PLAN_HEADER)
-    if idx == -1:
-        sep = "" if text.endswith("\n") or text == "" else "\n"
-        joiner = "\n" if text else ""
-        return f"{text}{sep}{joiner}{section}"
-    # find the next top-level header after the plan header
-    after = text.find("\n# ", idx + len(_PLAN_HEADER))
-    if after == -1:
-        return text[:idx] + section
-    return text[:idx] + section + text[after + 1:]
-
-
-def _resolve_daily_note(vault_root: Path, today: date) -> Path | None:
-    daily_dir = vault_root / "30 - Daily"
-    try:
-        directory_mode = daily_dir.stat().st_mode
-    except FileNotFoundError:
-        return None
-    if not stat.S_ISDIR(directory_mode):
-        return None
-    for candidate in (f"{today.isoformat()}.md", today.strftime("%b %d, %Y") + ".md"):
-        p = daily_dir / candidate
-        try:
-            candidate_mode = p.stat().st_mode
-        except FileNotFoundError:
-            continue
-        if stat.S_ISREG(candidate_mode):
-            return p
-    return None
-
-
-def write_daily_note(
-    intents: list[WriteIntent],
-    vault_root: Path | str,
-    plan_body: str,
-    today: date | None = None,
-) -> WriterResult:
-    """Step B: patch the ``# TDTB Plan`` section into today's daily note.
-
-    ``plan_body`` is the rendered plan text (the caller renders it from the
-    manifest — rendering is not a writer concern). Idempotent: re-patching
-    replaces the section, never duplicating it. Reconciliation: re-read the note
-    and assert the section is present with the intended body.
-    """
-    vault_root = Path(vault_root)
-    today = today or date.today()
-    patch = [i for i in intents if i.surface == "vault" and i.step == "B"]
-    result = WriterResult(step="B", surface="vault")
-    if not patch:
-        return result
-
-    try:
-        note = _resolve_daily_note(vault_root, today)
-    except OSError as exc:
-        result.fail(f"vault: today's daily note lookup failed: {exc}")
-        return result
-    if note is None:
-        result.reconciliation = {
-            "daily_note_present": False,
-            "skipped": True,
-            "reason": "optional daily note absent",
-            "date": today.isoformat(),
-        }
-        return result
-
-    try:
-        text = note.read_text(encoding="utf-8")
-    except OSError as exc:
-        result.fail(f"vault: today's daily note read failed: {exc}")
-        return result
-    new_text = _patch_plan_section(text, plan_body)
-    already = new_text == text
-    if not already:
-        try:
-            note.write_text(new_text, encoding="utf-8")
-        except OSError as exc:
-            result.fail(f"vault: today's daily note write failed: {exc}")
-            return result
-    (result.noops if already else result.updated).append(str(note.name))
-
-    # -- reconciliation: section present with intended body -------------------
-    try:
-        back = note.read_text(encoding="utf-8")
-    except OSError as exc:
-        result.fail(f"vault: today's daily note readback failed: {exc}")
-        return result
-    expected_section = f"{_PLAN_HEADER}\n{plan_body}".rstrip()
-    if expected_section in back and back.count(_PLAN_HEADER) == 1:
-        result.reconciliation = {"section_present": True, "count": 1}
-    else:
-        result.fail("vault: # TDTB Plan section not reconciled after patch")
-        result.reconciliation = {"section_present": _PLAN_HEADER in back,
-                                 "count": back.count(_PLAN_HEADER)}
-    return result
-
-
-# ---------------------------------------------------------------------------
 # 3. run_commit — thin sequential driver (T15 replaces with a ledgered,
 #    resumable, partial-failure-honest orchestrator).
 # ---------------------------------------------------------------------------
@@ -1336,22 +1112,18 @@ def run_commit(
     todoist: TodoistLike | None = None,
     store: EventStoreLike | None = None,
     vault_root: Path | str | None = None,
-    plan_body: str = "",
     today: date | None = None,
 ) -> list[WriterResult]:
     """Run every writer over ``intents`` in a fixed order and collect results.
 
     Deliberately minimal — no ledger, no resume, no cross-surface stop logic.
     That failure-safe orchestration is T15; this driver exists only for the
-    T14 manual-verify gate (run the writers end-to-end against a real vault +
+    T14 manual-verify gate (run the writers end-to-end against real Todoist +
     Terminal-granted calendar). A writer whose surface has no client/root is
     skipped."""
     results: list[WriterResult] = []
     if todoist is not None:
         results.append(write_todoist(intents, todoist))
-    if vault_root is not None:
-        results.append(write_frontmatter_flips(intents, vault_root))
-        results.append(write_daily_note(intents, vault_root, plan_body, today))
     if store is not None:
         results.append(write_calendar(intents, store, today))
     return results
