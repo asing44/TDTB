@@ -1663,28 +1663,6 @@
   margin-top: 2px;
   flex-wrap: wrap;
 }
-/* T12e (brief problem 3): crit/high badges are SOLID fills — a 22% tint at
-   10px was invisible. med/low render no badge at all; the stripe carries it.
-   .badge.badge--u* outranks the base .badge rule below (which is declared
-   later and was silently winning the same-specificity cascade). */
-.badge.badge--ucrit {
-  background: var(--c-overflow);
-  color: #fff;
-  font-weight: 600;
-  border-radius: 4px;
-}
-.badge.badge--uhigh {
-  background: var(--c-minting);
-  color: #3a2a05;
-  font-weight: 600;
-  border-radius: 4px;
-}
-.badge--umed,
-.badge--ulow,
-.badge--unone {
-  background: var(--t-badge-neutral-bg);
-  color: var(--t-badge-neutral-text);
-}
 .due--overdue {
   color: var(--c-overflow);
   font-weight: 600;

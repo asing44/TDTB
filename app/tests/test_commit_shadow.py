@@ -873,7 +873,7 @@ class TestExactSequenceAuthorization:
             "vault_frontmatter": {}, "daily_note_text": None,
         })
         today = main_mod.gather.effective_date(main_mod.datetime.now())
-        identity = "50 - Operations/Projects/Garage Buildout.md"
+        identity = "Garage Buildout"  # a row with no source id falls back to its name
         runstate.update_runstate(
             today,
             lambda s: s.setdefault("dropped", []).append(

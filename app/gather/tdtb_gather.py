@@ -1,10 +1,8 @@
 """
 tdtb_gather.py -- run-date and run-state helpers shared by the TDTB app.
 
-This module used to be the deterministic Obsidian-vault gather (note scan,
-``.base`` predicate mirror, ``active-inventory`` cache, precompute cache). The
-vault is gone (vault removal V4): nothing here reads or writes a vault. What
-remains is the small, non-vault surface the rest of the app still needs:
+The note-scan gather (and its caches) is gone. What remains is the small
+surface the rest of the app still needs:
 
 * ``effective_date`` -- the logical-day date (midnight to 2am is still
   yesterday);

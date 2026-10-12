@@ -103,7 +103,7 @@ def test_tokenless_reads_answer(client: TestClient, vault_env) -> None:
     assert plan.status_code == 200, plan.text
     body = plan.json()
     assert set(body) >= {"digest", "config", "anchored_blocks", "source_counts"}
-    assert body["source_counts"]["vault"] == 0  # wire field kept for the UI (V5 drops it)
+    assert "vault" not in body["source_counts"]  # the wire field is gone (V5b)
     assert not [w for w in body.get("source_warnings") or [] if "vault" in w.lower()]
     _assert_untouched(vault_env)
 

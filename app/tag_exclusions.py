@@ -176,7 +176,7 @@ def apply_tag_exclusions(
         if not isinstance(row, dict):
             return True
         if str(row.get("source") or "").strip().casefold() != CAPACITIES_SOURCE:
-            # Vault/Todoist rows carry their own tags/labels as planning
+            # Todoist rows carry their own tags/labels as planning
             # metadata; the policy never touches them.
             return True
         refs, unusable = _row_tag_refs(row)

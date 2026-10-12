@@ -1,17 +1,21 @@
 #!/usr/bin/env python3
 """Capture sanitized API contract fixtures for the cockpit frontend (T5).
 
-Runs the REAL FastAPI routes (TestClient) against a synthetic vault + fake
-external clients, and dumps each endpoint's actual JSON response to
+Runs the REAL FastAPI routes (TestClient) against an isolated scratch state
+dir + fake external clients, and dumps each endpoint's actual JSON response to
 ``frontend/src/adapters/contract-fixtures/``. Every shape in those files came
 out of the production route code — nothing hand-authored — with fixture data
-sanitized by construction (fake names, no real vault content).
+sanitized by construction (fake names, no real data). Never touches the live
+service, the operator's real ``~/.config/tdtb`` or any real data.
 
 Billed safety: /sequence's judgment layer is monkeypatched to a canned
 proposal — the route's validation/injection/response code still runs, the
 Agent SDK is never invoked, nothing is billed.
 
-Run with the app venv:  ../app/.venv/bin/python scripts/capture_contract_fixtures.py
+Run with the app venv, freezing the logical day so only intended contract
+changes diff:
+
+    TDTB_FIXTURE_DATE=2026-07-24 ../app/.venv/bin/python scripts/capture_contract_fixtures.py
 """
 from __future__ import annotations
 
@@ -28,6 +32,7 @@ sys.path.insert(0, str(APP / "gather"))
 
 from fastapi.testclient import TestClient  # noqa: E402
 
+import artifact_source  # noqa: E402
 import external_sources  # noqa: E402
 import judgment  # noqa: E402
 import main as main_mod  # noqa: E402
@@ -119,37 +124,76 @@ class DeadStore:
         return []
 
 
-def build_vault(root: Path) -> Path:
-    v = root / "vault"
-    v.mkdir()
-    cfg = v / "00 - META/Skill-Configs/tdtb-bridger.md"
-    cfg.parent.mkdir(parents=True, exist_ok=True)
+def build_scratch(root: Path) -> Path:
+    """Install the fixture config as the (scratch) repo config; return the
+    scratch note path ``write_config_note`` rewrites for the config variants."""
+    cfg = root / "config-note.md"
     write_config_note(cfg, CONFIG)  # installed as the repo config (V1)
-    proj = v / "50 - Operations/Projects"
-    proj.mkdir(parents=True)
-    (proj / "Sample Project.md").write_text(
-        "---\ntype: project\nassigned: true\nurgency: 3-high\ndeadline: 2026-07-19\n---\nbody\n",
-        encoding="utf-8",
-    )
-    (proj / "Make.md").write_text(
-        "---\ntype: project\nassigned: true\n---\nbody\n", encoding="utf-8"
-    )
-    (proj / "Sample Press.md").write_text(
-        "---\ntype: press\nassigned: true\nduration_min: 75\n---\nbody\n",
-        encoding="utf-8",
-    )
-    hab = v / "00 - META/Habituals"
-    hab.mkdir(parents=True)
-    (hab / "Water.md").write_text(
-        "---\ntitle: Water\ntype: habit\nentries:\n  - 2020-01-01\n---\n",
-        encoding="utf-8",
-    )
-    return v
+    return cfg
+
+
+def write_habit_artifact() -> None:
+    """Write a minimal valid planning artifact (no rows, one open habit) to the
+    scratch state dir so live mode reads a habits block instead of warning."""
+    stamp = f"{TODAY}T08:00:00-04:00"
+    source = {"status": "ok", "read_at": stamp, "rows": 0, "dropped": 0,
+              "deferred": 0, "warnings": []}
+    sources = {"todoist": dict(source), "capacities": dict(source)}
+    artifact_source.atomic_write_artifact({
+        "schema": artifact_source.ARTIFACT_SCHEMA,
+        "version": artifact_source.ARTIFACT_VERSION,
+        "generated_at": stamp,
+        "logical_day": str(TODAY),
+        "producer": {"name": "contract-fixture", "version": "0", "run_id": "fixture"},
+        "content_hash": artifact_source.compute_content_hash(sources, []),
+        "sources": sources,
+        "rows": [],
+        "admission": {"rule_set_hash": "fixture", "admitted": [], "dropped": []},
+        "habits": {"total": 1, "done": 0, "outstanding": 1, "est_minutes": 15},
+    })
+
+
+def isolate(tmp: Path) -> Path:
+    """Point every store at ``tmp`` and install the fixture config; return the
+    scratch note path ``write_config_note`` rewrites for the config variants.
+    Shared with the scratch_* harnesses so none of them can read or write the
+    operator's real ``~/.config/tdtb``."""
+    # V1: config is JSON (repo file + local override). Isolate both so a capture
+    # never reads the operator's real config; the markdown fixture above is
+    # installed as the repo config by write_config_note. All state (runstate,
+    # ledger, journals) lands under the scratch TDTB_HOME.
+    _os.environ["TDTB_HOME"] = str(tmp / "home")
+    _os.environ["TDTB_REPO_CONFIG"] = str(tmp / "repo-config" / "tdtb.json")
+    cfg = build_scratch(tmp)
+    # The default sources.mode is "artifact" (slice A4); the fake Todoist /
+    # calendar clients below are only read in "live" mode, which is the shape
+    # these fixtures have always captured. Written to the scratch home only.
+    local = Path(_os.environ["TDTB_HOME"]) / "config.json"
+    local.parent.mkdir(parents=True, exist_ok=True)
+    local.write_text(json.dumps({"version": 1, "sources": {"mode": "live"}}),
+                     encoding="utf-8")
+    # Habit capacity comes from the planning artifact's habits block (the
+    # note-based habit read is gone); a minimal valid artifact keeps the
+    # capacity summary and the "ok" source health the fixtures have always had.
+    write_habit_artifact()
+    return cfg
 
 
 def todoist_fake() -> FakeTodoist:
     return FakeTodoist({
         external_sources.ASSIGNED_QUERY_FALLBACK: [
+            # The note-backed sample rows (Make / Sample Press / Sample Project)
+            # are Todoist tasks now that the note source is gone; "Sample
+            # Project" is overdue so the forgot-strip's stale_assigned is real.
+            {"id": "9002", "content": "Make", "priority": 2,
+             "due": {"date": str(TODAY)},
+             "duration": {"unit": "minute", "amount": 60}, "labels": []},
+            {"id": "9003", "content": "Sample Press", "priority": 2,
+             "due": {"date": str(TODAY)},
+             "duration": {"unit": "minute", "amount": 75}, "labels": []},
+            {"id": "9004", "content": "Sample Project", "priority": 3,
+             "due": {"date": "2026-07-19"},
+             "duration": {"unit": "minute", "amount": 30}, "labels": []},
             {"id": "9001", "content": "Sample Todoist Task", "priority": 3,
              "due": {"date": str(TODAY)},
              "duration": {"unit": "minute", "amount": 90}, "labels": []},
@@ -161,7 +205,7 @@ def todoist_fake() -> FakeTodoist:
 def store_fake() -> FakeStore:
     return FakeStore([{
         "id": "EV-1",
-        "title": "Sample Meeting",
+        "title": "Team Standup",  # shares no token with the Todoist sample (companion rule)
         "start": datetime(TODAY.year, TODAY.month, TODAY.day, 9, 15),
         "end": datetime(TODAY.year, TODAY.month, TODAY.day, 9, 45),
         "calendar_id": "CAL-X",
@@ -190,23 +234,22 @@ else:
     TODAY = gather.effective_date(datetime.now())
 
 
+SCRATCH_PATHS: list[str] = []  # scratch dir spellings, masked in every dump
+
+
 def dump(name: str, payload) -> None:
     OUT.mkdir(parents=True, exist_ok=True)
-    (OUT / f"{name}.json").write_text(
-        json.dumps(payload, indent=2, sort_keys=False, default=str) + "\n",
-        encoding="utf-8",
-    )
+    text = json.dumps(payload, indent=2, sort_keys=False, default=str) + "\n"
+    for spelling in SCRATCH_PATHS:
+        text = text.replace(spelling, "<scratch>")
+    (OUT / f"{name}.json").write_text(text, encoding="utf-8")
     print(f"  {name}.json")
 
 
 def main() -> None:
     tmp = Path(tempfile.mkdtemp(prefix="tdtb-contract-"))
-    # V1: config is JSON (repo file + local override). Isolate both so a capture
-    # never reads the operator's real config; the markdown fixture above is
-    # installed as the repo config by write_config_note.
-    _os.environ["TDTB_HOME"] = str(tmp / "home")
-    _os.environ["TDTB_REPO_CONFIG"] = str(tmp / "repo-config" / "tdtb.json")
-    vault = build_vault(tmp)
+    SCRATCH_PATHS.extend([str(tmp.resolve()), str(tmp)])
+    cfg = isolate(tmp)
     app = main_mod.create_app()
     app.state.build_read_clients = lambda cfg: (todoist_fake(), store_fake())
     client = TestClient(app)
@@ -226,7 +269,7 @@ def main() -> None:
     ).json())
     dump("capacity-preview-allotment-omitted", client.get("/capacity-preview").json())
 
-    # -- day-setup (persists to the synthetic vault's runstate note) ---------
+    # -- day-setup (persists to the scratch runstate) ---------
     r = client.post("/day-setup", headers=auth, json={
         "anchor": "07:30", "eod": "23:00", "buffering": "standard",
         "day_preset": "Workday", "work_allotment_minutes": 240,
@@ -240,7 +283,7 @@ def main() -> None:
     dump("plan-inputs-with-setup", client.get("/plan-inputs").json())
 
     # -- T18b read-contract variants ----------------------------------------
-    # These are all real route responses from the same sanitized vault. The
+    # These are all real route responses from the same sanitized scratch state. The
     # frontend intentionally does not project day_semantics yet; T18f owns
     # that consumer work.
     client.post("/day-setup", headers=auth, json={
@@ -261,7 +304,6 @@ def main() -> None:
     dump("plan-inputs-allotment-zero", client.get("/plan-inputs").json())
     dump("capacity-preview-allotment-zero", client.get("/capacity-preview").json())
 
-    cfg = vault / "00 - META/Skill-Configs/tdtb-bridger.md"
     write_config_note(
         cfg,
         read_config_note(cfg).replace(
@@ -323,12 +365,10 @@ def main() -> None:
         assert r.status_code == 200, r.text
         dump("sequence-ok", r.json())
 
-        # 422: canned proposal that overlaps Morning Routine (hard wall).
+        # 422: canned proposal that drops every assigned row — a hard
+        # never-bump violation (a wall overlap is only a warning since T18d).
         def bad_propose(assigned_arg, config, anchored, ctx):
-            return {"sequence": [
-                {"id": a.get("name"), "start": "07:50", "end": "08:20", "zone": None}
-                for a in assigned_arg[:1]
-            ], "warnings": []}
+            return {"sequence": [], "warnings": []}
 
         judgment.propose_sequence = bad_propose
         r = client.post("/sequence", headers=auth, json=seq_body)
@@ -359,7 +399,7 @@ def main() -> None:
     r = client.post("/validate-sequence", headers=auth, json={**val_body, "sequence": bad_rows})
     dump("validate-fail", r.json())
 
-    # -- shadow commit (writes nothing; live state from the synthetic vault) --
+    # -- shadow commit (writes nothing; live state faked) --
     import shadow as shadow_mod
 
     real_gather_live = shadow_mod.gather_live_state

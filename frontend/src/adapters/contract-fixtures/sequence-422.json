@@ -2,10 +2,16 @@
   "detail": {
     "message": "sequence validation failed",
     "hard_errors": [
+      "assigned item 'Make' missing from sequence (never-bump violated)",
       "assigned item 'Sample Press' missing from sequence (never-bump violated)",
       "assigned item 'Sample Project' missing from sequence (never-bump violated)",
       "assigned item 'Sample Todoist Task' missing from sequence (never-bump violated)",
       "assigned item 'Quick Tasks' missing from sequence (never-bump violated)"
-    ]
+    ],
+    "rejected_proposal": {
+      "sequence": [],
+      "warnings": [],
+      "overlap_grants": []
+    }
   }
 }

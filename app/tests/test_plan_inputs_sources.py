@@ -383,7 +383,7 @@ def test_source_counts_reported(vault, live_sources_mode):
     }])
     body = _client(todoist=todoist, store=store).get("/plan-inputs").json()
     counts = body["source_counts"]
-    assert counts["todoist"] == 2 and counts["calendar"] == 1 and counts["vault"] >= 0
+    assert counts["todoist"] == 2 and counts["calendar"] == 1 and "vault" not in counts
 
 
 # ---------------------------------------------------------------------------
@@ -992,7 +992,7 @@ def test_legacy_intake_response_keeps_todays_shape(vault, live_sources_mode):
         "source_warnings", "time",
     ]
     assert "capacities_intake" not in body
-    assert body["source_counts"] == {"vault": 0, "todoist": 0, "capacities": 2, "calendar": 0}
+    assert body["source_counts"] == {"todoist": 0, "capacities": 2, "calendar": 0}
     assert _names(body, "assigned") == ["Cap A", "Cap B"]
     assert _surface(body, "suggested") == []
 

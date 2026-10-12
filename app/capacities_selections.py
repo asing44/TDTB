@@ -32,7 +32,7 @@ drift. The identity's space component must additionally match the requested
 space; a different-space identity is rejected on save.
 
 The store is machine-local only: it never reads a credential, calls a
-provider, or writes the vault.
+provider, or writes outside the app home.
 """
 from __future__ import annotations
 
@@ -209,7 +209,7 @@ class SelectionsRecord:
 def selections_path() -> Path:
     """The store path: ``<app home>/state/capacities-selections.json``.
 
-    Machine-local, never a vault path, and resolved through
+    Machine-local, and resolved through
     ``app_config.state_dir()`` so ``TDTB_HOME`` relocates it in tests."""
     return app_config.state_dir() / STATE_FILENAME
 

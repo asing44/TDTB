@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """T10 scratch preview server — the scratch_integration harness, held open.
 
-Identical safety envelope to scratch_integration.py (synthetic vault, faked
+Identical safety envelope to scratch_integration.py (scratch state dir, faked
 read clients, canned judgment — nothing billed, dead commit surfaces, frozen
 08:00 clock, refuses a busy :8790, NEVER :8746) but instead of running the
 Vitest suite and exiting, it serves until killed so a browser can drive the
@@ -47,12 +47,7 @@ def main() -> int:
             return 2
 
     tmp = Path(tempfile.mkdtemp(prefix="tdtb-scratch-t10-"))
-    vault = cf.build_vault(tmp)
-    from datetime import date
-
-    daily = vault / "30 - Daily" / f"{date.today().isoformat()}.md"
-    daily.parent.mkdir(parents=True, exist_ok=True)
-    daily.write_text("---\ntype: daily\n---\n\n# Notes\n", encoding="utf-8")
+    cf.isolate(tmp)  # scratch TDTB_HOME / repo config; never the real ~/.config/tdtb
 
     app = main_mod.create_app()
     app.state.build_read_clients = lambda cfg: (cf.todoist_fake(), cf.store_fake())
@@ -64,7 +59,7 @@ def main() -> int:
     shadow_mod.gather_live_state = canned_live_state
     main_mod.datetime = FrozenDateTime
 
-    print(f"scratch preview on http://{HOST}:{PORT}/static/cockpit/ (vault: {vault})")
+    print(f"scratch preview on http://{HOST}:{PORT}/static/cockpit/ (state: {tmp})")
     uvicorn.run(app, host=HOST, port=PORT, log_level="warning")
     return 0
 

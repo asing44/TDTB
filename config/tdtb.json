@@ -405,7 +405,7 @@
       "Token": "projects",
       "Color": "Soft violet",
       "Hex": "A78BFA",
-      "Used for": "Vault projects (also assigned-rail accent; indigo → violet T24 2026-07-24, BusyCal reference)"
+      "Used for": "Projects (also assigned-rail accent; indigo → violet T24 2026-07-24, BusyCal reference)"
     },
     {
       "Token": "buffer",

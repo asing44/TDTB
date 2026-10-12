@@ -1,8 +1,8 @@
 """Static-UI structural markers.
 
 cockpit-overhaul T15: the five legacy views are redirect stubs into the
-cockpit SPA. The wizard source is archived under app/legacy-static/ and is
-no longer served at runtime. Endpoint-shape tests (session token, digest
+cockpit SPA. The wizard source was deleted (vault removal V5b) and is not
+served at runtime. Endpoint-shape tests (session token, digest
 fetch flow) are view-independent and survive unchanged.
 """
 from __future__ import annotations
@@ -22,7 +22,6 @@ POOL_ITEMS = [
 ]
 
 STATIC_DIR = Path(__file__).parent.parent / "static"
-LEGACY_ARCHIVE_DIR = Path(__file__).parent.parent / "legacy-static"
 LEGACY_TO_STEP = {
     "index.html": "setup",
     "digest.html": "digest",
@@ -30,20 +29,10 @@ LEGACY_TO_STEP = {
     "timeline.html": "timeline",
     "commit.html": "commit",
 }
-STEP_FILES = ["setup.js", "digest.js", "adjust.js", "timeline.js", "commit.js"]
-CHIP_STEPS = ["digest.js", "adjust.js", "timeline.js", "commit.js"]  # setup has no chip rows
 
 
 def _read_static(name: str) -> str:
     return (STATIC_DIR / name).read_text()
-
-
-def _read_step(name: str) -> str:
-    return (LEGACY_ARCHIVE_DIR / "steps" / name).read_text()
-
-
-def _read_archive(name: str) -> str:
-    return (LEGACY_ARCHIVE_DIR / name).read_text()
 
 
 @pytest.fixture
@@ -57,7 +46,7 @@ def client() -> TestClient:
 class TestLegacyRedirectStubs:
     """cockpit-overhaul T15 (locked decision 15): legacy bookmarks land on the
     cockpit. Served 200 so bookmarks work, one-commit revertable, zero leftover
-    view logic. No wizard fallback — the wizard is archived, not served."""
+    view logic. No wizard fallback — the wizard is deleted."""
 
     @pytest.mark.parametrize("view,step", sorted(LEGACY_TO_STEP.items()))
     def test_stub_served_and_redirects(self, client, view, step):
@@ -76,37 +65,16 @@ class TestLegacyRedirectStubs:
             assert remnant not in html, f"{view} still carries view logic: {remnant}"
 
 
-class TestLegacyWizardArchived:
-    """cockpit-overhaul T15: the wizard SPA is archived under app/legacy-static/
-    for rollback/history. It is no longer served at runtime — /static/legacy.html
-    returns 404. Archive structural integrity is preserved."""
+class TestLegacyWizardRemoved:
+    """The wizard SPA (formerly archived under app/legacy-static/) is deleted;
+    /static/legacy.html returns 404."""
 
     def test_legacy_html_not_served(self, client):
         r = client.get("/static/legacy.html")
         assert r.status_code == 404
 
-    def test_archive_legacy_html_exists(self):
-        assert (LEGACY_ARCHIVE_DIR / "legacy.html").is_file()
-
-    def test_archive_includes_kit_and_wizard(self):
-        html = _read_archive("legacy.html")
-        assert "ui_kit.css" in html
-        assert "ui_kit.js" in html
-        assert "wizard_logic.js" in html
-        assert "timeline_logic.js" in html
-
-    def test_archive_loads_all_step_modules(self):
-        html = _read_archive("legacy.html")
-        for step in STEP_FILES:
-            assert f"steps/{step}" in html, f"legacy.html missing steps/{step}"
-
-    def test_archive_step_modules_exist(self):
-        for step in STEP_FILES:
-            assert (LEGACY_ARCHIVE_DIR / "steps" / step).is_file(), f"steps/{step} missing"
-
-    def test_archive_budget_header_renders_server_ledger(self):
-        html = _read_archive("legacy.html")
-        assert "/billed-ledger" in html
+    def test_legacy_archive_dir_is_gone(self):
+        assert not (Path(__file__).parent.parent / "legacy-static").exists()
 
 
 class TestSessionTokenRoute:
@@ -151,29 +119,8 @@ class TestDigestFetchShapeMatchesUI:
         assert r.status_code == 403
 
 
-class TestStepModuleMarkers:
-    """The legacy views' structural pins, retargeted at the step modules."""
-
-    def test_setup_step_markers(self):
-        js = _read_step("setup.js")
-        # read side + confirm POST + backend-verbatim bar (ui-parity T6,
-        # ui-revamp T3 — capacity math stays server-side).
-        assert "plan-inputs" in js
-        assert "day-setup" in js
-        assert "capacity-preview" in js
-        assert "/config" in js                     # folded config viewer
-
-    def test_digest_step_markers(self):
-        js = _read_step("digest.js")
-        # /plan-inputs is the single assembly endpoint (source counts +
-        # warnings + capacity + habits) — the loud-degrade surface.
-        assert "plan-inputs" in js
-        assert "OVERASSIGNED" in js
-
-    @pytest.mark.parametrize("step", CHIP_STEPS)
-    def test_step_renders_source_chip(self, step):
-        js = _read_step(step)
-        assert "chipEl(" in js or "chipHtml(" in js, f"{step} has no chip render call"
+class TestStaticRemnants:
+    """Structural pins over the files that remain under static/."""
 
     def test_no_durationtoblocks_remnant_anywhere(self):
         # ui-revamp locked decision 2: capacity math lives server-side
@@ -184,29 +131,6 @@ class TestStepModuleMarkers:
                 continue
             assert "durationToBlocks" not in path.read_text(), (
                 f"durationToBlocks remnant in {path.name}")
-
-    def test_timeline_has_no_billed_auto_fire_on_mount(self):
-        # G23 (d8a7013): a fresh timeline mount with no stash must NOT
-        # auto-fire the billed /sequence call — it idles until an explicit
-        # Propose/Manual click. Pin the idle-mount copy.
-        js = _read_step("timeline.js")
-        assert "G23" in js
-        assert "No plan yet — Propose sequence (1 billed call) or Manual layout." in js
-
-    def test_timeline_totals_label_is_selected_not_placed(self):
-        # ui-revamp T7 fix: /capacity-preview's segments.selected counts
-        # selections, not canvas placements — label must stay "Selected".
-        js = _read_step("timeline.js")
-        assert "'Selected: '" in js
-        assert "'Placed: '" not in js
-
-    def test_error_fetches_use_kit_error_surface(self):
-        # Every step that hand-rolls a fetch must still resolve failures to a
-        # visible red status render, never a swallowed catch.
-        for step in STEP_FILES:
-            js = _read_step(step)
-            assert ("status error" in js) or ("renderError" in js) or ("kitFetch" in js), (
-                f"steps/{step} has no visible error-status render path")
 
 
 class TestCockpitBuildBeside:

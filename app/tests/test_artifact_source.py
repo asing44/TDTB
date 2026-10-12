@@ -175,6 +175,21 @@ def test_missing_required_row_field_is_malformed(tmp_path):
     assert "identity" in " ".join(result.warnings)
 
 
+def test_a_row_from_a_retired_source_is_malformed_and_named(tmp_path):
+    """The note source is gone: an artifact row tagged ``source: "vault"`` is an
+    unknown source like any other, so the artifact degrades loudly (empty rows
+    plus a banner naming the offending row) instead of being half-used."""
+    rows = _rows()
+    rows[1]["source"] = "vault"
+    path = _write(tmp_path / "planning-artifact.json", _doc(rows=rows))
+
+    result = _load(path)
+
+    assert result.status == art.STATUS_MALFORMED
+    assert result.rows == []
+    assert "rows[1].source" in " ".join(result.warnings)
+
+
 def test_fresh_artifact_uses_rows(tmp_path):
     path = _write(tmp_path / "planning-artifact.json", _doc())
     result = _load(path)
@@ -278,8 +293,8 @@ def test_overlay_overrides_and_adds_rows(tmp_path):
         "rows": [
             {"name": "Call Vlad", "source": "todoist", "path": "todoist://9001",
              "identity": "todoist:9001", "assigned": True, "blocks": 9},
-            {"name": "Hand added", "source": "vault", "path": "Notes/Hand.md",
-             "identity": "Notes/Hand.md", "assigned": False},
+            {"name": "Hand added", "source": "todoist", "path": "todoist://9003",
+             "identity": "todoist:9003", "assigned": False},
         ],
     })
 
@@ -287,7 +302,7 @@ def test_overlay_overrides_and_adds_rows(tmp_path):
 
     by_name = {r["name"]: r for r in result.rows}
     assert by_name["Call Vlad"]["blocks"] == 9          # override wins
-    assert by_name["Hand added"]["path"] == "Notes/Hand.md"  # added
+    assert by_name["Hand added"]["path"] == "todoist://9003"  # added
     assert len(result.rows) == 3
     assert result.overlay_rows == 2
 
@@ -297,8 +312,8 @@ def test_overlay_is_dropped_entirely_for_a_stale_artifact(tmp_path):
         tmp_path / "planning-artifact.json", _doc(logical_day="2026-10-07")
     )
     overlay = _write(tmp_path / "planning-overlay.json", {
-        "rows": [{"name": "Hand added", "source": "vault",
-                  "path": "Notes/Hand.md", "identity": "Notes/Hand.md",
+        "rows": [{"name": "Hand added", "source": "todoist",
+                  "path": "todoist://9003", "identity": "todoist:9003",
                   "assigned": False}],
     })
 

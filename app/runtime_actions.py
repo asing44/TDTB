@@ -26,11 +26,11 @@ precondition: it records a deferral in the rolling ``deferrals`` store and
 best-effort un-schedules whatever derived records exist, so it is legal from
 the staging queue as well as from the committed plan.
 
-V3 (vault removal): the verbs that wrote Obsidian notes (``vault.complete``,
-``vault.assign``, ``vault.unassign``, ``vault.trash``) are deleted. A target
-that still resolves to a vault path (only possible from a pre-cutover manifest)
-is refused with an explicit "removed" error by ``plan_steps``; a journal entry
-that already holds one of those steps fails its undo with the same message.
+Only Todoist, Calendar, Capacities and state-dir steps exist. A target that
+resolves to no such source (e.g. a stale manifest row from a retired source)
+takes the ordinary "no ... source" refusal in ``plan_steps``; a journal entry
+from before the retirement that names a step kind this module no longer knows
+fails its undo with an "unknown step kind" error (it never crashes the load).
 
 Contracts (locked decision 41 + T20 scope amendment 2026-07-25):
 
@@ -52,8 +52,7 @@ Contracts (locked decision 41 + T20 scope amendment 2026-07-25):
   unavailable client fails closed with no journal entry and no side effect.
 
 The journal lives in the state dir
-(``<app home>/state/runtime-journal/<date>.json``; pre-V2 it was
-``00 - META/Cache/tdtb-runtime-journal-<date>.json`` in the vault), is written atomically
+(``<app home>/state/runtime-journal/<date>.json``), is written atomically
 (tmp + os.replace) and mutated only under ``runstate.day_lock`` — same
 single-writer discipline as every other dated write.
 """
@@ -108,7 +107,7 @@ STAGING_VERBS = (
 )
 
 # `external_sources` gives every Todoist row this synthetic path. It is an
-# identity, not a location — nothing may join it to a vault root.
+# identity, not a location — nothing may join it to a filesystem root.
 TODOIST_PATH_PREFIX = "todoist://"
 CAPACITIES_PATH_PREFIX = "capacities://"
 
@@ -182,14 +181,12 @@ def _resolve_from_digest_index(
     server itself wrote at /plan-inputs. Returns None when the name isn't in
     today's digest — an unknown item is still refused, exactly as post-commit.
 
-    T12d: a digest ``path`` is only a VAULT path when it is not
-    ``external_sources``' synthetic ``todoist://<id>``. Post-commit resolution
-    is safe here because it keys on the manifest's ``system`` column; the
-    staging index has no such column, so the pseudo-path has to be recognised
-    by shape — the same guard `shadow.py` applies at its own two sites.
-    Without it every staging verb against a Todoist row planned a vault write
-    at ``<vault>/todoist://<id>``, which closed the task, raised ENOENT, and
-    compensated the close back out.
+    The staging index has no ``system`` column, so ``external_sources``'
+    synthetic ``todoist://<id>`` pseudo-path has to be recognised by shape —
+    the same guard `shadow.py` applies at its own two sites. A row whose path
+    is neither Todoist nor Capacities (a retired note path) resolves to no
+    source, so every source verb refuses it with its ordinary "no ... source"
+    error.
     """
     rows = [r for r in runstate.read_digest_index(valid_date)
             if r.get("name") == name]
@@ -200,7 +197,7 @@ def _resolve_from_digest_index(
         path = str(row.get("path") or "")
         source = str(row.get("source") or "").strip().casefold()
         if source == "capacities" or path.startswith(CAPACITIES_PATH_PREFIX):
-            # A Capacities URI is a source identity, never a vault path. Copy
+            # A Capacities URI is a source identity, not a file path. Copy
             # only server-derived provider metadata into the guarded action.
             if path.startswith(CAPACITIES_PATH_PREFIX) and "capacities_id" not in out:
                 for key in (
@@ -217,8 +214,6 @@ def _resolve_from_digest_index(
         elif path.startswith(TODOIST_PATH_PREFIX) and "todoist_id" not in out:
             # A pseudo-path with no explicit id still identifies the task.
             out["todoist_id"] = path[len(TODOIST_PATH_PREFIX):]
-        if path and not path.startswith(TODOIST_PATH_PREFIX) and "vault_path" not in out:
-            out["vault_path"] = path
     return out
 
 
@@ -250,8 +245,6 @@ def resolve_target(valid_date: date, name: str) -> dict[str, Any]:
             out["event_id"] = str(row.get("id_or_path"))
             out["event_time"] = row.get("time")
             out["event_duration_min"] = int(row.get("duration_min") or 0)
-        elif system == "vault" and "vault_path" not in out:
-            out["vault_path"] = str(row.get("id_or_path"))
         elif system == "capacities" and "capacities_id" not in out:
             out["source"] = "capacities"
             out["capacities_id"] = str(row.get("id_or_path"))
@@ -267,21 +260,19 @@ def resolve_target(valid_date: date, name: str) -> dict[str, Any]:
 def drop_identity_of(target_or_row: dict[str, Any]) -> str:
     """Canonical source identity for a Drop exclusion.
 
-    Todoist rows are ``todoist:<task id>``; vault rows are the vault-relative
-    path. The ``todoist://`` pseudo-path is an identity marker, not a vault
-    location, so it never becomes a vault identity. Falls back to the name/id
-    for rows with no usable source identity (the manifest is name-keyed).
+    Todoist rows are ``todoist:<task id>``; Capacities rows carry their own
+    identity. The ``todoist://`` pseudo-path is an identity marker, not a
+    location. Falls back to the name/id for rows with no usable source
+    identity (the manifest is name-keyed).
     """
     tid = target_or_row.get("todoist_id")
     if tid not in (None, ""):
         return f"todoist:{tid}"
     source = str(target_or_row.get("source") or "").strip().casefold()
     identity = str(target_or_row.get("identity") or "").strip()
-    path = str(target_or_row.get("vault_path") or target_or_row.get("path") or "")
+    path = str(target_or_row.get("path") or "")
     if source == "capacities" or path.startswith(CAPACITIES_PATH_PREFIX):
         return identity or path
-    if path and not path.startswith(TODOIST_PATH_PREFIX):
-        return path
     return str(target_or_row.get("name") or target_or_row.get("id") or "")
 
 
@@ -305,37 +296,12 @@ def _event_snapshot(store: Any, event_id: str) -> dict | None:
     return {k: _iso(v) for k, v in ev.items()}
 
 
-#: Verbs that used to write the Obsidian note behind a vault-path row. The
-#: notes are gone (V3), so a target that still resolves to a vault path is
-#: refused instead of being silently skipped.
-VAULT_REMOVED_VERBS = (
-    "complete", "done", "assign", "unassign", "delete_permanent", "delete",
-)
-
-#: Journal step kinds deleted with the vault verbs. An old journal entry that
-#: still names one fails (apply never plans them; undo reports it) with a
-#: clear message instead of an "unknown step kind".
-REMOVED_STEP_KINDS = frozenset({
-    "vault.complete", "vault.assign", "vault.unassign", "vault.trash",
-})
-
-
-def _removed_vault_action(what: str) -> RuntimeActionError:
-    return RuntimeActionError(
-        f"{what}: the Obsidian vault is retired — vault note actions "
-        "(complete, assign, unassign, delete) were removed; nothing was changed"
-    )
-
-
 def plan_steps(verb: str, target: dict, args: dict, valid_date: date) -> list[dict]:
     """Pure: verb + resolved target -> ordered step specs (no clients)."""
     if target.get("phase") == "staging" and verb not in STAGING_VERBS:
         raise RuntimeActionError(
             f"{verb!r} needs a committed plan item — "
             f"{target.get('name')!r} is still staged")
-    if target.get("vault_path") and verb in VAULT_REMOVED_VERBS:
-        raise _removed_vault_action(
-            f"{verb!r} on {target.get('name')!r} (vault note {target['vault_path']!r})")
     steps: list[dict] = []
     if verb in ("complete", "done"):
         if target.get("todoist_id"):
@@ -358,7 +324,7 @@ def plan_steps(verb: str, target: dict, args: dict, valid_date: date) -> list[di
                 f"{target['name']!r}: no completable source in today's manifest")
     elif verb == "drop_from_plan":
         # IMP-05: a date-scoped TDTB exclusion. One runstate-only step — the
-        # identity is the stable source identity (todoist:<id> / vault path)
+        # identity is the stable source identity (todoist:<id> / capacities)
         # so the same name across surfaces dedupes; the dated runstate note
         # scopes it to today, making the item eligible again tomorrow.
         steps.append({
@@ -366,7 +332,7 @@ def plan_steps(verb: str, target: dict, args: dict, valid_date: date) -> list[di
             "surface": "runstate",
             "system": "runstate",
             "item": {k: target.get(k) for k in
-                     ("name", "todoist_id", "vault_path", "id")},
+                     ("name", "todoist_id", "id")},
             "date": str(valid_date),
         })
     elif verb == "unassign":
@@ -430,9 +396,9 @@ def plan_steps(verb: str, target: dict, args: dict, valid_date: date) -> list[di
         # target actually has, so `defer` is legal pre-commit (nothing placed
         # yet) as well as post-commit — unlike remove_from_today it never
         # refuses an item with no scheduled artifacts.
-        steps.append({"kind": "deferrals.record", "surface": "vault",
+        steps.append({"kind": "deferrals.record", "surface": "runstate",
                       "item": {k: target.get(k) for k in
-                               ("name", "vault_path", "todoist_id")}})
+                               ("name", "todoist_id")}})
         if target.get("event_id"):
             steps.append({"kind": "calendar.delete", "surface": "calendar",
                           "event_id": target["event_id"]})
@@ -586,8 +552,6 @@ def _apply_step(step: dict, valid_date: date,
         step["key"] = key
         step["before"] = {"entry": deferrals.load_deferrals().get(key)}
         step["entry"] = deferrals.record_deferral(item, valid_date)
-    elif kind in REMOVED_STEP_KINDS:
-        raise _removed_vault_action(f"step {kind!r}")
     else:  # pragma: no cover — plan_steps only emits the kinds above
         raise RuntimeActionError(f"unknown step kind {kind!r}")
     step["applied"] = True
@@ -672,8 +636,6 @@ def _reverse_step(step: dict, valid_date: date,
             {"dropped": (before.get("dropped") or [])}))
     elif kind == "deferrals.record":
         deferrals.set_entry(step["key"], before.get("entry"))
-    elif kind in REMOVED_STEP_KINDS:
-        raise _removed_vault_action(f"undo of step {kind!r}")
     else:  # pragma: no cover
         raise RuntimeActionError(f"unknown step kind {kind!r}")
 
@@ -832,7 +794,7 @@ def _locked_runstate_rmw(valid_date: date,
 
 
 _SURFACE_CLIENT = {"todoist": "todoist", "calendar": "store",
-                   "capacities": "capacities", "vault": None, "runstate": None}
+                   "capacities": "capacities", "runstate": None}
 
 
 def _check_surfaces(

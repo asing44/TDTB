@@ -84,7 +84,7 @@ Do not fold habit tasks into the `tasks` list used for rows — the
 `todoist-drop-habits` rule already excludes them there. Instead emit a
 separate top-level `habits` source entry (step 4): the producer turns it into
 the artifact's top-level `habits` block, which is the ONLY source of habit
-time now that Obsidian is retired. A habit task's `duration` (`"5m"`,
+time now that the note-based habit read is retired. A habit task's `duration` (`"5m"`,
 `"25m"`, or a REST `{"amount": N, "unit": "minute"|"day"}`) is its minutes;
 today's completions are matched to it by `task_id`/`id` or by `content`.
 Omit the entry only if the fetch failed — the app then zeroes habit time and

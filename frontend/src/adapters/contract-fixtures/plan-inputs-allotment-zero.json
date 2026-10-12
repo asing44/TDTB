@@ -13,38 +13,56 @@
     "assigned": [
       {
         "name": "Make",
-        "path": "50 - Operations/Projects/Make.md",
+        "path": "todoist://9002",
         "types": [
-          "project"
+          "todoist"
         ],
-        "urgency": null,
-        "deadline": null,
-        "priority_score": 4,
+        "urgency": 2,
+        "deadline": "2026-07-24",
+        "priority_score": 2.0,
         "assigned": true,
+        "source": "todoist",
+        "todoist_id": "9002",
+        "duration": 60,
+        "labels": [],
+        "is_recurring": false,
+        "scheduled_start": null,
         "blocks": 2
       },
       {
         "name": "Sample Press",
-        "path": "50 - Operations/Projects/Sample Press.md",
+        "path": "todoist://9003",
         "types": [
-          "press"
+          "todoist"
         ],
-        "urgency": null,
-        "deadline": null,
-        "priority_score": 4,
+        "urgency": 2,
+        "deadline": "2026-07-24",
+        "priority_score": 2.0,
         "assigned": true,
+        "source": "todoist",
+        "todoist_id": "9003",
+        "duration": 75,
+        "labels": [],
+        "is_recurring": false,
+        "scheduled_start": null,
         "blocks": 3
       },
       {
         "name": "Sample Project",
-        "path": "50 - Operations/Projects/Sample Project.md",
+        "path": "todoist://9004",
         "types": [
-          "project"
+          "todoist"
         ],
-        "urgency": "3-high",
+        "urgency": 3,
         "deadline": "2026-07-19",
-        "priority_score": 112,
+        "priority_score": 3.0,
         "assigned": true,
+        "source": "todoist",
+        "todoist_id": "9004",
+        "duration": 30,
+        "labels": [],
+        "is_recurring": false,
+        "scheduled_start": null,
         "blocks": 1
       },
       {
@@ -71,42 +89,44 @@
     "stale_assigned": [
       {
         "name": "Sample Project",
-        "path": "50 - Operations/Projects/Sample Project.md",
+        "path": "todoist://9004",
         "reason": "assigned but deadline 2026-07-19 has passed"
       }
-    ]
+    ],
+    "exclusion_policy": {
+      "version": 1,
+      "revision": 0,
+      "persisted": false,
+      "mode": "exclude_any",
+      "evaluated_counts": {
+        "assigned": 4,
+        "pool": 0
+      },
+      "excluded_counts": {
+        "assigned": 0,
+        "pool": 0,
+        "total": 0
+      },
+      "decisions": [],
+      "warnings": []
+    }
   },
   "config": {
-    "Defaults": {
-      "eod": "11:45 PM",
-      "work_allotment_minutes": 180
-    },
-    "Day Presets": [
+    "Calendar Titles": [
       {
-        "Name": "Workday",
-        "Days": "workdays",
-        "Zones": null,
-        "Work Allotment (min)": 240,
-        "Default": null
-      },
-      {
-        "Name": "Weekend",
-        "Days": "weekends",
-        "Zones": null,
-        "Work Allotment (min)": 0,
-        "Default": null
-      },
-      {
-        "Name": "Default",
-        "Days": "daily",
-        "Zones": null,
-        "Work Allotment (min)": null,
-        "Default": true
+        "Logical name": "blocks",
+        "BusyCal title": "\u2b1c Blocks",
+        "Role": "schedulable"
       }
     ],
-    "Overlap Permissions": {
-      "_body": "Default for everything is no-overlap."
-    },
+    "Presets": [
+      {
+        "Name": "Make",
+        "Type": "interval",
+        "Blocks": 2,
+        "Priority": 2
+      }
+    ],
     "Anchored Lifestyle Blocks": [
       {
         "Block": "Morning Routine",
@@ -139,32 +159,42 @@
         "time": null
       }
     ],
-    "Calendar Titles": [
+    "Day Presets": [
       {
-        "Logical name": "blocks",
-        "BusyCal title": "⬜ Blocks",
-        "Role": "schedulable"
+        "Name": "Workday",
+        "Days": "workdays",
+        "Zones": null,
+        "Work Allotment (min)": 240,
+        "Default": null
+      },
+      {
+        "Name": "Weekend",
+        "Days": "weekends",
+        "Zones": null,
+        "Work Allotment (min)": 0,
+        "Default": null
+      },
+      {
+        "Name": "Default",
+        "Days": "daily",
+        "Zones": null,
+        "Work Allotment (min)": null,
+        "Default": true
       }
     ],
-    "Presets": [
-      {
-        "Name": "Make",
-        "Type": "interval",
-        "Blocks": 2,
-        "Priority": 2
-      }
-    ],
+    "Overlap Permissions": {
+      "_body": "## Overlap Permissions\n\nDefault for everything is no-overlap."
+    },
+    "Defaults": {
+      "eod": "11:45 PM",
+      "work_allotment_minutes": 180
+    },
     "micro_adventure": {
       "id": "ma01",
       "idea": "Walk the greenway trail near the townhome",
       "category": "nature"
     },
-    "re_included": [],
-    "captures": {
-      "intention": "Sample intention",
-      "megan_nicety": "Sample nicety",
-      "stoic_intention": "Sample stoic"
-    }
+    "re_included": []
   },
   "anchored_blocks": [
     {
@@ -198,10 +228,13 @@
       "time": null
     },
     {
-      "Block": "Sample Meeting",
+      "Block": "Team Standup",
       "Start": "09:15",
       "End": "09:45",
-      "source": "calendar"
+      "source": "calendar",
+      "calendar_id": "CAL-X",
+      "calendar_title": "Fixture",
+      "capacity_class": "fixed"
     }
   ],
   "anchored_source_fingerprint": "0c0eada52127bb71239c4dca7be0dfdac04d59885bd671ae975b42914c61f8f8",
@@ -231,10 +264,12 @@
     "free": 23,
     "overassigned": false,
     "available_for_selection": 23,
-    "remaining": "⬆ 11hr 30min left · 23 blk",
+    "remaining": "\u2b06 11hr 30min left \u00b7 23 blk",
     "ratio": "8 / 31 blk",
-    "legend": "Fixed 1 · Anchored 6 · Habits 1 · Mint 0 · Selected 0 · Buffer 0 · Free 23 · Total 31 (habits: 0 done · 1 left)",
-    "counters": "deep: 0 / 0 · mixed: 0 / 0"
+    "legend": "Fixed 1 \u00b7 Anchored 6 \u00b7 Habits 1 \u00b7 Mint 0 \u00b7 Selected 0 \u00b7 Buffer 0 \u00b7 Free 23 \u00b7 Total 31 (habits: 0 done \u00b7 1 left)",
+    "counters": "deep: 0 / 0 \u00b7 mixed: 0 / 0",
+    "work_busy": 0,
+    "work_overflow": 0
   },
   "day_setup": {
     "anchor": "07:30",
@@ -249,13 +284,20 @@
         "time": null
       }
     ],
-    "schedulable": {},
+    "schedulable": {
+      "minting": {
+        "on": false,
+        "n": 0,
+        "sessions": []
+      }
+    },
+    "day_preset": "Workday",
+    "work_allotment_minutes": 0,
     "intention": "Sample intention",
     "megan_nicety": "Sample nicety",
-    "stoic_intention": "Sample stoic",
-    "day_preset": "Workday",
-    "work_allotment_minutes": 0
+    "stoic_intention": "Sample stoic"
   },
+  "day_setup_confirmed": true,
   "day_semantics": {
     "available_presets": [
       {
@@ -310,12 +352,15 @@
     "enabled_zones": [],
     "effective_allotment_minutes": 0,
     "default_allotment_minutes": 180,
+    "allotment_source": "dated_override",
     "mint_enabled": false,
+    "mint_below_default": false,
     "warnings": [],
     "errors": [],
-    "overlap_permissions_raw": "## Overlap Permissions\n\nDefault for everything is no-overlap."
+    "overlap_permissions_raw": "## Overlap Permissions\n\nDefault for everything is no-overlap.",
+    "mint_sessions": []
   },
-  "planning_config_fingerprint": "ac688554f19748e3a2668f0c7d63bfd36f5acf7b23fb5e030d0c80ee69b0404f",
+  "planning_config_fingerprint": "6d16f1c45b6742112472210d193e523e116533f81c59e448e471be5994abd3ae",
   "micro_adventure": {
     "pick": {
       "id": "ma01",
@@ -368,11 +413,43 @@
     "streak": 0,
     "pending_confirm": null
   },
+  "dropped_today": [],
+  "calendar_decisions": [
+    {
+      "identity": "EV-1",
+      "title": "Team Standup",
+      "source_calendar_id": "CAL-X",
+      "calendar_id": "CAL-X",
+      "calendar_title": "Fixture",
+      "decision": "included",
+      "reason_code": "included_timed",
+      "reason": "timed event included as busy block",
+      "capacity_class": "fixed",
+      "start": "09:15",
+      "end": "09:45",
+      "all_day": false
+    }
+  ],
+  "artifact": {
+    "state": "live",
+    "generated_at": null,
+    "age_minutes": null,
+    "logical_day": null,
+    "producer": null,
+    "warnings": []
+  },
   "source_warnings": [],
   "source_counts": {
-    "vault": 3,
-    "todoist": 1,
+    "todoist": 4,
+    "capacities": 0,
     "calendar": 1
   },
-  "day_setup_confirmed": true
+  "prompt_optins": {
+    "optins": {
+      "intention": false,
+      "megan_nicety": false,
+      "stoic_intention": false
+    },
+    "revision": 0
+  }
 }

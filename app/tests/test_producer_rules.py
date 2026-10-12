@@ -451,11 +451,11 @@ def test_capacities_first_match_wins_in_file_order():
     assert result.dropped[0].rule == "first"
 
 
-def test_capacities_and_todoist_rows_coexist_and_vault_is_ignored():
+def test_capacities_and_todoist_rows_coexist_and_a_retired_source_is_ignored():
     source = {
         "todoist": {"status": "ok", "tasks": [_task(task_id="1", content="T")]},
         "capacities": _cap_source(_cap_object()) ["capacities"],
-        "vault": {"status": "ok", "records": [{"id": "v1", "title": "V"}]},
+        "notes": {"status": "ok", "records": [{"id": "v1", "title": "V"}]},
     }
     result = _evaluate(_rules(
         _rule(when={"prop": "id", "op": "exists"}),
@@ -463,7 +463,7 @@ def test_capacities_and_todoist_rows_coexist_and_vault_is_ignored():
     ), source)
 
     assert [r["name"] for r in result.rows] == ["Inbox thing", "T"]
-    assert any("vault" in w for w in result.warnings)
+    assert any("notes" in w for w in result.warnings)
 
 
 def test_capacities_source_deferred_rides_the_sources_block():

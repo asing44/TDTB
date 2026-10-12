@@ -93,7 +93,7 @@ def _is_reminder(task: dict[str, Any]) -> bool:
 
 def _to_item(task: dict[str, Any], assigned: bool) -> dict[str, Any]:
     tid = str(task.get("id"))
-    # Todoist API priority: 4 = highest — same direction as vault urgency.
+    # Todoist API priority: 4 = highest — same direction as the urgency scale.
     priority = int(task.get("priority") or 1)
     return {
         "name": task.get("content") or f"(untitled {tid})",
@@ -176,23 +176,23 @@ def fetch_capacities_items(
 
 
 def disambiguate_names(
-    vault_items: list[dict[str, Any]], ext_items: list[dict[str, Any]]
+    base_items: list[dict[str, Any]], ext_items: list[dict[str, Any]]
 ) -> list[dict[str, Any]]:
-    """Rename external items whose name collides with a vault item (or an
+    """Rename external items whose name collides with a base item (or an
     earlier external item). Sequence identity is name-keyed downstream
     (timeline sets id = name), so duplicate names break never-bump and
-    duplicate-row validation. Vault names stay canonical; collisions get a
+    duplicate-row validation. Base names stay canonical; collisions get a
     source-specific suffix such as ``(Todoist)`` or ``(Capacities)``. Mutates
     copies, not inputs.
     """
-    vault_taken = {str(i.get("name", "")).casefold() for i in vault_items}
-    taken = set(vault_taken)
+    base_taken = {str(i.get("name", "")).casefold() for i in base_items}
+    taken = set(base_taken)
     out: list[dict[str, Any]] = []
     for item in ext_items:
         copy = dict(item)
         name = str(copy.get("name", ""))
         if name.casefold() in taken:
-            # A vault collision reads best as a source tag; a same-source
+            # A base-item collision reads best as a source tag; a same-source
             # duplicate just numbers up.
             source_label = {
                 "todoist": "Todoist",
@@ -200,7 +200,7 @@ def disambiguate_names(
             }.get(str(copy.get("source") or "").strip().casefold(), "Source")
             candidates = (
                 [f"{name} ({source_label})"]
-                if name.casefold() in vault_taken
+                if name.casefold() in base_taken
                 else []
             )
             candidates += [f"{name} ({n})" for n in range(2, len(ext_items) + 2)]

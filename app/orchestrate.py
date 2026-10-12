@@ -8,10 +8,9 @@ live ``/commit?mode=live`` route (T15) calls:
 
   - **Fixed surface order + stable ledger keys** (``SURFACES``) — every run
     dispatches todoist -> calendar, in that order, and records a per-surface
-    entry under that same key every time. (V3: the ``vault_flips`` and
-    ``daily_note`` surfaces were deleted with the Obsidian write steps; a
-    resumed run that finds those keys in an older persisted ledger ignores
-    them.)
+    entry under that same key every time. (Surfaces retired with the note
+    writes are gone; a resumed run that finds their keys in an older persisted
+    ledger ignores them.)
   - **A failing surface never aborts the run.** Writers are already
     idempotent and self-reconciling (commit.py's guarantee); a writer
     returning ``ok=False`` only marks its own ledger entry failed — later

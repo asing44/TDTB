@@ -941,8 +941,8 @@ export function projectAssigned(row: Wire): AssignedItem {
       ? "todoist"
       : row.source === "capacities"
         ? "capacities"
-        // Legacy/unknown source (an old payload may still say "vault"): render
-        // as a neutral Todoist-like row. It carries no todoistId or identity,
+        // Unknown source (an old or foreign payload): render as a neutral
+        // Todoist-like row. It carries no todoistId or identity,
         // so it is unidentified and no source-specific verb can address it.
         : "todoist";
   const blocks =

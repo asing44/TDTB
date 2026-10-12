@@ -539,7 +539,7 @@ describe("fixed-input gate (locked decision 17)", () => {
   it("readFixedInputs projects calendar + anchored on a healthy read", async () => {
     const a = new ApiAdapter();
     const f = await a.readFixedInputs();
-    expect(f.calendar.map((c) => c.name)).toEqual(["Sample Meeting"]);
+    expect(f.calendar.map((c) => c.name)).toEqual(["Team Standup"]);
   });
 
   it("THROWS on a calendar degrade — never an unchanged fingerprint", async () => {

@@ -14,7 +14,7 @@ functions:
      (``KILL`` / ``DIFF`` / ``INCONCLUSIVE`` / ``PASS``) per § 2.2–2.3.
 
 (The Step B daily-note carve-out the protocol once required is gone: the
-manifest no longer emits Step B/C vault rows, so there is nothing to carve out.)
+manifest no longer emits Step B/C rows, so there is nothing to carve out.)
 
 Nothing here does I/O; ``bake_in_run.py`` wires this against a real
 manifest/live-state and appends the log row.

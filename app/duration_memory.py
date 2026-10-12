@@ -25,10 +25,9 @@ discipline). ``resolve_duration`` is pure — it never writes anything.
 FT-01 MVP (persistence), V2 location:
 - ``save_memory`` / ``reset_memory`` / ``read_all_memory`` persist a
   versioned JSON cache at ``<app home>/state/duration-memory.json``
-  (``app_config.state_dir()``) with its lock beside it. Legacy path-shaped keys
-  from the one-time copy of the old note-era file are still accepted (they never
-  crash a read or a write) but no digest row carries that identity any more, so
-  they simply never match.
+  (``app_config.state_dir()``) with its lock beside it. Legacy keys left in an
+  old copied file are still accepted on read (they never crash a read or a
+  write, see ``normalize_identity``) but are never minted and never match.
 - Values are strict nonnegative integers divisible by 5 (``DURATION_STEP_MINUTES``);
   bools, fractions, negatives, and off-grid values raise ``ValueError``
   before any file access.
@@ -191,7 +190,7 @@ def _load_for_write() -> dict[str, int]:
     out: dict[str, int] = {}
     for key, raw in items.items():
         try:
-            norm = normalize_identity(str(key))
+            norm = normalize_identity(str(key), legacy_ok=True)
             value = validate_duration_minutes(raw)
         except (TypeError, ValueError) as exc:
             raise MemoryStoreError(
@@ -224,7 +223,7 @@ def read_all_memory() -> dict[str, int]:
     out: dict[str, int] = {}
     for key, raw in items.items():
         try:
-            norm = normalize_identity(str(key))
+            norm = normalize_identity(str(key), legacy_ok=True)
             value = validate_duration_minutes(raw)
         except (TypeError, ValueError):
             continue
@@ -311,28 +310,30 @@ def apply_remembered_overlay(
 # Identity
 # ---------------------------------------------------------------------------
 
-def normalize_identity(identity: str) -> str:
+def normalize_identity(identity: str, *, legacy_ok: bool = False) -> str:
     """Validate and normalize a canonical source identity.
 
-    Valid identities: ``todoist:<id>`` (Todoist task id), or a legacy
-    ``vault:<path>`` / path-shaped value containing ``/`` (kept readable so an
-    old copied cache file never crashes; no row matches it). A bare
+    The only identity that can be saved or looked up is ``todoist:<id>``. A bare
     display name is not an identity and raises ``ValueError``.
+
+    ``legacy_ok`` is for reading a cache file only: it also passes a key left
+    behind by the retired note source (a ``vault:`` prefix or any ``/`` path),
+    verbatim, so a copied old file never crashes a read or a write. No row
+    carries such an identity any more, so those entries never match; they are
+    never minted.
     """
     text = str(identity or "").strip()
     if text.startswith("todoist:"):
         tail = text[len("todoist:"):].strip()
         if tail:
             return f"todoist:{tail}"
-    if text.startswith("vault:"):
-        tail = text[len("vault:"):].strip()
-        if tail:
-            return f"vault:{tail}"
+    if legacy_ok and text.startswith("vault:") and text[len("vault:"):].strip():
+        return f"vault:{text[len('vault:'):].strip()}"
     if text.startswith("capacities:") or text.casefold().startswith("capacities://"):
         raise ValueError(
             f"{identity!r} is a Capacities source identity, not a duration-memory key"
         )
-    if "/" in text:
+    if legacy_ok and "/" in text:
         return text
     raise ValueError(
         f"{identity!r} is not a stable source identity "
@@ -354,8 +355,6 @@ def item_identity(item: dict[str, Any]) -> str | None:
     todoist_id = item.get("todoist_id")
     if todoist_id not in (None, ""):
         return f"todoist:{todoist_id}"
-    if path and not str(path).startswith("todoist://"):
-        return str(path)
     return None
 
 

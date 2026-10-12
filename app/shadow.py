@@ -4,9 +4,7 @@ Computes the full Phase-5 write contract (``plan_manifest``, per SKILL.md
 § 0.8) from a confirmed digest + sequence, diffs it against the live state of
 every write target (Todoist, calendar), and renders a preview —
 WITHOUT writing anything. It stays a permanent feature (bake-in comparison
-uses it). The Obsidian-vault steps (daily-note patch, ``assigned: true``
-flips) were deleted in V3 of the vault removal: Commit writes only Todoist
-and the calendar.
+uses it). Commit writes only Todoist and the calendar (no note steps exist).
 
 Three layers, kept strictly separate so the diff logic is unit-testable
 without touching disk or the network:
@@ -342,11 +340,11 @@ def _assigned_routing(name: str, item: dict[str, Any], config: dict[str, Any]) -
 
 
 def _is_todoist_assigned(item: dict[str, Any]) -> bool:
-    """Identify a server-derived Todoist row without treating vault rows as native.
+    """Identify a server-derived Todoist row without treating note-path rows as native.
 
     The HTTP boundary may retain either the source marker, a Todoist id, or the
-    canonical ``todoist://`` path.  Any one of those is sufficient; a vault
-    path alone is deliberately not.
+    canonical ``todoist://`` path.  Any one of those is sufficient; a bare
+    file path alone is deliberately not.
     """
     source = str(item.get("source") or "").strip().casefold()
     todoist_id = str(item.get("todoist_id") or "").strip()
@@ -359,7 +357,7 @@ def _is_capacities_assigned(item: dict[str, Any]) -> bool:
 
     The sanitized ``source`` field classifies the row. A ``capacities://`` path
     also counts, as a fail-closed backstop that matches the eligibility gate.
-    A path alone never makes a row Todoist or vault.
+    A path alone never makes a row Todoist.
     """
     source = str(item.get("source") or "").strip().casefold()
     path = str(item.get("path") or "").strip().casefold()
@@ -502,8 +500,7 @@ def build_plan_manifest(
             if _is_capacities_assigned(item):
                 # S6b: plan-only. One calendar block on the ⬜ Blocks class (the
                 # Step D default for non-Mint rows), resolved by plan_writes like
-                # every other calendar row. No Todoist task, no vault flip, and no
-                # name-derived Mint class.
+                # every other calendar row. No Todoist task and no name-derived Mint class.
                 entries.append(ManifestEntry(
                     step="D", system="calendar", action="create-event",
                     name=str(row_id), id_or_path=str(row_id),
@@ -511,10 +508,10 @@ def build_plan_manifest(
                     capacities=True,
                 ))
                 continue
-            # Routing reads the digest item's own vault types first (shakedown
+            # Routing reads the digest item's own types first (shakedown
             # 2026-07-14, defect: Magic Mirror -> Inbox): _preset_type only
-            # knows config Presets rows, but assigned items are vault notes
-            # whose types ride in the digest payload. Presets stay as fallback.
+            # knows config Presets rows, but assigned items carry their types
+            # in the digest payload. Presets stay as fallback.
             entries.append(ManifestEntry(
                 step="A", system="todoist", action="schedule",
                 name=row_id, id_or_path=item.get("path") or row_id,
@@ -776,8 +773,8 @@ def _match_todoist(
     sourced from Todoist reads carry it; their display names may be
     disambiguated — e.g. "Stillness (Todoist)" — so content matching would
     misclassify them as creates). Content matching remains the fallback for
-    vault-sourced rows, but never matches a task in ``claimed`` — a task
-    another row of the same diff already owns (T21: vault "Press" collapsing
+    rows without a Todoist ref, but never matches a task in ``claimed`` — a task
+    another row of the same diff already owns (T21: a ref-less "Press" collapsing
     onto the id-ref'd todoist "Press" double-updated one task live)."""
     if ref and ref.startswith("todoist://"):
         tid = ref[len("todoist://"):]

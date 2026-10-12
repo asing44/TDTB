@@ -16,8 +16,7 @@ Contract surfaces:
     ``micro_adventure_rotation`` in ``config/tdtb.json`` (plus the local
     override). Absent or malformed → the EXACT fallback seed pool
     (`FALLBACK_POOL`), which stays in code.
-  * History — the log ``<app home>/state/micro-adventure-log.md`` (it
-    used to live in the Obsidian vault),
+  * History — the log ``<app home>/state/micro-adventure-log.md`` (app-owned),
     YAML frontmatter, newest-first. Missing/unparseable → empty history.
 """
 from __future__ import annotations
@@ -250,8 +249,8 @@ def resolve_prior(
       (b) else pending_confirm = history[0], no done_update.
     A callable raising, or returning False/None, is inconclusive.
 
-    V3: the former daily-note ``### Live`` checkbox signal is gone with the
-    Obsidian vault; it has no state-dir equivalent, so an unconfirmed entry degrades to
+    The former daily-note ``### Live`` checkbox signal is gone; it has no
+    state-dir equivalent, so an unconfirmed entry degrades to
     "not done" (pending confirm) until answered in the cockpit."""
     hist = tuple(history)
     if not hist:

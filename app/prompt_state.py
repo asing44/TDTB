@@ -3,7 +3,7 @@ stores (U5 P1).
 
 The morning prompts (Intention, For Meegy, Stoic) are private runtime state.
 This module owns the two machine-local stores that back them, and nothing
-else — no vault path, no provider call, no credential, no manifest/route/UI
+else — no note path, no provider call, no credential, no manifest/route/UI
 wiring (those are later U5/U6 slices).
 
 1. **Logical-day draft store** — ``<app home>/state/prompt-drafts-<day>.json``,
@@ -12,7 +12,7 @@ wiring (those are later U5/U6 slices).
    text does not carry forward. A save is a PATCH: keys present in the patch
    are set, an explicit empty string clears that key, and omitted keys are
    preserved. Drafts start empty and nothing is migrated from any legacy
-   runstate or vault prompt text.
+   runstate or note prompt text.
 
 2. **Persistent opt-in store** — ``<app home>/state/prompt-optins.json``, an
    undated per-prompt boolean (default ``false``) with an optimistic

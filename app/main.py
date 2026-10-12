@@ -18,10 +18,8 @@ respectively. Both return a 502-style JSON error body on ``JudgmentError``
 route shape + real token guard) returning 501 until the commit writers
 (T14/T15) land.
 
-No route needs, reads or writes an Obsidian vault (vault removal V4): the
-service starts and serves every route with no vault-root environment variable
-set, and the retired variable is ignored if an older launchd plist still
-exports it.
+Every store lives in the app home; no environment variable names a notes
+root, and the retired one is ignored if an older launchd plist still exports it.
 """
 from __future__ import annotations
 
@@ -1032,7 +1030,8 @@ def _route_source_identity(
     if todoist_path:
         path_id = path[len("todoist://"):].strip()
         return ("todoist", path_id) if path_id else None
-    return "vault", path
+    # Any other path (a retired note path) carries no source identity.
+    return None
 
 
 # Bounded effective-blocks policy: the day runs on 30-minute blocks, so an
@@ -2593,7 +2592,7 @@ def _capacity_frame(
 
 
 def create_app() -> FastAPI:
-    """Build the TDTB FastAPI app. Takes no vault root: every store lives in
+    """Build the TDTB FastAPI app. Every store lives in
     the app home (``app_config.app_home()``)."""
 
     # -----------------------------------------------------------------------
@@ -3914,22 +3913,6 @@ def create_app() -> FastAPI:
             if not direct_intake:
                 capacities_items = [r for r in capacities_rows if r.get("assigned") is True]
                 c_pool = [r for r in capacities_rows if r.get("assigned") is not True]
-            # A producer may still fold rows tagged ``source: vault`` into the
-            # artifact (V5 retires that wire source). They keep joining the
-            # note-row surfaces, which are otherwise empty now.
-            artifact_vault = [
-                r for r in artifact_result.rows if r.get("source") == "vault"
-            ]
-            if artifact_vault:
-                run_data = {
-                    **run_data,
-                    "pool_items": run_data["pool_items"] + [
-                        r for r in artifact_vault if r.get("assigned") is not True
-                    ],
-                    "assigned_items": run_data["assigned_items"] + [
-                        r for r in artifact_vault if r.get("assigned") is True
-                    ],
-                }
         else:
             todoist_c, store = build_clients(config)
             build_capacities = app.state.build_capacities_adapter
@@ -4209,7 +4192,6 @@ def create_app() -> FastAPI:
                 + w_config + prompt_warnings + optins_warnings
             ),
             "source_counts": {
-                "vault": len(run_data["pool_items"]) + len(run_data["assigned_items"]),
                 "todoist": len(t_assigned) + len(t_pool),
                 "capacities": len(capacities_items),
                 "calendar": len(busy_blocks),

@@ -91,7 +91,7 @@ PRODUCER_COMMAND = (
     "~/.config/tdtb/config.json to read Todoist directly"
 )
 
-VALID_ROW_SOURCES = frozenset({"todoist", "capacities", "vault"})
+VALID_ROW_SOURCES = frozenset({"todoist", "capacities"})
 VALID_SOURCE_STATUS = frozenset({"ok", "partial", "failed"})
 
 REQUIRED_TOP_LEVEL = (
@@ -441,7 +441,7 @@ def load_habits(*, path: str | Path | None = None) -> tuple[dict[str, int], list
     Live source mode consumes the artifact for habits too: the REST Todoist
     client exposes no completed-tasks endpoint, so done-state is agent-fetched
     data either way. A missing/unreadable/malformed artifact degrades to the
-    zeroed block plus a loud warning — never a vault fallback.
+    zeroed block plus a loud warning — never a fallback to another source.
     """
     target = Path(path) if path is not None else artifact_path()
     try:

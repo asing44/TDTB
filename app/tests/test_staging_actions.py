@@ -3,8 +3,9 @@
 complete / delete_permanent / defer resolve from today's ``digest_index``
 before any commit exists; post-commit ``plan_manifest`` resolution is
 unchanged and still wins; unknown items and placement-only verbs are refused.
-V3: a staged vault-note row (``vault_path``) can no longer be completed,
-assigned, unassigned or deleted; those verbs refuse it with a clear error.
+A staged row with a path but no Todoist/Capacities identity (the retired note
+shape, "Roof") resolves to no source: complete / assign / delete refuse it with
+the ordinary "no ... source" error and write nothing.
 """
 
 from __future__ import annotations
@@ -79,10 +80,9 @@ def vault(tmp_path: Path) -> Path:
 # ---------------------------------------------------------------------------
 
 class TestStagingResolution:
-    def test_vault_row_resolves_to_a_staging_target(self, vault: Path):
+    def test_path_only_row_resolves_to_a_source_less_staging_target(self, vault: Path):
         target = ra.resolve_target(TODAY, "Roof")
-        assert target["phase"] == "staging"
-        assert target["vault_path"] == "50 - Operations/Roof.md"
+        assert target == {"name": "Roof", "phase": "staging"}
 
     def test_todoist_row_resolves(self, vault: Path):
         assert ra.resolve_target(TODAY, "Call Vlad")["todoist_id"] == "7"
@@ -90,7 +90,7 @@ class TestStagingResolution:
     def test_both_surfaces_resolve_together(self, vault: Path):
         target = ra.resolve_target(TODAY, "Both")
         assert target["todoist_id"] == "9"
-        assert target["vault_path"] == "50 - Operations/Both.md"
+        assert "vault_path" not in target
 
     def test_unknown_item_is_refused(self, vault: Path):
         with pytest.raises(ra.RuntimeActionError, match="manifest or digest"):
@@ -102,7 +102,7 @@ class TestStagingResolution:
         target = ra.resolve_target(TODAY, "Roof")
         assert target["phase"] == "committed"
         assert target["todoist_id"] == "111"
-        assert "vault_path" not in target  # manifest row is authoritative
+        assert target["todoist_id"] == "111"  # manifest row is authoritative
 
     def test_manifest_miss_falls_through_to_digest(self, vault: Path):
         runstate.update_runstate(TODAY, {"plan_manifest": [
@@ -116,20 +116,19 @@ class TestStagingResolution:
 
 class TestStagingVerbs:
     @pytest.mark.parametrize("verb", ["complete", "delete_permanent"])
-    def test_a_staged_vault_note_is_refused_with_a_clear_error(self, vault: Path, verb: str):
+    def test_a_source_less_staged_row_is_refused(self, vault: Path, verb: str):
         path = vault / "50 - Operations/Roof.md"
         before = path.read_text(encoding="utf-8")
-        with pytest.raises(ra.RuntimeActionError, match="vault is retired"):
+        with pytest.raises(ra.RuntimeActionError, match="Roof"):
             ra.apply_action(TODAY, verb, "Roof")
         assert path.read_text(encoding="utf-8") == before
-        assert not (vault / ".trash").exists()
         assert ra.load_journal(TODAY)["actions"] == []
 
     def test_defer_works_at_staging(self, vault: Path):
         import deferrals
         action = ra.apply_action(TODAY, "defer", "Roof")
         assert action["status"] == "applied"
-        assert deferrals.load_deferrals()["path:50 - Operations/Roof.md"]["count"] == 1
+        assert deferrals.load_deferrals()["name:roof"]["count"] == 1
 
     def test_staging_actions_are_journaled_like_any_other(self, vault: Path):
         ra.apply_action(TODAY, "complete", "Call Vlad", todoist=FakeTodoist())
@@ -148,10 +147,10 @@ class TestAssignVerb:
     """T9 forgot-strip's one-tap assign — the inverse of the signal that
     surfaced the row."""
 
-    def test_assign_of_a_staged_vault_note_is_refused(self, vault: Path):
+    def test_assign_of_a_source_less_staged_row_is_refused(self, vault: Path):
         path = vault / "50 - Operations/Roof.md"
         before = path.read_text(encoding="utf-8")
-        with pytest.raises(ra.RuntimeActionError, match="vault is retired"):
+        with pytest.raises(ra.RuntimeActionError, match="Roof"):
             ra.apply_action(TODAY, "assign", "Roof")
         assert path.read_text(encoding="utf-8") == before
         assert ra.load_journal(TODAY)["actions"] == []
@@ -315,11 +314,11 @@ class TestStagingRoute:
         assert r.status_code == 200, r.text
         assert r.json()["status"] == "applied"
 
-    def test_route_returns_422_for_a_removed_vault_verb(self, client: TestClient, vault: Path):
+    def test_route_returns_422_for_a_source_less_row(self, client: TestClient, vault: Path):
         r = client.post("/runtime-actions",
                         json={"verb": "complete", "target": "Roof"})
         assert r.status_code == 422
-        assert "vault is retired" in r.json()["detail"]
+        assert "Roof" in r.json()["detail"]
         assert "status: active" in (vault / "50 - Operations/Roof.md").read_text(encoding="utf-8")
 
     def test_route_refuses_an_unknown_item_with_422(self, client: TestClient):
@@ -340,14 +339,11 @@ class TestStagingRoute:
 # T12d — the pseudo-path conflation (found by t12c_morning_rehearsal.py)
 # ---------------------------------------------------------------------------
 
-class TestTodoistPseudoPathIsNotAVaultPath:
+class TestTodoistPseudoPathIsNotAFilePath:
     """`external_sources` gives every Todoist row a synthetic
-    ``path: "todoist://<id>"``. `shadow.py` guards that string in two places;
-    the T2 staging resolver did not, so it copied the pseudo-path into
-    ``vault_path`` and every staging verb planned a vault write at
-    ``<vault>/todoist://<id>``. On a real morning that closed the task, hit
-    ENOENT, and rolled the close back — a visible failure on every Done or
-    Delete against a Todoist row.
+    ``path: "todoist://<id>"``. The staging resolver must treat it as an
+    identity marker only, so every staging verb against a Todoist row plans
+    Todoist steps and nothing else (T12d, found by t12c_morning_rehearsal.py).
 
     The fixture above models Todoist rows with ``path: ""``, which production
     never emits; these build the index the way `main.build_digest_index` does,
@@ -369,11 +365,9 @@ class TestTodoistPseudoPathIsNotAVaultPath:
         rows = runstate.read_digest_index(TODAY)
         assert rows[0]["path"] == "todoist://7"
 
-    def test_resolution_yields_no_vault_path(self, real_shaped_vault: Path):
+    def test_resolution_yields_only_the_todoist_id(self, real_shaped_vault: Path):
         target = ra.resolve_target(TODAY, "Call Vlad")
-        assert target["todoist_id"] == "7"
-        assert "vault_path" not in target, (
-            f"the todoist:// pseudo-path leaked into vault_path: {target}")
+        assert target == {"name": "Call Vlad", "phase": "staging", "todoist_id": "7"}
 
     def test_complete_plans_only_a_todoist_step(self, real_shaped_vault: Path):
         target = ra.resolve_target(TODAY, "Call Vlad")
@@ -383,8 +377,7 @@ class TestTodoistPseudoPathIsNotAVaultPath:
     def test_assign_plans_only_a_todoist_step(self, real_shaped_vault: Path):
         """`assign` is the verb that actually failed on Adam's 2026-07-27
         morning — the forgot-strip's Assign button on a Todoist row. That day's
-        runtime journal recorded it resolving to
-        ``vault_path: 'todoist://6fgQFQmrfhVQ5c9X'`` and failing."""
+        runtime journal recorded it failing on the pseudo-path."""
         target = ra.resolve_target(TODAY, "Call Vlad")
         steps = ra.plan_steps("assign", target, {}, TODAY)
         assert [s["kind"] for s in steps] == ["todoist.assign_today"]

@@ -13,8 +13,7 @@ UI would have POSTed.
     .venv/bin/python build_commit_body.py --out /tmp/body.json
     .venv/bin/python build_commit_body.py --sequence-file seq.json
 
-The Obsidian note gather is gone (vault removal V4), so the digest carries no
-note rows; supply ``--sequence-file`` for a meaningful body.
+There is no note gather, so the digest carries no note rows; supply ``--sequence-file`` for a meaningful body.
 
 Sequence: absent ``--sequence-file``, a deterministic trivial back-to-back
 sequence over the digest's Assigned items is synthesized — identical to the

@@ -6,12 +6,10 @@ Use these words as defined here; do not drift to synonyms they exclude.
 
 - **app home** — the machine-local directory (`$TDTB_HOME`, default
   `~/.config/tdtb`) holding the optional config override and the `state/`
-  stores (run state, exclusions, deferrals, duration memory, journal). The
-  Obsidian vault is retired: nothing reads, writes or requires it. Anchor:
+  stores (run state, exclusions, deferrals, duration memory, journal). Anchor:
   `app/app_config.py` (`app_home`, `state_dir`).
 - **source** — the upstream system that owns a task's identity and properties
-  (`todoist`, `capacities`; the wire still carries a retired `vault` literal
-  until V5). Anchor: `app/external_sources.py`;
+  (`todoist`, `capacities`). Anchor: `app/external_sources.py`;
   `frontend/src/model/types.ts` (`Source`).
 - **tag** — a Capacities RootTag entity identified by `(space_id, tag_id)`;
   its title is presentation only. Anchor: `app/exclusion_settings.py`

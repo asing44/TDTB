@@ -2,8 +2,7 @@
 
 This module owns the ONE app-owned store the tag-exclusion settings API reads
 and writes: ``<app home>/state/exclusions.json`` (``app_config.state_dir()``,
-Capacities-first S1). It used to live in the Obsidian
-vault; the state dir is the only location.
+Capacities-first S1); the state dir is the only location.
 
 It persists only the editable policy — a set of stable Capacities tag
 identities the planner must exclude before selection — plus a server-owned

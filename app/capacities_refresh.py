@@ -26,7 +26,7 @@ Contract (KTD1–KTD3):
   tokens, and filesystem paths never reach a warning or a job document.
 
 Machine-local only: the caller owns the state root (``app_config.state_dir()``)
-so raw object content never enters a synced vault.
+so raw object content never enters a synced folder.
 """
 from __future__ import annotations
 
