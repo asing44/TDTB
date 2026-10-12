@@ -6249,10 +6249,10 @@ body {
      `flex-wrap: wrap` here is gone. A native-time row keeps its compact
      permission note on the meta line instead of wrapping under the slider. */
   .qrow__time .alloc-track {
-    /* 120px floor. At 1101-1279px the time column is 300px: two 32px steppers,
-       the 74px readout and three 6px gaps leave 144px for the track, and the
-       8px status dot needs 14px more. At 140px the dot wrapped under the
-       minus stepper. */
+    /* 120px floor, kept from the steady-slider fix and asserted by
+       slider-steppers.test.tsx. The readout and its status dot now sit on
+       their own line above, so this line holds only the two steppers and the
+       track. */
     flex: 1 1 auto;
     min-width: 120px;
   }
