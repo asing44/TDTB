@@ -2,9 +2,8 @@
 
 This module owns the ONE app-owned store the Capacities settings API reads and
 writes: ``<app home>/state/capacities-settings.json``
-(``app_config.state_dir()``, Capacities-first S1). It previously lived in the
-vault at ``00 - META/Cache/tdtb-capacities-settings.json``; that path is now
-the state dir is the only location (V2 removed the vault fallback).
+(``app_config.state_dir()``, Capacities-first S1). It used to live in the
+Obsidian vault; the state dir is the only location.
 
 It persists only the editable assignment policy — the native Auto toggles,
 the stable-identity exclusion set, the custom structures whose ``Active``
