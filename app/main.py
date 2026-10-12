@@ -3949,11 +3949,6 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
         run_data = gather.build_run_data(pool_notes, assigned_notes, today)
         order = _ranking_order(vault)
         w_vault: list[str] = app_config.sources_config_warnings()
-        if not vault_rows_on:
-            w_vault.append(
-                "Vault rows are disabled (sources.vault_enabled=false) — no "
-                "vault pool or assigned rows are read."
-            )
 
         result = config_reader.read_config(vault)
         config: dict[str, Any] = (
