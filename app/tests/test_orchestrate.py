@@ -104,27 +104,21 @@ class FakeStore:
 
 
 # ---------------------------------------------------------------------------
-# vault fixtures
+# vault fixtures (V3: the vault is never read or written; the argument only
+# anchors the state-dir ledger path, so an empty directory is enough)
 # ---------------------------------------------------------------------------
 
-FLIP_REL = "P/Garage.md"
-DAILY_REL = "30 - Daily/2026-07-12.md"
+SELECTION_PATH = "P/Garage.md"
 
 
 def _vault(tmp_path: Path) -> Path:
-    (tmp_path / "P").mkdir(parents=True, exist_ok=True)
-    (tmp_path / FLIP_REL).write_text("---\nassigned: false\n---\nbody\n", encoding="utf-8")
-    (tmp_path / "30 - Daily").mkdir(parents=True, exist_ok=True)
-    (tmp_path / DAILY_REL).write_text("# Journal\n", encoding="utf-8")
     return tmp_path
 
 
-def _all_four_intents() -> list[commit.WriteIntent]:
+def _both_surface_intents() -> list[commit.WriteIntent]:
     return [
         commit.WriteIntent("A", "todoist", "create", "Garage",
                            project_id=None, due_time="09:00", duration_min=30),
-        commit.WriteIntent("C", "vault", "update", "Garage", path=FLIP_REL),
-        commit.WriteIntent("B", "vault", "update", "# TDTB Plan"),
         commit.WriteIntent("D", "calendar", "create", "Minting",
                            calendar_id="cal-blocks-1", due_time="14:00",
                            start=datetime(2026, 7, 12, 14, 0), end=datetime(2026, 7, 12, 15, 0)),
@@ -139,14 +133,14 @@ def _ledger_from_disk(vault: Path, today: date = TODAY) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# 1. all-ok run over all 4 surfaces
+# 1. all-ok run over both surfaces (todoist, calendar)
 # ---------------------------------------------------------------------------
 
-def test_all_ok_all_four_surfaces_persists_ledger(tmp_path):
+def test_all_ok_both_surfaces_persists_ledger(tmp_path):
     vault = _vault(tmp_path)
     report = orchestrate.run_orchestrated(
-        _all_four_intents(), todoist=FakeTodoist(), store=FakeStore(), vault_root=vault,
-        plan_body="- 09:00 Garage", today=TODAY,
+        _both_surface_intents(), todoist=FakeTodoist(), store=FakeStore(), vault_root=vault,
+        today=TODAY,
     )
     assert report["ok"] is True
     assert report["resumed"] is False
@@ -156,6 +150,8 @@ def test_all_ok_all_four_surfaces_persists_ledger(tmp_path):
 
     data = _ledger_from_disk(vault)
     assert data["commit_ledger"]["surfaces"]["todoist"]["status"] == "ok"
+    # V3: the vault_flips / daily_note surfaces are gone from the ledger
+    assert set(data["commit_ledger"]["surfaces"]) == {"todoist", "calendar"}
     assert data["commit_ledger"]["today"] == str(TODAY)
 
 
@@ -164,34 +160,34 @@ def test_ledger_estimation_section_records_planned_sizes(tmp_path):
     ledger's estimation list (planned side of actual-vs-estimated)."""
     vault = _vault(tmp_path)
     orchestrate.run_orchestrated(
-        _all_four_intents(), todoist=FakeTodoist(), store=FakeStore(), vault_root=vault,
-        plan_body="- 09:00 Garage", today=TODAY,
+        _both_surface_intents(), todoist=FakeTodoist(), store=FakeStore(), vault_root=vault,
+        today=TODAY,
     )
     est = _ledger_from_disk(vault)["commit_ledger"]["estimation"]
     garage = next(e for e in est if e["name"] == "Garage")
     assert garage["planned_blocks"] == 1
     assert garage["planned_duration_min"] == 30
     assert garage["time"] == "09:00"
-    # zero-duration intents (vault patch/flip, the durationless calendar row)
-    # never enter the estimation log
+    # zero-duration intents (the durationless calendar row) never enter the
+    # estimation log
     assert all(e["planned_duration_min"] > 0 for e in est)
 
 
 def test_ledger_preserves_fifteen_minute_half_block(tmp_path):
     vault = _vault(tmp_path)
-    intents = _all_four_intents()
+    intents = _both_surface_intents()
     garage = next(i for i in intents if i.name == "Garage")
     garage.duration_min = 15
     orchestrate.run_orchestrated(
         intents, todoist=FakeTodoist(), store=FakeStore(), vault_root=vault,
-        plan_body="- 09:00 Garage", today=TODAY,
+        today=TODAY,
     )
     est = _ledger_from_disk(vault)["commit_ledger"]["estimation"]
     assert next(e for e in est if e["name"] == "Garage")["planned_blocks"] == 0.5
 
 
 # ---------------------------------------------------------------------------
-# 2. per-surface failure — one test per surface, other three still run
+# 2. per-surface failure — one test per surface, the other still runs
 # ---------------------------------------------------------------------------
 
 class TestPerSurfaceFailureDoesNotAbort:
@@ -205,47 +201,18 @@ class TestPerSurfaceFailureDoesNotAbort:
     def test_todoist_failure(self, tmp_path):
         vault = _vault(tmp_path)
         report = orchestrate.run_orchestrated(
-            _all_four_intents(), todoist=Dropping(), store=FakeStore(), vault_root=vault,
-            plan_body="- x", today=TODAY,
+            _both_surface_intents(), todoist=Dropping(), store=FakeStore(), vault_root=vault,
+            today=TODAY,
         )
         assert report["ok"] is False
         self._others_ok(report["surfaces"], "todoist")
         assert any("todoist" in f for f in report["failed"])
 
-    def test_vault_flips_failure_missing_target(self, tmp_path):
-        vault = _vault(tmp_path)
-        intents = _all_four_intents()
-        # point Step C at a note that doesn't exist
-        for i in intents:
-            if i.step == "C":
-                i.path = "P/Ghost.md"
-        report = orchestrate.run_orchestrated(
-            intents, todoist=FakeTodoist(), store=FakeStore(), vault_root=vault,
-            plan_body="- x", today=TODAY,
-        )
-        assert report["ok"] is False
-        self._others_ok(report["surfaces"], "vault_flips")
-
-    def test_daily_note_absence_is_bounded_noop(self, tmp_path):
-        vault = _vault(tmp_path)
-        (vault / DAILY_REL).unlink()
-        report = orchestrate.run_orchestrated(
-            _all_four_intents(), todoist=FakeTodoist(), store=FakeStore(), vault_root=vault,
-            plan_body="- x", today=TODAY,
-        )
-        assert report["ok"] is True
-        assert report["failed"] == []
-        assert report["surfaces"]["daily_note"]["status"] == "ok"
-        assert all(
-            entry["status"] == "ok" for entry in report["surfaces"].values()
-        )
-        assert not (vault / DAILY_REL).exists()
-
     def test_calendar_failure_wrong_surface_store(self, tmp_path):
         vault = _vault(tmp_path)
         report = orchestrate.run_orchestrated(
-            _all_four_intents(), todoist=FakeTodoist(), store=FakeStore(wrong_surface=True),
-            vault_root=vault, plan_body="- x", today=TODAY,
+            _both_surface_intents(), todoist=FakeTodoist(), store=FakeStore(wrong_surface=True),
+            vault_root=vault, today=TODAY,
         )
         assert report["ok"] is False
         self._others_ok(report["surfaces"], "calendar")
@@ -270,35 +237,31 @@ def _spy(monkeypatch, module, name):
 def test_resume_skips_known_ok_surfaces(tmp_path, monkeypatch):
     vault = _vault(tmp_path)
     calls_a = _spy(monkeypatch, commit, "write_todoist")
-    calls_c = _spy(monkeypatch, commit, "write_frontmatter_flips")
-    calls_b = _spy(monkeypatch, commit, "write_daily_note")
     calls_d = _spy(monkeypatch, commit, "write_calendar")
 
     todoist = FakeTodoist()
     bad_store = FakeStore(wrong_surface=True)
 
     report1 = orchestrate.run_orchestrated(
-        _all_four_intents(), todoist=todoist, store=bad_store, vault_root=vault,
-        plan_body="- x", today=TODAY,
+        _both_surface_intents(), todoist=todoist, store=bad_store, vault_root=vault,
+        today=TODAY,
     )
     assert report1["ok"] is False
     assert report1["surfaces"]["calendar"]["status"] == "failed"
-    for key in ("todoist", "vault_flips", "daily_note"):
-        assert report1["surfaces"][key]["status"] == "ok"
-    assert (len(calls_a), len(calls_c), len(calls_b), len(calls_d)) == (1, 1, 1, 1)
+    assert report1["surfaces"]["todoist"]["status"] == "ok"
+    assert (len(calls_a), len(calls_d)) == (1, 1)
 
     good_store = FakeStore()
     report2 = orchestrate.run_orchestrated(
-        _all_four_intents(), todoist=todoist, store=good_store, vault_root=vault,
-        plan_body="- x", today=TODAY, resume=True,
+        _both_surface_intents(), todoist=todoist, store=good_store, vault_root=vault,
+        today=TODAY, resume=True,
     )
     assert report2["ok"] is True
     assert report2["resumed"] is True
     assert report2["surfaces"]["calendar"]["status"] == "ok"
-    for key in ("todoist", "vault_flips", "daily_note"):
-        assert report2["surfaces"][key]["note"] == "resumed: already ok"
-    # the three already-ok surfaces were never re-dispatched; only calendar ran again
-    assert (len(calls_a), len(calls_c), len(calls_b), len(calls_d)) == (1, 1, 1, 2)
+    assert report2["surfaces"]["todoist"]["note"] == "resumed: already ok"
+    # the already-ok surface was never re-dispatched; only calendar ran again
+    assert (len(calls_a), len(calls_d)) == (1, 2)
 
 
 # ---------------------------------------------------------------------------
@@ -313,9 +276,9 @@ def test_ledger_preserves_prior_runstate_selections(tmp_path):
         runstate_mod.build_runstate({"selections": [{"id": "x", "path": "p", "blocks": 1}]}),
     )
 
-    intents = [commit.WriteIntent("B", "vault", "update", "# TDTB Plan")]
+    intents = [commit.WriteIntent("A", "todoist", "create", "Garage", due_time="09:00")]
     report = orchestrate.run_orchestrated(
-        intents, vault_root=vault, plan_body="- x", today=TODAY,
+        intents, todoist=FakeTodoist(), vault_root=vault, today=TODAY,
     )
     assert report["ok"] is True
 
@@ -340,17 +303,17 @@ def test_crash_consistency_earlier_surfaces_persisted_before_last_fails(tmp_path
     monkeypatch.setattr(runstate_mod, "write_runstate", spy_write)
 
     report = orchestrate.run_orchestrated(
-        _all_four_intents(), todoist=FakeTodoist(), store=FakeStore(wrong_surface=True),
-        vault_root=vault, plan_body="- x", today=TODAY,
+        _both_surface_intents(), todoist=FakeTodoist(), store=FakeStore(wrong_surface=True),
+        vault_root=vault, today=TODAY,
     )
     assert report["ok"] is False
     assert report["surfaces"]["calendar"]["status"] == "failed"
 
-    # the write persisted right after daily_note (the 3rd surface, before
-    # calendar was ever dispatched) already has 3 ok entries and no calendar key
-    before_calendar = snapshots[2]
+    # the write persisted right after todoist (the 1st surface, before
+    # calendar was ever dispatched) already has the ok entry and no calendar key
+    before_calendar = snapshots[0]
     surfaces_so_far = before_calendar["commit_ledger"]["surfaces"]
-    assert set(surfaces_so_far) == {"todoist", "vault_flips", "daily_note"}
+    assert set(surfaces_so_far) == {"todoist"}
     assert all(e["status"] == "ok" for e in surfaces_so_far.values())
 
     # the final on-disk state does include the failed calendar entry
@@ -366,12 +329,10 @@ def test_empty_calendar_subset_with_no_store_is_ok(tmp_path):
     vault = _vault(tmp_path)
     intents = [
         commit.WriteIntent("A", "todoist", "create", "Garage", due_time="09:00"),
-        commit.WriteIntent("C", "vault", "update", "Garage", path=FLIP_REL),
-        commit.WriteIntent("B", "vault", "update", "# TDTB Plan"),
     ]
     report = orchestrate.run_orchestrated(
         intents, todoist=FakeTodoist(), store=None, vault_root=vault,
-        plan_body="- x", today=TODAY,
+        today=TODAY,
     )
     assert report["ok"] is True
     cal_entry = report["surfaces"]["calendar"]
@@ -386,27 +347,25 @@ def test_empty_calendar_subset_with_no_store_is_ok(tmp_path):
 
 def test_recent_selections_appended_only_on_all_ok(tmp_path):
     vault = _vault(tmp_path)
-    sel = [{"id": "t1", "path": FLIP_REL, "blocks": 2}]
+    sel = [{"id": "t1", "path": SELECTION_PATH, "blocks": 2}]
 
-    intents = [commit.WriteIntent("B", "vault", "update", "# TDTB Plan")]
+    intents = [commit.WriteIntent("A", "todoist", "create", "Garage", due_time="09:00")]
     report = orchestrate.run_orchestrated(
-        intents, vault_root=vault, plan_body="- x", today=TODAY, selections=sel,
+        intents, todoist=FakeTodoist(), vault_root=vault, today=TODAY, selections=sel,
     )
     assert report["ok"] is True
     runs = runstate_mod.read_recent_selections(vault)
     assert len(runs) == 1
-    assert runs[0]["selections"][0]["path"] == FLIP_REL
+    assert runs[0]["selections"][0]["path"] == SELECTION_PATH
 
 
 def test_recent_selections_not_appended_on_failure(tmp_path):
     vault = _vault(tmp_path)
     sel = [{"id": "t2", "path": "x", "blocks": 1}]
 
-    intents = [commit.WriteIntent(
-        "C", "vault", "update", "Ghost", path="P/Ghost.md"
-    )]
+    intents = [commit.WriteIntent("A", "todoist", "create", "Garage", due_time="09:00")]
     report = orchestrate.run_orchestrated(
-        intents, vault_root=vault, plan_body="- x", today=TODAY, selections=sel,
+        intents, todoist=Dropping(), vault_root=vault, today=TODAY, selections=sel,
     )
     assert report["ok"] is False
     assert runstate_mod.read_recent_selections(vault) == []

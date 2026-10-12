@@ -2,9 +2,9 @@
 
 Covers the council-mandated invariants: UPDATE/CREATE partition, idempotency
 (re-run never double-creates), post-write reconciliation (count + id/surface
-match), and byte-preserving Step C frontmatter flips. No live network/EventKit:
-the Todoist client and EventStore are in-memory fakes; vault writers use tmp
-dirs.
+match). No live network/EventKit: the Todoist client and EventStore are
+in-memory fakes. (V3 deleted the Obsidian vault steps; Commit writes only
+Todoist and the calendar.)
 """
 from __future__ import annotations
 
@@ -199,7 +199,8 @@ class TestPlanWritesPartition:
     def test_noop_entries_stay_noop(self):
         d = _diff(
             _entry("A", "todoist", "schedule", "Garage", NOOP, time="09:00"),
-            _entry("C", "vault", "set-flag", "Garage", NOOP, id_or_path="P/G.md"),
+            _entry("D", "calendar", "create-event", "Dinner", NOOP, time="18:00",
+                   dur=30, routing="⬜ Blocks"),
         )
         intents = commit.plan_writes(d, CAL_IDS, today=TODAY)
         assert all(i.op == "noop" for i in intents)
@@ -210,10 +211,21 @@ class TestPlanWritesPartition:
             commit.plan_writes(d, CAL_IDS, today=TODAY)
 
     def test_conflict_entry_refuses_to_plan(self):
-        d = _diff(_entry("C", "vault", "set-flag", "Ghost", CONFLICT,
+        d = _diff(_entry("A", "todoist", "schedule", "Ghost", CONFLICT,
                          detail={"reason": "target missing"}))
         with pytest.raises(commit.CommitPlanError, match="conflict"):
             commit.plan_writes(d, CAL_IDS, today=TODAY)
+
+    @pytest.mark.parametrize("step,action", [("B", "patch"), ("C", "set-flag"),
+                                             ("B6", "frontmatter-captures")])
+    def test_legacy_vault_rows_are_refused_not_planned(self, step, action):
+        # V3: there is no vault planner any more. A stale/crafted vault row
+        # (daily-note patch, assigned flip, retired B6 captures) fails the
+        # whole commit closed instead of being silently dropped.
+        d = _diff(_entry(step, "vault", action, "legacy", UPDATE,
+                         id_or_path="<today's daily note>"))
+        with pytest.raises(commit.CommitPlanError, match="unknown surface 'vault'"):
+            commit.plan_writes(d, CAL_IDS, config={}, today=TODAY)
 
     def test_unresolved_calendar_target_refuses_to_plan(self):
         d = _diff(_entry("D", "calendar", "create-event", "Minting", CREATE,
@@ -442,114 +454,31 @@ class TestWriteCalendarReadbackIdentity:
 
 
 # ---------------------------------------------------------------------------
-# write_frontmatter_flips — Step C byte preservation + idempotency
-# ---------------------------------------------------------------------------
-
-class TestFrontmatterFlips:
-    def _note(self, vault: Path, rel: str, text: str) -> Path:
-        p = vault / rel
-        p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(text, encoding="utf-8")
-        return p
-
-    def test_flip_false_to_true_preserves_other_bytes(self, tmp_path):
-        rel = "50 - Operations/Projects/Garage.md"
-        original = ("---\ntype: project\nassigned: false\npriority: 3-high\n"
-                    "tags:\n  - home\n---\n\nBody stays exactly.\n")
-        self._note(tmp_path, rel, original)
-        intents = [commit.WriteIntent("C", "vault", "update", "Garage", path=rel)]
-        r = commit.write_frontmatter_flips(intents, tmp_path)
-        assert r.ok and r.updated == [rel]
-        after = (tmp_path / rel).read_text(encoding="utf-8")
-        assert after == original.replace("assigned: false", "assigned: true")
-
-    def test_insert_when_key_absent(self, tmp_path):
-        rel = "P/New.md"
-        self._note(tmp_path, rel, "---\ntype: project\n---\nbody\n")
-        intents = [commit.WriteIntent("C", "vault", "create", "New", path=rel)]
-        r = commit.write_frontmatter_flips(intents, tmp_path)
-        assert r.ok
-        fm_text = (tmp_path / rel).read_text(encoding="utf-8")
-        assert "assigned: true" in fm_text and fm_text.endswith("body\n")
-
-    def test_idempotent_already_true_untouched(self, tmp_path):
-        rel = "P/Done.md"
-        text = "---\ntype: project\nassigned: true\n---\nbody\n"
-        p = self._note(tmp_path, rel, text)
-        before = p.read_bytes()
-        intents = [commit.WriteIntent("C", "vault", "noop", "Done", path=rel)]
-        r = commit.write_frontmatter_flips(intents, tmp_path)
-        assert r.ok and r.noops == [rel] and p.read_bytes() == before
-
-    def test_missing_target_surfaces_failure(self, tmp_path):
-        intents = [commit.WriteIntent("C", "vault", "update", "Ghost", path="P/Ghost.md")]
-        r = commit.write_frontmatter_flips(intents, tmp_path)
-        assert not r.ok and "target missing" in r.error
-
-
-# ---------------------------------------------------------------------------
-# write_daily_note — Step B patch/idempotency
-# ---------------------------------------------------------------------------
-
-class TestDailyNote:
-    def _daily(self, vault: Path, name: str, text: str) -> Path:
-        d = vault / "30 - Daily"
-        d.mkdir(parents=True, exist_ok=True)
-        p = d / name
-        p.write_text(text, encoding="utf-8")
-        return p
-
-    def test_append_section_when_absent(self, tmp_path):
-        self._daily(tmp_path, "2026-07-12.md", "# Journal\nnotes\n")
-        intents = [commit.WriteIntent("B", "vault", "update", "# TDTB Plan")]
-        r = commit.write_daily_note(intents, tmp_path, "- 09:00 Garage", today=TODAY)
-        assert r.ok
-        text = (tmp_path / "30 - Daily/2026-07-12.md").read_text()
-        assert "# Journal" in text and "# TDTB Plan\n- 09:00 Garage" in text
-
-    def test_replace_existing_section_no_duplicate(self, tmp_path):
-        self._daily(tmp_path, "2026-07-12.md",
-                    "# TDTB Plan\n- old\n\n# Journal\nkeep\n")
-        intents = [commit.WriteIntent("B", "vault", "update", "# TDTB Plan")]
-        r = commit.write_daily_note(intents, tmp_path, "- 09:00 new", today=TODAY)
-        assert r.ok
-        text = (tmp_path / "30 - Daily/2026-07-12.md").read_text()
-        assert text.count("# TDTB Plan") == 1
-        assert "- 09:00 new" in text and "- old" not in text
-        assert "# Journal" in text and "keep" in text
-
-    def test_missing_note_is_bounded_noop(self, tmp_path):
-        (tmp_path / "30 - Daily").mkdir(parents=True)
-        intents = [commit.WriteIntent("B", "vault", "update", "# TDTB Plan")]
-        r = commit.write_daily_note(intents, tmp_path, "- x", today=TODAY)
-        assert r.ok
-        assert r.error is None
-        assert r.created == [] and r.updated == []
-        assert not list((tmp_path / "30 - Daily").iterdir())
-
-
-# ---------------------------------------------------------------------------
 # run_commit — thin driver aggregation
 # ---------------------------------------------------------------------------
 
 class TestRunCommit:
     def test_driver_runs_available_surfaces(self, tmp_path):
-        rel = "P/Garage.md"
-        (tmp_path / "P").mkdir(parents=True)
-        (tmp_path / rel).write_text("---\nassigned: false\n---\nb\n", encoding="utf-8")
-        (tmp_path / "30 - Daily").mkdir(parents=True)
-        (tmp_path / "30 - Daily/2026-07-12.md").write_text("# Journal\n", encoding="utf-8")
         client = FakeTodoist()
+        store = FakeStore()
         intents = [
             commit.WriteIntent("A", "todoist", "create", "Garage",
                                project_id="P", due_time="09:00"),
-            commit.WriteIntent("C", "vault", "update", "Garage", path=rel),
-            commit.WriteIntent("B", "vault", "update", "# TDTB Plan"),
+            commit.WriteIntent("D", "calendar", "create", "Minting",
+                               calendar_id="cal-blocks-1", due_time="14:00",
+                               start=datetime(2026, 7, 12, 14, 0),
+                               end=datetime(2026, 7, 12, 15, 0)),
         ]
-        results = commit.run_commit(intents, todoist=client, vault_root=tmp_path,
-                                    plan_body="- 09:00 Garage", today=TODAY)
-        assert {r.step for r in results} == {"A", "B", "C"}
+        results = commit.run_commit(intents, todoist=client, store=store,
+                                    vault_root=tmp_path, today=TODAY)
+        assert {r.step for r in results} == {"A", "D/E"}
         assert all(r.ok for r in results)
+        assert list(tmp_path.iterdir()) == []  # the vault root is never written
+
+    def test_vault_writers_are_deleted(self):
+        for name in ("write_daily_note", "write_frontmatter_flips",
+                     "_set_assigned_true", "_patch_plan_section", "_plan_vault"):
+            assert not hasattr(commit, name), name
 
 
 # ---------------------------------------------------------------------------
@@ -853,19 +782,12 @@ class TestCapturesPlanAndWrite:
         with pytest.raises(commit.CommitPlanError, match="capture-nicety"):
             commit.plan_writes(d, CAL_IDS, config={}, today=TODAY)
 
-    def test_retired_b6_action_is_refused(self):
-        # U5 B2: the B6 frontmatter-captures writer is retired and carries no
-        # payload; a crafted row is refused rather than reaching the vault.
-        d = _diff(_entry("B6", "vault", "frontmatter-captures", "Phase-1 captures",
-                         UPDATE, id_or_path="<today's daily note>"))
-        with pytest.raises(commit.CommitPlanError, match="frontmatter-captures"):
-            commit.plan_writes(d, CAL_IDS, config={"captures": self.CAPTURES}, today=TODAY)
-
     def test_b6_writer_and_surface_are_retired(self):
         # U5: the legacy B6 prompt writer and its orchestrate surface are gone,
         # so a crafted frontmatter-captures manifest cannot invoke it.
         assert not hasattr(commit, "write_captures_frontmatter")
         assert "captures" not in orchestrate.SURFACES
+        assert orchestrate.SURFACES == ["todoist", "calendar"]
 
 
 # ---------------------------------------------------------------------------

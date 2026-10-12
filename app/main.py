@@ -160,17 +160,6 @@ def _rank_key(item: dict[str, Any], today: date, order: list[str],
     return tuple(parts)
 
 
-def _render_plan_body(sequence_body: dict[str, Any]) -> str:
-    """Trivial ``# TDTB Plan`` body from the sequence rows — mirrors
-    ``commit_run.py``'s ``_render_plan_body`` exactly (duplicated rather than
-    imported: commit_run.py imports main.py, so importing back would be
-    circular)."""
-    lines = []
-    for row in sequence_body.get("sequence", []):
-        lines.append(f"- {row.get('start', '??')}–{row.get('end', '??')} {row.get('id', '')}")
-    return "\n".join(lines) or "- (no sequenced items)"
-
-
 def rank_pool(
     pool_items: list[dict[str, Any]],
     today: date,
@@ -2190,21 +2179,6 @@ def _todoist_completed_probe(client: Any):
     return probe
 
 
-def _daily_note_live_probe(vault: Path):
-    """T19 prior-resolution signal (b): read a date's daily note and inspect
-    its '### Live' checkbox. Missing note → inconclusive."""
-
-    def probe(d: date) -> bool | None:
-        note = vault / "30 - Daily" / f"{d.isoformat()}.md"
-        if not note.is_file():
-            return None
-        return micro_adventure.daily_note_live_done(
-            note.read_text(encoding="utf-8", errors="replace")
-        )
-
-    return probe
-
-
 def _micro_adventure_state(
     vault: Path, sections: dict[str, Any], today: date, todoist_c: Any = None,
 ) -> tuple[dict[str, Any], Any]:
@@ -2222,7 +2196,6 @@ def _micro_adventure_state(
             history,
             today=today,
             todoist_completed=_todoist_completed_probe(todoist_c),
-            daily_note_live_checked=_daily_note_live_probe(vault),
         )
         sel = micro_adventure.select_today(
             pool, resolution.history, today=today, window_days=window
@@ -2302,7 +2275,6 @@ def _append_micro_adventure_history(
         resolution = micro_adventure.resolve_prior(
             history, today=today,
             todoist_completed=None,  # commit-time flush uses checkbox only
-            daily_note_live_checked=_daily_note_live_probe(vault),
         )
         hist = micro_adventure.apply_done_update(history, resolution.done_update)
         touched = ((report.get("surfaces") or {}).get("todoist") or {}).get("touched") or {}
@@ -4128,7 +4100,7 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
                 external_sources.fetch_calendar_decisions(store, ext_cfg, today)
             )
             # T19: deterministic micro-adventure state — pure reads (config
-            # section, vault log, prior daily note, Todoist completion probe
+            # section, state-dir log, Todoist completion probe
             # on the already-open read client). Never writes, never consumes.
             ma_state, _ma_done = _micro_adventure_state(vault, config, today, todoist_c)
         finally:
@@ -5944,20 +5916,13 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
         except commit.CommitPlanError as exc:
             raise HTTPException(status_code=422, detail=f"plan refused: {exc}") from exc
 
-        # S6b: Capacities rows are calendar-only, so the Step B body omits them.
-        capacities_ids = {e.name for e in manifest if e.capacities}
-        body_rows = [
-            row for row in body.sequence.get("sequence", [])
-            if row.get("id") not in capacities_ids
-        ]
-        plan_body = _render_plan_body({**body.sequence, "sequence": body_rows})
         # B2: the due is the CIVIL calendar date, not the pre-02:00 logical
         # day that keys the draft store.
         civil_date = prompt_export.civil_date_for(datetime.now()).isoformat()
         if app.state.build_commit_clients:
             report = orchestrate.run_orchestrated(
                 intents, todoist=injected_todoist, store=store, vault_root=vault,
-                plan_body=plan_body, today=today, resume=resume,
+                today=today, resume=resume,
             )
             export_outcomes = prompt_export.run_prompt_exports_for_report(
                 report, day=today.isoformat(), civil_date=civil_date,
@@ -5967,7 +5932,7 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
             with shadow.todoist_client.TodoistClient(token) as todoist:
                 report = orchestrate.run_orchestrated(
                     intents, todoist=todoist, store=store, vault_root=vault,
-                    plan_body=plan_body, today=today, resume=resume,
+                    today=today, resume=resume,
                 )
                 export_outcomes = prompt_export.run_prompt_exports_for_report(
                     report, day=today.isoformat(), civil_date=civil_date,

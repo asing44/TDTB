@@ -17,7 +17,7 @@ import shadow  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
-# Manifest-row builders (mirrors test_shadow.py's _todoist_row/_flag_row/etc.)
+# Manifest-row builders (mirrors test_shadow.py's _todoist_row/etc.)
 # ---------------------------------------------------------------------------
 
 def _todoist_row(name="Garage Buildout", time="09:00"):
@@ -25,10 +25,6 @@ def _todoist_row(name="Garage Buildout", time="09:00"):
         step="A", system="todoist", action="schedule",
         name=name, id_or_path="P/Garage.md", time=time, duration_min=60, routing="PHEP",
     )
-
-
-def _flag_row(name="Garage Buildout", path="P/Garage.md"):
-    return shadow.ManifestEntry(step="C", system="vault", action="set-flag", name=name, id_or_path=path)
 
 
 def _calendar_row(name="Foods Dinner", time="18:00"):
@@ -39,6 +35,7 @@ def _calendar_row(name="Foods Dinner", time="18:00"):
 
 
 def _patch_row():
+    # Legacy Step B row: the manifest no longer emits it (V3).
     return shadow.ManifestEntry(step="B", system="vault", action="patch", name="# TDTB Plan", id_or_path="daily")
 
 
@@ -59,24 +56,13 @@ class TestClassifyBakeinMapping:
         assert verdict.inconclusive() == 0
         assert verdict.rows[0].verdict == bake_in_diff.AGREE
 
-    def test_step_b_would_update_is_agree_the_carve_out(self):
-        """The critical carve-out: Step B (action == 'patch') would-update ->
-        AGREE, because diff_against_live always marks it non-no-op once the
-        section exists (shadow.py:394). Without this every day would carry
-        >=1 diff and the bake-in could never pass."""
-        entry = shadow.ShadowDiffEntry(_patch_row(), shadow.UPDATE, {"reason": "section exists, will be replaced"})
+    def test_legacy_step_b_would_update_has_no_carve_out_any_more(self):
+        """V3: the daily-note carve-out is deleted with Step B itself; a
+        (crafted/stale) Step B would-update is just another UNEXPLAINED diff."""
+        entry = shadow.ShadowDiffEntry(_patch_row(), shadow.UPDATE, {"reason": "section exists"})
         verdict = bake_in_diff.classify_bakein(_make_diff([entry]))
-        assert verdict.agree() == 1
-        assert verdict.unexplained() == 0
-        assert verdict.rows[0].verdict == bake_in_diff.AGREE
-
-    def test_step_b_conflict_is_unexplained_not_carved_out(self):
-        """A Step B conflict ('daily note not found') is a real problem —
-        the carve-out only applies to would-update, never conflict."""
-        entry = shadow.ShadowDiffEntry(_patch_row(), shadow.CONFLICT, {"reason": "daily note not found"})
-        verdict = bake_in_diff.classify_bakein(_make_diff([entry]))
+        assert verdict.agree() == 0
         assert verdict.unexplained() == 1
-        assert verdict.rows[0].verdict == bake_in_diff.UNEXPLAINED
 
     def test_would_create_is_unexplained(self):
         entry = shadow.ShadowDiffEntry(_todoist_row(), shadow.CREATE, {"content": "Garage Buildout"})
@@ -92,12 +78,6 @@ class TestClassifyBakeinMapping:
         assert verdict.unexplained() == 1
         assert verdict.rows[0].verdict == bake_in_diff.UNEXPLAINED
 
-    def test_step_c_would_update_is_unexplained(self):
-        entry = shadow.ShadowDiffEntry(_flag_row(), shadow.UPDATE, {"assigned": {"old": False, "new": True}})
-        verdict = bake_in_diff.classify_bakein(_make_diff([entry]))
-        assert verdict.unexplained() == 1
-        assert verdict.rows[0].verdict == bake_in_diff.UNEXPLAINED
-
     def test_unavailable_is_inconclusive(self):
         entry = shadow.ShadowDiffEntry(_todoist_row(), shadow.UNAVAILABLE, {"reason": "todoist surface unavailable"})
         verdict = bake_in_diff.classify_bakein(_make_diff([entry]))
@@ -107,21 +87,18 @@ class TestClassifyBakeinMapping:
 
 
 # ---------------------------------------------------------------------------
-# The all-agree day — proves the Step-B carve-out actually lets a clean day
-# pass (a realistic mixed manifest across steps/surfaces).
+# The all-agree day — a clean day passes (a realistic mixed manifest across
+# surfaces).
 # ---------------------------------------------------------------------------
 
 class TestAllAgreeDay:
     def test_mixed_clean_day_is_all_agree_and_passes(self):
         entries = [
             shadow.ShadowDiffEntry(_todoist_row(), shadow.NOOP, {}),          # Step A no-op
-            shadow.ShadowDiffEntry(_patch_row(), shadow.UPDATE,               # Step B carve-out
-                                    {"reason": "section exists, will be replaced"}),
-            shadow.ShadowDiffEntry(_flag_row(), shadow.NOOP, {}),             # Step C no-op
             shadow.ShadowDiffEntry(_calendar_row(), shadow.NOOP, {"event_id": "e1"}),  # calendar no-op
         ]
         verdict = bake_in_diff.classify_bakein(_make_diff(entries))
-        assert verdict.agree() == 4
+        assert verdict.agree() == 2
         assert verdict.unexplained() == 0
         assert verdict.inconclusive() == 0
         assert verdict.unexplained_notes() == []
@@ -270,12 +247,10 @@ class TestRun:
     def test_run_clean_day_passes_and_writes_row(self, tmp_path):
         import datetime as dt
 
-        manifest = [_todoist_row(), _patch_row(), _flag_row()]
+        manifest = [_todoist_row()]
         live_state = {
             "todoist_tasks": [{"id": "1", "content": "Garage Buildout",
                                 "due": {"datetime": "2026-07-20T09:00:00Z", "timezone": "UTC"}}],
-            "vault_frontmatter": {"P/Garage.md": {"assigned": True}},
-            "daily_note_text": "# TDTB Plan\nold content",
         }
         log_path = tmp_path / "bake-in-log.md"
         row, verdict = bake_in_run.run(
@@ -414,7 +389,7 @@ class TestByIdReconcile:
         # Simulate the stale filter index: base read sees NO tasks.
         monkeypatch.setattr(
             shadow, "gather_live_state",
-            lambda config, vault: {"todoist_tasks": [], "vault_frontmatter": {}, "daily_note_text": None},
+            lambda config, vault: {"todoist_tasks": []},
         )
         live = {
             "T1": {"id": "T1", "content": "Garage Buildout", "due": {"datetime": "2026-07-13T09:00:00Z", "timezone": "UTC"}},

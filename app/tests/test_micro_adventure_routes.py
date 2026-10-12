@@ -206,8 +206,6 @@ def _fake_live_state(config, vault_root):
     return {
         "todoist_tasks": [],
         "calendar_events": [],
-        "vault_frontmatter": {},
-        "daily_note_text": "# Journal\n",
     }
 
 
@@ -217,8 +215,6 @@ LIVE_CONFIG = {"anchored_blocks": [{"id": "Live", "time": "20:30"}]}
 
 class TestCommitHistoryAppend:
     def _seed(self, vault: Path, monkeypatch) -> None:
-        (vault / "30 - Daily").mkdir(parents=True, exist_ok=True)
-        (vault / "30 - Daily/2026-07-12.md").write_text("# Journal\n", encoding="utf-8")
         config_path = vault / "00 - META" / "Skill-Configs" / "tdtb-bridger.md"
         config_path.parent.mkdir(parents=True, exist_ok=True)
         write_config_note(config_path,
@@ -310,17 +306,36 @@ class TestCommitHistoryAppend:
         assert body["micro_adventure_logged"] is False
         assert not (LOG_PATH()).exists()
 
-    def test_commit_flushes_checkbox_resolved_done_update(self, client, vault, monkeypatch):
+    def test_commit_ignores_a_daily_note_live_checkbox(self, client, vault, monkeypatch):
+        """V3: a ticked ``### Live`` box in the old daily note no longer counts;
+        the prior entry stays unconfirmed (done null) until answered in the
+        cockpit, and the vault note is not even read."""
         self._seed(vault, monkeypatch)
         _write_log(vault, "  - date: 2026-07-11\n    id: ma07\n    idea: Watch sunset\n    done:\n")
-        (vault / "30 - Daily/2026-07-11.md").write_text(
-            "# J\n### Live\n- [x] 🌱 Watch sunset\n", encoding="utf-8"
-        )
+        note = vault / "30 - Daily" / "2026-07-11.md"
+        note.parent.mkdir(parents=True, exist_ok=True)
+        note.write_text("# J\n### Live\n- [x] 🌱 Watch sunset\n", encoding="utf-8")
         fake = FakeLiveTodoist()
         client.app.state.build_commit_clients = lambda v, cfg: (fake, None)
         assert self._post_live(client).json()["micro_adventure_logged"] is True
         history = micro_adventure.read_history(LOG_PATH())
-        assert [ (e.id, e.done) for e in history ] == [("ma03", None), ("ma07", True)]
+        assert [(e.id, e.done) for e in history] == [("ma03", None), ("ma07", None)]
+
+    def test_commit_flushes_state_history_done_from_the_loose_end_answer(
+            self, client, vault, monkeypatch):
+        """The Live "done" state comes from the state-dir history: a "Did it"
+        answer recorded through the loose-end route survives the next commit's
+        history rewrite."""
+        self._seed(vault, monkeypatch)
+        _write_log(vault, "  - date: 2026-07-11\n    id: ma07\n    idea: Watch sunset\n    done:\n")
+        r = client.post("/micro-adventure/loose-end", headers=_auth(client),
+                        json={"date": "2026-07-11", "id": "ma07", "done": True})
+        assert r.status_code == 200, r.text
+        fake = FakeLiveTodoist()
+        client.app.state.build_commit_clients = lambda v, cfg: (fake, None)
+        assert self._post_live(client).json()["micro_adventure_logged"] is True
+        history = micro_adventure.read_history(LOG_PATH())
+        assert [(e.id, e.done) for e in history] == [("ma03", None), ("ma07", True)]
 
 
 class TestPoolComesFromConfig:

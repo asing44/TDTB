@@ -393,17 +393,11 @@ def _fake_live_state(config, vault_root):
     return {
         "todoist_tasks": [],
         "calendar_events": [],
-        "vault_frontmatter": {"P/Garage.md": {"assigned": False}},
-        "daily_note_text": "# Journal\n",
     }
 
 
 class TestLiveCommit:
     def _seed_vault(self, vault: Path) -> None:
-        (vault / "P").mkdir(parents=True, exist_ok=True)
-        (vault / "P/Garage.md").write_text("---\nassigned: false\n---\nbody\n", encoding="utf-8")
-        (vault / "30 - Daily").mkdir(parents=True, exist_ok=True)
-        (vault / "30 - Daily/2026-07-12.md").write_text("# Journal\n", encoding="utf-8")
         config_path = vault / "00 - META" / "Skill-Configs" / "tdtb-bridger.md"
         config_path.parent.mkdir(parents=True, exist_ok=True)
         write_config_note(config_path,
@@ -425,11 +419,8 @@ class TestLiveCommit:
 
     def test_mode_live_injected_clients_succeeds(self, client, vault, monkeypatch):
         self._seed_vault(vault)
-        # Freeze the route's date resolution to the seeded day so the daily-note
-        # surface targets the file _seed_vault created — otherwise the live path
-        # (main.py: gather.effective_date(datetime.now())) uses the real system
-        # date and patches a note that does not exist. Same module singleton main
-        # imports, so this reaches the route's own call.
+        # Freeze the route's date resolution to the seeded day (same module
+        # singleton main imports, so this reaches the route's own call).
         monkeypatch.setattr(gather, "effective_date", lambda now: date(2026, 7, 12))
         monkeypatch.setattr(shadow, "gather_live_state", _fake_live_state)
         client.app.state.build_commit_clients = lambda v, cfg: (FakeLiveTodoist(), FakeLiveStore())
@@ -447,11 +438,9 @@ class TestLiveCommit:
         body = r.json()
         assert body["ok"] is True
         assert body["resumed"] is False
-        assert set(body["surfaces"]) == {"todoist", "vault_flips", "daily_note",
-                                          "calendar"}
-        # the daily note actually got the plan section patched in
-        text = (vault / "30 - Daily/2026-07-12.md").read_text(encoding="utf-8")
-        assert "# TDTB Plan" in text
+        # V3: Commit writes only Todoist and the calendar
+        assert set(body["surfaces"]) == {"todoist", "calendar"}
+        assert not (vault / "30 - Daily").exists()
 
     def test_mode_live_resume_true_returns_200(self, client, vault, monkeypatch):
         self._seed_vault(vault)

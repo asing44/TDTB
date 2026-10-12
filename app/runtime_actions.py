@@ -9,14 +9,13 @@ markers, reverse compensation on mid-apply failure, and one-step undo.
 IMP-05 final source-action semantics (frozen reliability plan, action table):
 
 - ``done`` — the final name of ``complete``: Todoist closes only the current
-  occurrence (recurring advances normally); the vault gets its FileClass
-  terminal status. The already-created TDTB block stays historical.
+  occurrence (recurring advances normally). The already-created TDTB block
+  stays historical.
 - ``drop_from_plan`` — a date-scoped runstate-only exclusion. It touches no
-  Todoist/vault/calendar, removes the row from current planning only, is
+  Todoist/calendar, removes the row from current planning only, is
   idempotent per date, and is undoable (eligible again).
-- ``unassign`` — vault sets ``assigned: false``; a non-recurring Todoist task
-  has its date cleared; a recurring task's due occurrence advances WITHOUT
-  completing it, preserving the recurrence string/type and proving unchanged
+- ``unassign`` — a non-recurring Todoist task has its date cleared; a
+  recurring task's due occurrence advances WITHOUT completing it, preserving the recurrence string/type and proving unchanged
   completion counters by read-back. Never closes, never touches deferrals.
 - ``delete`` — the final name of ``delete_permanent``: every linked source
   target, atomically where feasible, plus only TDTB-owned calendar blocks
@@ -27,20 +26,26 @@ precondition: it records a deferral in the rolling ``deferrals`` store and
 best-effort un-schedules whatever derived records exist, so it is legal from
 the staging queue as well as from the committed plan.
 
+V3 (vault removal): the verbs that wrote Obsidian notes (``vault.complete``,
+``vault.assign``, ``vault.unassign``, ``vault.trash``) are deleted. A target
+that still resolves to a vault path (only possible from a pre-cutover manifest)
+is refused with an explicit "removed" error by ``plan_steps``; a journal entry
+that already holds one of those steps fails its undo with the same message.
+
 Contracts (locked decision 41 + T20 scope amendment 2026-07-25):
 
 - Targets resolve from today's runstate ``plan_manifest`` — the app only ever
   touches artifacts it committed (Todoist rows it scheduled, owned Blocks
-  calendar events, vault notes it flagged). Imported calendar entries never
+  calendar events). Imported calendar entries never
   appear in the manifest and are therefore untouchable here.
-- ``complete`` updates the authoritative source (Todoist close / FileClass-
-  specific vault status flip, byte-preserving) — derived artifacts stay.
+- ``complete`` updates the authoritative source (Todoist close / Capacities
+  completion) — derived artifacts stay.
 - ``skip_today`` / ``remove_from_today`` preserve assignment and source
   existence: they delete only today's owned Blocks event and clear the
   generated time-of-day (due date stays today).
 - ``duration_edit`` / ``move_resize`` update only the intended derived
   records (owned event interval; Todoist duration field).
-- ``delete_permanent`` deletes the source (Todoist delete / vault trash) and
+- ``delete_permanent`` deletes the source (Todoist delete) and
   today's owned event — journaled with full before-images so undo can
   recreate (recreated Todoist tasks/events get NEW ids, recorded in-step).
 - Surfaces are checked before ANY write: a verb whose plan needs an
@@ -67,7 +72,6 @@ from typing import Any
 
 import app_config
 import calendar_bridge
-import commit
 import deferrals
 import runstate
 
@@ -107,46 +111,6 @@ STAGING_VERBS = (
 # identity, not a location — nothing may join it to a vault root.
 TODOIST_PATH_PREFIX = "todoist://"
 CAPACITIES_PATH_PREFIX = "capacities://"
-
-# FileClass → completion status value. FileClass enums are vault-defined
-# (Propsec/MetadataMenu, `00 - META/Schemas/FileClasses/<type>.md`).
-#
-# T12d: this table was `{"capture": "processed"}` over a `"done"` default, and
-# NO FileClass in the vault defines "done". Two consequences, both live on
-# 2026-07-27: the value was invalid frontmatter Propsec would reject, and
-# `tdtb_gather.CLOSED_STATUSES` didn't recognise it — so a completed note
-# stayed OPEN and returned to the pool on the next refresh.
-#
-# Derivation rule, if a type is added: take the type's own enum and prefer
-# "completed", else "closed", else "processed". Every value here must stay a
-# member of CLOSED_STATUSES — `test_every_completion_value_reads_as_closed_to
-# _the_gather` enforces exactly that, so the writer and the reader can never
-# drift apart again.
-DONE_VALUE_BY_FILECLASS = {
-    # close to "processed" — inbox-shaped types
-    "capture": "processed",
-    "fleeting": "processed",
-    "idea": "processed",
-    "literature": "processed",
-    # close to "closed" — types whose enum has no "completed"
-    "press": "closed",
-    "interval": "closed",
-    "habit": "closed",
-    "movement": "closed",
-    "journal": "closed",
-    "org": "closed",
-    "peep": "closed",
-    "place": "closed",
-    "quote": "closed",
-    "source": "closed",
-    "term": "closed",
-}
-# The Global fileClass's terminal value — covers project, task, pursuit, plan,
-# print, permanent, reflection, weekplan, adventure.
-DEFAULT_DONE_VALUE = "completed"
-
-TRASH_DIR_REL = ".trash"
-
 
 class RuntimeActionError(Exception):
     """Refused/failed runtime action — message is the user-facing detail."""
@@ -305,73 +269,6 @@ def resolve_target(vault_root: Path | str, valid_date: date, name: str) -> dict[
     return out
 
 
-# ---------------------------------------------------------------------------
-# Byte-surgical vault helpers (same fence discipline as commit.py's
-# _set_assigned_true — single-line edit, everything else byte-identical)
-# ---------------------------------------------------------------------------
-
-_FILECLASS_RE = re.compile(r"^\s*type:\s*\[?\s*([A-Za-z0-9_-]+)", re.MULTILINE)
-
-
-def _fileclass_of(text: str) -> str | None:
-    m = _FILECLASS_RE.search(text.split("\n---", 1)[0] if text.startswith("---") else "")
-    return m.group(1).lower() if m else None
-
-
-def _set_status(text: str, value: str) -> tuple[str, str]:
-    """Set ``status: <value>`` in frontmatter, preserving every other byte."""
-    if not text.startswith("---"):
-        return text, "conflict"
-    end = text.find("\n---", 3)
-    if end == -1:
-        return text, "conflict"
-    fence = text[3:end]
-    rest = text[end:]
-    lines = fence.split("\n")
-    for idx, line in enumerate(lines):
-        stripped = line.strip()
-        if stripped.startswith("status:"):
-            if stripped.split(":", 1)[1].strip() == value:
-                return text, "noop"
-            indent = line[: len(line) - len(line.lstrip())]
-            lines[idx] = f"{indent}status: {value}"
-            return "---" + "\n".join(lines) + rest, "updated"
-    return text, "conflict"
-
-
-def _set_assigned_false(text: str) -> tuple[str, str]:
-    """Return ``(new_text, outcome)`` with ``assigned: false`` set.
-
-    Mirror of ``commit._set_assigned_true`` for the Unassign direction: edits
-    or inserts a single frontmatter line and never re-serializes YAML, so
-    unrelated keys, comments, quoting, and the body stay byte-identical.
-    ``outcome`` ∈ ``{"noop", "updated", "created"}``; ``"conflict"`` when
-    there is no frontmatter fence to edit.
-    """
-    if not text.startswith("---"):
-        return text, "conflict"
-    end = text.find("\n---", 3)
-    if end == -1:
-        return text, "conflict"
-    fence = text[3:end]
-    rest = text[end:]
-    lines = fence.split("\n")
-    for idx, line in enumerate(lines):
-        stripped = line.strip()
-        if stripped.startswith("assigned:"):
-            value = stripped.split(":", 1)[1].strip().lower()
-            if value == "false":
-                return text, "noop"
-            indent = line[: len(line) - len(line.lstrip())]
-            lines[idx] = f"{indent}assigned: false"
-            return "---" + "\n".join(lines) + rest, "updated"
-    if lines and lines[-1] == "":
-        lines.insert(len(lines) - 1, "assigned: false")
-    else:
-        lines.append("assigned: false")
-    return "---" + "\n".join(lines) + rest, "created"
-
-
 def drop_identity_of(target_or_row: dict[str, Any]) -> str:
     """Canonical source identity for a Drop exclusion.
 
@@ -413,20 +310,42 @@ def _event_snapshot(store: Any, event_id: str) -> dict | None:
     return {k: _iso(v) for k, v in ev.items()}
 
 
+#: Verbs that used to write the Obsidian note behind a vault-path row. The
+#: notes are gone (V3), so a target that still resolves to a vault path is
+#: refused instead of being silently skipped.
+VAULT_REMOVED_VERBS = (
+    "complete", "done", "assign", "unassign", "delete_permanent", "delete",
+)
+
+#: Journal step kinds deleted with the vault verbs. An old journal entry that
+#: still names one fails (apply never plans them; undo reports it) with a
+#: clear message instead of an "unknown step kind".
+REMOVED_STEP_KINDS = frozenset({
+    "vault.complete", "vault.assign", "vault.unassign", "vault.trash",
+})
+
+
+def _removed_vault_action(what: str) -> RuntimeActionError:
+    return RuntimeActionError(
+        f"{what}: the Obsidian vault is retired — vault note actions "
+        "(complete, assign, unassign, delete) were removed; nothing was changed"
+    )
+
+
 def plan_steps(verb: str, target: dict, args: dict, valid_date: date) -> list[dict]:
     """Pure: verb + resolved target -> ordered step specs (no clients)."""
     if target.get("phase") == "staging" and verb not in STAGING_VERBS:
         raise RuntimeActionError(
             f"{verb!r} needs a committed plan item — "
             f"{target.get('name')!r} is still staged")
+    if target.get("vault_path") and verb in VAULT_REMOVED_VERBS:
+        raise _removed_vault_action(
+            f"{verb!r} on {target.get('name')!r} (vault note {target['vault_path']!r})")
     steps: list[dict] = []
     if verb in ("complete", "done"):
         if target.get("todoist_id"):
             steps.append({"kind": "todoist.close", "surface": "todoist",
                           "task_id": target["todoist_id"]})
-        if target.get("vault_path"):
-            steps.append({"kind": "vault.complete", "surface": "vault",
-                          "path": target["vault_path"]})
         if target.get("capacities_id") and target.get("capacities_completion_supported") is True:
             fingerprint = str(target.get("source_fingerprint") or "").strip()
             if not fingerprint:
@@ -456,12 +375,9 @@ def plan_steps(verb: str, target: dict, args: dict, valid_date: date) -> list[di
             "date": str(valid_date),
         })
     elif verb == "unassign":
-        # IMP-05: vault assigned:false + Todoist date clear (non-recurring) or
+        # IMP-05: Todoist date clear (non-recurring) or
         # non-completing due advance (recurring). No deferral-memory nudge.
         task_id = target.get("todoist_id") or target.get("id")
-        if target.get("vault_path"):
-            steps.append({"kind": "vault.unassign", "surface": "vault",
-                          "system": "vault", "path": target["vault_path"]})
         if task_id:
             steps.append({"kind": "todoist.unassign", "surface": "todoist",
                           "system": "todoist", "task_id": str(task_id),
@@ -505,12 +421,8 @@ def plan_steps(verb: str, target: dict, args: dict, valid_date: date) -> list[di
                       "start": start, "end": end})
     elif verb == "assign":
         # T9 forgot-strip: one-tap "yes, today after all". The inverse of the
-        # signal that surfaced the row — a vault note gets assigned: true (the
-        # same flip /commit's Step C performs), a Todoist row gets pulled to
+        # signal that surfaced the row — a Todoist row gets pulled to
         # today. Journaled and undoable like every other verb.
-        if target.get("vault_path"):
-            steps.append({"kind": "vault.assign", "surface": "vault",
-                          "path": target["vault_path"]})
         if target.get("todoist_id"):
             steps.append({"kind": "todoist.assign_today", "surface": "todoist",
                           "task_id": target["todoist_id"]})
@@ -539,9 +451,6 @@ def plan_steps(verb: str, target: dict, args: dict, valid_date: date) -> list[di
         if target.get("todoist_id"):
             steps.append({"kind": "todoist.delete", "surface": "todoist",
                           "task_id": target["todoist_id"]})
-        if target.get("vault_path"):
-            steps.append({"kind": "vault.trash", "surface": "vault",
-                          "path": target["vault_path"]})
         if not steps:
             raise RuntimeActionError(
                 f"{target['name']!r}: nothing to delete in today's manifest")
@@ -618,43 +527,6 @@ def _apply_step(step: dict, vault_root: Path, valid_date: date,
                 start=_hhmm_to_dt(valid_date, step["start"]),
                 end=_hhmm_to_dt(valid_date, step["end"]),
             )
-    elif kind == "vault.complete":
-        path = vault_root / step["path"]
-        text = path.read_text(encoding="utf-8")
-        step["before"] = {"text": text}
-        done_value = DONE_VALUE_BY_FILECLASS.get(
-            _fileclass_of(text) or "", DEFAULT_DONE_VALUE)
-        new_text, outcome = _set_status(text, done_value)
-        if outcome == "conflict":
-            raise RuntimeActionError(
-                f"{step['path']!r}: no editable status frontmatter line")
-        step["done_value"] = done_value
-        _atomic_write(path, new_text)
-    elif kind == "vault.assign":
-        path = vault_root / step["path"]
-        text = path.read_text(encoding="utf-8")
-        step["before"] = {"text": text}
-        # Reuses /commit's Step C writer verbatim rather than a second
-        # frontmatter editor — one byte-surgical implementation, one set of
-        # edge cases (missing key, existing key, no fence).
-        new_text, outcome = commit._set_assigned_true(text)
-        if outcome == "conflict":
-            raise RuntimeActionError(
-                f"{step['path']!r}: no frontmatter fence to assign in")
-        step["outcome"] = outcome
-        _atomic_write(path, new_text)
-    elif kind == "vault.unassign":
-        # IMP-05 Unassign: set assigned: false, byte-preserving outside the
-        # single frontmatter line (mirror of commit._set_assigned_true).
-        path = vault_root / step["path"]
-        text = path.read_text(encoding="utf-8")
-        step["before"] = {"text": text}
-        new_text, outcome = _set_assigned_false(text)
-        if outcome == "conflict":
-            raise RuntimeActionError(
-                f"{step['path']!r}: no frontmatter fence to unassign in")
-        step["outcome"] = outcome
-        _atomic_write(path, new_text)
     elif kind == "todoist.assign_today":
         task = todoist.get_task(step["task_id"])
         step["before"] = {"task": task}
@@ -719,20 +591,8 @@ def _apply_step(step: dict, vault_root: Path, valid_date: date,
         step["key"] = key
         step["before"] = {"entry": deferrals.load_deferrals(vault_root).get(key)}
         step["entry"] = deferrals.record_deferral(vault_root, item, valid_date)
-    elif kind == "vault.trash":
-        path = vault_root / step["path"]
-        text = path.read_text(encoding="utf-8")
-        step["before"] = {"text": text, "path": step["path"]}
-        trash_dir = vault_root / TRASH_DIR_REL
-        trash_dir.mkdir(parents=True, exist_ok=True)
-        trash_path = trash_dir / Path(step["path"]).name
-        # never clobber an earlier trash entry
-        n = 1
-        while trash_path.exists():
-            trash_path = trash_dir / f"{Path(step['path']).stem}-{n}{Path(step['path']).suffix}"
-            n += 1
-        os.replace(path, trash_path)
-        step["trash_path"] = str(trash_path.relative_to(vault_root))
+    elif kind in REMOVED_STEP_KINDS:
+        raise _removed_vault_action(f"step {kind!r}")
     else:  # pragma: no cover — plan_steps only emits the kinds above
         raise RuntimeActionError(f"unknown step kind {kind!r}")
     step["applied"] = True
@@ -795,12 +655,6 @@ def _reverse_step(step: dict, vault_root: Path, valid_date: date,
         store.update_event(step["event_id"],
                            start=datetime.fromisoformat(ev["start"]),
                            end=datetime.fromisoformat(ev["end"]))
-    elif kind == "vault.complete":
-        _atomic_write(vault_root / step["path"], before["text"])
-    elif kind == "vault.assign":
-        _atomic_write(vault_root / step["path"], before["text"])
-    elif kind == "vault.unassign":
-        _atomic_write(vault_root / step["path"], before["text"])
     elif kind == "todoist.assign_today":
         if step.get("skipped_recurring"):
             return  # nothing was written — nothing to reverse
@@ -823,14 +677,8 @@ def _reverse_step(step: dict, vault_root: Path, valid_date: date,
             {"dropped": (before.get("dropped") or [])}))
     elif kind == "deferrals.record":
         deferrals.set_entry(vault_root, step["key"], before.get("entry"))
-    elif kind == "vault.trash":
-        original = vault_root / before["path"]
-        original.parent.mkdir(parents=True, exist_ok=True)
-        trash_path = vault_root / step["trash_path"]
-        if trash_path.exists():
-            os.replace(trash_path, original)
-        else:  # trash entry vanished — restore from exact before-image bytes
-            _atomic_write(original, before["text"])
+    elif kind in REMOVED_STEP_KINDS:
+        raise _removed_vault_action(f"undo of step {kind!r}")
     else:  # pragma: no cover
         raise RuntimeActionError(f"unknown step kind {kind!r}")
 
@@ -971,13 +819,6 @@ def _completion_proof(before_task: dict[str, Any],
         "changed": changed,
         "recurrence_preserved": recurrence_preserved,
     }
-
-
-def _atomic_write(path: Path, text: str) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(text, encoding="utf-8")
-    os.replace(tmp, path)
 
 
 def _locked_runstate_rmw(vault_root: Path, valid_date: date,

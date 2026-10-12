@@ -352,30 +352,6 @@ class TestSelectCustom:
 
 
 # --------------------------------------------------------------------------- #
-# daily_note_live_done
-# --------------------------------------------------------------------------- #
-class TestDailyNoteLiveDone:
-    def test_checked_box_true(self):
-        text = "## Day\n\n### Live\n- [x] Went on the adventure\n\n## Next\n"
-        assert ma.daily_note_live_done(text) is True
-
-    def test_unchecked_box_none(self):
-        text = "### Live\n- [ ] Not yet\n"
-        assert ma.daily_note_live_done(text) is None
-
-    def test_missing_section_none(self):
-        assert ma.daily_note_live_done("## Day\n- [x] unrelated\n") is None
-
-    def test_missing_text_none(self):
-        assert ma.daily_note_live_done(None) is None
-        assert ma.daily_note_live_done("") is None
-
-    def test_checkbox_after_section_end_ignored(self):
-        text = "### Live\nno box here\n\n### Other\n- [x] not the live one\n"
-        assert ma.daily_note_live_done(text) is None
-
-
-# --------------------------------------------------------------------------- #
 # resolve_prior
 # --------------------------------------------------------------------------- #
 class _Recorder:
@@ -389,114 +365,77 @@ class _Recorder:
 
 
 class TestResolvePrior:
+    """V3: the daily-note ``### Live`` checkbox signal is gone. The done state
+    lives in the state-dir history; Todoist completion is the only automatic
+    signal, and an unconfirmed entry degrades to "pending, not done"."""
+
     def _head(self, done=None, d=date(2026, 7, 14), tid="tk1"):
         return _hist("ma01", d, done=done, tid=tid)
 
-    def test_todoist_true_short_circuits(self):
-        note = _Recorder(True)  # would also say true, must NOT be called
-        history = [self._head()]
-        res = ma.resolve_prior(
-            history, today=TODAY,
-            todoist_completed=_Recorder(True),
-            daily_note_live_checked=note,
-        )
+    def test_daily_note_helpers_are_gone(self):
+        assert not hasattr(ma, "daily_note_live_done")
+        with pytest.raises(TypeError):
+            ma.resolve_prior([self._head()], today=TODAY,
+                             daily_note_live_checked=lambda d: True)
+
+    def test_todoist_true_marks_done(self):
+        tod = _Recorder(True)
+        res = ma.resolve_prior([self._head()], today=TODAY, todoist_completed=tod)
+        assert tod.calls == ["tk1"]
         assert res.done_update is not None
         assert res.done_update.done is True
         assert res.history[0].done is True
         assert res.pending_confirm is None
-        assert note.calls == []  # short-circuited
 
-    def test_todoist_inconclusive_falls_to_checkbox(self):
-        note = _Recorder(True)
-        history = [self._head()]
+    @pytest.mark.parametrize("answer", [None, False])
+    def test_todoist_inconclusive_or_false_is_pending_never_done_false(self, answer):
         res = ma.resolve_prior(
-            history, today=TODAY,
-            todoist_completed=_Recorder(None),  # inconclusive
-            daily_note_live_checked=note,
+            [self._head()], today=TODAY, todoist_completed=_Recorder(answer),
         )
-        assert res.done_update is not None
-        assert res.history[0].done is True
-        assert note.calls == [date(2026, 7, 14)]
+        assert res.done_update is None
+        assert res.pending_confirm is res.history[0]
+        assert res.history[0].done is None  # never becomes False
 
-    def test_todoist_false_falls_to_checkbox(self):
-        note = _Recorder(True)
-        res = ma.resolve_prior(
-            [self._head()], today=TODAY,
-            todoist_completed=_Recorder(False),
-            daily_note_live_checked=note,
-        )
-        assert res.done_update is not None
-        assert note.calls == [date(2026, 7, 14)]
-
-    def test_checkbox_unchecked_never_done_false(self):
-        # both inconclusive -> pending, done stays None (never becomes False)
-        res = ma.resolve_prior(
-            [self._head()], today=TODAY,
-            todoist_completed=_Recorder(None),
-            daily_note_live_checked=_Recorder(None),
-        )
+    def test_no_signals_at_all_is_pending(self):
+        res = ma.resolve_prior([self._head()], today=TODAY)
         assert res.done_update is None
         assert res.pending_confirm is not None
         assert res.pending_confirm.done is None
-        assert res.history[0].done is None
 
-    def test_both_inconclusive_pending(self):
-        res = ma.resolve_prior(
-            [self._head()], today=TODAY,
-            todoist_completed=_Recorder(False),
-            daily_note_live_checked=_Recorder(False),
-        )
-        assert res.pending_confirm is res.history[0]
-        assert res.done_update is None
-
-    def test_callables_raising_treated_as_inconclusive(self):
+    def test_todoist_raising_treated_as_inconclusive(self):
         def boom(_):
             raise RuntimeError("todoist down")
 
-        def boom2(_):
-            raise RuntimeError("note read failed")
-
         history = [self._head()]
-        res = ma.resolve_prior(
-            history, today=TODAY, todoist_completed=boom, daily_note_live_checked=boom2
-        )
+        res = ma.resolve_prior(history, today=TODAY, todoist_completed=boom)
         assert res.done_update is None
-        assert res.pending_confirm is not None
         assert res.pending_confirm == history[0]
         assert res.history == tuple(history)
-        assert res.history[0].done is None
 
-    def test_todoist_raises_but_checkbox_true(self):
-        def boom(_):
-            raise RuntimeError("down")
-
-        res = ma.resolve_prior(
-            [self._head()], today=TODAY,
-            todoist_completed=boom,
-            daily_note_live_checked=_Recorder(True),
-        )
-        assert res.done_update is not None
-        assert res.history[0].done is True
-
-    def test_no_task_id_skips_to_checkbox(self):
-        note = _Recorder(True)
+    def test_no_task_id_does_not_consult_todoist(self):
         tod = _Recorder(True)
-        res = ma.resolve_prior(
-            [self._head(tid=None)], today=TODAY,
-            todoist_completed=tod,
-            daily_note_live_checked=note,
-        )
-        assert tod.calls == []  # no task id -> todoist not consulted
-        assert res.history[0].done is True  # checkbox resolved it
+        res = ma.resolve_prior([self._head(tid=None)], today=TODAY, todoist_completed=tod)
+        assert tod.calls == []
+        assert res.history[0].done is None
+        assert res.pending_confirm is not None
 
-    def test_done_already_set_passthrough(self):
+    def test_done_in_state_history_is_final(self):
+        # The cockpit "Did it" answer (resolve_loose_end) is written to the
+        # state-dir log as done:true; the next read sees it and asks nothing.
         history = [self._head(done=True)]
-        res = ma.resolve_prior(
-            history, today=TODAY, todoist_completed=_Recorder(True), daily_note_live_checked=_Recorder(True)
-        )
+        tod = _Recorder(False)
+        res = ma.resolve_prior(history, today=TODAY, todoist_completed=tod)
+        assert tod.calls == []
         assert res.done_update is None
         assert res.pending_confirm is None
         assert res.history == tuple(history)
+
+    def test_dismissed_in_state_history_is_final(self):
+        history = [self._head(done=False)]
+        res = ma.resolve_prior(history, today=TODAY, todoist_completed=_Recorder(True))
+        assert res.done_update is None
+        assert res.pending_confirm is None
+        assert res.history[0].done is False
 
     def test_today_dated_head_passthrough(self):
         history = [self._head(d=TODAY)]  # date == today -> not applicable

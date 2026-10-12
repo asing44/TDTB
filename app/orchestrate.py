@@ -7,8 +7,11 @@ manual write-verify gate. This module is the real orchestration layer the
 live ``/commit?mode=live`` route (T15) calls:
 
   - **Fixed surface order + stable ledger keys** (``SURFACES``) — every run
-    dispatches todoist -> vault_flips -> daily_note -> calendar, in that
-    order, and records a per-surface entry under that same key every time.
+    dispatches todoist -> calendar, in that order, and records a per-surface
+    entry under that same key every time. (V3: the ``vault_flips`` and
+    ``daily_note`` surfaces were deleted with the Obsidian write steps; a
+    resumed run that finds those keys in an older persisted ledger ignores
+    them.)
   - **A failing surface never aborts the run.** Writers are already
     idempotent and self-reconciling (commit.py's guarantee); a writer
     returning ``ok=False`` only marks its own ledger entry failed — later
@@ -51,37 +54,27 @@ import tdtb_gather as gather  # noqa: E402  (path-shimmed import, see inventory.
 import commit  # noqa: E402
 import runstate  # noqa: E402
 
-# Fixed dispatch order + the ledger's stable key set. Order matters for
-# crash-consistency reasoning (todoist lands before anything vault-side, so a
-# crash after Step A never leaves an orphaned vault flip with no matching
-# task) and is never reordered by intent content.
-SURFACES: list[str] = ["todoist", "vault_flips", "daily_note", "calendar"]
+# Fixed dispatch order + the ledger's stable key set. Never reordered by
+# intent content.
+SURFACES: list[str] = ["todoist", "calendar"]
 
 # surface key -> (WriterResult.step label, the client this surface needs)
 _STEP_FOR: dict[str, str] = {
     "todoist": "A",
-    "vault_flips": "C",
-    "daily_note": "B",
     "calendar": "D/E",
 }
 _CLIENT_NAME_FOR: dict[str, str] = {
     "todoist": "todoist",
-    "vault_flips": "vault_root",
-    "daily_note": "vault_root",
     "calendar": "store",
 }
 
 
 def _subset_for(key: str, intents: list[commit.WriteIntent]) -> list[commit.WriteIntent]:
     """The intent subset each surface owns — mirrors commit.py's own writer
-    filters (todoist/vault-step-C/vault-step-B/calendar) so a surface never
+    filters (todoist/calendar) so a surface never
     sees an intent another surface is responsible for."""
     if key == "todoist":
         return [i for i in intents if i.surface == "todoist"]
-    if key == "vault_flips":
-        return [i for i in intents if i.surface == "vault" and i.step == "C"]
-    if key == "daily_note":
-        return [i for i in intents if i.surface == "vault" and i.step == "B"]
     if key == "calendar":
         return [i for i in intents if i.surface == "calendar"]
     raise ValueError(f"unknown surface key {key!r}")  # pragma: no cover — SURFACES is closed
@@ -93,16 +86,10 @@ def _dispatch(
     *,
     todoist: commit.TodoistLike | None,
     store: commit.EventStoreLike | None,
-    vault_root: Path | None,
-    plan_body: str,
     today: date,
 ) -> commit.WriterResult:
     if key == "todoist":
         return commit.write_todoist(subset, todoist)
-    if key == "vault_flips":
-        return commit.write_frontmatter_flips(subset, vault_root)
-    if key == "daily_note":
-        return commit.write_daily_note(subset, vault_root, plan_body, today)
     if key == "calendar":
         return commit.write_calendar(subset, store, today)
     raise ValueError(f"unknown surface key {key!r}")  # pragma: no cover — SURFACES is closed
@@ -162,7 +149,6 @@ def run_orchestrated(
     todoist: commit.TodoistLike | None = None,
     store: commit.EventStoreLike | None = None,
     vault_root: Path | str | None = None,
-    plan_body: str = "",
     today: date | None = None,
     resume: bool = False,
     selections: list[dict[str, Any]] | None = None,
@@ -219,7 +205,6 @@ def run_orchestrated(
 
     client_values: dict[str, Any] = {
         "todoist": todoist,
-        "vault_root": vault_path,
         "store": store,
     }
 
@@ -239,8 +224,7 @@ def run_orchestrated(
             )
         else:
             result = _dispatch(
-                key, subset, todoist=todoist, store=store, vault_root=vault_path,
-                plan_body=plan_body, today=today,
+                key, subset, todoist=todoist, store=store, today=today,
             )
             entry = _result_entry(result)
 

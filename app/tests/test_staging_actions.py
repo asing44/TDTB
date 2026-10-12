@@ -3,6 +3,8 @@
 complete / delete_permanent / defer resolve from today's ``digest_index``
 before any commit exists; post-commit ``plan_manifest`` resolution is
 unchanged and still wins; unknown items and placement-only verbs are refused.
+V3: a staged vault-note row (``vault_path``) can no longer be completed,
+assigned, unassigned or deleted; those verbs refuse it with a clear error.
 """
 
 from __future__ import annotations
@@ -113,37 +115,15 @@ class TestStagingResolution:
 # ---------------------------------------------------------------------------
 
 class TestStagingVerbs:
-    def test_complete_flips_a_staged_vault_note(self, vault: Path):
-        action = ra.apply_action(vault, TODAY, "complete", "Roof")
-        assert action["status"] == "applied"
-        text = (vault / "50 - Operations/Roof.md").read_text(encoding="utf-8")
-        # T12d: a project closes to its FileClass's "completed", not "done" —
-        # see TestCompletionStatusIsAFileClassValue below.
-        assert "status: completed" in text
-
-    def test_complete_closes_a_staged_todoist_row(self, vault: Path):
-        todoist = FakeTodoist()
-        action = ra.apply_action(vault, TODAY, "complete", "Call Vlad",
-                                 todoist=todoist)
-        assert action["status"] == "applied"
-        assert ("close", "7") in todoist.calls
-
-    def test_undo_of_a_staged_complete_restores_bytes(self, vault: Path):
-        before = (vault / "50 - Operations/Roof.md").read_text(encoding="utf-8")
-        action = ra.apply_action(vault, TODAY, "complete", "Roof")
-        ra.undo_action(vault, TODAY, action["id"])
-        assert (vault / "50 - Operations/Roof.md").read_text(encoding="utf-8") == before
-
-    def test_delete_permanent_trashes_a_staged_note(self, vault: Path):
-        action = ra.apply_action(vault, TODAY, "delete_permanent", "Roof")
-        assert action["status"] == "applied"
-        assert not (vault / "50 - Operations/Roof.md").exists()
-        assert (vault / ".trash" / "Roof.md").is_file()
-
-    def test_delete_permanent_undo_restores_the_note(self, vault: Path):
-        action = ra.apply_action(vault, TODAY, "delete_permanent", "Roof")
-        ra.undo_action(vault, TODAY, action["id"])
-        assert (vault / "50 - Operations/Roof.md").is_file()
+    @pytest.mark.parametrize("verb", ["complete", "delete_permanent"])
+    def test_a_staged_vault_note_is_refused_with_a_clear_error(self, vault: Path, verb: str):
+        path = vault / "50 - Operations/Roof.md"
+        before = path.read_text(encoding="utf-8")
+        with pytest.raises(ra.RuntimeActionError, match="vault is retired"):
+            ra.apply_action(vault, TODAY, verb, "Roof")
+        assert path.read_text(encoding="utf-8") == before
+        assert not (vault / ".trash").exists()
+        assert ra.load_journal(vault, TODAY)["actions"] == []
 
     def test_defer_works_at_staging(self, vault: Path):
         import deferrals
@@ -152,14 +132,15 @@ class TestStagingVerbs:
         assert deferrals.load_deferrals(vault)["path:50 - Operations/Roof.md"]["count"] == 1
 
     def test_staging_actions_are_journaled_like_any_other(self, vault: Path):
-        ra.apply_action(vault, TODAY, "complete", "Roof")
+        ra.apply_action(vault, TODAY, "complete", "Call Vlad", todoist=FakeTodoist())
         journal = ra.load_journal(vault, TODAY)
         assert len(journal["actions"]) == 1
         assert journal["actions"][0]["target"]["phase"] == "staging"
 
     def test_staging_actions_stay_idempotent(self, vault: Path):
-        ra.apply_action(vault, TODAY, "complete", "Roof")
-        dup = ra.apply_action(vault, TODAY, "complete", "Roof")
+        todoist = FakeTodoist()
+        ra.apply_action(vault, TODAY, "complete", "Call Vlad", todoist=todoist)
+        dup = ra.apply_action(vault, TODAY, "complete", "Call Vlad", todoist=todoist)
         assert dup.get("duplicate") is True
 
 
@@ -167,18 +148,13 @@ class TestAssignVerb:
     """T9 forgot-strip's one-tap assign — the inverse of the signal that
     surfaced the row."""
 
-    def test_assign_flips_the_vault_note(self, vault: Path):
-        action = ra.apply_action(vault, TODAY, "assign", "Roof")
-        assert action["status"] == "applied"
-        assert "assigned: true" in (
-            vault / "50 - Operations/Roof.md").read_text(encoding="utf-8")
-
-    def test_assign_is_byte_preserving_outside_the_flag(self, vault: Path):
+    def test_assign_of_a_staged_vault_note_is_refused(self, vault: Path):
         path = vault / "50 - Operations/Roof.md"
         before = path.read_text(encoding="utf-8")
-        ra.apply_action(vault, TODAY, "assign", "Roof")
-        after = path.read_text(encoding="utf-8")
-        assert after.replace("assigned: true\n", "") == before
+        with pytest.raises(ra.RuntimeActionError, match="vault is retired"):
+            ra.apply_action(vault, TODAY, "assign", "Roof")
+        assert path.read_text(encoding="utf-8") == before
+        assert ra.load_journal(vault, TODAY)["actions"] == []
 
     def test_assign_pulls_a_todoist_row_to_today(self, vault: Path):
         todoist = FakeTodoist()
@@ -191,16 +167,16 @@ class TestAssignVerb:
         ra.apply_action(vault, TODAY, "assign", "Call Vlad", todoist=todoist)
         assert todoist.calls == []
 
-    def test_undo_assign_restores_exact_bytes(self, vault: Path):
-        path = vault / "50 - Operations/Roof.md"
-        before = path.read_text(encoding="utf-8")
-        action = ra.apply_action(vault, TODAY, "assign", "Roof")
-        ra.undo_action(vault, TODAY, action["id"])
-        assert path.read_text(encoding="utf-8") == before
+    def test_assign_of_a_todoist_row_is_undoable(self, vault: Path):
+        todoist = FakeTodoist()
+        action = ra.apply_action(vault, TODAY, "assign", "Call Vlad", todoist=todoist)
+        undone = ra.undo_action(vault, TODAY, action["id"], todoist=todoist)
+        assert undone["status"] == "undone"
 
     def test_assign_is_idempotent(self, vault: Path):
-        ra.apply_action(vault, TODAY, "assign", "Roof")
-        dup = ra.apply_action(vault, TODAY, "assign", "Roof")
+        todoist = FakeTodoist()
+        ra.apply_action(vault, TODAY, "assign", "Call Vlad", todoist=todoist)
+        dup = ra.apply_action(vault, TODAY, "assign", "Call Vlad", todoist=todoist)
         assert dup.get("duplicate") is True
 
     def test_assign_is_a_staging_verb(self):
@@ -320,9 +296,16 @@ class TestStagingRoute:
 
     def test_route_applies_a_staging_verb(self, client: TestClient):
         r = client.post("/runtime-actions",
-                        json={"verb": "complete", "target": "Roof"})
+                        json={"verb": "complete", "target": "Call Vlad"})
         assert r.status_code == 200, r.text
         assert r.json()["status"] == "applied"
+
+    def test_route_returns_422_for_a_removed_vault_verb(self, client: TestClient, vault: Path):
+        r = client.post("/runtime-actions",
+                        json={"verb": "complete", "target": "Roof"})
+        assert r.status_code == 422
+        assert "vault is retired" in r.json()["detail"]
+        assert "status: active" in (vault / "50 - Operations/Roof.md").read_text(encoding="utf-8")
 
     def test_route_refuses_an_unknown_item_with_422(self, client: TestClient):
         r = client.post("/runtime-actions",
@@ -402,81 +385,3 @@ class TestTodoistPseudoPathIsNotAVaultPath:
                                  {}, todoist=todoist, store=None)
         assert result["status"] == "applied", result
         assert ("close", "7") in todoist.calls
-
-
-# ---------------------------------------------------------------------------
-# T12d — the completion vocabulary (found by t12c_morning_rehearsal.py)
-# ---------------------------------------------------------------------------
-
-class TestCompletionStatusIsAFileClassValue:
-    """`complete` wrote ``status: done``. No FileClass in the vault defines
-    ``done`` — terminal values are ``completed`` (project/task/pursuit),
-    ``closed`` (press/interval/habit) and ``processed`` (capture/fleeting/idea),
-    which is exactly `tdtb_gather.CLOSED_STATUSES`. So a completed note stayed
-    OPEN to the gather and came straight back into tomorrow's pool, and the
-    value it wrote was invalid frontmatter Propsec would flag.
-
-    `Controller.stagingAction` refreshes sources expecting the row to leave the
-    queue; it did not.
-    """
-
-    @pytest.mark.parametrize("fileclass,expected", [
-        ("project", "completed"),
-        ("task", "completed"),
-        ("pursuit", "completed"),
-        ("press", "closed"),
-        ("interval", "closed"),
-        ("habit", "closed"),
-        ("capture", "processed"),
-        ("fleeting", "processed"),
-        ("idea", "processed"),
-    ])
-    def test_each_type_closes_to_its_own_enum_value(self, tmp_path: Path,
-                                                    fileclass: str, expected: str):
-        note = tmp_path / "50 - Operations" / "Thing.md"
-        note.parent.mkdir(parents=True, exist_ok=True)
-        note.write_text(f"---\ntype: [{fileclass}]\nstatus: active\n---\n\nbody\n",
-                        encoding="utf-8")
-        runstate.write_digest_index(tmp_path, TODAY, [
-            {"name": "Thing", "todoist_id": "", "path": "50 - Operations/Thing.md"}])
-
-        result = ra.apply_action(tmp_path, TODAY, "complete", "Thing", {},
-                                 todoist=None, store=None)
-        assert result["status"] == "applied", result
-        assert f"status: {expected}" in note.read_text(encoding="utf-8")
-
-    def test_no_type_ever_closes_to_done(self):
-        assert ra.DEFAULT_DONE_VALUE != "done"
-        assert "done" not in set(ra.DONE_VALUE_BY_FILECLASS.values())
-
-    def test_every_completion_value_reads_as_closed_to_the_gather(self):
-        """The writer's vocabulary and the reader's must be the same one."""
-        import tdtb_gather
-
-        values = set(ra.DONE_VALUE_BY_FILECLASS.values()) | {ra.DEFAULT_DONE_VALUE}
-        assert values <= set(tdtb_gather.CLOSED_STATUSES), (
-            f"these completion values leave the note open to the gather: "
-            f"{sorted(values - set(tdtb_gather.CLOSED_STATUSES))}")
-
-    def test_a_completed_note_leaves_the_assigned_pool(self, tmp_path: Path):
-        """The end-to-end property T12c actually caught: complete it, and the
-        gather must no longer count it as assigned."""
-        import tdtb_gather
-
-        note = tmp_path / "50 - Operations" / "Thing.md"
-        note.parent.mkdir(parents=True, exist_ok=True)
-        note.write_text("---\ntype: [project]\nstatus: active\nassigned: true\n---\n\nbody\n",
-                        encoding="utf-8")
-        runstate.write_digest_index(tmp_path, TODAY, [
-            {"name": "Thing", "todoist_id": "", "path": "50 - Operations/Thing.md"}])
-
-        before = tdtb_gather.parse_frontmatter(note.read_text(encoding="utf-8"))
-        assert tdtb_gather.is_assigned("50 - Operations/Projects", before) is True
-
-        ra.apply_action(tmp_path, TODAY, "complete", "Thing", {},
-                        todoist=None, store=None)
-
-        after = tdtb_gather.parse_frontmatter(note.read_text(encoding="utf-8"))
-        assert tdtb_gather.is_assigned("50 - Operations/Projects", after) is False, (
-            "a completed note is still in the assigned pool — it will come back "
-            "on the next source refresh")

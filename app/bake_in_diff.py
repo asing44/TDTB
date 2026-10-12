@@ -13,16 +13,8 @@ functions:
      report (``recon_fail``, ``wrong_surface``) into the day-level enum
      (``KILL`` / ``DIFF`` / ``INCONCLUSIVE`` / ``PASS``) per § 2.2–2.3.
 
-The one non-obvious rule (protocol § 2.1, the ⚠ callout) is the **Step B
-carve-out**: ``diff_against_live`` *always* marks the daily-note patch
-(Step B, ``action == "patch"``) as ``would-update`` once the plan section
-already exists in the note (shadow.py:394, "section exists, will be
-replaced") — post-commit, that section always exists, so this is expected
-agreement, not drift. Without the carve-out every bake-in day would carry
-at least one diff and the bar (protocol § 3) could never be met. The
-carve-out is kept deliberately narrow: only ``would-update`` + Step B. A
-Step B ``conflict`` ("daily note not found") is a real problem and stays
-UNEXPLAINED — the carve-out never touches non-``would-update`` classes.
+(The Step B daily-note carve-out the protocol once required is gone: the
+manifest no longer emits Step B/C vault rows, so there is nothing to carve out.)
 
 Nothing here does I/O; ``bake_in_run.py`` wires this against a real
 manifest/live-state and appends the log row.
@@ -53,15 +45,7 @@ KILL = "KILL"
 DIFF = "DIFF"
 PASS = "PASS"
 
-_SURFACE_LABEL = {"todoist": "Todoist", "calendar": "the calendar", "vault": "the vault"}
-
-
-def _is_step_b_patch(manifest: ManifestEntry) -> bool:
-    """The narrow carve-out predicate: Step B AND action == 'patch'. Checking
-    both (rather than step alone) matches the protocol's "keep it narrow"
-    instruction — a future step relabeled "B" for an unrelated action must
-    not silently inherit the carve-out."""
-    return manifest.step == "B" and manifest.action == "patch"
+_SURFACE_LABEL = {"todoist": "Todoist", "calendar": "the calendar"}
 
 
 @dataclass(frozen=True)
@@ -103,10 +87,7 @@ def _reason_for(manifest: ManifestEntry, shadow_class: str, detail: dict[str, An
     detail = detail or {}
 
     if verdict == AGREE:
-        if shadow_class == NOOP:
-            return f"Step {step} {name!r}: matches what was committed (no-op)"
-        # would-update + Step B carve-out — the only other AGREE path.
-        return f"Step {step} {name!r}: daily-note section replaced as expected (Step B carve-out)"
+        return f"Step {step} {name!r}: matches what was committed (no-op)"
 
     if shadow_class == CREATE:
         where = _SURFACE_LABEL.get(manifest.system, manifest.system)
@@ -145,10 +126,9 @@ def classify_bakein(diff: ShadowDiff) -> BakeInVerdict:
     (protocol § 2.1 table):
 
       no-op                          -> AGREE
-      would-update + Step B patch    -> AGREE   (the carve-out)
       would-create                   -> UNEXPLAINED
       would-update (everything else) -> UNEXPLAINED
-      conflict                       -> UNEXPLAINED  (incl. Step B conflict)
+      conflict                       -> UNEXPLAINED
       unavailable                    -> INCONCLUSIVE
     """
     rows: list[BakeInRow] = []
@@ -157,8 +137,6 @@ def classify_bakein(diff: ShadowDiff) -> BakeInVerdict:
         cls = entry.classification
 
         if cls == NOOP:
-            verdict = AGREE
-        elif cls == UPDATE and _is_step_b_patch(m):
             verdict = AGREE
         elif cls in (CREATE, UPDATE, CONFLICT):
             verdict = UNEXPLAINED
