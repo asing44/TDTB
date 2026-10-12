@@ -6229,8 +6229,12 @@ body {
   }
 
   .qrow__time .alloc-track {
+    /* 120px floor. At 1101-1279px the time column is 300px: two 32px steppers,
+       the 74px readout and three 6px gaps leave 144px for the track, and the
+       8px status dot needs 14px more. At 140px the dot wrapped under the
+       minus stepper. */
     flex: 1 1 auto;
-    min-width: 140px;
+    min-width: 120px;
   }
 
   .qrow__time .alloc-track__value {

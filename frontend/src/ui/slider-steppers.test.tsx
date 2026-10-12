@@ -153,3 +153,13 @@ describe("a stored override above the shrunk range still agrees with the thumb",
     expect(readout.textContent).toBe("5hr*");
   });
 });
+
+describe("the status dot stays on the readout line at 1101-1499px", () => {
+  it("lets the track shrink to 120px so the dot fits beside the readout", () => {
+    // The time column is 300px at 1101-1279px. Two 32px steppers, the 74px
+    // readout and three 6px gaps leave 144px for the track; the 8px status
+    // dot needs 14px more, so a 140px floor pushed it under the − stepper.
+    const body = ruleBody("\\.qrow__time \\.alloc-track");
+    expect(body).toMatch(/min-width:\s*120px/);
+  });
+});
