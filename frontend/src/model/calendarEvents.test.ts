@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { dedupeCalendarEvents, displayAnchored, isMintSessionEvent } from "./calendarEvents";
+import { dedupeCalendarEvents, displayAnchored, isMintSessionEvent, isSessionCalendar } from "./calendarEvents";
 import type { AnchoredBlock } from "./types";
 
 const ev = (name: string, start: string, durationMin = 30, kind: AnchoredBlock["kind"] = "calendar"): AnchoredBlock => ({
@@ -41,5 +41,30 @@ describe("calendar event display rules", () => {
       ev("Pittering", "11:01"),
     ];
     expect(displayAnchored(rows).map((r) => r.name)).toEqual(["Sudsing", "Pittering"]);
+  });
+
+  it.each(["Session: focus", "🟡 Mint", "session: deep", "🟡 Mint Sessions"])(
+    "treats the %s calendar as session items",
+    (title) => {
+      expect(isSessionCalendar(title)).toBe(true);
+    },
+  );
+
+  it.each(["Calendar", "US Holidays", "🍯 A + M Busy Bees!", "Trinoor", null, undefined])(
+    "keeps events from the %s calendar",
+    (title) => {
+      expect(isSessionCalendar(title)).toBe(false);
+    },
+  );
+
+  it("hides events from session calendars (Pittering, Putz) but keeps others", () => {
+    const rows = [
+      { ...ev("🚶 Pittering", "09:50"), calendarTitle: "Session: focus" },
+      { ...ev("☕ Putz", "11:59"), calendarTitle: "Session: focus" },
+      { ...ev("Adam pickup Aldi", "13:45"), calendarTitle: "Calendar" },
+    ];
+    expect(displayAnchored(rows, { sessionCalendars: true }).map((r) => r.name)).toEqual(["Adam pickup Aldi"]);
+    // Without the option (Plan tasks) they stay, to be counted as ignored.
+    expect(displayAnchored(rows).map((r) => r.name)).toHaveLength(3);
   });
 });

@@ -509,8 +509,16 @@ export function DaySetupPanel({
         timeState,
       };
     });
-    const stripCalendar = displayAnchored(effectiveAnchoredBlocks(s))
-      .filter((a) => a.kind === "calendar" && a.start !== null && a.durationMin > 0)
+    const stripCalendar = displayAnchored(effectiveAnchoredBlocks(s), { sessionCalendars: true })
+      // Ignored calendars (the same ones Plan tasks tucks behind its "ignored"
+      // count) have no place among the day's commitments either.
+      .filter(
+        (a) =>
+          a.kind === "calendar" &&
+          a.start !== null &&
+          a.durationMin > 0 &&
+          (a.capacityClass ?? "fixed") !== "ignored",
+      )
       .map((a) => ({
         id: a.id,
         name: a.name,
