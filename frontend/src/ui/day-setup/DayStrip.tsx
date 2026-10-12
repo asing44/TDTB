@@ -11,11 +11,11 @@
    Pure presentation: selection state and the Wall-filtered id sets come from
    DaySetupPanel, so the strip never re-implements the Mint/wall contract. */
 
-import type { ComponentChildren } from "preact";
-import { useRef, useState } from "preact/hooks";
+import { Fragment, type ComponentChildren } from "preact";
+import { useEffect, useRef, useState } from "preact/hooks";
 import { display12h, toHHMM, toMinutes } from "../../model/time";
 import { dragTargetMinutes, keyboardTargetMinutes } from "./anchorDrag";
-import { compactHour, compactRange } from "./compactTime";
+import { compactClock, compactHour, compactRange } from "./compactTime";
 
 /** Pointer travel (px) before a press on an anchor becomes a drag. */
 const DRAG_THRESHOLD_PX = 4;
@@ -87,6 +87,23 @@ export function DayStrip(props: DayStripProps) {
   const suppressAnchorClick = useRef(false);
   const [preview, setPreview] = useState<{ id: string; from: number; min: number } | null>(null);
   const [announcement, setAnnouncement] = useState("");
+  // The strip's pixel width, so labels that do not fit inside a short block
+  // can be placed beside it. 900 is only the first-paint guess.
+  const laneRef = useRef<HTMLDivElement>(null);
+  const [laneW, setLaneW] = useState(900);
+  useEffect(() => {
+    const el = laneRef.current;
+    if (!el) return;
+    const measure = () => {
+      const w = el.getBoundingClientRect().width;
+      if (w > 0) setLaneW(w);
+    };
+    measure();
+    if (typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
 
   const rangeIds = (a: number, b: number) =>
     props.sessions.slice(Math.min(a, b), Math.max(a, b) + 1).map((session) => session.id);
@@ -231,8 +248,13 @@ export function DayStrip(props: DayStripProps) {
     props.onMoveAnchor?.(anchor.id, toHHMM(to));
   };
 
+  // Hour marks: every hour is a gridline through all lanes; labels are every
+  // hour when the strip is wide enough for them, else every two.
+  const hourly = laneW >= 760;
   const ticks: number[] = [];
-  for (let m = dayStart; m < dayEnd; m += 120) ticks.push(m);
+  for (let m = dayStart; m < dayEnd; m += hourly ? 60 : 120) ticks.push(m);
+  const gridHours: number[] = [];
+  for (let m = dayStart; m <= dayEnd; m += 60) gridHours.push(m);
 
   // A Mint block wholly outside the frame has no place on the strip; one that
   // straddles a frame edge is clipped to it. Hidden blocks are counted in a note.
@@ -245,7 +267,11 @@ export function DayStrip(props: DayStripProps) {
   // Blocks that would overlap are stacked into sub-rows (greedy interval
   // scheduling); a 30-minute overlap is tolerated so a neighbouring pair such
   // as Sudsing and Dinner share one row like the reference.
-  const rowEnds: number[] = [];
+  // A name that does not fit inside its block is drawn beside it (right,
+  // or left when the right would run off the strip) and counts toward the
+  // row's occupied span so neighbouring labels never collide.
+  const pxPerMin = laneW / daySpan;
+  const rowState: Array<{ end: number; outside: boolean }> = [];
   const placedAnchors = props.anchors
     .map((anchor) => {
       const min = toMinutes(anchor.start);
@@ -254,15 +280,25 @@ export function DayStrip(props: DayStripProps) {
     .filter(({ min, length }) => min + length > dayStart && min < dayEnd)
     .sort((a, b) => a.min - b.min)
     .map(({ anchor, min, length }) => {
-      let row = rowEnds.findIndex((end) => end - BLOCK_MIN <= min);
+      const text = `${anchor.name} ${compactClock(anchor.start)}`;
+      const textPx = text.length * 6.4 + 10;
+      const inside = anchor.counted && length * pxPerMin >= textPx;
+      const labelMin = textPx / pxPerMin;
+      const side: "right" | "left" =
+        (min + length - dayStart) * pxPerMin + textPx + 6 > laneW ? "left" : "right";
+      const lo = inside || side === "right" ? min : min - labelMin;
+      const hi = inside || side === "left" ? min + length : min + length + labelMin;
+      let row = rowState.findIndex(
+        (r) => r.end - (r.outside || !inside ? 0 : BLOCK_MIN) <= lo,
+      );
       if (row === -1) {
-        row = rowEnds.length;
-        rowEnds.push(0);
+        row = rowState.length;
+        rowState.push({ end: 0, outside: false });
       }
-      rowEnds[row] = min + length;
-      return { anchor, min, length, row };
+      rowState[row] = { end: hi, outside: !inside };
+      return { anchor, min, length, row, inside, side, text };
     });
-  const anchorRows = Math.max(1, rowEnds.length);
+  const anchorRows = Math.max(1, rowState.length);
   const anchorRowH = 28;
 
   // Contiguous selected / wall-blocked Mint slots read as one block: a run
@@ -302,8 +338,21 @@ export function DayStrip(props: DayStripProps) {
 
   return (
     <div class="day-strip" data-testid="day-strip">
+      <div class="day-strip__grid" aria-hidden="true">
+        {gridHours.map((m) => (
+          <span
+            class={`day-strip__gridline${(m / 60) % 2 === 0 ? " day-strip__gridline--major" : ""}`}
+            style={{ left: `${pct(m)}%` }}
+            key={m}
+          />
+        ))}
+      </div>
       <div class="day-strip__axis" aria-hidden="true">
-        {ticks.map((m) => (
+        {ticks
+          // The "frame" marker sits on the frame's start; an hour label that
+          // close to it would print over it.
+          .filter((m) => Math.abs(m - startMin) * pxPerMin >= 32)
+          .map((m) => (
           <span class="day-strip__tick" style={{ left: `${pct(m)}%` }} key={m}>
             {compactHour(m)}
           </span>
@@ -312,6 +361,12 @@ export function DayStrip(props: DayStripProps) {
       <div class="day-strip__frame" aria-hidden="true">
         <span class="day-strip__frame-box" style={{ left: `${pct(startMin)}%`, width: `${pct(endMin) - pct(startMin)}%` }} />
         <span class="day-strip__frame-label" style={{ left: `${pct(startMin)}%` }}>frame</span>
+        <span
+          class="day-strip__frame-range"
+          style={{ left: `${pct(startMin)}%`, width: `${pct(endMin) - pct(startMin)}%` }}
+        >
+          {compactClock(props.frameStart)} – {compactClock(props.frameEnd)}
+        </span>
       </div>
       <div class="day-strip__caption">
         <span class="day-strip__caption-label">Mint</span>
@@ -393,16 +448,18 @@ export function DayStrip(props: DayStripProps) {
       </div>
       <div
         class="day-strip__lane day-strip__lane--anchors"
+        ref={laneRef}
         aria-label="Anchors"
         style={{ height: `${anchorRows * anchorRowH + 2}px` }}
       >
-        {placedAnchors.map(({ anchor, min: placedMin, length, row }) => {
+        {placedAnchors.map(({ anchor, min: placedMin, length, row, inside, side, text }) => {
           const dragging = preview?.id === anchor.id;
           const min = dragging ? preview.min : placedMin;
           const movable = isMovable(anchor);
           const widthPct = (length / daySpan) * 100;
           const reason = anchor.reason ?? "";
           return (
+            <Fragment key={anchor.id}>
             <button
               type="button"
               class={`strip-anchor${anchor.counted ? "" : " strip-anchor--not-counted"}${
@@ -428,10 +485,25 @@ export function DayStrip(props: DayStripProps) {
               onPointerCancel={(e) => onAnchorPointerCancel(e as unknown as PointerEvent)}
               onKeyDown={(e) => onAnchorKeyDown(e as unknown as KeyboardEvent, anchor)}
               onClick={() => onAnchorClick(anchor.id)}
-              key={anchor.id}
             >
-              {anchor.counted && widthPct >= 5 ? anchor.name : null}
+              {inside ? text : null}
             </button>
+            {!inside && (
+              <span
+                class={`strip-anchor__label strip-anchor__label--${side}${
+                  anchor.counted ? "" : " strip-anchor__label--not-counted"
+                }`}
+                aria-hidden="true"
+                style={
+                  side === "right"
+                    ? { left: `calc(${rawPct(min + length)}% + 4px)`, top: `${2 + row * anchorRowH}px` }
+                    : { right: `calc(${100 - rawPct(min)}% + 4px)`, top: `${2 + row * anchorRowH}px` }
+                }
+              >
+                {text}
+              </span>
+            )}
+            </Fragment>
           );
         })}
       </div>
