@@ -220,7 +220,7 @@ class TestJournalCore:
         assert len(j["actions"]) == 1
         assert j["actions"][0]["id"] == action["id"]
         # journal file is valid JSON on disk
-        raw = json.loads((vault / ra.journal_rel_path(TODAY)).read_text())
+        raw = json.loads(ra.journal_path(TODAY).read_text())
         assert raw["actions"][0]["verb"] == "complete"
 
     def test_idempotent_repeat_returns_existing(self, vault: Path):

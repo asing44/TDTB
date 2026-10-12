@@ -2323,7 +2323,7 @@ class TestDurationMemorySave:
         assert body["duration_source"] == "remembered"
         cache = dm.cache_path(vault)
         assert cache.is_file()
-        assert cache.is_relative_to(vault)
+        assert not cache.is_relative_to(vault)
 
     @pytest.mark.parametrize("minutes", [7, 23, 8])
     def test_save_rejects_off_grid(self, client, vault, minutes):
@@ -2571,7 +2571,10 @@ class TestDurationMemoryIsolation:
         }, headers=h_a)
         assert r.status_code == 200
         assert dm.read_vault_memory(a) == {"todoist:1": 90}
-        assert dm.read_vault_memory(b) == {}
+        # V2: the store is the state dir, shared across vault roots; neither
+        # vault root receives a file.
+        assert dm.read_vault_memory(b) == {"todoist:1": 90}
+        assert list(a.iterdir()) == [] and list(b.iterdir()) == []
 # T02: GET /version — tokenless, pure read-only source/runtime fingerprint
 # ---------------------------------------------------------------------------
 

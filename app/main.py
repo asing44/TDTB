@@ -2217,7 +2217,7 @@ def _micro_adventure_state(
         section = sections.get("Micro-Adventures") if isinstance(sections, dict) else None
         pool = micro_adventure.parse_pool(section)
         window = micro_adventure.exclude_window_days(section)
-        history = micro_adventure.read_history(vault / micro_adventure.HISTORY_REL_PATH)
+        history = micro_adventure.read_history(micro_adventure.history_path())
         resolution = micro_adventure.resolve_prior(
             history,
             today=today,
@@ -2297,7 +2297,7 @@ def _append_micro_adventure_history(
     ):
         return  # Live block off/skipped today — no selection was committed
     try:
-        log_path = vault / micro_adventure.HISTORY_REL_PATH
+        log_path = micro_adventure.history_path()
         history = micro_adventure.read_history(log_path)
         resolution = micro_adventure.resolve_prior(
             history, today=today,
@@ -5229,7 +5229,7 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
         except ValueError:
             raise HTTPException(status_code=422, detail="date must be YYYY-MM-DD")
         vault = resolve_vault_root()
-        log_path = vault / micro_adventure.HISTORY_REL_PATH
+        log_path = micro_adventure.history_path()
         updated = micro_adventure.resolve_loose_end(
             micro_adventure.read_history(log_path),
             date_=entry_date, entry_id=body.id, done=body.done,

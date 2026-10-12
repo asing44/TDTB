@@ -22,7 +22,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "gather"))
 import tdtb_gather as gather  # noqa: E402
 
 TODAY = date(2026, 7, 12)
-LOG_REL = ma.HISTORY_REL_PATH
+LOG_PATH = ma.history_path
 
 
 def _entry(day: str, entry_id: str, done: bool | None) -> HistoryEntry:
@@ -73,7 +73,7 @@ def client(vault, monkeypatch) -> TestClient:
 
 
 def _write_log(vault: Path, history_yaml: str) -> None:
-    p = vault / LOG_REL
+    p = LOG_PATH()
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(
         "---\ndescription: test log\nschema_version: 1\nhistory:\n" + history_yaml + "---\n",
@@ -100,20 +100,20 @@ class TestLooseEndRoute:
         assert client.get("/plan-inputs").json()["micro_adventure"]["pending_confirm"] is not None
         r = _post(client, {"date": "2026-07-11", "id": "ma03", "done": True})
         assert r.status_code == 200
-        assert [(e.id, e.done) for e in ma.read_history(vault / LOG_REL)] == [("ma03", True)]
+        assert [(e.id, e.done) for e in ma.read_history(LOG_PATH())] == [("ma03", True)]
         assert client.get("/plan-inputs").json()["micro_adventure"]["pending_confirm"] is None
 
     def test_dismiss_writes_not_done(self, client, vault):
         _write_log(vault, PENDING)
         assert _post(client, {"date": "2026-07-11", "id": "ma03", "done": False}).status_code == 200
-        assert [(e.id, e.done) for e in ma.read_history(vault / LOG_REL)] == [("ma03", False)]
+        assert [(e.id, e.done) for e in ma.read_history(LOG_PATH())] == [("ma03", False)]
 
     def test_unknown_entry_is_404_and_the_log_is_untouched(self, client, vault):
         _write_log(vault, PENDING)
-        before = (vault / LOG_REL).read_text(encoding="utf-8")
+        before = (LOG_PATH()).read_text(encoding="utf-8")
         r = _post(client, {"date": "2026-07-11", "id": "ma99", "done": True})
         assert r.status_code == 404
-        assert (vault / LOG_REL).read_text(encoding="utf-8") == before
+        assert (LOG_PATH()).read_text(encoding="utf-8") == before
 
     def test_malformed_date_is_422(self, client, vault):
         _write_log(vault, PENDING)
