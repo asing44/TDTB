@@ -82,9 +82,9 @@ describe("Plan task row actions never depend on hover", () => {
   });
 });
 
-describe("Plan task rows drop the −/+ duration steppers", () => {
-  it("app.css no longer styles an .alloc-step control", () => {
-    expect(appCss).not.toMatch(/\.alloc-step/);
+describe("Plan task rows restore the −/+ duration steppers", () => {
+  it("app.css styles an .alloc-step control again", () => {
+    expect(appCss).toMatch(/\.alloc-step\s*\{/);
   });
 });
 

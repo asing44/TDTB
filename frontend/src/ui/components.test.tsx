@@ -17,6 +17,7 @@ import { ExecutionView } from "./ExecutionView";
 import { createStore, type Store } from "../store/createStore";
 import { Controller } from "../store/controller";
 import { effectiveAnchoredBlocks } from "../store/store";
+import { MAX_BLOCKS } from "../model/allocator";
 import { FixtureAdapter } from "../adapters/fixture";
 import { makeScenario, fixedInputsOf, type ScenarioName } from "../fixtures/scenarios";
 import { fingerprintFixedInputs } from "../model/fingerprint";
@@ -319,7 +320,7 @@ describe("Queue", () => {
     const { getByLabelText } = ui(<Queue />);
     const slider = getByLabelText("Note Processing duration in 15-minute steps");
     fireEvent.input(slider, { target: { value: "999" } });
-    expect(store.getState().overrides["Note Processing"].blocks).toBe(16);
+    expect(store.getState().overrides["Note Processing"].blocks).toBe(MAX_BLOCKS);
   });
 
   it("T7 sub-block shaping stays reachable on every row via the exact editor", () => {
