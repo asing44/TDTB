@@ -1354,3 +1354,49 @@ describe("capacities discovery delegation", () => {
     ]);
   });
 });
+
+describe("saveAnchoredStart (persist an anchor's time to config)", () => {
+  it("writes through the adapter by block name, then reloads inputs so the configured start matches", async () => {
+    const { store, adapter, controller } = harness("ready");
+    await controller.load();
+    const before = store.getState().inputs!.anchored.find((a) => a.id === "Sudsing")!;
+    expect(before.start).toBe("17:45");
+    const save = vi.spyOn(adapter, "saveAnchoredStart");
+    const result = await controller.saveAnchoredStart("Sudsing", "18:15");
+    expect(save).toHaveBeenCalledWith("Sudsing", "18:15");
+    expect(result).toEqual({ reloaded: true, refreshError: null });
+    expect(store.getState().inputs!.anchored.find((a) => a.id === "Sudsing")!.start).toBe("18:15");
+  });
+
+  it("does not reload or change state when the write is refused", async () => {
+    const { store, adapter, controller } = harness("ready");
+    await controller.load();
+    vi.spyOn(adapter, "saveAnchoredStart").mockRejectedValue(new Error("override shadows config"));
+    const refresh = vi.spyOn(adapter, "refreshSources");
+    await expect(controller.saveAnchoredStart("Sudsing", "18:15")).rejects.toThrow(/shadows/);
+    expect(refresh).not.toHaveBeenCalled();
+    expect(store.getState().inputs!.anchored.find((a) => a.id === "Sudsing")!.start).toBe("17:45");
+  });
+
+  it("refuses calendar rows and unknown ids without a network call", async () => {
+    const { store, adapter, controller } = harness("ready");
+    await controller.load();
+    const save = vi.spyOn(adapter, "saveAnchoredStart");
+    await expect(controller.saveAnchoredStart("nope", "18:15")).rejects.toThrow(/config anchor/);
+    const cal = store.getState().inputs!.anchored.find((a) => a.kind === "calendar");
+    if (cal) await expect(controller.saveAnchoredStart(cal.id, "18:15")).rejects.toThrow(/config anchor/);
+    expect(save).not.toHaveBeenCalled();
+  });
+
+  it("reports reloaded:false when the post-save refresh failed", async () => {
+    const { adapter, controller } = harness("ready");
+    await controller.load();
+    vi.spyOn(adapter, "saveAnchoredStart").mockResolvedValue({
+      block: "Sudsing", start: "18:15", previousStart: "17:45",
+    });
+    vi.spyOn(adapter, "refreshSources").mockRejectedValue(new Error("source read degraded"));
+    const result = await controller.saveAnchoredStart("Sudsing", "18:15");
+    expect(result.reloaded).toBe(false);
+    expect(result.refreshError).toMatch(/degraded/);
+  });
+});

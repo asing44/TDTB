@@ -39,7 +39,7 @@ import {
 import { calendarWalls } from "../model/overflow";
 import { effectiveAnchoredBlocks } from "../store/store";
 import { DayStrip } from "./day-setup/DayStrip";
-import { AnchorsCard } from "./day-setup/AnchorsCard";
+import { AnchorsCard, type AnchorTimeState } from "./day-setup/AnchorsCard";
 import { PromptsCard } from "./day-setup/PromptsCard";
 import { LooseEndBanner } from "./day-setup/LooseEndBanner";
 import { onSetupContinue, onSetupUndo } from "./day-setup/commands";
@@ -174,6 +174,22 @@ export function DaySetupPanel({
     };
   }, [variant]);
 
+  // Anchor time moves (strip drag / arrow keys) write today's override through
+  // the same controller path as the anchored editor. Writes are chained so a
+  // fast run of arrow presses reaches the server in order, and the draft is
+  // kept in step with the store except while a write is still in flight.
+  const [timeUi, setTimeUi] = useState<
+    Record<string, { saving?: boolean; saved?: boolean; error?: string | null }>
+  >({});
+  const persistChain = useRef<Promise<void>>(Promise.resolve());
+  const pendingPersists = useRef(0);
+  useEffect(() => {
+    if (variant !== "screen" || pendingPersists.current > 0) return;
+    setDraft((d) =>
+      d.anchored === s.daySetup.anchored ? d : { ...d, anchored: s.daySetup.anchored },
+    );
+  }, [variant, s.daySetup.anchored]);
+
   if (!active || !s.inputs) return null;
 
   const mintAnchor = draft.anchor ?? s.inputs.time.anchor;
@@ -248,6 +264,54 @@ export function DaySetupPanel({
       ...d,
       anchored: { ...d.anchored, [id]: { ...overrideOf(id), ...patch } },
     }));
+
+  const patchTimeUi = (id: string, patch: { saving?: boolean; saved?: boolean; error?: string | null }) =>
+    setTimeUi((current) => ({ ...current, [id]: { ...current[id], ...patch } }));
+  const errorText = (e: unknown) => String(e instanceof Error ? e.message : e);
+
+  const persistAnchoredOverride = (id: string, override: AnchoredOverride) => {
+    pendingPersists.current += 1;
+    persistChain.current = persistChain.current
+      .then(() => controller.saveAnchoredOverride(id, override))
+      .catch((e) =>
+        patchTimeUi(id, { error: `Could not save today's change: ${errorText(e)}` }),
+      )
+      .finally(() => {
+        pendingPersists.current -= 1;
+      });
+  };
+
+  /** Strip drag / arrow keys: today's start for one config anchor. */
+  const moveAnchor = (id: string, time: string | null) => {
+    const next: AnchoredOverride = { ...overrideOf(id), time };
+    setDraft((d) => ({ ...d, anchored: { ...d.anchored, [id]: next } }));
+    patchTimeUi(id, { saved: false, error: null });
+    persistAnchoredOverride(id, next);
+  };
+
+  const saveAnchorTime = async (id: string) => {
+    const time = overrideOf(id).time;
+    if (!time) return;
+    patchTimeUi(id, { saving: true, error: null });
+    try {
+      await persistChain.current; // today's override first, so both agree
+      const { reloaded, refreshError } = await controller.saveAnchoredStart(id, time);
+      patchTimeUi(
+        id,
+        reloaded
+          ? { saving: false, saved: true, error: null }
+          : {
+              saving: false,
+              error:
+                "Saved to config, but the page could not reload its inputs" +
+                (refreshError ? ` (${refreshError})` : "") +
+                ". Use Refresh sources to see it.",
+            },
+      );
+    } catch (e) {
+      patchTimeUi(id, { saving: false, error: errorText(e) });
+    }
+  };
 
   const setMintAllotment = (minutes: number) => {
     if (availableMintSessions.length === 0) {
@@ -422,6 +486,16 @@ export function DaySetupPanel({
       const startMin = toMinutes(time);
       const outside = startMin < frameStartMin || startMin > frameEndMin;
       const counted = on && !outside;
+      const configTime = sourceAnchor(a.id).start;
+      const ui = timeUi[a.id] ?? {};
+      const timeState: AnchorTimeState = {
+        configTime,
+        dirty: o.time != null && o.time !== configTime,
+        saved: ui.saved === true,
+        saving: ui.saving === true,
+        error: ui.error ?? null,
+        windowOpen: a.kind === "window" || a.kind === "template",
+      };
       return {
         id: a.id,
         name: a.name,
@@ -429,6 +503,9 @@ export function DaySetupPanel({
         counted,
         reason: !on ? "skipped" : outside ? "outside frame" : null,
         blocks: anchoredBlocks(sourceAnchor(a.id), o),
+        // Calendar rows never reach editableAnchors; counted config anchors move.
+        movable: counted,
+        timeState,
       };
     });
     const countedAnchors = stripAnchors.filter((anchor) => anchor.counted);
@@ -530,6 +607,7 @@ export function DaySetupPanel({
                   onToggleSession={toggleMintSession}
                   anchors={stripAnchors}
                   onEditAnchor={editAnchor}
+                  onMoveAnchor={(id, start) => moveAnchor(id, start)}
                   mintControl={
                     availableMintSessions.length > 0 ? (
                       <label class="frame-summary__blocks" for="setup-mint-blocks">
@@ -581,14 +659,18 @@ export function DaySetupPanel({
                 name: anchor.name,
                 time: anchor.start,
                 blocks: anchor.blocks,
+                timeState: anchor.timeState,
               }))}
               notCounted={notCountedAnchors.map((anchor) => ({
                 id: anchor.id,
                 name: anchor.name,
                 time: anchor.start,
                 reason: anchor.reason ?? "outside frame",
+                timeState: anchor.timeState,
               }))}
               onEdit={editAnchor}
+              onSaveTime={(id) => void saveAnchorTime(id)}
+              onResetTime={(id) => moveAnchor(id, null)}
             />
           </div>
 

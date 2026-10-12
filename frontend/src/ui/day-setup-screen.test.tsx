@@ -358,3 +358,126 @@ describe("default Mint fill and the Mint blocks slider", () => {
     expect(r.queryByText(/8-block/)).toBeNull();
   });
 });
+
+describe("anchor move and save to config", () => {
+  const pointer = { pointerId: 1, button: 0, pointerType: "mouse" } as const;
+  const strip = (r: ReturnType<ReturnType<typeof makeHarness>["ui"]>, id: string) =>
+    r.container.querySelector(`[data-anchor-id="${id}"]`) as HTMLElement;
+
+  // Ruler 07:00-24:00 drawn 1020px wide: 1px per minute.
+  function stubLane() {
+    return vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue({
+      x: 0, y: 0, left: 0, top: 0, right: 1020, bottom: 34, width: 1020, height: 34,
+      toJSON: () => ({}),
+    });
+  }
+  function drag(el: HTMLElement, px: number) {
+    fireEvent.pointerDown(el, { ...pointer, clientX: 500 });
+    fireEvent.pointerMove(el, { ...pointer, clientX: 500 + px });
+    fireEvent.pointerUp(el, { ...pointer, clientX: 500 + px });
+  }
+  const savedTime = (h: ReturnType<typeof screenHarness>, id: string) =>
+    h.store.getState().daySetup.anchored[id]?.time;
+
+  // Save time = write + billed-free source reload, each behind fixture latency.
+  const SLOW = { timeout: 5000 };
+
+  afterEach(() => vi.restoreAllMocks());
+
+  it("dragging an anchor saves today's override through the existing path and updates strip and card", async () => {
+    stubLane();
+    const h = screenHarness();
+    const saveDay = vi.spyOn(FixtureAdapter.prototype, "saveDaySetup");
+    const r = h.ui(<App />);
+    drag(strip(r, "Sudsing"), 30); // 5:45 PM -> 6:15 PM
+    // the click a browser fires right after the drop must not open the editor
+    fireEvent.click(strip(r, "Sudsing"));
+    expect(h.store.getState().ui.editorAnchor).toBeNull();
+    await vi.waitFor(() => expect(savedTime(h, "Sudsing")).toBe("18:15"));
+    expect(saveDay).toHaveBeenCalled();
+    expect(saveDay.mock.calls.at(-1)![0].anchored.Sudsing.time).toBe("18:15");
+    expect(strip(r, "Sudsing").getAttribute("aria-label")).toContain("6:15 PM");
+    expect(r.getByText("Today only")).toBeTruthy();
+    expect(r.getByRole("button", { name: "Save time" })).toBeTruthy();
+  });
+
+  it("moves with the arrow keys and the editor still opens from a click", async () => {
+    stubLane();
+    const h = screenHarness();
+    const r = h.ui(<App />);
+    fireEvent.keyDown(strip(r, "Sudsing"), { key: "ArrowRight" });
+    await vi.waitFor(() => expect(savedTime(h, "Sudsing")).toBe("18:00"));
+    fireEvent.keyDown(strip(r, "Sudsing"), { key: "ArrowLeft", shiftKey: true });
+    await vi.waitFor(() => expect(savedTime(h, "Sudsing")).toBe("17:00"));
+    fireEvent.click(strip(r, "Sudsing"));
+    expect(h.store.getState().ui.editorAnchor).toBe("Sudsing");
+  });
+
+  it("Save time persists to config, reloads inputs, and the tile reads Saved", async () => {
+    stubLane();
+    const h = screenHarness();
+    const save = vi.spyOn(FixtureAdapter.prototype, "saveAnchoredStart");
+    const r = h.ui(<App />);
+    drag(strip(r, "Sudsing"), 30);
+    await vi.waitFor(() => expect(r.getByRole("button", { name: "Save time" })).toBeTruthy());
+    fireEvent.click(r.getByRole("button", { name: "Save time" }));
+    await vi.waitFor(() => expect(r.getByText("Saved")).toBeTruthy(), SLOW);
+    expect(save).toHaveBeenCalledWith("Sudsing", "18:15");
+    expect(r.queryByText("Today only")).toBeNull();
+    expect(r.queryByRole("button", { name: "Save time" })).toBeNull();
+    // the reloaded inputs now carry the saved start as the configured one
+    expect(h.store.getState().inputs!.anchored.find((a) => a.id === "Sudsing")!.start).toBe("18:15");
+    expect(strip(r, "Sudsing").getAttribute("aria-label")).toContain("6:15 PM");
+  });
+
+  it("moving a saved anchor again goes back to Today only", async () => {
+    stubLane();
+    const h = screenHarness();
+    const r = h.ui(<App />);
+    drag(strip(r, "Sudsing"), 30);
+    await vi.waitFor(() => expect(r.getByRole("button", { name: "Save time" })).toBeTruthy());
+    fireEvent.click(r.getByRole("button", { name: "Save time" }));
+    await vi.waitFor(() => expect(r.getByText("Saved")).toBeTruthy(), SLOW);
+    fireEvent.keyDown(strip(r, "Sudsing"), { key: "ArrowRight" });
+    await vi.waitFor(() => expect(r.getByText("Today only")).toBeTruthy());
+    expect(r.queryByText("Saved")).toBeNull();
+  });
+
+  it("shows a refused save inline as an alert and keeps today's change", async () => {
+    stubLane();
+    const h = screenHarness();
+    vi.spyOn(FixtureAdapter.prototype, "saveAnchoredStart").mockRejectedValue(
+      new Error("The machine-local config.json overrides anchored_blocks"),
+    );
+    const r = h.ui(<App />);
+    drag(strip(r, "Sudsing"), 30);
+    await vi.waitFor(() => expect(r.getByRole("button", { name: "Save time" })).toBeTruthy());
+    fireEvent.click(r.getByRole("button", { name: "Save time" }));
+    await vi.waitFor(() => expect(r.getByRole("alert").textContent).toContain("overrides anchored_blocks"), SLOW);
+    expect(r.getByText("Today only")).toBeTruthy();
+    expect(savedTime(h, "Sudsing")).toBe("18:15");
+  });
+
+  it("Reset returns to the configured start and clears today's override time", async () => {
+    stubLane();
+    const h = screenHarness();
+    const r = h.ui(<App />);
+    drag(strip(r, "Sudsing"), 30);
+    await vi.waitFor(() => expect(r.getByRole("button", { name: "Reset" })).toBeTruthy());
+    fireEvent.click(r.getByRole("button", { name: "Reset" }));
+    await vi.waitFor(() => expect(savedTime(h, "Sudsing")).toBeNull());
+    expect(strip(r, "Sudsing").getAttribute("aria-label")).toContain("5:45 PM");
+    expect(r.queryByRole("button", { name: "Save time" })).toBeNull();
+    expect(r.queryByText("Today only")).toBeNull();
+  });
+
+  it("saves the moved anchor only once the server confirms, never on drag alone", async () => {
+    stubLane();
+    const h = screenHarness();
+    const save = vi.spyOn(FixtureAdapter.prototype, "saveAnchoredStart");
+    const r = h.ui(<App />);
+    drag(strip(r, "Sudsing"), 30);
+    await vi.waitFor(() => expect(savedTime(h, "Sudsing")).toBe("18:15"));
+    expect(save).not.toHaveBeenCalled();
+  });
+});

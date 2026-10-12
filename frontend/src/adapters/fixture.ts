@@ -6,6 +6,7 @@
 
 import type {
   Adapter,
+  AnchoredStartSaveResult,
   DurationMemoryResetResult,
   DurationMemorySaveResult,
   SequenceContext,
@@ -960,6 +961,18 @@ export class FixtureAdapter implements Adapter {
     const item = this.inputs.assigned.find((i) => itemIdentity(i) === identity);
     const minutes = item ? Math.round(item.blocks * 30) : 30;
     return { identity, minutes, source: "default" };
+  }
+
+  /** Anchored-start save: the fixture "config" is its loaded inputs, so a
+      save rewrites that block's configured start and the next source refresh
+      reads it back — the same reload loop the real server gives. */
+  async saveAnchoredStart(block: string, start: string): Promise<AnchoredStartSaveResult> {
+    await wait(LATENCY_MS);
+    const row = this.inputs.anchored.find((a) => a.id === block && a.kind !== "calendar");
+    if (!row) throw new Error(`anchored block '${block}' is not in the repo config`);
+    const previousStart = row.start;
+    row.start = start;
+    return { block, start, previousStart };
   }
 
   async autoSequence(_ctx: SequenceContext): Promise<SequenceResult> {

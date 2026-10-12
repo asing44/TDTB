@@ -96,6 +96,14 @@ export interface DurationMemoryResetResult {
   source: import("../model/types").DurationSourceLabel;
 }
 
+/** One explicit anchored-start save (config write). Times are 24h HH:MM, the
+    cockpit's wire-neutral form; the server stores "5:45 PM"-style text. */
+export interface AnchoredStartSaveResult {
+  block: string;
+  start: string;
+  previousStart: string | null;
+}
+
 export interface Adapter {
   /** GET /plan-inputs, projected assigned-only (digest.suggested dropped). */
   loadPlanInputs(): Promise<PlanInputs>;
@@ -189,6 +197,11 @@ export interface Adapter {
       (duration-memory MVP). The response carries the current
       source-resolved fallback the row should apply. */
   resetDurationMemory(identity: string): Promise<DurationMemoryResetResult>;
+  /** POST /config/anchored-blocks/start — one token-guarded non-billed write of
+      ONE anchored block's Start into the tracked repo config. Never touches
+      today's day setup. 404 unknown block, 409 shadowed by a local override,
+      422 unparseable time surface as ApiError with the server message. */
+  saveAnchoredStart(block: string, start: string): Promise<AnchoredStartSaveResult>;
   /** POST /sequence — the ONE billed action. Never called automatically. */
   autoSequence(ctx: SequenceContext): Promise<SequenceResult>;
   /** POST /validate-sequence — deterministic, free. */
