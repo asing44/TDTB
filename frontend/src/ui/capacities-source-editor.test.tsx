@@ -235,6 +235,9 @@ describe("CapacitiesSourceEditor", () => {
     await waitFor(() => expect(save).toHaveBeenCalledTimes(1));
 
     const draft = save.mock.calls[0][0];
+    await waitFor(() =>
+      expect(rendered.getByText(/^Saved revision 5 at /)).toBeTruthy(),
+    );
     expect(draft).toEqual({
       expectedRevision: 4,
       spaceId: "space-1",

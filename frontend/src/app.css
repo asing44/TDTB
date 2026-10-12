@@ -7624,3 +7624,12 @@ body {
     grid-template-columns: minmax(0, 1.5fr) repeat(3, minmax(0, 1fr));
   }
 }
+
+/* Save status beside the source-mapping Save button, so a save is visible
+   where the operator clicked rather than only in the header revision. */
+.capacities-source__save-status {
+  margin-right: auto;
+  align-self: center;
+  font-size: 12px;
+  color: var(--t-muted);
+}
