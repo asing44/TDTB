@@ -39,6 +39,16 @@ export interface StripAnchor {
   movable?: boolean;
 }
 
+export interface StripCalendarEvent {
+  id: string;
+  name: string;
+  /** 24h HH:MM */
+  start: string;
+  durationMin: number;
+  /** False when skipped today (dimmed). */
+  counted: boolean;
+}
+
 export interface DayStripProps {
   frameStart: string;
   frameEnd: string;
@@ -49,6 +59,8 @@ export interface DayStripProps {
   onToggleSession: (id: string) => void;
   anchors: StripAnchor[];
   onEditAnchor: (id: string) => void;
+  /** Today's calendar events, drawn on their own read-only lane. */
+  calendar?: StripCalendarEvent[];
   /** Called once per completed move (pointer drop or arrow key) with the new
       24h HH:MM start. Without it no anchor is movable. */
   onMoveAnchor?: (id: string, start: string) => void;
@@ -271,34 +283,62 @@ export function DayStrip(props: DayStripProps) {
   // or left when the right would run off the strip) and counts toward the
   // row's occupied span so neighbouring labels never collide.
   const pxPerMin = laneW / daySpan;
-  const rowState: Array<{ end: number; outside: boolean }> = [];
-  const placedAnchors = props.anchors
-    .map((anchor) => {
-      const min = toMinutes(anchor.start);
-      return { anchor, min, length: lengthOf(anchor) };
-    })
-    .filter(({ min, length }) => min + length > dayStart && min < dayEnd)
-    .sort((a, b) => a.min - b.min)
-    .map(({ anchor, min, length }) => {
-      const text = `${anchor.name} ${compactClock(anchor.start)}`;
-      const textPx = text.length * 6.4 + 10;
-      const inside = anchor.counted && length * pxPerMin >= textPx;
-      const labelMin = textPx / pxPerMin;
-      const side: "right" | "left" =
-        (min + length - dayStart) * pxPerMin + textPx + 6 > laneW ? "left" : "right";
-      const lo = inside || side === "right" ? min : min - labelMin;
-      const hi = inside || side === "left" ? min + length : min + length + labelMin;
-      let row = rowState.findIndex(
-        (r) => r.end - (r.outside || !inside ? 0 : BLOCK_MIN) <= lo,
-      );
-      if (row === -1) {
-        row = rowState.length;
-        rowState.push({ end: 0, outside: false });
-      }
-      rowState[row] = { end: hi, outside: !inside };
-      return { anchor, min, length, row, inside, side, text };
-    });
-  const anchorRows = Math.max(1, rowState.length);
+  const place = <T,>(
+    entries: Array<{ item: T; min: number; length: number; text: string; solid: boolean }>,
+  ) => {
+    const rowState: Array<{ end: number; outside: boolean }> = [];
+    const placed = entries
+      .filter(({ min, length }) => min + length > dayStart && min < dayEnd)
+      .sort((x, y) => x.min - y.min)
+      .map(({ item, min, length, text, solid }) => {
+        const textPx = text.length * 6.4 + 10;
+        const inside = solid && length * pxPerMin >= textPx;
+        const labelMin = textPx / pxPerMin;
+        const side: "right" | "left" =
+          (min + length - dayStart) * pxPerMin + textPx + 6 > laneW ? "left" : "right";
+        const lo = inside || side === "right" ? min : min - labelMin;
+        const hi = inside || side === "left" ? min + length : min + length + labelMin;
+        let row = rowState.findIndex(
+          (r) => r.end - (r.outside || !inside ? 0 : BLOCK_MIN) <= lo,
+        );
+        if (row === -1) {
+          row = rowState.length;
+          rowState.push({ end: 0, outside: false });
+        }
+        rowState[row] = { end: hi, outside: !inside };
+        return { item, min, length, row, inside, side, text };
+      });
+    return { placed, rows: Math.max(1, rowState.length) };
+  };
+  const anchorLayout = place(
+    props.anchors.map((anchor) => ({
+      item: anchor,
+      min: toMinutes(anchor.start),
+      length: lengthOf(anchor),
+      text: `${anchor.name} ${compactClock(anchor.start)}`,
+      solid: anchor.counted,
+    })),
+  );
+  const placedAnchors = anchorLayout.placed.map((p) => ({
+    anchor: p.item,
+    min: p.min,
+    length: p.length,
+    row: p.row,
+    inside: p.inside,
+    side: p.side,
+    text: p.text,
+  }));
+  const calendarLayout = place(
+    (props.calendar ?? []).map((event) => ({
+      item: event,
+      min: toMinutes(event.start),
+      length: Math.max(15, event.durationMin),
+      text: `${event.name} ${compactClock(event.start)}`,
+      solid: event.counted,
+    })),
+  );
+  const anchorRows = anchorLayout.rows;
+  const calendarRows = calendarLayout.rows;
   const anchorRowH = 28;
 
   // Contiguous selected / wall-blocked Mint slots read as one block: a run
@@ -368,6 +408,51 @@ export function DayStrip(props: DayStripProps) {
           {compactClock(props.frameStart)} – {compactClock(props.frameEnd)}
         </span>
       </div>
+      {calendarLayout.placed.length > 0 && (
+        <>
+          <div class="day-strip__caption">
+            <span class="day-strip__caption-label">Calendar</span>
+          </div>
+          <div
+            class="day-strip__lane day-strip__lane--calendar"
+            aria-label="Calendar"
+            style={{ height: `${calendarRows * anchorRowH + 2}px` }}
+          >
+            {calendarLayout.placed.map(({ item: event, min, length, row, inside, side, text }) => (
+              <Fragment key={event.id}>
+                <span
+                  class={`strip-cal${event.counted ? "" : " strip-cal--skipped"}`}
+                  style={{
+                    left: `${rawPct(min)}%`,
+                    width: `${(length / daySpan) * 100}%`,
+                    top: `${2 + row * anchorRowH}px`,
+                  }}
+                  title={`${event.name} ${display12h(event.start)}`}
+                  role="img"
+                  aria-label={`${event.name} ${display12h(event.start)} (calendar)`}
+                >
+                  {inside ? text : null}
+                </span>
+                {!inside && (
+                  <span
+                    class={`strip-anchor__label strip-anchor__label--${side}${
+                      event.counted ? "" : " strip-anchor__label--not-counted"
+                    }`}
+                    aria-hidden="true"
+                    style={
+                      side === "right"
+                        ? { left: `calc(${rawPct(min + length)}% + 4px)`, top: `${2 + row * anchorRowH}px` }
+                        : { right: `calc(${100 - rawPct(min)}% + 4px)`, top: `${2 + row * anchorRowH}px` }
+                    }
+                  >
+                    {text}
+                  </span>
+                )}
+              </Fragment>
+            ))}
+          </div>
+        </>
+      )}
       <div class="day-strip__caption">
         <span class="day-strip__caption-label">Mint</span>
         {props.mintControl}
