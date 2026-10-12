@@ -42,8 +42,8 @@ def vault(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
-def client(vault) -> TestClient:
-    app = main_mod.create_app(vault_root=vault)
+def client() -> TestClient:
+    app = main_mod.create_app()
     c = TestClient(app)
     c.app_token = app.state.token
     return c
@@ -60,66 +60,66 @@ def _today() -> date:
 class TestConfirmationSource:
     """Only a successful POST /day-setup confirms; unrelated writes never do."""
 
-    def test_fresh_vault_not_confirmed(self, vault):
-        assert runstate.is_day_setup_confirmed(vault, _today()) is False
+    def test_fresh_vault_not_confirmed(self):
+        assert runstate.is_day_setup_confirmed(_today()) is False
 
-    def test_skeleton_runstate_not_confirmed(self, client, vault):
+    def test_skeleton_runstate_not_confirmed(self, client):
         # /gather materialises the full skeleton — must not confirm.
         r = client.post("/gather", headers=_auth(client))
         assert r.status_code == 200
-        assert runstate.is_day_setup_confirmed(vault, _today()) is False
+        assert runstate.is_day_setup_confirmed(_today()) is False
 
-    def test_drop_write_not_confirmed(self, vault):
-        runstate.update_runstate(vault, _today(), {
+    def test_drop_write_not_confirmed(self):
+        runstate.update_runstate(_today(), {
             "dropped": [{"identity": "vault:x", "name": "X",
                          "dropped_at": "2026-08-14T00:00:00Z"}],
         })
-        assert runstate.is_day_setup_confirmed(vault, _today()) is False
+        assert runstate.is_day_setup_confirmed(_today()) is False
 
-    def test_commit_ledger_write_not_confirmed(self, vault):
-        runstate.update_runstate(vault, _today(), {
+    def test_commit_ledger_write_not_confirmed(self):
+        runstate.update_runstate(_today(), {
             "commit_ledger": {"surfaces": {"todoist": {"status": "ok"}}},
         })
-        assert runstate.is_day_setup_confirmed(vault, _today()) is False
+        assert runstate.is_day_setup_confirmed(_today()) is False
 
-    def test_billed_ledger_write_not_confirmed(self, vault):
-        runstate.update_runstate(vault, _today(), {"billed_calls": 2})
-        assert runstate.is_day_setup_confirmed(vault, _today()) is False
+    def test_billed_ledger_write_not_confirmed(self):
+        runstate.update_runstate(_today(), {"billed_calls": 2})
+        assert runstate.is_day_setup_confirmed(_today()) is False
 
-    def test_sequence_side_effect_write_not_confirmed(self, vault):
+    def test_sequence_side_effect_write_not_confirmed(self):
         # /sequence persists overlap_grants / pinned_rows / fingerprint —
         # an unrelated runstate write that must not confirm either.
-        runstate.update_runstate(vault, _today(), {
+        runstate.update_runstate(_today(), {
             "overlap_grants": [], "pinned_rows": [],
             "planning_config_fingerprint": "x" * 64,
         })
-        assert runstate.is_day_setup_confirmed(vault, _today()) is False
+        assert runstate.is_day_setup_confirmed(_today()) is False
 
-    def test_legacy_note_without_key_not_confirmed(self, vault):
+    def test_legacy_note_without_key_not_confirmed(self):
         # A pre-change runstate note carries no key — fail closed.
         state = runstate.build_runstate({})
         state.pop(runstate.DAY_SETUP_CONFIRMED_KEY, None)
-        runstate.write_runstate(vault, _today(), state)
-        assert runstate.is_day_setup_confirmed(vault, _today()) is False
+        runstate.write_runstate(_today(), state)
+        assert runstate.is_day_setup_confirmed(_today()) is False
 
-    def test_confirmation_scoped_to_planning_day(self, vault):
+    def test_confirmation_scoped_to_planning_day(self):
         today = _today()
         other_day = date(2020, 1, 1)
         runstate.write_runstate(
-            vault, other_day,
+            other_day,
             runstate.build_runstate({runstate.DAY_SETUP_CONFIRMED_KEY: True}),
         )
-        assert runstate.is_day_setup_confirmed(vault, other_day) is True
-        assert runstate.is_day_setup_confirmed(vault, today) is False
+        assert runstate.is_day_setup_confirmed(other_day) is True
+        assert runstate.is_day_setup_confirmed(today) is False
 
-    def test_day_setup_post_is_the_only_confirmation(self, client, vault):
+    def test_day_setup_post_is_the_only_confirmation(self, client):
         r = client.post("/day-setup", json={"anchor": "09:00"},
                         headers=_auth(client))
         assert r.status_code == 200
         assert r.json()["day_setup_confirmed"] is True
-        assert runstate.is_day_setup_confirmed(vault, _today()) is True
+        assert runstate.is_day_setup_confirmed(_today()) is True
 
-    def test_plan_inputs_exposes_confirmation(self, client, vault):
+    def test_plan_inputs_exposes_confirmation(self, client):
         before = client.get("/plan-inputs").json()
         assert before["day_setup_confirmed"] is False
         client.post("/day-setup", json={"anchor": "09:00"}, headers=_auth(client))
@@ -139,7 +139,7 @@ class TestWritePathFailClosed:
         )
         # The live /commit guard now accepts the digest row only when today's
         # frozen server identity index contains it — seed it before the call.
-        runstate.write_digest_index(vault, date(2026, 7, 12), [
+        runstate.write_digest_index(date(2026, 7, 12), [
             {"name": "Garage", "todoist_id": "", "path": "P/Garage.md",
              "surface": "assigned"},
         ])
@@ -162,7 +162,7 @@ class TestWritePathFailClosed:
         monkeypatch.setattr(gather, "effective_date", lambda now: date(2026, 7, 12))
         monkeypatch.setattr(shadow, "gather_live_state", _fake_live_state)
         client.app.state.build_commit_clients = (
-            lambda v, cfg: (FakeLiveTodoist(), FakeLiveStore())
+            lambda cfg: (FakeLiveTodoist(), FakeLiveStore())
         )
         client.post("/day-setup", json={"anchor": "09:00"}, headers=_auth(client))
         r = client.post(
@@ -172,13 +172,13 @@ class TestWritePathFailClosed:
         assert r.status_code == 200
         assert r.json()["ok"] is True
 
-    def test_runtime_actions_fail_closed_without_setup(self, client, vault):
+    def test_runtime_actions_fail_closed_without_setup(self, client):
         r = client.post("/runtime-actions", headers=_auth(client),
                         json={"verb": "complete", "target": "Press"})
         assert r.status_code == 409
         assert GATE_DETAIL in r.json()["detail"]
 
-    def test_runtime_actions_undo_fail_closed_without_setup(self, client, vault):
+    def test_runtime_actions_undo_fail_closed_without_setup(self, client):
         r = client.post("/runtime-actions/abc/undo", headers=_auth(client))
         assert r.status_code == 409
         assert GATE_DETAIL in r.json()["detail"]

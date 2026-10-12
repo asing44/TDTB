@@ -31,15 +31,8 @@ from capacities_refresh_helpers import (  # noqa: E402
 )
 
 
-@pytest.fixture
-def vault(tmp_path) -> Path:
-    root = tmp_path / "vault-root"
-    root.mkdir()
-    return root
-
-
 def _factory(tmp_path, provider, *, release: threading.Event | None = None):
-    def build(vault_path, config):
+    def build(config):
         if release is not None:
             provider.on_fetch = lambda: release.wait(timeout=5)
         store = _store(tmp_path)
@@ -59,7 +52,7 @@ def _factory(tmp_path, provider, *, release: threading.Event | None = None):
 
 
 def _client(tmp_path, provider, *, release=None) -> TestClient:
-    app = main_mod.create_app(vault_root=tmp_path / "vault")
+    app = main_mod.create_app()
     app.state.build_refresh_coordinator = _factory(tmp_path, provider, release=release)
     client = TestClient(app)
     client.app_token = app.state.token
@@ -156,8 +149,8 @@ def test_status_never_calls_the_provider(tmp_path):
 
 
 def test_unconfigured_source_is_503_on_start(tmp_path):
-    app = main_mod.create_app(vault_root=tmp_path / "vault")
-    app.state.build_refresh_coordinator = lambda vault_path, config: None
+    app = main_mod.create_app()
+    app.state.build_refresh_coordinator = lambda config: None
     client = TestClient(app)
 
     response = client.post(
@@ -169,15 +162,6 @@ def test_unconfigured_source_is_503_on_start(tmp_path):
     assert response.status_code == 503
     assert response.json()["detail"]["code"] == "capacities_refresh_unconfigured"
     assert client.get("/capacities/refresh/status").json()["configured"] is False
-
-
-def test_unresolved_vault_is_503(tmp_path, monkeypatch):
-    monkeypatch.delenv("TDTB_VAULT_ROOT", raising=False)
-    app = main_mod.create_app()
-    app.state.build_refresh_coordinator = lambda vault_path, config: None
-    client = TestClient(app)
-
-    assert client.get("/capacities/refresh/status").status_code == 503
 
 
 @pytest.mark.parametrize(
@@ -208,9 +192,9 @@ def _counting_factory(client, builds):
     """Wrap the injected factory so each build is observable."""
     inner = client.app.state.build_refresh_coordinator
 
-    def build(vault_path, config):
-        builds.append(vault_path)
-        return inner(vault_path, config)
+    def build(config):
+        builds.append(config)
+        return inner(config)
 
     return build
 
@@ -219,7 +203,7 @@ def _revision_stub(monkeypatch, holder):
     monkeypatch.setattr(
         main_mod.capacities_builder,
         "refresh_config_revision",
-        lambda vault: holder["value"],
+        lambda: holder["value"],
     )
 
 
@@ -229,7 +213,7 @@ def _space_stub(monkeypatch, holder):
     monkeypatch.setattr(
         main_mod.capacities_builder,
         "refresh_source_space_id",
-        lambda vault: holder["value"],
+        lambda: holder["value"],
         raising=False,
     )
 
@@ -410,14 +394,14 @@ def test_racing_starts_build_the_coordinator_once(tmp_path, monkeypatch):
     )
     inner = client.app.state.build_refresh_coordinator
 
-    def build(vault_path, config):
-        builds.append(vault_path)
+    def build(config):
+        builds.append(config)
         if len(builds) == 1:
             first_build.set()
             gate.wait(timeout=5)
         else:
             second_build.set()
-        return inner(vault_path, config)
+        return inner(config)
 
     client.app.state.build_refresh_coordinator = build
 

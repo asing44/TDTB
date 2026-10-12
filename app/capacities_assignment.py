@@ -113,7 +113,7 @@ class AssignmentCandidate:
 class AssignmentSettings:
     """Minimal evaluator settings seam.
 
-    The vault-scoped persistence and the settings API (``capacities_settings``)
+    The app-owned persistence and the settings API (``capacities_settings``)
     build this object; the cockpit UI is a later slice. This object deliberately
     carries only what the decision needs today, including the explicit
     ``active_structures`` custom Auto policy.

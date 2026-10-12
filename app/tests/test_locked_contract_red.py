@@ -161,7 +161,7 @@ def test_future_dated_vault_assigned_item_absent_from_today_plan_inputs():
         )
         import main as main_mod
 
-        app = main_mod.create_app(vault_root=root)
+        app = main_mod.create_app()
         body = TestClient(app).get("/plan-inputs").json()
         names = [i["name"] for i in body["digest"]["assigned"]]
         assert "Future" not in names

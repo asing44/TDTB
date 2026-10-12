@@ -12,8 +12,8 @@ this module's only job is:
         -> one appended row in ``bake-in-log.md`` (protocol § 2.3 schema).
 
 ``run()`` is the tested surface — ``manifest`` and ``live_state`` are either
-plain data (what a test hands it, no I/O) or a ``(vault_root, today) ->
-data`` callable the caller supplies (what ``main()`` hands it, wrapping the
+plain data (what a test hands it, no I/O) or a ``(today) -> data``
+callable the caller supplies (what ``main()`` hands it, wrapping the
 real gather/shadow calls). This mirrors ``shadow_run.py``'s
 gather -> digest -> manifest -> diff pipeline but never performs the I/O
 itself — ``main()`` builds the callables, ``run()`` only ever calls them.
@@ -32,7 +32,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import sys
 from datetime import date, datetime
 from pathlib import Path
@@ -57,11 +56,11 @@ _LOG_SEP = "|------|--------|-------|-------------|--------------|------------|-
 DEFAULT_LOG_PATH = Path(__file__).resolve().parent.parent / "bake-in-log.md"
 
 
-def _resolve(source: Any, vault_root: Path, today: date) -> Any:
-    """Call ``source(vault_root, today)`` if it's callable, else return it
+def _resolve(source: Any, today: date) -> Any:
+    """Call ``source(today)`` if it's callable, else return it
     as-is. Lets tests hand plain manifest/live-state data (no I/O) while
     ``main()`` hands closures over the real gather/shadow calls."""
-    return source(vault_root, today) if callable(source) else source
+    return source(today) if callable(source) else source
 
 
 def _escape_pipes(text: str) -> str:
@@ -119,11 +118,10 @@ def append_log_row(log_path: Path | str, row: dict[str, Any]) -> Path:
 
 
 def run(
-    vault_root: Path | str,
     today: date,
     driver: str,
-    manifest: list[shadow.ManifestEntry] | Callable[[Path, date], list[shadow.ManifestEntry]],
-    live_state: dict[str, Any] | Callable[[Path, date], dict[str, Any]],
+    manifest: list[shadow.ManifestEntry] | Callable[[date], list[shadow.ManifestEntry]],
+    live_state: dict[str, Any] | Callable[[date], dict[str, Any]],
     *,
     recon_fail: int = 0,
     wrong_surface: bool = False,
@@ -132,7 +130,7 @@ def run(
     """Run one bake-in day end-to-end and append its log row.
 
     ``manifest`` / ``live_state`` accept either plain data or a
-    ``(vault_root, today) -> data`` callable (kept injectable so tests never
+    ``(today) -> data`` callable (kept injectable so tests never
     hit disk/network — see module docstring). ``recon_fail`` /
     ``wrong_surface`` come from the driver's T14 commit report on app-days;
     leave them at their 0/False defaults on skill-days and shadow-only app
@@ -144,9 +142,8 @@ def run(
     if driver not in _VALID_DRIVERS:
         raise ValueError(f"driver must be one of {_VALID_DRIVERS!r}, got {driver!r}")
 
-    vault_root = Path(vault_root)
-    manifest_rows = _resolve(manifest, vault_root, today)
-    state = _resolve(live_state, vault_root, today)
+    manifest_rows = _resolve(manifest, today)
+    state = _resolve(live_state, today)
 
     diff = shadow.diff_against_live(manifest_rows, state)
     verdict_obj = classify_bakein(diff)
@@ -164,18 +161,14 @@ def run(
 # invocation once the T19 bake-in clock is running.
 # ---------------------------------------------------------------------------
 
-VAULT_ROOT_ENV = "TDTB_VAULT_ROOT"
-
-
-def _gather_manifest(vault: Path, today: date, sequence_file: str | None) -> list[shadow.ManifestEntry]:
+def _gather_manifest(today: date, sequence_file: str | None) -> list[shadow.ManifestEntry]:
     import main as main_mod  # local import: avoids a hard dependency for tests that only use run()
     import shadow_run
 
-    pool_notes, assigned_notes = shadow_run._gather_pool_and_assigned(vault, today)
-    run_data = gather.build_run_data(pool_notes, assigned_notes, today)
+    run_data = gather.empty_run_data(today)
 
     order = list(main_mod.config_reader.FALLBACK_RANKING_CRITERIA["within_tier_sort"])
-    config_result = main_mod.config_reader.read_config(vault)
+    config_result = main_mod.config_reader.read_config()
     if config_result.config is not None:
         value = config_result.config.get_ranking_criterion("within_tier_sort").value
         if isinstance(value, str):
@@ -194,7 +187,7 @@ def _gather_manifest(vault: Path, today: date, sequence_file: str | None) -> lis
     return shadow.build_plan_manifest(digest, sequence, config)
 
 
-def _ledger_todoist_ids(vault_root: Path, today: date) -> list[str]:
+def _ledger_todoist_ids(today: date) -> list[str]:
     """Todoist task IDs the day's commit ledger recorded as created / updated /
     noop (ISS-4).
 
@@ -208,7 +201,7 @@ def _ledger_todoist_ids(vault_root: Path, today: date) -> list[str]:
     when no ledger exists yet (skill-days, pre-commit), so the caller falls
     back to the filter read unchanged.
     """
-    path = runstate.runstate_read_path(vault_root, today)
+    path = runstate.runstate_read_path(today)
     if not path.exists():
         return []
     data = gather._extract_json_block(path.read_text(encoding="utf-8", errors="replace"))
@@ -224,14 +217,13 @@ def _ledger_todoist_ids(vault_root: Path, today: date) -> list[str]:
 
 
 def gather_live_state_by_id(
-    vault_root: Path,
     today: date,
     config: Any,
     fetch_task: Callable[[str], dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Like ``shadow.gather_live_state`` but reconcile the **Todoist** surface
     by-ID from the day's commit ledger (ISS-4) instead of a lag-prone filter
-    read. Vault + calendar surfaces come from ``shadow.gather_live_state``
+    read. The calendar surface comes from ``shadow.gather_live_state``
     unchanged (file reads / EventKit are not subject to the query-index lag).
 
     ``fetch_task`` is injectable ``(task_id) -> task-dict`` (tests hand a fake;
@@ -242,10 +234,9 @@ def gather_live_state_by_id(
     ``would-create``. A single missing ID (404 — task deleted post-commit) is
     skipped, not fatal.
     """
-    vault_root = Path(vault_root)
-    state = shadow.gather_live_state(config, vault_root)
+    state = shadow.gather_live_state(config)
 
-    ids = _ledger_todoist_ids(vault_root, today)
+    ids = _ledger_todoist_ids(today)
     if not ids:
         return state  # skill-day / no ledger -> keep the filter read
 
@@ -301,12 +292,12 @@ def _fetch_tasks_by_id(
     return tasks
 
 
-def _gather_live_state(vault: Path, today: date) -> dict[str, Any]:
+def _gather_live_state(today: date) -> dict[str, Any]:
     import main as main_mod
 
-    config_result = main_mod.config_reader.read_config(vault)
+    config_result = main_mod.config_reader.read_config()
     config = config_result.config.sections if config_result.config is not None else {}
-    return gather_live_state_by_id(vault, today, config)
+    return gather_live_state_by_id(today, config)
 
 
 def main() -> int:
@@ -322,26 +313,17 @@ def main() -> int:
     parser.add_argument("--log-path", default=None, help="Override the bake-in-log.md path")
     args = parser.parse_args()
 
-    root = os.environ.get(VAULT_ROOT_ENV)
-    if not root:
-        print(f"ERROR: {VAULT_ROOT_ENV} not set", file=sys.stderr)
-        return 1
-    vault = Path(root).expanduser()
-    if not vault.is_dir():
-        print(f"ERROR: vault root not found: {vault}", file=sys.stderr)
-        return 1
-
     today = gather.effective_date(datetime.now())
 
     try:
-        manifest = _gather_manifest(vault, today, args.sequence_file)
-        live_state = _gather_live_state(vault, today)
+        manifest = _gather_manifest(today, args.sequence_file)
+        live_state = _gather_live_state(today)
     except shadow.ShadowStateError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1
 
     row, verdict = run(
-        vault, today, args.driver, manifest, live_state,
+        today, args.driver, manifest, live_state,
         recon_fail=args.recon_fail, wrong_surface=args.wrong_surface,
         log_path=args.log_path,
     )

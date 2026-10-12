@@ -95,9 +95,9 @@ def vault(tmp_path) -> Path:
     return v
 
 
-def _client(vault, todoist=None, store=None) -> TestClient:
-    app = main_mod.create_app(vault_root=vault)
-    app.state.build_read_clients = lambda v, cfg: (todoist, store)
+def _client(todoist=None, store=None) -> TestClient:
+    app = main_mod.create_app()
+    app.state.build_read_clients = lambda cfg: (todoist, store)
     return TestClient(app)
 
 
@@ -169,28 +169,27 @@ def _capacities_row(name, tags, *, space=SPACE):
     }
 
 
-def _client_with_capacities(vault, items, todoist=None, store=None) -> TestClient:
-    app = main_mod.create_app(vault_root=vault)
-    app.state.build_read_clients = lambda v, cfg: (todoist, store)
-    app.state.build_capacities_adapter = lambda v, cfg: FakeCapacitiesAdapter(items)
+def _client_with_capacities(items, todoist=None, store=None) -> TestClient:
+    app = main_mod.create_app()
+    app.state.build_read_clients = lambda cfg: (todoist, store)
+    app.state.build_capacities_adapter = lambda cfg: FakeCapacitiesAdapter(items)
     return TestClient(app)
 
 
-def _save_tag_exclusion(vault: Path, tag_id: str = TAG_A) -> None:
+def _save_tag_exclusion(tag_id: str = TAG_A) -> None:
     es.save_settings(
-        vault,
         expected_revision=0,
         exclusions=[{"source": "capacities", "space_id": SPACE, "tag_id": tag_id}],
     )
 
 
 def test_plan_inputs_applies_tag_exclusions_and_stamps_the_revision(vault, live_sources_mode):
-    _save_tag_exclusion(vault)
+    _save_tag_exclusion()
     items = [
         _capacities_row("Keep", [{"space_id": SPACE, "tag_id": TAG_B, "title": "chores"}]),
         _capacities_row("Drop", [{"space_id": SPACE, "tag_id": TAG_A, "title": "habituals"}]),
     ]
-    client = _client_with_capacities(vault, items)
+    client = _client_with_capacities(items)
 
     body = client.get("/plan-inputs").json()
 
@@ -213,7 +212,7 @@ def test_plan_inputs_applies_tag_exclusions_and_stamps_the_revision(vault, live_
     # canonical tag identities on indexed rows.
     today = gather.effective_date(datetime.now())
     raw = json.loads(
-        (runstate_mod.digest_index_read_path(vault, today)).read_text(encoding="utf-8")
+        (runstate_mod.digest_index_read_path(today)).read_text(encoding="utf-8")
     )
     assert raw["exclusion_settings_revision"] == 1
     keep = next(i for i in raw["items"] if i["name"] == "Keep")
@@ -226,7 +225,7 @@ def test_plan_inputs_applies_tag_exclusions_and_stamps_the_revision(vault, live_
 def test_plan_inputs_tolerates_unusable_tags_when_no_policy_applies(vault, live_sources_mode):
     row = _capacities_row("Unusable", None)
     row["capacities_tags_error"] = "tags are title-only without typed identities"
-    client = _client_with_capacities(vault, [row])
+    client = _client_with_capacities([row])
 
     body = client.get("/plan-inputs").json()
 
@@ -235,10 +234,10 @@ def test_plan_inputs_tolerates_unusable_tags_when_no_policy_applies(vault, live_
 
 
 def test_plan_inputs_blocks_on_unusable_tag_payload_when_a_policy_applies(vault, live_sources_mode):
-    _save_tag_exclusion(vault)
+    _save_tag_exclusion()
     row = _capacities_row("TitleOnly", None)
     row["capacities_tags_error"] = "tags are title-only without typed identities"
-    client = _client_with_capacities(vault, [row])
+    client = _client_with_capacities([row])
 
     response = client.get("/plan-inputs")
 
@@ -254,10 +253,10 @@ def test_plan_inputs_blocks_on_unusable_tag_payload_when_a_policy_applies(vault,
 
 
 def test_plan_inputs_blocks_when_settings_storage_is_malformed(vault):
-    path = es.settings_path(vault)
+    path = es.settings_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("garbage", encoding="utf-8")
-    client = _client(vault)
+    client = _client()
 
     response = client.get("/plan-inputs")
 
@@ -279,7 +278,7 @@ def test_todoist_items_merge_into_digest(vault, live_sources_mode):
             {"id": "2", "content": "Water plants", "priority": 1, "labels": []},
         ],
     })
-    body = _client(vault, todoist=todoist, store=FakeStore([])).get("/plan-inputs").json()
+    body = _client(todoist=todoist, store=FakeStore([])).get("/plan-inputs").json()
     assigned_names = [i["name"] for i in body["digest"]["assigned"]]
     suggested_names = [i["name"] for i in body["digest"]["suggested"]]
     assert "Call Vlad" in assigned_names
@@ -294,7 +293,7 @@ def test_calendar_busy_blocks_join_anchored(vault, live_sources_mode):
         "end": datetime(2026, 7, 14, 10, 0),
         "calendar_id": "CAL-X",
     }])
-    body = _client(vault, todoist=FakeTodoist({}), store=store).get("/plan-inputs").json()
+    body = _client(todoist=FakeTodoist({}), store=store).get("/plan-inputs").json()
     names = [b["Block"] for b in body["anchored_blocks"]]
     assert "Morning Routine" in names  # config blocks kept
     assert "Dentist" in names          # calendar busy appended
@@ -336,7 +335,7 @@ def test_calendar_capacity_metadata_survives_the_plan_inputs_wire(vault, live_so
         ],
         calendars,
     )
-    body = _client(vault, todoist=FakeTodoist({}), store=store).get(
+    body = _client(todoist=FakeTodoist({}), store=store).get(
         "/plan-inputs"
     ).json()
     calendar_rows = [
@@ -354,13 +353,13 @@ def test_calendar_capacity_metadata_survives_the_plan_inputs_wire(vault, live_so
 
 def test_habits_summary_present(vault):
     _write_habits_artifact({"total": 2, "done": 1, "outstanding": 1, "est_minutes": 30})
-    body = _client(vault, todoist=FakeTodoist({}), store=FakeStore([])).get("/plan-inputs").json()
+    body = _client(todoist=FakeTodoist({}), store=FakeStore([])).get("/plan-inputs").json()
     assert body["habits"]["total"] == 2
     assert body["habits"]["outstanding"] == 1
 
 
 def test_missing_clients_degrade_to_warnings_not_500(vault):
-    body = _client(vault, todoist=None, store=None).get("/plan-inputs").json()
+    body = _client(todoist=None, store=None).get("/plan-inputs").json()
     assert isinstance(body["digest"], dict)  # vault-only digest still served
     joined = " ".join(body["source_warnings"]).lower()
     assert "todoist" in joined and "calendar" in joined
@@ -382,7 +381,7 @@ def test_source_counts_reported(vault, live_sources_mode):
         "end": datetime(2026, 7, 14, 9, 30),
         "calendar_id": "CAL-X",
     }])
-    body = _client(vault, todoist=todoist, store=store).get("/plan-inputs").json()
+    body = _client(todoist=todoist, store=store).get("/plan-inputs").json()
     counts = body["source_counts"]
     assert counts["todoist"] == 2 and counts["calendar"] == 1 and counts["vault"] >= 0
 
@@ -401,11 +400,11 @@ class TestCalendarDismissal:
             "calendar_id": "CAL-X",
         }])
 
-    def _client(self, vault):
-        c = _client(vault, store=self._store())
+    def _client(self):
+        c = _client(store=self._store())
         c.app_token = c.app.state.token if hasattr(c, "app") else None
-        app = main_mod.create_app(vault_root=vault)
-        app.state.build_read_clients = lambda v, cfg: (None, self._store())
+        app = main_mod.create_app()
+        app.state.build_read_clients = lambda cfg: (None, self._store())
         tc = TestClient(app)
         tc.app_token = app.state.token
         return tc
@@ -418,7 +417,7 @@ class TestCalendarDismissal:
         assert r.status_code == 200, r.text
 
     def test_dismissal_reaches_emitted_calendar_row(self, vault, live_sources_mode):
-        tc = self._client(vault)
+        tc = self._client()
         self._dismiss(tc)
         body = tc.get("/plan-inputs").json()
         [row] = [b for b in body["anchored_blocks"]
@@ -427,7 +426,7 @@ class TestCalendarDismissal:
         assert row.get("source") == "calendar"
 
     def test_dismissed_row_leaves_capacity_fixed_segment(self, vault, live_sources_mode):
-        tc = self._client(vault)
+        tc = self._client()
         before = tc.get("/plan-inputs").json()["capacity"]
         self._dismiss(tc)
         after = tc.get("/plan-inputs").json()["capacity"]
@@ -438,8 +437,8 @@ class TestCalendarDismissal:
     def test_dismissal_never_touches_the_source_calendar(self, vault):
         # participation is runstate-only: the store sees reads, never writes
         store = self._store()
-        app = main_mod.create_app(vault_root=vault)
-        app.state.build_read_clients = lambda v, cfg: (None, store)
+        app = main_mod.create_app()
+        app.state.build_read_clients = lambda cfg: (None, store)
         tc = TestClient(app)
         tc.app_token = app.state.token
         self._dismiss(tc)
@@ -649,7 +648,7 @@ def _direct_contract():
     ]
 
 
-def _save_direct_source(vault: Path) -> None:
+def _save_direct_source() -> None:
     common = dict(
         title_property="title",
         status_property="status",
@@ -659,7 +658,6 @@ def _save_direct_source(vault: Path) -> None:
         assignment_values=("true",),
     )
     cap_builder.save_source(
-        vault,
         expected_revision=0,
         space_id=DIRECT_SPACE,
         structures=[
@@ -686,9 +684,9 @@ def _direct_object(object_id: str, type_id: str, *, assigned: bool = True) -> di
     }
 
 
-def _publish_direct(vault: Path, objects: list[dict], *, with_contract: bool = True) -> None:
+def _publish_direct(objects: list[dict], *, with_contract: bool = True) -> None:
     """Install one complete generation; every configured type is checked."""
-    store = cap_builder.build_refresh_state(vault, DIRECT_SPACE)
+    store = cap_builder.build_refresh_state(DIRECT_SPACE)
     listed = {type_id: [] for type_id in (DIRECT_ROOT, DIRECT_CUSTOM)}
     for obj in objects:
         store.put(obj["id"], obj["structureId"], obj)
@@ -752,8 +750,8 @@ def _write_fresh_artifact(rows: list[dict], habits: dict | None = None) -> None:
     art.atomic_write_artifact(document)
 
 
-def _direct_client(vault: Path, *, build_clients, build_capacities) -> TestClient:
-    app = main_mod.create_app(vault_root=vault)
+def _direct_client(build_clients, build_capacities) -> TestClient:
+    app = main_mod.create_app()
     app.state.build_read_clients = build_clients
     app.state.build_capacities_adapter = build_capacities
     return TestClient(app)
@@ -771,13 +769,13 @@ def test_direct_duplicate_identity_is_served_as_one_row(vault):
     """Artifact Capacities rows are discarded under direct, so a row the artifact
     and the published generation both carry appears once, from the generation."""
     _set_sources(mode="artifact", capacities_intake="direct")
-    _save_direct_source(vault)
-    _publish_direct(vault, [_direct_object("obj-a", DIRECT_ROOT)])
+    _save_direct_source()
+    _publish_direct([_direct_object("obj-a", DIRECT_ROOT)])
     _write_fresh_artifact([
         _artifact_row("Stale artifact name", "capacities", DUPLICATE_IDENTITY, assigned=True),
     ])
     client = _direct_client(
-        vault, build_clients=_CallRecorder(), build_capacities=_CallRecorder(),
+        build_clients=_CallRecorder(), build_capacities=_CallRecorder(),
     )
 
     body = client.get("/plan-inputs").json()
@@ -792,17 +790,17 @@ def test_direct_duplicate_identity_is_served_as_one_row(vault):
 
 def test_direct_repeated_projection_rows_are_served_once(vault, monkeypatch):
     _set_sources(mode="artifact", capacities_intake="direct")
-    _save_direct_source(vault)
-    _publish_direct(vault, [_direct_object("obj-a", DIRECT_ROOT)])
+    _save_direct_source()
+    _publish_direct([_direct_object("obj-a", DIRECT_ROOT)])
     real_read = cap_builder.read_direct_intake
 
-    def doubled(root):
-        read = real_read(root)
+    def doubled():
+        read = real_read()
         return dataclasses.replace(read, objects=read.objects + read.objects)
 
     monkeypatch.setattr(cap_builder, "read_direct_intake", doubled)
     client = _direct_client(
-        vault, build_clients=_CallRecorder(), build_capacities=_CallRecorder(),
+        build_clients=_CallRecorder(), build_capacities=_CallRecorder(),
     )
 
     body = client.get("/plan-inputs").json()
@@ -812,8 +810,8 @@ def test_direct_repeated_projection_rows_are_served_once(vault, monkeypatch):
 
 def test_direct_keeps_artifact_todoist_and_habits_with_live_readers_stubbed(vault):
     _set_sources(mode="artifact", capacities_intake="direct")
-    _save_direct_source(vault)
-    _publish_direct(vault, [_direct_object("obj-a", DIRECT_ROOT)])
+    _save_direct_source()
+    _publish_direct([_direct_object("obj-a", DIRECT_ROOT)])
     habits = {"total": 3, "done": 1, "outstanding": 2, "est_minutes": 20}
     _write_fresh_artifact(
         [
@@ -824,7 +822,7 @@ def test_direct_keeps_artifact_todoist_and_habits_with_live_readers_stubbed(vaul
     )
     clients = _CallRecorder()
     builder = _CallRecorder()
-    client = _direct_client(vault, build_clients=clients, build_capacities=builder)
+    client = _direct_client(build_clients=clients, build_capacities=builder)
 
     body = client.get("/plan-inputs").json()
 
@@ -839,16 +837,16 @@ def test_direct_keeps_artifact_todoist_and_habits_with_live_readers_stubbed(vaul
 @pytest.mark.parametrize("published", ["no-generation", "no-contract"])
 def test_direct_missing_snapshot_or_contract_serves_no_rows_and_no_fallback(vault, published):
     _set_sources(mode="artifact", capacities_intake="direct")
-    _save_direct_source(vault)
+    _save_direct_source()
     if published == "no-contract":
-        _publish_direct(vault, [_direct_object("obj-a", DIRECT_ROOT)], with_contract=False)
+        _publish_direct([_direct_object("obj-a", DIRECT_ROOT)], with_contract=False)
     _write_fresh_artifact([
         _artifact_row("Artifact cap", "capacities", DUPLICATE_IDENTITY, assigned=True),
         _artifact_row("Call Vlad", "todoist", "todoist:9001", assigned=True),
     ])
     clients = _CallRecorder()
     builder = _CallRecorder()
-    client = _direct_client(vault, build_clients=clients, build_capacities=builder)
+    client = _direct_client(build_clients=clients, build_capacities=builder)
 
     body = client.get("/plan-inputs").json()
 
@@ -871,7 +869,7 @@ def test_direct_block_without_a_source_record_reports_not_configured(vault):
     _write_fresh_artifact([
         _artifact_row("Call Vlad", "todoist", "todoist:9001", assigned=True),
     ])
-    client = _direct_client(vault, build_clients=_CallRecorder(),
+    client = _direct_client(build_clients=_CallRecorder(),
                             build_capacities=_CallRecorder())
 
     body = client.get("/plan-inputs").json()
@@ -883,14 +881,14 @@ def test_direct_block_without_a_source_record_reports_not_configured(vault):
 
 def test_direct_unknown_rows_never_reach_the_assigned_surface(vault):
     _set_sources(mode="artifact", capacities_intake="direct")
-    _save_direct_source(vault)
-    _publish_direct(vault, [
+    _save_direct_source()
+    _publish_direct([
         _direct_object("obj-a", DIRECT_ROOT),
         # The custom type has a completion field this object never sets: UNKNOWN.
         _direct_object("obj-unknown", DIRECT_CUSTOM),
     ])
     client = _direct_client(
-        vault, build_clients=_CallRecorder(), build_capacities=_CallRecorder(),
+        build_clients=_CallRecorder(), build_capacities=_CallRecorder(),
     )
 
     body = client.get("/plan-inputs").json()
@@ -905,11 +903,11 @@ def test_direct_unknown_rows_never_reach_the_assigned_surface(vault):
 
 def test_direct_live_branch_never_calls_the_capacities_builder(vault):
     _set_sources(mode="live", capacities_intake="direct")
-    _save_direct_source(vault)
-    _publish_direct(vault, [_direct_object("obj-a", DIRECT_ROOT)])
+    _save_direct_source()
+    _publish_direct([_direct_object("obj-a", DIRECT_ROOT)])
     builder = _CallRecorder()
     client = _direct_client(
-        vault, build_clients=lambda _v, _c: (None, None), build_capacities=builder,
+        build_clients=lambda _c: (None, None), build_capacities=builder,
     )
 
     body = client.get("/plan-inputs").json()
@@ -921,16 +919,16 @@ def test_direct_live_branch_never_calls_the_capacities_builder(vault):
 
 def test_direct_intake_block_reports_state_coverage_and_generation(vault):
     _set_sources(mode="artifact", capacities_intake="direct")
-    _save_direct_source(vault)
-    _publish_direct(vault, [_direct_object("obj-a", DIRECT_ROOT)])
+    _save_direct_source()
+    _publish_direct([_direct_object("obj-a", DIRECT_ROOT)])
     client = _direct_client(
-        vault, build_clients=_CallRecorder(), build_capacities=_CallRecorder(),
+        build_clients=_CallRecorder(), build_capacities=_CallRecorder(),
     )
 
     body = client.get("/plan-inputs").json()
 
     block = body["capacities_intake"]
-    snapshot = cap_builder.read_direct_intake(vault).snapshot
+    snapshot = cap_builder.read_direct_intake().snapshot
     assert block["mode"] == "direct"
     assert block["state"] == "ok"
     assert block["generation"] == snapshot.generation
@@ -944,13 +942,13 @@ def test_direct_intake_block_reports_state_coverage_and_generation(vault):
 
 def test_direct_block_lists_unassigned_candidates_with_review_reasons(vault):
     _set_sources(mode="artifact", capacities_intake="direct")
-    _save_direct_source(vault)
-    _publish_direct(vault, [
+    _save_direct_source()
+    _publish_direct([
         _direct_object("obj-a", DIRECT_ROOT),
         _direct_object("obj-unknown", DIRECT_CUSTOM),
     ])
     client = _direct_client(
-        vault, build_clients=_CallRecorder(), build_capacities=_CallRecorder(),
+        build_clients=_CallRecorder(), build_capacities=_CallRecorder(),
     )
 
     body = client.get("/plan-inputs").json()
@@ -970,7 +968,7 @@ def test_live_capacities_split_on_the_assigned_flag(vault, live_sources_mode):
     assigned_row = _capacities_row("Cap A", [])
     pool_row = _capacities_row("Cap P", [])
     pool_row["assigned"] = False
-    client = _client_with_capacities(vault, [assigned_row, pool_row])
+    client = _client_with_capacities([assigned_row, pool_row])
 
     body = client.get("/plan-inputs").json()
 
@@ -981,7 +979,7 @@ def test_live_capacities_split_on_the_assigned_flag(vault, live_sources_mode):
 
 def test_legacy_intake_response_keeps_todays_shape(vault, live_sources_mode):
     client = _client_with_capacities(
-        vault, [_capacities_row("Cap A", []), _capacities_row("Cap B", [])],
+        [_capacities_row("Cap A", []), _capacities_row("Cap B", [])],
     )
 
     body = client.get("/plan-inputs").json()
@@ -1005,7 +1003,7 @@ def test_legacy_artifact_capacities_keep_their_surfaces(vault):
         _artifact_row("Cap assigned", "capacities", "capacities:space-1:RootTask:obj-a", assigned=True),
         _artifact_row("Cap pool", "capacities", "capacities:space-1:RootTask:obj-b", assigned=False),
     ])
-    client = _direct_client(vault, build_clients=_CallRecorder(), build_capacities=_CallRecorder())
+    client = _direct_client(build_clients=_CallRecorder(), build_capacities=_CallRecorder())
 
     body = client.get("/plan-inputs").json()
 
@@ -1025,7 +1023,7 @@ def test_legacy_artifact_capacities_keep_their_surfaces(vault):
 IGNORE_NOTICE_MARKER = "removed by the Ignore List"
 
 
-def _save_selection_source(vault: Path) -> None:
+def _save_selection_source() -> None:
     common = dict(
         title_property="title",
         status_property="status",
@@ -1035,7 +1033,6 @@ def _save_selection_source(vault: Path) -> None:
         assignment_values=("true",),
     )
     cap_builder.save_source(
-        vault,
         expected_revision=0,
         space_id=SPACE,
         structures=[cap_builder.SourceStructureRecord(structure_id="RootTask", **common)],
@@ -1072,12 +1069,12 @@ def _ignore_notices(body: dict) -> list[str]:
 
 
 def test_promoted_selection_removed_by_ignore_list_is_noticed_once(vault):
-    _save_selection_source(vault)
+    _save_selection_source()
     _seed_selections("keep")
     _write_ignore_names(vault, "keep")
     _write_fresh_artifact([_selection_row("keep"), _selection_row("other")])
 
-    body = _client(vault).get("/plan-inputs").json()
+    body = _client().get("/plan-inputs").json()
 
     assert "keep" not in _names(body, "assigned")
     assert "other" in _names(body, "suggested")
@@ -1088,12 +1085,12 @@ def test_promoted_selection_removed_by_ignore_list_is_noticed_once(vault):
 
 def test_ignore_list_notice_names_at_most_three_identities(vault):
     names = ["one", "two", "three", "four"]
-    _save_selection_source(vault)
+    _save_selection_source()
     _seed_selections(*names)
     _write_ignore_names(vault, *names)
     _write_fresh_artifact([_selection_row(name) for name in names])
 
-    body = _client(vault).get("/plan-inputs").json()
+    body = _client().get("/plan-inputs").json()
 
     assert _names(body, "assigned") == []
     notices = _ignore_notices(body)
@@ -1105,7 +1102,7 @@ def test_ignore_list_notice_names_at_most_three_identities(vault):
 
 def test_selection_excluded_before_promotion_gets_no_ignore_list_notice(vault):
     today = gather.effective_date(datetime.now())
-    _save_selection_source(vault)
+    _save_selection_source()
     _seed_selections("drop")
     _write_ignore_names(vault, "drop")
     _write_fresh_artifact([_selection_row("drop")])
@@ -1116,9 +1113,9 @@ def test_selection_excluded_before_promotion_gets_no_ignore_list_notice(vault):
             "dropped_at": "2026-10-09T09:00:00-07:00",
         }]
 
-    runstate_mod.update_runstate(vault, today, _drop)
+    runstate_mod.update_runstate(today, _drop)
 
-    body = _client(vault).get("/plan-inputs").json()
+    body = _client().get("/plan-inputs").json()
 
     assert "drop" not in _names(body, "assigned") + _names(body, "suggested")
     assert _ignore_notices(body) == []

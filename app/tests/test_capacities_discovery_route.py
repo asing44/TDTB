@@ -131,8 +131,8 @@ def vault(tmp_path) -> Path:
 
 
 @pytest.fixture
-def app(vault):
-    return main_mod.create_app(vault_root=vault)
+def app():
+    return main_mod.create_app()
 
 
 @pytest.fixture
@@ -153,11 +153,11 @@ def _install_real_discovery(monkeypatch):
 
 
 def _install_discovery(monkeypatch, catalog=(), error=None):
-    """Replace the discovery seam; returns the recorded (vault, space) calls."""
-    calls: list[tuple[Path, str]] = []
+    """Replace the discovery seam; returns the recorded space calls."""
+    calls: list[str] = []
 
-    def fake_discover(vault_root, space_id, config=None):
-        calls.append((Path(vault_root), space_id))
+    def fake_discover(space_id, config=None):
+        calls.append(space_id)
         if error is not None:
             raise error
         return catalog
@@ -186,7 +186,7 @@ def _mapping_structure(**overrides) -> dict:
 
 class TestAuth:
     def test_missing_token_is_403_and_contacts_no_provider(
-        self, client, vault, monkeypatch
+        self, client, monkeypatch
     ):
         calls = _install_discovery(monkeypatch)
 
@@ -197,10 +197,10 @@ class TestAuth:
             "detail": "missing or invalid X-TDTB-Token"
         }
         assert calls == []
-        assert not cb.source_path(vault).exists()
+        assert not cb.source_path().exists()
 
     def test_wrong_token_is_403_and_contacts_no_provider(
-        self, client, vault, monkeypatch
+        self, client, monkeypatch
     ):
         calls = _install_discovery(monkeypatch)
 
@@ -212,7 +212,7 @@ class TestAuth:
 
         assert response.status_code == 403
         assert calls == []
-        assert not cb.source_path(vault).exists()
+        assert not cb.source_path().exists()
 
     def test_token_is_checked_before_the_body_like_the_save_route(
         self, client, monkeypatch
@@ -227,7 +227,7 @@ class TestAuth:
 
 class TestSuccess:
     def test_discovery_returns_the_pinned_sorted_shape_and_echoes_space(
-        self, client, vault, monkeypatch
+        self, client, monkeypatch
     ):
         _install_real_discovery(monkeypatch)
 
@@ -241,7 +241,7 @@ class TestSuccess:
             "structures": EXPECTED_CATALOG,
             "warnings": [],
         }
-        assert cb.source_path(vault).exists() is False
+        assert cb.source_path().exists() is False
 
     def test_structure_without_a_display_title_returns_its_structure_id(
         self, client, monkeypatch
@@ -258,7 +258,7 @@ class TestSuccess:
         }
 
     def test_requested_space_reaches_discovery_and_is_echoed(
-        self, client, vault, monkeypatch
+        self, client, monkeypatch
     ):
         calls = _install_discovery(
             monkeypatch,
@@ -288,7 +288,7 @@ class TestSuccess:
         )
 
         assert response.status_code == 200
-        assert calls == [(vault, "space-elsewhere")]
+        assert calls == ["space-elsewhere"]
         assert response.json() == {
             "space_id": "space-elsewhere",
             "structures": [
@@ -400,7 +400,7 @@ class TestValidation:
         ],
     )
     def test_invalid_bodies_are_422_with_the_shared_error(
-        self, client, vault, monkeypatch, payload
+        self, client, monkeypatch, payload
     ):
         calls = _install_discovery(monkeypatch)
 
@@ -409,7 +409,7 @@ class TestValidation:
         assert response.status_code == 422
         assert response.json() == {"detail": VALIDATION_ERROR}
         assert calls == []
-        assert not cb.source_path(vault).exists()
+        assert not cb.source_path().exists()
 
     @pytest.mark.parametrize(
         "raw",
@@ -455,7 +455,7 @@ class TestValidation:
 
 class TestNoAutoSave:
     def test_discovery_never_reads_or_writes_the_mapping_record(
-        self, client, vault, monkeypatch
+        self, client, monkeypatch
     ):
         def forbidden(label):
             def _fail(*_args, **_kwargs):
@@ -479,11 +479,11 @@ class TestNoAutoSave:
         )
 
         assert response.status_code == 200
-        assert not cb.source_path(vault).exists()
-        assert not cb.lock_path(vault).exists()
+        assert not cb.source_path().exists()
+        assert not cb.lock_path().exists()
 
     def test_real_discovery_path_creates_no_mapping_file(
-        self, client, vault, monkeypatch
+        self, client, monkeypatch
     ):
         _install_real_discovery(monkeypatch)
 
@@ -492,11 +492,11 @@ class TestNoAutoSave:
         )
 
         assert response.status_code == 200
-        assert not cb.source_path(vault).exists()
-        assert not cb.lock_path(vault).exists()
+        assert not cb.source_path().exists()
+        assert not cb.lock_path().exists()
 
     def test_discovery_leaves_an_existing_mapping_byte_identical(
-        self, client, vault, monkeypatch
+        self, client, monkeypatch
     ):
         saved = client.post(
             SAVE,
@@ -508,7 +508,7 @@ class TestNoAutoSave:
             },
         )
         assert saved.status_code == 200
-        before = cb.source_path(vault).read_bytes()
+        before = cb.source_path().read_bytes()
         revision = saved.json()["source"]["revision"]
 
         _install_real_discovery(monkeypatch)
@@ -517,7 +517,7 @@ class TestNoAutoSave:
         )
 
         assert response.status_code == 200
-        assert cb.source_path(vault).read_bytes() == before
+        assert cb.source_path().read_bytes() == before
         read_back = client.get("/settings/capacities/source").json()
         assert read_back["source"]["revision"] == revision
         assert read_back["source"]["space_id"] == SPACE

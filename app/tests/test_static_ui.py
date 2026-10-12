@@ -47,15 +47,8 @@ def _read_archive(name: str) -> str:
 
 
 @pytest.fixture
-def vault(tmp_path) -> Path:
-    v = tmp_path / "vault-root"
-    v.mkdir()
-    return v
-
-
-@pytest.fixture
-def client(vault) -> TestClient:
-    app = main_mod.create_app(vault_root=vault)
+def client() -> TestClient:
+    app = main_mod.create_app()
     c = TestClient(app)
     c.app_token = app.state.token
     return c

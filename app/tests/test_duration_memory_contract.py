@@ -338,56 +338,47 @@ import os  # noqa: E402
 import duration_memory as dm  # noqa: E402
 
 
-def _write_cache(vault_root, data: dict, raw: str | None = None) -> None:
+def _write_cache(data: dict, raw: str | None = None) -> None:
     """Seed the cache file with ``data`` (JSON-serialized) or raw text."""
-    path = dm.cache_path(vault_root)
+    path = dm.cache_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(raw if raw is not None else json.dumps(data), encoding="utf-8")
 
 
-def _cache_bytes(vault_root) -> bytes:
-    return dm.cache_path(vault_root).read_bytes()
+def _cache_bytes() -> bytes:
+    return dm.cache_path().read_bytes()
 
 
 class TestStateDirPaths:
-    """V2: the store lives in the state dir; the vault root is ignored."""
+    """The store lives in the state dir."""
 
     def test_paths_derive_only_from_the_state_dir(self, tmp_path):
         import app_config
 
-        v1 = tmp_path / "vault-a"
-        v2 = tmp_path / "vault-b"
         state = app_config.state_dir()
-        assert dm.cache_path(v1) == state / "duration-memory.json"
-        assert dm.lock_path(v1) == state / "duration-memory.lock"
-        assert dm.cache_path(v1) == dm.cache_path(v2) == dm.cache_path()
-        assert not dm.cache_path(v1).is_relative_to(v1)
-        assert not dm.lock_path(v1).is_relative_to(v1)
+        assert dm.cache_path() == state / "duration-memory.json"
+        assert dm.lock_path() == state / "duration-memory.lock"
 
-    def test_vault_root_is_ignored_and_nothing_lands_in_it(self, tmp_path):
-        a = tmp_path / "vault-a"
-        b = tmp_path / "vault-b"
-        a.mkdir()
-        b.mkdir()
-        dm.save_memory(a, "todoist:1", 90)
-        assert dm.read_vault_memory(a) == {"todoist:1": 90}
-        assert dm.read_vault_memory(b) == {"todoist:1": 90}
-        assert list(a.iterdir()) == [] and list(b.iterdir()) == []
+    def test_save_lands_in_the_state_dir_only(self, tmp_path):
+        dm.save_memory("todoist:1", 90)
+        assert dm.read_all_memory() == {"todoist:1": 90}
+        assert dm.cache_path().is_file()
+        assert list(tmp_path.iterdir()) == []
 
     def test_absent_file_reads_empty_and_creates_nothing(self, tmp_path):
-        assert dm.read_vault_memory(tmp_path) == {}
+        assert dm.read_all_memory() == {}
         assert not dm.cache_path().exists()
 
     def test_legacy_vault_path_keys_do_not_crash(self, tmp_path):
-        _write_cache(tmp_path, {"version": 1, "items": {
+        _write_cache({"version": 1, "items": {
             "todoist:7": 45,
             "vault:50 - Operations/Intervals/Press.md": 30,
             "50 - Operations/Intervals/Press.md": 60,
         }})
-        memory = dm.read_vault_memory(tmp_path)
+        memory = dm.read_all_memory()
         assert memory["todoist:7"] == 45
-        assert dm.save_memory(tmp_path, "todoist:8", 15) == 15
-        assert dm.read_vault_memory(tmp_path)["todoist:7"] == 45
+        assert dm.save_memory("todoist:8", 15) == 15
+        assert dm.read_all_memory()["todoist:7"] == 45
 
 
 class TestStrictValidation:
@@ -396,108 +387,108 @@ class TestStrictValidation:
         with pytest.raises(ValueError):
             dm.validate_duration_minutes(value)
         with pytest.raises(ValueError):
-            dm.save_memory(tmp_path, "todoist:1", value)
-        assert not dm.cache_path(tmp_path).exists()
+            dm.save_memory("todoist:1", value)
+        assert not dm.cache_path().exists()
 
     @pytest.mark.parametrize("value", [30.5, 12.0, -5, 7, 23, 0.5])
     def test_rejects_fraction_negative_off_grid(self, tmp_path, value):
         with pytest.raises(ValueError):
             dm.validate_duration_minutes(value)
         with pytest.raises(ValueError):
-            dm.save_memory(tmp_path, "todoist:1", value)
-        assert not dm.cache_path(tmp_path).exists()
+            dm.save_memory("todoist:1", value)
+        assert not dm.cache_path().exists()
 
     def test_zero_is_valid(self, tmp_path):
         assert dm.validate_duration_minutes(0) == 0
-        assert dm.save_memory(tmp_path, "todoist:1", 0) == 0
-        assert dm.read_vault_memory(tmp_path) == {"todoist:1": 0}
+        assert dm.save_memory("todoist:1", 0) == 0
+        assert dm.read_all_memory() == {"todoist:1": 0}
 
     @pytest.mark.parametrize("value", [0, 5, 30, 90, 120])
     def test_grid_values_round_trip(self, tmp_path, value):
-        assert dm.save_memory(tmp_path, "todoist:1", value) == value
-        assert dm.read_vault_memory(tmp_path) == {"todoist:1": value}
+        assert dm.save_memory("todoist:1", value) == value
+        assert dm.read_all_memory() == {"todoist:1": value}
 
     def test_validation_does_not_mutate_existing_cache(self, tmp_path):
-        dm.save_memory(tmp_path, "todoist:1", 90)
-        before = _cache_bytes(tmp_path)
+        dm.save_memory("todoist:1", 90)
+        before = _cache_bytes()
         with pytest.raises(ValueError):
-            dm.save_memory(tmp_path, "todoist:1", 7)
+            dm.save_memory("todoist:1", 7)
         with pytest.raises(ValueError):
-            dm.save_memory(tmp_path, "todoist:1", True)
-        assert _cache_bytes(tmp_path) == before
+            dm.save_memory("todoist:1", True)
+        assert _cache_bytes() == before
 
 
 class TestSaveReset:
     def test_save_writes_versioned_json(self, tmp_path):
-        dm.save_memory(tmp_path, "todoist:123", 90)
-        data = json.loads(_cache_bytes(tmp_path).decode("utf-8"))
+        dm.save_memory("todoist:123", 90)
+        data = json.loads(_cache_bytes().decode("utf-8"))
         assert data["version"] == 1
         assert data["items"] == {"todoist:123": 90}
 
     def test_save_vault_path_identity(self, tmp_path):
         identity = "50 - Operations/Projects/Make.md"
-        dm.save_memory(tmp_path, identity, 30)
-        assert dm.read_vault_memory(tmp_path) == {identity: 30}
+        dm.save_memory(identity, 30)
+        assert dm.read_all_memory() == {identity: 30}
 
     def test_save_rejects_name_only_without_mutation(self, tmp_path):
         with pytest.raises(ValueError):
-            dm.save_memory(tmp_path, "Some Display Name", 90)
-        assert not dm.cache_path(tmp_path).exists()
+            dm.save_memory("Some Display Name", 90)
+        assert not dm.cache_path().exists()
 
     def test_save_replaces_existing_value_for_identity(self, tmp_path):
-        dm.save_memory(tmp_path, "todoist:1", 90)
-        dm.save_memory(tmp_path, "todoist:1", 60)
-        assert dm.read_vault_memory(tmp_path) == {"todoist:1": 60}
+        dm.save_memory("todoist:1", 90)
+        dm.save_memory("todoist:1", 60)
+        assert dm.read_all_memory() == {"todoist:1": 60}
 
     def test_one_canonical_identity_per_key(self, tmp_path):
-        dm.save_memory(tmp_path, "todoist:1", 90)
-        dm.save_memory(tmp_path, "todoist:2", 120)
-        assert dm.read_vault_memory(tmp_path) == {"todoist:1": 90, "todoist:2": 120}
+        dm.save_memory("todoist:1", 90)
+        dm.save_memory("todoist:2", 120)
+        assert dm.read_all_memory() == {"todoist:1": 90, "todoist:2": 120}
 
     def test_reset_removes_entry(self, tmp_path):
-        dm.save_memory(tmp_path, "todoist:1", 90)
-        assert dm.reset_memory(tmp_path, "todoist:1") is True
-        assert dm.read_vault_memory(tmp_path) == {}
-        assert json.loads(_cache_bytes(tmp_path).decode("utf-8"))["items"] == {}
+        dm.save_memory("todoist:1", 90)
+        assert dm.reset_memory("todoist:1") is True
+        assert dm.read_all_memory() == {}
+        assert json.loads(_cache_bytes().decode("utf-8"))["items"] == {}
 
     def test_reset_missing_identity_returns_false(self, tmp_path):
-        dm.save_memory(tmp_path, "todoist:1", 90)
-        assert dm.reset_memory(tmp_path, "todoist:2") is False
-        assert dm.read_vault_memory(tmp_path) == {"todoist:1": 90}
+        dm.save_memory("todoist:1", 90)
+        assert dm.reset_memory("todoist:2") is False
+        assert dm.read_all_memory() == {"todoist:1": 90}
 
     def test_reset_missing_file_returns_false_no_creation(self, tmp_path):
-        assert dm.reset_memory(tmp_path, "todoist:1") is False
-        assert not dm.cache_path(tmp_path).exists()
+        assert dm.reset_memory("todoist:1") is False
+        assert not dm.cache_path().exists()
 
     def test_reset_rejects_name_only(self, tmp_path):
-        dm.save_memory(tmp_path, "todoist:1", 90)
+        dm.save_memory("todoist:1", 90)
         with pytest.raises(ValueError):
-            dm.reset_memory(tmp_path, "Display Name")
-        assert dm.read_vault_memory(tmp_path) == {"todoist:1": 90}
+            dm.reset_memory("Display Name")
+        assert dm.read_all_memory() == {"todoist:1": 90}
 
 
 class TestFallbackReadsNoRepair:
     def test_missing_file_reads_empty(self, tmp_path):
-        assert dm.read_vault_memory(tmp_path) == {}
+        assert dm.read_all_memory() == {}
 
     def test_corrupt_file_reads_empty_no_repair(self, tmp_path):
-        _write_cache(tmp_path, {}, raw="{not json!!")
-        assert dm.read_vault_memory(tmp_path) == {}
-        assert _cache_bytes(tmp_path) == b"{not json!!"
+        _write_cache({}, raw="{not json!!")
+        assert dm.read_all_memory() == {}
+        assert _cache_bytes() == b"{not json!!"
 
     def test_unsupported_version_reads_empty_no_repair(self, tmp_path):
-        _write_cache(tmp_path, {"version": 99, "items": {"todoist:1": 90}})
-        assert dm.read_vault_memory(tmp_path) == {}
-        data = json.loads(_cache_bytes(tmp_path).decode("utf-8"))
+        _write_cache({"version": 99, "items": {"todoist:1": 90}})
+        assert dm.read_all_memory() == {}
+        data = json.loads(_cache_bytes().decode("utf-8"))
         assert data["version"] == 99  # untouched
 
     def test_wrong_shape_reads_empty_no_repair(self, tmp_path):
-        _write_cache(tmp_path, [1, 2, 3])
-        assert dm.read_vault_memory(tmp_path) == {}
-        assert _cache_bytes(tmp_path) == b"[1, 2, 3]"
+        _write_cache([1, 2, 3])
+        assert dm.read_all_memory() == {}
+        assert _cache_bytes() == b"[1, 2, 3]"
 
     def test_invalid_entries_skipped_no_repair(self, tmp_path):
-        _write_cache(tmp_path, {
+        _write_cache({
             "version": 1,
             "items": {
                 "todoist:1": 90,
@@ -507,65 +498,65 @@ class TestFallbackReadsNoRepair:
                 "todoist:4": -5,           # negative — invalid
             },
         })
-        assert dm.read_vault_memory(tmp_path) == {"todoist:1": 90}
-        data = json.loads(_cache_bytes(tmp_path).decode("utf-8"))
+        assert dm.read_all_memory() == {"todoist:1": 90}
+        data = json.loads(_cache_bytes().decode("utf-8"))
         assert "todoist:2" in data["items"]  # no repair
 
 
 class TestFailClosedWrites:
     def test_save_fails_closed_on_corrupt_read(self, tmp_path):
-        _write_cache(tmp_path, {}, raw="garbage")
+        _write_cache({}, raw="garbage")
         with pytest.raises(dm.MemoryStoreError):
-            dm.save_memory(tmp_path, "todoist:1", 90)
-        assert _cache_bytes(tmp_path) == b"garbage"
+            dm.save_memory("todoist:1", 90)
+        assert _cache_bytes() == b"garbage"
 
     def test_save_fails_closed_on_unsupported_version(self, tmp_path):
-        _write_cache(tmp_path, {"version": 99, "items": {}})
+        _write_cache({"version": 99, "items": {}})
         with pytest.raises(dm.MemoryStoreError):
-            dm.save_memory(tmp_path, "todoist:1", 90)
-        data = json.loads(_cache_bytes(tmp_path).decode("utf-8"))
+            dm.save_memory("todoist:1", 90)
+        data = json.loads(_cache_bytes().decode("utf-8"))
         assert data["version"] == 99
 
     def test_save_fails_closed_on_invalid_entry(self, tmp_path):
-        _write_cache(tmp_path, {"version": 1, "items": {"todoist:2": 7}})
+        _write_cache({"version": 1, "items": {"todoist:2": 7}})
         with pytest.raises(dm.MemoryStoreError):
-            dm.save_memory(tmp_path, "todoist:1", 90)
-        data = json.loads(_cache_bytes(tmp_path).decode("utf-8"))
+            dm.save_memory("todoist:1", 90)
+        data = json.loads(_cache_bytes().decode("utf-8"))
         assert data["items"] == {"todoist:2": 7}  # bytes preserved
 
     def test_save_fails_closed_on_lock_failure(self, tmp_path, monkeypatch):
-        dm.save_memory(tmp_path, "todoist:1", 90)
-        before = _cache_bytes(tmp_path)
+        dm.save_memory("todoist:1", 90)
+        before = _cache_bytes()
 
-        def boom(vault_root):
+        def boom():
             raise OSError("lock unavailable")
 
         monkeypatch.setattr(dm, "_acquire_lock_file", boom)
         with pytest.raises(OSError):
-            dm.save_memory(tmp_path, "todoist:1", 120)
-        assert _cache_bytes(tmp_path) == before
+            dm.save_memory("todoist:1", 120)
+        assert _cache_bytes() == before
 
     def test_save_fails_closed_on_write_failure(self, tmp_path, monkeypatch):
-        dm.save_memory(tmp_path, "todoist:1", 90)
-        before = _cache_bytes(tmp_path)
+        dm.save_memory("todoist:1", 90)
+        before = _cache_bytes()
 
         def boom(path, data):
             raise OSError("write failed")
 
         monkeypatch.setattr(dm, "_atomic_write_json", boom)
         with pytest.raises(OSError):
-            dm.save_memory(tmp_path, "todoist:1", 120)
-        assert _cache_bytes(tmp_path) == before
+            dm.save_memory("todoist:1", 120)
+        assert _cache_bytes() == before
 
     def test_reset_fails_closed_on_corrupt_read(self, tmp_path):
-        _write_cache(tmp_path, {}, raw="garbage")
+        _write_cache({}, raw="garbage")
         with pytest.raises(dm.MemoryStoreError):
-            dm.reset_memory(tmp_path, "todoist:1")
-        assert _cache_bytes(tmp_path) == b"garbage"
+            dm.reset_memory("todoist:1")
+        assert _cache_bytes() == b"garbage"
 
     def test_lock_file_created_under_vault(self, tmp_path):
-        dm.save_memory(tmp_path, "todoist:1", 90)
-        assert dm.lock_path(tmp_path).is_file()
+        dm.save_memory("todoist:1", 90)
+        assert dm.lock_path().is_file()
 
 
 class TestRememberedOverlay:

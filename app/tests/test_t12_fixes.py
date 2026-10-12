@@ -19,15 +19,8 @@ import tdtb_gather as gather  # noqa: E402
 
 
 @pytest.fixture
-def vault(tmp_path) -> Path:
-    v = tmp_path / "vault-root"
-    v.mkdir()
-    return v
-
-
-@pytest.fixture
-def client(vault) -> TestClient:
-    app = main_mod.create_app(vault_root=vault)
+def client() -> TestClient:
+    app = main_mod.create_app()
     c = TestClient(app)
     c.app_token = app.state.token
     return c
@@ -76,7 +69,7 @@ class TestSuppressedAnchoredFiltered:
         assert "Morning Routine" not in names
         assert "Wind-down" in names
 
-    def test_runstate_day_setup_override_filtered(self, client, vault, monkeypatch):
+    def test_runstate_day_setup_override_filtered(self, client, monkeypatch):
         # The client copy of the block is clean — the skip lives only in
         # today's runstate note. The server must merge + filter regardless.
         seen = self._capture_proposer(monkeypatch)
@@ -84,7 +77,7 @@ class TestSuppressedAnchoredFiltered:
         state = runstate.build_runstate(
             {"anchored": [{"id": "Morning Routine", "skip_today": True}]}
         )
-        runstate.write_runstate(vault, today, state)
+        runstate.write_runstate(today, state)
         r = client.post("/sequence", headers=_auth(client), json={
             "assigned": [{"id": "A"}],
             "config": {},
@@ -232,19 +225,19 @@ class TestQueryTimeout:
 # ---------------------------------------------------------------------------
 
 class TestGatherPreservesRunstate:
-    def test_regather_keeps_day_setup(self, client, vault):
+    def test_regather_keeps_day_setup(self, client):
         today = gather.effective_date(datetime.now())
         state = runstate.build_runstate({
             "anchor": "10:15", "buffering": "standard",
             "intention": "ship T12",
             "commit_ledger": {"todoist": {"ok": True}},
         })
-        runstate.write_runstate(vault, today, state)
+        runstate.write_runstate(today, state)
 
         r = client.post("/gather", headers=_auth(client))
         assert r.status_code == 200
 
-        text = runstate.runstate_read_path(vault, today).read_text(encoding="utf-8")
+        text = runstate.runstate_read_path(today).read_text(encoding="utf-8")
         data = gather._extract_json_block(text)
         assert data["anchor"] == "10:15"
         assert data["buffering"] == "standard"

@@ -31,15 +31,15 @@ def vault(tmp_path, monkeypatch) -> Path:
         # FEEDBACK-24: route verbs are gated on an explicit Day Setup confirm.
         "day_setup_confirmed": True,
     })
-    runstate.write_runstate(root, today, state)
+    runstate.write_runstate(today, state)
     return root
 
 
 @pytest.fixture
 def harness(vault) -> tuple[TestClient, FakeTodoist, FakeStore]:
-    app = main_mod.create_app(vault_root=vault)
+    app = main_mod.create_app()
     todoist, store = fresh_clients()
-    app.state.build_commit_clients = lambda v, config: (todoist, store)
+    app.state.build_commit_clients = lambda config: (todoist, store)
     c = TestClient(app)
     c.app_token = app.state.token
     return c, todoist, store
@@ -52,7 +52,7 @@ def _auth(client: TestClient) -> dict:
 class TestRuntimeActionRoutes:
     def test_capacities_completion_uses_the_guarded_runtime_action_route(self, vault):
         today = gather.effective_date(datetime.now())
-        runstate.write_digest_index(vault, today, [{
+        runstate.write_digest_index(today, [{
             "name": "Ship project",
             "path": "capacities://space-1/object-1",
             "identity": "capacities:space-1:custom-project:object-1",
@@ -64,9 +64,9 @@ class TestRuntimeActionRoutes:
             "source_fingerprint": "before-fingerprint",
         }])
         capacities = FakeCapacities()
-        app = main_mod.create_app(vault_root=vault)
-        app.state.build_commit_clients = lambda v, config: (None, None)
-        app.state.build_capacities_adapter = lambda v, config: capacities
+        app = main_mod.create_app()
+        app.state.build_commit_clients = lambda config: (None, None)
+        app.state.build_capacities_adapter = lambda config: capacities
         client = TestClient(app)
         client.app_token = app.state.token
 
@@ -123,9 +123,9 @@ class TestRuntimeActionRoutes:
         assert "not in today's plan" in r.json()["detail"]
 
     def test_unavailable_surface_is_503(self, vault):
-        app = main_mod.create_app(vault_root=vault)
+        app = main_mod.create_app()
         todoist, _ = fresh_clients()
-        app.state.build_commit_clients = lambda v, config: (todoist, None)
+        app.state.build_commit_clients = lambda config: (todoist, None)
         client = TestClient(app)
         client.app_token = app.state.token
         r = client.post("/runtime-actions", headers=_auth(client),

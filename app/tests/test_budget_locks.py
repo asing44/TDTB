@@ -20,15 +20,8 @@ TODAY = date(2026, 7, 16)
 
 
 @pytest.fixture
-def vault(tmp_path) -> Path:
-    v = tmp_path / "vault-root"
-    v.mkdir()
-    return v
-
-
-@pytest.fixture
-def client(vault) -> TestClient:
-    app = main_mod.create_app(vault_root=vault)
+def client() -> TestClient:
+    app = main_mod.create_app()
     c = TestClient(app)
     c.app_token = app.state.token
     c.app = app
@@ -53,30 +46,30 @@ class TestRunstateRmw:
     def test_billed_calls_in_skeleton(self):
         assert runstate.build_runstate()["billed_calls"] == 0
 
-    def test_read_runstate_roundtrip(self, vault):
-        runstate.write_runstate(vault, TODAY, runstate.build_runstate({"anchor": "08:15"}))
-        state = runstate.read_runstate(vault, TODAY)
+    def test_read_runstate_roundtrip(self):
+        runstate.write_runstate(TODAY, runstate.build_runstate({"anchor": "08:15"}))
+        state = runstate.read_runstate(TODAY)
         assert state["anchor"] == "08:15"
-        assert runstate.read_runstate(vault, date(2026, 1, 1)) is None
+        assert runstate.read_runstate(date(2026, 1, 1)) is None
 
-    def test_update_runstate_merges_dict(self, vault):
-        runstate.write_runstate(vault, TODAY, runstate.build_runstate({"anchor": "08:15"}))
-        state = runstate.update_runstate(vault, TODAY, {"eod": "22:00"})
+    def test_update_runstate_merges_dict(self):
+        runstate.write_runstate(TODAY, runstate.build_runstate({"anchor": "08:15"}))
+        state = runstate.update_runstate(TODAY, {"eod": "22:00"})
         assert state["anchor"] == "08:15" and state["eod"] == "22:00"
-        again = runstate.read_runstate(vault, TODAY)
+        again = runstate.read_runstate(TODAY)
         assert again["anchor"] == "08:15" and again["eod"] == "22:00"
 
-    def test_update_runstate_callable(self, vault):
-        runstate.update_runstate(vault, TODAY, lambda s: s.__setitem__("billed_calls", 3))
-        assert runstate.read_runstate(vault, TODAY)["billed_calls"] == 3
+    def test_update_runstate_callable(self):
+        runstate.update_runstate(TODAY, lambda s: s.__setitem__("billed_calls", 3))
+        assert runstate.read_runstate(TODAY)["billed_calls"] == 3
 
-    def test_concurrent_updates_no_lost_writes(self, vault):
+    def test_concurrent_updates_no_lost_writes(self):
         n_threads, n_iter = 8, 25
 
         def bump():
             for _ in range(n_iter):
                 runstate.update_runstate(
-                    vault, TODAY,
+                    TODAY,
                     lambda s: s.__setitem__("billed_calls", s.get("billed_calls", 0) + 1),
                 )
 
@@ -85,28 +78,28 @@ class TestRunstateRmw:
             t.start()
         for t in threads:
             t.join()
-        assert runstate.read_runstate(vault, TODAY)["billed_calls"] == n_threads * n_iter
+        assert runstate.read_runstate(TODAY)["billed_calls"] == n_threads * n_iter
 
-    def test_orchestrate_persist_preserves_concurrent_writes(self, vault, monkeypatch):
+    def test_orchestrate_persist_preserves_concurrent_writes(self, monkeypatch):
         """The ledger persist must not clobber a concurrent /day-setup write
         landed after run entry (the stale base_state overwrite, G26)."""
-        runstate.write_runstate(vault, TODAY, runstate.build_runstate({"anchor": "07:00"}))
+        runstate.write_runstate(TODAY, runstate.build_runstate({"anchor": "07:00"}))
 
         real_empty = orchestrate._empty_entry
 
         def entry_with_concurrent_write(key, **kw):
             # Simulate another request writing Day Setup mid-run (between the
             # orchestrator's run-entry state read and its ledger persists).
-            runstate.update_runstate(vault, TODAY, {"anchor": "09:30"})
+            runstate.update_runstate(TODAY, {"anchor": "09:30"})
             return real_empty(key, **kw)
 
         monkeypatch.setattr(orchestrate, "_empty_entry", entry_with_concurrent_write)
 
         report = orchestrate.run_orchestrated(
-            [], vault_root=vault, today=TODAY,
+            [], today=TODAY,
         )
         assert report["ok"]
-        final = runstate.read_runstate(vault, TODAY)
+        final = runstate.read_runstate(TODAY)
         assert final["anchor"] == "09:30", "concurrent Day Setup write was clobbered"
         assert final["commit_ledger"], "ledger itself must still persist"
 
@@ -148,9 +141,9 @@ class TestBilledLedger:
         with pytest.raises(judgment.BudgetExceededError):
             judgment.adjust_freetext("noop", {"assigned": []}, ctx=ctx)
 
-    def test_adjust_route_429_at_cap(self, client, vault):
+    def test_adjust_route_429_at_cap(self, client):
         runstate.write_runstate(
-            vault, _today(), runstate.build_runstate({"billed_calls": main_mod.BILLED_CAP}))
+            _today(), runstate.build_runstate({"billed_calls": main_mod.BILLED_CAP}))
         r = client.post(
             "/adjust", headers=_auth(client),
             json={"instruction": "x", "digest": {"assigned": []}},
@@ -158,16 +151,16 @@ class TestBilledLedger:
         assert r.status_code == 429
         assert "budget" in str(r.json()["detail"]).lower()
 
-    def test_sequence_route_429_at_cap(self, client, vault):
+    def test_sequence_route_429_at_cap(self, client):
         runstate.write_runstate(
-            vault, _today(), runstate.build_runstate({"billed_calls": main_mod.BILLED_CAP}))
+            _today(), runstate.build_runstate({"billed_calls": main_mod.BILLED_CAP}))
         r = client.post(
             "/sequence", headers=_auth(client),
             json={"assigned": [], "config": {}, "anchored_blocks": []},
         )
         assert r.status_code == 429
 
-    def test_adjust_route_wires_persistent_charge(self, client, vault, monkeypatch):
+    def test_adjust_route_wires_persistent_charge(self, client, monkeypatch):
         """The ctx the route passes must persist charges into today's note."""
         seen: dict = {}
 
@@ -183,12 +176,12 @@ class TestBilledLedger:
             json={"instruction": "x", "digest": {"assigned": []}},
         )
         assert r.status_code == 200
-        assert runstate.read_runstate(vault, _today())["billed_calls"] == 2
+        assert runstate.read_runstate(_today())["billed_calls"] == 2
 
-    def test_charge_mid_request_hits_cap_maps_429(self, client, vault, monkeypatch):
+    def test_charge_mid_request_hits_cap_maps_429(self, client, monkeypatch):
         """Budget exhausted BY the retry inside a request → 429, not 502."""
         runstate.write_runstate(
-            vault, _today(),
+            _today(),
             runstate.build_runstate({"billed_calls": main_mod.BILLED_CAP - 1}))
 
         def fake_adjust(instruction, digest, ctx=None):
@@ -202,11 +195,11 @@ class TestBilledLedger:
             json={"instruction": "x", "digest": {"assigned": []}},
         )
         assert r.status_code == 429
-        assert runstate.read_runstate(vault, _today())["billed_calls"] == main_mod.BILLED_CAP
+        assert runstate.read_runstate(_today())["billed_calls"] == main_mod.BILLED_CAP
 
-    def test_billed_ledger_get(self, client, vault):
+    def test_billed_ledger_get(self, client):
         runstate.write_runstate(
-            vault, _today(), runstate.build_runstate({"billed_calls": 2}))
+            _today(), runstate.build_runstate({"billed_calls": 2}))
         r = client.get("/billed-ledger")
         assert r.status_code == 200
         body = r.json()
@@ -245,7 +238,7 @@ class TestLiveCommitLock:
             client.app.state.live_commit_lock.release()
 
     def test_lock_released_on_error_path(self, client, monkeypatch):
-        def raise_state_error(config, vault):
+        def raise_state_error(config):
             raise main_mod.shadow.ShadowStateError("boom")
 
         monkeypatch.setattr(main_mod.shadow, "gather_live_state", raise_state_error)

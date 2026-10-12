@@ -162,7 +162,7 @@ def vault(tmp_path: Path) -> Path:
     (tmp_path / "Projects").mkdir()
     (tmp_path / "Projects" / "Press.md").write_text(NOTE_TEXT, encoding="utf-8")
     state = runstate.build_runstate({"plan_manifest": manifest_rows()})
-    runstate.write_runstate(tmp_path, TODAY, state)
+    runstate.write_runstate(TODAY, state)
     return tmp_path
 
 
@@ -244,7 +244,7 @@ class TestVerbCatalogue:
 class TestDone:
     def test_done_closes_current_occurrence(self, vault: Path):
         todoist, store = fresh_clients()
-        action = ra.apply_action(vault, TODAY, "done", "Press", {},
+        action = ra.apply_action(TODAY, "done", "Press", {},
                                  todoist=todoist, store=store)
         assert action["status"] == "applied"
         assert todoist.tasks["task-1"]["is_completed"] is True
@@ -254,9 +254,9 @@ class TestDone:
 
     def test_done_undo_reopens(self, vault: Path):
         todoist, store = fresh_clients()
-        action = ra.apply_action(vault, TODAY, "done", "Press", {},
+        action = ra.apply_action(TODAY, "done", "Press", {},
                                  todoist=todoist, store=store)
-        undone = ra.undo_action(vault, TODAY, action["id"],
+        undone = ra.undo_action(TODAY, action["id"],
                                 todoist=todoist, store=store)
         assert undone["status"] == "undone"
         assert todoist.tasks["task-1"]["is_completed"] is False
@@ -266,7 +266,7 @@ class TestDone:
 class TestDelete:
     def test_delete_removes_every_linked_target(self, vault: Path):
         todoist, store = fresh_clients()
-        action = ra.apply_action(vault, TODAY, "delete", "Press", {},
+        action = ra.apply_action(TODAY, "delete", "Press", {},
                                  todoist=todoist, store=store)
         assert action["status"] == "applied"
         assert "task-1" not in todoist.tasks
@@ -276,9 +276,9 @@ class TestDelete:
 
     def test_delete_undo_restores_all_surfaces(self, vault: Path):
         todoist, store = fresh_clients()
-        action = ra.apply_action(vault, TODAY, "delete", "Press", {},
+        action = ra.apply_action(TODAY, "delete", "Press", {},
                                  todoist=todoist, store=store)
-        undone = ra.undo_action(vault, TODAY, action["id"],
+        undone = ra.undo_action(TODAY, action["id"],
                                 todoist=todoist, store=store)
         assert undone["status"] == "undone"
         assert any(t["content"] == "Press" for t in todoist.tasks.values())
@@ -294,7 +294,7 @@ class TestDropFromPlan:
     def test_drop_writes_runstate_only(self, vault: Path):
         todoist, store = fresh_clients()
         calls_before = list(todoist.calls) + list(store.calls)
-        action = ra.apply_action(vault, TODAY, "drop_from_plan", "Press", {},
+        action = ra.apply_action(TODAY, "drop_from_plan", "Press", {},
                                  todoist=todoist, store=store)
         assert action["status"] == "applied"
         # no source touched
@@ -302,47 +302,62 @@ class TestDropFromPlan:
         assert store.calls == []
         assert (vault / "Projects" / "Press.md").read_text() == NOTE_TEXT
         assert "task-1" in todoist.tasks and "ev-1" in store.events
-        dropped = runstate.read_dropped(vault, TODAY)
+        dropped = runstate.read_dropped(TODAY)
         assert any(d.get("identity") == "todoist:task-1" for d in dropped)
 
     def test_drop_is_idempotent_per_date(self, vault: Path):
-        ra.apply_action(vault, TODAY, "drop_from_plan", "Press")
-        dup = ra.apply_action(vault, TODAY, "drop_from_plan", "Press")
+        ra.apply_action(TODAY, "drop_from_plan", "Press")
+        dup = ra.apply_action(TODAY, "drop_from_plan", "Press")
         assert dup.get("duplicate") is True
-        assert len(runstate.read_dropped(vault, TODAY)) == 1
+        assert len(runstate.read_dropped(TODAY)) == 1
 
     def test_drop_undo_restores_eligibility(self, vault: Path):
-        action = ra.apply_action(vault, TODAY, "drop_from_plan", "Press")
-        ra.undo_action(vault, TODAY, action["id"])
-        assert runstate.read_dropped(vault, TODAY) == []
+        action = ra.apply_action(TODAY, "drop_from_plan", "Press")
+        ra.undo_action(TODAY, action["id"])
+        assert runstate.read_dropped(TODAY) == []
 
     def test_drop_is_date_scoped(self, vault: Path):
-        ra.apply_action(vault, TODAY, "drop_from_plan", "Press")
+        ra.apply_action(TODAY, "drop_from_plan", "Press")
         tomorrow = date(2026, 8, 14)
-        assert runstate.read_dropped(vault, tomorrow) == []
+        assert runstate.read_dropped(tomorrow) == []
 
     def test_drop_filters_digest_and_exposes_dropped_today(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+        self, live_sources_mode, monkeypatch: pytest.MonkeyPatch
     ):
-        vault = tmp_path / "vault-root"
-        (vault / "50 - Operations" / "Projects").mkdir(parents=True)
-        (vault / "50 - Operations" / "Projects" / "Press.md").write_text(
-            "---\ntype: [project]\nstatus: active\nassigned: true\n---\n\n# Press\n",
-            encoding="utf-8")
+        import external_sources as ext
+
+        class _Todoist:
+            def get_filter_tasks(self, query, limit=None):
+                if query == ext.ASSIGNED_QUERY_FALLBACK:
+                    return [{"id": "task-9", "content": "Press", "priority": 4,
+                             "labels": []}]
+                return []
+
+            def close(self):
+                pass
+
+        class _Store:
+            def query_events(self, start, end, calendar_ids=None):
+                return []
+
+            def calendars(self):
+                return []
+
         monkeypatch.setattr(main_mod.gather, "effective_date", lambda _n: TODAY)
-        app = main_mod.create_app(vault_root=vault)
+        app = main_mod.create_app()
+        app.state.build_read_clients = lambda cfg: (_Todoist(), _Store())
         client = TestClient(app)
         client.headers.update({"X-TDTB-Token": app.state.token})
         first = client.get("/plan-inputs").json()
         assert any(i["name"] == "Press" for i in first["digest"]["assigned"])
         # drop resolves from the persisted identity index (staging phase)
-        assert ra.resolve_target(vault, TODAY, "Press")["phase"] == "staging"
-        action = ra.apply_action(vault, TODAY, "drop_from_plan", "Press")
+        assert ra.resolve_target(TODAY, "Press")["phase"] == "staging"
+        action = ra.apply_action(TODAY, "drop_from_plan", "Press")
         assert action["status"] == "applied"
         second = client.get("/plan-inputs").json()
         assert not any(i["name"] == "Press" for i in second["digest"]["assigned"])
         dropped = second.get("dropped_today") or []
-        assert any(d.get("identity", "").endswith("Press.md") for d in dropped)
+        assert any(d.get("identity") == "todoist:task-9" for d in dropped)
 
 
 # ---------------------------------------------------------------------------
@@ -356,30 +371,30 @@ class TestUnassignVaultRemoved:
         (root / "Projects").mkdir(parents=True)
         (root / "Projects" / "Press.md").write_text(NOTE_TEXT, encoding="utf-8")
         runstate.write_runstate(
-            root, TODAY,
+            TODAY,
             runstate.build_runstate({"plan_manifest": manifest_vault_only()}))
         return root
 
     @pytest.mark.parametrize("verb", ["unassign", "done", "delete"])
     def test_vault_only_target_is_refused_with_a_clear_error(self, vault_only: Path, verb):
         with pytest.raises(ra.RuntimeActionError, match="vault is retired"):
-            ra.apply_action(vault_only, TODAY, verb, "Press", {},
+            ra.apply_action(TODAY, verb, "Press", {},
                             todoist=None, store=None)
         assert (vault_only / "Projects" / "Press.md").read_text() == NOTE_TEXT
-        assert ra.load_journal(vault_only, TODAY)["actions"] == []
+        assert ra.load_journal(TODAY)["actions"] == []
         import deferrals
-        assert deferrals.load_deferrals(vault_only) == {}
+        assert deferrals.load_deferrals() == {}
 
     def test_route_returns_422_for_the_removed_vault_action(
             self, vault_only: Path, monkeypatch: pytest.MonkeyPatch):
         runstate.write_runstate(
-            vault_only, TODAY,
+            TODAY,
             runstate.build_runstate({"plan_manifest": manifest_vault_only(),
                                      "day_setup_confirmed": True}))
         monkeypatch.setattr(main_mod.gather, "effective_date", lambda _n: TODAY)
-        app = main_mod.create_app(vault_root=vault_only)
+        app = main_mod.create_app()
         todoist, store = fresh_clients()
-        app.state.build_commit_clients = lambda v, config: (todoist, store)
+        app.state.build_commit_clients = lambda config: (todoist, store)
         client = TestClient(app)
         r = client.post("/runtime-actions", headers={"X-TDTB-Token": app.state.token},
                         json={"verb": "unassign", "target": "Press"})
@@ -392,7 +407,7 @@ class TestUnassignVaultRemoved:
 class TestUnassignTodoist:
     def test_non_recurring_clears_the_date(self, vault: Path):
         todoist, _ = fresh_clients()
-        action = ra.apply_action(vault, TODAY, "unassign", "Press", {},
+        action = ra.apply_action(TODAY, "unassign", "Press", {},
                                  todoist=todoist, store=None)
         assert action["status"] == "applied"
         assert ("clear_task_date", "task-1") in todoist.calls
@@ -402,16 +417,16 @@ class TestUnassignTodoist:
 
     def test_non_recurring_undo_restores_the_due(self, vault: Path):
         todoist, _ = fresh_clients()
-        action = ra.apply_action(vault, TODAY, "unassign", "Press", {},
+        action = ra.apply_action(TODAY, "unassign", "Press", {},
                                  todoist=todoist, store=None)
-        ra.undo_action(vault, TODAY, action["id"], todoist=todoist)
+        ra.undo_action(TODAY, action["id"], todoist=todoist)
         assert todoist.tasks["task-1"]["due"]["datetime"] == "2026-08-13T16:00:00"
 
     def test_recurring_advances_without_completing_and_proves_readback(
         self, vault: Path,
     ):
         todoist = recurring_task()
-        action = ra.apply_action(vault, TODAY, "unassign", "Press", {},
+        action = ra.apply_action(TODAY, "unassign", "Press", {},
                                  todoist=todoist, store=None)
         assert action["status"] == "applied"
         # advanced to the NEXT occurrence, never closed
@@ -431,9 +446,9 @@ class TestUnassignTodoist:
 
     def test_recurring_undo_restores_prior_due(self, vault: Path):
         todoist = recurring_task()
-        action = ra.apply_action(vault, TODAY, "unassign", "Press", {},
+        action = ra.apply_action(TODAY, "unassign", "Press", {},
                                  todoist=todoist, store=None)
-        ra.undo_action(vault, TODAY, action["id"], todoist=todoist)
+        ra.undo_action(TODAY, action["id"], todoist=todoist)
         due = todoist.tasks["task-1"]["due"]
         assert due["datetime"] == "2026-08-13T16:00:00"
         assert due["string"] == "every day at 16:00"
@@ -441,7 +456,7 @@ class TestUnassignTodoist:
     def test_recurring_date_only_advance_uses_due_date(self, vault: Path):
         todoist = recurring_task({"date": "2026-08-13", "is_recurring": True,
                                   "string": "every 2 days"})
-        action = ra.apply_action(vault, TODAY, "unassign", "Press", {},
+        action = ra.apply_action(TODAY, "unassign", "Press", {},
                                  todoist=todoist, store=None)
         assert action["status"] == "applied"
         assert ("reschedule_task_date", "task-1", "2026-08-15") in todoist.calls
@@ -449,7 +464,7 @@ class TestUnassignTodoist:
     def test_unsupported_recurrence_fails_closed_with_no_write(self, vault: Path):
         todoist = recurring_task({"datetime": "2026-08-13T16:00:00",
                                   "is_recurring": True, "string": "every nope"})
-        action = ra.apply_action(vault, TODAY, "unassign", "Press", {},
+        action = ra.apply_action(TODAY, "unassign", "Press", {},
                                  todoist=todoist, store=None)
         # apply-time refusal is journaled, never applied, so no net source
         # write remains
@@ -462,7 +477,7 @@ class TestUnassignTodoist:
         assert not any(s.get("applied") and not s.get("compensated")
                        for s in action["steps"])
         assert (vault / "Projects" / "Press.md").read_text() == NOTE_TEXT
-        journal = ra.load_journal(vault, TODAY)
+        journal = ra.load_journal(TODAY)
         assert journal["actions"][0]["status"] in ("compensated", "failed")
 
     def test_readback_completion_change_compensates(self, vault: Path):
@@ -475,7 +490,7 @@ class TestUnassignTodoist:
             return original_reschedule(task_id, due_datetime)
 
         todoist.reschedule_task_datetime = corrupt
-        action = ra.apply_action(vault, TODAY, "unassign", "Press", {},
+        action = ra.apply_action(TODAY, "unassign", "Press", {},
                                  todoist=todoist, store=None)
         assert action["status"] in ("compensated", "failed")
         # the due write was reversed back to the before-image
@@ -487,9 +502,9 @@ class TestUnassignTodoist:
     def test_unassign_does_not_touch_deferrals(self, vault: Path):
         import deferrals
         todoist, _ = fresh_clients()
-        ra.apply_action(vault, TODAY, "unassign", "Press", {},
+        ra.apply_action(TODAY, "unassign", "Press", {},
                         todoist=todoist, store=None)
-        assert deferrals.load_deferrals(vault) == {}
+        assert deferrals.load_deferrals() == {}
 
 
 # ---------------------------------------------------------------------------
@@ -501,7 +516,7 @@ def route_vault(tmp_path: Path) -> Path:
     vault = tmp_path / "vault-root"
     (vault / "Projects").mkdir(parents=True)
     (vault / "Projects" / "Press.md").write_text(NOTE_TEXT, encoding="utf-8")
-    runstate.write_runstate(vault, TODAY,
+    runstate.write_runstate(TODAY,
                             runstate.build_runstate({
                                 "plan_manifest": manifest_rows(),
                                 # FEEDBACK-24: route verbs are gated on an
@@ -514,9 +529,9 @@ def route_vault(tmp_path: Path) -> Path:
 @pytest.fixture()
 def harness(route_vault: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(main_mod.gather, "effective_date", lambda _n: TODAY)
-    app = main_mod.create_app(vault_root=route_vault)
+    app = main_mod.create_app()
     todoist, store = fresh_clients()
-    app.state.build_commit_clients = lambda v, config: (todoist, store)
+    app.state.build_commit_clients = lambda config: (todoist, store)
     client = TestClient(app)
     client.app_token = app.state.token
     return client, todoist, store
@@ -542,11 +557,11 @@ class TestWire:
         action = client.post("/runtime-actions", headers=_auth(client),
                              json={"verb": "drop_from_plan", "target": "Press"}).json()
         assert action["status"] == "applied"
-        assert runstate.read_dropped(Path(client.app.state.vault_root), TODAY)
+        assert runstate.read_dropped(TODAY)
         r = client.post(f"/runtime-actions/{action['id']}/undo", headers=_auth(client))
         assert r.status_code == 200
         assert r.json()["status"] == "undone"
-        assert runstate.read_dropped(Path(client.app.state.vault_root), TODAY) == []
+        assert runstate.read_dropped(TODAY) == []
 
     def test_route_unassign_non_recurring(self, harness):
         client, todoist, _ = harness
@@ -555,8 +570,6 @@ class TestWire:
         assert r.status_code == 200, r.text
         assert r.json()["status"] == "applied"
         assert todoist.tasks["task-1"]["due"] is None
-        text = (Path(client.app.state.vault_root) / "Projects" / "Press.md").read_text()
-        assert text == NOTE_TEXT  # V3: the vault note is never touched
 
     def test_route_delete(self, harness):
         client, todoist, store = harness

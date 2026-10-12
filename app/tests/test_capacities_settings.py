@@ -28,19 +28,19 @@ DEFAULT_NATIVE_STRUCTURES = ["RootTask"]
 DEFAULT_ACTIVE_STATUSES = ["active"]
 
 
-def _write_raw(vault_root, text: str) -> Path:
-    path = cs.settings_path(vault_root)
+def _write_raw(text: str) -> Path:
+    path = cs.settings_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding="utf-8")
     return path
 
 
-def _write_json(vault_root, data) -> Path:
-    return _write_raw(vault_root, json.dumps(data))
+def _write_json(data) -> Path:
+    return _write_raw(json.dumps(data))
 
 
-def _bytes(vault_root) -> bytes:
-    return cs.settings_path(vault_root).read_bytes()
+def _bytes() -> bytes:
+    return cs.settings_path().read_bytes()
 
 
 def _valid_payload(**overrides) -> dict:
@@ -71,19 +71,15 @@ def _default_policy() -> cs.NativeTaskAutoPolicy:
 
 class TestPathsAndDefault:
     def test_paths_derive_only_from_app_home(self, tmp_path):
-        """S1: the store is machine-local. ``vault_root`` is accepted for
-        call-site compatibility and deliberately ignored, so both paths derive
-        only from the app home."""
-        v1 = tmp_path / "vault-a"
-        v2 = tmp_path / "vault-b"
-        assert cs.settings_path(v1) == app_config.state_dir() / "capacities-settings.json"
-        assert cs.lock_path(v1) == app_config.state_dir() / "capacities-settings.lock"
-        assert cs.settings_path(v1) == cs.settings_path(v2)
-        assert cs.settings_path(v1).is_relative_to(app_config.state_dir())
-        assert cs.lock_path(v1).is_relative_to(app_config.state_dir())
+        """The store is machine-local: both paths derive only from the app
+        home."""
+        assert cs.settings_path() == app_config.state_dir() / "capacities-settings.json"
+        assert cs.lock_path() == app_config.state_dir() / "capacities-settings.lock"
+        assert cs.settings_path().is_relative_to(app_config.state_dir())
+        assert cs.lock_path().is_relative_to(app_config.state_dir())
 
     def test_missing_file_returns_default_without_creating_it(self, tmp_path):
-        result = cs.read_settings(tmp_path)
+        result = cs.read_settings()
 
         assert result.persisted is False
         assert result.settings.revision == 0
@@ -93,11 +89,11 @@ class TestPathsAndDefault:
         assert policy.deadline_enabled is True
         assert policy.deadline_horizon_days == 2
         assert result.settings.excluded == frozenset()
-        assert not cs.settings_path(tmp_path).exists()
-        assert not cs.lock_path(tmp_path).exists()
+        assert not cs.settings_path().exists()
+        assert not cs.lock_path().exists()
 
     def test_default_settings_match_the_persisted_shape(self, tmp_path):
-        result = cs.read_settings(tmp_path)
+        result = cs.read_settings()
         expected = _valid_payload()
         expected["native_task_structures"] = DEFAULT_NATIVE_STRUCTURES
         expected["active_statuses"] = DEFAULT_ACTIVE_STATUSES
@@ -111,16 +107,15 @@ class TestPathsAndDefault:
         home_b = tmp_path / "home-b"
         monkeypatch.setenv("TDTB_HOME", str(home_a))
         cs.save_settings(
-            tmp_path,
             expected_revision=0,
             native_task_auto=_default_policy(),
             excluded=[NATIVE],
         )
-        assert cs.read_settings(tmp_path).persisted is True
-        assert cs.read_settings(tmp_path).settings.excluded == frozenset({NATIVE})
+        assert cs.read_settings().persisted is True
+        assert cs.read_settings().settings.excluded == frozenset({NATIVE})
 
         monkeypatch.setenv("TDTB_HOME", str(home_b))
-        assert cs.read_settings(tmp_path).persisted is False
+        assert cs.read_settings().persisted is False
 
 
 # ---------------------------------------------------------------------------
@@ -131,7 +126,6 @@ class TestPathsAndDefault:
 class TestRoundTrip:
     def test_save_round_trips_across_reads(self, tmp_path):
         saved = cs.save_settings(
-            tmp_path,
             expected_revision=0,
             native_task_auto=cs.NativeTaskAutoPolicy(
                 active_enabled=False,
@@ -145,7 +139,7 @@ class TestRoundTrip:
         assert saved.revision == 1
         assert saved.excluded == frozenset({NATIVE, CUSTOM})
 
-        result = cs.read_settings(tmp_path)
+        result = cs.read_settings()
         assert result.persisted is True
         assert result.settings == saved
         assert result.settings.native_task_auto.deadline_horizon_days == 7
@@ -154,12 +148,11 @@ class TestRoundTrip:
 
     def test_persisted_file_has_exactly_the_versioned_shape(self, tmp_path):
         cs.save_settings(
-            tmp_path,
             expected_revision=0,
             native_task_auto=_default_policy(),
             excluded=[NATIVE],
         )
-        data = json.loads(_bytes(tmp_path).decode("utf-8"))
+        data = json.loads(_bytes().decode("utf-8"))
 
         assert data == {
             "version": 1,
@@ -179,7 +172,6 @@ class TestRoundTrip:
 
     def test_saved_settings_bridge_to_the_evaluator_seam(self, tmp_path):
         saved = cs.save_settings(
-            tmp_path,
             expected_revision=0,
             native_task_auto=cs.NativeTaskAutoPolicy(
                 active_enabled=False, due_enabled=False, deadline_enabled=False,
@@ -197,22 +189,20 @@ class TestRoundTrip:
 
     def test_large_horizon_round_trips_without_an_arbitrary_cap(self, tmp_path):
         saved = cs.save_settings(
-            tmp_path,
             expected_revision=0,
             native_task_auto=cs.NativeTaskAutoPolicy(deadline_horizon_days=10**12),
             excluded=[],
         )
-        assert cs.read_settings(tmp_path).settings == saved
+        assert cs.read_settings().settings == saved
         assert saved.native_task_auto.deadline_horizon_days == 10**12
 
     def test_exclusion_keys_are_written_sorted_and_deterministic(self, tmp_path):
         cs.save_settings(
-            tmp_path,
             expected_revision=0,
             native_task_auto=_default_policy(),
             excluded=[CUSTOM, NATIVE],
         )
-        data = json.loads(_bytes(tmp_path).decode("utf-8"))
+        data = json.loads(_bytes().decode("utf-8"))
         assert list(data["excluded"]) == sorted([CUSTOM, NATIVE])
 
 
@@ -246,27 +236,25 @@ class TestCanonicalIdentity:
     def test_save_rejects_invalid_identity_before_any_file_access(self, tmp_path):
         with pytest.raises(ValueError):
             cs.save_settings(
-                tmp_path,
                 expected_revision=0,
                 native_task_auto=_default_policy(),
                 excluded=["task-1"],
             )
-        assert not cs.settings_path(tmp_path).exists()
-        assert not cs.lock_path(tmp_path).exists()
+        assert not cs.settings_path().exists()
+        assert not cs.lock_path().exists()
 
     def test_file_with_invalid_exclusion_identity_fails_closed(self, tmp_path):
-        _write_json(tmp_path, _valid_payload(excluded={"task-1": True}))
-        before = _bytes(tmp_path)
+        _write_json(_valid_payload(excluded={"task-1": True}))
+        before = _bytes()
         with pytest.raises(cs.SettingsFormatError):
-            cs.read_settings(tmp_path)
+            cs.read_settings()
         with pytest.raises(cs.SettingsFormatError):
             cs.save_settings(
-                tmp_path,
                 expected_revision=0,
                 native_task_auto=_default_policy(),
                 excluded=[],
             )
-        assert _bytes(tmp_path) == before
+        assert _bytes() == before
 
 
 # ---------------------------------------------------------------------------
@@ -287,10 +275,10 @@ class TestStrictDecoding:
         ],
     )
     def test_malformed_or_non_object_documents_fail_closed(self, tmp_path, raw):
-        _write_raw(tmp_path, raw)
+        _write_raw(raw)
         with pytest.raises(cs.SettingsFormatError):
-            cs.read_settings(tmp_path)
-        assert _bytes(tmp_path) == raw.encode("utf-8")
+            cs.read_settings()
+        assert _bytes() == raw.encode("utf-8")
 
     @pytest.mark.parametrize(
         "payload",
@@ -331,47 +319,43 @@ class TestStrictDecoding:
         ],
     )
     def test_strict_shape_violations_fail_closed(self, tmp_path, payload):
-        _write_json(tmp_path, payload)
-        before = _bytes(tmp_path)
+        _write_json(payload)
+        before = _bytes()
         with pytest.raises(cs.SettingsFormatError):
-            cs.read_settings(tmp_path)
-        assert _bytes(tmp_path) == before
+            cs.read_settings()
+        assert _bytes() == before
 
     def test_duplicate_top_level_keys_are_rejected(self, tmp_path):
         _write_raw(
-            tmp_path,
             '{"version": 1, "revision": 0, "revision": 1, '
             '"native_task_auto": {"active_enabled": true, "due_enabled": true, '
             '"deadline_enabled": true, "deadline_horizon_days": 2}, "excluded": {}}',
         )
         with pytest.raises(cs.SettingsFormatError):
-            cs.read_settings(tmp_path)
+            cs.read_settings()
 
     def test_duplicate_nested_keys_are_rejected(self, tmp_path):
         _write_raw(
-            tmp_path,
             '{"version": 1, "revision": 0, '
             '"native_task_auto": {"active_enabled": true, "active_enabled": false, '
             '"due_enabled": true, "deadline_enabled": true, '
             '"deadline_horizon_days": 2}, "excluded": {}}',
         )
         with pytest.raises(cs.SettingsFormatError):
-            cs.read_settings(tmp_path)
+            cs.read_settings()
 
     def test_duplicate_exclusion_keys_are_rejected(self, tmp_path):
         _write_raw(
-            tmp_path,
             '{"version": 1, "revision": 0, '
             '"native_task_auto": {"active_enabled": true, "due_enabled": true, '
             '"deadline_enabled": true, "deadline_horizon_days": 2}, '
             f'"excluded": {{"{NATIVE}": true, "{NATIVE}": true}}}}',
         )
         with pytest.raises(cs.SettingsFormatError):
-            cs.read_settings(tmp_path)
+            cs.read_settings()
 
     def test_valid_document_decodes_exactly(self, tmp_path):
         _write_json(
-            tmp_path,
             _valid_payload(
                 revision=4,
                 native_task_auto={
@@ -381,7 +365,7 @@ class TestStrictDecoding:
                 excluded={NATIVE: True},
             ),
         )
-        result = cs.read_settings(tmp_path)
+        result = cs.read_settings()
         assert result.persisted is True
         assert result.settings.revision == 4
         assert result.settings.native_task_auto.as_dict() == {
@@ -411,53 +395,53 @@ class TestStrictDecoding:
 class TestRevisions:
     def test_first_save_creates_revision_one(self, tmp_path):
         saved = cs.save_settings(
-            tmp_path, expected_revision=0,
+            expected_revision=0,
             native_task_auto=_default_policy(), excluded=[],
         )
         assert saved.revision == 1
-        assert cs.read_settings(tmp_path).settings.revision == 1
+        assert cs.read_settings().settings.revision == 1
 
     def test_revision_increments_on_each_save(self, tmp_path):
         first = cs.save_settings(
-            tmp_path, expected_revision=0,
+            expected_revision=0,
             native_task_auto=_default_policy(), excluded=[],
         )
         second = cs.save_settings(
-            tmp_path, expected_revision=first.revision,
+            expected_revision=first.revision,
             native_task_auto=_default_policy(), excluded=[NATIVE],
         )
         assert (first.revision, second.revision) == (1, 2)
-        assert cs.read_settings(tmp_path).settings.revision == 2
+        assert cs.read_settings().settings.revision == 2
 
     def test_stale_expected_revision_conflicts_and_preserves_bytes(self, tmp_path):
         cs.save_settings(
-            tmp_path, expected_revision=0,
+            expected_revision=0,
             native_task_auto=_default_policy(), excluded=[],
         )
-        before = _bytes(tmp_path)
+        before = _bytes()
         with pytest.raises(cs.SettingsConflictError):
             cs.save_settings(
-                tmp_path, expected_revision=0,
+                expected_revision=0,
                 native_task_auto=_default_policy(), excluded=[NATIVE],
             )
-        assert _bytes(tmp_path) == before
+        assert _bytes() == before
 
     def test_missing_file_with_nonzero_expected_revision_conflicts(self, tmp_path):
         with pytest.raises(cs.SettingsConflictError):
             cs.save_settings(
-                tmp_path, expected_revision=1,
+                expected_revision=1,
                 native_task_auto=_default_policy(), excluded=[],
             )
-        assert not cs.settings_path(tmp_path).exists()
+        assert not cs.settings_path().exists()
 
     def test_save_rejects_bad_expected_revision_before_file_access(self, tmp_path):
         for bad in (True, -1, 1.5, "0"):
             with pytest.raises(ValueError):
                 cs.save_settings(
-                    tmp_path, expected_revision=bad,
+                    expected_revision=bad,
                     native_task_auto=_default_policy(), excluded=[],
                 )
-        assert not cs.settings_path(tmp_path).exists()
+        assert not cs.settings_path().exists()
 
 
 # ---------------------------------------------------------------------------
@@ -467,48 +451,48 @@ class TestRevisions:
 
 class TestFailClosedWrites:
     def test_save_fails_closed_on_malformed_file(self, tmp_path):
-        _write_raw(tmp_path, "garbage")
+        _write_raw("garbage")
         with pytest.raises(cs.SettingsFormatError):
             cs.save_settings(
-                tmp_path, expected_revision=0,
+                expected_revision=0,
                 native_task_auto=_default_policy(), excluded=[],
             )
-        assert _bytes(tmp_path) == b"garbage"
+        assert _bytes() == b"garbage"
 
     def test_save_fails_closed_on_unsupported_version(self, tmp_path):
-        _write_json(tmp_path, _valid_payload(version=99))
-        before = _bytes(tmp_path)
+        _write_json(_valid_payload(version=99))
+        before = _bytes()
         with pytest.raises(cs.SettingsFormatError):
             cs.save_settings(
-                tmp_path, expected_revision=0,
+                expected_revision=0,
                 native_task_auto=_default_policy(), excluded=[],
             )
-        assert _bytes(tmp_path) == before
+        assert _bytes() == before
 
     def test_save_fails_closed_on_lock_failure(self, tmp_path, monkeypatch):
         cs.save_settings(
-            tmp_path, expected_revision=0,
+            expected_revision=0,
             native_task_auto=_default_policy(), excluded=[],
         )
-        before = _bytes(tmp_path)
+        before = _bytes()
 
-        def boom(vault_root):
+        def boom():
             raise OSError("lock unavailable")
 
         monkeypatch.setattr(cs, "_acquire_lock_file", boom)
         with pytest.raises(OSError):
             cs.save_settings(
-                tmp_path, expected_revision=1,
+                expected_revision=1,
                 native_task_auto=_default_policy(), excluded=[NATIVE],
             )
-        assert _bytes(tmp_path) == before
+        assert _bytes() == before
 
     def test_save_fails_closed_on_write_failure(self, tmp_path, monkeypatch):
         cs.save_settings(
-            tmp_path, expected_revision=0,
+            expected_revision=0,
             native_task_auto=_default_policy(), excluded=[],
         )
-        before = _bytes(tmp_path)
+        before = _bytes()
 
         def boom(path, data):
             raise OSError("write failed")
@@ -516,35 +500,35 @@ class TestFailClosedWrites:
         monkeypatch.setattr(cs, "_atomic_write_json", boom)
         with pytest.raises(OSError):
             cs.save_settings(
-                tmp_path, expected_revision=1,
+                expected_revision=1,
                 native_task_auto=_default_policy(), excluded=[NATIVE],
             )
-        assert _bytes(tmp_path) == before
+        assert _bytes() == before
 
     def test_read_fails_closed_on_directory_at_settings_path(self, tmp_path):
-        path = cs.settings_path(tmp_path)
+        path = cs.settings_path()
         path.mkdir(parents=True)
         with pytest.raises(cs.SettingsStoreError):
-            cs.read_settings(tmp_path)
+            cs.read_settings()
 
     def test_atomic_write_leaves_no_temp_files(self, tmp_path):
         cs.save_settings(
-            tmp_path, expected_revision=0,
+            expected_revision=0,
             native_task_auto=_default_policy(), excluded=[],
         )
         leftovers = [
             entry.name
-            for entry in cs.settings_path(tmp_path).parent.iterdir()
+            for entry in cs.settings_path().parent.iterdir()
             if entry.name.endswith(".tmp")
         ]
         assert leftovers == []
 
     def test_lock_file_created_under_vault(self, tmp_path):
         cs.save_settings(
-            tmp_path, expected_revision=0,
+            expected_revision=0,
             native_task_auto=_default_policy(), excluded=[],
         )
-        assert cs.lock_path(tmp_path).is_file()
+        assert cs.lock_path().is_file()
 
 
 # ---------------------------------------------------------------------------
@@ -558,11 +542,10 @@ PRESS_STRUCTURE = "6aa7b02a-4315-47d1-9cfb-0c0cdac0950c"
 
 class TestActiveStructures:
     def test_default_has_no_active_structures(self, tmp_path):
-        assert cs.read_settings(tmp_path).settings.active_structures == frozenset()
+        assert cs.read_settings().settings.active_structures == frozenset()
 
     def test_active_structures_round_trip(self, tmp_path):
         saved = cs.save_settings(
-            tmp_path,
             expected_revision=0,
             native_task_auto=_default_policy(),
             excluded=[],
@@ -570,18 +553,18 @@ class TestActiveStructures:
         )
 
         assert saved.active_structures == frozenset({PROJECT_STRUCTURE, "custom-project"})
-        result = cs.read_settings(tmp_path)
+        result = cs.read_settings()
         assert result.settings.active_structures == frozenset(
             {PROJECT_STRUCTURE, "custom-project"}
         )
 
     def test_active_structures_are_written_sorted_and_deterministic(self, tmp_path):
         cs.save_settings(
-            tmp_path, expected_revision=0,
+            expected_revision=0,
             native_task_auto=_default_policy(), excluded=[],
             active_structures=["zeta", "alpha"],
         )
-        data = json.loads(_bytes(tmp_path).decode("utf-8"))
+        data = json.loads(_bytes().decode("utf-8"))
         assert list(data["active_structures"]) == ["alpha", "zeta"]
 
     def test_version_1_file_without_the_key_reads_as_empty(self, tmp_path):
@@ -599,9 +582,9 @@ class TestActiveStructures:
             },
             "excluded": {},
         }
-        _write_json(tmp_path, legacy)
+        _write_json(legacy)
 
-        result = cs.read_settings(tmp_path)
+        result = cs.read_settings()
 
         assert result.persisted is True
         assert result.settings.active_structures == frozenset()
@@ -609,7 +592,7 @@ class TestActiveStructures:
 
     def test_saved_settings_bridge_active_structures_to_the_evaluator(self, tmp_path):
         saved = cs.save_settings(
-            tmp_path, expected_revision=0,
+            expected_revision=0,
             native_task_auto=_default_policy(), excluded=[],
             active_structures=[PROJECT_STRUCTURE],
         )
@@ -633,33 +616,32 @@ class TestActiveStructures:
         ],
     )
     def test_malformed_active_structures_fail_closed(self, tmp_path, active):
-        _write_json(tmp_path, _valid_payload(active_structures=active))
-        before = _bytes(tmp_path)
+        _write_json(_valid_payload(active_structures=active))
+        before = _bytes()
 
         with pytest.raises(cs.SettingsFormatError):
-            cs.read_settings(tmp_path)
+            cs.read_settings()
 
-        assert _bytes(tmp_path) == before
+        assert _bytes() == before
 
     def test_duplicate_active_structure_keys_are_rejected(self, tmp_path):
         _write_raw(
-            tmp_path,
             '{"version": 1, "revision": 0, '
             '"native_task_auto": {"active_enabled": true, "due_enabled": true, '
             '"deadline_enabled": true, "deadline_horizon_days": 2}, '
             '"excluded": {}, "active_structures": {"alpha": true, "alpha": true}}',
         )
         with pytest.raises(cs.SettingsFormatError):
-            cs.read_settings(tmp_path)
+            cs.read_settings()
 
     def test_save_rejects_invalid_structure_before_any_file_access(self, tmp_path):
         with pytest.raises(ValueError):
             cs.save_settings(
-                tmp_path, expected_revision=0,
+                expected_revision=0,
                 native_task_auto=_default_policy(), excluded=[],
                 active_structures=["custom-project", "  "],
             )
-        assert not cs.settings_path(tmp_path).exists()
+        assert not cs.settings_path().exists()
 
     def test_constructed_model_is_strict_about_active_structures(self):
         with pytest.raises(ValueError):
@@ -685,7 +667,7 @@ class TestAdmissionInputs:
         assert cs.SCHEMA_VERSION == 1
 
     def test_defaults_when_no_file_exists(self, tmp_path):
-        settings = cs.read_settings(tmp_path).settings
+        settings = cs.read_settings().settings
 
         assert settings.native_task_structures == frozenset({"RootTask"})
         assert settings.active_statuses == frozenset({"active"})
@@ -697,15 +679,15 @@ class TestAdmissionInputs:
 
         assert ca.NATIVE_TASK_STRUCTURES == frozenset({"RootTask"})
         assert "Task" not in ca.NATIVE_TASK_STRUCTURES
-        settings = cs.read_settings(tmp_path).settings
+        settings = cs.read_settings().settings
         assert settings.native_task_structures == frozenset({"RootTask"})
 
     def test_legacy_version_1_file_without_either_key_reads_with_the_documented_defaults(
         self, tmp_path
     ):
-        _write_json(tmp_path, _valid_payload())
+        _write_json(_valid_payload())
 
-        result = cs.read_settings(tmp_path)
+        result = cs.read_settings()
 
         assert result.persisted is True
         assert result.settings.native_task_structures == frozenset({"RootTask"})
@@ -713,7 +695,6 @@ class TestAdmissionInputs:
 
     def test_both_keys_round_trip_through_write_and_read(self, tmp_path):
         saved = cs.save_settings(
-            tmp_path,
             expected_revision=0,
             native_task_auto=_default_policy(),
             excluded=[],
@@ -723,7 +704,7 @@ class TestAdmissionInputs:
 
         assert saved.native_task_structures == frozenset({"RootTask", "custom-project"})
         assert saved.active_statuses == frozenset({"Active", "In Progress"})
-        result = cs.read_settings(tmp_path)
+        result = cs.read_settings()
         assert result.settings == saved
         assert result.settings.native_task_structures == frozenset(
             {"RootTask", "custom-project"}
@@ -732,24 +713,23 @@ class TestAdmissionInputs:
 
     def test_freshly_written_file_emits_both_keys(self, tmp_path):
         cs.save_settings(
-            tmp_path,
             expected_revision=0,
             native_task_auto=_default_policy(),
             excluded=[],
         )
-        data = json.loads(_bytes(tmp_path).decode("utf-8"))
+        data = json.loads(_bytes().decode("utf-8"))
 
         assert data["native_task_structures"] == DEFAULT_NATIVE_STRUCTURES
         assert data["active_statuses"] == DEFAULT_ACTIVE_STATUSES
 
     def test_written_lists_are_sorted_and_deterministic(self, tmp_path):
         cs.save_settings(
-            tmp_path, expected_revision=0,
+            expected_revision=0,
             native_task_auto=_default_policy(), excluded=[],
             native_task_structures=["zeta", "alpha"],
             active_statuses=["zeta", "Alpha"],
         )
-        data = json.loads(_bytes(tmp_path).decode("utf-8"))
+        data = json.loads(_bytes().decode("utf-8"))
 
         assert data["native_task_structures"] == ["alpha", "zeta"]
         assert data["active_statuses"] == ["Alpha", "zeta"]
@@ -758,37 +738,37 @@ class TestAdmissionInputs:
         # The evaluator normalizes at comparison time; the persisted form keeps
         # the operator's exact text.
         saved = cs.save_settings(
-            tmp_path, expected_revision=0,
+            expected_revision=0,
             native_task_auto=_default_policy(), excluded=[],
             active_statuses=["In Progress"],
         )
 
         assert saved.active_statuses == frozenset({"In Progress"})
-        assert cs.read_settings(tmp_path).settings.active_statuses == frozenset(
+        assert cs.read_settings().settings.active_statuses == frozenset(
             {"In Progress"}
         )
 
     def test_empty_native_task_structures_is_a_legitimate_configuration(self, tmp_path):
         saved = cs.save_settings(
-            tmp_path, expected_revision=0,
+            expected_revision=0,
             native_task_auto=_default_policy(), excluded=[],
             native_task_structures=[],
         )
 
         assert saved.native_task_structures == frozenset()
-        result = cs.read_settings(tmp_path)
+        result = cs.read_settings()
         assert result.settings.native_task_structures == frozenset()
         assert result.settings.as_dict()["native_task_structures"] == []
 
     def test_empty_active_statuses_is_a_legitimate_configuration(self, tmp_path):
         saved = cs.save_settings(
-            tmp_path, expected_revision=0,
+            expected_revision=0,
             native_task_auto=_default_policy(), excluded=[],
             active_statuses=[],
         )
 
         assert saved.active_statuses == frozenset()
-        assert cs.read_settings(tmp_path).settings.active_statuses == frozenset()
+        assert cs.read_settings().settings.active_statuses == frozenset()
 
     @pytest.mark.parametrize(
         "key, bad",
@@ -812,17 +792,17 @@ class TestAdmissionInputs:
     def test_malformed_stored_values_fail_closed_and_preserve_the_bytes(
         self, tmp_path, key, bad
     ):
-        _write_json(tmp_path, _valid_payload(**{key: bad}))
-        before = _bytes(tmp_path)
+        _write_json(_valid_payload(**{key: bad}))
+        before = _bytes()
 
         with pytest.raises(cs.SettingsFormatError):
-            cs.read_settings(tmp_path)
+            cs.read_settings()
         with pytest.raises(cs.SettingsFormatError):
             cs.save_settings(
-                tmp_path, expected_revision=0,
+                expected_revision=0,
                 native_task_auto=_default_policy(), excluded=[],
             )
-        assert _bytes(tmp_path) == before
+        assert _bytes() == before
 
     @pytest.mark.parametrize(
         "kwargs",
@@ -844,11 +824,11 @@ class TestAdmissionInputs:
     ):
         with pytest.raises(ValueError):
             cs.save_settings(
-                tmp_path, expected_revision=0,
+                expected_revision=0,
                 native_task_auto=_default_policy(), excluded=[], **kwargs,
             )
-        assert not cs.settings_path(tmp_path).exists()
-        assert not cs.lock_path(tmp_path).exists()
+        assert not cs.settings_path().exists()
+        assert not cs.lock_path().exists()
 
     def test_constructed_model_is_strict_about_the_admission_inputs(self):
         for kwargs in (
@@ -870,7 +850,7 @@ class TestAdmissionInputs:
 
     def test_saved_settings_bridge_both_inputs_to_the_evaluator(self, tmp_path):
         saved = cs.save_settings(
-            tmp_path, expected_revision=0,
+            expected_revision=0,
             native_task_auto=_default_policy(), excluded=[],
             native_task_structures=["custom-project"],
             active_statuses=["In Progress"],
@@ -921,7 +901,7 @@ class TestAssignedStructures:
         assert cs.SCHEMA_VERSION == 1
 
     def test_default_has_no_declarations(self, tmp_path):
-        settings = cs.read_settings(tmp_path).settings
+        settings = cs.read_settings().settings
 
         assert settings.assigned_structures == {}
         assert settings.as_dict()["assigned_structures"] == {}
@@ -932,7 +912,6 @@ class TestAssignedStructures:
             PRESS_STRUCTURE: ADVENTURE_ASSIGNED_PROPERTY,
         }
         saved = cs.save_settings(
-            tmp_path,
             expected_revision=0,
             native_task_auto=_default_policy(),
             excluded=[],
@@ -940,7 +919,7 @@ class TestAssignedStructures:
         )
 
         assert saved.assigned_structures == declarations
-        result = cs.read_settings(tmp_path)
+        result = cs.read_settings()
         assert result.settings.assigned_structures == declarations
         assert result.settings.as_dict()["assigned_structures"] == declarations
 
@@ -948,7 +927,7 @@ class TestAssignedStructures:
         # The ID is a raw, opaque Capacities property ID: it is never
         # normalized, case-folded, or trimmed.
         saved = cs.save_settings(
-            tmp_path, expected_revision=0,
+            expected_revision=0,
             native_task_auto=_default_policy(), excluded=[],
             assigned_structures={"custom-project": "Assigned-ID_CaseSensitive"},
         )
@@ -956,34 +935,34 @@ class TestAssignedStructures:
         assert saved.assigned_structures == {
             "custom-project": "Assigned-ID_CaseSensitive"
         }
-        assert cs.read_settings(tmp_path).settings.assigned_structures == {
+        assert cs.read_settings().settings.assigned_structures == {
             "custom-project": "Assigned-ID_CaseSensitive"
         }
 
     def test_every_fresh_write_emits_the_key_even_when_omitted(self, tmp_path):
         cs.save_settings(
-            tmp_path, expected_revision=0,
+            expected_revision=0,
             native_task_auto=_default_policy(), excluded=[],
         )
 
-        data = json.loads(_bytes(tmp_path).decode("utf-8"))
+        data = json.loads(_bytes().decode("utf-8"))
         assert data["assigned_structures"] == {}
 
     def test_assigned_structures_are_written_sorted_and_deterministic(self, tmp_path):
         cs.save_settings(
-            tmp_path, expected_revision=0,
+            expected_revision=0,
             native_task_auto=_default_policy(), excluded=[],
             assigned_structures={"zeta": "p2", "alpha": "p1"},
         )
 
-        data = json.loads(_bytes(tmp_path).decode("utf-8"))
+        data = json.loads(_bytes().decode("utf-8"))
         assert list(data["assigned_structures"]) == ["alpha", "zeta"]
         assert data["assigned_structures"] == {"alpha": "p1", "zeta": "p2"}
 
     def test_version_1_file_without_the_key_reads_as_empty(self, tmp_path):
-        _write_json(tmp_path, _legacy_version_1_payload())
+        _write_json(_legacy_version_1_payload())
 
-        result = cs.read_settings(tmp_path)
+        result = cs.read_settings()
 
         assert result.persisted is True
         assert result.settings.assigned_structures == {}
@@ -993,11 +972,11 @@ class TestAssignedStructures:
         # The declaration is an adapter/mapping input, never an evaluator
         # input: adding it must not perturb ``AssignmentSettings``.
         baseline = cs.save_settings(
-            tmp_path, expected_revision=0,
+            expected_revision=0,
             native_task_auto=_default_policy(), excluded=[],
         ).to_assignment_settings()
         declared = cs.save_settings(
-            tmp_path, expected_revision=1,
+            expected_revision=1,
             native_task_auto=_default_policy(), excluded=[],
             assigned_structures={PROJECT_STRUCTURE: PROJECT_ASSIGNED_PROPERTY},
         ).to_assignment_settings()
@@ -1024,24 +1003,23 @@ class TestAssignedStructures:
         ],
     )
     def test_malformed_stored_declarations_fail_closed(self, tmp_path, declarations):
-        _write_json(tmp_path, _valid_payload(assigned_structures=declarations))
-        before = _bytes(tmp_path)
+        _write_json(_valid_payload(assigned_structures=declarations))
+        before = _bytes()
 
         with pytest.raises(cs.SettingsFormatError):
-            cs.read_settings(tmp_path)
+            cs.read_settings()
         # A strict save over the malformed file also refuses and preserves the
         # offending bytes rather than repairing them.
         with pytest.raises(cs.SettingsFormatError):
             cs.save_settings(
-                tmp_path, expected_revision=0,
+                expected_revision=0,
                 native_task_auto=_default_policy(), excluded=[],
                 assigned_structures={PROJECT_STRUCTURE: PROJECT_ASSIGNED_PROPERTY},
             )
-        assert _bytes(tmp_path) == before
+        assert _bytes() == before
 
     def test_duplicate_declared_structure_keys_are_rejected(self, tmp_path):
         _write_raw(
-            tmp_path,
             '{"version": 1, "revision": 0, '
             '"native_task_auto": {"active_enabled": true, "due_enabled": true, '
             '"deadline_enabled": true, "deadline_horizon_days": 2}, '
@@ -1050,7 +1028,7 @@ class TestAssignedStructures:
         )
 
         with pytest.raises(cs.SettingsFormatError):
-            cs.read_settings(tmp_path)
+            cs.read_settings()
 
     @pytest.mark.parametrize(
         "declarations",
@@ -1069,13 +1047,13 @@ class TestAssignedStructures:
     ):
         with pytest.raises(ValueError):
             cs.save_settings(
-                tmp_path, expected_revision=0,
+                expected_revision=0,
                 native_task_auto=_default_policy(), excluded=[],
                 assigned_structures=declarations,
             )
 
-        assert not cs.settings_path(tmp_path).exists()
-        assert not cs.lock_path(tmp_path).exists()
+        assert not cs.settings_path().exists()
+        assert not cs.lock_path().exists()
 
     def test_constructed_model_is_strict_about_assigned_structures(self):
         for declarations in (

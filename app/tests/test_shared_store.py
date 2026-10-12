@@ -86,7 +86,7 @@ class TestSharedAcrossPhases:
             shadow.todoist_client, "load_token",
             lambda p: (_ for _ in ()).throw(RuntimeError("no token")),
         )
-        _todoist, store = main_mod.build_real_read_clients(tmp_path, {})
+        _todoist, store = main_mod.build_real_read_clients({})
         assert store is calendar_bridge.shared_store()
         assert counting_store.constructed == 1
 
@@ -98,7 +98,7 @@ class TestSharedAcrossPhases:
             lambda p: (_ for _ in ()).throw(RuntimeError("no token")),
         )
         preflight = calendar_bridge.shared_store()
-        state = shadow.gather_live_state({}, tmp_path)
+        state = shadow.gather_live_state({})
         assert counting_store.constructed == 1  # no second construction
         assert state.get("calendar_unavailable") is not True
         assert state["calendar_events"] == []
@@ -136,7 +136,7 @@ class FakeStoreWithCals:
         return list(self._cals)
 
 
-def _fake_live_state(config, vault_root):
+def _fake_live_state(config):
     return {
         "todoist_tasks": [],
         "calendar_events": [],
@@ -164,7 +164,7 @@ class TestWritableCalendarPrecondition:
             "| Morning | 12:00 AM | 11:59 PM |\n",
             encoding="utf-8",
         )
-        app = main_mod.create_app(vault_root=vault)
+        app = main_mod.create_app()
         c = TestClient(app)
         c.app_token = app.state.token
         return c
@@ -182,7 +182,7 @@ class TestWritableCalendarPrecondition:
                 touched["todoist"] = True
                 raise AssertionError("no write client may be touched before the gate")
 
-        client.app.state.build_commit_clients = lambda v, cfg: (TripwireTodoist(), store)
+        client.app.state.build_commit_clients = lambda cfg: (TripwireTodoist(), store)
         r = client.post(
             "/commit?mode=live",
             headers={"X-TDTB-Token": client.app_token},

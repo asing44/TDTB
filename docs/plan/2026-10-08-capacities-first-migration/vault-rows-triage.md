@@ -2,6 +2,9 @@
      "$PY" tools/vault_rows_report.py --vault-root "$VAULT" --format md > /Users/walle-mini/Repos/Projects/TDTB/docs/plan/2026-10-08-capacities-first-migration/vault-rows-triage.md
      Read-only: it writes nothing to the vault. -->
 
+> **Historical (vault removal V4, 2026-10-12):** this document predates the removal of the Obsidian vault. Any vault root, `TDTB_VAULT_ROOT`, `sources.vault_enabled`, `tools/vault_rows_report.py`, `tools/migrate_vault_state.py` or `schema_guard` step below describes code that no longer exists. See `docs/plan/2026-10-12-vault-removal/plan.md`.
+
+
 # Vault rows the S5 cutover would remove
 
 - logical day: **2026-10-09**

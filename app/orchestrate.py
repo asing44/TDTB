@@ -16,12 +16,12 @@ live ``/commit?mode=live`` route (T15) calls:
     idempotent and self-reconciling (commit.py's guarantee); a writer
     returning ``ok=False`` only marks its own ledger entry failed — later
     surfaces still run. Nothing here re-raises a writer's failure.
-  - **Per-surface crash-consistency.** The ledger is persisted to the vault's
+  - **Per-surface crash-consistency.** The ledger is persisted to the state-dir
     ``tdtb-runstate-<today>.md`` note immediately after each surface is
     processed, not just at the end — a crash mid-run still leaves the ok
     surfaces recorded on disk.
   - **Resume skips known-ok surfaces.** With ``resume=True``, a surface whose
-    *prior* ledger entry (loaded from the vault) already reads ``ok`` is
+    *prior* ledger entry (loaded from the state dir) already reads ``ok`` is
     carried forward verbatim and its writer is never re-invoked. The writers
     are idempotent so re-running them would also be safe — resuming instead
     of re-running is a deliberate proof of that safety, and it avoids
@@ -29,7 +29,7 @@ live ``/commit?mode=live`` route (T15) calls:
   - **``recent-selections`` stays a post-commit action** (per commit.py's
     docstring) — appended only when the *whole* run lands ok.
 
-Base-state loading note: ``gather.load_runstate(vault_root, valid_date)``
+Base-state loading note: ``gather.load_runstate(valid_date)``
 finds the most recent runstate *strictly before* ``valid_date`` (its
 contract, built for the precompute's diff-base lookup) — it can never see a
 same-day file. Resume fundamentally needs exactly that same-day file (a prior
@@ -124,7 +124,7 @@ def _empty_entry(key: str, *, note: str, status: str, error: str | None = None) 
     }
 
 
-def _prior_state(vault_root: Path, today: date) -> dict[str, Any] | None:
+def _prior_state(today: date) -> dict[str, Any] | None:
     """State to carry forward into this run.
 
     Prefers today's own runstate note (an earlier partial run this same day —
@@ -134,12 +134,12 @@ def _prior_state(vault_root: Path, today: date) -> dict[str, Any] | None:
     note doesn't exist yet (still preserves whatever ``/gather`` or a prior
     day left behind, per commit_ledger's "preserves other runstate keys"
     guarantee)."""
-    own_path = runstate.runstate_read_path(vault_root, today)
+    own_path = runstate.runstate_read_path(today)
     if own_path.is_file():
         data = gather._extract_json_block(own_path.read_text(encoding="utf-8", errors="replace"))
         if data is not None:
             return data
-    _, state = gather.load_runstate(vault_root, today)
+    _, state = gather.load_runstate(today)
     return state
 
 
@@ -148,7 +148,6 @@ def run_orchestrated(
     *,
     todoist: commit.TodoistLike | None = None,
     store: commit.EventStoreLike | None = None,
-    vault_root: Path | str | None = None,
     today: date | None = None,
     resume: bool = False,
     selections: list[dict[str, Any]] | None = None,
@@ -167,18 +166,17 @@ def run_orchestrated(
     """
     today = today or date.today()
     now = now or datetime.now(timezone.utc)
-    vault_path = Path(vault_root) if vault_root is not None else None
 
-    prior: dict[str, Any] | None = _prior_state(vault_path, today) if vault_path is not None else None
-    if persist_ledger and vault_path is not None and prior:
+    prior: dict[str, Any] | None = _prior_state(today)
+    if persist_ledger and prior:
         # Carry a prior-day state forward into today's note ONCE, under the
         # day lock — only when today's own note doesn't exist yet. Later
         # persists are locked commit_ledger-only merges (G26), so they can't
         # do this carry-forward themselves.
         with runstate.day_lock(today):
-            if runstate.read_runstate(vault_path, today) is None:
+            if runstate.read_runstate(today) is None:
                 runstate.write_runstate(
-                    vault_path, today, runstate.build_runstate(prior), now=now)
+                    today, runstate.build_runstate(prior), now=now)
     prior_ledger = (prior or {}).get("commit_ledger") or {}
     prior_surfaces = prior_ledger.get("surfaces") or {}
 
@@ -230,19 +228,19 @@ def run_orchestrated(
 
         surfaces[key] = entry
 
-        if persist_ledger and vault_path is not None:
+        if persist_ledger:
             # G26: locked RMW touching ONLY commit_ledger — persisting the
             # run-entry base_state clobbered concurrent /day-setup writes.
             runstate.update_runstate(
-                vault_path, today, {"commit_ledger": ledger}, now=now)
+                today, {"commit_ledger": ledger}, now=now)
 
     overall_ok = all(e["status"] != "failed" for e in surfaces.values())
 
-    if overall_ok and selections and vault_path is not None:
-        runstate.append_recent_selection(vault_path, today, selections)
+    if overall_ok and selections:
+        runstate.append_recent_selection(today, selections)
 
-    if persist_ledger and vault_path is not None:
-        runstate.update_runstate(vault_path, today, {"commit_ledger": ledger}, now=now)
+    if persist_ledger:
+        runstate.update_runstate(today, {"commit_ledger": ledger}, now=now)
 
     landed: list[str] = []
     failed: list[str] = []

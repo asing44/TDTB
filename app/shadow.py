@@ -169,7 +169,7 @@ def _minutes_between(start: str | None, end: str | None) -> int:
 
 
 def _preset_type(name: str, config: dict[str, Any]) -> str | None:
-    # Section key dual-handled (ISS-1): real vault config keys this section by
+    # Section key dual-handled (ISS-1): the config keys this section by
     # its title-case heading "Presets" (the config sections),
     # the app fixtures use lowercase "presets". Title-case wins; lowercase is the
     # fixture fallback — mirrors the row-level Name/name dual-handling below.
@@ -985,7 +985,7 @@ def diff_against_live(manifest: list[ManifestEntry], live_state: dict[str, Any])
 # 3. gather_live_state — the I/O layer
 # ---------------------------------------------------------------------------
 
-def gather_live_state(config: Any, vault_root: str | Path) -> dict[str, Any]:
+def gather_live_state(config: Any) -> dict[str, Any]:
     """Read the current live state of every Phase-5 write target.
 
     Each surface degrades independently — a reachable-but-failing surface
@@ -1002,8 +1002,6 @@ def gather_live_state(config: Any, vault_root: str | Path) -> dict[str, Any]:
     calendar window) rather than
     config-scoped — precision narrows once real writers land in T14/T15.
     """
-    # ``vault_root`` is accepted for signature compatibility only (V4 removes
-    # it): the vault is never read here.
     state: dict[str, Any] = {
         "todoist_tasks": [],
         "calendar_events": [],

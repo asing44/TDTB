@@ -16,8 +16,8 @@ Contract surfaces:
     ``micro_adventure_rotation`` in ``config/tdtb.json`` (plus the local
     override). Absent or malformed → the EXACT fallback seed pool
     (`FALLBACK_POOL`), which stays in code.
-  * History — the log ``<app home>/state/micro-adventure-log.md`` (V2; it
-    lived in the vault at `00 - META/Cache/tdtb-micro-adventure-log.md`),
+  * History — the log ``<app home>/state/micro-adventure-log.md`` (it
+    used to live in the Obsidian vault),
     YAML frontmatter, newest-first. Missing/unparseable → empty history.
 """
 from __future__ import annotations
@@ -32,9 +32,6 @@ import frontmatter
 import app_config
 
 DEFAULT_EXCLUDE_WINDOW_DAYS = 14
-#: Pre-V2 vault location — never read or written by the app; kept only as the
-#: migration tool's source of truth.
-HISTORY_REL_PATH = "00 - META/Cache/tdtb-micro-adventure-log.md"
 STATE_FILENAME = "micro-adventure-log.md"
 _DEFAULT_LOG_DESCRIPTION = "TDTB micro-adventure selection history (newest-first)."
 
@@ -254,7 +251,7 @@ def resolve_prior(
     A callable raising, or returning False/None, is inconclusive.
 
     V3: the former daily-note ``### Live`` checkbox signal is gone with the
-    vault; it has no state-dir equivalent, so an unconfirmed entry degrades to
+    Obsidian vault; it has no state-dir equivalent, so an unconfirmed entry degrades to
     "not done" (pending confirm) until answered in the cockpit."""
     hist = tuple(history)
     if not hist:

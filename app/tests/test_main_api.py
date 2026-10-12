@@ -13,6 +13,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
+import app_config  # noqa: E402
 import capacities_selections  # noqa: E402
 import prompt_state  # noqa: E402
 import main as main_mod  # noqa: E402
@@ -21,7 +22,11 @@ import shadow  # noqa: E402
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "gather"))
 import tdtb_gather as gather  # noqa: E402
-from tests.config_markdown import read_config_note, write_config_note  # noqa: E402
+from tests.config_markdown import (  # noqa: E402
+    install_config_markdown,
+    read_config_note,
+    write_config_note,
+)
 
 
 MUTATING_ROUTES = ("/gather", "/digest", "/adjust", "/sequence", "/commit")
@@ -44,7 +49,7 @@ def vault(tmp_path) -> Path:
 @pytest.fixture
 def client(vault) -> TestClient:
     vault.mkdir()
-    app = main_mod.create_app(vault_root=vault)
+    app = main_mod.create_app()
     c = TestClient(app)
     c.app_token = app.state.token
     return c
@@ -89,14 +94,6 @@ class TestRouteShape:
         assert r.status_code == 501
         assert "T14" in r.json()["detail"]
 
-    def test_503_when_vault_root_unconfigured(self, monkeypatch):
-        monkeypatch.delenv(main_mod.VAULT_ROOT_ENV, raising=False)
-        app = main_mod.create_app()
-        c = TestClient(app)
-        r = c.get("/config")
-        assert r.status_code == 503
-
-
 class TestTokenGuard:
     @pytest.mark.parametrize("route", MUTATING_ROUTES)
     def test_missing_token_403(self, client, route):
@@ -114,14 +111,14 @@ class TestTokenGuard:
 
 
 class TestGatherAndRunstate:
-    def test_gather_writes_runstate_and_cache(self, client, vault):
+    def test_gather_writes_runstate_only(self, client, vault):
         r = client.post("/gather", headers=_auth(client))
         assert r.status_code == 200
         body = r.json()
         assert body["pool_count"] == 0 and body["assigned_count"] == 0
 
         today = gather.effective_date(datetime.now())
-        rs_path = rs.runstate_read_path(vault, today)
+        rs_path = rs.runstate_read_path(today)
         assert rs_path.is_file()
         text = rs_path.read_text(encoding="utf-8")
         # Frontmatter shape per SKILL.md § 0.8
@@ -135,10 +132,10 @@ class TestGatherAndRunstate:
         assert data["selections"] == []
         assert "dedup_map" in data and "re_included" in data
 
-        # active-inventory cache also written
-        assert (vault / gather.CACHE_REL_PATH).is_file()
+        # No active-inventory / precompute cache is written any more.
+        assert not list(vault.rglob("*")) if vault.exists() else True
 
-    def test_gather_deletes_stale_runstates(self, client, vault):
+    def test_gather_deletes_stale_runstates(self, client):
         # S1: trigger-1 cleanup prunes earlier-dated notes in the ACTIVE state
         # directory; the frozen vault cache is never written or pruned.
         rs.state_runstate_dir().mkdir(parents=True, exist_ok=True)
@@ -149,11 +146,10 @@ class TestGatherAndRunstate:
         assert not stale.exists()
         assert rs.state_runstate_path(today).is_file()
 
-    def test_runstate_loadable_by_gather_load_runstate(self, vault):
-        vault.mkdir()
+    def test_runstate_loadable_by_gather_load_runstate(self):
         d = date(2026, 7, 10)
-        rs.write_runstate(vault, d, rs.build_runstate({"selections": [{"id": "x"}]}))
-        diff_base, state = gather.load_runstate(vault, d + timedelta(days=1))
+        rs.write_runstate(d, rs.build_runstate({"selections": [{"id": "x"}]}))
+        diff_base, state = gather.load_runstate(d + timedelta(days=1))
         assert diff_base == d
         assert state["selections"] == [{"id": "x"}]
 
@@ -173,7 +169,7 @@ class TestDigestDeterminism:
         b = {"pool_items": list(reversed(POOL_ITEMS)), "assigned_items": [], "today": "2026-07-12"}
         assert self._digest(client, a)["suggested"] == self._digest(client, b)["suggested"]
 
-    def test_digest_honors_same_day_drop_on_both_surfaces(self, client, vault):
+    def test_digest_honors_same_day_drop_on_both_surfaces(self, client):
         """A dropped source stays out of POST /digest even when the caller
         supplies fresh pool and assigned inputs without refreshing /plan-inputs."""
         today = gather.effective_date(datetime.now())
@@ -187,7 +183,7 @@ class TestDigestDeterminism:
             "path": "Projects/Dropped Suggested.md",
             "assigned": False,
         }
-        rs.update_runstate(vault, today, {
+        rs.update_runstate(today, {
             "dropped": [
                 {"identity": assigned["path"], "name": assigned["name"]},
                 {"identity": suggested["path"], "name": suggested["name"]},
@@ -255,18 +251,17 @@ class TestDigestTagExclusions:
             ],
         }
 
-    def _save(self, vault) -> None:
+    def _save(self) -> None:
         import exclusion_settings as es_mod
         es_mod.save_settings(
-            vault,
             expected_revision=0,
             exclusions=[
                 {"source": "capacities", "space_id": self.SPACE, "tag_id": self.TAG_A}
             ],
         )
 
-    def test_digest_applies_tag_exclusions_on_both_surfaces(self, client, vault):
-        self._save(vault)
+    def test_digest_applies_tag_exclusions_on_both_surfaces(self, client):
+        self._save()
         assigned = self._row("Assigned Drop", self.TAG_A, "habituals")
         pool_drop = self._row("Pool Drop", self.TAG_A, "habituals")
         keep = self._row("Keep", self.TAG_B, "chores")
@@ -288,9 +283,9 @@ class TestDigestTagExclusions:
         assert [d["surface"] for d in report["decisions"]] == ["assigned", "pool"]
         assert report["decisions"][0]["reason"] == "excluded_tag"
 
-    def test_digest_blocks_when_settings_storage_is_malformed(self, client, vault):
+    def test_digest_blocks_when_settings_storage_is_malformed(self, client):
         import exclusion_settings as es_mod
-        path = es_mod.settings_path(vault)
+        path = es_mod.settings_path()
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("garbage", encoding="utf-8")
 
@@ -307,7 +302,7 @@ class TestRecentSelections:
     SEL = [{"id": "t1", "path": "50 - Operations/Projects/Alpha.md", "blocks": 2}]
 
     def test_append_creates_file_in_skill_shape(self, tmp_path):
-        path = rs.append_recent_selection(tmp_path, date(2026, 7, 12), self.SEL)
+        path = rs.append_recent_selection(date(2026, 7, 12), self.SEL)
         assert path == rs.state_recent_selections_path()
         fm = gather.parse_frontmatter(path.read_text(encoding="utf-8"))
         assert fm is not None
@@ -319,31 +314,30 @@ class TestRecentSelections:
 
     def test_newest_first_max_five(self, tmp_path):
         for i in range(7):
-            rs.append_recent_selection(tmp_path, date(2026, 7, 1 + i), self.SEL)
-        runs = rs.read_recent_selections(tmp_path)
+            rs.append_recent_selection(date(2026, 7, 1 + i), self.SEL)
+        runs = rs.read_recent_selections()
         assert len(runs) == 5
         assert [str(r["date"]) for r in runs] == [
             "2026-07-07", "2026-07-06", "2026-07-05", "2026-07-04", "2026-07-03"]
 
     def test_same_date_replaces_not_duplicates(self, tmp_path):
-        rs.append_recent_selection(tmp_path, date(2026, 7, 12), self.SEL)
-        rs.append_recent_selection(tmp_path, date(2026, 7, 12),
+        rs.append_recent_selection(date(2026, 7, 12), self.SEL)
+        rs.append_recent_selection(date(2026, 7, 12),
                                    [{"id": "t2", "path": "p", "blocks": 1}])
-        runs = rs.read_recent_selections(tmp_path)
+        runs = rs.read_recent_selections()
         assert len(runs) == 1
         assert runs[0]["selections"][0]["id"] == "t2"
 
     def test_fractional_block_duration_round_trips(self, tmp_path):
         rs.append_recent_selection(
-            tmp_path,
             date(2026, 7, 12),
             [{"id": "quick", "path": "p", "blocks": 0.5}],
         )
-        runs = rs.read_recent_selections(tmp_path)
+        runs = rs.read_recent_selections()
         assert runs[0]["selections"][0]["blocks"] == 0.5
 
     def test_missing_file_reads_empty(self, tmp_path):
-        assert rs.read_recent_selections(tmp_path) == []
+        assert rs.read_recent_selections() == []
 
 
 # ---------------------------------------------------------------------------
@@ -389,7 +383,7 @@ LIVE_DIGEST = {"assigned": [{"name": "Garage", "path": "P/Garage.md"}], "suggest
 LIVE_SEQUENCE = {"sequence": [{"id": "Garage", "start": "09:00", "end": "10:00", "zone": "any"}]}
 
 
-def _fake_live_state(config, vault_root):
+def _fake_live_state(config):
     return {
         "todoist_tasks": [],
         "calendar_events": [],
@@ -412,7 +406,7 @@ class TestLiveCommit:
         # P3-02: seed today's server digest identity index so the commit
         # eligibility boundary recognizes "Garage" as a server-known assignment.
         rs.write_digest_index(
-            vault, date(2026, 7, 12),
+            date(2026, 7, 12),
             [{"name": "Garage", "todoist_id": "", "path": "P/Garage.md",
               "surface": "assigned"}],
         )
@@ -423,7 +417,7 @@ class TestLiveCommit:
         # singleton main imports, so this reaches the route's own call).
         monkeypatch.setattr(gather, "effective_date", lambda now: date(2026, 7, 12))
         monkeypatch.setattr(shadow, "gather_live_state", _fake_live_state)
-        client.app.state.build_commit_clients = lambda v, cfg: (FakeLiveTodoist(), FakeLiveStore())
+        client.app.state.build_commit_clients = lambda cfg: (FakeLiveTodoist(), FakeLiveStore())
         # FEEDBACK-24: live commit is gated on an explicit Day Setup confirm —
         # seed it through the real route so the write path is exercisable.
         assert client.post("/day-setup", json={"anchor": "09:00"},
@@ -446,7 +440,7 @@ class TestLiveCommit:
         self._seed_vault(vault)
         monkeypatch.setattr(gather, "effective_date", lambda now: date(2026, 7, 12))
         monkeypatch.setattr(shadow, "gather_live_state", _fake_live_state)
-        client.app.state.build_commit_clients = lambda v, cfg: (FakeLiveTodoist(), FakeLiveStore())
+        client.app.state.build_commit_clients = lambda cfg: (FakeLiveTodoist(), FakeLiveStore())
         assert client.post("/day-setup", json={"anchor": "09:00"},
                            headers=_auth(client)).status_code == 200
 
@@ -463,12 +457,12 @@ class TestLiveCommit:
         assert r.status_code == 501
         assert "T14" in r.json()["detail"]
 
-    def test_mode_shadow_unchanged(self, client, vault, monkeypatch):
+    def test_mode_shadow_unchanged(self, client, monkeypatch):
         monkeypatch.setattr(shadow, "gather_live_state", _fake_live_state)
         # P3-02: seed today's digest index so the eligibility boundary
         # recognizes "Garage" as a server-known assignment.
         rs.write_digest_index(
-            vault, gather.effective_date(datetime.now()),
+            gather.effective_date(datetime.now()),
             [{"name": "Garage", "todoist_id": "", "path": "P/Garage.md",
               "surface": "assigned"}],
         )
@@ -491,7 +485,7 @@ class TestLiveCommit:
         self._seed_vault(vault)
         monkeypatch.setattr(gather, "effective_date", lambda now: date(2026, 7, 12))
 
-        def fake_live_state_no_calendar(config, vault_root):
+        def fake_live_state_no_calendar(config):
             return {
                 "todoist_tasks": [], "calendar_events": [],
                 "vault_frontmatter": {}, "daily_note_text": "# Journal\n",
@@ -500,10 +494,10 @@ class TestLiveCommit:
         monkeypatch.setattr(shadow, "gather_live_state", fake_live_state_no_calendar)
         # store=None -> no calendar titles resolve -> the calendar CREATE row
         # below can never plan -> CommitPlanError -> 422.
-        client.app.state.build_commit_clients = lambda v, cfg: (FakeLiveTodoist(), None)
+        client.app.state.build_commit_clients = lambda cfg: (FakeLiveTodoist(), None)
         assert client.post("/day-setup", json={"anchor": "09:00"},
                            headers=_auth(client)).status_code == 200
-        rs.update_runstate(vault, date(2026, 7, 12), {
+        rs.update_runstate(date(2026, 7, 12), {
             "work_allotment_minutes": 30,
             "schedulable": {"minting": {"on": True}},
         })
@@ -536,7 +530,7 @@ class TestCapacitiesMixedPlanCommit:
     TODOIST_SEQ = {"id": "LOOTS", "start": "10:00", "end": "10:30", "zone": "any"}
     CAP_SEQ = {"id": "Ship project", "start": "09:00", "end": "10:00", "zone": "any"}
 
-    def _seed(self, vault: Path, today: date) -> None:
+    def _seed(self, today: date) -> None:
         capacities_selections.save_selections(
             space_id="space-1", expected_revision=0,
             selections=[{
@@ -544,7 +538,7 @@ class TestCapacitiesMixedPlanCommit:
                 "rules_revision": 0, "acknowledged": True,
             }],
         )
-        rs.write_digest_index(vault, today, [
+        rs.write_digest_index(today, [
             {"name": "Ship project", "todoist_id": "",
              "path": "capacities://space-1/object-1",
              "identity": self.CAP_IDENTITY, "source": "capacities",
@@ -569,7 +563,7 @@ class TestCapacitiesMixedPlanCommit:
         self, client, vault, monkeypatch
     ):
         today = gather.effective_date(datetime.now())
-        self._seed(vault, today)
+        self._seed(today)
         monkeypatch.setattr(shadow, "gather_live_state", _fake_live_state)
         before = {p: p.read_bytes() for p in vault.rglob("*") if p.is_file()}
 
@@ -597,8 +591,8 @@ class TestCapacitiesMixedPlanCommit:
         self, client, vault, monkeypatch
     ):
         today = gather.effective_date(datetime.now())
-        self._seed(vault, today)
-        rs.write_digest_index(vault, today, [
+        self._seed(today)
+        rs.write_digest_index(today, [
             {"name": "Ship project", "todoist_id": "T1", "path": "todoist://T1",
              "source": "todoist", "surface": "assigned"},
             {"name": "Ship project", "todoist_id": "",
@@ -667,7 +661,7 @@ class TestDaySetup:
         assert "Sudsing" in body["re_included"]
 
         today = gather.effective_date(datetime.now())
-        note = rs.runstate_read_path(vault, today)
+        note = rs.runstate_read_path(today)
         assert note.is_file()
         state = gather._extract_json_block(note.read_text(encoding="utf-8"))
         assert state["anchor"] == "18:00" and state["eod"] == "22:00"
@@ -688,11 +682,11 @@ class TestDaySetup:
     def test_day_setup_merge_preserves_existing_keys(self, client, vault):
         _write_min_config(vault)
         today = gather.effective_date(datetime.now())
-        rs.write_runstate(vault, today, rs.build_runstate(
+        rs.write_runstate(today, rs.build_runstate(
             {"micro_adventure": {"idea": "stargaze"}}))
         client.post("/day-setup", json={"anchor": "18:00"}, headers=_auth(client))
         state = gather._extract_json_block(
-            (rs.runstate_read_path(vault, today)).read_text(encoding="utf-8"))
+            (rs.runstate_read_path(today)).read_text(encoding="utf-8"))
         assert state["micro_adventure"] == {"idea": "stargaze"}
         assert state["anchor"] == "18:00"
 
@@ -725,7 +719,7 @@ class TestDaySetup:
 
         today = gather.effective_date(datetime.now())
         state = gather._extract_json_block(
-            (rs.runstate_read_path(vault, today)).read_text(encoding="utf-8"))
+            (rs.runstate_read_path(today)).read_text(encoding="utf-8"))
         assert state["schedulable"]["minting"] == {
             "on": True,
             "n": 2,
@@ -794,32 +788,32 @@ class TestT18b2TriStatePersistence:
         assert r.status_code == 200, r.text
         today = gather.effective_date(datetime.now())
         state = gather._extract_json_block(
-            (rs.runstate_read_path(vault, today)).read_text(encoding="utf-8"))
+            (rs.runstate_read_path(today)).read_text(encoding="utf-8"))
         assert state["day_preset"] == "Workday"
 
     def test_preset_omitted_preserves_existing(self, client, vault):
         _write_day_presets_config(vault)
         today = gather.effective_date(datetime.now())
-        rs.write_runstate(vault, today, rs.build_runstate({"day_preset": "Weekend"}))
+        rs.write_runstate(today, rs.build_runstate({"day_preset": "Weekend"}))
         # Body OMITS day_preset — must not clear the existing override
         r = client.post("/day-setup", json={"anchor": "09:00"},
                         headers=_auth(client))
         assert r.status_code == 200, r.text
         state = gather._extract_json_block(
-            (rs.runstate_read_path(vault, today)).read_text(encoding="utf-8"))
+            (rs.runstate_read_path(today)).read_text(encoding="utf-8"))
         assert state["day_preset"] == "Weekend"
         assert state["anchor"] == "09:00"
 
     def test_preset_null_clears_override(self, client, vault):
         _write_day_presets_config(vault)
         today = gather.effective_date(datetime.now())
-        rs.write_runstate(vault, today, rs.build_runstate({"day_preset": "Workday"}))
+        rs.write_runstate(today, rs.build_runstate({"day_preset": "Workday"}))
         # Body sends explicit null — must clear the override
         r = client.post("/day-setup", json={"day_preset": None},
                         headers=_auth(client))
         assert r.status_code == 200, r.text
         state = gather._extract_json_block(
-            (rs.runstate_read_path(vault, today)).read_text(encoding="utf-8"))
+            (rs.runstate_read_path(today)).read_text(encoding="utf-8"))
         assert state["day_preset"] is None
 
     def test_allotment_positive_persists(self, client, vault):
@@ -829,30 +823,30 @@ class TestT18b2TriStatePersistence:
         assert r.status_code == 200, r.text
         today = gather.effective_date(datetime.now())
         state = gather._extract_json_block(
-            (rs.runstate_read_path(vault, today)).read_text(encoding="utf-8"))
+            (rs.runstate_read_path(today)).read_text(encoding="utf-8"))
         assert state["work_allotment_minutes"] == 240
 
     def test_allotment_omitted_preserves_existing(self, client, vault):
         _write_day_presets_config(vault)
         today = gather.effective_date(datetime.now())
-        rs.write_runstate(vault, today, rs.build_runstate({"work_allotment_minutes": 180}))
+        rs.write_runstate(today, rs.build_runstate({"work_allotment_minutes": 180}))
         r = client.post("/day-setup", json={"anchor": "09:00"},
                         headers=_auth(client))
         assert r.status_code == 200, r.text
         state = gather._extract_json_block(
-            (rs.runstate_read_path(vault, today)).read_text(encoding="utf-8"))
+            (rs.runstate_read_path(today)).read_text(encoding="utf-8"))
         assert state["work_allotment_minutes"] == 180
         assert state["anchor"] == "09:00"
 
     def test_allotment_null_clears_override(self, client, vault):
         _write_day_presets_config(vault)
         today = gather.effective_date(datetime.now())
-        rs.write_runstate(vault, today, rs.build_runstate({"work_allotment_minutes": 240}))
+        rs.write_runstate(today, rs.build_runstate({"work_allotment_minutes": 240}))
         r = client.post("/day-setup", json={"work_allotment_minutes": None},
                         headers=_auth(client))
         assert r.status_code == 200, r.text
         state = gather._extract_json_block(
-            (rs.runstate_read_path(vault, today)).read_text(encoding="utf-8"))
+            (rs.runstate_read_path(today)).read_text(encoding="utf-8"))
         assert state["work_allotment_minutes"] is None
 
     def test_allotment_zero_persists_as_disable(self, client, vault):
@@ -862,7 +856,7 @@ class TestT18b2TriStatePersistence:
         assert r.status_code == 200, r.text
         today = gather.effective_date(datetime.now())
         state = gather._extract_json_block(
-            (rs.runstate_read_path(vault, today)).read_text(encoding="utf-8"))
+            (rs.runstate_read_path(today)).read_text(encoding="utf-8"))
         assert state["work_allotment_minutes"] == 0
 
     def test_allotment_not_divisible_by_15_rejected(self, client, vault):
@@ -907,25 +901,25 @@ class TestT18b2TriStatePersistence:
         client.post("/day-setup", json={"work_allotment_minutes": 240},
                     headers=_auth(client))
         state = gather._extract_json_block(
-            (rs.runstate_read_path(vault, today)).read_text(encoding="utf-8"))
+            (rs.runstate_read_path(today)).read_text(encoding="utf-8"))
         assert state["work_allotment_minutes"] == 240
         # 2) Omitted — must preserve 240
         client.post("/day-setup", json={"anchor": "09:00"},
                     headers=_auth(client))
         state = gather._extract_json_block(
-            (rs.runstate_read_path(vault, today)).read_text(encoding="utf-8"))
+            (rs.runstate_read_path(today)).read_text(encoding="utf-8"))
         assert state["work_allotment_minutes"] == 240
         # 3) Explicit null — must clear to None
         client.post("/day-setup", json={"work_allotment_minutes": None},
                     headers=_auth(client))
         state = gather._extract_json_block(
-            (rs.runstate_read_path(vault, today)).read_text(encoding="utf-8"))
+            (rs.runstate_read_path(today)).read_text(encoding="utf-8"))
         assert state["work_allotment_minutes"] is None
         # 4) Explicit 0 — must persist as 0 (distinct from None)
         client.post("/day-setup", json={"work_allotment_minutes": 0},
                     headers=_auth(client))
         state = gather._extract_json_block(
-            (rs.runstate_read_path(vault, today)).read_text(encoding="utf-8"))
+            (rs.runstate_read_path(today)).read_text(encoding="utf-8"))
         assert state["work_allotment_minutes"] == 0
 
 
@@ -1120,7 +1114,7 @@ class TestSequenceInjection:
                 return cls(2026, 7, 13, 9, 0)  # Monday 09:00
 
         monkeypatch.setattr(main_mod, "datetime", _FrozenDatetime)
-        rs.write_digest_index(vault, date(2026, 7, 13), [{
+        rs.write_digest_index(date(2026, 7, 13), [{
             "name": "Garage", "todoist_id": "", "path": "P/Garage.md",
             "surface": "assigned", "source": "vault", "duration": 60,
             "blocks": 2,
@@ -1185,7 +1179,7 @@ class TestSequenceInjection:
     ):
         _write_min_config(vault)
         frozen_date = date(2026, 7, 13)
-        rs.write_runstate(vault, frozen_date, rs.build_runstate({
+        rs.write_runstate(frozen_date, rs.build_runstate({
             "schedulable": {"minting": {
                 "on": True,
                 "sessions": ["mint:morning:08:30"],
@@ -1208,7 +1202,7 @@ class TestSequenceInjection:
                 return cls(2026, 7, 13, 9, 0)
 
         monkeypatch.setattr(main_mod, "datetime", _FrozenDatetime)
-        rs.write_digest_index(vault, frozen_date, [{
+        rs.write_digest_index(frozen_date, [{
             "name": "Garage", "todoist_id": "", "path": "P/Garage.md",
             "surface": "assigned", "source": "vault", "duration": 60,
             "blocks": 2,
@@ -1272,7 +1266,7 @@ class TestEstimationCorrection:
     def _run(self, client, vault, monkeypatch, defaults):
         _write_min_config(vault)
         today = gather.effective_date(datetime.now())
-        rs.write_digest_index(vault, today, [{
+        rs.write_digest_index(today, [{
             "name": "Garage", "todoist_id": "", "path": "P/Garage.md",
             "surface": "assigned", "source": "vault", "blocks": 2,
         }])
@@ -1369,10 +1363,10 @@ class TestRecurringPlacementImmunity:
         "blocks": 0.5, "is_recurring": True, "scheduled_start": "12:30",
     }
 
-    def _post(self, client, vault, monkeypatch, *, pinned_rows=None, captured=None):
+    def _post(self, client, monkeypatch, *, pinned_rows=None, captured=None):
         captured = captured if captured is not None else {}
         today = gather.effective_date(datetime.now())
-        rs.write_digest_index(vault, today, [{
+        rs.write_digest_index(today, [{
             "name": "LOOTS", "todoist_id": "t-loots",
             "path": "todoist://t-loots", "surface": "assigned",
             "source": "todoist", "blocks": 0.5,
@@ -1393,35 +1387,35 @@ class TestRecurringPlacementImmunity:
             "pinned_rows": pinned_rows or [],
         }, headers=_auth(client)), captured
 
-    def test_recurring_row_excluded_from_movable_and_walled(self, client, vault, monkeypatch):
-        r, captured = self._post(client, vault, monkeypatch)
+    def test_recurring_row_excluded_from_movable_and_walled(self, client, monkeypatch):
+        r, captured = self._post(client, monkeypatch)
         assert r.status_code == 200, r.text
         assert all((i.get("id") or i.get("name")) != "LOOTS"
                    for i in captured["assigned"])
         walls = [b for b in captured["anchored"] if b.get("pinned")]
         assert [(w["Start"], w["End"]) for w in walls] == [("12:30", "12:45")]
 
-    def test_recurring_row_lands_in_sequence_and_response_pins(self, client, vault, monkeypatch):
-        r, _ = self._post(client, vault, monkeypatch)
+    def test_recurring_row_lands_in_sequence_and_response_pins(self, client, monkeypatch):
+        r, _ = self._post(client, monkeypatch)
         rows = {row["id"]: row for row in r.json()["sequence"]}
         assert rows["LOOTS"]["start"] == "12:30"
         pins = r.json()["pinned_rows"]
         assert [p["id"] for p in pins] == ["LOOTS"]
 
-    def test_client_pin_for_recurring_id_wins_no_duplicate(self, client, vault, monkeypatch):
+    def test_client_pin_for_recurring_id_wins_no_duplicate(self, client, monkeypatch):
         pin = {"id": "LOOTS", "start": "12:30", "end": "12:45", "zone": None}
-        r, captured = self._post(client, vault, monkeypatch, pinned_rows=[pin])
+        r, captured = self._post(client, monkeypatch, pinned_rows=[pin])
         assert r.status_code == 200, r.text
         walls = [b for b in captured["anchored"] if b.get("pinned")]
         assert len(walls) == 1
         assert r.json()["pinned_rows"] == [pin]
 
-    def test_conflicting_client_pin_rejected_before_judgment(self, client, vault, monkeypatch):
+    def test_conflicting_client_pin_rejected_before_judgment(self, client, monkeypatch):
         # a client pin of ANOTHER row overlapping the recurring wall must
         # fail closed pre-charge, same as overlapping client pins do
         pin = {"id": "B", "start": "12:30", "end": "13:00", "zone": None}
         called = {}
-        r, captured = self._post(client, vault, monkeypatch, pinned_rows=[pin],
+        r, captured = self._post(client, monkeypatch, pinned_rows=[pin],
                                  captured=called)
         assert r.status_code == 422
         assert "assigned" not in called  # judgment never invoked
@@ -1436,20 +1430,20 @@ class TestNativeTimedRouteEnforcement:
         "blocks": 0.5, "is_recurring": False, "scheduled_start": "14:00",
     }
 
-    def _seed_index(self, vault, rows=None):
+    def _seed_index(self, rows=None):
         today = gather.effective_date(datetime.now())
-        rs.write_digest_index(vault, today, rows or [{
+        rs.write_digest_index(today, rows or [{
             "name": "ERRAND", "todoist_id": "t-errand",
             "path": "todoist://t-errand", "surface": "assigned",
             "source": "todoist", "blocks": 0.5,
             "is_recurring": False, "scheduled_start": "14:00",
         }])
 
-    def _post_sequence(self, client, vault, monkeypatch, *, pinned_rows=None,
+    def _post_sequence(self, client, monkeypatch, *, pinned_rows=None,
                        captured=None, submitted_rows=None,
                        server_rows=None):
         captured = captured if captured is not None else {}
-        self._seed_index(vault, server_rows)
+        self._seed_index(server_rows)
 
         def fake_propose(assigned, config, anchored_blocks, ctx=None):
             captured["assigned"] = assigned
@@ -1474,10 +1468,10 @@ class TestNativeTimedRouteEnforcement:
         return client.post("/sequence", json=payload, headers=_auth(client)), captured
 
     def test_omitted_pin_is_rederived_for_non_recurring_native_time(
-        self, client, vault, monkeypatch
+        self, client, monkeypatch
     ):
         # Contract: omitting pinned_rows cannot turn a native timed row loose.
-        r, captured = self._post_sequence(client, vault, monkeypatch)
+        r, captured = self._post_sequence(client, monkeypatch)
         assert r.status_code == 200, r.text
         assert all(
             (item.get("id") or item.get("name")) != "ERRAND"
@@ -1490,7 +1484,7 @@ class TestNativeTimedRouteEnforcement:
         }]
 
     def test_submitted_blocks_override_is_effective_but_native_provenance_stays_server_owned(
-        self, client, vault, monkeypatch
+        self, client, monkeypatch
     ):
         # Client timing/source/recurrence are replaced by the dated server
         # index, and native provenance (native_blocks) is server-owned — but
@@ -1508,7 +1502,7 @@ class TestNativeTimedRouteEnforcement:
             "is_recurring": False, "scheduled_start": "14:00",
         }]
         r, captured = self._post_sequence(
-            client, vault, monkeypatch, submitted_rows=[submitted],
+            client, monkeypatch, submitted_rows=[submitted],
             server_rows=server,
         )
         assert r.status_code == 200, r.text
@@ -1522,12 +1516,12 @@ class TestNativeTimedRouteEnforcement:
         assert row["allow_time_adjustment"] is True
 
     def test_client_blocks_zero_cannot_disable_native_protection(
-        self, client, vault, monkeypatch
+        self, client, monkeypatch
     ):
         submitted = dict(self.NON_RECURRING)
         submitted.update({"blocks": 0, "scheduled_start": "09:00", "source": "vault"})
         r, captured = self._post_sequence(
-            client, vault, monkeypatch, submitted_rows=[submitted]
+            client, monkeypatch, submitted_rows=[submitted]
         )
         assert r.status_code == 200, r.text
         assert all(item.get("id") != "ERRAND" for item in captured["assigned"])
@@ -1536,12 +1530,12 @@ class TestNativeTimedRouteEnforcement:
 
     @pytest.mark.parametrize("allow", [False, "true", 1])
     def test_only_exact_boolean_opt_in_survives(
-        self, client, vault, monkeypatch, allow
+        self, client, monkeypatch, allow
     ):
         submitted = dict(self.NON_RECURRING)
         submitted["allow_time_adjustment"] = allow
         r, captured = self._post_sequence(
-            client, vault, monkeypatch, submitted_rows=[submitted]
+            client, monkeypatch, submitted_rows=[submitted]
         )
         assert r.status_code == 200, r.text
         assert all(item.get("id") != "ERRAND" for item in captured["assigned"])
@@ -1549,7 +1543,7 @@ class TestNativeTimedRouteEnforcement:
         assert [(wall["Start"], wall["End"]) for wall in walls] == [("14:00", "14:15")]
 
     def test_opt_in_on_matching_vault_row_does_not_survive(
-        self, client, vault, monkeypatch
+        self, client, monkeypatch
     ):
         vault_row = {
             "id": "LOCAL", "name": "LOCAL", "source": "vault",
@@ -1567,7 +1561,7 @@ class TestNativeTimedRouteEnforcement:
         submitted = [dict(self.NON_RECURRING, allow_time_adjustment=True),
                      dict(vault_row, allow_time_adjustment=True)]
         r, captured = self._post_sequence(
-            client, vault, monkeypatch, submitted_rows=submitted,
+            client, monkeypatch, submitted_rows=submitted,
             server_rows=server,
         )
         assert r.status_code == 200, r.text
@@ -1591,7 +1585,7 @@ class TestNativeTimedRouteEnforcement:
         assert called == {}
 
     def test_suggested_identity_cannot_be_submitted_as_assigned(
-        self, client, vault, monkeypatch
+        self, client, monkeypatch
     ):
         suggested = dict(self.NON_RECURRING)
         server = [{
@@ -1606,7 +1600,7 @@ class TestNativeTimedRouteEnforcement:
             lambda *args, **kwargs: called.setdefault("called", True),
         )
         r, _ = self._post_sequence(
-            client, vault, monkeypatch, submitted_rows=[suggested],
+            client, monkeypatch, submitted_rows=[suggested],
             server_rows=server,
         )
         assert r.status_code == 422
@@ -1614,7 +1608,7 @@ class TestNativeTimedRouteEnforcement:
         assert called == {}
 
     def test_mismatched_identity_cannot_authorize_by_name(
-        self, client, vault, monkeypatch
+        self, client, monkeypatch
     ):
         server = [{
             "name": "ERRAND", "todoist_id": "t-other",
@@ -1628,7 +1622,7 @@ class TestNativeTimedRouteEnforcement:
             lambda *args, **kwargs: called.setdefault("called", True),
         )
         r, _ = self._post_sequence(
-            client, vault, monkeypatch,
+            client, monkeypatch,
             submitted_rows=[dict(self.NON_RECURRING, allow_time_adjustment=True)],
             server_rows=server,
         )
@@ -1652,14 +1646,14 @@ class TestNativeTimedRouteEnforcement:
         assert "Legacy" in str(r.json()["detail"])
         assert called == {}
 
-    def test_matching_pin_is_canonicalized_at_route_boundary(self, client, vault, monkeypatch):
+    def test_matching_pin_is_canonicalized_at_route_boundary(self, client, monkeypatch):
         # Contract: a matching client pin is accepted only as server canonical.
         matching = {
             "id": "ERRAND", "start": "14:00", "end": "14:15",
             "zone": "client-zone", "metadata": {"stale": True},
         }
         r, captured = self._post_sequence(
-            client, vault, monkeypatch, pinned_rows=[matching]
+            client, monkeypatch, pinned_rows=[matching]
         )
         assert r.status_code == 200, r.text
         walls = [block for block in captured["anchored"] if block.get("pinned")]
@@ -1668,14 +1662,14 @@ class TestNativeTimedRouteEnforcement:
             "id": "ERRAND", "start": "14:00", "end": "14:15", "zone": None,
         }]
 
-    def test_conflicting_native_pin_fails_before_billed_boundary(self, client, vault, monkeypatch):
+    def test_conflicting_native_pin_fails_before_billed_boundary(self, client, monkeypatch):
         # Contract: an altered native pin is rejected before judgment/billing.
         captured = {}
         conflicting = {
             "id": "ERRAND", "start": "13:00", "end": "13:15", "zone": None,
         }
         r, captured = self._post_sequence(
-            client, vault, monkeypatch, pinned_rows=[conflicting],
+            client, monkeypatch, pinned_rows=[conflicting],
             captured=captured,
         )
         assert r.status_code == 422
@@ -1696,22 +1690,22 @@ class TestNativeTimedRouteEnforcement:
         ],
     )
     def test_duplicate_foreign_and_malformed_pins_remain_rejected(
-        self, client, vault, monkeypatch, pinned_rows, message
+        self, client, monkeypatch, pinned_rows, message
     ):
         # Contract: generic pin validation remains a hard preflight boundary.
         r, captured = self._post_sequence(
-            client, vault, monkeypatch, pinned_rows=pinned_rows,
+            client, monkeypatch, pinned_rows=pinned_rows,
         )
         assert r.status_code == 422
         assert message in str(r.json()["detail"])
         assert "assigned" not in captured
 
     def test_validate_sequence_recomputes_protection_without_pinned_rows(
-        self, client, vault
+        self, client
     ):
         # Contract: /validate-sequence must reject a moved native row even when
         # client pinned_rows and snapshot metadata are both omitted.
-        self._seed_index(vault)
+        self._seed_index()
         r = client.post("/validate-sequence", json={
             "sequence": [{
                 "id": "ERRAND", "start": "15:00", "end": "15:15", "zone": "any",
@@ -1736,8 +1730,8 @@ class TestNativeTimedRouteEnforcement:
 
 
 class TestCommitNativeProtection:
-    def _seed_recurring_todoist(self, vault, today):
-        rs.write_digest_index(vault, today, [{
+    def _seed_recurring_todoist(self, today):
+        rs.write_digest_index(today, [{
             "name": "Native", "todoist_id": "t-native",
             "path": "todoist://t-native", "surface": "assigned",
             "source": "todoist", "duration": 30, "blocks": 1,
@@ -1774,8 +1768,8 @@ class TestCommitNativeProtection:
             "config": {},
         }
 
-    def _seed_included_and_omitted_native_rows(self, vault, today):
-        rs.write_digest_index(vault, today, [{
+    def _seed_included_and_omitted_native_rows(self, today):
+        rs.write_digest_index(today, [{
             "name": "Included Native", "todoist_id": "t-included",
             "path": "todoist://t-included", "surface": "assigned",
             "source": "todoist", "duration": 30, "blocks": 0,
@@ -1805,12 +1799,12 @@ class TestCommitNativeProtection:
         }
 
     def test_shadow_commit_rejects_moved_native_row_without_pin_metadata(
-        self, client, vault, monkeypatch
+        self, client, monkeypatch
     ):
         # Contract: /commit recomputes native protection unconditionally before
         # manifest construction; omitted client metadata cannot bypass it.
         today = gather.effective_date(datetime.now())
-        rs.write_digest_index(vault, today, [{
+        rs.write_digest_index(today, [{
             "name": "Native", "todoist_id": "t-native",
             "path": "todoist://t-native", "surface": "assigned",
             "source": "todoist", "blocks": 1,
@@ -1846,10 +1840,10 @@ class TestCommitNativeProtection:
         assert manifest_calls == []
 
     def test_exact_opt_in_reaches_sanitized_recurring_digest(
-        self, client, vault, monkeypatch
+        self, client, monkeypatch
     ):
         today = gather.effective_date(datetime.now())
-        self._seed_recurring_todoist(vault, today)
+        self._seed_recurring_todoist(today)
         manifest_calls = self._capture_shadow_manifest(monkeypatch)
 
         body = self._commit_body(allow=True)
@@ -1876,10 +1870,10 @@ class TestCommitNativeProtection:
 
     @pytest.mark.parametrize("allow", [False, "true"])
     def test_non_boolean_opt_in_is_not_retained(
-        self, client, vault, monkeypatch, allow
+        self, client, monkeypatch, allow
     ):
         today = gather.effective_date(datetime.now())
-        self._seed_recurring_todoist(vault, today)
+        self._seed_recurring_todoist(today)
         manifest_calls = self._capture_shadow_manifest(monkeypatch)
 
         r = client.post(
@@ -1892,10 +1886,10 @@ class TestCommitNativeProtection:
         assert "allow_time_adjustment" not in safe_row
 
     def test_nonmatching_opt_in_is_rejected_before_manifest(
-        self, client, vault, monkeypatch
+        self, client, monkeypatch
     ):
         today = gather.effective_date(datetime.now())
-        self._seed_recurring_todoist(vault, today)
+        self._seed_recurring_todoist(today)
         manifest_calls = self._capture_shadow_manifest(monkeypatch)
 
         r = client.post(
@@ -1908,10 +1902,10 @@ class TestCommitNativeProtection:
         assert manifest_calls == []
 
     def test_omitted_native_row_is_not_required_in_commit_sequence(
-        self, client, vault, monkeypatch
+        self, client, monkeypatch
     ):
         today = gather.effective_date(datetime.now())
-        self._seed_included_and_omitted_native_rows(vault, today)
+        self._seed_included_and_omitted_native_rows(today)
         manifest_calls = self._capture_shadow_manifest(monkeypatch)
 
         r = client.post(
@@ -1928,10 +1922,10 @@ class TestCommitNativeProtection:
         assert safe_row["duration"] == 30
 
     def test_altered_included_native_row_still_rejects_with_omitted_row(
-        self, client, vault, monkeypatch
+        self, client, monkeypatch
     ):
         today = gather.effective_date(datetime.now())
-        self._seed_included_and_omitted_native_rows(vault, today)
+        self._seed_included_and_omitted_native_rows(today)
         manifest_calls = self._capture_shadow_manifest(monkeypatch)
 
         r = client.post(
@@ -1959,17 +1953,17 @@ class TestEffectiveBlocksOverlay:
             "todoist_id": "t-errand", "path": "todoist://t-errand",
             "blocks": 0.5, "is_recurring": False, "scheduled_start": "14:00"}
 
-    def _seed(self, vault, rows):
+    def _seed(self, rows):
         today = gather.effective_date(datetime.now())
         seeded = [
             {**dict(row), "surface": "assigned"}
             for row in rows
         ]
-        rs.write_digest_index(vault, today, seeded)
+        rs.write_digest_index(today, seeded)
 
-    def _post_sequence(self, client, vault, monkeypatch, *, submitted_rows,
+    def _post_sequence(self, client, monkeypatch, *, submitted_rows,
                        server_rows, captured=None, called=None):
-        self._seed(vault, server_rows)
+        self._seed(server_rows)
         captured = captured if captured is not None else {}
         state = {"called": False}
 
@@ -1991,12 +1985,12 @@ class TestEffectiveBlocksOverlay:
         return r, captured, state
 
     def test_vault_blocks_override_is_effective_for_planning(
-        self, client, vault, monkeypatch
+        self, client, monkeypatch
     ):
         # Red repro: a 3-block today-only override must reach the planning
         # duration (90 min), not be replaced by the server's 1 block.
         r, captured, _ = self._post_sequence(
-            client, vault, monkeypatch,
+            client, monkeypatch,
             submitted_rows=[{**self.VAULT, "blocks": 3}],
             server_rows=[self.VAULT],
         )
@@ -2007,12 +2001,12 @@ class TestEffectiveBlocksOverlay:
         assert row["path"] == "Projects/Local.md"
 
     def test_todoist_blocks_override_cannot_unpin_native_row(
-        self, client, vault, monkeypatch
+        self, client, monkeypatch
     ):
         # blocks=0 is a legitimate effective override, but native protection
         # is server-derived (native_blocks) and must still pin the row.
         r, captured, _ = self._post_sequence(
-            client, vault, monkeypatch,
+            client, monkeypatch,
             submitted_rows=[{**self.TODO, "blocks": 0}],
             server_rows=[self.TODO],
         )
@@ -2022,12 +2016,12 @@ class TestEffectiveBlocksOverlay:
         assert [(wall["Start"], wall["End"]) for wall in walls] == [("14:00", "14:15")]
 
     def test_todoist_override_with_opt_in_is_movable_and_retains_provenance(
-        self, client, vault, monkeypatch
+        self, client, monkeypatch
     ):
         # With the exact opt-in the row is movable; the effective override
         # rides ``blocks`` while ``native_blocks`` keeps the server value.
         r, captured, _ = self._post_sequence(
-            client, vault, monkeypatch,
+            client, monkeypatch,
             submitted_rows=[{**self.TODO, "blocks": 3,
                              "allow_time_adjustment": True,
                              "native_blocks": 0}],
@@ -2040,10 +2034,10 @@ class TestEffectiveBlocksOverlay:
         assert row["allow_time_adjustment"] is True
 
     def test_zero_blocks_override_is_legitimate_for_vault_row(
-        self, client, vault, monkeypatch
+        self, client, monkeypatch
     ):
         r, captured, _ = self._post_sequence(
-            client, vault, monkeypatch,
+            client, monkeypatch,
             submitted_rows=[{**self.VAULT, "blocks": 0}],
             server_rows=[self.VAULT],
         )
@@ -2052,12 +2046,12 @@ class TestEffectiveBlocksOverlay:
         assert row["blocks"] == 0
 
     def test_absent_blocks_falls_back_to_server_blocks(
-        self, client, vault, monkeypatch
+        self, client, monkeypatch
     ):
         submitted = {key: value for key, value in self.VAULT.items()
                      if key != "blocks"}
         r, captured, _ = self._post_sequence(
-            client, vault, monkeypatch,
+            client, monkeypatch,
             submitted_rows=[submitted],
             server_rows=[self.VAULT],
         )
@@ -2067,13 +2061,13 @@ class TestEffectiveBlocksOverlay:
 
     @pytest.mark.parametrize("bad", [True, "3", -1, 999, 10**400])
     def test_malformed_or_extreme_blocks_overlay_fails_closed(
-        self, client, vault, monkeypatch, bad
+        self, client, monkeypatch, bad
     ):
         # Bounded 30-minute-block policy: bools, non-numbers, non-finite
         # (10**400 overflows to non-finite), negatives, and >48 blocks are
         # never silently accepted.
         r, captured, state = self._post_sequence(
-            client, vault, monkeypatch,
+            client, monkeypatch,
             submitted_rows=[{**self.VAULT, "blocks": bad}],
             server_rows=[self.VAULT],
         )
@@ -2083,9 +2077,9 @@ class TestEffectiveBlocksOverlay:
         assert state["called"] is False
 
     def test_validate_sequence_accepts_valid_blocks_overlay(
-        self, client, vault
+        self, client
     ):
-        self._seed(vault, [self.VAULT])
+        self._seed([self.VAULT])
         r = client.post("/validate-sequence", json={
             "sequence": [{"id": "LOCAL", "start": "10:00", "end": "11:30",
                           "zone": "any"}],
@@ -2096,9 +2090,9 @@ class TestEffectiveBlocksOverlay:
         assert r.json()["ok"] is True
 
     def test_validate_sequence_rejects_malformed_blocks_overlay(
-        self, client, vault
+        self, client
     ):
-        self._seed(vault, [self.VAULT])
+        self._seed([self.VAULT])
         r = client.post("/validate-sequence", json={
             "sequence": [{"id": "LOCAL", "start": "10:00", "end": "10:30",
                           "zone": "any"}],
@@ -2121,9 +2115,9 @@ class TestEffectiveBlocksOverlay:
         return manifest_calls
 
     def test_shadow_commit_carries_effective_blocks_overlay(
-        self, client, vault, monkeypatch
+        self, client, monkeypatch
     ):
-        self._seed(vault, [self.VAULT])
+        self._seed([self.VAULT])
         manifest_calls = self._capture_shadow_manifest(monkeypatch)
         r = client.post("/commit?mode=shadow", headers=_auth(client), json={
             "digest": {"assigned": [{**self.VAULT, "blocks": 3}],
@@ -2140,9 +2134,9 @@ class TestEffectiveBlocksOverlay:
         assert safe_row["source"] == "vault"
 
     def test_shadow_commit_todoist_zero_override_keeps_native_blocks(
-        self, client, vault, monkeypatch
+        self, client, monkeypatch
     ):
-        self._seed(vault, [self.TODO])
+        self._seed([self.TODO])
         manifest_calls = self._capture_shadow_manifest(monkeypatch)
         r = client.post("/commit?mode=shadow", headers=_auth(client), json={
             "digest": {"assigned": [{
@@ -2159,9 +2153,9 @@ class TestEffectiveBlocksOverlay:
         assert safe_row["native_blocks"] == 0.5  # server provenance retained
 
     def test_shadow_commit_todoist_zero_override_cannot_unpin(
-        self, client, vault, monkeypatch
+        self, client, monkeypatch
     ):
-        self._seed(vault, [self.TODO])
+        self._seed([self.TODO])
         manifest_calls = self._capture_shadow_manifest(monkeypatch)
         r = client.post("/commit?mode=shadow", headers=_auth(client), json={
             "digest": {"assigned": [{
@@ -2177,9 +2171,9 @@ class TestEffectiveBlocksOverlay:
         assert manifest_calls == []
 
     def test_shadow_commit_rejects_malformed_blocks_overlay(
-        self, client, vault, monkeypatch
+        self, client, monkeypatch
     ):
-        self._seed(vault, [self.VAULT])
+        self._seed([self.VAULT])
         manifest_calls = self._capture_shadow_manifest(monkeypatch)
         r = client.post("/commit?mode=shadow", headers=_auth(client), json={
             "digest": {"assigned": [{**self.VAULT, "blocks": -1}],
@@ -2203,7 +2197,7 @@ class TestCalendarDismissalSequenceSide:
                "Duration": 120, "source": "calendar"}
 
     def test_dismissed_calendar_row_dropped_from_walls_and_frame(
-            self, client, vault, monkeypatch):
+            self, client, monkeypatch):
         r = client.post("/day-setup", json={
             "anchored": [{"id": "Farmers Market", "on": True,
                           "skip_today": True, "time": None}],
@@ -2273,19 +2267,40 @@ last_updated: 2026-07-01
 | Make | interval | 2 | 2 |
 """
 
-DM_IDENTITY = "50 - Operations/Projects/Make.md"
+DM_IDENTITY = "todoist:2"
 
 
-def _seed_dm_vault(vault: Path) -> None:
-    """Vault with one assigned preset-named note (Make, 2 blocks) + config."""
-    cfg = vault / "00 - META/Skill-Configs/tdtb-bridger.md"
-    cfg.parent.mkdir(parents=True, exist_ok=True)
-    write_config_note(cfg, _DM_CONFIG, encoding="utf-8")
-    proj = vault / "50 - Operations" / "Projects"
-    proj.mkdir(parents=True, exist_ok=True)
-    (proj / "Make.md").write_text(
-        "---\ntype: project\nassigned: true\n---\nbody\n", encoding="utf-8"
-    )
+class _DmTodoist:
+    """Read-only Todoist stand-in: one assigned task named like a preset."""
+
+    def get_filter_tasks(self, query, limit=None):
+        import external_sources as ext
+
+        if query == ext.ASSIGNED_QUERY_FALLBACK:
+            return [{"id": "2", "content": "Make", "priority": 4, "labels": []}]
+        return []
+
+    def close(self):
+        pass
+
+
+class _DmStore:
+    def query_events(self, start, end, calendar_ids=None):
+        return []
+
+    def calendars(self):
+        return [{"id": "CAL-X", "title": "Fixture"}]
+
+
+def _seed_dm(client) -> None:
+    """Config with the ``Make`` preset (2 blocks) and one assigned Todoist
+    task of that name, served through the live read seam."""
+    install_config_markdown(_DM_CONFIG)
+    path = app_config.config_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"version": 1, "sources": {"mode": "live"}}),
+                    encoding="utf-8")
+    client.app.state.build_read_clients = lambda cfg: (_DmTodoist(), _DmStore())
 
 
 class TestDurationMemorySave:
@@ -2310,59 +2325,59 @@ class TestDurationMemorySave:
         assert body["identity"] == DM_IDENTITY
         assert body["minutes"] == 90
         assert body["duration_source"] == "remembered"
-        cache = dm.cache_path(vault)
+        cache = dm.cache_path()
         assert cache.is_file()
         assert not cache.is_relative_to(vault)
 
     @pytest.mark.parametrize("minutes", [7, 23, 8])
-    def test_save_rejects_off_grid(self, client, vault, minutes):
+    def test_save_rejects_off_grid(self, client, minutes):
         r = client.post("/duration-memory/save", json={
             "identity": DM_IDENTITY, "minutes": minutes,
         }, headers=_auth(client))
         assert r.status_code == 422
-        assert not dm.cache_path(vault).exists()
+        assert not dm.cache_path().exists()
 
     @pytest.mark.parametrize("minutes", [30.5, "30", True, None])
-    def test_save_rejects_fraction_string_bool(self, client, vault, minutes):
+    def test_save_rejects_fraction_string_bool(self, client, minutes):
         r = client.post("/duration-memory/save", json={
             "identity": DM_IDENTITY, "minutes": minutes,
         }, headers=_auth(client))
         assert r.status_code == 422
-        assert not dm.cache_path(vault).exists()
+        assert not dm.cache_path().exists()
 
-    def test_save_rejects_negative(self, client, vault):
+    def test_save_rejects_negative(self, client):
         r = client.post("/duration-memory/save", json={
             "identity": DM_IDENTITY, "minutes": -5,
         }, headers=_auth(client))
         assert r.status_code == 422
-        assert not dm.cache_path(vault).exists()
+        assert not dm.cache_path().exists()
 
-    def test_save_rejects_name_only_identity(self, client, vault):
+    def test_save_rejects_name_only_identity(self, client):
         r = client.post("/duration-memory/save", json={
             "identity": "Some Display Name", "minutes": 90,
         }, headers=_auth(client))
         assert r.status_code == 422
-        assert not dm.cache_path(vault).exists()
+        assert not dm.cache_path().exists()
 
-    def test_save_zero_is_valid(self, client, vault):
+    def test_save_zero_is_valid(self, client):
         r = client.post("/duration-memory/save", json={
             "identity": DM_IDENTITY, "minutes": 0,
         }, headers=_auth(client))
         assert r.status_code == 200, r.text
         assert r.json()["minutes"] == 0
 
-    def test_invalid_save_preserves_existing_cache(self, client, vault):
+    def test_invalid_save_preserves_existing_cache(self, client):
         ok = client.post("/duration-memory/save", json={
             "identity": DM_IDENTITY, "minutes": 90,
         }, headers=_auth(client))
         assert ok.status_code == 200
-        before = dm.cache_path(vault).read_bytes()
+        before = dm.cache_path().read_bytes()
         for minutes in (7, 30.5, -5):
             r = client.post("/duration-memory/save", json={
                 "identity": DM_IDENTITY, "minutes": minutes,
             }, headers=_auth(client))
             assert r.status_code == 422
-        assert dm.cache_path(vault).read_bytes() == before
+        assert dm.cache_path().read_bytes() == before
 
 
 class TestDurationMemoryReset:
@@ -2371,8 +2386,8 @@ class TestDurationMemoryReset:
             "identity": DM_IDENTITY,
         }).status_code == 403
 
-    def test_reset_removes_and_returns_source_fallback(self, client, vault):
-        _seed_dm_vault(vault)
+    def test_reset_removes_and_returns_source_fallback(self, client):
+        _seed_dm(client)
         save = client.post("/duration-memory/save", json={
             "identity": DM_IDENTITY, "minutes": 90,
         }, headers=_auth(client))
@@ -2390,9 +2405,9 @@ class TestDurationMemoryReset:
         assert body["duration_minutes"] == 60
         assert body["duration_source"] == "preset"
         assert body["found"] is True
-        assert dm.read_vault_memory(vault) == {}
+        assert dm.read_all_memory() == {}
 
-    def test_reset_no_source_fallback_returns_bounded_error(self, client, vault):
+    def test_reset_no_source_fallback_returns_bounded_error(self, client):
         # FT-06 F2-R1: resolve-first — an identity absent from today's plan has
         # NO source fallback, so reset must return a bounded error (not a
         # successful found:false response) and leave durable memory unchanged.
@@ -2404,16 +2419,16 @@ class TestDurationMemoryReset:
         assert isinstance(detail, dict)
         assert detail["code"] == "duration_memory_no_fallback"
         assert "message" in detail
-        assert not dm.cache_path(vault).exists()
+        assert not dm.cache_path().exists()
 
-    def test_reset_no_source_fallback_preserves_durable_bytes(self, client, vault):
+    def test_reset_no_source_fallback_preserves_durable_bytes(self, client):
         # FT-06 F2-R1: when reset is rejected for a missing fallback, the
         # remembered value stays byte-for-byte identical on disk.
         save = client.post("/duration-memory/save", json={
             "identity": "todoist:ghost", "minutes": 90,
         }, headers=_auth(client))
         assert save.status_code == 200
-        cache = dm.cache_path(vault)
+        cache = dm.cache_path()
         before = cache.read_bytes()
 
         r = client.post("/duration-memory/reset", json={
@@ -2421,25 +2436,25 @@ class TestDurationMemoryReset:
         }, headers=_auth(client))
         assert r.status_code == 409, r.text
         assert cache.read_bytes() == before
-        assert dm.read_vault_memory(vault) == {"todoist:ghost": 90}
+        assert dm.read_all_memory() == {"todoist:ghost": 90}
 
     def test_reset_fallback_resolution_failure_preserves_durable_bytes(
         self, client, vault, monkeypatch
     ):
         # FT-06 F2-R1: when fallback resolution fails (gather error), reset
         # returns a bounded error and the remembered value stays unchanged.
-        _seed_dm_vault(vault)
+        _seed_dm(client)
         save = client.post("/duration-memory/save", json={
             "identity": DM_IDENTITY, "minutes": 90,
         }, headers=_auth(client))
         assert save.status_code == 200
-        cache = dm.cache_path(vault)
+        cache = dm.cache_path()
         before = cache.read_bytes()
 
-        def boom(pool_notes, assigned_notes, today):
-            raise RuntimeError("gather exploded mid-resolution")
+        def boom(*args, **kwargs):
+            raise RuntimeError("source read exploded mid-resolution")
 
-        monkeypatch.setattr(gather, "build_run_data", boom)
+        monkeypatch.setattr(main_mod.external_sources, "fetch_todoist_items", boom)
         r = client.post("/duration-memory/reset", json={
             "identity": DM_IDENTITY,
         }, headers=_auth(client))
@@ -2449,14 +2464,14 @@ class TestDurationMemoryReset:
         assert detail["code"] == "duration_memory_fallback_error"
         assert str(vault) not in r.text
         assert cache.read_bytes() == before
-        assert dm.read_vault_memory(vault) == {DM_IDENTITY: 90}
+        assert dm.read_all_memory() == {DM_IDENTITY: 90}
 
     def test_reset_unremembered_with_valid_fallback_reports_removed_false(
-        self, client, vault
+        self, client
     ):
         # No remembered value but a valid source fallback: reset is a no-op
         # deletion and returns the source-resolved fallback.
-        _seed_dm_vault(vault)
+        _seed_dm(client)
         r = client.post("/duration-memory/reset", json={
             "identity": DM_IDENTITY,
         }, headers=_auth(client))
@@ -2467,16 +2482,16 @@ class TestDurationMemoryReset:
         assert body["duration_minutes"] == 60
         assert body["duration_source"] == "preset"
         assert body["found"] is True
-        assert not dm.cache_path(vault).exists()
+        assert not dm.cache_path().exists()
 
-    def test_reset_rejects_name_only_identity(self, client, vault):
+    def test_reset_rejects_name_only_identity(self, client):
         r = client.post("/duration-memory/reset", json={
             "identity": "Some Display Name",
         }, headers=_auth(client))
         assert r.status_code == 422
 
-    def test_reset_fallback_source_resolves_for_vault_row(self, client, vault):
-        _seed_dm_vault(vault)
+    def test_reset_fallback_source_resolves_for_vault_row(self, client):
+        _seed_dm(client)
         client.post("/duration-memory/save", json={
             "identity": DM_IDENTITY, "minutes": 90,
         }, headers=_auth(client))
@@ -2496,7 +2511,7 @@ class TestDurationMemoryErrorRedaction:
     chain only."""
 
     def test_save_cache_error_detail_has_no_absolute_path(self, client, vault):
-        p = dm.cache_path(vault)
+        p = dm.cache_path()
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text("{not json", encoding="utf-8")
         r = client.post("/duration-memory/save", json={
@@ -2504,7 +2519,7 @@ class TestDurationMemoryErrorRedaction:
         }, headers=_auth(client))
         assert r.status_code == 500
         assert str(vault) not in r.text
-        assert str(dm.cache_path(vault)) not in r.text
+        assert str(dm.cache_path()) not in r.text
         detail = r.json()["detail"]
         assert isinstance(detail, dict)
         assert "message" in detail
@@ -2513,8 +2528,8 @@ class TestDurationMemoryErrorRedaction:
         # FT-06 resolve-first: a valid source fallback must exist before the
         # route touches the cache, so seed the vault to reach the store-error
         # path. A corrupt cache then fails closed with a bounded 500.
-        _seed_dm_vault(vault)
-        p = dm.cache_path(vault)
+        _seed_dm(client)
+        p = dm.cache_path()
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text("{not json", encoding="utf-8")
         r = client.post("/duration-memory/reset", json={
@@ -2522,12 +2537,12 @@ class TestDurationMemoryErrorRedaction:
         }, headers=_auth(client))
         assert r.status_code == 500
         assert str(vault) not in r.text
-        assert str(dm.cache_path(vault)) not in r.text
+        assert str(dm.cache_path()) not in r.text
         detail = r.json()["detail"]
         assert isinstance(detail, dict)
         assert "message" in detail
 
-    def test_save_oserror_detail_has_no_absolute_path(self, client, vault, monkeypatch):
+    def test_save_oserror_detail_has_no_absolute_path(self, client, monkeypatch):
         def boom(path, data):
             raise OSError(
                 "write failed at /private/tmp/secret-cache/tdtb-duration-memory.json"
@@ -2550,8 +2565,8 @@ class TestDurationMemoryIsolation:
         b = tmp_path / "vault-b"
         a.mkdir()
         b.mkdir()
-        app_a = main_mod.create_app(vault_root=a)
-        app_b = main_mod.create_app(vault_root=b)
+        app_a = main_mod.create_app()
+        app_b = main_mod.create_app()
         c_a = TestClient(app_a)
         c_b = TestClient(app_b)
         h_a = {"X-TDTB-Token": app_a.state.token}
@@ -2559,10 +2574,10 @@ class TestDurationMemoryIsolation:
             "identity": "todoist:1", "minutes": 90,
         }, headers=h_a)
         assert r.status_code == 200
-        assert dm.read_vault_memory(a) == {"todoist:1": 90}
+        assert dm.read_all_memory() == {"todoist:1": 90}
         # V2: the store is the state dir, shared across vault roots; neither
         # vault root receives a file.
-        assert dm.read_vault_memory(b) == {"todoist:1": 90}
+        assert dm.read_all_memory() == {"todoist:1": 90}
         assert list(a.iterdir()) == [] and list(b.iterdir()) == []
 # T02: GET /version — tokenless, pure read-only source/runtime fingerprint
 # ---------------------------------------------------------------------------
@@ -2634,12 +2649,6 @@ class TestVersionEndpoint:
         assert _SHA256_HEX_RE.fullmatch(body["cockpit_index_sha256"])
         assert _SHA256_HEX_RE.fullmatch(body["cockpit_asset_sha256"])
         assert _ASSET_RE.fullmatch(body["cockpit_asset"])
-
-    def test_version_does_not_require_vault_or_config(self, monkeypatch):
-        monkeypatch.delenv(main_mod.VAULT_ROOT_ENV, raising=False)
-        c = TestClient(main_mod.create_app())
-        assert c.get("/version").status_code == 200
-        assert c.get("/config").status_code == 503  # contrast: config needs vault
 
     def test_version_deterministic_and_pins_fixture_values(self, client, tmp_path):
         asset_name = "assets/index-abc12345.js"

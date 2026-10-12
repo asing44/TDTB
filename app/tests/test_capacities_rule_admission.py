@@ -258,7 +258,7 @@ def _source_record(revision=3):
 
 def test_direct_refresh_wires_rules_and_revision_but_legacy_does_not(tmp_path, monkeypatch):
     source = _source_record()
-    monkeypatch.setattr(cb, "read_source", lambda _: source)
+    monkeypatch.setattr(cb, "read_source", lambda: source)
     monkeypatch.setattr(cb, "load_capacities_token", lambda _: "synthetic-token")
     monkeypatch.setattr(cr, "load_rules", lambda space_id: rules())
     monkeypatch.setattr(cb, "build_refresh_state", lambda *args: object())
@@ -271,27 +271,27 @@ def test_direct_refresh_wires_rules_and_revision_but_legacy_does_not(tmp_path, m
     monkeypatch.setattr(cb.capacities_refresh, "RefreshCoordinator", coordinator)
     config = cb.CapacitiesBuilderConfig(content_cache=None, refresh_state_path=tmp_path)
 
-    built = cb.build_refresh_coordinator(tmp_path, config)
+    built = cb.build_refresh_coordinator(config)
     assert built.rules == rules()
     # Source revision 3 + settings revision 0 + rules revision 2.
-    assert cb.refresh_config_revision(tmp_path) == 5
+    assert cb.refresh_config_revision() == 5
 
-    legacy = cb.build_capacities_adapter(tmp_path, config)
+    legacy = cb.build_capacities_adapter(config)
     assert legacy.config.rules is None
 
 
 def test_refresh_config_revision_tracks_a_real_rules_save(tmp_path, monkeypatch):
-    monkeypatch.setattr(cb, "read_source", lambda _: _source_record())
-    before = cb.refresh_config_revision(tmp_path)
+    monkeypatch.setattr(cb, "read_source", lambda: _source_record())
+    before = cb.refresh_config_revision()
     cr.save_rule(SPACE, "custom-project", RULE, schema={"minutes": "number"})
-    after = cb.refresh_config_revision(tmp_path)
+    after = cb.refresh_config_revision()
     assert (before, after) == (3, 4)
 
 
 def test_coordinator_passes_rules_to_its_internal_adapter_config(tmp_path):
     record = rules()
     store = cb.build_refresh_state(
-        tmp_path, SPACE, cb.CapacitiesBuilderConfig(refresh_state_path=tmp_path / "state")
+        SPACE, cb.CapacitiesBuilderConfig(refresh_state_path=tmp_path / "state")
     )
     coordinator = cb.capacities_refresh.RefreshCoordinator(
         root=tmp_path / "state",
@@ -318,7 +318,7 @@ def test_publication_guard_takes_rules_store_lock(tmp_path, monkeypatch):
         return acquire(path)
 
     monkeypatch.setattr(cb.capacities_cache_io, "acquire_path_lock", tracked)
-    with cb._config_save_guard(tmp_path):
+    with cb._config_save_guard():
         assert cr.lock_path() in handles
 
 
@@ -333,7 +333,7 @@ def test_publication_guard_excludes_a_real_rules_save(tmp_path):
     release = threading.Event()
 
     def hold_guard():
-        with cb._config_save_guard(tmp_path):
+        with cb._config_save_guard():
             entered.set()
             release.wait(timeout=5)
 

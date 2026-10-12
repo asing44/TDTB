@@ -14,7 +14,7 @@ import pytest
 
 import config_reader
 import judgment
-from tests.config_markdown import write_config_note  # noqa: E402
+from tests.config_markdown import install_config_markdown  # noqa: E402
 
 
 CONTEXT_PROSE = (
@@ -57,9 +57,8 @@ last_updated: 2026-07-26
 """
 
 
-def _write_config(tmp_path: Path, text: str) -> Path:
-    write_config_note(tmp_path / "config-note.md", text)
-    return tmp_path
+def _install_config(text: str) -> None:
+    install_config_markdown(text)
 
 
 # ---------------------------------------------------------------------------
@@ -109,20 +108,22 @@ class TestSanitizer:
 # ---------------------------------------------------------------------------
 
 class TestConfigAccessor:
-    def test_reads_the_section_as_prose(self, tmp_path: Path):
-        result = config_reader.read_config(_write_config(tmp_path, CONFIG_WITH_CONTEXT))
+    def test_reads_the_section_as_prose(self):
+        _install_config(CONFIG_WITH_CONTEXT)
+        result = config_reader.read_config()
         assert "No screen-heavy work after 21:00." in result.config.get_placement_context()
 
-    def test_absent_section_is_empty_string(self, tmp_path: Path):
-        result = config_reader.read_config(_write_config(tmp_path, CONFIG_WITHOUT))
+    def test_absent_section_is_empty_string(self):
+        _install_config(CONFIG_WITHOUT)
+        result = config_reader.read_config()
         assert result.config.get_placement_context() == ""
 
-    def test_section_is_not_required_for_validation(self, tmp_path: Path):
+    def test_section_is_not_required_for_validation(self):
         """An optional section must never turn a valid config invalid."""
-        with_ctx = config_reader.read_config(
-            _write_config(tmp_path / "a", CONFIG_WITH_CONTEXT))
-        without = config_reader.read_config(
-            _write_config(tmp_path / "b", CONFIG_WITHOUT))
+        _install_config(CONFIG_WITH_CONTEXT)
+        with_ctx = config_reader.read_config()
+        _install_config(CONFIG_WITHOUT)
+        without = config_reader.read_config()
         assert (with_ctx.validation.missing_sections
                 == without.validation.missing_sections)
 

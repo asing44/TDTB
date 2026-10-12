@@ -22,8 +22,6 @@
          NOTE: judgment.py omits temperature for openai/* models only. -->
     <key>TDTB_JUDGMENT_MODEL</key>
     <string>deepseek/deepseek-v4.1-flash</string>
-    <key>TDTB_VAULT_ROOT</key>
-    <string>__TDTB_VAULT_ROOT__</string>
     <!-- launchd children get a bare PATH; the judgment layer's Agent SDK
          needs node (homebrew) + the claude CLI (~/.local/bin) or /sequence
          hangs to the 120s timeout (2026-07-17 incident). -->

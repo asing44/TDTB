@@ -1,11 +1,11 @@
-"""T4 (cockpit-overhaul): durable vault duration resolution.
+"""T4 (cockpit-overhaul): durable duration resolution.
 
 Locked decision 14 precedence for an assigned row's ``blocks``:
 Todoist-native duration → name-matched ``## Presets`` row → contract-defined
 type field (currently press ``duration_min``) → 1 block. Explicit zero from a
 matched source stays 0 (background rows); only an absent/unparseable value
-falls through. Pure resolver + /plan-inputs enrichment only — no vault writes,
-no schema fields.
+falls through. Pure resolver + /plan-inputs enrichment only — no source
+writes, no schema fields.
 """
 from __future__ import annotations
 
@@ -17,9 +17,7 @@ from fastapi.testclient import TestClient
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 import main as main_mod  # noqa: E402
-from tests.config_markdown import write_config_note  # noqa: E402
-
-CONFIG_REL_PATH = "00 - META/Skill-Configs/tdtb-bridger.md"
+from tests.config_markdown import install_config_markdown  # noqa: E402
 
 PRESETS = [
     {"Name": "Press", "Type": "interval", "Blocks": "2.5", "Priority": "3"},
@@ -99,7 +97,7 @@ class TestTypeContractField:
 
 
 class TestDefault:
-    def test_plain_vault_item_is_one_block(self):
+    def test_plain_item_is_one_block(self):
         assert _resolve({"name": "Garage Buildout", "types": ["project"]}) == 1
 
     def test_no_presets_no_fm(self):
@@ -204,69 +202,53 @@ class FakeStore:
 
 
 @pytest.fixture
-def vault(tmp_path) -> Path:
-    v = tmp_path / "vault-root"
-    v.mkdir()
-    p = v / CONFIG_REL_PATH
-    p.parent.mkdir(parents=True, exist_ok=True)
-    write_config_note(p, CONFIG_WITH_PRESETS, encoding="utf-8")
-    proj = v / "50 - Operations" / "Projects"
-    proj.mkdir(parents=True)
-    (proj / "Make.md").write_text(
-        "---\ntype: project\nassigned: true\n---\nbody\n", encoding="utf-8"
-    )
-    (proj / "Garage Buildout.md").write_text(
-        "---\ntype: project\nassigned: true\n---\nbody\n", encoding="utf-8"
-    )
-    (proj / "Guitar Reps.md").write_text(
-        "---\ntype: press\nassigned: true\nduration_min: 75\n---\nbody\n",
-        encoding="utf-8",
-    )
-    return v
+def presets_config() -> None:
+    install_config_markdown(CONFIG_WITH_PRESETS)
 
 
-def _client(vault, todoist=None) -> TestClient:
-    app = main_mod.create_app(vault_root=vault)
-    app.state.build_read_clients = lambda v, cfg: (todoist, FakeStore())
+def _make_todoist(extra=()):
+    """Assigned Todoist rows standing in for the retired note rows: ``Make``
+    (a name-matched preset) and ``Garage Buildout`` (no preset, default)."""
+    import external_sources as ext
+
+    return FakeTodoist({
+        ext.ASSIGNED_QUERY_FALLBACK: [
+            {"id": "2", "content": "Make", "priority": 4, "labels": []},
+            {"id": "3", "content": "Garage Buildout", "priority": 4, "labels": []},
+            *extra,
+        ],
+        ext.QUICK_QUERY_FALLBACK: [],
+    })
+
+
+def _client(todoist=None) -> TestClient:
+    app = main_mod.create_app()
+    app.state.build_read_clients = lambda cfg: (todoist, FakeStore())
     return TestClient(app)
 
 
 def _assigned_by_name(body):
     return {i["name"]: i for i in body["digest"]["assigned"]}
 
-def test_plan_inputs_assigned_rows_carry_resolved_blocks(vault, live_sources_mode):
-    import external_sources as ext
-
-    todoist = FakeTodoist({
-        ext.ASSIGNED_QUERY_FALLBACK: [
-            {"id": "1", "content": "Call Vlad", "priority": 4,
-             "duration": {"unit": "minute", "amount": 90}, "labels": []},
-        ],
-        ext.QUICK_QUERY_FALLBACK: [],
-    })
-    body = _client(vault, todoist=todoist).get("/plan-inputs").json()
+def test_plan_inputs_assigned_rows_carry_resolved_blocks(presets_config, live_sources_mode):
+    todoist = _make_todoist(extra=[
+        {"id": "1", "content": "Call Vlad", "priority": 4,
+         "duration": {"unit": "minute", "amount": 90}, "labels": []},
+    ])
+    body = _client(todoist=todoist).get("/plan-inputs").json()
     rows = _assigned_by_name(body)
     assert rows["Call Vlad"]["blocks"] == 3       # Todoist-native 90m
     assert rows["Make"]["blocks"] == 2            # preset name match
-    assert rows["Guitar Reps"]["blocks"] == 3     # press duration_min 75
     assert rows["Garage Buildout"]["blocks"] == 1  # default
 
 
-def test_plan_inputs_suggested_rows_untouched(vault):
-    body = _client(vault, todoist=FakeTodoist({})).get("/plan-inputs").json()
+def test_plan_inputs_suggested_rows_untouched():
+    body = _client(todoist=FakeTodoist({})).get("/plan-inputs").json()
     assert all("blocks" not in i for i in body["digest"]["suggested"])
 
 
-def test_plan_inputs_no_config_still_enriches_default(tmp_path):
-    v = tmp_path / "vault-root"
-    v.mkdir()
-    proj = v / "50 - Operations" / "Projects"
-    proj.mkdir(parents=True)
-    (proj / "Garage Buildout.md").write_text(
-        "---\ntype: project\nassigned: true\n---\nbody\n", encoding="utf-8"
-    )
-    app = main_mod.create_app(vault_root=v)
-    body = TestClient(app).get("/plan-inputs").json()
+def test_plan_inputs_no_config_still_enriches_default(live_sources_mode):
+    body = _client(todoist=_make_todoist()).get("/plan-inputs").json()
     rows = _assigned_by_name(body)
     assert rows["Garage Buildout"]["blocks"] == 1
 
@@ -279,12 +261,12 @@ import json as _json  # noqa: E402
 
 import duration_memory as dm  # noqa: E402
 
-MAKE_IDENTITY = "50 - Operations/Projects/Make.md"
+MAKE_IDENTITY = "todoist:2"
 
 
-def _auth_client(vault, todoist=None) -> tuple[TestClient, dict]:
-    app = main_mod.create_app(vault_root=vault)
-    app.state.build_read_clients = lambda v, cfg: (todoist, FakeStore())
+def _auth_client(todoist=None) -> tuple[TestClient, dict]:
+    app = main_mod.create_app()
+    app.state.build_read_clients = lambda cfg: (todoist, FakeStore())
     c = TestClient(app)
     return c, {"X-TDTB-Token": app.state.token}
 
@@ -297,8 +279,8 @@ def _save(client, headers, identity, minutes):
     return r.json()
 
 
-def test_plan_inputs_overlays_remembered_duration(vault):
-    client, headers = _auth_client(vault, todoist=FakeTodoist({}))
+def test_plan_inputs_overlays_remembered_duration(presets_config, live_sources_mode):
+    client, headers = _auth_client(todoist=_make_todoist())
     _save(client, headers, MAKE_IDENTITY, 90)
     body = client.get("/plan-inputs").json()
     rows = _assigned_by_name(body)
@@ -309,9 +291,9 @@ def test_plan_inputs_overlays_remembered_duration(vault):
 
 # FT-05 F1: a valid 45-minute remembered value stays exactly 45 through the
 # GET /plan-inputs rehydration (1.5 blocks, not a 30-minute-grid ceiling of 2),
-# including a fresh server process reading the persisted vault cache.
-def test_plan_inputs_remembered_45_minutes_stays_exact(vault):
-    client, headers = _auth_client(vault, todoist=FakeTodoist({}))
+# including a fresh server process reading the persisted cache.
+def test_plan_inputs_remembered_45_minutes_stays_exact(presets_config, live_sources_mode):
+    client, headers = _auth_client(todoist=_make_todoist())
     _save(client, headers, MAKE_IDENTITY, 45)
     body = client.get("/plan-inputs").json()
     rows = _assigned_by_name(body)
@@ -319,32 +301,32 @@ def test_plan_inputs_remembered_45_minutes_stays_exact(vault):
     assert rows["Make"]["duration_source"] == "remembered"
     assert rows["Make"]["blocks"] == 1.5
     # Fresh server process: a NEW app instance rehydrates the same disk cache.
-    fresh, _ = _auth_client(vault, todoist=FakeTodoist({}))
+    fresh, _ = _auth_client(todoist=_make_todoist())
     rows = _assigned_by_name(fresh.get("/plan-inputs").json())
     assert rows["Make"]["duration_minutes"] == 45
     assert rows["Make"]["blocks"] == 1.5
 
 
-def test_plan_inputs_get_does_not_mutate_duration_cache(vault):
-    client, headers = _auth_client(vault, todoist=FakeTodoist({}))
+def test_plan_inputs_get_does_not_mutate_duration_cache(presets_config, live_sources_mode):
+    client, headers = _auth_client(todoist=_make_todoist())
     _save(client, headers, MAKE_IDENTITY, 90)
-    cache_path = dm.cache_path(vault)
+    cache_path = dm.cache_path()
     before = cache_path.read_bytes()
     client.get("/plan-inputs")
     assert cache_path.read_bytes() == before
 
 
-def test_plan_inputs_source_resolved_when_no_memory(vault):
-    client, headers = _auth_client(vault, todoist=FakeTodoist({}))
+def test_plan_inputs_source_resolved_when_no_memory(presets_config, live_sources_mode):
+    client, headers = _auth_client(todoist=_make_todoist())
     body = client.get("/plan-inputs").json()
     rows = _assigned_by_name(body)
     assert rows["Make"]["blocks"] == 2              # preset 2 blocks
     assert "duration_source" not in rows["Make"]
 
 
-def test_plan_inputs_ignores_corrupt_cache_and_serves_source(vault):
-    client, headers = _auth_client(vault, todoist=FakeTodoist({}))
-    p = dm.cache_path(vault)
+def test_plan_inputs_ignores_corrupt_cache_and_serves_source(presets_config, live_sources_mode):
+    client, headers = _auth_client(todoist=_make_todoist())
+    p = dm.cache_path()
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text("not json", encoding="utf-8")
     body = client.get("/plan-inputs").json()
@@ -374,8 +356,8 @@ def _labelled_todoist():
     })
 
 
-def test_plan_inputs_labelled_rows_carry_exact_tag_provenance(vault, live_sources_mode):
-    body = _client(vault, todoist=_labelled_todoist()).get("/plan-inputs").json()
+def test_plan_inputs_labelled_rows_carry_exact_tag_provenance(live_sources_mode):
+    body = _client(todoist=_labelled_todoist()).get("/plan-inputs").json()
     rows = _assigned_by_name(body)
     hour = rows["Inspect dishwasher"]
     assert hour["blocks"] == 2
@@ -391,8 +373,8 @@ def test_plan_inputs_labelled_rows_carry_exact_tag_provenance(vault, live_source
     assert laundry["duration_source"] == "tag:🍅 Half-hour"
 
 
-def test_plan_inputs_remembered_still_wins_over_tag_provenance(vault, live_sources_mode):
-    client, headers = _auth_client(vault, todoist=_labelled_todoist())
+def test_plan_inputs_remembered_still_wins_over_tag_provenance(live_sources_mode):
+    client, headers = _auth_client(todoist=_labelled_todoist())
     _save(client, headers, "todoist:7", 45)
     rows = _assigned_by_name(client.get("/plan-inputs").json())
     hour = rows["Inspect dishwasher"]

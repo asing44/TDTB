@@ -194,8 +194,8 @@ def vault(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
-def client(vault) -> TestClient:
-    app = main_mod.create_app(vault_root=vault)
+def client() -> TestClient:
+    app = main_mod.create_app()
     c = TestClient(app)
     c.app_token = app.state.token
     return c
@@ -209,10 +209,10 @@ def _today() -> date:
     return gather.effective_date(datetime.now())
 
 
-def _seed_digest_index(vault: Path) -> None:
+def _seed_digest_index() -> None:
     # The live /commit guard accepts the digest row only when today's frozen
     # server identity index contains it — seed it before the commit call.
-    rs.write_digest_index(vault, date(2026, 7, 12), [
+    rs.write_digest_index(date(2026, 7, 12), [
         {"name": "Garage", "todoist_id": "", "path": "P/Garage.md",
          "surface": "assigned"},
     ])
@@ -223,10 +223,10 @@ class TestSetupGateBlocksExternalWrites:
     side-effects) never confirms Day Setup; write paths fail closed (409)
     until a real POST /day-setup for the current planning day."""
 
-    def test_skeleton_runstate_from_gather_is_not_confirmed(self, client, vault):
+    def test_skeleton_runstate_from_gather_is_not_confirmed(self, client):
         r = client.post("/gather", headers=_auth(client))
         assert r.status_code == 200
-        assert rs.is_day_setup_confirmed(vault, _today()) is False
+        assert rs.is_day_setup_confirmed(_today()) is False
         inputs = client.get("/plan-inputs", headers=_auth(client)).json()
         assert inputs["day_setup_confirmed"] is False
 
@@ -241,7 +241,7 @@ class TestSetupGateBlocksExternalWrites:
             "# Journal\n", encoding="utf-8")
         monkeypatch.setattr(gather, "effective_date",
                             lambda now: date(2026, 7, 12))
-        _seed_digest_index(vault)
+        _seed_digest_index()
         before = {p: p.read_bytes() for p in vault.rglob("*") if p.is_file()}
         r = client.post(
             "/commit?mode=live", headers=_auth(client),
@@ -253,7 +253,7 @@ class TestSetupGateBlocksExternalWrites:
         after = {p: p.read_bytes() for p in vault.rglob("*") if p.is_file()}
         assert before == after  # external write path wrote NOTHING
 
-    def test_runtime_actions_fail_closed_without_setup(self, client, vault):
+    def test_runtime_actions_fail_closed_without_setup(self, client):
         apply = client.post("/runtime-actions", headers=_auth(client),
                             json={"verb": "complete", "target": "Press"})
         assert apply.status_code == 409
@@ -273,10 +273,10 @@ class TestSetupGateBlocksExternalWrites:
             "# Journal\n", encoding="utf-8")
         monkeypatch.setattr(gather, "effective_date",
                             lambda now: date(2026, 7, 12))
-        _seed_digest_index(vault)
+        _seed_digest_index()
         monkeypatch.setattr(shadow, "gather_live_state", _fake_live_state)
         client.app.state.build_commit_clients = (
-            lambda v, cfg: (FakeLiveTodoist(), FakeLiveStore())
+            lambda cfg: (FakeLiveTodoist(), FakeLiveStore())
         )
         setup = client.post("/day-setup", json={"anchor": "09:00"},
                             headers=_auth(client))
@@ -441,9 +441,9 @@ def _write_cfg(vault: Path) -> None:
     )
 
 
-def _seed_mint_session(vault) -> None:
+def _seed_mint_session() -> None:
     today = gather.effective_date(datetime.now())
-    rs.write_runstate(vault, today, rs.build_runstate({
+    rs.write_runstate(today, rs.build_runstate({
         "anchor": "00:00", "eod": "23:59",
         "schedulable": {"minting": {
             "on": True,
@@ -455,7 +455,7 @@ def _seed_mint_session(vault) -> None:
 class TestMintOverlapRoute:
     def test_route_rejects_assigned_row_over_selected_mint(self, client, vault):
         _write_cfg(vault)
-        _seed_mint_session(vault)
+        _seed_mint_session()
         r = client.post("/validate-sequence", headers=_auth(client), json={
             "sequence": [_seq_row("task-1", "08:45", "09:15")],
             "assigned": [{"id": "task-1"}],
@@ -472,7 +472,7 @@ class TestMintOverlapRoute:
 
     def test_route_allows_clean_row_beside_selected_mint(self, client, vault):
         _write_cfg(vault)
-        _seed_mint_session(vault)
+        _seed_mint_session()
         r = client.post("/validate-sequence", headers=_auth(client), json={
             "sequence": [_seq_row("task-1", "09:00", "09:30")],
             "assigned": [{"id": "task-1"}],

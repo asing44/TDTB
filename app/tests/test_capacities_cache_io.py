@@ -20,24 +20,23 @@ import capacities_cache_io as cache_io  # noqa: E402
 
 
 def test_namespace_digest_matches_the_pinned_algorithm(tmp_path):
-    vault = tmp_path / "vault-a"
     base_url = "https://api.capacities.io"
-    material = "\x1f".join((str(vault.resolve()), "space-1", base_url))
+    material = "\x1f".join(("space-1", base_url))
     expected = hashlib.sha256(material.encode("utf-8")).hexdigest()
 
-    assert cache_io.cache_namespace(vault, "space-1", base_url) == expected
+    assert cache_io.cache_namespace("space-1", base_url) == expected
     # The provider URL is normalized exactly as before: trailing slashes are
     # stripped, so a trailing slash is the same namespace.
-    assert cache_io.cache_namespace(vault, "space-1", base_url + "/") == expected
+    assert cache_io.cache_namespace("space-1", base_url + "/") == expected
 
 
-def test_namespace_separates_vault_space_and_base_url(tmp_path):
+def test_namespace_separates_space_and_base_url(tmp_path):
     base_url = "https://api.capacities.io"
-    base = cache_io.cache_namespace(tmp_path, "space-1", base_url)
+    base = cache_io.cache_namespace("space-1", base_url)
 
-    assert base != cache_io.cache_namespace(tmp_path / "elsewhere", "space-1", base_url)
-    assert base != cache_io.cache_namespace(tmp_path, "space-2", base_url)
-    assert base != cache_io.cache_namespace(tmp_path, "space-1", "https://other.example")
+    assert base == cache_io.cache_namespace("space-1", base_url + "/")
+    assert base != cache_io.cache_namespace("space-2", base_url)
+    assert base != cache_io.cache_namespace("space-1", "https://other.example")
 
 
 def test_builder_wrappers_delegate_to_the_shared_primitives(tmp_path, monkeypatch):
@@ -57,10 +56,10 @@ def test_builder_wrappers_delegate_to_the_shared_primitives(tmp_path, monkeypatc
     monkeypatch.setattr(cache_io, "release_lock_file", _record("release_lock_file"))
     monkeypatch.setattr(cache_io, "atomic_write_json", _record("atomic_write_json"))
 
-    assert cb._content_cache_namespace(tmp_path, "space-1", "https://api") is sentinel
-    assert cb._store_lock(tmp_path) is sentinel
+    assert cb._content_cache_namespace("space-1", "https://api") is sentinel
+    assert cb._store_lock() is sentinel
     assert cb._acquire_path_lock(tmp_path / "x.lock") is sentinel
-    assert cb._acquire_lock_file(tmp_path) is sentinel
+    assert cb._acquire_lock_file() is sentinel
     assert cb._release_lock_file(sentinel) is None
     assert cb._atomic_write_json(tmp_path / "x.json", {"a": 1}) is None
 

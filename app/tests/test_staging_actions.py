@@ -67,9 +67,9 @@ def vault(tmp_path: Path) -> Path:
     for name in ("Roof", "Both"):
         (tmp_path / "50 - Operations" / f"{name}.md").write_text(
             f"---\ntype: [project]\nstatus: active\n---\n\n# {name}\n", encoding="utf-8")
-    runstate.write_digest_index(tmp_path, TODAY, DIGEST_INDEX)
+    runstate.write_digest_index(TODAY, DIGEST_INDEX)
     # FEEDBACK-24: route verbs are gated on an explicit Day Setup confirm.
-    runstate.write_runstate(tmp_path, TODAY,
+    runstate.write_runstate(TODAY,
                             runstate.build_runstate({"day_setup_confirmed": True}))
     return tmp_path
 
@@ -80,34 +80,34 @@ def vault(tmp_path: Path) -> Path:
 
 class TestStagingResolution:
     def test_vault_row_resolves_to_a_staging_target(self, vault: Path):
-        target = ra.resolve_target(vault, TODAY, "Roof")
+        target = ra.resolve_target(TODAY, "Roof")
         assert target["phase"] == "staging"
         assert target["vault_path"] == "50 - Operations/Roof.md"
 
     def test_todoist_row_resolves(self, vault: Path):
-        assert ra.resolve_target(vault, TODAY, "Call Vlad")["todoist_id"] == "7"
+        assert ra.resolve_target(TODAY, "Call Vlad")["todoist_id"] == "7"
 
     def test_both_surfaces_resolve_together(self, vault: Path):
-        target = ra.resolve_target(vault, TODAY, "Both")
+        target = ra.resolve_target(TODAY, "Both")
         assert target["todoist_id"] == "9"
         assert target["vault_path"] == "50 - Operations/Both.md"
 
     def test_unknown_item_is_refused(self, vault: Path):
         with pytest.raises(ra.RuntimeActionError, match="manifest or digest"):
-            ra.resolve_target(vault, TODAY, "Never Heard Of It")
+            ra.resolve_target(TODAY, "Never Heard Of It")
 
     def test_manifest_still_wins_when_present(self, vault: Path):
-        runstate.update_runstate(vault, TODAY, {"plan_manifest": [
+        runstate.update_runstate(TODAY, {"plan_manifest": [
             {"name": "Roof", "system": "todoist", "id_or_path": "111"}]})
-        target = ra.resolve_target(vault, TODAY, "Roof")
+        target = ra.resolve_target(TODAY, "Roof")
         assert target["phase"] == "committed"
         assert target["todoist_id"] == "111"
         assert "vault_path" not in target  # manifest row is authoritative
 
     def test_manifest_miss_falls_through_to_digest(self, vault: Path):
-        runstate.update_runstate(vault, TODAY, {"plan_manifest": [
+        runstate.update_runstate(TODAY, {"plan_manifest": [
             {"name": "Something Else", "system": "todoist", "id_or_path": "111"}]})
-        assert ra.resolve_target(vault, TODAY, "Roof")["phase"] == "staging"
+        assert ra.resolve_target(TODAY, "Roof")["phase"] == "staging"
 
 
 # ---------------------------------------------------------------------------
@@ -120,27 +120,27 @@ class TestStagingVerbs:
         path = vault / "50 - Operations/Roof.md"
         before = path.read_text(encoding="utf-8")
         with pytest.raises(ra.RuntimeActionError, match="vault is retired"):
-            ra.apply_action(vault, TODAY, verb, "Roof")
+            ra.apply_action(TODAY, verb, "Roof")
         assert path.read_text(encoding="utf-8") == before
         assert not (vault / ".trash").exists()
-        assert ra.load_journal(vault, TODAY)["actions"] == []
+        assert ra.load_journal(TODAY)["actions"] == []
 
     def test_defer_works_at_staging(self, vault: Path):
         import deferrals
-        action = ra.apply_action(vault, TODAY, "defer", "Roof")
+        action = ra.apply_action(TODAY, "defer", "Roof")
         assert action["status"] == "applied"
-        assert deferrals.load_deferrals(vault)["path:50 - Operations/Roof.md"]["count"] == 1
+        assert deferrals.load_deferrals()["path:50 - Operations/Roof.md"]["count"] == 1
 
     def test_staging_actions_are_journaled_like_any_other(self, vault: Path):
-        ra.apply_action(vault, TODAY, "complete", "Call Vlad", todoist=FakeTodoist())
-        journal = ra.load_journal(vault, TODAY)
+        ra.apply_action(TODAY, "complete", "Call Vlad", todoist=FakeTodoist())
+        journal = ra.load_journal(TODAY)
         assert len(journal["actions"]) == 1
         assert journal["actions"][0]["target"]["phase"] == "staging"
 
     def test_staging_actions_stay_idempotent(self, vault: Path):
         todoist = FakeTodoist()
-        ra.apply_action(vault, TODAY, "complete", "Call Vlad", todoist=todoist)
-        dup = ra.apply_action(vault, TODAY, "complete", "Call Vlad", todoist=todoist)
+        ra.apply_action(TODAY, "complete", "Call Vlad", todoist=todoist)
+        dup = ra.apply_action(TODAY, "complete", "Call Vlad", todoist=todoist)
         assert dup.get("duplicate") is True
 
 
@@ -152,31 +152,31 @@ class TestAssignVerb:
         path = vault / "50 - Operations/Roof.md"
         before = path.read_text(encoding="utf-8")
         with pytest.raises(ra.RuntimeActionError, match="vault is retired"):
-            ra.apply_action(vault, TODAY, "assign", "Roof")
+            ra.apply_action(TODAY, "assign", "Roof")
         assert path.read_text(encoding="utf-8") == before
-        assert ra.load_journal(vault, TODAY)["actions"] == []
+        assert ra.load_journal(TODAY)["actions"] == []
 
     def test_assign_pulls_a_todoist_row_to_today(self, vault: Path):
         todoist = FakeTodoist()
-        ra.apply_action(vault, TODAY, "assign", "Call Vlad", todoist=todoist)
+        ra.apply_action(TODAY, "assign", "Call Vlad", todoist=todoist)
         assert ("reschedule", "7", "today") in todoist.calls
 
     def test_assign_honours_the_t27_recurring_guard(self, vault: Path):
         todoist = FakeTodoist()
         todoist.tasks["7"]["due"] = {"string": "every day", "is_recurring": True}
-        ra.apply_action(vault, TODAY, "assign", "Call Vlad", todoist=todoist)
+        ra.apply_action(TODAY, "assign", "Call Vlad", todoist=todoist)
         assert todoist.calls == []
 
     def test_assign_of_a_todoist_row_is_undoable(self, vault: Path):
         todoist = FakeTodoist()
-        action = ra.apply_action(vault, TODAY, "assign", "Call Vlad", todoist=todoist)
-        undone = ra.undo_action(vault, TODAY, action["id"], todoist=todoist)
+        action = ra.apply_action(TODAY, "assign", "Call Vlad", todoist=todoist)
+        undone = ra.undo_action(TODAY, action["id"], todoist=todoist)
         assert undone["status"] == "undone"
 
     def test_assign_is_idempotent(self, vault: Path):
         todoist = FakeTodoist()
-        ra.apply_action(vault, TODAY, "assign", "Call Vlad", todoist=todoist)
-        dup = ra.apply_action(vault, TODAY, "assign", "Call Vlad", todoist=todoist)
+        ra.apply_action(TODAY, "assign", "Call Vlad", todoist=todoist)
+        dup = ra.apply_action(TODAY, "assign", "Call Vlad", todoist=todoist)
         assert dup.get("duplicate") is True
 
     def test_assign_is_a_staging_verb(self):
@@ -193,19 +193,19 @@ class TestPlacementOnlyVerbsRefuse:
     ])
     def test_refused_before_commit(self, vault: Path, verb: str, args: dict):
         with pytest.raises(ra.RuntimeActionError, match="still staged"):
-            ra.apply_action(vault, TODAY, verb, "Both", args=args,
+            ra.apply_action(TODAY, verb, "Both", args=args,
                             todoist=FakeTodoist())
 
     def test_refusal_writes_no_journal_entry(self, vault: Path):
         with pytest.raises(ra.RuntimeActionError):
-            ra.apply_action(vault, TODAY, "skip_today", "Both",
+            ra.apply_action(TODAY, "skip_today", "Both",
                             todoist=FakeTodoist())
-        assert ra.load_journal(vault, TODAY)["actions"] == []
+        assert ra.load_journal(TODAY)["actions"] == []
 
     def test_refusal_leaves_todoist_untouched(self, vault: Path):
         todoist = FakeTodoist()
         with pytest.raises(ra.RuntimeActionError):
-            ra.apply_action(vault, TODAY, "remove_from_today", "Both",
+            ra.apply_action(TODAY, "remove_from_today", "Both",
                             todoist=todoist)
         assert todoist.calls == []
 
@@ -241,55 +241,70 @@ class TestDigestIndex:
              "suggested": []})[0]["name"] == "A"
 
 
+class _RoofTodoist:
+    """Read-only Todoist stand-in serving one assigned task named ``Roof``."""
+
+    def get_filter_tasks(self, query, limit=None):
+        import external_sources as ext
+
+        if query == ext.ASSIGNED_QUERY_FALLBACK:
+            return [{"id": "roof-1", "content": "Roof", "priority": 4, "labels": []}]
+        return []
+
+    def close(self):
+        pass
+
+
+class _NoEvents:
+    def query_events(self, start, end, calendar_ids=None):
+        return []
+
+    def calendars(self):
+        return []
+
+
+def _roof_client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
+    monkeypatch.setattr(main.gather, "effective_date", lambda _n: TODAY)
+    app = main.create_app()
+    app.state.build_read_clients = lambda cfg: (_RoofTodoist(), _NoEvents())
+    return TestClient(app)
+
+
 class TestPlanInputsPersistsTheIndex:
     """The wiring T2 depends on: /plan-inputs must leave behind an index the
     later /runtime-actions call can resolve against."""
 
-    def test_plan_inputs_writes_digest_index(self, tmp_path: Path,
+    def test_plan_inputs_writes_digest_index(self, live_sources_mode,
                                              monkeypatch: pytest.MonkeyPatch):
-        vault = tmp_path / "vault-root"
-        (vault / "50 - Operations" / "Projects").mkdir(parents=True)
-        (vault / "50 - Operations" / "Projects" / "Roof.md").write_text(
-            "---\ntype: [project]\nstatus: active\nassigned: true\n---\n\n# Roof\n",
-            encoding="utf-8")
-        monkeypatch.setattr(main.gather, "effective_date", lambda _n: TODAY)
-        client = TestClient(main.create_app(vault_root=vault))
+        client = _roof_client(monkeypatch)
         assert client.get("/plan-inputs").status_code == 200
-        index = runstate.read_digest_index(vault, TODAY)
-        assert any(r["path"].endswith("Roof.md") for r in index)
+        index = runstate.read_digest_index(TODAY)
+        assert any(r.get("todoist_id") == "roof-1" for r in index)
 
     def test_plan_inputs_does_not_materialise_the_runstate_note(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+        self, monkeypatch: pytest.MonkeyPatch
     ):
         """The index has its own dated file on purpose: writing run-state from
         /plan-inputs would leave a skeleton note whose empty defaults later
         read back as user-confirmed day setup."""
-        vault = tmp_path / "vault-root"
-        vault.mkdir()
         monkeypatch.setattr(main.gather, "effective_date", lambda _n: TODAY)
-        client = TestClient(main.create_app(vault_root=vault))
+        client = TestClient(main.create_app())
         assert client.get("/plan-inputs").json()["day_setup"] == {}
-        assert not (vault / runstate.runstate_rel_path(TODAY)).exists()
+        assert not runstate.state_runstate_path(TODAY).exists()
 
-    def test_index_survives_into_target_resolution(self, tmp_path: Path,
+    def test_index_survives_into_target_resolution(self, live_sources_mode,
                                                    monkeypatch: pytest.MonkeyPatch):
-        vault = tmp_path / "vault-root"
-        (vault / "50 - Operations" / "Projects").mkdir(parents=True)
-        (vault / "50 - Operations" / "Projects" / "Roof.md").write_text(
-            "---\ntype: [project]\nstatus: active\nassigned: true\n---\n\n# Roof\n",
-            encoding="utf-8")
-        monkeypatch.setattr(main.gather, "effective_date", lambda _n: TODAY)
-        client = TestClient(main.create_app(vault_root=vault))
+        client = _roof_client(monkeypatch)
         client.get("/plan-inputs")
-        assert ra.resolve_target(vault, TODAY, "Roof")["phase"] == "staging"
+        assert ra.resolve_target(TODAY, "Roof")["phase"] == "staging"
 
 
 class TestStagingRoute:
     @pytest.fixture
     def client(self, vault: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
         monkeypatch.setattr(main.gather, "effective_date", lambda _n: TODAY)
-        app = main.create_app(vault_root=vault)
-        app.state.build_commit_clients = lambda v, c: (FakeTodoist(), None)
+        app = main.create_app()
+        app.state.build_commit_clients = lambda c: (FakeTodoist(), None)
         c = TestClient(app)
         c.headers.update({"X-TDTB-Token": app.state.token})
         return c
@@ -347,21 +362,21 @@ class TestTodoistPseudoPathIsNotAVaultPath:
                  "source": "todoist"},
             ],
         })
-        runstate.write_digest_index(tmp_path, TODAY, index)
+        runstate.write_digest_index(TODAY, index)
         return tmp_path
 
     def test_the_index_really_does_carry_the_pseudo_path(self, real_shaped_vault: Path):
-        rows = runstate.read_digest_index(real_shaped_vault, TODAY)
+        rows = runstate.read_digest_index(TODAY)
         assert rows[0]["path"] == "todoist://7"
 
     def test_resolution_yields_no_vault_path(self, real_shaped_vault: Path):
-        target = ra.resolve_target(real_shaped_vault, TODAY, "Call Vlad")
+        target = ra.resolve_target(TODAY, "Call Vlad")
         assert target["todoist_id"] == "7"
         assert "vault_path" not in target, (
             f"the todoist:// pseudo-path leaked into vault_path: {target}")
 
     def test_complete_plans_only_a_todoist_step(self, real_shaped_vault: Path):
-        target = ra.resolve_target(real_shaped_vault, TODAY, "Call Vlad")
+        target = ra.resolve_target(TODAY, "Call Vlad")
         steps = ra.plan_steps("complete", target, {}, TODAY)
         assert [s["kind"] for s in steps] == ["todoist.close"]
 
@@ -370,18 +385,18 @@ class TestTodoistPseudoPathIsNotAVaultPath:
         morning — the forgot-strip's Assign button on a Todoist row. That day's
         runtime journal recorded it resolving to
         ``vault_path: 'todoist://6fgQFQmrfhVQ5c9X'`` and failing."""
-        target = ra.resolve_target(real_shaped_vault, TODAY, "Call Vlad")
+        target = ra.resolve_target(TODAY, "Call Vlad")
         steps = ra.plan_steps("assign", target, {}, TODAY)
         assert [s["kind"] for s in steps] == ["todoist.assign_today"]
 
     def test_delete_permanent_plans_only_a_todoist_step(self, real_shaped_vault: Path):
-        target = ra.resolve_target(real_shaped_vault, TODAY, "Call Vlad")
+        target = ra.resolve_target(TODAY, "Call Vlad")
         steps = ra.plan_steps("delete_permanent", target, {}, TODAY)
         assert all(s["surface"] == "todoist" for s in steps), steps
 
     def test_complete_of_a_todoist_row_applies(self, real_shaped_vault: Path):
         todoist = FakeTodoist()
-        result = ra.apply_action(real_shaped_vault, TODAY, "complete", "Call Vlad",
+        result = ra.apply_action(TODAY, "complete", "Call Vlad",
                                  {}, todoist=todoist, store=None)
         assert result["status"] == "applied", result
         assert ("close", "7") in todoist.calls

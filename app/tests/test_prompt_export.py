@@ -422,7 +422,7 @@ def vault(tmp_path) -> Path:
         "| Morning | 12:00 AM | 11:59 PM |\n",
         encoding="utf-8",
     )
-    rs.write_digest_index(v, date.fromisoformat(DAY),
+    rs.write_digest_index(date.fromisoformat(DAY),
                           [{"name": "Garage", "todoist_id": "", "path": "P/Garage.md",
                             "surface": "assigned"}])
     return v
@@ -430,7 +430,7 @@ def vault(tmp_path) -> Path:
 
 @pytest.fixture
 def client(vault) -> TestClient:
-    app = main_mod.create_app(vault_root=vault)
+    app = main_mod.create_app()
     c = TestClient(app)
     c.app_token = app.state.token
     return c
@@ -445,7 +445,7 @@ def _freeze(monkeypatch) -> None:
 
 
 def _live_state(garage_live: bool):
-    def _state(config, vault_root):
+    def _state(config):
         tasks = []
         if garage_live:
             tasks = [{"id": "T1", "content": "Garage",
@@ -472,7 +472,7 @@ class TestPromptExportRoute:
         ps.save_optins(expected_revision=0, optins={"megan_nicety": True})
         ps.save_drafts(day=DAY, patch={"megan_nicety": SECRET})
         todoist = RecordingTodoist()
-        client.app.state.build_commit_clients = lambda v, cfg: (todoist, None)
+        client.app.state.build_commit_clients = lambda cfg: (todoist, None)
         self._confirm(client)
 
         r = client.post("/commit?mode=live", headers=_auth(client),
@@ -500,7 +500,7 @@ class TestPromptExportRoute:
         ps.save_optins(expected_revision=0, optins={"megan_nicety": True})
         ps.save_drafts(day=DAY, patch={"megan_nicety": SECRET})
         todoist = RecordingTodoist()
-        client.app.state.build_commit_clients = lambda v, cfg: (todoist, None)
+        client.app.state.build_commit_clients = lambda cfg: (todoist, None)
         self._confirm(client)
         payload = {"digest": DIGEST, "sequence": SEQUENCE, "config": {}}
         assert client.post("/commit?mode=live", headers=_auth(client),
@@ -514,7 +514,7 @@ class TestPromptExportRoute:
         _freeze(monkeypatch)
         monkeypatch.setattr(shadow, "gather_live_state", _live_state(garage_live=False))
         todoist = RecordingTodoist()
-        client.app.state.build_commit_clients = lambda v, cfg: (todoist, None)
+        client.app.state.build_commit_clients = lambda cfg: (todoist, None)
         self._confirm(client)
         spoof = "BROWSER-SPOOF-NICETY"
         r = client.post("/commit?mode=live", headers=_auth(client), json={
@@ -534,7 +534,7 @@ class TestPromptExportRoute:
         ps.save_optins(expected_revision=0, optins={"megan_nicety": True})
         ps.save_drafts(day=DAY, patch={"megan_nicety": SECRET})
 
-        def _boom(v, cfg):
+        def _boom(cfg):
             raise AssertionError("shadow must not build a provider client")
 
         client.app.state.build_commit_clients = _boom
@@ -557,7 +557,7 @@ class TestPromptExportRoute:
         ps.save_optins(expected_revision=0, optins={"megan_nicety": True})
         ps.save_drafts(day=DAY, patch={"megan_nicety": SECRET})
         client.app.state.build_commit_clients = (
-            lambda v, cfg: (NoCreateTodoist([{"id": "T1", "content": "Garage",
+            lambda cfg: (NoCreateTodoist([{"id": "T1", "content": "Garage",
                                               "due": {"datetime": f"{DAY}T09:00:00"}}]),
                             None)
         )
@@ -578,7 +578,7 @@ class TestPromptExportRoute:
         ps.save_optins(expected_revision=0, optins={"megan_nicety": True})
         ps.save_drafts(day=DAY, patch={"megan_nicety": SECRET})
         todoist = NoIdTodoist()
-        client.app.state.build_commit_clients = lambda v, cfg: (todoist, None)
+        client.app.state.build_commit_clients = lambda cfg: (todoist, None)
         self._confirm(client)
         r = client.post("/commit?mode=live", headers=_auth(client),
                         json={"digest": DIGEST, "sequence": SEQUENCE, "config": {}})
@@ -600,7 +600,7 @@ class TestPromptExportRoute:
         ps.save_optins(expected_revision=0, optins={"megan_nicety": True})
         ps.save_drafts(day=DAY, patch={"megan_nicety": SECRET})
         todoist = RecordingTodoist()
-        client.app.state.build_commit_clients = lambda v, cfg: (todoist, None)
+        client.app.state.build_commit_clients = lambda cfg: (todoist, None)
         r = client.post("/commit?mode=live",
                         json={"digest": DIGEST, "sequence": SEQUENCE, "config": {}})
         assert r.status_code == 403

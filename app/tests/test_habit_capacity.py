@@ -80,13 +80,13 @@ def vault(tmp_path: Path) -> Path:
     return root
 
 
-def _client(vault: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
+def _client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
     monkeypatch.setattr(main.gather, "effective_date", lambda _n: TODAY)
-    return TestClient(main.create_app(vault_root=vault))
+    return TestClient(main.create_app())
 
 
-def _body(vault: Path, monkeypatch: pytest.MonkeyPatch) -> dict:
-    response = _client(vault, monkeypatch).get("/plan-inputs")
+def _body(monkeypatch: pytest.MonkeyPatch) -> dict:
+    response = _client(monkeypatch).get("/plan-inputs")
     assert response.status_code == 200, response.text
     return response.json()
 
@@ -245,27 +245,27 @@ class TestArtifactHabits:
 class TestCapacitySegment:
     def test_habits_segment_reflects_the_artifact_estimate(self, vault, monkeypatch):
         _write_artifact({"total": 3, "done": 0, "outstanding": 3, "est_minutes": 90})
-        assert _body(vault, monkeypatch)["capacity"]["habits"] == 3
+        assert _body(monkeypatch)["capacity"]["habits"] == 3
 
     def test_ticking_one_off_frees_a_block(self, vault, monkeypatch):
         _write_artifact({"total": 3, "done": 0, "outstanding": 3, "est_minutes": 90})
-        before = _body(vault, monkeypatch)["capacity"]
+        before = _body(monkeypatch)["capacity"]
         _write_artifact({"total": 3, "done": 1, "outstanding": 2, "est_minutes": 60})
-        after = _body(vault, monkeypatch)["capacity"]
+        after = _body(monkeypatch)["capacity"]
         assert after["habits"] == before["habits"] - 1
         assert after["free"] > before["free"]
 
     def test_all_done_leaves_no_habit_reservation(self, vault, monkeypatch):
         _write_artifact({"total": 2, "done": 2, "outstanding": 0, "est_minutes": 0})
-        assert _body(vault, monkeypatch)["capacity"]["habits"] == 0
+        assert _body(monkeypatch)["capacity"]["habits"] == 0
 
     def test_legend_reports_the_done_left_split(self, vault, monkeypatch):
         _write_artifact({"total": 2, "done": 1, "outstanding": 1, "est_minutes": 30})
-        legend = _body(vault, monkeypatch)["capacity"]["legend"]
+        legend = _body(monkeypatch)["capacity"]["legend"]
         assert "habits: 1 done · 1 left" in legend
 
     def test_no_artifact_zeroes_habits_and_warns_loudly(self, vault, monkeypatch):
-        body = _body(vault, monkeypatch)
+        body = _body(monkeypatch)
         assert body["habits"] == {
             "total": 0, "done": 0, "outstanding": 0, "est_minutes": 0,
         }
@@ -273,7 +273,7 @@ class TestCapacitySegment:
 
     def test_digest_publishes_the_same_block_shape(self, vault, monkeypatch):
         _write_artifact({"total": 4, "done": 2, "outstanding": 2, "est_minutes": 30})
-        body = _body(vault, monkeypatch)
+        body = _body(monkeypatch)
         assert set(body["habits"]) == {
             "total", "done", "outstanding", "est_minutes",
         }

@@ -54,12 +54,12 @@ def main() -> int:
     daily.parent.mkdir(parents=True, exist_ok=True)
     daily.write_text("---\ntype: daily\n---\n\n# Notes\n", encoding="utf-8")
 
-    app = main_mod.create_app(vault_root=vault)
-    app.state.build_read_clients = lambda v, cfg: (cf.todoist_fake(), cf.store_fake())
+    app = main_mod.create_app()
+    app.state.build_read_clients = lambda cfg: (cf.todoist_fake(), cf.store_fake())
     # T22: in-memory writers, matching scratch_integration — dead (None, None)
     # clients would 422 the live path now that anchored Step E calendar rows
     # are always planned.
-    app.state.build_commit_clients = lambda v, cfg: (WriterTodoist(), WriterStore())
+    app.state.build_commit_clients = lambda cfg: (WriterTodoist(), WriterStore())
     judgment.propose_sequence = canned_propose
     shadow_mod.gather_live_state = canned_live_state
     main_mod.datetime = FrozenDateTime

@@ -13,13 +13,14 @@ UI would have POSTed.
     .venv/bin/python build_commit_body.py --out /tmp/body.json
     .venv/bin/python build_commit_body.py --sequence-file seq.json
 
-Vault root: ``$TDTB_VAULT_ROOT`` (same env var main.py reads, never hardcoded).
+The Obsidian note gather is gone (vault removal V4), so the digest carries no
+note rows; supply ``--sequence-file`` for a meaningful body.
 
 Sequence: absent ``--sequence-file``, a deterministic trivial back-to-back
 sequence over the digest's Assigned items is synthesized — identical to the
 sequence ``commit_run.py`` used for the T14 write-verify gate. It is NOT a real
 judgment timeline (no zone/capacity awareness); it exists to exercise every
-commit writer end-to-end with real vault data. Drop in ``--sequence-file`` with
+commit writer end-to-end. Drop in ``--sequence-file`` with
 a real ``/sequence`` response (``{"sequence":[{id,start,end,zone},...]}``) for a
 faithful timeline. Writes NOTHING to any live surface — this only emits JSON.
 
@@ -42,7 +43,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import sys
 from datetime import date, datetime
 from pathlib import Path
@@ -55,10 +55,8 @@ import main as main_mod  # noqa: E402
 import runstate as runstate_mod  # noqa: E402  (dated run-state note path)
 import shadow_run  # noqa: E402  (reuse its gather/digest/sequence helpers verbatim)
 
-VAULT_ROOT_ENV = "TDTB_VAULT_ROOT"
 
-
-def _load_runstate_micro_adventure(vault: Path, today: date) -> dict | None:
+def _load_runstate_micro_adventure(today: date) -> dict | None:
     """Read today's run-state ``micro_adventure`` selection, if one was made.
 
     Reads the *exact-date* run-state note (``tdtb-runstate-<today>.md``), unlike
@@ -67,7 +65,7 @@ def _load_runstate_micro_adventure(vault: Path, today: date) -> dict | None:
     the note's write format contract verbatim. Missing note or absent key -> None
     (the Live reroute then silently stays a Step E calendar block).
     """
-    rs_path = runstate_mod.runstate_read_path(vault, today)
+    rs_path = runstate_mod.runstate_read_path(today)
     if not rs_path.is_file():
         return None
     data = gather._extract_json_block(rs_path.read_text(encoding="utf-8", errors="replace"))
@@ -95,7 +93,7 @@ def _coerce_micro_adventure(value: str | None) -> dict | None:
 
 
 def inject_micro_adventure(
-    config: dict, vault: Path, today: date, override: dict | None = None
+    config: dict, today: date, override: dict | None = None
 ) -> dict:
     """Return ``config`` with a ``micro_adventure`` selection merged in.
 
@@ -107,29 +105,28 @@ def inject_micro_adventure(
     This is the ISS-2 seam: without it, the emitted body's config can never carry
     ``micro_adventure`` and the SKILL.md Step E Live→Todoist reroute is unreachable
     through the headless path. The ``override`` is what lets §5 acceptance actually
-    *exercise* the reroute on a day with no selection in the vault.
+    *exercise* the reroute on a day with no selection.
     """
-    micro = override if override is not None else _load_runstate_micro_adventure(vault, today)
+    micro = override if override is not None else _load_runstate_micro_adventure(today)
     if not micro:
         return config
     return {**config, "micro_adventure": micro}
 
 
 def build_body(
-    vault: Path, sequence_file: str | None, micro_adventure: dict | None = None
+    sequence_file: str | None, micro_adventure: dict | None = None
 ) -> dict:
-    """Assemble the {digest, sequence, config} body from live vault data.
+    """Assemble the {digest, sequence, config} body (no note rows; see module docstring).
 
     Mirrors ``commit_run.py``'s pipeline up to the manifest, but stops at the
     three inputs the /commit route needs and returns them as a plain dict.
     """
     today = gather.effective_date(datetime.now())
 
-    pool_notes, assigned_notes = shadow_run._gather_pool_and_assigned(vault, today)
-    run_data = gather.build_run_data(pool_notes, assigned_notes, today)
+    run_data = gather.empty_run_data(today)
 
     order = list(main_mod.config_reader.FALLBACK_RANKING_CRITERIA["within_tier_sort"])
-    config_result = main_mod.config_reader.read_config(vault)
+    config_result = main_mod.config_reader.read_config()
     if config_result.config is not None:
         value = config_result.config.get_ranking_criterion("within_tier_sort").value
         if isinstance(value, str):
@@ -147,7 +144,7 @@ def build_body(
         sequence = shadow_run._synthesize_trivial_sequence(digest["assigned"])
 
     config = config_result.config.sections if config_result.config is not None else {}
-    config = inject_micro_adventure(config, vault, today, override=micro_adventure)
+    config = inject_micro_adventure(config, today, override=micro_adventure)
     return {"digest": digest, "sequence": sequence, "config": config}
 
 
@@ -163,17 +160,8 @@ def main() -> int:
                              "idea string. Overrides today's run-state selection.")
     args = parser.parse_args()
 
-    root = os.environ.get(VAULT_ROOT_ENV)
-    if not root:
-        print(f"ERROR: {VAULT_ROOT_ENV} not set", file=sys.stderr)
-        return 1
-    vault = Path(root).expanduser()
-    if not vault.is_dir():
-        print(f"ERROR: vault root not found: {vault}", file=sys.stderr)
-        return 1
-
     micro = _coerce_micro_adventure(args.micro_adventure)
-    body = build_body(vault, args.sequence_file, micro_adventure=micro)
+    body = build_body(args.sequence_file, micro_adventure=micro)
     Path(args.out).write_text(json.dumps(body, indent=2, default=str), encoding="utf-8")
 
     seq_rows = len(body["sequence"].get("sequence", []))

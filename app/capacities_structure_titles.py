@@ -1,10 +1,10 @@
 """capacities_structure_titles.py — machine-local Capacities title cache.
 
-Capacities returns a display title for every structure, but the vault-local
+Capacities returns a display title for every structure, but the app-owned
 mapping record stores only structure IDs and deliberately persists no
 provider metadata: the mapping is operator-owned and revision-checked, while
 a title is disposable, last-observed display metadata. This cache keeps those
-titles OUTSIDE the vault, in the same machine-local root as the credential
+titles OUTSIDE the mapping record, in the same machine-local root as the credential
 slot and the content cache, so nothing lands in a synced or backed-up tree.
 
 The on-disk document is::
@@ -12,14 +12,14 @@ The on-disk document is::
     {
       "version": 1,
       "namespaces": {
-        "<sha256 hex of vault root + space + base url>": {
+        "<sha256 hex of space + base url>": {
           "titles": {"<structure id>": "<display title>"}
         }
       }
     }
 
 The namespace key is the same separator-based digest the content cache uses,
-so two different vaults, spaces, or provider base URLs never share entries.
+so two different spaces or provider base URLs never share entries.
 ``remember_titles`` replaces only its own namespace and preserves every other
 one. There is deliberately no TTL: this is last-observed display metadata,
 refreshed only when a read already happens.
@@ -47,7 +47,7 @@ from capacities_cache_io import (
     store_lock,
 )
 
-#: Machine-local (never vault-local), a sibling of the content cache at
+#: Machine-local, a sibling of the content cache at
 #: ``DEFAULT_CONTENT_CACHE_PATH`` and of the credential slot.
 DEFAULT_TITLES_CACHE_PATH = (
     Path.home() / ".config" / "tdtb" / "tdtb-capacities-structure-titles.json"
@@ -144,7 +144,6 @@ def _load_document(path: Path) -> dict[str, Any]:
 
 
 def read_titles(
-    vault_root: str | Path,
     space_id: str,
     base_url: str,
     *,
@@ -158,7 +157,7 @@ def read_titles(
     """
     cache_path = _resolve_path(path)
     try:
-        namespace = cache_namespace(vault_root, space_id, base_url)
+        namespace = cache_namespace(space_id, base_url)
         raw = cache_path.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError, TypeError, ValueError):
         return {}
@@ -181,7 +180,6 @@ def read_titles(
 
 
 def remember_titles(
-    vault_root: str | Path,
     space_id: str,
     base_url: str,
     titles: Mapping[Any, Any],
@@ -202,7 +200,7 @@ def remember_titles(
     cache_path = _resolve_path(path)
     lock_file = _lock_file_for(cache_path)
     try:
-        namespace = cache_namespace(vault_root, space_id, base_url)
+        namespace = cache_namespace(space_id, base_url)
         _ensure_private_directory(cache_path.parent)
         _ensure_owner_only_file(lock_file)
         with store_lock(cache_path):

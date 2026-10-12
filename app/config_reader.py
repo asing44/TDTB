@@ -203,7 +203,7 @@ class TdtbConfig:
         """Return `## Ignore List` as {"todoist_ids", "paths", "names"} sets —
         the user-editable permanent hide list (T13e). The section's existing
         schema is honored: `### Todoist (by ID)` rows match on todoist_id,
-        `### Obsidian (by path)` rows on vault-relative path. A `### Names`
+        `### Obsidian (by path)` rows on source path. A `### Names`
         subsection (or bare `Name` rows) matches any source case-insensitively.
         Optional section; empty sets if absent."""
         section = self.sections.get("Ignore List")
@@ -407,14 +407,9 @@ def sanitize_placement_context(raw: str) -> str:
 # Top-level entry point
 # ---------------------------------------------------------------------------
 
-def read_config(vault_root: str | Path | None = None) -> ConfigReadResult:
+def read_config() -> ConfigReadResult:
     """Read the TDTB config: ``config/tdtb.json`` with the machine-local
     ``~/.config/tdtb/config.json`` layered on top (see ``app_config``).
-
-    ``vault_root`` is accepted and ignored: the vault note is no longer a
-    config source. The parameter stays only so the existing callers (which
-    still thread the vault root for their other, later-slice reads) need not
-    change; it goes away with them.
 
     Returns a `ConfigReadResult`:
       - `bootstrap_needed=True`, `config=None`, `validation=None` when neither

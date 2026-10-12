@@ -392,8 +392,8 @@ def vault(tmp_path) -> Path:
 
 
 @pytest.fixture
-def client(vault) -> TestClient:
-    c = TestClient(main_mod.create_app(vault_root=vault))
+def client() -> TestClient:
+    c = TestClient(main_mod.create_app())
     c.app_token = c.app.state.token
     return c
 
@@ -418,7 +418,7 @@ def _contract() -> list[dict]:
     ]
 
 
-def _save_source(vault: Path) -> None:
+def _save_source() -> None:
     common = dict(
         title_property="title",
         status_property="status",
@@ -428,7 +428,6 @@ def _save_source(vault: Path) -> None:
         assignment_values=("true",),
     )
     cb.save_source(
-        vault,
         expected_revision=0,
         space_id=SPACE,
         structures=[
@@ -461,9 +460,9 @@ def _object(object_id: str, structure: str = ROOT, *, completion=None, tags=None
     return {"id": object_id, "structureId": structure, "properties": properties}
 
 
-def _publish(vault: Path, objects: list[dict]) -> None:
+def _publish(objects: list[dict]) -> None:
     """Install one complete generation; every configured type is checked."""
-    store = cb.build_refresh_state(vault, SPACE)
+    store = cb.build_refresh_state(SPACE)
     listed = {type_id: [] for type_id in (ROOT, CUSTOM)}
     for obj in objects:
         store.put(obj["id"], obj["structureId"], obj)
@@ -484,7 +483,7 @@ def _publish(vault: Path, objects: list[dict]) -> None:
     store.install_generation(evidence, expected_generation=0, structures=_contract())
 
 
-def _ready(vault: Path, objects: list[dict]) -> None:
+def _ready(objects: list[dict]) -> None:
     """Direct intake, a saved source, and one published generation."""
     path = app_config.config_path()
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -492,8 +491,8 @@ def _ready(vault: Path, objects: list[dict]) -> None:
         json.dumps({"version": 1, "sources": {"capacities_intake": "direct"}}),
         encoding="utf-8",
     )
-    _save_source(vault)
-    _publish(vault, objects)
+    _save_source()
+    _publish(objects)
 
 
 STANDARD = [
@@ -536,7 +535,7 @@ def _stored() -> dict:
 
 
 class TestSelectionsGet:
-    def test_no_source_record_is_the_documented_empty_shape(self, client, vault):
+    def test_no_source_record_is_the_documented_empty_shape(self, client):
         response = client.get(SELECTIONS_URL)
 
         assert response.status_code == 200
@@ -548,8 +547,8 @@ class TestSelectionsGet:
         }
         assert not cs.selections_path().exists()
 
-    def test_source_without_a_store_is_empty_for_that_space(self, client, vault):
-        _save_source(vault)
+    def test_source_without_a_store_is_empty_for_that_space(self, client):
+        _save_source()
 
         response = client.get(SELECTIONS_URL)
 
@@ -561,8 +560,8 @@ class TestSelectionsGet:
         }
         assert not cs.selections_path().exists()
 
-    def test_reports_space_revisions_and_each_selection(self, client, vault):
-        _save_source(vault)
+    def test_reports_space_revisions_and_each_selection(self, client):
+        _save_source()
         _seed((_ident("obj-a"), 7, True))
 
         response = client.get(SELECTIONS_URL)
@@ -577,16 +576,16 @@ class TestSelectionsGet:
             {"identity": _ident("obj-a"), "acknowledged": True, "rules_revision": 7},
         ]
 
-    def test_is_tokenless_and_answers_under_legacy_intake(self, client, vault):
+    def test_is_tokenless_and_answers_under_legacy_intake(self, client):
         # No config.json, so the intake is the legacy default: GET still reads the store.
-        _save_source(vault)
+        _save_source()
 
         response = client.get(SELECTIONS_URL, headers={"X-TDTB-Token": "wrong-token"})
 
         assert response.status_code == 200
 
-    def test_foreign_space_store_is_the_empty_shape(self, client, vault):
-        _save_source(vault)
+    def test_foreign_space_store_is_the_empty_shape(self, client):
+        _save_source()
         cs.save_selections(
             space_id="space-2",
             expected_revision=0,
@@ -607,7 +606,7 @@ class TestSelectionsGet:
         }
 
     def test_store_failure_is_a_bounded_503_that_keeps_the_bytes(self, client, vault):
-        _save_source(vault)
+        _save_source()
         path = cs.selections_path()
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("{not json", encoding="utf-8")
@@ -622,16 +621,16 @@ class TestSelectionsGet:
 
 
 class TestSelectionsPostAuth:
-    def test_post_requires_the_token(self, client, vault):
-        _ready(vault, STANDARD)
+    def test_post_requires_the_token(self, client):
+        _ready(STANDARD)
 
         response = _select(client, select=[(_ident("obj-a"), False)], headers={})
 
         assert response.status_code == 403
         assert not cs.selections_path().exists()
 
-    def test_post_with_a_wrong_token_is_rejected(self, client, vault):
-        _ready(vault, STANDARD)
+    def test_post_with_a_wrong_token_is_rejected(self, client):
+        _ready(STANDARD)
 
         response = _select(
             client,
@@ -644,8 +643,8 @@ class TestSelectionsPostAuth:
 
 
 class TestSelectionsPostIntake:
-    def test_legacy_intake_answers_422_and_writes_nothing(self, client, vault):
-        _save_source(vault)  # no config.json: legacy default
+    def test_legacy_intake_answers_422_and_writes_nothing(self, client):
+        _save_source()  # no config.json: legacy default
 
         response = _select(client, select=[(_ident("obj-a"), False)])
 
@@ -662,8 +661,8 @@ class TestSelectionsPostValidation:
         "Capacities:space-1:RootTask:obj-a",
         "capacities:space-1:RootTask:obj-a ",
     ])
-    def test_forged_identity_is_rejected_and_named(self, client, vault, forged):
-        _ready(vault, STANDARD)
+    def test_forged_identity_is_rejected_and_named(self, client, forged):
+        _ready(STANDARD)
 
         response = _select(client, select=[(forged, False)])
 
@@ -673,8 +672,8 @@ class TestSelectionsPostValidation:
         assert detail["identity"] == forged
         assert not cs.selections_path().exists()
 
-    def test_cross_space_identity_is_rejected_and_named(self, client, vault):
-        _ready(vault, STANDARD)
+    def test_cross_space_identity_is_rejected_and_named(self, client):
+        _ready(STANDARD)
         identity = _ident("obj-a", space="space-2")
 
         response = _select(client, select=[(identity, False)])
@@ -684,8 +683,8 @@ class TestSelectionsPostValidation:
         assert response.json()["detail"]["identity"] == identity
         assert not cs.selections_path().exists()
 
-    def test_unknown_object_is_not_cached_and_named(self, client, vault):
-        _ready(vault, STANDARD)
+    def test_unknown_object_is_not_cached_and_named(self, client):
+        _ready(STANDARD)
         identity = _ident("obj-missing")
 
         response = _select(client, select=[(identity, False)])
@@ -695,10 +694,10 @@ class TestSelectionsPostValidation:
         assert response.json()["detail"]["identity"] == identity
         assert not cs.selections_path().exists()
 
-    def test_completed_object_never_reaches_the_candidate_surface(self, client, vault):
+    def test_completed_object_never_reaches_the_candidate_surface(self, client):
         # The adapter drops a closed (completed) object before the candidate list,
         # so selecting it is not_cached, not excluded.
-        _ready(vault, [_object("obj-done", CUSTOM, completion="done")])
+        _ready([_object("obj-done", CUSTOM, completion="done")])
         identity = _ident("obj-done", CUSTOM)
 
         response = _select(client, select=[(identity, False)])
@@ -707,8 +706,8 @@ class TestSelectionsPostValidation:
         assert response.json()["detail"]["code"] == "not_cached"
         assert response.json()["detail"]["identity"] == identity
 
-    def test_unmapped_structure_is_type_disabled_and_named(self, client, vault):
-        _ready(vault, STANDARD)
+    def test_unmapped_structure_is_type_disabled_and_named(self, client):
+        _ready(STANDARD)
         identity = _ident("obj-x", structure="Project")
 
         response = _select(client, select=[(identity, False)])
@@ -718,13 +717,13 @@ class TestSelectionsPostValidation:
         assert response.json()["detail"]["identity"] == identity
         assert not cs.selections_path().exists()
 
-    def test_tag_excluded_identity_is_refused_and_writes_nothing(self, client, vault):
+    def test_tag_excluded_identity_is_refused_and_writes_nothing(self, client):
         # The adapter drops tag-excluded rows before the candidate list, so the
         # identity is refused as a non-candidate. The code is pinned below.
-        es.save_settings(vault, expected_revision=0, exclusions=[
+        es.save_settings(expected_revision=0, exclusions=[
             {"source": "capacities", "space_id": SPACE, "tag_id": TAG_A},
         ])
-        _ready(vault, [_object("obj-tagged", tags=[TAG_A])])
+        _ready([_object("obj-tagged", tags=[TAG_A])])
         identity = _ident("obj-tagged")
 
         response = _select(client, select=[(identity, False)])
@@ -733,7 +732,7 @@ class TestSelectionsPostValidation:
         assert response.json()["detail"]["identity"] == identity
         assert not cs.selections_path().exists()
 
-    def test_tag_excluded_identity_is_refused_and_named(self, client, vault):
+    def test_tag_excluded_identity_is_refused_and_named(self, client):
         """A tag-excluded identity is refused as not_cached, not excluded.
 
         Settled by root (S4 report): load_direct_rows applies the tag policy
@@ -744,10 +743,10 @@ class TestSelectionsPostValidation:
         pre-exclusion candidate surface is a possible later refinement,
         recorded as a residual, not a defect.
         """
-        es.save_settings(vault, expected_revision=0, exclusions=[
+        es.save_settings(expected_revision=0, exclusions=[
             {"source": "capacities", "space_id": SPACE, "tag_id": TAG_A},
         ])
-        _ready(vault, [_object("obj-tagged", tags=[TAG_A])])
+        _ready([_object("obj-tagged", tags=[TAG_A])])
 
         response = _select(client, select=[(_ident("obj-tagged"), False)])
 
@@ -756,8 +755,8 @@ class TestSelectionsPostValidation:
         assert response.json()["detail"]["identity"] == _ident("obj-tagged")
         assert not cs.selections_path().exists()
 
-    def test_dropped_today_is_excluded_and_named(self, client, vault):
-        _ready(vault, STANDARD)
+    def test_dropped_today_is_excluded_and_named(self, client):
+        _ready(STANDARD)
         today = gather.effective_date(datetime.now())
 
         def _drop(state):
@@ -766,7 +765,7 @@ class TestSelectionsPostValidation:
                 "dropped_at": "2026-10-09T09:00:00-07:00",
             }]
 
-        runstate.update_runstate(vault, today, _drop)
+        runstate.update_runstate(today, _drop)
 
         response = _select(client, select=[(_ident("obj-a"), False)])
 
@@ -775,8 +774,8 @@ class TestSelectionsPostValidation:
         assert response.json()["detail"]["identity"] == _ident("obj-a")
         assert not cs.selections_path().exists()
 
-    def test_review_candidate_without_acknowledgement_is_rejected(self, client, vault):
-        _ready(vault, STANDARD)
+    def test_review_candidate_without_acknowledgement_is_rejected(self, client):
+        _ready(STANDARD)
         identity = _ident("obj-unknown", CUSTOM)
 
         response = _select(client, select=[(identity, False)])
@@ -786,8 +785,8 @@ class TestSelectionsPostValidation:
         assert response.json()["detail"]["identity"] == identity
         assert not cs.selections_path().exists()
 
-    def test_review_candidate_with_acknowledgement_is_stored(self, client, vault):
-        _ready(vault, STANDARD)
+    def test_review_candidate_with_acknowledgement_is_stored(self, client):
+        _ready(STANDARD)
         identity = _ident("obj-unknown", CUSTOM)
 
         response = _select(client, select=[(identity, True)])
@@ -798,16 +797,16 @@ class TestSelectionsPostValidation:
         ]
         assert _stored()[identity].acknowledged is True
 
-    def test_clear_candidate_needs_no_acknowledgement(self, client, vault):
-        _ready(vault, STANDARD)
+    def test_clear_candidate_needs_no_acknowledgement(self, client):
+        _ready(STANDARD)
 
         response = _select(client, select=[(_ident("obj-a"), False)])
 
         assert response.status_code == 200
         assert _stored()[_ident("obj-a")].acknowledged is False
 
-    def test_duplicate_identity_in_one_request_is_rejected(self, client, vault):
-        _ready(vault, STANDARD)
+    def test_duplicate_identity_in_one_request_is_rejected(self, client):
+        _ready(STANDARD)
         identity = _ident("obj-a")
 
         response = _select(client, select=[(identity, False), (identity, True)])
@@ -817,8 +816,8 @@ class TestSelectionsPostValidation:
         assert response.json()["detail"]["identity"] == identity
         assert not cs.selections_path().exists()
 
-    def test_stale_revision_is_a_409_with_both_revisions(self, client, vault):
-        _ready(vault, STANDARD)
+    def test_stale_revision_is_a_409_with_both_revisions(self, client):
+        _ready(STANDARD)
         first = _select(client, expected=0, select=[(_ident("obj-a"), False)])
         assert first.status_code == 200
         assert first.json()["revision"] == 1
@@ -835,13 +834,13 @@ class TestSelectionsPostValidation:
         assert detail["current_revision"] == 1
         assert cs.selections_path().read_bytes() == before
 
-    def test_unevaluable_tags_refuse_the_candidate_and_write_nothing(self, client, vault):
-        es.save_settings(vault, expected_revision=0, exclusions=[
+    def test_unevaluable_tags_refuse_the_candidate_and_write_nothing(self, client):
+        es.save_settings(expected_revision=0, exclusions=[
             {"source": "capacities", "space_id": SPACE, "tag_id": TAG_A},
         ])
         malformed = _object("obj-bad-tags")
         malformed["properties"]["tags"] = {"type": "text", "text": "tag"}
-        _ready(vault, [malformed])
+        _ready([malformed])
 
         response = _select(client, select=[(_ident("obj-bad-tags"), False)])
 
@@ -853,8 +852,8 @@ class TestSelectionsPostValidation:
 
 
 class TestSelectionsPostMerge:
-    def test_merge_keeps_untouched_records_and_stamps_only_the_new_one(self, client, vault):
-        _ready(vault, STANDARD)
+    def test_merge_keeps_untouched_records_and_stamps_only_the_new_one(self, client):
+        _ready(STANDARD)
         _seed((_ident("obj-a"), 7, False))
 
         response = _select(
@@ -874,8 +873,8 @@ class TestSelectionsPostMerge:
             "rules_revision": 0,
         }
 
-    def test_reselect_is_idempotent_and_never_duplicates(self, client, vault):
-        _ready(vault, STANDARD)
+    def test_reselect_is_idempotent_and_never_duplicates(self, client):
+        _ready(STANDARD)
         _seed((_ident("obj-a"), 7, False))
 
         response = _select(client, expected=1, select=[(_ident("obj-a"), False)])
@@ -886,8 +885,8 @@ class TestSelectionsPostMerge:
         assert selections[0]["rules_revision"] == 0
         assert response.json()["revision"] == 2
 
-    def test_deselect_then_reselect_in_one_call_leaves_one_current_record(self, client, vault):
-        _ready(vault, STANDARD)
+    def test_deselect_then_reselect_in_one_call_leaves_one_current_record(self, client):
+        _ready(STANDARD)
         _seed((_ident("obj-a"), 7, True))
 
         response = _select(
@@ -902,8 +901,8 @@ class TestSelectionsPostMerge:
             {"identity": _ident("obj-a"), "acknowledged": False, "rules_revision": 0},
         ]
 
-    def test_deselect_removes_only_the_named_record(self, client, vault):
-        _ready(vault, STANDARD)
+    def test_deselect_removes_only_the_named_record(self, client):
+        _ready(STANDARD)
         _seed((_ident("obj-a"), 7, False), (_ident("obj-unknown", CUSTOM), 7, True))
 
         response = _select(client, expected=1, deselect=[_ident("obj-a")])
@@ -914,8 +913,8 @@ class TestSelectionsPostMerge:
         ]
         assert response.json()["revision"] == 2
 
-    def test_deselect_of_an_unselected_identity_is_a_no_op(self, client, vault):
-        _ready(vault, STANDARD)
+    def test_deselect_of_an_unselected_identity_is_a_no_op(self, client):
+        _ready(STANDARD)
 
         response = _select(client, expected=0, deselect=[_ident("obj-a")])
 
@@ -925,8 +924,8 @@ class TestSelectionsPostMerge:
 
 
 class TestSelectionsPostRulesRevision:
-    def test_client_supplied_rules_revision_is_never_accepted(self, client, vault):
-        _ready(vault, STANDARD)
+    def test_client_supplied_rules_revision_is_never_accepted(self, client):
+        _ready(STANDARD)
         entry = {"identity": _ident("obj-a"), "acknowledge": False, "rules_revision": 999}
 
         nested = client.post(
@@ -949,8 +948,8 @@ class TestSelectionsPostRulesRevision:
         assert top_level.status_code == 422
         assert not cs.selections_path().exists()
 
-    def test_rules_revision_is_stamped_from_the_server_rules(self, client, vault):
-        _ready(vault, STANDARD)
+    def test_rules_revision_is_stamped_from_the_server_rules(self, client):
+        _ready(STANDARD)
         rules_file = cr.rules_path()
         rules_file.parent.mkdir(parents=True, exist_ok=True)
         rules_file.write_text(
@@ -966,8 +965,8 @@ class TestSelectionsPostRulesRevision:
 
 
 class TestSelectionsPostStore:
-    def test_corrupt_store_is_a_bounded_503_and_keeps_the_bytes(self, client, vault):
-        _ready(vault, STANDARD)
+    def test_corrupt_store_is_a_bounded_503_and_keeps_the_bytes(self, client):
+        _ready(STANDARD)
         path = cs.selections_path()
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("{not json", encoding="utf-8")
@@ -980,7 +979,7 @@ class TestSelectionsPostStore:
         assert path.read_bytes() == b"{not json"
 
     def test_save_failure_is_a_bounded_503_without_paths(self, client, vault, monkeypatch):
-        _ready(vault, STANDARD)
+        _ready(STANDARD)
 
         def _boom(**_kwargs):
             raise cs.SelectionStoreError("write failed at /private/var/secret")
@@ -996,9 +995,9 @@ class TestSelectionsPostStore:
 
 class TestSelectionsNoProvider:
     def test_both_routes_never_reach_a_provider_or_a_credential(
-        self, client, vault, monkeypatch
+        self, client, monkeypatch
     ):
-        _ready(vault, STANDARD)
+        _ready(STANDARD)
         calls: list[str] = []
 
         def _forbidden(label):

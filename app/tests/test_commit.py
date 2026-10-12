@@ -470,7 +470,7 @@ class TestRunCommit:
                                end=datetime(2026, 7, 12, 15, 0)),
         ]
         results = commit.run_commit(intents, todoist=client, store=store,
-                                    vault_root=tmp_path, today=TODAY)
+                                    today=TODAY)
         assert {r.step for r in results} == {"A", "D/E"}
         assert all(r.ok for r in results)
         assert list(tmp_path.iterdir()) == []  # the vault root is never written

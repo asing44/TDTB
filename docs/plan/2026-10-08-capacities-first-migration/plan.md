@@ -1,5 +1,7 @@
 # TDTB — Capacities-first migration (retire Obsidian vault reads)
 
+> **Historical (vault removal V4, 2026-10-12):** this document predates the removal of the Obsidian vault. Any vault root, `TDTB_VAULT_ROOT`, `sources.vault_enabled`, `tools/vault_rows_report.py`, `tools/migrate_vault_state.py` or `schema_guard` step below describes code that no longer exists. See `docs/plan/2026-10-12-vault-removal/plan.md`.
+
 Status: **design complete; operator decisions D1–D4 recorded. Implementation begins at S0.**
 Date: 2026-10-08. Surface: this file (there is no `progress.md` in this repo).
 

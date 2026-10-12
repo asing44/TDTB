@@ -32,15 +32,8 @@ import tdtb_gather as gather  # noqa: E402
 
 
 @pytest.fixture
-def vault(tmp_path: Path) -> Path:
-    v = tmp_path / "vault-root"
-    v.mkdir()
-    return v
-
-
-@pytest.fixture
-def client(vault) -> TestClient:
-    app = main_mod.create_app(vault_root=vault)
+def client() -> TestClient:
+    app = main_mod.create_app()
     c = TestClient(app)
     c.app_token = app.state.token
     return c
@@ -62,7 +55,7 @@ def _drafts() -> dict:
 # Local storage + no day_setup_confirmed on prompt-only saves
 # ---------------------------------------------------------------------------
 
-def test_captures_only_save_does_not_confirm(client, vault):
+def test_captures_only_save_does_not_confirm(client):
     r = client.post("/day-setup", json={
         "captures": {"intention": "synthetic intent",
                      "megan_nicety": "synthetic nicety"},
@@ -70,7 +63,7 @@ def test_captures_only_save_does_not_confirm(client, vault):
     assert r.status_code == 200, r.text
     body = r.json()
     assert body["day_setup_confirmed"] is False
-    assert runstate.is_day_setup_confirmed(vault, _today()) is False
+    assert runstate.is_day_setup_confirmed(_today()) is False
     assert _drafts() == {
         "intention": "synthetic intent",
         "megan_nicety": "synthetic nicety",
@@ -91,7 +84,7 @@ def test_captures_only_save_echoes_clean_optins(client):
     assert body["optins_revision"] == 0
 
 
-def test_captures_only_save_with_corrupt_optins_echoes_unavailable(client, vault):
+def test_captures_only_save_with_corrupt_optins_echoes_unavailable(client):
     """A corrupt opt-in store + captures-only save must not confirm the day,
     must not fabricate an all-false opt-in echo, and must preserve the bytes."""
     target = prompt_state.optins_path()
@@ -113,13 +106,13 @@ def test_captures_only_save_with_corrupt_optins_echoes_unavailable(client, vault
     assert main_mod._PROMPT_OPTINS_READ_WARNING in body.get("prompt_warnings", [])
     # No day confirmation and no write of the corrupt bytes.
     assert body["day_setup_confirmed"] is False
-    assert runstate.is_day_setup_confirmed(vault, _today()) is False
+    assert runstate.is_day_setup_confirmed(_today()) is False
     assert target.read_text(encoding="utf-8") == corrupt
     # The draft still saved.
     assert _drafts() == {"intention": "synthetic intent"}
 
 
-def test_optins_only_save_does_not_confirm(client, vault):
+def test_optins_only_save_does_not_confirm(client):
     r = client.post("/day-setup", json={
         "optins": {"intention": True, "megan_nicety": False,
                    "stoic_intention": False},
@@ -132,17 +125,17 @@ def test_optins_only_save_does_not_confirm(client, vault):
     assert body["optins"] == {
         "intention": True, "megan_nicety": False, "stoic_intention": False,
     }
-    assert runstate.is_day_setup_confirmed(vault, _today()) is False
+    assert runstate.is_day_setup_confirmed(_today()) is False
 
 
-def test_nonprompt_save_still_confirms(client, vault):
+def test_nonprompt_save_still_confirms(client):
     r = client.post("/day-setup", json={"anchor": "09:00"}, headers=_auth(client))
     assert r.status_code == 200
     assert r.json()["day_setup_confirmed"] is True
-    assert runstate.is_day_setup_confirmed(vault, _today()) is True
+    assert runstate.is_day_setup_confirmed(_today()) is True
 
 
-def test_empty_body_still_confirms(client, vault):
+def test_empty_body_still_confirms(client):
     # Backward compatibility: the pre-U5 bare save still confirms.
     r = client.post("/day-setup", json={}, headers=_auth(client))
     assert r.status_code == 200
@@ -162,9 +155,9 @@ def test_capture_patch_omit_preserves_and_empty_clears(client):
 # Reads override inert legacy runstate prompt text
 # ---------------------------------------------------------------------------
 
-def test_read_overrides_inert_legacy_runstate_prompt_text(client, vault):
+def test_read_overrides_inert_legacy_runstate_prompt_text(client):
     today = _today()
-    runstate.update_runstate(vault, today, {
+    runstate.update_runstate(today, {
         "intention": "LEGACY-INERT-TEXT",
         "megan_nicety": "LEGACY-INERT-TEXT",
         "stoic_intention": "LEGACY-INERT-TEXT",

@@ -8,7 +8,7 @@ JSON files, layered in this order:
      overridable with ``$TDTB_REPO_CONFIG`` for tests), then
   2. ``~/.config/tdtb/config.json`` (``config_path()``, relocatable with
      ``$TDTB_HOME``) as an OPTIONAL machine-local override. Machine settings
-     (``sources.mode``, ``sources.vault_enabled``) and anything secret-ish live
+     (``sources.mode``) and anything secret-ish live
      only here.
 
 Layering is recursive for objects (so a local ``sources.mode`` joins a repo
@@ -42,7 +42,6 @@ translation to the markdown-shaped section dict the rest of the app consumes
       "todoist": {"read_query": {"assigned": ..., "quick": ...}},
       "sources": {"mode": "live" | "artifact",
                   "artifact": {"max_age_minutes": 240},
-                  "vault_enabled": true,
                   "capacities_intake": "legacy" | "direct"}
     }
 
@@ -51,8 +50,8 @@ translation to the markdown-shaped section dict the rest of the app consumes
 ``sections``. ``mode: "both"`` is rejected at load — the read drift trap — so
 a file carrying it is ignored as a whole (the other layer still loads).
 
-Record sections carry the old vault config's own row shape verbatim, so the
-translation stays lossless and the operator edits the same fields the vault
+Record sections carry the retired config note's own row shape verbatim, so the
+translation stays lossless and the operator edits the same fields the note
 table exposed. ``habits`` and ``todoist.read_query`` re-home dot-notation
 ``Defaults`` keys under their own objects. Every key has an in-code fallback
 (``config_reader.FALLBACK_*``, ``micro_adventure.FALLBACK_POOL``), so a missing
@@ -70,12 +69,12 @@ import os
 from pathlib import Path
 from typing import Any
 
-#: Env var that overrides the app home. Mirrors the vault-free precedent in
+#: Env var that overrides the app home. Mirrors the precedent in
 #: ``capacities_structure_titles.py`` (``~/.config/tdtb``), one root with one
 #: override for every app-owned store.
 TDTB_HOME_ENV = "TDTB_HOME"
 
-#: Machine-local, never vault-local. A sibling of the Capacities title cache.
+#: Machine-local. A sibling of the Capacities title cache.
 DEFAULT_APP_HOME = Path.home() / ".config" / "tdtb"
 
 CONFIG_FILENAME = "config.json"
@@ -110,22 +109,22 @@ DEFAULT_CAPACITIES_INTAKE = CAPACITIES_INTAKE_LEGACY
 
 #: Keys the ``sources`` section recognizes. Anything else is reported.
 SOURCES_KNOWN_KEYS = frozenset({
-    "mode", "vault_enabled", "artifact", "max_age_minutes",
+    "mode", "artifact", "max_age_minutes",
     SOURCES_CAPACITIES_INTAKE_KEY,
 })
+
+#: Retired ``sources`` keys that older machine-local configs still carry (the
+#: operator's live ``~/.config/tdtb/config.json`` holds
+#: ``sources.vault_enabled: false``). They are ignored silently: no effect, no
+#: validation failure, no ``sources_config_warnings`` entry. A trimmed match
+#: counts, so a whitespace-padded legacy key is tolerated the same way.
+SOURCES_LEGACY_IGNORED_KEYS = frozenset({"vault_enabled"})
 
 #: Keys the nested ``sources.artifact`` section recognizes.
 SOURCES_ARTIFACT_KNOWN_KEYS = frozenset({"max_age_minutes"})
 
 #: Default artifact age ceiling (minutes) before a load reports ``aged``.
 DEFAULT_ARTIFACT_MAX_AGE_MINUTES = 240
-
-#: ``sources.vault_enabled`` — the S5 cutover knob. When false the vault gather
-#: contributes no rows and a resolvable vault root is no longer required for the
-#: digest. The default is **True**: shipping the S5 slice changes nothing, the
-#: cutover IS the operator setting this to false, and the rollback is setting it
-#: back. S6 deletes the flag and the vault gather together.
-DEFAULT_VAULT_ENABLED = True
 
 # ---------------------------------------------------------------------------
 # Home resolver — the one reusable helper later slices use
@@ -257,30 +256,6 @@ def sources_mode(path: str | Path | None = None) -> str:
     return DEFAULT_SOURCES_MODE
 
 
-def vault_enabled(path: str | Path | None = None) -> bool:
-    """Whether the vault gather contributes rows to the planning digest.
-
-    Reads ``sources.vault_enabled`` from config.json, accepting a top-level
-    ``vault_enabled`` alias for operator convenience (the plan names the flag
-    without a section). Absent, or carried by an unusable document, resolves
-    to :data:`DEFAULT_VAULT_ENABLED` — **True**. Failing toward "vault
-    on" is deliberate, because a malformed config must never silently drop the
-    ~96 vault rows the migration exists to triage. Only an explicit false
-    disables the gather, per the S5 "loud, not silent" contract.
-
-    ``mode`` and ``vault_enabled`` are independent: an operator can run the
-    live source mode with the vault gather off."""
-    document = load_document(path)
-    if document is None:
-        return DEFAULT_VAULT_ENABLED
-    sources = _trimmed_keys(document.get("sources"))
-    value = sources.get("vault_enabled")
-    if value is None:
-        value = _trimmed_keys(document).get("vault_enabled")
-    parsed = _coerce_bool(value)
-    return DEFAULT_VAULT_ENABLED if parsed is None else parsed
-
-
 def artifact_max_age_minutes(path: str | Path | None = None) -> int:
     """The artifact age ceiling, default 240 minutes.
 
@@ -321,13 +296,13 @@ def sources_config_warnings(path: str | Path | None = None) -> list[str]:
     """Report unrecognized keys in the ``sources`` section of config.json.
 
     JSON preserves a hand-typed leading/trailing space in a key, so
-    ``" vault_enabled"`` looks correct to the operator while missing every
-    exact-key lookup. :func:`_trimmed_keys` tolerates that on read, but a key
-    the section does not recognize at all is still silently discarded unless
-    it is reported here — the 2026-10-09 S5 flip wrote ``" vault_enabled"``
-    and the vault stayed on with no warning. This is the verdict that makes
-    the tolerance loud: report the key as written (whitespace included) so the
-    operator can find it.
+    ``" mode"`` looks correct to the operator while missing every exact-key
+    lookup. :func:`_trimmed_keys` tolerates that on read, but a key the
+    section does not recognize at all is still silently discarded unless it is
+    reported here. This is the verdict that makes the tolerance loud: report
+    the key as written (whitespace included) so the operator can find it.
+    Retired keys in :data:`SOURCES_LEGACY_IGNORED_KEYS` are the one exception:
+    they are dropped without a word.
 
     Returns ``[]`` for an unusable document, an absent ``sources`` section,
     or a clean section (every key — including an empty ``sources: {}``, which
@@ -350,7 +325,11 @@ def _sources_warnings(document: dict[str, Any]) -> list[str]:
     sources = document.get("sources")
     if not isinstance(sources, dict):
         return []
-    warnings = _unrecognized_key_warnings(sources, "sources", SOURCES_KNOWN_KEYS)
+    current = {
+        key: value for key, value in sources.items()
+        if str(key).strip() not in SOURCES_LEGACY_IGNORED_KEYS
+    }
+    warnings = _unrecognized_key_warnings(current, "sources", SOURCES_KNOWN_KEYS)
     intake = _trimmed_keys(sources).get(SOURCES_CAPACITIES_INTAKE_KEY, DEFAULT_CAPACITIES_INTAKE)
     if not (isinstance(intake, str) and intake in CAPACITIES_INTAKE_MODES):
         warnings.append(
@@ -469,11 +448,10 @@ def _trimmed_keys(raw: Any) -> dict[str, Any]:
     """Return ``raw`` with its keys stripped of surrounding whitespace.
 
     JSON preserves a hand-typed leading/trailing space in a key, so
-    ``" vault_enabled"`` looks correct to the operator while missing every
-    exact-key lookup. Trimming is deliberate tolerance: the key is
-    unambiguous once trimmed, and NOT trimming silently discards an explicit
-    operator instruction (the S5 flip of 2026-10-09 wrote ``" vault_enabled"``
-    and the vault stayed on with no warning).
+    ``" mode"`` looks correct to the operator while missing every exact-key
+    lookup. Trimming is deliberate tolerance: the key is unambiguous once
+    trimmed, and NOT trimming silently discards an explicit operator
+    instruction.
     """
     if not isinstance(raw, dict):
         return {}
@@ -493,8 +471,7 @@ def _unrecognized_key_warnings(
       effect. This is the case the warning exists for.
     * **Whitespace-padded** — the *trimmed* key IS known, so
       :func:`_trimmed_keys` made the value take effect. Reported as a cleanup
-      note only. Claiming such a key was ignored would be false: the
-      2026-10-09 key ``" vault_enabled"`` is honoured on read.
+      note only. Claiming such a key was ignored would be false.
 
     Both report the key as written, so it can be found in the file."""
     unknown: list[str] = []
@@ -524,23 +501,6 @@ def _unrecognized_key_warnings(
             "section's other keys."
         )
     return out
-
-
-def _coerce_bool(value: Any) -> bool | None:
-    """Strict-ish boolean coercion for config flags. ``None`` when the value
-    is absent or not an unambiguous boolean — callers then apply their default."""
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, str):
-        lowered = value.strip().lower()
-        if lowered == "true":
-            return True
-        if lowered == "false":
-            return False
-        return None
-    if type(value) is int and value in (0, 1):
-        return bool(value)
-    return None
 
 
 def _flatten(nested: dict[str, Any], prefix: str = "") -> dict[str, Any]:

@@ -76,7 +76,7 @@ def _contract(*, drop: frozenset[str] = frozenset()) -> list[dict[str, Any]]:
     ]
 
 
-def _save_record(vault: Path) -> None:
+def _save_record() -> None:
     structures = []
     for type_id in (ROOT, CUSTOM):
         # A distinct completion field knows only ``done``; every other value is
@@ -100,7 +100,6 @@ def _save_record(vault: Path) -> None:
             )
         )
     cb.save_source(
-        vault,
         expected_revision=0,
         space_id=SPACE,
         structures=structures,
@@ -125,7 +124,6 @@ def _object(
 
 
 def _publish(
-    vault: Path,
     objects: list[dict[str, Any]],
     *,
     structures: Any,
@@ -133,7 +131,7 @@ def _publish(
     expected_generation: int = 0,
 ) -> crs.CompleteSnapshot:
     """Install one complete generation through the production store seam."""
-    store = cb.build_refresh_state(vault, SPACE)
+    store = cb.build_refresh_state(SPACE)
     listed: dict[str, list[str]] = {}
     for obj in objects:
         store.put(obj["id"], obj["structureId"], obj)
@@ -168,19 +166,12 @@ def _corrupt_cached_object(object_id: str) -> None:
     raise AssertionError(f"no cached object stored for {object_id!r}")
 
 
-def _load(vault: Path, now: datetime = NOON):
-    return ci.load_direct_rows(vault, now=now)
+def _load(now: datetime = NOON):
+    return ci.load_direct_rows(now=now)
 
 
 def _names(rows: list[dict[str, Any]]) -> set[str]:
     return {row["name"] for row in rows}
-
-
-@pytest.fixture
-def vault(tmp_path: Path) -> Path:
-    root = tmp_path / "vault"
-    root.mkdir()
-    return root
 
 
 @pytest.fixture
@@ -256,11 +247,10 @@ def test_unusable_config_never_selects_direct(text):
 # ---------------------------------------------------------------------------
 
 def test_offline_projection_splits_assigned_rows_from_pool_rows(
-    vault, no_token_no_provider
+    no_token_no_provider
 ):
-    _save_record(vault)
+    _save_record()
     _publish(
-        vault,
         [
             _object("root-assigned", ROOT, assigned=True),
             _object("custom-pool", CUSTOM, assigned=True),
@@ -269,7 +259,7 @@ def test_offline_projection_splits_assigned_rows_from_pool_rows(
         structures=_contract(),
     )
 
-    assigned, pool, warnings, coverage = _load(vault)
+    assigned, pool, warnings, coverage = _load()
 
     assert _names(assigned) == {"root-assigned"}
     assert _names(pool) == {"custom-pool"}
@@ -296,8 +286,8 @@ def test_offline_provider_refuses_every_provider_call():
         provider.patch_object("root-assigned", {})
 
 
-def test_absent_source_record_is_silently_not_configured(vault):
-    assert _load(vault) == ([], [], [], ci.DirectCoverage())
+def test_absent_source_record_is_silently_not_configured():
+    assert _load() == ([], [], [], ci.DirectCoverage())
 
 
 # ---------------------------------------------------------------------------
@@ -305,11 +295,11 @@ def test_absent_source_record_is_silently_not_configured(vault):
 # ---------------------------------------------------------------------------
 
 def test_missing_snapshot_serves_no_rows_and_requires_refresh(
-    vault, no_token_no_provider
+    no_token_no_provider
 ):
-    _save_record(vault)
+    _save_record()
 
-    assigned, pool, warnings, coverage = _load(vault)
+    assigned, pool, warnings, coverage = _load()
 
     assert (assigned, pool) == ([], [])
     assert len(warnings) == 1
@@ -317,11 +307,11 @@ def test_missing_snapshot_serves_no_rows_and_requires_refresh(
     assert coverage.members == 0
 
 
-def test_missing_structure_contract_serves_no_rows(vault, no_token_no_provider):
-    _save_record(vault)
-    _publish(vault, [_object("root-assigned", ROOT)], structures=None)
+def test_missing_structure_contract_serves_no_rows(no_token_no_provider):
+    _save_record()
+    _publish([_object("root-assigned", ROOT)], structures=None)
 
-    assigned, pool, warnings, _ = _load(vault)
+    assigned, pool, warnings, _ = _load()
 
     assert (assigned, pool) == ([], [])
     assert len(warnings) == 1
@@ -329,34 +319,32 @@ def test_missing_structure_contract_serves_no_rows(vault, no_token_no_provider):
     assert "contract" in warnings[0]
 
 
-def test_contract_from_a_prior_generation_is_never_served(vault, no_token_no_provider):
-    _save_record(vault)
-    _publish(vault, [_object("root-assigned", ROOT)], structures=_contract())
+def test_contract_from_a_prior_generation_is_never_served(no_token_no_provider):
+    _save_record()
+    _publish([_object("root-assigned", ROOT)], structures=_contract())
     _publish(
-        vault,
         [_object("root-assigned", ROOT)],
         structures=None,
         expected_generation=1,
     )
 
-    assigned, pool, warnings, _ = _load(vault)
+    assigned, pool, warnings, _ = _load()
 
     assert (assigned, pool) == ([], [])
     assert "contract" in warnings[0]
 
 
 def test_damaged_cached_member_serves_no_rows_and_counts_it(
-    vault, no_token_no_provider
+    no_token_no_provider
 ):
-    _save_record(vault)
+    _save_record()
     _publish(
-        vault,
         [_object("root-assigned", ROOT), _object("custom-assigned", CUSTOM)],
         structures=_contract(),
     )
     _corrupt_cached_object("custom-assigned")
 
-    assigned, pool, warnings, coverage = _load(vault)
+    assigned, pool, warnings, coverage = _load()
 
     assert (assigned, pool) == ([], [])
     assert coverage.unreadable == 1
@@ -364,17 +352,16 @@ def test_damaged_cached_member_serves_no_rows_and_counts_it(
 
 
 def test_contract_shape_error_maps_to_refresh_required_without_rows(
-    vault, no_token_no_provider
+    no_token_no_provider
 ):
     """A property removed upstream is a contract error, not a crash."""
-    _save_record(vault)
+    _save_record()
     _publish(
-        vault,
         [_object("root-assigned", ROOT)],
         structures=_contract(drop=frozenset({"assigned"})),
     )
 
-    assigned, pool, warnings, _ = _load(vault)
+    assigned, pool, warnings, _ = _load()
 
     assert (assigned, pool) == ([], [])
     assert len(warnings) == 1
@@ -383,10 +370,10 @@ def test_contract_shape_error_maps_to_refresh_required_without_rows(
 
 @pytest.mark.parametrize("failure", ["rules", "tag-exclusion"])
 def test_unusable_rules_or_exclusion_metadata_fails_closed(
-    vault, no_token_no_provider, monkeypatch, failure
+    no_token_no_provider, monkeypatch, failure
 ):
-    _save_record(vault)
-    _publish(vault, [_object("root-assigned", ROOT)], structures=_contract())
+    _save_record()
+    _publish([_object("root-assigned", ROOT)], structures=_contract())
 
     if failure == "rules":
         def broken_rules(space_id, **_kwargs):
@@ -399,7 +386,7 @@ def test_unusable_rules_or_exclusion_metadata_fails_closed(
 
         monkeypatch.setattr(tag_exclusions, "apply_tag_exclusions", blocked)
 
-    assigned, pool, warnings, _ = _load(vault)
+    assigned, pool, warnings, _ = _load()
 
     assert (assigned, pool) == ([], [])
     assert len(warnings) == 1
@@ -410,31 +397,30 @@ def test_unusable_rules_or_exclusion_metadata_fails_closed(
 # ---------------------------------------------------------------------------
 
 def test_configured_type_absent_from_snapshot_needs_refresh(
-    vault, no_token_no_provider
+    no_token_no_provider
 ):
     """The custom type is mapped but never listed in the published generation."""
-    _save_record(vault)
-    _publish(vault, [_object("root-assigned", ROOT)], structures=_contract())
+    _save_record()
+    _publish([_object("root-assigned", ROOT)], structures=_contract())
 
-    assigned, _pool, warnings, _ = _load(vault)
+    assigned, _pool, warnings, _ = _load()
 
     assert _names(assigned) == {"root-assigned"}
     assert [w for w in warnings if "needs Refresh" in w and CUSTOM in w]
 
 
 def test_type_checked_before_the_newest_check_is_marked_unchanged_since(
-    vault, no_token_no_provider
+    no_token_no_provider
 ):
     """The single-type Rescan leaves the other type's check time behind."""
-    _save_record(vault)
+    _save_record()
     _publish(
-        vault,
         [_object("root-assigned", ROOT), _object("custom-assigned", CUSTOM)],
         structures=_contract(),
         checked={ROOT: OLD_TS, CUSTOM: NEW_TS},
     )
 
-    assigned, pool, warnings, _ = _load(vault)
+    assigned, pool, warnings, _ = _load()
 
     assert _names(assigned) | _names(pool) == {"root-assigned", "custom-assigned"}
     stale = [w for w in warnings if "unchanged since" in w]
@@ -449,19 +435,19 @@ def test_type_checked_before_the_newest_check_is_marked_unchanged_since(
 # ---------------------------------------------------------------------------
 
 def test_duplicate_projected_rows_are_deduped_by_identity(
-    vault, no_token_no_provider, monkeypatch
+    no_token_no_provider, monkeypatch
 ):
-    _save_record(vault)
-    _publish(vault, [_object("root-assigned", ROOT)], structures=_contract())
+    _save_record()
+    _publish([_object("root-assigned", ROOT)], structures=_contract())
     real_read = cb.read_direct_intake
 
-    def doubled(root):
-        read = real_read(root)
+    def doubled():
+        read = real_read()
         return dataclasses.replace(read, objects=read.objects + read.objects)
 
     monkeypatch.setattr(cb, "read_direct_intake", doubled)
 
-    assigned, pool, _warnings, coverage = _load(vault)
+    assigned, pool, _warnings, coverage = _load()
 
     assert [row["name"] for row in assigned] == ["root-assigned"]
     assert pool == []
@@ -485,37 +471,35 @@ class _FrozenDatetime(datetime):
 
 
 def test_projection_uses_the_app_effective_date_not_date_today(
-    vault, no_token_no_provider, monkeypatch
+    no_token_no_provider, monkeypatch
 ):
     """A due-tomorrow object is future at 01:30 (logical day 10-09) and is
     served only once the rollover moves the logical day to 10-10."""
-    _save_record(vault)
+    _save_record()
     _publish(
-        vault,
         [_object("root-due", ROOT, assigned=True, due="2026-10-10")],
         structures=_contract(),
     )
     monkeypatch.setattr(ci, "date", _NoToday)
 
-    before_rollover, _, _, _ = _load(vault, now=datetime(2026, 10, 10, 1, 30))
-    after_rollover, _, _, _ = _load(vault, now=datetime(2026, 10, 10, 2, 30))
+    before_rollover, _, _, _ = _load(now=datetime(2026, 10, 10, 1, 30))
+    after_rollover, _, _, _ = _load(now=datetime(2026, 10, 10, 2, 30))
 
     assert before_rollover == []
     assert _names(after_rollover) == {"root-due"}
 
 
 def test_default_clock_path_uses_the_effective_date(
-    vault, no_token_no_provider, monkeypatch
+    no_token_no_provider, monkeypatch
 ):
-    _save_record(vault)
+    _save_record()
     _publish(
-        vault,
         [_object("root-due", ROOT, assigned=True, due="2026-10-10")],
         structures=_contract(),
     )
     monkeypatch.setattr(ci, "date", _NoToday)
     monkeypatch.setattr(ci, "datetime", _FrozenDatetime)
 
-    assigned, _pool, _warnings, _ = ci.load_direct_rows(vault)
+    assigned, _pool, _warnings, _ = ci.load_direct_rows()
 
     assert assigned == []

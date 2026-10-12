@@ -88,7 +88,7 @@ def client(vault, monkeypatch) -> TestClient:
     # gather.effective_date; pin it to MONDAY so the weekday Mint default
     # (8 blocks with the implicit 240-minute allotment) is host-date stable.
     monkeypatch.setattr(gather, "effective_date", lambda _now: MONDAY)
-    return TestClient(main_mod.create_app(vault_root=vault))
+    return TestClient(main_mod.create_app())
 
 
 def _get(client, day_setup=None, selected=None):
@@ -213,7 +213,7 @@ class TestDaySetupInputs:
         # exactly where the route reads it back.
         today = MONDAY
         state = runstate_mod.build_runstate({"buffering": "off"})
-        runstate_mod.write_runstate(vault, today, state)
+        runstate_mod.write_runstate(today, state)
         # no query override → persisted 'off' applies
         r = client.get(
             "/capacity-preview", params={"day_setup": json.dumps(FRAME)}
@@ -317,8 +317,8 @@ class _PreviewStore:
 def _client_with_store(vault: Path, store) -> TestClient:
     p = vault / CONFIG_REL_PATH
     write_config_note(p, CONFIG_DISABLED_CALENDARS, encoding="utf-8")
-    app = main_mod.create_app(vault_root=vault)
-    app.state.build_read_clients = lambda v, cfg: (None, store)
+    app = main_mod.create_app()
+    app.state.build_read_clients = lambda cfg: (None, store)
     return TestClient(app)
 
 

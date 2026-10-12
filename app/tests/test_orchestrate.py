@@ -125,8 +125,8 @@ def _both_surface_intents() -> list[commit.WriteIntent]:
     ]
 
 
-def _ledger_from_disk(vault: Path, today: date = TODAY) -> dict:
-    path = runstate_mod.runstate_read_path(vault, today)
+def _ledger_from_disk(today: date = TODAY) -> dict:
+    path = runstate_mod.runstate_read_path(today)
     data = gather._extract_json_block(path.read_text(encoding="utf-8"))
     assert data is not None
     return data
@@ -139,8 +139,7 @@ def _ledger_from_disk(vault: Path, today: date = TODAY) -> dict:
 def test_all_ok_both_surfaces_persists_ledger(tmp_path):
     vault = _vault(tmp_path)
     report = orchestrate.run_orchestrated(
-        _both_surface_intents(), todoist=FakeTodoist(), store=FakeStore(), vault_root=vault,
-        today=TODAY,
+        _both_surface_intents(), todoist=FakeTodoist(), store=FakeStore(), today=TODAY,
     )
     assert report["ok"] is True
     assert report["resumed"] is False
@@ -148,7 +147,7 @@ def test_all_ok_both_surfaces_persists_ledger(tmp_path):
     for key in orchestrate.SURFACES:
         assert report["surfaces"][key]["status"] == "ok"
 
-    data = _ledger_from_disk(vault)
+    data = _ledger_from_disk()
     assert data["commit_ledger"]["surfaces"]["todoist"]["status"] == "ok"
     # V3: the vault_flips / daily_note surfaces are gone from the ledger
     assert set(data["commit_ledger"]["surfaces"]) == {"todoist", "calendar"}
@@ -160,10 +159,9 @@ def test_ledger_estimation_section_records_planned_sizes(tmp_path):
     ledger's estimation list (planned side of actual-vs-estimated)."""
     vault = _vault(tmp_path)
     orchestrate.run_orchestrated(
-        _both_surface_intents(), todoist=FakeTodoist(), store=FakeStore(), vault_root=vault,
-        today=TODAY,
+        _both_surface_intents(), todoist=FakeTodoist(), store=FakeStore(), today=TODAY,
     )
-    est = _ledger_from_disk(vault)["commit_ledger"]["estimation"]
+    est = _ledger_from_disk()["commit_ledger"]["estimation"]
     garage = next(e for e in est if e["name"] == "Garage")
     assert garage["planned_blocks"] == 1
     assert garage["planned_duration_min"] == 30
@@ -179,10 +177,9 @@ def test_ledger_preserves_fifteen_minute_half_block(tmp_path):
     garage = next(i for i in intents if i.name == "Garage")
     garage.duration_min = 15
     orchestrate.run_orchestrated(
-        intents, todoist=FakeTodoist(), store=FakeStore(), vault_root=vault,
-        today=TODAY,
+        intents, todoist=FakeTodoist(), store=FakeStore(), today=TODAY,
     )
-    est = _ledger_from_disk(vault)["commit_ledger"]["estimation"]
+    est = _ledger_from_disk()["commit_ledger"]["estimation"]
     assert next(e for e in est if e["name"] == "Garage")["planned_blocks"] == 0.5
 
 
@@ -201,8 +198,7 @@ class TestPerSurfaceFailureDoesNotAbort:
     def test_todoist_failure(self, tmp_path):
         vault = _vault(tmp_path)
         report = orchestrate.run_orchestrated(
-            _both_surface_intents(), todoist=Dropping(), store=FakeStore(), vault_root=vault,
-            today=TODAY,
+            _both_surface_intents(), todoist=Dropping(), store=FakeStore(), today=TODAY,
         )
         assert report["ok"] is False
         self._others_ok(report["surfaces"], "todoist")
@@ -212,7 +208,7 @@ class TestPerSurfaceFailureDoesNotAbort:
         vault = _vault(tmp_path)
         report = orchestrate.run_orchestrated(
             _both_surface_intents(), todoist=FakeTodoist(), store=FakeStore(wrong_surface=True),
-            vault_root=vault, today=TODAY,
+            today=TODAY,
         )
         assert report["ok"] is False
         self._others_ok(report["surfaces"], "calendar")
@@ -243,8 +239,7 @@ def test_resume_skips_known_ok_surfaces(tmp_path, monkeypatch):
     bad_store = FakeStore(wrong_surface=True)
 
     report1 = orchestrate.run_orchestrated(
-        _both_surface_intents(), todoist=todoist, store=bad_store, vault_root=vault,
-        today=TODAY,
+        _both_surface_intents(), todoist=todoist, store=bad_store, today=TODAY,
     )
     assert report1["ok"] is False
     assert report1["surfaces"]["calendar"]["status"] == "failed"
@@ -253,8 +248,7 @@ def test_resume_skips_known_ok_surfaces(tmp_path, monkeypatch):
 
     good_store = FakeStore()
     report2 = orchestrate.run_orchestrated(
-        _both_surface_intents(), todoist=todoist, store=good_store, vault_root=vault,
-        today=TODAY, resume=True,
+        _both_surface_intents(), todoist=todoist, store=good_store, today=TODAY, resume=True,
     )
     assert report2["ok"] is True
     assert report2["resumed"] is True
@@ -272,17 +266,17 @@ def test_ledger_preserves_prior_runstate_selections(tmp_path):
     vault = _vault(tmp_path)
     prior_date = TODAY - timedelta(days=1)
     runstate_mod.write_runstate(
-        vault, prior_date,
+        prior_date,
         runstate_mod.build_runstate({"selections": [{"id": "x", "path": "p", "blocks": 1}]}),
     )
 
     intents = [commit.WriteIntent("A", "todoist", "create", "Garage", due_time="09:00")]
     report = orchestrate.run_orchestrated(
-        intents, todoist=FakeTodoist(), vault_root=vault, today=TODAY,
+        intents, todoist=FakeTodoist(), today=TODAY,
     )
     assert report["ok"] is True
 
-    data = _ledger_from_disk(vault)
+    data = _ledger_from_disk()
     assert "commit_ledger" in data
     assert data["selections"] == [{"id": "x", "path": "p", "blocks": 1}]
 
@@ -296,15 +290,15 @@ def test_crash_consistency_earlier_surfaces_persisted_before_last_fails(tmp_path
     snapshots: list[dict] = []
     orig_write = runstate_mod.write_runstate
 
-    def spy_write(vault_root, valid_date, state, now=None):
+    def spy_write(valid_date, state, now=None):
         snapshots.append(copy.deepcopy(state))
-        return orig_write(vault_root, valid_date, state, now=now)
+        return orig_write(valid_date, state, now=now)
 
     monkeypatch.setattr(runstate_mod, "write_runstate", spy_write)
 
     report = orchestrate.run_orchestrated(
         _both_surface_intents(), todoist=FakeTodoist(), store=FakeStore(wrong_surface=True),
-        vault_root=vault, today=TODAY,
+        today=TODAY,
     )
     assert report["ok"] is False
     assert report["surfaces"]["calendar"]["status"] == "failed"
@@ -317,7 +311,7 @@ def test_crash_consistency_earlier_surfaces_persisted_before_last_fails(tmp_path
     assert all(e["status"] == "ok" for e in surfaces_so_far.values())
 
     # the final on-disk state does include the failed calendar entry
-    final = _ledger_from_disk(vault)
+    final = _ledger_from_disk()
     assert final["commit_ledger"]["surfaces"]["calendar"]["status"] == "failed"
 
 
@@ -331,8 +325,7 @@ def test_empty_calendar_subset_with_no_store_is_ok(tmp_path):
         commit.WriteIntent("A", "todoist", "create", "Garage", due_time="09:00"),
     ]
     report = orchestrate.run_orchestrated(
-        intents, todoist=FakeTodoist(), store=None, vault_root=vault,
-        today=TODAY,
+        intents, todoist=FakeTodoist(), store=None, today=TODAY,
     )
     assert report["ok"] is True
     cal_entry = report["surfaces"]["calendar"]
@@ -351,10 +344,10 @@ def test_recent_selections_appended_only_on_all_ok(tmp_path):
 
     intents = [commit.WriteIntent("A", "todoist", "create", "Garage", due_time="09:00")]
     report = orchestrate.run_orchestrated(
-        intents, todoist=FakeTodoist(), vault_root=vault, today=TODAY, selections=sel,
+        intents, todoist=FakeTodoist(), today=TODAY, selections=sel,
     )
     assert report["ok"] is True
-    runs = runstate_mod.read_recent_selections(vault)
+    runs = runstate_mod.read_recent_selections()
     assert len(runs) == 1
     assert runs[0]["selections"][0]["path"] == SELECTION_PATH
 
@@ -365,10 +358,10 @@ def test_recent_selections_not_appended_on_failure(tmp_path):
 
     intents = [commit.WriteIntent("A", "todoist", "create", "Garage", due_time="09:00")]
     report = orchestrate.run_orchestrated(
-        intents, todoist=Dropping(), vault_root=vault, today=TODAY, selections=sel,
+        intents, todoist=Dropping(), today=TODAY, selections=sel,
     )
     assert report["ok"] is False
-    assert runstate_mod.read_recent_selections(vault) == []
+    assert runstate_mod.read_recent_selections() == []
 
 
 class TestVerifyFailuresReport:
@@ -389,15 +382,13 @@ class TestVerifyFailuresReport:
         intents = [commit_mod.WriteIntent("A", "todoist", "create", "Garage",
                                           project_id="P", due_time="09:00")]
         report = orchestrate.run_orchestrated(
-            intents, todoist=BadTodoist(), vault_root=tmp_path,
-            persist_ledger=False)
+            intents, todoist=BadTodoist(), persist_ledger=False)
         assert report["ok"] is False
         assert report["verify_failures"]
         assert any("Garage" in f for f in report["verify_failures"])
 
     def test_clean_report_has_empty_verify_failures(self, tmp_path):
-        report = orchestrate.run_orchestrated([], vault_root=tmp_path,
-                                              persist_ledger=False)
+        report = orchestrate.run_orchestrated([], persist_ledger=False)
         assert report["verify_failures"] == []
         assert report["verify_details"] == []
 
@@ -418,8 +409,7 @@ class TestVerifyFailuresReport:
         intents = [commit_mod.WriteIntent("A", "todoist", "create", "Garage",
                                           project_id="P", due_time="09:00")]
         report = orchestrate.run_orchestrated(
-            intents, todoist=BadTodoist(), vault_root=tmp_path,
-            persist_ledger=False)
+            intents, todoist=BadTodoist(), persist_ledger=False)
         assert report["verify_details"]
         d = report["verify_details"][0]
         assert d["kind"] == "due"

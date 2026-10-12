@@ -71,31 +71,31 @@ class _LiveSeams:
         self.clients = 0
         self.builder = 0
 
-    def build_clients(self, _vault, _config):
+    def build_clients(self, _config):
         self.clients += 1
         return (None, None)
 
-    def build_capacities(self, _vault, _config):
+    def build_capacities(self, _config):
         self.builder += 1
         return FakeCapacitiesAdapter(self.legacy_rows)
 
 
-def _drill_client(vault: Path, seams: _LiveSeams) -> TestClient:
-    app = main_mod.create_app(vault_root=vault)
+def _drill_client(seams: _LiveSeams) -> TestClient:
+    app = main_mod.create_app()
     app.state.build_read_clients = seams.build_clients
     app.state.build_capacities_adapter = seams.build_capacities
     return TestClient(app)
 
 
-def test_direct_legacy_direct_flip_uses_cache_not_artifact_and_keeps_state(vault):
+def test_direct_legacy_direct_flip_uses_cache_not_artifact_and_keeps_state():
     """The rollback drill in artifact mode: direct -> legacy -> direct.
 
     ``direct`` must serve the published generation only (no artifact Capacities
     leakage); ``legacy`` must restore the artifact Capacities rows; the second
     ``direct`` must show the same generation and a surviving selection."""
     _set_sources(mode="artifact", capacities_intake="direct")
-    _save_direct_source(vault)
-    _publish_direct(vault, [
+    _save_direct_source()
+    _publish_direct([
         _direct_object("obj-a", DIRECT_ROOT),
         _direct_object("obj-pool", DIRECT_ROOT, assigned=False),
     ])
@@ -103,7 +103,7 @@ def test_direct_legacy_direct_flip_uses_cache_not_artifact_and_keeps_state(vault
     _seed_selections("obj-pool")
 
     seams = _LiveSeams([_capacities_row("Cap A", []), _capacities_row("Cap B", [])])
-    client = _drill_client(vault, seams)
+    client = _drill_client(seams)
 
     # Phase 1 — direct: cache only, artifact Capacities discarded, selection
     # promoted, and neither live seam touched (artifact mode never needs them).
@@ -111,7 +111,7 @@ def test_direct_legacy_direct_flip_uses_cache_not_artifact_and_keeps_state(vault
     block = first["capacities_intake"]
     assert block["mode"] == "direct"
     assert block["state"] == "ok"
-    snapshot = cap_builder.read_direct_intake(vault).snapshot
+    snapshot = cap_builder.read_direct_intake().snapshot
     assert block["generation"] == snapshot.generation
     assert block["installed_at"] == snapshot.installed_at
     assigned = _names(first, "assigned")
@@ -143,20 +143,20 @@ def test_direct_legacy_direct_flip_uses_cache_not_artifact_and_keeps_state(vault
     assert [record.identity for record in stored.selections] == [
         f"capacities:{DIRECT_SPACE}:{DIRECT_ROOT}:obj-pool"
     ]
-    assert cap_builder.read_direct_intake(vault).snapshot.generation == snapshot.generation
+    assert cap_builder.read_direct_intake().snapshot.generation == snapshot.generation
 
 
-def test_direct_legacy_direct_flip_never_builds_live_capacities_under_direct(vault):
+def test_direct_legacy_direct_flip_never_builds_live_capacities_under_direct():
     """In live mode the direct phase skips the builder; legacy still builds it.
 
     This is the live-builder half of the same flip, so the ``direct`` guard is
     pinned independently of the artifact leakage path."""
     _set_sources(mode="live", capacities_intake="direct")
-    _save_direct_source(vault)
-    _publish_direct(vault, [_direct_object("obj-a", DIRECT_ROOT)])
+    _save_direct_source()
+    _publish_direct([_direct_object("obj-a", DIRECT_ROOT)])
 
     seams = _LiveSeams([_capacities_row("Cap A", []), _capacities_row("Cap B", [])])
-    client = _drill_client(vault, seams)
+    client = _drill_client(seams)
 
     first = client.get("/plan-inputs").json()
     assert seams.builder == 0  # direct never constructs the live builder
@@ -175,16 +175,16 @@ def test_direct_legacy_direct_flip_never_builds_live_capacities_under_direct(vau
     assert "obj-a" in _names(third, "assigned")
 
 
-def test_missing_direct_snapshot_is_refresh_required_without_legacy_fallback(vault):
+def test_missing_direct_snapshot_is_refresh_required_without_legacy_fallback():
     """No published generation is a hard refusal: ``refresh_required`` and no
     fallback — even though the artifact Capacities row would serve under
     ``legacy``."""
     _set_sources(mode="artifact", capacities_intake="direct")
-    _save_direct_source(vault)  # the source record exists; no generation does
+    _save_direct_source()  # the source record exists; no generation does
     _write_fresh_artifact(_artifact_rows())
 
     client = _direct_client(
-        vault, build_clients=_CallRecorder(), build_capacities=_CallRecorder(),
+        build_clients=_CallRecorder(), build_capacities=_CallRecorder(),
     )
 
     body = client.get("/plan-inputs").json()

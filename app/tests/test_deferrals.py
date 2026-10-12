@@ -65,71 +65,73 @@ class TestKeys:
 # ---------------------------------------------------------------------------
 
 class TestStore:
-    def test_missing_file_loads_empty(self, vault: Path):
-        assert deferrals.load_deferrals(vault) == {}
+    def test_missing_file_loads_empty(self):
+        assert deferrals.load_deferrals() == {}
 
-    def test_record_creates_entry_with_count_one(self, vault: Path):
-        deferrals.record_deferral(vault, item("Roof"), TODAY)
-        store = deferrals.load_deferrals(vault)
+    def test_record_creates_entry_with_count_one(self):
+        deferrals.record_deferral(item("Roof"), TODAY)
+        store = deferrals.load_deferrals()
         entry = store["path:50 - Operations/Roof.md"]
         assert entry["count"] == 1
         assert entry["last_deferred"] == "2026-07-26"
         assert entry["name"] == "Roof"
 
-    def test_repeat_same_day_still_increments(self, vault: Path):
-        deferrals.record_deferral(vault, item("Roof"), TODAY)
-        deferrals.record_deferral(vault, item("Roof"), TODAY)
-        entry = deferrals.load_deferrals(vault)["path:50 - Operations/Roof.md"]
+    def test_repeat_same_day_still_increments(self):
+        deferrals.record_deferral(item("Roof"), TODAY)
+        deferrals.record_deferral(item("Roof"), TODAY)
+        entry = deferrals.load_deferrals()["path:50 - Operations/Roof.md"]
         assert entry["count"] == 2
 
-    def test_later_day_updates_last_deferred(self, vault: Path):
-        deferrals.record_deferral(vault, item("Roof"), date(2026, 7, 20))
-        deferrals.record_deferral(vault, item("Roof"), TODAY)
-        entry = deferrals.load_deferrals(vault)["path:50 - Operations/Roof.md"]
+    def test_later_day_updates_last_deferred(self):
+        deferrals.record_deferral(item("Roof"), date(2026, 7, 20))
+        deferrals.record_deferral(item("Roof"), TODAY)
+        entry = deferrals.load_deferrals()["path:50 - Operations/Roof.md"]
         assert entry["count"] == 2
         assert entry["last_deferred"] == "2026-07-26"
 
-    def test_file_lands_at_the_cache_dir_path(self, vault: Path):
-        deferrals.record_deferral(vault, item("Roof"), TODAY)
+    def test_file_lands_at_the_cache_dir_path(self):
+        deferrals.record_deferral(item("Roof"), TODAY)
         assert deferrals.deferrals_path().is_file()
 
     def test_no_tmp_file_left_behind(self, vault: Path):
-        deferrals.record_deferral(vault, item("Roof"), TODAY)
+        deferrals.record_deferral(item("Roof"), TODAY)
         assert not list((vault / "00 - META" / "Cache").glob("*.tmp"))
 
-    def test_corrupt_file_degrades_to_empty(self, vault: Path):
-        path = vault / deferrals.DEFERRALS_REL_PATH
+    def test_corrupt_file_degrades_to_empty(self):
+        path = deferrals.deferrals_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("{not json", encoding="utf-8")
-        assert deferrals.load_deferrals(vault) == {}
+        assert deferrals.load_deferrals() == {}
 
-    def test_wrong_shape_degrades_to_empty(self, vault: Path):
-        (vault / deferrals.DEFERRALS_REL_PATH).write_text(
-            json.dumps([1, 2, 3]), encoding="utf-8")
-        assert deferrals.load_deferrals(vault) == {}
+    def test_wrong_shape_degrades_to_empty(self):
+        path = deferrals.deferrals_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps([1, 2, 3]), encoding="utf-8")
+        assert deferrals.load_deferrals() == {}
 
-    def test_expired_entries_pruned_on_load(self, vault: Path):
-        deferrals.record_deferral(vault, item("Old"), date(2026, 6, 1))
-        deferrals.record_deferral(vault, item("Fresh"), TODAY)
-        store = deferrals.load_deferrals(vault, today=TODAY)
+    def test_expired_entries_pruned_on_load(self):
+        deferrals.record_deferral(item("Old"), date(2026, 6, 1))
+        deferrals.record_deferral(item("Fresh"), TODAY)
+        store = deferrals.load_deferrals(today=TODAY)
         assert "path:50 - Operations/Fresh.md" in store
         assert "path:50 - Operations/Old.md" not in store
 
-    def test_load_without_today_does_not_prune(self, vault: Path):
-        deferrals.record_deferral(vault, item("Old"), date(2026, 6, 1))
-        assert len(deferrals.load_deferrals(vault)) == 1
+    def test_load_without_today_does_not_prune(self):
+        deferrals.record_deferral(item("Old"), date(2026, 6, 1))
+        assert len(deferrals.load_deferrals()) == 1
 
-    def test_set_entry_restores_exact_prior_state(self, vault: Path):
-        deferrals.record_deferral(vault, item("Roof"), TODAY)
+    def test_set_entry_restores_exact_prior_state(self):
+        deferrals.record_deferral(item("Roof"), TODAY)
         key = "path:50 - Operations/Roof.md"
-        before = deferrals.load_deferrals(vault)[key]
-        deferrals.record_deferral(vault, item("Roof"), TODAY)
-        deferrals.set_entry(vault, key, before)
-        assert deferrals.load_deferrals(vault)[key] == before
+        before = deferrals.load_deferrals()[key]
+        deferrals.record_deferral(item("Roof"), TODAY)
+        deferrals.set_entry(key, before)
+        assert deferrals.load_deferrals()[key] == before
 
-    def test_set_entry_none_removes(self, vault: Path):
-        deferrals.record_deferral(vault, item("Roof"), TODAY)
-        deferrals.set_entry(vault, "path:50 - Operations/Roof.md", None)
-        assert deferrals.load_deferrals(vault) == {}
+    def test_set_entry_none_removes(self):
+        deferrals.record_deferral(item("Roof"), TODAY)
+        deferrals.set_entry("path:50 - Operations/Roof.md", None)
+        assert deferrals.load_deferrals() == {}
 
 
 # ---------------------------------------------------------------------------
@@ -163,9 +165,9 @@ class TestBias:
     def test_missing_count_is_zero(self):
         assert deferrals.bias_for({"last_deferred": "2026-07-25"}, TODAY) == 0
 
-    def test_bias_map_keys_by_identity(self, vault: Path):
-        deferrals.record_deferral(vault, item("Roof"), date(2026, 7, 25))
-        assert deferrals.bias_map(vault, TODAY) == {
+    def test_bias_map_keys_by_identity(self):
+        deferrals.record_deferral(item("Roof"), date(2026, 7, 25))
+        assert deferrals.bias_map(TODAY) == {
             "path:50 - Operations/Roof.md": 1}
 
 
@@ -237,7 +239,7 @@ class FakeTodoist:
 
 
 def _vault_with_manifest(vault: Path, rows: list[dict]) -> Path:
-    runstate.write_runstate(vault, TODAY, runstate.build_runstate(
+    runstate.write_runstate(TODAY, runstate.build_runstate(
         {"plan_manifest": rows}))
     return vault
 
@@ -249,9 +251,9 @@ class TestDeferVerb:
     def test_defer_records_and_journals(self, vault: Path):
         _vault_with_manifest(vault, [
             {"name": "Roof", "system": "vault", "id_or_path": "50 - Operations/Roof.md"}])
-        action = ra.apply_action(vault, TODAY, "defer", "Roof")
+        action = ra.apply_action(TODAY, "defer", "Roof")
         assert action["status"] == "applied"
-        store = deferrals.load_deferrals(vault)
+        store = deferrals.load_deferrals()
         assert store["path:50 - Operations/Roof.md"]["count"] == 1
 
     def test_defer_needs_no_scheduled_artifacts(self, vault: Path):
@@ -267,10 +269,10 @@ class TestDeferVerb:
             {"name": "Call", "system": "todoist", "id_or_path": "7"}])
         todoist = FakeTodoist({"7": {"id": "7", "content": "Call",
                                      "due": {"date": "2026-07-26", "string": "today"}}})
-        action = ra.apply_action(vault, TODAY, "defer", "Call", todoist=todoist)
+        action = ra.apply_action(TODAY, "defer", "Call", todoist=todoist)
         assert action["status"] == "applied"
         assert ("reschedule", "7", "today") in todoist.calls
-        assert deferrals.load_deferrals(vault)["todoist:7"]["count"] == 1
+        assert deferrals.load_deferrals()["todoist:7"]["count"] == 1
 
     def test_defer_honours_the_t27_recurring_guard(self, vault: Path):
         _vault_with_manifest(vault, [
@@ -278,40 +280,40 @@ class TestDeferVerb:
         todoist = FakeTodoist({"7": {"id": "7", "content": "Call",
                                      "due": {"string": "every day",
                                              "is_recurring": True}}})
-        ra.apply_action(vault, TODAY, "defer", "Call", todoist=todoist)
+        ra.apply_action(TODAY, "defer", "Call", todoist=todoist)
         assert todoist.calls == []  # no due write — recurrence preserved
 
     def test_undo_defer_restores_prior_entry(self, vault: Path):
         _vault_with_manifest(vault, [
             {"name": "Roof", "system": "vault", "id_or_path": "50 - Operations/Roof.md"}])
-        ra.apply_action(vault, TODAY, "defer", "Roof")
-        second = ra.apply_action(vault, TODAY, "defer", "Roof",
+        ra.apply_action(TODAY, "defer", "Roof")
+        second = ra.apply_action(TODAY, "defer", "Roof",
                                  args={"nonce": 1})
-        assert deferrals.load_deferrals(vault)["path:50 - Operations/Roof.md"]["count"] == 2
-        ra.undo_action(vault, TODAY, second["id"])
-        assert deferrals.load_deferrals(vault)["path:50 - Operations/Roof.md"]["count"] == 1
+        assert deferrals.load_deferrals()["path:50 - Operations/Roof.md"]["count"] == 2
+        ra.undo_action(TODAY, second["id"])
+        assert deferrals.load_deferrals()["path:50 - Operations/Roof.md"]["count"] == 1
 
     def test_undo_first_defer_removes_the_entry(self, vault: Path):
         _vault_with_manifest(vault, [
             {"name": "Roof", "system": "vault", "id_or_path": "50 - Operations/Roof.md"}])
-        action = ra.apply_action(vault, TODAY, "defer", "Roof")
-        ra.undo_action(vault, TODAY, action["id"])
-        assert deferrals.load_deferrals(vault) == {}
+        action = ra.apply_action(TODAY, "defer", "Roof")
+        ra.undo_action(TODAY, action["id"])
+        assert deferrals.load_deferrals() == {}
 
     def test_defer_is_idempotent_per_key(self, vault: Path):
         _vault_with_manifest(vault, [
             {"name": "Roof", "system": "vault", "id_or_path": "50 - Operations/Roof.md"}])
-        ra.apply_action(vault, TODAY, "defer", "Roof")
-        dup = ra.apply_action(vault, TODAY, "defer", "Roof")
+        ra.apply_action(TODAY, "defer", "Roof")
+        dup = ra.apply_action(TODAY, "defer", "Roof")
         assert dup.get("duplicate") is True
-        assert deferrals.load_deferrals(vault)["path:50 - Operations/Roof.md"]["count"] == 1
+        assert deferrals.load_deferrals()["path:50 - Operations/Roof.md"]["count"] == 1
 
     def test_defer_feeds_the_next_days_ranking(self, vault: Path):
         _vault_with_manifest(vault, [
             {"name": "Roof", "system": "vault", "id_or_path": "50 - Operations/Roof.md"}])
-        ra.apply_action(vault, TODAY, "defer", "Roof")
+        ra.apply_action(TODAY, "defer", "Roof")
         tomorrow = date(2026, 7, 27)
         pool = [item("Roof"), item("Other")]
         ranked = main.rank_pool(pool, tomorrow, ORDER,
-                                bias=deferrals.bias_map(vault, tomorrow))
+                                bias=deferrals.bias_map(tomorrow))
         assert [i["name"] for i in ranked] == ["Roof", "Other"]

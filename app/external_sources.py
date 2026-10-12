@@ -1,8 +1,8 @@
-"""Read-side aggregation for non-vault sources (gather-parity plan, 2026-07-14).
+"""Read-side aggregation for the non-note sources (gather-parity plan, 2026-07-14).
 
 Composes the app's existing read primitives — ``TodoistClient.get_filter_tasks``
 and ``calendar_bridge.EventStore.query_events`` — into digest-ready shapes.
-The frozen vault gather module is untouched; ``main.py`` merges these outputs.
+``main.py`` merges these outputs.
 
 Degrade contract (locked decision 3): every fetch returns its data plus a
 ``warnings`` list and NEVER raises — a missing token / EventKit grant yields

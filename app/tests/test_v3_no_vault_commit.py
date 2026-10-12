@@ -70,11 +70,11 @@ def client(ro_vault: Path, monkeypatch) -> TestClient:
     monkeypatch.setattr(gather, "effective_date", lambda now: TODAY)
     monkeypatch.setattr(shadow, "gather_live_state", _fake_live_state)
     rs.write_digest_index(
-        ro_vault, TODAY,
+        TODAY,
         [{"name": "Garage", "todoist_id": "", "path": "P/Garage.md", "surface": "assigned"}],
     )
-    app = main_mod.create_app(vault_root=ro_vault)
-    app.state.build_commit_clients = lambda v, cfg: (FakeLiveTodoist(), FakeLiveStore())
+    app = main_mod.create_app()
+    app.state.build_commit_clients = lambda cfg: (FakeLiveTodoist(), FakeLiveStore())
     c = TestClient(app)
     c.app_token = app.state.token
     assert c.post("/day-setup", json={"anchor": "09:00"},
@@ -137,7 +137,7 @@ def test_live_commit_persists_the_plan_manifest_without_vault_rows(
         client: TestClient, ro_vault: Path) -> None:
     client.post("/commit?mode=live", headers=_auth(client),
                 json={"digest": LIVE_DIGEST, "sequence": LIVE_SEQUENCE, "config": {}})
-    state = rs.read_runstate(ro_vault, TODAY) or {}
+    state = rs.read_runstate(TODAY) or {}
     assert state["commit_ledger"]["surfaces"].keys() == {"todoist", "calendar"}
     assert all(r.get("system") != "vault" for r in state.get("plan_manifest") or [])
 
@@ -155,7 +155,7 @@ def _write_log(history_yaml: str) -> None:
 
 
 def _state(ro_vault: Path) -> dict:
-    return main_mod._micro_adventure_state(ro_vault, {}, TODAY)[0]
+    return main_mod._micro_adventure_state({}, TODAY)[0]
 
 
 def test_unanswered_prior_entry_is_pending_even_with_a_ticked_daily_note(ro_vault: Path) -> None:

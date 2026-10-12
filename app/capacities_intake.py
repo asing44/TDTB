@@ -106,7 +106,6 @@ _UNREAD = object()  # sentinel: the caller supplied no preloaded generation read
 
 
 def load_direct_rows(
-    vault_root: str | Path,
     *,
     now: datetime | None = None,
     read: Any = _UNREAD,
@@ -124,7 +123,7 @@ def load_direct_rows(
     """
     if read is _UNREAD:
         try:
-            read = capacities_builder.read_direct_intake(vault_root)
+            read = capacities_builder.read_direct_intake()
         except capacities_builder.CapacitiesSourceStoreError:
             return _refused([SOURCE_UNREADABLE])
     if read is None:
@@ -148,7 +147,7 @@ def load_direct_rows(
     try:
         rules = capacities_rules.load_rules(read.space_id)
         policy = tag_exclusions.ExclusionPolicy.from_read(
-            exclusion_settings.read_settings(vault_root)
+            exclusion_settings.read_settings()
         )
     except (capacities_rules.RulesStoreError, exclusion_settings.ExclusionSettingsStoreError):
         return _refused([POLICY_UNREADABLE], coverage)
