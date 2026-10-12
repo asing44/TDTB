@@ -46,6 +46,13 @@ export function CustomPromptList(props: CustomPromptListProps) {
 
   return (
     <>
+      {props.editing && (
+        <p class="field__hint custom-prompt__edit-note" role="status">
+          {list.length === 0
+            ? "Intention, For Meegy and Stoic are built in and can't be renamed or removed. Use + Add prompt below to add your own."
+            : "Rename or remove your own prompts. Intention, For Meegy and Stoic are built in and stay as they are."}
+        </p>
+      )}
       {list.map((p) => {
         const fieldId = `custom-prompt-${p.id}`;
         return (

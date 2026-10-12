@@ -85,4 +85,10 @@ describe("custom morning prompts", () => {
     expect(r.queryByLabelText("Prompt question for Gratitude")).toBeNull();
     expect(r.queryByRole("button", { name: "Remove Gratitude" })).toBeNull();
   });
+
+  it("explains the built-ins when editing an empty list", () => {
+    const r = render(<CustomPromptList editing={true} storage={memoryStorage()} />);
+    expect(r.getByRole("button", { name: "+ Add prompt" })).toBeTruthy();
+    expect(r.getByRole("status").textContent).toContain("built in");
+  });
 });
