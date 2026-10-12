@@ -6807,7 +6807,7 @@ body {
    The hover-reveal track above makes a hovered row hide its own title (the
    cluster takes ~450px out of the title column). From 1280px the mockup's
    presentation replaces it: a fixed trailing actions track that is always
-   reserved and only fades in, so hover never moves or crushes anything. One
+   reserved and always shown (no hover needed), so nothing moves or crushes. One
    row: stripe | title | due | slider | actions, 13px labels, mockup order
    (Mark complete, Exclude, Exact, Leave as-is, More). The plan column widens
    to give the 520px track room. 1101-1279px keeps the compact hover track. */
@@ -6839,6 +6839,9 @@ body {
     overflow: visible;
     justify-content: flex-end;
     gap: 6px;
+    /* Always visible: the mockup's row shows its actions without a hover. */
+    opacity: 1;
+    pointer-events: auto;
   }
 
   .qrow:hover .qrow__name,
