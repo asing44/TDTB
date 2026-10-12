@@ -7864,3 +7864,33 @@ body {
     display: none;
   }
 }
+
+/* Calendar lane on the day strip: today's events, read-only, in the same
+   calendar blue as the Plan tasks timeline. */
+.day-strip__lane--calendar {
+  position: relative;
+  min-height: 30px;
+}
+
+.strip-cal {
+  position: absolute;
+  z-index: 2;
+  height: 26px;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  padding: 0 6px;
+  overflow: hidden;
+  white-space: nowrap;
+  border-radius: 4px;
+  border: 0.5px solid color-mix(in srgb, var(--c-event) 55%, transparent);
+  background: color-mix(in srgb, var(--c-event) 30%, var(--t-surface));
+  color: var(--t-text);
+  font-size: 11px;
+}
+
+.strip-cal--skipped {
+  border-style: dashed;
+  background: color-mix(in srgb, var(--c-event) 10%, var(--t-surface-2));
+  color: var(--t-muted);
+}

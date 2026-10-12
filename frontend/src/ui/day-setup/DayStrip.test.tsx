@@ -212,3 +212,25 @@ describe("anchors that must not move", () => {
     expect(el.classList.contains("strip-anchor--movable")).toBe(false);
   });
 });
+
+describe("calendar lane", () => {
+  it("draws today's calendar events read-only with name and time", () => {
+    const { r } = setup({
+      calendar: [
+        { id: "phep", name: "PHEP sync", start: "15:00", durationMin: 60, counted: true },
+        { id: "standup", name: "Standup", start: "09:30", durationMin: 30, counted: false },
+      ],
+    });
+    const lane = r.container.querySelector('[aria-label="Calendar"]');
+    expect(lane).toBeTruthy();
+    expect(r.getByLabelText(/^PHEP sync 3(:00)? PM \(calendar\)$/)).toBeTruthy();
+    expect(r.getByLabelText(/^Standup 9:30 AM \(calendar\)$/)).toBeTruthy();
+    // Not a button: calendar rows are not editable or movable here.
+    expect(lane?.querySelector("button")).toBeNull();
+  });
+
+  it("omits the lane when there are no events", () => {
+    const { r } = setup({ calendar: [] });
+    expect(r.container.querySelector('[aria-label="Calendar"]')).toBeNull();
+  });
+});

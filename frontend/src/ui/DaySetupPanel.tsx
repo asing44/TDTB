@@ -508,6 +508,15 @@ export function DaySetupPanel({
         timeState,
       };
     });
+    const stripCalendar = effectiveAnchoredBlocks(s)
+      .filter((a) => a.kind === "calendar" && a.start !== null && a.durationMin > 0)
+      .map((a) => ({
+        id: a.id,
+        name: a.name,
+        start: a.start as string,
+        durationMin: a.durationMin,
+        counted: a.on && !a.skipToday,
+      }));
     const countedAnchors = stripAnchors.filter((anchor) => anchor.counted);
     const notCountedAnchors = stripAnchors.filter((anchor) => !anchor.counted);
     const freeSlots = Math.max(0, selectableMintSessionIds.length - selectedMintSessionIds.length);
@@ -606,6 +615,7 @@ export function DaySetupPanel({
                   onSelectIds={(ids) => setMintSelection(ids)}
                   onToggleSession={toggleMintSession}
                   anchors={stripAnchors}
+                  calendar={stripCalendar}
                   onEditAnchor={editAnchor}
                   onMoveAnchor={(id, start) => moveAnchor(id, start)}
                   mintControl={
