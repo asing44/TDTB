@@ -153,6 +153,32 @@ def write_habit_artifact() -> None:
     })
 
 
+def isolate(tmp: Path) -> Path:
+    """Point every store at ``tmp`` and install the fixture config; return the
+    scratch note path ``write_config_note`` rewrites for the config variants.
+    Shared with the scratch_* harnesses so none of them can read or write the
+    operator's real ``~/.config/tdtb``."""
+    # V1: config is JSON (repo file + local override). Isolate both so a capture
+    # never reads the operator's real config; the markdown fixture above is
+    # installed as the repo config by write_config_note. All state (runstate,
+    # ledger, journals) lands under the scratch TDTB_HOME.
+    _os.environ["TDTB_HOME"] = str(tmp / "home")
+    _os.environ["TDTB_REPO_CONFIG"] = str(tmp / "repo-config" / "tdtb.json")
+    cfg = build_scratch(tmp)
+    # The default sources.mode is "artifact" (slice A4); the fake Todoist /
+    # calendar clients below are only read in "live" mode, which is the shape
+    # these fixtures have always captured. Written to the scratch home only.
+    local = Path(_os.environ["TDTB_HOME"]) / "config.json"
+    local.parent.mkdir(parents=True, exist_ok=True)
+    local.write_text(json.dumps({"version": 1, "sources": {"mode": "live"}}),
+                     encoding="utf-8")
+    # Habit capacity comes from the planning artifact's habits block (the
+    # note-based habit read is gone); a minimal valid artifact keeps the
+    # capacity summary and the "ok" source health the fixtures have always had.
+    write_habit_artifact()
+    return cfg
+
+
 def todoist_fake() -> FakeTodoist:
     return FakeTodoist({
         external_sources.ASSIGNED_QUERY_FALLBACK: [
@@ -223,24 +249,7 @@ def dump(name: str, payload) -> None:
 def main() -> None:
     tmp = Path(tempfile.mkdtemp(prefix="tdtb-contract-"))
     SCRATCH_PATHS.extend([str(tmp.resolve()), str(tmp)])
-    # V1: config is JSON (repo file + local override). Isolate both so a capture
-    # never reads the operator's real config; the markdown fixture above is
-    # installed as the repo config by write_config_note. All state (runstate,
-    # ledger, journals) lands under the scratch TDTB_HOME.
-    _os.environ["TDTB_HOME"] = str(tmp / "home")
-    _os.environ["TDTB_REPO_CONFIG"] = str(tmp / "repo-config" / "tdtb.json")
-    cfg = build_scratch(tmp)
-    # The default sources.mode is "artifact" (slice A4); the fake Todoist /
-    # calendar clients below are only read in "live" mode, which is the shape
-    # these fixtures have always captured. Written to the scratch home only.
-    local = Path(_os.environ["TDTB_HOME"]) / "config.json"
-    local.parent.mkdir(parents=True, exist_ok=True)
-    local.write_text(json.dumps({"version": 1, "sources": {"mode": "live"}}),
-                     encoding="utf-8")
-    # Habit capacity comes from the planning artifact's habits block (the
-    # note-based habit read is gone); a minimal valid artifact keeps the
-    # capacity summary and the "ok" source health the fixtures have always had.
-    write_habit_artifact()
+    cfg = isolate(tmp)
     app = main_mod.create_app()
     app.state.build_read_clients = lambda cfg: (todoist_fake(), store_fake())
     client = TestClient(app)

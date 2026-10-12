@@ -32,7 +32,7 @@ A2)::
 
 ``habits`` is not a row source: the producer folds it into the artifact's
 top-level ``habits`` block (``total/done/outstanding/est_minutes``), the only
-source of habit time now that the vault read is retired.
+source of habit time now that the note-based habit read is retired.
 
 Usage::
 

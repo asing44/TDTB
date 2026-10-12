@@ -342,7 +342,7 @@ def attach_to_report(report: Any, outcomes: list[PromptExportOutcome]) -> Any:
 
     ``report["ok"]`` keeps its existing four-surface meaning; the export lane
     reports through ``prompt_exports``/``prompt_exports_ok`` so a stranded
-    receipt is visible without silently masking a landed vault/calendar write."""
+    receipt is visible without silently masking a landed Todoist/calendar write."""
     if not isinstance(report, dict):
         return report
     entries = [o.as_dict() for o in outcomes]

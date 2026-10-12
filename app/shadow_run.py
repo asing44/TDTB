@@ -5,8 +5,7 @@ app process, no writes).
     .venv/bin/python shadow_run.py
     .venv/bin/python shadow_run.py --sequence-file path/to/sequence.json
 
-The Obsidian note gather is gone (vault removal V4): the digest this tool
-builds carries no note rows, so the useful input is ``--sequence-file``.
+There is no note gather: the digest this tool builds carries no note rows, so the useful input is ``--sequence-file``.
 
 Pipeline: gather -> digest (main.py's rank_pool/build_digest, same
 deterministic ranking the /digest route uses) -> (skip judgment — this is a

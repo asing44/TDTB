@@ -138,7 +138,7 @@ class CapacitiesConfig:
     max_content_reads: int = 20
     #: Assignment policy seam. Defaults to the default-enabled policy; the
     #: settings store owns persistence and the caller passes it in. The adapter
-    #: never reads vault files or credentials itself.
+    #: never reads local files or credentials itself.
     assignment_settings: AssignmentSettings = field(default_factory=AssignmentSettings)
     #: Optional stored per-type rules record (``capacities_rules.RulesRecord``)
     #: for this space. When a structure has an ACTIVE stored rule, that rule is

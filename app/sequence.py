@@ -93,7 +93,7 @@ def _is_native_todoist_row(item: dict[str, Any]) -> bool:
     """Return whether an item is a Todoist row eligible for native protection.
 
     Real source rows carry ``source``.  Source-less legacy fixtures remain
-    supported, while explicit non-Todoist sources and vault paths are never
+    supported, while explicit non-Todoist sources and bare file paths are never
     treated as native timed tasks.
     """
     source = str(item.get("source") or "").strip().casefold()

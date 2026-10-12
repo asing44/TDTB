@@ -1,8 +1,6 @@
 """app_config.py — TDTB app config: tracked repo file + machine-local override.
 
-V1 of the vault removal (docs/plan/2026-10-12-vault-removal): the hand-editable
-TDTB config no longer comes from the Obsidian vault note. It comes from two
-JSON files, layered in this order:
+The hand-editable TDTB config comes from two JSON files, layered in this order:
 
   1. ``config/tdtb.json`` at the repo root (tracked; ``repo_config_path()``,
      overridable with ``$TDTB_REPO_CONFIG`` for tests), then
@@ -548,6 +546,6 @@ def _ignore_section(ignore: Any) -> dict[str, Any]:
         return {}
     return {
         "Todoist (by ID)": [{"ID": str(v)} for v in _as_list(ignore.get("todoist_ids"))],
-        "Obsidian (by path)": [{"Path": str(v)} for v in _as_list(ignore.get("paths"))],
+        "By path": [{"Path": str(v)} for v in _as_list(ignore.get("paths"))],
         "Names": [{"Name": str(v)} for v in _as_list(ignore.get("names"))],
     }

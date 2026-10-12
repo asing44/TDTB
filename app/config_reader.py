@@ -1,7 +1,6 @@
 """config_reader.py — Runtime view of the TDTB config (repo file + local override).
 
-The config no longer comes from the Obsidian vault note (vault removal V1,
-docs/plan/2026-10-12-vault-removal). ``read_config`` takes its sections from
+``read_config`` takes its sections from
 ``app_config`` — the tracked ``config/tdtb.json`` with the optional
 machine-local ``~/.config/tdtb/config.json`` layered on top — and every key
 that is absent falls back to the in-code constants below (the same inline
@@ -203,7 +202,7 @@ class TdtbConfig:
         """Return `## Ignore List` as {"todoist_ids", "paths", "names"} sets —
         the user-editable permanent hide list (T13e). The section's existing
         schema is honored: `### Todoist (by ID)` rows match on todoist_id,
-        `### Obsidian (by path)` rows on source path. A `### Names`
+        `### By path` rows on source path. A `### Names`
         subsection (or bare `Name` rows) matches any source case-insensitively.
         Optional section; empty sets if absent."""
         section = self.sections.get("Ignore List")
@@ -221,7 +220,7 @@ class TdtbConfig:
                     v = str(row.get("ID") or "").strip()
                     if v and v != "—":
                         out["todoist_ids"].add(v)
-                elif "obsidian" in key or "path" in key:
+                elif "path" in key:
                     v = str(row.get("Path") or "").strip()
                     if v and v != "—":
                         out["paths"].add(v)

@@ -29,7 +29,7 @@ that rule model that are pure and local:
    previously active rule is untouched (AE21/R33).
 
 The store is machine-local only: ``app_config.state_dir()/capacities-rules.json``.
-It never reads a credential, calls a provider, or writes the vault.
+It never reads a credential, calls a provider, or writes outside the app home.
 
 Deviations from the producer's own validators are deliberate and covered by
 tests:
@@ -276,7 +276,7 @@ class RuleSaveResult:
 def rules_path() -> Path:
     """The store path: ``<app home>/state/capacities-rules.json``.
 
-    Machine-local, never a vault path, and resolved through
+    Machine-local, and resolved through
     ``app_config.state_dir()`` so ``TDTB_HOME`` relocates it in tests."""
     return app_config.state_dir() / STATE_FILENAME
 

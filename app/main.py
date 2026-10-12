@@ -18,10 +18,8 @@ respectively. Both return a 502-style JSON error body on ``JudgmentError``
 route shape + real token guard) returning 501 until the commit writers
 (T14/T15) land.
 
-No route needs, reads or writes an Obsidian vault (vault removal V4): the
-service starts and serves every route with no vault-root environment variable
-set, and the retired variable is ignored if an older launchd plist still
-exports it.
+Every store lives in the app home; no environment variable names a notes
+root, and the retired one is ignored if an older launchd plist still exports it.
 """
 from __future__ import annotations
 
@@ -2594,7 +2592,7 @@ def _capacity_frame(
 
 
 def create_app() -> FastAPI:
-    """Build the TDTB FastAPI app. Takes no vault root: every store lives in
+    """Build the TDTB FastAPI app. Every store lives in
     the app home (``app_config.app_home()``)."""
 
     # -----------------------------------------------------------------------

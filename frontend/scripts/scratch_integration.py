@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """T7 scratch integration gate — real routes, real ApiAdapter, nothing billed.
 
-Boots the REAL FastAPI app against a synthetic scratch vault on :8790
+Boots the REAL FastAPI app against an isolated scratch state dir on :8790
 (uvicorn, in-process thread), with the same fake externals as the T5 contract
 capture:
 
@@ -46,7 +46,7 @@ HOST, PORT = "127.0.0.1", 8790
 BASE = f"http://{HOST}:{PORT}"
 
 import calendar_bridge  # noqa: E402
-import capture_contract_fixtures as cf  # noqa: E402 — reuse vault + fakes
+import capture_contract_fixtures as cf  # noqa: E402 — reuse the scratch isolation + fakes
 import judgment  # noqa: E402
 import main as main_mod  # noqa: E402
 import shadow as shadow_mod  # noqa: E402
@@ -162,23 +162,18 @@ def canned_propose(assigned_arg, config, anchored, ctx):
     return {"sequence": rows, "warnings": []}
 
 
-def build_vault(root):
-    """Synthetic scratch vault, renamed off the generic ``Sample`` token so the
-    scratch gate can't false-positive on a missing ``Sample`` collision."""
-    vault = cf.build_vault(root)
-    proj = vault / "50 - Operations/Projects"
-    (proj / "Sample Project.md").rename(proj / "Client Project.md")
-    (proj / "Sample Press.md").rename(proj / "Press Brief.md")
-    return vault
-
-
 def todoist_fake():
-    """cf.todoist_fake() with only the synthetic assigned task renamed."""
+    """cf.todoist_fake() renamed off the generic ``Sample`` token so the
+    scratch gate can't false-positive on a missing ``Sample`` collision."""
+    renames = {
+        "Sample Todoist Task": "Inbox Task",
+        "Sample Project": "Client Project",
+        "Sample Press": "Press Brief",
+    }
     fake = cf.todoist_fake()
     for tasks in fake.by_query.values():
         for task in tasks:
-            if task.get("content") == "Sample Todoist Task":
-                task["content"] = "Inbox Task"
+            task["content"] = renames.get(task.get("content"), task.get("content"))
     return fake
 
 
@@ -186,13 +181,13 @@ def store_fake():
     """cf.store_fake() with only the synthetic calendar title renamed."""
     fake = cf.store_fake()
     for event in fake.events:
-        if event.get("title") == "Sample Meeting":
+        if event.get("title") == "Team Standup":
             event["title"] = "Team Meeting"
     return fake
 
 
 def canned_live_state(config):
-    """Canned live surfaces that AGREE with the scratch vault, so the commit
+    """Canned live surfaces that AGREE with the scratch state, so the commit
     planner sees clean would-creates instead of refusing on conflicts. All
     surfaces available: an unavailable surface is a shadow blocker that
     (correctly) refuses ARM_LIVE at the state level (T8)."""
@@ -210,13 +205,7 @@ def main() -> int:
             return 2
 
     tmp = Path(tempfile.mkdtemp(prefix="tdtb-scratch-t7-"))
-    vault = build_vault(tmp)
-    # Daily note: the vault write path (plan section + captures) targets it.
-    from datetime import date
-
-    daily = vault / "30 - Daily" / f"{date.today().isoformat()}.md"
-    daily.parent.mkdir(parents=True, exist_ok=True)
-    daily.write_text("---\ntype: daily\n---\n\n# Notes\n", encoding="utf-8")
+    cf.isolate(tmp)  # scratch TDTB_HOME / repo config; never the real ~/.config/tdtb
     app = main_mod.create_app()
     app.state.build_read_clients = lambda cfg: (todoist_fake(), store_fake())
     app.state.build_commit_clients = lambda cfg: (WriterTodoist(), WriterStore())
@@ -239,7 +228,7 @@ def main() -> int:
     else:
         print("scratch server never came up", file=sys.stderr)
         return 2
-    print(f"scratch server up on {BASE} (vault: {vault})")
+    print(f"scratch server up on {BASE} (state: {tmp})")
 
     proc = subprocess.run(
         ["npx", "vitest", "run", "src/adapters/scratch.integration.test.ts"],

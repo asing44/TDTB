@@ -247,7 +247,6 @@ describe("projectPlanInputs (contract: plan-inputs.json)", () => {
   it("valid date + source counts + health", () => {
     expect(p.validDate).toMatch(/^\d{4}-\d{2}-\d{2}$/);
     expect(p.sourceCounts).toEqual({ todoist: 4, calendar: 1 });
-    expect("vault" in p.sourceCounts).toBe(false);
     expect(p.sourceHealth).toBe("ok");
     expect(p.daySetup.confirmed).toBe(false); // no runstate saved yet
   });

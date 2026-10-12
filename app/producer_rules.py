@@ -883,7 +883,7 @@ def compute_habit_summary(
     week by default, so the day is scoped here, not by the fetch).
     ``est_minutes`` sums only the OUTSTANDING tasks' durations (fallback
     ``fallback_minutes_per_habit`` where unset), rounded UP to the
-    ``round_to_minutes`` grain — the same semantics the vault read used."""
+    ``round_to_minutes`` grain — the same semantics the retired note read used."""
     empty = dict(artifact_source.HABITS_EMPTY)
     if not isinstance(entry, dict):
         return empty

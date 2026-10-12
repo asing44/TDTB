@@ -337,7 +337,7 @@ def _config_phep_project_id(config: Any) -> str:
 
     Accepts a TdtbConfig (``get_todoist_project_id``) or a plain dict
     (``todoist_projects`` / ``projects`` map), degrading to the fallback id so a
-    config-less path still routes PHEP correctly (spec § 3.2: all vault efforts
+    config-less path still routes PHEP correctly (spec § 3.2: all project efforts
     round-trip through PHEP)."""
     getter = getattr(config, "get_todoist_project_id", None)
     if callable(getter):
@@ -415,7 +415,7 @@ def plan_writes(
                 )
                 continue
             intents.append(_plan_calendar(m, e, cal_id, today))
-        else:  # a vault (or any unknown) row: the vault steps no longer exist
+        else:  # any unknown surface (e.g. a retired source) is refused
             problems.append(f"{m.step}/{m.name}: unknown surface {m.system!r}")
 
     if problems:
@@ -533,7 +533,7 @@ def _plan_todoist(m: ManifestEntry, e: ShadowDiffEntry, config: Any, today: date
             retiming_authorized=retiming_authorized,
             due_all_day_today=all_day,
         )
-    # CREATE: route to PHEP project (vault efforts) or Todoist Inbox (None).
+    # CREATE: route to PHEP project (project efforts) or Todoist Inbox (None).
     project_id = _config_phep_project_id(config) if m.routing == "PHEP" else None
     return WriteIntent(
         step=m.step, surface="todoist", op="create", name=m.name,
