@@ -116,7 +116,7 @@ export interface Adapter {
   billedLedger(): Promise<Ledger>;
   /** GET /capacity-preview — server-verbatim numbers for proposed edits. */
   capacityPreview(daySetup: DaySetup, selectedBlocks: number[]): Promise<Capacity>;
-  /** POST /day-setup — persist session/day-scoped setup, never vault config. */
+  /** POST /day-setup — persist session/day-scoped setup, never persistent config. */
   saveDaySetup(daySetup: DaySetup): Promise<void>;
   /** U5 POST /day-setup {captures} — PATCH the local prompt drafts.
       Prompt-only: never confirms the day. */
@@ -141,7 +141,7 @@ export interface Adapter {
   /** POST /settings/capacities/save — one token-guarded non-billed full
       replacement of the local policy. */
   saveCapacitiesSettings(draft: CapacitiesSettingsDraft): Promise<CapacitiesSettings>;
-  /** GET /settings/capacities/source — tokenless read of the vault-local
+  /** GET /settings/capacities/source — tokenless read of the
       source mapping record; an absent record is `{source: null,
       persisted: false}`, never an error. */
   loadCapacitiesSource(): Promise<CapacitiesSourceRead>;

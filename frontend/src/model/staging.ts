@@ -9,8 +9,8 @@
    IMP-05/IMP-07 final UI verb set (frozen action table): Done,
    Drop from plan, Unassign, Delete. 'Defer' and 'Assign' are NOT product
    verbs — they are gone from the catalogue. Drop from plan is a date-scoped
-   runstate-only exclusion (no source write); Unassign flips vault
-   assignment / clears or advances the Todoist due; Delete is the only
+   runstate-only exclusion (no source write); Unassign clears
+   or advances the Todoist due; Delete is the only
    destructive verb.
 
    The placement verbs (skip_today, remove_from_today, duration_edit,

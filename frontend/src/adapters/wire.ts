@@ -145,8 +145,8 @@ export function durationSourceOf(label: unknown): DurationSourceLabel {
 }
 
 /** Canonical stable source identity for a row (mirrors the backend
-    item_identity rule): todoist:<id> for todoist rows, the normalized vault
-    path otherwise, null when neither is present. A display name alone is
+    item_identity rule): todoist:<id> for todoist rows, the row's own path
+    otherwise, null when neither is present. A display name alone is
     never an identity. */
 export function itemIdentity(item: {
   source?: string;
@@ -457,7 +457,7 @@ export function capacitiesSettingsToWire(draft: CapacitiesSettingsDraft): Wire {
   };
 }
 
-// -- Capacities source mapping (vault-local structural mapping record) -------
+// -- Capacities source mapping (structural mapping record) -------
 
 function capacitiesSourceError(detail: string): Error {
   return new Error(`invalid Capacities source response: ${detail}`);
@@ -941,7 +941,10 @@ export function projectAssigned(row: Wire): AssignedItem {
       ? "todoist"
       : row.source === "capacities"
         ? "capacities"
-        : "vault";
+        // Legacy/unknown source (an old payload may still say "vault"): render
+        // as a neutral Todoist-like row. It carries no todoistId or identity,
+        // so it is unidentified and no source-specific verb can address it.
+        : "todoist";
   const blocks =
     typeof row.blocks === "number" && Number.isFinite(row.blocks) ? row.blocks : 1;
   // FT-05 F1: exact remembered minutes win for the user-visible label —
@@ -978,7 +981,7 @@ export function projectAssigned(row: Wire): AssignedItem {
         source === "todoist" && row.todoist_id != null && String(row.todoist_id) !== ""
           ? String(row.todoist_id)
           : null,
-      path: row.path ?? null,
+      path: source === "capacities" ? (row.path ?? null) : null,
     }),
     durationSource: durationSourceOf(row.duration_source),
     isRecurring: source === "todoist" && row.is_recurring === true,
@@ -1681,7 +1684,7 @@ export const FORGOT_LIST_CAP = 5;
 
 /** IMP-07: rows the server excluded from today via Drop from plan. Shape is
     runstate's {identity, name, dropped_at}; the identity is canonical source
-    identity (todoist:<id> / vault path). A row with no name or identity is
+    identity (todoist:<id> / Capacities identity). A row with no name or identity is
     dropped — there would be nothing to render or re-identify. */
 export function projectDroppedToday(rows: unknown): import("../model/types").DroppedItem[] {
   if (!Array.isArray(rows)) return [];
@@ -1732,7 +1735,6 @@ export function projectPlanInputs(wire: Wire): PlanInputs {
     planningConfigFingerprint: String(wire.planning_config_fingerprint ?? ""),
     sourceWarnings: warnings,
     sourceCounts: {
-      vault: Number(wire.source_counts?.vault ?? 0),
       todoist: Number(wire.source_counts?.todoist ?? 0),
       calendar: Number(wire.source_counts?.calendar ?? 0),
     },
