@@ -4,21 +4,23 @@ The single-context domain glossary for this repository (`docs/agents/domain.md`)
 One line per term plus the code anchor where the concept is defined or enforced.
 Use these words as defined here; do not drift to synonyms they exclude.
 
-- **vault** — the filesystem root for legacy planning inputs and local app
-  caches, not Capacities authority. Anchor: `app/runstate.py` (`vault_root` is
-  always a caller-supplied parameter), `app/main.py` (`resolve_vault_root`).
+- **app home** — the machine-local directory (`$TDTB_HOME`, default
+  `~/.config/tdtb`) holding the optional config override and the `state/`
+  stores (run state, exclusions, deferrals, duration memory, journal). The
+  Obsidian vault is retired: nothing reads, writes or requires it. Anchor:
+  `app/app_config.py` (`app_home`, `state_dir`).
 - **source** — the upstream system that owns a task's identity and properties
-  (`vault`, `todoist`, `capacities`). Anchor: `app/external_sources.py`;
+  (`todoist`, `capacities`; the wire still carries a retired `vault` literal
+  until V5). Anchor: `app/external_sources.py`;
   `frontend/src/model/types.ts` (`Source`).
 - **tag** — a Capacities RootTag entity identified by `(space_id, tag_id)`;
   its title is presentation only. Anchor: `app/exclusion_settings.py`
   (`TagExclusion`), `app/tag_exclusions.py`.
-- **label** — source-specific text/typed-choice metadata (Todoist labels,
-  vault frontmatter tags); not automatically a Capacities tag identity.
-  Anchor: `app/todoist_client.py` (`labels`),
-  `app/gather/tdtb_gather.py` (`get_tags`).
+- **label** — source-specific text/typed-choice metadata (Todoist labels);
+  not automatically a Capacities tag identity.
+  Anchor: `app/todoist_client.py` (`labels`).
 - **Ignore List** — the config-file exclusion list (`ignore` in
-  `config/tdtb.json`, local override on top) matching Todoist ids, vault paths,
+  `config/tdtb.json`, local override on top) matching Todoist ids, paths,
   or folded names. Anchor: `app/main.py`
   (`build_digest`'s `ignore` parameter), `app/config_reader.py`
   (`get_ignore_list`).

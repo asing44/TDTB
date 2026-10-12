@@ -53,7 +53,7 @@ is incomplete. The live service may be inspected with bounded GET-only health,
 version, and contract checks. Never send `POST /commit` without Adam's
 explicit instruction. Never fire billed `POST /sequence` or `POST /adjust`
 against live state during unattended or implementation work; use fixtures,
-mocks, or the scratch instance on `:8790`. Do not write the real vault,
+mocks, or the scratch instance on `:8790`. Do not write real
 Todoist, Calendar, or other source state from a scratch walkthrough.
 
 Restarting `:8746` is an attended deployment action. It is allowed only when

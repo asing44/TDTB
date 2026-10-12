@@ -16,7 +16,7 @@
 # Markers are written only after a successful install.
 #
 # This script is the authoritative machine-local bootstrap. It never
-# activates launchd, never restarts :8746, and never touches the real vault.
+# activates launchd, never restarts :8746.
 #
 # Ownership boundary: the global ~/.local/bin/tdtb-restart launcher is owned
 # by Configurations/gpt-stack/seat-bootstrap.sh (HQ). This script manages
@@ -58,7 +58,6 @@ Modes:
 
 Environment:
   TDTB_REPO       Override the repo root (default: parent of this script).
-  TDTB_VAULT_ROOT  Override the vault root used for --launchd plist rendering.
 EOF
 }
 
@@ -161,33 +160,6 @@ validate_paths() {
     print -u2 -- "ERROR: repo structure incomplete at $REPO_ROOT"
     exit 1
   fi
-}
-
-# ---------------------------------------------------------------------------
-# Resolve vault root (for --launchd)
-# ---------------------------------------------------------------------------
-resolve_vault() {
-  if [[ -n "${TDTB_VAULT_ROOT:-}" ]]; then
-    if [[ -d "$TDTB_VAULT_ROOT" ]]; then
-      print -- "$TDTB_VAULT_ROOT"
-      return 0
-    fi
-    fail "TDTB_VAULT_ROOT set but not a directory: $TDTB_VAULT_ROOT"
-    return 1
-  fi
-
-  local candidate
-  for candidate in \
-    "$HOME/Local Documents/Obsidian/WALL⋅E-THNK" \
-    "$HOME/Obsidian/WALL⋅E-THNK"; do
-    if [[ -d "$candidate" ]]; then
-      print -- "$candidate"
-      return 0
-    fi
-  done
-
-  fail "no WALL⋅E-THNK vault found — set TDTB_VAULT_ROOT or sync vault first"
-  return 1
 }
 
 # ---------------------------------------------------------------------------
@@ -351,18 +323,15 @@ ensure_bootstrap_link() {
 }
 
 # ---------------------------------------------------------------------------
-# Step 4 (--launchd): stage plist with __WALLE_HOME__, __TDTB_REPO__,
-# and __TDTB_VAULT_ROOT__ substitution
+# Step 4 (--launchd): stage plist with __WALLE_HOME__ and __TDTB_REPO__
+# substitution
 # ---------------------------------------------------------------------------
 stage_plist() {
   step "launchd plist ($PLIST_DEST)"
 
-  local vault
-  vault="$(resolve_vault)" || return 1
-
   if (( dry_run )); then
     dry "mkdir -p $LAUNCH_AGENTS_DIR"
-    dry "sed -e s|__WALLE_HOME__|\$HOME|g -e s|__TDTB_REPO__|$REPO_ROOT|g -e s|__TDTB_VAULT_ROOT__|$vault|g $PLIST_TEMPLATE > $PLIST_DEST"
+    dry "sed -e s|__WALLE_HOME__|\$HOME|g -e s|__TDTB_REPO__|$REPO_ROOT|g $PLIST_TEMPLATE > $PLIST_DEST"
     dry "plutil -lint $PLIST_DEST"
     return 0
   fi
@@ -381,7 +350,6 @@ stage_plist() {
   if ! sed \
     -e "s|__WALLE_HOME__|$HOME|g" \
     -e "s|__TDTB_REPO__|$REPO_ROOT|g" \
-    -e "s|__TDTB_VAULT_ROOT__|$vault|g" \
     "$PLIST_TEMPLATE" > "$temp"; then
     rm -f "$temp"
     fail "could not render plist from template"

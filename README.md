@@ -56,7 +56,7 @@ You can run `tdtb-bootstrap` from anywhere after the first bootstrap completes.
 | Flag | Behaviour |
 |---|---|
 | *(none)* | Validate paths; create `app/.venv` (uv + Python 3.12); `npm ci` in `frontend/`; symlink `~/.local/bin/tdtb-bootstrap` → `bootstrap-seat.sh`. Dependency freshness is tracked by SHA-256 marker files (`.tdtb-req-hash`, `.tdtb-lock-hash`); stale or missing markers trigger reinstallation. |
-| `--launchd` | Also stage `~/Library/LaunchAgents/com.walle.tdtb.plist` from the canonical launchd template. Substitutes `__WALLE_HOME__`, `__TDTB_REPO__`, and `__TDTB_VAULT_ROOT__`. Does **not** activate launchd or restart `:8746`. |
+| `--launchd` | Also stage `~/Library/LaunchAgents/com.walle.tdtb.plist` from the canonical launchd template. Substitutes `__WALLE_HOME__` and `__TDTB_REPO__`. Does **not** activate launchd or restart `:8746`. |
 | `--dry-run` | Read-only: report what would change without creating venvs, node_modules, symlinks, plist files, or hash markers. |
 
 **Per-seat local dependencies** (not installed by bootstrap):
@@ -74,4 +74,4 @@ re-validate and update seat projections after a repo checkout or worktree
 switch.
 
 **Tests:** `app/tests/test_bootstrap_seat.py` — fixture-based, fakes uv/npm,
-uses a temporary HOME/repo/vault, never touches real infrastructure.
+uses a temporary HOME/repo, never touches real infrastructure.

@@ -30,26 +30,8 @@ skip_build=0
 launchd_started=0
 
 refresh_plist() {
-  local vault="" candidate temp
+  local temp
 
-  if [[ -n "${TDTB_VAULT_ROOT:-}" && -d "$TDTB_VAULT_ROOT" ]]; then
-    vault="$TDTB_VAULT_ROOT"
-  else
-    for candidate in \
-      "$HOME/Local Documents/Obsidian/WALL⋅E-THNK" \
-      "$HOME/Obsidian/WALL⋅E-THNK"; do
-      if [[ -d "$candidate" ]]; then
-        vault="$candidate"
-        break
-      fi
-    done
-  fi
-
-  if [[ -z "$vault" ]]; then
-    print -u2 -- "  plist       FAILED — no local WALL⋅E-THNK vault found"
-    print -u2 -- "              set TDTB_VAULT_ROOT or sync the vault before restarting"
-    return 1
-  fi
   if [[ ! -f "$PLIST_TEMPLATE" ]]; then
     print -u2 -- "  plist       FAILED — repo template missing: $PLIST_TEMPLATE"
     return 1
@@ -66,7 +48,6 @@ refresh_plist() {
   if ! sed \
     -e "s|__WALLE_HOME__|$HOME|g" \
     -e "s|__TDTB_REPO__|$TASK_DIR|g" \
-    -e "s|__TDTB_VAULT_ROOT__|$vault|g" \
     "$PLIST_TEMPLATE" > "$temp"; then
     rm -f "$temp"
     print -u2 -- "  plist       FAILED — could not render $PLIST_TEMPLATE"
