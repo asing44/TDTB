@@ -152,9 +152,8 @@ def test_local_override_wins_and_repo_fills_the_rest() -> None:
 
 def test_local_sources_join_repo_without_repo_sources() -> None:
     _repo(REPO_DOC)
-    _local({"version": 1, "sources": {"mode": "live", "vault_enabled": False}})
+    _local({"version": 1, "sources": {"mode": "live"}})
     assert app_config.sources_mode() == "live"
-    assert app_config.vault_enabled() is False
 
 
 def test_unsupported_version_local_is_ignored_repo_still_loads() -> None:
@@ -315,6 +314,6 @@ def test_vault_note_is_not_a_config_source(tmp_path: Path) -> None:
     note = tmp_path / "00 - META" / "Skill-Configs" / "tdtb-bridger.md"
     note.parent.mkdir(parents=True)
     note.write_text("## Defaults\n| Key | Value |\n|---|---|\n| eod | 1:00 AM |\n", encoding="utf-8")
-    result = read_config(tmp_path)
+    result = read_config()
     assert result.bootstrap_needed is True
     assert result.config is None
