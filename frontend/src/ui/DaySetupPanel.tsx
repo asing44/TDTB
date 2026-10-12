@@ -38,6 +38,7 @@ import {
 } from "../model/anchored";
 import { calendarWalls } from "../model/overflow";
 import { effectiveAnchoredBlocks } from "../store/store";
+import { displayAnchored } from "../model/calendarEvents";
 import { DayStrip } from "./day-setup/DayStrip";
 import { AnchorsCard, type AnchorTimeState } from "./day-setup/AnchorsCard";
 import { PromptsCard } from "./day-setup/PromptsCard";
@@ -508,7 +509,7 @@ export function DaySetupPanel({
         timeState,
       };
     });
-    const stripCalendar = effectiveAnchoredBlocks(s)
+    const stripCalendar = displayAnchored(effectiveAnchoredBlocks(s))
       .filter((a) => a.kind === "calendar" && a.start !== null && a.durationMin > 0)
       .map((a) => ({
         id: a.id,
