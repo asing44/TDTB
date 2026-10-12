@@ -7714,3 +7714,153 @@ body {
   padding-top: 4px;
   background: var(--t-surface);
 }
+
+/* ---- Row actions never depend on hover (below 1280px) -----------------------
+   Narrow widths used to reveal the verbs on hover only, which left an empty
+   band under every row at 900-1000px and an overlay at 1101-1279px. Below
+   1101px the stacked layout simply shows them. From 1101 to 1279px the row
+   takes a second grid line under the title, due and slider, so nothing covers
+   anything and nothing needs a hover. From 1280px the fixed trailing track
+   above applies. */
+@media (max-width: 1100px) {
+  .qrow__actions {
+    opacity: 1;
+    pointer-events: auto;
+    flex-wrap: wrap;
+    justify-content: flex-start;
+    gap: 6px;
+  }
+
+  /* The tooltips carry the descriptions now; the two-line buttons only made
+     the stacked row taller. Same mockup order and skin as the wide layouts,
+     44px touch targets kept. */
+  .qrow__action-group {
+    display: contents;
+  }
+
+  .qrow__divider {
+    display: none;
+  }
+
+  .qrow__actions .planbtn__detail,
+  .qrow__actions .alloc-verb__detail {
+    display: none;
+  }
+
+  .qrow__actions .planbtn,
+  .qrow__actions .alloc-verb {
+    display: inline-flex;
+    align-items: center;
+    min-width: 0;
+    padding: 0 10px;
+    font-size: 13px;
+    white-space: nowrap;
+    border-width: 1px;
+    border-radius: 6px;
+  }
+
+  .qrow__actions .planbtn,
+  .qrow__actions .alloc-verb--drop_from_plan,
+  .qrow__actions .alloc-verb--more {
+    background: var(--t-surface);
+    border-color: var(--t-border);
+  }
+
+  .qrow__tip--done {
+    order: 0;
+  }
+
+  .qrow__tip--plan {
+    order: 1;
+  }
+
+  .qrow__tip--drop_from_plan {
+    order: 2;
+  }
+
+  .qrow__actions .row-more {
+    order: 3;
+  }
+}
+
+@media (min-width: 1101px) and (max-width: 1279px) {
+  .qrow {
+    grid-template-columns: 3px minmax(0, 1fr) 150px 300px;
+    grid-template-rows: auto auto;
+    row-gap: 6px;
+  }
+
+  .qrow__stripe {
+    grid-column: 1;
+    grid-row: 1 / -1;
+    align-self: stretch;
+  }
+
+  .qrow__body {
+    grid-column: 2;
+    grid-row: 1;
+  }
+
+  .qrow__due {
+    grid-column: 3;
+    grid-row: 1;
+  }
+
+  .qrow__time {
+    grid-column: 4;
+    grid-row: 1;
+  }
+
+  .qrow__actions,
+  .qrow:hover .qrow__actions,
+  .qrow:focus-within .qrow__actions,
+  .qrow--focused .qrow__actions,
+  .qrow--dropped .qrow__actions {
+    grid-column: 2 / -1;
+    grid-row: 2;
+    width: auto;
+    overflow: visible;
+    justify-content: flex-start;
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  .qrow:hover .qrow__due,
+  .qrow:focus-within .qrow__due,
+  .qrow--focused .qrow__due,
+  .qrow--dropped .qrow__due {
+    visibility: visible;
+  }
+
+  .qrow:hover .qrow__name,
+  .qrow:focus-within .qrow__name,
+  .qrow--focused .qrow__name {
+    -webkit-line-clamp: 2;
+  }
+
+  /* Mockup order here too (Mark complete first): flatten the role=group
+     wrappers like the wider layouts do. */
+  .qrow__action-group {
+    display: contents;
+  }
+
+  .qrow__tip--done {
+    order: 0;
+  }
+
+  .qrow__tip--plan {
+    order: 1;
+  }
+
+  .qrow__tip--drop_from_plan {
+    order: 2;
+  }
+
+  .qrow__actions .row-more {
+    order: 3;
+  }
+
+  .qrow__divider {
+    display: none;
+  }
+}
