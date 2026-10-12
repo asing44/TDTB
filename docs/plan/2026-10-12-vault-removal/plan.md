@@ -1,6 +1,6 @@
 # TDTB: remove the Obsidian vault entirely (S6 finish)
 
-Status: **V1 landed (merged to main); V2 landed on branch `TDTB/vault-removal-v2-20261012` (not merged); V3-V5 open.** Operator directive (2026-10-12): anything "vault" in the Obsidian sense is
+Status: **V1 and V2 landed (merged to main); V3 landed on branch `TDTB/vault-removal-v3-20261012` (not merged); V4-V5 open.** Operator directive (2026-10-12): anything "vault" in the Obsidian sense is
 100% deprecated. Hand-edited config moves into the repo; runtime state moves to the state dir
 (`~/.config/tdtb/state/`) or is dropped; nothing replaces the Obsidian note writes at Commit.
 
@@ -21,7 +21,7 @@ so the vault gather already contributes no rows. This plan is the S6 deletion pl
 |---|---|
 | **V1 (landed)** | `config/tdtb.json` seeded from the live config; `app_config` loads repo file then local override; `config_reader.read_config` stops reading `00 - META/Skill-Configs/tdtb-bridger.md`; micro-adventure pool read from config (fallback pool stays in code). Schema Reference ids and Color Palette move into the same file. |
 | **V2 (landed)** | Remaining vault-written runtime state moves to the state dir: micro-adventure log, duration memory (+lock), runtime journal. Vault fallbacks for already-moved stores (runstate, recent selections, exclusion/capacities settings, deferrals, source mapping) are removed. See "V2 as landed". |
-| **V3** | Delete Commit's vault steps (`write_daily_note`, `write_frontmatter_flips`, `vault.trash`, orchestrate/shadow "vault" surface). Replace the `### Live` daily-note probe with state-dir done state. |
+| **V3 (landed)** | Delete Commit's vault steps (`write_daily_note`, `write_frontmatter_flips`, `vault.trash`, orchestrate/shadow "vault" surface). Replace the `### Live` daily-note probe with state-dir done state. |
 | **V4** | Delete the vault gather, `schema_guard` + `.base` mirror, `active-inventory`/precompute caches, `vault_enabled`, `TDTB_VAULT_ROOT`, `resolve_vault_root`, `tools/migrate_vault_*`, and the launchd/restart/bootstrap vault plumbing. |
 | **V5** | Wire and UI: drop the `"vault"` source, `source_counts.vault`, `system: "vault"`, the VAULT chip and every user-facing "vault" string; update contract fixtures. |
 
@@ -77,6 +77,38 @@ Surprises:
   in the vault. Before restarting live on V2, run `python tools/migrate_vault_state.py --vault-root <vault> --dry-run`,
   then without `--dry-run`. It copies only if absent; if the old service writes to the vault after the copy, refresh
   deliberately.
+
+**V3 as landed.** Commit writes Todoist and the calendar only; no vault byte is read or written by Commit or the runtime verbs.
+
+- `commit.py`: `write_daily_note`, `write_frontmatter_flips`, `_set_assigned_true`, `_patch_plan_section`,
+  `_resolve_daily_note`, `_plan_vault` and `WriteIntent.path` are deleted. `plan_writes` has no vault branch: a `system: "vault"`
+  manifest row (incl. the retired `frontmatter-captures`) now falls into the existing "unknown surface" refusal, so a crafted or
+  stale row still refuses the whole commit closed (the dedicated `frontmatter-captures` refusal was dead and is gone).
+- `shadow.py`: the manifest no longer emits the Step B `# TDTB Plan` patch row or the Step C `set-flag` rows;
+  `diff_against_live` has no vault/daily-note branches; `gather_live_state` no longer walks the vault or reads the daily note
+  (state keys `vault_frontmatter`, `daily_note_text`, `vault_unavailable`, `vault_error` are gone; the `vault_root` argument stays, ignored).
+- `orchestrate.py`: `SURFACES == ["todoist", "calendar"]`; the `vault_flips` and `daily_note` ledger surfaces and the `plan_body` argument
+  are deleted (`main._render_plan_body`, `commit_run._render_plan_body` too). `bake_in_diff` loses its Step B carve-out (nothing emits Step B).
+- `runtime_actions.py`: `vault.complete`, `vault.assign`, `vault.unassign`, `vault.trash` (and `.trash`, the FileClass status table, the
+  byte-surgical helpers) are deleted. `complete/done/assign/unassign/delete/delete_permanent` on a target that still resolves to a
+  `vault_path` raise `RuntimeActionError("... the Obsidian vault is retired ... nothing was changed")` from `plan_steps` (before any
+  journal entry), which `/runtime-actions` already maps to 422; an old journal entry holding a `vault.*` step fails its undo with the
+  same message (`undo_failed`). Todoist/Calendar/Capacities steps, `defer`, `drop_from_plan` are untouched.
+- Live probe: `micro_adventure.daily_note_live_done`, `resolve_prior(daily_note_live_checked=)` and `main._daily_note_live_probe` are deleted.
+  The Live "done" state is the `done` field of `state/micro-adventure-log.md`, set by the cockpit "Did it"/Dismiss route
+  (`POST /micro-adventure/loose-end`, response shape unchanged) or the Todoist-completion signal. **Information lost:** a `- [x]` ticked
+  under `### Live` in an Obsidian daily note no longer marks the prior adventure done; it has no state-dir equivalent, so the entry
+  stays `done: null` and the banner asks "Did it / Dismiss" (degrades to "not done", never reads the vault).
+- Result shape: the live commit report's `surfaces` map loses the `vault_flips` and `daily_note` keys (all other keys and the per-surface
+  entry shape are unchanged); the shadow/`plan_manifest` entries lose their `system: "vault"` rows (Step B, Step C). `frontend/src/adapters/wire.ts`
+  builds `surfaces` from `Object.entries` and `projectShadow` copies `system` through, so nothing in the UI breaks; V5 removes the type literal and
+  regenerates `commit-live-*.json` (they still show the two removed keys and were stale at baseline anyway).
+- Left for V4/V5 on purpose: `vault_root` parameters, `TDTB_VAULT_ROOT`, vault gather, `schema_guard`, `runstate.DEFAULT_RUNSTATE["daily_note_path"]`,
+  `ManifestEntry.system` doc "vault" mentions in frontend types, and every UI string.
+- Tests: `test_v3_no_vault_commit.py` (live commit, resume, shadow commit and the Live-done flow against a read-only empty vault root;
+  nothing appears under it); removed-verb errors in `test_runtime_actions.py`, `test_final_actions.py`, `test_staging_actions.py`; the daily-note
+  patch, frontmatter flip, trash/undo, FileClass-status and live-probe tests are deleted with their code.
+- Operator step: none. Live Commit keeps writing Todoist/Calendar as before; the daily note simply stops receiving a `# TDTB Plan` section.
 
 ## Inventory (from the 2026-10-12 read-only map)
 
