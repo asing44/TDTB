@@ -1,6 +1,6 @@
 # TDTB: remove the Obsidian vault entirely (S6 finish)
 
-Status: **V1 and V2 landed (merged to main); V3 landed on branch `TDTB/vault-removal-v3-20261012` (not merged); V4-V5 open.** Operator directive (2026-10-12): anything "vault" in the Obsidian sense is
+Status: **V1-V3 landed on main; V4 landed on branch `TDTB/vault-removal-v4-20261012` (not merged); V5 open.** Operator directive (2026-10-12): anything "vault" in the Obsidian sense is
 100% deprecated. Hand-edited config moves into the repo; runtime state moves to the state dir
 (`~/.config/tdtb/state/`) or is dropped; nothing replaces the Obsidian note writes at Commit.
 
@@ -22,7 +22,7 @@ so the vault gather already contributes no rows. This plan is the S6 deletion pl
 | **V1 (landed)** | `config/tdtb.json` seeded from the live config; `app_config` loads repo file then local override; `config_reader.read_config` stops reading `00 - META/Skill-Configs/tdtb-bridger.md`; micro-adventure pool read from config (fallback pool stays in code). Schema Reference ids and Color Palette move into the same file. |
 | **V2 (landed)** | Remaining vault-written runtime state moves to the state dir: micro-adventure log, duration memory (+lock), runtime journal. Vault fallbacks for already-moved stores (runstate, recent selections, exclusion/capacities settings, deferrals, source mapping) are removed. See "V2 as landed". |
 | **V3 (landed)** | Delete Commit's vault steps (`write_daily_note`, `write_frontmatter_flips`, `vault.trash`, orchestrate/shadow "vault" surface). Replace the `### Live` daily-note probe with state-dir done state. |
-| **V4** | Delete the vault gather, `schema_guard` + `.base` mirror, `active-inventory`/precompute caches, `vault_enabled`, `TDTB_VAULT_ROOT`, `resolve_vault_root`, `tools/migrate_vault_*`, and the launchd/restart/bootstrap vault plumbing. |
+| **V4 (landed)** | Delete the vault gather, `schema_guard` + `.base` mirror, `active-inventory`/precompute caches, `vault_enabled`, `TDTB_VAULT_ROOT`, `resolve_vault_root`, `tools/migrate_vault_*`, and the launchd/restart/bootstrap vault plumbing. |
 | **V5** | Wire and UI: drop the `"vault"` source, `source_counts.vault`, `system: "vault"`, the VAULT chip and every user-facing "vault" string; update contract fixtures. |
 
 **V1 as landed.** `config/tdtb.json` is the tracked config (seeded from the live local config plus the vault-note-only
@@ -109,6 +109,63 @@ Surprises:
   nothing appears under it); removed-verb errors in `test_runtime_actions.py`, `test_final_actions.py`, `test_staging_actions.py`; the daily-note
   patch, frontmatter flip, trash/undo, FileClass-status and live-probe tests are deleted with their code.
 - Operator step: none. Live Commit keeps writing Todoist/Calendar as before; the daily note simply stops receiving a `# TDTB Plan` section.
+
+**V4 as landed.** Nothing under `app/` reads, writes, scans or requires a vault root any more.
+
+- **Deleted code:** `app/schema_guard.py` (+ `.base` hashing and CLI), `app/inventory.py`, `tools/migrate_vault_state.py`,
+  `tools/vault_rows_report.py`. `app/gather/tdtb_gather.py` keeps only `effective_date`, `empty_run_data` (the always-empty note slice of
+  `/gather`, same envelope), `parse_frontmatter` (reads the app-owned recent-selections cache), `_extract_json_block` and
+  `load_runstate(valid_date)` (state dir only). `walk_vault`, `select_digest_notes`, the scan dirs, the `.base` predicate mirror,
+  `build_cache`/`write_cache` (`active-inventory.md`) and the precompute cache are gone. (Fixed on the way: the unused no-PyYAML
+  fallback frontmatter parser looped forever on a boolean value.) All `*_REL_PATH` / `CACHE_DIR_REL` vault constants and
+  `runstate_rel_path` / `digest_index_rel_path` / `journal_rel_path` and the dead `RUNSTATE_DEFAULTS["daily_note_path"]` key are deleted.
+- **`sources.vault_enabled` is gone** (flag, default, validation). The operator's live `~/.config/tdtb/config.json`
+  (`sources: {vault_enabled: false, mode: "live"}`) keeps loading: `app_config.SOURCES_LEGACY_IGNORED_KEYS` makes the key
+  silently ignored (no effect, no validation failure, no `sources_config_warnings` entry; whitespace-padded too). Pinned by
+  `test_sources_config.py::TestLegacyVaultEnabledKey`, including `/plan-inputs` serving with that exact file.
+- **No vault root anywhere:** `create_app()` takes no argument; `resolve_vault_root`, `_refresh_vault_root`, `_vault_root_or_none`,
+  `_disabled_vault_root`, `VAULT_ROOT_ENV` and `app.state.vault_root` are deleted; `TDTB_VAULT_ROOT` is never read (a set value is
+  ignored). Every `vault_root` / `vault` parameter was removed from the store modules, `runtime_actions`, `orchestrate`,
+  `shadow.gather_live_state`, `commit.run_commit`, the builders and the CLI harnesses. The injection seams are now
+  `(config) -> ...` (`build_read_clients`, `build_calendar_store`, `build_capacities_adapter`, `build_commit_clients`,
+  `build_refresh_coordinator`). The ~40 routes that 503'd without a vault root now just serve (e.g. `/config`, `/settings/*`).
+  `shadow_run.py`, `commit_run.py`, `build_commit_body.py`, `bake_in_run.py` lose their env check; their digest has no note rows
+  (useful input is `--sequence-file`).
+- **`/plan-inputs` is unchanged for `vault_enabled=false`:** note rows were already empty, so the digest is built from Todoist /
+  Capacities / calendar / artifact rows exactly as before. `source_counts.vault` is still emitted (0, or the count of artifact rows
+  tagged `source: "vault"` which are still accepted until V5). `/gather` still returns `pool_count`/`assigned_count`/
+  `pool_items`/`assigned_items` (empty) and still seeds the micro-adventure runstate keys, but no longer writes `active-inventory.md`.
+  `POST /digest` without a body now digests an empty pool.
+- **Orchestrate:** `run_orchestrated` used to persist the ledger / recent selections only when given a `vault_root`; it now persists
+  whenever `persist_ledger` is true (the live route always did), so the `vault_root` argument no longer doubles as a persistence switch.
+- **Cache namespaces changed (decision for the operator):** the Capacities content-cache namespace, the structure-title cache namespace
+  and the direct-refresh snapshot pointer namespace used to hash the vault-root string together with space and base URL. They now hash
+  space and base URL only, so after the first restart on V4 the machine-local content cache is rebuilt from fresh reads (one logged
+  "ignored a stored cache" warning), cached structure titles reappear on the next Capacities read, and a published direct-refresh
+  generation is not served under the new namespace (`sources.capacities_intake: direct` reports `refresh_required` until one Capacities
+  Refresh is run; `legacy` intake, the live setting, is unaffected apart from the cold content cache). Nothing is lost that a refresh does
+  not recreate.
+- **Renames:** `duration_memory.read_vault_memory` -> `read_all_memory`. Legacy `vault:` / path-shaped keys in an existing
+  `duration-memory.json` are still tolerated (never crash a read or write, never match).
+- **Deployment:** `launchd/com.walle.tdtb.plist` drops the `TDTB_VAULT_ROOT` key and placeholder; `restart-live.sh` and
+  `bootstrap-seat.sh` no longer discover or require a vault (bootstrap `--launchd` no longer fails when none exists). README,
+  CONTEXT and AGENTS updated; older plans under `docs/plan/` that describe vault steps carry a "Historical" banner.
+- **Tests:** deleted `test_vault_cutover`, `test_schema_guard`, `test_inventory`, `test_migrate_vault_state`, `test_gather_metadata`,
+  `gather/tests/test_tdtb_precompute`, the 503-without-vault tests and the vault-scan gather tests; `vault_root` arguments, seam lambdas
+  and fake `(config, vault_root)` stand-ins were rewritten; the vault-note digest fixtures became Todoist-row fixtures. New:
+  `test_v4_no_vault_root.py` (health / config / version / plan-inputs / day-setup / gather / digest / shadow + live commit, run once
+  with `TDTB_VAULT_ROOT` unset and once with it pointing at a read-only empty dir that must stay empty, plus a static guard that no
+  module under `app/` names the variable), `test_sources_config.py` (legacy `vault_enabled` shape, key tolerance, warnings),
+  restart/bootstrap script tests updated. `app/tests/config_markdown.py` is **kept**: 20 test modules (and
+  `frontend/scripts/capture_contract_fixtures.py`) install readable markdown config fixtures through it, and converting them to JSON is
+  not cheap; the app itself never parses markdown.
+- **Left for V5 on purpose:** the wire `"vault"` source (`artifact_source.VALID_ROW_SOURCES`, `source_counts.vault`, `system: "vault"`
+  handling and the `vault_path` target key in `runtime_actions`/`deferrals`, the `"vault"` source label in `main._route_source_identity`), the
+  frontend, `app/legacy-static` and the built bundles, the external `tdtb-bridger-vault` skill name, and the word "vault" in test
+  fixture names / inert path keys that only feed `tests/config_markdown.py`.
+- **Operator steps:** none required. Restarting through `restart-live.sh` re-renders the plist from the template (the old installed
+  plist exported `TDTB_VAULT_ROOT`; the new one does not). If the service is restarted against the OLD installed plist the variable is
+  simply ignored. Optionally run one Capacities Refresh after the restart (see namespaces above).
 
 ## Inventory (from the 2026-10-12 read-only map)
 
