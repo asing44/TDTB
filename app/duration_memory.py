@@ -13,9 +13,9 @@ Frozen plan items 10-12 (``Plans Link/2026-08-09-tdtb-planning-ui-reliability.md
   one of ``remembered`` / ``tag:<name>`` / ``native`` / ``preset`` / ``type`` /
   ``default``.
 - Memory is keyed by canonical source identity (Todoist task id via
-  ``todoist:<id>``; normalized vault path), survives recurring occurrences,
+  ``todoist:<id>``), survives recurring occurrences,
   uses atomic writes (tmp + ``os.replace`` when a path is supplied), and never
-  rewrites Todoist/vault source duration fields. Name alone is not an
+  rewrites source duration fields. Name alone is not an
   identity (item 12).
 
 The default store is in-memory so unit tests never touch disk; callers opt
@@ -23,19 +23,16 @@ into persistence by passing ``path`` (under the existing TDTB cache
 discipline). ``resolve_duration`` is pure — it never writes anything.
 
 FT-01 MVP (persistence), V2 location:
-- ``save_memory`` / ``reset_memory`` / ``read_vault_memory`` persist a
+- ``save_memory`` / ``reset_memory`` / ``read_all_memory`` persist a
   versioned JSON cache at ``<app home>/state/duration-memory.json``
-  (``app_config.state_dir()``) with its lock beside it. The vault is never
-  read or written; the ``vault_root`` parameters are accepted for call-site
-  compatibility and ignored (V4 removes them). The file format is unchanged,
-  so a pre-V2 vault file can be copied in as-is by
-  ``tools/migrate_vault_state.py``. Legacy vault-path keys in a copied file are
-  still accepted (they never crash) but no digest row carries that identity any
-  more, so they simply never match.
+  (``app_config.state_dir()``) with its lock beside it. Legacy path-shaped keys
+  from the one-time copy of the old note-era file are still accepted (they never
+  crash a read or a write) but no digest row carries that identity any more, so
+  they simply never match.
 - Values are strict nonnegative integers divisible by 5 (``DURATION_STEP_MINUTES``);
   bools, fractions, negatives, and off-grid values raise ``ValueError``
   before any file access.
-- Writes serialize read-modify-write under a per-vault lock and replace
+- Writes serialize read-modify-write under a process lock and replace
   atomically (tmp + ``os.replace``). Lock/read/write failures raise
   ``MemoryStoreError``/``OSError`` and never replace known durable bytes.
 - Reads (missing/corrupt/unsupported) fall back to ``{}`` with no repair;
@@ -56,11 +53,10 @@ except ImportError:  # pragma: no cover — non-POSIX fallback
     _fcntl = None
 
 import app_config
-import runstate
 from duration_tags import recognize_duration_tag
 
-# Contract-defined per-type duration fields (the vault FileClass owns the
-# contract; press notes carry ``duration_min`` in minutes). Mirrors
+# Contract-defined per-type duration fields (press rows carry ``duration_min``
+# in minutes). Mirrors
 # ``main._TYPE_DURATION_FIELDS`` — duplicated here so the resolver stays a
 # pure, importable seam.
 _TYPE_DURATION_FIELDS: dict[str, str] = {"press": "duration_min"}
@@ -73,15 +69,10 @@ _store: dict[str, int] = {}
 # ---------------------------------------------------------------------------
 # FT-01 MVP: versioned cache constants
 # ---------------------------------------------------------------------------
-# V2: the cache and lock live under ``app_config.state_dir()``. The
-# ``*_REL_PATH`` constants are the pre-V2 vault locations, kept only as the
-# migration tool's source of truth.
+# The cache and lock live under ``app_config.state_dir()``.
 
 STATE_FILENAME = "duration-memory.json"
 STATE_LOCK_FILENAME = "duration-memory.lock"
-CACHE_DIR_REL = runstate.CACHE_DIR_REL  # "00 - META/Cache"
-CACHE_REL_PATH = f"{CACHE_DIR_REL}/tdtb-duration-memory.json"
-LOCK_REL_PATH = f"{CACHE_DIR_REL}/tdtb-duration-memory.lock"
 SCHEMA_VERSION = 1
 DURATION_STEP_MINUTES = 5
 
@@ -91,14 +82,12 @@ class MemoryStoreError(Exception):
     preserve existing durable bytes (FT-01)."""
 
 
-def cache_path(vault_root: str | Path | None = None) -> Path:
-    """The versioned JSON cache path: ``<app home>/state/duration-memory.json``.
-
-    ``vault_root`` is accepted for call-site compatibility and ignored."""
+def cache_path() -> Path:
+    """The versioned JSON cache path: ``<app home>/state/duration-memory.json``."""
     return app_config.state_dir() / STATE_FILENAME
 
 
-def lock_path(vault_root: str | Path | None = None) -> Path:
+def lock_path() -> Path:
     """The lock-file path, beside the cache in the state dir."""
     return app_config.state_dir() / STATE_LOCK_FILENAME
 
@@ -134,17 +123,17 @@ _LOCKS: dict[str, threading.Lock] = {}
 _LOCKS_GUARD = threading.Lock()
 
 
-def _store_lock(vault_root: str | Path | None = None) -> threading.Lock:
+def _store_lock() -> threading.Lock:
     key = str(cache_path().resolve())
     with _LOCKS_GUARD:
         return _LOCKS.setdefault(key, threading.Lock())
 
 
-def _acquire_lock_file(vault_root: str | Path | None = None) -> Any:
+def _acquire_lock_file() -> Any:
     """Advisory exclusive flock on the state-dir lock file. Returns the
     open file handle (released on close). Raises on failure — callers fail
     closed with no cache mutation."""
-    path = lock_path(vault_root)
+    path = lock_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     fh = open(path, "a+", encoding="utf-8")
     try:
@@ -168,18 +157,18 @@ def _release_lock_file(fh: Any) -> None:
         pass
 
 
-def _load_for_write(vault_root: str | Path) -> dict[str, int]:
+def _load_for_write() -> dict[str, int]:
     """Strict read used ONLY by the write path. Missing file → {} (fresh
     cache). Corrupt / unsupported / any-invalid-entry data raises
     ``MemoryStoreError`` so the write fails closed and never replaces
     known durable bytes."""
-    path = cache_path(vault_root)
+    path = cache_path()
     if not path.is_file():
         return {}
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError) as exc:
-        # FT-05 F3: bounded client-safe message — no absolute vault/cache
+        # FT-05 F3: bounded client-safe message — no absolute cache
         # path. The original cause (with the path) stays in the exception
         # chain for server-side diagnostics.
         raise MemoryStoreError(
@@ -213,14 +202,14 @@ def _load_for_write(vault_root: str | Path) -> dict[str, int]:
     return out
 
 
-def read_vault_memory(vault_root: str | Path) -> dict[str, int]:
-    """Vault-scoped remembered durations.
+def read_all_memory() -> dict[str, int]:
+    """Remembered durations, keyed by canonical identity.
 
     Missing, corrupt, or unsupported cache data falls back to ``{}`` with
     NO repair — reads never write. Invalid entries in an otherwise-valid
     file are skipped (the caller overlays only valid remembered values).
     """
-    path = cache_path(vault_root)
+    path = cache_path()
     if not path.is_file():
         return {}
     try:
@@ -244,10 +233,10 @@ def read_vault_memory(vault_root: str | Path) -> dict[str, int]:
 
 
 def save_memory(
-    vault_root: str | Path, identity: str, minutes: int
+    identity: str, minutes: int
 ) -> int:
     """Persist a strictly-validated remembered duration for one canonical
-    identity, vault-scoped, under the cache lock with an atomic replace.
+    identity, under the cache lock with an atomic replace.
 
     Validation (identity + value) happens BEFORE any file access; a lock,
     read, or write failure raises and never replaces existing durable bytes
@@ -255,36 +244,34 @@ def save_memory(
     """
     key = normalize_identity(identity)
     value = validate_duration_minutes(minutes)
-    root = Path(vault_root)
-    with _store_lock(root):
-        fh = _acquire_lock_file(root)
+    with _store_lock():
+        fh = _acquire_lock_file()
         try:
-            items = _load_for_write(root)
+            items = _load_for_write()
             items[key] = value
-            _atomic_write_json(cache_path(root), _encode(items))
+            _atomic_write_json(cache_path(), _encode(items))
         finally:
             _release_lock_file(fh)
     return value
 
 
-def reset_memory(vault_root: str | Path, identity: str) -> bool:
-    """Remove the remembered duration for one canonical identity, vault-
-    scoped, under the cache lock with an atomic replace.
+def reset_memory(identity: str) -> bool:
+    """Remove the remembered duration for one canonical identity,
+    under the cache lock with an atomic replace.
 
     Returns True when an entry was removed. A missing cache is a no-op
     (returns False without creating the cache file); corrupt or unsupported
     data raises ``MemoryStoreError`` without replacing the bytes.
     """
     key = normalize_identity(identity)
-    root = Path(vault_root)
-    with _store_lock(root):
-        fh = _acquire_lock_file(root)
+    with _store_lock():
+        fh = _acquire_lock_file()
         try:
-            items = _load_for_write(root)
+            items = _load_for_write()
             if key not in items:
                 return False
             del items[key]
-            _atomic_write_json(cache_path(root), _encode(items))
+            _atomic_write_json(cache_path(), _encode(items))
             return True
         finally:
             _release_lock_file(fh)
@@ -327,8 +314,9 @@ def apply_remembered_overlay(
 def normalize_identity(identity: str) -> str:
     """Validate and normalize a canonical source identity.
 
-    Valid identities: ``todoist:<id>`` (Todoist task id), ``vault:<path>``
-    or any path-shaped value containing ``/`` (normalized vault path). A bare
+    Valid identities: ``todoist:<id>`` (Todoist task id), or a legacy
+    ``vault:<path>`` / path-shaped value containing ``/`` (kept readable so an
+    old copied cache file never crashes; no row matches it). A bare
     display name is not an identity and raises ``ValueError``.
     """
     text = str(identity or "").strip()
@@ -356,7 +344,7 @@ def item_identity(item: dict[str, Any]) -> str | None:
     """Canonical duration-memory identity for a digest/assigned row.
 
     Capacities owns its source duration and keeps its namespaced identity out of
-    the existing vault/Todoist duration-memory cache until a separate mapping
+    the existing Todoist duration-memory cache until a separate mapping
     contract authorizes that behavior.
     """
     source = str(item.get("source") or "").strip().casefold()

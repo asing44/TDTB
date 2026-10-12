@@ -17,12 +17,11 @@ verdict (``WriterResult.ok`` + counts + any surfaced mismatch). This is the
 first time real writes leave the app; run the plan-only preview first, eyeball
 it, then re-run with ``--commit``.
 
-Vault root: ``$TDTB_VAULT_ROOT`` (same env var main.py reads, never hardcoded).
 Reuses shadow_run's gather→digest→sequence→manifest→diff pipeline verbatim, then
 diverges at ``plan_writes`` / ``run_commit``.
 
 Exit codes: 0 = plan-only preview OK, or a --commit run where every writer
-reconciled (all ok); 1 = setup error (no vault / no token) OR a --commit run
+reconciled (all ok); 1 = setup error (no token) OR a --commit run
 where any writer returned ok=False (a surfaced reconciliation failure — the
 kill-switch signal, spec T18).
 """
@@ -30,9 +29,8 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import sys
-from datetime import date, datetime
+from datetime import datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
@@ -44,8 +42,6 @@ import shadow  # noqa: E402
 import commit  # noqa: E402
 import calendar_bridge  # noqa: E402
 import shadow_run  # noqa: E402  (reuse its gather/digest/sequence helpers)
-
-VAULT_ROOT_ENV = "TDTB_VAULT_ROOT"
 
 
 def _resolve_calendar_ids(config: dict, store: "calendar_bridge.EventStore | None") -> dict[str, str]:
@@ -98,14 +94,13 @@ def _print_results(results: list["commit.WriterResult"]) -> None:
     print()
 
 
-def run(vault: Path, sequence_file: str | None, do_commit: bool) -> int:
+def run(sequence_file: str | None, do_commit: bool) -> int:
     today = gather.effective_date(datetime.now())
 
     # -- gather -> digest -> sequence -> manifest (shadow_run pipeline, reused) --
-    pool_notes, assigned_notes = shadow_run._gather_pool_and_assigned(vault, today)
-    run_data = gather.build_run_data(pool_notes, assigned_notes, today)
+    run_data = gather.empty_run_data(today)
     order = list(main_mod.config_reader.FALLBACK_RANKING_CRITERIA["within_tier_sort"])
-    config_result = main_mod.config_reader.read_config(vault)
+    config_result = main_mod.config_reader.read_config()
     if config_result.config is not None:
         value = config_result.config.get_ranking_criterion("within_tier_sort").value
         if isinstance(value, str):
@@ -124,7 +119,7 @@ def run(vault: Path, sequence_file: str | None, do_commit: bool) -> int:
     manifest = shadow.build_plan_manifest(digest, sequence, config)
 
     try:
-        live_state = shadow.gather_live_state(config, vault)
+        live_state = shadow.gather_live_state(config)
     except shadow.ShadowStateError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1
@@ -155,8 +150,7 @@ def run(vault: Path, sequence_file: str | None, do_commit: bool) -> int:
     token = shadow.todoist_client.load_token(shadow.TOKEN_ENV_PATH)
     with shadow.todoist_client.TodoistClient(token) as todoist:
         results = commit.run_commit(
-            intents, todoist=todoist, store=store, vault_root=vault,
-            today=today,
+            intents, todoist=todoist, store=store, today=today,
         )
     _print_results(results)
     all_ok = all(r.ok for r in results)
@@ -174,18 +168,9 @@ def main() -> int:
                         help="Actually write (default is a plan-only preview)")
     args = parser.parse_args()
 
-    root = os.environ.get(VAULT_ROOT_ENV)
-    if not root:
-        print(f"ERROR: {VAULT_ROOT_ENV} not set", file=sys.stderr)
-        return 1
-    vault = Path(root).expanduser()
-    if not vault.is_dir():
-        print(f"ERROR: vault root not found: {vault}", file=sys.stderr)
-        return 1
-
     if args.commit:
         print("⚠ --commit: this WILL write to live Todoist and the calendar.\n")
-    return run(vault, args.sequence_file, args.commit)
+    return run(args.sequence_file, args.commit)
 
 
 if __name__ == "__main__":

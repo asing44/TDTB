@@ -18,16 +18,16 @@ respectively. Both return a 502-style JSON error body on ``JudgmentError``
 route shape + real token guard) returning 501 until the commit writers
 (T14/T15) land.
 
-``vault_root`` is resolved at request time — per-app override (tests /
-create_app arg) first, else the ``TDTB_VAULT_ROOT`` env var. Never hardcoded
-(spec locked decision 2).
+No route needs, reads or writes an Obsidian vault (vault removal V4): the
+service starts and serves every route with no vault-root environment variable
+set, and the retired variable is ignored if an older launchd plist still
+exports it.
 """
 from __future__ import annotations
 
 import hashlib
 import json
 import math
-import os
 import secrets
 import re
 import subprocess
@@ -92,8 +92,6 @@ import app_config  # noqa: E402
 import config_write  # noqa: E402
 import artifact_source  # noqa: E402
 
-VAULT_ROOT_ENV = "TDTB_VAULT_ROOT"
-
 #: Sentinel distinguishing "no coordinator built yet" from a built-but-
 #: unconfigured coordinator (``None``) in ``app.state.refresh_coordinator``.
 _REFRESH_COORDINATOR_UNSET = object()
@@ -141,7 +139,7 @@ def _rank_key(item: dict[str, Any], today: date, order: list[str],
     parts: list[Any] = []
     for criterion in order:
         if criterion == "urgency":
-            parts.append(-(urgency + nudge))  # vault urgency: 4 = highest
+            parts.append(-(urgency + nudge))  # note-era urgency: 4 = highest
         elif criterion == "overdue":
             parts.append(0 if (deadline and deadline < today) else 1)
         elif criterion == "deadline":
@@ -197,7 +195,6 @@ _SOURCE_UNAPPLIED_WARNING = (
 
 
 def _capacities_hard_excluded(
-    vault: Path,
     today: date,
     candidates: list[dict[str, Any]],
     exclusion_policy: tag_exclusions.ExclusionPolicy | None,
@@ -213,7 +210,7 @@ def _capacities_hard_excluded(
     """
     hard_excluded = {
         str(entry.get("identity"))
-        for entry in runstate.read_dropped(vault, today)
+        for entry in runstate.read_dropped(today)
         if entry.get("identity")
     }
     if exclusion_policy is not None and candidates:
@@ -371,7 +368,7 @@ def _capacities_rule_schema_by_structure(
 
 
 def _capacities_rules_contract_schema(
-    vault: Path, space_id: str,
+    space_id: str,
 ) -> tuple[dict[str, dict[str, str]], bool]:
     """``(schema_by_structure, contract_available)`` from the installed
     generation's structure contract — an offline read, no provider call.
@@ -380,7 +377,7 @@ def _capacities_rules_contract_schema(
     stored as a draft because there is no discovered shape to validate the
     rule against, never because a shape was invented."""
     try:
-        store = capacities_builder.build_refresh_state(vault, space_id)
+        store = capacities_builder.build_refresh_state(space_id)
         contract = store.load_structure_contract(
             capacities_refresh.DEFAULT_SCOPE_KEY
         )
@@ -459,7 +456,6 @@ def _capacities_rules_payload(
 
 
 def _promote_selected_capacities(
-    vault: Path,
     today: date,
     pool_items: list[dict[str, Any]],
     assigned_items: list[dict[str, Any]],
@@ -476,7 +472,7 @@ def _promote_selected_capacities(
     ``(pool_items, assigned_items, warnings)``; a no-op when nothing is selected.
     """
     try:
-        source = capacities_builder.read_source(vault)
+        source = capacities_builder.read_source()
     except (capacities_builder.CapacitiesSourceStoreError, OSError):
         return pool_items, assigned_items, [_SOURCE_UNAPPLIED_WARNING]
     if source is None:
@@ -508,7 +504,7 @@ def _promote_selected_capacities(
         if _is_capacities(row) and row.get("identity") in pending_identities
     ]
     hard_excluded = _capacities_hard_excluded(
-        vault, today, candidates, exclusion_policy,
+        today, candidates, exclusion_policy,
     )
     promoted, notices = capacities_selections.resolve_selections(
         pending,
@@ -579,7 +575,7 @@ def _capacities_index_complete(row: dict[str, Any]) -> bool:
 
 
 def _capacities_commit_refusals(
-    vault: Path, today: date, matches: list[tuple[dict[str, Any], dict[str, Any]]],
+    today: date, matches: list[tuple[dict[str, Any], dict[str, Any]]],
 ) -> list[str]:
     """Commit-time admission of the authorized Capacities rows, one reason each.
 
@@ -588,7 +584,7 @@ def _capacities_commit_refusals(
     were acknowledged, and no hard exclusion has caught it since indexing. The
     selection store and tag-exclusion policy are re-read here, never trusted
     from the index. A failed read raises 503 and admits nothing. Todoist and
-    vault rows never reach this function.
+    note-path rows never reach this function.
     """
     candidates = [
         candidate for candidate, _submitted in matches
@@ -623,9 +619,9 @@ def _capacities_commit_refusals(
             ),
         ) from exc
 
-    exclusion_policy = _exclusion_policy_or_block(vault)
+    exclusion_policy = _exclusion_policy_or_block()
     try:
-        excluded = _capacities_hard_excluded(vault, today, complete, exclusion_policy)
+        excluded = _capacities_hard_excluded(today, complete, exclusion_policy)
     except tag_exclusions.TagExclusionBlocked as exc:
         raise HTTPException(status_code=503, detail=exc.diagnostics) from exc
 
@@ -712,7 +708,6 @@ def _ignore_list_selection_warnings(
 
 
 def _capacities_intake_block(
-    vault: Path,
     digest: dict[str, Any],
     coverage: capacities_intake.DirectCoverage,
     direct_warnings: list[str],
@@ -788,7 +783,7 @@ def build_digest(
     """Two-surface digest per SKILL.md Phase 2/3: Assigned + ranked Suggested.
 
     ``ignore`` (config `## Ignore List`, T13e) drops matching items from
-    every surface: Todoist rows by ``todoist_id``, vault rows by relative
+    every surface: Todoist rows by ``todoist_id``, path rows by
     ``path``, any row by case-insensitive name. The user-editable permanent
     hide list; counts reflect the post-filter sets.
 
@@ -1076,7 +1071,6 @@ def _validated_blocks_overlay(value: Any) -> float | int | None:
 
 
 def _canonicalize_route_assigned(
-    vault: Path,
     today: date,
     submitted_rows: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
@@ -1097,7 +1091,7 @@ def _canonicalize_route_assigned(
     overlays fail closed (the row is refused). Client pins remain untouched
     and are passed to planning for its canonical conflict diagnostics.
     """
-    index = runstate.read_digest_index(vault, today)
+    index = runstate.read_digest_index(today)
     server_rows = [
         row for row in index
         if isinstance(row, dict)
@@ -1235,8 +1229,8 @@ def _canonicalize_route_assigned(
     return canonical
 
 
-def _available_capacities_structures(vault: Path) -> list[str]:
-    """Advisory list of configured Capacities structure ids from the vault-local
+def _available_capacities_structures() -> list[str]:
+    """Advisory list of configured Capacities structure ids from the app-owned
     source mapping record (``capacities_builder``).
 
     This is UI metadata for the settings drawer, so it is deliberately
@@ -1246,7 +1240,7 @@ def _available_capacities_structures(vault: Path) -> list[str]:
     constructed, no credential is read, and no provider is contacted here.
     """
     try:
-        record = capacities_builder.read_source(vault)
+        record = capacities_builder.read_source()
     except (capacities_builder.CapacitiesSourceStoreError, OSError) as exc:
         print(f"capacities source read failed: {exc}", file=sys.stderr)
         return []
@@ -1256,7 +1250,7 @@ def _available_capacities_structures(vault: Path) -> list[str]:
 
 
 def _capacities_structure_titles(
-    vault: Path, available_structures: list[str]
+    available_structures: list[str]
 ) -> dict[str, str]:
     """Last observed display titles for the mapped Capacities structures.
 
@@ -1266,9 +1260,9 @@ def _capacities_structure_titles(
     structure with no cached title is simply absent (the drawer falls back to
     the structure id).
 
-    The read uses the same (resolved vault root, mapping-record ``space_id``,
-    builder ``base_url``) namespace triple the structure observer writes
-    under, so another vault, space, or provider base URL can never leak a
+    The read uses the same (mapping-record ``space_id``, builder ``base_url``)
+    namespace pair the structure observer writes
+    under, so another space or provider base URL can never leak a
     title. ``read_titles`` is machine-local and fail-soft: a missing,
     unreadable, corrupt, or unsupported cache yields ``{}`` and never raises,
     so a cache problem can never change the settings route's status code or
@@ -1276,14 +1270,13 @@ def _capacities_structure_titles(
     no provider is contacted.
     """
     try:
-        record = capacities_builder.read_source(vault)
+        record = capacities_builder.read_source()
     except (capacities_builder.CapacitiesSourceStoreError, OSError) as exc:
         print(f"capacities source read failed: {exc}", file=sys.stderr)
         return {}
     if record is None:
         return {}
     titles = capacities_structure_titles.read_titles(
-        vault,
         record.space_id,
         capacities_builder.CapacitiesBuilderConfig().base_url,
     )
@@ -1294,7 +1287,7 @@ def _capacities_structure_titles(
     }
 
 
-def _exclusion_policy_or_block(vault: Path) -> tag_exclusions.ExclusionPolicy:
+def _exclusion_policy_or_block() -> tag_exclusions.ExclusionPolicy:
     """Read the tag-exclusion policy for a planning surface, failing closed.
 
     Malformed or unreadable storage blocks planning with a structured 503
@@ -1303,7 +1296,7 @@ def _exclusion_policy_or_block(vault: Path) -> tag_exclusions.ExclusionPolicy:
     their own storage error semantics; this is the planning boundary only.
     """
     try:
-        read = exclusion_settings.read_settings(vault)
+        read = exclusion_settings.read_settings()
     except exclusion_settings.ExclusionSettingsFormatError as exc:
         raise HTTPException(
             status_code=503,
@@ -1316,7 +1309,7 @@ def _exclusion_policy_or_block(vault: Path) -> tag_exclusions.ExclusionPolicy:
             },
         ) from exc
     except (exclusion_settings.ExclusionSettingsStoreError, OSError) as exc:
-        # Bounded client-safe message — no absolute vault/cache path.
+        # Bounded client-safe message — no absolute cache path.
         print(f"exclusion settings read failed: {exc}", file=sys.stderr)
         raise HTTPException(
             status_code=503,
@@ -1449,7 +1442,7 @@ class RuntimeActionRequest(BaseModel):
     """/runtime-actions body (T20): one verb against one committed plan item.
 
     ``target`` is the plan-item NAME — resolution to Todoist ids / owned
-    event ids / vault paths happens server-side from today's runstate
+    event ids / source paths happens server-side from today's runstate
     ``plan_manifest``, so the client can never address an artifact the app
     didn't commit."""
 
@@ -1460,7 +1453,7 @@ class RuntimeActionRequest(BaseModel):
 
 class DaySetupRequest(BaseModel):
     """/day-setup body: the Phase-1 confirm payload. Session/day-scoped —
-    persists to the dated run-state note, NEVER to vault config (locked
+    persists to the dated run-state note, NEVER to the config files (locked
     decision 2; skill 811 skip_today is session-only).
 
     T18b.2 tri-state semantics for ``day_preset`` and
@@ -1924,9 +1917,9 @@ _DAY_SETUP_KEYS = ("anchor", "eod", "buffering", "schedulable", "anchored",
                    "day_preset", "work_allotment_minutes")
 
 
-def _read_today_runstate(vault: Path, today: date) -> dict[str, Any]:
+def _read_today_runstate(today: date) -> dict[str, Any]:
     """Today's exact-date run-state note as a dict; missing/unparseable → {}."""
-    rs_path = runstate.runstate_read_path(vault, today)
+    rs_path = runstate.runstate_read_path(today)
     if not rs_path.is_file():
         return {}
     return gather._extract_json_block(
@@ -1988,9 +1981,9 @@ def _day_setup_with_prompts(
     return setup, warnings
 
 
-def _read_day_setup(vault: Path, today: date) -> tuple[dict[str, Any], list[str]]:
+def _read_day_setup(today: date) -> tuple[dict[str, Any], list[str]]:
     """Today's Day Setup (runstate + local prompt drafts) + read warnings."""
-    return _day_setup_with_prompts(_read_today_runstate(vault, today), today)
+    return _day_setup_with_prompts(_read_today_runstate(today), today)
 
 
 def _read_prompt_optins() -> tuple[dict[str, bool], int]:
@@ -2180,10 +2173,10 @@ def _todoist_completed_probe(client: Any):
 
 
 def _micro_adventure_state(
-    vault: Path, sections: dict[str, Any], today: date, todoist_c: Any = None,
+    sections: dict[str, Any], today: date, todoist_c: Any = None,
 ) -> tuple[dict[str, Any], Any]:
     """Read-only micro-adventure contract (T19 / locked decision 25): pool +
-    rotation from config, history from the vault log, prior-entry resolution,
+    rotation from config, history from the state-dir log, prior-entry resolution,
     deterministic LRU selection. Returns (JSON-safe state, done_update) —
     done_update is a HistoryEntry flushed to the log only in the commit path.
     Degrades to a no-pick state on any failure; never raises."""
@@ -2225,7 +2218,7 @@ def _micro_adventure_state(
 
 
 def _ensure_micro_adventure(
-    config: dict[str, Any], vault: Path, today: date,
+    config: dict[str, Any], today: date,
 ) -> dict[str, Any]:
     """Server-authoritative micro_adventure merge for the commit paths: the
     dated runstate override wins; otherwise the deterministic auto-pick. Never
@@ -2233,13 +2226,13 @@ def _ensure_micro_adventure(
     owns selection)."""
     if config.get("micro_adventure"):
         return config
-    micro = _read_today_runstate(vault, today).get("micro_adventure")
+    micro = _read_today_runstate(today).get("micro_adventure")
     if not micro:
-        result = config_reader.read_config(vault)
+        result = config_reader.read_config()
         sections: dict[str, Any] = (
             dict(result.config.sections) if result.config is not None else {}
         )
-        state, _ = _micro_adventure_state(vault, sections, today, None)
+        state, _ = _micro_adventure_state(sections, today, None)
         micro = state["auto_pick"]
     if micro:
         return {**config, "micro_adventure": micro}
@@ -2247,7 +2240,7 @@ def _ensure_micro_adventure(
 
 
 def _append_micro_adventure_history(
-    report: Any, config: dict[str, Any], intents: list[Any], vault: Path, today: date,
+    report: Any, config: dict[str, Any], intents: list[Any], today: date,
 ) -> None:
     """T19 commit-path history append — the ONLY surface that writes the log
     (LD25: previews/refreshes/reloads never consume a pick). Idempotent via
@@ -2320,8 +2313,8 @@ def _duration_minutes(dur: Any) -> int | None:
     return time_engine.duration_minutes(dur)
 
 
-# T4 (cockpit-overhaul): contract-defined per-type duration fields. The vault
-# FileClass owns the contract — press notes carry duration_min (minutes).
+# T4 (cockpit-overhaul): contract-defined per-type duration fields — press
+# rows carry duration_min (minutes).
 _TYPE_DURATION_FIELDS: dict[str, str] = {"press": "duration_min"}
 
 
@@ -2387,7 +2380,7 @@ def resolve_assigned_blocks(
     Todoist-native duration → name-matched Presets row → contract-defined
     type field (press duration_min) → 1 block. Explicit zero from a matched
     source stays 0 (background rows); only absent/unparseable falls through.
-    Pure — no vault writes, no schema fields, no session-override handling
+    Pure — no source writes, no schema fields, no session-override handling
     (today-only edits are client state, locked decision 14).
 
     The label step sits before native per frozen item 11 (remembered → tag →
@@ -2599,27 +2592,9 @@ def _capacity_frame(
     return frame, cap
 
 
-def _disabled_vault_root() -> Path:
-    """A path that cannot exist, used as the vault stand-in when
-    ``sources.vault_enabled=false`` and no real vault root resolves.
-
-    The routed store readers (runstate, exclusions, deferrals, duration
-    memory, micro-adventure) accept a ``vault_root`` for call-site
-    compatibility and fall back to it only when their app-home store is
-    absent. Returning a guaranteed-absent path under the app home keeps every
-    ``vault_root / <rel>`` composition safe and lets each reader fall through
-    to the app-home store / its default instead of raising on a missing root.
-    The app never creates this directory."""
-    return app_config.state_dir() / "__vault_disabled__"
-
-
-def create_app(vault_root: str | Path | None = None) -> FastAPI:
-    """Build the TDTB FastAPI app.
-
-    ``vault_root`` (tests inject a tmp dir here) overrides the
-    ``TDTB_VAULT_ROOT`` env var; neither present → vault-dependent routes
-    return 503 rather than guessing a path.
-    """
+def create_app() -> FastAPI:
+    """Build the TDTB FastAPI app. Takes no vault root: every store lives in
+    the app home (``app_config.app_home()``)."""
 
     # -----------------------------------------------------------------------
     # GET /version — tokenless, pure read-only source/runtime fingerprint
@@ -2699,11 +2674,10 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
         }
 
     app = FastAPI(title="TDTB", docs_url=None, redoc_url=None)
-    app.state.vault_root = str(vault_root) if vault_root else None
     app.state.token = secrets.token_urlsafe(32)
     # T02: /version fingerprint paths — the running process's own repo root
     # and the committed cockpit dir. Tests override these to isolated
-    # fixtures; the route never touches the vault or any state-bearing path.
+    # fixtures; the route never touches any state-bearing path.
     app.state.repo_root = str(Path(__file__).resolve().parent.parent)
     app.state.cockpit_dir = str(_STATIC_DIR / "cockpit")
     # Tests inject a Callable[[Path, dict], tuple[todoist_like, store_like|None]]
@@ -2724,7 +2698,7 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
     # real-server module bottom swaps in build_real_calendar_store.
     app.state.build_calendar_store = None
     # Capacities stays opt-in by configuration, not by code: the production
-    # builder returns None when no vault-local mapping record exists, so an
+    # builder returns None when no app-owned mapping record exists, so an
     # unconfigured machine sees no Capacities source and no warning, while a
     # configured-but-broken one (malformed record, or a mapping record with no
     # usable credential) raises and surfaces as a source warning instead of
@@ -2747,48 +2721,12 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
     # both pass check-before-write against the same snapshot and double-write.
     app.state.live_commit_lock = threading.Lock()
 
-    def resolve_vault_root() -> Path:
-        root = app.state.vault_root or os.environ.get(VAULT_ROOT_ENV)
-        if not root:
-            raise HTTPException(
-                status_code=503,
-                detail=f"vault root not configured — set {VAULT_ROOT_ENV}",
-            )
-        path = Path(root).expanduser()
-        if not path.is_dir():
-            raise HTTPException(status_code=503, detail=f"vault root not found: {path}")
-        return path
-
     def require_token(x_tdtb_token: str | None = Header(default=None)) -> None:
         if not x_tdtb_token or not secrets.compare_digest(x_tdtb_token, app.state.token):
             raise HTTPException(status_code=403, detail="missing or invalid X-TDTB-Token")
 
-    def _vault_root_or_none() -> Path | None:
-        """Resolve the vault root WITHOUT raising — ``None`` when unset or not
-        a directory.
-
-        S5 cutover path only: with ``sources.vault_enabled=false`` the digest
-        must serve when no vault root is configured, so the 503-fail-closed
-        `resolve_vault_root` is the wrong helper there. The default (flag true)
-        path still calls `resolve_vault_root` and keeps its 503 contract."""
-        root = app.state.vault_root or os.environ.get(VAULT_ROOT_ENV)
-        if not root:
-            return None
-        path = Path(root).expanduser()
-        return path if path.is_dir() else None
-
-    def _run_gather(vault: Path, today: date) -> tuple[list[dict], list[dict]]:
-        # S5 cutover: sources.vault_enabled=false stops the vault gather
-        # contributing rows. The gather code is NOT deleted here (S6 does
-        # that) — it is gated, so the flip is reversible by config alone.
-        if not app_config.vault_enabled():
-            return [], []
-        # Selection lives in the gather module so the S5 vault-rows report and
-        # the live digest select exactly the same rows (no drifting copy).
-        return gather.select_digest_notes(vault, today)
-
-    def _ranking_order(vault: Path) -> list[str]:
-        result = config_reader.read_config(vault)
+    def _ranking_order() -> list[str]:
+        result = config_reader.read_config()
         if result.config is not None:
             value = result.config.get_ranking_criterion("within_tier_sort").value
             if isinstance(value, str):
@@ -2799,22 +2737,22 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
 
     # -- G24: persistent billed-call ledger ----------------------------------
 
-    def _billed_spent(vault: Path, today: date) -> int:
-        state = runstate.read_runstate(vault, today) or {}
+    def _billed_spent(today: date) -> int:
+        state = runstate.read_runstate(today) or {}
         try:
             return int(state.get("billed_calls") or 0)
         except (TypeError, ValueError):
             return 0
 
-    def _require_billed_budget(vault: Path, today: date) -> None:
-        spent = _billed_spent(vault, today)
+    def _require_billed_budget(today: date) -> None:
+        spent = _billed_spent(today)
         if spent >= BILLED_CAP:
             raise HTTPException(
                 status_code=429,
                 detail=f"billed budget spent ({spent}/{BILLED_CAP}) for {today}",
             )
 
-    def _billed_ctx(vault: Path, today: date) -> judgment.RunContext:
+    def _billed_ctx(today: date) -> judgment.RunContext:
         """RunContext whose charge hook spends the persistent per-day ledger
         once per REAL SDK attempt (retries included), atomically (G26 lock)."""
         def charge(label: str) -> None:
@@ -2825,17 +2763,17 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
                         f"billed budget spent ({spent}/{BILLED_CAP}) for {today}: {label}"
                     )
                 state["billed_calls"] = spent + 1
-            runstate.update_runstate(vault, today, spend)
+            runstate.update_runstate(today, spend)
         return judgment.RunContext(charge=charge)
 
     # -- FEEDBACK-24: Day Setup confirmation gate ---------------------------
 
-    def _require_day_setup(vault: Path, today: date, action: str) -> None:
+    def _require_day_setup(today: date, action: str) -> None:
         """Fail closed (409, actionable) when today's runstate holds no
         explicit Day Setup confirmation. Only a successful POST /day-setup
         for this date writes the confirmation key — skeleton keys, Drop,
         ledger, and other unrelated runstate writes never satisfy it."""
-        if not runstate.is_day_setup_confirmed(vault, today):
+        if not runstate.is_day_setup_confirmed(today):
             raise HTTPException(
                 status_code=409,
                 detail=f"Day Setup not confirmed for {today} — confirm Day "
@@ -2856,8 +2794,8 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
         """T02: tokenless, pure read-only source/runtime fingerprint. Reads
         only Git identity (rev-parse on the running repo) and the committed
         cockpit index + referenced production asset bytes — no judgment,
-        ledger, provider, runstate, billing, Todoist, Calendar, Vault, or
-        external-source call, and never resolve_vault_root. Missing Git
+        ledger, provider, runstate, billing, Todoist, Calendar, or
+        external-source call. Missing Git
         identity, index, unique asset reference, or asset → 503 (fail
         closed, no state mutation)."""
         payload = build_version_fingerprint(
@@ -2892,8 +2830,7 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
 
     @app.get("/config")
     def get_config() -> dict:
-        vault = resolve_vault_root()
-        result = config_reader.read_config(vault)
+        result = config_reader.read_config()
         if result.bootstrap_needed:
             return {"bootstrap_needed": True, "sections": [], "validation": None}
         assert result.config is not None and result.validation is not None
@@ -2912,17 +2849,16 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
     def get_capacities_settings() -> dict:
         """Tokenless local read of the persisted Capacities assignment policy.
 
-        Reads the vault-local settings policy (or reports the default-enabled
-        policy when it is absent), the advisory vault-local source mapping
+        Reads the app-owned settings policy (or reports the default-enabled
+        policy when it is absent), the advisory app-owned source mapping
         record, and the machine-local structure-title cache; it never builds a
         Capacities adapter, reads a credential, calls a provider, or touches
         runstate. Malformed/unsupported settings storage fails closed with a
         bounded error and leaves the bytes untouched."""
-        vault = resolve_vault_root()
         try:
-            result = capacities_settings.read_settings(vault)
+            result = capacities_settings.read_settings()
         except (capacities_settings.SettingsStoreError, OSError) as exc:
-            # Bounded client-safe message — no absolute vault/cache path.
+            # Bounded client-safe message — no absolute cache path.
             print(f"capacities settings read failed: {exc}", file=sys.stderr)
             raise HTTPException(
                 status_code=500,
@@ -2934,13 +2870,13 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
                     ),
                 },
             ) from exc
-        available_structures = _available_capacities_structures(vault)
+        available_structures = _available_capacities_structures()
         return {
             "settings": result.settings.as_dict(),
             "persisted": result.persisted,
             "available_structures": available_structures,
             "structure_titles": _capacities_structure_titles(
-                vault, available_structures
+                available_structures
             ),
         }
 
@@ -2950,10 +2886,9 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
 
         The complete editable policy is supplied; ``version`` and the new
         ``revision`` are server-owned. The current revision is compared under
-        the vault lock: a stale ``expected_revision`` is a 409, malformed
+        the store lock: a stale ``expected_revision`` is a 409, malformed
         existing storage is a 409, and a lock/read/write failure is a 500 —
         every failure path preserves the original bytes."""
-        vault = resolve_vault_root()
         policy = capacities_settings.NativeTaskAutoPolicy(
             active_enabled=body.native_task_auto.active_enabled,
             due_enabled=body.native_task_auto.due_enabled,
@@ -2962,7 +2897,6 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
         )
         try:
             saved = capacities_settings.save_settings(
-                vault,
                 expected_revision=body.expected_revision,
                 native_task_auto=policy,
                 excluded=body.excluded.keys(),
@@ -2994,7 +2928,7 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
                 },
             ) from exc
         except (capacities_settings.SettingsStoreError, OSError) as exc:
-            # Bounded client-safe message — no absolute vault/cache path.
+            # Bounded client-safe message — no absolute cache path.
             print(f"capacities settings save failed: {exc}", file=sys.stderr)
             raise HTTPException(
                 status_code=500,
@@ -3010,18 +2944,17 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
 
     @app.get("/settings/capacities/source")
     def get_capacities_source() -> dict:
-        """Tokenless read of the vault-local Capacities source mapping record.
+        """Tokenless read of the app-owned Capacities source mapping record.
 
-        Reads exactly one vault cache file and never constructs an adapter,
+        Reads exactly one state file and never constructs an adapter,
         reads a credential, or contacts a provider. An absent record answers
         ``{source: null, persisted: false}`` and creates no file; malformed or
         unreadable storage fails closed with a bounded 500 and leaves the
         existing bytes untouched."""
-        vault = resolve_vault_root()
         try:
-            record = capacities_builder.read_source(vault)
+            record = capacities_builder.read_source()
         except (capacities_builder.CapacitiesSourceStoreError, OSError) as exc:
-            # Bounded client-safe message — no absolute vault/cache path.
+            # Bounded client-safe message — no absolute cache path.
             print(f"capacities source read failed: {exc}", file=sys.stderr)
             raise HTTPException(
                 status_code=500,
@@ -3061,10 +2994,8 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
             )
         except capacities_builder.CapacitiesSourceFormatError as exc:
             raise _capacities_source_invalid_body() from exc
-        vault = resolve_vault_root()
         try:
             saved = capacities_builder.save_source(
-                vault,
                 expected_revision=body.expected_revision,
                 space_id=candidate.space_id,
                 structures=candidate.structures,
@@ -3080,7 +3011,7 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
                 },
             ) from exc
         except capacities_builder.CapacitiesSourceFormatError as exc:
-            # Bounded client-safe message — no absolute vault/cache path.
+            # Bounded client-safe message — no absolute cache path.
             print(f"capacities source save failed: {exc}", file=sys.stderr)
             raise HTTPException(
                 status_code=409,
@@ -3093,7 +3024,7 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
                 },
             ) from exc
         except (capacities_builder.CapacitiesSourceStoreError, OSError) as exc:
-            # Bounded client-safe message — no absolute vault/cache path.
+            # Bounded client-safe message — no absolute cache path.
             print(f"capacities source save failed: {exc}", file=sys.stderr)
             raise HTTPException(
                 status_code=500,
@@ -3121,7 +3052,7 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
         Delegates wholly to ``capacities_builder.discover_capacities_source``:
         one provider structures request, the client closed either way, and the
         catalog serialized into the pinned wire shape. Discovery is strictly
-        read-only — it never reads, creates, or modifies the vault-local
+        read-only — it never reads, creates, or modifies the app-owned
         mapping record, so it cannot change what TDTB ingests.
 
         Space scoping is token-implied: the provider's structures endpoint
@@ -3136,10 +3067,9 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
         503, a provider rate limit a 429, and any other provider, contract,
         or transport failure a 502 — no message carries exception text, the
         token, or a filesystem path."""
-        vault = resolve_vault_root()
         try:
             catalog = capacities_builder.discover_capacities_source(
-                vault, body.space_id
+                body.space_id
             )
         except capacities_builder.CapacitiesTokenError as exc:
             # Bounded client-safe message — no credential slot or path.
@@ -3192,22 +3122,7 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
 
     # -- U2: paced direct Capacities refresh (status/start/cancel) ----------
 
-    def _refresh_vault_root() -> Path:
-        """Vault root for the refresh routes — resolved, not required to exist.
-
-        Unlike ``resolve_vault_root`` this does NOT require the directory to
-        exist: the refresh store namespaces by the vault-root string and its
-        durable state is machine-local, so an unresolved *path* (``None`` and no
-        env var) is the 503 case, not a not-yet-created directory."""
-        root = app.state.vault_root or os.environ.get(VAULT_ROOT_ENV)
-        if not root:
-            raise HTTPException(
-                status_code=503,
-                detail=f"vault root not configured — set {VAULT_ROOT_ENV}",
-            )
-        return Path(root).expanduser()
-
-    def _refresh_revision(vault: Path) -> Any:
+    def _refresh_revision() -> Any:
         """Current combined configuration revision, or ``None`` when unconfigured.
 
         A malformed or unreadable mapping/settings store is a bounded 503: the
@@ -3215,7 +3130,7 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
         against scope it could not read.
         """
         try:
-            return capacities_builder.refresh_config_revision(vault)
+            return capacities_builder.refresh_config_revision()
         except Exception as exc:  # noqa: BLE001 — bounded source boundary
             print(f"capacities refresh config read failed: {exc}", file=sys.stderr)
             raise HTTPException(
@@ -3229,7 +3144,7 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
                 },
             ) from exc
 
-    def _refresh_source_space(vault: Path) -> Any:
+    def _refresh_source_space() -> Any:
         """Live source space id, or ``None`` when unconfigured.
 
         The combined revision is a sum, so a source space switch can leave it
@@ -3239,7 +3154,7 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
         "unchanged" and reuse a coordinator whose scope it could not verify.
         """
         try:
-            return capacities_builder.refresh_source_space_id(vault)
+            return capacities_builder.refresh_source_space_id()
         except Exception as exc:  # noqa: BLE001 — bounded source boundary
             print(f"capacities refresh source read failed: {exc}", file=sys.stderr)
             raise HTTPException(
@@ -3270,7 +3185,6 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
         cached = getattr(app.state, "refresh_coordinator", _REFRESH_COORDINATOR_UNSET)
         if cached is not _REFRESH_COORDINATOR_UNSET and not ensure_current:
             return cached
-        vault = _refresh_vault_root()
         with app.state.refresh_coordinator_lock:
             # Re-read under the lock: a racing start may have built while this
             # one waited, and its instance must win over a second build.
@@ -3278,8 +3192,8 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
             if cached is not _REFRESH_COORDINATOR_UNSET:
                 if cached is not None and cached.is_running():
                     return cached
-            revision = _refresh_revision(vault)
-            source_space = _refresh_source_space(vault)
+            revision = _refresh_revision()
+            source_space = _refresh_source_space()
             if (
                 cached is not _REFRESH_COORDINATOR_UNSET
                 and revision
@@ -3300,7 +3214,7 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
             coordinator: Any | None = None
             if build is not None:
                 try:
-                    coordinator = build(vault, {})
+                    coordinator = build({})
                 except Exception as exc:  # noqa: BLE001 — bounded source boundary
                     print(
                         f"capacities refresh coordinator build failed: {exc}",
@@ -3338,8 +3252,7 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
         """Tokenless local read of the one refresh job + last complete snapshot.
 
         Never calls a provider and never spawns work; an unconfigured source
-        answers ``configured: false`` with no job rather than erroring. An
-        unresolved vault root is a 503 (fail closed, like ``/config``)."""
+        answers ``configured: false`` with no job rather than erroring."""
         coordinator = _refresh_coordinator()
         if coordinator is None:
             return {
@@ -3404,7 +3317,7 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
         coordinator = _refresh_configured()
         return coordinator.cancel()
 
-    def _tag_catalog(vault: Path) -> dict[str, Any]:
+    def _tag_catalog() -> dict[str, Any]:
         """Advisory RootTag catalog for the exclusion drawer.
 
         Degrades instead of hiding saved settings: an unconfigured source, a
@@ -3420,7 +3333,7 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
         if build is None:
             return unconfigured
         try:
-            adapter = build(vault, {})
+            adapter = build({})
         except Exception as exc:  # noqa: BLE001 — advisory boundary degrades
             return {
                 "status": "unavailable", "space_id": None, "tags": [],
@@ -3483,9 +3396,8 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
         shape with ``space_id: null``. A store for another space answers the
         empty shape for the source space. Storage failures are a bounded 503.
         """
-        vault = _refresh_vault_root()
         try:
-            source = capacities_builder.read_source(vault)
+            source = capacities_builder.read_source()
         except (capacities_builder.CapacitiesSourceStoreError, OSError) as exc:
             raise _capacities_selections_storage_error() from exc
         if source is None:
@@ -3528,9 +3440,8 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
                     "message": "Capacities selections apply only under direct intake.",
                 },
             )
-        vault = _refresh_vault_root()
         try:
-            source = capacities_builder.read_source(vault)
+            source = capacities_builder.read_source()
         except (capacities_builder.CapacitiesSourceStoreError, OSError) as exc:
             raise _capacities_selections_storage_error() from exc
         if source is None:
@@ -3574,17 +3485,16 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
         }
 
         try:
-            read = capacities_builder.read_direct_intake(vault)
+            read = capacities_builder.read_direct_intake()
         except capacities_builder.CapacitiesSourceStoreError as exc:
             raise _capacities_selections_storage_error() from exc
         assigned, pool, _warnings, _coverage = capacities_intake.load_direct_rows(
-            vault, read=read,
+            read=read,
         )
         candidates = {row.get("identity"): row for row in [*assigned, *pool]}
-        exclusion_policy = _exclusion_policy_or_block(vault)
+        exclusion_policy = _exclusion_policy_or_block()
         try:
             hard_excluded = _capacities_hard_excluded(
-                vault,
                 gather.effective_date(datetime.now()),
                 list(candidates.values()),
                 exclusion_policy,
@@ -3661,14 +3571,14 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
 
     # -- U3a routes: per-type Capacities inclusion rules (GET/POST) ---------
 
-    def _capacities_rules_source(vault: Path) -> Any:
+    def _capacities_rules_source() -> Any:
         """The configured source record, or a bounded fail-closed 503.
 
         A malformed/unreadable mapping store raises rather than being read as
         unconfigured; ``None`` means genuinely no source (a documented empty
         shape, not an error)."""
         try:
-            return capacities_builder.read_source(vault)
+            return capacities_builder.read_source()
         except (capacities_builder.CapacitiesSourceStoreError, OSError) as exc:
             print(f"capacities rules source read failed: {exc}", file=sys.stderr)
             raise _capacities_rules_storage_error() from exc
@@ -3684,8 +3594,7 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
         unreadable source/rules store fails closed with a bounded 503; a
         missing or unusable structure contract is reported as
         ``contract_available: false`` rather than a fabricated schema."""
-        vault = _refresh_vault_root()
-        source = _capacities_rules_source(vault)
+        source = _capacities_rules_source()
         if source is None:
             return _capacities_rules_payload(
                 space_id=None,
@@ -3700,7 +3609,7 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
             print(f"capacities rules read failed: {exc}", file=sys.stderr)
             raise _capacities_rules_storage_error() from exc
         schema_by_structure, contract_available = _capacities_rules_contract_schema(
-            vault, source.space_id
+            source.space_id
         )
         return _capacities_rules_payload(
             space_id=source.space_id,
@@ -3731,8 +3640,7 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
         provider call, no credential, and no write to external Capacities. The
         rule store's own lock is the only lock taken here — the route
         deliberately does not nest it inside the publication guard."""
-        vault = _refresh_vault_root()
-        source = _capacities_rules_source(vault)
+        source = _capacities_rules_source()
         if source is None:
             raise HTTPException(
                 status_code=503,
@@ -3756,7 +3664,7 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
                 },
             )
         schema_by_structure, contract_available = _capacities_rules_contract_schema(
-            vault, source.space_id
+            source.space_id
         )
         schema = schema_by_structure.get(body.structure_id)
         try:
@@ -3814,16 +3722,15 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
     def get_exclusion_settings() -> dict:
         """Tokenless local read of the persisted tag-exclusion policy.
 
-        Reads exactly one vault cache file (or reports the empty default when
+        Reads exactly one state file (or reports the empty default when
         it is absent); the advisory tag catalog may build a provider adapter,
         but its failure degrades to a status + warning and never hides the
         saved settings. Malformed/unsupported storage fails closed with a
         bounded 500 and leaves the bytes untouched."""
-        vault = resolve_vault_root()
         try:
-            result = exclusion_settings.read_settings(vault)
+            result = exclusion_settings.read_settings()
         except (exclusion_settings.ExclusionSettingsStoreError, OSError) as exc:
-            # Bounded client-safe message — no absolute vault/cache path.
+            # Bounded client-safe message — no absolute cache path.
             print(f"exclusion settings read failed: {exc}", file=sys.stderr)
             raise HTTPException(
                 status_code=500,
@@ -3838,7 +3745,7 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
         return {
             "settings": result.settings.as_dict(),
             "persisted": result.persisted,
-            "tag_catalog": _tag_catalog(vault),
+            "tag_catalog": _tag_catalog(),
         }
 
     @app.post("/settings/exclusions/save", dependencies=[Depends(require_token)])
@@ -3847,13 +3754,11 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
 
         The complete editable policy is supplied; ``version`` and the new
         ``revision`` are server-owned. The current revision is compared under
-        the vault lock: a stale ``expected_revision`` is a 409, malformed
+        the store lock: a stale ``expected_revision`` is a 409, malformed
         existing storage is a 409, and a lock/read/write failure is a 500 —
         every failure path preserves the original bytes."""
-        vault = resolve_vault_root()
         try:
             saved = exclusion_settings.save_settings(
-                vault,
                 expected_revision=body.expected_revision,
                 exclusions=[
                     exclusion_settings.TagExclusion(
@@ -3887,7 +3792,7 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
                 },
             ) from exc
         except (exclusion_settings.ExclusionSettingsStoreError, OSError) as exc:
-            # Bounded client-safe message — no absolute vault/cache path.
+            # Bounded client-safe message — no absolute cache path.
             print(f"exclusion settings save failed: {exc}", file=sys.stderr)
             raise HTTPException(
                 status_code=500,
@@ -3906,7 +3811,7 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
         """T16: read-only assembly of the {digest, config, anchored_blocks}
         inputs the timeline view needs to build its /sequence,
         /validate-sequence, and /commit bodies. The browser can't read the
-        vault and /config exposes only section *keys*; this mirrors
+        config files and /config exposes only section *keys*; this mirrors
         build_commit_body.build_body's input assembly (minus the sequence).
 
         Tokenless GET, like /config. T16 justified that with "writes nothing";
@@ -3914,26 +3819,15 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
         route writes exactly ONE run-state key, ``digest_index``, and nothing
         else. That write is derived solely from data this same GET returns, is
         confined to a non-authoritative cache key, touches no external system,
-        and is idempotent for identical vault state — so the token boundary
+        and is idempotent for identical state — so the token boundary
         (which gates external writes and billed calls) is unchanged. The write
         is deliberately LAST, after ``day_setup`` is read back."""
-        vault_rows_on = app_config.vault_enabled()
-        if vault_rows_on:
-            vault = resolve_vault_root()
-        else:
-            # S5 cutover: with vault rows off the digest must serve without a
-            # configured vault root, so the 503-fail-closed resolver is the
-            # wrong helper here. A guaranteed-absent stand-in keeps every
-            # `vault_root / <rel>` composition safe and lets the store readers
-            # fall through to their app-home stores.
-            vault = _vault_root_or_none() or _disabled_vault_root()
         today = gather.effective_date(datetime.now())
-        pool_notes, assigned_notes = _run_gather(vault, today)
-        run_data = gather.build_run_data(pool_notes, assigned_notes, today)
-        order = _ranking_order(vault)
-        w_vault: list[str] = app_config.sources_config_warnings()
+        run_data = gather.empty_run_data(today)
+        order = _ranking_order()
+        w_config: list[str] = app_config.sources_config_warnings()
 
-        result = config_reader.read_config(vault)
+        result = config_reader.read_config()
         config: dict[str, Any] = (
             dict(result.config.sections) if result.config is not None else {}
         )
@@ -3945,12 +3839,12 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
         ext_cfg: dict[str, Any] = {
             **dict(config.get("Defaults") or {}),
             "calendar_capacity_classes": config.get("Calendar Capacity Classes"),
-            # Issue #6: canonical vault config section for disabled calendars,
+            # Issue #6: canonical config section for disabled calendars,
             # so route-level exclusions become diagnosable via calendar_decisions.
             "calendar_disabled": config.get("Disabled Calendars"),
         }
-        build_clients = app.state.build_read_clients or (lambda v, c: (None, None))
-        build_store = app.state.build_calendar_store or (lambda v, c: None)
+        build_clients = app.state.build_read_clients or (lambda c: (None, None))
+        build_store = app.state.build_calendar_store or (lambda c: None)
         capacities_items: list[dict[str, Any]] = []
         w_capacities: list[str] = []
         # A1 artifact seam: when the operator sets sources.mode=artifact, the
@@ -3985,7 +3879,7 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
         w_todo: list[str] = []
         # Habits are agent-fetched data either way (the REST Todoist client
         # exposes no completed-tasks read), so the summary rides the artifact
-        # in BOTH source modes. Never a vault fallback; no data -> zeroed block
+        # in BOTH source modes. Never a note fallback; no data -> zeroed block
         # plus a loud source_warnings entry.
         habits: dict[str, Any] = dict(artifact_source.HABITS_EMPTY)
         w_hab: list[str] = []
@@ -3996,7 +3890,7 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
             # through its own seam so the digest's calendar rows survive
             # artifact mode; Todoist and Capacities stay artifact-only and
             # construct no live client.
-            store = build_store(vault, config)
+            store = build_store(config)
             artifact_result = artifact_source.load_artifact(datetime.now())
             artifact_block = artifact_result.as_digest_block()
             if artifact_result.status != artifact_source.STATUS_FRESH:
@@ -4020,8 +3914,9 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
             if not direct_intake:
                 capacities_items = [r for r in capacities_rows if r.get("assigned") is True]
                 c_pool = [r for r in capacities_rows if r.get("assigned") is not True]
-            # A producer may fold vault rows into the artifact too; they join
-            # the live vault gather's own surfaces rather than a third one.
+            # A producer may still fold rows tagged ``source: vault`` into the
+            # artifact (V5 retires that wire source). They keep joining the
+            # note-row surfaces, which are otherwise empty now.
             artifact_vault = [
                 r for r in artifact_result.rows if r.get("source") == "vault"
             ]
@@ -4036,13 +3931,13 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
                     ],
                 }
         else:
-            todoist_c, store = build_clients(vault, config)
+            todoist_c, store = build_clients(config)
             build_capacities = app.state.build_capacities_adapter
             # Under direct intake the live builder is never called: no client is
             # constructed and no provider read happens on this path.
             if build_capacities is not None and not direct_intake:
                 try:
-                    capacities_client = build_capacities(vault, config)
+                    capacities_client = build_capacities(config)
                 except Exception as exc:  # noqa: BLE001 — source boundary degrades
                     capacities_client = None
                     w_capacities = [
@@ -4065,7 +3960,7 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
             # rows refuse; load_direct_rows reuses this read as-is.
             try:
                 intake_read: capacities_builder.DirectIntakeRead | None = (
-                    capacities_builder.read_direct_intake(vault)
+                    capacities_builder.read_direct_intake()
                 )
             except capacities_builder.CapacitiesSourceStoreError:
                 intake_read = None
@@ -4078,7 +3973,7 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
                 c_pool,
                 direct_warnings,
                 direct_coverage,
-            ) = capacities_intake.load_direct_rows(vault, read=intake_read)
+            ) = capacities_intake.load_direct_rows(read=intake_read)
             w_capacities = [*w_capacities, *direct_warnings]
         try:
             if source_mode != app_config.SOURCES_MODE_ARTIFACT:
@@ -4102,7 +3997,7 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
             # T19: deterministic micro-adventure state — pure reads (config
             # section, state-dir log, Todoist completion probe
             # on the already-open read client). Never writes, never consumes.
-            ma_state, _ma_done = _micro_adventure_state(vault, config, today, todoist_c)
+            ma_state, _ma_done = _micro_adventure_state(config, today, todoist_c)
         finally:
             if todoist_c is not None and hasattr(todoist_c, "close"):
                 try:
@@ -4111,26 +4006,25 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
                     pass
 
         # Sequence identity downstream is name-keyed (timeline id = name) —
-        # rename Todoist items that collide with vault names before merging.
-        vault_all = run_data["pool_items"] + run_data["assigned_items"]
-        t_assigned = external_sources.disambiguate_names(vault_all, t_assigned)
-        t_pool = external_sources.disambiguate_names(vault_all + t_assigned, t_pool)
+        # rename Todoist items that collide with existing row names before merging.
+        existing_rows = run_data["pool_items"] + run_data["assigned_items"]
+        t_assigned = external_sources.disambiguate_names(existing_rows, t_assigned)
+        t_pool = external_sources.disambiguate_names(existing_rows + t_assigned, t_pool)
         capacities_items = external_sources.disambiguate_names(
-            vault_all + t_assigned + t_pool,
+            existing_rows + t_assigned + t_pool,
             capacities_items,
         )
         c_pool = external_sources.disambiguate_names(
-            vault_all + t_assigned + t_pool + capacities_items,
+            existing_rows + t_assigned + t_pool + capacities_items,
             c_pool,
         )
-        exclusion_policy = _exclusion_policy_or_block(vault)
+        exclusion_policy = _exclusion_policy_or_block()
         try:
             # U3c-2: selected Capacities rows are promoted BEFORE build_digest,
             # so they pass the same exclusion stages as every other row.
             assigned_input = run_data["assigned_items"] + t_assigned + capacities_items
             pool_rows, assigned_rows, selection_warnings = (
                 _promote_selected_capacities(
-                    vault,
                     today,
                     run_data["pool_items"] + t_pool + c_pool,
                     assigned_input,
@@ -4146,7 +4040,7 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
                 ignore=(
                     result.config.get_ignore_list() if result.config is not None else None
                 ),
-                bias=deferrals.bias_map(vault, today),  # T1 defer-with-memory
+                bias=deferrals.bias_map(today),  # T1 defer-with-memory
                 exclusion_policy=exclusion_policy,
             )
             # S5: a promoted selection that the Ignore List then removed is named
@@ -4165,11 +4059,8 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
         # press duration_min → 1). Suggested rows stay untouched — the
         # cockpit never consumes them.
         presets = result.config.get_presets() if result.config is not None else []
-        fm_by_path = {n["path"]: n["fm"] for n in assigned_notes}
         for row in digest["assigned"]:
-            row["blocks"] = resolve_assigned_blocks(
-                row, presets, fm_by_path.get(row.get("path"))
-            )
+            row["blocks"] = resolve_assigned_blocks(row, presets, None)
             # Exact-minutes provenance when the duration-label step won:
             # blocks are 30-minute-quantised, so a 10-minute label would
             # still render 30min. Same field shape as the remembered overlay
@@ -4181,12 +4072,12 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
                 row["duration_minutes"] = tag_minutes
                 row["duration_source"] = f"tag:{tag_label}"
 
-        # FT-01: remembered-duration overlay — a valid vault-scoped remembered
+        # FT-01: remembered-duration overlay — a valid remembered
         # value wins over the source-derived blocks and is labelled
         # ``remembered``. Pure read: never mutates the duration cache, never
         # calls billed endpoints, never writes upstream sources. Missing or
         # corrupt cache data simply leaves source-resolved blocks in place.
-        remembered = duration_memory.read_vault_memory(vault)
+        remembered = duration_memory.read_all_memory()
         for row in digest["assigned"]:
             duration_memory.apply_remembered_overlay(row, remembered)
 
@@ -4195,7 +4086,7 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
         # selected Live micro-adventure reaches the /commit Live→Todoist
         # reroute. Missing note or absent key → no-op. Reads the dated note
         # directly (not load_runstate, which returns the strictly-prior note).
-        rs_path = runstate.runstate_read_path(vault, today)
+        rs_path = runstate.runstate_read_path(today)
         if rs_path.is_file():
             rs_data = gather._extract_json_block(
                 rs_path.read_text(encoding="utf-8", errors="replace")
@@ -4218,7 +4109,7 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
         }
 
         # -- Day Setup + time/capacity (ui-parity T4) ------------------------
-        day_setup, prompt_warnings = _read_day_setup(vault, today)
+        day_setup, prompt_warnings = _read_day_setup(today)
         resolved_day_semantics = day_semantics.resolve_day_contract(
             result, today, dated_overrides=day_setup,
         )
@@ -4263,7 +4154,7 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
         # today's planning digest and surface under Dropped today. The
         # identity index is written from the FILTERED digest so a dropped
         # item is also unresolvable to staging verbs this date.
-        dropped_rows = runstate.read_dropped(vault, today)
+        dropped_rows = runstate.read_dropped(today)
         dropped_ids = {str(d.get("identity"))
                        for d in dropped_rows if d.get("identity")}
         if dropped_ids:
@@ -4282,7 +4173,6 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
         # materialise the dated note, after which every later day_setup read
         # treats the skeleton's empty defaults as user-confirmed.
         runstate.write_digest_index(
-            vault,
             today,
             build_digest_index(digest),
             # Server-owned policy stamp: the revision this digest was built
@@ -4307,7 +4197,7 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
             # FEEDBACK-24: the ONLY signal the UI may treat as "Day Setup
             # confirmed" — a skeleton echo (any non-empty day_setup keys)
             # must never imply confirmation.
-            "day_setup_confirmed": runstate.is_day_setup_confirmed(vault, today),
+            "day_setup_confirmed": runstate.is_day_setup_confirmed(today),
             "day_semantics": resolved_day_semantics,
             "planning_config_fingerprint": planning_config_fingerprint,
             "micro_adventure": micro_payload,
@@ -4316,7 +4206,7 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
             "artifact": artifact_block,
             "source_warnings": (
                 w_todo + w_cal + w_hab + w_capacities + artifact_warnings
-                + w_vault + prompt_warnings + optins_warnings
+                + w_config + prompt_warnings + optins_warnings
             ),
             "source_counts": {
                 "vault": len(run_data["pool_items"]) + len(run_data["assigned_items"]),
@@ -4329,7 +4219,7 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
             response["prompt_optins"] = optins_metadata
         if direct_intake:
             response["capacities_intake"] = _capacities_intake_block(
-                vault, digest, direct_coverage, direct_warnings, intake_read,
+                digest, direct_coverage, direct_warnings, intake_read,
             )
         return response
 
@@ -4338,9 +4228,8 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
         """G24: tokenless read of the persistent per-day billed-call ledger,
         so UI budget counters render the server's number, not a client-side
         guess (same contract stance as /capacity-preview)."""
-        vault = resolve_vault_root()
         today = gather.effective_date(datetime.now())
-        spent = _billed_spent(vault, today)
+        spent = _billed_spent(today)
         return {
             "today": str(today),
             "spent": spent,
@@ -4404,13 +4293,12 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
             # exact fractional block cost instead of rounding 15m up to 30m.
             extra_blk += max(0, mins) / 30
 
-        vault = resolve_vault_root()
         today = gather.effective_date(datetime.now())
-        persisted, _prompt_warnings = _read_day_setup(vault, today)
+        persisted, _prompt_warnings = _read_day_setup(today)
         merged = {**persisted,
                   **{k: v for k, v in overrides.items() if k in _DAY_SETUP_KEYS}}
 
-        result = config_reader.read_config(vault)
+        result = config_reader.read_config()
         config: dict[str, Any] = (
             dict(result.config.sections) if result.config is not None else {}
         )
@@ -4431,12 +4319,12 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
         ext_cfg: dict[str, Any] = {
             **dict(config.get("Defaults") or {}),
             "calendar_capacity_classes": config.get("Calendar Capacity Classes"),
-            # Issue #6: canonical vault config section for disabled calendars,
+            # Issue #6: canonical config section for disabled calendars,
             # so route-level exclusions become diagnosable via calendar_decisions.
             "calendar_disabled": config.get("Disabled Calendars"),
         }
-        build_clients = app.state.build_read_clients or (lambda v, c: (None, None))
-        todoist_c, store = build_clients(vault, config)
+        build_clients = app.state.build_read_clients or (lambda c: (None, None))
+        todoist_c, store = build_clients(config)
         try:
             if store is not None:
                 try:
@@ -4452,7 +4340,7 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
             busy_blocks, _w_cal = external_sources.fetch_calendar_busy(
                 store, ext_cfg, today
             )
-            # Habits ride the artifact here too — no vault read.
+            # Habits ride the artifact here too — no note read.
             habits, _w_hab = artifact_source.load_habits()
         finally:
             if todoist_c is not None and hasattr(todoist_c, "close"):
@@ -4495,23 +4383,20 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
 
     # -- duration-memory (FT-01) ----------------------------------------------
 
-    def _source_resolved_fallback(vault: Path, today: date, identity: str):
+    def _source_resolved_fallback(today: date, identity: str):
         """Current source-resolved ``(minutes, label)`` for a canonical
         identity, resolved WITHOUT memory — the reset route's fallback.
-        Mirrors /plan-inputs' row assembly (vault gather + external Todoist
+        Mirrors /plan-inputs' row assembly (external Todoist
         via the injected read clients); read-only and deterministic. None
         when the identity is not present today."""
-        pool_notes, assigned_notes = _run_gather(vault, today)
-        run_data = gather.build_run_data(pool_notes, assigned_notes, today)
-        result = config_reader.read_config(vault)
+        result = config_reader.read_config()
         config: dict[str, Any] = (
             dict(result.config.sections) if result.config is not None else {}
         )
         presets = result.config.get_presets() if result.config is not None else []
-        fm_by_path = {n["path"]: n["fm"] for n in assigned_notes}
-        rows = list(run_data["assigned_items"]) + list(run_data["pool_items"])
-        build_clients = app.state.build_read_clients or (lambda v, c: (None, None))
-        todoist_c, _store = build_clients(vault, config)
+        rows: list[dict[str, Any]] = []
+        build_clients = app.state.build_read_clients or (lambda c: (None, None))
+        todoist_c, _store = build_clients(config)
         try:
             if todoist_c is not None:
                 ext_cfg: dict[str, Any] = {
@@ -4531,7 +4416,7 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
         for row in rows:
             if duration_memory.item_identity(row) == identity:
                 return duration_memory.resolve_duration(
-                    row, presets, fm_by_path.get(row.get("path")), memory={}
+                    row, presets, None, memory={}
                 )
         return None
 
@@ -4590,15 +4475,14 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
         Strict validation (integer >= 0 divisible by 5) happens before any
         cache access; lock/read/write failures fail closed (500) and never
         replace existing durable bytes."""
-        vault = resolve_vault_root()
         try:
             identity = duration_memory.normalize_identity(body.identity)
-            minutes = duration_memory.save_memory(vault, identity, body.minutes)
+            minutes = duration_memory.save_memory(identity, body.minutes)
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         except (duration_memory.MemoryStoreError, OSError) as exc:
             # FT-05 F3: never return raw internal diagnostics (they can carry
-            # absolute vault/cache paths). The real cause stays server-side.
+            # absolute cache paths). The real cause stays server-side.
             print(f"duration-memory save failed: {exc}", file=sys.stderr)
             raise HTTPException(
                 status_code=500,
@@ -4617,7 +4501,7 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
     def post_duration_reset(body: DurationMemoryRequest) -> dict:
         """FT-01: remove the remembered duration for one canonical identity
         and return the current source-resolved fallback. No billed calls and
-        no upstream writes — the fallback resolves from vault gather plus the
+        no upstream writes — the fallback resolves from the
         same injected read clients /plan-inputs uses.
 
         FT-06 F2-R1 ordering: the source fallback is resolved FIRST. When no
@@ -4626,17 +4510,16 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
         bytes unchanged — the remembered value is never deleted without a
         proven fallback. Only a valid fallback proceeds to the (fail-closed)
         deletion and is returned to the client."""
-        vault = resolve_vault_root()
         today = gather.effective_date(datetime.now())
         try:
             identity = duration_memory.normalize_identity(body.identity)
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         try:
-            fallback = _source_resolved_fallback(vault, today, identity)
+            fallback = _source_resolved_fallback(today, identity)
         except Exception as exc:  # noqa: BLE001 — bounded client-safe boundary
             # FT-06 F2-R1: resolution failure must not delete durable memory.
-            # The real cause (which may name vault/source paths) stays
+            # The real cause (which may name source paths) stays
             # server-side only.
             print(
                 f"duration-memory reset fallback resolution failed: {exc}",
@@ -4666,10 +4549,10 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
                 },
             )
         try:
-            removed = duration_memory.reset_memory(vault, identity)
+            removed = duration_memory.reset_memory(identity)
         except (duration_memory.MemoryStoreError, OSError) as exc:
             # FT-05 F3: bounded client-safe detail; the real cause (which may
-            # name the vault/cache path) stays server-side only.
+            # name the cache path) stays server-side only.
             print(f"duration-memory reset failed: {exc}", file=sys.stderr)
             raise HTTPException(
                 status_code=500,
@@ -4694,17 +4577,11 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
 
     @app.post("/gather", dependencies=[Depends(require_token)])
     def post_gather() -> dict:
-        """Run the deterministic vault gather; writes the active-inventory
-        cache and the trigger-1 run-state note (both vault-side writes —
-        hence token-guarded)."""
-        vault = resolve_vault_root()
+        """Seed today's trigger-1 run-state note (the micro-adventure keys) and
+        return the run-data envelope. There is no note gather any more, so the
+        envelope carries no rows; the write is token-guarded."""
         today = gather.effective_date(datetime.now())
-        pool_notes, assigned_notes = _run_gather(vault, today)
-
-        cache = gather.build_cache(pool_notes, today)
-        gather.write_cache(cache, vault)
-
-        run_data = gather.build_run_data(pool_notes, assigned_notes, today)
+        run_data = gather.empty_run_data(today)
         # Merge-preserving (T12 audit): a re-gather must not reset today's
         # note to the skeleton — that wiped confirmed Day Setup (anchor/eod/
         # buffering/anchored/captures) and the commit ledger on any second
@@ -4715,31 +4592,30 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
         # (pool/streak/pending, plus the auto-pick only when no dated override
         # exists) but never consumes an idea — history appends live solely in
         # the commit path.
-        result = config_reader.read_config(vault)
+        result = config_reader.read_config()
         sections: dict[str, Any] = (
             dict(result.config.sections) if result.config is not None else {}
         )
-        ma_state, _ = _micro_adventure_state(vault, sections, today, None)
+        ma_state, _ = _micro_adventure_state(sections, today, None)
         ma_updates: dict[str, Any] = {
             "live_pool": ma_state["live_pool"],
             "live_streak": ma_state["streak"],
             "pending_confirm": ma_state["pending_confirm"],
         }
-        if not _read_today_runstate(vault, today).get("micro_adventure"):
+        if not _read_today_runstate(today).get("micro_adventure"):
             ma_updates["micro_adventure"] = ma_state["auto_pick"]
-        runstate.update_runstate(vault, today, ma_updates)
+        runstate.update_runstate(today, ma_updates)
         return run_data
 
     @app.post("/day-setup", dependencies=[Depends(require_token)])
     def post_day_setup(body: DaySetupRequest) -> dict:
         """Persist the Phase-1 Day Setup confirm into today's run-state note
-        (session/day-scoped — never vault config). Derives ``re_included``
+        (session/day-scoped — never the config files). Derives ``re_included``
         server-side, once, per skill 819: a block whose window-passed DEFAULT
         is off/skipped but which the payload turns on."""
-        vault = resolve_vault_root()
         today = gather.effective_date(datetime.now())
 
-        result = config_reader.read_config(vault)
+        result = config_reader.read_config()
         config: dict[str, Any] = (
             dict(result.config.sections) if result.config is not None else {}
         )
@@ -4759,7 +4635,7 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
         prompt_only = bool(present & _PROMPT_ONLY_FIELDS) and not bool(
             present & _NON_PROMPT_SETUP_FIELDS
         )
-        existing_setup, prompt_warnings = _read_day_setup(vault, today)
+        existing_setup, prompt_warnings = _read_day_setup(today)
         # Local prompt stores are the only prompt target; the legacy runstate
         # keys stay INERT and are never written here.
         _save_prompt_drafts(today, body.captures)
@@ -4880,8 +4756,8 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
             # No runstate write at all: the local prompt stores are the only
             # target, so a draft/opt-in edit cannot materialize or alter the
             # dated runstate note.
-            state = _read_today_runstate(vault, today)
-            confirmed = runstate.is_day_setup_confirmed(vault, today)
+            state = _read_today_runstate(today)
+            confirmed = runstate.is_day_setup_confirmed(today)
         else:
             # G26: locked RMW — concurrent /day-setup POSTs previously lost
             # updates. FEEDBACK-24: this successful POST is the ONLY writer of
@@ -4898,7 +4774,7 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
                 current_sched["minting"] = current_mint
                 state["schedulable"] = current_sched
 
-            state = runstate.update_runstate(vault, today, _save_day_setup)
+            state = runstate.update_runstate(today, _save_day_setup)
         day_setup_echo, echo_warnings = _day_setup_with_prompts(state, today)
         prompt_warnings = [*prompt_warnings, *echo_warnings, *optins_warnings]
         response: dict[str, Any] = {
@@ -4920,24 +4796,21 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
     @app.post("/digest", dependencies=[Depends(require_token)])
     def post_digest(body: DigestRequest | None = None) -> dict:
         """Deterministic tiered digest. Accepts pre-gathered run-data in the
-        body; otherwise gathers live from the vault. Same input → identical
+        body; otherwise the note-row slice is empty. Same input → identical
         output (integration-tested)."""
-        vault = resolve_vault_root()
-        order = _ranking_order(vault)
+        order = _ranking_order()
         if body and body.pool_items is not None:
             today = date.fromisoformat(body.today) if body.today else gather.effective_date(datetime.now())
             pool_items = body.pool_items
             assigned_items = body.assigned_items or []
         else:
             today = gather.effective_date(datetime.now())
-            pool_notes, assigned_notes = _run_gather(vault, today)
-            run_data = gather.build_run_data(pool_notes, assigned_notes, today)
-            pool_items = run_data["pool_items"]
-            assigned_items = run_data["assigned_items"]
+            pool_items = []
+            assigned_items = []
         # P3-02: the same-day Drop-from-plan exclusions must also gate /digest
         # — a dropped item may neither be returned nor re-indexed for today,
         # on either surface. Date-scoped: tomorrow the item is eligible again.
-        dropped_rows = runstate.read_dropped(vault, today)
+        dropped_rows = runstate.read_dropped(today)
         dropped_ids = {
             str(d.get("identity")) for d in dropped_rows if d.get("identity")
         }
@@ -4950,14 +4823,14 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
                 i for i in pool_items
                 if runtime_actions.drop_identity_of(i) not in dropped_ids
             ]
-        cfg_result = config_reader.read_config(vault)
-        exclusion_policy = _exclusion_policy_or_block(vault)
+        cfg_result = config_reader.read_config()
+        exclusion_policy = _exclusion_policy_or_block()
         try:
             # U3c-2: the same promotion as the plan-inputs caller, BEFORE
             # build_digest.
             pool_items, assigned_items, selection_warnings = (
                 _promote_selected_capacities(
-                    vault, today, pool_items, assigned_items, exclusion_policy,
+                    today, pool_items, assigned_items, exclusion_policy,
                 )
             )
             digest = build_digest(
@@ -4968,7 +4841,7 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
                 ignore=(
                     cfg_result.config.get_ignore_list() if cfg_result.config is not None else None
                 ),
-                bias=deferrals.bias_map(vault, today),  # T1 defer-with-memory
+                bias=deferrals.bias_map(today),  # T1 defer-with-memory
                 exclusion_policy=exclusion_policy,
             )
         except tag_exclusions.TagExclusionBlocked as exc:
@@ -4986,12 +4859,11 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
         judgment layer (call #3). SDK/schema failure → 502-style JSON error,
         never a bare 500. G24: gated on + charged against the persistent
         per-day billed ledger (429 when spent)."""
-        vault = resolve_vault_root()
         today = gather.effective_date(datetime.now())
-        _require_billed_budget(vault, today)
+        _require_billed_budget(today)
         try:
             return judgment.adjust_freetext(
-                body.instruction, body.digest, ctx=_billed_ctx(vault, today))
+                body.instruction, body.digest, ctx=_billed_ctx(today))
         except judgment.BudgetExceededError as exc:
             raise HTTPException(status_code=429, detail=str(exc)) from exc
         except judgment.JudgmentError as exc:
@@ -5024,12 +4896,11 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
     @app.post("/sequence", dependencies=[Depends(require_token)])
     def post_sequence(body: SequenceRequest) -> dict:
         """Propose a timeline through the pure planning boundary."""
-        vault = resolve_vault_root()
         today = gather.effective_date(datetime.now())
         canonical_assigned = _canonicalize_route_assigned(
-            vault, today, body.assigned,
+            today, body.assigned,
         )
-        day_setup, _prompt_warnings = _read_day_setup(vault, today)
+        day_setup, _prompt_warnings = _read_day_setup(today)
         defaults: dict[str, Any] = dict((body.config or {}).get("Defaults") or {})
         resolved_day_semantics = _authoritative_day_semantics(
             body.config, day_setup, today,
@@ -5076,11 +4947,11 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
                 status_code=422,
                 detail={"message": str(exc), "hard_errors": exc.hard_errors},
             ) from exc
-        _require_billed_budget(vault, today)
+        _require_billed_budget(today)
         try:
             outcome = planning.run_proposal(
                 prepared, judgment.propose_sequence,
-                ctx=_billed_ctx(vault, today),
+                ctx=_billed_ctx(today),
             )
         except judgment.BudgetExceededError as exc:
             raise HTTPException(status_code=429, detail=str(exc)) from exc
@@ -5093,19 +4964,18 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
                         "hard_errors": outcome.validation.hard_errors,
                         "rejected_proposal": outcome.rejected_proposal},
             )
-        runstate.update_runstate(vault, today, outcome.snapshot)
+        runstate.update_runstate(today, outcome.snapshot)
         assert outcome.result is not None
         return outcome.result
 
     @app.post("/validate-sequence", dependencies=[Depends(require_token)])
     def post_validate_sequence(body: ValidateSequenceRequest) -> dict:
         """Revalidate the client layout without provider calls or merging."""
-        vault = resolve_vault_root()
         today = gather.effective_date(datetime.now())
         canonical_assigned = _canonicalize_route_assigned(
-            vault, today, body.assigned,
+            today, body.assigned,
         )
-        snapshot = _read_today_runstate(vault, today)
+        snapshot = _read_today_runstate(today)
         day_setup, _prompt_warnings = _day_setup_with_prompts(snapshot, today)
         defaults = dict((body.config or {}).get("Defaults") or {})
         resolved_day_semantics = _authoritative_day_semantics(
@@ -5163,9 +5033,8 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
             or body.planning_config_fingerprint
         ):
             return
-        vault = resolve_vault_root()
         today = gather.effective_date(datetime.now())
-        snapshot = _read_today_runstate(vault, today)
+        snapshot = _read_today_runstate(today)
         if (
             snapshot.get("pinned_rows", []) != body.pinned_rows
             or snapshot.get("overlap_grants", []) != body.overlap_grants
@@ -5200,7 +5069,6 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
             entry_date = date.fromisoformat(body.date)
         except ValueError:
             raise HTTPException(status_code=422, detail="date must be YYYY-MM-DD")
-        vault = resolve_vault_root()
         log_path = micro_adventure.history_path()
         updated = micro_adventure.resolve_loose_end(
             micro_adventure.read_history(log_path),
@@ -5249,11 +5117,10 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
                 # FEEDBACK-24: the Day Setup gate (409) takes precedence over
                 # the P3-02 eligibility boundary; apply the P3-02 eligibility
                 # boundary before any live write path runs.
-                live_vault = resolve_vault_root()
                 live_today = gather.effective_date(datetime.now())
-                _require_day_setup(live_vault, live_today, "committing")
+                _require_day_setup(live_today, "committing")
                 commit_config, safe_digest = _validate_commit_eligibility(
-                    body, live_vault, live_today,
+                    body, live_today,
                 )
                 return _run_live_commit(
                     body, resume, config_override=commit_config,
@@ -5270,22 +5137,21 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
                 status_code=400, detail="shadow commit requires a body with 'digest' and 'sequence'"
             )
 
-        vault = resolve_vault_root()
         shadow_today = gather.effective_date(datetime.now())
-        shadow_day_setup, _prompt_warnings = _read_day_setup(vault, shadow_today)
+        shadow_day_setup, _prompt_warnings = _read_day_setup(shadow_today)
         # P3-02: eligibility boundary immediately before manifest construction.
         # It returns the same server-authoritative effective config that the
         # validator used, plus the sanitized digest, so the client cannot
         # inject or rewrite Step E/D source rows or assigned metadata after
         # the boundary.
-        shadow_config, safe_digest = _validate_commit_eligibility(body, vault, shadow_today)
+        shadow_config, safe_digest = _validate_commit_eligibility(body, shadow_today)
         manifest = _build_manifest_or_refuse(
             safe_digest, body.sequence, shadow_config,
             time_frame=_frame_for_writes(shadow_config, shadow_day_setup))
 
         config_for_state: Any = shadow_config
         try:
-            live_state = shadow.gather_live_state(config_for_state, vault)
+            live_state = shadow.gather_live_state(config_for_state)
         except shadow.ShadowStateError as exc:
             raise HTTPException(status_code=502, detail=f"shadow state error: {exc}") from exc
 
@@ -5325,24 +5191,24 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
         return frame.as_dict()
 
     def _server_commit_config(
-        vault: Path, today: date, day_setup: dict[str, Any],
+        today: date, day_setup: dict[str, Any],
     ) -> dict[str, Any]:
         """Build the effective config used by the commit boundary.
 
         The browser echoes config in the commit body, but source rows must be
-        authorized from the current vault/config and dated setup instead of
+        authorized from the current config and dated setup instead of
         from that echo.  The returned object is also passed to the manifest
         builder so a client cannot alter an authorized row after validation.
         """
-        result = config_reader.read_config(vault)
+        result = config_reader.read_config()
         config: dict[str, Any] = (
             dict(result.config.sections) if result.config is not None else {}
         )
         config = shadow.apply_day_setup(config, day_setup)
-        return _ensure_micro_adventure(config, vault, today)
+        return _ensure_micro_adventure(config, today)
 
     def _validate_commit_eligibility(
-        body: CommitRequest, vault: Path, today: date,
+        body: CommitRequest, today: date,
     ) -> tuple[dict[str, Any], dict[str, Any]]:
         """P3-02 server authorization immediately before manifest building.
 
@@ -5406,7 +5272,7 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
                        + " — nothing was written",
             )
 
-        index = runstate.read_digest_index(vault, today)
+        index = runstate.read_digest_index(today)
         server_assigned = [
             row for row in index
             if isinstance(row, dict)
@@ -5418,7 +5284,7 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
         # identities and remove matching cached assigned rows so a dropped
         # item cannot be committed merely because the index was not refreshed.
         dropped_ids = {
-            str(d.get("identity")) for d in runstate.read_dropped(vault, today)
+            str(d.get("identity")) for d in runstate.read_dropped(today)
             if d.get("identity")
         }
         dropped_assigned_names: list[str] = []
@@ -5439,7 +5305,7 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
             """Match a submitted name plus a stable server source identity.
 
             A Todoist id and its ``todoist://`` path are equivalent forms of
-            the same source identity. Vault paths remain path-only. In either
+            the same source identity. Plain paths remain path-only. In either
             case a name-only submission is never sufficient. A Capacities row
             matches only on its canonical identity (see
             ``_capacities_identity_matches``).
@@ -5499,7 +5365,7 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
             else:
                 unknown_assigned.append(name)
         capacities_refusals.extend(
-            _capacities_commit_refusals(vault, today, authorized_matches),
+            _capacities_commit_refusals(today, authorized_matches),
         )
 
         # Effective-blocks overlays are validated BEFORE any write decision:
@@ -5526,8 +5392,8 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
                 detail=detail + " — nothing was written",
             )
 
-        day_setup, _prompt_warnings = _read_day_setup(vault, today)
-        config = _server_commit_config(vault, today, day_setup)
+        day_setup, _prompt_warnings = _read_day_setup(today)
+        config = _server_commit_config(today, day_setup)
         presets = config.get("Presets") or config.get("presets") or []
 
         def _server_digest_row(
@@ -5849,18 +5715,17 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
         digest_override: dict[str, Any] | None = None,
     ) -> Any:
         """T15 live-commit write path — always runs under the G25 lock."""
-        vault = resolve_vault_root()
         today = gather.effective_date(datetime.now())
         # FEEDBACK-24: the external write path fails closed until Day Setup is
         # explicitly confirmed for today (409, actionable). The client-facing
         # wizard already lands on setup, but a direct or stale client must not
         # be able to write a plan over an unconfirmed day.
-        _require_day_setup(vault, today, "committing")
+        _require_day_setup(today, "committing")
         # T8: Day Setup state (anchored overrides, re_included, captures)
         # flows into the manifest via config
-        live_day_setup, _prompt_warnings = _read_day_setup(vault, today)
+        live_day_setup, _prompt_warnings = _read_day_setup(today)
         if config_override is None:
-            config = _server_commit_config(vault, today, live_day_setup)
+            config = _server_commit_config(today, live_day_setup)
         else:
             config = config_override
         manifest = _build_manifest_or_refuse(
@@ -5868,7 +5733,7 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
             body.sequence, config,
             time_frame=_frame_for_writes(config, live_day_setup))
         try:
-            live_state = shadow.gather_live_state(config, vault)
+            live_state = shadow.gather_live_state(config)
         except shadow.ShadowStateError as exc:
             raise HTTPException(status_code=502, detail=f"shadow state error: {exc}") from exc
         diff = shadow.diff_against_live(manifest, live_state)
@@ -5878,7 +5743,7 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
         token: str | None = None
         has_calendar_rows = any(e.manifest.system == "calendar" for e in diff.entries)
         if app.state.build_commit_clients:
-            injected_todoist, store = app.state.build_commit_clients(vault, config)
+            injected_todoist, store = app.state.build_commit_clients(config)
         else:
             token = shadow.todoist_client.load_token(shadow.TOKEN_ENV_PATH)
             if has_calendar_rows:
@@ -5921,8 +5786,7 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
         civil_date = prompt_export.civil_date_for(datetime.now()).isoformat()
         if app.state.build_commit_clients:
             report = orchestrate.run_orchestrated(
-                intents, todoist=injected_todoist, store=store, vault_root=vault,
-                today=today, resume=resume,
+                intents, todoist=injected_todoist, store=store, today=today, resume=resume,
             )
             export_outcomes = prompt_export.run_prompt_exports_for_report(
                 report, day=today.isoformat(), civil_date=civil_date,
@@ -5931,8 +5795,7 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
         else:
             with shadow.todoist_client.TodoistClient(token) as todoist:
                 report = orchestrate.run_orchestrated(
-                    intents, todoist=todoist, store=store, vault_root=vault,
-                    today=today, resume=resume,
+                    intents, todoist=todoist, store=store, today=today, resume=resume,
                 )
                 export_outcomes = prompt_export.run_prompt_exports_for_report(
                     report, day=today.isoformat(), civil_date=civil_date,
@@ -5941,7 +5804,7 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
         prompt_export.attach_to_report(report, export_outcomes)
         # T19: the authorized commit is the ONLY history-consuming surface —
         # exactly one idempotent log upsert, after every surface reports ok.
-        _append_micro_adventure_history(report, config, intents, vault, today)
+        _append_micro_adventure_history(report, config, intents, today)
         return report
 
     # -- runtime item actions (T20) -------------------------------------------
@@ -5954,10 +5817,9 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
         Capacities builder remains opt-in; no live credential route is created
         here by default.
         """
-        vault = resolve_vault_root()
         owns_todoist = False
         if app.state.build_commit_clients:
-            todoist_c, store = app.state.build_commit_clients(vault, None)
+            todoist_c, store = app.state.build_commit_clients(None)
             capacities_c = None
         else:
             todoist_c = None
@@ -5977,13 +5839,13 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
         build_capacities = app.state.build_capacities_adapter
         if build_capacities is not None:
             try:
-                result = config_reader.read_config(vault)
+                result = config_reader.read_config()
                 config = (
                     dict(result.config.sections)
                     if result.config is not None
                     else {}
                 )
-                capacities_c = build_capacities(vault, config)
+                capacities_c = build_capacities(config)
             except Exception:  # noqa: BLE001 — action boundary fails closed
                 capacities_c = None
         return todoist_c, store, capacities_c, owns_todoist
@@ -5994,15 +5856,14 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
 
     @app.post("/runtime-actions", dependencies=[Depends(require_token)])
     def post_runtime_action(body: RuntimeActionRequest) -> Any:
-        vault = resolve_vault_root()
         today = gather.effective_date(datetime.now())
-        # FEEDBACK-24: runtime verbs write external state (Todoist/vault) —
+        # FEEDBACK-24: runtime verbs write external state (Todoist/Calendar) —
         # fail closed until Day Setup is explicitly confirmed for today.
-        _require_day_setup(vault, today, "applying runtime actions")
+        _require_day_setup(today, "applying runtime actions")
         todoist_c, store, capacities_c, owns = _runtime_clients()
         try:
             return runtime_actions.apply_action(
-                vault, today, body.verb, body.target, body.args,
+                today, body.verb, body.target, body.args,
                 todoist=todoist_c, store=store, capacities=capacities_c,
             )
         except runtime_actions.RuntimeActionError as exc:
@@ -6016,14 +5877,13 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
     @app.post("/runtime-actions/{action_id}/undo",
               dependencies=[Depends(require_token)])
     def post_runtime_action_undo(action_id: str) -> Any:
-        vault = resolve_vault_root()
         today = gather.effective_date(datetime.now())
         # FEEDBACK-24: undo writes external state too — same closed gate.
-        _require_day_setup(vault, today, "undoing runtime actions")
+        _require_day_setup(today, "undoing runtime actions")
         todoist_c, store, capacities_c, owns = _runtime_clients()
         try:
             return runtime_actions.undo_action(
-                vault, today, action_id,
+                today, action_id,
                 todoist=todoist_c, store=store, capacities=capacities_c,
             )
         except runtime_actions.RuntimeActionError as exc:
@@ -6036,9 +5896,8 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
 
     @app.get("/runtime-actions", dependencies=[Depends(require_token)])
     def get_runtime_actions() -> Any:
-        vault = resolve_vault_root()
         today = gather.effective_date(datetime.now())
-        return runtime_actions.load_journal(vault, today)
+        return runtime_actions.load_journal(today)
 
     # -- static UI (T10: thin, unstyled config + digest views) ----------------
     if _STATIC_DIR.is_dir():
@@ -6047,7 +5906,7 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
     return app
 
 
-def build_real_read_clients(vault: Path, config: dict[str, Any]) -> tuple[Any, Any]:
+def build_real_read_clients(config: dict[str, Any]) -> tuple[Any, Any]:
     """Live read clients for /plan-inputs; each degrades to None (→ a
     source_warnings entry) when the token/EventKit grant is absent."""
     todoist_c = None
@@ -6064,7 +5923,7 @@ def build_real_read_clients(vault: Path, config: dict[str, Any]) -> tuple[Any, A
     return todoist_c, store
 
 
-def build_real_calendar_store(vault: Path, config: dict[str, Any]) -> Any:
+def build_real_calendar_store(config: dict[str, Any]) -> Any:
     """Live calendar store for the artifact-mode seam; degrades to None.
 
     Calendar is not a live *plan source* the artifact replaces — it is a
@@ -6077,31 +5936,31 @@ def build_real_calendar_store(vault: Path, config: dict[str, Any]) -> Any:
         return None
 
 
-def build_real_capacities_adapter(vault: Path, config: dict[str, Any]) -> Any:
+def build_real_capacities_adapter(config: dict[str, Any]) -> Any:
     """Live Capacities adapter for the source seam.
 
-    The seam's shape is ``(vault, config) -> adapter|None``, matching
+    The seam's shape is ``(config) -> adapter|None``, matching
     ``build_real_read_clients``; the builder underneath instead takes an
     optional ``CapacitiesBuilderConfig`` for injection, so this adapter is the
     boundary between the two conventions.
 
-    ``config`` (the parsed vault config) is unused: Capacities reads its own
-    vault-local mapping record and assignment settings, and the builder
+    ``config`` (the parsed config) is unused: Capacities reads its own
+    app-owned mapping record and assignment settings, and the builder
     supplies the credential slot, page bound, and content-read budget.
     """
-    return capacities_builder.build_capacities_adapter(vault)
+    return capacities_builder.build_capacities_adapter()
 
 
-def build_real_refresh_coordinator(vault: Path, config: dict[str, Any]) -> Any:
+def build_real_refresh_coordinator(config: dict[str, Any]) -> Any:
     """Live paced-refresh coordinator for the direct-refresh seam (U2).
 
     Mirrors ``build_real_capacities_adapter``: the seam's shape is
-    ``(vault, config) -> coordinator|None`` while the builder owns the
-    credential slot, store root, and page bound. ``config`` (the parsed vault
-    config) is unused — Capacities reads its own vault-local mapping record and
+    ``(config) -> coordinator|None`` while the builder owns the
+    credential slot, store root, and page bound. ``config`` (the parsed
+    config) is unused — Capacities reads its own app-owned mapping record and
     settings policy. ``None`` means "no Capacities source configured".
     """
-    return capacities_builder.build_refresh_coordinator(vault)
+    return capacities_builder.build_refresh_coordinator()
 
 
 app = create_app()

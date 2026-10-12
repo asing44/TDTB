@@ -123,18 +123,13 @@ class RuntimeActionError(Exception):
 STATE_JOURNAL_DIRNAME = "runtime-journal"
 
 
-def journal_rel_path(valid_date: date) -> str:
-    """Pre-V2 vault spelling — the app no longer reads or writes it."""
-    return f"{runstate.CACHE_DIR_REL}/tdtb-runtime-journal-{valid_date}.json"
-
-
 def journal_path(valid_date: date) -> Path:
     """``<app home>/state/runtime-journal/<date>.json`` (computed only)."""
     return app_config.state_dir() / STATE_JOURNAL_DIRNAME / f"{valid_date}.json"
 
 
-def load_journal(vault_root: Path | str | None, valid_date: date) -> dict[str, Any]:
-    """Read the dated journal from the state dir (``vault_root`` ignored)."""
+def load_journal(valid_date: date) -> dict[str, Any]:
+    """Read the dated journal from the state dir."""
     path = journal_path(valid_date)
     if not path.exists():
         return {"valid_date": str(valid_date), "actions": []}
@@ -147,7 +142,7 @@ def load_journal(vault_root: Path | str | None, valid_date: date) -> dict[str, A
     return data
 
 
-def _write_journal(vault_root: Path | str | None, valid_date: date, journal: dict) -> None:
+def _write_journal(valid_date: date, journal: dict) -> None:
     path = journal_path(valid_date)
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(".json.tmp")
@@ -181,7 +176,7 @@ def _now_iso(now: datetime | None = None) -> str:
 # ---------------------------------------------------------------------------
 
 def _resolve_from_digest_index(
-    vault_root: Path | str, valid_date: date, name: str,
+    valid_date: date, name: str,
 ) -> dict[str, Any] | None:
     """T2 staging-phase fallback: resolve from the digest identity index the
     server itself wrote at /plan-inputs. Returns None when the name isn't in
@@ -196,7 +191,7 @@ def _resolve_from_digest_index(
     at ``<vault>/todoist://<id>``, which closed the task, raised ENOENT, and
     compensated the close back out.
     """
-    rows = [r for r in runstate.read_digest_index(vault_root, valid_date)
+    rows = [r for r in runstate.read_digest_index(valid_date)
             if r.get("name") == name]
     if not rows:
         return None
@@ -227,7 +222,7 @@ def _resolve_from_digest_index(
     return out
 
 
-def resolve_target(vault_root: Path | str, valid_date: date, name: str) -> dict[str, Any]:
+def resolve_target(valid_date: date, name: str) -> dict[str, Any]:
     """Resolve a plan-item name to its source artifacts.
 
     Post-commit (``plan_manifest`` present) resolution is unchanged and still
@@ -237,11 +232,11 @@ def resolve_target(vault_root: Path | str, valid_date: date, name: str) -> dict[
     commit exists. The resolved dict carries ``phase`` so the verb planner can
     refuse verbs that only make sense against placed artifacts.
     """
-    state = runstate.read_runstate(vault_root, valid_date) or {}
+    state = runstate.read_runstate(valid_date) or {}
     rows = [r for r in state.get("plan_manifest") or []
             if isinstance(r, dict) and r.get("name") == name]
     if not rows:
-        staged = _resolve_from_digest_index(vault_root, valid_date, name)
+        staged = _resolve_from_digest_index(valid_date, name)
         if staged is not None:
             return staged
         raise RuntimeActionError(
@@ -463,7 +458,7 @@ def plan_steps(verb: str, target: dict, args: dict, valid_date: date) -> list[di
 # Step execution — apply / reverse (compensation and undo share reverse ops)
 # ---------------------------------------------------------------------------
 
-def _apply_step(step: dict, vault_root: Path, valid_date: date,
+def _apply_step(step: dict, valid_date: date,
                 todoist: Any, store: Any, capacities: Any) -> None:
     kind = step["kind"]
     if kind == "todoist.close":
@@ -574,7 +569,7 @@ def _apply_step(step: dict, vault_root: Path, valid_date: date,
         item = step.get("item") or {}
         identity = drop_identity_of(item)
         step["identity"] = identity
-        step["before"] = {"dropped": runstate.read_dropped(vault_root, valid_date)}
+        step["before"] = {"dropped": runstate.read_dropped(valid_date)}
 
         def _append_drop(state: dict[str, Any]) -> None:
             dropped = [d for d in (state.get("dropped") or [])
@@ -584,13 +579,13 @@ def _apply_step(step: dict, vault_root: Path, valid_date: date,
                             "dropped_at": _now_iso()})
             state["dropped"] = dropped
 
-        _locked_runstate_rmw(vault_root, valid_date, _append_drop)
+        _locked_runstate_rmw(valid_date, _append_drop)
     elif kind == "deferrals.record":
         item = step["item"]
         key = deferrals.key_for_item(item)
         step["key"] = key
-        step["before"] = {"entry": deferrals.load_deferrals(vault_root).get(key)}
-        step["entry"] = deferrals.record_deferral(vault_root, item, valid_date)
+        step["before"] = {"entry": deferrals.load_deferrals().get(key)}
+        step["entry"] = deferrals.record_deferral(item, valid_date)
     elif kind in REMOVED_STEP_KINDS:
         raise _removed_vault_action(f"step {kind!r}")
     else:  # pragma: no cover — plan_steps only emits the kinds above
@@ -598,7 +593,7 @@ def _apply_step(step: dict, vault_root: Path, valid_date: date,
     step["applied"] = True
 
 
-def _reverse_step(step: dict, vault_root: Path, valid_date: date,
+def _reverse_step(step: dict, valid_date: date,
                   todoist: Any, store: Any, capacities: Any) -> None:
     """Exact reverse of one applied step, from its before-image."""
     kind = step["kind"]
@@ -673,10 +668,10 @@ def _reverse_step(step: dict, vault_root: Path, valid_date: date,
             todoist.reschedule_task(step["task_id"], due["string"])
         # no due at all — the clear was reversed by not writing anything
     elif kind == "runstate.drop":
-        _locked_runstate_rmw(vault_root, valid_date, lambda state: state.update(
+        _locked_runstate_rmw(valid_date, lambda state: state.update(
             {"dropped": (before.get("dropped") or [])}))
     elif kind == "deferrals.record":
-        deferrals.set_entry(vault_root, step["key"], before.get("entry"))
+        deferrals.set_entry(step["key"], before.get("entry"))
     elif kind in REMOVED_STEP_KINDS:
         raise _removed_vault_action(f"undo of step {kind!r}")
     else:  # pragma: no cover
@@ -821,7 +816,7 @@ def _completion_proof(before_task: dict[str, Any],
     }
 
 
-def _locked_runstate_rmw(vault_root: Path, valid_date: date,
+def _locked_runstate_rmw(valid_date: date,
                          mutator: Any) -> None:
     """Run-state RMW for callers that ALREADY hold ``runstate.day_lock``.
 
@@ -831,9 +826,9 @@ def _locked_runstate_rmw(vault_root: Path, valid_date: date,
     This performs the same read-modify-write under the caller-held lock.
     """
     state = runstate.build_runstate(
-        runstate.read_runstate(vault_root, valid_date) or None)
+        runstate.read_runstate(valid_date) or None)
     mutator(state)
-    runstate.write_runstate(vault_root, valid_date, state)
+    runstate.write_runstate(valid_date, state)
 
 
 _SURFACE_CLIENT = {"todoist": "todoist", "calendar": "store",
@@ -862,7 +857,6 @@ def _check_surfaces(
 # ---------------------------------------------------------------------------
 
 def apply_action(
-    vault_root: Path | str,
     valid_date: date,
     verb: str,
     target_name: str,
@@ -879,16 +873,15 @@ def apply_action(
     the first write, updated after apply/compensation, so a crash mid-action
     always leaves an inspectable record.
     """
-    vault_root = Path(vault_root)
     args = args or {}
     if verb not in VERBS:
         raise RuntimeActionError(f"unknown verb {verb!r}")
-    target = resolve_target(vault_root, valid_date, target_name)
+    target = resolve_target(valid_date, target_name)
     steps = plan_steps(verb, target, args, valid_date)
     _check_surfaces(steps, todoist, store, capacities)
 
     with runstate.day_lock(valid_date):
-        journal = load_journal(vault_root, valid_date)
+        journal = load_journal(valid_date)
         key = idempotency_key(valid_date, verb, target_name, args)
         for existing in journal["actions"]:
             if (existing.get("idempotency_key") == key
@@ -912,14 +905,14 @@ def apply_action(
             "error": None,
         }
         journal["actions"].append(action)
-        _write_journal(vault_root, valid_date, journal)
+        _write_journal(valid_date, journal)
 
         try:
             for step in steps:
                 _apply_step(
-                    step, vault_root, valid_date, todoist, store, capacities
+                    step, valid_date, todoist, store, capacities
                 )
-                _write_journal(vault_root, valid_date, journal)
+                _write_journal(valid_date, journal)
             action["status"] = "applied"
         except Exception as exc:  # noqa: BLE001 — every failure is journaled
             action["error"] = str(exc)
@@ -928,7 +921,7 @@ def apply_action(
             for step in reversed(applied):
                 try:
                     _reverse_step(
-                        step, vault_root, valid_date, todoist, store, capacities
+                        step, valid_date, todoist, store, capacities
                     )
                     step["compensated"] = True
                 except Exception as comp_exc:  # noqa: BLE001
@@ -941,12 +934,11 @@ def apply_action(
             else:
                 action["status"] = "compensated"
         action["finished_at"] = _now_iso(now)
-        _write_journal(vault_root, valid_date, journal)
+        _write_journal(valid_date, journal)
         return action
 
 
 def undo_action(
-    vault_root: Path | str,
     valid_date: date,
     action_id: str,
     *,
@@ -956,9 +948,8 @@ def undo_action(
     now: datetime | None = None,
 ) -> dict[str, Any]:
     """Reverse one previously applied action from its exact before-images."""
-    vault_root = Path(vault_root)
     with runstate.day_lock(valid_date):
-        journal = load_journal(vault_root, valid_date)
+        journal = load_journal(valid_date)
         action = find_action(journal, action_id)
         if action is None:
             raise RuntimeActionError(f"unknown action {action_id!r}")
@@ -972,14 +963,14 @@ def undo_action(
         for step in reversed(steps):
             try:
                 _reverse_step(
-                    step, vault_root, valid_date, todoist, store, capacities
+                    step, valid_date, todoist, store, capacities
                 )
             except Exception as exc:  # noqa: BLE001
                 step["undo_error"] = str(exc)
                 undo_failed = True
         action["status"] = "undo_failed" if undo_failed else "undone"
         action["undone_at"] = _now_iso(now)
-        _write_journal(vault_root, valid_date, journal)
+        _write_journal(valid_date, journal)
         if undo_failed:
             raise RuntimeActionError(
                 f"undo of {action_id!r} failed on one or more steps — "

@@ -244,7 +244,7 @@ class TestRoute:
     def client(self, tmp_path) -> TestClient:
         vault = tmp_path / "vault-root"
         vault.mkdir()
-        app = main_mod.create_app(vault_root=vault)
+        app = main_mod.create_app()
         c = TestClient(app)
         c.app_token = app.state.token
         return c

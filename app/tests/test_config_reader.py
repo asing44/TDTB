@@ -113,16 +113,17 @@ def test_full_read_is_valid() -> None:
     )
 
 
-def test_vault_root_argument_is_ignored(tmp_path: Path) -> None:
-    """The vault root stays a parameter only for caller compatibility; a note
-    sitting there changes nothing."""
+def test_read_config_takes_no_argument_and_ignores_a_stray_note(tmp_path: Path) -> None:
+    """``read_config`` has no vault parameter; a markdown note sitting anywhere
+    changes nothing."""
+    import inspect
+
+    assert not inspect.signature(read_config).parameters
     _install(FULL_DOC)
     note = tmp_path / "00 - META" / "Skill-Configs" / "tdtb-bridger.md"
     note.parent.mkdir(parents=True)
     note.write_text("## Defaults\n| Key | Value |\n|---|---|\n| eod | 1:00 AM |\n", encoding="utf-8")
 
-    assert read_config(tmp_path).config.get_default("eod").value == "11:45 PM"
-    assert read_config(tmp_path / "nowhere").config.get_default("eod").value == "11:45 PM"
     assert read_config().config.get_default("eod").value == "11:45 PM"
 
 
@@ -321,7 +322,7 @@ def test_unusable_config_sets_bootstrap_needed_and_never_raises() -> None:
     path = app_config.repo_config_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("{ not json", encoding="utf-8")
-    assert read_config(Path("/no/such/vault")).bootstrap_needed is True
+    assert read_config().bootstrap_needed is True
 
 
 # ---------------------------------------------------------------------------

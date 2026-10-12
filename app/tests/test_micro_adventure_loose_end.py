@@ -57,22 +57,15 @@ class TestResolveLooseEnd:
 
 
 @pytest.fixture
-def vault(tmp_path) -> Path:
-    root = tmp_path / "vault-root"
-    root.mkdir()
-    return root
-
-
-@pytest.fixture
-def client(vault, monkeypatch) -> TestClient:
+def client(monkeypatch) -> TestClient:
     monkeypatch.setattr(gather, "effective_date", lambda now: TODAY)
-    app = main_mod.create_app(vault_root=vault)
+    app = main_mod.create_app()
     c = TestClient(app)
     c.app_token = app.state.token
     return c
 
 
-def _write_log(vault: Path, history_yaml: str) -> None:
+def _write_log(history_yaml: str) -> None:
     p = LOG_PATH()
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(
@@ -90,32 +83,32 @@ def _post(client: TestClient, body: dict, *, token: bool = True):
 
 
 class TestLooseEndRoute:
-    def test_requires_the_token(self, client, vault):
-        _write_log(vault, PENDING)
+    def test_requires_the_token(self, client):
+        _write_log(PENDING)
         r = _post(client, {"date": "2026-07-11", "id": "ma03", "done": True}, token=False)
         assert r.status_code == 403
 
-    def test_did_it_writes_done_and_clears_the_banner(self, client, vault):
-        _write_log(vault, PENDING)
+    def test_did_it_writes_done_and_clears_the_banner(self, client):
+        _write_log(PENDING)
         assert client.get("/plan-inputs").json()["micro_adventure"]["pending_confirm"] is not None
         r = _post(client, {"date": "2026-07-11", "id": "ma03", "done": True})
         assert r.status_code == 200
         assert [(e.id, e.done) for e in ma.read_history(LOG_PATH())] == [("ma03", True)]
         assert client.get("/plan-inputs").json()["micro_adventure"]["pending_confirm"] is None
 
-    def test_dismiss_writes_not_done(self, client, vault):
-        _write_log(vault, PENDING)
+    def test_dismiss_writes_not_done(self, client):
+        _write_log(PENDING)
         assert _post(client, {"date": "2026-07-11", "id": "ma03", "done": False}).status_code == 200
         assert [(e.id, e.done) for e in ma.read_history(LOG_PATH())] == [("ma03", False)]
 
-    def test_unknown_entry_is_404_and_the_log_is_untouched(self, client, vault):
-        _write_log(vault, PENDING)
+    def test_unknown_entry_is_404_and_the_log_is_untouched(self, client):
+        _write_log(PENDING)
         before = (LOG_PATH()).read_text(encoding="utf-8")
         r = _post(client, {"date": "2026-07-11", "id": "ma99", "done": True})
         assert r.status_code == 404
         assert (LOG_PATH()).read_text(encoding="utf-8") == before
 
-    def test_malformed_date_is_422(self, client, vault):
-        _write_log(vault, PENDING)
+    def test_malformed_date_is_422(self, client):
+        _write_log(PENDING)
         r = _post(client, {"date": "11 Jul", "id": "ma03", "done": True})
         assert r.status_code == 422

@@ -24,7 +24,7 @@ Contract (KTD2/KTD3):
   and a current configuration revision; complete listing absence is the only
   removal evidence.
 * **Namespace isolation.** Objects are keyed by provider origin + space +
-  type + object; pointers are keyed by vault root + origin + space. Stored
+  type + object; pointers are keyed by origin + space. Stored
   bytes for another scope are never served, and they are never overwritten by
   a blind install.
 * **Stamped structure contract.** A generation's raw structures payload is
@@ -34,7 +34,7 @@ Contract (KTD2/KTD3):
 
 Machine-local only: the caller owns the root (``app_config.state_dir()`` via
 ``capacities_builder.refresh_state_dir``), so raw content never enters a
-synced vault. Diagnostics never embed content, credentials, or absolute paths.
+synced folder. Diagnostics never embed content, credentials, or absolute paths.
 """
 from __future__ import annotations
 
@@ -127,10 +127,9 @@ def object_namespace(origin: str, space_id: str, type_key: str, object_id: str) 
     return _digest(_norm(origin), _norm(space_id), _norm(type_key), _norm(object_id))
 
 
-def snapshot_namespace(vault_root: Any, origin: str, space_id: str) -> str:
-    """Stable digest for one vault + provider origin + space."""
-    root = str(Path(vault_root).resolve()) if vault_root is not None else ""
-    return _digest(root, _norm(origin), _norm(space_id))
+def snapshot_namespace(origin: str, space_id: str) -> str:
+    """Stable digest for one provider origin + space."""
+    return _digest("snapshot", _norm(origin), _norm(space_id))
 
 
 # ---------------------------------------------------------------------------
@@ -411,7 +410,6 @@ class RefreshStateStore:
         *,
         origin: str,
         space_id: str,
-        vault_root: Any = None,
         max_objects: int = DEFAULT_MAX_OBJECTS,
         max_bytes: int = DEFAULT_MAX_BYTES,
         epoch_clock: Callable[[], float] = time.time,
@@ -419,7 +417,7 @@ class RefreshStateStore:
         self._root = Path(root)
         self._origin = _norm(origin)
         self._space_id = _norm(space_id)
-        self._snapshot_namespace = snapshot_namespace(vault_root, self._origin, self._space_id)
+        self._snapshot_namespace = snapshot_namespace(self._origin, self._space_id)
         self._max_objects = int(max_objects)
         self._max_bytes = int(max_bytes)
         self._epoch_clock = epoch_clock
@@ -698,7 +696,7 @@ class RefreshStateStore:
             self._warn(
                 "contract-scope",
                 "Capacities refresh state: the stored structure contract belongs "
-                "to a different vault, provider, space, or scope; contract missing "
+                "to a different provider, space, or scope; contract missing "
                 "until the next Refresh.",
             )
             return None
@@ -950,7 +948,7 @@ class RefreshStateStore:
             self._warn(
                 "snapshot-namespace",
                 "Capacities refresh state: the stored complete pointer belongs "
-                "to a different vault, provider, or space; it is never served "
+                "to a different provider or space; it is never served "
                 "here.",
             )
             raise RefreshStateFormatError("complete pointer scope mismatch")
@@ -1095,7 +1093,7 @@ class RefreshStateStore:
     def unfinished_runs(self) -> tuple[RunMarker, ...]:
         """Every unfinished run marker under this store's namespace scope.
 
-        Markers for another vault/provider/space are never reported, so a
+        Markers for another provider/space are never reported, so a
         restart reconciles only its own interrupted work.
         """
         directory = self._root / RUNS_DIRNAME

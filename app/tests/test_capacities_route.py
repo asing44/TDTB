@@ -53,8 +53,8 @@ def test_plan_inputs_projects_injected_capacities_items_and_indexes_identity(tmp
         "capacities_completion_supported": False,
         "source_fingerprint": "fingerprint-1",
     })
-    app = main.create_app(vault_root=vault)
-    app.state.build_capacities_adapter = lambda _vault, _config: adapter
+    app = main.create_app()
+    app.state.build_capacities_adapter = lambda _config: adapter
 
     body = TestClient(app).get("/plan-inputs").json()
 
@@ -63,7 +63,7 @@ def test_plan_inputs_projects_injected_capacities_items_and_indexes_identity(tmp
     assert not any("Capacities" in warning for warning in body["source_warnings"])
     assert adapter.days == [date(2026, 9, 29)]
     assert adapter.closed is True
-    index = runstate.read_digest_index(vault, date(2026, 9, 29))
+    index = runstate.read_digest_index(date(2026, 9, 29))
     assert index[0]["identity"] == "capacities:space-1:custom-project:object-1"
     assert index[0]["capacities_id"] == "object-1"
 
@@ -82,7 +82,7 @@ def test_production_seam_honours_the_vault_and_config_call_convention(tmp_path):
 
     # Unconfigured vault: the seam must answer None (no Capacities source)
     # rather than raising, and must accept the app's argument shape.
-    assert main.build_real_capacities_adapter(vault, {}) is None
-    assert main.create_app(vault_root=vault).state.build_capacities_adapter is (
+    assert main.build_real_capacities_adapter({}) is None
+    assert main.create_app().state.build_capacities_adapter is (
         main.build_real_capacities_adapter
     )

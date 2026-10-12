@@ -67,7 +67,6 @@ def test_plist_template_renders_cleanly():
     lint the result. No launchctl, no ~/Library/LaunchAgents write."""
     home = "/Users/walle-mini"
     repo = str(REPO_ROOT)
-    vault = "/tmp/tdtb-fake-vault"
     template = PLIST_TEMPLATE.read_text()
     result = subprocess.run(
         [
@@ -76,8 +75,6 @@ def test_plist_template_renders_cleanly():
             f"s|__WALLE_HOME__|{home}|g",
             "-e",
             f"s|__TDTB_REPO__|{repo}|g",
-            "-e",
-            f"s|__TDTB_VAULT_ROOT__|{vault}|g",
         ],
         input=template,
         capture_output=True,
@@ -87,7 +84,7 @@ def test_plist_template_renders_cleanly():
     rendered = result.stdout
     assert "__WALLE_HOME__" not in rendered
     assert "__TDTB_REPO__" not in rendered
-    assert "__TDTB_VAULT_ROOT__" not in rendered
+    assert "VAULT" not in rendered
     assert f"{repo}/app/.venv/bin/python" in rendered
     assert f"{repo}/app</string>" in rendered
     # Verify no unresolved __...__ placeholders remain
@@ -106,12 +103,13 @@ def test_plist_template_renders_cleanly():
 def test_tdtb_restart_plist_refresh_includes_repo_substitution():
     """restart-live.sh's refresh_plist() substitutes __TDTB_REPO__ with TASK_DIR."""
     text = RESTART_SCRIPT.read_text()
-    # Check the sed command in refresh_plist() has all three substitutions
+    # Check the sed command in refresh_plist() has both substitutions
     assert re.search(
         r'__TDTB_REPO__.*\$TASK_DIR', text
     ), "refresh_plist must substitute __TDTB_REPO__ with TASK_DIR"
     assert "__TDTB_REPO__" in text
-    assert "__TDTB_VAULT_ROOT__" in text
+    assert "__TDTB_VAULT_ROOT__" not in text
+    assert "TDTB_VAULT_ROOT" not in text
     assert "__WALLE_HOME__" in text
 
 
@@ -128,11 +126,10 @@ def test_plist_template_rejects_unresolved_placeholder():
     # Start from the real template and omit one substitution
     home = "/Users/walle-mini"
     repo = str(REPO_ROOT)
-    vault = "/tmp/tdtb-fake-vault"
     template = PLIST_TEMPLATE.read_text()
-    # Only substitute two of three — leave __TDTB_REPO__ unresolved
+    # Only substitute one of two — leave __TDTB_REPO__ unresolved
     result = subprocess.run(
-        ["sed", "-e", f"s|__WALLE_HOME__|{home}|g", "-e", f"s|__TDTB_VAULT_ROOT__|{vault}|g"],
+        ["sed", "-e", f"s|__WALLE_HOME__|{home}|g"],
         input=template,
         capture_output=True,
         text=True,

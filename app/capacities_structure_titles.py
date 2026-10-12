@@ -144,7 +144,6 @@ def _load_document(path: Path) -> dict[str, Any]:
 
 
 def read_titles(
-    vault_root: str | Path,
     space_id: str,
     base_url: str,
     *,
@@ -158,7 +157,7 @@ def read_titles(
     """
     cache_path = _resolve_path(path)
     try:
-        namespace = cache_namespace(vault_root, space_id, base_url)
+        namespace = cache_namespace(space_id, base_url)
         raw = cache_path.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError, TypeError, ValueError):
         return {}
@@ -181,7 +180,6 @@ def read_titles(
 
 
 def remember_titles(
-    vault_root: str | Path,
     space_id: str,
     base_url: str,
     titles: Mapping[Any, Any],
@@ -202,7 +200,7 @@ def remember_titles(
     cache_path = _resolve_path(path)
     lock_file = _lock_file_for(cache_path)
     try:
-        namespace = cache_namespace(vault_root, space_id, base_url)
+        namespace = cache_namespace(space_id, base_url)
         _ensure_private_directory(cache_path.parent)
         _ensure_owner_only_file(lock_file)
         with store_lock(cache_path):

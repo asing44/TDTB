@@ -10,9 +10,8 @@ Store
 ``<app home>/state/deferrals.json`` (``app_config.state_dir()``,
 Capacities-first S1) — rolling (not dated; deferral memory is explicitly
 cross-day), written atomically (tmp + ``os.replace``) under a module lock, same
-single-writer discipline as ``runstate``/the runtime journal. It previously
-lived in the vault at ``00 - META/Cache/tdtb-deferrals.json``; the state
-dir is now the only location (V2 removed the vault fallback).
+single-writer discipline as ``runstate``/the runtime journal. It lives in the
+state dir (``app_config.state_dir()``).
 Shape::
 
     {"version": 1,
@@ -25,9 +24,8 @@ an enhancement, never a dependency (same rule as the recent-selections cache).
 
 Identity keys
 -------------
-``path:`` > ``todoist:`` > ``name:`` (casefolded), first available wins. Vault
-path is the most stable identity the digest carries; Todoist ids are stable but
-absent for vault rows; the name fallback keeps prompt-items and ad-hoc rows
+``path:`` > ``todoist:`` > ``name:`` (casefolded), first available wins. A
+path is the most stable identity the digest carries when present; Todoist ids are stable; the name fallback keeps prompt-items and ad-hoc rows
 addressable.
 
 Decay / expiry
@@ -55,12 +53,8 @@ from pathlib import Path
 from typing import Any
 
 import app_config
-import runstate
 
-#: The active store only; the pre-S1 vault location below is kept only
-#: as the migration tool's source of truth (the vault is never read).
 STATE_FILENAME = "deferrals.json"
-DEFERRALS_REL_PATH = f"{runstate.CACHE_DIR_REL}/tdtb-deferrals.json"
 SCHEMA_VERSION = 1
 
 MAX_BIAS = 2
@@ -98,16 +92,14 @@ def key_for_item(item: dict[str, Any]) -> str:
 # Store
 # ---------------------------------------------------------------------------
 
-def deferrals_path(vault_root: Path | str | None = None) -> Path:
+def deferrals_path() -> Path:
     """The active store path: ``<app home>/state/deferrals.json``.
-
-    ``vault_root`` is accepted for call-site compatibility and deliberately
-    ignored — the store is machine-local after S1 and derives only from
-    ``app_config.state_dir()``, never from the vault."""
+    The store is machine-local and derives only from
+    ``app_config.state_dir()``."""
     return app_config.state_dir() / STATE_FILENAME
 
 
-def _read_raw(vault_root: Path | str) -> dict[str, Any]:
+def _read_raw() -> dict[str, Any]:
     path = deferrals_path()
     if not path.is_file():
         return {}
@@ -144,12 +136,11 @@ def _parse_day(value: Any) -> date | None:
 
 
 def load_deferrals(
-    vault_root: Path | str,
     today: date | None = None,
 ) -> dict[str, dict[str, Any]]:
     """Read the store. With ``today``, expired entries are pruned from the
     returned map (the file itself is pruned lazily, on the next write)."""
-    items = _read_raw(vault_root)
+    items = _read_raw()
     if today is None:
         return items
     kept: dict[str, dict[str, Any]] = {}
@@ -164,14 +155,13 @@ def load_deferrals(
 
 
 def record_deferral(
-    vault_root: Path | str,
     item: dict[str, Any],
     on_date: date,
 ) -> dict[str, Any]:
     """Increment (or create) the item's deferral entry. Returns the new entry."""
     key = key_for_item(item)
     with _STORE_LOCK:
-        items = _read_raw(vault_root)
+        items = _read_raw()
         prior = items.get(key) or {}
         try:
             count = int(prior.get("count") or 0)
@@ -191,14 +181,13 @@ def record_deferral(
 
 
 def set_entry(
-    vault_root: Path | str,
     key: str,
     entry: dict[str, Any] | None,
 ) -> None:
     """Force one key to an exact value (or remove it) — the undo path for the
     ``defer`` runtime verb, restoring a journaled before-image byte-for-byte."""
     with _STORE_LOCK:
-        items = _read_raw(vault_root)
+        items = _read_raw()
         if entry is None:
             items.pop(key, None)
         else:
@@ -227,11 +216,11 @@ def bias_for(entry: dict[str, Any], today: date) -> int:
     return max(0, min(count, MAX_BIAS) - days // DECAY_INTERVAL_DAYS)
 
 
-def bias_map(vault_root: Path | str, today: date) -> dict[str, int]:
+def bias_map(today: date) -> dict[str, int]:
     """``{identity key: bias}`` for every non-zero entry — what ``rank_pool``
     consumes. Empty (never raising) when the cache is absent or unreadable."""
     out: dict[str, int] = {}
-    for key, entry in load_deferrals(vault_root, today=today).items():
+    for key, entry in load_deferrals(today=today).items():
         bias = bias_for(entry, today)
         if bias:
             out[key] = bias

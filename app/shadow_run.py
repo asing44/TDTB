@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""shadow_run.py — T13 gate prep: run a full shadow diff against the real
-vault from the CLI (no app process, no writes).
+"""shadow_run.py — T13 gate prep: run a full shadow diff from the CLI (no
+app process, no writes).
 
     .venv/bin/python shadow_run.py
     .venv/bin/python shadow_run.py --sequence-file path/to/sequence.json
 
-Vault root: ``$TDTB_VAULT_ROOT`` — the same env var main.py reads (spec
-locked decision 2, never hardcoded).
+The Obsidian note gather is gone (vault removal V4): the digest this tool
+builds carries no note rows, so the useful input is ``--sequence-file``.
 
 Pipeline: gather -> digest (main.py's rank_pool/build_digest, same
 deterministic ranking the /digest route uses) -> (skip judgment — this is a
@@ -18,7 +18,7 @@ the digest's Assigned items -> shadow.build_plan_manifest -> gather_live_state
 warnings.
 
 Always exits 0 — this is a diagnostic preview, not a CI gate. A missing
-Todoist token file (ShadowStateError) or an unconfigured vault root print a
+Todoist token file (ShadowStateError) prints a
 clear error and exit 1; everything else about a shadow run degrades to a
 warning per shadow.gather_live_state's per-surface contract.
 """
@@ -26,9 +26,8 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import sys
-from datetime import date, datetime
+from datetime import datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
@@ -38,27 +37,13 @@ import tdtb_gather as gather  # noqa: E402
 import main as main_mod  # noqa: E402
 import shadow  # noqa: E402
 
-VAULT_ROOT_ENV = "TDTB_VAULT_ROOT"
-
-
-def _gather_pool_and_assigned(vault: Path, today: date) -> tuple[list[dict], list[dict]]:
-    pool_notes: list[dict] = []
-    assigned_notes: list[dict] = []
-    for note in gather.walk_vault(vault):
-        name, folder, fm = note["name"], note["folder"], note["fm"]
-        if gather.is_assigned(folder, fm):
-            assigned_notes.append(note)
-        if gather.is_in_pool(name, folder, fm, today):
-            pool_notes.append(note)
-    return pool_notes, assigned_notes
-
 
 def _synthesize_trivial_sequence(assigned_items: list[dict]) -> dict:
     """No --sequence-file given: place each Assigned digest item back-to-back
     starting at 09:00, 30 minutes each, in digest order. This is NOT a real
     plan (no zone/capacity/anchored-block awareness) — it exists only to
     exercise build_plan_manifest / gather_live_state / diff_against_live
-    end-to-end against real vault data ahead of a real sequence."""
+    end-to-end against live Todoist/calendar state ahead of a real sequence."""
     rows = []
     minute = 9 * 60
     for item in assigned_items:
@@ -96,13 +81,12 @@ def _print_table(diff: "shadow.ShadowDiff") -> None:
     print()
 
 
-def run(vault: Path, sequence_file: str | None) -> int:
+def run(sequence_file: str | None) -> int:
     today = gather.effective_date(datetime.now())
-    pool_notes, assigned_notes = _gather_pool_and_assigned(vault, today)
-    run_data = gather.build_run_data(pool_notes, assigned_notes, today)
+    run_data = gather.empty_run_data(today)
 
     order = list(main_mod.config_reader.FALLBACK_RANKING_CRITERIA["within_tier_sort"])
-    config_result = main_mod.config_reader.read_config(vault)
+    config_result = main_mod.config_reader.read_config()
     if config_result.config is not None:
         value = config_result.config.get_ranking_criterion("within_tier_sort").value
         if isinstance(value, str):
@@ -122,7 +106,7 @@ def run(vault: Path, sequence_file: str | None) -> int:
     manifest = shadow.build_plan_manifest(digest, sequence, config)
 
     try:
-        live_state = shadow.gather_live_state(config, vault)
+        live_state = shadow.gather_live_state(config)
     except shadow.ShadowStateError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1
@@ -137,16 +121,7 @@ def main() -> int:
     parser.add_argument("--sequence-file", default=None, help="Path to a /sequence-shaped JSON file")
     args = parser.parse_args()
 
-    root = os.environ.get(VAULT_ROOT_ENV)
-    if not root:
-        print(f"ERROR: {VAULT_ROOT_ENV} not set", file=sys.stderr)
-        return 1
-    vault = Path(root).expanduser()
-    if not vault.is_dir():
-        print(f"ERROR: vault root not found: {vault}", file=sys.stderr)
-        return 1
-
-    return run(vault, args.sequence_file)
+    return run(args.sequence_file)
 
 
 if __name__ == "__main__":

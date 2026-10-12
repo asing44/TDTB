@@ -1,16 +1,16 @@
 """capacities_builder.py — production factory for the Capacities source adapter.
 
 This module is the ONLY place that reads the host-local Capacities credential
-and the vault-local structural mapping record, then assembles a
+and the app-owned structural mapping record, then assembles a
 :class:`capacities_adapter.CapacitiesAdapter`. It preserves the documented
-separation in ``capacities_adapter``: the adapter itself never reads vault files
+separation in ``capacities_adapter``: the adapter itself never reads files
 or credentials — the caller supplies both, and this builder is that caller.
 
 Two persisted surfaces feed the factory:
 
-1. The vault-local, versioned structural mapping record::
+1. The app-owned, versioned structural mapping record::
 
-       00 - META/Cache/tdtb-capacities-source.json
+       <app home>/state/capacities-source.json
 
    It maps each Capacities structure to an explicit ``StructureMapping`` and
    names the Capacities ``space_id``. It mirrors the established store pattern
@@ -27,8 +27,8 @@ Two persisted surfaces feed the factory:
 A third persisted surface is cache state, not configuration: the durable
 object-content cache at
 ``~/.config/tdtb/tdtb-capacities-content-cache.json``. It is machine-local so
-raw task content never enters a synced or backed-up vault, is namespaced by
-vault root + space + provider base URL, stores raw content with the
+raw task content never enters a synced or backed-up folder, is namespaced by
+space + provider base URL, stores raw content with the
 wall-clock UTC fetch time (never assignment decisions, and never a monotonic
 reading), and is treated as disposable and silently replaced when unusable.
 
@@ -60,7 +60,6 @@ import capacities_refresh_state
 import capacities_rules
 import capacities_settings
 import exclusion_settings
-import runstate
 import tag_exclusions
 from capacities_adapter import (
     CapacitiesAdapter,
@@ -81,16 +80,13 @@ from shadow import TOKEN_ENV_PATH
 # ---------------------------------------------------------------------------
 # Paths, schema, and credential constants
 # ---------------------------------------------------------------------------
-# S1: the record lives at ``<app home>/state/capacities-source.json``
-# (``app_config.state_dir()``) and its lock beside it. The ``*_REL_PATH``
-# constants below are the frozen pre-S1 vault locations, kept only as the
-# migration tool's source of truth (the vault is never read). The temp
+# The record lives at ``<app home>/state/capacities-source.json``
+# (``app_config.state_dir()``) and its lock beside it. The temp
 # name is unique per write (mkstemp), so it cannot collide with another
 # writer.
 
 STATE_FILENAME = "capacities-source.json"
 STATE_LOCK_FILENAME = "capacities-source.lock"
-SOURCE_REL_PATH = f"{runstate.CACHE_DIR_REL}/tdtb-capacities-source.json"
 
 #: How long a per-object content read stays reusable. The provider allows 30
 #: requests per minute; this TTL is what lets consecutive refreshes inside one
@@ -103,7 +99,7 @@ CONTENT_CACHE_TTL_SECONDS = 300.0
 CONTENT_CACHE_MAX_ENTRIES = 4096
 CONTENT_CACHE_MAX_BYTES = 16 * 1024 * 1024
 CONTENT_CACHE_SCHEMA_VERSION = 1
-#: Machine-local (never vault-local) so raw task content stays out of any
+#: Machine-local so raw task content stays out of any
 #: synced or backed-up tree. Same established machine-local root as the
 #: credential slot (``shadow.TOKEN_ENV_PATH`` -> ``~/.config/tdtb/env``).
 DEFAULT_CONTENT_CACHE_PATH = (
@@ -118,7 +114,6 @@ REFRESH_STATE_DIRNAME = "capacities-refresh"
 #: Keeping a distinct identity lets an explicit ``None`` (or any test cache)
 #: keep its exact current meaning.
 _DEFAULT_CONTENT_CACHE = object()
-LOCK_REL_PATH = f"{runstate.CACHE_DIR_REL}/tdtb-capacities-source.lock"
 SCHEMA_VERSION = 1
 
 #: The shared host-local credential slot (same file as the Todoist token).
@@ -426,16 +421,15 @@ class SourceRecord:
         }
 
 
-def source_path(vault_root: str | Path | None = None) -> Path:
+def source_path() -> Path:
     """The active store path: ``<app home>/state/capacities-source.json``.
 
-    ``vault_root`` is accepted for call-site compatibility and deliberately
-    ignored — the record is machine-local after S1 and derives only from
-    ``app_config.state_dir()``, never from the vault."""
+    The record is machine-local and derives only from
+    ``app_config.state_dir()``."""
     return app_config.state_dir() / STATE_FILENAME
 
 
-def lock_path(vault_root: str | Path | None = None) -> Path:
+def lock_path() -> Path:
     """The active lock-file path, beside the record in the app home.
 
     A 0-byte runtime artifact created on demand; never migrated."""
@@ -580,7 +574,7 @@ def decode_source_payload(*, space_id: Any, structures: Any) -> SourceRecord:
         ) from exc
 
 
-def read_source(vault_root: str | Path) -> SourceRecord | None:
+def read_source() -> SourceRecord | None:
     """Read the app-owned Capacities structural mapping record.
 
     A missing file returns ``None`` WITHOUT creating anything — that is the
@@ -588,8 +582,7 @@ def read_source(vault_root: str | Path) -> SourceRecord | None:
     storage raises :class:`CapacitiesSourceFormatError`; an unreadable file
     raises :class:`CapacitiesSourceStoreError`. Reads never write.
 
-    V2: the state-dir record is the only location; there is no vault
-    fallback. ``vault_root`` is accepted for call-site compatibility and ignored.
+    The state-dir record is the only location.
     """
     try:
         path = source_path() if os.path.lexists(source_path()) else None
@@ -610,13 +603,13 @@ def read_source(vault_root: str | Path) -> SourceRecord | None:
 # every existing caller and test name working unchanged; the behaviour lives
 # in exactly one place.
 #
-# Per-vault-root process-local locks (same single-process convention as
+# Process-local locks (keyed by the lock-file path) (same single-process convention as
 # ``capacities_settings``); the flock on the app-home lock file adds
 # cross-process serialization for the same bytes.
 
 
-def _store_lock(vault_root: str | Path) -> threading.Lock:
-    return capacities_cache_io.store_lock(vault_root)
+def _store_lock() -> threading.Lock:
+    return capacities_cache_io.store_lock(lock_path())
 
 
 def _acquire_path_lock(path: str | Path) -> Any:
@@ -624,7 +617,7 @@ def _acquire_path_lock(path: str | Path) -> Any:
     return capacities_cache_io.acquire_path_lock(path)
 
 
-def _acquire_lock_file(vault_root: str | Path) -> Any:
+def _acquire_lock_file() -> Any:
     return _acquire_path_lock(lock_path())
 
 
@@ -639,7 +632,6 @@ def _atomic_write_json(path: str | Path, data: dict[str, Any]) -> None:
 
 
 def save_source(
-    vault_root: str | Path,
     *,
     expected_revision: int,
     space_id: str,
@@ -658,11 +650,10 @@ def save_source(
         raise ValueError("expected_revision must be a nonnegative integer")
     candidate = SourceRecord(space_id=space_id, structures=tuple(structures))
 
-    root = Path(vault_root)
-    with _store_lock(root):
-        fh = _acquire_lock_file(root)
+    with _store_lock():
+        fh = _acquire_lock_file()
         try:
-            current = read_source(root)
+            current = read_source()
             current_revision = current.revision if current is not None else 0
             if current_revision != expected_revision:
                 raise CapacitiesSourceConflictError(
@@ -924,7 +915,7 @@ class _ContentCache:
             self._warn(
                 "namespace",
                 "Capacities content cache: ignored a stored cache for a "
-                "different vault or space; restart progress will be rebuilt "
+                "different space or provider; restart progress will be rebuilt "
                 "from fresh reads.",
             )
             return []
@@ -1053,13 +1044,13 @@ class _ContentCache:
 
 
 def _content_cache_namespace(
-    vault_root: str | Path, space_id: str, base_url: str
+    space_id: str, base_url: str
 ) -> str:
-    """Stable digest identifying the vault + space + provider scope."""
-    return capacities_cache_io.cache_namespace(vault_root, space_id, base_url)
+    """Stable digest identifying the space + provider scope."""
+    return capacities_cache_io.cache_namespace(space_id, base_url)
 
 
-#: Namespace -> shared cache, so every adapter rebuild for the same vault +
+#: Namespace -> shared cache, so every adapter rebuild for the same
 #: space + provider reuses the same durable cache instance. The cache must
 #: outlive one adapter: every request builds and closes its own adapter.
 _CACHE_REGISTRY: dict[str, _ContentCache] = {}
@@ -1067,7 +1058,7 @@ _CACHE_REGISTRY_LOCK = threading.Lock()
 
 
 def _resolve_content_cache(
-    config: CapacitiesBuilderConfig, vault_root: str | Path, space_id: str
+    config: CapacitiesBuilderConfig, space_id: str
 ) -> Any:
     """Resolve the configured cache seam.
 
@@ -1077,7 +1068,7 @@ def _resolve_content_cache(
     """
     if config.content_cache is not _DEFAULT_CONTENT_CACHE:
         return config.content_cache
-    namespace = _content_cache_namespace(vault_root, space_id, config.base_url)
+    namespace = _content_cache_namespace(space_id, config.base_url)
     persist_path = (
         Path(config.cache_path)
         if config.cache_path is not None
@@ -1128,7 +1119,7 @@ def _resolve_assigned_structures(
 ) -> tuple[StructureMapping, ...]:
     """Resolve the settings declaration onto the source mappings.
 
-    This is the only place the two persisted surfaces — the vault-local
+    This is the only place the two persisted surfaces — the app-owned
     source record and the settings store — meet, so the precedence lives
     here: a structure declared in ``assigned_structures`` reads the declared
     raw property id with ``true`` implied, and every other structure keeps
@@ -1175,28 +1166,26 @@ def _structure_titles(payload: Any) -> dict[str, str]:
 
 
 def _structure_title_observer(
-    vault_root: str | Path, space_id: str, base_url: str
+    space_id: str, base_url: str
 ) -> Callable[[Any], None]:
     """Build the best-effort sink that persists observed structure titles.
 
     The sink calls ``remember_titles``, which never raises and returns
     ``False`` on any failure, so binding it adds no failure path to a read.
-    The namespace is exactly the (vault root, space, base URL) triple the
-    client was built for, so one vault, space, or provider URL can never see
-    another's titles. It makes no provider call of its own: it only ever
+    The namespace is exactly the (space, base URL) pair the client was built
+    for, so one space or provider URL can never see another's titles. It makes no provider call of its own: it only ever
     sees a payload a read already fetched.
     """
 
     def observe(payload: Any) -> None:
         remember_titles(
-            vault_root, space_id, base_url, _structure_titles(payload)
+            space_id, base_url, _structure_titles(payload)
         )
 
     return observe
 
 
 def build_capacities_adapter(
-    vault_root: str | Path,
     config: CapacitiesBuilderConfig | None = None,
     *,
     transport: Any = None,
@@ -1205,7 +1194,7 @@ def build_capacities_adapter(
 
     Order of operations (error semantics are the contract):
 
-    1. Read the vault-local mapping record. ABSENT -> return ``None`` silently;
+    1. Read the mapping record. ABSENT -> return ``None`` silently;
        a user who does not use Capacities sees no warning.
     2. A PRESENT but malformed/unsupported record raises a bounded error that
        carries no credential and no absolute machine path.
@@ -1219,15 +1208,15 @@ def build_capacities_adapter(
     No network call is made; the transport is injected.
     """
     cfg = config if config is not None else CapacitiesBuilderConfig()
-    record = read_source(vault_root)
+    record = read_source()
     if record is None:
         return None
 
-    settings = read_settings(vault_root).settings
+    settings = read_settings().settings
     assignment_settings = settings.to_assignment_settings()
     token = load_capacities_token(cfg.token_path)
     effective_transport = transport if transport is not None else cfg.transport
-    content_cache = _resolve_content_cache(cfg, vault_root, record.space_id)
+    content_cache = _resolve_content_cache(cfg, record.space_id)
 
     client = CapacitiesRestClient(
         token,
@@ -1237,7 +1226,7 @@ def build_capacities_adapter(
         transport=effective_transport,
         content_cache=content_cache,
         structures_observer=_structure_title_observer(
-            vault_root, record.space_id, cfg.base_url
+            record.space_id, cfg.base_url
         ),
     )
     return CapacitiesAdapter(
@@ -1270,11 +1259,10 @@ def refresh_state_dir() -> Path:
 
 
 def build_refresh_state(
-    vault_root: str | Path,
     space_id: str,
     config: CapacitiesBuilderConfig | None = None,
 ) -> capacities_refresh_state.RefreshStateStore:
-    """Resolve the direct-refresh store for one vault + space + provider.
+    """Resolve the direct-refresh store for one space + provider.
 
     Namespacing reuses the same machine-local root convention as the legacy
     cache (``app_config.state_dir()``) but a distinct directory. The provider
@@ -1291,7 +1279,6 @@ def build_refresh_state(
         root,
         origin=capacities_refresh_state.provider_origin(cfg.base_url),
         space_id=space_id,
-        vault_root=vault_root,
     )
 
 
@@ -1316,18 +1303,18 @@ class DirectIntakeRead:
     unreadable: int
 
 
-def read_direct_intake(vault_root: str | Path) -> DirectIntakeRead | None:
+def read_direct_intake() -> DirectIntakeRead | None:
     """Read the published generation for the offline direct intake.
 
     ``None`` means Capacities is not configured (no source record), which is
     silent by design. A malformed record raises
     :class:`CapacitiesSourceStoreError`, which the caller maps to a refusal.
     """
-    record = read_source(vault_root)
+    record = read_source()
     if record is None:
         return None
-    settings = read_settings(vault_root).settings
-    store = build_refresh_state(vault_root, record.space_id)
+    settings = read_settings().settings
+    store = build_refresh_state(record.space_id)
     snapshot = store.load_snapshot(capacities_refresh.DEFAULT_SCOPE_KEY)
     structures = None
     objects: list[dict[str, Any]] = []
@@ -1356,7 +1343,7 @@ def read_direct_intake(vault_root: str | Path) -> DirectIntakeRead | None:
     )
 
 
-def refresh_config_revision(vault_root: str | Path) -> int | None:
+def refresh_config_revision() -> int | None:
     """The current combined source+settings+rules+exclusions revision, or
     ``None`` if unconfigured.
 
@@ -1369,20 +1356,20 @@ def refresh_config_revision(vault_root: str | Path) -> int | None:
     returns ``None`` before the exclusions store is touched, so an
     unconfigured Capacities source never reads the policy.
     """
-    current = read_source(vault_root)
+    current = read_source()
     if current is None:
         return None
     rules = capacities_rules.load_rules(current.space_id)
-    exclusions = exclusion_settings.read_settings(vault_root)
+    exclusions = exclusion_settings.read_settings()
     return (
         int(current.revision)
-        + int(read_settings(vault_root).settings.revision)
+        + int(read_settings().settings.revision)
         + int(rules.revision)
         + int(exclusions.settings.revision)
     )
 
 
-def refresh_source_space_id(vault_root: str | Path) -> str | None:
+def refresh_source_space_id() -> str | None:
     """The live source record's space id, or ``None`` if unconfigured.
 
     One definition shared by the coordinator's publication guard and the route
@@ -1393,7 +1380,7 @@ def refresh_source_space_id(vault_root: str | Path) -> str | None:
     another. A malformed or unreadable source record raises, exactly like
     :func:`refresh_config_revision`.
     """
-    current = read_source(vault_root)
+    current = read_source()
     if current is None:
         return None
     return current.space_id
@@ -1407,7 +1394,7 @@ def _refresh_state_root(config: CapacitiesBuilderConfig) -> Path:
 
 
 @contextmanager
-def _config_save_guard(vault_root: str | Path) -> Iterator[None]:
+def _config_save_guard() -> Iterator[None]:
     """Serialize publication against configuration savers (KTD3).
 
     Held across the coordinator's revision recheck and generation install, a
@@ -1427,8 +1414,8 @@ def _config_save_guard(vault_root: str | Path) -> Iterator[None]:
     settings, then rules, then exclusions; only this guard takes all four, so
     the fixed order cannot invert.
     """
-    with _store_lock(vault_root):
-        handle = _acquire_lock_file(vault_root)
+    with _store_lock():
+        handle = _acquire_lock_file()
         try:
             settings_handle = capacities_cache_io.acquire_path_lock(
                 capacities_settings.lock_path()
@@ -1454,7 +1441,6 @@ def _config_save_guard(vault_root: str | Path) -> Iterator[None]:
 
 
 def build_refresh_coordinator(
-    vault_root: str | Path,
     config: CapacitiesBuilderConfig | None = None,
 ) -> capacities_refresh.RefreshCoordinator | None:
     """Construct the paced direct-refresh coordinator, or ``None`` if unconfigured.
@@ -1491,12 +1477,12 @@ def build_refresh_coordinator(
     exclusions store.
     """
     cfg = config if config is not None else CapacitiesBuilderConfig()
-    pre_build_space = refresh_source_space_id(vault_root)
-    configuration_revision = refresh_config_revision(vault_root)
+    pre_build_space = refresh_source_space_id()
+    configuration_revision = refresh_config_revision()
     if configuration_revision is None:
         return None
 
-    record = read_source(vault_root)
+    record = read_source()
     if record is None:
         return None
     if record.space_id != pre_build_space:
@@ -1510,10 +1496,10 @@ def build_refresh_coordinator(
             f"{record.space_id!r}); start the refresh again"
         )
 
-    settings = read_settings(vault_root).settings
+    settings = read_settings().settings
     rules = capacities_rules.load_rules(record.space_id)
     exclusion_policy = tag_exclusions.ExclusionPolicy.from_read(
-        exclusion_settings.read_settings(vault_root)
+        exclusion_settings.read_settings()
     )
     token = load_capacities_token(cfg.token_path)
     client = CapacitiesRestClient(
@@ -1524,10 +1510,10 @@ def build_refresh_coordinator(
         transport=cfg.transport,
         content_cache=None,
         structures_observer=_structure_title_observer(
-            vault_root, record.space_id, cfg.base_url
+            record.space_id, cfg.base_url
         ),
     )
-    store = build_refresh_state(vault_root, record.space_id, cfg)
+    store = build_refresh_state(record.space_id, cfg)
 
     return capacities_refresh.RefreshCoordinator(
         root=_refresh_state_root(cfg),
@@ -1537,10 +1523,10 @@ def build_refresh_coordinator(
         mappings=_resolve_assigned_structures(
             record.to_mappings(), settings.assigned_structures
         ),
-        revision_supplier=lambda: refresh_config_revision(vault_root),
-        space_id_supplier=lambda: refresh_source_space_id(vault_root),
+        revision_supplier=lambda: refresh_config_revision(),
+        space_id_supplier=lambda: refresh_source_space_id(),
         configuration_revision=configuration_revision,
-        config_guard=lambda: _config_save_guard(vault_root),
+        config_guard=lambda: _config_save_guard(),
         assignment_settings=settings.to_assignment_settings(),
         rules=rules,
         exclusion_policy=exclusion_policy,
@@ -1550,7 +1536,6 @@ def build_refresh_coordinator(
 
 def import_legacy_content_cache(
     store: capacities_refresh_state.RefreshStateStore,
-    vault_root: str | Path,
     space_id: str,
     config: CapacitiesBuilderConfig | None = None,
     *,
@@ -1561,7 +1546,7 @@ def import_legacy_content_cache(
 
     The legacy namespace digest is computed exactly as
     :func:`_resolve_content_cache` does, so only a document written for this
-    vault + space + provider is eligible. ``legacy_path`` defaults to the
+    space + provider is eligible. ``legacy_path`` defaults to the
     configured cache path (or ``DEFAULT_CONTENT_CACHE_PATH``), matching the
     legacy reader's own resolution.
     """
@@ -1572,7 +1557,7 @@ def import_legacy_content_cache(
         path = Path(cfg.cache_path)
     else:
         path = DEFAULT_CONTENT_CACHE_PATH
-    expected_namespace = _content_cache_namespace(vault_root, space_id, cfg.base_url)
+    expected_namespace = _content_cache_namespace(space_id, cfg.base_url)
     return capacities_refresh_state.import_legacy_entries(
         store,
         path,
@@ -1726,13 +1711,12 @@ def _catalog_structures(payload: Any) -> tuple[CatalogStructure, ...]:
 
 
 def discover_capacities_source(
-    vault_root: str | Path,
     space_id: str,
     config: CapacitiesBuilderConfig | None = None,
 ) -> tuple[CatalogStructure, ...]:
     """Read the space's structures for the mapping editor.
 
-    Deliberately independent of the vault-local mapping record and the
+    Deliberately independent of the mapping record and the
     assignment settings: the editor exists to build a mapping, so discovery
     has to work while no valid mapping exists. Only the REST client is
     constructed — the full adapter factory requires the mapping and raises
@@ -1750,7 +1734,7 @@ def discover_capacities_source(
         timeout=cfg.timeout,
         transport=cfg.transport,
         structures_observer=_structure_title_observer(
-            vault_root, space_id, cfg.base_url
+            space_id, cfg.base_url
         ),
     )
     try:

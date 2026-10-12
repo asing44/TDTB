@@ -29,8 +29,8 @@ def _entry(tag_id: str = TAG_A, space: str = SPACE, source: str = "capacities") 
     return {"source": source, "space_id": space, "tag_id": tag_id}
 
 
-def _write_raw(vault: Path, raw: str) -> Path:
-    path = es.settings_path(vault)
+def _write_raw(raw: str) -> Path:
+    path = es.settings_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(raw, encoding="utf-8")
     return path
@@ -49,12 +49,12 @@ class TestDefaults:
         vault = tmp_path / "vault-root"
         vault.mkdir()
 
-        result = es.read_settings(vault)
+        result = es.read_settings()
 
         assert result.persisted is False
         assert result.settings.revision == 0
         assert result.settings.tags == ()
-        assert not es.settings_path(vault).exists()
+        assert not es.settings_path().exists()
         # Reading must not even materialize the cache directory.
         assert not (vault / "00 - META" / "Cache").exists()
 
@@ -108,7 +108,6 @@ class TestSave:
         vault.mkdir()
 
         saved = es.save_settings(
-            vault,
             expected_revision=0,
             exclusions=[
                 _entry(TAG_B, OTHER_SPACE),
@@ -118,7 +117,7 @@ class TestSave:
 
         assert saved.revision == 1
         assert [t.tag_id for t in saved.tags] == [TAG_A, TAG_B]
-        on_disk = json.loads(es.settings_path(vault).read_text(encoding="utf-8"))
+        on_disk = json.loads(es.settings_path().read_text(encoding="utf-8"))
         assert on_disk == {
             "version": 1,
             "revision": 1,
@@ -130,16 +129,16 @@ class TestSave:
             },
         }
         # Round-trip read agrees with the saved settings.
-        result = es.read_settings(vault)
+        result = es.read_settings()
         assert result.persisted is True
         assert result.settings == saved
 
     def test_second_save_replaces_the_whole_list(self, tmp_path):
         vault = tmp_path / "vault-root"
         vault.mkdir()
-        es.save_settings(vault, expected_revision=0, exclusions=[_entry(TAG_A)])
+        es.save_settings(expected_revision=0, exclusions=[_entry(TAG_A)])
 
-        saved = es.save_settings(vault, expected_revision=1, exclusions=[_entry(TAG_B)])
+        saved = es.save_settings(expected_revision=1, exclusions=[_entry(TAG_B)])
 
         assert saved.revision == 2
         assert [t.tag_id for t in saved.tags] == [TAG_B]
@@ -147,41 +146,40 @@ class TestSave:
     def test_stale_revision_conflicts_and_preserves_bytes(self, tmp_path):
         vault = tmp_path / "vault-root"
         vault.mkdir()
-        es.save_settings(vault, expected_revision=0, exclusions=[_entry(TAG_A)])
-        before = es.settings_path(vault).read_bytes()
+        es.save_settings(expected_revision=0, exclusions=[_entry(TAG_A)])
+        before = es.settings_path().read_bytes()
 
         with pytest.raises(es.ExclusionSettingsConflictError):
-            es.save_settings(vault, expected_revision=0, exclusions=[_entry(TAG_B)])
+            es.save_settings(expected_revision=0, exclusions=[_entry(TAG_B)])
 
-        assert es.settings_path(vault).read_bytes() == before
+        assert es.settings_path().read_bytes() == before
 
     def test_invalid_inputs_rejected_before_any_file_access(self, tmp_path):
         vault = tmp_path / "vault-root"
         vault.mkdir()
-        _write_raw(vault, "{not json")
+        _write_raw("{not json")
 
         with pytest.raises(ValueError):
-            es.save_settings(vault, expected_revision=0, exclusions=[_entry(source="todoist")])
+            es.save_settings(expected_revision=0, exclusions=[_entry(source="todoist")])
         with pytest.raises(ValueError):
-            es.save_settings(vault, expected_revision=-1, exclusions=[])
+            es.save_settings(expected_revision=-1, exclusions=[])
         with pytest.raises(ValueError):
             es.save_settings(
-                vault,
                 expected_revision=0,
                 exclusions=[_entry(TAG_A), _entry(TAG_A)],
             )
 
-        assert es.settings_path(vault).read_bytes() == b"{not json"
+        assert es.settings_path().read_bytes() == b"{not json"
 
     def test_malformed_storage_blocks_save_without_erasing(self, tmp_path):
         vault = tmp_path / "vault-root"
         vault.mkdir()
-        _write_raw(vault, json.dumps({"version": 1}))
+        _write_raw(json.dumps({"version": 1}))
 
         with pytest.raises(es.ExclusionSettingsFormatError):
-            es.save_settings(vault, expected_revision=0, exclusions=[_entry(TAG_A)])
+            es.save_settings(expected_revision=0, exclusions=[_entry(TAG_A)])
 
-        assert es.settings_path(vault).read_bytes() == json.dumps({"version": 1}).encode()
+        assert es.settings_path().read_bytes() == json.dumps({"version": 1}).encode()
 
     def test_concurrent_saves_serialize_on_the_lock(self, tmp_path):
         vault = tmp_path / "vault-root"
@@ -192,7 +190,7 @@ class TestSave:
         def worker() -> None:
             barrier.wait()
             try:
-                es.save_settings(vault, expected_revision=0, exclusions=[_entry(TAG_A)])
+                es.save_settings(expected_revision=0, exclusions=[_entry(TAG_A)])
                 outcomes.append("saved")
             except es.ExclusionSettingsConflictError:
                 outcomes.append("conflict")
@@ -204,31 +202,31 @@ class TestSave:
             t.join()
 
         assert sorted(outcomes) == ["conflict", "saved"]
-        assert es.read_settings(vault).settings.revision == 1
+        assert es.read_settings().settings.revision == 1
 
     def test_atomic_write_failure_preserves_the_original_bytes(self, tmp_path, monkeypatch):
         vault = tmp_path / "vault-root"
         vault.mkdir()
-        es.save_settings(vault, expected_revision=0, exclusions=[_entry(TAG_A)])
-        before = es.settings_path(vault).read_bytes()
+        es.save_settings(expected_revision=0, exclusions=[_entry(TAG_A)])
+        before = es.settings_path().read_bytes()
 
         def boom(*args, **kwargs):
             raise OSError("simulated write failure")
 
         monkeypatch.setattr(es, "_atomic_write_json", boom)
         with pytest.raises(OSError):
-            es.save_settings(vault, expected_revision=1, exclusions=[_entry(TAG_B)])
+            es.save_settings(expected_revision=1, exclusions=[_entry(TAG_B)])
 
-        assert es.settings_path(vault).read_bytes() == before
-        assert es.read_settings(vault).settings.revision == 1
+        assert es.settings_path().read_bytes() == before
+        assert es.read_settings().settings.revision == 1
 
     def test_no_temp_files_left_behind(self, tmp_path):
         vault = tmp_path / "vault-root"
         vault.mkdir()
-        es.save_settings(vault, expected_revision=0, exclusions=[_entry(TAG_A)])
+        es.save_settings(expected_revision=0, exclusions=[_entry(TAG_A)])
 
         leftovers = [
-            p.name for p in es.settings_path(vault).parent.iterdir()
+            p.name for p in es.settings_path().parent.iterdir()
             if p.name.endswith(".tmp")
         ]
         assert leftovers == []
@@ -284,10 +282,10 @@ class TestMalformedStorage:
     def test_malformed_storage_raises_and_preserves_bytes(self, tmp_path, raw):
         vault = tmp_path / "vault-root"
         vault.mkdir()
-        path = _write_raw(vault, raw)
+        path = _write_raw(raw)
 
         with pytest.raises(es.ExclusionSettingsFormatError):
-            es.read_settings(vault)
+            es.read_settings()
 
         assert path.read_bytes() == raw.encode()
 
@@ -295,13 +293,12 @@ class TestMalformedStorage:
         vault = tmp_path / "vault-root"
         vault.mkdir()
         _write_raw(
-            vault,
             json.dumps(_valid_doc(3, [
                 {"source": "capacities", "space_id": SPACE, "tag_id": TAG_A},
             ])),
         )
 
-        result = es.read_settings(vault)
+        result = es.read_settings()
 
         assert result.persisted is True
         assert result.settings.revision == 3
@@ -312,7 +309,7 @@ class TestMalformedStorage:
         vault.mkdir()
         # A directory where the file should be is unreadable storage, not a
         # missing file — reads fail closed without touching it.
-        es.settings_path(vault).mkdir(parents=True)
+        es.settings_path().mkdir(parents=True)
 
         with pytest.raises(es.ExclusionSettingsStoreError):
-            es.read_settings(vault)
+            es.read_settings()

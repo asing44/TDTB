@@ -36,7 +36,7 @@ def vault(tmp_path) -> Path:
 @pytest.fixture
 def client(vault) -> TestClient:
     vault.mkdir()
-    app = main_mod.create_app(vault_root=vault)
+    app = main_mod.create_app()
     c = TestClient(app)
     c.app_token = app.state.token
     return c
@@ -46,7 +46,7 @@ def _auth(client: TestClient) -> dict:
     return {"X-TDTB-Token": client.app_token}
 
 
-def _write_log(vault: Path, history_yaml: str) -> None:
+def _write_log(history_yaml: str) -> None:
     p = LOG_PATH()
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(
@@ -69,25 +69,24 @@ class TestPlanInputsMicro:
         # the auto-pick rides config for downstream sequence/commit bodies
         assert body["config"]["micro_adventure"] == ma["pick"]
 
-    def test_recent_use_excluded_lru_advances(self, client, vault, monkeypatch):
+    def test_recent_use_excluded_lru_advances(self, client, monkeypatch):
         monkeypatch.setattr(gather, "effective_date", lambda now: TODAY)
-        _write_log(vault, "  - date: 2026-07-11\n    id: ma01\n    idea: x\n    done: true\n")
+        _write_log("  - date: 2026-07-11\n    id: ma01\n    idea: x\n    done: true\n")
         ma = client.get("/plan-inputs").json()["micro_adventure"]
         assert ma["pick"]["id"] == "ma02"  # ma01 inside the 14-day window
         assert ma["streak"] == 1
 
-    def test_pending_confirm_surfaces_when_inconclusive(self, client, vault, monkeypatch):
+    def test_pending_confirm_surfaces_when_inconclusive(self, client, monkeypatch):
         monkeypatch.setattr(gather, "effective_date", lambda now: TODAY)
-        _write_log(vault, "  - date: 2026-07-11\n    id: ma03\n    idea: Ride bike somewhere\n    done:\n")
+        _write_log("  - date: 2026-07-11\n    id: ma03\n    idea: Ride bike somewhere\n    done:\n")
         ma = client.get("/plan-inputs").json()["micro_adventure"]
         assert ma["pending_confirm"] == {
             "date": "2026-07-11", "id": "ma03", "idea": "Ride bike somewhere",
         }
 
-    def test_todoist_completion_probe_resolves_prior(self, client, vault, monkeypatch, live_sources_mode):
+    def test_todoist_completion_probe_resolves_prior(self, client, monkeypatch, live_sources_mode):
         monkeypatch.setattr(gather, "effective_date", lambda now: TODAY)
         _write_log(
-            vault,
             "  - date: 2026-07-11\n    id: ma03\n    idea: x\n"
             "    todoist_task_id: t99\n    done:\n",
         )
@@ -97,7 +96,7 @@ class TestPlanInputsMicro:
                 assert task_id == "t99"
                 return {"checked": True}
 
-        client.app.state.build_read_clients = lambda v, c: (ReadClient(), None)
+        client.app.state.build_read_clients = lambda c: (ReadClient(), None)
         ma = client.get("/plan-inputs").json()["micro_adventure"]
         assert ma["pending_confirm"] is None
         assert ma["streak"] == 1  # virtually resolved done:true
@@ -105,10 +104,10 @@ class TestPlanInputsMicro:
         head = micro_adventure.read_history(LOG_PATH())[0]
         assert head.done is None
 
-    def test_runstate_override_wins(self, client, vault, monkeypatch):
+    def test_runstate_override_wins(self, client, monkeypatch):
         monkeypatch.setattr(gather, "effective_date", lambda now: TODAY)
         rs.update_runstate(
-            vault, TODAY,
+            TODAY,
             {"micro_adventure": {"id": "custom", "idea": "Night swim", "category": "custom"}},
         )
         body = client.get("/plan-inputs").json()
@@ -119,50 +118,50 @@ class TestPlanInputsMicro:
 
 
 class TestGatherPopulatesRunstate:
-    def test_gather_writes_micro_keys(self, client, vault, monkeypatch):
+    def test_gather_writes_micro_keys(self, client, monkeypatch):
         monkeypatch.setattr(gather, "effective_date", lambda now: TODAY)
         r = client.post("/gather", headers=_auth(client))
         assert r.status_code == 200
-        state = main_mod._read_today_runstate(vault, TODAY)
+        state = main_mod._read_today_runstate(TODAY)
         assert state["micro_adventure"]["id"] == "ma01"
         assert state["live_pool"][0]["id"] == "ma01"
         assert state["live_streak"] == 0
         assert state["pending_confirm"] is None
 
-    def test_gather_preserves_existing_override(self, client, vault, monkeypatch):
+    def test_gather_preserves_existing_override(self, client, monkeypatch):
         monkeypatch.setattr(gather, "effective_date", lambda now: TODAY)
         override = {"id": "custom", "idea": "Night swim", "category": "custom"}
-        rs.update_runstate(vault, TODAY, {"micro_adventure": override})
+        rs.update_runstate(TODAY, {"micro_adventure": override})
         client.post("/gather", headers=_auth(client))
-        state = main_mod._read_today_runstate(vault, TODAY)
+        state = main_mod._read_today_runstate(TODAY)
         assert state["micro_adventure"] == override  # not clobbered by auto
 
 
 class TestDaySetupOverride:
-    def test_set_persist_and_clear(self, client, vault, monkeypatch):
+    def test_set_persist_and_clear(self, client, monkeypatch):
         monkeypatch.setattr(gather, "effective_date", lambda now: TODAY)
         r = client.post(
             "/day-setup", headers=_auth(client),
             json={"micro_adventure": {"id": "ma07", "idea": "Watch sunset", "category": "nature"}},
         )
         assert r.status_code == 200
-        assert main_mod._read_today_runstate(vault, TODAY)["micro_adventure"]["id"] == "ma07"
+        assert main_mod._read_today_runstate(TODAY)["micro_adventure"]["id"] == "ma07"
 
         # omitted field preserves
         client.post("/day-setup", headers=_auth(client), json={"anchor": "09:00"})
-        assert main_mod._read_today_runstate(vault, TODAY)["micro_adventure"]["id"] == "ma07"
+        assert main_mod._read_today_runstate(TODAY)["micro_adventure"]["id"] == "ma07"
 
         # explicit null clears back to auto
         client.post("/day-setup", headers=_auth(client), json={"micro_adventure": None})
-        assert main_mod._read_today_runstate(vault, TODAY)["micro_adventure"] is None
+        assert main_mod._read_today_runstate(TODAY)["micro_adventure"] is None
 
-    def test_custom_category_defaulted(self, client, vault, monkeypatch):
+    def test_custom_category_defaulted(self, client, monkeypatch):
         monkeypatch.setattr(gather, "effective_date", lambda now: TODAY)
         client.post(
             "/day-setup", headers=_auth(client),
             json={"micro_adventure": {"id": "custom", "idea": "Night swim"}},
         )
-        stored = main_mod._read_today_runstate(vault, TODAY)["micro_adventure"]
+        stored = main_mod._read_today_runstate(TODAY)["micro_adventure"]
         assert stored == {"id": "custom", "idea": "Night swim", "category": "custom"}
 
     def test_invalid_shape_422(self, client):
@@ -202,7 +201,7 @@ class FakeLiveTodoist:
         return self._tasks[task_id]
 
 
-def _fake_live_state(config, vault_root):
+def _fake_live_state(config):
     return {
         "todoist_tasks": [],
         "calendar_events": [],
@@ -233,7 +232,7 @@ class TestCommitHistoryAppend:
         monkeypatch.setattr(gather, "effective_date", lambda now: TODAY)
         monkeypatch.setattr(shadow, "gather_live_state", _fake_live_state)
         rs.update_runstate(
-            vault, TODAY,
+            TODAY,
             {"micro_adventure": {"id": "ma03", "idea": "Ride bike somewhere",
                                  "category": "novelty"},
              # T12a: the commit routes derive a day frame from the runstate
@@ -259,7 +258,7 @@ class TestCommitHistoryAppend:
     def test_live_commit_appends_history_with_task_id(self, client, vault, monkeypatch):
         self._seed(vault, monkeypatch)
         fake = FakeLiveTodoist()
-        client.app.state.build_commit_clients = lambda v, cfg: (fake, None)
+        client.app.state.build_commit_clients = lambda cfg: (fake, None)
         r = self._post_live(client)
         assert r.status_code == 200
         body = r.json()
@@ -276,7 +275,7 @@ class TestCommitHistoryAppend:
     def test_recommit_is_idempotent_one_entry(self, client, vault, monkeypatch):
         self._seed(vault, monkeypatch)
         fake = FakeLiveTodoist()
-        client.app.state.build_commit_clients = lambda v, cfg: (fake, None)
+        client.app.state.build_commit_clients = lambda cfg: (fake, None)
         assert self._post_live(client).json()["ok"] is True
         assert self._post_live(client, resume=True).json()["ok"] is True
         history = micro_adventure.read_history(LOG_PATH())
@@ -300,7 +299,7 @@ class TestCommitHistoryAppend:
     def test_failed_commit_does_not_append(self, client, vault, monkeypatch):
         self._seed(vault, monkeypatch)
         # no todoist client -> the todoist surface fails -> report.ok False
-        client.app.state.build_commit_clients = lambda v, cfg: (None, None)
+        client.app.state.build_commit_clients = lambda cfg: (None, None)
         body = self._post_live(client).json()
         assert body["ok"] is False
         assert body["micro_adventure_logged"] is False
@@ -311,12 +310,12 @@ class TestCommitHistoryAppend:
         the prior entry stays unconfirmed (done null) until answered in the
         cockpit, and the vault note is not even read."""
         self._seed(vault, monkeypatch)
-        _write_log(vault, "  - date: 2026-07-11\n    id: ma07\n    idea: Watch sunset\n    done:\n")
+        _write_log("  - date: 2026-07-11\n    id: ma07\n    idea: Watch sunset\n    done:\n")
         note = vault / "30 - Daily" / "2026-07-11.md"
         note.parent.mkdir(parents=True, exist_ok=True)
         note.write_text("# J\n### Live\n- [x] 🌱 Watch sunset\n", encoding="utf-8")
         fake = FakeLiveTodoist()
-        client.app.state.build_commit_clients = lambda v, cfg: (fake, None)
+        client.app.state.build_commit_clients = lambda cfg: (fake, None)
         assert self._post_live(client).json()["micro_adventure_logged"] is True
         history = micro_adventure.read_history(LOG_PATH())
         assert [(e.id, e.done) for e in history] == [("ma03", None), ("ma07", None)]
@@ -327,12 +326,12 @@ class TestCommitHistoryAppend:
         answer recorded through the loose-end route survives the next commit's
         history rewrite."""
         self._seed(vault, monkeypatch)
-        _write_log(vault, "  - date: 2026-07-11\n    id: ma07\n    idea: Watch sunset\n    done:\n")
+        _write_log("  - date: 2026-07-11\n    id: ma07\n    idea: Watch sunset\n    done:\n")
         r = client.post("/micro-adventure/loose-end", headers=_auth(client),
                         json={"date": "2026-07-11", "id": "ma07", "done": True})
         assert r.status_code == 200, r.text
         fake = FakeLiveTodoist()
-        client.app.state.build_commit_clients = lambda v, cfg: (fake, None)
+        client.app.state.build_commit_clients = lambda cfg: (fake, None)
         assert self._post_live(client).json()["micro_adventure_logged"] is True
         history = micro_adventure.read_history(LOG_PATH())
         assert [(e.id, e.done) for e in history] == [("ma03", None), ("ma07", True)]
@@ -346,9 +345,9 @@ class TestPoolComesFromConfig:
     @staticmethod
     def _state(tmp_path: Path):
         import config_reader
-        result = config_reader.read_config(tmp_path)
+        result = config_reader.read_config()
         sections = dict(result.config.sections) if result.config else {}
-        return main_mod._micro_adventure_state(tmp_path, sections, TODAY)[0]
+        return main_mod._micro_adventure_state(sections, TODAY)[0]
 
     def test_config_pool_is_offered(self, tmp_path: Path) -> None:
         import json

@@ -67,23 +67,22 @@ def _valid_token_file(tmp_path: Path) -> Path:
     return _write_token(tmp_path / "env", "CAPACITIES_API_TOKEN=secret-token-value\n")
 
 
-def _write_source(vault_root: Path, payload: dict) -> Path:
-    path = cb.source_path(vault_root)
+def _write_source(payload: dict) -> Path:
+    path = cb.source_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload), encoding="utf-8")
     return path
 
 
-def _write_source_raw(vault_root: Path, text: str) -> Path:
-    path = cb.source_path(vault_root)
+def _write_source_raw(text: str) -> Path:
+    path = cb.source_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding="utf-8")
     return path
 
 
-def _write_settings(vault_root: Path) -> None:
+def _write_settings() -> None:
     cs.save_settings(
-        vault_root,
         expected_revision=0,
         native_task_auto=cs.NativeTaskAutoPolicy(),
         excluded=(EXCLUDED,),
@@ -182,15 +181,15 @@ class _FakeProvider:
 def test_absent_record_returns_none_silently(tmp_path):
     token = _valid_token_file(tmp_path)
     result = cb.build_capacities_adapter(
-        tmp_path, cb.CapacitiesBuilderConfig(token_path=token)
+        cb.CapacitiesBuilderConfig(token_path=token)
     )
     assert result is None
     # Nothing was created as a side effect of the opt-out read.
-    assert not cb.source_path(tmp_path).exists()
+    assert not cb.source_path().exists()
 
 
 def test_read_source_returns_none_when_absent(tmp_path):
-    assert cb.read_source(tmp_path) is None
+    assert cb.read_source() is None
 
 
 # ---------------------------------------------------------------------------
@@ -198,13 +197,12 @@ def test_read_source_returns_none_when_absent(tmp_path):
 # ---------------------------------------------------------------------------
 
 def test_well_formed_record_returns_configured_adapter(tmp_path):
-    _write_source(tmp_path, _valid_payload())
-    _write_settings(tmp_path)
+    _write_source(_valid_payload())
+    _write_settings()
     token = _valid_token_file(tmp_path)
     transport = _RecordingTransport()
 
     adapter = cb.build_capacities_adapter(
-        tmp_path,
         cb.CapacitiesBuilderConfig(token_path=token),
         transport=transport,
     )
@@ -223,9 +221,8 @@ def test_well_formed_record_returns_configured_adapter(tmp_path):
 def test_settings_admission_inputs_reach_the_adapter_config(tmp_path):
     """The production path carries both persisted admission inputs from the
     vault file through ``to_assignment_settings`` into the built adapter."""
-    _write_source(tmp_path, _valid_payload())
+    _write_source(_valid_payload())
     cs.save_settings(
-        tmp_path,
         expected_revision=0,
         native_task_auto=cs.NativeTaskAutoPolicy(),
         excluded=(),
@@ -237,7 +234,6 @@ def test_settings_admission_inputs_reach_the_adapter_config(tmp_path):
     transport = _RecordingTransport()
 
     adapter = cb.build_capacities_adapter(
-        tmp_path,
         cb.CapacitiesBuilderConfig(token_path=token),
         transport=transport,
     )
@@ -252,12 +248,12 @@ def test_settings_admission_inputs_reach_the_adapter_config(tmp_path):
 
 
 def test_transport_is_injected_and_no_network_calls_made(tmp_path):
-    _write_source(tmp_path, _valid_payload())
+    _write_source(_valid_payload())
     token = _valid_token_file(tmp_path)
     transport = _RecordingTransport()
 
     adapter = cb.build_capacities_adapter(
-        tmp_path, cb.CapacitiesBuilderConfig(token_path=token, transport=transport)
+        cb.CapacitiesBuilderConfig(token_path=token, transport=transport)
     )
 
     assert adapter is not None
@@ -282,9 +278,8 @@ SETTINGS_ASSIGNED_PROPERTY = "f779f78a-settings-assigned"
 ADVENTURE_ASSIGNED_PROPERTY = "c19f9b95-settings-assigned"
 
 
-def _write_settings_with_declarations(vault_root: Path, declarations: dict) -> None:
+def _write_settings_with_declarations(declarations: dict) -> None:
     cs.save_settings(
-        vault_root,
         expected_revision=0,
         native_task_auto=cs.NativeTaskAutoPolicy(),
         excluded=(EXCLUDED,),
@@ -293,9 +288,9 @@ def _write_settings_with_declarations(vault_root: Path, declarations: dict) -> N
     )
 
 
-def _write_legacy_settings(vault_root: Path) -> None:
+def _write_legacy_settings() -> None:
     """A pre-existing version-1 file written before the additive key existed."""
-    path = cs.settings_path(vault_root)
+    path = cs.settings_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
         json.dumps({
@@ -341,10 +336,9 @@ def _assignment_payload() -> dict:
 
 
 def _built_mappings(tmp_path: Path, payload: dict) -> tuple[StructureMapping, ...]:
-    _write_source(tmp_path, payload)
+    _write_source(payload)
     token = _valid_token_file(tmp_path)
     adapter = cb.build_capacities_adapter(
-        tmp_path,
         cb.CapacitiesBuilderConfig(token_path=token, transport=_RecordingTransport()),
     )
     assert adapter is not None
@@ -411,7 +405,7 @@ def _declared_object(object_id: str, *, boolean: bool) -> dict:
 
 
 def test_declaration_overrides_only_the_declared_structure(tmp_path):
-    _write_settings_with_declarations(tmp_path, {"custom-project": SETTINGS_ASSIGNED_PROPERTY})
+    _write_settings_with_declarations({"custom-project": SETTINGS_ASSIGNED_PROPERTY})
 
     mappings = {m.structure_id: m for m in _built_mappings(tmp_path, _assignment_payload())}
 
@@ -429,7 +423,7 @@ def test_declaration_overrides_only_the_declared_structure(tmp_path):
 
 
 def test_no_declaration_leaves_every_mapping_at_its_own_default(tmp_path):
-    _write_settings_with_declarations(tmp_path, {})
+    _write_settings_with_declarations({})
 
     mappings = {m.structure_id: m for m in _built_mappings(tmp_path, _assignment_payload())}
 
@@ -438,7 +432,7 @@ def test_no_declaration_leaves_every_mapping_at_its_own_default(tmp_path):
 
 
 def test_legacy_settings_file_without_the_key_falls_back_to_the_mapping(tmp_path):
-    _write_legacy_settings(tmp_path)
+    _write_legacy_settings()
 
     mappings = {m.structure_id: m for m in _built_mappings(tmp_path, _assignment_payload())}
 
@@ -448,7 +442,7 @@ def test_legacy_settings_file_without_the_key_falls_back_to_the_mapping(tmp_path
 
 
 def test_declaration_for_an_unmapped_structure_is_ignored(tmp_path):
-    _write_settings_with_declarations(tmp_path, {"Adventure": ADVENTURE_ASSIGNED_PROPERTY})
+    _write_settings_with_declarations({"Adventure": ADVENTURE_ASSIGNED_PROPERTY})
 
     mappings = _built_mappings(tmp_path, _valid_payload())
 
@@ -460,7 +454,7 @@ def test_declaration_does_not_supply_a_mapping_assignment_property(tmp_path):
     # one: ``assignment_property`` drives ``_structure_can_contribute``, and
     # the operator chose "assignment check only" — the declaration must not
     # gate enumeration.
-    _write_settings_with_declarations(tmp_path, {"RootTask": SETTINGS_ASSIGNED_PROPERTY})
+    _write_settings_with_declarations({"RootTask": SETTINGS_ASSIGNED_PROPERTY})
 
     mappings = {m.structure_id: m for m in _built_mappings(tmp_path, _valid_payload())}
 
@@ -471,13 +465,13 @@ def test_declaration_does_not_supply_a_mapping_assignment_property(tmp_path):
 
 def test_declared_property_reaches_a_real_read_through_the_production_path(tmp_path):
     """The declaration must survive settings file -> builder -> adapter read."""
-    _write_source(tmp_path, _valid_payload())
-    _write_settings_with_declarations(tmp_path, {"custom-project": SETTINGS_ASSIGNED_PROPERTY})
+    _write_source(_valid_payload())
+    _write_settings_with_declarations({"custom-project": SETTINGS_ASSIGNED_PROPERTY})
     token = _valid_token_file(tmp_path)
     transport = _StructuresTransport()
 
     adapter = cb.build_capacities_adapter(
-        tmp_path, cb.CapacitiesBuilderConfig(token_path=token, transport=transport)
+        cb.CapacitiesBuilderConfig(token_path=token, transport=transport)
     )
     result = adapter.items_for_day_from_objects(
         TODAY,
@@ -490,12 +484,11 @@ def test_declared_property_reaches_a_real_read_through_the_production_path(tmp_p
 
 
 def test_declared_property_false_is_not_assigned_through_the_production_path(tmp_path):
-    _write_source(tmp_path, _valid_payload())
-    _write_settings_with_declarations(tmp_path, {"custom-project": SETTINGS_ASSIGNED_PROPERTY})
+    _write_source(_valid_payload())
+    _write_settings_with_declarations({"custom-project": SETTINGS_ASSIGNED_PROPERTY})
     token = _valid_token_file(tmp_path)
 
     adapter = cb.build_capacities_adapter(
-        tmp_path,
         cb.CapacitiesBuilderConfig(token_path=token, transport=_StructuresTransport()),
     )
     result = adapter.items_for_day_from_objects(
@@ -511,12 +504,12 @@ def test_declared_property_false_is_not_assigned_through_the_production_path(tmp
 # ---------------------------------------------------------------------------
 
 def test_missing_token_file_raises_without_leaking_path_or_token(tmp_path):
-    _write_source(tmp_path, _valid_payload())
+    _write_source(_valid_payload())
     missing = tmp_path / "nested" / "env"
 
     with pytest.raises(cb.CapacitiesTokenError) as excinfo:
         cb.build_capacities_adapter(
-            tmp_path, cb.CapacitiesBuilderConfig(token_path=missing)
+            cb.CapacitiesBuilderConfig(token_path=missing)
         )
 
     message = str(excinfo.value)
@@ -525,25 +518,25 @@ def test_missing_token_file_raises_without_leaking_path_or_token(tmp_path):
 
 
 def test_loose_token_permissions_raise(tmp_path):
-    _write_source(tmp_path, _valid_payload())
+    _write_source(_valid_payload())
     token = _write_token(
         tmp_path / "env", "CAPACITIES_API_TOKEN=secret-token-value\n", mode=0o644
     )
 
     with pytest.raises(cb.CapacitiesTokenError) as excinfo:
         cb.build_capacities_adapter(
-            tmp_path, cb.CapacitiesBuilderConfig(token_path=token)
+            cb.CapacitiesBuilderConfig(token_path=token)
         )
     assert "secret-token-value" not in str(excinfo.value)
 
 
 def test_token_file_without_key_raises(tmp_path):
-    _write_source(tmp_path, _valid_payload())
+    _write_source(_valid_payload())
     token = _write_token(tmp_path / "env", "SOMETHING_ELSE=value\n")
 
     with pytest.raises(cb.CapacitiesTokenError) as excinfo:
         cb.build_capacities_adapter(
-            tmp_path, cb.CapacitiesBuilderConfig(token_path=token)
+            cb.CapacitiesBuilderConfig(token_path=token)
         )
     assert "value" not in str(excinfo.value)
 
@@ -593,13 +586,13 @@ def _dup_structure_payload() -> list[dict]:
     ],
 )
 def test_malformed_record_raises_and_preserves_bytes(tmp_path, payload):
-    path = _write_source(tmp_path, payload)
+    path = _write_source(payload)
     before = path.read_bytes()
     token = _valid_token_file(tmp_path)
 
     with pytest.raises(cb.CapacitiesSourceFormatError):
         cb.build_capacities_adapter(
-            tmp_path, cb.CapacitiesBuilderConfig(token_path=token)
+            cb.CapacitiesBuilderConfig(token_path=token)
         )
 
     assert path.read_bytes() == before
@@ -610,19 +603,19 @@ def test_duplicate_json_keys_raise_and_preserve_bytes(tmp_path):
         '{"version": 1, "revision": 0, "revision": 0, '
         f'"space_id": "{SPACE}", "structures": []}}'
     )
-    path = _write_source_raw(tmp_path, raw)
+    path = _write_source_raw(raw)
     before = path.read_bytes()
 
     with pytest.raises(cb.CapacitiesSourceFormatError):
-        cb.read_source(tmp_path)
+        cb.read_source()
 
     assert path.read_bytes() == before
 
 
 def test_unparseable_record_raises(tmp_path):
-    _write_source_raw(tmp_path, "{not json")
+    _write_source_raw("{not json")
     with pytest.raises(cb.CapacitiesSourceFormatError):
-        cb.read_source(tmp_path)
+        cb.read_source()
 
 
 def test_parse_source_json_rejects_duplicate_keys_at_every_level():
@@ -648,11 +641,11 @@ def test_structure_without_assignment_or_status_round_trips_and_contract_is_defe
     payload = _valid_payload(
         structures=[{"structure_id": "custom-bare", "title_property": "title"}]
     )
-    _write_source(tmp_path, payload)
+    _write_source(payload)
     token = _valid_token_file(tmp_path)
 
     adapter = cb.build_capacities_adapter(
-        tmp_path, cb.CapacitiesBuilderConfig(token_path=token)
+        cb.CapacitiesBuilderConfig(token_path=token)
     )
 
     # The builder is structural-only; it round-trips the mapping verbatim.
@@ -696,19 +689,19 @@ def test_save_source_round_trips_and_conflicts_preserve_bytes(tmp_path):
         ),
     )
     saved = cb.save_source(
-        tmp_path, expected_revision=0, space_id=record.space_id,
+        expected_revision=0, space_id=record.space_id,
         structures=record.structures,
     )
     assert saved.revision == 1
-    assert cb.read_source(tmp_path) == saved
+    assert cb.read_source() == saved
 
-    before = cb.source_path(tmp_path).read_bytes()
+    before = cb.source_path().read_bytes()
     with pytest.raises(cb.CapacitiesSourceStoreError):
         cb.save_source(
-            tmp_path, expected_revision=0, space_id=record.space_id,
+            expected_revision=0, space_id=record.space_id,
             structures=record.structures,
         )
-    assert cb.source_path(tmp_path).read_bytes() == before
+    assert cb.source_path().read_bytes() == before
 
 
 def test_stale_save_raises_the_typed_conflict_with_both_revisions(tmp_path):
@@ -717,14 +710,14 @@ def test_stale_save_raises_the_typed_conflict_with_both_revisions(tmp_path):
         structures=(cb.SourceStructureRecord(structure_id="RootTask"),),
     )
     cb.save_source(
-        tmp_path, expected_revision=0, space_id=record.space_id,
+        expected_revision=0, space_id=record.space_id,
         structures=record.structures,
     )
-    before = cb.source_path(tmp_path).read_bytes()
+    before = cb.source_path().read_bytes()
 
     with pytest.raises(cb.CapacitiesSourceConflictError) as excinfo:
         cb.save_source(
-            tmp_path, expected_revision=0, space_id=record.space_id,
+            expected_revision=0, space_id=record.space_id,
             structures=record.structures,
         )
 
@@ -733,7 +726,7 @@ def test_stale_save_raises_the_typed_conflict_with_both_revisions(tmp_path):
     # The typed conflict is still the store error every existing caller
     # already catches.
     assert isinstance(excinfo.value, cb.CapacitiesSourceStoreError)
-    assert cb.source_path(tmp_path).read_bytes() == before
+    assert cb.source_path().read_bytes() == before
 
 
 def test_racing_saves_from_the_same_revision_produce_one_winner(tmp_path):
@@ -749,7 +742,7 @@ def test_racing_saves_from_the_same_revision_produce_one_winner(tmp_path):
         try:
             results.append(
                 cb.save_source(
-                    tmp_path, expected_revision=0,
+                    expected_revision=0,
                     space_id=record.space_id, structures=record.structures,
                 )
             )
@@ -771,7 +764,7 @@ def test_racing_saves_from_the_same_revision_produce_one_winner(tmp_path):
     assert winners[0].revision == 1
     assert conflicts[0].expected_revision == 0
     assert conflicts[0].current_revision == 1
-    assert cb.read_source(tmp_path) == winners[0]
+    assert cb.read_source() == winners[0]
 
 
 def test_decode_source_payload_reuses_the_store_decoders():
@@ -833,7 +826,6 @@ class TestStatusValueVocabulary:
 
     def test_multi_word_status_value_round_trips(self, tmp_path):
         record = cb.save_source(
-            tmp_path,
             expected_revision=0,
             space_id="space-1",
             structures=(
@@ -848,7 +840,7 @@ class TestStatusValueVocabulary:
         assert record.structures[0].open_status_values == (
             "Todo", "Started", "Active", "On Hold",
         )
-        assert cb.read_source(tmp_path) == record
+        assert cb.read_source() == record
 
     @pytest.mark.parametrize(
         "bad", ["", " ", " Active", "Active ", "On\tHold", "On\nHold"]
@@ -884,10 +876,9 @@ class _ObjectTransport(httpx.MockTransport):
 
 
 def _cached_adapter(tmp_path, transport, cache):
-    _write_source(tmp_path, _valid_payload())
+    _write_source(_valid_payload())
     token = _valid_token_file(tmp_path)
     return cb.build_capacities_adapter(
-        tmp_path,
         cb.CapacitiesBuilderConfig(
             token_path=token, transport=transport, content_cache=cache
         ),
@@ -905,7 +896,7 @@ def test_builder_default_resolves_a_namespace_scoped_durable_cache(tmp_path):
     one-minute window each pay for every object and the second degrades.
     """
     transport = _ObjectTransport()
-    _write_source(tmp_path, _valid_payload())
+    _write_source(_valid_payload())
     token = _valid_token_file(tmp_path)
     cache_path = tmp_path / "content-cache.json"
 
@@ -914,9 +905,9 @@ def test_builder_default_resolves_a_namespace_scoped_durable_cache(tmp_path):
     config = cb.CapacitiesBuilderConfig(
         token_path=token, transport=transport, cache_path=cache_path
     )
-    first = cb.build_capacities_adapter(tmp_path, config)
+    first = cb.build_capacities_adapter(config)
     first.provider.get_object("task-1")
-    second = cb.build_capacities_adapter(tmp_path, config)
+    second = cb.build_capacities_adapter(config)
     second.provider.get_object("task-1")
 
     assert first.config.content_cache is second.config.content_cache
@@ -924,7 +915,7 @@ def test_builder_default_resolves_a_namespace_scoped_durable_cache(tmp_path):
     assert cache_path.exists()
     document = json.loads(cache_path.read_text(encoding="utf-8"))
     assert document["namespace"] == cb._content_cache_namespace(
-        tmp_path, SPACE, cb.CAPACITIES_BASE_URL
+        SPACE, cb.CAPACITIES_BASE_URL
     )
 
 
@@ -1329,16 +1320,16 @@ def test_content_cache_file_is_versioned_and_owner_only(tmp_path):
     assert stat.S_IMODE(path.stat().st_mode) == 0o600
 
 
-def test_cache_namespace_separates_vault_space_and_base_url(tmp_path):
-    base = cb._content_cache_namespace(tmp_path, "space-1", "https://api.capacities.io")
+def test_cache_namespace_separates_space_and_base_url(tmp_path):
+    base = cb._content_cache_namespace("space-1", "https://api.capacities.io")
     assert base != cb._content_cache_namespace(
-        tmp_path, "space-2", "https://api.capacities.io"
+        "space-2", "https://api.capacities.io"
     )
     assert base != cb._content_cache_namespace(
-        tmp_path, "space-1", "https://other.example"
+        "space-1", "https://other.example"
     )
-    assert base != cb._content_cache_namespace(
-        tmp_path / "elsewhere", "space-1", "https://api.capacities.io"
+    assert base == cb._content_cache_namespace(
+        "space-1", "https://api.capacities.io/"
     )
 
 
@@ -1355,50 +1346,39 @@ def test_content_cache_namespace_isolation_between_writers(tmp_path):
     assert other.get("task-1") is None
     warnings = other.drain_warnings()
     assert warnings
-    assert any("different vault or space" in warning for warning in warnings)
+    assert any("different space or provider" in warning for warning in warnings)
     assert all(str(tmp_path) not in warning for warning in warnings)
 
     other.put("task-2", {"id": "task-2"})
     assert _cache_document(tmp_path)["namespace"] == "vault-b|space-1|https://api"
 
 
-def test_builder_namespace_separates_vaults_spaces_and_base_urls(tmp_path):
-    vault_a = tmp_path / "a"
-    vault_b = tmp_path / "b"
-    vault_c = tmp_path / "c"
-    for root, payload in (
-        (vault_a, _valid_payload()),
-        (vault_b, _valid_payload()),
-        (vault_c, _valid_payload(space_id="space-2")),
-    ):
-        root.mkdir()
-        _write_source(root, payload)
+def test_builder_namespace_separates_spaces_and_base_urls(tmp_path):
     token = _valid_token_file(tmp_path)
     cache_path = tmp_path / "content-cache.json"
 
-    def build(root, **overrides):
+    def build(**overrides):
         config = cb.CapacitiesBuilderConfig(
             token_path=token,
             transport=_ObjectTransport(),
             cache_path=cache_path,
             **overrides,
         )
-        return cb.build_capacities_adapter(root, config)
+        return cb.build_capacities_adapter(config)
 
-    first = build(vault_a)
+    _write_source(_valid_payload())
+    first = build()
     first.config.content_cache.put("task-1", {"id": "task-1"})
-    assert build(vault_a).config.content_cache.get("task-1") is not None
+    assert build().config.content_cache.get("task-1") is not None
 
-    # A different vault, a different space, and a different provider base URL
-    # each resolve to their own namespace, so object-id-only entries never leak.
-    assert build(vault_b).config.content_cache.get("task-1") is None
-    assert build(vault_c).config.content_cache.get("task-1") is None
+    # A different space and a different provider base URL each resolve to
+    # their own namespace, so object-id-only entries never leak.
     assert (
-        build(vault_a, base_url="https://other.example").config.content_cache.get(
-            "task-1"
-        )
+        build(base_url="https://other.example").config.content_cache.get("task-1")
         is None
     )
+    _write_source(_valid_payload(space_id="space-2"))
+    assert build().config.content_cache.get("task-1") is None
 
 
 def _contract_structure_rows():
@@ -1424,12 +1404,11 @@ def _contract_structure_rows():
 def test_cache_diagnostics_reach_adapter_warnings_without_leaks(tmp_path):
     cache_path = tmp_path / "content-cache.json"
     cache_path.write_text("{not json", encoding="utf-8")
-    _write_source(tmp_path, _valid_payload())
-    _write_settings(tmp_path)
+    _write_source(_valid_payload())
+    _write_settings()
     token = _valid_token_file(tmp_path)
 
     adapter = cb.build_capacities_adapter(
-        tmp_path,
         cb.CapacitiesBuilderConfig(
             token_path=token, transport=_RecordingTransport(), cache_path=cache_path
         ),
@@ -1446,10 +1425,10 @@ def test_cache_diagnostics_reach_adapter_warnings_without_leaks(tmp_path):
 
 
 def test_default_builder_writes_only_to_the_isolated_cache_path(tmp_path):
-    _write_source(tmp_path, _valid_payload())
+    _write_source(_valid_payload())
     token = _valid_token_file(tmp_path)
     adapter = cb.build_capacities_adapter(
-        tmp_path, cb.CapacitiesBuilderConfig(token_path=token, transport=_ObjectTransport())
+        cb.CapacitiesBuilderConfig(token_path=token, transport=_ObjectTransport())
     )
     adapter.provider.get_object("task-1")
 
@@ -1572,7 +1551,7 @@ def test_discovery_succeeds_when_the_mapping_is_absent(tmp_path):
     transport = _StructuresPayloadTransport()
 
     catalog = cb.discover_capacities_source(
-        tmp_path, SPACE, _discovery_config(tmp_path, transport)
+        SPACE, _discovery_config(tmp_path, transport)
     )
 
     assert _catalog_ids(catalog) == [
@@ -1582,19 +1561,18 @@ def test_discovery_succeeds_when_the_mapping_is_absent(tmp_path):
     ]
     assert transport.calls == ["/space/structures"]
     # Discovery is a read of the provider, not of the vault: nothing created.
-    assert not cb.source_path(tmp_path).exists()
+    assert not cb.source_path().exists()
 
 
 def test_discovery_succeeds_when_the_mapping_is_malformed(tmp_path, monkeypatch):
     raw = "{ not json"
-    source = _write_source_raw(tmp_path, raw)
+    source = _write_source_raw(raw)
     token = _valid_token_file(tmp_path)
 
     # The normal factory cannot serve this vault: the stored mapping is
     # unreadable. Discovery exists precisely to work before a mapping does.
     with pytest.raises(cb.CapacitiesSourceFormatError):
         cb.build_capacities_adapter(
-            tmp_path,
             cb.CapacitiesBuilderConfig(
                 token_path=token, transport=_RecordingTransport()
             ),
@@ -1609,7 +1587,7 @@ def test_discovery_succeeds_when_the_mapping_is_malformed(tmp_path, monkeypatch)
     transport = _StructuresPayloadTransport()
 
     catalog = cb.discover_capacities_source(
-        tmp_path, SPACE, _discovery_config(tmp_path, transport)
+        SPACE, _discovery_config(tmp_path, transport)
     )
 
     assert _catalog_ids(catalog) == [
@@ -1656,7 +1634,7 @@ def test_discovery_fetches_structures_once_without_other_calls(
     monkeypatch.setattr(cb, "CapacitiesRestClient", _FakeDiscoveryClient)
     config = _discovery_config(tmp_path, None)
 
-    catalog = cb.discover_capacities_source(tmp_path, SPACE, config)
+    catalog = cb.discover_capacities_source(SPACE, config)
 
     client = _FakeDiscoveryClient.last
     assert client is not None
@@ -1680,7 +1658,7 @@ def test_discovery_closes_the_client_when_the_fetch_fails(tmp_path, monkeypatch)
 
     with pytest.raises(RuntimeError, match="provider unavailable"):
         cb.discover_capacities_source(
-            tmp_path, SPACE, _discovery_config(tmp_path, None)
+            SPACE, _discovery_config(tmp_path, None)
         )
 
     assert _FailingDiscoveryClient.last is not None
@@ -1691,7 +1669,7 @@ def test_catalog_shape_matches_the_probed_space(tmp_path):
     transport = _StructuresPayloadTransport()
 
     catalog = cb.discover_capacities_source(
-        tmp_path, SPACE, _discovery_config(tmp_path, transport)
+        SPACE, _discovery_config(tmp_path, transport)
     )
 
     assert _catalog_ids(catalog) == [
@@ -1760,7 +1738,7 @@ def test_blank_structure_title_falls_back_to_the_structure_id(tmp_path):
     transport = _StructuresPayloadTransport(rows)
 
     catalog = cb.discover_capacities_source(
-        tmp_path, SPACE, _discovery_config(tmp_path, transport)
+        SPACE, _discovery_config(tmp_path, transport)
     )
 
     assert _catalog_ids(catalog) == ["structured-blank"]
@@ -1784,7 +1762,7 @@ def test_discovery_raises_on_a_malformed_catalog_payload(tmp_path, rows):
 
     with pytest.raises(CapacitiesContractError):
         cb.discover_capacities_source(
-            tmp_path, SPACE, _discovery_config(tmp_path, transport)
+            SPACE, _discovery_config(tmp_path, transport)
         )
 
 
@@ -1793,13 +1771,13 @@ def test_discovery_raises_on_a_malformed_catalog_payload(tmp_path, rows):
 # ---------------------------------------------------------------------------
 
 def _builder_adapter(tmp_path: Path, transport) -> CapacitiesAdapter:
-    _write_source(tmp_path, _valid_payload())
+    _write_source(_valid_payload())
     _write_settings_with_declarations(
-        tmp_path, {"custom-project": SETTINGS_ASSIGNED_PROPERTY}
+        {"custom-project": SETTINGS_ASSIGNED_PROPERTY}
     )
     token = _valid_token_file(tmp_path)
     adapter = cb.build_capacities_adapter(
-        tmp_path, cb.CapacitiesBuilderConfig(token_path=token, transport=transport)
+        cb.CapacitiesBuilderConfig(token_path=token, transport=transport)
     )
     assert adapter is not None
     return adapter
@@ -1834,7 +1812,7 @@ def test_a_failing_title_sink_cannot_change_a_read(tmp_path, monkeypatch):
     )
 
     assert [row["capacities_id"] for row in result.items] == ["project-1"]
-    assert cst.read_titles(tmp_path, SPACE, cb.CAPACITIES_BASE_URL) == {}
+    assert cst.read_titles(SPACE, cb.CAPACITIES_BASE_URL) == {}
 
 
 def test_a_normal_read_captures_titles_for_its_own_namespace(tmp_path):
@@ -1845,13 +1823,13 @@ def test_a_normal_read_captures_titles_for_its_own_namespace(tmp_path):
     )
     assert result.items
 
-    assert cst.read_titles(tmp_path, SPACE, cb.CAPACITIES_BASE_URL) == {
+    assert cst.read_titles(SPACE, cb.CAPACITIES_BASE_URL) == {
         "RootTask": "RootTask",
         "custom-project": "custom-project",
     }
     # Another space or provider URL is another namespace: no bleed-through.
-    assert cst.read_titles(tmp_path, "other-space", cb.CAPACITIES_BASE_URL) == {}
-    assert cst.read_titles(tmp_path, SPACE, "https://other.example") == {}
+    assert cst.read_titles("other-space", cb.CAPACITIES_BASE_URL) == {}
+    assert cst.read_titles(SPACE, "https://other.example") == {}
 
 
 class _TagsTransport(httpx.MockTransport):
@@ -1875,16 +1853,16 @@ class _TagsTransport(httpx.MockTransport):
 
 
 def test_a_read_that_never_fetches_structures_leaves_titles_untouched(tmp_path):
-    _write_source(tmp_path, _valid_payload())
+    _write_source(_valid_payload())
     token = _valid_token_file(tmp_path)
     transport = _TagsTransport()
     adapter = cb.build_capacities_adapter(
-        tmp_path, cb.CapacitiesBuilderConfig(token_path=token, transport=transport)
+        cb.CapacitiesBuilderConfig(token_path=token, transport=transport)
     )
 
     titles_path = cst.DEFAULT_TITLES_CACHE_PATH
     assert cst.remember_titles(
-        tmp_path, SPACE, cb.CAPACITIES_BASE_URL, {"RootTask": "Task"}
+        SPACE, cb.CAPACITIES_BASE_URL, {"RootTask": "Task"}
     )
     before = titles_path.read_bytes()
 
@@ -1896,7 +1874,7 @@ def test_a_read_that_never_fetches_structures_leaves_titles_untouched(tmp_path):
     # extra request is made and the stored titles are byte-identical.
     assert transport.calls == ["/objects/structure"]
     assert titles_path.read_bytes() == before
-    assert cst.read_titles(tmp_path, SPACE, cb.CAPACITIES_BASE_URL) == {
+    assert cst.read_titles(SPACE, cb.CAPACITIES_BASE_URL) == {
         "RootTask": "Task"
     }
 
@@ -1914,7 +1892,7 @@ def test_builder_resolves_a_namespaced_refresh_state_store(tmp_path):
     root = tmp_path / "refresh-state"
     config = cb.CapacitiesBuilderConfig(refresh_state_path=root)
 
-    store = cb.build_refresh_state(tmp_path, SPACE, config)
+    store = cb.build_refresh_state(SPACE, config)
     store.put("task-1", "RootTask", {"id": "task-1"}, content_read_at=1234.0)
 
     document = json.loads(next((root / crs.OBJECTS_DIRNAME).glob("*.json")).read_text())
@@ -1925,7 +1903,7 @@ def test_builder_resolves_a_namespaced_refresh_state_store(tmp_path):
 
 
 def test_refresh_state_dir_defaults_under_the_isolated_app_home(tmp_path):
-    store = cb.build_refresh_state(tmp_path, SPACE)
+    store = cb.build_refresh_state(SPACE)
     store.put("task-1", "RootTask", {"id": "task-1"}, content_read_at=1.0)
 
     expected = cb.refresh_state_dir() / crs.OBJECTS_DIRNAME
@@ -1942,7 +1920,7 @@ def test_legacy_import_wrapper_uses_the_legacy_namespace_and_leaves_it_untouched
             {
                 "version": 1,
                 "namespace": cb._content_cache_namespace(
-                    tmp_path, SPACE, cb.CAPACITIES_BASE_URL
+                    SPACE, cb.CAPACITIES_BASE_URL
                 ),
                 "entries": [
                     {
@@ -1958,11 +1936,10 @@ def test_legacy_import_wrapper_uses_the_legacy_namespace_and_leaves_it_untouched
     before = legacy.read_bytes()
 
     store = cb.build_refresh_state(
-        tmp_path, SPACE, cb.CapacitiesBuilderConfig(refresh_state_path=tmp_path / "s")
+        SPACE, cb.CapacitiesBuilderConfig(refresh_state_path=tmp_path / "s")
     )
     result = cb.import_legacy_content_cache(
         store,
-        tmp_path,
         SPACE,
         cb.CapacitiesBuilderConfig(
             refresh_state_path=tmp_path / "s", cache_path=legacy
@@ -1984,7 +1961,7 @@ def test_legacy_import_wrapper_refuses_another_providers_document(tmp_path):
             {
                 "version": 1,
                 "namespace": cb._content_cache_namespace(
-                    tmp_path, SPACE, "https://other.example.com"
+                    SPACE, "https://other.example.com"
                 ),
                 "entries": [
                     {
@@ -1999,11 +1976,10 @@ def test_legacy_import_wrapper_refuses_another_providers_document(tmp_path):
     )
 
     store = cb.build_refresh_state(
-        tmp_path, SPACE, cb.CapacitiesBuilderConfig(refresh_state_path=tmp_path / "s")
+        SPACE, cb.CapacitiesBuilderConfig(refresh_state_path=tmp_path / "s")
     )
     result = cb.import_legacy_content_cache(
         store,
-        tmp_path,
         SPACE,
         cb.CapacitiesBuilderConfig(cache_path=legacy),
         object_types={"task-1": "RootTask"},
@@ -2020,11 +1996,10 @@ def test_legacy_import_wrapper_refuses_another_providers_document(tmp_path):
 
 def _refresh_coordinator_for(tmp_path):
     """A production-wired coordinator over a well-formed record and settings."""
-    _write_source(tmp_path, _valid_payload())
-    _write_settings(tmp_path)
+    _write_source(_valid_payload())
+    _write_settings()
     token = _valid_token_file(tmp_path)
     return cb.build_refresh_coordinator(
-        tmp_path,
         cb.CapacitiesBuilderConfig(
             token_path=token,
             refresh_state_path=tmp_path / "state",
@@ -2060,8 +2035,8 @@ def test_refresh_coordinator_serializes_publication_with_source_saves(tmp_path):
     acquired = threading.Event()
 
     def save_like():
-        with cb._store_lock(tmp_path):
-            handle = cb._acquire_lock_file(tmp_path)
+        with cb._store_lock():
+            handle = cb._acquire_lock_file()
             try:
                 acquired.set()
             finally:
@@ -2099,14 +2074,13 @@ def test_refresh_coordinator_serializes_publication_with_settings_saves(tmp_path
     holder.start()
     assert entered.wait(timeout=5)
 
-    current = cs.read_settings(tmp_path).settings.revision
+    current = cs.read_settings().settings.revision
     finished = threading.Event()
     errors: list = []
 
     def settings_save():
         try:
             cs.save_settings(
-                tmp_path,
                 expected_revision=current,
                 native_task_auto=cs.NativeTaskAutoPolicy(),
             )

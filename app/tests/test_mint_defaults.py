@@ -162,7 +162,7 @@ def test_capacity_preview_and_schedulable_row_use_same_effective_allotment(
         encoding="utf-8",
     )
     monkeypatch.setattr(main_mod.gather, "effective_date", lambda _now: MONDAY)
-    client = TestClient(main_mod.create_app(vault_root=vault))
+    client = TestClient(main_mod.create_app())
     preview = client.get(
         "/capacity-preview",
         params={"day_setup": json.dumps({"anchor": "08:00", "eod": "18:00"})},
@@ -184,7 +184,7 @@ def test_day_setup_zero_clears_persisted_stale_sessions(tmp_path, monkeypatch):
     vault = tmp_path / "vault"
     vault.mkdir()
     monkeypatch.setattr(main_mod.gather, "effective_date", lambda _now: MONDAY)
-    app = main_mod.create_app(vault_root=vault)
+    app = main_mod.create_app()
     client = TestClient(app)
     headers = {"X-TDTB-Token": app.state.token}
     session = ext.mint_session_options(CONFIG)[0]["id"]
@@ -201,7 +201,7 @@ def test_day_setup_zero_clears_persisted_stale_sessions(tmp_path, monkeypatch):
         json={"work_allotment_minutes": 0},
     )
     assert disabled.status_code == 200
-    state = runstate.read_runstate(vault, MONDAY)
+    state = runstate.read_runstate(MONDAY)
     assert state["work_allotment_minutes"] == 0
     assert state["schedulable"]["minting"] == {"on": False, "n": 0, "sessions": []}
 
@@ -327,7 +327,7 @@ def test_sequence_recomputes_omitted_day_semantics_from_request_config(
 ):
     vault = tmp_path / "vault"
     vault.mkdir()
-    app = main_mod.create_app(vault_root=vault)
+    app = main_mod.create_app()
     client = TestClient(app)
     captured = {}
 

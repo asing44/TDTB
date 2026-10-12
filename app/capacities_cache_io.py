@@ -1,6 +1,6 @@
 """capacities_cache_io.py — shared machine-local cache IO primitives.
 
-Dependency-free (standard library only) helpers shared by the vault-local
+Dependency-free (standard library only) helpers shared by the app-owned
 Capacities stores and the machine-local Capacities caches. They live in their
 own module because a cache module that ``capacities_builder`` imports needs
 them without importing the builder back (an import cycle).
@@ -11,10 +11,10 @@ The semantics are the ones the persistent content cache shipped with:
   deterministically, flushed and fsynced, then ``os.replace``;
 * a per-key process-local lock paired with a POSIX advisory lock file for
   cross-process serialization, and a release that never raises;
-* the separator-based namespace digest that keeps two vaults, two spaces, or
+* the separator-based namespace digest that keeps two spaces or
   two provider base URLs from ever sharing cache entries.
 
-Nothing here reads a credential, configuration, or vault file: the caller
+Nothing here reads a credential, or configuration file: the caller
 owns the path and the data.
 """
 from __future__ import annotations
@@ -94,14 +94,14 @@ def atomic_write_json(path: str | Path, data: dict[str, Any]) -> None:
 
 
 def cache_namespace(
-    vault_root: str | Path, space_id: str, base_url: str
+    space_id: str, base_url: str
 ) -> str:
-    """Stable digest identifying the vault + space + provider scope.
+    """Stable digest identifying the space + provider scope.
 
     Stored instead of the raw triple so the machine-local file and every
     diagnostic stay free of absolute paths; equality is all the cache needs.
     """
     material = "\x1f".join(
-        (str(Path(vault_root).resolve()), str(space_id), str(base_url).rstrip("/"))
+        (str(space_id), str(base_url).rstrip("/"))
     )
     return hashlib.sha256(material.encode("utf-8")).hexdigest()

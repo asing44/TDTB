@@ -254,7 +254,7 @@ class TestRun:
         }
         log_path = tmp_path / "bake-in-log.md"
         row, verdict = bake_in_run.run(
-            tmp_path, dt.date(2026, 7, 20), "skill", manifest, live_state,
+            dt.date(2026, 7, 20), "skill", manifest, live_state,
             log_path=log_path,
         )
         assert verdict == bake_in_diff.PASS
@@ -272,7 +272,7 @@ class TestRun:
         live_state = {"todoist_tasks": []}  # no live match -> would-create -> UNEXPLAINED
         log_path = tmp_path / "bake-in-log.md"
         row, verdict = bake_in_run.run(
-            tmp_path, dt.date(2026, 7, 21), "app", manifest, live_state,
+            dt.date(2026, 7, 21), "app", manifest, live_state,
             log_path=log_path,
         )
         assert verdict == bake_in_diff.DIFF
@@ -287,44 +287,44 @@ class TestRun:
                                 "due": {"datetime": "2026-07-22T09:00:00Z", "timezone": "UTC"}}],
         }
         row, verdict = bake_in_run.run(
-            tmp_path, dt.date(2026, 7, 22), "app", manifest, live_state,
+            dt.date(2026, 7, 22), "app", manifest, live_state,
             recon_fail=1, log_path=tmp_path / "bake-in-log.md",
         )
         assert verdict == bake_in_diff.KILL
         assert row["recon_fail"] == 1
 
     def test_run_accepts_callables_for_injectable_gather(self, tmp_path):
-        """manifest/live_state may be (vault_root, today) -> data callables —
+        """manifest/live_state may be (today) -> data callables —
         never touching disk/network in this test, just proving the shape is
         respected."""
         import datetime as dt
 
         calls = []
 
-        def manifest_source(vault_root, today):
-            calls.append(("manifest", vault_root, today))
+        def manifest_source(today):
+            calls.append(("manifest", today))
             return [_todoist_row()]
 
-        def live_state_source(vault_root, today):
-            calls.append(("live_state", vault_root, today))
+        def live_state_source(today):
+            calls.append(("live_state", today))
             return {"todoist_tasks": [{"id": "1", "content": "Garage Buildout",
                                         "due": {"datetime": "2026-07-23T09:00:00Z", "timezone": "UTC"}}]}
 
         row, verdict = bake_in_run.run(
-            tmp_path, dt.date(2026, 7, 23), "skill", manifest_source, live_state_source,
+            dt.date(2026, 7, 23), "skill", manifest_source, live_state_source,
             log_path=tmp_path / "bake-in-log.md",
         )
         assert verdict == bake_in_diff.PASS
         assert len(calls) == 2
-        assert calls[0][1] == tmp_path
-        assert calls[0][2] == dt.date(2026, 7, 23)
+        assert calls[0][1] == dt.date(2026, 7, 23)
+        assert calls[1][1] == dt.date(2026, 7, 23)
 
     def test_run_rejects_unknown_driver(self, tmp_path):
         import datetime as dt
 
         with pytest.raises(ValueError, match="driver"):
             bake_in_run.run(
-                tmp_path, dt.date(2026, 7, 24), "bogus", [], {},
+                dt.date(2026, 7, 24), "bogus", [], {},
                 log_path=tmp_path / "bake-in-log.md",
             )
 
@@ -338,7 +338,7 @@ class TestRun:
         monkeypatch.setattr(bake_in_run, "DEFAULT_LOG_PATH", fake_default)
         override = tmp_path / "override.md"
         bake_in_run.run(
-            tmp_path, dt.date(2026, 7, 25), "skill", [], {},
+            dt.date(2026, 7, 25), "skill", [], {},
             log_path=override,
         )
         assert override.is_file()
@@ -353,7 +353,7 @@ class TestRun:
 # ---------------------------------------------------------------------------
 
 class TestByIdReconcile:
-    def _seed_ledger(self, vault, today, created=(), updated=(), noops=()):
+    def _seed_ledger(self, today, created=(), updated=(), noops=()):
         import runstate
         state = runstate.build_runstate({
             "commit_ledger": {
@@ -368,34 +368,34 @@ class TestByIdReconcile:
                 },
             }
         })
-        runstate.write_runstate(vault, today, state)
+        runstate.write_runstate(today, state)
 
     def test_ledger_ids_dedup_across_created_updated_noops(self, tmp_path):
         import datetime as dt
         today = dt.date(2026, 7, 13)
-        self._seed_ledger(tmp_path, today, created=["T1", "T2"], updated=["T2"], noops=["T3", "T1"])
-        assert bake_in_run._ledger_todoist_ids(tmp_path, today) == ["T1", "T2", "T3"]
+        self._seed_ledger(today, created=["T1", "T2"], updated=["T2"], noops=["T3", "T1"])
+        assert bake_in_run._ledger_todoist_ids(today) == ["T1", "T2", "T3"]
 
     def test_no_ledger_returns_empty_ids(self, tmp_path):
         import datetime as dt
-        assert bake_in_run._ledger_todoist_ids(tmp_path, dt.date(2026, 7, 13)) == []
+        assert bake_in_run._ledger_todoist_ids(dt.date(2026, 7, 13)) == []
 
     def test_by_id_flips_false_would_create_to_agree(self, tmp_path, monkeypatch):
         """The core ISS-4 regression: a lagged filter read would false-DIFF the
         6 same-day creates; by-ID reconciliation makes the differ AGREE."""
         import datetime as dt
         today = dt.date(2026, 7, 13)
-        self._seed_ledger(tmp_path, today, created=["T1", "T2"])
+        self._seed_ledger(today, created=["T1", "T2"])
         # Simulate the stale filter index: base read sees NO tasks.
         monkeypatch.setattr(
             shadow, "gather_live_state",
-            lambda config, vault: {"todoist_tasks": []},
+            lambda config: {"todoist_tasks": []},
         )
         live = {
             "T1": {"id": "T1", "content": "Garage Buildout", "due": {"datetime": "2026-07-13T09:00:00Z", "timezone": "UTC"}},
             "T2": {"id": "T2", "content": "Volunteering", "due": {"datetime": "2026-07-13T11:30:00Z", "timezone": "UTC"}},
         }
-        state = bake_in_run.gather_live_state_by_id(tmp_path, today, {}, fetch_task=lambda tid: live[tid])
+        state = bake_in_run.gather_live_state_by_id(today, {}, fetch_task=lambda tid: live[tid])
         assert not state.get("todoist_unavailable")
         assert {t["content"] for t in state["todoist_tasks"]} == {"Garage Buildout", "Volunteering"}
         manifest = [_todoist_row("Garage Buildout", "09:00"), _todoist_row("Volunteering", "11:30")]
@@ -405,9 +405,9 @@ class TestByIdReconcile:
     def test_no_ledger_keeps_filter_read(self, tmp_path, monkeypatch):
         import datetime as dt
         base_tasks = [{"id": "F", "content": "FromFilter", "due": {"datetime": "2026-07-13T08:00:00Z", "timezone": "UTC"}}]
-        monkeypatch.setattr(shadow, "gather_live_state", lambda config, vault: {"todoist_tasks": list(base_tasks)})
+        monkeypatch.setattr(shadow, "gather_live_state", lambda config: {"todoist_tasks": list(base_tasks)})
         state = bake_in_run.gather_live_state_by_id(
-            tmp_path, dt.date(2026, 7, 13), {}, fetch_task=lambda tid: {},
+            dt.date(2026, 7, 13), {}, fetch_task=lambda tid: {},
         )
         assert state["todoist_tasks"] == base_tasks
 
@@ -415,29 +415,29 @@ class TestByIdReconcile:
         import datetime as dt
         import todoist_client
         today = dt.date(2026, 7, 13)
-        self._seed_ledger(tmp_path, today, created=["T1", "GONE"])
-        monkeypatch.setattr(shadow, "gather_live_state", lambda config, vault: {"todoist_tasks": []})
+        self._seed_ledger(today, created=["T1", "GONE"])
+        monkeypatch.setattr(shadow, "gather_live_state", lambda config: {"todoist_tasks": []})
 
         def fetch(tid):
             if tid == "GONE":
                 raise todoist_client.TodoistError(404, "not found")
             return {"id": "T1", "content": "Garage Buildout", "due": {"datetime": "2026-07-13T09:00:00Z", "timezone": "UTC"}}
 
-        state = bake_in_run.gather_live_state_by_id(tmp_path, today, {}, fetch_task=fetch)
+        state = bake_in_run.gather_live_state_by_id(today, {}, fetch_task=fetch)
         assert [t["id"] for t in state["todoist_tasks"]] == ["T1"]
 
     def test_by_id_non_404_error_propagates_from_injected_fetch(self, tmp_path, monkeypatch):
         import datetime as dt
         import todoist_client
         today = dt.date(2026, 7, 13)
-        self._seed_ledger(tmp_path, today, created=["T1"])
-        monkeypatch.setattr(shadow, "gather_live_state", lambda config, vault: {"todoist_tasks": []})
+        self._seed_ledger(today, created=["T1"])
+        monkeypatch.setattr(shadow, "gather_live_state", lambda config: {"todoist_tasks": []})
 
         def fetch(tid):
             raise todoist_client.TodoistError(500, "server error")
 
         with pytest.raises(todoist_client.TodoistError):
-            bake_in_run.gather_live_state_by_id(tmp_path, today, {}, fetch_task=fetch)
+            bake_in_run.gather_live_state_by_id(today, {}, fetch_task=fetch)
 
     def test_by_id_reconciles_v1_due_date_via_native_reader(self, tmp_path, monkeypatch):
         """v1 /tasks/{id} carries the time under due.date; post-ISS-5,
@@ -447,12 +447,12 @@ class TestByIdReconcile:
         the false time-None DIFF the bridge originally fixed."""
         import datetime as dt
         today = dt.date(2026, 7, 13)
-        self._seed_ledger(tmp_path, today, created=["T1"])
-        monkeypatch.setattr(shadow, "gather_live_state", lambda config, vault: {"todoist_tasks": []})
+        self._seed_ledger(today, created=["T1"])
+        monkeypatch.setattr(shadow, "gather_live_state", lambda config: {"todoist_tasks": []})
         # v1 shape: due.date populated, due.datetime absent; plus an unreliable is_deleted.
         v1_task = {"id": "T1", "content": "Garage Buildout", "is_deleted": True,
                    "due": {"date": "2026-07-13T09:00:00", "datetime": None, "string": "today at 09:00"}}
-        state = bake_in_run.gather_live_state_by_id(tmp_path, today, {}, fetch_task=lambda tid: v1_task)
+        state = bake_in_run.gather_live_state_by_id(today, {}, fetch_task=lambda tid: v1_task)
         # no bridge: the raw v1 due shape is passed through untouched...
         assert state["todoist_tasks"][0]["due"]["datetime"] is None
         assert state["todoist_tasks"][0]["due"]["date"] == "2026-07-13T09:00:00"

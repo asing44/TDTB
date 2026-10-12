@@ -322,7 +322,7 @@ def vault(tmp_path) -> Path:
 @pytest.fixture
 def client(vault) -> TestClient:
     vault.mkdir()
-    app = main_mod.create_app(vault_root=vault)
+    app = main_mod.create_app()
     c = TestClient(app)
     c.app_token = app.state.token
     return c
@@ -336,7 +336,7 @@ class TestSequenceRouteMintDerivation:
     def test_sequence_injects_allotment_derived_minting_row(self, client, vault, monkeypatch):
         _write_cfg(vault)
         frozen_date = date(2026, 7, 13)
-        rs.write_runstate(vault, frozen_date, rs.build_runstate({
+        rs.write_runstate(frozen_date, rs.build_runstate({
             "work_allotment_minutes": 300,
         }))
         captured = {}
@@ -375,9 +375,9 @@ class TestSequenceRouteMintDerivation:
 
 
 class TestValidateSequenceMintWalls:
-    def _seed_mint_session(self, vault) -> None:
+    def _seed_mint_session(self) -> None:
         today = gather.effective_date(datetime.now())
-        rs.write_runstate(vault, today, rs.build_runstate({
+        rs.write_runstate(today, rs.build_runstate({
             "anchor": "00:00", "eod": "23:59",
             "schedulable": {"minting": {
                 "on": True,
@@ -387,7 +387,7 @@ class TestValidateSequenceMintWalls:
 
     def test_route_rejects_row_over_selected_mint_session(self, client, vault):
         _write_cfg(vault)
-        self._seed_mint_session(vault)
+        self._seed_mint_session()
         r = client.post("/validate-sequence", headers=_auth(client), json={
             "sequence": [_seq_row("task-1", "08:45", "09:15")],
             "assigned": [{"id": "task-1"}],
@@ -404,7 +404,7 @@ class TestValidateSequenceMintWalls:
 
     def test_route_allows_clean_rows_beside_mint_session(self, client, vault):
         _write_cfg(vault)
-        self._seed_mint_session(vault)
+        self._seed_mint_session()
         r = client.post("/validate-sequence", headers=_auth(client), json={
             "sequence": [_seq_row("task-1", "09:00", "09:30")],
             "assigned": [{"id": "task-1"}],
@@ -427,11 +427,11 @@ class TestValidateSequenceMintWalls:
 AUG17 = date(2026, 8, 17)  # Monday — workday so Mint sessions emit
 
 
-def _seed_aug17_mint(vault, sessions=("mint:afternoon:15:00",)) -> None:
+def _seed_aug17_mint(sessions=("mint:afternoon:15:00",)) -> None:
     # QT is disabled so the AUG17 fixture's selected set is exactly the
     # chosen Mint session plus the tasks the test posts — never-bump then
     # proves each selected item appears exactly once.
-    rs.write_runstate(vault, AUG17, rs.build_runstate({
+    rs.write_runstate(AUG17, rs.build_runstate({
         "schedulable": {"minting": {
             "on": True,
             "sessions": list(sessions),
@@ -471,7 +471,7 @@ def test_august_17_stale_mint_filtered_before_judgment(client, vault, monkeypatc
     the immutable merge, or any billed ledger change — the exact August 17
     incident shape (Mint 15:00-15:30 vs OPPD 15:00-15:30)."""
     _write_cfg(vault)
-    _seed_aug17_mint(vault)
+    _seed_aug17_mint()
     _freeze_aug17(monkeypatch)
     judgment_calls = []
 
@@ -495,7 +495,7 @@ def test_august_17_stale_mint_filtered_before_judgment(client, vault, monkeypatc
         "wall_interval": {"start": "15:00", "end": "15:30"},
     }]
     assert judgment_calls == []
-    state = rs.read_runstate(vault, AUG17)
+    state = rs.read_runstate(AUG17)
     assert state["billed_calls"] == 0
     # Public ledger seam: the stale preflight never spends the per-day budget.
     ledger_after = client.get("/billed-ledger", headers=_auth(client)).json()
@@ -506,7 +506,7 @@ def test_august_17_stale_mint_filtered_before_judgment(client, vault, monkeypatc
 def test_august_17_work_wall_also_stops_before_judgment(client, vault, monkeypatch):
     # The server-side recheck covers work walls too, not only fixed.
     _write_cfg(vault)
-    _seed_aug17_mint(vault)
+    _seed_aug17_mint()
     _freeze_aug17(monkeypatch)
     judgment_calls = []
     monkeypatch.setattr(
@@ -517,7 +517,7 @@ def test_august_17_work_wall_also_stops_before_judgment(client, vault, monkeypat
     assert r.status_code == 422
     assert r.json()["detail"]["conflicts"][0]["wall_id"] == "OPPD"
     assert judgment_calls == []
-    assert rs.read_runstate(vault, AUG17)["billed_calls"] == 0
+    assert rs.read_runstate(AUG17)["billed_calls"] == 0
 
 
 def test_validate_sequence_surfaces_stale_mint_wall_conflict(client, vault, monkeypatch):
@@ -528,7 +528,7 @@ def test_validate_sequence_surfaces_stale_mint_wall_conflict(client, vault, monk
     accepted as clean.
     """
     _write_cfg(vault)
-    _seed_aug17_mint(vault)
+    _seed_aug17_mint()
     _freeze_aug17(monkeypatch)
     r = client.post("/validate-sequence", headers=_auth(client), json={
         "sequence": [],
@@ -559,7 +559,7 @@ def test_clean_mint_selection_still_sequences(client, vault, monkeypatch):
     # A saved Mint session that does NOT touch a wall keeps the normal path:
     # judgment runs, the exact immutable row is merged, no conflict.
     _write_cfg(vault)
-    _seed_aug17_mint(vault, sessions=("mint:afternoon:14:00",))
+    _seed_aug17_mint(sessions=("mint:afternoon:14:00",))
     _freeze_aug17(monkeypatch)
     captured = {}
 
@@ -598,7 +598,7 @@ def test_august_17_clean_sequence_places_every_task_once_at_exact_duration(
     through the REAL validator — no dropped, duplicated, or shortened rows,
     and the selected Mint session stays a single immutable row."""
     _write_cfg(vault)
-    _seed_aug17_mint(vault, sessions=("mint:afternoon:14:00",))
+    _seed_aug17_mint(sessions=("mint:afternoon:14:00",))
     _freeze_aug17(monkeypatch)
 
     def fake_propose(assigned, config, anchored_blocks, ctx=None):
@@ -657,7 +657,7 @@ def test_selected_mint_windows_reach_judgment_as_prompt_only_walls(
     walls itself from optional_items/assigned), and the Mint row is never
     made movable."""
     _write_cfg(vault)
-    _seed_aug17_mint(vault, sessions=("mint:afternoon:14:00",))
+    _seed_aug17_mint(sessions=("mint:afternoon:14:00",))
     _freeze_aug17(monkeypatch)
     captured = {}
 
@@ -700,7 +700,7 @@ def test_sequence_rejects_post_judgment_mint_overlap_once(
     Mint interval, while the dedupe fix keeps the user-facing error singular.
     """
     _write_cfg(vault)
-    _seed_aug17_mint(vault, sessions=("mint:afternoon:14:00",))
+    _seed_aug17_mint(sessions=("mint:afternoon:14:00",))
     _freeze_aug17(monkeypatch)
 
     def fake_propose(assigned, config, anchored_blocks, ctx=None):
@@ -728,4 +728,4 @@ def test_sequence_rejects_post_judgment_mint_overlap_once(
     ]
     assert len(mint_errors) == 1
     assert "Mint Afternoon · 14:00" in mint_errors[0]
-    assert rs.read_runstate(vault, AUG17)["billed_calls"] == 0
+    assert rs.read_runstate(AUG17)["billed_calls"] == 0

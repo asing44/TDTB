@@ -191,7 +191,7 @@ def store_fake():
     return fake
 
 
-def canned_live_state(config, vault_root):
+def canned_live_state(config):
     """Canned live surfaces that AGREE with the scratch vault, so the commit
     planner sees clean would-creates instead of refusing on conflicts. All
     surfaces available: an unavailable surface is a shadow blocker that
@@ -217,9 +217,9 @@ def main() -> int:
     daily = vault / "30 - Daily" / f"{date.today().isoformat()}.md"
     daily.parent.mkdir(parents=True, exist_ok=True)
     daily.write_text("---\ntype: daily\n---\n\n# Notes\n", encoding="utf-8")
-    app = main_mod.create_app(vault_root=vault)
-    app.state.build_read_clients = lambda v, cfg: (todoist_fake(), store_fake())
-    app.state.build_commit_clients = lambda v, cfg: (WriterTodoist(), WriterStore())
+    app = main_mod.create_app()
+    app.state.build_read_clients = lambda cfg: (todoist_fake(), store_fake())
+    app.state.build_commit_clients = lambda cfg: (WriterTodoist(), WriterStore())
     judgment.propose_sequence = canned_propose
     shadow_mod.gather_live_state = canned_live_state
     main_mod.datetime = FrozenDateTime  # freeze route clocks (anchor, dates)

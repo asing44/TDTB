@@ -723,7 +723,7 @@ class TestGatherLiveState:
         vault = tmp_path / "vault"
         vault.mkdir()
         with pytest.raises(shadow.ShadowStateError, match="Todoist token file not found"):
-            shadow.gather_live_state({}, vault)
+            shadow.gather_live_state({})
 
     def test_todoist_failure_degrades_to_marker_not_crash(self, tmp_path, monkeypatch):
         token_path = tmp_path / "env"
@@ -746,7 +746,7 @@ class TestGatherLiveState:
 
         vault = tmp_path / "vault"
         vault.mkdir()
-        state = shadow.gather_live_state({}, vault)
+        state = shadow.gather_live_state({})
         assert state["todoist_unavailable"] is True
         assert "todoist_tasks" in state and state["todoist_tasks"] == []
         assert state["calendar_unavailable"] is True
@@ -780,7 +780,7 @@ class TestGatherLiveState:
 
         vault = tmp_path / "vault"
         vault.mkdir()
-        state = shadow.gather_live_state({}, vault)
+        state = shadow.gather_live_state({})
         assert state["calendar_unavailable"] is True
         assert state["todoist_tasks"] == [{"id": "1", "content": "x"}]
 
@@ -819,7 +819,7 @@ class TestGatherLiveState:
 
         vault = tmp_path / "vault"
         vault.mkdir()
-        shadow.gather_live_state({}, vault)
+        shadow.gather_live_state({})
         assert calls == ["today | overdue"]
 
     def test_state_has_no_vault_keys_and_vault_is_not_read(self, tmp_path, monkeypatch):
@@ -836,7 +836,7 @@ class TestGatherLiveState:
             lambda: (_ for _ in ()).throw(RuntimeError("skip")),
         )
         missing_vault = tmp_path / "no-such-vault"
-        state = shadow.gather_live_state({}, missing_vault)
+        state = shadow.gather_live_state({})
         assert not any("vault" in k or "daily_note" in k for k in state)
         assert not missing_vault.exists()
 
@@ -863,7 +863,7 @@ class TestGatherLiveState:
         note.write_text("---\ntype: project\nassigned: true\n---\nbody\n", encoding="utf-8")
         before = {p: (p.read_bytes(), p.stat().st_mtime) for p in vault.rglob("*") if p.is_file()}
 
-        shadow.gather_live_state({}, vault)
+        shadow.gather_live_state({})
 
         after = {p: (p.read_bytes(), p.stat().st_mtime) for p in vault.rglob("*") if p.is_file()}
         assert before == after

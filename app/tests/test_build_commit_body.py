@@ -20,10 +20,10 @@ TODAY = date(2026, 7, 13)
 MICRO = {"id": "ma03", "idea": "Cook something new", "category": "food"}
 
 
-def _write_runstate(vault: Path, micro):
+def _write_runstate(micro):
     """Write today's run-state note with the given micro_adventure value."""
     state = runstate_mod.build_runstate({"micro_adventure": micro})
-    return runstate_mod.write_runstate(vault, TODAY, state)
+    return runstate_mod.write_runstate(TODAY, state)
 
 
 # ---------------------------------------------------------------------------
@@ -32,27 +32,27 @@ def _write_runstate(vault: Path, micro):
 
 class TestInjectMicroAdventure:
     def test_reads_todays_runstate_selection(self, tmp_path):
-        _write_runstate(tmp_path, MICRO)
-        out = bcb.inject_micro_adventure({}, tmp_path, TODAY)
+        _write_runstate(MICRO)
+        out = bcb.inject_micro_adventure({}, TODAY)
         assert out["micro_adventure"] == MICRO
 
     def test_no_note_returns_config_unchanged(self, tmp_path):
         base = {"presets": []}
-        out = bcb.inject_micro_adventure(base, tmp_path, TODAY)
+        out = bcb.inject_micro_adventure(base, TODAY)
         assert out is base  # untouched, same object
         assert "micro_adventure" not in out
 
     def test_note_without_selection_returns_unchanged(self, tmp_path):
-        _write_runstate(tmp_path, None)  # default skeleton: micro_adventure = None
+        _write_runstate(None)  # default skeleton: micro_adventure = None
         base = {"presets": []}
-        out = bcb.inject_micro_adventure(base, tmp_path, TODAY)
+        out = bcb.inject_micro_adventure(base, TODAY)
         assert out is base
         assert "micro_adventure" not in out
 
     def test_does_not_mutate_input(self, tmp_path):
-        _write_runstate(tmp_path, MICRO)
+        _write_runstate(MICRO)
         base = {"anchored_blocks": [{"id": "Live"}]}
-        out = bcb.inject_micro_adventure(base, tmp_path, TODAY)
+        out = bcb.inject_micro_adventure(base, TODAY)
         assert "micro_adventure" not in base  # input untouched
         assert out is not base
         assert out["micro_adventure"] == MICRO
@@ -62,8 +62,8 @@ class TestInjectMicroAdventure:
         guards against a regression to gather.load_runstate's prior-note lookup.
         """
         ystate = runstate_mod.build_runstate({"micro_adventure": MICRO})
-        runstate_mod.write_runstate(tmp_path, date(2026, 7, 12), ystate)
-        out = bcb.inject_micro_adventure({}, tmp_path, TODAY)
+        runstate_mod.write_runstate(date(2026, 7, 12), ystate)
+        out = bcb.inject_micro_adventure({}, TODAY)
         assert "micro_adventure" not in out
 
 
@@ -87,14 +87,14 @@ class TestMicroAdventureOverride:
         assert bcb._coerce_micro_adventure("42") == {"idea": "42"}
 
     def test_override_wins_over_runstate(self, tmp_path):
-        _write_runstate(tmp_path, MICRO)  # run-state has one selection
+        _write_runstate(MICRO)  # run-state has one selection
         override = {"idea": "Override wins"}
-        out = bcb.inject_micro_adventure({}, tmp_path, TODAY, override=override)
+        out = bcb.inject_micro_adventure({}, TODAY, override=override)
         assert out["micro_adventure"] == override
 
     def test_override_injects_without_any_runstate(self, tmp_path):
         override = {"idea": "No note needed"}
-        out = bcb.inject_micro_adventure({}, tmp_path, TODAY, override=override)
+        out = bcb.inject_micro_adventure({}, TODAY, override=override)
         assert out["micro_adventure"] == override
 
 
@@ -108,8 +108,8 @@ class TestLiveRerouteSeam:
     BASE_CONFIG = {"anchored_blocks": [{"id": "Live"}]}
 
     def test_injected_config_drives_live_todoist_reroute(self, tmp_path):
-        _write_runstate(tmp_path, MICRO)
-        injected = bcb.inject_micro_adventure(dict(self.BASE_CONFIG), tmp_path, TODAY)
+        _write_runstate(MICRO)
+        injected = bcb.inject_micro_adventure(dict(self.BASE_CONFIG), TODAY)
         manifest = shadow.build_plan_manifest(self.DIGEST, self.SEQUENCE, injected)
         step_a = [m for m in manifest if m.step == "A"]
         assert len(step_a) == 1

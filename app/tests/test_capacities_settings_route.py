@@ -33,15 +33,8 @@ ADVENTURE_ASSIGNED_PROPERTY = "c19f9b95-7c2d-4e18-8a51-9b0c1d2e3f40"
 
 
 @pytest.fixture
-def vault(tmp_path) -> Path:
-    root = tmp_path / "vault-root"
-    root.mkdir()
-    return root
-
-
-@pytest.fixture
-def client(vault) -> TestClient:
-    app = main_mod.create_app(vault_root=vault)
+def client() -> TestClient:
+    app = main_mod.create_app()
     c = TestClient(app)
     c.app_token = app.state.token
     return c
@@ -81,13 +74,13 @@ def _body(expected_revision: int = 0, **overrides) -> dict:
     return body
 
 
-def _settings_bytes(vault: Path) -> bytes:
-    return cs.settings_path(vault).read_bytes()
+def _settings_bytes() -> bytes:
+    return cs.settings_path().read_bytes()
 
 
-def _write_source_record(vault: Path, structure_ids: list[str]) -> Path:
+def _write_source_record(structure_ids: list[str]) -> Path:
     """Write a minimal valid Capacities source-mapping record (vault-local)."""
-    path = cb.source_path(vault)
+    path = cb.source_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
         json.dumps({
@@ -102,7 +95,7 @@ def _write_source_record(vault: Path, structure_ids: list[str]) -> Path:
 
 
 class TestGet:
-    def test_get_is_tokenless_and_reports_the_default(self, client, vault):
+    def test_get_is_tokenless_and_reports_the_default(self, client):
         response = client.get("/settings/capacities")
 
         assert response.status_code == 200
@@ -123,9 +116,9 @@ class TestGet:
             "native_task_structures": ["RootTask"],
             "active_statuses": ["active"],
         }
-        assert not cs.settings_path(vault).exists()
+        assert not cs.settings_path().exists()
 
-    def test_get_reports_persisted_settings_after_save(self, client, vault):
+    def test_get_reports_persisted_settings_after_save(self, client):
         saved = client.post(
             "/settings/capacities/save",
             headers=_auth(client),
@@ -138,8 +131,8 @@ class TestGet:
         assert body["settings"]["revision"] == 1
         assert body["settings"]["excluded"] == {NATIVE: True}
 
-    def test_get_malformed_storage_fails_closed_without_erasing(self, client, vault):
-        path = cs.settings_path(vault)
+    def test_get_malformed_storage_fails_closed_without_erasing(self, client):
+        path = cs.settings_path()
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("{not json!!", encoding="utf-8")
 
@@ -149,17 +142,17 @@ class TestGet:
         detail = response.json()["detail"]
         assert detail["code"] == "capacities_settings_storage_error"
         assert "preserved" in detail["message"]
-        assert _settings_bytes(vault) == b"{not json!!"
+        assert _settings_bytes() == b"{not json!!"
 
-    def test_get_reports_no_available_structures_when_unconfigured(self, client, vault):
+    def test_get_reports_no_available_structures_when_unconfigured(self, client):
         body = client.get("/settings/capacities").json()
 
         assert body["available_structures"] == []
         # Advisory only: reading the settings route never creates a record.
-        assert not cb.source_path(vault).exists()
+        assert not cb.source_path().exists()
 
-    def test_get_reports_configured_structures_sorted(self, client, vault):
-        _write_source_record(vault, ["b-structure", "a-structure"])
+    def test_get_reports_configured_structures_sorted(self, client):
+        _write_source_record(["b-structure", "a-structure"])
 
         body = client.get("/settings/capacities").json()
 
@@ -168,8 +161,8 @@ class TestGet:
         assert body["persisted"] is False
         assert body["settings"]["revision"] == 0
 
-    def test_get_malformed_source_record_degrades_to_empty(self, client, vault):
-        path = cb.source_path(vault)
+    def test_get_malformed_source_record_degrades_to_empty(self, client):
+        path = cb.source_path()
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("{not json!!", encoding="utf-8")
 
@@ -199,7 +192,7 @@ class TestPostAuth:
 
 
 class TestPostPersistence:
-    def test_post_persists_and_returns_the_saved_settings(self, client, vault):
+    def test_post_persists_and_returns_the_saved_settings(self, client):
         response = client.post(
             "/settings/capacities/save",
             headers=_auth(client),
@@ -226,9 +219,9 @@ class TestPostPersistence:
         # defaults by the full-replacement save.
         assert body["settings"]["native_task_structures"] == ["RootTask"]
         assert body["settings"]["active_statuses"] == ["active"]
-        assert cs.settings_path(vault).is_file()
+        assert cs.settings_path().is_file()
 
-    def test_post_is_a_full_replacement(self, client, vault):
+    def test_post_is_a_full_replacement(self, client):
         client.post(
             "/settings/capacities/save",
             headers=_auth(client),
@@ -244,13 +237,13 @@ class TestPostPersistence:
         assert second.json()["settings"]["excluded"] == {}
         assert second.json()["settings"]["revision"] == 2
 
-    def test_post_stale_revision_conflicts_and_preserves_bytes(self, client, vault):
+    def test_post_stale_revision_conflicts_and_preserves_bytes(self, client):
         client.post(
             "/settings/capacities/save",
             headers=_auth(client),
             json=_body(),
         )
-        before = _settings_bytes(vault)
+        before = _settings_bytes()
 
         response = client.post(
             "/settings/capacities/save",
@@ -260,10 +253,10 @@ class TestPostPersistence:
 
         assert response.status_code == 409
         assert response.json()["detail"]["code"] == "capacities_settings_conflict"
-        assert _settings_bytes(vault) == before
+        assert _settings_bytes() == before
 
-    def test_post_malformed_existing_storage_conflicts_without_erasing(self, client, vault):
-        path = cs.settings_path(vault)
+    def test_post_malformed_existing_storage_conflicts_without_erasing(self, client):
+        path = cs.settings_path()
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("garbage", encoding="utf-8")
 
@@ -275,26 +268,7 @@ class TestPostPersistence:
 
         assert response.status_code == 409
         assert response.json()["detail"]["code"] == "capacities_settings_storage_error"
-        assert _settings_bytes(vault) == b"garbage"
-
-    def test_post_unresolved_vault_returns_503(self, monkeypatch):
-        monkeypatch.delenv("TDTB_VAULT_ROOT", raising=False)
-        app = main_mod.create_app()
-        c = TestClient(app)
-
-        response = c.post(
-            "/settings/capacities/save",
-            headers={"X-TDTB-Token": app.state.token},
-            json=_body(),
-        )
-
-        assert response.status_code == 503
-
-    def test_get_unresolved_vault_returns_503(self, monkeypatch):
-        monkeypatch.delenv("TDTB_VAULT_ROOT", raising=False)
-        app = main_mod.create_app()
-        assert TestClient(app).get("/settings/capacities").status_code == 503
-
+        assert _settings_bytes() == b"garbage"
 
 class TestPostValidation:
     @pytest.mark.parametrize(
@@ -333,7 +307,7 @@ class TestPostValidation:
             _body(excluded={NATIVE: 1}),                                  # flag int
         ],
     )
-    def test_malformed_requests_are_rejected_422(self, client, vault, payload):
+    def test_malformed_requests_are_rejected_422(self, client, payload):
         response = client.post(
             "/settings/capacities/save",
             headers=_auth(client),
@@ -341,10 +315,10 @@ class TestPostValidation:
         )
 
         assert response.status_code == 422
-        assert not cs.settings_path(vault).exists()
+        assert not cs.settings_path().exists()
 
     def test_duplicate_request_keys_are_not_silently_accepted_as_two_identities(
-        self, client, vault
+        self, client
     ):
         # A duplicate JSON key in the request collapses to one key at parse
         # time; the server still validates the surviving value strictly. This
@@ -374,7 +348,7 @@ class TestNoProviderCalls:
         client.app.state.build_capacities_adapter = boom
 
     def test_get_never_builds_an_adapter_or_provider(
-        self, client, vault, monkeypatch
+        self, client, monkeypatch
     ):
         self._poison_adapter(client)
 
@@ -386,7 +360,7 @@ class TestNoProviderCalls:
         assert client.get("/settings/capacities").status_code == 200
 
     def test_post_never_builds_an_adapter_or_provider(
-        self, client, vault, monkeypatch
+        self, client, monkeypatch
     ):
         self._poison_adapter(client)
 
@@ -402,7 +376,7 @@ class TestNoProviderCalls:
         )
 
         assert response.status_code == 200
-        data = json.loads(_settings_bytes(vault).decode("utf-8"))
+        data = json.loads(_settings_bytes().decode("utf-8"))
         assert data["excluded"] == {NATIVE: True}
 
 
@@ -410,7 +384,7 @@ PROJECT_STRUCTURE = "0d194525-c5a1-4af5-bb62-202b83006b5e"
 
 
 class TestActiveStructures:
-    def test_post_persists_and_get_reports_active_structures(self, client, vault):
+    def test_post_persists_and_get_reports_active_structures(self, client):
         response = client.post(
             "/settings/capacities/save",
             headers=_auth(client),
@@ -429,7 +403,7 @@ class TestActiveStructures:
         }
 
     def test_omitting_active_structures_is_a_full_replacement_to_empty(
-        self, client, vault
+        self, client
     ):
         client.post(
             "/settings/capacities/save",
@@ -458,7 +432,7 @@ class TestActiveStructures:
             "custom-project",
         ],
     )
-    def test_post_rejects_malformed_active_structures_422(self, client, vault, bad):
+    def test_post_rejects_malformed_active_structures_422(self, client, bad):
         response = client.post(
             "/settings/capacities/save",
             headers=_auth(client),
@@ -466,7 +440,7 @@ class TestActiveStructures:
         )
 
         assert response.status_code == 422
-        assert not cs.settings_path(vault).exists()
+        assert not cs.settings_path().exists()
 
 
 class TestAdmissionInputs:
@@ -479,7 +453,7 @@ class TestAdmissionInputs:
     explicit empty list is a legitimate replacement (nothing native / no
     status satisfies the condition)."""
 
-    def test_post_persists_and_get_round_trips_both_inputs(self, client, vault):
+    def test_post_persists_and_get_round_trips_both_inputs(self, client):
         response = client.post(
             "/settings/capacities/save",
             headers=_auth(client),
@@ -502,11 +476,11 @@ class TestAdmissionInputs:
         assert body["settings"]["active_statuses"] == expected_statuses
 
         # The persisted version-1 bytes carry the same additive keys.
-        stored = json.loads(_settings_bytes(vault).decode("utf-8"))
+        stored = json.loads(_settings_bytes().decode("utf-8"))
         assert stored["native_task_structures"] == expected_structures
         assert stored["active_statuses"] == expected_statuses
 
-    def test_empty_lists_are_a_legitimate_full_replacement(self, client, vault):
+    def test_empty_lists_are_a_legitimate_full_replacement(self, client):
         response = client.post(
             "/settings/capacities/save",
             headers=_auth(client),
@@ -521,7 +495,7 @@ class TestAdmissionInputs:
         assert read_back["native_task_structures"] == []
         assert read_back["active_statuses"] == []
 
-    def test_omitting_each_input_writes_its_documented_default(self, client, vault):
+    def test_omitting_each_input_writes_its_documented_default(self, client):
         first = client.post(
             "/settings/capacities/save",
             headers=_auth(client),
@@ -545,7 +519,7 @@ class TestAdmissionInputs:
         assert second.json()["settings"]["native_task_structures"] == ["RootTask"]
         assert second.json()["settings"]["active_statuses"] == ["In Progress"]
 
-    def test_stale_revision_with_admission_inputs_still_conflicts(self, client, vault):
+    def test_stale_revision_with_admission_inputs_still_conflicts(self, client):
         first = client.post(
             "/settings/capacities/save",
             headers=_auth(client),
@@ -555,7 +529,7 @@ class TestAdmissionInputs:
             ),
         )
         assert first.status_code == 200
-        before = _settings_bytes(vault)
+        before = _settings_bytes()
 
         response = client.post(
             "/settings/capacities/save",
@@ -569,16 +543,16 @@ class TestAdmissionInputs:
 
         assert response.status_code == 409
         assert response.json()["detail"]["code"] == "capacities_settings_conflict"
-        assert _settings_bytes(vault) == before
+        assert _settings_bytes() == before
 
-    def test_malformed_admission_input_preserves_existing_bytes(self, client, vault):
+    def test_malformed_admission_input_preserves_existing_bytes(self, client):
         first = client.post(
             "/settings/capacities/save",
             headers=_auth(client),
             json=_body(native_task_structures=["custom-project"]),
         )
         assert first.status_code == 200
-        before = _settings_bytes(vault)
+        before = _settings_bytes()
 
         response = client.post(
             "/settings/capacities/save",
@@ -594,7 +568,7 @@ class TestAdmissionInputs:
             "active_statuses" in entry["loc"]
             for entry in response.json()["detail"]
         )
-        assert _settings_bytes(vault) == before
+        assert _settings_bytes() == before
 
     @pytest.mark.parametrize(
         "field,bad",
@@ -618,7 +592,7 @@ class TestAdmissionInputs:
         ],
     )
     def test_post_rejects_malformed_admission_inputs_422(
-        self, client, vault, field, bad
+        self, client, field, bad
     ):
         response = client.post(
             "/settings/capacities/save",
@@ -628,7 +602,7 @@ class TestAdmissionInputs:
 
         assert response.status_code == 422
         assert any(field in entry["loc"] for entry in response.json()["detail"])
-        assert not cs.settings_path(vault).exists()
+        assert not cs.settings_path().exists()
 
 
 class TestAssignedStructuresRoute:
@@ -639,7 +613,7 @@ class TestAssignedStructuresRoute:
     replacement to the empty default (no override anywhere, so the mapping's
     own ``assignment_property`` applies)."""
 
-    def test_get_returns_the_key_and_post_round_trips_it(self, client, vault):
+    def test_get_returns_the_key_and_post_round_trips_it(self, client):
         declarations = {
             PROJECT_STRUCTURE: PROJECT_ASSIGNED_PROPERTY,
             PRESS_STRUCTURE: ADVENTURE_ASSIGNED_PROPERTY,
@@ -657,10 +631,10 @@ class TestAssignedStructuresRoute:
         assert body["settings"]["assigned_structures"] == declarations
 
         # The persisted version-1 bytes carry the same additive key.
-        stored = json.loads(_settings_bytes(vault).decode("utf-8"))
+        stored = json.loads(_settings_bytes().decode("utf-8"))
         assert stored["assigned_structures"] == declarations
 
-    def test_omitting_the_key_is_a_full_replacement_to_empty(self, client, vault):
+    def test_omitting_the_key_is_a_full_replacement_to_empty(self, client):
         first = client.post(
             "/settings/capacities/save",
             headers=_auth(client),
@@ -687,7 +661,7 @@ class TestAssignedStructuresRoute:
             == {}
         )
 
-    def test_empty_object_is_a_legitimate_replacement(self, client, vault):
+    def test_empty_object_is_a_legitimate_replacement(self, client):
         response = client.post(
             "/settings/capacities/save",
             headers=_auth(client),
@@ -711,7 +685,7 @@ class TestAssignedStructuresRoute:
             {" custom-project ": PROJECT_ASSIGNED_PROPERTY},        # whitespace alias
         ],
     )
-    def test_post_rejects_malformed_declarations_422(self, client, vault, bad):
+    def test_post_rejects_malformed_declarations_422(self, client, bad):
         response = client.post(
             "/settings/capacities/save",
             headers=_auth(client),
@@ -723,9 +697,9 @@ class TestAssignedStructuresRoute:
             "assigned_structures" in entry["loc"]
             for entry in response.json()["detail"]
         )
-        assert not cs.settings_path(vault).exists()
+        assert not cs.settings_path().exists()
 
-    def test_malformed_declaration_preserves_existing_bytes(self, client, vault):
+    def test_malformed_declaration_preserves_existing_bytes(self, client):
         first = client.post(
             "/settings/capacities/save",
             headers=_auth(client),
@@ -736,7 +710,7 @@ class TestAssignedStructuresRoute:
             ),
         )
         assert first.status_code == 200
-        before = _settings_bytes(vault)
+        before = _settings_bytes()
 
         response = client.post(
             "/settings/capacities/save",
@@ -748,7 +722,7 @@ class TestAssignedStructuresRoute:
         )
 
         assert response.status_code == 422
-        assert _settings_bytes(vault) == before
+        assert _settings_bytes() == before
 
 
 class TestStructureTitles:
@@ -761,11 +735,10 @@ class TestStructureTitles:
     changes the status code or any neighbouring field."""
 
     def test_mapped_titles_are_returned_and_unmapped_ones_dropped(
-        self, client, vault, titles_cache
+        self, client, titles_cache
     ):
-        _write_source_record(vault, [PROJECT_STRUCTURE])
+        _write_source_record([PROJECT_STRUCTURE])
         assert cst.remember_titles(
-            vault,
             SPACE,
             cb.CAPACITIES_BASE_URL,
             {PROJECT_STRUCTURE: "Project", PRESS_STRUCTURE: "Press"},
@@ -778,11 +751,11 @@ class TestStructureTitles:
         assert body["structure_titles"] == {PROJECT_STRUCTURE: "Project"}
 
     def test_mapped_structure_without_a_cached_title_is_absent(
-        self, client, vault, titles_cache
+        self, client, titles_cache
     ):
-        _write_source_record(vault, [PROJECT_STRUCTURE, PRESS_STRUCTURE])
+        _write_source_record([PROJECT_STRUCTURE, PRESS_STRUCTURE])
         assert cst.remember_titles(
-            vault, SPACE, cb.CAPACITIES_BASE_URL, {PRESS_STRUCTURE: "Press"}
+            SPACE, cb.CAPACITIES_BASE_URL, {PRESS_STRUCTURE: "Press"}
         ) is True
 
         body = client.get("/settings/capacities").json()
@@ -791,10 +764,10 @@ class TestStructureTitles:
         assert body["structure_titles"] == {PRESS_STRUCTURE: "Press"}
 
     def test_unmapped_vault_shows_no_titles_even_with_a_cache(
-        self, client, vault, titles_cache
+        self, client, titles_cache
     ):
         assert cst.remember_titles(
-            vault, SPACE, cb.CAPACITIES_BASE_URL, {PROJECT_STRUCTURE: "Project"}
+            SPACE, cb.CAPACITIES_BASE_URL, {PROJECT_STRUCTURE: "Project"}
         ) is True
 
         body = client.get("/settings/capacities").json()
@@ -804,11 +777,11 @@ class TestStructureTitles:
 
     @pytest.mark.parametrize("damage", ["missing", "corrupt", "version", "directory"])
     def test_broken_cache_is_empty_and_changes_nothing_else(
-        self, client, vault, titles_cache, damage
+        self, client, titles_cache, damage
     ):
-        _write_source_record(vault, [PROJECT_STRUCTURE])
+        _write_source_record([PROJECT_STRUCTURE])
         assert cst.remember_titles(
-            vault, SPACE, cb.CAPACITIES_BASE_URL, {PROJECT_STRUCTURE: "Project"}
+            SPACE, cb.CAPACITIES_BASE_URL, {PROJECT_STRUCTURE: "Project"}
         ) is True
         baseline = client.get("/settings/capacities").json()
         assert baseline["structure_titles"] == {PROJECT_STRUCTURE: "Project"}
@@ -842,28 +815,20 @@ class TestStructureTitles:
             if key != "structure_titles"
         }
 
-    def test_titles_from_another_vault_space_or_base_url_are_invisible(
-        self, client, vault, titles_cache, tmp_path
+    def test_titles_from_another_space_or_base_url_are_invisible(
+        self, client, titles_cache, tmp_path
     ):
-        _write_source_record(vault, [PROJECT_STRUCTURE])
+        _write_source_record([PROJECT_STRUCTURE])
         # The route reads under the builder config's base URL; a different
         # constant here would silently hide every title.
         assert cb.CapacitiesBuilderConfig().base_url == cb.CAPACITIES_BASE_URL
 
         assert cst.remember_titles(
-            tmp_path / "other-vault",
-            SPACE,
-            cb.CAPACITIES_BASE_URL,
-            {PROJECT_STRUCTURE: "Other vault"},
-        ) is True
-        assert cst.remember_titles(
-            vault,
             "other-space",
             cb.CAPACITIES_BASE_URL,
             {PROJECT_STRUCTURE: "Other space"},
         ) is True
         assert cst.remember_titles(
-            vault,
             SPACE,
             "https://other.example",
             {PROJECT_STRUCTURE: "Other provider"},
@@ -872,18 +837,17 @@ class TestStructureTitles:
         assert client.get("/settings/capacities").json()["structure_titles"] == {}
 
         assert cst.remember_titles(
-            vault, SPACE, cb.CAPACITIES_BASE_URL, {PROJECT_STRUCTURE: "Project"}
+            SPACE, cb.CAPACITIES_BASE_URL, {PROJECT_STRUCTURE: "Project"}
         ) is True
         assert client.get("/settings/capacities").json()["structure_titles"] == {
             PROJECT_STRUCTURE: "Project"
         }
 
     def test_the_read_stays_additive_and_assigned_structures_round_trips(
-        self, client, vault, titles_cache
+        self, client, titles_cache
     ):
-        _write_source_record(vault, [PROJECT_STRUCTURE, PRESS_STRUCTURE])
+        _write_source_record([PROJECT_STRUCTURE, PRESS_STRUCTURE])
         assert cst.remember_titles(
-            vault,
             SPACE,
             cb.CAPACITIES_BASE_URL,
             {PROJECT_STRUCTURE: "Project", PRESS_STRUCTURE: "Press"},
@@ -935,11 +899,11 @@ class TestStructureTitles:
 
 class TestStructureTitlesNoProviderContact:
     def test_the_title_read_touches_no_adapter_credential_or_provider(
-        self, client, vault, monkeypatch, titles_cache
+        self, client, monkeypatch, titles_cache
     ):
-        _write_source_record(vault, [PROJECT_STRUCTURE])
+        _write_source_record([PROJECT_STRUCTURE])
         assert cst.remember_titles(
-            vault, SPACE, cb.CAPACITIES_BASE_URL, {PROJECT_STRUCTURE: "Project"}
+            SPACE, cb.CAPACITIES_BASE_URL, {PROJECT_STRUCTURE: "Project"}
         ) is True
         calls: list[str] = []
 

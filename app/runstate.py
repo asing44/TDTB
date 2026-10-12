@@ -14,14 +14,10 @@ tdtb-bridger-vault skill uses (SKILL.md § 0.8 Run-state persistence and
 Location (Capacities-first S1): every runstate-owned file — the dated notes,
 ``tdtb-recent-selections.md`` and the dated digest indexes — lives under
 ``<app home>/state/runstate/`` (``app_config.state_dir()``), beside the rest of
-the app-owned stores. Writes never touch the vault.
+the app-owned stores.
 
-V2: the state dir is the ONLY location. The vault fallback read was removed;
-an absent state file reads as empty/None (the one-shot
-``tools/migrate_vault_state.py`` copies existing vault files in).
-
-``vault_root`` is always a caller-supplied parameter — never hardcoded
-(spec locked decision 2). Gate: T9 integration tests.
+The state dir is the ONLY location; an absent state file reads as empty/None.
+Gate: T9 integration tests.
 """
 from __future__ import annotations
 
@@ -42,10 +38,6 @@ if _GATHER_DIR not in sys.path:
 
 import tdtb_gather as gather  # noqa: E402  (path-shimmed import, see inventory.py)
 
-#: Legacy vault cache directory. Never read or written by the app after V2; it
-#: survives only as the migration tool's source layout.
-CACHE_DIR_REL = "00 - META/Cache"
-RECENT_SELECTIONS_REL_PATH = f"{CACHE_DIR_REL}/tdtb-recent-selections.md"
 RECENT_SELECTIONS_MAX_RUNS = 5
 
 #: S1: the runstate store's own directory under the app home.
@@ -62,7 +54,6 @@ RUNSTATE_DEFAULTS: dict[str, Any] = {
     "anchor": "",
     "eod": "",
     "buffering": "standard",
-    "daily_note_path": "",
     "dedup_map": {},
     "re_included": [],
     "summit_child": None,
@@ -87,7 +78,7 @@ RUNSTATE_DEFAULTS: dict[str, Any] = {
     # IMP-05: date-scoped Drop-from-plan exclusions. The dated note scopes
     # the list to one day — an item dropped today is eligible again tomorrow.
     # Entries are {identity, name, dropped_at}; identity is the canonical
-    # source identity (todoist:<id> / vault path).
+    # source identity (todoist:<id> / source path).
     "dropped": [],
     # T18b.2: tri-state dated overrides — None = no override (fall back to
     # config resolution); 0 work_allotment_minutes = explicit Mint disable.
@@ -113,14 +104,6 @@ def day_lock(valid_date: date | str) -> threading.Lock:
     key = str(valid_date)
     with _DAY_LOCKS_GUARD:
         return _DAY_LOCKS.setdefault(key, threading.Lock())
-
-
-def runstate_rel_path(valid_date: date) -> str:
-    """Vault-relative path of the dated run-state note.
-
-    Pre-S1 spelling, kept for tests that assert nothing is written there. The active store path is
-    :func:`state_runstate_path`."""
-    return f"{CACHE_DIR_REL}/tdtb-runstate-{valid_date}.md"
 
 
 # ---------------------------------------------------------------------------
@@ -149,22 +132,18 @@ def state_digest_index_path(valid_date: date) -> Path:
     return state_runstate_dir() / f"tdtb-digest-index-{valid_date}.json"
 
 
-def runstate_read_path(vault_root: Path | str | None, valid_date: date) -> Path:
-    """The dated note's path in the state dir (V2: no vault fallback).
-
-    Kept as the single path helper for external readers that used to compose
-    ``vault_root / runstate_rel_path(...)``. ``vault_root`` is accepted for
-    call-site compatibility and ignored (V4 drops the parameter)."""
+def runstate_read_path(valid_date: date) -> Path:
+    """The dated note's path in the state dir (the single path helper)."""
     return state_runstate_path(valid_date)
 
 
-def recent_selections_read_path(vault_root: Path | str | None = None) -> Path:
-    """The recent-selections cache path in the state dir (``vault_root`` ignored)."""
+def recent_selections_read_path() -> Path:
+    """The recent-selections cache path in the state dir."""
     return state_recent_selections_path()
 
 
-def digest_index_read_path(vault_root: Path | str | None, valid_date: date) -> Path:
-    """The dated digest identity index path in the state dir (``vault_root`` ignored)."""
+def digest_index_read_path(valid_date: date) -> Path:
+    """The dated digest identity index path in the state dir."""
     return state_digest_index_path(valid_date)
 
 
@@ -177,7 +156,6 @@ def build_runstate(overrides: dict[str, Any] | None = None) -> dict[str, Any]:
 
 
 def write_runstate(
-    vault_root: Path | str,
     valid_date: date,
     state: dict[str, Any],
     now: datetime | None = None,
@@ -190,9 +168,7 @@ def write_runstate(
     dates are best-effort deleted so they don't accumulate; same-day writes
     overwrite.
 
-    S1: the note goes to ``<app home>/state/runstate/``. ``vault_root`` is
-    accepted for call-site compatibility and is never written to — the frozen
-    vault notes stay untouched as the rollback point, and the trigger-1
+    The note goes to ``<app home>/state/runstate/``, and the trigger-1
     cleanup runs only inside the state directory.
     """
     now = now or datetime.now(timezone.utc)
@@ -237,17 +213,17 @@ def write_runstate(
     return out_path
 
 
-def read_runstate(vault_root: Path | str, valid_date: date) -> dict[str, Any] | None:
+def read_runstate(valid_date: date) -> dict[str, Any] | None:
     """Read the dated run-state note's JSON body. Missing/unparseable → None.
 
-    V2: state dir only; no vault fallback."""
-    path = runstate_read_path(vault_root, valid_date)
+    State dir only."""
+    path = runstate_read_path(valid_date)
     if not path.is_file():
         return None
     return gather._extract_json_block(path.read_text(encoding="utf-8", errors="replace"))
 
 
-def is_day_setup_confirmed(vault_root: Path | str, valid_date: date) -> bool:
+def is_day_setup_confirmed(valid_date: date) -> bool:
     """True ONLY when the dated note carries the explicit Day Setup
     confirmation written by a successful POST /day-setup for that date.
 
@@ -256,14 +232,13 @@ def is_day_setup_confirmed(vault_root: Path | str, valid_date: date) -> bool:
     or any other unrelated runstate write never satisfies it, and a
     pre-change note without the key fails closed.
     """
-    state = read_runstate(vault_root, valid_date)
+    state = read_runstate(valid_date)
     if state is None:
         return False
     return state.get(DAY_SETUP_CONFIRMED_KEY) is True
 
 
 def update_runstate(
-    vault_root: Path | str,
     valid_date: date,
     updates: dict[str, Any] | Callable[[dict[str, Any]], None],
     now: datetime | None = None,
@@ -277,12 +252,12 @@ def update_runstate(
     mutates the state in place. Returns the state as written.
     """
     with day_lock(valid_date):
-        state = build_runstate(read_runstate(vault_root, valid_date) or None)
+        state = build_runstate(read_runstate(valid_date) or None)
         if callable(updates):
             updates(state)
         else:
             state.update(updates)
-        write_runstate(vault_root, valid_date, state, now=now)
+        write_runstate(valid_date, state, now=now)
         return state
 
 
@@ -297,12 +272,7 @@ def update_runstate(
 # schedulable) as if the user had confirmed them. Same cache dir, same atomic
 # discipline, no shared-shape coupling.
 
-def digest_index_rel_path(valid_date: date) -> str:
-    return f"{CACHE_DIR_REL}/tdtb-digest-index-{valid_date}.json"
-
-
 def write_digest_index(
-    vault_root: Path | str,
     valid_date: date,
     index: list[dict[str, str]],
     *,
@@ -316,8 +286,7 @@ def write_digest_index(
     against a stale policy; this slice records it only and adds no rejection.
     ``None`` (legacy callers) omits the key.
 
-    S1: the index goes to ``<app home>/state/runstate/``; the vault is never
-    written to.
+    The index goes to ``<app home>/state/runstate/``.
     """
     if exclusion_settings_revision is not None and (
         type(exclusion_settings_revision) is not int
@@ -340,7 +309,7 @@ def write_digest_index(
     return out_path
 
 
-def read_digest_index(vault_root: Path | str, valid_date: date) -> list[dict[str, Any]]:
+def read_digest_index(valid_date: date) -> list[dict[str, Any]]:
     """Today's index; missing or unreadable degrades to ``[]`` (the caller
     then refuses the target, exactly as an unknown name is refused).
 
@@ -348,8 +317,8 @@ def read_digest_index(vault_root: Path | str, valid_date: date) -> list[dict[str
     whose own valid_date disagrees with the requested day is treated as
     missing, so a stale/cross-day cache can never authorize a commit.
 
-    V2: state dir only; no vault fallback."""
-    path = digest_index_read_path(vault_root, valid_date)
+    State dir only."""
+    path = digest_index_read_path(valid_date)
     if not path.is_file():
         return []
     try:
@@ -362,14 +331,14 @@ def read_digest_index(vault_root: Path | str, valid_date: date) -> list[dict[str
     return [i for i in items if isinstance(i, dict)] if isinstance(items, list) else []
 
 
-def read_dropped(vault_root: Path | str, valid_date: date) -> list[dict[str, Any]]:
+def read_dropped(valid_date: date) -> list[dict[str, Any]]:
     """Today's Drop-from-plan exclusions, or ``[]`` when none.
 
     The dated run-state note scopes the list: a different ``valid_date`` is a
     different day, so dropped items are eligible again. Malformed entries are
     ignored, never raised on.
     """
-    state = read_runstate(vault_root, valid_date) or {}
+    state = read_runstate(valid_date) or {}
     dropped = state.get("dropped")
     if not isinstance(dropped, list):
         return []
@@ -398,13 +367,13 @@ def _selections_to_yaml_lines(runs: list[dict[str, Any]]) -> list[str]:
     return lines
 
 
-def read_recent_selections(vault_root: Path | str) -> list[dict[str, Any]]:
+def read_recent_selections() -> list[dict[str, Any]]:
     """Read the ``runs:`` list from the recent-selections cache.
 
     Missing or unparseable file → empty list (the skill treats this cache as
     an enhancement, never a dependency — skip silently). V2: state dir only.
     """
-    path = recent_selections_read_path(vault_root)
+    path = recent_selections_read_path()
     if not path.is_file():
         return []
     fm = gather.parse_frontmatter(path.read_text(encoding="utf-8", errors="replace"))
@@ -415,7 +384,6 @@ def read_recent_selections(vault_root: Path | str) -> list[dict[str, Any]]:
 
 
 def append_recent_selection(
-    vault_root: Path | str,
     run_date: date,
     selections: list[dict[str, Any]],
 ) -> Path:
@@ -425,10 +393,9 @@ def append_recent_selection(
     spec. A same-date entry is replaced rather than duplicated (same-day
     re-commit overwrites, matching the run-state overwrite semantics).
 
-    S1: the cache is written to ``<app home>/state/runstate/``; the vault copy
-    is never written to.
+    The cache is written to ``<app home>/state/runstate/``.
     """
-    runs = [r for r in read_recent_selections(vault_root)
+    runs = [r for r in read_recent_selections()
             if str(r.get("date")) != str(run_date)]
     entry = {
         "date": str(run_date),

@@ -1,7 +1,7 @@
 """Tests for bootstrap-seat.sh — the portable TDTB seat bootstrap runner.
 
 These tests fake uv, npm, and node with minimal stub executables, use a
-temporary HOME, repo root, and vault, and never touch the real filesystem
+temporary HOME and repo root, and never touch the real filesystem
 outside the test temp dirs.
 """
 from __future__ import annotations
@@ -144,7 +144,7 @@ def temp_repo(tmp_path: Path, temp_home: Path) -> Path:
     (repo / "frontend" / "package.json").write_text('{"name":"test"}\n')
     (repo / "frontend" / "package-lock.json").write_text('{"lockfileVersion":3}\n')
     (repo / "launchd").mkdir(parents=True)
-    # The plist template uses __WALLE_HOME__, __TDTB_REPO__, __TDTB_VAULT_ROOT__
+    # The plist template uses __WALLE_HOME__ and __TDTB_REPO__
     (repo / "launchd" / "com.walle.tdtb.plist").write_text("""\
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -161,8 +161,8 @@ def temp_repo(tmp_path: Path, temp_home: Path) -> Path:
   <string>__TDTB_REPO__/app</string>
   <key>EnvironmentVariables</key>
   <dict>
-    <key>TDTB_VAULT_ROOT</key>
-    <string>__TDTB_VAULT_ROOT__</string>
+    <key>TDTB_JUDGMENT_MODEL</key>
+    <string>test-model</string>
   </dict>
   <key>RunAtLoad</key>
   <true/>
@@ -179,19 +179,6 @@ def temp_repo(tmp_path: Path, temp_home: Path) -> Path:
     (repo / "bootstrap-seat.sh").write_text("#!/bin/zsh\n# stub\n")
     (repo / "bootstrap-seat.sh").chmod(0o755)
     return repo
-
-
-@pytest.fixture
-def temp_vault(tmp_path: Path) -> Path:
-    """A temporary vault at one of the two supported paths relative to HOME.
-
-    Creates ``<tmp>/vault`` (caller sets HOME accordingly or passes the path
-    explicitly via TDTB_VAULT_ROOT).
-    """
-    vault = tmp_path / "vault"
-    vault.mkdir(parents=True)
-    (vault / ".obsidian").mkdir(parents=True)  # minimal vault marker
-    return vault
 
 
 @pytest.fixture
@@ -553,12 +540,11 @@ class TestBootstrapLink:
 class TestLaunchdMode:
     """--launchd renders and stages the plist."""
 
-    def test_stages_plist(self, temp_repo: Path, temp_home: Path, fake_bindir: Path, temp_vault: Path):
+    def test_stages_plist(self, temp_repo: Path, temp_home: Path, fake_bindir: Path):
         """--launchd stages the plist with all substitutions."""
         result = _run_bootstrap(
             temp_repo, temp_home, fake_bindir,
             extra_args=["--launchd"],
-            extra_env={"TDTB_VAULT_ROOT": str(temp_vault)},
         )
         assert result.returncode == 0, f"stderr: {result.stderr}"
 
@@ -566,16 +552,15 @@ class TestLaunchdMode:
         assert plist.is_file(), "plist should have been staged"
 
         content = plist.read_text()
-        # Verify all three substitutions
+        # Verify both substitutions
         assert str(temp_home) in content, "plist should contain resolved HOME"
         assert str(temp_repo) in content, "plist should contain resolved TDTB_REPO"
-        assert str(temp_vault) in content, "plist should contain resolved vault"
         # Verify template markers are gone
         assert "__WALLE_HOME__" not in content, "HOME marker should be substituted"
         assert "__TDTB_REPO__" not in content, "REPO marker should be substituted"
-        assert "__TDTB_VAULT_ROOT__" not in content, "vault marker should be substituted"
+        assert "VAULT" not in content, "the retired vault key must not be rendered"
 
-    def test_launchd_custom_repo(self, temp_repo: Path, temp_home: Path, fake_bindir: Path, temp_vault: Path, tmp_path: Path):
+    def test_launchd_custom_repo(self, temp_repo: Path, temp_home: Path, fake_bindir: Path, tmp_path: Path):
         """A custom TDTB_REPO (e.g. a worktree) is reflected in the staged plist."""
         # Create a second repo structure (simulates a worktree)
         worktree = tmp_path / "worktree"
@@ -596,7 +581,6 @@ class TestLaunchdMode:
         result = _run_bootstrap(
             worktree, temp_home, fake_bindir,
             extra_args=["--launchd"],
-            extra_env={"TDTB_VAULT_ROOT": str(temp_vault)},
         )
         assert result.returncode == 0, f"stderr: {result.stderr}"
 
@@ -610,44 +594,41 @@ class TestLaunchdMode:
             "plist should NOT contain the default repo path"
         )
 
-    def test_detects_current_plist(self, temp_repo: Path, temp_home: Path, fake_bindir: Path, temp_vault: Path):
-        """Re-run with same vault skips re-rendering."""
+    def test_detects_current_plist(self, temp_repo: Path, temp_home: Path, fake_bindir: Path):
+        """Re-run skips re-rendering."""
         r1 = _run_bootstrap(
             temp_repo, temp_home, fake_bindir,
             extra_args=["--launchd"],
-            extra_env={"TDTB_VAULT_ROOT": str(temp_vault)},
         )
         assert r1.returncode == 0, f"first run: {r1.stderr}"
 
         r2 = _run_bootstrap(
             temp_repo, temp_home, fake_bindir,
             extra_args=["--launchd"],
-            extra_env={"TDTB_VAULT_ROOT": str(temp_vault)},
         )
         assert r2.returncode == 0, f"second run: {r2.stderr}"
         assert "already current" in r2.stdout or "already exists" in r2.stdout, (
             "second run should detect plist is current"
         )
 
-    def test_fails_on_missing_vault(self, temp_repo: Path, temp_home: Path, fake_bindir: Path):
-        """--launchd fails closed when no vault is found."""
+    def test_ignores_a_legacy_vault_root_variable(self, temp_repo: Path, temp_home: Path, fake_bindir: Path):
+        """--launchd needs no vault: TDTB_VAULT_ROOT is neither required nor used."""
         result = _run_bootstrap(
             temp_repo, temp_home, fake_bindir,
             extra_args=["--launchd"],
+            extra_env={"TDTB_VAULT_ROOT": "/nonexistent/vault"},
         )
-        assert result.returncode != 0
-        assert "vault" in result.stderr.lower(), (
-            "error should mention vault: " + result.stderr
-        )
+        assert result.returncode == 0, f"stderr: {result.stderr}"
+        content = (temp_home / "Library" / "LaunchAgents" / "com.walle.tdtb.plist").read_text()
+        assert "/nonexistent/vault" not in content
 
-    def test_fails_on_invalid_plist(self, temp_repo: Path, temp_home: Path, fake_bindir: Path, temp_vault: Path, tmp_path: Path):
+    def test_fails_on_invalid_plist(self, temp_repo: Path, temp_home: Path, fake_bindir: Path, tmp_path: Path):
         """--launchd fails closed when the rendered plist is invalid."""
         # Replace plist template with something that will render to invalid XML
         (temp_repo / "launchd" / "com.walle.tdtb.plist").write_text("not xml at all <<<")
         result = _run_bootstrap(
             temp_repo, temp_home, fake_bindir,
             extra_args=["--launchd"],
-            extra_env={"TDTB_VAULT_ROOT": str(temp_vault)},
         )
         assert result.returncode != 0
         assert "invalid" in result.stderr.lower() or "plutil" in result.stderr.lower(), (
@@ -655,7 +636,7 @@ class TestLaunchdMode:
         )
 
     def test_preserves_existing_plist_on_failure(
-        self, temp_repo: Path, temp_home: Path, fake_bindir: Path, temp_vault: Path,
+        self, temp_repo: Path, temp_home: Path, fake_bindir: Path,
     ):
         """If the new plist can't be validated, the old one is preserved."""
         plist_dest = temp_home / "Library" / "LaunchAgents" / "com.walle.tdtb.plist"
@@ -667,7 +648,6 @@ class TestLaunchdMode:
         result = _run_bootstrap(
             temp_repo, temp_home, fake_bindir,
             extra_args=["--launchd"],
-            extra_env={"TDTB_VAULT_ROOT": str(temp_vault)},
         )
         assert result.returncode != 0
         # The old plist should still be there
@@ -702,12 +682,11 @@ class TestDryRun:
         bootstrap_link = temp_home / ".local" / "bin" / "tdtb-bootstrap"
         assert not bootstrap_link.exists(), "bootstrap symlink should NOT have been created during dry run"
 
-    def test_no_plist(self, temp_repo: Path, temp_home: Path, fake_bindir: Path, temp_vault: Path):
+    def test_no_plist(self, temp_repo: Path, temp_home: Path, fake_bindir: Path):
         """--dry-run --launchd does not stage the plist."""
         result = _run_bootstrap(
             temp_repo, temp_home, fake_bindir,
             extra_args=["--dry-run", "--launchd"],
-            extra_env={"TDTB_VAULT_ROOT": str(temp_vault)},
         )
         assert result.returncode == 0
         plist = temp_home / "Library" / "LaunchAgents" / "com.walle.tdtb.plist"

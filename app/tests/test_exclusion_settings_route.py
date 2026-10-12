@@ -27,15 +27,8 @@ TAG_B = "0d194525-c5a1-4af5-bb62-202b83006b5e"
 
 
 @pytest.fixture
-def vault(tmp_path) -> Path:
-    root = tmp_path / "vault-root"
-    root.mkdir()
-    return root
-
-
-@pytest.fixture
-def client(vault) -> TestClient:
-    app = main_mod.create_app(vault_root=vault)
+def client() -> TestClient:
+    app = main_mod.create_app()
     c = TestClient(app)
     c.app_token = app.state.token
     return c
@@ -58,8 +51,8 @@ def _body(expected_revision: int = 0, tags: list | None = None, **overrides) -> 
     return body
 
 
-def _settings_bytes(vault: Path) -> bytes:
-    return es.settings_path(vault).read_bytes()
+def _settings_bytes() -> bytes:
+    return es.settings_path().read_bytes()
 
 
 class FakeCatalogAdapter:
@@ -82,7 +75,7 @@ def _default_catalog() -> dict:
 
 
 class TestGet:
-    def test_get_is_tokenless_and_reports_the_default(self, client, vault):
+    def test_get_is_tokenless_and_reports_the_default(self, client):
         response = client.get("/settings/exclusions")
 
         assert response.status_code == 200
@@ -96,9 +89,9 @@ class TestGet:
         # No source record → the advisory catalog reports unconfigured and
         # reading never creates the settings file.
         assert body["tag_catalog"] == _default_catalog()
-        assert not es.settings_path(vault).exists()
+        assert not es.settings_path().exists()
 
-    def test_get_reports_persisted_settings_after_save(self, client, vault):
+    def test_get_reports_persisted_settings_after_save(self, client):
         saved = client.post(
             "/settings/exclusions/save",
             headers=_auth(client),
@@ -111,8 +104,8 @@ class TestGet:
         assert body["settings"]["revision"] == 1
         assert body["settings"]["exclusions"]["tags"] == [_entry()]
 
-    def test_get_malformed_storage_fails_closed_without_erasing(self, client, vault):
-        path = es.settings_path(vault)
+    def test_get_malformed_storage_fails_closed_without_erasing(self, client):
+        path = es.settings_path()
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("{not json!!", encoding="utf-8")
 
@@ -122,7 +115,7 @@ class TestGet:
         detail = response.json()["detail"]
         assert detail["code"] == "exclusion_settings_storage_error"
         assert "preserved" in detail["message"]
-        assert _settings_bytes(vault) == b"{not json!!"
+        assert _settings_bytes() == b"{not json!!"
 
     def test_get_catalog_lists_root_tags_when_configured(self, client):
         adapter = FakeCatalogAdapter(result={
@@ -134,7 +127,7 @@ class TestGet:
             ],
             "warnings": [],
         })
-        client.app.state.build_capacities_adapter = lambda v, cfg: adapter
+        client.app.state.build_capacities_adapter = lambda cfg: adapter
 
         body = client.get("/settings/exclusions").json()
 
@@ -149,14 +142,14 @@ class TestGet:
         }
         assert adapter.closed is True
 
-    def test_get_catalog_failure_does_not_hide_saved_settings(self, client, vault):
+    def test_get_catalog_failure_does_not_hide_saved_settings(self, client):
         client.post(
             "/settings/exclusions/save",
             headers=_auth(client),
             json=_body(tags=[_entry()]),
         )
 
-        def boom(v, cfg):
+        def boom(cfg):
             raise RuntimeError("capacities token file not found")
 
         client.app.state.build_capacities_adapter = boom
@@ -170,13 +163,13 @@ class TestGet:
         assert body["tag_catalog"]["status"] == "unavailable"
         assert any("unavailable" in w for w in body["tag_catalog"]["warnings"])
 
-    def test_get_catalog_adapter_raise_degrades_with_saved_settings_intact(self, client, vault):
+    def test_get_catalog_adapter_raise_degrades_with_saved_settings_intact(self, client):
         client.post(
             "/settings/exclusions/save",
             headers=_auth(client),
             json=_body(tags=[_entry()]),
         )
-        client.app.state.build_capacities_adapter = lambda v, cfg: FakeCatalogAdapter(
+        client.app.state.build_capacities_adapter = lambda cfg: FakeCatalogAdapter(
             error=RuntimeError("provider down")
         )
 
@@ -192,18 +185,12 @@ class TestGet:
             "tags": [{"id": TAG_A, "title": "habituals"}],
             "warnings": ["tag catalog stopped after 1 page(s) — the listing is incomplete"],
         })
-        client.app.state.build_capacities_adapter = lambda v, cfg: adapter
+        client.app.state.build_capacities_adapter = lambda cfg: adapter
 
         body = client.get("/settings/exclusions").json()
 
         assert body["tag_catalog"]["status"] == "partial"
         assert body["tag_catalog"]["warnings"]
-
-    def test_get_unresolved_vault_returns_503(self, monkeypatch):
-        monkeypatch.delenv("TDTB_VAULT_ROOT", raising=False)
-        app = main_mod.create_app()
-        assert TestClient(app).get("/settings/exclusions").status_code == 503
-
 
 class TestPostAuth:
     def test_post_requires_token(self, client):
@@ -219,7 +206,7 @@ class TestPostAuth:
 
 
 class TestPostPersistence:
-    def test_post_persists_and_returns_the_saved_settings(self, client, vault):
+    def test_post_persists_and_returns_the_saved_settings(self, client):
         response = client.post(
             "/settings/exclusions/save",
             headers=_auth(client),
@@ -239,7 +226,7 @@ class TestPostPersistence:
                 ]
             },
         }
-        assert es.settings_path(vault).is_file()
+        assert es.settings_path().is_file()
 
     def test_post_is_a_full_replacement(self, client):
         client.post(
@@ -257,13 +244,13 @@ class TestPostPersistence:
         assert second.json()["settings"]["exclusions"]["tags"] == []
         assert second.json()["settings"]["revision"] == 2
 
-    def test_post_stale_revision_conflicts_and_preserves_bytes(self, client, vault):
+    def test_post_stale_revision_conflicts_and_preserves_bytes(self, client):
         client.post(
             "/settings/exclusions/save",
             headers=_auth(client),
             json=_body(),
         )
-        before = _settings_bytes(vault)
+        before = _settings_bytes()
 
         response = client.post(
             "/settings/exclusions/save",
@@ -273,10 +260,10 @@ class TestPostPersistence:
 
         assert response.status_code == 409
         assert response.json()["detail"]["code"] == "exclusion_settings_conflict"
-        assert _settings_bytes(vault) == before
+        assert _settings_bytes() == before
 
-    def test_post_malformed_existing_storage_conflicts_without_erasing(self, client, vault):
-        path = es.settings_path(vault)
+    def test_post_malformed_existing_storage_conflicts_without_erasing(self, client):
+        path = es.settings_path()
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("garbage", encoding="utf-8")
 
@@ -288,21 +275,7 @@ class TestPostPersistence:
 
         assert response.status_code == 409
         assert response.json()["detail"]["code"] == "exclusion_settings_storage_error"
-        assert _settings_bytes(vault) == b"garbage"
-
-    def test_post_unresolved_vault_returns_503(self, monkeypatch):
-        monkeypatch.delenv("TDTB_VAULT_ROOT", raising=False)
-        app = main_mod.create_app()
-        c = TestClient(app)
-
-        response = c.post(
-            "/settings/exclusions/save",
-            headers={"X-TDTB-Token": app.state.token},
-            json=_body(),
-        )
-
-        assert response.status_code == 503
-
+        assert _settings_bytes() == b"garbage"
 
 class TestPostValidation:
     @pytest.mark.parametrize(
@@ -327,7 +300,7 @@ class TestPostValidation:
             _body(tags=[{**_entry(), "title": "habituals"}]),              # extra entry key
         ],
     )
-    def test_malformed_requests_are_rejected_422(self, client, vault, payload):
+    def test_malformed_requests_are_rejected_422(self, client, payload):
         response = client.post(
             "/settings/exclusions/save",
             headers=_auth(client),
@@ -335,9 +308,9 @@ class TestPostValidation:
         )
 
         assert response.status_code == 422
-        assert not es.settings_path(vault).exists()
+        assert not es.settings_path().exists()
 
-    def test_duplicate_request_keys_collapse_to_one_validated_identity(self, client, vault):
+    def test_duplicate_request_keys_collapse_to_one_validated_identity(self, client):
         # A duplicate JSON key in the request collapses to one key at parse
         # time; the server still validates the surviving value strictly. This
         # documents that the storage-level duplicate rejection is the strong

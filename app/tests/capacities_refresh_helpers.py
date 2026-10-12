@@ -154,7 +154,6 @@ class FakeProvider:
 
 def _store(tmp_path):
     return cb.build_refresh_state(
-        tmp_path / "vault",
         SPACE,
         cb.CapacitiesBuilderConfig(refresh_state_path=tmp_path / "state"),
     )

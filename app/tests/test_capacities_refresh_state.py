@@ -43,7 +43,6 @@ def _store(tmp_path, *, root=None, space_id=SPACE, clock=None, **kwargs):
         root if root is not None else tmp_path / "refresh-state",
         origin=ORIGIN,
         space_id=space_id,
-        vault_root=tmp_path,
         epoch_clock=clock if clock is not None else _Clock(),
         **kwargs,
     )
@@ -201,7 +200,7 @@ def test_a_pointer_with_a_foreign_namespace_is_never_served_or_overwritten(
     foreign_bytes = pointer.read_bytes()
 
     assert store.load_snapshot(SCOPE) is None
-    assert any("different vault" in warning.lower() for warning in store.drain_warnings())
+    assert any("different provider" in warning.lower() for warning in store.drain_warnings())
     with pytest.raises(rs.RefreshStateFormatError):
         _install(store, revision=2, expected=1, listings=[_listing("T", ["o1"], 11.0)])
     assert pointer.read_bytes() == foreign_bytes
@@ -209,7 +208,7 @@ def test_a_pointer_with_a_foreign_namespace_is_never_served_or_overwritten(
     # A different space resolves a different pointer path, so it never even
     # looks at (or warns about) another scope's bytes.
     other = rs.RefreshStateStore(
-        root, origin=ORIGIN, space_id="space-2", vault_root=tmp_path
+        root, origin=ORIGIN, space_id="space-2"
     )
     assert other.load_snapshot(SCOPE) is None
     assert other.drain_warnings() == []

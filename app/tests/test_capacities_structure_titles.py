@@ -30,49 +30,46 @@ def _document(path: Path) -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def _stored_titles(path: Path, vault, space, base=BASE_URL) -> dict:
-    namespace = cache_io.cache_namespace(vault, space, base)
+def _stored_titles(path: Path, space, base=BASE_URL) -> dict:
+    namespace = cache_io.cache_namespace(space, base)
     return _document(path)["namespaces"][namespace]["titles"]
 
 
 def test_round_trip_and_namespace_isolation(tmp_path):
     path = tmp_path / "titles.json"
-    vault_a, vault_b = tmp_path / "vault-a", tmp_path / "vault-b"
 
     assert (
-        titles.remember_titles(vault_a, "space-1", BASE_URL, {"s1": "One"}, path=path)
+        titles.remember_titles("space-1", BASE_URL, {"s1": "One"}, path=path)
         is True
     )
-    assert titles.read_titles(vault_a, "space-1", BASE_URL, path=path) == {"s1": "One"}
+    assert titles.read_titles("space-1", BASE_URL, path=path) == {"s1": "One"}
     # A trailing slash is the same provider scope, not a new namespace.
-    assert titles.read_titles(vault_a, "space-1", BASE_URL + "/", path=path) == {
+    assert titles.read_titles("space-1", BASE_URL + "/", path=path) == {
         "s1": "One"
     }
-    # Another vault, another space, or another provider URL sees nothing.
-    assert titles.read_titles(vault_b, "space-1", BASE_URL, path=path) == {}
-    assert titles.read_titles(vault_a, "space-2", BASE_URL, path=path) == {}
-    assert titles.read_titles(vault_a, "space-1", "https://other.example", path=path) == {}
+    # Another space or another provider URL sees nothing.
+    assert titles.read_titles("space-2", BASE_URL, path=path) == {}
+    assert titles.read_titles("space-1", "https://other.example", path=path) == {}
 
 
 def test_rewriting_one_namespace_keeps_the_document_byte_identical(tmp_path):
     path = tmp_path / "titles.json"
-    vault_a, vault_b = tmp_path / "vault-a", tmp_path / "vault-b"
 
-    assert titles.remember_titles(vault_a, "space-1", BASE_URL, {"s1": "One"}, path=path)
-    assert titles.remember_titles(vault_b, "space-1", BASE_URL, {"s2": "Two"}, path=path)
+    assert titles.remember_titles("space-1", BASE_URL, {"s1": "One"}, path=path)
+    assert titles.remember_titles("space-2", BASE_URL, {"s2": "Two"}, path=path)
     before = path.read_bytes()
 
     assert (
-        titles.remember_titles(vault_a, "space-1", BASE_URL, {"s1": "One"}, path=path)
+        titles.remember_titles("space-1", BASE_URL, {"s1": "One"}, path=path)
         is True
     )
 
     # Byte-for-byte: rewriting one namespace moved nothing else in the file.
     assert path.read_bytes() == before
-    assert titles.read_titles(vault_b, "space-1", BASE_URL, path=path) == {"s2": "Two"}
+    assert titles.read_titles("space-2", BASE_URL, path=path) == {"s2": "Two"}
     assert set(_document(path)["namespaces"]) == {
-        cache_io.cache_namespace(vault_a, "space-1", BASE_URL),
-        cache_io.cache_namespace(vault_b, "space-1", BASE_URL),
+        cache_io.cache_namespace("space-1", BASE_URL),
+        cache_io.cache_namespace("space-2", BASE_URL),
     }
 
 
@@ -81,7 +78,7 @@ def test_failing_atomic_write_returns_false_and_preserves_previous_bytes(
 ):
     path = tmp_path / "titles.json"
     vault = tmp_path / "vault-a"
-    assert titles.remember_titles(vault, "space-1", BASE_URL, {"s1": "One"}, path=path)
+    assert titles.remember_titles("space-1", BASE_URL, {"s1": "One"}, path=path)
     before = path.read_bytes()
 
     def _boom(_path, _data):
@@ -89,12 +86,12 @@ def test_failing_atomic_write_returns_false_and_preserves_previous_bytes(
 
     monkeypatch.setattr(titles, "atomic_write_json", _boom)
     assert (
-        titles.remember_titles(vault, "space-1", BASE_URL, {"s1": "Two"}, path=path)
+        titles.remember_titles("space-1", BASE_URL, {"s1": "Two"}, path=path)
         is False
     )
 
     assert path.read_bytes() == before
-    assert titles.read_titles(vault, "space-1", BASE_URL, path=path) == {"s1": "One"}
+    assert titles.read_titles("space-1", BASE_URL, path=path) == {"s1": "One"}
 
 
 def test_replace_failure_after_a_complete_temp_write_preserves_previous_bytes(
@@ -102,7 +99,7 @@ def test_replace_failure_after_a_complete_temp_write_preserves_previous_bytes(
 ):
     path = tmp_path / "titles.json"
     vault = tmp_path / "vault-a"
-    assert titles.remember_titles(vault, "space-1", BASE_URL, {"s1": "One"}, path=path)
+    assert titles.remember_titles("space-1", BASE_URL, {"s1": "One"}, path=path)
     before = path.read_bytes()
 
     def _boom(*_args, **_kwargs):
@@ -112,20 +109,20 @@ def test_replace_failure_after_a_complete_temp_write_preserves_previous_bytes(
     # temp file but before the replace. The prior bytes must survive.
     monkeypatch.setattr(cache_io.os, "replace", _boom)
     assert (
-        titles.remember_titles(vault, "space-1", BASE_URL, {"s1": "Two"}, path=path)
+        titles.remember_titles("space-1", BASE_URL, {"s1": "Two"}, path=path)
         is False
     )
 
     assert path.read_bytes() == before
     assert list(tmp_path.glob(".*.tmp")) == []
-    assert titles.read_titles(vault, "space-1", BASE_URL, path=path) == {"s1": "One"}
+    assert titles.read_titles("space-1", BASE_URL, path=path) == {"s1": "One"}
 
 
 def test_cache_file_lock_file_and_created_directories_are_owner_only(tmp_path):
     path = tmp_path / "fresh" / "nested" / "titles.json"
     assert (
         titles.remember_titles(
-            tmp_path / "vault-a", "space-1", BASE_URL, {"s1": "One"}, path=path
+            "space-1", BASE_URL, {"s1": "One"}, path=path
         )
         is True
     )
@@ -144,7 +141,6 @@ def test_blank_and_whitespace_titles_are_not_remembered(tmp_path):
 
     assert (
         titles.remember_titles(
-            vault,
             "space-1",
             BASE_URL,
             {"a": "Alpha", "b": "   ", "c": "", "d": "\t\n", "e": None},
@@ -153,14 +149,14 @@ def test_blank_and_whitespace_titles_are_not_remembered(tmp_path):
         is True
     )
 
-    assert titles.read_titles(vault, "space-1", BASE_URL, path=path) == {"a": "Alpha"}
-    assert set(_stored_titles(path, vault, "space-1")) == {"a"}
+    assert titles.read_titles("space-1", BASE_URL, path=path) == {"a": "Alpha"}
+    assert set(_stored_titles(path, "space-1")) == {"a"}
 
 
 def test_blank_titles_already_stored_are_ignored_on_read(tmp_path):
     path = tmp_path / "titles.json"
     vault = tmp_path / "vault-a"
-    namespace = cache_io.cache_namespace(vault, "space-1", BASE_URL)
+    namespace = cache_io.cache_namespace("space-1", BASE_URL)
     path.write_text(
         json.dumps(
             {
@@ -173,7 +169,7 @@ def test_blank_titles_already_stored_are_ignored_on_read(tmp_path):
         encoding="utf-8",
     )
 
-    assert titles.read_titles(vault, "space-1", BASE_URL, path=path) == {"a": "Alpha"}
+    assert titles.read_titles("space-1", BASE_URL, path=path) == {"a": "Alpha"}
 
 
 def test_unwritable_cache_path_returns_false_without_raising(tmp_path):
@@ -184,7 +180,7 @@ def test_unwritable_cache_path_returns_false_without_raising(tmp_path):
     try:
         assert (
             titles.remember_titles(
-                tmp_path / "vault-a", "space-1", BASE_URL, {"s1": "One"}, path=path
+                "space-1", BASE_URL, {"s1": "One"}, path=path
             )
             is False
         )
@@ -198,7 +194,7 @@ def test_unwritable_cache_path_returns_false_without_raising(tmp_path):
 def test_missing_file_reads_empty_and_creates_nothing(tmp_path):
     path = tmp_path / "titles.json"
 
-    assert titles.read_titles(tmp_path / "vault-a", "space-1", BASE_URL, path=path) == {}
+    assert titles.read_titles("space-1", BASE_URL, path=path) == {}
     assert list(tmp_path.iterdir()) == []
 
 
@@ -221,7 +217,7 @@ def test_corrupt_and_unsupported_documents_read_empty_and_are_not_rewritten(
     path.write_bytes(payload)
     before = path.read_bytes()
 
-    assert titles.read_titles(tmp_path / "vault-a", "space-1", BASE_URL, path=path) == {}
+    assert titles.read_titles("space-1", BASE_URL, path=path) == {}
     assert path.read_bytes() == before
     assert list(tmp_path.iterdir()) == [path]
 
@@ -229,14 +225,14 @@ def test_corrupt_and_unsupported_documents_read_empty_and_are_not_rewritten(
 def test_malformed_namespace_entry_reads_empty(tmp_path):
     path = tmp_path / "titles.json"
     vault = tmp_path / "vault-a"
-    namespace = cache_io.cache_namespace(vault, "space-1", BASE_URL)
+    namespace = cache_io.cache_namespace("space-1", BASE_URL)
 
     for entry in ("nope", [], {"titles": "nope"}, {"titles": 3}, {}):
         path.write_text(
             json.dumps({"version": 1, "namespaces": {namespace: entry}}),
             encoding="utf-8",
         )
-        assert titles.read_titles(vault, "space-1", BASE_URL, path=path) == {}
+        assert titles.read_titles("space-1", BASE_URL, path=path) == {}
 
     # A namespace for a different scope is not this scope's namespace.
     path.write_text(
@@ -244,7 +240,7 @@ def test_malformed_namespace_entry_reads_empty(tmp_path):
             {
                 "version": 1,
                 "namespaces": {
-                    cache_io.cache_namespace(vault, "space-2", BASE_URL): {
+                    cache_io.cache_namespace("space-2", BASE_URL): {
                         "titles": {"s1": "One"}
                     }
                 },
@@ -252,7 +248,7 @@ def test_malformed_namespace_entry_reads_empty(tmp_path):
         ),
         encoding="utf-8",
     )
-    assert titles.read_titles(vault, "space-1", BASE_URL, path=path) == {}
+    assert titles.read_titles("space-1", BASE_URL, path=path) == {}
 
 
 def test_remember_repairs_a_corrupt_document(tmp_path):
@@ -261,32 +257,32 @@ def test_remember_repairs_a_corrupt_document(tmp_path):
     path.write_bytes(b"garbage")
 
     assert (
-        titles.remember_titles(vault, "space-1", BASE_URL, {"s1": "One"}, path=path)
+        titles.remember_titles("space-1", BASE_URL, {"s1": "One"}, path=path)
         is True
     )
 
     assert _document(path) == {
         "version": titles.TITLES_SCHEMA_VERSION,
         "namespaces": {
-            cache_io.cache_namespace(vault, "space-1", BASE_URL): {
+            cache_io.cache_namespace("space-1", BASE_URL): {
                 "titles": {"s1": "One"}
             }
         },
     }
-    assert titles.read_titles(vault, "space-1", BASE_URL, path=path) == {"s1": "One"}
+    assert titles.read_titles("space-1", BASE_URL, path=path) == {"s1": "One"}
 
 
 def test_invalid_titles_argument_returns_false_and_keeps_the_file(tmp_path):
     path = tmp_path / "titles.json"
     vault = tmp_path / "vault-a"
-    assert titles.remember_titles(vault, "space-1", BASE_URL, {"s1": "One"}, path=path)
+    assert titles.remember_titles("space-1", BASE_URL, {"s1": "One"}, path=path)
     before = path.read_bytes()
 
     assert (
-        titles.remember_titles(vault, "space-1", BASE_URL, None, path=path) is False
+        titles.remember_titles("space-1", BASE_URL, None, path=path) is False
     )
     assert (
-        titles.remember_titles(vault, "space-1", BASE_URL, ["s1"], path=path) is False
+        titles.remember_titles("space-1", BASE_URL, ["s1"], path=path) is False
     )
     assert path.read_bytes() == before
 
@@ -298,8 +294,7 @@ def test_concurrent_writers_keep_every_namespace(tmp_path):
     def worker(index):
         try:
             ok = titles.remember_titles(
-                tmp_path / f"vault-{index}",
-                "space-1",
+                f"space-{index}",
                 BASE_URL,
                 {f"s{index}": f"Title {index}"},
                 path=path,
@@ -319,7 +314,7 @@ def test_concurrent_writers_keep_every_namespace(tmp_path):
     assert len(_document(path)["namespaces"]) == 16
     for index in range(16):
         assert titles.read_titles(
-            tmp_path / f"vault-{index}", "space-1", BASE_URL, path=path
+            f"space-{index}", BASE_URL, path=path
         ) == {f"s{index}": f"Title {index}"}
 
 

@@ -25,7 +25,11 @@ import runstate as runstate_mod  # noqa: E402
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "gather"))
 import tdtb_gather as gather  # noqa: E402
-from tests.config_markdown import read_config_note, write_config_note  # noqa: E402
+from tests.config_markdown import (  # noqa: E402
+    install_config_markdown,
+    read_config_note,
+    write_config_note,
+)
 
 CONFIG_REL_PATH = "00 - META/Skill-Configs/tdtb-bridger.md"
 
@@ -60,7 +64,7 @@ def vault(tmp_path) -> Path:
 @pytest.fixture
 def client(vault) -> TestClient:
     vault.mkdir()
-    app = main_mod.create_app(vault_root=vault)
+    app = main_mod.create_app()
     return TestClient(app)
 
 
@@ -141,24 +145,24 @@ class TestPlanInputsRoute:
         after = client.get("/plan-inputs").json()["anchored_source_fingerprint"]
         assert after != before
 
-    def test_micro_adventure_side_load(self, client, vault):
+    def test_micro_adventure_side_load(self, client):
         # Parity with build_commit_body Locked #7: today's run-state selection
         # is merged into config so the /commit Live->Todoist reroute is reachable.
         today = gather.effective_date(datetime.now())
         micro = {"id": "ma03", "idea": "Cook something new", "category": "food"}
         state = runstate_mod.build_runstate({"micro_adventure": micro})
-        runstate_mod.write_runstate(vault, today, state)
+        runstate_mod.write_runstate(today, state)
         r = client.get("/plan-inputs")
         assert r.json()["config"].get("micro_adventure") == micro
 
-    def test_micro_adventure_singular_and_refresh_stable(self, client, vault):
+    def test_micro_adventure_singular_and_refresh_stable(self, client):
         """P3-03: the selected Live/micro-adventure identity is singular,
         canonical, and stable across repeated /plan-inputs reads. A same-day
         refresh must not produce a second Live selection or swap the pick."""
         today = gather.effective_date(datetime.now())
         micro = {"id": "ma03", "idea": "Ride bike somewhere", "category": "novelty"}
         state = runstate_mod.build_runstate({"micro_adventure": micro})
-        runstate_mod.write_runstate(vault, today, state)
+        runstate_mod.write_runstate(today, state)
 
         first = client.get("/plan-inputs")
         assert first.status_code == 200
@@ -187,20 +191,47 @@ class TestPlanInputsRoute:
         assert body1["micro_adventure"] == body2["micro_adventure"]
 
 
+class _AssignedTodoist:
+    """Read-only Todoist stand-in serving the given assigned task names."""
+
+    def __init__(self, names):
+        self.names = list(names)
+
+    def get_filter_tasks(self, query, limit=None):
+        import external_sources as ext
+
+        if query != ext.ASSIGNED_QUERY_FALLBACK:
+            return []
+        return [
+            {"id": str(100 + n), "content": name, "priority": 4, "labels": []}
+            for n, name in enumerate(self.names)
+        ]
+
+    def close(self):
+        pass
+
+
+class _NoEvents:
+    def query_events(self, start, end, calendar_ids=None):
+        return []
+
+    def calendars(self):
+        return []
+
+
+def _todoist_client(names) -> TestClient:
+    app = main_mod.create_app()
+    app.state.build_read_clients = lambda cfg: (_AssignedTodoist(names), _NoEvents())
+    return TestClient(app)
+
+
 class TestIgnoreList:
     """`## Ignore List` config section drops matching items from the digest —
-    vault rows by relative path, name rows case-insensitively, both surfaces
-    (T13e). Todoist-ID matching is pinned at the build_digest level in
-    test_main_api since this route runs without a Todoist client."""
+    name rows case-insensitively, both surfaces (T13e). Todoist-ID matching is
+    pinned at the build_digest level in test_main_api."""
 
     CONFIG_WITH_IGNORES = MINIMAL_CONFIG + """
 ## Ignore List
-
-### Obsidian (by path)
-
-| Path | Notes |
-|------|-------|
-| 50 - Operations/Tasks/By Path.md | |
 
 ### Names
 
@@ -209,38 +240,20 @@ class TestIgnoreList:
 | M1.0 | |
 """
 
-    def _write(self, vault: Path, name: str) -> None:
-        note = vault / "50 - Operations" / "Tasks" / f"{name}.md"
-        note.parent.mkdir(parents=True, exist_ok=True)
-        note.write_text(
-            f"---\nassigned: true\ntype: [task]\nstatus: in-progress\n---\n{name}\n",
-            encoding="utf-8",
-        )
-
-    def _write_cfg(self, vault: Path) -> None:
-        p = vault / CONFIG_REL_PATH
-        p.parent.mkdir(parents=True, exist_ok=True)
-        write_config_note(p, self.CONFIG_WITH_IGNORES, encoding="utf-8")
-
-    def test_ignored_name_and_path_dropped_from_digest(self, client, vault):
-        self._write_cfg(vault)
-        self._write(vault, "M1.0")
-        self._write(vault, "By Path")
-        self._write(vault, "Keep Me")
-        body = client.get("/plan-inputs").json()
+    def test_ignored_name_dropped_from_digest(self, live_sources_mode):
+        install_config_markdown(self.CONFIG_WITH_IGNORES)
+        body = _todoist_client(["M1.0", "Keep Me"]).get("/plan-inputs").json()
         names = [i["name"] for i in body["digest"]["assigned"]]
         assert names == ["Keep Me"]
 
-    def test_name_ignore_is_case_insensitive(self, client, vault):
-        self._write_cfg(vault)
-        self._write(vault, "m1.0")
-        body = client.get("/plan-inputs").json()
+    def test_name_ignore_is_case_insensitive(self, live_sources_mode):
+        install_config_markdown(self.CONFIG_WITH_IGNORES)
+        body = _todoist_client(["m1.0"]).get("/plan-inputs").json()
         assert [i["name"] for i in body["digest"]["assigned"]] == []
 
-    def test_no_ignore_section_keeps_everything(self, client, vault):
-        _write_config(vault)
-        self._write(vault, "M1.0")
-        body = client.get("/plan-inputs").json()
+    def test_no_ignore_section_keeps_everything(self, live_sources_mode):
+        install_config_markdown(MINIMAL_CONFIG)
+        body = _todoist_client(["M1.0"]).get("/plan-inputs").json()
         assert "M1.0" in [i["name"] for i in body["digest"]["assigned"]]
 
 
@@ -289,8 +302,8 @@ def _decisions_client(vault: Path, store) -> TestClient:
     p = vault / CONFIG_REL_PATH
     p.parent.mkdir(parents=True, exist_ok=True)
     write_config_note(p, CONFIG_DISABLED_CALENDARS, encoding="utf-8")
-    app = main_mod.create_app(vault_root=vault)
-    app.state.build_read_clients = lambda v, cfg: (_FakeTodoistEmpty(), store)
+    app = main_mod.create_app()
+    app.state.build_read_clients = lambda cfg: (_FakeTodoistEmpty(), store)
     return TestClient(app)
 
 
@@ -369,14 +382,9 @@ class TestDropFromPlanRefresh:
     digest_index is written from the FILTERED digest)."""
 
     def test_dropped_item_absent_from_digest_and_index_across_refresh(
-        self, client, vault
+        self, live_sources_mode
     ):
-        note = vault / "50 - Operations" / "Projects" / "Press.md"
-        note.parent.mkdir(parents=True, exist_ok=True)
-        note.write_text(
-            "---\ntype: [project]\nstatus: active\nassigned: true\n---\n\n# Press\n",
-            encoding="utf-8",
-        )
+        client = _todoist_client(["Press"])
 
         first = client.get("/plan-inputs").json()
         row = next(r for r in first["digest"]["assigned"] if r["name"] == "Press")
@@ -386,7 +394,7 @@ class TestDropFromPlanRefresh:
         # Drop it for today (date-scoped runstate exclusion, as /drop writes it).
         today = gather.effective_date(datetime.now())
         runstate_mod.update_runstate(
-            vault, today,
+            today,
             lambda s: s.setdefault("dropped", []).append(
                 {"identity": identity, "name": "Press",
                  "dropped_at": "2026-09-05T00:00:00Z"}
@@ -408,7 +416,7 @@ class TestDropFromPlanRefresh:
 
         # identity index is built from the FILTERED digest — the dropped
         # identity must not be resolvable to staging verbs after refresh.
-        index = runstate_mod.read_digest_index(vault, today)
+        index = runstate_mod.read_digest_index(today)
         index_identities = {
             i.get("path") or f"todoist:{i.get('todoist_id')}"
             for i in index if isinstance(i, dict)

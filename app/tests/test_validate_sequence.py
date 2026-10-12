@@ -22,11 +22,11 @@ import tdtb_gather as gather  # noqa: E402
 from datetime import datetime
 
 
-def _pin_frame(vault: Path):
+def _pin_frame():
     """Pin the T7 time frame deterministically (anchor 00:00, eod 23:59) so
     clock-relative past-placement checks never fire in these route tests."""
     today = gather.effective_date(datetime.now())
-    rs.write_runstate(vault, today, rs.build_runstate(
+    rs.write_runstate(today, rs.build_runstate(
         {"anchor": "00:00", "eod": "23:59"}))
 
 
@@ -38,7 +38,7 @@ def vault(tmp_path) -> Path:
 @pytest.fixture
 def client(vault) -> TestClient:
     vault.mkdir()
-    app = main_mod.create_app(vault_root=vault)
+    app = main_mod.create_app()
     c = TestClient(app)
     c.app_token = app.state.token
     return c
@@ -56,8 +56,8 @@ class TestValidateSequenceRoute:
         )
         assert r.status_code == 403
 
-    def test_ok_no_violations(self, client, vault):
-        _pin_frame(vault)
+    def test_ok_no_violations(self, client):
+        _pin_frame()
         r = client.post(
             "/validate-sequence",
             headers=_auth(client),
@@ -74,11 +74,11 @@ class TestValidateSequenceRoute:
         assert body["hard_errors"] == []
         assert body["warnings"] == []
 
-    def test_revalidation_requires_same_pin_grant_fingerprint_snapshot(self, client, vault):
-        _pin_frame(vault)
+    def test_revalidation_requires_same_pin_grant_fingerprint_snapshot(self, client):
+        _pin_frame()
         today = gather.effective_date(datetime.now())
         pin = {"id": "A", "start": "13:00", "end": "13:30", "zone": "any"}
-        rs.update_runstate(vault, today, {
+        rs.update_runstate(today, {
             "pinned_rows": [pin], "overlap_grants": [],
             "planning_config_fingerprint": "fp-current",
         })
@@ -93,10 +93,10 @@ class TestValidateSequenceRoute:
         stale = client.post("/validate-sequence", headers=_auth(client), json=payload)
         assert stale.json()["hard_errors"] == ["planning snapshot is stale"]
 
-    def test_warning_passthrough_soft_zone(self, client, vault):
+    def test_warning_passthrough_soft_zone(self, client):
         # work_hours default window is 08:30-17:00; 07:00 is outside -> SOFT
         # zone_violation warning, ok stays True (never gates).
-        _pin_frame(vault)
+        _pin_frame()
         r = client.post(
             "/validate-sequence",
             headers=_auth(client),
@@ -114,12 +114,12 @@ class TestValidateSequenceRoute:
             w["kind"] == "zone_violation" and w["id"] == "t1" for w in body["warnings"]
         )
 
-    def test_injected_schedulable_rows_are_not_extras(self, client, vault):
+    def test_injected_schedulable_rows_are_not_extras(self, client):
         # /sequence injects Minting/QT/Shivery into its allowlist before
         # validating; this route must mirror that or drag-time revalidation
         # of a proposal flags the injected rows as foreign (2026-07-15 bug).
         today = gather.effective_date(datetime.now())
-        rs.write_runstate(vault, today, rs.build_runstate({
+        rs.write_runstate(today, rs.build_runstate({
             "anchor": "00:00", "eod": "23:59",
             "schedulable": {"qt": {"on": True, "n": 1},
                             "shivery": {"on": True, "n": 1}}}))
@@ -141,11 +141,11 @@ class TestValidateSequenceRoute:
         assert body["hard_errors"] == []
         assert body["ok"] is True
 
-    def test_qt_absorbed_items_optional_either_way(self, client, vault):
+    def test_qt_absorbed_items_optional_either_way(self, client):
         # A 🚀10min item folds into the QT block: an LLM proposal leaves it
         # unplaced, a manual layout places it directly — both must validate.
         today = gather.effective_date(datetime.now())
-        rs.write_runstate(vault, today, rs.build_runstate({
+        rs.write_runstate(today, rs.build_runstate({
             "anchor": "00:00", "eod": "23:59",
             "schedulable": {"qt": {"on": True, "n": 1}}}))
         assigned = [{"id": "Water plants", "name": "Water plants",
@@ -194,8 +194,8 @@ class TestValidateSequenceRoute:
         assert body["ok"] is True
         assert body["hard_errors"] == []
 
-    def test_public_validator_compares_equivalent_time_encodings(self, client, vault):
-        _pin_frame(vault)
+    def test_public_validator_compares_equivalent_time_encodings(self, client):
+        _pin_frame()
         r = client.post(
             "/validate-sequence",
             headers=_auth(client),
@@ -215,9 +215,9 @@ class TestValidateSequenceRoute:
         assert body["hard_errors"] == []
 
     def test_public_validator_exposes_structured_calendar_diagnostic_additively(
-        self, client, vault
+        self, client
     ):
-        _pin_frame(vault)
+        _pin_frame()
         r = client.post(
             "/validate-sequence",
             headers=_auth(client),
@@ -249,13 +249,13 @@ class TestValidateSequenceRoute:
             {"id": "Dentist", "start": "09:00", "end": "10:00"},
         ]
 
-    def test_public_validator_keeps_server_native_pin_immutable(self, client, vault):
-        _pin_frame(vault)
+    def test_public_validator_keeps_server_native_pin_immutable(self, client):
+        _pin_frame()
         today = gather.effective_date(datetime.now())
         native_pin = {
             "id": "Native task", "start": "09:00", "end": "09:30", "zone": None,
         }
-        rs.write_digest_index(vault, today, [{
+        rs.write_digest_index(today, [{
             "name": "Native task",
             "todoist_id": "todo-1",
             "surface": "assigned",
@@ -264,7 +264,7 @@ class TestValidateSequenceRoute:
             "scheduled_start": "09:00",
             "is_recurring": "false",
         }])
-        rs.update_runstate(vault, today, {
+        rs.update_runstate(today, {
             "pinned_rows": [native_pin],
             "overlap_grants": [],
             "planning_config_fingerprint": "",
@@ -289,13 +289,13 @@ class TestValidateSequenceRoute:
         assert body["hard_errors"] == ["pinned rows changed from immutable snapshot"]
 
     def test_stale_pinned_rows_are_rejected_but_empty_snapshot_remains_exempt(
-        self, client, vault
+        self, client
     ):
-        _pin_frame(vault)
+        _pin_frame()
         today = gather.effective_date(datetime.now())
         stored_pin = {"id": "A", "start": "12:00", "end": "12:30", "zone": "any"}
         submitted_pin = {"id": "A", "start": "13:00", "end": "13:30", "zone": "any"}
-        rs.update_runstate(vault, today, {
+        rs.update_runstate(today, {
             "pinned_rows": [stored_pin],
             "overlap_grants": [],
             "planning_config_fingerprint": "fp-current",
@@ -319,7 +319,7 @@ class TestValidateSequenceRoute:
         # Clear the persisted validation metadata before exercising the legacy
         # empty-snapshot exemption; the stale attempt above must not turn the
         # next request into a second stale-snapshot case.
-        rs.update_runstate(vault, today, {
+        rs.update_runstate(today, {
             "pinned_rows": [],
             "overlap_grants": [],
             "planning_config_fingerprint": "",
@@ -336,8 +336,8 @@ class TestValidateSequenceRoute:
         )
         assert current.json()["ok"] is True
 
-    def test_stale_overlap_grants_are_rejected(self, client, vault):
-        _pin_frame(vault)
+    def test_stale_overlap_grants_are_rejected(self, client):
+        _pin_frame()
         today = gather.effective_date(datetime.now())
         stored_grant = {
             "primary_id": "A", "companion_id": "Wall",
@@ -349,7 +349,7 @@ class TestValidateSequenceRoute:
             **stored_grant,
             "primary_interval": {"start": "13:00", "end": "13:30"},
         }
-        rs.update_runstate(vault, today, {
+        rs.update_runstate(today, {
             "pinned_rows": [],
             "overlap_grants": [stored_grant],
             "planning_config_fingerprint": "fp-current",
@@ -371,9 +371,9 @@ class TestValidateSequenceRoute:
         assert r.status_code == 200
         assert r.json()["hard_errors"] == ["planning snapshot is stale"]
 
-    def test_changed_anchor_makes_nonempty_validation_snapshot_stale(self, client, vault):
+    def test_changed_anchor_makes_nonempty_validation_snapshot_stale(self, client):
         today = gather.effective_date(datetime.now())
-        rs.write_runstate(vault, today, rs.build_runstate({
+        rs.write_runstate(today, rs.build_runstate({
             "anchor": "10:00",
             "eod": "23:00",
             # The saved validation snapshot was made before the anchor moved.

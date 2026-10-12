@@ -405,10 +405,10 @@ def _read(revision=7):
 def test_direct_refresh_wires_the_exclusion_policy_but_legacy_does_not(
     tmp_path, monkeypatch
 ):
-    monkeypatch.setattr(cb, "read_source", lambda _: _source_record())
+    monkeypatch.setattr(cb, "read_source", lambda: _source_record())
     monkeypatch.setattr(cb, "load_capacities_token", lambda _: "synthetic-token")
     monkeypatch.setattr(cr, "load_rules", lambda space_id: _rules(_custom_rule()))
-    monkeypatch.setattr(cb.exclusion_settings, "read_settings", lambda _: _read(7))
+    monkeypatch.setattr(cb.exclusion_settings, "read_settings", lambda: _read(7))
     monkeypatch.setattr(cb, "build_refresh_state", lambda *args: object())
     captured = {}
 
@@ -419,18 +419,18 @@ def test_direct_refresh_wires_the_exclusion_policy_but_legacy_does_not(
     monkeypatch.setattr(cb.capacities_refresh, "RefreshCoordinator", coordinator)
     config = cb.CapacitiesBuilderConfig(content_cache=None, refresh_state_path=tmp_path)
 
-    built = cb.build_refresh_coordinator(tmp_path, config)
+    built = cb.build_refresh_coordinator(config)
     assert built.exclusion_policy.revision == 7
     assert built.exclusion_policy.tags[0].tag_id == TAG_A
     # Source revision 3 + settings revision 0 + rules revision 2 + exclusions 7.
-    assert cb.refresh_config_revision(tmp_path) == 12
+    assert cb.refresh_config_revision() == 12
 
-    legacy = cb.build_capacities_adapter(tmp_path, config)
+    legacy = cb.build_capacities_adapter(config)
     assert legacy.config.exclusion_policy is None
 
 
 def test_legacy_builder_never_reads_the_exclusions_store(tmp_path, monkeypatch):
-    monkeypatch.setattr(cb, "read_source", lambda _: _source_record())
+    monkeypatch.setattr(cb, "read_source", lambda: _source_record())
     monkeypatch.setattr(cb, "load_capacities_token", lambda _: "synthetic-token")
 
     def boom(_):
@@ -439,40 +439,39 @@ def test_legacy_builder_never_reads_the_exclusions_store(tmp_path, monkeypatch):
     monkeypatch.setattr(cb.exclusion_settings, "read_settings", boom)
 
     legacy = cb.build_capacities_adapter(
-        tmp_path, cb.CapacitiesBuilderConfig(content_cache=None)
+        cb.CapacitiesBuilderConfig(content_cache=None)
     )
     assert legacy.config.exclusion_policy is None
 
 
 def test_source_absent_returns_none_before_reading_exclusions(tmp_path, monkeypatch):
-    monkeypatch.setattr(cb, "read_source", lambda _: None)
+    monkeypatch.setattr(cb, "read_source", lambda: None)
 
     def boom(_):
         raise AssertionError("exclusions must not be read when the source is absent")
 
     monkeypatch.setattr(cb.exclusion_settings, "read_settings", boom)
 
-    assert cb.refresh_config_revision(tmp_path) is None
+    assert cb.refresh_config_revision() is None
     config = cb.CapacitiesBuilderConfig(refresh_state_path=tmp_path / "state")
-    assert cb.build_refresh_coordinator(tmp_path, config) is None
+    assert cb.build_refresh_coordinator(config) is None
 
 
 def test_refresh_config_revision_tracks_a_real_exclusion_save(tmp_path, monkeypatch):
-    monkeypatch.setattr(cb, "read_source", lambda _: _source_record())
-    before = cb.refresh_config_revision(tmp_path)
+    monkeypatch.setattr(cb, "read_source", lambda: _source_record())
+    before = cb.refresh_config_revision()
     es.save_settings(
-        tmp_path,
         expected_revision=0,
         exclusions=[es.TagExclusion("capacities", SPACE, TAG_A)],
     )
-    after = cb.refresh_config_revision(tmp_path)
+    after = cb.refresh_config_revision()
     assert (before, after) == (3, 4)
 
 
 def test_build_freezes_the_configuration_revision_before_config_reads(
     tmp_path, monkeypatch
 ):
-    monkeypatch.setattr(cb, "read_source", lambda _: _source_record())
+    monkeypatch.setattr(cb, "read_source", lambda: _source_record())
     monkeypatch.setattr(cb, "load_capacities_token", lambda _: "synthetic-token")
 
     class FakeClient:
@@ -480,21 +479,20 @@ def test_build_freezes_the_configuration_revision_before_config_reads(
             pass
 
     monkeypatch.setattr(cb, "CapacitiesRestClient", FakeClient)
-    before = cb.refresh_config_revision(tmp_path)
+    before = cb.refresh_config_revision()
     coordinator = cb.build_refresh_coordinator(
-        tmp_path, cb.CapacitiesBuilderConfig(refresh_state_path=tmp_path / "state")
+        cb.CapacitiesBuilderConfig(refresh_state_path=tmp_path / "state")
     )
 
     assert coordinator is not None
     assert coordinator.configuration_revision == before
 
     es.save_settings(
-        tmp_path,
         expected_revision=0,
         exclusions=[es.TagExclusion("capacities", SPACE, TAG_A)],
     )
     assert coordinator.configuration_revision == before
-    assert cb.refresh_config_revision(tmp_path) != before
+    assert cb.refresh_config_revision() != before
 
 
 def _primary_source_record(revision=3):
@@ -514,22 +512,21 @@ def _primary_source_record(revision=3):
 
 
 def test_build_then_exclusion_save_fails_the_first_start_stale(tmp_path, monkeypatch):
-    monkeypatch.setattr(cb, "read_source", lambda _: _primary_source_record())
+    monkeypatch.setattr(cb, "read_source", lambda: _primary_source_record())
     monkeypatch.setattr(cb, "load_capacities_token", lambda _: "synthetic-token")
     provider = _paged_provider(objects={PRIMARY: ["a"]})
     monkeypatch.setattr(cb, "CapacitiesRestClient", lambda *a, **k: provider)
     coordinator = cb.build_refresh_coordinator(
-        tmp_path, cb.CapacitiesBuilderConfig(refresh_state_path=tmp_path / "state")
+        cb.CapacitiesBuilderConfig(refresh_state_path=tmp_path / "state")
     )
     assert coordinator is not None
     frozen = coordinator.configuration_revision
 
     es.save_settings(
-        tmp_path,
         expected_revision=0,
         exclusions=[es.TagExclusion("capacities", SPACE, TAG_A)],
     )
-    assert cb.refresh_config_revision(tmp_path) == frozen + 1
+    assert cb.refresh_config_revision() == frozen + 1
 
     coordinator.start()
     status = coordinator.wait(timeout=5)
@@ -553,7 +550,7 @@ def test_publication_guard_takes_the_exclusions_lock_innermost(tmp_path, monkeyp
 
     monkeypatch.setattr(cb.capacities_cache_io, "acquire_path_lock", tracked)
 
-    with cb._config_save_guard(tmp_path):
+    with cb._config_save_guard():
         assert handles[-1] == es.lock_path()
 
     assert handles == [
@@ -575,7 +572,7 @@ def test_publication_guard_excludes_a_real_exclusion_save(tmp_path):
     release = threading.Event()
 
     def hold_guard():
-        with cb._config_save_guard(tmp_path):
+        with cb._config_save_guard():
             entered.set()
             release.wait(timeout=5)
 
@@ -587,7 +584,6 @@ def test_publication_guard_excludes_a_real_exclusion_save(tmp_path):
 
     def save_like():
         es.save_settings(
-            tmp_path,
             expected_revision=0,
             exclusions=[es.TagExclusion("capacities", SPACE, TAG_A)],
         )
@@ -601,7 +597,7 @@ def test_publication_guard_excludes_a_real_exclusion_save(tmp_path):
     holder.join(timeout=5)
     saver.join(timeout=5)
     assert done.is_set()
-    stored = es.read_settings(tmp_path).settings
+    stored = es.read_settings().settings
     assert stored.revision == 1
     assert stored.tags[0].tag_id == TAG_A
 
@@ -640,7 +636,7 @@ def test_build_reads_the_revision_before_the_source_record(tmp_path, monkeypatch
     """
     reads = {"count": 0}
 
-    def flipping_read_source(_vault):
+    def flipping_read_source():
         reads["count"] += 1
         if reads["count"] <= 2:
             return _primary_record_for(SPACE, 3, open_values=("active",))
@@ -652,7 +648,7 @@ def test_build_reads_the_revision_before_the_source_record(tmp_path, monkeypatch
     monkeypatch.setattr(cb, "CapacitiesRestClient", lambda *a, **k: provider)
 
     coordinator = cb.build_refresh_coordinator(
-        tmp_path, cb.CapacitiesBuilderConfig(refresh_state_path=tmp_path / "state")
+        cb.CapacitiesBuilderConfig(refresh_state_path=tmp_path / "state")
     )
 
     assert coordinator is not None
@@ -688,7 +684,6 @@ def test_source_space_switch_with_an_equal_revision_sum_fails_stale(
     structures = _primary_record_for(SPACE, 0).structures
     for expected in range(3):
         cb.save_source(
-            vault,
             expected_revision=expected,
             space_id=SPACE,
             structures=structures,
@@ -700,13 +695,13 @@ def test_source_space_switch_with_an_equal_revision_sum_fails_stale(
         expected_revision=0,
     )
     # Source 3 + settings 0 + rules 1 + exclusions 0.
-    assert cb.refresh_config_revision(vault) == 4
+    assert cb.refresh_config_revision() == 4
 
     monkeypatch.setattr(cb, "load_capacities_token", lambda _: "synthetic-token")
     provider = _paged_provider(objects={PRIMARY: ["a"]})
     monkeypatch.setattr(cb, "CapacitiesRestClient", lambda *a, **k: provider)
     coordinator = cb.build_refresh_coordinator(
-        vault, cb.CapacitiesBuilderConfig(refresh_state_path=tmp_path / "state")
+        cb.CapacitiesBuilderConfig(refresh_state_path=tmp_path / "state")
     )
     assert coordinator is not None
     assert coordinator.configuration_revision == 4
@@ -715,13 +710,12 @@ def test_source_space_switch_with_an_equal_revision_sum_fails_stale(
     # The switch: source 3 -> 4 in another space; the space-1 rules no longer
     # apply, so the live sum is unchanged at 4 while the live space moved.
     cb.save_source(
-        vault,
         expected_revision=3,
         space_id="space-B",
         structures=structures,
     )
-    assert cb.refresh_config_revision(vault) == 4
-    assert cb.read_source(vault).space_id == "space-B"
+    assert cb.refresh_config_revision() == 4
+    assert cb.read_source().space_id == "space-B"
 
     coordinator.start()
     status = coordinator.wait(timeout=5)
@@ -749,7 +743,6 @@ def test_space_switch_between_the_build_reads_fails_closed(tmp_path, monkeypatch
     structures = _primary_record_for(SPACE, 0).structures
     for expected in range(4):
         cb.save_source(
-            vault,
             expected_revision=expected,
             space_id=SPACE,
             structures=structures,
@@ -761,11 +754,11 @@ def test_space_switch_between_the_build_reads_fails_closed(tmp_path, monkeypatch
         expected_revision=0,
     )
     # Source 4 + settings 0 + rules 1 + exclusions 0.
-    assert cb.refresh_config_revision(vault) == 5
+    assert cb.refresh_config_revision() == 5
 
     reads = {"count": 0}
 
-    def switching_read_source(_vault):
+    def switching_read_source():
         reads["count"] += 1
         if reads["count"] >= 3:
             return _primary_record_for("space-B", 4, open_values=("done",))
@@ -775,7 +768,7 @@ def test_space_switch_between_the_build_reads_fails_closed(tmp_path, monkeypatch
 
     with pytest.raises(RuntimeError, match="space changed"):
         cb.build_refresh_coordinator(
-            vault, cb.CapacitiesBuilderConfig(refresh_state_path=tmp_path / "state")
+            cb.CapacitiesBuilderConfig(refresh_state_path=tmp_path / "state")
         )
 
 
@@ -793,7 +786,7 @@ def test_space_switch_between_the_space_and_revision_reads_fails_closed(
     """
     reads = {"count": 0}
 
-    def switching_read_source(_vault):
+    def switching_read_source():
         reads["count"] += 1
         if reads["count"] == 1:
             return _primary_record_for(SPACE, 3, open_values=("active",))
@@ -803,7 +796,7 @@ def test_space_switch_between_the_space_and_revision_reads_fails_closed(
 
     with pytest.raises(RuntimeError, match="space changed"):
         cb.build_refresh_coordinator(
-            tmp_path, cb.CapacitiesBuilderConfig(refresh_state_path=tmp_path / "state")
+            cb.CapacitiesBuilderConfig(refresh_state_path=tmp_path / "state")
         )
 
 
@@ -821,7 +814,6 @@ def test_publication_guard_fails_stale_when_the_space_read_is_unreadable(
     structures = _primary_record_for(SPACE, 0).structures
     for expected in range(3):
         cb.save_source(
-            vault,
             expected_revision=expected,
             space_id=SPACE,
             structures=structures,
@@ -830,7 +822,7 @@ def test_publication_guard_fails_stale_when_the_space_read_is_unreadable(
     provider = _paged_provider(objects={PRIMARY: ["a"]})
     monkeypatch.setattr(cb, "CapacitiesRestClient", lambda *a, **k: provider)
     coordinator = cb.build_refresh_coordinator(
-        vault, cb.CapacitiesBuilderConfig(refresh_state_path=tmp_path / "state")
+        cb.CapacitiesBuilderConfig(refresh_state_path=tmp_path / "state")
     )
     assert coordinator is not None
 

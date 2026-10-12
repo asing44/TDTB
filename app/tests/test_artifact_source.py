@@ -464,7 +464,7 @@ def test_capacities_pool_row_reaches_the_pool(vault):
     _enable_artifact_mode()
     art.atomic_write_artifact(doc)
 
-    app = main_mod.create_app(vault_root=vault)
+    app = main_mod.create_app()
     app.state.build_read_clients = _boom
     app.state.build_capacities_adapter = _boom
     client = TestClient(app)
@@ -483,7 +483,7 @@ def test_artifact_mode_constructs_no_live_client(vault):
     _enable_artifact_mode()
     art.atomic_write_artifact(doc)
 
-    app = main_mod.create_app(vault_root=vault)
+    app = main_mod.create_app()
     app.state.build_read_clients = _boom
     app.state.build_capacities_adapter = _boom
     client = TestClient(app)
@@ -499,7 +499,7 @@ def test_artifact_mode_constructs_no_live_client(vault):
 
 def test_artifact_mode_missing_file_degrades_with_a_banner(vault):
     _enable_artifact_mode()
-    app = main_mod.create_app(vault_root=vault)
+    app = main_mod.create_app()
     app.state.build_read_clients = _boom
     app.state.build_capacities_adapter = _boom
     client = TestClient(app)
@@ -519,7 +519,7 @@ def test_artifact_mode_stale_rows_are_not_used_and_ride_warnings(vault):
     _enable_artifact_mode()
     art.atomic_write_artifact(doc)
 
-    app = main_mod.create_app(vault_root=vault)
+    app = main_mod.create_app()
     app.state.build_read_clients = _boom
     app.state.build_capacities_adapter = _boom
     client = TestClient(app)
@@ -536,11 +536,11 @@ def test_live_mode_still_constructs_the_live_seam(vault, live_sources_mode):
     # A4 flipped the default to artifact; this test opts back into live.
     called = {"n": 0}
 
-    def _clients(_v, _c):
+    def _clients(_c):
         called["n"] += 1
         return None, None
 
-    app = main_mod.create_app(vault_root=vault)
+    app = main_mod.create_app()
     app.state.build_read_clients = _clients
     app.state.build_capacities_adapter = None
     client = TestClient(app)
@@ -587,11 +587,11 @@ def test_artifact_mode_still_obtains_the_calendar_store(vault):
         [event], [CalendarInfo("Work", "CAL-STORE", True, "Local")]
     )
 
-    def _store(_v, _c):
+    def _store(_c):
         called["n"] += 1
         return fake_store
 
-    app = main_mod.create_app(vault_root=vault)
+    app = main_mod.create_app()
     app.state.build_read_clients = _boom
     app.state.build_capacities_adapter = _boom
     app.state.build_calendar_store = _store
@@ -618,7 +618,7 @@ def test_real_calendar_store_seam_degrades_to_none(monkeypatch):
 
     monkeypatch.setattr(main_mod.calendar_bridge, "shared_store", _forbidden)
 
-    assert main_mod.build_real_calendar_store(Path("/vault"), {}) is None
+    assert main_mod.build_real_calendar_store({}) is None
 
 
 # ---------------------------------------------------------------------------

@@ -48,20 +48,20 @@ def vault(tmp_path) -> Path:
     # eligibility boundary can verify submitted assigned names.
     today = main_mod.gather.effective_date(main_mod.datetime.now())
     runstate.write_digest_index(
-        v, today, [{"name": "Garage Buildout",
+        today, [{"name": "Garage Buildout",
                     "todoist_id": "",
                     "path": "50 - Operations/Projects/Garage Buildout.md",
                     "surface": "assigned"}]
     )
     runstate.write_runstate(
-        v, today, runstate.build_runstate({"anchor": "00:00"}),
+        today, runstate.build_runstate({"anchor": "00:00"}),
     )
     return v
 
 
 @pytest.fixture
 def client(vault) -> TestClient:
-    app = main_mod.create_app(vault_root=vault)
+    app = main_mod.create_app()
     c = TestClient(app)
     c.app_token = app.state.token
     return c
@@ -108,7 +108,7 @@ class TestModeDispatch:
 
 class TestShadowFlow:
     def test_shadow_returns_diff_and_writes_nothing(self, client, vault, monkeypatch):
-        def fake_gather(config, vault_root):
+        def fake_gather(config):
             return {
                 "todoist_tasks": [],
                 "calendar_events": [],
@@ -139,7 +139,7 @@ class TestShadowFlow:
         assert before == after
 
     def test_shadow_state_error_becomes_502(self, client, monkeypatch):
-        def raise_state_error(config, vault_root):
+        def raise_state_error(config):
             raise shadow.ShadowStateError("token file missing")
 
         monkeypatch.setattr(shadow, "gather_live_state", raise_state_error)
@@ -152,24 +152,12 @@ class TestShadowFlow:
         assert r.status_code == 502
         assert "token file missing" in r.json()["detail"]
 
-    def test_shadow_503_when_vault_root_unconfigured(self, monkeypatch):
-        monkeypatch.delenv(main_mod.VAULT_ROOT_ENV, raising=False)
-        app = main_mod.create_app()
-        c = TestClient(app)
-        r = c.post(
-            "/commit?mode=shadow",
-            headers={"X-TDTB-Token": app.state.token},
-            json={"digest": DIGEST, "sequence": SEQUENCE, "config": {}},
-        )
-        assert r.status_code == 503
-
-
 class TestCommitEligibility:
     """P3-02: /commit must reject stale/dropped digest & sequence rows with
     422 before any manifest is built, while legitimate rows still pass."""
 
     def test_stale_assigned_item_is_422(self, client, vault, monkeypatch):
-        def fake_gather(config, vault_root):
+        def fake_gather(config):
             return {
                 "todoist_tasks": [], "calendar_events": [],
                 "vault_frontmatter": {}, "daily_note_text": None,
@@ -196,9 +184,9 @@ class TestCommitEligibility:
 
     SHIP_IDENTITY = "capacities:space-1:RootTask:object-1"
 
-    def _seed_ship_project_index(self, vault):
+    def _seed_ship_project_index(self):
         today = main_mod.gather.effective_date(main_mod.datetime.now())
-        runstate.write_digest_index(vault, today, [{
+        runstate.write_digest_index(today, [{
             "name": "Ship project",
             "path": "capacities://space-1/object-1",
             "identity": self.SHIP_IDENTITY,
@@ -214,7 +202,7 @@ class TestCommitEligibility:
     def test_selected_capacities_row_is_admitted_as_calendar_only(
         self, client, vault, monkeypatch
     ):
-        self._seed_ship_project_index(vault)
+        self._seed_ship_project_index()
         capacities_selections.save_selections(
             space_id="space-1", expected_revision=0,
             selections=[{
@@ -222,7 +210,7 @@ class TestCommitEligibility:
                 "rules_revision": 0, "acknowledged": True,
             }],
         )
-        monkeypatch.setattr(shadow, "gather_live_state", lambda config, vault_root: {
+        monkeypatch.setattr(shadow, "gather_live_state", lambda config: {
             "todoist_tasks": [], "calendar_events": [], "vault_frontmatter": {},
             "daily_note_text": "# TDTB Plan\n",
         })
@@ -255,7 +243,7 @@ class TestCommitEligibility:
         assert before == after
 
     def test_capacities_row_matched_by_name_and_path_only_is_refused(self, client, vault):
-        self._seed_ship_project_index(vault)
+        self._seed_ship_project_index()
         before = {p: p.read_bytes() for p in vault.rglob("*") if p.is_file()}
 
         response = client.post(
@@ -281,7 +269,7 @@ class TestCommitEligibility:
         assert before == after
 
     def test_stale_sequence_row_is_422(self, client, vault, monkeypatch):
-        def fake_gather(config, vault_root):
+        def fake_gather(config):
             return {
                 "todoist_tasks": [], "calendar_events": [],
                 "vault_frontmatter": {}, "daily_note_text": None,
@@ -306,7 +294,7 @@ class TestCommitEligibility:
     def test_valid_schedulable_row_accepted(self, client, vault, monkeypatch):
         """Minting (and its legacy display variant) is a legitimate Step D row
         and must reach the manifest/diff, not the eligibility rejection."""
-        def fake_gather(config, vault_root):
+        def fake_gather(config):
             return {
                 "todoist_tasks": [], "calendar_events": [],
                 "vault_frontmatter": {}, "daily_note_text": None,
@@ -329,7 +317,7 @@ class TestCommitEligibility:
 
     def test_valid_anchored_and_trinoor_rows_accepted(self, client, vault, monkeypatch):
         """Anchored (Step E) and Trinoor zone (Step D′) rows pass the guard."""
-        def fake_gather(config, vault_root):
+        def fake_gather(config):
             return {
                 "todoist_tasks": [], "calendar_events": [],
                 "vault_frontmatter": {}, "daily_note_text": None,
@@ -383,14 +371,14 @@ class TestCommitEligibility:
             def calendars(self):
                 return []
 
-        def _fake_state(config, vault_root):
+        def _fake_state(config):
             return {
                 "todoist_tasks": [], "calendar_events": [],
                 "vault_frontmatter": {}, "daily_note_text": None,
             }
 
         client.app.state.build_commit_clients = (
-            lambda v, cfg: (_WritesRecorder(writes), _FakeStore())
+            lambda cfg: (_WritesRecorder(writes), _FakeStore())
         )
         monkeypatch.setattr(shadow, "gather_live_state", _fake_state)
         # FEEDBACK-24 gate: confirm Day Setup first so the eligibility guard
@@ -413,12 +401,12 @@ class TestCommitEligibility:
 
     # ---- P3-02 hardening: server authorization boundary --------------------
 
-    def _write_mixed_surface_index(self, vault: Path) -> None:
+    def _write_mixed_surface_index(self) -> None:
         """Index with the fixture's assigned row plus a suggested-only row, so
         a client cannot promote the suggested row by naming it as assigned."""
         today = main_mod.gather.effective_date(main_mod.datetime.now())
         runstate.write_digest_index(
-            vault, today,
+            today,
             [{"name": "Garage Buildout", "todoist_id": "",
               "path": "50 - Operations/Projects/Garage Buildout.md",
               "surface": "assigned"},
@@ -434,7 +422,7 @@ class TestCommitEligibility:
     def test_suggested_to_assigned_promotion_is_422(self, client, vault):
         """A suggested-only server row must not be promotable to the assigned
         surface just because the client labels it assigned."""
-        self._write_mixed_surface_index(vault)
+        self._write_mixed_surface_index()
         before = {p: p.read_bytes() for p in vault.rglob("*") if p.is_file()}
         promo_digest = {"assigned": [
             {"name": "Pool Item", "path": "50 - Operations/Pool/Pool Item.md"},
@@ -504,7 +492,7 @@ class TestCommitEligibility:
         """A currently disabled Minting projection is not an authorization
         source merely because Minting is a known legacy schedulable name."""
         today = main_mod.gather.effective_date(main_mod.datetime.now())
-        runstate.update_runstate(vault, today, {
+        runstate.update_runstate(today, {
             "work_allotment_minutes": 0,
         })
         before = {p: p.read_bytes() for p in vault.rglob("*") if p.is_file()}
@@ -626,7 +614,7 @@ class TestCommitEligibility:
         otherwise-legitimate digest — plus forged todoist ids and config —
         still fails closed."""
         today = main_mod.gather.effective_date(main_mod.datetime.now())
-        runstate.write_digest_index(vault, today, [])
+        runstate.write_digest_index(today, [])
         before = {p: p.read_bytes() for p in vault.rglob("*") if p.is_file()}
         forged_digest = {"assigned": [
             {"name": "Garage Buildout",
@@ -650,7 +638,7 @@ class TestCommitEligibility:
             self, client, vault):
         """Live mode: the promotion attempt is refused at the eligibility
         boundary; the injected write client is never touched."""
-        self._write_mixed_surface_index(vault)
+        self._write_mixed_surface_index()
 
         writes = []
 
@@ -663,7 +651,7 @@ class TestCommitEligibility:
                 return []
 
         client.app.state.build_commit_clients = (
-            lambda v, cfg: (_WritesRecorder(writes), _FakeStore())
+            lambda cfg: (_WritesRecorder(writes), _FakeStore())
         )
         self._confirm_day_setup(client)
         before = {p: p.read_bytes() for p in vault.rglob("*") if p.is_file()}
@@ -695,7 +683,7 @@ class TestCommitEligibility:
                 return []
 
         client.app.state.build_commit_clients = (
-            lambda v, cfg: (_WritesRecorder(writes), _FakeStore())
+            lambda cfg: (_WritesRecorder(writes), _FakeStore())
         )
         self._confirm_day_setup(client)
         before = {p: p.read_bytes() for p in vault.rglob("*") if p.is_file()}
@@ -775,7 +763,7 @@ class TestExactSequenceAuthorization:
 
     def test_forged_anchored_timing_is_422(self, client, vault, monkeypatch):
         """A valid anchored ID with a forged start must not be authorized."""
-        monkeypatch.setattr(shadow, "gather_live_state", lambda c, v: {
+        monkeypatch.setattr(shadow, "gather_live_state", lambda c: {
             "todoist_tasks": [], "calendar_events": [],
             "vault_frontmatter": {}, "daily_note_text": None,
         })
@@ -793,7 +781,7 @@ class TestExactSequenceAuthorization:
 
     def test_forged_zone_timing_is_422(self, client, vault, monkeypatch):
         """A valid Trinoor zone ID with forged timing must not be authorized."""
-        monkeypatch.setattr(shadow, "gather_live_state", lambda c, v: {
+        monkeypatch.setattr(shadow, "gather_live_state", lambda c: {
             "todoist_tasks": [], "calendar_events": [],
             "vault_frontmatter": {}, "daily_note_text": None,
         })
@@ -811,7 +799,7 @@ class TestExactSequenceAuthorization:
 
     def test_backdrop_on_non_zone_row_is_422(self, client, vault, monkeypatch):
         """A ``backdrop: true`` flag is honored only on server zone rows."""
-        monkeypatch.setattr(shadow, "gather_live_state", lambda c, v: {
+        monkeypatch.setattr(shadow, "gather_live_state", lambda c: {
             "todoist_tasks": [], "calendar_events": [],
             "vault_frontmatter": {}, "daily_note_text": None,
         })
@@ -829,7 +817,7 @@ class TestExactSequenceAuthorization:
 
     def test_non_positive_interval_is_422(self, client, vault, monkeypatch):
         """A sequence row whose end does not follow its start fails closed."""
-        monkeypatch.setattr(shadow, "gather_live_state", lambda c, v: {
+        monkeypatch.setattr(shadow, "gather_live_state", lambda c: {
             "todoist_tasks": [], "calendar_events": [],
             "vault_frontmatter": {}, "daily_note_text": None,
         })
@@ -845,7 +833,7 @@ class TestExactSequenceAuthorization:
 
     def test_invalid_hhmm_timing_is_422(self, client, vault, monkeypatch):
         """Missing or unparseable start/end fail closed before manifest build."""
-        monkeypatch.setattr(shadow, "gather_live_state", lambda c, v: {
+        monkeypatch.setattr(shadow, "gather_live_state", lambda c: {
             "todoist_tasks": [], "calendar_events": [],
             "vault_frontmatter": {}, "daily_note_text": None,
         })
@@ -861,7 +849,7 @@ class TestExactSequenceAuthorization:
 
     def test_duplicate_sequence_id_is_422(self, client, vault, monkeypatch):
         """The same id appearing twice in the sequence fails closed."""
-        monkeypatch.setattr(shadow, "gather_live_state", lambda c, v: {
+        monkeypatch.setattr(shadow, "gather_live_state", lambda c: {
             "todoist_tasks": [], "calendar_events": [],
             "vault_frontmatter": {}, "daily_note_text": None,
         })
@@ -880,14 +868,14 @@ class TestExactSequenceAuthorization:
         """Drop-after-index-write: a Drop recorded after the last /plan-inputs
         refresh must invalidate the cached assigned identity at commit time,
         without any /plan-inputs refresh in between."""
-        monkeypatch.setattr(shadow, "gather_live_state", lambda c, v: {
+        monkeypatch.setattr(shadow, "gather_live_state", lambda c: {
             "todoist_tasks": [], "calendar_events": [],
             "vault_frontmatter": {}, "daily_note_text": None,
         })
         today = main_mod.gather.effective_date(main_mod.datetime.now())
         identity = "50 - Operations/Projects/Garage Buildout.md"
         runstate.update_runstate(
-            vault, today,
+            today,
             lambda s: s.setdefault("dropped", []).append(
                 {"identity": identity, "name": "Garage Buildout",
                  "dropped_at": "2026-09-05T00:00:00Z"}
@@ -908,7 +896,7 @@ class TestExactSequenceAuthorization:
         """Client-supplied non-identity metadata (types, source) must not reach
         build_plan_manifest: routing must fall back to server config, so the
         forged 'adventure' type cannot reroute the item to PHEP."""
-        monkeypatch.setattr(shadow, "gather_live_state", lambda c, v: {
+        monkeypatch.setattr(shadow, "gather_live_state", lambda c: {
             "todoist_tasks": [], "calendar_events": [],
             "vault_frontmatter": {}, "daily_note_text": None,
         })
@@ -976,10 +964,8 @@ def _run_commit_run_live(monkeypatch, tmp_path, digest, sequence) -> dict:
         captured["kwargs"] = kwargs
         return []
 
-    monkeypatch.setattr(commit_run.shadow_run, "_gather_pool_and_assigned",
-                        lambda vault, today: ([], []))
     monkeypatch.setattr(commit_run.main_mod, "build_digest", lambda *a, **k: digest)
-    monkeypatch.setattr(commit_run.shadow, "gather_live_state", lambda config, vault: {
+    monkeypatch.setattr(commit_run.shadow, "gather_live_state", lambda config: {
         "todoist_tasks": [], "calendar_events": [],
     })
     monkeypatch.setattr(commit_run.calendar_bridge, "shared_store", lambda: None)
@@ -989,7 +975,7 @@ def _run_commit_run_live(monkeypatch, tmp_path, digest, sequence) -> dict:
     monkeypatch.setattr(commit_run.shadow.todoist_client, "TodoistClient", _StubTodoistClient)
     monkeypatch.setattr(commit_run.commit, "run_commit", _run_commit)
 
-    assert commit_run.run(tmp_path, str(seq_file), do_commit=True) == 0
+    assert commit_run.run(str(seq_file), do_commit=True) == 0
     return captured
 
 

@@ -1111,7 +1111,6 @@ def run_commit(
     *,
     todoist: TodoistLike | None = None,
     store: EventStoreLike | None = None,
-    vault_root: Path | str | None = None,
     today: date | None = None,
 ) -> list[WriterResult]:
     """Run every writer over ``intents`` in a fixed order and collect results.

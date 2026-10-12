@@ -48,15 +48,8 @@ REMOVED_PROP_RULE = {"prop": "priority", "op": "eq", "values": ["high"]}
 
 
 @pytest.fixture
-def vault(tmp_path) -> Path:
-    root = tmp_path / "vault-root"
-    root.mkdir()
-    return root
-
-
-@pytest.fixture
-def client(vault) -> TestClient:
-    c = TestClient(main_mod.create_app(vault_root=vault))
+def client() -> TestClient:
+    c = TestClient(main_mod.create_app())
     c.app_token = c.app.state.token
     return c
 
@@ -76,9 +69,8 @@ def _contract() -> list[dict]:
     return [{"id": TYPE, "title": TYPE, "propertyDefinitions": properties}]
 
 
-def _save_source(vault: Path) -> None:
+def _save_source() -> None:
     cb.save_source(
-        vault,
         expected_revision=0,
         space_id=SPACE,
         structures=[
@@ -94,13 +86,13 @@ def _save_source(vault: Path) -> None:
     )
 
 
-def _publish_contract(vault: Path, *, object_ids: tuple[str, ...] = ()) -> None:
+def _publish_contract(object_ids: tuple[str, ...] = ()) -> None:
     """Install one complete generation carrying the structure contract.
 
     No cached object content is written, so a valid rule must activate from the
     contract schema alone — an insufficient cached VALUE never blocks
     activation."""
-    store = cb.build_refresh_state(vault, SPACE)
+    store = cb.build_refresh_state(SPACE)
     evidence = crs.SnapshotEvidence(
         scope_key="all",
         revision=1,
@@ -167,7 +159,7 @@ def test_plan_inputs_absent_optins_is_all_false_revision_zero(client):
     }
 
 
-def test_plan_inputs_persisted_optins_survive_restart(vault):
+def test_plan_inputs_persisted_optins_survive_restart():
     prompt_state.save_optins(
         expected_revision=0,
         optins={
@@ -177,7 +169,7 @@ def test_plan_inputs_persisted_optins_survive_restart(vault):
         },
     )
     # A fresh app instance (a restart) reads the same machine-local store.
-    restarted = TestClient(main_mod.create_app(vault_root=vault))
+    restarted = TestClient(main_mod.create_app())
     meta = restarted.get("/plan-inputs").json()["prompt_optins"]
     assert meta["optins"]["intention"] is True
     assert meta["revision"] == 1
@@ -200,9 +192,9 @@ def test_corrupt_optins_are_unavailable_with_a_bounded_warning(client):
 # GET /capacities/rules — read contract
 # ---------------------------------------------------------------------------
 
-def test_rules_get_is_tokenless_and_documents_the_read_contract(client, vault):
-    _save_source(vault)
-    _publish_contract(vault)
+def test_rules_get_is_tokenless_and_documents_the_read_contract(client):
+    _save_source()
+    _publish_contract()
     response = client.get(RULES_URL)
     assert response.status_code == 200, response.text
     body = response.json()
@@ -239,8 +231,8 @@ def test_rules_get_without_a_source_is_the_empty_shape(client):
     assert body["capabilities"]["contract_available"] is False
 
 
-def test_rules_get_without_a_published_contract_reports_schema_unavailable(client, vault):
-    _save_source(vault)
+def test_rules_get_without_a_published_contract_reports_schema_unavailable(client):
+    _save_source()
     body = client.get(RULES_URL).json()
     entry = body["structures"][0]
     assert entry["schema_available"] is False
@@ -252,9 +244,9 @@ def test_rules_get_without_a_published_contract_reports_schema_unavailable(clien
 # POST /capacities/rules — token, conflict, activation, drafts
 # ---------------------------------------------------------------------------
 
-def test_rules_post_requires_the_token(client, vault):
-    _save_source(vault)
-    _publish_contract(vault)
+def test_rules_post_requires_the_token(client):
+    _save_source()
+    _publish_contract()
     response = client.post(RULES_URL, json={
         "structure_id": TYPE,
         "rule": VALID_RULE,
@@ -265,17 +257,17 @@ def test_rules_post_requires_the_token(client, vault):
     assert not cr.rules_path().exists()
 
 
-def test_rules_post_with_a_wrong_token_is_rejected(client, vault):
-    _save_source(vault)
-    _publish_contract(vault)
+def test_rules_post_with_a_wrong_token_is_rejected(client):
+    _save_source()
+    _publish_contract()
     response = _post(client, headers={"X-TDTB-Token": "wrong-token"})
     assert response.status_code == 403
     assert not cr.rules_path().exists()
 
 
-def test_valid_rule_becomes_active_with_its_fallback(client, vault):
-    _save_source(vault)
-    _publish_contract(vault)
+def test_valid_rule_becomes_active_with_its_fallback(client):
+    _save_source()
+    _publish_contract()
     response = _post(client, rule=VALID_RULE, fallback_minutes=45)
     assert response.status_code == 200, response.text
     body = response.json()
@@ -293,22 +285,22 @@ def test_valid_rule_becomes_active_with_its_fallback(client, vault):
     assert stored.fallback_minutes == 45
 
 
-def test_insufficient_cached_values_do_not_prevent_activation(client, vault):
-    _save_source(vault)
+def test_insufficient_cached_values_do_not_prevent_activation(client):
+    _save_source()
     # The contract is installed with no listed/cached objects at all: the
     # schema comes from the published contract, so zero cached VALUES cannot
     # block a valid activation.
-    _publish_contract(vault)
-    snapshot = cb.build_refresh_state(vault, SPACE).load_snapshot("all")
+    _publish_contract()
+    snapshot = cb.build_refresh_state(SPACE).load_snapshot("all")
     assert snapshot is not None and snapshot.members == ()
     response = _post(client, rule=VALID_RULE)
     assert response.status_code == 200, response.text
     assert response.json()["save"]["valid"] is True
 
 
-def test_regex_rule_is_rejected_and_stays_a_draft(client, vault):
-    _save_source(vault)
-    _publish_contract(vault)
+def test_regex_rule_is_rejected_and_stays_a_draft(client):
+    _save_source()
+    _publish_contract()
     response = _post(client, rule=REGEX_RULE)
     assert response.status_code == 200, response.text
     save = response.json()["save"]
@@ -318,9 +310,9 @@ def test_regex_rule_is_rejected_and_stays_a_draft(client, vault):
     assert save["draft"] == REGEX_RULE
 
 
-def test_invalid_rule_preserves_the_previous_active(client, vault):
-    _save_source(vault)
-    _publish_contract(vault)
+def test_invalid_rule_preserves_the_previous_active(client):
+    _save_source()
+    _publish_contract()
     assert _post(client, rule=VALID_RULE, expected_revision=0).json()["save"]["valid"]
     response = _post(client, rule=REGEX_RULE, expected_revision=1)
     save = response.json()["save"]
@@ -330,9 +322,9 @@ def test_invalid_rule_preserves_the_previous_active(client, vault):
     assert response.json()["structures"][0]["active"] == VALID_RULE
 
 
-def test_rule_referencing_a_removed_property_stays_a_draft(client, vault):
-    _save_source(vault)
-    _publish_contract(vault)
+def test_rule_referencing_a_removed_property_stays_a_draft(client):
+    _save_source()
+    _publish_contract()
     response = _post(client, rule=REMOVED_PROP_RULE)
     save = response.json()["save"]
     assert save["valid"] is False
@@ -341,8 +333,8 @@ def test_rule_referencing_a_removed_property_stays_a_draft(client, vault):
     assert save["draft"] == REMOVED_PROP_RULE
 
 
-def test_no_published_schema_saves_a_draft_honestly(client, vault):
-    _save_source(vault)  # no published generation → no schema to validate against
+def test_no_published_schema_saves_a_draft_honestly(client):
+    _save_source()  # no published generation → no schema to validate against
     response = _post(client, rule=VALID_RULE)
     assert response.status_code == 200, response.text
     save = response.json()["save"]
@@ -352,18 +344,18 @@ def test_no_published_schema_saves_a_draft_honestly(client, vault):
     assert save["draft"] == VALID_RULE
 
 
-def test_unknown_or_foreign_structure_is_rejected(client, vault):
-    _save_source(vault)
-    _publish_contract(vault)
+def test_unknown_or_foreign_structure_is_rejected(client):
+    _save_source()
+    _publish_contract()
     response = _post(client, structure_id="not-mapped")
     assert response.status_code == 422
     assert response.json()["detail"]["code"] == "capacities_rules_unknown_structure"
     assert not cr.rules_path().exists()
 
 
-def test_stale_revision_is_a_409_with_both_revisions(client, vault):
-    _save_source(vault)
-    _publish_contract(vault)
+def test_stale_revision_is_a_409_with_both_revisions(client):
+    _save_source()
+    _publish_contract()
     assert _post(client, expected_revision=0).status_code == 200
     response = _post(client, expected_revision=0)
     assert response.status_code == 409
@@ -377,7 +369,7 @@ def test_stale_revision_is_a_409_with_both_revisions(client, vault):
 # Fail-closed boundaries and no live reads
 # ---------------------------------------------------------------------------
 
-def test_source_read_failure_fails_closed(client, vault):
+def test_source_read_failure_fails_closed(client):
     path = cb.source_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("{not json", encoding="utf-8")
@@ -387,9 +379,9 @@ def test_source_read_failure_fails_closed(client, vault):
     assert path.read_text(encoding="utf-8") == "{not json"
 
 
-def test_corrupt_rules_store_fails_closed(client, vault):
-    _save_source(vault)
-    _publish_contract(vault)
+def test_corrupt_rules_store_fails_closed(client):
+    _save_source()
+    _publish_contract()
     path = cr.rules_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("{not json", encoding="utf-8")
@@ -401,10 +393,10 @@ def test_corrupt_rules_store_fails_closed(client, vault):
 
 
 def test_rules_routes_never_read_a_credential_or_call_a_provider(
-    client, vault, monkeypatch
+    client, monkeypatch
 ):
-    _save_source(vault)
-    _publish_contract(vault)
+    _save_source()
+    _publish_contract()
 
     def boom(*_args, **_kwargs):
         raise AssertionError("no provider/credential access expected")
@@ -417,11 +409,11 @@ def test_rules_routes_never_read_a_credential_or_call_a_provider(
     assert _post(client).status_code == 200
 
 
-def test_rule_save_bumps_the_combined_refresh_revision(client, vault):
+def test_rule_save_bumps_the_combined_refresh_revision(client):
     """The existing coordinator staleness contract sees a rules save."""
-    _save_source(vault)
-    _publish_contract(vault)
-    before = cb.refresh_config_revision(vault)
+    _save_source()
+    _publish_contract()
+    before = cb.refresh_config_revision()
     assert _post(client, fallback_minutes=30).status_code == 200
-    after = cb.refresh_config_revision(vault)
+    after = cb.refresh_config_revision()
     assert after == before + 1

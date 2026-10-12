@@ -44,8 +44,8 @@ def vault(tmp_path) -> Path:
 
 
 @pytest.fixture
-def app(vault):
-    return main_mod.create_app(vault_root=vault)
+def app():
+    return main_mod.create_app()
 
 
 @pytest.fixture
@@ -87,8 +87,8 @@ def _body(expected_revision: int = 0, **overrides) -> dict:
     return body
 
 
-def _source_bytes(vault: Path) -> bytes:
-    return cb.source_path(vault).read_bytes()
+def _source_bytes() -> bytes:
+    return cb.source_path().read_bytes()
 
 
 class TestGet:
@@ -101,9 +101,9 @@ class TestGet:
 
         assert response.status_code == 200
         assert response.json() == {"source": None, "persisted": False}
-        assert not cb.source_path(vault).exists()
+        assert not cb.source_path().exists()
         # A read must not create the record, the lock, or any other path.
-        assert not cb.lock_path(vault).exists()
+        assert not cb.lock_path().exists()
         assert sorted(
             str(p.relative_to(vault)) for p in vault.rglob("*")
         ) == before
@@ -116,7 +116,7 @@ class TestGet:
 
         assert response.status_code == 200
 
-    def test_get_returns_the_persisted_record(self, client, vault):
+    def test_get_returns_the_persisted_record(self, client):
         saved = client.post(
             "/settings/capacities/source/save",
             headers=_auth(client),
@@ -129,8 +129,8 @@ class TestGet:
         assert body == {"source": saved.json()["source"], "persisted": True}
         assert body["source"]["revision"] == 1
 
-    def test_corrupt_record_fails_closed_and_preserves_bytes(self, client, vault):
-        path = cb.source_path(vault)
+    def test_corrupt_record_fails_closed_and_preserves_bytes(self, client):
+        path = cb.source_path()
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("{not json", encoding="utf-8")
 
@@ -142,8 +142,8 @@ class TestGet:
         assert "preserved" in detail["message"]
         assert path.read_bytes() == b"{not json"
 
-    def test_unreadable_record_fails_closed(self, client, vault):
-        path = cb.source_path(vault)
+    def test_unreadable_record_fails_closed(self, client):
+        path = cb.source_path()
         path.parent.mkdir(parents=True, exist_ok=True)
         path.mkdir()
 
@@ -155,23 +155,14 @@ class TestGet:
             == "capacities_source_storage_error"
         )
 
-    def test_unresolved_vault_is_503(self, monkeypatch):
-        monkeypatch.delenv("TDTB_VAULT_ROOT", raising=False)
-        app = main_mod.create_app()
-
-        response = TestClient(app).get("/settings/capacities/source")
-
-        assert response.status_code == 503
-
-
 class TestPostAuth:
-    def test_post_requires_token(self, client, vault):
+    def test_post_requires_token(self, client):
         response = client.post("/settings/capacities/source/save", json=_body())
 
         assert response.status_code == 403
-        assert not cb.source_path(vault).exists()
+        assert not cb.source_path().exists()
 
-    def test_post_wrong_token_is_rejected(self, client, vault):
+    def test_post_wrong_token_is_rejected(self, client):
         response = client.post(
             "/settings/capacities/source/save",
             headers={"X-TDTB-Token": "wrong-token"},
@@ -179,11 +170,11 @@ class TestPostAuth:
         )
 
         assert response.status_code == 403
-        assert not cb.source_path(vault).exists()
+        assert not cb.source_path().exists()
 
 
 class TestPostPersistence:
-    def test_round_trip_increments_the_revision_once(self, client, vault):
+    def test_round_trip_increments_the_revision_once(self, client):
         response = client.post(
             "/settings/capacities/source/save",
             headers=_auth(client),
@@ -201,9 +192,9 @@ class TestPostPersistence:
 
         read_back = client.get("/settings/capacities/source").json()
         assert read_back == {"source": source, "persisted": True}
-        assert cb.read_source(vault).as_dict() == source
+        assert cb.read_source().as_dict() == source
 
-    def test_a_second_save_increments_the_revision_again(self, client, vault):
+    def test_a_second_save_increments_the_revision_again(self, client):
         first = client.post(
             "/settings/capacities/source/save",
             headers=_auth(client),
@@ -228,7 +219,7 @@ class TestPostPersistence:
             for row in second.json()["source"]["structures"]
         ] == ["Task"]
 
-    def test_absent_record_is_revision_zero(self, client, vault):
+    def test_absent_record_is_revision_zero(self, client):
         response = client.post(
             "/settings/capacities/source/save",
             headers=_auth(client),
@@ -242,15 +233,15 @@ class TestPostPersistence:
             "expected_revision": 3,
             "current_revision": 0,
         }
-        assert not cb.source_path(vault).exists()
+        assert not cb.source_path().exists()
 
-    def test_stale_revision_conflicts_with_both_revisions(self, client, vault):
+    def test_stale_revision_conflicts_with_both_revisions(self, client):
         client.post(
             "/settings/capacities/source/save",
             headers=_auth(client),
             json=_body(),
         )
-        before = _source_bytes(vault)
+        before = _source_bytes()
 
         response = client.post(
             "/settings/capacities/source/save",
@@ -265,12 +256,12 @@ class TestPostPersistence:
             "expected_revision": 0,
             "current_revision": 1,
         }
-        assert _source_bytes(vault) == before
+        assert _source_bytes() == before
 
     def test_save_over_a_corrupt_record_is_409_without_erasing(
-        self, client, vault
+        self, client
     ):
-        path = cb.source_path(vault)
+        path = cb.source_path()
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("garbage", encoding="utf-8")
 
@@ -288,14 +279,14 @@ class TestPostPersistence:
         assert path.read_bytes() == b"garbage"
 
     def test_save_write_failure_is_500_and_preserves_bytes(
-        self, client, vault, monkeypatch
+        self, client, monkeypatch
     ):
         client.post(
             "/settings/capacities/source/save",
             headers=_auth(client),
             json=_body(),
         )
-        before = _source_bytes(vault)
+        before = _source_bytes()
 
         def fail_write(*_args, **_kwargs):
             raise OSError("disk full")
@@ -316,20 +307,7 @@ class TestPostPersistence:
             response.json()["detail"]["code"]
             == "capacities_source_storage_error"
         )
-        assert _source_bytes(vault) == before
-
-    def test_unresolved_vault_is_503(self, client, monkeypatch):
-        monkeypatch.delenv("TDTB_VAULT_ROOT", raising=False)
-        app = main_mod.create_app()
-
-        response = TestClient(app).post(
-            "/settings/capacities/source/save",
-            headers={"X-TDTB-Token": app.state.token},
-            json=_body(),
-        )
-
-        assert response.status_code == 503
-
+        assert _source_bytes() == before
 
 class TestPostValidation:
     @pytest.mark.parametrize(
@@ -361,14 +339,14 @@ class TestPostValidation:
         ],
     )
     def test_malformed_bodies_are_422_and_leave_the_bytes_identical(
-        self, client, vault, payload
+        self, client, payload
     ):
         assert client.post(
             "/settings/capacities/source/save",
             headers=_auth(client),
             json=_body(),
         ).status_code == 200
-        before = _source_bytes(vault)
+        before = _source_bytes()
 
         response = client.post(
             "/settings/capacities/source/save",
@@ -378,7 +356,7 @@ class TestPostValidation:
 
         assert response.status_code == 422
         assert response.json()["detail"] == VALIDATION_ERROR
-        assert _source_bytes(vault) == before
+        assert _source_bytes() == before
 
     @pytest.mark.parametrize(
         "raw",
@@ -404,14 +382,14 @@ class TestPostValidation:
         ],
     )
     def test_raw_body_failures_are_422_and_leave_the_bytes_identical(
-        self, client, vault, raw
+        self, client, raw
     ):
         assert client.post(
             "/settings/capacities/source/save",
             headers=_auth(client),
             json=_body(),
         ).status_code == 200
-        before = _source_bytes(vault)
+        before = _source_bytes()
 
         response = client.post(
             "/settings/capacities/source/save",
@@ -421,12 +399,12 @@ class TestPostValidation:
 
         assert response.status_code == 422
         assert response.json()["detail"] == VALIDATION_ERROR
-        assert _source_bytes(vault) == before
+        assert _source_bytes() == before
 
 
 class TestConcurrentSave:
     def test_racing_saves_from_one_revision_produce_one_winner(
-        self, app, vault
+        self, app
     ):
         token = app.state.token
         barrier = threading.Barrier(2)
@@ -457,12 +435,12 @@ class TestConcurrentSave:
             "expected_revision": 0,
             "current_revision": 1,
         }
-        assert cb.read_source(vault).revision == 1
+        assert cb.read_source().revision == 1
 
 
 class TestNoProviderContact:
     def test_get_and_save_never_build_an_adapter_or_touch_a_provider(
-        self, client, vault, monkeypatch
+        self, client, monkeypatch
     ):
         calls: list[str] = []
 
@@ -610,7 +588,7 @@ def _write_artifact(rows, today) -> None:
 class TestSelectionPromotionOnDigest:
     """POST /digest is the second digest-build caller."""
 
-    def test_selected_pool_row_is_promoted_and_leaves_the_pool(self, client, vault):
+    def test_selected_pool_row_is_promoted_and_leaves_the_pool(self, client):
         _seed_source(client)
         _seed_selections((_identity("keep"), 0))
 
@@ -623,10 +601,10 @@ class TestSelectionPromotionOnDigest:
         assert "source_warnings" not in digest
 
     def test_promoted_row_still_hits_the_tag_exclusion_with_an_excluded_notice(
-        self, client, vault
+        self, client
     ):
         _seed_source(client)
-        es.save_settings(vault, expected_revision=0, exclusions=[
+        es.save_settings(expected_revision=0, exclusions=[
             {"source": "capacities", "space_id": SPACE, "tag_id": TAG_A},
         ])
         _seed_selections((_identity("keep"), 0), (_identity("drop"), 0))
@@ -642,7 +620,7 @@ class TestSelectionPromotionOnDigest:
         notices = _notices_for(digest, _identity("drop"))
         assert len(notices) == 1 and "excluded" in notices[0]
 
-    def test_drop_listed_selection_is_not_promoted_and_says_so(self, client, vault):
+    def test_drop_listed_selection_is_not_promoted_and_says_so(self, client):
         _seed_source(client)
         _seed_selections((_identity("drop"), 0))
 
@@ -652,7 +630,7 @@ class TestSelectionPromotionOnDigest:
                 "dropped_at": "2026-10-09T09:00:00-07:00",
             }]
 
-        runstate.update_runstate(vault, TODAY, _drop)
+        runstate.update_runstate(TODAY, _drop)
 
         digest = _digest(client, pool=[_cap_row("drop")])
 
@@ -661,9 +639,9 @@ class TestSelectionPromotionOnDigest:
         notices = _notices_for(digest, _identity("drop"))
         assert len(notices) == 1 and "excluded" in notices[0]
 
-    def test_all_four_notice_codes_surface_on_the_digest_warnings(self, client, vault):
+    def test_all_four_notice_codes_surface_on_the_digest_warnings(self, client):
         _seed_source(client)
-        es.save_settings(vault, expected_revision=0, exclusions=[
+        es.save_settings(expected_revision=0, exclusions=[
             {"source": "capacities", "space_id": SPACE, "tag_id": TAG_A},
         ])
         _seed_selections(
@@ -690,7 +668,7 @@ class TestSelectionPromotionOnDigest:
         assert "no cached" in gone[0]
         assert "predates" in moved[0]
 
-    def test_empty_selection_store_changes_nothing(self, client, vault):
+    def test_empty_selection_store_changes_nothing(self, client):
         _seed_source(client)
 
         digest = _digest(client, pool=[_cap_row("keep")])
@@ -699,7 +677,7 @@ class TestSelectionPromotionOnDigest:
         assert _names(digest["suggested"]) == ["keep"]
         assert "source_warnings" not in digest
 
-    def test_foreign_space_selections_change_nothing(self, client, vault):
+    def test_foreign_space_selections_change_nothing(self, client):
         _seed_source(client)
         _seed_selections((_identity("keep", space="space-2"), 0), space="space-2")
 
@@ -709,7 +687,7 @@ class TestSelectionPromotionOnDigest:
         assert _names(digest["suggested"]) == ["keep"]
         assert "source_warnings" not in digest
 
-    def test_malformed_selection_store_degrades_to_a_visible_warning(self, client, vault):
+    def test_malformed_selection_store_degrades_to_a_visible_warning(self, client):
         _seed_source(client)
         sel.selections_path().parent.mkdir(parents=True, exist_ok=True)
         sel.selections_path().write_text("{not json", encoding="utf-8")
@@ -725,13 +703,13 @@ def _snapshot(vault: Path) -> dict[Path, bytes]:
     return {p: p.read_bytes() for p in vault.rglob("*") if p.is_file()}
 
 
-def _index_assigned(vault: Path, today: date, *rows: dict) -> None:
+def _index_assigned(today: date, *rows: dict) -> None:
     """Persist ``rows`` as today's assigned index with no selection involved.
 
     The commit boundary reads only the index, so writing it directly models any
     indexed state, including an assigned row that was never selected."""
     runstate.write_digest_index(
-        vault, today,
+        today,
         main_mod.build_digest_index({"assigned": list(rows), "suggested": []}),
     )
 
@@ -768,7 +746,7 @@ class TestCapacitiesCommitAuthorization:
 
     @pytest.fixture(autouse=True)
     def _no_live_state(self, monkeypatch):
-        monkeypatch.setattr(shadow, "gather_live_state", lambda config, vault_root: {
+        monkeypatch.setattr(shadow, "gather_live_state", lambda config: {
             "todoist_tasks": [], "calendar_events": [], "vault_frontmatter": {},
             "daily_note_text": "# TDTB Plan\n",
         })
@@ -796,13 +774,13 @@ class TestCapacitiesCommitAuthorization:
     # -- admitted ------------------------------------------------------------
 
     def test_selected_indexed_acknowledged_row_is_admitted_as_calendar_only(
-        self, client, vault, today
+        self, client, today
     ):
         _seed_source(client)
         _seed_selections((_identity("keep"), 0))
         digest = _digest(client, pool=[_cap_row("keep")], today=today)
         assert _names(digest["assigned"]) == ["keep"]
-        runstate.write_digest_index(vault, today, main_mod.build_digest_index(digest))
+        runstate.write_digest_index(today, main_mod.build_digest_index(digest))
 
         response = _capacities_commit(client, _submitted("keep"))
 
@@ -813,11 +791,11 @@ class TestCapacitiesCommitAuthorization:
         ] == []
 
     def test_acknowledged_warning_candidate_is_admitted_with_safe_values(
-        self, client, vault, today
+        self, client, today
     ):
         _seed_source(client)
         _seed_selections((_identity("keep"), 0), acknowledged=True)
-        _index_assigned(vault, today, _cap_row("keep", review_reasons=["rule_unknown"]))
+        _index_assigned(today, _cap_row("keep", review_reasons=["rule_unknown"]))
 
         response = _capacities_commit(client, _submitted("keep"))
 
@@ -829,7 +807,7 @@ class TestCapacitiesCommitAuthorization:
     def test_name_only_submission_is_refused(self, client, vault, today):
         _seed_source(client)
         _seed_selections((_identity("keep"), 0))
-        _index_assigned(vault, today, _cap_row("keep"))
+        _index_assigned(today, _cap_row("keep"))
         before = _snapshot(vault)
 
         response = _capacities_commit(client, {"name": "keep"})
@@ -839,7 +817,7 @@ class TestCapacitiesCommitAuthorization:
     def test_path_only_submission_without_identity_is_refused(self, client, vault, today):
         _seed_source(client)
         _seed_selections((_identity("keep"), 0))
-        _index_assigned(vault, today, _cap_row("keep"))
+        _index_assigned(today, _cap_row("keep"))
         before = _snapshot(vault)
 
         response = _capacities_commit(
@@ -853,7 +831,7 @@ class TestCapacitiesCommitAuthorization:
     def test_forged_identity_is_refused(self, client, vault, today):
         _seed_source(client)
         _seed_selections((_identity("keep"), 0))
-        _index_assigned(vault, today, _cap_row("keep"))
+        _index_assigned(today, _cap_row("keep"))
         before = _snapshot(vault)
         forged = {**_submitted("keep"), "identity": _identity("other")}
 
@@ -867,7 +845,7 @@ class TestCapacitiesCommitAuthorization:
 
     def test_unselected_row_is_refused(self, client, vault, today):
         _seed_source(client)
-        _index_assigned(vault, today, _cap_row("keep"))
+        _index_assigned(today, _cap_row("keep"))
         before = _snapshot(vault)
 
         response = _capacities_commit(client, _submitted("keep"))
@@ -877,7 +855,7 @@ class TestCapacitiesCommitAuthorization:
     def test_withdrawn_after_indexing_is_refused(self, client, vault, today):
         _seed_source(client)
         _seed_selections((_identity("keep"), 0))
-        _index_assigned(vault, today, _cap_row("keep"))
+        _index_assigned(today, _cap_row("keep"))
         sel.save_selections(space_id=SPACE, expected_revision=1, selections=[])
         before = _snapshot(vault)
 
@@ -888,7 +866,7 @@ class TestCapacitiesCommitAuthorization:
     def test_unacknowledged_warning_candidate_is_refused(self, client, vault, today):
         _seed_source(client)
         _seed_selections((_identity("keep"), 0), acknowledged=False)
-        _index_assigned(vault, today, _cap_row("keep", review_reasons=["rule_unknown"]))
+        _index_assigned(today, _cap_row("keep", review_reasons=["rule_unknown"]))
         before = _snapshot(vault)
 
         response = _capacities_commit(client, _submitted("keep"))
@@ -898,7 +876,7 @@ class TestCapacitiesCommitAuthorization:
     def test_store_read_failure_fails_closed(self, client, vault, today):
         _seed_source(client)
         _seed_selections((_identity("keep"), 0))
-        _index_assigned(vault, today, _cap_row("keep"))
+        _index_assigned(today, _cap_row("keep"))
         sel.selections_path().write_text("{not json", encoding="utf-8")
         before = _snapshot(vault)
 
@@ -911,8 +889,8 @@ class TestCapacitiesCommitAuthorization:
     def test_excluded_after_indexing_is_refused(self, client, vault, today):
         _seed_source(client)
         _seed_selections((_identity("keep"), 0))
-        _index_assigned(vault, today, _cap_row("keep", tags=[TAG_A]))
-        es.save_settings(vault, expected_revision=0, exclusions=[
+        _index_assigned(today, _cap_row("keep", tags=[TAG_A]))
+        es.save_settings(expected_revision=0, exclusions=[
             {"source": "capacities", "space_id": SPACE, "tag_id": TAG_A},
         ])
         before = _snapshot(vault)
@@ -926,7 +904,7 @@ class TestCapacitiesCommitAuthorization:
     def test_dropped_after_indexing_is_refused(self, client, vault, today):
         _seed_source(client)
         _seed_selections((_identity("keep"), 0))
-        _index_assigned(vault, today, _cap_row("keep"))
+        _index_assigned(today, _cap_row("keep"))
 
         def _drop(state):
             state["dropped"] = [{
@@ -934,7 +912,7 @@ class TestCapacitiesCommitAuthorization:
                 "dropped_at": "2026-10-09T09:00:00-07:00",
             }]
 
-        runstate.update_runstate(vault, today, _drop)
+        runstate.update_runstate(today, _drop)
         before = _snapshot(vault)
 
         response = _capacities_commit(client, _submitted("keep"))
@@ -946,7 +924,7 @@ class TestCapacitiesCommitAuthorization:
         _seed_selections((_identity("keep"), 0))
         row = _cap_row("keep")
         del row["capacities_space_id"]
-        _index_assigned(vault, today, row)
+        _index_assigned(today, row)
         before = _snapshot(vault)
 
         response = _capacities_commit(client, _submitted("keep"))
@@ -980,7 +958,7 @@ class TestIndexKeepsReviewState:
 class TestSelectionPromotionCallerParity:
     """GET /plan-inputs (first caller) and POST /digest (second caller)."""
 
-    def test_plan_inputs_and_digest_promote_the_same_pool_row(self, client, vault):
+    def test_plan_inputs_and_digest_promote_the_same_pool_row(self, client):
         today = main_mod.gather.effective_date(datetime.now())
         _seed_source(client)
         _seed_selections((_identity("keep"), 0))
@@ -1009,7 +987,7 @@ class TestSelectionPromotionCallerParity:
         assert "source_warnings" not in digest
 
     def test_plan_inputs_drop_listed_selection_is_not_promoted_and_says_so(
-        self, client, vault
+        self, client
     ):
         today = main_mod.gather.effective_date(datetime.now())
         _seed_source(client)
@@ -1027,7 +1005,7 @@ class TestSelectionPromotionCallerParity:
                 "dropped_at": "2026-10-09T09:00:00-07:00",
             }]
 
-        runstate.update_runstate(vault, today, _drop)
+        runstate.update_runstate(today, _drop)
 
         body = client.get("/plan-inputs").json()
 
@@ -1037,7 +1015,7 @@ class TestSelectionPromotionCallerParity:
         assert len(notices) == 1 and "excluded" in notices[0]
 
     def test_plan_inputs_surfaces_a_selection_notice_in_source_warnings(
-        self, client, vault
+        self, client
     ):
         today = main_mod.gather.effective_date(datetime.now())
         _seed_source(client)

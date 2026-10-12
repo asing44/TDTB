@@ -207,8 +207,8 @@ def main() -> None:
     _os.environ["TDTB_HOME"] = str(tmp / "home")
     _os.environ["TDTB_REPO_CONFIG"] = str(tmp / "repo-config" / "tdtb.json")
     vault = build_vault(tmp)
-    app = main_mod.create_app(vault_root=vault)
-    app.state.build_read_clients = lambda v, cfg: (todoist_fake(), store_fake())
+    app = main_mod.create_app()
+    app.state.build_read_clients = lambda cfg: (todoist_fake(), store_fake())
     client = TestClient(app)
     token = client.get("/session-token").json()["token"]
     auth = {"X-TDTB-Token": token}
@@ -285,9 +285,9 @@ def main() -> None:
     write_config_note(cfg, CONFIG)  # installed as the repo config (V1)
 
     # Degraded sources: real calendar/todoist warning strings.
-    app.state.build_read_clients = lambda v, cfg: (None, DeadStore())
+    app.state.build_read_clients = lambda cfg: (None, DeadStore())
     dump("plan-inputs-degraded", client.get("/plan-inputs").json())
-    app.state.build_read_clients = lambda v, cfg: (todoist_fake(), store_fake())
+    app.state.build_read_clients = lambda cfg: (todoist_fake(), store_fake())
 
     # -- sequence (judgment monkeypatched — route code real, nothing billed) --
     inputs = client.get("/plan-inputs").json()
@@ -338,12 +338,12 @@ def main() -> None:
         judgment.propose_sequence = real_propose
 
     # 429: exhaust the persistent ledger, then hit the real gate.
-    runstate.update_runstate(vault, TODAY, {"billed_calls": main_mod.BILLED_CAP})
+    runstate.update_runstate(TODAY, {"billed_calls": main_mod.BILLED_CAP})
     r = client.post("/sequence", headers=auth, json=seq_body)
     assert r.status_code == 429, r.text
     dump("sequence-429", r.json())
     dump("billed-ledger-spent", client.get("/billed-ledger").json())
-    runstate.update_runstate(vault, TODAY, {"billed_calls": 0})
+    runstate.update_runstate(TODAY, {"billed_calls": 0})
 
     # -- validate-sequence ---------------------------------------------------
     ok_rows = [r_ for r_ in json.loads((OUT / "sequence-ok.json").read_text())["sequence"]
@@ -363,7 +363,7 @@ def main() -> None:
     import shadow as shadow_mod
 
     real_gather_live = shadow_mod.gather_live_state
-    shadow_mod.gather_live_state = lambda config, vault_root: {
+    shadow_mod.gather_live_state = lambda config: {
         "todoist": {"tasks": []},
         "calendar": {"events": [], "unavailable": True},
         "unavailable_surfaces": ["calendar"],
@@ -381,8 +381,7 @@ def main() -> None:
 
     # -- live commit report shapes (real orchestrate code, fake surfaces) -----
     report_ok = orchestrate.run_orchestrated(
-        [], todoist=None, store=None, vault_root=vault,
-        today=TODAY, persist_ledger=False,
+        [], todoist=None, store=None, today=TODAY, persist_ledger=False,
     )
     dump("commit-live-ok", report_ok)
 
@@ -392,8 +391,7 @@ def main() -> None:
         due_time="10:00", duration_min=60,
     )]
     report_partial = orchestrate.run_orchestrated(
-        intents, todoist=None, store=None, vault_root=vault,
-        today=TODAY, persist_ledger=False,
+        intents, todoist=None, store=None, today=TODAY, persist_ledger=False,
     )
     dump("commit-live-partial", report_partial)
 
