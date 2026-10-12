@@ -22,6 +22,7 @@ import shadow  # noqa: E402
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "gather"))
 import tdtb_gather as gather  # noqa: E402
+from tests.config_markdown import write_config_note  # noqa: E402
 
 TODAY = date(2026, 7, 12)
 LOG_REL = micro_adventure.HISTORY_REL_PATH
@@ -220,7 +221,7 @@ class TestCommitHistoryAppend:
         (vault / "30 - Daily/2026-07-12.md").write_text("# Journal\n", encoding="utf-8")
         config_path = vault / "00 - META" / "Skill-Configs" / "tdtb-bridger.md"
         config_path.parent.mkdir(parents=True, exist_ok=True)
-        config_path.write_text(
+        write_config_note(config_path,
             "## Defaults\n"
             "| Key | Value |\n|---|---|\n| eod | 11:59 PM |\n\n"
             "## Anchored Lifestyle Blocks\n"
@@ -320,3 +321,36 @@ class TestCommitHistoryAppend:
         assert self._post_live(client).json()["micro_adventure_logged"] is True
         history = micro_adventure.read_history(vault / LOG_REL)
         assert [ (e.id, e.done) for e in history ] == [("ma03", None), ("ma07", True)]
+
+
+class TestPoolComesFromConfig:
+    """V1: the pool and rotation window are read from the layered JSON config
+    (``micro_adventure_pool`` / ``micro_adventure_rotation``), never the vault
+    note; with neither present the in-code ``FALLBACK_POOL`` is used."""
+
+    @staticmethod
+    def _state(tmp_path: Path):
+        import config_reader
+        result = config_reader.read_config(tmp_path)
+        sections = dict(result.config.sections) if result.config else {}
+        return main_mod._micro_adventure_state(tmp_path, sections, TODAY)[0]
+
+    def test_config_pool_is_offered(self, tmp_path: Path) -> None:
+        import json
+        import app_config
+        path = app_config.repo_config_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({
+            "version": 1,
+            "micro_adventure_pool": [
+                {"ID": "cfg1", "Idea": "Config idea", "Category": "x", "Effort": "low", "Active": True},
+            ],
+        }), encoding="utf-8")
+        state = self._state(tmp_path)
+        assert [p["id"] for p in state["live_pool"]] == ["cfg1"]
+        assert state["auto_pick"]["id"] == "cfg1"
+
+    def test_no_config_uses_the_code_fallback_pool(self, tmp_path: Path) -> None:
+        state = self._state(tmp_path)
+        assert state["auto_pick"] is not None
+        assert state["auto_pick"]["id"] in {p.id for p in micro_adventure.FALLBACK_POOL}

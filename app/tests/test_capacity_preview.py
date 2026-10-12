@@ -32,6 +32,7 @@ import runstate as runstate_mod  # noqa: E402
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "gather"))
 import tdtb_gather as gather  # noqa: E402
+from tests.config_markdown import write_config_note  # noqa: E402
 
 CONFIG_REL_PATH = "00 - META/Skill-Configs/tdtb-bridger.md"
 
@@ -77,7 +78,7 @@ def vault(tmp_path) -> Path:
     v.mkdir()
     p = v / CONFIG_REL_PATH
     p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(CONFIG, encoding="utf-8")
+    write_config_note(p, CONFIG, encoding="utf-8")
     return v
 
 
@@ -315,7 +316,7 @@ class _PreviewStore:
 
 def _client_with_store(vault: Path, store) -> TestClient:
     p = vault / CONFIG_REL_PATH
-    p.write_text(CONFIG_DISABLED_CALENDARS, encoding="utf-8")
+    write_config_note(p, CONFIG_DISABLED_CALENDARS, encoding="utf-8")
     app = main_mod.create_app(vault_root=vault)
     app.state.build_read_clients = lambda v, cfg: (None, store)
     return TestClient(app)

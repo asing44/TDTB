@@ -17,6 +17,7 @@ from fastapi.testclient import TestClient
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 import main as main_mod  # noqa: E402
+from tests.config_markdown import write_config_note  # noqa: E402
 
 CONFIG_REL_PATH = "00 - META/Skill-Configs/tdtb-bridger.md"
 
@@ -208,7 +209,7 @@ def vault(tmp_path) -> Path:
     v.mkdir()
     p = v / CONFIG_REL_PATH
     p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(CONFIG_WITH_PRESETS, encoding="utf-8")
+    write_config_note(p, CONFIG_WITH_PRESETS, encoding="utf-8")
     proj = v / "50 - Operations" / "Projects"
     proj.mkdir(parents=True)
     (proj / "Make.md").write_text(

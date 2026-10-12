@@ -360,7 +360,7 @@ class TestPopulatedTitleCaseConfig:
     Every other test in this file passes ``config={}`` or a lowercase app
     fixture, so the section-key lookups (`Presets` / `Anchored Lifestyle
     Blocks`) were never exercised against the title-case dict that
-    ``config_reader.parse_config_markdown`` actually produces. That gap let a
+    the config markdown parser actually produced. That gap let a
     title-case/lowercase mismatch silently disable PHEP routing and Step-E
     anchored events on real config (Townhome Pontification → Inbox instead of
     PHEP). These tests drive the real parse→manifest seam, not a hand-built
@@ -386,8 +386,8 @@ class TestPopulatedTitleCaseConfig:
 """
 
     def _parsed_config(self):
-        import config_reader  # sys.path already includes app dir (top of file)
-        return config_reader.parse_config_markdown(self._CONFIG_MD)
+        from tests.config_markdown import parse_config_markdown
+        return parse_config_markdown(self._CONFIG_MD)
 
     def test_assigned_pursuit_preset_routes_to_phep_from_real_config(self):
         """The Townhome repro: an assigned item that is a `pursuit`-typed Preset

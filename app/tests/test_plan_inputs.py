@@ -25,6 +25,7 @@ import runstate as runstate_mod  # noqa: E402
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "gather"))
 import tdtb_gather as gather  # noqa: E402
+from tests.config_markdown import read_config_note, write_config_note  # noqa: E402
 
 CONFIG_REL_PATH = "00 - META/Skill-Configs/tdtb-bridger.md"
 
@@ -66,7 +67,7 @@ def client(vault) -> TestClient:
 def _write_config(vault: Path) -> None:
     p = vault / CONFIG_REL_PATH
     p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(MINIMAL_CONFIG, encoding="utf-8")
+    write_config_note(p, MINIMAL_CONFIG, encoding="utf-8")
 
 
 class TestPlanInputsRoute:
@@ -133,8 +134,8 @@ class TestPlanInputsRoute:
         _write_config(vault)
         before = client.get("/plan-inputs").json()["anchored_source_fingerprint"]
         path = vault / CONFIG_REL_PATH
-        path.write_text(
-            path.read_text(encoding="utf-8").replace("| 80m      |", "| 90m      |"),
+        write_config_note(path,
+            read_config_note(path).replace("| 80m      |", "| 90m      |"),
             encoding="utf-8",
         )
         after = client.get("/plan-inputs").json()["anchored_source_fingerprint"]
@@ -219,7 +220,7 @@ class TestIgnoreList:
     def _write_cfg(self, vault: Path) -> None:
         p = vault / CONFIG_REL_PATH
         p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(self.CONFIG_WITH_IGNORES, encoding="utf-8")
+        write_config_note(p, self.CONFIG_WITH_IGNORES, encoding="utf-8")
 
     def test_ignored_name_and_path_dropped_from_digest(self, client, vault):
         self._write_cfg(vault)
@@ -287,7 +288,7 @@ class _DecisionsStore:
 def _decisions_client(vault: Path, store) -> TestClient:
     p = vault / CONFIG_REL_PATH
     p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(CONFIG_DISABLED_CALENDARS, encoding="utf-8")
+    write_config_note(p, CONFIG_DISABLED_CALENDARS, encoding="utf-8")
     app = main_mod.create_app(vault_root=vault)
     app.state.build_read_clients = lambda v, cfg: (_FakeTodoistEmpty(), store)
     return TestClient(app)

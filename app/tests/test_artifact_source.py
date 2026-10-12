@@ -24,6 +24,7 @@ import artifact_source as art  # noqa: E402
 import main as main_mod  # noqa: E402
 import tdtb_gather as gather  # noqa: E402
 from calendar_bridge import CalendarInfo  # noqa: E402
+from tests.config_markdown import write_config_note  # noqa: E402
 
 FIXTURE = Path(__file__).parent / "fixtures" / "planning-artifact.json"
 
@@ -408,7 +409,7 @@ def vault(tmp_path) -> Path:
     v.mkdir()
     p = v / "00 - META/Skill-Configs/tdtb-bridger.md"
     p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(MINIMAL_CONFIG, encoding="utf-8")
+    write_config_note(p, MINIMAL_CONFIG, encoding="utf-8")
     return v
 
 

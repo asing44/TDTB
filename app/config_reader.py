@@ -1,46 +1,44 @@
-"""config_reader.py — Parses the TDTB vault config markdown into a runtime config.
+"""config_reader.py — Runtime view of the TDTB config (repo file + local override).
 
-Reads `00 - META/Skill-Configs/tdtb-bridger.md` (vault_root is always a caller-supplied
-parameter — never hardcoded) and exposes section/key lookups with the same inline
-fallback contract the tdtb-bridger-vault skill carries (SKILL.md § 0.1 Step 2,
+The config no longer comes from the Obsidian vault note (vault removal V1,
+docs/plan/2026-10-12-vault-removal). ``read_config`` takes its sections from
+``app_config`` — the tracked ``config/tdtb.json`` with the optional
+machine-local ``~/.config/tdtb/config.json`` layered on top — and every key
+that is absent falls back to the in-code constants below (the same inline
+fallback contract the tdtb-bridger-vault skill carries, SKILL.md § 0.1 Step 2,
 "Skill-inline fallback values", lines ~399-410).
-
-Dual-read (Capacities-first S0): `~/.config/tdtb/config.json` (see
-``app_config``) is overlaid on the vault parse when present; with no
-config.json the vault file is read exactly as before.
 
 Gate: TDD — tests/test_config_reader.py must pass.
 
 Contract summary (spec § 3.4):
-  - Parse `## ` sections by heading; key/value tables become dicts.
-  - Dot-notation keys (e.g. `buffering.standard_pct`) expand to nested values.
+  - ``sections`` is the markdown-shaped dict ``app_config.sections_from_document``
+    emits: key/value sections as dicts (dot-notation keys such as
+    ``buffering.standard_pct`` are kept and also expanded to nested values),
+    record sections as lists of row dicts.
   - Every key has an inline fallback; `get()` returns config value if present,
     else fallback, with an inspectable `source` marker ("config" / "fallback").
-  - Required sections (Defaults, Schedulable Defaults, Anchored Lifestyle Blocks,
-    Presets) are validated; specific missing sections/keys are reported, never
-    raised as an exception.
+  - Required sections (Defaults, Schedulable Defaults, Anchored Lifestyle
+    Blocks, Presets) are validated; specific missing sections/keys are
+    reported, never raised as an exception.
   - Optional sections (Ranking Criteria, Micro-Adventures, Calendar Titles,
     Schema Reference) fall back individually per-key, never error.
-  - `bootstrap_needed` is set when the config file is missing entirely. This
-    module does NOT write a default config — that is a future task.
+  - `bootstrap_needed` is set when neither config layer is usable. This
+    module does NOT write a default config.
   - Preset rows require Name/Type/Blocks/Priority; Zone + Latest Start are
     optional. Priority scale is 4=highest — never inverted, never touched here
     (this module passes the raw value through).
-  - Todoist IDs are read from a Schema Reference / Reference IDs section when
-    present; otherwise fall back to the skill's stable constants, marked
+  - Todoist IDs are read from a Schema Reference section when present;
+    otherwise fall back to the skill's stable constants, marked
     source="fallback".
 """
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 import app_config
 
-
-CONFIG_REL_PATH = "00 - META/Skill-Configs/tdtb-bridger.md"
 
 REQUIRED_SECTIONS = (
     "Defaults",
@@ -139,9 +137,9 @@ class ValidationResult:
 
 
 class TdtbConfig:
-    """Parsed TDTB vault config with fallback-aware lookups.
+    """TDTB config with fallback-aware lookups.
 
-    Construct via `read_config(vault_root)`, not directly — the reader handles
+    Construct via `read_config()`, not directly — the reader handles
     the missing-file / bootstrap_needed case before a TdtbConfig exists.
     """
 
@@ -193,8 +191,8 @@ class TdtbConfig:
         Allocator-rewrite T5 / locked decision 10: wellbeing and placement
         preferences are config PROSE, not a subsystem. Whatever Adam writes
         here ("no screen-heavy work after 21:00") rides verbatim into the
-        sequence prompt. Prose-only sections parse to `{"_body": ...}`; a
-        section that also carries a table contributes only its prose.
+        sequence prompt. The config's ``placement_context`` string arrives as
+        ``{"_body": ...}``.
         """
         section = self.sections.get(PLACEMENT_CONTEXT_SECTION)
         if not isinstance(section, dict):
@@ -350,13 +348,8 @@ class ConfigReadResult:
 
 
 # ---------------------------------------------------------------------------
-# Markdown parsing
+# Helpers
 # ---------------------------------------------------------------------------
-
-_HEADING_RE = re.compile(r"^(#{2,3})\s+(.*\S)\s*$")
-_TABLE_ROW_RE = re.compile(r"^\|(.+)\|\s*$")
-_TABLE_SEP_RE = re.compile(r"^\|[\s:|-]+\|\s*$")
-
 
 def _normalize_ref_name(name: str) -> str:
     """Emoji-insensitive key for Reference-IDs row matching: drop every
@@ -365,107 +358,6 @@ def _normalize_ref_name(name: str) -> str:
     return "".join(ch for ch in name if ch.isalnum()).casefold()
 
 
-def _split_table_cells(line: str) -> list[str]:
-    inner = line.strip()
-    if inner.startswith("|"):
-        inner = inner[1:]
-    if inner.endswith("|"):
-        inner = inner[:-1]
-    return [c.strip() for c in inner.split("|")]
-
-
-def _coerce_scalar(raw: str) -> Any:
-    """Best-effort type coercion for a table cell: bool/int/float/None-ish, else str."""
-    s = raw.strip()
-    # Strip a single layer of inline-code backticks (`ID123`) — the live
-    # config wraps IDs in backticks for Obsidian rendering; the ID string
-    # itself, not the markdown, is the value callers want.
-    if len(s) >= 2 and s.startswith("`") and s.endswith("`"):
-        s = s[1:-1].strip()
-    if s in ("", "—", "-", "–"):
-        return None
-    low = s.lower()
-    # NOTE: "on"/"off" are deliberately NOT coerced to bool here — the
-    # Schedulable Defaults `State` column uses on/off as a status label
-    # (schema notes: "State (Schedulable defaults) is on / off"), and
-    # round-tripping it as a string is what config-driven display/writeback
-    # expects. `overlap_allowed` (yes/no) is the boolean-shaped field.
-    if low in ("yes", "true"):
-        return True
-    if low in ("no", "false"):
-        return False
-    try:
-        if re.fullmatch(r"-?\d+", s):
-            return int(s)
-        if re.fullmatch(r"-?\d*\.\d+", s):
-            return float(s)
-    except ValueError:
-        pass
-    return s
-
-
-def _expand_dot_notation(flat: dict[str, Any]) -> dict[str, Any]:
-    """Keep dot-notation keys as-is in the flat dict (lookups use the dotted
-    key directly per `get()`), while also expanding a nested-dict mirror for
-    callers that prefer nested access. Both views share the same values.
-    """
-    nested: dict[str, Any] = dict(flat)
-    for key, value in flat.items():
-        if "." in key:
-            parts = key.split(".")
-            cursor = nested
-            for part in parts[:-1]:
-                cursor = cursor.setdefault(part, {})
-                if not isinstance(cursor, dict):
-                    break
-            else:
-                cursor[parts[-1]] = value
-    return nested
-
-
-def _parse_kv_table(rows: list[list[str]]) -> dict[str, Any]:
-    """Parse a two-column `| Key | Value |`-style table into a flat dict.
-
-    Any table where the first header cell is not literally "Key" still parses
-    generically: first column becomes the dict key, second becomes the value.
-    Extra columns beyond two are ignored for kv tables.
-    """
-    if not rows:
-        return {}
-    header = [h.lower() for h in rows[0]]
-    data_rows = rows[1:]
-    flat: dict[str, Any] = {}
-    for row in data_rows:
-        if len(row) < 2:
-            continue
-        key = row[0].strip()
-        if not key:
-            continue
-        value = _coerce_scalar(row[1])
-        flat[key] = value
-    return _expand_dot_notation(flat)
-
-
-def _parse_record_table(rows: list[list[str]]) -> list[dict[str, Any]]:
-    """Parse a multi-column table (e.g. Presets, Anchored Lifestyle Blocks)
-    into a list of row-dicts keyed by header name.
-    """
-    if len(rows) < 1:
-        return []
-    header = rows[0]
-    records: list[dict[str, Any]] = []
-    for row in rows[1:]:
-        record: dict[str, Any] = {}
-        for i, col_name in enumerate(header):
-            if not col_name:
-                continue
-            cell = row[i] if i < len(row) else ""
-            record[col_name] = _coerce_scalar(cell)
-        records.append(record)
-    return records
-
-
-# Sections whose top-level table is key/value shaped rather than record rows.
 # Allocator-rewrite T5: the config-owned prose block that rides verbatim into
 # the sequence prompt. Bounded so a runaway section can't crowd out the real
 # inputs (assigned rows, anchored blocks) in the one billed call.
@@ -511,185 +403,30 @@ def sanitize_placement_context(raw: str) -> str:
     return "\n".join(out).strip()
 
 
-_KV_SECTIONS = {"Defaults", "Ranking Criteria"}
-# Sections whose table is record-shaped (list of dicts).
-_RECORD_SECTIONS = {
-    "Schedulable Defaults",
-    "Anchored Lifestyle Blocks",
-    "Presets",
-}
-
-
-def _looks_like_kv_table(rows: list[list[str]]) -> bool:
-    """Heuristic: only a table with an explicit 'Key' + 'Value' header pair
-    is treated as key/value; everything else (incl. other 2-column tables
-    like `Todoist Projects`'s `Project | ID`) parses as records. A bare
-    column-count check is too ambiguous — several live-config tables are
-    2-column but semantically record-shaped (each row is a named entity).
-    """
-    if not rows:
-        return False
-    header = [h.lower() for h in rows[0]]
-    return "key" in header and "value" in header
-
-
-def _parse_block(lines: list[str], section_name_hint: str | None) -> Any:
-    """Parse the body of a section/subsection: one or more tables, plus any
-    plain-text lines (kept as a '_body' fallback, unused by lookups today
-    but preserved so nothing is silently dropped).
-    """
-    tables: list[list[list[str]]] = []
-    current_table: list[list[str]] = []
-    body_lines: list[str] = []
-
-    for line in lines:
-        if _TABLE_SEP_RE.match(line):
-            continue
-        m = _TABLE_ROW_RE.match(line)
-        if m:
-            current_table.append(_split_table_cells(line))
-        else:
-            if current_table:
-                tables.append(current_table)
-                current_table = []
-            if line.strip():
-                body_lines.append(line)
-    if current_table:
-        tables.append(current_table)
-
-    if not tables:
-        return {"_body": "\n".join(body_lines)} if body_lines else {}
-
-    # Multiple tables in one section (e.g. Overlap Permissions has two
-    # sub-tables under different headers) — merge kv tables, collect record
-    # tables under a synthetic list. Most sections have exactly one table.
-    if len(tables) == 1:
-        rows = tables[0]
-        if section_name_hint in _RECORD_SECTIONS:
-            return _parse_record_table(rows)
-        if section_name_hint in _KV_SECTIONS:
-            return _parse_kv_table(rows)
-        return _parse_kv_table(rows) if _looks_like_kv_table(rows) else _parse_record_table(rows)
-
-    # Multiple tables and no explicit hint: return a list of parsed tables,
-    # auto-detecting kv vs record per-table.
-    parsed: list[Any] = []
-    for rows in tables:
-        if _looks_like_kv_table(rows):
-            parsed.append(_parse_kv_table(rows))
-        else:
-            parsed.append(_parse_record_table(rows))
-    return parsed if len(parsed) > 1 else parsed[0]
-
-
-def parse_config_markdown(text: str) -> dict[str, Any]:
-    """Parse the full config markdown into a `{section_name: parsed_body}` dict.
-
-    `## ` headings are top-level sections. `### ` headings nest as a keyed
-    sub-dict on the parent section (e.g. `Template Blocks` → `{"Trinoor
-    Hours": [...], "Press (Gym)": [...]}`). Table rows within a section
-    become dicts (key/value) or lists of dicts (records) depending on shape.
-    """
-    lines = text.splitlines()
-    sections: dict[str, Any] = {}
-
-    # Locate every heading with its line index.
-    headings: list[tuple[int, int, str]] = []  # (level, line_idx, name)
-    for i, line in enumerate(lines):
-        m = _HEADING_RE.match(line)
-        if m:
-            level = len(m.group(1))
-            headings.append((level, i, m.group(2).strip()))
-
-    # Only consider level-2 and level-3 headings for section parsing.
-    h2_indices = [idx for idx, h in enumerate(headings) if h[0] == 2]
-
-    for hi, h_idx in enumerate(h2_indices):
-        level, start_line, name = headings[h_idx]
-        # end_line is the start of the NEXT level-2 heading (not just the next
-        # heading overall, which could be one of this section's own level-3
-        # sub-headings and would truncate the section to nothing).
-        end_line = headings[h2_indices[hi + 1]][1] if hi + 1 < len(h2_indices) else len(lines)
-
-        # Find any level-3 sub-headings within this section's line range.
-        sub_headings = [
-            h for h in headings
-            if h[0] == 3 and start_line < h[1] < end_line
-        ]
-
-        if sub_headings:
-            sub_dict: dict[str, Any] = {}
-            # Body before the first sub-heading (rare, but don't drop it).
-            pre_body = lines[start_line + 1 : sub_headings[0][1]]
-            pre_parsed = _parse_block(pre_body, name)
-            if pre_parsed:
-                sub_dict.update(pre_parsed) if isinstance(pre_parsed, dict) else None
-
-            for si, (slevel, sline, sname) in enumerate(sub_headings):
-                s_end = sub_headings[si + 1][1] if si + 1 < len(sub_headings) else end_line
-                sub_lines = lines[sline + 1 : s_end]
-                sub_dict[sname] = _parse_block(sub_lines, sname)
-
-            sections[name] = sub_dict
-        else:
-            body_lines = lines[start_line + 1 : end_line]
-            sections[name] = _parse_block(body_lines, name)
-
-    return sections
-
-
 # ---------------------------------------------------------------------------
 # Top-level entry point
 # ---------------------------------------------------------------------------
 
-def _merge_sections(base: dict[str, Any], overlay: dict[str, Any]) -> dict[str, Any]:
-    """Overlay app-config sections on top of the vault-parsed sections.
+def read_config(vault_root: str | Path | None = None) -> ConfigReadResult:
+    """Read the TDTB config: ``config/tdtb.json`` with the machine-local
+    ``~/.config/tdtb/config.json`` layered on top (see ``app_config``).
 
-    A section present in both dicts is merged key-wise (so a config.json that
-    carries only ``Defaults.habits.*`` keeps the vault's other Defaults keys,
-    and one that carries only the micro-adventure Pool keeps the vault's
-    Rotation). Anything else is taken from the overlay, which wins.
-    """
-    merged = dict(base)
-    for key, value in overlay.items():
-        if isinstance(value, dict) and isinstance(merged.get(key), dict):
-            merged[key] = {**merged[key], **value}
-        else:
-            merged[key] = value
-    return merged
-
-
-def read_config(vault_root: str | Path) -> ConfigReadResult:
-    """Read and parse the TDTB config from `vault_root`.
-
-    Dual-read (S0): `~/.config/tdtb/config.json` (see ``app_config``) is the
-    canonical source when present and is overlaid on the vault parse — every
-    section it carries wins, every section it does not still comes from the
-    vault. With no config.json the vault file is read exactly as before, so
-    behaviour is unchanged. `vault_root` is always a caller-supplied
-    parameter — never hardcoded.
+    ``vault_root`` is accepted and ignored: the vault note is no longer a
+    config source. The parameter stays only so the existing callers (which
+    still thread the vault root for their other, later-slice reads) need not
+    change; it goes away with them.
 
     Returns a `ConfigReadResult`:
-      - `bootstrap_needed=True`, `config=None`, `validation=None` when there
-        is neither a config.json nor a vault file (caller decides whether to
-        offer writing defaults — this module does not write one).
+      - `bootstrap_needed=True`, `config=None`, `validation=None` when neither
+        layer is usable (caller decides whether to offer writing defaults —
+        this module does not write one).
       - Otherwise `config` is a populated `TdtbConfig` and `validation` is
         the required-section/key report (never raises on gaps).
     """
-    overlay = app_config.load_sections()
-    config_path = Path(vault_root) / CONFIG_REL_PATH
-    if not config_path.exists():
-        if overlay:
-            config = TdtbConfig(sections=dict(overlay), raw_text=None)
-            return ConfigReadResult(
-                config=config, bootstrap_needed=False, validation=config.validate()
-            )
+    sections = app_config.load_sections()
+    if not sections:
         return ConfigReadResult(config=None, bootstrap_needed=True, validation=None)
-
-    raw_text = config_path.read_text(encoding="utf-8")
-    sections = parse_config_markdown(raw_text)
-    if overlay:
-        sections = _merge_sections(sections, overlay)
-    config = TdtbConfig(sections=sections, raw_text=raw_text)
-    validation = config.validate()
-    return ConfigReadResult(config=config, bootstrap_needed=False, validation=validation)
+    config = TdtbConfig(sections=sections, raw_text=None)
+    return ConfigReadResult(
+        config=config, bootstrap_needed=False, validation=config.validate()
+    )

@@ -13,6 +13,7 @@ import day_semantics  # noqa: E402
 import external_sources as ext  # noqa: E402
 import main as main_mod  # noqa: E402
 import runstate  # noqa: E402
+from tests.config_markdown import write_config_note  # noqa: E402
 
 
 MONDAY = date(2026, 7, 13)
@@ -140,7 +141,7 @@ def test_capacity_preview_and_schedulable_row_use_same_effective_allotment(
     vault = tmp_path / "vault"
     config_path = vault / "00 - META/Skill-Configs/tdtb-bridger.md"
     config_path.parent.mkdir(parents=True)
-    config_path.write_text(
+    write_config_note(config_path,
         "---\n"
         "description: test config\n"
         "last_updated: 2026-07-01\n"

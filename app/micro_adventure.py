@@ -10,9 +10,12 @@ seam is `read_history` / `write_history`, which wrap `frontmatter` and swallow
 all errors down to `[]` / a fresh log.
 
 Contract surfaces:
-  * Pool — the vault config `## Micro-Adventures` section (parsed shape:
-    ``{"_body": ..., "Rotation": {...}, "Pool": [ {...}, ... ]}``). Absent or
-    malformed → the EXACT fallback seed pool (`FALLBACK_POOL`).
+  * Pool — the config's `Micro-Adventures` section (shape:
+    ``{"Rotation": {...}, "Pool": [ {...}, ... ]}``), built by
+    ``app_config.sections_from_document`` from ``micro_adventure_pool`` and
+    ``micro_adventure_rotation`` in ``config/tdtb.json`` (plus the local
+    override). Absent or malformed → the EXACT fallback seed pool
+    (`FALLBACK_POOL`), which stays in code.
   * History — the vault log `00 - META/Cache/tdtb-micro-adventure-log.md`,
     YAML frontmatter, newest-first. Missing/unparseable → empty history.
 """

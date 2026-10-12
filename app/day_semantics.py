@@ -2,7 +2,7 @@
 
 Parses `## Day Presets`, Template zones, allotment defaults, and the complete
 raw `## Overlap Permissions` section from the parsed config sections dict
-(produced by `config_reader.parse_config_markdown`). Pure — no I/O, no live
+(produced by `app_config.sections_from_document`). Pure — no I/O, no live
 calls, no billed endpoints.
 
 Contract (locked decisions 30–40, T18a):
@@ -15,7 +15,8 @@ Contract (locked decisions 30–40, T18a):
 - `Defaults.work_allotment_minutes` is the fallback when a matched/default
   row omits its own allotment (None).
 - `0` explicitly disables Mint capacity and Mint zones.
-- Overlap Permissions prose is preserved verbatim from the raw config text.
+- Overlap Permissions prose is preserved verbatim (the config's
+  `overlap_permissions` string; legacy raw-text callers still extract it).
 - Existing task `## Presets` contract is NOT consumed or modified.
 - Malformed definitions (duplicate names, unknown days, missing required
   fields, non-15-min allotments) are rejected deterministically into
@@ -314,9 +315,10 @@ def project_day_semantics(
 ) -> DaySemanticsProjection:
     """Project the day-semantics contract from parsed config sections.
 
-    ``sections`` is the dict from ``config_reader.parse_config_markdown``.
-    ``raw_config_text`` is the full raw markdown text (for verbatim Overlap
-    Permissions extraction). The configured-default preset is derived from
+    ``sections`` is the dict from ``app_config.sections_from_document`` (its
+    ``Overlap Permissions`` string is the verbatim policy). ``raw_config_text``
+    is legacy: raw markdown to extract that policy from when the sections dict
+    carries none. The configured-default preset is derived from
     exactly one truthy ``Default`` column on a Day Presets row; callers must
     not inject a default.
 
@@ -414,7 +416,16 @@ def project_day_semantics(
     zones = _extract_zones(template_blocks if isinstance(template_blocks, dict) else {})
 
     # Overlap Permissions raw
+    # V1: the policy text is a config string (``overlap_permissions``), carried
+    # as ``Overlap Permissions._body``; the raw-markdown extraction stays for
+    # legacy callers that still pass raw_config_text, and wins when it finds
+    # the section.
     overlap_raw = _extract_overlap_raw(raw_config_text)
+    if not overlap_raw:
+        overlap_section = sections.get("Overlap Permissions")
+        body = overlap_section.get("_body") if isinstance(overlap_section, dict) else None
+        if isinstance(body, str) and body.strip():
+            overlap_raw = body.strip()
 
     return DaySemanticsProjection(
         presets=presets,

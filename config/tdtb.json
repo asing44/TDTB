@@ -1,0 +1,525 @@
+{
+  "version": 1,
+  "defaults": {
+    "eod": "11:45 PM",
+    "anchor": {
+      "round_to_minutes": 15
+    },
+    "buffering": {
+      "standard_pct": 0.2,
+      "minimal_pct": 0.11,
+      "off_pct": 0.0
+    },
+    "caps": {
+      "deep": 4,
+      "mixed": 3
+    },
+    "work_allotment_minutes": 240
+  },
+  "habits": {
+    "fallback_minutes_per_habit": 4,
+    "round_to_minutes": 15
+  },
+  "schedulable_defaults": [
+    {
+      "Block": "buffering",
+      "State": "on",
+      "Duration (blocks)": null,
+      "Notes": "mode: standard"
+    },
+    {
+      "Block": "minting",
+      "State": "on",
+      "Duration (blocks)": 4,
+      "Notes": "individual blocks within Trinoor zone"
+    },
+    {
+      "Block": "quick_tasks",
+      "State": "on",
+      "Duration (blocks)": 1,
+      "Notes": "flexible / movable"
+    },
+    {
+      "Block": "shivery_jigs",
+      "State": "off",
+      "Duration (blocks)": 0,
+      "Notes": null
+    }
+  ],
+  "ranking_criteria": {
+    "available_recency_days": 7,
+    "interval_available_window_days": 3,
+    "within_tier_sort": [
+      "urgency",
+      "overdue",
+      "deadline",
+      "staleness",
+      "summit"
+    ],
+    "sequence_rank": [
+      "priority",
+      "overdue",
+      "started",
+      "alphabetical"
+    ],
+    "today_sort": [
+      "priority",
+      "due_date",
+      "alphabetical"
+    ]
+  },
+  "schema_reference": {
+    "todoist_projects": [
+      {
+        "Project": "PHEP",
+        "ID": "6fgXPMw28j7cRFMH"
+      },
+      {
+        "Project": "Inbox",
+        "ID": "6M92PWG3HHJgQvfp"
+      }
+    ],
+    "todoist_filters": [
+      {
+        "Filter": "⭐ Today",
+        "ID": "2368117560",
+        "Notes": "Dated + overdue tasks for today"
+      },
+      {
+        "Filter": "🥇 First",
+        "ID": "2360031067",
+        "Notes": "No-date: P1, near-deadline, stale #🌟Necessary/#⚡Worthwhile/#✨Optional"
+      },
+      {
+        "Filter": "🥈 Next",
+        "ID": "2360031248",
+        "Notes": "No-date: next-priority tier"
+      },
+      {
+        "Filter": "🥉 Then",
+        "ID": "2360031650",
+        "Notes": "No-date: lower-priority backlog"
+      },
+      {
+        "Filter": "⚡ Quick Tasks",
+        "ID": "2365541130",
+        "Notes": "Short tasks by routing label (@🚀10min etc.)"
+      }
+    ]
+  },
+  "calendar": {
+    "titles": [
+      {
+        "Logical name": "blocks",
+        "BusyCal title": "⬜ Blocks",
+        "Role": "Work-window events, QT, Shivery Jigs, anchored lifestyle blocks"
+      },
+      {
+        "Logical name": "mint",
+        "BusyCal title": "🟡 Mint",
+        "Role": "Minting (individual Trinoor work blocks)"
+      },
+      {
+        "Logical name": "trinoor",
+        "BusyCal title": "🟡 Trinoor",
+        "Role": "Trinoor work-zone framing events"
+      }
+    ],
+    "capacity_classes": [
+      {
+        "BusyCal title": "🟡 Trinoor",
+        "Class": "work",
+        "Reason": "Work meetings consume the configured work allotment instead of adding a second reservation"
+      },
+      {
+        "BusyCal title": "Session: focus",
+        "Class": "ignored",
+        "Reason": "Pomodoro evidence records completed focus; they do not reserve future availability"
+      },
+      {
+        "BusyCal title": "✅ TickTick",
+        "Class": "ignored",
+        "Reason": "TickTick task-completion calendar; its timed items are task evidence, not commitments that reserve time"
+      },
+      {
+        "BusyCal title": "Calendar",
+        "Class": "work",
+        "Reason": "Base/imported work-meeting calendar - work meetings consume the work allotment"
+      },
+      {
+        "BusyCal title": "🍯 A + M Busy Bees!",
+        "Class": "ignored",
+        "Reason": "Family calendar: events stay visible but reserve no planning capacity and do not wall Mint"
+      }
+    ]
+  },
+  "ignore": {
+    "todoist_ids": [
+      "6gJm2CCXM7hgXg9j",
+      "6fgQFQmpgv5C2Rw5",
+      "6fgQFQr2p468M7M5",
+      "6gQVxQXrgh4XQ48v"
+    ],
+    "paths": [],
+    "names": []
+  },
+  "presets": [
+    {
+      "Name": "Summits",
+      "Type": "interval",
+      "Blocks": 1,
+      "Priority": 4,
+      "Zone": "any",
+      "Latest Start": null
+    },
+    {
+      "Name": "Press",
+      "Type": "interval",
+      "Blocks": 2.5,
+      "Priority": 3,
+      "Zone": "after_work, before_work",
+      "Latest Start": "7:00 PM"
+    },
+    {
+      "Name": "Press : Alternate",
+      "Type": "interval",
+      "Blocks": 2,
+      "Priority": 3,
+      "Zone": "after_work, before_work",
+      "Latest Start": "7:00 PM"
+    },
+    {
+      "Name": "Make",
+      "Type": "interval",
+      "Blocks": 2,
+      "Priority": 2,
+      "Zone": "any",
+      "Latest Start": null
+    },
+    {
+      "Name": "Note Processing",
+      "Type": "interval",
+      "Blocks": 1,
+      "Priority": 2,
+      "Zone": "any",
+      "Latest Start": null
+    },
+    {
+      "Name": "Parse Eagle",
+      "Type": "interval",
+      "Blocks": 1,
+      "Priority": 1,
+      "Zone": "any",
+      "Latest Start": null
+    },
+    {
+      "Name": "Semi-Weekly Reflection",
+      "Type": "interval",
+      "Blocks": 1,
+      "Priority": 3,
+      "Zone": "any",
+      "Latest Start": null
+    },
+    {
+      "Name": "Semi-Monthly Adventure",
+      "Type": "interval",
+      "Blocks": 1,
+      "Priority": 3,
+      "Zone": "any",
+      "Latest Start": null
+    },
+    {
+      "Name": "Stillness",
+      "Type": "interval",
+      "Blocks": 1,
+      "Priority": 2,
+      "Zone": "any",
+      "Latest Start": null
+    },
+    {
+      "Name": "Deep CWEAN",
+      "Type": "interval",
+      "Blocks": 4,
+      "Priority": 2,
+      "Zone": "weekend",
+      "Latest Start": null
+    },
+    {
+      "Name": "Holiday Gifts",
+      "Type": "task",
+      "Blocks": 1,
+      "Priority": 4,
+      "Zone": "any",
+      "Latest Start": null
+    }
+  ],
+  "anchored_blocks": [
+    {
+      "Block": "Morning Routines",
+      "Type": "hard",
+      "Start": "7:45 AM",
+      "End": null,
+      "Duration": "80m",
+      "Days": "daily",
+      "overlap_allowed": false,
+      "Notes": null
+    },
+    {
+      "Block": "Sudsing",
+      "Type": "hard",
+      "Start": "5:45 PM",
+      "End": null,
+      "Duration": "30m",
+      "Days": "daily",
+      "overlap_allowed": false,
+      "Notes": null
+    },
+    {
+      "Block": "Foods Breakfast",
+      "Type": "window",
+      "Start": "8:30 AM",
+      "End": "1:00 PM",
+      "Duration": "45m",
+      "Days": "daily",
+      "overlap_allowed": true,
+      "Notes": null
+    },
+    {
+      "Block": "Foods Dinner",
+      "Type": "window",
+      "Start": "6:00 PM",
+      "End": "8:30 PM",
+      "Duration": "60m",
+      "Days": "daily",
+      "overlap_allowed": false,
+      "Notes": null
+    },
+    {
+      "Block": "Live",
+      "Type": "window",
+      "Start": "12:00 PM",
+      "End": "8:00 PM",
+      "Duration": "30m",
+      "Days": "daily",
+      "overlap_allowed": true,
+      "Notes": "Matching contextual assignments may overlap (e.g. bike ride). No MINT overlap."
+    },
+    {
+      "Block": "Night Routine",
+      "Type": "hard",
+      "Start": "10:00 PM",
+      "End": null,
+      "Duration": "45m",
+      "Days": "daily",
+      "overlap_allowed": false,
+      "Notes": null
+    }
+  ],
+  "day_presets": [
+    {
+      "Name": "Workday",
+      "Days": "workdays",
+      "Zones": "Trinoor Hours",
+      "Work Allotment (min)": 300,
+      "Default": true
+    },
+    {
+      "Name": "Non-workday",
+      "Days": "weekends",
+      "Zones": null,
+      "Work Allotment (min)": 0,
+      "Default": false
+    }
+  ],
+  "template_blocks": {
+    "Trinoor Hours": [
+      {
+        "Slot": "Morning",
+        "Start": "8:30 AM",
+        "End": "12:30 PM"
+      },
+      {
+        "Slot": "Afternoon",
+        "Start": "1:30 PM",
+        "End": "5:00 PM"
+      }
+    ],
+    "Press (Gym)": [
+      {
+        "Days": "Mon – Thu",
+        "Hours": "5:00 AM – 10:00 PM"
+      },
+      {
+        "Days": "Fri",
+        "Hours": "5:00 AM – 9:00 PM"
+      },
+      {
+        "Days": "Sat",
+        "Hours": "7:00 AM – 6:00 PM"
+      },
+      {
+        "Days": "Sun",
+        "Hours": "Noon – 6:00 PM"
+      }
+    ]
+  },
+  "overlap_permissions": "## Overlap Permissions\n\nDefault for everything is no-overlap. Entries here grant exception (Template anchored treatment). Single \"permeable\" permission concept — no separate \"skip\" vs \"overlap\" distinction.\n\n### Todoist (by ID)\n\n| ID        | Name (ref) | Notes                    |\n| --------- | ---------- | ------------------------ |\n| 6gQVxQXrgh4XQ48v | M1.5 | medication — every day at 12pm  |\n| 6gQVxRr7gpXVmV9v | M2.0 | medication — 8pm                |\n| 6fgXQcF9CvfCjJ9M | Z    | Zepy 12.5 — every Sat           |\n|           | Weigh self | 5m weigh self quick task |\n\n### Calendar Event Classes\n\n| Calendar / prefix | Notes                                                |\n| ----------------- | ---------------------------------------------------- |\n| ◽ Blocks          | Minting work blocks accept overlay                   |\n| 🟡 Trinoor        | Work zone accepts overlay (work happens IN the zone) |",
+  "colors": [
+    {
+      "Token": "event",
+      "Color": "Soft blue",
+      "Hex": "7DD3FC",
+      "Used for": "Calendar fixed events (meetings) — BusyCal together-blue (T24 2026-07-24)"
+    },
+    {
+      "Token": "anchored",
+      "Color": "Warm gray",
+      "Hex": "A8A29E",
+      "Used for": "Anchored blocks (capacity-bar segment) — \"fixed/immovable\" quiet routine gray (green 2026-06-26 → red → violet 2026-07-21 → gray T24 2026-07-24, BusyCal reference)"
+    },
+    {
+      "Token": "template_anchored",
+      "Color": "Light gray",
+      "Hex": "E5E7EB",
+      "Used for": "Template anchored (context-only)"
+    },
+    {
+      "Token": "minting",
+      "Color": "Amber",
+      "Hex": "F59E0B",
+      "Used for": "Minting individual schedulable blocks"
+    },
+    {
+      "Token": "habit",
+      "Color": "Pink",
+      "Hex": "F472B6",
+      "Used for": "Habits segment — outstanding habits (capacity-bar segment; pink → gray T24 2026-07-24 → pink 2026-07-27, Adam's cockpit review: three adjacent grays read as one in the pie)"
+    },
+    {
+      "Token": "tasks",
+      "Color": "Light red",
+      "Hex": "FCA5A5",
+      "Used for": "Todoist tasks"
+    },
+    {
+      "Token": "projects",
+      "Color": "Soft violet",
+      "Hex": "A78BFA",
+      "Used for": "Vault projects (also assigned-rail accent; indigo → violet T24 2026-07-24, BusyCal reference)"
+    },
+    {
+      "Token": "buffer",
+      "Color": "Cool light slate",
+      "Hex": "CBD5E1",
+      "Used for": "Buffer time — rendered as diagonal hatch alongside `free` (both are uncommitted time). Cooled and lightened 2026-07-27 so it no longer reads as the same gray as `anchored`"
+    },
+    {
+      "Token": "selected",
+      "Color": "Blue",
+      "Hex": "3B82F6",
+      "Used for": "Selected items aggregate (capacity-bar segment)"
+    },
+    {
+      "Token": "free",
+      "Color": "Green",
+      "Hex": "10B981",
+      "Used for": "Free capacity (capacity-bar tail)"
+    },
+    {
+      "Token": "overflow",
+      "Color": "Red",
+      "Hex": "EF4444",
+      "Used for": "OVERASSIGNED red state"
+    }
+  ],
+  "micro_adventure_pool": [
+    {
+      "ID": "ma01",
+      "Idea": "Walk the greenway trail near the townhome",
+      "Category": "nature",
+      "Effort": "low",
+      "Active": true
+    },
+    {
+      "ID": "ma02",
+      "Idea": "Call a friend you haven't talked to in a while",
+      "Category": "social",
+      "Effort": "low",
+      "Active": true
+    },
+    {
+      "ID": "ma03",
+      "Idea": "Ride bike somewhere",
+      "Category": "novelty",
+      "Effort": "low",
+      "Active": true
+    },
+    {
+      "ID": "ma04",
+      "Idea": "Cook or eat something you've never tried",
+      "Category": "novelty",
+      "Effort": "med",
+      "Active": true
+    },
+    {
+      "ID": "ma05",
+      "Idea": "Strike up a conversation with a stranger",
+      "Category": "courage",
+      "Effort": "low",
+      "Active": true
+    },
+    {
+      "ID": "ma06",
+      "Idea": "Sit outside, no phone, for 15 minutes",
+      "Category": "stillness",
+      "Effort": "low",
+      "Active": true
+    },
+    {
+      "ID": "ma07",
+      "Idea": "Watch sunset",
+      "Category": "nature",
+      "Effort": "low",
+      "Active": true
+    },
+    {
+      "ID": "ma08",
+      "Idea": "Sketch or photograph something ordinary",
+      "Category": "creative",
+      "Effort": "low",
+      "Active": true
+    },
+    {
+      "ID": "ma11",
+      "Idea": "Write a handwritten note to someone and send it",
+      "Category": "social",
+      "Effort": "low",
+      "Active": true
+    },
+    {
+      "ID": "ma12",
+      "Idea": "Practice one new skill move for 15 minutes",
+      "Category": "growth",
+      "Effort": "low",
+      "Active": true
+    },
+    {
+      "ID": "ma13",
+      "Idea": "Take a short barefoot walk in the grass",
+      "Category": "nature",
+      "Effort": "low",
+      "Active": true
+    },
+    {
+      "ID": "ma14",
+      "Idea": "Do something unprompted and kind",
+      "Category": "courage",
+      "Effort": "low",
+      "Active": true
+    }
+  ],
+  "micro_adventure_rotation": {
+    "exclude_window_days": 14,
+    "graduate_offer": true
+  }
+}

@@ -24,6 +24,7 @@ from fastapi.testclient import TestClient
 
 import app_config
 import main
+from tests.config_markdown import write_config_note  # noqa: E402
 
 
 TODAY = date(2026, 10, 9)
@@ -77,7 +78,7 @@ def _write_note(vault: Path, rel: str, name: str, *, deadline=None) -> Path:
 def vault(tmp_path) -> Path:
     v = tmp_path / "vault-root"
     (v / "00 - META/Skill-Configs").mkdir(parents=True)
-    (v / "00 - META/Skill-Configs/tdtb-bridger.md").write_text(
+    write_config_note(v / "00 - META/Skill-Configs/tdtb-bridger.md",
         MINIMAL_CONFIG, encoding="utf-8"
     )
     _write_note(v, "50 - Operations/Projects", "Alpha Project")

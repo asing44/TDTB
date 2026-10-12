@@ -1,25 +1,43 @@
-"""app_config.py — machine-local TDTB app config (`~/.config/tdtb/config.json`).
+"""app_config.py — TDTB app config: tracked repo file + machine-local override.
 
-S0 of the Capacities-first migration: the app gains a single machine-local
-home for its own configuration, resolved by `app_home()` and overridable with
-the `TDTB_HOME` env var. This module owns exactly two things:
+V1 of the vault removal (docs/plan/2026-10-12-vault-removal): the hand-editable
+TDTB config no longer comes from the Obsidian vault note. It comes from two
+JSON files, layered in this order:
 
-  - the **home resolver** (`app_home`, `config_path`, `state_dir`) that later
-    slices reuse for every app-owned store, and
-  - the **config.json v1 schema** — the canonical on-disk document, plus the
-    bidirectional translation to and from the markdown-shaped section dict the
-    rest of the app already consumes.
+  1. ``config/tdtb.json`` at the repo root (tracked; ``repo_config_path()``,
+     overridable with ``$TDTB_REPO_CONFIG`` for tests), then
+  2. ``~/.config/tdtb/config.json`` (``config_path()``, relocatable with
+     ``$TDTB_HOME``) as an OPTIONAL machine-local override. Machine settings
+     (``sources.mode``, ``sources.vault_enabled``) and anything secret-ish live
+     only here.
 
-The document is::
+Layering is recursive for objects (so a local ``sources.mode`` joins a repo
+``sources`` object) and replace-wins for everything else, lists included (a
+local ``presets`` replaces the repo ``presets`` wholesale).
+
+This module also owns the **home resolver** (`app_home`, `config_path`,
+`state_dir`) every app-owned store reuses, and the v1 document schema plus its
+translation to the markdown-shaped section dict the rest of the app consumes
+(``TdtbConfig.sections``). The document is::
 
     {
       "version": 1,
+      "defaults": {"eod": ..., "anchor": {...}, "buffering": {...}, "caps": {...},
+                   "work_allotment_minutes": ...},
+      "schedulable_defaults": [...],
+      "ranking_criteria": {"within_tier_sort": [...], ...},
+      "placement_context": "prose that rides into the sequence prompt",
+      "schema_reference": {"todoist_projects": [...], "todoist_filters": [...]},
       "calendar": {"titles": [...], "capacity_classes": [...], "disabled": [...]},
       "ignore": {"todoist_ids": [...], "paths": [...], "names": [...]},
       "presets": [...],
       "anchored_blocks": [...],
+      "day_presets": [...],
+      "template_blocks": {"Trinoor Hours": [...], ...},
+      "overlap_permissions": "verbatim markdown policy text",
       "colors": [...],
       "micro_adventure_pool": [...],
+      "micro_adventure_rotation": {"exclude_window_days": 14, ...},
       "habits": {"fallback_minutes_per_habit": 4, "round_to_minutes": 15},
       "todoist": {"read_query": {"assigned": ..., "quick": ...}},
       "sources": {"mode": "live" | "artifact",
@@ -30,23 +48,20 @@ The document is::
 
 ``sources`` is the artifact-contract pivot's source-selection knob (see
 ``artifact_source``). It is not markdown-shaped and never appears in
-``sections``. ``mode: "both"`` is rejected at load — the read drift trap —
-so ``load_document`` returns None for it and the app falls back to the vault.
+``sections``. ``mode: "both"`` is rejected at load — the read drift trap — so
+a file carrying it is ignored as a whole (the other layer still loads).
 
-Record sections (presets, anchored_blocks, colors, calendar.titles,
-capacity_classes, micro_adventure_pool) carry the vault config's own row
-shape verbatim, so the translation is lossless and the operator can hand-edit
-the same fields the vault table exposed. `habits` and `todoist.read_query`
-re-home dot-notation `Defaults` keys under their own sections.
+Record sections carry the old vault config's own row shape verbatim, so the
+translation stays lossless and the operator edits the same fields the vault
+table exposed. ``habits`` and ``todoist.read_query`` re-home dot-notation
+``Defaults`` keys under their own objects. Every key has an in-code fallback
+(``config_reader.FALLBACK_*``, ``micro_adventure.FALLBACK_POOL``), so a missing
+key never errors.
 
-Dual-read contract: `load_sections()` returns `{}` — never raises — for a
-missing, unreadable, corrupt, or unsupported-version file. A `{}` result means
-"config.json is not in play", so `config_reader.read_config` falls back to the
-vault exactly as before. A populated result is overlaid on top of the vault
-parse, so a migrated config.json changes nothing it does not explicitly carry.
+``load_sections()`` returns ``{}`` — never raises — when neither file is
+usable (missing, unreadable, corrupt, or unsupported version).
 
-This module never writes config.json; that is the one-shot
-`tools/migrate_vault_config.py`, run explicitly by a human.
+This module never writes either file.
 """
 from __future__ import annotations
 
@@ -64,6 +79,12 @@ TDTB_HOME_ENV = "TDTB_HOME"
 DEFAULT_APP_HOME = Path.home() / ".config" / "tdtb"
 
 CONFIG_FILENAME = "config.json"
+
+#: Env var that relocates the tracked repo config. A test seam: the suite points
+#: it at a per-test path so no test ever reads the real ``config/tdtb.json``.
+REPO_CONFIG_ENV = "TDTB_REPO_CONFIG"
+REPO_CONFIG_FILENAME = "tdtb.json"
+REPO_CONFIG_DIRNAME = "config"
 STATE_DIRNAME = "state"
 CONFIG_VERSION = 1
 
@@ -99,26 +120,12 @@ SOURCES_ARTIFACT_KNOWN_KEYS = frozenset({"max_age_minutes"})
 #: Default artifact age ceiling (minutes) before a load reports ``aged``.
 DEFAULT_ARTIFACT_MAX_AGE_MINUTES = 240
 
-#: ``Defaults`` keys that no longer mean anything and must never be carried
-#: into ``config.json``. Kept explicit so a retired key is dropped at the
-#: translation boundary instead of being copied forward forever by every
-#: migration. See the habit-time slice: the vault habit read is gone.
-RETIRED_DEFAULT_KEYS = frozenset({
-    "habits.source_directory",
-})
-
-
 #: ``sources.vault_enabled`` — the S5 cutover knob. When false the vault gather
 #: contributes no rows and a resolvable vault root is no longer required for the
 #: digest. The default is **True**: shipping the S5 slice changes nothing, the
 #: cutover IS the operator setting this to false, and the rollback is setting it
 #: back. S6 deletes the flag and the vault gather together.
 DEFAULT_VAULT_ENABLED = True
-
-#: Row fields that name a disabled calendar (mirrors
-#: ``calendar_bridge.normalize_disabled_calendars``).
-_DISABLED_FIELDS = ("Title", "BusyCal title", "Calendar title", "Identifier")
-
 
 # ---------------------------------------------------------------------------
 # Home resolver — the one reusable helper later slices use
@@ -152,11 +159,20 @@ def state_dir() -> Path:
 # Loading
 # ---------------------------------------------------------------------------
 
-def load_document(path: str | Path | None = None) -> dict[str, Any] | None:
-    """Read and validate ``config.json``. Returns the parsed document, or
-    ``None`` for a missing / unreadable / corrupt / unsupported-version file.
-    Never raises."""
-    target = Path(path) if path is not None else config_path()
+def repo_config_path() -> Path:
+    """Path to the tracked repo config, ``<repo root>/config/tdtb.json``
+    (``$TDTB_REPO_CONFIG`` overrides it; read at call time)."""
+    override = os.environ.get(REPO_CONFIG_ENV)
+    if override:
+        return Path(override).expanduser()
+    return Path(__file__).resolve().parent.parent / REPO_CONFIG_DIRNAME / REPO_CONFIG_FILENAME
+
+
+def read_document_file(target: str | Path) -> dict[str, Any] | None:
+    """Read and validate ONE config file. Returns the parsed document, or
+    ``None`` for a missing / unreadable / corrupt / unsupported-version file or
+    one whose ``sources`` section is rejected. Never raises."""
+    target = Path(target)
     try:
         if not target.exists():
             return None
@@ -170,13 +186,43 @@ def load_document(path: str | Path | None = None) -> dict[str, Any] | None:
     return data
 
 
+def _layer(base: Any, overlay: Any) -> Any:
+    """Recursive overlay: objects merge key-wise, anything else (lists
+    included) is replaced by the overlay value."""
+    if isinstance(base, dict) and isinstance(overlay, dict):
+        merged = dict(base)
+        for key, value in overlay.items():
+            merged[key] = _layer(merged[key], value) if key in merged else value
+        return merged
+    return overlay
+
+
+def load_document(path: str | Path | None = None) -> dict[str, Any] | None:
+    """The effective config document.
+
+    With an explicit ``path`` that single file is read (see
+    :func:`read_document_file`). With none, the tracked repo file is read
+    first and ``$TDTB_HOME/config.json`` is layered on top as an optional
+    machine-local override; a layer that is missing or unusable is skipped.
+    ``None`` when neither layer is usable. Never raises."""
+    if path is not None:
+        return read_document_file(path)
+    repo = read_document_file(repo_config_path())
+    local = read_document_file(config_path())
+    if repo is None:
+        return local
+    if local is None:
+        return repo
+    return _layer(repo, local)
+
+
 def _sources_section_ok(document: dict[str, Any]) -> bool:
     """Validate the optional ``sources`` section, rejecting ``both``.
 
     An absent section, or one without a ``mode``, is accepted (the default is
     ``live``). A mode outside :data:`SOURCES_MODES` — most importantly
     ``both`` — rejects the whole document, so ``load_document`` returns None
-    and the app falls back to the vault rather than running two readers."""
+    and the file is ignored rather than running two readers."""
     sources = document.get("sources")
     if sources is None:
         return True
@@ -217,8 +263,7 @@ def vault_enabled(path: str | Path | None = None) -> bool:
     Reads ``sources.vault_enabled`` from config.json, accepting a top-level
     ``vault_enabled`` alias for operator convenience (the plan names the flag
     without a section). Absent, or carried by an unusable document, resolves
-    to :data:`DEFAULT_VAULT_ENABLED` — **True**. The vault config markdown
-    carries no such key, so there is no vault fallback: failing toward "vault
+    to :data:`DEFAULT_VAULT_ENABLED` — **True**. Failing toward "vault
     on" is deliberate, because a malformed config must never silently drop the
     ~96 vault rows the migration exists to triage. Only an explicit false
     disables the gather, per the S5 "loud, not silent" contract.
@@ -287,9 +332,21 @@ def sources_config_warnings(path: str | Path | None = None) -> list[str]:
     Returns ``[]`` for an unusable document, an absent ``sources`` section,
     or a clean section (every key — including an empty ``sources: {}``, which
     makes no claim — is recognized). Never raises."""
-    document = load_document(path)
-    if document is None:
-        return []
+    if path is not None:
+        documents = [read_document_file(path)]
+    else:
+        documents = [
+            read_document_file(repo_config_path()),
+            read_document_file(config_path()),
+        ]
+    warnings: list[str] = []
+    for document in documents:
+        if document is not None:
+            warnings += _sources_warnings(document)
+    return list(dict.fromkeys(warnings))
+
+
+def _sources_warnings(document: dict[str, Any]) -> list[str]:
     sources = document.get("sources")
     if not isinstance(sources, dict):
         return []
@@ -310,10 +367,11 @@ def sources_config_warnings(path: str | Path | None = None) -> list[str]:
 
 
 def load_sections(path: str | Path | None = None) -> dict[str, Any]:
-    """Return the markdown-shaped sections dict implied by ``config.json``.
+    """Return the markdown-shaped sections dict implied by the layered config
+    (repo file, then the machine-local override).
 
-    ``{}`` when the file is absent or unusable, which is the signal to
-    ``config_reader.read_config`` to fall back to the vault."""
+    ``{}`` when no layer is usable, which is the signal to
+    ``config_reader.read_config`` that there is nothing to read."""
     document = load_document(path)
     if document is None:
         return {}
@@ -348,84 +406,59 @@ def sections_from_document(document: dict[str, Any]) -> dict[str, Any]:
         out["Presets"] = document["presets"]
     if "anchored_blocks" in document:
         out["Anchored Lifestyle Blocks"] = document["anchored_blocks"]
+    if "schedulable_defaults" in document:
+        out["Schedulable Defaults"] = document["schedulable_defaults"]
+    if "day_presets" in document:
+        out["Day Presets"] = document["day_presets"]
+    if isinstance(document.get("template_blocks"), dict):
+        out["Template Blocks"] = document["template_blocks"]
+    if isinstance(document.get("overlap_permissions"), str):
+        # Dict-shaped like the old prose-only section, so the /plan-inputs
+        # ``config`` echo keeps its type; ``_body`` is the verbatim policy.
+        out["Overlap Permissions"] = {"_body": document["overlap_permissions"]}
+    if isinstance(document.get("ranking_criteria"), dict):
+        out["Ranking Criteria"] = dict(document["ranking_criteria"])
+    if isinstance(document.get("placement_context"), str):
+        out["Placement Context"] = {"_body": document["placement_context"]}
+    schema_reference = document.get("schema_reference")
+    if isinstance(schema_reference, dict):
+        ref: dict[str, Any] = {}
+        if "todoist_projects" in schema_reference:
+            ref["Todoist Projects"] = schema_reference["todoist_projects"]
+        if "todoist_filters" in schema_reference:
+            ref["Todoist Filters"] = schema_reference["todoist_filters"]
+        out["Schema Reference"] = ref
     if "colors" in document:
         out["Color Palette"] = document["colors"]
+
+    micro: dict[str, Any] = {}
     if "micro_adventure_pool" in document:
-        out["Micro-Adventures"] = {"Pool": document["micro_adventure_pool"]}
-
-    habits = document.get("habits")
-    if isinstance(habits, dict) and habits:
-        out["Defaults"] = _expand_dot_notation(
-            {f"habits.{key}": value for key, value in habits.items()}
+        micro["Pool"] = document["micro_adventure_pool"]
+    rotation = document.get("micro_adventure_rotation")
+    if isinstance(rotation, dict) and rotation:
+        micro["Rotation"] = _expand_dot_notation(
+            {f"rotation.{key}": value for key, value in rotation.items()}
         )
+    if micro:
+        out["Micro-Adventures"] = micro
 
+    # ``Defaults`` is one flat dotted-key dict (plus a nested mirror); the
+    # document spreads it over ``defaults`` (nested), ``habits`` and
+    # ``todoist.read_query`` so each reads naturally in the file.
+    flat: dict[str, Any] = {}
+    if isinstance(document.get("defaults"), dict):
+        flat.update(_flatten(document["defaults"]))
+    habits = document.get("habits")
+    if isinstance(habits, dict):
+        flat.update({f"habits.{key}": value for key, value in habits.items()})
     todoist = document.get("todoist")
     read_query = todoist.get("read_query") if isinstance(todoist, dict) else None
     if isinstance(read_query, dict):
-        flat = {f"todoist.read_query.{key}": value for key, value in read_query.items()}
-        out["Defaults"] = {**(out.get("Defaults") or {}), **_expand_dot_notation(flat)}
+        flat.update({f"todoist.read_query.{key}": value for key, value in read_query.items()})
+    if flat:
+        out["Defaults"] = _expand_dot_notation(flat)
 
     return out
-
-
-# ---------------------------------------------------------------------------
-# markdown-shaped sections -> config.json (used by the one-shot migration)
-# ---------------------------------------------------------------------------
-
-def document_from_sections(sections: dict[str, Any]) -> dict[str, Any]:
-    """Translate a parsed vault-config section dict into a config.json v1
-    document. Lossless for every section config.json v1 carries."""
-    document: dict[str, Any] = {"version": CONFIG_VERSION}
-
-    calendar: dict[str, Any] = {}
-    if "Calendar Titles" in sections:
-        calendar["titles"] = sections["Calendar Titles"]
-    if "Calendar Capacity Classes" in sections:
-        calendar["capacity_classes"] = sections["Calendar Capacity Classes"]
-    if "Disabled Calendars" in sections:
-        calendar["disabled"] = _disabled_values(sections["Disabled Calendars"])
-    if calendar:
-        document["calendar"] = calendar
-
-    if "Ignore List" in sections:
-        document["ignore"] = _ignore_document(sections["Ignore List"])
-    if "Presets" in sections:
-        document["presets"] = sections["Presets"]
-    if "Anchored Lifestyle Blocks" in sections:
-        document["anchored_blocks"] = sections["Anchored Lifestyle Blocks"]
-    if "Color Palette" in sections:
-        document["colors"] = sections["Color Palette"]
-
-    micro = sections.get("Micro-Adventures")
-    if isinstance(micro, dict) and "Pool" in micro:
-        document["micro_adventure_pool"] = micro["Pool"]
-
-    defaults = sections.get("Defaults")
-    if isinstance(defaults, dict):
-        habits = {
-            key.split(".", 1)[1]: value
-            for key, value in defaults.items()
-            if key.startswith("habits.")
-            and "." in key
-            and key not in RETIRED_DEFAULT_KEYS
-            # ``habits.source_directory`` is RETIRED: it named the Obsidian
-            # folder the habit read used, and that read is gone (habit time
-            # now rides the artifact). The vault table still lists it, so
-            # without this drop every migration would keep copying a dead
-            # vault path into config.json — the exact thing that makes a
-            # reader think the vault is still a source. Do not re-add it.
-        }
-        if habits:
-            document["habits"] = habits
-        read_query = {
-            key.rsplit(".", 1)[1]: value
-            for key, value in defaults.items()
-            if key.startswith("todoist.read_query.") and "." in key
-        }
-        if read_query:
-            document["todoist"] = {"read_query": read_query}
-
-    return document
 
 
 # ---------------------------------------------------------------------------
@@ -510,6 +543,19 @@ def _coerce_bool(value: Any) -> bool | None:
     return None
 
 
+def _flatten(nested: dict[str, Any], prefix: str = "") -> dict[str, Any]:
+    """Flatten nested objects into dot-notation keys (``{"caps": {"deep": 4}}``
+    becomes ``{"caps.deep": 4}``); non-object values are leaves."""
+    out: dict[str, Any] = {}
+    for key, value in nested.items():
+        dotted = f"{prefix}{key}"
+        if isinstance(value, dict):
+            out.update(_flatten(value, f"{dotted}."))
+        else:
+            out[dotted] = value
+    return out
+
+
 def _as_list(value: Any) -> list[Any]:
     if isinstance(value, list):
         return value
@@ -533,53 +579,6 @@ def _expand_dot_notation(flat: dict[str, Any]) -> dict[str, Any]:
             else:
                 cursor[parts[-1]] = value
     return nested
-
-
-def _disabled_values(section: Any) -> list[str]:
-    """Extract every title/identifier a ``## Disabled Calendars`` section names,
-    mirroring ``normalize_disabled_calendars``'s field coverage."""
-    if isinstance(section, str):
-        return [section]
-    if isinstance(section, dict):
-        return [str(key) for key, flag in section.items() if flag]
-    if not isinstance(section, list):
-        return []
-    out: list[str] = []
-    for entry in section:
-        if isinstance(entry, dict):
-            out.extend(str(entry[field]) for field in _DISABLED_FIELDS if entry.get(field))
-        elif entry not in (None, ""):
-            out.append(str(entry))
-    return out
-
-
-def _ignore_document(section: Any) -> dict[str, list[str]]:
-    """Flatten an ``## Ignore List`` section into the canonical
-    ``{todoist_ids, paths, names}`` lists (same matching rules as
-    ``TdtbConfig.get_ignore_list``)."""
-    out: dict[str, list[str]] = {"todoist_ids": [], "paths": [], "names": []}
-    if not isinstance(section, dict):
-        return out
-    for sub_name, rows in section.items():
-        if not isinstance(rows, list):
-            continue
-        key = str(sub_name).casefold()
-        for row in rows:
-            if not isinstance(row, dict):
-                continue
-            if "todoist" in key:
-                value = str(row.get("ID") or "").strip()
-                if value and value != "—":
-                    out["todoist_ids"].append(value)
-            elif "obsidian" in key or "path" in key:
-                value = str(row.get("Path") or "").strip()
-                if value and value != "—":
-                    out["paths"].append(value)
-            else:
-                value = str(row.get("Name") or "").strip()
-                if value and value != "—":
-                    out["names"].append(value.casefold())
-    return out
 
 
 def _ignore_section(ignore: Any) -> dict[str, Any]:

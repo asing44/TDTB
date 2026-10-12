@@ -22,6 +22,14 @@ def _isolated_app_home(tmp_path_factory, monkeypatch):
     ``TDTB_HOME`` is read at call time (see ``app_config.app_home``), so
     setting it before the test body is enough."""
     monkeypatch.setenv("TDTB_HOME", str(tmp_path_factory.mktemp("tdtb-home")))
+    # V1: the tracked ``config/tdtb.json`` is layered under the machine-local
+    # config. Point it at a per-test (initially absent) path so no test reads
+    # the real repo file; tests that need one install it with
+    # ``tests.config_markdown.install_config_markdown``.
+    monkeypatch.setenv(
+        "TDTB_REPO_CONFIG",
+        str(tmp_path_factory.mktemp("tdtb-repo-config") / "tdtb.json"),
+    )
 
 
 @pytest.fixture
