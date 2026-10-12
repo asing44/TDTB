@@ -236,44 +236,26 @@ class PriorResolution:
     pending_confirm: HistoryEntry | None
 
 
-def daily_note_live_done(note_text: str | None) -> bool | None:
-    """Inspect the '### Live' section of a daily note. A '- [x]' checkbox within
-    it → True; only '- [ ]' (or no checkbox) → None (inconclusive); section or
-    text missing → None. An unchecked box is NEVER treated as done:false."""
-    if not isinstance(note_text, str) or not note_text:
-        return None
-    lines = note_text.splitlines()
-    in_section = False
-    for line in lines:
-        stripped = line.strip()
-        if not in_section:
-            if stripped.lower() == "### live":
-                in_section = True
-            continue
-        # Inside the Live section — a new heading ends it.
-        if stripped.startswith("#"):
-            break
-        low = stripped.lower()
-        if low.startswith("- [x]"):
-            return True
-    return None
-
-
 def resolve_prior(
     history: Iterable[HistoryEntry],
     *,
     today: date,
     todoist_completed: Callable[[str], bool | None] | None = None,
-    daily_note_live_checked: Callable[[date], bool | None] | None = None,
 ) -> PriorResolution:
     """Resolve whether the most recent (history[0]) adventure was completed.
 
+    The done state itself lives in the state-dir history log: an entry with
+    ``done`` already set (the cockpit "Did it" / Dismiss answer, or an earlier
+    flushed Todoist-completion signal) is final and skipped here.
+
     Applies ONLY when history[0].done is None and history[0].date < today.
       (a) todoist_completed(task_id) True → virtual done:true.
-      (b) else daily_note_live_checked(date) True → virtual done:true.
-      (c) else pending_confirm = history[0], no done_update.
-    Callables raising, or returning False/None, are inconclusive. An (a) True
-    short-circuits — (b) is never consulted."""
+      (b) else pending_confirm = history[0], no done_update.
+    A callable raising, or returning False/None, is inconclusive.
+
+    V3: the former daily-note ``### Live`` checkbox signal is gone with the
+    vault; it has no state-dir equivalent, so an unconfirmed entry degrades to
+    "not done" (pending confirm) until answered in the cockpit."""
     hist = tuple(history)
     if not hist:
         return PriorResolution(hist, None, None)
@@ -292,16 +274,7 @@ def resolve_prior(
         if result is True:
             return PriorResolution((done_entry,) + hist[1:], done_entry, None)
 
-    # (b) Daily-note '### Live' checkbox.
-    if daily_note_live_checked is not None:
-        try:
-            note_result = daily_note_live_checked(head.date)
-        except Exception:
-            note_result = None
-        if note_result is True:
-            return PriorResolution((done_entry,) + hist[1:], done_entry, None)
-
-    # (c) Inconclusive — flag for explicit confirmation.
+    # (b) Inconclusive — flag for explicit confirmation.
     return PriorResolution(hist, None, head)
 
 

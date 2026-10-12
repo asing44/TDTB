@@ -2179,21 +2179,6 @@ def _todoist_completed_probe(client: Any):
     return probe
 
 
-def _daily_note_live_probe(vault: Path):
-    """T19 prior-resolution signal (b): read a date's daily note and inspect
-    its '### Live' checkbox. Missing note → inconclusive."""
-
-    def probe(d: date) -> bool | None:
-        note = vault / "30 - Daily" / f"{d.isoformat()}.md"
-        if not note.is_file():
-            return None
-        return micro_adventure.daily_note_live_done(
-            note.read_text(encoding="utf-8", errors="replace")
-        )
-
-    return probe
-
-
 def _micro_adventure_state(
     vault: Path, sections: dict[str, Any], today: date, todoist_c: Any = None,
 ) -> tuple[dict[str, Any], Any]:
@@ -2211,7 +2196,6 @@ def _micro_adventure_state(
             history,
             today=today,
             todoist_completed=_todoist_completed_probe(todoist_c),
-            daily_note_live_checked=_daily_note_live_probe(vault),
         )
         sel = micro_adventure.select_today(
             pool, resolution.history, today=today, window_days=window
@@ -2291,7 +2275,6 @@ def _append_micro_adventure_history(
         resolution = micro_adventure.resolve_prior(
             history, today=today,
             todoist_completed=None,  # commit-time flush uses checkbox only
-            daily_note_live_checked=_daily_note_live_probe(vault),
         )
         hist = micro_adventure.apply_done_update(history, resolution.done_update)
         touched = ((report.get("surfaces") or {}).get("todoist") or {}).get("touched") or {}
@@ -4117,7 +4100,7 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
                 external_sources.fetch_calendar_decisions(store, ext_cfg, today)
             )
             # T19: deterministic micro-adventure state — pure reads (config
-            # section, vault log, prior daily note, Todoist completion probe
+            # section, state-dir log, Todoist completion probe
             # on the already-open read client). Never writes, never consumes.
             ma_state, _ma_done = _micro_adventure_state(vault, config, today, todoist_c)
         finally:
