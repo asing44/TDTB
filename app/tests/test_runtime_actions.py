@@ -425,54 +425,47 @@ class TestDeletePermanent:
         assert any(e["title"] == "Press" for e in store.events.values())
 
 
-class TestVaultVerbsRemoved:
-    """V3: the verbs that wrote Obsidian notes are deleted. A vault-path target
-    gets an explicit error (no journal entry, no side effect), never a silent
-    no-op, and the removed constants/helpers are gone."""
+class TestRetiredNoteRows:
+    """A stale manifest row from the retired note source resolves to no source:
+    every source verb takes its ordinary "no ... source" refusal (no journal
+    entry, no side effect), the row never blocks a real source on the same
+    name, and an old journal still loads."""
 
-    REMOVED = ["complete", "done", "assign", "unassign", "delete", "delete_permanent"]
+    SOURCE_VERBS = ["complete", "done", "assign", "unassign", "delete", "delete_permanent"]
 
-    @pytest.mark.parametrize("verb", REMOVED)
-    def test_vault_target_is_refused_with_a_clear_error(self, vault: Path, verb: str):
+    @pytest.mark.parametrize("verb", SOURCE_VERBS)
+    def test_row_with_no_source_is_refused(self, vault: Path, verb: str):
         todoist, store = fresh_clients()
         before = list(todoist.calls)
-        with pytest.raises(ra.RuntimeActionError, match="vault is retired"):
+        with pytest.raises(ra.RuntimeActionError):
             ra.apply_action(TODAY, verb, "Legacy", {},
                             todoist=todoist, store=store)
         assert todoist.calls == before
         assert ra.load_journal(TODAY)["actions"] == []
-        assert (vault / "Projects" / "Press.md").read_text() == NOTE_TEXT
-        assert not (vault / ".trash").exists()
 
-    @pytest.mark.parametrize("verb", REMOVED)
-    def test_error_names_the_verb_and_the_note(self, vault: Path, verb: str):
-        with pytest.raises(ra.RuntimeActionError) as exc:
-            ra.apply_action(TODAY, verb, "Legacy", {}, todoist=None, store=None)
-        assert repr(verb) in str(exc.value)
-        assert "Projects/Press.md" in str(exc.value)
-
-    def test_a_target_with_todoist_and_vault_rows_is_refused_whole(self, vault: Path):
+    def test_a_retired_row_does_not_block_a_real_source_of_the_same_name(self, vault: Path):
         state = runstate.build_runstate(
             {"plan_manifest": manifest_rows() + [dict(legacy_vault_rows()[0], name="Press")]})
         runstate.write_runstate(TODAY, state)
+        assert "vault_path" not in ra.resolve_target(TODAY, "Press")
         todoist, store = fresh_clients()
-        with pytest.raises(ra.RuntimeActionError, match="vault is retired"):
-            ra.apply_action(TODAY, "complete", "Press", {},
-                            todoist=todoist, store=store)
-        assert todoist.tasks["task-1"]["is_completed"] is False  # nothing partially done
-        assert ra.load_journal(TODAY)["actions"] == []
+        action = ra.apply_action(TODAY, "complete", "Press", {},
+                                 todoist=todoist, store=store)
+        assert action["status"] == "applied"
+        assert todoist.tasks["task-1"]["is_completed"] is True
 
-    def test_non_vault_verbs_still_work_on_a_vault_path_target(self, vault: Path):
+    def test_non_source_verbs_still_work_on_such_a_row(self, vault: Path):
         action = ra.apply_action(TODAY, "drop_from_plan", "Legacy", {},
                                  todoist=None, store=None)
         assert action["status"] == "applied"
 
     def test_removed_helpers_and_step_kinds_are_gone(self):
         for name in ("DONE_VALUE_BY_FILECLASS", "DEFAULT_DONE_VALUE", "TRASH_DIR_REL",
-                     "_set_status", "_set_assigned_false", "_fileclass_of", "_atomic_write"):
+                     "_set_status", "_set_assigned_false", "_fileclass_of", "_atomic_write",
+                     "VAULT_REMOVED_VERBS", "REMOVED_STEP_KINDS", "_removed_vault_action"):
             assert not hasattr(ra, name), name
 
-    def test_an_old_journal_vault_step_cannot_be_applied_or_undone_silently(self, vault: Path):
+    def test_an_old_journal_step_of_a_removed_kind_loads_and_fails_its_undo(self, vault: Path):
         journal = {"valid_date": str(TODAY), "actions": [{
             "id": "ra-old-1", "date": str(TODAY), "verb": "delete_permanent",
             "target": {"name": "Legacy"}, "args": {}, "idempotency_key": "k",
@@ -484,14 +477,13 @@ class TestVaultVerbsRemoved:
                        "before": {"text": NOTE_TEXT, "path": "Projects/Press.md"}}],
         }]}
         ra._write_journal(TODAY, journal)
+        assert ra.find_action(ra.load_journal(TODAY), "ra-old-1") is not None
         with pytest.raises(ra.RuntimeActionError, match="journal holds per-step errors"):
             ra.undo_action(TODAY, "ra-old-1", todoist=None, store=None)
         entry = ra.find_action(ra.load_journal(TODAY), "ra-old-1")
         assert entry["status"] == "undo_failed"
-        assert "vault is retired" in entry["steps"][0]["undo_error"]
+        assert "unknown step kind" in entry["steps"][0]["undo_error"]
         assert not (vault / ".trash").exists()
-        with pytest.raises(ra.RuntimeActionError, match="vault is retired"):
-            ra._apply_step({"kind": "vault.trash", "path": "x"}, TODAY, None, None, None)
 
 
 # ---------------------------------------------------------------------------

@@ -91,7 +91,7 @@ PRODUCER_COMMAND = (
     "~/.config/tdtb/config.json to read Todoist directly"
 )
 
-VALID_ROW_SOURCES = frozenset({"todoist", "capacities", "vault"})
+VALID_ROW_SOURCES = frozenset({"todoist", "capacities"})
 VALID_SOURCE_STATUS = frozenset({"ok", "partial", "failed"})
 
 REQUIRED_TOP_LEVEL = (

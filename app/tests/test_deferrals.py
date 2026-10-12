@@ -109,6 +109,18 @@ class TestStore:
         path.write_text(json.dumps([1, 2, 3]), encoding="utf-8")
         assert deferrals.load_deferrals() == {}
 
+    def test_an_existing_file_with_note_path_entries_still_loads_and_writes(self):
+        """Entries keyed by a retired note path stay loadable; a new deferral
+        is recorded beside them without touching them."""
+        deferrals._write_raw({"path:50 - Operations/Old.md": {
+            "count": 2, "last_deferred": str(TODAY), "name": "Old",
+            "path": "50 - Operations/Old.md", "todoist_id": ""}})
+        assert deferrals.load_deferrals(today=TODAY)["path:50 - Operations/Old.md"]["count"] == 2
+        deferrals.record_deferral({"name": "New", "todoist_id": "7"}, TODAY)
+        store = deferrals.load_deferrals()
+        assert store["path:50 - Operations/Old.md"]["count"] == 2
+        assert store["todoist:7"]["count"] == 1
+
     def test_expired_entries_pruned_on_load(self):
         deferrals.record_deferral(item("Old"), date(2026, 6, 1))
         deferrals.record_deferral(item("Fresh"), TODAY)
@@ -238,6 +250,11 @@ class FakeTodoist:
         return self.tasks[task_id]
 
 
+def _stage_roof() -> None:
+    """A staged row with no Todoist/Capacities identity: defer keys it by name."""
+    runstate.write_digest_index(TODAY, [{"name": "Roof", "surface": "assigned"}])
+
+
 def _vault_with_manifest(vault: Path, rows: list[dict]) -> Path:
     runstate.write_runstate(TODAY, runstate.build_runstate(
         {"plan_manifest": rows}))
@@ -249,18 +266,16 @@ class TestDeferVerb:
         assert "defer" in ra.VERBS
 
     def test_defer_records_and_journals(self, vault: Path):
-        _vault_with_manifest(vault, [
-            {"name": "Roof", "system": "vault", "id_or_path": "50 - Operations/Roof.md"}])
+        _stage_roof()
         action = ra.apply_action(TODAY, "defer", "Roof")
         assert action["status"] == "applied"
         store = deferrals.load_deferrals()
-        assert store["path:50 - Operations/Roof.md"]["count"] == 1
+        assert store["name:roof"]["count"] == 1
 
     def test_defer_needs_no_scheduled_artifacts(self, vault: Path):
         """Unlike remove_from_today, defer never refuses an unplaced item —
         this is what makes it legal from the staging queue."""
-        _vault_with_manifest(vault, [
-            {"name": "Roof", "system": "vault", "id_or_path": "50 - Operations/Roof.md"}])
+        _stage_roof()
         steps = ra.plan_steps("defer", {"name": "Roof"}, {}, TODAY)
         assert [s["kind"] for s in steps] == ["deferrals.record"]
 
@@ -284,36 +299,32 @@ class TestDeferVerb:
         assert todoist.calls == []  # no due write — recurrence preserved
 
     def test_undo_defer_restores_prior_entry(self, vault: Path):
-        _vault_with_manifest(vault, [
-            {"name": "Roof", "system": "vault", "id_or_path": "50 - Operations/Roof.md"}])
+        _stage_roof()
         ra.apply_action(TODAY, "defer", "Roof")
         second = ra.apply_action(TODAY, "defer", "Roof",
                                  args={"nonce": 1})
-        assert deferrals.load_deferrals()["path:50 - Operations/Roof.md"]["count"] == 2
+        assert deferrals.load_deferrals()["name:roof"]["count"] == 2
         ra.undo_action(TODAY, second["id"])
-        assert deferrals.load_deferrals()["path:50 - Operations/Roof.md"]["count"] == 1
+        assert deferrals.load_deferrals()["name:roof"]["count"] == 1
 
     def test_undo_first_defer_removes_the_entry(self, vault: Path):
-        _vault_with_manifest(vault, [
-            {"name": "Roof", "system": "vault", "id_or_path": "50 - Operations/Roof.md"}])
+        _stage_roof()
         action = ra.apply_action(TODAY, "defer", "Roof")
         ra.undo_action(TODAY, action["id"])
         assert deferrals.load_deferrals() == {}
 
     def test_defer_is_idempotent_per_key(self, vault: Path):
-        _vault_with_manifest(vault, [
-            {"name": "Roof", "system": "vault", "id_or_path": "50 - Operations/Roof.md"}])
+        _stage_roof()
         ra.apply_action(TODAY, "defer", "Roof")
         dup = ra.apply_action(TODAY, "defer", "Roof")
         assert dup.get("duplicate") is True
-        assert deferrals.load_deferrals()["path:50 - Operations/Roof.md"]["count"] == 1
+        assert deferrals.load_deferrals()["name:roof"]["count"] == 1
 
     def test_defer_feeds_the_next_days_ranking(self, vault: Path):
-        _vault_with_manifest(vault, [
-            {"name": "Roof", "system": "vault", "id_or_path": "50 - Operations/Roof.md"}])
+        _stage_roof()
         ra.apply_action(TODAY, "defer", "Roof")
         tomorrow = date(2026, 7, 27)
-        pool = [item("Roof"), item("Other")]
+        pool = [item("Roof", path=None), item("Other")]
         ranked = main.rank_pool(pool, tomorrow, ORDER,
                                 bias=deferrals.bias_map(tomorrow))
         assert [i["name"] for i in ranked] == ["Roof", "Other"]

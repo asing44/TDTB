@@ -163,4 +163,4 @@ class TestLegacyVaultEnabledKey:
         assert not [
             w for w in body.get("source_warnings") or [] if "vault_enabled" in w
         ]
-        assert body["source_counts"]["vault"] == 0
+        assert "vault" not in body["source_counts"]

@@ -369,16 +369,21 @@ class TestStateDirPaths:
         assert dm.read_all_memory() == {}
         assert not dm.cache_path().exists()
 
-    def test_legacy_vault_path_keys_do_not_crash(self, tmp_path):
+    def test_legacy_keys_do_not_crash_and_survive_writes(self, tmp_path):
         _write_cache({"version": 1, "items": {
             "todoist:7": 45,
             "vault:50 - Operations/Intervals/Press.md": 30,
+            "vault:Note.md": 15,
             "50 - Operations/Intervals/Press.md": 60,
         }})
         memory = dm.read_all_memory()
         assert memory["todoist:7"] == 45
+        assert memory["vault:Note.md"] == 15
         assert dm.save_memory("todoist:8", 15) == 15
         assert dm.read_all_memory()["todoist:7"] == 45
+        assert dm.read_all_memory()["vault:Note.md"] == 15
+        # No digest row can address a legacy key.
+        assert dm.item_identity({"name": "Press", "path": "50 - Operations/Intervals/Press.md"}) is None
 
 
 class TestStrictValidation:
@@ -425,10 +430,13 @@ class TestSaveReset:
         assert data["version"] == 1
         assert data["items"] == {"todoist:123": 90}
 
-    def test_save_vault_path_identity(self, tmp_path):
-        identity = "50 - Operations/Projects/Make.md"
-        dm.save_memory(identity, 30)
-        assert dm.read_all_memory() == {identity: 30}
+    def test_save_rejects_path_shaped_identity_without_mutation(self, tmp_path):
+        # Path-shaped / prefixed keys of the retired note source are tolerated
+        # when READING an old file, but are never minted by a save.
+        for identity in ("50 - Operations/Projects/Make.md", "vault:Make.md"):
+            with pytest.raises(ValueError):
+                dm.save_memory(identity, 30)
+        assert not dm.cache_path().exists()
 
     def test_save_rejects_name_only_without_mutation(self, tmp_path):
         with pytest.raises(ValueError):

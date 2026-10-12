@@ -83,7 +83,7 @@ def key_for_item(item: dict[str, Any]) -> str:
     """``deferral_key`` over a digest/pool item (or a resolved action target)."""
     return deferral_key(
         name=str(item.get("name") or ""),
-        path=str(item.get("path") or item.get("vault_path") or ""),
+        path=str(item.get("path") or ""),
         todoist_id=str(item.get("todoist_id") or ""),
     )
 
@@ -171,8 +171,7 @@ def record_deferral(
             "count": count + 1,
             "last_deferred": str(on_date),
             "name": str(item.get("name") or prior.get("name") or ""),
-            "path": str(item.get("path") or item.get("vault_path")
-                        or prior.get("path") or ""),
+            "path": str(item.get("path") or prior.get("path") or ""),
             "todoist_id": str(item.get("todoist_id") or prior.get("todoist_id") or ""),
         }
         items[key] = entry

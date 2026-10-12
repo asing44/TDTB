@@ -149,8 +149,8 @@ def manifest_rows(name: str = "Press") -> list[dict]:
 
 
 def manifest_vault_only(name: str = "Press", vault_rel: str = "Projects/Press.md") -> list[dict]:
-    """A pre-cutover committed target that is only a vault note (no Todoist /
-    calendar row) — every vault-writing verb must refuse it explicitly."""
+    """A pre-cutover committed target from the retired note source (no Todoist /
+    calendar row): it resolves to no source, so every source verb refuses it."""
     return [
         {"step": "C", "system": "vault", "action": "set-flag", "name": name,
          "id_or_path": vault_rel, "time": None, "duration_min": 0, "routing": "—"},
@@ -227,14 +227,6 @@ class TestVerbCatalogue:
         kinds = [s["kind"] for s in steps]
         assert "todoist.delete" in kinds and "calendar.delete" in kinds
         assert not any(k.startswith("vault.") for k in kinds)
-
-    @pytest.mark.parametrize("verb", ["done", "complete", "assign", "unassign",
-                                      "delete", "delete_permanent"])
-    def test_vault_path_target_is_refused_by_the_planner(self, verb):
-        target = {"phase": "committed", "name": "Press",
-                  "todoist_id": "task-1", "vault_path": "Projects/Press.md"}
-        with pytest.raises(ra.RuntimeActionError, match="vault is retired"):
-            ra.plan_steps(verb, target, {}, TODAY)
 
 
 # ---------------------------------------------------------------------------
@@ -361,10 +353,10 @@ class TestDropFromPlan:
 
 
 # ---------------------------------------------------------------------------
-# Unassign — Todoist clear / non-completing advance (V3: no vault half)
+# Unassign — Todoist clear / non-completing advance
 # ---------------------------------------------------------------------------
 
-class TestUnassignVaultRemoved:
+class TestRetiredNoteOnlyTarget:
     @pytest.fixture()
     def vault_only(self, tmp_path: Path) -> Path:
         root = tmp_path / "vault-only"
@@ -376,8 +368,8 @@ class TestUnassignVaultRemoved:
         return root
 
     @pytest.mark.parametrize("verb", ["unassign", "done", "delete"])
-    def test_vault_only_target_is_refused_with_a_clear_error(self, vault_only: Path, verb):
-        with pytest.raises(ra.RuntimeActionError, match="vault is retired"):
+    def test_source_less_target_is_refused(self, vault_only: Path, verb):
+        with pytest.raises(ra.RuntimeActionError, match="Press"):
             ra.apply_action(TODAY, verb, "Press", {},
                             todoist=None, store=None)
         assert (vault_only / "Projects" / "Press.md").read_text() == NOTE_TEXT
@@ -385,7 +377,7 @@ class TestUnassignVaultRemoved:
         import deferrals
         assert deferrals.load_deferrals() == {}
 
-    def test_route_returns_422_for_the_removed_vault_action(
+    def test_route_returns_422_for_a_source_less_target(
             self, vault_only: Path, monkeypatch: pytest.MonkeyPatch):
         runstate.write_runstate(
             TODAY,
@@ -399,7 +391,7 @@ class TestUnassignVaultRemoved:
         r = client.post("/runtime-actions", headers={"X-TDTB-Token": app.state.token},
                         json={"verb": "unassign", "target": "Press"})
         assert r.status_code == 422
-        assert "vault is retired" in r.json()["detail"]
+        assert "Press" in r.json()["detail"]
         assert todoist.calls == []
         assert (vault_only / "Projects" / "Press.md").read_text() == NOTE_TEXT
 
