@@ -61,7 +61,7 @@ export function ActionDock() {
       : "Sequence staged and valid. Preview the exact writes next.",
     fix: `${s.validation?.hardErrors.length ?? 0} blocking issue${(s.validation?.hardErrors.length ?? 0) === 1 ? "" : "s"} — place or edit rows to fix, or resequence.`,
     preview: "Shadow preview is current. Review and approve in the drawer.",
-    committing: "Committing to Todoist, Calendar, and vault…",
+    committing: "Committing to Todoist and Calendar…",
     verified: "Committed and verified. Have a good day.",
     partial: "Commit did not complete cleanly — review surfaces in the drawer.",
     "budget-manual": "Billed budget spent — manual layout stays available.",

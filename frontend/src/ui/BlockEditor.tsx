@@ -210,7 +210,7 @@ export function BlockEditor() {
             ? "All day — included, unscheduled, and uses no capacity."
             : nativeProtected
               ? "Protected — keeps the Todoist start fixed. Allow the scheduler to move it in the row's time control."
-              : "Today only — never changes the vault assignment or preset."}
+              : "Today only — never changes the preset."}
         </div>
         {saveError && (
           <p class="editor__error" role="alert">

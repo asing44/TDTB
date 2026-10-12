@@ -96,8 +96,8 @@ export function CapacitiesSettingsPanel({ active }: { active: boolean }) {
   const known = knownCapacitiesItems(s.inputs?.assigned ?? []);
   const knownIds = new Set(known.map(identityOf).filter((id): id is string => id !== null));
   const hiddenExclusions = (draft?.excluded ?? []).filter((identity) => !knownIds.has(identity));
-  // The vault-local source mapping is the only non-circular inventory of
-  // structures to offer. Ids the server already honours but this vault no
+  // The source mapping is the only non-circular inventory of
+  // structures to offer. Ids the server already honours but the mapping no
   // longer lists are preserved on save, mirroring hiddenExclusions — and
   // surfaced rather than silently dropped.
   const availableStructures = settings?.availableStructures ?? [];
@@ -114,12 +114,12 @@ export function CapacitiesSettingsPanel({ active }: { active: boolean }) {
     (structureId) => !availableStructureIds.has(structureId),
   );
   // Same retention rule as the Active-pull set: an id the server already
-  // honours but this vault no longer lists is preserved on save and surfaced
+  // honours but the mapping no longer lists is preserved on save and surfaced
   // instead of silently dropped.
   const staleNativeStructures = (draft?.nativeTaskStructures ?? []).filter(
     (structureId) => !availableStructureIds.has(structureId),
   );
-  // A declaration whose structure the server honours but this vault no longer
+  // A declaration whose structure the server honours but the mapping no longer
   // lists is retained on save and surfaced, exactly like the stale set above.
   const assignedStructures = draft?.assignedStructures ?? {};
   const staleAssignedStructures = Object.keys(assignedStructures)
@@ -190,7 +190,7 @@ export function CapacitiesSettingsPanel({ active }: { active: boolean }) {
   };
 
   // ``active_statuses`` is free text: the settings API exposes no status
-  // inventory (the vault source mapping's per-structure status values never
+  // inventory (the source mapping's per-structure status values never
   // cross the wire), so every saved value is an explicit entry that is kept
   // verbatim and removed only by hand.
   const addStatus = () => {
@@ -336,18 +336,18 @@ export function CapacitiesSettingsPanel({ active }: { active: boolean }) {
                 <h3 id="capacities-sec-admission">Admission vocabulary</h3>
                 {staleNativeStructures.length > 0 && (
                   <span class="capacities-settings__revision">
-                    {staleNativeStructures.length} saved {staleNativeStructures.length === 1 ? "structure" : "structures"} outside this vault
+                    {staleNativeStructures.length} saved {staleNativeStructures.length === 1 ? "structure" : "structures"} outside the source mapping
                   </span>
                 )}
               </div>
               <div class="setup-section__body">
                 <h4>Native task structures</h4>
                 <p class="capacities-settings__hint">
-                  Native Task Auto applies only to structures admitted here. The list is read from this vault's Capacities source mapping — the same inventory as Active pull, not from the current plan inputs.
+                  Native Task Auto applies only to structures admitted here. The list is read from the Capacities source mapping — the same inventory as Active pull, not from the current plan inputs.
                 </p>
                 {availableStructures.length === 0 ? (
                   <p class="capacities-settings__empty">
-                    This vault's Capacities source mapping lists no structures; saved admissions are preserved on save.
+                    The Capacities source mapping lists no structures; saved admissions are preserved on save.
                   </p>
                 ) : (
                   <div class="capacities-object-list" role="group" aria-label="Capacities structures admitted to the native Task Auto rules">
@@ -376,9 +376,9 @@ export function CapacitiesSettingsPanel({ active }: { active: boolean }) {
                 )}
                 {staleNativeStructures.length > 0 && (
                   <div class="capacities-exclusion-list">
-                    <h4>Native structures outside this vault's mapping</h4>
+                    <h4>Native structures outside the source mapping</h4>
                     <p class="capacities-settings__hint">
-                      These {staleNativeStructures.length} saved {staleNativeStructures.length === 1 ? "id is" : "ids are"} not in this vault's Capacities source mapping. They are retained unchanged on save.
+                      These {staleNativeStructures.length} saved {staleNativeStructures.length === 1 ? "id is" : "ids are"} not in the Capacities source mapping. They are retained unchanged on save.
                     </p>
                     {staleNativeStructures.map((structureId) => (
                       <div class="capacities-exclusion-row" key={structureId}>
@@ -428,7 +428,7 @@ export function CapacitiesSettingsPanel({ active }: { active: boolean }) {
                 <h3 id="capacities-sec-assigned">Assigned flag declarations</h3>
                 {staleAssignedStructures.length > 0 && (
                   <span class="capacities-settings__revision">
-                    {staleAssignedStructures.length} saved {staleAssignedStructures.length === 1 ? "structure" : "structures"} outside this vault
+                    {staleAssignedStructures.length} saved {staleAssignedStructures.length === 1 ? "structure" : "structures"} outside the source mapping
                   </span>
                 )}
               </div>
@@ -451,7 +451,7 @@ export function CapacitiesSettingsPanel({ active }: { active: boolean }) {
                 )}
                 {availableStructures.length === 0 ? (
                   <p class="capacities-settings__empty">
-                    This vault's Capacities source mapping lists no structures; saved declarations are preserved on save.
+                    The Capacities source mapping lists no structures; saved declarations are preserved on save.
                   </p>
                 ) : (
                   <div class="capacities-object-list" role="group" aria-label="Capacities structures with a declared assignment property">
@@ -478,9 +478,9 @@ export function CapacitiesSettingsPanel({ active }: { active: boolean }) {
                 )}
                 {staleAssignedStructures.length > 0 && (
                   <div class="capacities-exclusion-list">
-                    <h4>Declared structures outside this vault's mapping</h4>
+                    <h4>Declared structures outside the source mapping</h4>
                     <p class="capacities-settings__hint">
-                      These {staleAssignedStructures.length} saved {staleAssignedStructures.length === 1 ? "id is" : "ids are"} not in this vault's Capacities source mapping. They are retained unchanged on save.
+                      These {staleAssignedStructures.length} saved {staleAssignedStructures.length === 1 ? "id is" : "ids are"} not in the Capacities source mapping. They are retained unchanged on save.
                     </p>
                     {staleAssignedStructures.map((structureId) => (
                       <div class="capacities-exclusion-row" key={structureId}>
@@ -551,17 +551,17 @@ export function CapacitiesSettingsPanel({ active }: { active: boolean }) {
                 <h3 id="capacities-sec-active-pull">Active pull</h3>
                 {staleActiveStructures.length > 0 && (
                   <span class="capacities-settings__revision">
-                    {staleActiveStructures.length} saved {staleActiveStructures.length === 1 ? "structure" : "structures"} outside this vault
+                    {staleActiveStructures.length} saved {staleActiveStructures.length === 1 ? "structure" : "structures"} outside the source mapping
                   </span>
                 )}
               </div>
               <div class="setup-section__body">
                 <p class="capacities-settings__hint">
-                  Choose which Capacities structures honour an Active status pull. The list is read from this vault's Capacities source mapping, not from the current plan inputs.
+                  Choose which Capacities structures honour an Active status pull. The list is read from the Capacities source mapping, not from the current plan inputs.
                 </p>
                 {availableStructures.length === 0 ? (
                   <p class="capacities-settings__empty">
-                    No Capacities structures are configured for this vault yet. Add a Capacities source mapping before choosing which structures honour an Active status pull.
+                    No Capacities structures are configured yet. Add a Capacities source mapping before choosing which structures honour an Active status pull.
                   </p>
                 ) : (
                   <div class="capacities-object-list" role="group" aria-label="Capacities structures honouring an Active status pull">
@@ -590,9 +590,9 @@ export function CapacitiesSettingsPanel({ active }: { active: boolean }) {
                 )}
                 {staleActiveStructures.length > 0 && (
                   <div class="capacities-exclusion-list">
-                    <h4>Active structures outside this vault's mapping</h4>
+                    <h4>Active structures outside the source mapping</h4>
                     <p class="capacities-settings__hint">
-                      These {staleActiveStructures.length} saved {staleActiveStructures.length === 1 ? "id is" : "ids are"} not in this vault's Capacities source mapping. They are retained unchanged on save.
+                      These {staleActiveStructures.length} saved {staleActiveStructures.length === 1 ? "id is" : "ids are"} not in the Capacities source mapping. They are retained unchanged on save.
                     </p>
                     {staleActiveStructures.map((structureId) => (
                       <div class="capacities-exclusion-row" key={structureId}>
