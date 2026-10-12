@@ -92,7 +92,7 @@ export function Header() {
   const refreshing = s.refresh.phase === "loading";
   const pillState = refreshing ? "refreshing" : health === "ok" ? "healthy" : "degraded";
   const pillText = refreshing
-    ? "Refreshing sources…"
+    ? "Sources refreshing…"
     : health === "ok"
       ? "Sources healthy"
       : "Sources degraded · commit blocked";
