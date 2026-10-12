@@ -1,6 +1,6 @@
 /* scenarios.ts — deterministic fixture scenarios (locked decision 12).
    Six states: fresh, ready, sequenced, conflict, commit-preview, verified.
-   Data mirrors the real vault/config shapes (tdtb-bridger.md anchored blocks,
+   Data mirrors the real config shapes (config/tdtb.json anchored blocks,
    presets, palette semantics) so the approved mockup is honest about density
    and copy. No randomness, no clocks — every value is pinned. */
 
@@ -73,13 +73,13 @@ const ANCHORED: AnchoredBlock[] = [
   { id: "PHEP sync (Vlad)", name: "PHEP sync (Vlad)", kind: "calendar", start: "14:45", end: "15:30", durationMin: 45, overlapAllowed: false, on: true, skipToday: false, calendarId: "fixture-personal", calendarTitle: "Personal", capacityClass: "fixed" },
 ];
 
-// -- assigned items (vault + todoist, resolved blocks per locked decision 14)
+// -- assigned items (capacities + todoist, resolved blocks per locked decision 14)
 const ASSIGNED: AssignedItem[] = [
-  { id: "Magic Mirror", name: "Magic Mirror", path: "50 - Operations/Projects/Magic Mirror.md", source: "vault", types: ["project"], urgency: "3-high", deadline: "2026-07-19", priorityScore: 86, blocks: 3, durationLabel: "1hr 30min", todoistId: null },
-  { id: "Rowe's T-shirt Redesign 2026", name: "Rowe's T-shirt Redesign 2026", path: "50 - Operations/Projects/Rowe's T-shirt Redesign 2026.md", source: "vault", types: ["project"], urgency: "4-crit", deadline: "2026-07-31", priorityScore: 91, blocks: 2, durationLabel: "1hr", todoistId: null },
-  { id: "Press", name: "Press", path: "50 - Operations/Pursuits/Press.md", source: "vault", types: ["interval"], urgency: null, deadline: null, priorityScore: 64, blocks: 3, durationLabel: "1hr 15min", todoistId: null },
-  { id: "Note Processing", name: "Note Processing", path: "50 - Operations/Pursuits/Note Processing.md", source: "vault", types: ["interval"], urgency: null, deadline: null, priorityScore: 41, blocks: 1, durationLabel: "30min", todoistId: null },
-  { id: "Entryway Design", name: "Entryway Design", path: "50 - Operations/Projects/Entryway Design.md", source: "vault", types: ["project"], urgency: "2-med", deadline: null, priorityScore: 38, blocks: 1, durationLabel: "30min", todoistId: null },
+  { id: "Magic Mirror", name: "Magic Mirror", path: null, source: "todoist", types: ["task"], urgency: "3", deadline: "2026-07-19", priorityScore: 86, blocks: 3, durationLabel: "1hr 30min", todoistId: "6fx00xMIRROR" },
+  { id: "Rowe's T-shirt Redesign 2026", name: "Rowe's T-shirt Redesign 2026", path: null, source: "todoist", types: ["task"], urgency: "4", deadline: "2026-07-31", priorityScore: 91, blocks: 2, durationLabel: "1hr", todoistId: "6fx00xROWE" },
+  { id: "Press", name: "Press", path: null, source: "todoist", types: ["task"], urgency: null, deadline: null, priorityScore: 64, blocks: 3, durationLabel: "1hr 15min", todoistId: "6fx00xPRESS" },
+  { id: "Note Processing", name: "Note Processing", path: null, source: "capacities", types: ["interval"], urgency: null, deadline: null, priorityScore: 41, blocks: 1, durationLabel: "30min", todoistId: null, identity: "capacities:fixture-space:custom-project:note-processing", capacitiesIdentity: "capacities:fixture-space:custom-project:note-processing", capacitiesStructureId: "custom-project" },
+  { id: "Entryway Design", name: "Entryway Design", path: null, source: "todoist", types: ["task"], urgency: "2", deadline: null, priorityScore: 38, blocks: 1, durationLabel: "30min", todoistId: "6fx00xENTRYWAY" },
   { id: "Review AWS module 4", name: "Review AWS module 4", path: null, source: "todoist", types: ["task"], urgency: null, deadline: "2026-07-18", priorityScore: 55, blocks: 2, durationLabel: "1hr", todoistId: "6fx001AWS" },
   { id: "Pick up prescription", name: "Pick up prescription", path: null, source: "todoist", types: ["task"], urgency: null, deadline: "2026-07-18", priorityScore: 50, blocks: 1, durationLabel: "30min", todoistId: "6fx002RX" },
   { id: "Charge GoPro", name: "Charge GoPro", path: null, source: "todoist", types: ["task"], urgency: null, deadline: null, priorityScore: 12, blocks: 0, durationLabel: "—", todoistId: "6fx003GOPRO" },
@@ -166,7 +166,7 @@ function inputs(overrides: Partial<PlanInputs> = {}): PlanInputs {
     },
     planningConfigFingerprint: "fixture-planning-v1",
     sourceWarnings: [],
-    sourceCounts: { vault: 5, todoist: 3, calendar: 2 },
+    sourceCounts: { todoist: 3, calendar: 2 },
     sourceHealth: "ok",
     microAdventure: {
       pick: { ...MICRO_POOL[0] },
@@ -205,11 +205,9 @@ const SHADOW: ShadowDiff = {
     { step: "B", system: "calendar", action: "create-event", name: "⬜ Magic Mirror", idOrPath: "BusyCal:Blocks", time: "10:45", durationMin: 90, classification: "would-create", detail: {} },
     { step: "B", system: "calendar", action: "create-event", name: "⬜ Rowe's T-shirt Redesign 2026", idOrPath: "BusyCal:Blocks", time: "09:45", durationMin: 60, classification: "would-create", detail: {} },
     { step: "B", system: "calendar", action: "create-event", name: "⬜ Press", idOrPath: "BusyCal:Blocks", time: "19:00", durationMin: 75, classification: "would-create", detail: {} },
-    { step: "C", system: "vault", action: "patch", name: "Daily plan note", idOrPath: "10 - Journal/2026-07-18.md", time: null, durationMin: 0, classification: "would-update", detail: { section: "## Plan" } },
-    { step: "D", system: "vault", action: "set-flag", name: "Note Processing", idOrPath: "50 - Operations/Pursuits/Note Processing.md", time: null, durationMin: 0, classification: "no-op", detail: { reason: "already current" } },
   ],
   unavailableSurfaces: [],
-  counts: { "would-create": 3, "would-update": 3, "no-op": 1, conflict: 0, unavailable: 0 },
+  counts: { "would-create": 3, "would-update": 2, "no-op": 0, conflict: 0, unavailable: 0 },
 };
 
 const REPORT_OK: CommitReport = {
@@ -217,7 +215,6 @@ const REPORT_OK: CommitReport = {
   surfaces: [
     { system: "todoist", status: "ok", detail: "2 scheduled" },
     { system: "calendar", status: "ok", detail: "3 events created" },
-    { system: "vault", status: "ok", detail: "plan note written" },
   ],
   verifyFailures: [],
 };
@@ -278,9 +275,12 @@ export function makeScenario(name: ScenarioName): Scenario {
       s.staged.daySetupConfirmed = true;
       // Extra load: Deep CWEAN 4 blocks + longer AWS review pushes free negative.
       s.inputs.assigned.push({
-        id: "Deep CWEAN", name: "Deep CWEAN", path: "50 - Operations/Pursuits/Deep CWEAN.md",
-        source: "vault", types: ["interval"], urgency: null, deadline: null,
+        id: "Deep CWEAN", name: "Deep CWEAN", path: null,
+        source: "capacities", types: ["interval"], urgency: null, deadline: null,
         priorityScore: 47, blocks: 4, durationLabel: "2hr", todoistId: null,
+        identity: "capacities:fixture-space:custom-project:deep-cwean",
+        capacitiesIdentity: "capacities:fixture-space:custom-project:deep-cwean",
+        capacitiesStructureId: "custom-project",
       });
       s.inputs.capacity = cap(18);
       s.inputs.sourceWarnings = [
@@ -342,8 +342,8 @@ export function makeScenario(name: ScenarioName): Scenario {
       return s;
     }
     case "sparse": {
-      // KTD13: reproduce the live state Adam saw — a stale artifact, vault
-      // off, no assigned rows, degraded sources, and the legacy Capacities
+      // KTD13: reproduce the live state Adam saw — a stale artifact, legacy
+      // sources off, no assigned rows, degraded sources, and the legacy Capacities
       // intake (no direct snapshot block). The fixture adapter must not
       // inject its synthetic direct intake here (see applyCapacitiesIntake).
       const s = base("sparse", "Sparse day — stale artifact, degraded sources");
@@ -365,7 +365,7 @@ export function makeScenario(name: ScenarioName): Scenario {
         "Todoist read failed (timeout) — task list may be incomplete",
         "Capacities refresh required — no direct snapshot is installed",
       ];
-      s.inputs.sourceCounts = { vault: 0, todoist: 0, calendar: 0 };
+      s.inputs.sourceCounts = { todoist: 0, calendar: 0 };
       s.inputs.capacity = cap(0);
       return s;
     }

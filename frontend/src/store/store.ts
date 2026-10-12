@@ -1402,7 +1402,7 @@ export function canShadow(s: AppState): boolean {
 
 /** Every CONFLICT the shadow diff emits carries a `reason` saying WHY
     (`shadow.py` — "daily note not found", "target missing: …", "unrecognized
-    manifest row: …"). Dropping it produced blockers like "vault conflict: #
+    manifest row: …"). Dropping it produced blockers like "conflict: #
     TDTB Plan", which names the write that is blocked but not the cause —
     2026-07-27 that cost a round trip to work out that today's daily note
     simply did not exist yet. The data was always there; only the display

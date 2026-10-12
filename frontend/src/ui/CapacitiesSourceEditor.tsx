@@ -1,4 +1,4 @@
-/* CapacitiesSourceEditor — the vault-local Capacities source mapping editor.
+/* CapacitiesSourceEditor — the Capacities source mapping editor.
 
    The mapping record names which Capacities structures TDTB reads and which
    provider property plays each role on a structure. Property values are
@@ -682,7 +682,7 @@ export function CapacitiesSourceEditor({
           <>
             {record === null && (
               <p class="capacities-settings__empty">
-                No Capacities source mapping has been saved for this vault yet.
+                No Capacities source mapping has been saved yet.
                 Name the Capacities space and add at least one structure to
                 start one.
               </p>

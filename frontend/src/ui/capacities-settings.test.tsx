@@ -24,7 +24,7 @@ function openWithCapacityRow() {
   };
   h.store.dispatch({
     type: "INPUTS_LOADED",
-    inputs: { ...inputs, assigned: [...inputs.assigned, capacityItem] },
+    inputs: { ...inputs, assigned: [...inputs.assigned.filter((r) => r.source !== "capacities"), capacityItem] },
     ledger: h.store.getState().ledger!,
   });
   h.store.dispatch({ type: "UI", patch: { capacitiesSettingsOpen: true } });
@@ -88,7 +88,7 @@ describe("CapacitiesSettingsDrawer", () => {
     };
     h.store.dispatch({
       type: "INPUTS_LOADED",
-      inputs: { ...inputs, assigned: [...inputs.assigned, capacityItem] },
+      inputs: { ...inputs, assigned: [...inputs.assigned.filter((r) => r.source !== "capacities"), capacityItem] },
       ledger: h.store.getState().ledger!,
     });
     // The server returns a non-empty inclusion set the drawer has no editor for.
@@ -227,7 +227,7 @@ describe("CapacitiesSettingsDrawer", () => {
     await waitFor(() => expect(rendered.getByText("Active pull")).toBeTruthy());
 
     // The stale id is surfaced rather than hidden.
-    expect(rendered.getByText(/Active structures outside this vault's mapping/)).toBeTruthy();
+    expect(rendered.getByText(/Active structures outside the source mapping/)).toBeTruthy();
     expect(rendered.getByText("legacy-structure")).toBeTruthy();
 
     const save = vi.spyOn(h.controller, "saveCapacitiesSettings");
@@ -293,7 +293,7 @@ describe("CapacitiesSettingsDrawer", () => {
     const rendered = h.ui(<CapacitiesSettingsDrawer />);
     await waitFor(() => expect(rendered.getByText("Admission vocabulary")).toBeTruthy());
 
-    // The structure list is the same vault-local source mapping the Active
+    // The structure list is the same source mapping the Active
     // pull editor already enumerates — no new discovery path.
     expect(rendered.getByText(/same inventory as Active pull/)).toBeTruthy();
     expect(
@@ -389,7 +389,7 @@ describe("CapacitiesSettingsDrawer", () => {
     expect(capacitiesSettingsToWire(save.mock.calls[0][0]).assigned_structures).toEqual({});
   });
 
-  it("keeps a saved declaration outside the vault mapping and round-trips it", async () => {
+  it("keeps a saved declaration outside the source mapping and round-trips it", async () => {
     const h = makeHarness("ready");
     vi.spyOn(h.controller, "loadCapacitiesSettings").mockResolvedValue({
       version: 1,
@@ -418,7 +418,7 @@ describe("CapacitiesSettingsDrawer", () => {
 
     // Retained and surfaced, never silently dropped. (The native and active
     // stale blocks use the same wording, so count rather than pick one.)
-    expect(rendered.getByText(/Declared structures outside this vault's mapping/)).toBeTruthy();
+    expect(rendered.getByText(/Declared structures outside the source mapping/)).toBeTruthy();
     expect(rendered.getAllByText(/retained unchanged on save/).length).toBeGreaterThan(0);
     expect(rendered.getByText("legacy-declared")).toBeTruthy();
 
@@ -480,7 +480,7 @@ describe("CapacitiesSettingsDrawer", () => {
     ).toBe("assigned-prop");
   });
 
-  it("keeps a saved native structure outside the vault mapping and round-trips it", async () => {
+  it("keeps a saved native structure outside the source mapping and round-trips it", async () => {
     const h = makeHarness("ready");
     vi.spyOn(h.controller, "loadCapacitiesSettings").mockResolvedValue({
       version: 1,
@@ -505,7 +505,7 @@ describe("CapacitiesSettingsDrawer", () => {
     await waitFor(() => expect(rendered.getByText("Admission vocabulary")).toBeTruthy());
 
     // Retained and surfaced, never silently dropped.
-    expect(rendered.getByText(/Native structures outside this vault's mapping/)).toBeTruthy();
+    expect(rendered.getByText(/Native structures outside the source mapping/)).toBeTruthy();
     expect(rendered.getByText("legacy-native")).toBeTruthy();
 
     const save = vi.spyOn(h.controller, "saveCapacitiesSettings");
@@ -661,10 +661,10 @@ describe("CapacitiesSettingsDrawer", () => {
     h.store.dispatch({ type: "UI", patch: { capacitiesSettingsOpen: true } });
     const rendered = h.ui(<CapacitiesSettingsDrawer />);
     await waitFor(() =>
-      expect(rendered.getByText(/Active structures outside this vault's mapping/)).toBeTruthy(),
+      expect(rendered.getByText(/Active structures outside the source mapping/)).toBeTruthy(),
     );
 
-    // The stale id is outside this vault's mapping, so it keeps the raw id
+    // The stale id is outside the source mapping, so it keeps the raw id
     // and never borrows a title the drawer does not consider available.
     expect(rendered.getByText("legacy-structure")).toBeTruthy();
     expect(rendered.queryByText("Legacy Project")).toBeNull();

@@ -27,7 +27,7 @@ function writeTarget(e: ShadowEntry): { label: string; title: string } {
 }
 
 function SurfaceTotals({ entries }: { entries: ShadowEntry[] }) {
-  const systems = ["todoist", "calendar", "vault"] as const;
+  const systems = ["todoist", "calendar"] as const;
   return (
     <div class="surface-totals">
       {systems.map((sys) => {
@@ -337,7 +337,7 @@ export function ApprovalDrawer() {
                   // FEEDBACK-23: structured due failures render 12-hour from
                   // canonical machine fields; raw ISO/timezone stay available
                   // as the hover title for chasing a bad write. Non-due
-                  // failures (calendar/vault/readback) render verbatim.
+                  // failures (calendar/readback) render verbatim.
                   const d = report.verifyDetails?.[i];
                   return (
                     <li key={i} class="alerts__item alerts__item--error">

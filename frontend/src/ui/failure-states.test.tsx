@@ -291,7 +291,7 @@ describe("partial commit", () => {
           surfaces: [
             { system: "todoist", status: "ok", detail: "2 scheduled" },
             { system: "calendar", status: "failed", detail: "BusyCal write refused" },
-            { system: "vault", status: "skipped", detail: "aborted after calendar failure" },
+            { system: "readback", status: "skipped", detail: "aborted after calendar failure" },
           ],
           verifyFailures: ["calendar: 3 expected events, 0 found"],
         },
@@ -299,7 +299,7 @@ describe("partial commit", () => {
     });
     expect(getByText(/Commit did not complete cleanly/)).toBeTruthy();
     expect(getByText(/calendar — failed · BusyCal write refused/)).toBeTruthy();
-    expect(getByText(/vault — skipped/)).toBeTruthy();
+    expect(getByText(/readback — skipped/)).toBeTruthy();
     expect(getByText(/3 expected events, 0 found/)).toBeTruthy();
     // T21 (2026-07-24): the run's failed todoist verify was read as clean —
     // the dock must shout, not offer a neutral "View result".

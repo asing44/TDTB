@@ -32,7 +32,7 @@
 
   /* Semantic block colors — TDTB config Color Palette, verbatim hex.
      T24 2026-07-24: remapped to Adam's BusyCal day-view reference — gray
-     routines/habits, purple vault work, soft-blue calendar imports. */
+     routines/habits, purple project work, soft-blue calendar imports. */
   --c-event: #7dd3fc;            /* calendar fixed events — BusyCal together-blue */
   --c-anchored: #a8a29e;         /* anchored lifestyle blocks — quiet routine gray */
   --c-template-anchored: #e5e7eb;/* template anchored (context-only) */
@@ -41,7 +41,7 @@
                                     the T24 routine-gray, which was one of three
                                     adjacent grays in the pie) */
   --c-tasks: #fca5a5;            /* Todoist tasks */
-  --c-projects: #a78bfa;         /* vault projects/intervals — BusyCal purple */
+  --c-projects: #a78bfa;         /* projects/intervals — BusyCal purple */
   --c-buffer: #cbd5e1;           /* buffer time — cool light slate, pulled away
                                     from anchored's warm gray (2026-07-27) */
   --c-selected: #3b82f6;         /* selected aggregate */

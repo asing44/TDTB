@@ -335,40 +335,38 @@ describe("hard blockers are never overridable by acceptance", () => {
   });
 });
 
-/* 2026-07-27: a live preview showed "vault conflict: # TDTB Plan" and "vault
-   conflict: Phase-1 captures". Both meant one thing — today's daily note did
-   not exist yet — but the blocker line named only the blocked write, so the
-   cause had to be dug out of shadow.py by hand. Every CONFLICT the diff emits
+/* 2026-07-27: a live preview showed bare "conflict: <write>" blocker lines
+   whose cause had to be dug out of shadow.py by hand. Every CONFLICT the diff emits
    carries a `reason`; these pin that it reaches the operator. */
 describe("shadow blockers name the cause, not just the blocked write", () => {
   function conflictWith(detail: Record<string, unknown>): ShadowDiff {
     const base = conflictShadow();
-    return { ...base, entries: [{ ...base.entries[0], system: "vault", name: "# TDTB Plan", detail }] };
+    return { ...base, entries: [{ ...base.entries[0], system: "todoist", name: "Sample task", detail }] };
   }
 
   it("carries the reason through to the blocker line", () => {
     let s = sequenced();
-    s = reducer(s, { type: "SHADOW_OK", shadow: conflictWith({ reason: "daily note not found" }) });
+    s = reducer(s, { type: "SHADOW_OK", shadow: conflictWith({ reason: "target missing" }) });
     expect(shadowBlockers(s)).toEqual([
-      "vault conflict: # TDTB Plan — daily note not found",
+      "todoist conflict: Sample task — target missing",
     ]);
   });
 
   it("still names the write when a conflict carries no reason", () => {
     let s = sequenced();
     s = reducer(s, { type: "SHADOW_OK", shadow: conflictWith({}) });
-    expect(shadowBlockers(s)).toEqual(["vault conflict: # TDTB Plan"]);
+    expect(shadowBlockers(s)).toEqual(["todoist conflict: Sample task"]);
   });
 
   it("a non-string reason degrades to the bare line rather than rendering junk", () => {
     let s = sequenced();
     s = reducer(s, { type: "SHADOW_OK", shadow: conflictWith({ reason: { nested: true } }) });
-    expect(shadowBlockers(s)).toEqual(["vault conflict: # TDTB Plan"]);
+    expect(shadowBlockers(s)).toEqual(["todoist conflict: Sample task"]);
   });
 
   it("blocking still turns on the conflict itself, not on having a reason", () => {
     let s = sequenced();
-    s = reducer(s, { type: "SHADOW_OK", shadow: conflictWith({ reason: "daily note not found" }) });
+    s = reducer(s, { type: "SHADOW_OK", shadow: conflictWith({ reason: "target missing" }) });
     expect(canLiveCommit(s)).toBe(false);
   });
 });

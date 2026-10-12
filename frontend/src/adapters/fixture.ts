@@ -243,7 +243,7 @@ export class FixtureAdapter implements Adapter {
   /** Pending Capacities partial-coverage state for the next reads: null means
       the scenario's own health, 0 means a full-coverage read. */
   private capacitiesDeferred: number | null = null;
-  /** The vault-local source mapping record; null means none saved yet. */
+  /** The source mapping record; null means none saved yet. */
   private capacitiesSource: CapacitiesSource | null = null;
   /** Deterministic discovery catalog for the mapping editor. Discovery is a
       live provider read in production and never touches the mapping record;

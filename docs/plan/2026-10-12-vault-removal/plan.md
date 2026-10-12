@@ -1,6 +1,6 @@
 # TDTB: remove the Obsidian vault entirely (S6 finish)
 
-Status: **V1 and V2 landed (merged to main); V3 landed on branch `TDTB/vault-removal-v3-20261012` (not merged); V4-V5 open.** Operator directive (2026-10-12): anything "vault" in the Obsidian sense is
+Status: **V1 and V2 landed (merged to main); V3 landed on branch `TDTB/vault-removal-v3-20261012` (not merged); V4 and V5a open elsewhere (V5a landed on branch `TDTB/vault-removal-v5a-20261012`, not merged); V5b open.** Operator directive (2026-10-12): anything "vault" in the Obsidian sense is
 100% deprecated. Hand-edited config moves into the repo; runtime state moves to the state dir
 (`~/.config/tdtb/state/`) or is dropped; nothing replaces the Obsidian note writes at Commit.
 
@@ -109,6 +109,15 @@ Surprises:
   nothing appears under it); removed-verb errors in `test_runtime_actions.py`, `test_final_actions.py`, `test_staging_actions.py`; the daily-note
   patch, frontmatter flip, trash/undo, FileClass-status and live-probe tests are deleted with their code.
 - Operator step: none. Live Commit keeps writing Todoist/Calendar as before; the daily note simply stops receiving a `# TDTB Plan` section.
+
+**V5a as landed** (frontend half of V5; branch `TDTB/vault-removal-v5a-20261012`, not merged). Nothing under `frontend/src` models or says "vault" outside the stale contract fixtures and the tolerance tests/comments.
+
+- Types: `Source = "todoist" | "capacities"`; `ManifestEntry.system` is `"todoist" | "calendar"`; `sourceCounts` is `{todoist, calendar}`.
+- Tolerance (backend still emits the legacy fields until V5b): `projectAssigned` maps an unknown or legacy source (incl. `"vault"`, or none) to a **neutral Todoist-like row**: `source: "todoist"`, `path: null`, no `todoistId`, `identity: null`. It is unidentified, so no source-specific verb or duration-memory save can address it. `source_counts.vault` is ignored; a `system: "vault"` shadow/report entry copies through and renders without crashing (ApprovalDrawer totals show only todoist/calendar).
+- Rendering: `sourceChip` fallthrough is a neutral `OTHER` chip (`.qrow__src--other`); `sourceContext` is labels only; `typeToken`/`sourceDetail` and the `VAULT_TIERS` stringified-list urgency parser are deleted (Capacities rows carry `urgency: null`; non-Todoist urgency shows verbatim, untiered); the dead `badge--u*` urgency badge in Queue is removed (its CSS rules remain); export prompt drops `(vault . path)` and the "create in PHEP" line (unrecognized rows read `(unidentified)`).
+- Strings: ActionDock, BlockEditor, CapacitiesSettingsPanel, CapacitiesSourceEditor, ConnectionsScreen reworded ("the source mapping").
+- Fixtures: scenario rows converted (Magic Mirror, Rowe's, Press, Entryway Design -> Todoist with priority ints so bands are unchanged; Note Processing, Deep CWEAN -> Capacities); shadow fixture lost its two vault rows (the "ready" preview now stages 5 exact writes, not 6).
+- Left for V5b: delete `source_counts.vault`, vault `system` rows and any `source: "vault"` emission in `app/`; regenerate `frontend/src/adapters/contract-fixtures/*` (about 12 files carry `source_counts.vault`/vault rows, `shadow-diff.json` has `system:"vault"`, `commit-live-*.json` still show removed surfaces) and then tighten `wire.test.ts` (the legacy-tolerance tests can become plain fallback tests); delete the dead `.badge--ucrit/uhigh/umed/ulow/unone` rules in `app.css`; `app/legacy-static/*` (outside the frontend tree) still has chip-vault, `'vault'` source fallbacks and "writes to Todoist, the vault, and the calendar" copy.
 
 ## Inventory (from the 2026-10-12 read-only map)
 

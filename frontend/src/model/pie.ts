@@ -34,8 +34,8 @@ const SEGMENTS: Array<{ key: keyof Capacity & string; label: string; color: stri
   { key: "buffer", label: "Buffer", color: "var(--c-buffer)" },
 ];
 
-/* Config's `free` token, not a neutral surface: the vault Color Palette
-   (Skill-Configs/tdtb-bridger.md) is source of truth for every visual element,
+/* Config's `free` token, not a neutral surface: the config Color Palette
+   (config/tdtb.json) is source of truth for every visual element,
    and it assigns green to free capacity. A surface-colored wedge also read as
    chart background rather than as unspent day. */
 export const UNALLOCATED_COLOR = "var(--c-free)";

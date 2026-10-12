@@ -32,7 +32,7 @@ function isNativeTimedTodoist(item: AssignedItem): boolean {
 }
 
 /** Stable source identity token. Mirrors the canonical identity the app keys
-    rows on (todoist id / vault path / capacities identity): a display name
+    rows on (todoist id / capacities identity): a display name
     alone is never an identity, and an identity-less row is marked so an
     external scheduler cannot mistake it for something writable. */
 function sourceIdentity(item: AssignedItem): string {
@@ -47,7 +47,7 @@ function sourceIdentity(item: AssignedItem): string {
       ? `(capacities · ${identity})`
       : "(capacities · unidentified)";
   }
-  return item.path ? `(vault · ${item.path})` : "(vault · unidentified)";
+  return "(unidentified)";
 }
 
 /** Recurrence identity + the time-adjustment permission that actually
@@ -68,7 +68,7 @@ function timePermission(s: AppState, item: AssignedItem): string | null {
 }
 
 /** Existing relationship context the scheduler should not discard: source
-    labels/tags and the Obsidian parent relationship when the row carries
+    labels/tags and the parent relationship when the row carries
     them. */
 function relationshipContext(item: AssignedItem): string[] {
   const out: string[] = [];
@@ -306,10 +306,6 @@ export function buildDayPrompt(s: AppState): string {
     "   - Tasks marked `protected` keep their shown native time unless I " +
       "explicitly approve a move; tasks marked `adjustable` may be moved as " +
       "part of the plan.",
-  );
-  out.push(
-    "   - Vault-sourced tasks (`vault · path`) have no Todoist row yet — " +
-      "create them in my PHEP project, not the Inbox.",
   );
   out.push(
     "   - Capacities-sourced tasks (`capacities · …`) have no write route " +

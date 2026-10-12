@@ -56,7 +56,7 @@ import {
 } from "../model/allocator";
 import { stripeColor, trackFor, trackGradient } from "../model/bands";
 import { DIRECT_VERBS, MORE_VERBS } from "../model/staging";
-import { sourceDetail, typeToken } from "../model/sourceContext";
+import { sourceContext } from "../model/sourceContext";
 import { dueLabel, normalizeUrgency } from "../model/urgency";
 import type { AssignedItem } from "../model/types";
 import { CalendarImpact } from "./CalendarImpact";
@@ -64,14 +64,15 @@ import { CapacityCard } from "./CapacityCard";
 import { Tooltip } from "./Tooltip";
 
 /** U11 labeling pass: the row's provenance as a chip a scan can read without
-    parsing a sentence — TODOIST / CAPACITIES / VAULT (plus the CALENDAR
-    vocabulary the source counts already use). Colour tints live in app.css. */
+    parsing a sentence — TODOIST / CAPACITIES (plus the CALENDAR
+    vocabulary the source counts already use). An unrecognized source reads
+    as a neutral OTHER chip. Colour tints live in app.css. */
 export function sourceChip(item: AssignedItem): { key: string; label: string } {
   const source = String(item.source);
   if (source === "todoist") return { key: "todoist", label: "TODOIST" };
   if (source === "capacities") return { key: "capacities", label: "CAPACITIES" };
   if (source === "calendar") return { key: "calendar", label: "CALENDAR" };
-  return { key: "vault", label: "VAULT" };
+  return { key: "other", label: "OTHER" };
 }
 
 /** The row's KIND as a human label. Capacities rows resolve their structure id
@@ -92,7 +93,7 @@ export function kindLabel(
     const title = id ? (titles?.[id] ?? "").trim() : "";
     return title.length > 0 ? title : "Capacities item";
   }
-  return typeToken(item);
+  return null;
 }
 
 /** Duration provenance, spoken. The uppercase SOURCE/REMEMBERED pill crowded
@@ -557,7 +558,7 @@ function Row({
             it. */}
         <span class="qrow__source" title={item.path ?? undefined}>
           {/* U11 labeling: provenance leads as a coloured chip (TODOIST /
-              CAPACITIES / VAULT), then the row's human KIND, then plain meta.
+              CAPACITIES), then the row's human KIND, then plain meta.
               The raw uppercase type badge is gone — a Capacities structure id
               resolves through the structure-titles cache to its title, and an
               untitled one reads "Capacities item", never a UUID. */}
@@ -572,7 +573,7 @@ function Row({
           <span class="qrow__meta">
             {[
               srcTag === "source" ? `est ${blocksLabel(blocks)}` : "",
-              sourceDetail(item),
+              sourceContext(item),
               scheduledRow ? display12h(scheduledRow.start) : "",
               item.isRecurring && item.scheduledStart
                 ? `fixed · recurring · ${display12h(item.scheduledStart)}`
@@ -604,14 +605,6 @@ function Row({
             {PRIORITY_LABEL[urgency.tier]}
           </span>
         )}
-        {/* Todoist urgency text IS the p-level ("p1"), which the chip above
-            already shows; the badge only adds something for sources whose
-            urgency text differs (e.g. "4-crit"). */}
-        {urgency &&
-          (urgency.tier === "crit" || urgency.tier === "high") &&
-          urgency.text !== PRIORITY_LABEL[urgency.tier] && (
-            <span class={`badge badge--u${urgency.tier}`}>{urgency.text}</span>
-          )}
         {due && (
           <span
             class={due.tone ? `due due--${due.tone}` : "due"}

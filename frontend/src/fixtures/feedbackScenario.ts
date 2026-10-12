@@ -49,15 +49,15 @@ export const FEEDBACK_ANCHORED: AnchoredBlock[] = [
 /** Assigned rows from the reported scenario — 16 blocks of included work.
     Magic Mirror is the row the screenshot showed overlapping Cooking. */
 export const FEEDBACK_ASSIGNED: AssignedItem[] = [
-  { id: "Magic Mirror", name: "Magic Mirror", path: "50 - Operations/Projects/Magic Mirror.md", source: "vault", types: ["project"], urgency: "3-high", deadline: "2026-07-19", priorityScore: 86, blocks: 3, durationLabel: "1hr 30min", todoistId: null },
+  { id: "Magic Mirror", name: "Magic Mirror", path: null, source: "todoist", types: ["task"], urgency: "3", deadline: "2026-07-19", priorityScore: 86, blocks: 3, durationLabel: "1hr 30min", todoistId: "fb00xMIRROR" },
   { id: "Log hours", name: "Log hours", path: null, source: "todoist", types: ["task"], urgency: null, deadline: "2026-07-14", priorityScore: 20, blocks: 1, durationLabel: "30min", todoistId: "fb001LOG" },
-  { id: "Note Processing", name: "Note Processing", path: "50 - Operations/Pursuits/Note Processing.md", source: "vault", types: ["interval"], urgency: null, deadline: null, priorityScore: 41, blocks: 1, durationLabel: "30min", todoistId: null },
+  { id: "Note Processing", name: "Note Processing", path: null, source: "capacities", types: ["interval"], urgency: null, deadline: null, priorityScore: 41, blocks: 1, durationLabel: "30min", todoistId: null, identity: "capacities:fixture-space:custom-project:note-processing", capacitiesIdentity: "capacities:fixture-space:custom-project:note-processing", capacitiesStructureId: "custom-project" },
   { id: "Pick up prescription", name: "Pick up prescription", path: null, source: "todoist", types: ["task"], urgency: null, deadline: "2026-07-14", priorityScore: 50, blocks: 1, durationLabel: "30min", todoistId: "fb002RX" },
-  { id: "Press", name: "Press", path: "50 - Operations/Pursuits/Press.md", source: "vault", types: ["interval"], urgency: null, deadline: null, priorityScore: 64, blocks: 3, durationLabel: "1hr 15min", todoistId: null },
-  { id: "Rowe's T-shirt Redesign 2026", name: "Rowe's T-shirt Redesign 2026", path: "50 - Operations/Projects/Rowe's T-shirt Redesign 2026.md", source: "vault", types: ["project"], urgency: "4-crit", deadline: "2026-07-31", priorityScore: 91, blocks: 2, durationLabel: "1hr", todoistId: null },
+  { id: "Press", name: "Press", path: null, source: "todoist", types: ["task"], urgency: null, deadline: null, priorityScore: 64, blocks: 3, durationLabel: "1hr 15min", todoistId: "fb00xPRESS" },
+  { id: "Rowe's T-shirt Redesign 2026", name: "Rowe's T-shirt Redesign 2026", path: null, source: "todoist", types: ["task"], urgency: "4", deadline: "2026-07-31", priorityScore: 91, blocks: 2, durationLabel: "1hr", todoistId: "fb00xROWE" },
   { id: "Review AWS module 4", name: "Review AWS module 4", path: null, source: "todoist", types: ["task"], urgency: null, deadline: "2026-07-14", priorityScore: 55, blocks: 2, durationLabel: "1hr", todoistId: "fb003AWS" },
-  { id: "Entryway Design", name: "Entryway Design", path: "50 - Operations/Projects/Entryway Design.md", source: "vault", types: ["project"], urgency: "2-med", deadline: null, priorityScore: 38, blocks: 1, durationLabel: "30min", todoistId: null },
-  { id: "Deep CWEAN", name: "Deep CWEAN", path: "50 - Operations/Pursuits/Deep CWEAN.md", source: "vault", types: ["interval"], urgency: null, deadline: null, priorityScore: 47, blocks: 2, durationLabel: "1hr", todoistId: null },
+  { id: "Entryway Design", name: "Entryway Design", path: null, source: "todoist", types: ["task"], urgency: "2", deadline: null, priorityScore: 38, blocks: 1, durationLabel: "30min", todoistId: "fb00xENTRYWAY" },
+  { id: "Deep CWEAN", name: "Deep CWEAN", path: null, source: "capacities", types: ["interval"], urgency: null, deadline: null, priorityScore: 47, blocks: 2, durationLabel: "1hr", todoistId: null, identity: "capacities:fixture-space:custom-project:deep-cwean", capacitiesIdentity: "capacities:fixture-space:custom-project:deep-cwean", capacitiesStructureId: "custom-project" },
 ];
 
 /** Server-verbatim capacity for the reported shape: 2 available blocks,
@@ -119,7 +119,7 @@ export function feedbackInputs(): PlanInputs {
     },
     planningConfigFingerprint: "feedback-planning-v1",
     sourceWarnings: [],
-    sourceCounts: { vault: 5, todoist: 4, calendar: 3 },
+    sourceCounts: { todoist: 4, calendar: 3 },
     sourceHealth: "ok",
     microAdventure: {
       pick: { id: "ma02", idea: "Call a friend you haven't talked to in a while", category: "social" },

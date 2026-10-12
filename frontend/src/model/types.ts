@@ -11,7 +11,7 @@
    Sequence identity is name-keyed — `id` = the digest item's `name`
    (T1 contract in main.py). */
 
-export type Source = "vault" | "todoist" | "capacities";
+export type Source = "todoist" | "capacities";
 
 /** TDTB-owned native Capacities Task Auto policy. Each condition is an
     independent OR rule; the backend persists the exact policy and revision. */
@@ -46,7 +46,7 @@ export interface CapacitiesSettings {
       property id is opaque and kept exactly as declared; additive to schema
       version 1, and an absent key means no declarations. */
   assignedStructures: Record<string, string>;
-  /** Read-only, vault-local structure ids the drawer offers as Active-pull
+  /** Read-only structure ids the drawer offers as Active-pull
       choices. Advisory UI metadata sourced from the Capacities source mapping;
       empty when none are configured or the record is unreadable. */
   availableStructures: string[];
@@ -98,7 +98,7 @@ export interface CapacitiesSourceStructure {
   completionValue: string | null;
 }
 
-/** The vault-local Capacities source mapping record. `version` and `revision`
+/** The Capacities source mapping record. `version` and `revision`
     are server-owned; a save echoes `revision` as its `expectedRevision`. */
 export interface CapacitiesSource {
   version: number;
@@ -228,15 +228,15 @@ export interface AssignedItem {
   blocks: number;
   /** Human duration label, e.g. "1hr 30min" or "All day". */
   durationLabel: string;
-  /** Todoist task id for todoist-sourced rows; null for vault rows. Carried
+  /** Todoist task id for todoist-sourced rows; null for Capacities rows. Carried
       so the copy-prompt fallback can instruct update-by-id (the app's own
       commit convention) instead of duplicate creation. */
   todoistId: string | null;
-  /** Canonical stable source identity (todoist:<id> or normalized vault
-      path) — the key the duration-memory mutation API operates on. Absent
+  /** Canonical stable source identity (todoist:<id> or the Capacities
+      identity) — the key the duration-memory mutation API operates on. Absent
       only when the wire carries neither; a display name alone is never an
       identity. Capacities keeps its source identity in the fields below so it
-      cannot fall into the vault/Todoist duration-memory cache. */
+      cannot fall into the Todoist duration-memory cache. */
   identity?: string | null;
   capacitiesIdentity?: string | null;
   capacitiesId?: string | null;
@@ -250,11 +250,11 @@ export interface AssignedItem {
       the planner to place. scheduledStart is their current Todoist wall time. */
   isRecurring?: boolean;
   scheduledStart?: string | null;
-  /** Todoist labels, verbatim (T23 source context); absent/[] for vault rows. */
+  /** Todoist labels, verbatim (T23 source context); absent/[] for Capacities rows. */
   labels?: string[];
   /** Source tags, verbatim; absent/[] when the backend carries no tags. */
   tags?: string[];
-  /** Obsidian parent/child relationship, preserved for sequencing context. */
+  /** Parent/child relationship, preserved for sequencing context. */
   relatesTo?: string | null;
 }
 
@@ -506,7 +506,7 @@ export type ShadowClassification =
 
 export interface ShadowEntry {
   step: string;
-  system: "todoist" | "vault" | "calendar";
+  system: "todoist" | "calendar";
   action: string;
   name: string;
   idOrPath: string;
@@ -535,7 +535,7 @@ export interface CommitReport {
   /** FEEDBACK-23: machine-canonical per-failure records when the server
       provides them. The UI formats the 12-hour display from these values
       and keeps raw ISO/timezone for chasing a bad write. Absent for legacy
-      payloads or non-due failures (calendar/vault/readback), where the raw
+      payloads or non-due failures (calendar/readback), where the raw
       string in verifyFailures is the display. */
   verifyDetails?: DueVerificationDetail[];
   /** U5: content-free prompt-export outcomes for this live Commit. */
@@ -807,7 +807,7 @@ export interface ForgotItem {
 
 /** IMP-07: one row dropped from today's plan via the Drop from plan verb.
     Date-scoped server-side (runstate); the identity is the canonical source
-    identity (todoist:<id> / vault path), and the row is eligible again
+    identity (todoist:<id> / Capacities identity), and the row is eligible again
     tomorrow. */
 export interface DroppedItem {
   identity: string;
@@ -835,7 +835,7 @@ export interface PlanInputs {
   daySemantics: DaySemantics;
   planningConfigFingerprint: string;
   sourceWarnings: string[];
-  sourceCounts: { vault: number; todoist: number; calendar: number };
+  sourceCounts: { todoist: number; calendar: number };
   sourceHealth: SourceHealth;
   microAdventure: MicroAdventure;
   /** S7a: typed direct-intake block. Absent for legacy payloads or the

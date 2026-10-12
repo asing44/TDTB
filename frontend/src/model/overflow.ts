@@ -4,7 +4,7 @@
    On an overbooked day the sequencer drops what does not fit and the review
    reads "no slot found — it stays assigned for today" for every one of them.
    That is honest but useless: the rows are still work Adam intends to do, and
-   a row with no time never reaches Todoist, the vault, or the calendar, so it
+   a row with no time never reaches Todoist or the calendar, so it
    never reaches BusyCal either.
 
    So a dropped row is laid out from the day-frame anchor instead, back to
@@ -15,7 +15,7 @@
    unreadable and the exact shape that hard-blocks the next Send
    (see model/pins.ts).
 
-   These are ordinary work rows: they route to Todoist / vault / calendar by
+   These are ordinary work rows: they route to Todoist / calendar by
    source through the normal manifest, and they really are written. Adam's
    call — everything shows up in BusyCal anyway, so a placement that is not
    written is a placement that does not exist. `validate_sequence` will flag

@@ -197,9 +197,9 @@ describe("over-allotment is reported, never converted into a proposed drop (supe
     const h = makeHarness("ready", (sc) => {
       sc.inputs.assigned.push({
         id: "Deep CWEAN", name: "Deep CWEAN",
-        path: "50 - Operations/Pursuits/Deep CWEAN.md",
-        source: "vault", types: ["interval"], urgency: null, deadline: null,
-        priorityScore: 47, blocks: 4, durationLabel: "2hr", todoistId: null,
+        path: null,
+        source: "todoist", types: ["task"], urgency: null, deadline: null,
+        priorityScore: 47, blocks: 4, durationLabel: "2hr", todoistId: "fb9DEEP",
       });
     });
     const { container } = h.ui(<ActionDock />);

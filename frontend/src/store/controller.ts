@@ -515,7 +515,7 @@ export class Controller {
   // -- explicit duration memory (MVP) ---------------------------------------
 
   /** Canonical mutation identity for a row: the model's projected identity,
-      else derived from the wire identity fields (todoist:<id> / vault path).
+      else derived from the wire identity fields (todoist:<id> / Capacities identity).
       Null only when the row carries neither — name alone is never an
       identity, and such a row cannot be saved or reset. */
   private identityOf(id: string): string | null {
@@ -898,7 +898,7 @@ export class Controller {
     // journal entry — only a thrown adapter error sets runtimeError. Without
     // this check a failed verb read as success: no message, and a source
     // refresh that made the row look handled. (Caught on the scratch server:
-    // a vault note with no `status:` line failed closed, correctly, and the
+    // a Capacities row with no writable status failed closed, correctly, and the
     // UI said nothing at all.)
     const last = s.lastRuntimeAction;
     if (last && last.status !== "applied") {
@@ -912,7 +912,7 @@ export class Controller {
     // unassigned, or deleted outright, it is not part of this plan any more.
     // Say so locally instead of waiting on the source refresh: whether the
     // row actually disappears depends on the surface (a dropped Todoist task
-    // leaves the Today filter; a vault row may not), and a verb that fires,
+    // leaves the Today filter; a Capacities row may not), and a verb that fires,
     // journals, and leaves the queue untouched reads as a verb that did
     // nothing. Undo re-includes it.
     this.setOverride(target, false, this.getState().overrides[target]?.blocks ?? null);

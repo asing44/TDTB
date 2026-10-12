@@ -548,7 +548,7 @@ export function ConnectionsScreen() {
                 {structures.length === 0 ? (
                   <tr>
                     <td colSpan={5} class="connections-table__empty">
-                      This vault's Capacities source mapping lists no structures.
+                      The Capacities source mapping lists no structures.
                     </td>
                   </tr>
                 ) : (

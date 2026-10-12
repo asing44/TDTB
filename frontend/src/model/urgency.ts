@@ -1,8 +1,7 @@
 /* urgency + due-label normalization — T26 (2026-07-24 legibility findings).
-   The gather emits vault urgency in three shapes — clean "3-high", a
-   STRINGIFIED python list "['4-crit']", or null — and todoist urgency as the
-   raw Todoist priority int (4 = highest). Raw literals rendered verbatim
-   ("['4-crit']") are unscannable; normalize once, here, for every surface. */
+   Todoist urgency arrives as the raw Todoist priority int (4 = highest);
+   Capacities rows carry none. A raw literal rendered verbatim is unscannable;
+   normalize once, here, for every surface. */
 
 import type { AssignedItem } from "./types";
 
@@ -12,13 +11,6 @@ export interface UrgencyChip {
   text: string;
   tier: UrgencyTier | null;
 }
-
-const VAULT_TIERS: Record<string, UrgencyTier> = {
-  "4": "crit",
-  "3": "high",
-  "2": "med",
-  "1": "low",
-};
 
 /** Todoist priority int → user-facing p-level (API 4 = p1, highest). */
 const TODOIST_P: Record<string, [string, UrgencyTier]> = {
@@ -35,10 +27,8 @@ export function normalizeUrgency(item: AssignedItem): UrgencyChip | null {
     const p = TODOIST_P[raw];
     return p ? { text: p[0], tier: p[1] } : { text: raw, tier: null };
   }
-  // vault: unwrap a stringified list — "['4-crit']" → "4-crit"
-  const inner = raw.replace(/^\[\s*'?/, "").replace(/'?\s*\]$/, "").split("','")[0].trim();
-  if (!inner) return null;
-  return { text: inner, tier: VAULT_TIERS[inner[0]] ?? null };
+  // Non-Todoist sources carry no urgency scale; show the literal, untiered.
+  return { text: raw, tier: null };
 }
 
 export type DueTone = "overdue" | "today" | "soon" | null;

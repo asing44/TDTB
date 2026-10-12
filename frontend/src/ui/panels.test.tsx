@@ -88,7 +88,7 @@ describe("FEEDBACK-08 Results/SOW reachability", () => {
         surfaces: [
           { system: "todoist", status: "ok", detail: "2 scheduled" },
           { system: "calendar", status: "failed", detail: "BusyCal write refused" },
-          { system: "vault", status: "skipped", detail: "aborted after calendar failure" },
+          { system: "readback", status: "skipped", detail: "aborted after calendar failure" },
         ],
         verifyFailures: ["calendar: 3 expected events, 0 found"],
       },

@@ -28,8 +28,8 @@ function item(name: string, over: Partial<AssignedItem> & { tags?: string[] } = 
   return {
     id: name,
     name,
-    path: `50 - Operations/Projects/${name}.md`,
-    source: "vault",
+    path: null,
+    source: "todoist",
     types: ["project"],
     urgency: null,
     deadline: null,
@@ -79,7 +79,7 @@ describe("P6-01 relationship-aware allocator projection", () => {
   });
 
   it("keeps relationship context visible when parent and child cross urgency bands", () => {
-    const parent = item("Zeta parent", { urgency: "3-high" });
+    const parent = item("Zeta parent", { urgency: "3" });
     const child = item("Alpha child", { relatesTo: "[[Zeta parent]]" });
     const groups = hierarchyBandedRows(stateFor([child, parent]));
 
@@ -169,8 +169,8 @@ describe("P6-01 relationship-aware allocator projection", () => {
   it("preserves the existing flat urgency-band axis", () => {
     const groups = bandedRows(stateFor([
       item("ordinary"),
-      item("high", { urgency: "3-high" }),
-      item("critical", { urgency: "4-crit" }),
+      item("high", { urgency: "3" }),
+      item("critical", { urgency: "4" }),
     ]));
 
     expect(groups.crit.map((row) => row.id)).toEqual(["critical"]);
@@ -204,11 +204,11 @@ describe("P6-01 relationship-aware allocator projection", () => {
 
   it("uses stable source identity as the final tie-break", () => {
     const rows = hierarchyRows([
-      item("Beta", { identity: "vault:z" }),
-      item("Alpha", { identity: "vault:a" }),
+      item("Beta", { identity: "todoist:z" }),
+      item("Alpha", { identity: "todoist:a" }),
     ], TODAY);
 
-    expect(rows.map((row) => row.item.identity)).toEqual(["vault:a", "vault:z"]);
+    expect(rows.map((row) => row.item.identity)).toEqual(["todoist:a", "todoist:z"]);
     expect(rows).toHaveLength(2);
   });
 });

@@ -535,7 +535,7 @@ describe("T8 live-commit failure handling (mocked — no real writes)", () => {
       status: "partial",
       surfaces: [
         { system: "todoist", status: "failed", detail: "no client" },
-        { system: "vault", status: "ok", detail: null },
+        { system: "calendar", status: "ok", detail: null },
       ],
       verifyFailures: ["todoist: create failed"],
     });
@@ -582,8 +582,8 @@ describe("T8 shadow blockers gate arm at the STATE level", () => {
     vi.spyOn(adapter, "shadowCommit").mockResolvedValue(
       blockedShadow({
         entries: [{
-          step: "C", system: "vault", action: "set-flag", name: "Sample",
-          idOrPath: "50 - Operations/Projects/Sample.md", time: null,
+          step: "B", system: "calendar", action: "create-event", name: "Sample",
+          idOrPath: "BusyCal:Blocks", time: null,
           durationMin: 0, classification: "conflict", detail: {},
         }],
       }),
@@ -735,7 +735,7 @@ describe("FEEDBACK-01 chronological sequence ordering", () => {
       time: { ...adapter.scenario.inputs.time, anchor: "17:15" },
       assigned: [
         {
-          id: "Log hours", name: "Log hours", path: null, source: "vault",
+          id: "Log hours", name: "Log hours", path: null, source: "todoist",
           types: [], urgency: null, deadline: null, priorityScore: 0,
           blocks: 1, durationLabel: "30min", todoistId: null,
         },

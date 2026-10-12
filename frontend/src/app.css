@@ -6400,7 +6400,7 @@ body {
 }
 
 /* Source chip: provenance a scan can read at a glance. One tint per source —
-   todoist red, capacities purple, calendar blue, vault neutral. */
+   todoist red, capacities purple, calendar blue; anything else stays neutral. */
 .qrow__src {
   flex: none;
   padding: 1px 6px;
@@ -6425,7 +6425,7 @@ body {
   background: color-mix(in srgb, var(--c-event) 30%, var(--t-surface));
   border-color: color-mix(in srgb, var(--c-event) 55%, transparent);
 }
-.qrow__src--vault {
+.qrow__src--other {
   background: var(--t-surface-2);
   border-color: color-mix(in srgb, var(--t-border) 85%, transparent);
   color: var(--t-muted);
