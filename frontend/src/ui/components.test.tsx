@@ -299,15 +299,17 @@ describe("Queue", () => {
     expect(container.querySelector(".qrow__allday")).toBeTruthy();
   });
 
-  it("T7 the − stepper walks a row down to all day in 15-minute steps", () => {
+  it("T7 the slider walks a row down to all day in 15-minute steps", () => {
     const { ui, store } = makeHarness("ready");
     const { getByLabelText, getByText } = ui(<Queue />);
     const blocks = () => store.getState().overrides["Note Processing"]?.blocks;
-    // 1 block (30min) → 15min → all day. Before the half-block grid landed,
-    // clampBlocks rounded n − 0.5 straight back to n and this button was dead.
-    fireEvent.click(getByLabelText("15 minutes less for Note Processing"));
+    // 1 block (30min) → 15min → all day. The row's −/+ steppers were removed
+    // (2026-10-12); the slider is the drag-free route to all day now, and it
+    // shares the same half-block grid the row's arrow keys walk.
+    const slider = getByLabelText("Note Processing duration in 15-minute steps");
+    fireEvent.input(slider, { target: { value: "0.5" } });
     expect(blocks()).toBe(0.5);
-    fireEvent.click(getByLabelText("Make Note Processing all day"));
+    fireEvent.input(slider, { target: { value: "0" } });
     expect(blocks()).toBe(0);
     expect(getByText("All day*")).toBeTruthy();
   });

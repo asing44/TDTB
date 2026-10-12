@@ -154,16 +154,25 @@ describe("U11 grouping maps the band/state model (KTD12)", () => {
   });
 });
 
-describe("U11 rows reveal actions on hover or keyboard focus", () => {
-  it("keeps the action cluster in the DOM and reveals it via hover/focus CSS", () => {
+describe("U11 row actions stay visible without a hover", () => {
+  it("keeps the action cluster in the DOM and visible at every width", () => {
     const h = makeHarness("ready");
     const { container } = h.ui(<Queue />);
     const row = rowNamed(container, "Press");
     expect(row.querySelector(".qrow__actions")).toBeTruthy();
-    // The reveal is CSS-driven (jsdom cannot hover), so pin the rules.
-    expect(APP_CSS).toMatch(/\.qrow__actions\s*\{[^}]*opacity:\s*0/);
-    expect(APP_CSS).toMatch(/\.qrow:hover\s+\.qrow__actions[\s\S]{0,80}opacity:\s*1/);
-    expect(APP_CSS).toMatch(/\.qrow:focus-within\s+\.qrow__actions[\s\S]{0,80}opacity:\s*1/);
+    // The cluster is always visible: no rule hides it at rest, and the
+    // hover/focus reveal layer is gone (removed 2026-10-12).
+    expect(APP_CSS).not.toMatch(/\.qrow__actions\s*\{[^}]*opacity:\s*0/);
+    expect(APP_CSS).not.toMatch(/\.qrow:hover\s+\.qrow__actions\s*\{/);
+    expect(APP_CSS).not.toMatch(/\.qrow:focus-within\s+\.qrow__actions\s*\{/);
+    expect(APP_CSS).not.toMatch(/\.qrow--focused\s+\.qrow__actions\s*\{/);
+    // Each layout band shows the cluster without a hover.
+    expect(APP_CSS).toMatch(
+      /@media\s*\(max-width:\s*1100px\)\s*\{\s*\.qrow__actions\s*\{[^}]*opacity:\s*1/,
+    );
+    expect(APP_CSS).toMatch(
+      /@media\s*\(min-width:\s*1280px\)[\s\S]*?\.qrow__actions,[\s\S]*?opacity:\s*1;/,
+    );
   });
 
   it("reveals actions when the row receives keyboard focus", () => {
@@ -283,11 +292,13 @@ describe("overflow containment (2026-10-10)", () => {
     expect(APP_CSS).toMatch(
       /@media\s*\(min-width:\s*1500px\)\s*\{\s*\.qrow\s*\{\s*grid-template-columns:\s*3px\s+minmax\(0,\s*1fr\)\s+auto\s+190px\s+340px\s*;/,
     );
-    // 1101-1279: a revealed row lets the cluster take the due track and hides
-    // the due text, so the title keeps room and nothing is painted over it.
+    // 1101-1279: the always-visible cluster drops to its own grid line, so
+    // the due text stays readable and nothing is painted over the title.
     expect(APP_CSS).toMatch(
-      /@media\s*\(min-width:\s*1101px\)\s+and\s+\(max-width:\s*1279px\)\s*\{[\s\S]*?\.qrow:hover\s+\.qrow__actions[\s\S]*?grid-column:\s*3\s*\/\s*5;[\s\S]*?\.qrow:hover\s+\.qrow__due[\s\S]*?visibility:\s*hidden;/,
+      /@media\s*\(min-width:\s*1101px\)\s+and\s+\(max-width:\s*1279px\)\s*\{[\s\S]*?\.qrow\s*\{[\s\S]*?grid-template-rows:\s*auto\s+auto;[\s\S]*?\.qrow__actions,[\s\S]*?grid-row:\s*2;[\s\S]*?opacity:\s*1;/,
     );
+    // Nothing hides the due text on hover any more.
+    expect(APP_CSS).not.toMatch(/visibility:\s*hidden/);
     expect(APP_CSS).toMatch(
       /@media\s*\(min-width:\s*1101px\)[\s\S]*\.qrow\s*\{[^}]*grid-template-columns:\s*3px\s+minmax\(0,\s*1fr\)\s+auto\s+190px\s+300px\s*;/,
     );
@@ -308,24 +319,21 @@ describe("overflow containment (2026-10-10)", () => {
     expect(APP_CSS).not.toMatch(/\.qrow__actions\s*\{[^}]*position:\s*absolute/);
     expect(APP_CSS).not.toMatch(/\.qrow__actions\s*\{[^}]*right:\s*352px/);
     expect(APP_CSS).not.toMatch(/\.qrow__actions\s*\{[^}]*right:\s*8px/);
-    // At rest the track is 0px (no dead band); a hovered, focused, or dropped
-    // row widens it to its natural width.
-    expect(APP_CSS).toMatch(/\.qrow__actions\s*\{[^}]*width:\s*0;/);
+    // The cluster is never zero-width: every desktop band lays it out at its
+    // natural width, always visible.
+    expect(APP_CSS).not.toMatch(/\.qrow__actions\s*\{[^}]*?(?<!min-)width:\s*0;/);
     expect(APP_CSS).toMatch(
-      /\.qrow:hover\s+\.qrow__actions,[\s\S]*?\{[^}]*width:\s*max-content/,
+      /@media\s*\(min-width:\s*1280px\)[\s\S]*?\.qrow__actions,[\s\S]*?\{[^}]*width:\s*auto/,
     );
     expect(APP_CSS).not.toMatch(/340px\s+max-content/);
   });
 
-  it("the hidden actions cluster cannot intercept a slider click", () => {
-    // Hidden (opacity 0) and inert until hover/focus, so the slider stays
-    // clickable even where the cluster shares the row.
-    expect(APP_CSS).toMatch(/\.qrow__actions\s*\{[^}]*pointer-events:\s*none/);
+  it("the always-visible cluster sits in flow, never over the slider", () => {
+    // The cluster owns its own grid track, so it cannot intercept a slider
+    // click; it is never hidden or made inert.
+    expect(APP_CSS).not.toMatch(/\.qrow__actions\s*\{[^}]*pointer-events:\s*none/);
     expect(APP_CSS).toMatch(
-      /\.qrow:hover\s+\.qrow__actions[\s\S]*?pointer-events:\s*auto/,
-    );
-    expect(APP_CSS).toMatch(
-      /\.qrow:focus-within\s+\.qrow__actions[\s\S]*?pointer-events:\s*auto/,
+      /@media\s*\(min-width:\s*1280px\)[\s\S]*?\.qrow__actions,[\s\S]*?pointer-events:\s*auto/,
     );
   });
 

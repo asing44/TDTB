@@ -1569,24 +1569,6 @@
 .qrow__time-adjustment:focus-within {
   border-top-color: var(--t-accent);
 }
-/* Flanking half-block trim. Deliberately quieter than the row's verbs — these
-   nudge a number, they don't act on the item. */
-.alloc-step {
-  flex: none;
-  width: 32px;
-  min-width: 32px;
-  /* These carry the 15-minute grid AND the only drag-free route to all-day,
-     so they hold the same 44px vertical floor as the row verbs. Kept narrow
-     so the time column stays compact. */
-  min-height: 44px;
-  padding: 0;
-  font-size: 15px;
-  line-height: 1;
-  color: var(--t-muted);
-}
-.alloc-step:disabled {
-  opacity: 0.35;
-}
 .qrow__actions {
   display: flex;
   align-items: center;
@@ -5131,27 +5113,8 @@ body {
   }
 }
 
-/* Row controls reveal on hover or keyboard focus. Kept in the DOM and
-   focusable (never display:none / visibility:hidden) so Tab still reaches
-   every verb; opacity alone hides them, and :focus-within is what makes the
-   keyboard path visible. */
-.qrow__actions {
-  opacity: 0;
-  transition: opacity 120ms ease;
-}
-
-.qrow:hover .qrow__actions {
-  opacity: 1;
-}
-
-.qrow:focus-within .qrow__actions {
-  opacity: 1;
-}
-
-.qrow--focused .qrow__actions {
-  opacity: 1;
-}
-
+/* Row controls stay visible at every width; the hover/focus reveal layer was
+   overridden by the later layout blocks and is gone (2026-10-12). */
 .qrow--focused {
   background: color-mix(in srgb, var(--band-color) 12%, var(--t-surface));
   outline: 2px solid var(--t-accent);
@@ -6541,41 +6504,8 @@ body {
     grid-row: 1;
   }
 
-  /* Zero-width at rest: the cluster is still in the DOM and focusable
-     (opacity and pointer-events only, never display:none), so Tab reaches
-     every verb. :focus-within widens the track as soon as one takes focus. */
-  .qrow__actions {
-    position: static;
-    top: auto;
-    right: auto;
-    left: auto;
-    z-index: auto;
-    transform: none;
-    width: 0;
-    min-width: 0;
-    overflow: hidden;
-    flex-wrap: nowrap;
-    align-items: center;
-    justify-content: flex-end;
-    padding-left: 0;
-    background: none;
-    opacity: 0;
-    pointer-events: none;
-    transition: opacity 120ms ease;
-  }
-
-  .qrow:hover .qrow__actions,
-  .qrow:focus-within .qrow__actions,
-  .qrow--focused .qrow__actions,
-  .qrow--dropped .qrow__actions {
-    width: max-content;
-    overflow: visible;
-    opacity: 1;
-    pointer-events: auto;
-  }
-
-  /* A revealed cluster narrows the title track; clamp a hovered title to one
-     line so the row keeps its height instead of growing to fit the wrap. */
+  /* A hovered title clamps to one line so the always-visible cluster cannot
+     grow the row. */
   .qrow:hover .qrow__name,
   .qrow:focus-within .qrow__name,
   .qrow--focused .qrow__name {
@@ -6601,22 +6531,15 @@ body {
 }
 
 /* 1101-1279px is too narrow for title + verbs + due + slider side by side. A
-   revealed row lets the cluster take the due track and hides the due text
-   for as long as the row is revealed, so the title keeps its room. The
-   slider track is never spanned. */
+   later block moves the always-visible cluster to its own grid line here, so
+   the due text stays readable and the title keeps its room. The slider track
+   is never spanned. */
 @media (min-width: 1101px) and (max-width: 1279px) {
   .qrow:hover .qrow__actions,
   .qrow:focus-within .qrow__actions,
   .qrow--focused .qrow__actions,
   .qrow--dropped .qrow__actions {
     grid-column: 3 / 5;
-  }
-
-  .qrow:hover .qrow__due,
-  .qrow:focus-within .qrow__due,
-  .qrow--focused .qrow__due,
-  .qrow--dropped .qrow__due {
-    visibility: hidden;
   }
 }
 
@@ -6884,7 +6807,7 @@ body {
   }
 
   .qrow {
-    grid-template-columns: 3px 96px minmax(0, 1fr) 170px 310px 520px;
+    grid-template-columns: 3px 96px minmax(0, 1fr) 170px 310px 540px;
     grid-template-rows: auto auto;
     row-gap: 1px;
   }
@@ -6962,6 +6885,31 @@ body {
   .qrow--focused .qrow__actions,
   .qrow--dropped .qrow__actions {
     grid-column: 6;
+  }
+
+  /* Mockup screen B action sizing: 13px labels on 31px, 1px-ruled buttons
+     with a 6px gap in the widened 540px track. The 44px touch floor applies
+     only below 1500px now, because the mockup's row is a 31px line. */
+  .qrow__actions {
+    gap: 6px;
+  }
+
+  .qrow__actions .planbtn {
+    height: 31px;
+    min-height: 31px;
+    padding: 6px 10px;
+    font-size: 13px;
+    border-width: 1px;
+    border-radius: 6px;
+  }
+
+  .qrow__actions .alloc-verb {
+    height: 31px;
+    min-height: 31px;
+    padding: 6px 10px;
+    font-size: 13px;
+    border-width: 1px;
+    border-radius: 6px;
   }
 }
 

@@ -103,13 +103,21 @@ describe("FEEDBACK-14: boundary behavior", () => {
 });
 
 describe("FEEDBACK-14: pointer controls and persistence consistency", () => {
-  it("pointer steppers share the ±15 min grid and persist the same value", () => {
+  it("the slider shares the ±15 min grid and persists the same value", () => {
     const h = makeHarness("ready");
-    const { getByRole } = h.ui(<Queue />);
-    fireEvent.click(getByRole("button", { name: "15 minutes more for Magic Mirror" }));
+    const { container } = h.ui(<Queue />);
+    // The row's −/+ steppers were removed (2026-10-12); the slider is the
+    // pointer control now and lands on the same half-block values.
+    const magic = container.querySelector(
+      'input[aria-label="Magic Mirror duration in 15-minute steps"]',
+    ) as HTMLInputElement;
+    fireEvent.input(magic, { target: { value: "3.5" } });
     expect(effectiveBlocks(h.store.getState(), "Magic Mirror")).toBe(3 + HALF_BLOCK);
     expect(h.store.getState().overrides["Magic Mirror"]?.blocks).toBe(3 + HALF_BLOCK);
-    fireEvent.click(getByRole("button", { name: "15 minutes less for Note Processing" }));
+    const note = container.querySelector(
+      'input[aria-label="Note Processing duration in 15-minute steps"]',
+    ) as HTMLInputElement;
+    fireEvent.input(note, { target: { value: "0.5" } });
     expect(effectiveBlocks(h.store.getState(), "Note Processing")).toBe(0.5);
     expect(h.store.getState().overrides["Note Processing"]?.blocks).toBe(0.5);
   });
