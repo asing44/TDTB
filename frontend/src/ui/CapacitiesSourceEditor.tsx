@@ -490,6 +490,8 @@ export function CapacitiesSourceEditor({
   const [conflict, setConflict] = useState<Conflict | null>(null);
   const [review, setReview] = useState<Review | null>(null);
   const [saving, setSaving] = useState(false);
+  // When the last save landed; the status line under the button reads from it.
+  const [savedAt, setSavedAt] = useState<Date | null>(null);
   const [reloading, setReloading] = useState(false);
   const [catalog, setCatalog] = useState<CapacitiesCatalog | null>(null);
   const [discovering, setDiscovering] = useState(false);
@@ -599,6 +601,7 @@ export function CapacitiesSourceEditor({
       const saved = await controller.saveCapacitiesSource(draft);
       setRecord(saved.source);
       setDraft(draftOf(saved.source));
+      setSavedAt(new Date());
     } catch (e) {
       const stale = capacitiesSourceConflictOf(e);
       if (stale !== null) {
@@ -633,6 +636,12 @@ export function CapacitiesSourceEditor({
       setReloading(false);
     }
   };
+
+  // Unsaved when the draft differs from what the server last returned.
+  const dirty =
+    draft !== null &&
+    record !== null &&
+    JSON.stringify(draft) !== JSON.stringify(draftOf(record));
 
   return (
     <section
@@ -849,6 +858,15 @@ export function CapacitiesSourceEditor({
             )}
 
             <div class="editor__actions setup__actions">
+              <span class="capacities-source__save-status" role="status">
+                {saving
+                  ? ""
+                  : dirty
+                    ? "Unsaved changes"
+                    : savedAt !== null && record !== null
+                      ? `Saved revision ${record.revision} at ${savedAt.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`
+                      : ""}
+              </span>
               <button
                 class="btn btn--primary"
                 onClick={() => void save()}

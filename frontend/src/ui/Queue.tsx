@@ -159,7 +159,6 @@ function StagingVerbs({ item, busy }: { item: AssignedItem; busy: boolean }) {
           <button
             class={`alloc-verb alloc-verb--${spec.verb}${armed ? " alloc-verb--armed" : ""}`}
             disabled={busy}
-            title={`${spec.aria}: ${item.name}`}
             aria-label={
               armed
                 ? `Confirm ${spec.aria.toLowerCase()}: ${item.name}`
