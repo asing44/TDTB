@@ -6986,3 +6986,540 @@ body {
     grid-column: 6;
   }
 }
+
+/* ---- Set up day: match Planning Mockups screen A (2026-10-12) -------------
+   Appended so these win the cascade without rewriting the blocks above. All
+   rules are scoped to the promoted screen (.day-setup-screen), the strip, or
+   the page header; the settings-drawer composition is untouched. Sizes and
+   spacing come from the mockup's inline styles. */
+
+/* Page: loose end + grid sit in one flex column; cards are 12px-radius
+   surfaces with 20/22 padding and sentence-case 16px headings. */
+.day-setup-screen {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  padding-top: 24px;
+}
+
+.day-setup-screen .setup-section {
+  margin: 0;
+  padding: 20px 22px;
+  border: 1px solid var(--t-border);
+  border-radius: 12px;
+  background: var(--t-surface);
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.day-setup-screen .setup-section__head {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.day-setup-screen .setup-section__head h3,
+.day-setup-screen .setup-section--prompts .setup-section__head h3 {
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.day-setup-screen .setup-section__hint {
+  margin: 0;
+  font-size: 13px;
+}
+
+.day-setup-screen .setup-section__head-action {
+  font-size: 13px;
+  color: var(--t-accent-strong);
+}
+
+.day-setup-screen .setup-section__body {
+  gap: 18px;
+}
+
+.day-setup-screen .setup-section--anchors .setup-section__body {
+  gap: 12px;
+}
+
+.day-setup-screen__main {
+  gap: 20px;
+}
+
+@media (min-width: 1101px) {
+  .day-setup-screen__grid {
+    grid-template-columns: minmax(0, 1fr) 400px;
+    gap: 24px;
+  }
+}
+
+/* Loose end banner: small answer buttons, as in the mockup. */
+@media (min-width: 1101px) {
+  .loose-end .btn {
+    min-height: 0;
+    padding: 6px 12px;
+    border-width: 1px;
+    border-radius: 6px;
+    font-size: 13px;
+    font-weight: 400;
+  }
+
+  .loose-end .btn--primary {
+    border-color: var(--t-accent);
+  }
+}
+
+/* Frame fields: boxed controls, mono times, custom chevron on selects. */
+.day-setup-screen .frame-fields .field select,
+.day-setup-screen .frame-fields .field input {
+  padding: 8px 10px;
+  border: 1px solid var(--t-border);
+  border-radius: 6px;
+  background-color: light-dark(#fff, var(--t-surface-2));
+  font-size: 14px;
+}
+
+.day-setup-screen .frame-fields .field input[type="time"] {
+  font-family: var(--font-mono);
+  font-size: 13px;
+}
+
+.day-setup-screen .frame-fields .field input[type="time"]::-webkit-calendar-picker-indicator {
+  opacity: 0.45;
+}
+
+.day-setup-screen .frame-fields .field select,
+.day-setup-screen .field--stacked .field__controls select {
+  appearance: none;
+  padding-right: 28px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%236b6862' stroke-width='1.5'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+}
+
+.day-setup-screen .frame-fields .field label {
+  font-size: 12px;
+}
+
+/* Day strip: whole-day ruler, outlined frame lane, captioned lanes. */
+.day-strip {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 0;
+  padding-top: 0;
+}
+
+.day-strip__axis {
+  height: 16px;
+}
+
+.day-strip__tick {
+  transform: none;
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.day-strip__frame {
+  height: 30px;
+  border: 0;
+  border-radius: 6px;
+  background: var(--t-surface-2);
+  box-shadow: none;
+}
+
+.day-strip__frame-box {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  box-sizing: border-box;
+  border: 1.5px solid var(--t-text);
+  border-radius: 6px;
+}
+
+.day-strip__frame-label {
+  top: -20px;
+  padding: 0 3px;
+  transform: translateX(-50%);
+  background: var(--t-surface);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 16px;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--t-text);
+}
+
+.day-strip__caption {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 20px;
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--t-muted);
+}
+
+.day-strip__caption .frame-summary__blocks {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  align-self: center;
+  min-height: 0;
+  margin-left: auto;
+}
+
+.day-strip__caption .field__range {
+  flex: none;
+  width: 140px;
+  min-width: 0;
+  min-height: 0;
+  height: 18px;
+  margin: 0;
+}
+
+.day-strip__lane {
+  height: 30px;
+  margin-top: 0;
+  border-radius: 6px;
+}
+
+/* The Mint lane is hatched wherever Mint cannot go: outside the frame, and
+   (below) on slots a calendar wall blocks. The frame's free span sits on top
+   as a plain lane. */
+.day-strip__lane--mint {
+  background: repeating-linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--t-text) 8%, var(--t-surface-2)) 0 4px,
+    var(--t-surface-2) 4px 8px
+  );
+}
+
+.day-strip__free {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  background: var(--t-surface-2);
+  pointer-events: none;
+}
+
+.day-strip__empty {
+  position: relative;
+  line-height: 30px;
+}
+
+.strip-slot {
+  top: 2px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid var(--t-border);
+  border-radius: 4px;
+  z-index: 1;
+}
+
+.strip-slot__label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.strip-slot--selected {
+  border-width: 0;
+  border-radius: 0;
+  box-shadow: inset -1px 0 0 color-mix(in srgb, #fff 40%, transparent);
+}
+
+.strip-slot--selected.strip-slot--run-first {
+  border-top-left-radius: 4px;
+  border-bottom-left-radius: 4px;
+}
+
+.strip-slot--selected.strip-slot--run-last {
+  border-top-right-radius: 4px;
+  border-bottom-right-radius: 4px;
+  box-shadow: none;
+}
+
+.strip-slot--blocked {
+  border-width: 0;
+  border-radius: 0;
+  background: repeating-linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--t-text) 8%, var(--t-surface-2)) 0 4px,
+    var(--t-surface-2) 4px 8px
+  );
+}
+
+.strip-run {
+  position: absolute;
+  top: 2px;
+  bottom: 2px;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  font-size: 11px;
+  white-space: nowrap;
+  pointer-events: none;
+  color: var(--t-muted);
+}
+
+.strip-run--selected {
+  font-weight: 500;
+  color: color-mix(in srgb, var(--c-minting) 20%, #000);
+}
+
+.day-strip__lane--anchors {
+  min-height: 30px;
+}
+
+.strip-anchor {
+  height: 26px;
+  max-width: none;
+  box-sizing: border-box;
+  padding: 0 2px;
+  border: 0;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--t-text) 62%, var(--t-surface-2));
+  color: var(--t-surface);
+  font-size: 11px;
+  text-align: center;
+}
+
+.strip-anchor--tiny {
+  background: color-mix(in srgb, var(--t-text) 42%, var(--t-surface-2));
+}
+
+.strip-anchor--not-counted {
+  border: 1px dashed color-mix(in srgb, var(--t-text) 45%, var(--t-surface-2));
+  background: color-mix(in srgb, var(--t-text) 14%, var(--t-surface-2));
+  color: var(--t-muted);
+}
+
+.strip-anchor--skipped {
+  border-style: dashed;
+  background: repeating-linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--t-text) 30%, var(--t-surface-2)) 0 3px,
+    color-mix(in srgb, var(--t-text) 16%, var(--t-surface-2)) 3px 6px
+  );
+  opacity: 0.7;
+}
+
+.day-strip__note {
+  margin: 0;
+}
+
+/* Mint summary: a plain amber bar. The Mint blocks slider lives on the Mint
+   caption row above, so the bar is text plus Reset to config. */
+.frame-summary {
+  margin-top: 0;
+  padding: 10px 14px;
+  gap: 12px;
+  border-radius: 8px;
+  font-size: 13px;
+}
+
+.frame-summary__reset {
+  margin-left: auto;
+  font-size: 13px;
+}
+
+/* Anchors card: tiles with mono time, dashed not-counted pills. */
+.day-setup-screen .anchor-chip {
+  padding: 10px 12px;
+  border-color: var(--t-border);
+  border-width: 1px;
+  border-radius: 8px;
+  background: transparent;
+  align-items: center;
+}
+
+.day-setup-screen .anchor-chip__meta {
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.day-setup-screen .not-counted {
+  margin-top: 0;
+  font-size: 13px;
+}
+
+.day-setup-screen .not-counted__chip {
+  padding: 4px 10px;
+  border: 1px dashed var(--t-border);
+  background: transparent;
+  font-size: 13px;
+}
+
+/* Morning prompts card. */
+.day-setup-screen .setup-section--prompts {
+  gap: 16px;
+}
+
+.day-setup-screen .setup-section--prompts .field__labelrow label {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--t-text);
+}
+
+.day-setup-screen .setup-section--prompts .field__tag {
+  font-size: 11px;
+}
+
+.day-setup-screen .setup-section--prompts .setup-section__body {
+  gap: 16px;
+}
+
+.day-setup-screen .setup-section--prompts .field--stacked {
+  margin-bottom: 0;
+}
+
+.day-setup-screen .setup-section--prompts .field__labelrow {
+  margin-bottom: 8px;
+}
+
+.day-setup-screen .setup-section--prompts .field__controls {
+  align-items: stretch;
+}
+
+.day-setup-screen .setup-section--prompts .field__controls select,
+.day-setup-screen .setup-section--prompts .field__controls input,
+.day-setup-screen .setup-section--prompts textarea {
+  padding: 8px 10px;
+  border: 1px solid var(--t-border);
+  border-radius: 6px;
+  background-color: light-dark(#fff, var(--t-surface-2));
+  font-size: 14px;
+}
+
+.day-setup-screen .setup-section--prompts textarea {
+  min-height: 44px;
+  line-height: 1.4;
+}
+
+.day-setup-screen .setup-section--prompts .live-micro__status {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  font-size: 12px;
+  color: var(--t-muted);
+}
+
+.day-setup-screen .setup-section--prompts .prompts-live {
+  gap: 8px;
+  margin-bottom: 0;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--t-border);
+}
+
+.day-setup-screen .setup-section--prompts .prompt-exports {
+  padding-top: 16px;
+  border-top: 1px solid var(--t-border);
+}
+
+.day-setup-screen .setup-section--prompts .prompt-exports .field__label {
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.day-setup-screen .setup-section--prompts .prompt-optin {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.day-setup-screen .custom-prompt__open {
+  padding: 10px;
+  border-radius: 8px;
+  color: var(--t-text);
+}
+
+@media (min-width: 1101px) {
+  .day-setup-screen .setup-section--prompts .field__controls .btn,
+  .day-setup-screen .setup-section--prompts .prompt-exports .btn {
+    min-height: 0;
+    padding: 8px 12px;
+    border-width: 1px;
+    border-radius: 6px;
+    font-size: 13px;
+    font-weight: 400;
+  }
+}
+
+/* Header: 17px/600 date, mono step numerals, amber refreshing pill. */
+.app-header__day {
+  font-size: 17px;
+  font-weight: 600;
+}
+
+.app-stepper__step {
+  gap: 8px;
+  padding: 6px 12px;
+  font-size: 13px;
+}
+
+.app-stepper__mark {
+  font-family: var(--font-mono);
+}
+
+.app-stepper__sep {
+  width: 24px;
+}
+
+.health-pill--refreshing {
+  border-color: color-mix(in srgb, var(--c-minting) 35%, var(--t-border));
+  background: color-mix(in srgb, var(--c-minting) 14%, var(--t-surface));
+  color: color-mix(in srgb, var(--c-minting) 45%, var(--t-text));
+  font-size: 13px;
+}
+
+.health-pill--refreshing::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--c-minting);
+}
+
+/* Footer: quiet Saved/Undo text, roomier primary. */
+.footer--setup .footer__saved {
+  font-size: 13px;
+}
+
+.footer--setup .footer__undo {
+  color: var(--t-text);
+  font-size: 13px;
+  text-decoration: none;
+}
+
+.footer--setup .footer__undo:hover {
+  text-decoration: underline;
+}
+
+@media (min-width: 1101px) {
+  .footer--setup .footer__continue {
+    min-height: 0;
+    padding: 10px 18px;
+    border-radius: 8px;
+    font-size: 14px;
+  }
+}
+
+@media (min-width: 1101px) {
+  .day-setup-screen .frame-fields {
+    grid-template-columns: minmax(0, 1.5fr) repeat(3, minmax(0, 1fr));
+  }
+}

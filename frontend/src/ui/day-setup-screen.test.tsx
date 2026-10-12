@@ -152,12 +152,20 @@ describe("U12 Set up day composition", () => {
     expect(h.store.getState().ui.editorAnchor).toBe("Sudsing");
   });
 
-  it("keeps out-of-frame anchors off the strip and opens the editor from their chip", () => {
+  it("draws out-of-frame anchors dimmed on the strip and opens the editor from their chip", () => {
     const h = screenHarness("ready", 8, { frameStart: "13:30" });
     const r = h.ui(<App />);
-    expect(r.container.querySelector('[data-anchor-id="Morning Routine"]')).toBeNull();
-    expect(r.container.querySelector('[data-anchor-id="Sudsing"]')).toBeTruthy();
-    fireEvent.click(r.getByRole("button", { name: /Morning Routine.*outside frame/ }));
+    expect(
+      r.container
+        .querySelector('[data-anchor-id="Morning Routine"]')
+        ?.classList.contains("strip-anchor--not-counted"),
+    ).toBe(true);
+    const sudsing = r.container.querySelector('[data-anchor-id="Sudsing"]') as HTMLElement;
+    expect(sudsing.classList.contains("strip-anchor--not-counted")).toBe(false);
+    const chip = (Array.from(r.container.querySelectorAll(".not-counted__chip")) as HTMLElement[]).find((el) =>
+      /Morning Routine.*outside frame/.test(el.textContent ?? ""),
+    ) as HTMLElement;
+    fireEvent.click(chip);
     expect(h.store.getState().ui.editorAnchor).toBe("Morning Routine");
   });
 
@@ -170,8 +178,10 @@ describe("U12 Set up day composition", () => {
     const h = screenHarness("ready", 8, { frameStart: "13:30", mint });
     const r = h.ui(<App />);
     expect(slotOf(r, "mint:early")).toBeNull();
-    expect(slotOf(r, "mint:edge").style.left).toBe("0%");
-    expect(parseFloat(slotOf(r, "mint:edge").style.width)).toBeCloseTo((15 / 570) * 100, 1);
+    // The strip spans the whole day (8a-midnight), so the clipped block starts
+    // at the frame edge, 5.5h into a 16h ruler, and keeps its 15 clipped minutes.
+    expect(parseFloat(slotOf(r, "mint:edge").style.left)).toBeCloseTo((330 / 960) * 100, 2);
+    expect(parseFloat(slotOf(r, "mint:edge").style.width)).toBeCloseTo((15 / 960) * 100, 1);
     expect(r.getByText("1 Mint block outside the frame")).toBeTruthy();
   });
 

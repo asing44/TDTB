@@ -3,6 +3,7 @@
    dashed "Not counted today" row with the reason. */
 
 import { display12h } from "../../model/time";
+import { compactClock } from "./compactTime";
 
 export interface AnchorChip {
   id: string;
@@ -47,7 +48,7 @@ export function AnchorsCard(props: AnchorsCardProps) {
             >
               <span class="anchor-chip__name">{anchor.name}</span>
               <span class="anchor-chip__meta">
-                {display12h(anchor.time)} · {anchor.blocks}
+                {compactClock(anchor.time)} · {anchor.blocks}
               </span>
             </button>
           ))}
@@ -64,7 +65,7 @@ export function AnchorsCard(props: AnchorsCardProps) {
                 onClick={() => props.onEdit(anchor.id)}
                 key={anchor.id}
               >
-                {anchor.name} {display12h(anchor.time)} · {anchor.reason}
+                {anchor.name} {compactClock(anchor.time)} · {anchor.reason}
               </button>
             ))
           )}

@@ -437,16 +437,16 @@ export function DaySetupPanel({
 
     return (
       <div class="settings-panel settings-panel--day day-setup-screen">
-        {micro.pendingConfirm && (
-          <LooseEndBanner
-            pending={micro.pendingConfirm}
-            onAnswer={(entry, done) =>
-              void controller.resolveLooseEnd({ date: entry.date, id: entry.id }, done)
-            }
-          />
-        )}
         <div class="day-setup-screen__grid">
           <div class="day-setup-screen__main">
+            {micro.pendingConfirm && (
+              <LooseEndBanner
+                pending={micro.pendingConfirm}
+                onAnswer={(entry, done) =>
+                  void controller.resolveLooseEnd({ date: entry.date, id: entry.id }, done)
+                }
+              />
+            )}
             <section
               class="setup-section setup-section--frame"
               data-settings-section="frame"
@@ -530,6 +530,26 @@ export function DaySetupPanel({
                   onToggleSession={toggleMintSession}
                   anchors={stripAnchors}
                   onEditAnchor={editAnchor}
+                  mintControl={
+                    availableMintSessions.length > 0 ? (
+                      <label class="frame-summary__blocks" for="setup-mint-blocks">
+                        <span>Mint blocks</span>
+                        <input
+                          id="setup-mint-blocks"
+                          type="range"
+                          class="field__range"
+                          min={0}
+                          max={mintSelectionMax}
+                          step={1}
+                          value={selectedMintSessionIds.length}
+                          aria-valuetext={`${selectedMintSessionIds.length} of ${mintSelectionMax} blocks`}
+                          onInput={(e) =>
+                            setMintSessionCount(Number((e.target as HTMLInputElement).value))
+                          }
+                        />
+                      </label>
+                    ) : null
+                  }
                 />
 
                 {availableMintSessions.length > 0 && (
@@ -541,20 +561,6 @@ export function DaySetupPanel({
                     <span class="frame-summary__free">
                       Only {freeSlots} free slot{freeSlots === 1 ? "" : "s"} inside the frame today.
                     </span>
-                    <label class="frame-summary__blocks" for="setup-mint-blocks">
-                      <span>Mint blocks</span>
-                      <input
-                        id="setup-mint-blocks"
-                        type="range"
-                        class="field__range"
-                        min={0}
-                        max={mintSelectionMax}
-                        step={1}
-                        value={selectedMintSessionIds.length}
-                        aria-valuetext={`${selectedMintSessionIds.length} of ${mintSelectionMax} blocks`}
-                        onInput={(e) => setMintSessionCount(Number((e.target as HTMLInputElement).value))}
-                      />
-                    </label>
                     <button type="button" class="btn frame-summary__reset" onClick={resetAllotment}>
                       Reset to config
                     </button>

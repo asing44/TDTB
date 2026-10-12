@@ -114,7 +114,7 @@ export function PromptsCard(props: PromptsCardProps) {
         </div>
 
         <div class="field field--stacked">
-          <div class="field__labelrow"><label for="cap-intention">Intention</label><span class="field__tag">local draft</span></div>
+          <div class="field__labelrow"><label for="cap-intention">Intention</label><span class="field__tag">text → daily note</span></div>
           <textarea
             id="cap-intention"
             class="cap-intention"
@@ -127,7 +127,7 @@ export function PromptsCard(props: PromptsCardProps) {
           />
         </div>
         <div class="field field--stacked">
-          <div class="field__labelrow"><label for="cap-meegy">For Meegy</label><span class="field__tag">local draft</span></div>
+          <div class="field__labelrow"><label for="cap-meegy">For Meegy</label><span class="field__tag">text → daily note</span></div>
           <textarea
             id="cap-meegy"
             value={props.captures.forMeegy}
@@ -136,7 +136,7 @@ export function PromptsCard(props: PromptsCardProps) {
           />
         </div>
         <div class="field field--stacked">
-          <div class="field__labelrow"><label for="cap-stoic">Stoic</label><span class="field__tag">local draft</span></div>
+          <div class="field__labelrow"><label for="cap-stoic">Stoic</label><span class="field__tag">text → daily note</span></div>
           <textarea
             id="cap-stoic"
             value={props.captures.stoic}
