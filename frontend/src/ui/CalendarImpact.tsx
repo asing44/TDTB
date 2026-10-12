@@ -20,6 +20,7 @@
 import { useCallback, useEffect, useRef, useState } from "preact/hooks";
 import { useApp, useAppState } from "./context";
 import { effectiveAnchoredBlocks } from "../store/store";
+import { displayAnchored } from "../model/calendarEvents";
 import { blocksLabel, display12h, formatBlockAmount, toMinutes } from "../model/time";
 import type { AnchoredBlock, CalendarCapacityClass } from "../model/types";
 
@@ -198,7 +199,7 @@ export function CalendarImpact({ inline = false }: { inline?: boolean }) {
   const frameLen = Math.max(1, frameEnd - frameStart);
   const pct = (minutes: number) => `${((minutes - frameStart) / frameLen) * 100}%`;
 
-  const all = effectiveAnchoredBlocks(s);
+  const all = displayAnchored(effectiveAnchoredBlocks(s));
   const ignored = all.filter(
     (row) => row.kind === "calendar" && capacityClass(row) === "ignored",
   );
