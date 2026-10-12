@@ -16,6 +16,7 @@
 
 import type {
   Adapter,
+  AnchoredStartSaveResult,
   DurationMemoryResetResult,
   DurationMemorySaveResult,
   SequenceContext,
@@ -75,6 +76,7 @@ import {
   emptyTagCatalog,
   projectCapacity,
   projectCommitReport,
+  projectAnchoredStartSave,
   projectDurationMemoryReset,
   projectDurationMemorySave,
   projectFixedInputs,
@@ -453,6 +455,15 @@ export class ApiAdapter implements Adapter {
   async resetDurationMemory(identity: string): Promise<DurationMemoryResetResult> {
     return projectDurationMemoryReset(
       await this.post("/duration-memory/reset", { identity }),
+    );
+  }
+
+  /** Persist one anchor's start to the tracked repo config: exactly ONE
+      token-guarded non-billed POST. The wire time is the cockpit's 24h
+      HH:MM; the server normalizes it to the config's "5:45 PM" style. */
+  async saveAnchoredStart(block: string, start: string): Promise<AnchoredStartSaveResult> {
+    return projectAnchoredStartSave(
+      await this.post("/config/anchored-blocks/start", { block, start }),
     );
   }
 

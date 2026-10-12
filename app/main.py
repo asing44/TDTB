@@ -89,6 +89,7 @@ import capacities_structure_titles  # noqa: E402
 import exclusion_settings  # noqa: E402
 import tag_exclusions  # noqa: E402
 import app_config  # noqa: E402
+import config_write  # noqa: E402
 import artifact_source  # noqa: E402
 
 VAULT_ROOT_ENV = "TDTB_VAULT_ROOT"
@@ -1443,6 +1444,16 @@ class DurationSaveRequest(BaseModel):
                 f"divisible by {duration_memory.DURATION_STEP_MINUTES}"
             )
         return value
+
+
+class AnchoredStartSaveRequest(BaseModel):
+    """/config/anchored-blocks/start body: one config anchored block by name
+    plus its new start (``HH:MM`` 24h or ``H:MM AM/PM``). Time validity is
+    decided by ``config_write.normalize_start`` so the route can return a
+    bounded 422 with the writer's own message."""
+
+    block: str
+    start: str
 
 
 class RuntimeActionRequest(BaseModel):
@@ -4551,6 +4562,54 @@ def create_app(vault_root: str | Path | None = None) -> FastAPI:
                     row, presets, fm_by_path.get(row.get("path")), memory={}
                 )
         return None
+
+    @app.post("/config/anchored-blocks/start", dependencies=[Depends(require_token)])
+    def post_anchored_block_start(body: AnchoredStartSaveRequest) -> dict:
+        """Persist a changed Start for ONE anchored block to the tracked repo
+        config (``config/tdtb.json``), touching nothing else in the file.
+
+        This is the only route that edits the repo config, and only this one
+        value. Unknown names (including calendar-sourced rows, which are not
+        config rows) are 404, an unparseable time is 422, and a machine-local
+        override that defines ``anchored_blocks`` is 409 because it would
+        shadow the saved value. The config is re-read from disk on every use,
+        so the running app sees the change without a restart."""
+        try:
+            return config_write.save_anchored_start(body.block, body.start)
+        except config_write.InvalidStartError as exc:
+            raise HTTPException(
+                status_code=422,
+                detail={"code": "anchored_start_invalid", "message": str(exc)},
+            ) from exc
+        except config_write.UnknownBlockError as exc:
+            raise HTTPException(
+                status_code=404,
+                detail={"code": "anchored_block_not_found", "message": str(exc)},
+            ) from exc
+        except config_write.ShadowedByLocalConfigError as exc:
+            raise HTTPException(
+                status_code=409,
+                detail={"code": "anchored_blocks_shadowed", "message": str(exc)},
+            ) from exc
+        except config_write.NotEditableError as exc:
+            raise HTTPException(
+                status_code=409,
+                detail={"code": "anchored_block_not_editable", "message": str(exc)},
+            ) from exc
+        except OSError as exc:
+            # Never return raw internals (they carry absolute paths); the real
+            # cause stays server-side and the original file is untouched.
+            print(f"anchored start save failed: {exc}", file=sys.stderr)
+            raise HTTPException(
+                status_code=500,
+                detail={
+                    "code": "config_write_error",
+                    "message": (
+                        "The config could not be written; "
+                        "the existing file was preserved."
+                    ),
+                },
+            ) from exc
 
     @app.post("/duration-memory/save", dependencies=[Depends(require_token)])
     def post_duration_save(body: DurationSaveRequest) -> dict:

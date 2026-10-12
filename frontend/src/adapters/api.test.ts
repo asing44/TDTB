@@ -739,6 +739,39 @@ describe("duration-memory mutations (MVP)", () => {
   });
 });
 
+describe("anchored start save (config write)", () => {
+  it("POSTs block + 24h start once with the token and projects the normalized start to 24h", async () => {
+    route("/config/anchored-blocks/start", {
+      block: "Sudsing",
+      start: "6:15 PM",
+      previous_start: "5:45 PM",
+    });
+    const a = new ApiAdapter();
+    const r = await a.saveAnchoredStart("Sudsing", "18:15");
+    expect(r).toEqual({ block: "Sudsing", start: "18:15", previousStart: "17:45" });
+    const post = calls.find((c) => c.path === "/config/anchored-blocks/start");
+    expect(post?.init?.method).toBe("POST");
+    expect((post!.init!.headers as any)["X-TDTB-Token"]).toBe("tok-123");
+    expect(JSON.parse(post!.init!.body as string)).toEqual({ block: "Sudsing", start: "18:15" });
+    expect(calls.filter((c) => c.init?.method === "POST").length).toBe(1);
+    expect(calls.some((c) => c.path === "/day-setup" || c.path === "/sequence")).toBe(false);
+  });
+
+  it("surfaces the server message for 404 / 409 / 422", async () => {
+    for (const [status, message] of [
+      [404, "anchored block 'X' is not in the repo config"],
+      [409, "The machine-local config.json overrides anchored_blocks"],
+      [422, "not a valid time: 'later'"],
+    ] as const) {
+      route("/config/anchored-blocks/start", { detail: { code: "x", message } }, status);
+      const err = await new ApiAdapter().saveAnchoredStart("X", "18:15").catch((e) => e);
+      expect(err).toBeInstanceOf(ApiError);
+      expect(err.status).toBe(status);
+      expect(err.message).toBe(message);
+    }
+  });
+});
+
 describe("tag exclusion settings routes", () => {
   const TAG_A = "5a25370b-f9a0-40cf-bc3a-0cab4744913c";
   const TAG_B = "0d194525-c5a1-4af5-bb62-202b83006b5e";

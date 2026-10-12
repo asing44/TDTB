@@ -410,6 +410,27 @@ export class Controller {
     await this.refreshCapacity();
   }
 
+  /** Persist an anchor's start to the tracked repo config (every day the
+      anchor runs), then re-read planning inputs through the same refresh path
+      as an explicit source refresh so the configured start equals the saved
+      one. A refused write (404/409/422) throws the adapter error and leaves
+      state untouched. `reloaded` is true only when the refreshed inputs now
+      carry the saved start; otherwise the caller must say the config was
+      written but the view is stale. Today's override is not edited here. */
+  async saveAnchoredStart(
+    id: string,
+    start: string,
+  ): Promise<{ reloaded: boolean; refreshError: string | null }> {
+    const block = this.getState().inputs?.anchored.find((a) => a.id === id);
+    if (!block || block.kind === "calendar") {
+      throw new Error(`'${id}' is not a config anchor, so its time cannot be saved`);
+    }
+    await this.adapter.saveAnchoredStart(block.name, start);
+    await this.refreshSources();
+    const now = this.getState().inputs?.anchored.find((a) => a.id === id)?.start ?? null;
+    return { reloaded: now === start, refreshError: this.getState().refresh.error };
+  }
+
   /** U5: PATCH the local prompt drafts. Captures-only, so the server treats
       it as a prompt-only write that never confirms the day. */
   async savePromptDrafts(patch: Record<string, string>): Promise<void> {

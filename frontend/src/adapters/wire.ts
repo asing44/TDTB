@@ -79,6 +79,7 @@ import type {
 } from "../model/types";
 import { blocksLabel } from "../model/time";
 import type {
+  AnchoredStartSaveResult,
   DurationMemoryResetResult,
   DurationMemorySaveResult,
 } from "./adapter";
@@ -918,6 +919,18 @@ export function projectDurationMemorySave(wire: Wire): DurationMemorySaveResult 
     preserves authoritative state instead of applying zero. */
 export function projectDurationMemoryReset(wire: Wire): DurationMemoryResetResult {
   return projectDurationMemoryResult(wire);
+}
+
+/** POST /config/anchored-blocks/start response: the server echoes the
+    normalized "5:45 PM"-style start; the cockpit works in 24h. */
+export function projectAnchoredStartSave(wire: Wire): AnchoredStartSaveResult {
+  const start = to24h(wire.start);
+  if (!start) throw new Error("anchored start save returned no usable start");
+  return {
+    block: String(wire.block ?? ""),
+    start,
+    previousStart: to24h(wire.previous_start),
+  };
 }
 
 // -- per-endpoint projections ------------------------------------------------

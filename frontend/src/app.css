@@ -7362,6 +7362,107 @@ body {
   font-size: 13px;
 }
 
+/* Anchor drag on the Day strip: counted config anchors move horizontally. The
+   live time label sits in the Anchors caption row so the lane's overflow clip
+   never hides it. */
+.day-strip__caption {
+  position: relative;
+}
+
+.strip-anchor--movable {
+  cursor: grab;
+  touch-action: pan-y;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.strip-anchor--dragging {
+  cursor: grabbing;
+  z-index: 2;
+  outline: 2px solid var(--t-accent);
+  outline-offset: 1px;
+  box-shadow: 0 2px 8px color-mix(in srgb, var(--t-text) 28%, transparent);
+}
+
+.day-strip__drag-label {
+  position: absolute;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  padding: 1px 10px;
+  border-radius: 999px;
+  background: var(--t-text);
+  color: var(--t-surface);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 16px;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+/* Anchors card: a tile is the chip plus, once the start differs from the
+   configured one, its Today only / Saved state with Save time and Reset. */
+.anchor-tile {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.anchor-time {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 0 4px;
+  font-size: 12px;
+}
+
+.anchor-time__row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+}
+
+.anchor-time__state {
+  font-weight: 600;
+}
+
+.anchor-time__state--today {
+  color: var(--t-text);
+}
+
+.anchor-time__state--saved {
+  color: var(--t-accent-strong);
+}
+
+.anchor-time__config,
+.anchor-time__hint {
+  color: var(--t-muted);
+}
+
+.anchor-time__actions {
+  display: flex;
+  gap: 6px;
+}
+
+.anchor-time .anchor-time__btn {
+  padding: 3px 12px;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.anchor-time .anchor-time__btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.not-counted__item {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+}
+
 /* Morning prompts card. */
 .day-setup-screen .setup-section--prompts {
   gap: 16px;
