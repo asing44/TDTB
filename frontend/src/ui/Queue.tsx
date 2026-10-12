@@ -52,6 +52,7 @@ import {
   HALF_BLOCK,
   MAX_BLOCKS,
   MIN_BLOCKS,
+  clampDisplayBlocks,
   clampHalfBlocks,
 } from "../model/allocator";
 import { stripeColor, trackFor, trackGradient } from "../model/bands";
@@ -487,7 +488,10 @@ function Row({
   const kind = kindLabel(item, structureTitles);
   const urgency = normalizeUrgency(item);
   const due = dueLabel(item.deadline, s.inputs?.validDate ?? "");
-  const blocks = effectiveBlocks(s, item.id);
+  // Display clamp only: a stored override above the slider's range (e.g. 12
+  // blocks saved before MAX_BLOCKS dropped to 10) must not show a readout the
+  // thumb cannot reach. The override in state is left untouched.
+  const blocks = clampDisplayBlocks(effectiveBlocks(s, item.id));
   const included = s.overrides[item.id]?.included ?? true;
   const overridden = s.overrides[item.id]?.blocks != null;
   // Duration-memory MVP: three distinct provenance states — "memory" (a
@@ -617,6 +621,29 @@ function Row({
       <div class="qrow__time">
         {included ? (
           <>
+            {/* The slider's own notch is a 30-minute block; these are the
+                half-block trim the slider can't express without becoming
+                twice as twitchy to drag. They snap to the HALF-block grid —
+                routing them through clampBlocks made − a no-op at every
+                integer and turned + into a 30-minute jump. */}
+            <Tooltip
+              label={blocks <= HALF_BLOCK ? "All day (no capacity)" : "−15 min"}
+            >
+              <button
+                class="iconbtn alloc-step"
+                aria-label={
+                  blocks <= HALF_BLOCK
+                    ? `Make ${item.name} all day`
+                    : `15 minutes less for ${item.name}`
+                }
+                disabled={blocks <= MIN_BLOCKS}
+                onClick={() =>
+                  controller.setOverride(item.id, included, clampHalfBlocks(blocks - HALF_BLOCK))
+                }
+              >
+                −
+              </button>
+            </Tooltip>
             <span class="alloc-track" style={{ "--trackbg": trackGradient(track) }}>
               <input
                 type="range"
@@ -624,8 +651,8 @@ function Row({
                 /* Half-block notches, all the way down to All day: 30min →
                    15min → All day. The row no longer relocates when it hits
                    zero (see bandedRows), so the bottom of the track is a
-                   place you can safely drag to. The notches are the same
-                   half-block grid the row's arrow keys walk. */
+                   place you can safely drag to. Same grid as the ± steppers,
+                   so the two controls can't disagree. */
                 min={MIN_BLOCKS}
                 max={MAX_BLOCKS}
                 step={HALF_BLOCK}
@@ -648,6 +675,18 @@ function Row({
                 <span class="alloc-track__mark" style={{ left: `${track.markPct}%` }} />
               )}
             </span>
+            <Tooltip label="+15 min">
+              <button
+                class="iconbtn alloc-step"
+                aria-label={`15 minutes more for ${item.name}`}
+                disabled={blocks >= MAX_BLOCKS}
+                onClick={() =>
+                  controller.setOverride(item.id, included, clampHalfBlocks(blocks + HALF_BLOCK))
+                }
+              >
+                +
+              </button>
+            </Tooltip>
             <span
               class={`alloc-track__value ${track.pastBudget ? "alloc-track__value--over" : ""}`}
               aria-live="polite"

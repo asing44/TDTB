@@ -22,9 +22,9 @@ import { normalizeUrgency } from "./urgency";
 import { formatBlockAmount } from "./time";
 
 /** Slider bounds. 0 = all day (visible, no capacity — locked decision 7);
-    16 blocks = 8h, past any single sane work item. */
+    10 blocks = 5h, past any single sane work item. */
 export const MIN_BLOCKS = 0;
-export const MAX_BLOCKS = 16;
+export const MAX_BLOCKS = 10;
 /** Locked decision 7: 30-minute steps, i.e. one block per notch. */
 export const BLOCK_STEP = 1;
 /** The ±15min row steppers shape BETWEEN the slider's notches, so they snap to
@@ -86,6 +86,15 @@ export function clampBlocks(blocks: number): number {
 /** Clamp a stepper value to the half-block (15-minute) grid. */
 export function clampHalfBlocks(blocks: number): number {
   return clampBlocksTo(blocks, HALF_BLOCK);
+}
+
+/** Range clamp for DISPLAY only — never snaps the grid, so an exact-editor
+    value like 35 minutes (1.1667 blocks) survives. It exists so a stored
+    override above the slider's range (e.g. 12 blocks saved before MAX_BLOCKS
+    dropped to 10) cannot show a readout that disagrees with the thumb. */
+export function clampDisplayBlocks(blocks: number): number {
+  if (!Number.isFinite(blocks)) return MIN_BLOCKS;
+  return Math.min(MAX_BLOCKS, Math.max(MIN_BLOCKS, blocks));
 }
 
 /** Free blocks with the user's in-flight slider values applied. Exact rather

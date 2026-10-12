@@ -1569,6 +1569,24 @@
 .qrow__time-adjustment:focus-within {
   border-top-color: var(--t-accent);
 }
+/* Flanking half-block trim. Deliberately quieter than the row's verbs — these
+   nudge a number, they don't act on the item. */
+.alloc-step {
+  flex: none;
+  width: 32px;
+  min-width: 32px;
+  /* These carry the 15-minute grid AND the only drag-free route to all-day,
+     so they hold the same 44px vertical floor as the row verbs. Kept narrow
+     so the time column stays compact. */
+  min-height: 44px;
+  padding: 0;
+  font-size: 15px;
+  line-height: 1;
+  color: var(--t-muted);
+}
+.alloc-step:disabled {
+  opacity: 0.35;
+}
 .qrow__actions {
   display: flex;
   align-items: center;
@@ -6216,7 +6234,13 @@ body {
   }
 
   .qrow__time .alloc-track__value {
-    min-width: 0;
+    /* Fixed width at every width: the readout's text changes every drag step
+       ("All day" to "15min" to "1hr" ...). With a zero min-width it sized
+       to its own text, the flex track beside it re-laid out, and the native
+       thumb re-snapped mid-drag. Pin the box instead. 74px holds the widest
+       label ("4hr 45min*"), so nothing clips. */
+    flex: none;
+    width: 74px;
     white-space: nowrap;
   }
 

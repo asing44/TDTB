@@ -8,6 +8,7 @@ import {
   MAX_BLOCKS,
   MIN_BLOCKS,
   clampBlocks,
+  clampDisplayBlocks,
   importanceKey,
   liveFree,
   orderByImportance,
@@ -133,6 +134,25 @@ describe("clampBlocks", () => {
 
   it("the step is one block", () => {
     expect(BLOCK_STEP).toBe(1);
+  });
+
+  it("the range tops out at 10 blocks (5 hours)", () => {
+    expect(MAX_BLOCKS).toBe(10);
+    expect(clampBlocks(10)).toBe(10);
+    expect(clampBlocks(11)).toBe(MAX_BLOCKS);
+  });
+});
+
+describe("clampDisplayBlocks", () => {
+  it("clamps a stale stored override into the slider's range", () => {
+    expect(clampDisplayBlocks(12)).toBe(MAX_BLOCKS);
+    expect(clampDisplayBlocks(-1)).toBe(MIN_BLOCKS);
+  });
+
+  it("never snaps the grid, so exact 5-minute values survive", () => {
+    // 35 minutes — an exact-editor value the slider's half-block grid cannot
+    // express; a display clamp must not round it.
+    expect(clampDisplayBlocks(35 / 30)).toBeCloseTo(35 / 30);
   });
 });
 
