@@ -349,24 +349,45 @@ def _cache_bytes(vault_root) -> bytes:
     return dm.cache_path(vault_root).read_bytes()
 
 
-class TestVaultCachePaths:
-    def test_paths_derive_only_from_vault_root(self, tmp_path):
+class TestStateDirPaths:
+    """V2: the store lives in the state dir; the vault root is ignored."""
+
+    def test_paths_derive_only_from_the_state_dir(self, tmp_path):
+        import app_config
+
         v1 = tmp_path / "vault-a"
         v2 = tmp_path / "vault-b"
-        assert dm.cache_path(v1) == v1 / "00 - META/Cache/tdtb-duration-memory.json"
-        assert dm.lock_path(v1) == v1 / "00 - META/Cache/tdtb-duration-memory.lock"
-        assert dm.cache_path(v1) != dm.cache_path(v2)
-        # No absolute-path or env leakage: both paths sit strictly beneath the
-        # resolved vault root.
-        assert dm.cache_path(v1).is_relative_to(v1)
-        assert dm.lock_path(v1).is_relative_to(v1)
+        state = app_config.state_dir()
+        assert dm.cache_path(v1) == state / "duration-memory.json"
+        assert dm.lock_path(v1) == state / "duration-memory.lock"
+        assert dm.cache_path(v1) == dm.cache_path(v2) == dm.cache_path()
+        assert not dm.cache_path(v1).is_relative_to(v1)
+        assert not dm.lock_path(v1).is_relative_to(v1)
 
-    def test_vault_isolation(self, tmp_path):
+    def test_vault_root_is_ignored_and_nothing_lands_in_it(self, tmp_path):
         a = tmp_path / "vault-a"
         b = tmp_path / "vault-b"
+        a.mkdir()
+        b.mkdir()
         dm.save_memory(a, "todoist:1", 90)
         assert dm.read_vault_memory(a) == {"todoist:1": 90}
-        assert dm.read_vault_memory(b) == {}
+        assert dm.read_vault_memory(b) == {"todoist:1": 90}
+        assert list(a.iterdir()) == [] and list(b.iterdir()) == []
+
+    def test_absent_file_reads_empty_and_creates_nothing(self, tmp_path):
+        assert dm.read_vault_memory(tmp_path) == {}
+        assert not dm.cache_path().exists()
+
+    def test_legacy_vault_path_keys_do_not_crash(self, tmp_path):
+        _write_cache(tmp_path, {"version": 1, "items": {
+            "todoist:7": 45,
+            "vault:50 - Operations/Intervals/Press.md": 30,
+            "50 - Operations/Intervals/Press.md": 60,
+        }})
+        memory = dm.read_vault_memory(tmp_path)
+        assert memory["todoist:7"] == 45
+        assert dm.save_memory(tmp_path, "todoist:8", 15) == 15
+        assert dm.read_vault_memory(tmp_path)["todoist:7"] == 45
 
 
 class TestStrictValidation:

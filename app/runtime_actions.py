@@ -46,8 +46,9 @@ Contracts (locked decision 41 + T20 scope amendment 2026-07-25):
 - Surfaces are checked before ANY write: a verb whose plan needs an
   unavailable client fails closed with no journal entry and no side effect.
 
-The journal lives beside the runstate note
-(``00 - META/Cache/tdtb-runtime-journal-<date>.json``), is written atomically
+The journal lives in the state dir
+(``<app home>/state/runtime-journal/<date>.json``; pre-V2 it was
+``00 - META/Cache/tdtb-runtime-journal-<date>.json`` in the vault), is written atomically
 (tmp + os.replace) and mutated only under ``runstate.day_lock`` — same
 single-writer discipline as every other dated write.
 """
@@ -64,6 +65,7 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+import app_config
 import calendar_bridge
 import commit
 import deferrals
@@ -154,12 +156,22 @@ class RuntimeActionError(Exception):
 # Journal
 # ---------------------------------------------------------------------------
 
+STATE_JOURNAL_DIRNAME = "runtime-journal"
+
+
 def journal_rel_path(valid_date: date) -> str:
+    """Pre-V2 vault spelling — the app no longer reads or writes it."""
     return f"{runstate.CACHE_DIR_REL}/tdtb-runtime-journal-{valid_date}.json"
 
 
-def load_journal(vault_root: Path | str, valid_date: date) -> dict[str, Any]:
-    path = Path(vault_root) / journal_rel_path(valid_date)
+def journal_path(valid_date: date) -> Path:
+    """``<app home>/state/runtime-journal/<date>.json`` (computed only)."""
+    return app_config.state_dir() / STATE_JOURNAL_DIRNAME / f"{valid_date}.json"
+
+
+def load_journal(vault_root: Path | str | None, valid_date: date) -> dict[str, Any]:
+    """Read the dated journal from the state dir (``vault_root`` ignored)."""
+    path = journal_path(valid_date)
     if not path.exists():
         return {"valid_date": str(valid_date), "actions": []}
     try:
@@ -171,8 +183,8 @@ def load_journal(vault_root: Path | str, valid_date: date) -> dict[str, Any]:
     return data
 
 
-def _write_journal(vault_root: Path | str, valid_date: date, journal: dict) -> None:
-    path = Path(vault_root) / journal_rel_path(valid_date)
+def _write_journal(vault_root: Path | str | None, valid_date: date, journal: dict) -> None:
+    path = journal_path(valid_date)
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(".json.tmp")
     tmp.write_text(json.dumps(journal, indent=2, ensure_ascii=False, default=str),

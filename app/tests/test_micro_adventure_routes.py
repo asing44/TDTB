@@ -25,7 +25,7 @@ import tdtb_gather as gather  # noqa: E402
 from tests.config_markdown import write_config_note  # noqa: E402
 
 TODAY = date(2026, 7, 12)
-LOG_REL = micro_adventure.HISTORY_REL_PATH
+LOG_PATH = micro_adventure.history_path
 
 
 @pytest.fixture
@@ -47,7 +47,7 @@ def _auth(client: TestClient) -> dict:
 
 
 def _write_log(vault: Path, history_yaml: str) -> None:
-    p = vault / LOG_REL
+    p = LOG_PATH()
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(
         "---\ndescription: test log\nschema_version: 1\nhistory:\n"
@@ -102,7 +102,7 @@ class TestPlanInputsMicro:
         assert ma["pending_confirm"] is None
         assert ma["streak"] == 1  # virtually resolved done:true
         # read path never writes the log — done stays null on disk
-        head = micro_adventure.read_history(vault / LOG_REL)[0]
+        head = micro_adventure.read_history(LOG_PATH())[0]
         assert head.done is None
 
     def test_runstate_override_wins(self, client, vault, monkeypatch):
@@ -269,7 +269,7 @@ class TestCommitHistoryAppend:
         body = r.json()
         assert body["ok"] is True
         assert body["micro_adventure_logged"] is True
-        history = micro_adventure.read_history(vault / LOG_REL)
+        history = micro_adventure.read_history(LOG_PATH())
         assert len(history) == 1
         head = history[0]
         assert (head.date, head.id, head.idea) == (TODAY, "ma03", "Ride bike somewhere")
@@ -283,7 +283,7 @@ class TestCommitHistoryAppend:
         client.app.state.build_commit_clients = lambda v, cfg: (fake, None)
         assert self._post_live(client).json()["ok"] is True
         assert self._post_live(client, resume=True).json()["ok"] is True
-        history = micro_adventure.read_history(vault / LOG_REL)
+        history = micro_adventure.read_history(LOG_PATH())
         assert len(history) == 1  # upsert replaced, never duplicated
 
     def test_shadow_commit_never_writes_history(self, client, vault, monkeypatch):
@@ -299,7 +299,7 @@ class TestCommitHistoryAppend:
         live_rows = [e for e in entries if e["manifest"]["system"] == "todoist"]
         assert any("🌱" in e["manifest"]["name"] for e in live_rows)
         # …but the history log stays untouched
-        assert not (vault / LOG_REL).exists()
+        assert not (LOG_PATH()).exists()
 
     def test_failed_commit_does_not_append(self, client, vault, monkeypatch):
         self._seed(vault, monkeypatch)
@@ -308,7 +308,7 @@ class TestCommitHistoryAppend:
         body = self._post_live(client).json()
         assert body["ok"] is False
         assert body["micro_adventure_logged"] is False
-        assert not (vault / LOG_REL).exists()
+        assert not (LOG_PATH()).exists()
 
     def test_commit_flushes_checkbox_resolved_done_update(self, client, vault, monkeypatch):
         self._seed(vault, monkeypatch)
@@ -319,7 +319,7 @@ class TestCommitHistoryAppend:
         fake = FakeLiveTodoist()
         client.app.state.build_commit_clients = lambda v, cfg: (fake, None)
         assert self._post_live(client).json()["micro_adventure_logged"] is True
-        history = micro_adventure.read_history(vault / LOG_REL)
+        history = micro_adventure.read_history(LOG_PATH())
         assert [ (e.id, e.done) for e in history ] == [("ma03", None), ("ma07", True)]
 
 

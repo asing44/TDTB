@@ -16,10 +16,9 @@ Location (Capacities-first S1): every runstate-owned file — the dated notes,
 ``<app home>/state/runstate/`` (``app_config.state_dir()``), beside the rest of
 the app-owned stores. Writes never touch the vault.
 
-Read-new-first with a read-only vault fallback: a read prefers the state-dir
-file and falls back to the frozen pre-S1 copy under ``00 - META/Cache`` when the
-state file is absent, which is what makes S1 reversible (restore the paths and
-the vault copies are authoritative again).
+V2: the state dir is the ONLY location. The vault fallback read was removed;
+an absent state file reads as empty/None (the one-shot
+``tools/migrate_vault_state.py`` copies existing vault files in).
 
 ``vault_root`` is always a caller-supplied parameter — never hardcoded
 (spec locked decision 2). Gate: T9 integration tests.
@@ -43,9 +42,8 @@ if _GATHER_DIR not in sys.path:
 
 import tdtb_gather as gather  # noqa: E402  (path-shimmed import, see inventory.py)
 
-#: Legacy vault cache directory. READ-ONLY after S1 — it holds the frozen
-#: pre-migration runstate set (the rollback point) and the read-only fallback,
-#: plus the two stores not yet moved (duration memory, the runtime journal).
+#: Legacy vault cache directory. Never read or written by the app after V2; it
+#: survives only as the migration tool's source layout.
 CACHE_DIR_REL = "00 - META/Cache"
 RECENT_SELECTIONS_REL_PATH = f"{CACHE_DIR_REL}/tdtb-recent-selections.md"
 RECENT_SELECTIONS_MAX_RUNS = 5
@@ -120,14 +118,13 @@ def day_lock(valid_date: date | str) -> threading.Lock:
 def runstate_rel_path(valid_date: date) -> str:
     """Vault-relative path of the dated run-state note.
 
-    Pre-S1 spelling, kept for the read-only vault fallback and for callers that
-    still compose ``vault_root / <rel>``. The active store path is
+    Pre-S1 spelling, kept for tests that assert nothing is written there. The active store path is
     :func:`state_runstate_path`."""
     return f"{CACHE_DIR_REL}/tdtb-runstate-{valid_date}.md"
 
 
 # ---------------------------------------------------------------------------
-# Store locations (S1): state dir first, frozen vault copy as fallback
+# Store locations (state dir only)
 # ---------------------------------------------------------------------------
 
 def state_runstate_dir() -> Path:
@@ -152,55 +149,23 @@ def state_digest_index_path(valid_date: date) -> Path:
     return state_runstate_dir() / f"tdtb-digest-index-{valid_date}.json"
 
 
-def legacy_runstate_path(vault_root: Path | str, valid_date: date) -> Path:
-    """The frozen pre-S1 vault note — read-only fallback."""
-    return Path(vault_root) / runstate_rel_path(valid_date)
+def runstate_read_path(vault_root: Path | str | None, valid_date: date) -> Path:
+    """The dated note's path in the state dir (V2: no vault fallback).
+
+    Kept as the single path helper for external readers that used to compose
+    ``vault_root / runstate_rel_path(...)``. ``vault_root`` is accepted for
+    call-site compatibility and ignored (V4 drops the parameter)."""
+    return state_runstate_path(valid_date)
 
 
-def legacy_recent_selections_path(vault_root: Path | str) -> Path:
-    """The frozen pre-S1 vault recent-selections cache."""
-    return Path(vault_root) / RECENT_SELECTIONS_REL_PATH
+def recent_selections_read_path(vault_root: Path | str | None = None) -> Path:
+    """The recent-selections cache path in the state dir (``vault_root`` ignored)."""
+    return state_recent_selections_path()
 
 
-def legacy_digest_index_path(vault_root: Path | str, valid_date: date) -> Path:
-    """The frozen pre-S1 vault digest identity index."""
-    return Path(vault_root) / digest_index_rel_path(valid_date)
-
-
-def _first_existing(*paths: Path) -> Path | None:
-    for path in paths:
-        if path.is_file():
-            return path
-    return None
-
-
-def runstate_read_path(vault_root: Path | str, valid_date: date) -> Path:
-    """New-first read path for the dated note: the state-dir note when it
-    exists, else the frozen vault copy, else the (absent) state-dir path.
-
-    External readers that compose the path themselves must use this instead of
-    ``vault_root / runstate_rel_path(...)`` so they see post-S1 writes."""
-    found = _first_existing(
-        state_runstate_path(valid_date), legacy_runstate_path(vault_root, valid_date)
-    )
-    return found if found is not None else state_runstate_path(valid_date)
-
-
-def recent_selections_read_path(vault_root: Path | str) -> Path:
-    """New-first read path for the recent-selections cache."""
-    found = _first_existing(
-        state_recent_selections_path(), legacy_recent_selections_path(vault_root)
-    )
-    return found if found is not None else state_recent_selections_path()
-
-
-def digest_index_read_path(vault_root: Path | str, valid_date: date) -> Path:
-    """New-first read path for the dated digest identity index."""
-    found = _first_existing(
-        state_digest_index_path(valid_date),
-        legacy_digest_index_path(vault_root, valid_date),
-    )
-    return found if found is not None else state_digest_index_path(valid_date)
+def digest_index_read_path(vault_root: Path | str | None, valid_date: date) -> Path:
+    """The dated digest identity index path in the state dir (``vault_root`` ignored)."""
+    return state_digest_index_path(valid_date)
 
 
 def build_runstate(overrides: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -275,8 +240,7 @@ def write_runstate(
 def read_runstate(vault_root: Path | str, valid_date: date) -> dict[str, Any] | None:
     """Read the dated run-state note's JSON body. Missing/unparseable → None.
 
-    S1: the state-dir note wins; the frozen vault note is the read-only
-    fallback when no state file exists yet."""
+    V2: state dir only; no vault fallback."""
     path = runstate_read_path(vault_root, valid_date)
     if not path.is_file():
         return None
@@ -384,8 +348,7 @@ def read_digest_index(vault_root: Path | str, valid_date: date) -> list[dict[str
     whose own valid_date disagrees with the requested day is treated as
     missing, so a stale/cross-day cache can never authorize a commit.
 
-    S1: the state-dir index wins; the frozen vault index is the read-only
-    fallback."""
+    V2: state dir only; no vault fallback."""
     path = digest_index_read_path(vault_root, valid_date)
     if not path.is_file():
         return []
@@ -439,8 +402,7 @@ def read_recent_selections(vault_root: Path | str) -> list[dict[str, Any]]:
     """Read the ``runs:`` list from the recent-selections cache.
 
     Missing or unparseable file → empty list (the skill treats this cache as
-    an enhancement, never a dependency — skip silently). S1: the state-dir
-    cache wins; the frozen vault cache is the read-only fallback.
+    an enhancement, never a dependency — skip silently). V2: state dir only.
     """
     path = recent_selections_read_path(vault_root)
     if not path.is_file():

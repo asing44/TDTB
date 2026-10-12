@@ -16,7 +16,8 @@ Contract surfaces:
     ``micro_adventure_rotation`` in ``config/tdtb.json`` (plus the local
     override). Absent or malformed → the EXACT fallback seed pool
     (`FALLBACK_POOL`), which stays in code.
-  * History — the vault log `00 - META/Cache/tdtb-micro-adventure-log.md`,
+  * History — the log ``<app home>/state/micro-adventure-log.md`` (V2; it
+    lived in the vault at `00 - META/Cache/tdtb-micro-adventure-log.md`),
     YAML frontmatter, newest-first. Missing/unparseable → empty history.
 """
 from __future__ import annotations
@@ -28,9 +29,19 @@ from typing import Any, Callable, Iterable
 
 import frontmatter
 
+import app_config
+
 DEFAULT_EXCLUDE_WINDOW_DAYS = 14
+#: Pre-V2 vault location — never read or written by the app; kept only as the
+#: migration tool's source of truth.
 HISTORY_REL_PATH = "00 - META/Cache/tdtb-micro-adventure-log.md"
+STATE_FILENAME = "micro-adventure-log.md"
 _DEFAULT_LOG_DESCRIPTION = "TDTB micro-adventure selection history (newest-first)."
+
+
+def history_path() -> Path:
+    """The active log path: ``<app home>/state/micro-adventure-log.md``."""
+    return app_config.state_dir() / STATE_FILENAME
 
 
 # ------------------------------------------------------------------ value types

@@ -22,10 +22,16 @@ The default store is in-memory so unit tests never touch disk; callers opt
 into persistence by passing ``path`` (under the existing TDTB cache
 discipline). ``resolve_duration`` is pure — it never writes anything.
 
-FT-01 MVP (vault-scoped persistence):
+FT-01 MVP (persistence), V2 location:
 - ``save_memory`` / ``reset_memory`` / ``read_vault_memory`` persist a
-  versioned JSON cache beneath ``00 - META/Cache`` under the RESOLVED
-  ``vault_root`` — paths derive only from the caller-supplied vault root.
+  versioned JSON cache at ``<app home>/state/duration-memory.json``
+  (``app_config.state_dir()``) with its lock beside it. The vault is never
+  read or written; the ``vault_root`` parameters are accepted for call-site
+  compatibility and ignored (V4 removes them). The file format is unchanged,
+  so a pre-V2 vault file can be copied in as-is by
+  ``tools/migrate_vault_state.py``. Legacy vault-path keys in a copied file are
+  still accepted (they never crash) but no digest row carries that identity any
+  more, so they simply never match.
 - Values are strict nonnegative integers divisible by 5 (``DURATION_STEP_MINUTES``);
   bools, fractions, negatives, and off-grid values raise ``ValueError``
   before any file access.
@@ -49,6 +55,7 @@ try:
 except ImportError:  # pragma: no cover — non-POSIX fallback
     _fcntl = None
 
+import app_config
 import runstate
 from duration_tags import recognize_duration_tag
 
@@ -64,12 +71,14 @@ DEFAULT_MINUTES = 30
 _store: dict[str, int] = {}
 
 # ---------------------------------------------------------------------------
-# FT-01 MVP: vault-scoped versioned cache constants
+# FT-01 MVP: versioned cache constants
 # ---------------------------------------------------------------------------
-# The cache and lock live beneath ``00 - META/Cache`` under the RESOLVED
-# vault root — paths derive only from the caller-supplied vault_root, never
-# from cwd, env, or display names.
+# V2: the cache and lock live under ``app_config.state_dir()``. The
+# ``*_REL_PATH`` constants are the pre-V2 vault locations, kept only as the
+# migration tool's source of truth.
 
+STATE_FILENAME = "duration-memory.json"
+STATE_LOCK_FILENAME = "duration-memory.lock"
 CACHE_DIR_REL = runstate.CACHE_DIR_REL  # "00 - META/Cache"
 CACHE_REL_PATH = f"{CACHE_DIR_REL}/tdtb-duration-memory.json"
 LOCK_REL_PATH = f"{CACHE_DIR_REL}/tdtb-duration-memory.lock"
@@ -82,14 +91,16 @@ class MemoryStoreError(Exception):
     preserve existing durable bytes (FT-01)."""
 
 
-def cache_path(vault_root: str | Path) -> Path:
-    """The versioned JSON cache path beneath the resolved vault root."""
-    return Path(vault_root) / CACHE_REL_PATH
+def cache_path(vault_root: str | Path | None = None) -> Path:
+    """The versioned JSON cache path: ``<app home>/state/duration-memory.json``.
+
+    ``vault_root`` is accepted for call-site compatibility and ignored."""
+    return app_config.state_dir() / STATE_FILENAME
 
 
-def lock_path(vault_root: str | Path) -> Path:
-    """The lock-file path beneath the resolved vault root."""
-    return Path(vault_root) / LOCK_REL_PATH
+def lock_path(vault_root: str | Path | None = None) -> Path:
+    """The lock-file path, beside the cache in the state dir."""
+    return app_config.state_dir() / STATE_LOCK_FILENAME
 
 
 def validate_duration_minutes(value: Any) -> int:
@@ -116,21 +127,21 @@ def _encode(items: dict[str, int]) -> dict[str, Any]:
     return {"version": SCHEMA_VERSION, "items": dict(sorted(items.items()))}
 
 
-# Per-vault-root process-local RMW locks (same single-process convention as
-# ``runstate`` G26 / ``deferrals._STORE_LOCK``); the flock on the vault-scoped
+# Per-store-path process-local RMW locks (same single-process convention as
+# ``runstate`` G26 / ``deferrals._STORE_LOCK``); the flock on the state-dir
 # lock file adds cross-process serialization for the same bytes.
 _LOCKS: dict[str, threading.Lock] = {}
 _LOCKS_GUARD = threading.Lock()
 
 
-def _store_lock(vault_root: str | Path) -> threading.Lock:
-    key = str(Path(vault_root).resolve())
+def _store_lock(vault_root: str | Path | None = None) -> threading.Lock:
+    key = str(cache_path().resolve())
     with _LOCKS_GUARD:
         return _LOCKS.setdefault(key, threading.Lock())
 
 
-def _acquire_lock_file(vault_root: str | Path) -> Any:
-    """Advisory exclusive flock on the vault-scoped lock file. Returns the
+def _acquire_lock_file(vault_root: str | Path | None = None) -> Any:
+    """Advisory exclusive flock on the state-dir lock file. Returns the
     open file handle (released on close). Raises on failure — callers fail
     closed with no cache mutation."""
     path = lock_path(vault_root)

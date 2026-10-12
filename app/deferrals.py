@@ -11,9 +11,8 @@ Store
 Capacities-first S1) — rolling (not dated; deferral memory is explicitly
 cross-day), written atomically (tmp + ``os.replace``) under a module lock, same
 single-writer discipline as ``runstate``/the runtime journal. It previously
-lived in the vault at ``00 - META/Cache/tdtb-deferrals.json``; that path is now
-the frozen, read-only fallback (see :func:`legacy_deferrals_path`), so reads
-prefer the state file and writes never touch the vault.
+lived in the vault at ``00 - META/Cache/tdtb-deferrals.json``; the state
+dir is now the only location (V2 removed the vault fallback).
 Shape::
 
     {"version": 1,
@@ -58,8 +57,8 @@ from typing import Any
 import app_config
 import runstate
 
-#: The active store only; the pre-S1 vault location below is the frozen,
-#: read-only fallback and the migration tool's source of truth.
+#: The active store only; the pre-S1 vault location below is kept only
+#: as the migration tool's source of truth (the vault is never read).
 STATE_FILENAME = "deferrals.json"
 DEFERRALS_REL_PATH = f"{runstate.CACHE_DIR_REL}/tdtb-deferrals.json"
 SCHEMA_VERSION = 1
@@ -108,17 +107,9 @@ def deferrals_path(vault_root: Path | str | None = None) -> Path:
     return app_config.state_dir() / STATE_FILENAME
 
 
-def legacy_deferrals_path(vault_root: Path | str) -> Path:
-    """The frozen pre-S1 vault path — read-only fallback."""
-    return Path(vault_root) / DEFERRALS_REL_PATH
-
-
 def _read_raw(vault_root: Path | str) -> dict[str, Any]:
-    path = next(
-        (p for p in (deferrals_path(), legacy_deferrals_path(vault_root)) if p.is_file()),
-        None,
-    )
-    if path is None:
+    path = deferrals_path()
+    if not path.is_file():
         return {}
     try:
         data = json.loads(path.read_text(encoding="utf-8"))

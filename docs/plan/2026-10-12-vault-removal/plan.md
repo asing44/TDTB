@@ -1,6 +1,6 @@
 # TDTB: remove the Obsidian vault entirely (S6 finish)
 
-Status: **V1 landed on branch `TDTB/vault-removal-v1-20261012` (not merged); V2-V5 open.** Operator directive (2026-10-12): anything "vault" in the Obsidian sense is
+Status: **V1 landed (merged to main); V2 landed on branch `TDTB/vault-removal-v2-20261012` (not merged); V3-V5 open.** Operator directive (2026-10-12): anything "vault" in the Obsidian sense is
 100% deprecated. Hand-edited config moves into the repo; runtime state moves to the state dir
 (`~/.config/tdtb/state/`) or is dropped; nothing replaces the Obsidian note writes at Commit.
 
@@ -20,7 +20,7 @@ so the vault gather already contributes no rows. This plan is the S6 deletion pl
 | Slice | Scope |
 |---|---|
 | **V1 (landed)** | `config/tdtb.json` seeded from the live config; `app_config` loads repo file then local override; `config_reader.read_config` stops reading `00 - META/Skill-Configs/tdtb-bridger.md`; micro-adventure pool read from config (fallback pool stays in code). Schema Reference ids and Color Palette move into the same file. |
-| **V2** | Remaining vault-written runtime state moves to the state dir: micro-adventure log, duration memory (+lock), runtime journal. Vault fallbacks for already-moved stores (runstate, recent selections, exclusion/capacities settings, deferrals, source mapping) are removed. |
+| **V2 (landed)** | Remaining vault-written runtime state moves to the state dir: micro-adventure log, duration memory (+lock), runtime journal. Vault fallbacks for already-moved stores (runstate, recent selections, exclusion/capacities settings, deferrals, source mapping) are removed. See "V2 as landed". |
 | **V3** | Delete Commit's vault steps (`write_daily_note`, `write_frontmatter_flips`, `vault.trash`, orchestrate/shadow "vault" surface). Replace the `### Live` daily-note probe with state-dir done state. |
 | **V4** | Delete the vault gather, `schema_guard` + `.base` mirror, `active-inventory`/precompute caches, `vault_enabled`, `TDTB_VAULT_ROOT`, `resolve_vault_root`, `tools/migrate_vault_*`, and the launchd/restart/bootstrap vault plumbing. |
 | **V5** | Wire and UI: drop the `"vault"` source, `source_counts.vault`, `system: "vault"`, the VAULT chip and every user-facing "vault" string; update contract fixtures. |
@@ -49,6 +49,34 @@ Surprises:
   fixtures were already stale against code at baseline (23 files differ) and were not regenerated.
 - Still reading the vault in V1 scope on purpose: `TDTB_VAULT_ROOT`, gather, commit steps, state files, `schema_guard`,
   and the legacy-static `setup.js` note-path string (V2-V5).
+
+**V2 as landed.** Destinations under `<TDTB_HOME>/state/` (file formats unchanged, so vault files copy as-is):
+
+| Store | Pre-V2 vault file | State path |
+|---|---|---|
+| Micro-adventure log | `00 - META/Cache/tdtb-micro-adventure-log.md` | `micro-adventure-log.md` (`micro_adventure.history_path()`) |
+| Duration memory (+lock) | `tdtb-duration-memory.json` / `.lock` | `duration-memory.json` / `duration-memory.lock` |
+| Runtime journal (incl. undo) | `tdtb-runtime-journal-<date>.json` | `runtime-journal/<date>.json` (`runtime_actions.journal_path()`) |
+
+- Vault fallback reads deleted for runstate, recent selections, digest index (`runstate.legacy_*` and `_first_existing`),
+  exclusion settings, capacities settings, capacities source mapping, deferrals (`legacy_*_path`), and gather's
+  `load_runstate` (it searched the vault cache after the state dir). An absent state file reads as empty/default.
+- `vault_root` parameters stay on every signature (ignored) so call sites compile; V4 removes them. `runstate_read_path`,
+  `recent_selections_read_path`, `digest_index_read_path` now just return the state-dir path. The `*_REL_PATH` constants
+  stay only because `tools/migrate_vault_state.py` names the vault sources with them (V4 deletes both).
+- Duration-memory keys: `todoist:<id>` (and capacities identities) read/write as before. Legacy vault-path keys
+  (`vault:<path>` or any `/` path) still pass `normalize_identity`, so a copied file never crashes a read or a write,
+  but no digest row carries a vault identity any more (vault gather is off), so they simply never match again.
+- `tools/migrate_vault_state.py` copies the three new stores with the same contract (never overwrite, vault untouched,
+  dry-run, missing reported, lock never copied); journals are renamed `tdtb-runtime-journal-<date>.json` -> `runtime-journal/<date>.json`.
+- Tests: `test_v2_state_dir_only.py` runs the log, duration, journal and S1-store flows against a read-only empty vault
+  and asserts nothing appears under it; `gather/tests/conftest.py` isolates `TDTB_HOME` for the gather suite.
+- Still vault-touching after V2 (V3-V5): the daily-note `### Live` probe, commit vault steps, `runtime_actions` vault verbs
+  for vault-path rows, `active-inventory.md`, precompute cache, `schema_guard`, `TDTB_VAULT_ROOT`.
+- **Operator step:** the live micro-adventure log and duration memory (and optionally the 25 runtime journals) exist only
+  in the vault. Before restarting live on V2, run `python tools/migrate_vault_state.py --vault-root <vault> --dry-run`,
+  then without `--dry-run`. It copies only if absent; if the old service writes to the vault after the copy, refresh
+  deliberately.
 
 ## Inventory (from the 2026-10-12 read-only map)
 
