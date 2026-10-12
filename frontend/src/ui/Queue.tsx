@@ -392,7 +392,7 @@ function ShortcutHint() {
   return (
     <div class="queue__hint" role="note" aria-label="Task table keyboard shortcuts">
       <span class="queue__hint-keys">
-        Hover a row for actions · <kbd>C</kbd> complete · <kbd>E</kbd> exclude ·{" "}
+        Row shortcuts · <kbd>C</kbd> complete · <kbd>E</kbd> exclude ·{" "}
         <kbd>D</kbd> exact duration · <kbd>←→</kbd> ±15min · <kbd>↑↓</kbd> move
       </span>
       <span class="queue__hint-note">
@@ -586,9 +586,14 @@ function Row({
             {PRIORITY_LABEL[urgency.tier]}
           </span>
         )}
-        {urgency && (urgency.tier === "crit" || urgency.tier === "high") && (
-          <span class={`badge badge--u${urgency.tier}`}>{urgency.text}</span>
-        )}
+        {/* Todoist urgency text IS the p-level ("p1"), which the chip above
+            already shows; the badge only adds something for sources whose
+            urgency text differs (e.g. "4-crit"). */}
+        {urgency &&
+          (urgency.tier === "crit" || urgency.tier === "high") &&
+          urgency.text !== PRIORITY_LABEL[urgency.tier] && (
+            <span class={`badge badge--u${urgency.tier}`}>{urgency.text}</span>
+          )}
         {due && (
           <span
             class={due.tone ? `due due--${due.tone}` : "due"}

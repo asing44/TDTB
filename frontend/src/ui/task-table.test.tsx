@@ -99,7 +99,7 @@ describe("U11 hint row lists exactly the shortcuts that work", () => {
     const hint = r.container.querySelector(".queue__hint");
     expect(hint).toBeTruthy();
     const text = hint?.textContent ?? "";
-    expect(text).toContain("Hover a row for actions");
+    expect(text).toContain("Row shortcuts");
     expect(text).toContain("C complete");
     expect(text).toContain("E exclude");
     expect(text).toContain("D exact duration");
@@ -413,5 +413,24 @@ describe("POLISH-3 lane header, footer clearance, one action layout", () => {
     expect(APP_CSS).toMatch(
       /\.qrow__source\s+\.qrow__time-adjustment\s*\{[^}]*flex:\s*0\s+0\s+auto/,
     );
+  });
+});
+
+describe("priority labels on a row", () => {
+  it("shows a Todoist p1 once, not as both the chip and a badge", () => {
+    const h = makeHarness("ready", (sc) => {
+      const it = sc.inputs.assigned.find((a) => a.id === "Review AWS module 4");
+      if (it) it.urgency = "4";
+    });
+    const r = h.ui(<Queue />);
+    const due = rowNamed(r.container, "Review AWS module 4").querySelector(".qrow__due");
+    const texts = Array.from(due?.querySelectorAll("span") ?? []).map((n) => n.textContent);
+    expect(texts.filter((t) => t === "p1")).toHaveLength(1);
+  });
+
+  it("keeps the badge when its text adds something beyond the p-level", () => {
+    const r = makeHarness("ready").ui(<Queue />);
+    const due = rowNamed(r.container, "Rowe's T-shirt Redesign 2026").querySelector(".qrow__due");
+    expect(due?.querySelector(".badge")?.textContent).toBe("4-crit");
   });
 });
