@@ -1501,10 +1501,32 @@
 }
 .qrow__time {
   display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+  min-width: 0;
+}
+/* 2026-10-12 (Adam): the duration readout leads the time column on its own
+   line — above the slider, never wrapping, with the provenance dot beside
+   it. The left alignment below overrides `.alloc-track__value`'s base right
+   alignment so the text lines up with the left edge of the − stepper. */
+.qrow__time-readout {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  flex-wrap: nowrap;
+  white-space: nowrap;
+  gap: 6px;
+  min-width: 0;
+}
+.qrow__time-readout .alloc-track__value {
+  text-align: left;
+}
+.qrow__time-line {
+  display: flex;
   align-items: center;
   gap: 6px;
   min-width: 0;
-  flex-wrap: wrap;
 }
 /* P4-03: native Todoist starts are protected planning evidence. The opt-in
    stays in the existing time track, below its readout, rather than becoming a
@@ -6221,13 +6243,10 @@ body {
     flex-wrap: nowrap;
   }
 
-  /* Slider line keeps its 140px floor; a native-time row wraps its compact
-     permission note onto a second line inside the column rather than
-     squeezing the label to one character per line. */
-  .qrow__time {
-    flex-wrap: wrap;
-  }
-
+  /* The time column is a two-line flex column (readout above the slider
+     line) at every width, and the readout itself never wraps — so the old
+     `flex-wrap: wrap` here is gone. A native-time row keeps its compact
+     permission note on the meta line instead of wrapping under the slider. */
   .qrow__time .alloc-track {
     /* 120px floor. At 1101-1279px the time column is 300px: two 32px steppers,
        the 74px readout and three 6px gaps leave 144px for the track, and the
