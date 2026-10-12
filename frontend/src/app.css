@@ -6802,3 +6802,78 @@ body {
     display: none;
   }
 }
+
+/* ---- Row actions: Planning Mockups layout (>=1280px) ----------------------
+   The hover-reveal track above makes a hovered row hide its own title (the
+   cluster takes ~450px out of the title column). From 1280px the mockup's
+   presentation replaces it: a fixed trailing actions track that is always
+   reserved and only fades in, so hover never moves or crushes anything. One
+   row: stripe | title | due | slider | actions, 13px labels, mockup order
+   (Mark complete, Exclude, Exact, Leave as-is, More). The plan column widens
+   to give the 520px track room. 1101-1279px keeps the compact hover track. */
+@media (min-width: 1280px) {
+  .cockpit {
+    --plan-max-width: 1360px;
+  }
+
+  .qrow {
+    grid-template-columns: 3px minmax(0, 1fr) 170px 300px 520px;
+  }
+
+  .qrow__due {
+    grid-column: 3;
+    visibility: visible !important;
+  }
+
+  .qrow__time {
+    grid-column: 4;
+  }
+
+  .qrow__actions,
+  .qrow:hover .qrow__actions,
+  .qrow:focus-within .qrow__actions,
+  .qrow--focused .qrow__actions,
+  .qrow--dropped .qrow__actions {
+    grid-column: 5;
+    width: auto;
+    overflow: visible;
+    justify-content: flex-end;
+    gap: 6px;
+  }
+
+  .qrow:hover .qrow__name,
+  .qrow:focus-within .qrow__name,
+  .qrow--focused .qrow__name {
+    -webkit-line-clamp: 2;
+  }
+
+  /* Groups flatten so the five buttons can be ordered across them; the
+     role=group wrappers stay in the DOM for assistive tech. */
+  .qrow__action-group {
+    display: contents;
+  }
+
+  .qrow__actions .alloc-verb--done {
+    order: 0;
+  }
+
+  /* The plan buttons sit inside Tooltip's anchor span, so the anchor is the
+     flex item that carries the order. */
+  .qrow__actions .tooltip-anchor {
+    order: 1;
+  }
+
+  .qrow__actions .alloc-verb--drop_from_plan {
+    order: 2;
+  }
+
+  .qrow__actions .row-more {
+    order: 3;
+  }
+
+  .qrow__actions .planbtn,
+  .qrow__actions .alloc-verb {
+    padding: 0 10px;
+    font-size: 13px;
+  }
+}
