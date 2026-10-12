@@ -1521,6 +1521,7 @@
 }
 .qrow__time-readout .alloc-track__value {
   text-align: left;
+  min-width: 0;
 }
 .qrow__time-line {
   display: flex;
@@ -6257,13 +6258,8 @@ body {
   }
 
   .qrow__time .alloc-track__value {
-    /* Fixed width at every width: the readout's text changes every drag step
-       ("All day" to "15min" to "1hr" ...). With a zero min-width it sized
-       to its own text, the flex track beside it re-laid out, and the native
-       thumb re-snapped mid-drag. Pin the box instead. 74px holds the widest
-       label ("4hr 45min*"), so nothing clips. */
-    flex: none;
-    width: 74px;
+    /* The readout sits on its own line above the slider, so its text width
+       cannot reflow the track. It keeps its text width and never wraps. */
     white-space: nowrap;
   }
 

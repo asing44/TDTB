@@ -120,17 +120,17 @@ describe("Plan row duration steppers are restored", () => {
   });
 });
 
-describe("the duration readout holds a fixed width", () => {
-  it("drops the min-width:0 override that let the readout size to its text", () => {
-    const body = ruleBody("\\.qrow__time \\.alloc-track__value");
-    expect(body).not.toMatch(/min-width:\s*0/);
+describe("the duration readout sizes to its text on its own line", () => {
+  it("sizes to its text, so the status dot sits right beside it", () => {
+    const body = ruleBody("\\.qrow__time-readout \\.alloc-track__value");
+    expect(body).toMatch(/min-width:\s*0/);
+    expect(body).toMatch(/text-align:\s*left/);
   });
 
-  it("pins a fixed width and right alignment", () => {
+  it("never wraps and carries no fixed width", () => {
     const body = ruleBody("\\.qrow__time \\.alloc-track__value");
-    expect(body).toMatch(/flex:\s*none/);
-    expect(body).toMatch(/width:\s*\d+px/);
     expect(body).toMatch(/white-space:\s*nowrap/);
+    expect(body).not.toMatch(/width:\s*\d+px/);
     const base = ruleBody("\\.alloc-track__value");
     expect(base).toMatch(/text-align:\s*right/);
   });
