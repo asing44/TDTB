@@ -1501,10 +1501,33 @@
 }
 .qrow__time {
   display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+  min-width: 0;
+}
+/* 2026-10-12 (Adam): the duration readout leads the time column on its own
+   line — above the slider, never wrapping, with the provenance dot beside
+   it. The left alignment below overrides `.alloc-track__value`'s base right
+   alignment so the text lines up with the left edge of the − stepper. */
+.qrow__time-readout {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  flex-wrap: nowrap;
+  white-space: nowrap;
+  gap: 6px;
+  min-width: 0;
+}
+.qrow__time-readout .alloc-track__value {
+  text-align: left;
+  min-width: 0;
+}
+.qrow__time-line {
+  display: flex;
   align-items: center;
   gap: 6px;
   min-width: 0;
-  flex-wrap: wrap;
 }
 /* P4-03: native Todoist starts are protected planning evidence. The opt-in
    stays in the existing time track, below its readout, rather than becoming a
@@ -6221,30 +6244,22 @@ body {
     flex-wrap: nowrap;
   }
 
-  /* Slider line keeps its 140px floor; a native-time row wraps its compact
-     permission note onto a second line inside the column rather than
-     squeezing the label to one character per line. */
-  .qrow__time {
-    flex-wrap: wrap;
-  }
-
+  /* The time column is a two-line flex column (readout above the slider
+     line) at every width, and the readout itself never wraps — so the old
+     `flex-wrap: wrap` here is gone. A native-time row keeps its compact
+     permission note on the meta line instead of wrapping under the slider. */
   .qrow__time .alloc-track {
-    /* 120px floor. At 1101-1279px the time column is 300px: two 32px steppers,
-       the 74px readout and three 6px gaps leave 144px for the track, and the
-       8px status dot needs 14px more. At 140px the dot wrapped under the
-       minus stepper. */
+    /* 120px floor, kept from the steady-slider fix and asserted by
+       slider-steppers.test.tsx. The readout and its status dot now sit on
+       their own line above, so this line holds only the two steppers and the
+       track. */
     flex: 1 1 auto;
     min-width: 120px;
   }
 
   .qrow__time .alloc-track__value {
-    /* Fixed width at every width: the readout's text changes every drag step
-       ("All day" to "15min" to "1hr" ...). With a zero min-width it sized
-       to its own text, the flex track beside it re-laid out, and the native
-       thumb re-snapped mid-drag. Pin the box instead. 74px holds the widest
-       label ("4hr 45min*"), so nothing clips. */
-    flex: none;
-    width: 74px;
+    /* The readout sits on its own line above the slider, so its text width
+       cannot reflow the track. It keeps its text width and never wraps. */
     white-space: nowrap;
   }
 
