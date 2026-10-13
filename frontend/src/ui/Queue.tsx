@@ -99,9 +99,9 @@ export function kindLabel(
   return null;
 }
 
-/** Duration provenance, spoken. The uppercase SOURCE/REMEMBERED pill crowded
-    the duration column; the state is now a small dot whose aria-label/title
-    names where the value came from. */
+/** Duration provenance, spoken. The value wears a short visible text label
+    ("source", "memory", "remembered") and the aria-label/title names where
+    the value came from in full. */
 function srcTagLabel(tag: "memory" | "remembered" | "source"): string {
   if (tag === "memory") return "Duration: memory (today's session override)";
   if (tag === "remembered") return "Duration: remembered (durable memory)";
@@ -639,17 +639,19 @@ function Row({
                 {blocksLabel(blocks)}
                 {overridden ? "*" : ""}
               </span>
-              {/* FEEDBACK-10 (A08) + duration-memory MVP: provenance as a small
-                  dot with a spoken label — the uppercase SOURCE/REMEMBERED pill
-                  crowded the duration column. The * on the value stays as the
-                  redundant session-memory signal. */}
+              {/* FEEDBACK-10 (A08) + duration-memory MVP: provenance as a
+                  visible text label. The earlier colored dot carried identity
+                  in color alone; the label reads out "source", "memory", or
+                  "remembered". The * on the value stays as the redundant
+                  session-memory signal. */}
               <span
-                class={`qrow__dur-src qrow__dur-src--${srcTag}`}
-                role="img"
+                class={`qrow__dur-label qrow__dur-label--${srcTag}`}
                 data-src={srcTag}
                 title={srcTagLabel(srcTag)}
                 aria-label={srcTagLabel(srcTag)}
-              />
+              >
+                {srcTag}
+              </span>
             </div>
             <div class="qrow__time-line">
                 {/* The slider's own notch is a 30-minute block; these are the

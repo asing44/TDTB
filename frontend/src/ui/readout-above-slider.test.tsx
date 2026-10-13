@@ -2,7 +2,7 @@
 
    Adam's capture showed the duration readout ("2hr 30min*") wrapping onto its
    own line BELOW the slider, under the − stepper. The column now stacks two
-   lines: the readout (with its provenance dot) first, then [−] [track] [+].
+   lines: the readout (with its provenance label) first, then [−] [track] [+].
    The readout is never allowed to wrap.
 
    jsdom does no layout, so ordering and membership are checked in the DOM and
@@ -54,12 +54,13 @@ describe("the duration readout leads the time column", () => {
     ).toBeTruthy();
   });
 
-  it("holds only the value and the status dot, in that order", () => {
+  it("holds only the value and the source label, in that order", () => {
     const readout = timeColumn().querySelector<HTMLElement>(".qrow__time-readout")!;
     const kids = Array.from(readout.children) as HTMLElement[];
     expect(kids).toHaveLength(2);
     expect(kids[0].classList.contains("alloc-track__value")).toBe(true);
-    expect(kids[1].classList.contains("qrow__dur-src")).toBe(true);
+    expect(kids[1].classList.contains("qrow__dur-label")).toBe(true);
+    expect(kids[1].textContent).toBe("source");
   });
 
   it("holds −, the track, and +, in that order", () => {

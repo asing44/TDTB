@@ -387,11 +387,13 @@ describe("FEEDBACK-10 remembered duration is visible (A08)", () => {
       'input[aria-label="Note Processing duration in 15-minute steps"]',
     ) as HTMLInputElement;
     expect(slider.getAttribute("aria-valuetext")).toMatch(/\(source\)$/);
-    const dot = slider
+    const label = slider
       .closest(".qrow")!
-      .querySelector(".qrow__dur-src") as HTMLElement;
-    expect(dot.getAttribute("data-src")).toBe("source");
-    expect(dot.getAttribute("aria-label")).toMatch(/source/);
+      .querySelector(".qrow__dur-label") as HTMLElement;
+    expect(label.textContent).toBe("source");
+    expect(label.getAttribute("data-src")).toBe("source");
+    expect(label.getAttribute("aria-label")).toMatch(/source/);
+    expect(slider.closest(".qrow")!.querySelector(".qrow__dur-src")).toBeNull();
   });
 
   it("an overridden row names its duration source as 'memory'", () => {
@@ -405,12 +407,14 @@ describe("FEEDBACK-10 remembered duration is visible (A08)", () => {
       'input[aria-label="Note Processing duration in 15-minute steps"]',
     ) as HTMLInputElement;
     expect(refreshed.getAttribute("aria-valuetext")).toMatch(/\(memory\)$/);
-    const dot = refreshed
+    const label = refreshed
       .closest(".qrow")!
-      .querySelector(".qrow__dur-src") as HTMLElement;
-    expect(dot.getAttribute("data-src")).toBe("memory");
-    expect(dot.className).toContain("qrow__dur-src--memory");
-    expect(dot.getAttribute("aria-label")).toMatch(/memory/);
+      .querySelector(".qrow__dur-label") as HTMLElement;
+    expect(label.textContent).toBe("memory");
+    expect(label.getAttribute("data-src")).toBe("memory");
+    expect(label.className).toContain("qrow__dur-label--memory");
+    expect(label.getAttribute("aria-label")).toMatch(/memory/);
+    expect(refreshed.closest(".qrow")!.querySelector(".qrow__dur-src")).toBeNull();
   });
 });
 

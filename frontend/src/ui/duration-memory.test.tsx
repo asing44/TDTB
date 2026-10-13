@@ -54,12 +54,15 @@ describe("duration-memory MVP: chip distinguishes remembered and source", () => 
       'input[aria-label="Press duration in 15-minute steps"]',
     ) as HTMLInputElement;
     expect(slider.getAttribute("aria-valuetext")).toMatch(/\(remembered\)$/);
-    const dot = slider
+    const label = slider
       .closest(".qrow")!
-      .querySelector(".qrow__dur-src") as HTMLElement;
-    expect(dot.getAttribute("data-src")).toBe("remembered");
-    expect(dot.className).toContain("qrow__dur-src--remembered");
-    expect(dot.getAttribute("aria-label")).toMatch(/remembered/);
+      .querySelector(".qrow__dur-label") as HTMLElement;
+    expect(label.textContent).toBe("remembered");
+    expect(label.getAttribute("data-src")).toBe("remembered");
+    expect(label.className).toContain("qrow__dur-label--remembered");
+    expect(label.getAttribute("aria-label")).toMatch(/remembered/);
+    // The dot element is gone; provenance is spoken by visible text.
+    expect(slider.closest(".qrow")!.querySelector(".qrow__dur-src")).toBeNull();
   });
 
   it("a plain source-resolved row keeps the existing 'source' label", () => {
@@ -69,11 +72,12 @@ describe("duration-memory MVP: chip distinguishes remembered and source", () => 
       'input[aria-label="Press duration in 15-minute steps"]',
     ) as HTMLInputElement;
     expect(slider.getAttribute("aria-valuetext")).toMatch(/\(source\)$/);
-    const dot = slider
+    const label = slider
       .closest(".qrow")!
-      .querySelector(".qrow__dur-src") as HTMLElement;
-    expect(dot.getAttribute("data-src")).toBe("source");
-    expect(dot.getAttribute("aria-label")).toMatch(/source/);
+      .querySelector(".qrow__dur-label") as HTMLElement;
+    expect(label.textContent).toBe("source");
+    expect(label.getAttribute("data-src")).toBe("source");
+    expect(label.getAttribute("aria-label")).toMatch(/source/);
   });
 });
 
