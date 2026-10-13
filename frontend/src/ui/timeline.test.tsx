@@ -125,6 +125,63 @@ describe("U10 timeline — placement", () => {
 
 });
 
+/* Axis tick collision: an off-hour frame start emits an opening tick, and the
+   first hourly tick can land close enough that the two labels overlap (a
+   10:45 start put "10:45" and "11a" 15 minutes ≈ 29px apart at a 1500px track,
+   while the label itself is ≈ 32px wide, so the axis read "10:451a"). The
+   rule: drop an hourly tick whose gap from the previously emitted tick is less
+   than the minutes the previous label spans, `ceil(spanMinutes × labelPx ÷
+   700)` with the label width `chars × 6.4`. 700 is the conservative assumed
+   track width, so the computed minimum is slightly larger than a real
+   ≥900px track needs — that slack is the inter-label breathing room. The
+   opening tick is never dropped, and on-the-hour frames have no opening tick
+   to collide with, so their hour labels are unchanged. */
+function harnessWithFrame(anchor: string, eod: string, rows: AnchoredBlock[]) {
+  const h = makeHarness("ready");
+  const inputs = structuredClone(h.store.getState().inputs!);
+  inputs.time = { ...inputs.time, anchor, effectiveEod: eod };
+  inputs.anchored = rows;
+  h.store.dispatch({ type: "INPUTS_LOADED", inputs, ledger: h.store.getState().ledger! });
+  return h;
+}
+
+function tickLabels(container: Element): string[] {
+  return Array.from(container.querySelectorAll(".timeline__tick")).map(
+    (el) => el.textContent ?? "",
+  );
+}
+
+describe("U10 timeline — axis tick collision", () => {
+  it("drops the first hourly tick when it would overlap the off-hour opening label", () => {
+    const h = harnessWithFrame("10:45", "23:45", [calendarRow()]);
+    const r = h.ui(<CalendarImpact />);
+    const labels = tickLabels(r.container);
+    expect(labels[0]).toBe("10:45");
+    expect(labels).not.toContain("11a");
+    expect(labels).toContain("12p");
+  });
+
+  it("keeps every hourly tick when the frame starts on the hour", () => {
+    const h = harnessWithFrame("10:00", "23:00", [calendarRow()]);
+    const r = h.ui(<CalendarImpact />);
+    const labels = tickLabels(r.container);
+    expect(labels).toContain("10a");
+    expect(labels).toContain("11a");
+    expect(labels).toContain("12p");
+  });
+
+  it("keeps the first hourly tick when the opening gap clears the label width", () => {
+    // 10:15→23:45 is a 780-minute span; a 5-char label needs
+    // ceil(780 × 32 ÷ 700) = 36 minutes, and the 45-minute gap to 11:00 clears
+    // it, so "11a" stays.
+    const h = harnessWithFrame("10:15", "23:45", [calendarRow()]);
+    const r = h.ui(<CalendarImpact />);
+    const labels = tickLabels(r.container);
+    expect(labels).toContain("10:15");
+    expect(labels).toContain("11a");
+  });
+});
+
 describe("U10 timeline — keyboard select", () => {
   it("moves focus with arrows, opens the detail row, and Escape returns focus", () => {
     const h = harnessWithCalendar([
