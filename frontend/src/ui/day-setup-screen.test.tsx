@@ -75,6 +75,34 @@ describe("U12 Set up day composition", () => {
     expect(r.getByRole("button", { name: /Continue to tasks/ })).toBeTruthy();
   });
 
+  it("keeps a duplicate calendar event whose counted copy is the work copy", () => {
+    // Live case: the same 15:00-15:30 event lists an ignored '🟡 Trinoor' copy
+    // first and a counted work copy from 'Calendar' second. The strip must show
+    // the work copy in Mint yellow, not drop the event.
+    const h = screenHarness();
+    const inputs = structuredClone(h.store.getState().inputs!);
+    const oppd = {
+      name: "OPPD-Payment Risk Weekly Working Session",
+      kind: "calendar" as const,
+      start: "15:00",
+      end: "15:30",
+      durationMin: 30,
+      overlapAllowed: false,
+      on: true,
+      skipToday: false,
+    };
+    inputs.anchored = [
+      ...inputs.anchored,
+      { ...oppd, id: "OPPD (Trinoor)", calendarId: "trinoor", calendarTitle: "🟡 Trinoor", capacityClass: "ignored" },
+      { ...oppd, id: "OPPD (Calendar)", calendarId: "calendar", calendarTitle: "Calendar", capacityClass: "work" },
+    ];
+    h.store.dispatch({ type: "INPUTS_LOADED", inputs, ledger: h.store.getState().ledger! });
+    const r = h.ui(<App />);
+    const el = r.getByTestId("day-strip").querySelector('[aria-label^="OPPD-Payment Risk"]') as HTMLElement;
+    expect(el).toBeTruthy();
+    expect(el.classList.contains("strip-cal--work")).toBe(true);
+  });
+
   it("keeps every prompt textarea inside the Morning prompts card and ships no copy-prompt", () => {
     const h = screenHarness();
     const r = h.ui(<App />);
