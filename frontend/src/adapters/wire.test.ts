@@ -653,6 +653,81 @@ describe("S7a typed direct-intake block (capacities_intake)", () => {
   });
 });
 
+describe("skipped-object find-it clues in the direct-intake block", () => {
+  const baseSkipped = {
+    identity: "capacities:sp:struct-a:obj-9",
+    title: null,
+    reason: "No title",
+    detail: "property 'title' has no usable value",
+    structure_id: "struct-a",
+    structure_name: "Project",
+    labels: ["P1", "Idle"],
+    updated_at: "2026-10-10T00:33:06.790Z",
+    hint: "Description · Cadence:",
+  };
+  const blockWith = (skipped: unknown) => ({
+    mode: "direct",
+    state: "degraded",
+    coverage: { members: 1, evaluated: 0, malformed: 1, unreadable: 0 },
+    unassigned_candidates: [],
+    skipped,
+  });
+
+  it("projects labels, updatedAt, and hint when the server reports them", () => {
+    const projected = projectCapacitiesIntake(blockWith([baseSkipped]));
+    expect(projected?.skipped).toEqual([
+      {
+        identity: "capacities:sp:struct-a:obj-9",
+        title: null,
+        reason: "No title",
+        detail: "property 'title' has no usable value",
+        structureId: "struct-a",
+        structureName: "Project",
+        labels: ["P1", "Idle"],
+        updatedAt: "2026-10-10T00:33:06.790Z",
+        hint: "Description · Cadence:",
+      },
+    ]);
+  });
+
+  it("omits the clue keys entirely for a legacy skipped row", () => {
+    const legacy = {
+      identity: "capacities:sp:struct-a:obj-9",
+      title: null,
+      reason: "No title",
+      detail: "property 'title' has no usable value",
+      structure_id: "struct-a",
+      structure_name: "Project",
+    };
+    const projected = projectCapacitiesIntake(blockWith([legacy]));
+    expect(projected?.skipped?.[0]).toEqual({
+      identity: "capacities:sp:struct-a:obj-9",
+      title: null,
+      reason: "No title",
+      detail: "property 'title' has no usable value",
+      structureId: "struct-a",
+      structureName: "Project",
+    });
+    expect("labels" in (projected?.skipped?.[0] ?? {})).toBe(false);
+    expect("updatedAt" in (projected?.skipped?.[0] ?? {})).toBe(false);
+    expect("hint" in (projected?.skipped?.[0] ?? {})).toBe(false);
+  });
+
+  it("drops malformed clue values without dropping the row", () => {
+    const hostile = {
+      ...baseSkipped,
+      labels: ["P1", 7, null, ""],
+      updated_at: 42,
+      hint: ["not", "a", "string"],
+    };
+    const projected = projectCapacitiesIntake(blockWith([hostile]));
+    expect(projected?.skipped).toHaveLength(1);
+    expect(projected?.skipped?.[0].labels).toEqual(["P1"]);
+    expect(projected?.skipped?.[0].updatedAt).toBeUndefined();
+    expect(projected?.skipped?.[0].hint).toBeUndefined();
+  });
+});
+
 describe("T18b additive read contracts", () => {
   it("projects preset metadata, integer-minute allotment, Mint capacity, and config fingerprint", () => {
     const fixtures = [

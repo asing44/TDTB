@@ -216,6 +216,42 @@ describe("sources details popover", () => {
     expect(item.textContent).not.toContain("capacities:");
   });
 
+  it("shows labels, an edited date, and the hint under a skipped row", () => {
+    const h = stage((sc) => {
+      sc.inputs.capacitiesIntake = intake({
+        skipped: [
+          skippedRow({
+            title: null,
+            labels: ["P1", "Idle"],
+            updatedAt: "2026-10-10T00:33:06.790Z",
+            hint: "Description · Cadence:",
+          }),
+        ],
+      });
+    });
+    const r = openSources(h);
+    const clues = r.getByText('P1 · Idle · edited Oct 10 · "Description · Cadence:"');
+    expect(clues).toBeTruthy();
+    expect(clues.className).toContain("rail__sources-skipped-clues");
+  });
+
+  it("shows only the parts it has, and nothing extra when there are no clues", () => {
+    const h = stage((sc) => {
+      sc.inputs.capacitiesIntake = intake({
+        skipped: [
+          skippedRow({ identity: `${SKIP_ID}-l`, labels: ["Inbox"] }),
+          skippedRow({ identity: `${SKIP_ID}-n` }),
+        ],
+      });
+    });
+    const r = openSources(h);
+    expect(r.getByText("Inbox")).toBeTruthy();
+    const rows = Array.from(
+      r.container.querySelectorAll(".rail__sources-skipped-clues"),
+    );
+    expect(rows).toHaveLength(1);
+  });
+
   it("keeps the panel on screen for a trigger near the bottom", () => {
     setViewport(900, 700);
     stubRects({ top: 600, left: 20, width: 24, height: 20 }, { width: 340, height: 500 });

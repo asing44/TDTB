@@ -13,7 +13,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import { useApp, useAppState } from "./context";
 import type { Theme } from "../store/store";
 import { summaryHasChanges, type RefreshSummary } from "../model/refresh";
-import type { CapacitiesCoverage } from "../model/types";
+import type { CapacitiesCoverage, CapacitiesIntakeSkipped } from "../model/types";
 import { capacitiesCoverageOf } from "../adapters/wire";
 import { display12h } from "../model/time";
 import { formatRelative } from "../model/relative";
@@ -47,6 +47,34 @@ function dateTimeAt(ms: number): string {
 /** A short structure key is a name; a long one is an opaque id shown short. */
 function structureLabel(key: string): string {
   return key.length > SHORT_ID_AFTER ? key.slice(0, 8) : key;
+}
+
+/** Short "Oct 10" for a server ISO timestamp, or null when unparseable.
+    Capacities timestamps are UTC (trailing ``Z``); the calendar date is read
+    in UTC so the displayed day matches the source value on every machine
+    rather than shifting across a local midnight. */
+function shortEditedDate(iso: string): string | null {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return null;
+  return d.toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+    timeZone: "UTC",
+  });
+}
+
+/** The compact find-it clue line for one skipped row, or null when empty.
+    Parts are joined with " · ": labels, "edited {date}", then the hint in
+    quotes. Empty parts are omitted and an unreadable clue never throws. */
+function skippedClues(row: CapacitiesIntakeSkipped): string | null {
+  const parts: string[] = [];
+  if (row.labels && row.labels.length > 0) parts.push(row.labels.join(" · "));
+  const edited = row.updatedAt ? shortEditedDate(row.updatedAt) : null;
+  if (edited) parts.push(`edited ${edited}`);
+  if (typeof row.hint === "string" && row.hint !== "") {
+    parts.push(`"${row.hint}"`);
+  }
+  return parts.length > 0 ? parts.join(" · ") : null;
 }
 
 export function refreshSummaryText(
@@ -344,21 +372,27 @@ export function ReadinessStrip() {
                   <div class="rail__sources-src-counts">No skipped objects.</div>
                 ) : (
                   <ul class="rail__sources-skipped-list">
-                    {shownSkipped.map((row) => (
-                      <li
-                        class="rail__sources-skipped-item"
-                        key={row.identity}
-                        title={row.identity.slice(0, 8)}
-                      >
-                        <span class="rail__sources-skipped-title">
-                          {row.title && row.title.trim() !== "" ? row.title : "Untitled"}
-                        </span>
-                        <span class="rail__sources-skipped-reason"> — {row.reason}</span>
-                        {row.structureName && (
-                          <span class="rail__sources-skipped-meta">{row.structureName}</span>
-                        )}
-                      </li>
-                    ))}
+                    {shownSkipped.map((row) => {
+                      const clues = skippedClues(row);
+                      return (
+                        <li
+                          class="rail__sources-skipped-item"
+                          key={row.identity}
+                          title={row.identity.slice(0, 8)}
+                        >
+                          <span class="rail__sources-skipped-title">
+                            {row.title && row.title.trim() !== "" ? row.title : "Untitled"}
+                          </span>
+                          <span class="rail__sources-skipped-reason"> — {row.reason}</span>
+                          {row.structureName && (
+                            <span class="rail__sources-skipped-meta">{row.structureName}</span>
+                          )}
+                          {clues && (
+                            <span class="rail__sources-skipped-clues">{clues}</span>
+                          )}
+                        </li>
+                      );
+                    })}
                   </ul>
                 )}
                 {skippedOverflow > 0 && (
