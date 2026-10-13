@@ -6958,7 +6958,7 @@ body {
   }
 
   .qrow {
-    grid-template-columns: 3px 96px minmax(0, 1fr) 112px 300px 500px;
+    grid-template-columns: 3px 96px minmax(0, 1fr) 132px 300px 500px;
     grid-template-rows: auto auto;
     row-gap: 1px;
   }
@@ -7973,7 +7973,7 @@ body {
 
 @media (min-width: 1440px) {
   .qrow {
-    grid-template-columns: 3px 96px minmax(0, 1fr) 112px 300px 500px;
+    grid-template-columns: 3px 96px minmax(0, 1fr) 132px 300px 500px;
     grid-template-rows: auto auto;
     row-gap: 1px;
     column-gap: 14px;
@@ -8056,8 +8056,42 @@ body {
     min-width: 120px;
   }
 
+  /* The readout is a FIXED-width, right-aligned cell: the duration value on
+     the first line and the provenance chip beneath it on a second line. The
+     stable 34px min-height makes rows with and without a chip the same box, so
+     the slider line and −/+ steppers sit at the same x/y in every row. The
+     chip never wraps and cannot exceed the cell. */
   .qrow__time-readout {
     flex: none;
+    width: 88px;
+    min-width: 88px;
+    min-height: 34px;
+    flex-direction: column;
+    align-items: flex-end;
+    justify-content: center;
+    gap: 1px;
+    white-space: nowrap;
+    flex-wrap: nowrap;
+  }
+
+  .qrow__time-readout .alloc-track__value {
+    width: 88px;
+    min-width: 88px;
+    text-align: right;
+  }
+
+  .qrow__time-readout .qrow__dur-label {
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  /* The due cell is wide enough for the longest realistic one-line due text
+     ("p1 overdue 12d", "due 2026-07-31"). It stays a single line so the text
+     never wraps out of the track or hides under the slider. */
+  .qrow__due {
+    flex-wrap: nowrap;
+    min-width: 0;
   }
 
   /* Actions keep their reserved 500px track and stay visible at rest, so

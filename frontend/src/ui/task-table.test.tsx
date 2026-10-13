@@ -289,7 +289,7 @@ describe("overflow containment (2026-10-10)", () => {
     // actions. The reserved action track holds the cluster, so a revealed
     // cluster never paints over the title or the slider.
     expect(APP_CSS).toMatch(
-      /grid-template-columns:\s*3px\s+96px\s+minmax\(0,\s*1fr\)\s+112px\s+300px\s+500px/,
+      /grid-template-columns:\s*3px\s+96px\s+minmax\(0,\s*1fr\)\s+132px\s+300px\s+500px/,
     );
     // 1101-1439: the always-visible cluster drops to its own grid line, so
     // the due text stays readable and nothing is painted over the title.
