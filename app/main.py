@@ -764,6 +764,9 @@ def _capacities_intake_block(
                 "detail": entry.detail,
                 "structure_id": entry.structure_id,
                 "structure_name": entry.structure_name,
+                "labels": list(entry.labels),
+                "updated_at": entry.updated_at,
+                "hint": entry.hint,
             }
             for entry in sorted(coverage.skipped, key=lambda item: item.identity)[:50]
         ],

@@ -240,6 +240,12 @@ class SkippedObject:
     detail: str
     structure_id: str | None
     structure_name: str | None
+    #: Find-it clues so the operator can locate a title-less object in
+    #: Capacities. All three are best-effort and additive; extraction never
+    #: raises and an unreadable shape degrades to the empty value.
+    labels: tuple[str, ...] = ()
+    updated_at: str | None = None
+    hint: str | None = None
 
 
 def _text(value: Any) -> str:
@@ -780,6 +786,114 @@ def _readable_title(obj: dict[str, Any], mapping: StructureMapping) -> str | Non
         text = _text(obj.get("title"))
     text = _text(text)
     return text[:120] if text else None
+
+
+#: Find-it clue caps for the additive skipped surface.
+_SKIP_LABEL_LIMIT = 6
+_SKIP_LABEL_CHARS = 40
+_SKIP_HINT_TOKENS = 3
+_SKIP_HINT_CHARS = 80
+
+
+def _skipped_labels(obj: dict[str, Any]) -> tuple[str, ...]:
+    """Label display names from every ``label``-typed property; never raises.
+
+    Names are trimmed and capped at 40 chars, de-duplicated in first-seen
+    order, and limited to six so a hostile payload cannot bloat the additive
+    block. A member without a readable string name contributes nothing.
+    """
+    properties = obj.get("properties")
+    if not isinstance(properties, dict):
+        return ()
+    names: list[str] = []
+    seen: set[str] = set()
+    for prop in properties.values():
+        if not isinstance(prop, dict) or _text(prop.get("type")) != "label":
+            continue
+        members = prop.get("label")
+        if not isinstance(members, list):
+            continue
+        for member in members:
+            name = member.get("name") if isinstance(member, dict) else member
+            if not isinstance(name, str):
+                continue
+            text = _text(name)[:_SKIP_LABEL_CHARS]
+            if not text or text in seen:
+                continue
+            seen.add(text)
+            names.append(text)
+            if len(names) >= _SKIP_LABEL_LIMIT:
+                return tuple(names)
+    return tuple(names)
+
+
+def _skipped_updated_at(obj: dict[str, Any]) -> str | None:
+    """The ``lastUpdatedAt`` value when readable as a non-empty string.
+
+    The property is keyed on an id starting with ``lastUpdatedAt`` and carries
+    ``{"lastUpdatedAt": {"value": "…"}, "type": "lastUpdatedAt"}``. Any other
+    shape contributes nothing rather than raising.
+    """
+    properties = obj.get("properties")
+    if not isinstance(properties, dict):
+        return None
+    for key, prop in properties.items():
+        if not isinstance(prop, dict):
+            continue
+        typed = _text(prop.get("type")) == "lastUpdatedAt"
+        keyed = isinstance(key, str) and key.startswith("lastUpdatedAt")
+        if not typed and not keyed:
+            continue
+        payload = prop.get("lastUpdatedAt")
+        if not isinstance(payload, dict):
+            continue
+        value = payload.get("value")
+        if isinstance(value, str):
+            text = value.strip()
+            if text:
+                return text
+    return None
+
+
+def _skipped_hint(obj: dict[str, Any]) -> str | None:
+    """Up to three visible block text tokens joined by ``' · '``; never raises.
+
+    ``blocks`` is a dict of block lists; each block carries a ``tokens`` list.
+    Only non-empty string ``text`` values count, so markup or entity tokens
+    without text are skipped. The joined result is capped at 80 chars.
+    """
+    blocks = obj.get("blocks")
+    if not isinstance(blocks, dict):
+        return None
+    tokens: list[str] = []
+    for block_list in blocks.values():
+        if not isinstance(block_list, list):
+            continue
+        for block in block_list:
+            if not isinstance(block, dict):
+                continue
+            members = block.get("tokens")
+            if not isinstance(members, list):
+                continue
+            for token in members:
+                if not isinstance(token, dict):
+                    continue
+                text = token.get("text")
+                if not isinstance(text, str):
+                    continue
+                text = _text(text)
+                if not text:
+                    continue
+                tokens.append(text)
+                if len(tokens) >= _SKIP_HINT_TOKENS:
+                    break
+            if len(tokens) >= _SKIP_HINT_TOKENS:
+                break
+        if len(tokens) >= _SKIP_HINT_TOKENS:
+            break
+    if not tokens:
+        return None
+    return " · ".join(tokens)[:_SKIP_HINT_CHARS]
 
 
 def _structure_display_name(
@@ -1505,12 +1619,13 @@ class CapacitiesAdapter:
                 if not listed_id or listed_id not in seen_skipped:
                     if listed_id:
                         seen_skipped.add(listed_id)
+                    readable = isinstance(obj, dict)
                     skipped.append(
                         SkippedObject(
                             identity=listed_id,
                             title=(
                                 _readable_title(obj, mapping)
-                                if isinstance(obj, dict)
+                                if readable
                                 else None
                             ),
                             reason=_skip_reason(exc),
@@ -1519,6 +1634,11 @@ class CapacitiesAdapter:
                             structure_name=_structure_display_name(
                                 self._structure_defs, structure_id
                             ),
+                            labels=_skipped_labels(obj) if readable else (),
+                            updated_at=(
+                                _skipped_updated_at(obj) if readable else None
+                            ),
+                            hint=_skipped_hint(obj) if readable else None,
                         )
                     )
                 continue
