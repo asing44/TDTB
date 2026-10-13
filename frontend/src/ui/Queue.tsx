@@ -99,13 +99,20 @@ export function kindLabel(
   return null;
 }
 
-/** Duration provenance, spoken. The value wears a short visible text label
-    ("source", "memory", "remembered") and the aria-label/title names where
-    the value came from in full. */
+/** Duration provenance, spoken. It is the title/aria-label on the visible
+    chip; the chip's own wording comes from durLabelText. */
 function srcTagLabel(tag: "memory" | "remembered" | "source"): string {
   if (tag === "memory") return "Duration: memory (today's session override)";
   if (tag === "remembered") return "Duration: remembered (durable memory)";
   return "Duration: source (source-resolved)";
+}
+
+/** Visible chip wording — plain, not the internal tag. Source-resolved rows
+    are the default and render no chip at all. */
+function durLabelText(tag: "memory" | "remembered" | "source"): string | null {
+  if (tag === "memory") return "today only";
+  if (tag === "remembered") return "saved";
+  return null;
 }
 
 function hasAdjustableNativeTime(item: AssignedItem): boolean {
@@ -508,6 +515,7 @@ function Row({
     : item.durationSource === "remembered"
       ? "remembered"
       : "source";
+  const durLabel = durLabelText(srcTag);
   const scheduledRow = s.sequence?.find((r) => r.id === item.id && r.kind === "work");
   const track = trackFor(cumBefore, blocks, budgetTotal(s), MAX_BLOCKS);
 
@@ -627,11 +635,9 @@ function Row({
       <div class="qrow__time">
         {included ? (
           <>
-            {/* 2026-10-12 (Adam): the duration readout used to land on its
-                own line BELOW the slider, under the − stepper. It now leads
-                the column ABOVE the slider, on one line. The value holds the
-                left edge; the provenance label is pushed to the far right,
-                directly above the + stepper. */}
+            {/* 2026-10-12 (Adam): the duration readout leads the time column
+                ABOVE the slider, on one line. The value holds the left edge;
+                a non-default provenance chip sits immediately after it. */}
             <div class="qrow__time-readout">
               <span
                 class={`alloc-track__value ${track.pastBudget ? "alloc-track__value--over" : ""}`}
@@ -641,18 +647,19 @@ function Row({
                 {overridden ? "*" : ""}
               </span>
               {/* FEEDBACK-10 (A08) + duration-memory MVP: provenance as a
-                  visible text label. The earlier colored dot carried identity
-                  in color alone; the label reads out "source", "memory", or
-                  "remembered". The * on the value stays as the redundant
-                  session-memory signal. */}
-              <span
-                class={`qrow__dur-label qrow__dur-label--${srcTag}`}
-                data-src={srcTag}
-                title={srcTagLabel(srcTag)}
-                aria-label={srcTagLabel(srcTag)}
-              >
-                {srcTag}
-              </span>
+                  visible chip, in plain words, right after the value. Source
+                  rows are the default and render no chip; the * on the value
+                  and the slider's aria-valuetext still carry that state. */}
+              {durLabel != null && (
+                <span
+                  class={`qrow__dur-label qrow__dur-label--${srcTag}`}
+                  data-src={srcTag}
+                  title={srcTagLabel(srcTag)}
+                  aria-label={srcTagLabel(srcTag)}
+                >
+                  {durLabel}
+                </span>
+              )}
             </div>
             <div class="qrow__time-line">
                 {/* The slider's own notch is a 30-minute block; these are the

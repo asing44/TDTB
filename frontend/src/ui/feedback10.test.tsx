@@ -380,23 +380,20 @@ describe("FEEDBACK-10 icon actions expose hover/focus tooltips (A12)", () => {
 });
 
 describe("FEEDBACK-10 remembered duration is visible (A08)", () => {
-  it("a default row names its duration source as 'source'", () => {
+  it("a default row carries no visible duration label", () => {
     const h = makeHarness("ready");
     const { container } = h.ui(<Queue />);
     const slider = container.querySelector(
       'input[aria-label="Note Processing duration in 15-minute steps"]',
     ) as HTMLInputElement;
     expect(slider.getAttribute("aria-valuetext")).toMatch(/\(source\)$/);
-    const label = slider
-      .closest(".qrow")!
-      .querySelector(".qrow__dur-label") as HTMLElement;
-    expect(label.textContent).toBe("source");
-    expect(label.getAttribute("data-src")).toBe("source");
-    expect(label.getAttribute("aria-label")).toMatch(/source/);
+    expect(
+      slider.closest(".qrow")!.querySelector(".qrow__dur-label"),
+    ).toBeNull();
     expect(slider.closest(".qrow")!.querySelector(".qrow__dur-src")).toBeNull();
   });
 
-  it("an overridden row names its duration source as 'memory'", () => {
+  it("an overridden row is labelled 'today only'", () => {
     const h = makeHarness("ready");
     const { container } = h.ui(<Queue />);
     const slider = container.querySelector(
@@ -410,7 +407,7 @@ describe("FEEDBACK-10 remembered duration is visible (A08)", () => {
     const label = refreshed
       .closest(".qrow")!
       .querySelector(".qrow__dur-label") as HTMLElement;
-    expect(label.textContent).toBe("memory");
+    expect(label.textContent).toBe("today only");
     expect(label.getAttribute("data-src")).toBe("memory");
     expect(label.className).toContain("qrow__dur-label--memory");
     expect(label.getAttribute("aria-label")).toMatch(/memory/);

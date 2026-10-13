@@ -3,9 +3,9 @@
    Adam's capture showed the duration readout ("2hr 30min*") wrapping onto its
    own line BELOW the slider, under the − stepper. The column now stacks two
    lines: the readout first, then [−] [track] [+]. The duration value keeps the
-   left edge (aligned with the − stepper); the provenance label rides the far
-   right of that same line, directly above the + stepper and right-aligned to
-   its edge. The readout is never allowed to wrap.
+   left edge (aligned with the − stepper); a provenance label, when the row is
+   not source-default, sits immediately after the value. The readout is never
+   allowed to wrap.
 
    jsdom does no layout, so ordering and membership are checked in the DOM and
    the no-wrap / column / alignment guarantees are read off the cascade on
@@ -56,13 +56,32 @@ describe("the duration readout leads the time column", () => {
     ).toBeTruthy();
   });
 
-  it("holds only the value and the source label, in that order", () => {
+  it("holds only the value on a source (default) row", () => {
     const readout = timeColumn().querySelector<HTMLElement>(".qrow__time-readout")!;
+    const kids = Array.from(readout.children) as HTMLElement[];
+    expect(kids).toHaveLength(1);
+    expect(kids[0].classList.contains("alloc-track__value")).toBe(true);
+    expect(readout.querySelector(".qrow__dur-label")).toBeNull();
+  });
+
+  it("puts the label immediately after the value on a non-default row", () => {
+    const h = makeHarness("ready");
+    h.store.dispatch({
+      type: "OVERRIDE_SET",
+      id: "Magic Mirror",
+      override: { included: true, blocks: 4 },
+    });
+    const container: HTMLElement = h.ui(<Queue />).container;
+    const row = Array.from(
+      container.querySelectorAll<HTMLElement>(".qrow"),
+    ).find((r) => r.textContent?.includes("Magic Mirror"))!;
+    const readout = row.querySelector<HTMLElement>(".qrow__time-readout")!;
     const kids = Array.from(readout.children) as HTMLElement[];
     expect(kids).toHaveLength(2);
     expect(kids[0].classList.contains("alloc-track__value")).toBe(true);
     expect(kids[1].classList.contains("qrow__dur-label")).toBe(true);
-    expect(kids[1].textContent).toBe("source");
+    expect(kids[1].textContent).toBe("today only");
+    expect(kids[1].getAttribute("data-src")).toBe("memory");
   });
 
   it("holds −, the track, and +, in that order", () => {
@@ -105,11 +124,12 @@ describe("the readout line never wraps and the column stacks", () => {
     expect(body).toMatch(/text-align:\s*left/);
   });
 
-  it("pushes the source label to the right edge, above the + stepper", () => {
+  it("keeps the label next to the value, left-aligned with the readout", () => {
     // Only CSS can place the label: jsdom does no layout, so the placement is
-    // read off the readout's cascade. `space-between` sends the second (and
-    // last) child to the column's right edge, which is the + stepper's edge.
+    // read off the readout's cascade. `flex-start` holds the label right after
+    // the value instead of pushing it to the column's right edge.
     const body = ruleBody("\\.qrow__time-readout");
-    expect(body).toMatch(/justify-content:\s*space-between/);
+    expect(body).toMatch(/justify-content:\s*flex-start/);
+    expect(body).not.toMatch(/justify-content:\s*space-between/);
   });
 });

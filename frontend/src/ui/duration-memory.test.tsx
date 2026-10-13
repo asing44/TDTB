@@ -1,5 +1,5 @@
 /* duration-memory.test.tsx — duration-memory MVP (2026-08-17): the
-   remembered/source chip distinction, strict invalid-value blocking, the
+   remembered/source label distinction, strict invalid-value blocking, the
    explicit save and per-item reset mutations, failure preservation, and the
    accessible pending/error state on the existing controls. */
 
@@ -35,8 +35,8 @@ function openEditor(h: ReturnType<typeof memoryHarness>) {
   });
 }
 
-describe("duration-memory MVP: chip distinguishes remembered and source", () => {
-  it("a durable-remembered row renders 'remembered', not 'source'", () => {
+describe("duration-memory MVP: the label distinguishes remembered and source", () => {
+  it("a durable-remembered row renders 'saved', not 'source'", () => {
     const sc = makeScenario("ready");
     sc.inputs.assigned = sc.inputs.assigned.map((r) =>
       r.id === PRESS ? { ...r, durationSource: "remembered" } : r,
@@ -57,27 +57,24 @@ describe("duration-memory MVP: chip distinguishes remembered and source", () => 
     const label = slider
       .closest(".qrow")!
       .querySelector(".qrow__dur-label") as HTMLElement;
-    expect(label.textContent).toBe("remembered");
+    expect(label.textContent).toBe("saved");
     expect(label.getAttribute("data-src")).toBe("remembered");
     expect(label.className).toContain("qrow__dur-label--remembered");
     expect(label.getAttribute("aria-label")).toMatch(/remembered/);
-    // The dot element is gone; provenance is spoken by visible text.
+    // The dot element is gone; the chip spells the durable state out.
     expect(slider.closest(".qrow")!.querySelector(".qrow__dur-src")).toBeNull();
   });
 
-  it("a plain source-resolved row keeps the existing 'source' label", () => {
+  it("a plain source-resolved row renders no visible label", () => {
     const h = memoryHarness();
     const { container } = h.ui(<Queue />);
     const slider = container.querySelector(
       'input[aria-label="Press duration in 15-minute steps"]',
     ) as HTMLInputElement;
     expect(slider.getAttribute("aria-valuetext")).toMatch(/\(source\)$/);
-    const label = slider
-      .closest(".qrow")!
-      .querySelector(".qrow__dur-label") as HTMLElement;
-    expect(label.textContent).toBe("source");
-    expect(label.getAttribute("data-src")).toBe("source");
-    expect(label.getAttribute("aria-label")).toMatch(/source/);
+    expect(
+      slider.closest(".qrow")!.querySelector(".qrow__dur-label"),
+    ).toBeNull();
   });
 });
 
