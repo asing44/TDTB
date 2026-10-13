@@ -57,7 +57,11 @@ def _definition(
     return row
 
 
-def _contract(*, drop: frozenset[str] = frozenset()) -> list[dict[str, Any]]:
+def _contract(
+    *,
+    drop: frozenset[str] = frozenset(),
+    types: tuple[str, ...] = (ROOT, CUSTOM),
+) -> list[dict[str, Any]]:
     """The S0 structures payload. ``drop`` removes properties upstream."""
     properties = [
         _definition("title", "title"),
@@ -72,13 +76,13 @@ def _contract(*, drop: frozenset[str] = frozenset()) -> list[dict[str, Any]]:
             "title": type_id,
             "propertyDefinitions": [p for p in properties if p["id"] not in drop],
         }
-        for type_id in (ROOT, CUSTOM)
+        for type_id in types
     ]
 
 
-def _save_record() -> None:
+def _save_record(types: tuple[str, ...] = (ROOT, CUSTOM)) -> None:
     structures = []
-    for type_id in (ROOT, CUSTOM):
+    for type_id in types:
         # A distinct completion field knows only ``done``; every other value is
         # UNKNOWN, so a custom row is an unassigned pool candidate. The root type
         # has no completion mapping, so its eligible rows are assigned.
@@ -428,6 +432,84 @@ def test_type_checked_before_the_newest_check_is_marked_unchanged_since(
     assert ROOT in stale[0]
     assert "2026-10-01" in stale[0]
     assert not any(CUSTOM in w and "unchanged since" in w for w in warnings)
+
+
+FOUR_TYPES = (ROOT, CUSTOM, "T3", "T4")
+
+
+def test_types_checked_within_the_skew_window_are_not_stale(
+    no_token_no_provider,
+):
+    """A full Refresh checks every type in sequence, so one generation's check
+    times differ by a fraction of a second; that is not a stale type."""
+    _save_record(FOUR_TYPES)
+    checked = {
+        type_id: NOON_TS + index * 0.2 for index, type_id in enumerate(FOUR_TYPES)
+    }
+    _publish(
+        [_object(f"{type_id}-assigned", type_id) for type_id in FOUR_TYPES],
+        structures=_contract(types=FOUR_TYPES),
+        checked=checked,
+    )
+
+    _assigned, _pool, warnings, _ = _load()
+
+    assert not [w for w in warnings if "unchanged since" in w]
+
+
+def test_type_checked_ten_minutes_before_the_others_is_stale(
+    no_token_no_provider,
+):
+    """A Rescan of one type leaves that type ten minutes behind; it is stale."""
+    _save_record(FOUR_TYPES)
+    checked = {type_id: NOON_TS for type_id in FOUR_TYPES if type_id != ROOT}
+    checked[ROOT] = NOON_TS - 600.0
+    _publish(
+        [_object(f"{type_id}-assigned", type_id) for type_id in FOUR_TYPES],
+        structures=_contract(types=FOUR_TYPES),
+        checked=checked,
+    )
+
+    _assigned, _pool, warnings, _ = _load()
+
+    stale = [w for w in warnings if "unchanged since" in w]
+    assert len(stale) == 1
+    assert ROOT in stale[0]
+
+
+@pytest.mark.parametrize("gap_seconds, expected", [(299.0, 0), (301.0, 1)])
+def test_type_check_skew_threshold(
+    gap_seconds, expected, no_token_no_provider
+):
+    """Just inside the skew window is a full Refresh; just outside is a Rescan."""
+    _save_record()
+    _publish(
+        [_object("root-assigned", ROOT), _object("custom-assigned", CUSTOM)],
+        structures=_contract(),
+        checked={ROOT: NOON_TS - gap_seconds, CUSTOM: NOON_TS},
+    )
+
+    _assigned, _pool, warnings, _ = _load()
+
+    stale = [w for w in warnings if "unchanged since" in w]
+    assert len(stale) == expected
+
+
+def test_type_absent_from_generation_warns_not_in_published_generation(
+    no_token_no_provider,
+):
+    """A mapped type the generation never checked is missing, not stale."""
+    _save_record()
+    _publish([_object("root-assigned", ROOT)], structures=_contract())
+
+    _assigned, _pool, warnings, _ = _load()
+
+    missing = [
+        w
+        for w in warnings
+        if CUSTOM in w and "not in the published generation" in w
+    ]
+    assert len(missing) == 1
 
 
 # ---------------------------------------------------------------------------

@@ -63,6 +63,12 @@ POLICY_UNREADABLE = (
     "Capacities rules or tag exclusions are unreadable; no Capacities rows are shown."
 )
 
+#: A full Refresh checks types one after another, so their ``type_check_times``
+#: differ by a fraction of a second even though every type was just checked.
+#: Treat a gap within this window as the same generation; only a materially
+#: older check (the single-type Rescan) is stale.
+_TYPE_CHECK_SKEW_SECONDS = 300.0
+
 
 class ProviderCallDefect(RuntimeError):
     """The offline projection reached the provider. A defect, never a fallback."""
@@ -200,7 +206,8 @@ def _refused(
 
 def _type_warnings(read: capacities_builder.DirectIntakeRead) -> list[str]:
     """Per-type freshness: a configured type the generation never checked, and
-    any type checked before the newest check (the single-type Rescan case)."""
+    any type checked materially before the newest check (the single-type
+    Rescan case). Sub-skew gaps are one full Refresh, not a stale type."""
     if read.snapshot is None:
         return []
     checked = dict(read.snapshot.type_check_times)
@@ -214,7 +221,7 @@ def _type_warnings(read: capacities_builder.DirectIntakeRead) -> list[str]:
     if checked:
         newest = max(checked.values())
         for type_key in sorted(checked):
-            if checked[type_key] < newest:
+            if newest - checked[type_key] > _TYPE_CHECK_SKEW_SECONDS:
                 warnings.append(
                     f"Capacities structure {type_key!r} unchanged since "
                     f"{_local_day(checked[type_key])}; Refresh to check it again."
