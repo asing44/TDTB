@@ -37,6 +37,15 @@ function ruleBody(selector: string): string {
   return match[1];
 }
 
+/** Body of the LAST `selector { … }` rule — the appended >=1440px redesign
+    layer wins the cascade, so the last match is the live desktop rule. */
+function lastRuleBody(selector: string): string {
+  const re = new RegExp(`(?:^|\\n)\\s*${selector}\\s*\\{([^}]*)\\}`, "g");
+  const matches = Array.from(appCss.matchAll(re), (m) => m[1]);
+  if (matches.length === 0) throw new Error(`selector not found in app.css: ${selector}`);
+  return matches[matches.length - 1];
+}
+
 function rowFor(container: HTMLElement, name: string): HTMLElement {
   const found = Array.from(container.querySelectorAll<HTMLElement>(".qrow")).find(
     (r) => r.textContent?.includes(name),
@@ -122,9 +131,9 @@ describe("Plan row duration steppers are restored", () => {
 
 describe("the duration readout holds a fixed width beside the slider", () => {
   it("holds a fixed value area so sliders line up between rows", () => {
-    const body = ruleBody("\\.qrow__time-readout \\.alloc-track__value");
-    expect(body).toMatch(/width:\s*76px/);
-    expect(body).toMatch(/min-width:\s*76px/);
+    const body = lastRuleBody("\\.qrow__time-readout \\.alloc-track__value");
+    expect(body).toMatch(/width:\s*88px/);
+    expect(body).toMatch(/min-width:\s*88px/);
     expect(body).toMatch(/text-align:\s*right/);
   });
 

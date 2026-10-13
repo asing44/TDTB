@@ -1,11 +1,11 @@
 /* readout-above-slider.test.tsx — Plan task row duration column (2026-10-12
    redesign):
 
-   The duration readout moved off its own line ABOVE the slider and now sits
-   INLINE to the RIGHT of the slider: [−] [track] [+] readout. The value holds
-   a fixed width so the sliders line up between rows; a plain-word provenance
-   label, when the row is not source-default, sits immediately after the
-   value. The readout never wraps.
+   The duration readout sits INLINE to the RIGHT of the slider in the one-line
+   desktop row: [−] [track] [+] readout. The readout is a FIXED-width cell; a
+   plain-word provenance label, when the row is not source-default, stacks on a
+   second line beneath the value so every row keeps the same cell box and the
+   sliders line up. The readout never wraps.
 
    jsdom does no layout, so ordering and membership are checked in the DOM and
    the row / nowrap / fixed-width guarantees are read off the cascade on disk,
@@ -39,6 +39,32 @@ function lastRuleBody(selector: string): string {
   const matches = Array.from(appCss.matchAll(re), (m) => m[1]);
   if (matches.length === 0) throw new Error(`selector not found in app.css: ${selector}`);
   return matches[matches.length - 1];
+}
+
+/** Body of the LAST `selector { … }` rule inside the `@media (min-width: 1440px)`
+    layers only (brace-balanced). The file ends with `max-width: 1439px` blocks
+    that re-declare some selectors for the stacked layout, so the plain last
+    match is not the live desktop rule. */
+function desktopRuleBody(selector: string): string {
+  const bodies: string[] = [];
+  const open = /@media\s*\(min-width:\s*1440px\)\s*\{/g;
+  while (open.exec(appCss) !== null) {
+    let depth = 1;
+    let i = open.lastIndex;
+    const start = i;
+    while (i < appCss.length && depth > 0) {
+      if (appCss[i] === "{") depth += 1;
+      else if (appCss[i] === "}") depth -= 1;
+      i += 1;
+    }
+    bodies.push(appCss.slice(start, i - 1));
+  }
+  const re = new RegExp(`(?:^|\\n)\\s*${selector}\\s*\\{([^}]*)\\}`, "g");
+  const hits = bodies.flatMap((b) => Array.from(b.matchAll(re), (x) => x[1]));
+  if (hits.length === 0) {
+    throw new Error(`no @media (min-width: 1440px) rule for ${selector}`);
+  }
+  return hits[hits.length - 1];
 }
 
 function timeColumn(): HTMLElement {
@@ -116,9 +142,9 @@ describe("the duration readout trails the slider", () => {
   });
 });
 
-describe("the readout is a fixed-width value area beside the slider", () => {
+describe("the readout is a fixed-width cell beside the slider", () => {
   it("keeps the readout on one nowrap line", () => {
-    const body = ruleBody("\\.qrow__time-readout");
+    const body = desktopRuleBody("\\.qrow__time-readout");
     expect(body).toMatch(/flex-wrap:\s*nowrap/);
     expect(body).toMatch(/white-space:\s*nowrap/);
   });
@@ -128,15 +154,25 @@ describe("the readout is a fixed-width value area beside the slider", () => {
     expect(body).toMatch(/flex-direction:\s*row/);
   });
 
+  it("stacks the value over the chip in a fixed-width cell", () => {
+    const body = desktopRuleBody("\\.qrow__time-readout");
+    expect(body).toMatch(/width:\s*88px/);
+    expect(body).toMatch(/min-width:\s*88px/);
+    expect(body).toMatch(/min-height:\s*34px/);
+    expect(body).toMatch(/flex-direction:\s*column/);
+    expect(body).toMatch(/align-items:\s*flex-end/);
+  });
+
   it("holds a fixed-width value area so sliders line up between rows", () => {
-    const body = ruleBody("\\.qrow__time-readout \\.alloc-track__value");
-    expect(body).toMatch(/width:\s*76px/);
+    const body = desktopRuleBody("\\.qrow__time-readout \\.alloc-track__value");
+    expect(body).toMatch(/width:\s*88px/);
     expect(body).toMatch(/text-align:\s*right/);
   });
 
-  it("keeps the label next to the value, left-aligned with the readout", () => {
-    const body = ruleBody("\\.qrow__time-readout");
-    expect(body).toMatch(/justify-content:\s*flex-start/);
-    expect(body).not.toMatch(/justify-content:\s*space-between/);
+  it("never lets the chip wrap or exceed the readout cell", () => {
+    const body = desktopRuleBody("\\.qrow__time-readout \\.qrow__dur-label");
+    expect(body).toMatch(/max-width:\s*100%/);
+    expect(body).toMatch(/overflow:\s*hidden/);
+    expect(ruleBody("\\.qrow__dur-label")).toMatch(/white-space:\s*nowrap/);
   });
 });

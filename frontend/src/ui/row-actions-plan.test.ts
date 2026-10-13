@@ -140,7 +140,7 @@ describe("Plan task rows restore the −/+ duration steppers", () => {
 describe("Plan task row layout reserves the action track", () => {
   it("uses the mockup's reserved 500px action track at desktop width", () => {
     expect(appCss).toMatch(
-      /grid-template-columns:\s*3px\s+96px\s+minmax\(0,\s*1fr\)\s+112px\s+300px\s+500px/,
+      /grid-template-columns:\s*3px\s+96px\s+minmax\(0,\s*1fr\)\s+132px\s+300px\s+500px/,
     );
     expect(at1500(".qrow")).toMatch(/500px/);
   });
