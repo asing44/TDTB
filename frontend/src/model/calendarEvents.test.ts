@@ -33,6 +33,70 @@ describe("calendar event display rules", () => {
     expect(out.map((e) => e.start)).toEqual(["15:00", "16:00"]);
   });
 
+  // A calendar-synced event can sit on several calendars under the same
+  // (title, start, end, length). The live bug: an ignored '🟡 Trinoor' copy
+  // listed first won the group, so the counted work copy vanished.
+  const cal = (name: string, start: string, over: Partial<AnchoredBlock>): AnchoredBlock =>
+    ({ ...ev(name, start, 30), ...over });
+
+  it("keeps the counted copy of a duplicate pair that differs by capacity class", () => {
+    const rows = [
+      cal("OPPD-Payment Risk Weekly Working Session", "15:00", {
+        id: "OPPD (Trinoor)", calendarTitle: "🟡 Trinoor", capacityClass: "ignored",
+      }),
+      cal("OPPD-Payment Risk Weekly Working Session", "15:00", {
+        id: "OPPD (Calendar)", calendarTitle: "Calendar", capacityClass: "work",
+      }),
+    ];
+    const out = dedupeCalendarEvents(rows);
+    expect(out).toHaveLength(1);
+    expect(out[0].capacityClass).toBe("work");
+    expect(out[0].calendarTitle).toBe("Calendar");
+  });
+
+  it("keeps the counted copy at the group's first position so order is stable", () => {
+    const rows = [
+      cal("A", "09:00", { capacityClass: "fixed" }),
+      cal("OPPD", "15:00", { capacityClass: "ignored" }),
+      cal("B", "16:00", { capacityClass: "fixed" }),
+      cal("OPPD", "15:00", { capacityClass: "work" }),
+    ];
+    const out = dedupeCalendarEvents(rows);
+    expect(out.map((e) => e.name)).toEqual(["A", "OPPD", "B"]);
+    expect(out[1].capacityClass).toBe("work");
+  });
+
+  it("keeps the first of two counted (non-ignored) copies", () => {
+    const first = cal("OPPD", "15:00", { id: "first", capacityClass: "work" });
+    const second = cal("OPPD", "15:00", { id: "second", capacityClass: "fixed" });
+    const out = dedupeCalendarEvents([first, second]);
+    expect(out).toHaveLength(1);
+    expect(out[0]).toBe(first);
+  });
+
+  it("treats a row without a capacity class as counted", () => {
+    const bare = ev("OPPD", "15:00");
+    const work = cal("OPPD", "15:00", { id: "work", capacityClass: "work" });
+    const out = dedupeCalendarEvents([bare, work]);
+    expect(out).toHaveLength(1);
+    expect(out[0]).toBe(bare);
+  });
+
+  it("displayAnchored keeps the counted duplicate in the group's first position", () => {
+    const rows = [
+      cal("Capitals @ Hurricanes", "19:00", { start: "19:00", capacityClass: "fixed" }),
+      cal("OPPD-Payment Risk Weekly Working Session", "15:00", {
+        id: "OPPD (Trinoor)", calendarTitle: "🟡 Trinoor", capacityClass: "ignored",
+      }),
+      cal("OPPD-Payment Risk Weekly Working Session", "15:00", {
+        id: "OPPD (Calendar)", calendarTitle: "Calendar", capacityClass: "work",
+      }),
+    ];
+    const out = displayAnchored(rows, { sessionCalendars: true });
+    expect(out.map((r) => r.name)).toEqual(["Capitals @ Hurricanes", "OPPD-Payment Risk Weekly Working Session"]);
+    expect(out[1].capacityClass).toBe("work");
+  });
+
   it("filters only calendar rows and leaves anchors alone", () => {
     const rows = [
       ev("Sudsing", "17:45", 30, "hard"),
