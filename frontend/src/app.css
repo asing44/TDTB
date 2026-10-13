@@ -1507,7 +1507,7 @@
   min-width: 0;
 }
 /* 2026-10-12 (Adam): the duration readout leads the time column on its own
-   line — above the slider, never wrapping, with the provenance dot beside
+   line — above the slider, never wrapping, with the provenance label beside
    it. The left alignment below overrides `.alloc-track__value`'s base right
    alignment so the text lines up with the left edge of the − stepper. */
 .qrow__time-readout {
@@ -6250,7 +6250,7 @@ body {
      permission note on the meta line instead of wrapping under the slider. */
   .qrow__time .alloc-track {
     /* 120px floor, kept from the steady-slider fix and asserted by
-       slider-steppers.test.tsx. The readout and its status dot now sit on
+       slider-steppers.test.tsx. The readout and its status label now sit on
        their own line above, so this line holds only the two steppers and the
        track. */
     flex: 1 1 auto;
@@ -6430,20 +6430,31 @@ body {
   white-space: nowrap;
 }
 
-/* Duration provenance dot (replaces the uppercase SOURCE/REMEMBERED pill).
-   The state is spoken through aria-label/title on the element itself. */
-.qrow__dur-src {
+/* Duration provenance label (replaces the colored source dot; restores the
+   earlier text chip). "source" stays quiet; "memory" and "remembered" carry
+   the state color. The full provenance is still spoken through
+   aria-label/title on the element itself. */
+.qrow__dur-label {
   flex: none;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--state-source);
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  padding: 1px 4px;
+  border-radius: 3px;
+  color: var(--state-source);
+  border: 0.5px solid var(--t-border);
+  background: var(--t-surface);
+  white-space: nowrap;
 }
-.qrow__dur-src--memory {
-  background: var(--state-memory);
+.qrow__dur-label--memory {
+  color: var(--t-accent-text);
+  background: color-mix(in srgb, var(--state-memory) 14%, var(--t-surface));
+  border-color: color-mix(in srgb, var(--state-memory) 45%, transparent);
 }
-.qrow__dur-src--remembered {
-  background: var(--state-remembered);
+.qrow__dur-label--remembered {
+  color: var(--t-text);
+  background: color-mix(in srgb, var(--state-remembered) 13%, var(--t-surface));
+  border-color: color-mix(in srgb, var(--state-remembered) 40%, transparent);
 }
 
 

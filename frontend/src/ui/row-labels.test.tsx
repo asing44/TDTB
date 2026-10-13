@@ -1,7 +1,7 @@
 /* row-labels.test.tsx — U11 row-labeling pass (2026-10-10). TDD for the new
    behavior: the source chip vocabulary, Capacities structure-title resolution
    (falling back to "Capacities item", never a UUID), the duration provenance
-   dot, and the compact one-line time-movement note on fixed rows.
+   text label, and the compact one-line time-movement note on fixed rows.
 
    Fixture adapters only: no live adapter, no billed call, no source write. */
 
@@ -125,13 +125,14 @@ describe("rendered rows carry the clearer labels", () => {
     expect(unknown.textContent).not.toMatch(/RootTask/);
   });
 
-  it("speaks the duration provenance through the dot, not a pill", () => {
+  it("shows the duration provenance as a text label, not a dot", () => {
     const h = makeHarness("ready");
     const { container } = h.ui(<Queue />);
-    const dot = container.querySelector(".qrow__dur-src") as HTMLElement;
-    expect(dot).toBeTruthy();
-    expect(dot.getAttribute("aria-label")).toMatch(/Duration:/);
-    expect(dot.textContent).toBe("");
+    const label = container.querySelector(".qrow__dur-label") as HTMLElement;
+    expect(label).toBeTruthy();
+    expect(label.getAttribute("aria-label")).toMatch(/Duration:/);
+    expect(label.textContent).toBe("source");
+    expect(container.querySelector(".qrow__dur-src")).toBeNull();
   });
 
   it("renders the fixed-row permission as one compact line, not a one-char column", () => {
