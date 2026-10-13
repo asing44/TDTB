@@ -167,7 +167,7 @@ Surprises:
   plist exported `TDTB_VAULT_ROOT`; the new one does not). If the service is restarted against the OLD installed plist the variable is
   simply ignored. Optionally run one Capacities Refresh after the restart (see namespaces above).
 
-**V5a as landed** (frontend half of V5; branch `TDTB/vault-removal-v5a-20261012`, not merged). Nothing under `frontend/src` models or says "vault" outside the stale contract fixtures and the tolerance tests/comments.
+**V5a as landed** (frontend half of V5; merged to main as `5fb154a`). Nothing under `frontend/src` models or says "vault" outside the stale contract fixtures and the tolerance tests/comments.
 
 - Types: `Source = "todoist" | "capacities"`; `ManifestEntry.system` is `"todoist" | "calendar"`; `sourceCounts` is `{todoist, calendar}`.
 - Tolerance (backend still emits the legacy fields until V5b): `projectAssigned` maps an unknown or legacy source (incl. `"vault"`, or none) to a **neutral Todoist-like row**: `source: "todoist"`, `path: null`, no `todoistId`, `identity: null`. It is unidentified, so no source-specific verb or duration-memory save can address it. `source_counts.vault` is ignored; a `system: "vault"` shadow/report entry copies through and renders without crashing (ApprovalDrawer totals show only todoist/calendar).
