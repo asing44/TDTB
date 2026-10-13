@@ -322,7 +322,9 @@ describe("sources details popover", () => {
   it("spells out the next action for degraded, deferred, and clean states", () => {
     const degraded = openSources(stage());
     expect(
-      degraded.getByText("Fix or delete these in Capacities, then Refresh."),
+      degraded.getByText(
+        "These do not block planning but are left out of the plan. Fix or delete them in Capacities, then Refresh.",
+      ),
     ).toBeTruthy();
     degraded.unmount();
 
@@ -344,6 +346,21 @@ describe("sources details popover", () => {
       }),
     );
     expect(clean.getByText("Nothing needs attention.")).toBeTruthy();
+  });
+
+  it("keeps the skipped-object action visible and advisory when the read is ok", () => {
+    const h = stage((sc) => {
+      sc.inputs.capacitiesIntake = intake({
+        state: "ok",
+        coverage: { members: 6, evaluated: 6, malformed: 1, unreadable: 0 },
+      });
+    });
+    const r = openSources(h);
+    expect(
+      r.getByText(
+        "These do not block planning but are left out of the plan. Fix or delete them in Capacities, then Refresh.",
+      ),
+    ).toBeTruthy();
   });
 
   it("appends the relative age to the rail readout only past ten minutes", () => {

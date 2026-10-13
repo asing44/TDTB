@@ -383,6 +383,36 @@ describe("degraded sources (plan-inputs-degraded.json)", () => {
   });
 });
 
+describe("skipped Capacities objects (advisory)", () => {
+  const skipped =
+    "skipped Capacities object bb95d80d-573c-4aff-8faa-9dccdd2617a1 — not plannable: No title";
+
+  it("treats the skipped-object notice as advisory, not degraded", () => {
+    expect(sourceHealthOf([skipped])).toBe("ok");
+    expect(sourceHealthOf([skipped, skipped])).toBe("ok");
+  });
+
+  it("still degrades when a real warning accompanies a skip", () => {
+    expect(sourceHealthOf([skipped, "Todoist read failed (timeout)"])).toBe("degraded");
+  });
+
+  it("keeps Capacities partial coverage on the degraded gate", () => {
+    expect(
+      sourceHealthOf(["Capacities partial — 20 evaluated · 51 deferred"]),
+    ).toBe("degraded");
+  });
+
+  it("keeps the calendar reminder omission advisory", () => {
+    const warning =
+      "Calendar omission: 2.0M: zero or negative duration (reminder-style marker)";
+    expect(sourceHealthOf([warning])).toBe("ok");
+  });
+
+  it("does not match a near-miss skipped string", () => {
+    expect(sourceHealthOf(["skipped Capacities object — oops"])).toBe("degraded");
+  });
+});
+
 describe("Capacities partial coverage (source_warnings)", () => {
   const budgetWarning =
     "Capacities partial — 20 evaluated · 51 deferred across contributing " +

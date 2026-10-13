@@ -130,10 +130,53 @@ describe("U7 stepper header", () => {
       const label = pill.getAttribute("aria-label") ?? "";
       expect(label).toContain("Sources last refreshed 18m");
       expect(label).toContain("Capacity > Details > Sources");
+      expect(label).not.toContain("were skipped");
       expect(pill.getAttribute("title")).toBe(label);
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("names the advisory skipped Capacities objects in a healthy pill", () => {
+    const skipped =
+      "skipped Capacities object bb95d80d-573c-4aff-8faa-9dccdd2617a1 — not plannable: No title";
+    const h = makeHarness("ready", (sc) => {
+      sc.inputs.sourceWarnings = [skipped];
+    });
+    const r = h.ui(<Header />);
+    const pill = r.getByRole("status");
+    expect(pill.textContent).toContain("Sources healthy · 1 skipped");
+    const label = pill.getAttribute("aria-label") ?? "";
+    expect(label).toContain("1 Capacities objects were skipped (not plannable).");
+    expect(label).toContain("They are not in the plan.");
+    expect(label).toContain("Capacity > Details > Sources.");
+    expect(pill.getAttribute("title")).toBe(label);
+    expect(pill.className).toContain("health-pill--healthy");
+    expect(r.queryByRole("button", { name: "Retry source refresh" })).toBeNull();
+  });
+
+  it("falls back to the intake skipped count when it is larger than the warnings", () => {
+    const skipped =
+      "skipped Capacities object bb95d80d-573c-4aff-8faa-9dccdd2617a1 — not plannable: No title";
+    const h = makeHarness("ready", (sc) => {
+      sc.inputs.sourceWarnings = [skipped];
+      sc.inputs.capacitiesIntake = {
+        mode: "direct",
+        state: "ok",
+        generation: 1,
+        installedAt: null,
+        typeCheckTimes: {},
+        coverage: { members: 3, evaluated: 3, malformed: 0, unreadable: 0 },
+        unassignedCandidates: [],
+        skipped: [
+          { identity: "a", title: null, reason: "No title", detail: "", structureId: null, structureName: null },
+          { identity: "b", title: null, reason: "No title", detail: "", structureId: null, structureName: null },
+          { identity: "c", title: null, reason: "No title", detail: "", structureId: null, structureName: null },
+        ],
+      };
+    });
+    const r = h.ui(<Header />);
+    expect(r.getByRole("status").textContent).toContain("Sources healthy · 3 skipped");
   });
 
   it("Connections opens the existing connections screen", () => {

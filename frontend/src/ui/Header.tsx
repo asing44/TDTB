@@ -13,6 +13,7 @@ import { Fragment } from "preact";
 import { useApp, useAppState } from "./context";
 import { display12h } from "../model/time";
 import { formatRelativeShort } from "../model/relative";
+import { countAdvisorySkipped } from "../adapters/wire";
 
 const DAY = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -104,6 +105,16 @@ export function Header() {
     : health === "ok"
       ? "Sources healthy"
       : "Sources degraded · commit blocked";
+  // Skipped Capacities objects no longer block planning, but they are left out
+  // of the plan, so a healthy pill still says how many.
+  const skippedCount = Math.max(
+    countAdvisorySkipped(s.inputs.sourceWarnings),
+    s.inputs.capacitiesIntake?.skipped?.length ?? 0,
+  );
+  const skippedNote =
+    !refreshing && health === "ok" && skippedCount > 0
+      ? `${skippedCount} Capacities objects were skipped (not plannable). They are not in the plan. See Capacity > Details > Sources.`
+      : null;
   // Discoverability: the freshness evidence lives inside the collapsed
   // capacity-card Details disclosure, so the header pill carries the age and
   // a plain-language hint to where the details are.
@@ -112,11 +123,13 @@ export function Header() {
   const refreshed =
     refreshedAt && !Number.isNaN(refreshedAt.getTime()) ? refreshedAt : null;
   const age = refreshed ? formatRelativeShort(now, refreshed) : null;
-  const pillText = !refreshing && age ? `${pillBase} · ${age}` : pillBase;
-  const pillHint =
+  const pillLead = skippedNote ? `${pillBase} · ${skippedCount} skipped` : pillBase;
+  const pillText = !refreshing && age ? `${pillLead} · ${age}` : pillLead;
+  const pillAgeHint =
     age && refreshed
       ? `Sources last refreshed ${age} (${dateTimeLabel(refreshed)}). Open Capacity > Details > Sources for more.`
       : "Open Capacity > Details > Sources for more.";
+  const pillHint = skippedNote ? `${skippedNote} ${pillAgeHint}` : pillAgeHint;
 
   const preset = s.inputs.daySemantics.selectedPreset?.name;
   const t = s.inputs.time;

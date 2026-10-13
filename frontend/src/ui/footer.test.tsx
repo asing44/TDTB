@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { cleanup, fireEvent } from "@testing-library/preact";
 import { makeHarness } from "./test-harness";
 import { Footer } from "./Footer";
+import { sourceHealthOf } from "../adapters/wire";
 
 afterEach(() => cleanup());
 
@@ -40,6 +41,21 @@ describe("U7 footer", () => {
       .getByText(/^Sequence & commit \d+ blk$/)
       .closest("button") as HTMLButtonElement;
     expect(primary.disabled).toBe(true);
+  });
+
+  it("does not block sequencing when the only warnings are skipped Capacities objects", () => {
+    const h = makeHarness("ready", (sc) => {
+      sc.inputs.sourceWarnings = [
+        "skipped Capacities object bb95d80d-573c-4aff-8faa-9dccdd2617a1 — not plannable: No title",
+      ];
+      sc.inputs.sourceHealth = sourceHealthOf(sc.inputs.sourceWarnings);
+    });
+    const r = h.ui(<Footer />);
+    expect(r.queryByText(/Can't sequence until sources are healthy\./)).toBeNull();
+    const primary = r
+      .getByText(/^Sequence & commit \d+ blk$/)
+      .closest("button") as HTMLButtonElement;
+    expect(primary.disabled).toBe(false);
   });
 
   it("shows the ← Day setup back link on Plan tasks and opens day setup", () => {
