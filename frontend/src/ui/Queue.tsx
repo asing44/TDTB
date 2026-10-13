@@ -629,8 +629,9 @@ function Row({
           <>
             {/* 2026-10-12 (Adam): the duration readout used to land on its
                 own line BELOW the slider, under the − stepper. It now leads
-                the column ABOVE the slider, on one line, with the provenance
-                dot riding beside it. */}
+                the column ABOVE the slider, on one line. The value holds the
+                left edge; the provenance label is pushed to the far right,
+                directly above the + stepper. */}
             <div class="qrow__time-readout">
               <span
                 class={`alloc-track__value ${track.pastBudget ? "alloc-track__value--over" : ""}`}
