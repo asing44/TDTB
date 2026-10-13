@@ -756,6 +756,17 @@ def _capacities_intake_block(
             "malformed": coverage.malformed,
             "unreadable": coverage.unreadable,
         },
+        "skipped": [
+            {
+                "identity": entry.identity,
+                "title": entry.title,
+                "reason": entry.reason,
+                "detail": entry.detail,
+                "structure_id": entry.structure_id,
+                "structure_name": entry.structure_name,
+            }
+            for entry in sorted(coverage.skipped, key=lambda item: item.identity)[:50]
+        ],
         "unassigned_candidates": [
             {
                 "identity": row.get("identity"),
