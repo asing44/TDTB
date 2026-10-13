@@ -97,6 +97,28 @@ export function clampDisplayBlocks(blocks: number): number {
   return Math.min(MAX_BLOCKS, Math.max(MIN_BLOCKS, blocks));
 }
 
+/** Five minutes on the 30-minute block scale: the floor a sub-15 row walks
+    down through before All day (remembered durations save in 5-minute steps). */
+const FIVE_MINUTE_BLOCK = 5 / 30;
+
+/** One "+15 min" press. Exact, not snapped: a 10min row goes to 25min, where
+    clampHalfBlocks would jump it to 30min. On the 15-minute grid this is the
+    same walk as before. */
+export function stepUpBlocks(blocks: number): number {
+  return clampDisplayBlocks(blocks + HALF_BLOCK);
+}
+
+/** One "−15 min" press. The bottom notch stays All day (15min → All day, as
+    designed). Below 15 minutes an off-grid value walks down in 5-minute steps
+    (10min → 5min → All day), so one press never drops a short row from the
+    plan. */
+export function stepDownBlocks(blocks: number): number {
+  if (!Number.isFinite(blocks) || blocks <= MIN_BLOCKS) return MIN_BLOCKS;
+  if (blocks === HALF_BLOCK) return MIN_BLOCKS;
+  if (blocks > HALF_BLOCK) return clampDisplayBlocks(blocks - HALF_BLOCK);
+  return Math.max(MIN_BLOCKS, blocks - FIVE_MINUTE_BLOCK);
+}
+
 /** Free blocks with the user's in-flight slider values applied. Exact rather
     than approximate — see the header note on why the substitution is safe. */
 export function liveFree(cap: Capacity | null, localSelected: number): number {

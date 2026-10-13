@@ -54,6 +54,8 @@ import {
   MIN_BLOCKS,
   clampDisplayBlocks,
   clampHalfBlocks,
+  stepDownBlocks,
+  stepUpBlocks,
 } from "../model/allocator";
 import { stripeColor, trackFor, trackGradient } from "../model/bands";
 import { DIRECT_VERBS, MORE_VERBS } from "../model/staging";
@@ -454,8 +456,9 @@ function rowKeydown(
     e.preventDefault();
   } else if ((key === "ArrowLeft" || key === "ArrowRight") && !inControl) {
     if (!included) return;
-    const delta = key === "ArrowRight" ? HALF_BLOCK : -HALF_BLOCK;
-    controller.setOverride(item.id, included, clampHalfBlocks(effectiveBlocks(s, item.id) + delta));
+    const current = effectiveBlocks(s, item.id);
+    const next = key === "ArrowRight" ? stepUpBlocks(current) : stepDownBlocks(current);
+    controller.setOverride(item.id, included, next);
     e.preventDefault();
   } else if (key === "e" && !inControl) {
     controller.setOverride(item.id, !included, s.overrides[item.id]?.blocks ?? null);
@@ -492,6 +495,9 @@ function Row({
   // blocks saved before MAX_BLOCKS dropped to 10) must not show a readout the
   // thumb cannot reach. The override in state is left untouched.
   const blocks = clampDisplayBlocks(effectiveBlocks(s, item.id));
+  const stepDown = stepDownBlocks(blocks);
+  const stepUp = stepUpBlocks(blocks);
+  const minusMinutes = Math.round((blocks - stepDown) * 30);
   const included = s.overrides[item.id]?.included ?? true;
   const overridden = s.overrides[item.id]?.blocks != null;
   // Duration-memory MVP: three distinct provenance states — "memory" (a
@@ -652,18 +658,18 @@ function Row({
                     routing them through clampBlocks made − a no-op at every
                     integer and turned + into a 30-minute jump. */}
                   <Tooltip
-                    label={blocks <= HALF_BLOCK ? "All day (no capacity)" : "−15 min"}
+                    label={stepDown <= MIN_BLOCKS ? "All day (no capacity)" : `−${minusMinutes} min`}
                   >
                     <button
                       class="iconbtn alloc-step"
                       aria-label={
-                        blocks <= HALF_BLOCK
+                        stepDown <= MIN_BLOCKS
                           ? `Make ${item.name} all day`
-                          : `15 minutes less for ${item.name}`
+                          : `${minusMinutes} minutes less for ${item.name}`
                       }
                       disabled={blocks <= MIN_BLOCKS}
                       onClick={() =>
-                        controller.setOverride(item.id, included, clampHalfBlocks(blocks - HALF_BLOCK))
+                        controller.setOverride(item.id, included, stepDown)
                       }
                     >
                       −
@@ -706,7 +712,7 @@ function Row({
                       aria-label={`15 minutes more for ${item.name}`}
                       disabled={blocks >= MAX_BLOCKS}
                       onClick={() =>
-                        controller.setOverride(item.id, included, clampHalfBlocks(blocks + HALF_BLOCK))
+                        controller.setOverride(item.id, included, stepUp)
                       }
                     >
                       +

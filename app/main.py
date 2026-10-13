@@ -4044,14 +4044,19 @@ def create_app() -> FastAPI:
         presets = result.config.get_presets() if result.config is not None else []
         for row in digest["assigned"]:
             row["blocks"] = resolve_assigned_blocks(row, presets, None)
-            # Exact-minutes provenance when the duration-label step won:
-            # blocks are 30-minute-quantised, so a 10-minute label would
-            # still render 30min. Same field shape as the remembered overlay
-            # below, which runs afterwards and still overwrites both fields
-            # when a remembered value exists. warn=False: the collision
-            # diagnostic already came from resolve_assigned_blocks above.
+            # Exact minutes when the duration-label step won: a 10-minute label
+            # is 1/3 block, not the 30-minute-quantised 1, so the cockpit shows
+            # and edits what the label says. Same exact-blocks shape as the
+            # remembered overlay below (FT-05 F1), which runs afterwards and
+            # still overwrites these fields when a remembered value exists.
+            # warn=False: the collision diagnostic already came from
+            # resolve_assigned_blocks above.
             tag_label, tag_minutes = _assigned_duration_tag(row, warn=False)
             if tag_minutes is not None:
+                exact_blocks = tag_minutes / 30
+                row["blocks"] = (
+                    int(exact_blocks) if exact_blocks.is_integer() else exact_blocks
+                )
                 row["duration_minutes"] = tag_minutes
                 row["duration_source"] = f"tag:{tag_label}"
 
