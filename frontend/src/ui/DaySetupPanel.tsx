@@ -525,6 +525,8 @@ export function DaySetupPanel({
         start: a.start as string,
         durationMin: a.durationMin,
         counted: a.on && !a.skipToday,
+        // Work-class (Mint) rows draw yellow on the lane; fixed stays blue.
+        capacityClass: a.capacityClass,
       }));
     const countedAnchors = stripAnchors.filter((anchor) => anchor.counted);
     const notCountedAnchors = stripAnchors.filter((anchor) => !anchor.counted);

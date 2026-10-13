@@ -229,6 +229,19 @@ describe("calendar lane", () => {
     expect(lane?.querySelector("button")).toBeNull();
   });
 
+  it("marks a work-class event with the Mint-yellow modifier, leaving fixed blue", () => {
+    const { r } = setup({
+      calendar: [
+        { id: "jim", name: "Jim Meet", start: "13:00", durationMin: 45, counted: true, capacityClass: "work" },
+        { id: "phep", name: "PHEP sync", start: "14:45", durationMin: 45, counted: true, capacityClass: "fixed" },
+      ],
+    });
+    const work = r.container.querySelector('[aria-label^="Jim Meet"]') as HTMLElement;
+    const fixed = r.container.querySelector('[aria-label^="PHEP sync"]') as HTMLElement;
+    expect(work.classList.contains("strip-cal--work")).toBe(true);
+    expect(fixed.classList.contains("strip-cal--work")).toBe(false);
+  });
+
   it("omits the lane when there are no events", () => {
     const { r } = setup({ calendar: [] });
     expect(r.container.querySelector('[aria-label="Calendar"]')).toBeNull();

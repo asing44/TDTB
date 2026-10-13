@@ -7954,9 +7954,24 @@ body {
   font-size: 11px;
 }
 
+/* Anything MINT always yellow: a work-class calendar event is a Mint work
+   block, so it borrows the minting family (the Mint lane and the plan lane's
+   work blocks) instead of the calendar's together-blue. Fixed stays blue. */
+.strip-cal--work {
+  border-color: color-mix(in srgb, var(--c-minting) 55%, transparent);
+  background: color-mix(in srgb, var(--c-minting) 30%, var(--t-surface));
+}
+
 .strip-cal--skipped {
   border-style: dashed;
   background: color-mix(in srgb, var(--c-event) 10%, var(--t-surface-2));
+  color: var(--t-muted);
+}
+
+/* A skipped work-class event keeps the yellow tint so its class still reads. */
+.strip-cal--work.strip-cal--skipped {
+  border-style: dashed;
+  background: color-mix(in srgb, var(--c-minting) 10%, var(--t-surface-2));
   color: var(--t-muted);
 }
 

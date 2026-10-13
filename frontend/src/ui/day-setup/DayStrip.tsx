@@ -14,6 +14,7 @@
 import { Fragment, type ComponentChildren } from "preact";
 import { useEffect, useRef, useState } from "preact/hooks";
 import { display12h, toHHMM, toMinutes } from "../../model/time";
+import type { CalendarCapacityClass } from "../../model/types";
 import { dragTargetMinutes, keyboardTargetMinutes } from "./anchorDrag";
 import { compactClock, compactHour, compactRange } from "./compactTime";
 
@@ -47,6 +48,9 @@ export interface StripCalendarEvent {
   durationMin: number;
   /** False when skipped today (dimmed). */
   counted: boolean;
+  /** 'work' is a Mint work block and draws in the minting family, not the
+      calendar blue. Absent is treated as 'fixed'. */
+  capacityClass?: CalendarCapacityClass;
 }
 
 export interface DayStripProps {
@@ -421,7 +425,9 @@ export function DayStrip(props: DayStripProps) {
             {calendarLayout.placed.map(({ item: event, min, length, row, inside, side, text }) => (
               <Fragment key={event.id}>
                 <span
-                  class={`strip-cal${event.counted ? "" : " strip-cal--skipped"}`}
+                  class={`strip-cal${event.counted ? "" : " strip-cal--skipped"}${
+                    event.capacityClass === "work" ? " strip-cal--work" : ""
+                  }`}
                   style={{
                     left: `${rawPct(min)}%`,
                     width: `${(length / daySpan) * 100}%`,
