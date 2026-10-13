@@ -6590,7 +6590,7 @@ body {
    later block moves the always-visible cluster to its own grid line here, so
    the due text stays readable and the title keeps its room. The slider track
    is never spanned. */
-@media (min-width: 1101px) and (max-width: 1279px) {
+@media (min-width: 1101px) and (max-width: 1439px) {
   .qrow:hover .qrow__actions,
   .qrow:focus-within .qrow__actions,
   .qrow--focused .qrow__actions,
@@ -6779,7 +6779,7 @@ body {
    row: stripe | title | due | slider | actions, 13px labels, mockup order
    (Mark complete, Exclude, Exact, Leave as-is, More). The plan column widens
    to give the 520px track room. 1101-1279px keeps the compact hover track. */
-@media (min-width: 1280px) {
+@media (min-width: 1440px) {
   .cockpit {
     --plan-max-width: 1360px;
   }
@@ -7765,7 +7765,7 @@ body {
   }
 }
 
-@media (min-width: 1101px) and (max-width: 1279px) {
+@media (min-width: 1101px) and (max-width: 1439px) {
   .qrow {
     grid-template-columns: 3px minmax(0, 1fr) 150px 300px;
     grid-template-rows: auto auto;
@@ -7890,7 +7890,7 @@ body {
    two-line layouts keep the readout above the slider and the cluster always
    visible. */
 
-@media (min-width: 1280px) {
+@media (min-width: 1440px) {
   .qrow {
     grid-template-columns: 3px 96px minmax(0, 1fr) 112px 300px 500px;
     grid-template-rows: auto auto;
@@ -7994,6 +7994,7 @@ body {
   .qrow:hover .qrow__actions,
   .qrow:focus-within .qrow__actions,
   .qrow--focused .qrow__actions {
+    grid-column: 6;
     opacity: 1;
     pointer-events: auto;
   }
@@ -8039,7 +8040,7 @@ body {
 }
 
 /* Narrow layouts keep the readout above the slider in the stacked column. */
-@media (max-width: 1279px) {
+@media (max-width: 1439px) {
   .qrow__time-readout {
     order: -1;
   }

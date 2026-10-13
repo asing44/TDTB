@@ -1,11 +1,11 @@
 /* row-actions-plan.test.ts — CSS guards for the Plan task row action set
    (2026-10-12 redesign). Two approved changes:
 
-   1. At deskop width (>=1280px) the row is one quiet line: the action cluster
+   1. At desktop width (>=1440px) the row is one quiet line: the action cluster
       is present but hidden at rest (opacity/pointer-events, never
       display:none) and revealed on `.qrow:hover` / `.qrow:focus-within`. Its
       grid track is reserved, so a revealed cluster never reflows the row.
-      Below 1280px the cluster stays visible without a hover.
+      Below 1440px the cluster stays visible without a hover.
    2. The wide layout matches Planning Mockups screen B's action sizing: 13px
       labels, 6px/10px padding, 31px buttons at >=1500px, 1px borders, 6px
       radius, 6px gaps, and a 500px reserved action track.
@@ -78,13 +78,13 @@ describe("Plan task row actions reveal on hover at desktop width", () => {
     );
   });
 
-  it("keeps the cluster visible without a hover below 1280px", () => {
+  it("keeps the cluster visible without a hover below 1440px", () => {
     expect(appCss).toMatch(
       /@media\s*\(max-width:\s*1100px\)\s*\{\s*\.qrow__actions\s*\{[^}]*opacity:\s*1/,
     );
-    // 1101-1279 keeps the cluster on its own grid line, always visible.
+    // 1101-1439 keeps the cluster on its own grid line, always visible.
     expect(appCss).toMatch(
-      /@media\s*\(min-width:\s*1101px\)\s+and\s+\(max-width:\s*1279px\)[\s\S]*?\.qrow__actions[\s\S]*?opacity:\s*1/,
+      /@media\s*\(min-width:\s*1101px\)\s+and\s+\(max-width:\s*1439px\)[\s\S]*?\.qrow__actions[\s\S]*?opacity:\s*1/,
     );
   });
 

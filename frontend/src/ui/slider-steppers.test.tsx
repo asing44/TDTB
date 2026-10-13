@@ -154,9 +154,9 @@ describe("a stored override above the shrunk range still agrees with the thumb",
   });
 });
 
-describe("the readout fits beside the track at 1101-1279px", () => {
+describe("the readout fits beside the track at 1101-1439px", () => {
   it("lets the track shrink to 120px so the readout fits beside it", () => {
-    // The time column is 300px at 1101-1279px. Two 32px steppers, the fixed
+    // The time column is 300px at 1101-1439px. Two 32px steppers, the fixed
     // readout and the gaps leave little room; a 140px track floor overflowed
     // the column, so the track keeps a 120px floor.
     const body = ruleBody("\\.qrow__time \\.alloc-track");

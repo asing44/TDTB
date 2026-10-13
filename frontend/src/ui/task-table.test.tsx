@@ -281,16 +281,16 @@ describe("U11 quiet day keeps the table frame", () => {
    row-action cluster widened the page and squeezed "Mark complete". */
 describe("overflow containment (2026-10-10)", () => {
   it("desktop rows are one line with the actions in their own reserved track", () => {
-    // One-line mockup grid at >=1280px: stripe | pill | title | due | time |
+    // One-line mockup grid at >=1440px: stripe | pill | title | due | time |
     // actions. The reserved action track holds the cluster, so a revealed
     // cluster never paints over the title or the slider.
     expect(APP_CSS).toMatch(
       /grid-template-columns:\s*3px\s+96px\s+minmax\(0,\s*1fr\)\s+112px\s+300px\s+500px/,
     );
-    // 1101-1279: the always-visible cluster drops to its own grid line, so
+    // 1101-1439: the always-visible cluster drops to its own grid line, so
     // the due text stays readable and nothing is painted over the title.
     expect(APP_CSS).toMatch(
-      /@media\s*\(min-width:\s*1101px\)\s+and\s+\(max-width:\s*1279px\)\s*\{[\s\S]*?\.qrow\s*\{[\s\S]*?grid-template-rows:\s*auto\s+auto;[\s\S]*?\.qrow__actions,[\s\S]*?grid-row:\s*2;[\s\S]*?opacity:\s*1;/,
+      /@media\s*\(min-width:\s*1101px\)\s+and\s+\(max-width:\s*1439px\)\s*\{[\s\S]*?\.qrow\s*\{[\s\S]*?grid-template-rows:\s*auto\s+auto;[\s\S]*?\.qrow__actions,[\s\S]*?grid-row:\s*2;[\s\S]*?opacity:\s*1;/,
     );
     // Nothing hides the due text on hover.
     expect(APP_CSS).not.toMatch(/visibility:\s*hidden/);
