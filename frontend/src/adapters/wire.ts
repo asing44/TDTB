@@ -20,6 +20,7 @@ import type {
   CapacitiesIntake,
   CapacitiesIntakeCandidate,
   CapacitiesIntakeCoverage,
+  CapacitiesIntakeSkipped,
   CapacitiesIntakeState,
   CapacitiesLimit,
   CapacitiesRefreshCoverage,
@@ -1313,6 +1314,37 @@ function projectCapacitiesIntakeCandidate(raw: Wire): CapacitiesIntakeCandidate 
   };
 }
 
+/** Tolerant projection of the additive ``capacities_intake.skipped`` list. An
+    absent/non-array value returns undefined so the caller can distinguish
+    "server did not report it" (fall back to warnings) from an empty list.
+    Malformed rows are dropped, the list is capped at 50, and nothing here
+    throws. */
+function projectCapacitiesIntakeSkipped(
+  raw: unknown,
+): CapacitiesIntakeSkipped[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const out: CapacitiesIntakeSkipped[] = [];
+  for (const row of raw) {
+    if (out.length >= 50) break;
+    if (!row || typeof row !== "object" || Array.isArray(row)) continue;
+    const src = row as Wire;
+    const identity = typeof src.identity === "string" ? src.identity : "";
+    const reason = typeof src.reason === "string" ? src.reason : "";
+    if (identity === "" || reason === "") continue;
+    out.push({
+      identity,
+      title: typeof src.title === "string" ? src.title : null,
+      reason,
+      detail: typeof src.detail === "string" ? src.detail : "",
+      structureId:
+        typeof src.structure_id === "string" ? src.structure_id : null,
+      structureName:
+        typeof src.structure_name === "string" ? src.structure_name : null,
+    });
+  }
+  return out;
+}
+
 /** S7a: typed projection of the additive ``capacities_intake`` block. Returns
     null only when the block is genuinely absent (legacy payloads or the legacy
     intake mode), so the caller can omit the key rather than fabricate one. A
@@ -1346,6 +1378,7 @@ export function projectCapacitiesIntake(raw: unknown): CapacitiesIntake | null {
       if (checkedAt !== null) typeCheckTimes[String(key)] = checkedAt;
     }
   }
+  const skipped = projectCapacitiesIntakeSkipped(block.skipped);
   return {
     mode: "direct",
     state: block.state as CapacitiesIntakeState,
@@ -1359,6 +1392,7 @@ export function projectCapacitiesIntake(raw: unknown): CapacitiesIntake | null {
           !!row && typeof row === "object" && !Array.isArray(row),
       )
       .map(projectCapacitiesIntakeCandidate),
+    ...(skipped !== undefined ? { skipped } : {}),
   };
 }
 

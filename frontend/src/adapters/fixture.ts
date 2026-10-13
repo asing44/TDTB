@@ -584,19 +584,90 @@ export class FixtureAdapter implements Adapter {
       reviewReasons,
       selected: selected.has(identity),
     });
+    // Fixture-only freshness metadata so the Sources details popover renders a
+    // realistic cached generation: a partial read with six skipped objects.
+    // ``simulateCapacitiesCoverage(0)`` explicitly models full coverage, so
+    // that path keeps the ``ok`` block the store tests rely on.
+    const full = this.capacitiesDeferred === 0;
+    const installedAt = Math.floor(Date.now() / 1000) - 18 * 60;
+    const partialWarning =
+      "Capacities partial — 168 evaluated · 6 deferred across contributing structures.";
+    const skipped = [
+      {
+        identity: "capacities:space-1:custom-project:3dwa-20261013",
+        title: "3D/W A on October 13, 2026",
+        reason: "Duration is not a number",
+        detail: "durationMinutes was '2h'",
+        structureId: "custom-project",
+        structureName: "Projects",
+      },
+      {
+        identity: "capacities:space-1:custom-project:obj-4",
+        title: null,
+        reason: "No title",
+        detail: "title property missing",
+        structureId: "custom-project",
+        structureName: "Projects",
+      },
+      {
+        identity: "capacities:space-1:area:obj-9f8e7d6c",
+        title: "3D/W A on October 20, 2026",
+        reason: "No title",
+        detail: "title property empty",
+        structureId: "9f8e7d6c5b4a39281706f5e4d3c2b1a0",
+        structureName: "Areas",
+      },
+      {
+        identity: "capacities:space-1:area:obj-5",
+        title: "Quarterly review prep",
+        reason: "Duration is not a number",
+        detail: "durationMinutes missing",
+        structureId: "9f8e7d6c5b4a39281706f5e4d3c2b1a0",
+        structureName: "Areas",
+      },
+      {
+        identity: "capacities:space-1:custom-project:obj-6",
+        title: null,
+        reason: "No title",
+        detail: "title is whitespace",
+        structureId: "custom-project",
+        structureName: "Projects",
+      },
+      {
+        identity: "capacities:space-1:custom-project:obj-7",
+        title: "Draft launch brief",
+        reason: "Duration is not a number",
+        detail: "durationMinutes was null",
+        structureId: "custom-project",
+        structureName: "Projects",
+      },
+    ];
     return {
       ...inputs,
+      ...(full
+        ? {}
+        : {
+            sourceWarnings: inputs.sourceWarnings.includes(partialWarning)
+              ? inputs.sourceWarnings
+              : [...inputs.sourceWarnings, partialWarning],
+          }),
       capacitiesIntake: {
         mode: "direct",
-        state: "ok",
+        state: full ? "ok" : "degraded",
         generation: this.refreshGeneration > 0 ? this.refreshGeneration : 1,
-        installedAt: null,
-        typeCheckTimes: {},
-        coverage: { members: 6, evaluated: 6, malformed: 0, unreadable: 0 },
+        installedAt,
+        typeCheckTimes: {
+          "custom-project": installedAt - 2 * 3600,
+          "9f8e7d6c5b4a39281706f5e4d3c2b1a0": installedAt,
+        },
+        coverage: full
+          ? { members: 174, evaluated: 174, malformed: 0, unreadable: 0 }
+          : { members: 174, evaluated: 168, malformed: 6, unreadable: 0 },
         unassignedCandidates: [
           candidate("capacities:space-1:custom-project:obj-1", "Draft launch brief", []),
           candidate("capacities:space-1:custom-project:obj-2", "Renew domain", ["overdue"]),
         ],
+        ...(full ? {} : { skipped }),
       },
     };
   }
