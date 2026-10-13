@@ -755,6 +755,111 @@
   font-weight: 600;
 }
 
+/* -- Sources details popover ------------------------------------------------ */
+/* .rail clips with overflow:hidden, so the popover is fixed-positioned and
+   anchored from the details trigger's rect (the component computes the
+   offsets). It opens upward from the pinned chip row, wraps long ids/copy,
+   and scrolls inside itself if the skipped list is tall. */
+.rail__sources {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.rail__sources-toggle {
+  padding: 3px 7px;
+  line-height: 1;
+}
+.rail__sources-pop {
+  position: fixed;
+  z-index: 40;
+  width: min(340px, calc(100vw - 24px));
+  overflow-y: auto;
+  display: grid;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 0.5px solid var(--t-border);
+  border-radius: var(--radius);
+  background: var(--t-surface);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.14);
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--t-text);
+  text-align: left;
+  white-space: normal;
+}
+.rail__sources-pop:focus-visible {
+  outline: 2px solid var(--t-accent);
+  outline-offset: 2px;
+}
+.rail__sources-src {
+  display: grid;
+  gap: 2px;
+}
+.rail__sources-src-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+.rail__sources-src-name {
+  font-weight: 600;
+  color: var(--t-text);
+}
+.rail__sources-src-meta,
+.rail__sources-skipped-meta {
+  font-size: 10px;
+  color: var(--t-muted);
+}
+.rail__sources-src-line {
+  margin: 0;
+  color: var(--t-text);
+  overflow-wrap: anywhere;
+}
+.rail__sources-src-counts {
+  color: var(--t-muted);
+  overflow-wrap: anywhere;
+}
+.rail__sources-skipped {
+  display: grid;
+  gap: 4px;
+  padding-top: 8px;
+  border-top: 0.5px solid var(--t-border);
+}
+.rail__sources-skipped-head {
+  font-weight: 600;
+  color: var(--t-text);
+}
+.rail__sources-skipped-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 5px;
+}
+.rail__sources-skipped-item {
+  overflow-wrap: anywhere;
+}
+.rail__sources-skipped-title {
+  font-weight: 600;
+  color: var(--t-text);
+}
+.rail__sources-skipped-reason {
+  color: var(--t-muted);
+}
+.rail__sources-skipped-meta {
+  display: block;
+  margin-top: 1px;
+}
+.rail__sources-action {
+  margin: 0;
+  padding-top: 8px;
+  border-top: 0.5px solid var(--t-border);
+  color: var(--t-text);
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
 /* -- readiness chips -------------------------------------------------------- */
 .chip {
   display: inline-flex;

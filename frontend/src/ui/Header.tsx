@@ -12,6 +12,7 @@ import { footerBlockedReason } from "./Footer";
 import { Fragment } from "preact";
 import { useApp, useAppState } from "./context";
 import { display12h } from "../model/time";
+import { formatRelativeShort } from "../model/relative";
 
 const DAY = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -20,6 +21,13 @@ function prettyDate(iso: string): string {
   const d = new Date(`${iso}T00:00:00`);
   if (Number.isNaN(d.getTime())) return iso;
   return `${DAY[d.getDay()]} ${d.getDate()} ${MON[d.getMonth()]}`;
+}
+
+function dateTimeLabel(d: Date): string {
+  const date = d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  const hh = String(d.getHours()).padStart(2, "0");
+  const mm = String(d.getMinutes()).padStart(2, "0");
+  return `${date}, ${display12h(`${hh}:${mm}`)}`;
 }
 
 type StepId = "setup" | "plan" | "commit";
@@ -91,11 +99,24 @@ export function Header() {
   const health = s.inputs.sourceHealth;
   const refreshing = s.refresh.phase === "loading";
   const pillState = refreshing ? "refreshing" : health === "ok" ? "healthy" : "degraded";
-  const pillText = refreshing
+  const pillBase = refreshing
     ? "Sources refreshing…"
     : health === "ok"
       ? "Sources healthy"
       : "Sources degraded · commit blocked";
+  // Discoverability: the freshness evidence lives inside the collapsed
+  // capacity-card Details disclosure, so the header pill carries the age and
+  // a plain-language hint to where the details are.
+  const now = new Date();
+  const refreshedAt = s.refresh.lastRefreshed ? new Date(s.refresh.lastRefreshed) : null;
+  const refreshed =
+    refreshedAt && !Number.isNaN(refreshedAt.getTime()) ? refreshedAt : null;
+  const age = refreshed ? formatRelativeShort(now, refreshed) : null;
+  const pillText = !refreshing && age ? `${pillBase} · ${age}` : pillBase;
+  const pillHint =
+    age && refreshed
+      ? `Sources last refreshed ${age} (${dateTimeLabel(refreshed)}). Open Capacity > Details > Sources for more.`
+      : "Open Capacity > Details > Sources for more.";
 
   const preset = s.inputs.daySemantics.selectedPreset?.name;
   const t = s.inputs.time;
@@ -148,6 +169,8 @@ export function Header() {
           class={`health-pill health-pill--${pillState}`}
           role="status"
           aria-live="polite"
+          title={pillHint}
+          aria-label={pillHint}
         >
           {pillText}
         </span>

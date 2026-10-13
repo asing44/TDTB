@@ -605,9 +605,23 @@ export interface CapacitiesIntakeCandidate {
   selected: boolean;
 }
 
+/** One object the direct intake skipped, with the reason the server gave.
+    ``identity`` is the canonical source identity (the UI shows a short form);
+    ``title`` is null when the object had none. */
+export interface CapacitiesIntakeSkipped {
+  identity: string;
+  title: string | null;
+  reason: string;
+  detail: string;
+  structureId: string | null;
+  structureName: string | null;
+}
+
 /** Typed projection of the additive ``capacities_intake`` block. ``mode`` is
     always ``direct`` (legacy omits the block entirely). Timestamps stay in
-    the server's epoch-seconds form; the UI formats them. */
+    the server's epoch-seconds form; the UI formats them. ``skipped`` is
+    optional: absent means the server did not report the list, so the UI falls
+    back to the verbatim warnings. */
 export interface CapacitiesIntake {
   mode: "direct";
   state: CapacitiesIntakeState;
@@ -616,6 +630,7 @@ export interface CapacitiesIntake {
   typeCheckTimes: Record<string, number>;
   coverage: CapacitiesIntakeCoverage;
   unassignedCandidates: CapacitiesIntakeCandidate[];
+  skipped?: CapacitiesIntakeSkipped[];
 }
 
 /** One node in a per-type Capacities inclusion-rule predicate tree, mirroring

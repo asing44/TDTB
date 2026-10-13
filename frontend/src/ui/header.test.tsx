@@ -4,11 +4,30 @@
    Connections link. */
 
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent } from "@testing-library/preact";
+import { act, cleanup, fireEvent } from "@testing-library/preact";
 import { makeHarness } from "./test-harness";
 import { Header } from "./Header";
+import { fingerprintFixedInputs } from "../model/fingerprint";
+import { fixedInputsOf } from "../fixtures/scenarios";
 
-afterEach(() => cleanup());
+afterEach(() => {
+  cleanup();
+  vi.useRealTimers();
+});
+
+/** Dispatch a completed refresh at a fixed instant. */
+function refreshOk(h: ReturnType<typeof makeHarness>, at: string): void {
+  const inputs = h.store.getState().inputs!;
+  h.store.dispatch({
+    type: "SOURCE_REFRESH_OK",
+    inputs,
+    ledger: h.store.getState().ledger!,
+    fingerprint: fingerprintFixedInputs(fixedInputsOf(inputs)),
+    anchoredSourceFingerprint: inputs.anchoredSourceFingerprint,
+    planningConfigFingerprint: inputs.planningConfigFingerprint,
+    at,
+  });
+}
 
 describe("U7 stepper header", () => {
   it("renders three steps bound to ui.screen with roving tabindex", () => {
@@ -98,6 +117,23 @@ describe("U7 stepper header", () => {
     const r = h.ui(<Header />);
     expect(r.getByText(/Sources healthy/)).toBeTruthy();
     expect(r.queryByRole("button", { name: "Retry source refresh" })).toBeNull();
+  });
+
+  it("appends the refresh age and a discovery tooltip to the pill", () => {
+    vi.useFakeTimers({ now: new Date("2026-10-13T15:00:00") });
+    try {
+      const h = makeHarness("ready");
+      const r = h.ui(<Header />);
+      act(() => refreshOk(h, "2026-10-13T14:42:00"));
+      const pill = r.getByRole("status");
+      expect(pill.textContent).toContain("Sources healthy · 18m");
+      const label = pill.getAttribute("aria-label") ?? "";
+      expect(label).toContain("Sources last refreshed 18m");
+      expect(label).toContain("Capacity > Details > Sources");
+      expect(pill.getAttribute("title")).toBe(label);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("Connections opens the existing connections screen", () => {

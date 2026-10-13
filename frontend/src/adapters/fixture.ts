@@ -584,19 +584,90 @@ export class FixtureAdapter implements Adapter {
       reviewReasons,
       selected: selected.has(identity),
     });
+    // Fixture-only freshness metadata so the Sources details popover renders a
+    // realistic cached generation: a partial read with six skipped objects.
+    // ``simulateCapacitiesCoverage(0)`` explicitly models full coverage, so
+    // that path keeps the ``ok`` block the store tests rely on.
+    const full = this.capacitiesDeferred === 0;
+    const installedAt = Math.floor(Date.now() / 1000) - 18 * 60;
+    const partialWarning =
+      "Capacities partial — 168 evaluated · 6 deferred across contributing structures.";
+    const skipped = [
+      {
+        identity: "bb95d80d-573c-4aff-8faa-9dccdd2617a1",
+        title: "3D/W A on October 13, 2026",
+        reason: "Duration is not a number",
+        detail: "durationMinutes was '2h'",
+        structureId: "project",
+        structureName: "Project",
+      },
+      {
+        identity: "3f2a1c74-9b6e-4d21-8a55-0c7e1f2d3b44",
+        title: null,
+        reason: "No title",
+        detail: "title property missing",
+        structureId: "task",
+        structureName: "Task",
+      },
+      {
+        identity: "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+        title: "3D/W A on October 20, 2026",
+        reason: "No title",
+        detail: "title property empty",
+        structureId: "event",
+        structureName: "Event",
+      },
+      {
+        identity: "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+        title: "Quarterly review prep",
+        reason: "Duration is not a number",
+        detail: "durationMinutes missing",
+        structureId: "press",
+        structureName: "Press",
+      },
+      {
+        identity: "d2b3c4a5-6f70-4812-93a4-b5c6d7e8f901",
+        title: null,
+        reason: "No title",
+        detail: "title is whitespace",
+        structureId: "project",
+        structureName: "Project",
+      },
+      {
+        identity: "ef12ab34-cd56-4e78-9a0b-c1d2e3f4a5b6",
+        title: "Draft launch brief",
+        reason: "Duration is not a number",
+        detail: "durationMinutes was null",
+        structureId: "task",
+        structureName: "Task",
+      },
+    ];
     return {
       ...inputs,
+      ...(full
+        ? {}
+        : {
+            sourceWarnings: inputs.sourceWarnings.includes(partialWarning)
+              ? inputs.sourceWarnings
+              : [...inputs.sourceWarnings, partialWarning],
+          }),
       capacitiesIntake: {
         mode: "direct",
-        state: "ok",
+        state: full ? "ok" : "degraded",
         generation: this.refreshGeneration > 0 ? this.refreshGeneration : 1,
-        installedAt: null,
-        typeCheckTimes: {},
-        coverage: { members: 6, evaluated: 6, malformed: 0, unreadable: 0 },
+        installedAt,
+        typeCheckTimes: {
+          "custom-project": installedAt - 2 * 3600,
+          "9f8e7d6c5b4a39281706f5e4d3c2b1a0": installedAt,
+        },
+        coverage: full
+          ? { members: 174, evaluated: 174, malformed: 0, unreadable: 0 }
+          : { members: 174, evaluated: 168, malformed: 6, unreadable: 0 },
         unassignedCandidates: [
           candidate("capacities:space-1:custom-project:obj-1", "Draft launch brief", []),
           candidate("capacities:space-1:custom-project:obj-2", "Renew domain", ["overdue"]),
         ],
+        ...(full ? {} : { skipped }),
       },
     };
   }
