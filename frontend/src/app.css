@@ -1507,13 +1507,15 @@
   min-width: 0;
 }
 /* 2026-10-12 (Adam): the duration readout leads the time column on its own
-   line — above the slider, never wrapping, with the provenance label beside
-   it. The left alignment below overrides `.alloc-track__value`'s base right
-   alignment so the text lines up with the left edge of the − stepper. */
+   line — above the slider, never wrapping. The value holds the left edge; the
+   provenance label is pushed to the far right of that same line, directly
+   above the + stepper and right-aligned to its edge. The left alignment below
+   overrides `.alloc-track__value`'s base right alignment so the value lines up
+   with the left edge of the − stepper. */
 .qrow__time-readout {
   display: flex;
   align-items: center;
-  justify-content: flex-start;
+  justify-content: space-between;
   flex-wrap: nowrap;
   white-space: nowrap;
   gap: 6px;

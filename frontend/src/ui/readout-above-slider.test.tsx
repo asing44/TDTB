@@ -2,8 +2,10 @@
 
    Adam's capture showed the duration readout ("2hr 30min*") wrapping onto its
    own line BELOW the slider, under the − stepper. The column now stacks two
-   lines: the readout (with its provenance label) first, then [−] [track] [+].
-   The readout is never allowed to wrap.
+   lines: the readout first, then [−] [track] [+]. The duration value keeps the
+   left edge (aligned with the − stepper); the provenance label rides the far
+   right of that same line, directly above the + stepper and right-aligned to
+   its edge. The readout is never allowed to wrap.
 
    jsdom does no layout, so ordering and membership are checked in the DOM and
    the no-wrap / column / alignment guarantees are read off the cascade on
@@ -98,8 +100,16 @@ describe("the readout line never wraps and the column stacks", () => {
     expect(body).toMatch(/flex-direction:\s*column/);
   });
 
-  it("left-aligns the readout so it lines up with the − stepper", () => {
+  it("left-aligns the value so it lines up with the − stepper", () => {
     const body = ruleBody("\\.qrow__time-readout \\.alloc-track__value");
     expect(body).toMatch(/text-align:\s*left/);
+  });
+
+  it("pushes the source label to the right edge, above the + stepper", () => {
+    // Only CSS can place the label: jsdom does no layout, so the placement is
+    // read off the readout's cascade. `space-between` sends the second (and
+    // last) child to the column's right edge, which is the + stepper's edge.
+    const body = ruleBody("\\.qrow__time-readout");
+    expect(body).toMatch(/justify-content:\s*space-between/);
   });
 });
