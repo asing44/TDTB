@@ -1,6 +1,6 @@
 # TDTB: remove the Obsidian vault entirely (S6 finish)
 
- Status: **all slices landed (V1-V5a on main; V5b on branch `TDTB/vault-removal-v5b-20261012`, not merged).**  Operator directive (2026-10-12): anything "vault" in the Obsidian sense is
+ Status: **all slices landed (V1-V5a on main; V5b merged to main as `9d87958`).**  Operator directive (2026-10-12): anything "vault" in the Obsidian sense is
 100% deprecated. Hand-edited config moves into the repo; runtime state moves to the state dir
 (`~/.config/tdtb/state/`) or is dropped; nothing replaces the Obsidian note writes at Commit.
 
@@ -167,7 +167,7 @@ Surprises:
   plist exported `TDTB_VAULT_ROOT`; the new one does not). If the service is restarted against the OLD installed plist the variable is
   simply ignored. Optionally run one Capacities Refresh after the restart (see namespaces above).
 
-**V5a as landed** (frontend half of V5; branch `TDTB/vault-removal-v5a-20261012`, not merged). Nothing under `frontend/src` models or says "vault" outside the stale contract fixtures and the tolerance tests/comments.
+**V5a as landed** (frontend half of V5; merged to main as `5fb154a`). Nothing under `frontend/src` models or says "vault" outside the stale contract fixtures and the tolerance tests/comments.
 
 - Types: `Source = "todoist" | "capacities"`; `ManifestEntry.system` is `"todoist" | "calendar"`; `sourceCounts` is `{todoist, calendar}`.
 - Tolerance (backend still emits the legacy fields until V5b): `projectAssigned` maps an unknown or legacy source (incl. `"vault"`, or none) to a **neutral Todoist-like row**: `source: "todoist"`, `path: null`, no `todoistId`, `identity: null`. It is unidentified, so no source-specific verb or duration-memory save can address it. `source_counts.vault` is ignored; a `system: "vault"` shadow/report entry copies through and renders without crashing (ApprovalDrawer totals show only todoist/calendar).
@@ -176,7 +176,7 @@ Surprises:
 - Fixtures: scenario rows converted (Magic Mirror, Rowe's, Press, Entryway Design -> Todoist with priority ints so bands are unchanged; Note Processing, Deep CWEAN -> Capacities); shadow fixture lost its two vault rows (the "ready" preview now stages 5 exact writes, not 6).
 - Left for V5b: delete `source_counts.vault`, vault `system` rows and any `source: "vault"` emission in `app/`; regenerate `frontend/src/adapters/contract-fixtures/*` (about 12 files carry `source_counts.vault`/vault rows, `shadow-diff.json` has `system:"vault"`, `commit-live-*.json` still show removed surfaces) and then tighten `wire.test.ts` (the legacy-tolerance tests can become plain fallback tests); delete the dead `.badge--ucrit/uhigh/umed/ulow/unone` rules in `app.css`; `app/legacy-static/*` (outside the frontend tree) still has chip-vault, `'vault'` source fallbacks and "writes to Todoist, the vault, and the calendar" copy.
 
-**V5b as landed** (backend wire, fixtures, legacy UI, wording; branch `TDTB/vault-removal-v5b-20261012`, not merged). Nothing under `app/`, `tools/`, `launchd/`, `frontend/src` or `frontend/scripts` models or says "vault"/"Obsidian" except the items listed under "What remains".
+**V5b as landed** (backend wire, fixtures, legacy UI, wording; merged to main as `9d87958`). Nothing under `app/`, `tools/`, `launchd/`, `frontend/src` or `frontend/scripts` models or says "vault"/"Obsidian" except the items listed under "What remains".
 
 - **Wire:** `source_counts` is `{todoist, capacities, calendar}` (no `vault`). `artifact_source.VALID_ROW_SOURCES = {todoist, capacities}`: an artifact row tagged `source: "vault"` is an unknown source, so the artifact is `malformed` and degrades loudly (empty rows plus a banner naming `rows[i].source`), exactly like any other unknown source; producer rules naming it are invalid. `main`'s digest no longer folds vault-tagged artifact rows into the note-row surfaces. `_route_source_identity` gives a bare non-Todoist/non-Capacities path no identity (such a row is never a route match).
 - **`runtime_actions`:** `system: "vault"` manifest handling, the `vault_path` target key, `VAULT_REMOVED_VERBS`, `REMOVED_STEP_KINDS` and the "vault is retired" error are gone. A source-less target (e.g. a stale manifest row) takes each verb's ordinary "no ... source" refusal (422 from the route, no journal entry); `drop_from_plan` and `defer` still work (keyed by name). An old journal step of kind `vault.*` loads, and its undo fails as `undo_failed` ("unknown step kind"). `deferrals.record` steps now say `surface: "runstate"`. `deferrals` stops reading `vault_path`; an existing file with `path:` keys loads and writes unchanged (test added).
