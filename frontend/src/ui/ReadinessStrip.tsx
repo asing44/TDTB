@@ -230,8 +230,8 @@ export function ReadinessStrip() {
   const skippedOverflow = (skipped?.length ?? 0) - shownSkipped.length;
   const deferred = coverage?.deferred ?? 0;
   const action =
-    intake?.state === "degraded" && shownSkipped.length > 0
-      ? "Fix or delete these in Capacities, then Refresh."
+    shownSkipped.length > 0
+      ? "These do not block planning but are left out of the plan. Fix or delete them in Capacities, then Refresh."
       : deferred > 0
         ? "Refresh again to evaluate the rest."
         : "Nothing needs attention.";

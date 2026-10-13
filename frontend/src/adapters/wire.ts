@@ -1207,6 +1207,19 @@ export function projectDaySemantics(wire: Wire): DaySemantics {
 const advisoryReminderOmission =
   /^\s*calendar omission: .*zero or negative duration \(reminder-style marker\)\s*$/i;
 
+/** A Capacities object the intake skipped as not plannable (no title, no
+    numeric duration, ...). The server words it exactly
+    ``skipped Capacities object <id> — not plannable: <reason>``. It stays in
+    ``sourceWarnings`` and in the Sources popover, but it names an object that
+    is left out of the plan, not a failed read, so it does not block planning. */
+const advisorySkippedObject =
+  /^\s*skipped Capacities object \S+ — not plannable: .+$/;
+
+/** How many advisory skipped-object notices the warnings carry. */
+export function countAdvisorySkipped(warnings: readonly string[]): number {
+  return warnings.filter((warning) => advisorySkippedObject.test(warning)).length;
+}
+
 const capacitiesPartialPrefix = "Capacities partial";
 const capacitiesPartialCounts = /^Capacities partial — (\d+) evaluated · (\d+) deferred\b/;
 
@@ -1666,7 +1679,10 @@ export function capacitiesSelectionsToWire(draft: CapacitiesSelectionsDraft): Wi
 }
 
 export function sourceHealthOf(warnings: string[]): SourceHealth {
-  return warnings.some((warning) => !advisoryReminderOmission.test(warning))
+  return warnings.some(
+    (warning) =>
+      !advisoryReminderOmission.test(warning) && !advisorySkippedObject.test(warning),
+  )
     ? "degraded"
     : "ok";
 }

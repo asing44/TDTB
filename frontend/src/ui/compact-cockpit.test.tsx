@@ -7,6 +7,7 @@ import { App } from "./App";
 import { ActionDock } from "./ActionDock";
 import { ApprovalDrawer } from "./ApprovalDrawer";
 import { makeHarness } from "./test-harness";
+import { sourceHealthOf } from "../adapters/wire";
 
 describe("compact planning cockpit", () => {
   it("keeps the assigned work list as the primary surface with a local capacity readout", () => {
@@ -202,6 +203,22 @@ describe("compact planning cockpit", () => {
     // prompts stay local and export only on an opted-in Commit.
     expect(r.queryByRole("button", { name: "Copy plan prompt for an external LLM" })).toBeNull();
     expect(r.getByText(/export on Commit only/)).toBeTruthy();
+  });
+
+  it("does not block sequencing when the only warnings are skipped Capacities objects", () => {
+    const h = makeHarness("ready", (scenario) => {
+      scenario.inputs.sourceWarnings = [
+        "skipped Capacities object bb95d80d-573c-4aff-8faa-9dccdd2617a1 — not plannable: No title",
+      ];
+      scenario.inputs.sourceHealth = sourceHealthOf(scenario.inputs.sourceWarnings);
+    });
+    const r = h.ui(<ActionDock />);
+    const sequence = r
+      .getByText(/^Sequence & commit \d+ blk$/)
+      .closest("button") as HTMLButtonElement;
+
+    expect(sequence.disabled).toBe(false);
+    expect(r.queryByRole("alert")).toBeNull();
   });
 
   it("keeps degraded source health as an approval blocker", () => {
