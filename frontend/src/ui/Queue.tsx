@@ -421,7 +421,7 @@ function ShortcutHint() {
   return (
     <div class="queue__hint" role="note" aria-label="Task table keyboard shortcuts">
       <span class="queue__hint-keys">
-        Hover a row for actions · <kbd>C</kbd> complete · <kbd>E</kbd> exclude ·{" "}
+        Row shortcuts · <kbd>C</kbd> complete · <kbd>E</kbd> exclude ·{" "}
         <kbd>D</kbd> exact duration · <kbd>←→</kbd> ±15min · <kbd>↑↓</kbd> move
       </span>
       <span class="queue__hint-note">
