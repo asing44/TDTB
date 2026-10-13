@@ -25,3 +25,23 @@ export function formatRelative(now: Date, then: Date): string {
     ...(then.getFullYear() !== now.getFullYear() ? { year: "numeric" } : {}),
   });
 }
+
+/** Compact form for the header pill: "just now" / "18m" / "2h" /
+    "yesterday" / "4d" / a short date. */
+export function formatRelativeShort(now: Date, then: Date): string {
+  const nowMs = now.getTime();
+  const thenMs = then.getTime();
+  if (!Number.isFinite(nowMs) || !Number.isFinite(thenMs)) return "unknown";
+  const diffMs = nowMs - thenMs;
+  if (diffMs < 60_000) return "just now";
+  const minutes = Math.floor(diffMs / 60_000);
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h`;
+  const startOfDay = (d: Date) =>
+    new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+  const dayDiff = Math.round((startOfDay(now) - startOfDay(then)) / 86_400_000);
+  if (dayDiff === 1) return "yesterday";
+  if (dayDiff < 7) return `${dayDiff}d`;
+  return then.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}

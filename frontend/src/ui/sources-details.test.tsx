@@ -11,6 +11,7 @@ import { act, cleanup, fireEvent } from "@testing-library/preact";
 afterEach(() => {
   cleanup();
   vi.useRealTimers();
+  vi.restoreAllMocks();
 });
 
 import { ReadinessStrip } from "./ReadinessStrip";
@@ -85,6 +86,45 @@ function refreshOk(h: ReturnType<typeof makeHarness>, at: string) {
 beforeEach(() => {
   vi.useFakeTimers({ now: NOW });
 });
+
+interface StubRect {
+  top: number;
+  left: number;
+  width: number;
+  height: number;
+}
+
+function setViewport(width: number, height: number): void {
+  Object.defineProperty(window, "innerWidth", { value: width, configurable: true });
+  Object.defineProperty(window, "innerHeight", { value: height, configurable: true });
+}
+
+/** Stub layout for the details trigger and the popover panel. The trigger
+    object is read by reference so a test can move it before a resize event. */
+function stubRects(triggerRect: StubRect, panel: { width: number; height: number }): void {
+  const make = (r: StubRect) => ({
+    x: r.left,
+    y: r.top,
+    top: r.top,
+    left: r.left,
+    width: r.width,
+    height: r.height,
+    right: r.left + r.width,
+    bottom: r.top + r.height,
+    toJSON: () => ({}),
+  });
+  vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function (
+    this: Element,
+  ) {
+    if (this.classList?.contains("rail__sources-pop")) {
+      return make({ top: 0, left: 0, width: panel.width, height: panel.height }) as DOMRect;
+    }
+    if (this.classList?.contains("rail__sources-toggle")) {
+      return make({ ...triggerRect }) as DOMRect;
+    }
+    return make({ top: 0, left: 0, width: 0, height: 0 }) as DOMRect;
+  });
+}
 
 describe("sources details popover", () => {
   it("opens and closes from the details button, tracking aria-expanded", () => {
@@ -163,15 +203,56 @@ describe("sources details popover", () => {
     expect(r.queryByText(/9f8e7d6c5b4a39281706f5e4d3c2b1a0/)).toBeNull();
   });
 
-  it("renders the skipped list with title, reason, structure name, and identity", () => {
+  it("renders the skipped list without raw ids and keeps identity in the tooltip", () => {
     const h = stage();
     const r = openSources(h);
     expect(r.getByText(/Draft launch brief/)).toBeTruthy();
     expect(r.getByText(/missing title/)).toBeTruthy();
-    expect(r.getByText("Projects")).toBeTruthy();
-    const item = r.container.querySelector(`[title="${SKIP_ID}"]`) as HTMLElement;
+    const item = r.getByText("Projects").closest("li") as HTMLElement;
     expect(item).toBeTruthy();
-    expect(item.textContent).toContain(SKIP_ID.slice(0, 8));
+    // The tooltip carries the short identity; the visible row must not.
+    expect(item.getAttribute("title")).toBe(SKIP_ID.slice(0, 8));
+    expect(item.textContent).not.toContain(SKIP_ID.slice(0, 8));
+    expect(item.textContent).not.toContain("capacities:");
+  });
+
+  it("keeps the panel on screen for a trigger near the bottom", () => {
+    setViewport(900, 700);
+    stubRects({ top: 600, left: 20, width: 24, height: 20 }, { width: 340, height: 500 });
+    const r = openSources(stage());
+    const panel = r.getByRole("dialog") as HTMLElement;
+    const top = parseFloat(panel.style.top);
+    const maxHeight = parseFloat(panel.style.maxHeight);
+    expect(panel.style.left).toBe("20px");
+    expect(maxHeight).toBe(500);
+    expect(top).toBeGreaterThanOrEqual(8);
+    expect(top + maxHeight).toBeLessThanOrEqual(700 - 8);
+  });
+
+  it("opens downward and stays on screen for a trigger near the top", () => {
+    setViewport(900, 700);
+    stubRects({ top: 20, left: 20, width: 24, height: 20 }, { width: 340, height: 500 });
+    const r = openSources(stage());
+    const panel = r.getByRole("dialog") as HTMLElement;
+    const top = parseFloat(panel.style.top);
+    const maxHeight = parseFloat(panel.style.maxHeight);
+    expect(top).toBeGreaterThanOrEqual(40);
+    expect(top).toBeGreaterThanOrEqual(8);
+    expect(top + maxHeight).toBeLessThanOrEqual(700 - 8);
+  });
+
+  it("recomputes placement on resize while open", () => {
+    setViewport(900, 700);
+    const triggerRect = { top: 600, left: 20, width: 24, height: 20 };
+    stubRects(triggerRect, { width: 340, height: 500 });
+    const r = openSources(stage());
+    const panel = r.getByRole("dialog") as HTMLElement;
+    expect(parseFloat(panel.style.top)).toBe(94);
+    triggerRect.top = 20;
+    act(() => {
+      window.dispatchEvent(new Event("resize"));
+    });
+    expect(parseFloat(panel.style.top)).toBe(46);
   });
 
   it("shows at most eight skipped objects, then an overflow count", () => {

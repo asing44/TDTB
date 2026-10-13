@@ -3,7 +3,7 @@
    the labels are deterministic. */
 
 import { describe, expect, it } from "vitest";
-import { formatRelative } from "./relative";
+import { formatRelative, formatRelativeShort } from "./relative";
 
 const NOW = new Date("2026-10-13T15:00:00");
 const minus = (ms: number) => new Date(NOW.getTime() - ms);
@@ -46,5 +46,16 @@ describe("formatRelative", () => {
   it("treats a future timestamp as just now and an invalid one as unknown", () => {
     expect(formatRelative(NOW, new Date(NOW.getTime() + 60_000))).toBe("just now");
     expect(formatRelative(NOW, new Date(Number.NaN))).toBe("unknown");
+  });
+});
+
+describe("formatRelativeShort", () => {
+  it("keeps the compact pill form", () => {
+    expect(formatRelativeShort(NOW, minus(10_000))).toBe("just now");
+    expect(formatRelativeShort(NOW, minus(18 * 60_000))).toBe("18m");
+    expect(formatRelativeShort(NOW, minus(2 * 3_600_000))).toBe("2h");
+    expect(formatRelativeShort(NOW, new Date("2026-10-12T09:00:00"))).toBe("yesterday");
+    expect(formatRelativeShort(NOW, new Date("2026-10-09T09:00:00"))).toBe("4d");
+    expect(formatRelativeShort(NOW, new Date(Number.NaN))).toBe("unknown");
   });
 });

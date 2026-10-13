@@ -9,7 +9,7 @@
    counts, the cached Capacities generation and coverage, per-structure check
    times, any skipped objects, and the plain next action. */
 
-import { useEffect, useRef, useState } from "preact/hooks";
+import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import { useApp, useAppState } from "./context";
 import type { Theme } from "../store/store";
 import { summaryHasChanges, type RefreshSummary } from "../model/refresh";
@@ -17,6 +17,7 @@ import type { CapacitiesCoverage } from "../model/types";
 import { capacitiesCoverageOf } from "../adapters/wire";
 import { display12h } from "../model/time";
 import { formatRelative } from "../model/relative";
+import { computePopoverPlacement, type PopoverPlacement } from "./popoverPlacement";
 
 const PANEL_ID = "rail-sources-details";
 const TEN_MINUTES_MS = 10 * 60_000;
@@ -76,10 +77,11 @@ export function ReadinessStrip() {
   const s = useAppState();
   const { controller, store } = useApp();
   const [detailsOpen, setDetailsOpen] = useState(false);
-  const [anchor, setAnchor] = useState({ left: 0, bottom: 0 });
+  const [placement, setPlacement] = useState<PopoverPlacement | null>(null);
   const wrapRef = useRef<HTMLSpanElement>(null);
   const detailsRef = useRef<HTMLButtonElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
+  const naturalSizeRef = useRef<{ width: number; height: number } | null>(null);
 
   useEffect(() => {
     if (!detailsOpen) return;
@@ -103,6 +105,41 @@ export function ReadinessStrip() {
       document.removeEventListener("mousedown", onPointer);
       document.removeEventListener("touchstart", onPointer);
       document.removeEventListener("keydown", onKey);
+    };
+  }, [detailsOpen]);
+
+  // Place the panel from the trigger and panel rects: prefer upward, else
+  // downward, always clamped inside the viewport. Recomputed on open and on
+  // window resize/scroll while open. The natural panel size is measured once
+  // (before a max-height clamp is applied) so later recomputes stay stable.
+  useLayoutEffect(() => {
+    if (!detailsOpen) {
+      naturalSizeRef.current = null;
+      setPlacement(null);
+      return;
+    }
+    const place = () => {
+      const trigger = detailsRef.current?.getBoundingClientRect();
+      const panel = panelRef.current;
+      if (!trigger || !panel) return;
+      if (!naturalSizeRef.current) {
+        const rect = panel.getBoundingClientRect();
+        naturalSizeRef.current = { width: rect.width, height: rect.height };
+      }
+      setPlacement(
+        computePopoverPlacement(
+          trigger,
+          { width: window.innerWidth, height: window.innerHeight },
+          naturalSizeRef.current,
+        ),
+      );
+    };
+    place();
+    window.addEventListener("resize", place);
+    window.addEventListener("scroll", place, true);
+    return () => {
+      window.removeEventListener("resize", place);
+      window.removeEventListener("scroll", place, true);
     };
   }, [detailsOpen]);
 
@@ -132,18 +169,7 @@ export function ReadinessStrip() {
       s.theme === "system" ? "light" : s.theme === "light" ? "dark" : "system";
     store.dispatch({ type: "THEME_SET", theme: next });
   };
-  const toggleDetails = () => {
-    if (!detailsOpen) {
-      const rect = detailsRef.current?.getBoundingClientRect();
-      if (rect) {
-        setAnchor({
-          left: rect.left,
-          bottom: window.innerHeight - rect.top + 6,
-        });
-      }
-    }
-    setDetailsOpen(!detailsOpen);
-  };
+  const toggleDetails = () => setDetailsOpen(!detailsOpen);
 
   const liveLine = refreshedDate
     ? `Refreshed ${formatRelative(now, refreshedDate)} (${clockFromDate(refreshedDate)})`
@@ -269,7 +295,15 @@ export function ReadinessStrip() {
             aria-label="Source freshness details"
             tabIndex={-1}
             ref={panelRef}
-            style={{ left: `${anchor.left}px`, bottom: `${anchor.bottom}px` }}
+            style={
+              placement
+                ? {
+                    top: `${placement.top}px`,
+                    left: `${placement.left}px`,
+                    maxHeight: `${placement.maxHeight}px`,
+                  }
+                : { visibility: "hidden" }
+            }
           >
             <div class="rail__sources-src">
               <div class="rail__sources-src-head">
@@ -314,7 +348,7 @@ export function ReadinessStrip() {
                       <li
                         class="rail__sources-skipped-item"
                         key={row.identity}
-                        title={row.identity}
+                        title={row.identity.slice(0, 8)}
                       >
                         <span class="rail__sources-skipped-title">
                           {row.title && row.title.trim() !== "" ? row.title : "Untitled"}
@@ -323,9 +357,6 @@ export function ReadinessStrip() {
                         {row.structureName && (
                           <span class="rail__sources-skipped-meta">{row.structureName}</span>
                         )}
-                        <span class="rail__sources-skipped-id" title={row.identity}>
-                          {row.identity.slice(0, 8)}
-                        </span>
                       </li>
                     ))}
                   </ul>

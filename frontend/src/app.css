@@ -774,7 +774,6 @@
   position: fixed;
   z-index: 40;
   width: min(340px, calc(100vw - 24px));
-  max-height: 60vh;
   overflow-y: auto;
   display: grid;
   gap: 8px;
@@ -849,13 +848,8 @@
   color: var(--t-muted);
 }
 .rail__sources-skipped-meta {
-  margin-left: 6px;
-}
-.rail__sources-skipped-id {
-  margin-left: 6px;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 10px;
-  color: var(--t-muted);
+  display: block;
+  margin-top: 1px;
 }
 .rail__sources-action {
   margin: 0;
