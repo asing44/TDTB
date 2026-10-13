@@ -1507,15 +1507,14 @@
   min-width: 0;
 }
 /* 2026-10-12 (Adam): the duration readout leads the time column on its own
-   line — above the slider, never wrapping. The value holds the left edge; the
-   provenance label is pushed to the far right of that same line, directly
-   above the + stepper and right-aligned to its edge. The left alignment below
+   line — above the slider, never wrapping. The value holds the left edge and
+   the provenance chip sits immediately after it. The left alignment below
    overrides `.alloc-track__value`'s base right alignment so the value lines up
    with the left edge of the − stepper. */
 .qrow__time-readout {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-start;
   flex-wrap: nowrap;
   white-space: nowrap;
   gap: 6px;
@@ -6432,10 +6431,10 @@ body {
   white-space: nowrap;
 }
 
-/* Duration provenance label (replaces the colored source dot; restores the
-   earlier text chip). "source" stays quiet; "memory" and "remembered" carry
-   the state color. The full provenance is still spoken through
-   aria-label/title on the element itself. */
+/* Duration provenance chip, in plain words ("today only", "saved"). Only
+   non-default rows wear it: a source-resolved row is the default and renders
+   no chip, so there is no `--source` variant. The full provenance is still
+   spoken through aria-label/title on the element itself. */
 .qrow__dur-label {
   flex: none;
   font-size: 9px;
