@@ -4160,14 +4160,20 @@ def create_app() -> FastAPI:
         # Its own dated file, NOT a run-state key: writing run-state here would
         # materialise the dated note, after which every later day_setup read
         # treats the skeleton's empty defaults as user-confirmed.
-        runstate.write_digest_index(
-            today,
-            build_digest_index(digest),
-            # Server-owned policy stamp: the revision this digest was built
-            # under. Recorded for a later staleness guard; this slice adds no
-            # refresh rejection.
-            exclusion_settings_revision=exclusion_policy.revision,
-        )
+        try:
+            runstate.write_digest_index(
+                today,
+                build_digest_index(digest),
+                # Server-owned policy stamp: the revision this digest was
+                # built under. Recorded for a later staleness guard; this
+                # slice adds no refresh rejection.
+                exclusion_settings_revision=exclusion_policy.revision,
+            )
+        except OSError as exc:
+            # Best-effort cache: the index is derived solely from data this
+            # same GET returns, so a failed write degrades target resolution
+            # to "unknown" for this date rather than failing the read.
+            print(f"digest index write failed: {exc}", file=sys.stderr)
 
         # U5 read-side: expose the persisted opt-in metadata top-level, exactly
         # as the frontend's projectPromptOptins expects it. A corrupt store

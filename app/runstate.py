@@ -26,6 +26,7 @@ import os
 import re
 import sys
 import threading
+import uuid
 from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
@@ -155,6 +156,30 @@ def build_runstate(overrides: dict[str, Any] | None = None) -> dict[str, Any]:
     return state
 
 
+def _atomic_write_text(out_path: Path, text: str) -> None:
+    """Write ``text`` to a unique sibling temp file, then atomically replace
+    ``out_path``.
+
+    Routes run in parallel threadpool workers, so a FIXED ``<name>.tmp``
+    scratch path races: two writers share the temp file and the first
+    ``os.replace`` consumes it, failing the second with ``FileNotFoundError``.
+    The scratch name is unique per call. On any failure the temp file is
+    removed (best-effort) and the exception re-raised; the final path is
+    never partially written."""
+    tmp = out_path.with_name(
+        f"{out_path.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp"
+    )
+    try:
+        tmp.write_text(text, encoding="utf-8")
+        os.replace(tmp, out_path)
+    except BaseException:
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
+        raise
+
+
 def write_runstate(
     valid_date: date,
     state: dict[str, Any],
@@ -207,9 +232,7 @@ def write_runstate(
     out_path = state_runstate_path(valid_date)
     # Atomic replace (T12 audit): routes run in parallel threadpool workers,
     # and a bare write_text lets a concurrent reader see a truncated note.
-    tmp_path = out_path.with_suffix(".md.tmp")
-    tmp_path.write_text(text, encoding="utf-8")
-    os.replace(tmp_path, out_path)
+    _atomic_write_text(out_path, text)
     return out_path
 
 
@@ -300,12 +323,10 @@ def write_digest_index(
         payload["exclusion_settings_revision"] = exclusion_settings_revision
     out_path = state_digest_index_path(valid_date)
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = out_path.with_suffix(".json.tmp")
-    tmp.write_text(
+    _atomic_write_text(
+        out_path,
         json.dumps(payload, indent=2, ensure_ascii=False, default=str),
-        encoding="utf-8",
     )
-    os.replace(tmp, out_path)
     return out_path
 
 
@@ -412,7 +433,5 @@ def append_recent_selection(
     ]
     out_path = state_recent_selections_path()
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path = out_path.with_suffix(".md.tmp")
-    tmp_path.write_text("\n".join(lines), encoding="utf-8")
-    os.replace(tmp_path, out_path)
+    _atomic_write_text(out_path, "\n".join(lines))
     return out_path
