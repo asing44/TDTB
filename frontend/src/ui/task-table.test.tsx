@@ -99,7 +99,7 @@ describe("U11 hint row lists exactly the shortcuts that work", () => {
     const hint = r.container.querySelector(".queue__hint");
     expect(hint).toBeTruthy();
     const text = hint?.textContent ?? "";
-    expect(text).toContain("Row shortcuts");
+    expect(text).toContain("Hover a row for actions");
     expect(text).toContain("C complete");
     expect(text).toContain("E exclude");
     expect(text).toContain("D exact duration");
@@ -154,24 +154,21 @@ describe("U11 grouping maps the band/state model (KTD12)", () => {
   });
 });
 
-describe("U11 row actions stay visible without a hover", () => {
-  it("keeps the action cluster in the DOM and visible at every width", () => {
+describe("U11 row actions reveal on hover at desktop width", () => {
+  it("keeps the action cluster in the DOM at every width", () => {
     const h = makeHarness("ready");
     const { container } = h.ui(<Queue />);
     const row = rowNamed(container, "Press");
     expect(row.querySelector(".qrow__actions")).toBeTruthy();
-    // The cluster is always visible: no rule hides it at rest, and the
-    // hover/focus reveal layer is gone (removed 2026-10-12).
-    expect(APP_CSS).not.toMatch(/\.qrow__actions\s*\{[^}]*opacity:\s*0/);
-    expect(APP_CSS).not.toMatch(/\.qrow:hover\s+\.qrow__actions\s*\{/);
-    expect(APP_CSS).not.toMatch(/\.qrow:focus-within\s+\.qrow__actions\s*\{/);
-    expect(APP_CSS).not.toMatch(/\.qrow--focused\s+\.qrow__actions\s*\{/);
-    // Each layout band shows the cluster without a hover.
+    // Wide: quiet at rest (opacity, not display) and revealed on hover or
+    // keyboard focus; the grid track is reserved so the row never reflows.
+    expect(APP_CSS).toMatch(/\.qrow__actions\s*\{[^}]*opacity:\s*0/);
+    expect(APP_CSS).toMatch(/\.qrow:hover\s+\.qrow__actions/);
+    expect(APP_CSS).toMatch(/\.qrow:focus-within\s+\.qrow__actions/);
+    expect(APP_CSS).toMatch(/\.qrow--focused\s+\.qrow__actions/);
+    // Narrow: the stacked layout shows the cluster without a hover.
     expect(APP_CSS).toMatch(
       /@media\s*\(max-width:\s*1100px\)\s*\{\s*\.qrow__actions\s*\{[^}]*opacity:\s*1/,
-    );
-    expect(APP_CSS).toMatch(
-      /@media\s*\(min-width:\s*1280px\)[\s\S]*?\.qrow__actions,[\s\S]*?opacity:\s*1;/,
     );
   });
 
@@ -283,58 +280,41 @@ describe("U11 quiet day keeps the table frame", () => {
    (the same approach as the a11y/responsive suites). The defect: the revealed
    row-action cluster widened the page and squeezed "Mark complete". */
 describe("overflow containment (2026-10-10)", () => {
-  it("desktop row actions never paint over the title or the slider", () => {
-    // Actions are their own grid track between the title and the due column:
-    // stripe | title | actions | due | slider. A revealed cluster widens its
-    // track and the title truncates; nothing is laid over the title text.
-    // Full 340px slider from 1500px; the 1101-1499 band keeps a 300px slider so
-    // the slider value never wraps and the hovered title keeps room.
+  it("desktop rows are one line with the actions in their own reserved track", () => {
+    // One-line mockup grid at >=1280px: stripe | pill | title | due | time |
+    // actions. The reserved action track holds the cluster, so a revealed
+    // cluster never paints over the title or the slider.
     expect(APP_CSS).toMatch(
-      /@media\s*\(min-width:\s*1500px\)\s*\{\s*\.qrow\s*\{\s*grid-template-columns:\s*3px\s+minmax\(0,\s*1fr\)\s+auto\s+190px\s+340px\s*;/,
+      /grid-template-columns:\s*3px\s+96px\s+minmax\(0,\s*1fr\)\s+112px\s+300px\s+500px/,
     );
     // 1101-1279: the always-visible cluster drops to its own grid line, so
     // the due text stays readable and nothing is painted over the title.
     expect(APP_CSS).toMatch(
       /@media\s*\(min-width:\s*1101px\)\s+and\s+\(max-width:\s*1279px\)\s*\{[\s\S]*?\.qrow\s*\{[\s\S]*?grid-template-rows:\s*auto\s+auto;[\s\S]*?\.qrow__actions,[\s\S]*?grid-row:\s*2;[\s\S]*?opacity:\s*1;/,
     );
-    // Nothing hides the due text on hover any more.
+    // Nothing hides the due text on hover.
     expect(APP_CSS).not.toMatch(/visibility:\s*hidden/);
-    expect(APP_CSS).toMatch(
-      /@media\s*\(min-width:\s*1101px\)[\s\S]*\.qrow\s*\{[^}]*grid-template-columns:\s*3px\s+minmax\(0,\s*1fr\)\s+auto\s+190px\s+300px\s*;/,
-    );
-    // A hovered title clamps to one line so the revealed cluster can't grow the row.
-    expect(APP_CSS).toMatch(
-      /\.qrow:hover\s+\.qrow__name,[\s\S]*?-webkit-line-clamp:\s*1/,
-    );
-    expect(APP_CSS).toMatch(
-      /@media\s*\(min-width:\s*1101px\)[\s\S]*\.qrow__actions\s*\{\s*grid-column:\s*3;/,
-    );
-    expect(APP_CSS).toMatch(
-      /@media\s*\(min-width:\s*1101px\)[\s\S]*\.qrow__due\s*\{\s*grid-column:\s*4;/,
-    );
-    expect(APP_CSS).toMatch(
-      /@media\s*\(min-width:\s*1101px\)[\s\S]*\.qrow__time\s*\{\s*grid-column:\s*5;/,
-    );
+    // The title clamps to one line so the reserved cluster never grows it.
+    expect(APP_CSS).toMatch(/\.qrow__name\s*\{[^}]*?-webkit-line-clamp:\s*1/);
+    expect(APP_CSS).toMatch(/\.qrow__actions\s*\{[^}]*grid-column:\s*6/);
+    expect(APP_CSS).toMatch(/\.qrow__due\s*\{[^}]*grid-column:\s*4/);
+    expect(APP_CSS).toMatch(/\.qrow__time\s*\{[^}]*grid-column:\s*5/);
     // The cluster is in flow: no absolute overlay, no right/left anchor.
     expect(APP_CSS).not.toMatch(/\.qrow__actions\s*\{[^}]*position:\s*absolute/);
     expect(APP_CSS).not.toMatch(/\.qrow__actions\s*\{[^}]*right:\s*352px/);
     expect(APP_CSS).not.toMatch(/\.qrow__actions\s*\{[^}]*right:\s*8px/);
-    // The cluster is never zero-width: every desktop band lays it out at its
-    // natural width, always visible.
+    // The cluster is never zero-width: the track is reserved, not collapsed.
     expect(APP_CSS).not.toMatch(/\.qrow__actions\s*\{[^}]*?(?<!min-)width:\s*0;/);
-    expect(APP_CSS).toMatch(
-      /@media\s*\(min-width:\s*1280px\)[\s\S]*?\.qrow__actions,[\s\S]*?\{[^}]*width:\s*auto/,
-    );
     expect(APP_CSS).not.toMatch(/340px\s+max-content/);
   });
 
-  it("the always-visible cluster sits in flow, never over the slider", () => {
-    // The cluster owns its own grid track, so it cannot intercept a slider
-    // click; it is never hidden or made inert.
-    expect(APP_CSS).not.toMatch(/\.qrow__actions\s*\{[^}]*pointer-events:\s*none/);
+  it("the revealed cluster sits in flow, never over the slider", () => {
+    // The cluster owns its reserved grid track, so it cannot intercept a
+    // slider click; it is quiet at rest, not inert or removed.
     expect(APP_CSS).toMatch(
-      /@media\s*\(min-width:\s*1280px\)[\s\S]*?\.qrow__actions,[\s\S]*?pointer-events:\s*auto/,
+      /\.qrow:hover\s+\.qrow__actions,[\s\S]*?pointer-events:\s*auto/,
     );
+    expect(APP_CSS).not.toMatch(/\.qrow__actions\s*\{[^}]*display:\s*none/);
   });
 
   it("the page frame is full width with one shared side inset", () => {

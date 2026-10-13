@@ -120,17 +120,17 @@ describe("Plan row duration steppers are restored", () => {
   });
 });
 
-describe("the duration readout sizes to its text on its own line", () => {
-  it("sizes to its text, so the status dot sits right beside it", () => {
+describe("the duration readout holds a fixed width beside the slider", () => {
+  it("holds a fixed value area so sliders line up between rows", () => {
     const body = ruleBody("\\.qrow__time-readout \\.alloc-track__value");
-    expect(body).toMatch(/min-width:\s*0/);
-    expect(body).toMatch(/text-align:\s*left/);
+    expect(body).toMatch(/width:\s*76px/);
+    expect(body).toMatch(/min-width:\s*76px/);
+    expect(body).toMatch(/text-align:\s*right/);
   });
 
-  it("never wraps and carries no fixed width", () => {
+  it("never wraps the value; the base value rule stays right-aligned", () => {
     const body = ruleBody("\\.qrow__time \\.alloc-track__value");
     expect(body).toMatch(/white-space:\s*nowrap/);
-    expect(body).not.toMatch(/width:\s*\d+px/);
     const base = ruleBody("\\.alloc-track__value");
     expect(base).toMatch(/text-align:\s*right/);
   });
@@ -154,11 +154,11 @@ describe("a stored override above the shrunk range still agrees with the thumb",
   });
 });
 
-describe("the status dot stays on the readout line at 1101-1499px", () => {
-  it("lets the track shrink to 120px so the dot fits beside the readout", () => {
-    // The time column is 300px at 1101-1279px. Two 32px steppers, the 74px
-    // readout and three 6px gaps leave 144px for the track; the 8px status
-    // dot needs 14px more, so a 140px floor pushed it under the − stepper.
+describe("the readout fits beside the track at 1101-1279px", () => {
+  it("lets the track shrink to 120px so the readout fits beside it", () => {
+    // The time column is 300px at 1101-1279px. Two 32px steppers, the fixed
+    // readout and the gaps leave little room; a 140px track floor overflowed
+    // the column, so the track keeps a 120px floor.
     const body = ruleBody("\\.qrow__time \\.alloc-track");
     expect(body).toMatch(/min-width:\s*120px/);
   });
