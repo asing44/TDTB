@@ -188,6 +188,9 @@ class CapacitiesReadResult:
     evaluated: int = 0
     deferred: int = 0
     malformed: int = 0
+    #: One entry per malformed identity, for the additive intake block. The
+    #: count above stays the coverage authority; this is the named surface.
+    skipped: tuple[SkippedObject, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -200,7 +203,43 @@ class CompletionOutcome:
 
 
 class _MalformedObject(ValueError):
-    pass
+    """A listed object could not be projected into a plan row.
+
+    ``reason`` is the small fixed operator-facing bucket for the cause; the
+    message stays the existing raw diagnostic (the text the warning prints
+    after ``not plannable:``). ``None`` means the cause was not classified and
+    maps to the ``Not plannable`` fallback.
+    """
+
+    def __init__(self, message: str, *, reason: str | None = None) -> None:
+        super().__init__(message)
+        self.reason = reason
+
+
+#: The fixed skip-reason vocabulary the additive intake block reports.
+_SKIP_REASON_TITLE = "No title"
+_SKIP_REASON_DURATION = "Duration is not a number"
+_SKIP_REASON_DATE = "Start date is not valid"
+_SKIP_REASON_UNREADABLE = "Unreadable object"
+_SKIP_REASON_UNKNOWN = "Not plannable"
+
+
+@dataclass(frozen=True)
+class SkippedObject:
+    """One malformed listed object, named for the operator.
+
+    ``title`` is a safe display value only: a non-empty trimmed string capped
+    at 120 chars, or ``None`` when neither the mapped title property nor the
+    listed object's own title can be read. ``detail`` is the raw projection
+    failure message, unchanged from the warning.
+    """
+
+    identity: str
+    title: str | None
+    reason: str
+    detail: str
+    structure_id: str | None
+    structure_name: str | None
 
 
 def _text(value: Any) -> str:
@@ -278,10 +317,14 @@ def _label_options(definition: dict[str, Any]) -> set[str]:
 
 def _property_payload(prop: Any, prop_id: str) -> tuple[str, Any]:
     if not isinstance(prop, dict):
-        raise _MalformedObject(f"property {prop_id!r} is not an object")
+        raise _MalformedObject(
+            f"property {prop_id!r} is not an object", reason=_SKIP_REASON_UNREADABLE
+        )
     kind = _text(prop.get("type"))
     if not kind or kind not in prop:
-        raise _MalformedObject(f"property {prop_id!r} has no typed payload")
+        raise _MalformedObject(
+            f"property {prop_id!r} has no typed payload", reason=_SKIP_REASON_UNREADABLE
+        )
     return kind, prop[kind]
 
 
@@ -290,7 +333,10 @@ def _property_tokens(prop: Any, prop_id: str) -> set[str]:
     values: list[Any] = []
     if kind in {"label", "entity"}:
         if not isinstance(payload, list):
-            raise _MalformedObject(f"property {prop_id!r} has a non-list {kind} payload")
+            raise _MalformedObject(
+                f"property {prop_id!r} has a non-list {kind} payload",
+                reason=_SKIP_REASON_UNREADABLE,
+            )
         for value in payload:
             if isinstance(value, dict):
                 values.extend(value.get(key) for key in ("id", "name") if value.get(key) is not None)
@@ -303,10 +349,16 @@ def _property_tokens(prop: Any, prop_id: str) -> set[str]:
             values.append(payload)
     elif kind == "date":
         if not isinstance(payload, dict):
-            raise _MalformedObject(f"property {prop_id!r} has a non-object date payload")
+            raise _MalformedObject(
+                f"property {prop_id!r} has a non-object date payload",
+                reason=_SKIP_REASON_UNREADABLE,
+            )
         values.append(payload.get("start"))
     else:
-        raise _MalformedObject(f"property {prop_id!r} has unsupported type {kind!r}")
+        raise _MalformedObject(
+            f"property {prop_id!r} has unsupported type {kind!r}",
+            reason=_SKIP_REASON_UNREADABLE,
+        )
     return {_normalized(value) for value in values if value is not None and _text(value)}
 
 
@@ -324,7 +376,10 @@ def _status_display_tokens(prop: Any, prop_id: str) -> set[str]:
     if kind not in {"label", "entity"}:
         return _property_tokens(prop, prop_id)
     if not isinstance(payload, list):
-        raise _MalformedObject(f"property {prop_id!r} has a non-list {kind} payload")
+        raise _MalformedObject(
+            f"property {prop_id!r} has a non-list {kind} payload",
+            reason=_SKIP_REASON_UNREADABLE,
+        )
     values: list[Any] = []
     for value in payload:
         if isinstance(value, dict):
@@ -647,32 +702,46 @@ def _capacities_tag_refs(
 def _property_text(prop: Any, prop_id: str) -> str:
     kind, payload = _property_payload(prop, prop_id)
     if kind not in {"title", "text", "richText"}:
-        raise _MalformedObject(f"title property {prop_id!r} is not text")
+        raise _MalformedObject(
+            f"title property {prop_id!r} is not text", reason=_SKIP_REASON_TITLE
+        )
     value = payload.get("value") if isinstance(payload, dict) else payload
     text = _text(value)
     if not text:
-        raise _MalformedObject(f"property {prop_id!r} has no usable value")
+        raise _MalformedObject(
+            f"property {prop_id!r} has no usable value", reason=_SKIP_REASON_TITLE
+        )
     return text
 
 
 def _property_number(prop: Any, prop_id: str) -> int | float:
     kind, payload = _property_payload(prop, prop_id)
     if kind not in {"number", "text"}:
-        raise _MalformedObject(f"duration property {prop_id!r} is not numeric")
+        raise _MalformedObject(
+            f"duration property {prop_id!r} is not numeric",
+            reason=_SKIP_REASON_DURATION,
+        )
     value = payload.get("value") if isinstance(payload, dict) else payload
     try:
         number = float(value)
     except (TypeError, ValueError):
-        raise _MalformedObject(f"duration property {prop_id!r} is not numeric") from None
+        raise _MalformedObject(
+            f"duration property {prop_id!r} is not numeric",
+            reason=_SKIP_REASON_DURATION,
+        ) from None
     if number < 0:
-        raise _MalformedObject(f"duration property {prop_id!r} is negative")
+        raise _MalformedObject(
+            f"duration property {prop_id!r} is negative", reason=_SKIP_REASON_DURATION
+        )
     return int(number) if number.is_integer() else number
 
 
 def _property_date(prop: Any, prop_id: str) -> date | None:
     kind, payload = _property_payload(prop, prop_id)
     if kind != "date" or not isinstance(payload, dict):
-        raise _MalformedObject(f"date property {prop_id!r} is not a date")
+        raise _MalformedObject(
+            f"date property {prop_id!r} is not a date", reason=_SKIP_REASON_DATE
+        )
     start = payload.get("start")
     if start in (None, ""):
         return None
@@ -680,7 +749,50 @@ def _property_date(prop: Any, prop_id: str) -> date | None:
     try:
         return date.fromisoformat(raw[:10])
     except ValueError:
-        raise _MalformedObject(f"date property {prop_id!r} has invalid start") from None
+        raise _MalformedObject(
+            f"date property {prop_id!r} has invalid start", reason=_SKIP_REASON_DATE
+        ) from None
+
+
+def _skip_reason(exc: _MalformedObject) -> str:
+    """The fixed operator-facing bucket for a projection failure."""
+    return getattr(exc, "reason", None) or _SKIP_REASON_UNKNOWN
+
+
+def _readable_title(obj: dict[str, Any], mapping: StructureMapping) -> str | None:
+    """Best-effort display title for a malformed object; never raises.
+
+    The mapped title property is tried first, then the object's own listed
+    title. A title that is not readable stays ``None``. The value is trimmed
+    and capped at 120 chars so a hostile payload cannot bloat the additive
+    intake block.
+    """
+    text = ""
+    properties = obj.get("properties")
+    if isinstance(properties, dict):
+        prop = properties.get(mapping.title_property)
+        if prop is not None:
+            try:
+                text = _property_text(prop, mapping.title_property)
+            except _MalformedObject:
+                text = ""
+    if not text:
+        text = _text(obj.get("title"))
+    text = _text(text)
+    return text[:120] if text else None
+
+
+def _structure_display_name(
+    structures: dict[str, dict[str, Any]] | None, structure_id: str
+) -> str | None:
+    """The cached structures contract's display name, or ``None``."""
+    if not structures or not structure_id:
+        return None
+    row = structures.get(structure_id)
+    if not isinstance(row, dict):
+        return None
+    name = _text(row.get("title")) or _text(row.get("name"))
+    return name or None
 
 
 def _fingerprint(obj: dict[str, Any]) -> str:
@@ -990,22 +1102,33 @@ class CapacitiesAdapter:
         self, obj: dict[str, Any], mapping: StructureMapping, logical_day: date
     ) -> dict[str, Any] | None:
         if not isinstance(obj, dict):
-            raise _MalformedObject("object row is not an object")
+            raise _MalformedObject(
+                "object row is not an object", reason=_SKIP_REASON_UNREADABLE
+            )
         object_id = _text(obj.get("id"))
         if not object_id:
-            raise _MalformedObject("object has no id")
+            raise _MalformedObject("object has no id", reason=_SKIP_REASON_UNREADABLE)
         if _text(obj.get("structureId")) != mapping.structure_id:
-            raise _MalformedObject(f"object {object_id!r} has the wrong structure")
+            raise _MalformedObject(
+                f"object {object_id!r} has the wrong structure",
+                reason=_SKIP_REASON_UNREADABLE,
+            )
         # The space guarantee comes from the space-scoped enumeration, not from
         # the payload: neither the scoped listing nor the object-content read
         # returns ``spaceId``. A row that *does* carry one must agree, so a
         # cross-space row is still rejected rather than trusted.
         payload_space = _text(obj.get("spaceId"))
         if payload_space and payload_space != self.config.space_id:
-            raise _MalformedObject(f"object {object_id!r} is not in the configured space")
+            raise _MalformedObject(
+                f"object {object_id!r} is not in the configured space",
+                reason=_SKIP_REASON_UNREADABLE,
+            )
         properties = obj.get("properties")
         if not isinstance(properties, dict):
-            raise _MalformedObject(f"object {object_id!r} has malformed properties")
+            raise _MalformedObject(
+                f"object {object_id!r} has malformed properties",
+                reason=_SKIP_REASON_UNREADABLE,
+            )
 
         identity = f"capacities:{self.config.space_id}:{mapping.structure_id}:{object_id}"
 
@@ -1159,7 +1282,9 @@ class CapacitiesAdapter:
 
         title_prop = properties.get(mapping.title_property)
         if title_prop is None:
-            raise _MalformedObject(f"object {object_id!r} has no title")
+            raise _MalformedObject(
+                f"object {object_id!r} has no title", reason=_SKIP_REASON_TITLE
+            )
         try:
             title = _property_text(title_prop, mapping.title_property)
         except _MalformedObject:
@@ -1177,7 +1302,9 @@ class CapacitiesAdapter:
                 # and its diagnostic rather than projecting an empty name.
                 raise
         if not title:
-            raise _MalformedObject(f"object {object_id!r} has an empty title")
+            raise _MalformedObject(
+                f"object {object_id!r} has an empty title", reason=_SKIP_REASON_TITLE
+            )
 
         rule_state: capacities_rules.Evaluation | None = None
         if active_rule is not None:
@@ -1332,17 +1459,19 @@ class CapacitiesAdapter:
 
     def _project_objects(
         self, logical_day: date, objects: Sequence[dict[str, Any]]
-    ) -> tuple[list[dict[str, Any]], list[str], set[str], set[str]]:
+    ) -> tuple[list[dict[str, Any]], list[str], set[str], set[str], list[SkippedObject]]:
         """Project listed objects and account for every distinct identity.
 
-        Returns ``(items, warnings, evaluated, malformed)``. ``evaluated``
-        holds the identities that projected successfully — including objects
-        the projection then filtered out as ineligible, which are evaluated
-        even though they never become items. ``malformed`` holds the
-        identities whose projection failed; a malformed row with no usable
-        identity is reported by its warning alone, because there is nothing
-        to count it once by. Both sets are keyed on the listed identity so
-        repeated rows cannot inflate coverage.
+        Returns ``(items, warnings, evaluated, malformed, skipped)``.
+        ``evaluated`` holds the identities that projected successfully —
+        including objects the projection then filtered out as ineligible,
+        which are evaluated even though they never become items. ``malformed``
+        holds the identities whose projection failed; a malformed row with no
+        usable identity is reported by its warning alone, because there is
+        nothing to count it once by. Both sets are keyed on the listed
+        identity so repeated rows cannot inflate coverage. ``skipped`` is the
+        named, display-only surface: one entry per malformed object, keyed on
+        the bare object id (the same id the warning already prints).
         """
         self._ensure_contract()
         assert self._mappings is not None
@@ -1350,6 +1479,8 @@ class CapacitiesAdapter:
         warnings: list[str] = []
         evaluated: set[str] = set()
         malformed: set[str] = set()
+        skipped: list[SkippedObject] = []
+        seen_skipped: set[str] = set()
         for obj in objects:
             structure_id = _text(obj.get("structureId")) if isinstance(obj, dict) else ""
             mapping = self._mappings.get(structure_id)
@@ -1368,6 +1499,28 @@ class CapacitiesAdapter:
                 warnings.append(
                     f"skipped Capacities object {listed_id or '<unknown>'} — not plannable: {exc}"
                 )
+                # A repeat of the same malformed identity keeps one named
+                # entry, mirroring the coverage set. An identity-less row still
+                # gets an entry so the operator sees every failure.
+                if not listed_id or listed_id not in seen_skipped:
+                    if listed_id:
+                        seen_skipped.add(listed_id)
+                    skipped.append(
+                        SkippedObject(
+                            identity=listed_id,
+                            title=(
+                                _readable_title(obj, mapping)
+                                if isinstance(obj, dict)
+                                else None
+                            ),
+                            reason=_skip_reason(exc),
+                            detail=str(exc),
+                            structure_id=structure_id or None,
+                            structure_name=_structure_display_name(
+                                self._structure_defs, structure_id
+                            ),
+                        )
+                    )
                 continue
             if identity:
                 evaluated.add(identity)
@@ -1405,18 +1558,21 @@ class CapacitiesAdapter:
         if review_rows:
             warnings.append(_review_warning(review_rows))
         items.sort(key=lambda row: (_normalized(row["name"]), row["identity"]))
-        return items, warnings, evaluated, malformed
+        return items, warnings, evaluated, malformed, skipped
 
     def items_for_day_from_objects(
         self, logical_day: date, objects: Sequence[dict[str, Any]]
     ) -> CapacitiesReadResult:
-        items, warnings, evaluated, malformed = self._project_objects(logical_day, objects)
+        items, warnings, evaluated, malformed, skipped = self._project_objects(
+            logical_day, objects
+        )
         warnings = [*self._contract_warnings, *warnings]
         return CapacitiesReadResult(
             items=items,
             warnings=warnings,
             evaluated=len(evaluated),
             malformed=len(malformed),
+            skipped=tuple(skipped),
         )
 
     def _active_rule(self, structure_id: str) -> dict[str, Any] | None:
@@ -1485,19 +1641,25 @@ class CapacitiesAdapter:
         warnings: list[str] = list(self._contract_warnings)
         evaluated: set[str] = set()
         malformed: set[str] = set()
+        skipped: list[SkippedObject] = []
         page_count = 0
         for structure_id, mapping in self._mappings.items():
             if not self._structure_can_contribute(mapping):
                 continue
             objects, pages = self._list_objects(structure_id)
             page_count += pages
-            items, batch_warnings, batch_evaluated, batch_malformed = (
-                self._project_objects(logical_day, objects)
-            )
+            (
+                items,
+                batch_warnings,
+                batch_evaluated,
+                batch_malformed,
+                batch_skipped,
+            ) = self._project_objects(logical_day, objects)
             all_items.extend(items)
             warnings.extend(batch_warnings)
             evaluated |= batch_evaluated
             malformed |= batch_malformed
+            skipped.extend(batch_skipped)
         # Run-local coverage over distinct listed identities. A duplicate row
         # can report one identity as evaluated first and deferred later once
         # the budget ran out; the stronger outcome wins so neither counter is
@@ -1528,6 +1690,7 @@ class CapacitiesAdapter:
             evaluated=len(evaluated),
             deferred=len(deferred),
             malformed=len(malformed),
+            skipped=tuple(skipped),
         )
 
     def list_tags(self) -> dict[str, Any]:

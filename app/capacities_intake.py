@@ -41,6 +41,7 @@ from capacities_adapter import (  # noqa: E402
     CapacitiesAdapter,
     CapacitiesConfig,
     CapacitiesContractError,
+    SkippedObject,
 )
 
 SOURCE_UNREADABLE = (
@@ -100,6 +101,9 @@ class DirectCoverage:
     unreadable: int = 0
     evaluated: int = 0
     malformed: int = 0
+    #: Named malformed objects for the additive intake block. ``malformed``
+    #: above stays the count authority; this carries the display detail.
+    skipped: tuple[SkippedObject, ...] = ()
 
 
 _UNREAD = object()  # sentinel: the caller supplied no preloaded generation read
@@ -182,6 +186,7 @@ def load_direct_rows(
         members=members,
         evaluated=result.evaluated,
         malformed=result.malformed,
+        skipped=tuple(result.skipped),
     )
     return assigned, pool, warnings, coverage
 
