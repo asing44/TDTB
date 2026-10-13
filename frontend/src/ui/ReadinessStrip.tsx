@@ -50,16 +50,15 @@ function structureLabel(key: string): string {
 }
 
 /** Short "Oct 10" for a server ISO timestamp, or null when unparseable.
-    Capacities timestamps are UTC (trailing ``Z``); the calendar date is read
-    in UTC so the displayed day matches the source value on every machine
-    rather than shifting across a local midnight. */
+    Capacities timestamps are UTC (trailing ``Z``) but the Capacities app shows
+    edit times in the viewer's local time, so the date is read locally: an edit
+    at 8:33 PM on Oct 9 must read "Oct 9", not the UTC "Oct 10". */
 function shortEditedDate(iso: string): string | null {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return null;
   return d.toLocaleDateString(undefined, {
     month: "short",
     day: "numeric",
-    timeZone: "UTC",
   });
 }
 

@@ -223,14 +223,18 @@ describe("sources details popover", () => {
           skippedRow({
             title: null,
             labels: ["P1", "Idle"],
-            updatedAt: "2026-10-10T00:33:06.790Z",
+            updatedAt: "2026-10-10T12:00:00.000Z",
             hint: "Description · Cadence:",
           }),
         ],
       });
     });
     const r = openSources(h);
-    const clues = r.getByText('P1 · Idle · edited Oct 10 · "Description · Cadence:"');
+    const edited = new Date("2026-10-10T12:00:00.000Z").toLocaleDateString(undefined, {
+      month: "short",
+      day: "numeric",
+    });
+    const clues = r.getByText(`P1 · Idle · edited ${edited} · "Description · Cadence:"`);
     expect(clues).toBeTruthy();
     expect(clues.className).toContain("rail__sources-skipped-clues");
   });
