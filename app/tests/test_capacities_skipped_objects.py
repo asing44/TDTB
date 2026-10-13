@@ -49,6 +49,9 @@ CONTRACT_KEYS = {
     "detail",
     "structure_id",
     "structure_name",
+    "labels",
+    "updated_at",
+    "hint",
 }
 
 
@@ -168,6 +171,162 @@ def test_title_reader_never_raises_on_hostile_property_shapes():
 
 
 # ---------------------------------------------------------------------------
+# (a2) find-it clues: labels, lastUpdatedAt, and block text hints
+# ---------------------------------------------------------------------------
+
+def _label(name):
+    return {"id": name.casefold(), "name": name}
+
+
+def test_skipped_labels_are_deduped_and_keep_property_order():
+    obj = _task(
+        "labelled",
+        {
+            "title": _prop("title", "title", {"value": ""}),
+            "assigned": _prop("boolean", "boolean", True),
+            "state": _prop("label", "label", [_label("Active"), _label("Active")]),
+            "priority": _prop("label", "label", [_label("P1"), _label("Idle")]),
+            "status": _prop("label", "label", [_label("Active")]),
+        },
+    )
+    provider = FakeProvider(_structures(), {})
+
+    entry = _adapter(provider).items_for_day_from_objects(TODAY, [obj]).skipped[0]
+
+    assert entry.labels == ("Active", "P1", "Idle")
+    assert entry.updated_at is None
+    assert entry.hint is None
+
+
+def test_skipped_labels_are_capped_and_length_limited():
+    long_name = "Z" * 60
+    obj = _task(
+        "many-labels",
+        {
+            "title": _prop("title", "title", {"value": ""}),
+            "assigned": _prop("boolean", "boolean", True),
+            "p0": _prop("label", "label", [_label(long_name)]),
+            **{
+                f"p{index}": _prop("label", "label", [_label(f"Tag{index}")])
+                for index in range(1, 8)
+            },
+        },
+    )
+    provider = FakeProvider(_structures(), {})
+
+    entry = _adapter(provider).items_for_day_from_objects(TODAY, [obj]).skipped[0]
+
+    assert len(entry.labels) == 6
+    assert entry.labels[0] == "Z" * 40
+    assert entry.labels == ("Z" * 40, "Tag1", "Tag2", "Tag3", "Tag4", "Tag5")
+
+
+def test_skipped_updated_at_is_read_from_last_updated_property():
+    obj = _task(
+        "stamped",
+        {
+            "title": _prop("title", "title", {"value": ""}),
+            "assigned": _prop("boolean", "boolean", True),
+            "lastUpdatedAt-abc": {
+                "type": "lastUpdatedAt",
+                "lastUpdatedAt": {"value": "2026-10-10T00:33:06.790Z"},
+            },
+        },
+    )
+    provider = FakeProvider(_structures(), {})
+
+    entry = _adapter(provider).items_for_day_from_objects(TODAY, [obj]).skipped[0]
+
+    assert entry.updated_at == "2026-10-10T00:33:06.790Z"
+
+
+def test_skipped_updated_at_is_null_when_absent_or_hostile():
+    objects = [
+        _task("no-stamp", {
+            "title": _prop("title", "title", {"value": ""}),
+            "assigned": _prop("boolean", "boolean", True),
+        }),
+        _task("empty-stamp", {
+            "title": _prop("title", "title", {"value": ""}),
+            "assigned": _prop("boolean", "boolean", True),
+            "lastUpdatedAt-abc": {
+                "type": "lastUpdatedAt",
+                "lastUpdatedAt": {"value": "   "},
+            },
+        }),
+        _task("hostile-stamp", {
+            "title": _prop("title", "title", {"value": ""}),
+            "assigned": _prop("boolean", "boolean", True),
+            "lastUpdatedAt-abc": {
+                "type": "lastUpdatedAt",
+                "lastUpdatedAt": {"value": 42},
+            },
+        }),
+    ]
+    provider = FakeProvider(_structures(), {})
+
+    result = _adapter(provider).items_for_day_from_objects(TODAY, objects)
+
+    assert [entry.updated_at for entry in result.skipped] == [None, None, None]
+
+
+def test_skipped_hint_reads_up_to_three_block_text_tokens():
+    obj = _task(
+        "with-blocks",
+        {
+            "title": _prop("title", "title", {"value": ""}),
+            "assigned": _prop("boolean", "boolean", True),
+        },
+    )
+    obj["blocks"] = {
+        "section-1": [
+            {
+                "type": "TextBlock",
+                "tokens": [
+                    {"type": "TextToken", "text": "Description"},
+                    {"type": "TextToken", "text": "   "},
+                    {"type": "TextToken", "text": "Habit details"},
+                    {"type": "TextToken", "text": "Cadence:"},
+                    {"type": "TextToken", "text": "unused-fourth"},
+                ],
+            }
+        ]
+    }
+    provider = FakeProvider(_structures(), {})
+
+    entry = _adapter(provider).items_for_day_from_objects(TODAY, [obj]).skipped[0]
+
+    assert entry.hint == "Description · Habit details · Cadence:"
+
+
+def test_skipped_clues_never_raise_on_hostile_shapes():
+    obj = _task("hostile-clues", {"title": _prop("title", "title", {"value": ""})})
+    obj["properties"] = {
+        "title": _prop("title", "title", {"value": ""}),
+        "assigned": _prop("boolean", "boolean", True),
+        "bad-label": {"type": "label", "label": "not-a-list"},
+        "bad-stamp": {"type": "lastUpdatedAt", "lastUpdatedAt": "not-a-map"},
+        "nested-label": {"type": "label", "label": [{"name": {"deep": True}}, 5, None]},
+    }
+    obj["blocks"] = {
+        "bad-list": "not-a-list",
+        "block-tokens": [
+            "not-a-block",
+            {"tokens": "not-a-token-list"},
+            {"tokens": ["not-a-token", {"text": 5}, {"text": ""}]},
+        ],
+    }
+    provider = FakeProvider(_structures(), {})
+
+    entry = _adapter(provider).items_for_day_from_objects(TODAY, [obj]).skipped[0]
+
+    assert entry.labels == ()
+    assert entry.updated_at is None
+    assert entry.hint is None
+    assert entry.reason == "No title"
+
+
+# ---------------------------------------------------------------------------
 # (b) the /plan-inputs block carries the skipped contract
 # ---------------------------------------------------------------------------
 
@@ -209,11 +368,59 @@ def test_direct_block_includes_named_skipped_objects(vault):  # noqa: F811
         "detail": "property 'title' has no usable value",
         "structure_id": DIRECT_ROOT,
         "structure_name": "RootTask",
+        "labels": ["Active"],
+        "updated_at": None,
+        "hint": None,
     }
     assert by_identity["obj-date"]["title"] == "Fix date"
     assert by_identity["obj-date"]["reason"] == "Start date is not valid"
     assert by_identity["obj-date"]["structure_id"] == DIRECT_ROOT
     assert by_identity["obj-date"]["structure_name"] == "RootTask"
+    assert by_identity["obj-date"]["labels"] == ["Active"]
+
+
+def test_direct_block_skipped_entries_carry_find_it_clues(vault):  # noqa: F811
+    _set_sources(mode="artifact", capacities_intake="direct")
+    _save_direct_source()
+    clues_object = {
+        "id": "obj-clues",
+        "structureId": DIRECT_ROOT,
+        "properties": {
+            "title": {"type": "title", "title": {"value": ""}},
+            "assigned": {"type": "boolean", "boolean": True},
+            "priority": {
+                "type": "label",
+                "label": [{"id": "p1", "name": "P1"}, {"id": "idle", "name": "Idle"}],
+            },
+            "lastUpdatedAt-abc": {
+                "type": "lastUpdatedAt",
+                "lastUpdatedAt": {"value": "2026-10-10T00:33:06.790Z"},
+            },
+        },
+        "blocks": {
+            "link-1": [
+                {
+                    "type": "TextBlock",
+                    "tokens": [
+                        {"type": "TextToken", "text": "Description"},
+                        {"type": "TextToken", "text": "Cadence:"},
+                    ],
+                }
+            ]
+        },
+    }
+    _publish_direct([clues_object])
+    client = _direct_client(
+        build_clients=_CallRecorder(), build_capacities=_CallRecorder(),
+    )
+
+    body = client.get("/plan-inputs").json()
+
+    entry = body["capacities_intake"]["skipped"][0]
+    assert entry["labels"] == ["P1", "Idle"]
+    assert entry["updated_at"] == "2026-10-10T00:33:06.790Z"
+    assert entry["hint"] == "Description · Cadence:"
+    assert set(entry) == CONTRACT_KEYS
 
 
 # ---------------------------------------------------------------------------

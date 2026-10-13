@@ -105,6 +105,21 @@ function labelMinWidthPx(name: string): number {
   return Math.min(name.length * LABEL_CHAR_PX + LABEL_PAD_PX, LABEL_MAX_PX);
 }
 
+/** Axis label collision guard (2026-10-13): the axis has no measured width at
+    first paint, so the minimum gap between two ticks is derived from the frame
+    span and the previous label's width, assuming a 700px track. That is
+    conservative for the smallest real track (≥900px), so the derived gap
+    already includes breathing room and no separate padding term is needed. */
+const AXIS_ASSUMED_TRACK_PX = 700;
+
+/** Minutes the previous axis label needs before the next tick may sit: its own
+    estimated width (`chars × 6.4px`) scaled to the frame at 700px. */
+function axisLabelMinGapMinutes(prevLabel: string, spanMinutes: number): number {
+  return Math.ceil(
+    (spanMinutes * prevLabel.length * LABEL_CHAR_PX) / AXIS_ASSUMED_TRACK_PX,
+  );
+}
+
 /** Place one lane's rows at proportional positions. Rows wholly outside the
     frame are dropped; partly-outside rows are clipped to the frame edges.
     Overlapping rows are assigned to the first stack row that is free. */
@@ -236,10 +251,22 @@ export function CalendarImpact({ inline = false }: { inline?: boolean }) {
         ) ?? null;
 
   // Axis ticks: an opening tick when the frame starts off the hour, then every
-  // hour boundary inside the frame.
+  // hour boundary inside the frame — except an hourly tick too close to the
+  // tick before it, whose label would collide (a 10:45 start put "10:45" and
+  // "11a" 15 minutes apart and the axis read "10:451a"). The opening tick is
+  // never dropped, and on-the-hour frames have no opening tick, so their hour
+  // labels are unchanged. Two hourly ticks are always 60 minutes apart, clear
+  // of the guard; the final tick is only dropped when the opening label would
+  // otherwise overlap it.
   const ticks: number[] = [];
   if (frameStart % 60 !== 0) ticks.push(frameStart);
-  for (let m = Math.ceil(frameStart / 60) * 60; m <= frameEnd; m += 60) ticks.push(m);
+  for (let m = Math.ceil(frameStart / 60) * 60; m <= frameEnd; m += 60) {
+    const prev = ticks[ticks.length - 1];
+    if (prev != null && m - prev < axisLabelMinGapMinutes(axisLabel(prev), frameLen)) {
+      continue;
+    }
+    ticks.push(m);
+  }
 
 
   /** Move focus between blocks in document order (arrow navigation), so a

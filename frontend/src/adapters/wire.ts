@@ -1331,7 +1331,7 @@ function projectCapacitiesIntakeSkipped(
     const identity = typeof src.identity === "string" ? src.identity : "";
     const reason = typeof src.reason === "string" ? src.reason : "";
     if (identity === "" || reason === "") continue;
-    out.push({
+    const projected: CapacitiesIntakeSkipped = {
       identity,
       title: typeof src.title === "string" ? src.title : null,
       reason,
@@ -1340,7 +1340,21 @@ function projectCapacitiesIntakeSkipped(
         typeof src.structure_id === "string" ? src.structure_id : null,
       structureName:
         typeof src.structure_name === "string" ? src.structure_name : null,
-    });
+    };
+    // Find-it clues are optional and additive: a legacy row omits them, and a
+    // malformed value degrades to absent rather than dropping the row.
+    if (Array.isArray(src.labels)) {
+      projected.labels = src.labels.filter(
+        (value): value is string => typeof value === "string" && value !== "",
+      );
+    }
+    if (typeof src.updated_at === "string" && src.updated_at !== "") {
+      projected.updatedAt = src.updated_at;
+    }
+    if (typeof src.hint === "string" && src.hint !== "") {
+      projected.hint = src.hint;
+    }
+    out.push(projected);
   }
   return out;
 }

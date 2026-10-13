@@ -615,6 +615,10 @@ export interface CapacitiesIntakeSkipped {
   detail: string;
   structureId: string | null;
   structureName: string | null;
+  /** Optional find-it clues the server may attach; absent for legacy rows. */
+  labels?: string[];
+  updatedAt?: string | null;
+  hint?: string | null;
 }
 
 /** Typed projection of the additive ``capacities_intake`` block. ``mode`` is
