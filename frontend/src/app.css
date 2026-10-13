@@ -6586,19 +6586,6 @@ body {
   }
 }
 
-/* 1101-1279px is too narrow for title + verbs + due + slider side by side. A
-   later block moves the always-visible cluster to its own grid line here, so
-   the due text stays readable and the title keeps its room. The slider track
-   is never spanned. */
-@media (min-width: 1101px) and (max-width: 1439px) {
-  .qrow:hover .qrow__actions,
-  .qrow:focus-within .qrow__actions,
-  .qrow--focused .qrow__actions,
-  .qrow--dropped .qrow__actions {
-    grid-column: 3 / 5;
-  }
-}
-
 @media (min-width: 1500px) {
   .qrow {
     grid-template-columns: 3px minmax(0, 1fr) auto 190px 340px;
@@ -6797,11 +6784,7 @@ body {
     grid-column: 4;
   }
 
-  .qrow__actions,
-  .qrow:hover .qrow__actions,
-  .qrow:focus-within .qrow__actions,
-  .qrow--focused .qrow__actions,
-  .qrow--dropped .qrow__actions {
+  .qrow__actions {
     grid-column: 5;
     width: auto;
     overflow: visible;
@@ -6918,11 +6901,7 @@ body {
 
   .qrow__due,
   .qrow__time,
-  .qrow__actions,
-  .qrow:hover .qrow__actions,
-  .qrow:focus-within .qrow__actions,
-  .qrow--focused .qrow__actions,
-  .qrow--dropped .qrow__actions {
+  .qrow__actions {
     grid-row: 1 / -1;
     align-self: center;
   }
@@ -6935,11 +6914,7 @@ body {
     grid-column: 5;
   }
 
-  .qrow__actions,
-  .qrow:hover .qrow__actions,
-  .qrow:focus-within .qrow__actions,
-  .qrow--focused .qrow__actions,
-  .qrow--dropped .qrow__actions {
+  .qrow__actions {
     grid-column: 6;
   }
 
@@ -7793,11 +7768,7 @@ body {
     grid-row: 1;
   }
 
-  .qrow__actions,
-  .qrow:hover .qrow__actions,
-  .qrow:focus-within .qrow__actions,
-  .qrow--focused .qrow__actions,
-  .qrow--dropped .qrow__actions {
+  .qrow__actions {
     grid-column: 2 / -1;
     grid-row: 2;
     width: auto;
@@ -7882,13 +7853,11 @@ body {
    source+meta | due | time control | actions. The duration readout moves
    INLINE to the RIGHT of the slider (value first, then a plain-word
    provenance label) in a fixed-width mono value area, so sliders line up
-   between rows. Row actions and the −/+ steppers are present and kept in the
-   DOM but quiet at rest, revealed on row hover / focus-within through
-   opacity (never display:none); their grid tracks are reserved so the row
-   never reflows. Appended at the end of app.css so it wins the cascade
-   without rewriting the layered blocks above. Below 1280px the existing
-   two-line layouts keep the readout above the slider and the cluster always
-   visible. */
+   between rows. Row actions and the −/+ steppers are always visible; their
+   grid tracks are reserved so the row never reflows. Appended at the end of
+   app.css so it wins the cascade without rewriting the layered blocks above.
+   Below 1440px the existing two-line layouts keep the readout above the
+   slider and the cluster always visible. */
 
 @media (min-width: 1440px) {
   .qrow {
@@ -7979,40 +7948,13 @@ body {
     flex: none;
   }
 
-  /* Actions are quiet at rest but keep their reserved 500px track, so a
-     revealed cluster never moves the title, due, or slider. */
+  /* Actions keep their reserved 500px track and stay visible at rest, so
+     nothing moves the title, due, or slider. */
   .qrow__actions {
     grid-column: 6;
     justify-content: flex-end;
     flex-wrap: nowrap;
     gap: 6px;
-    opacity: 0;
-    pointer-events: none;
-    transition: opacity 120ms ease;
-  }
-
-  .qrow:hover .qrow__actions,
-  .qrow:focus-within .qrow__actions,
-  .qrow--focused .qrow__actions {
-    grid-column: 6;
-    opacity: 1;
-    pointer-events: auto;
-  }
-
-  /* The −/+ steppers flank the slider and share the reveal, so a quiet row is
-     just the slider and its value. Their anchor keeps the width, so the
-     slider never jumps. */
-  .qrow__time .alloc-step {
-    opacity: 0;
-    pointer-events: none;
-    transition: opacity 120ms ease;
-  }
-
-  .qrow:hover .qrow__time .alloc-step,
-  .qrow:focus-within .qrow__time .alloc-step,
-  .qrow--focused .qrow__time .alloc-step {
-    opacity: 1;
-    pointer-events: auto;
   }
 
   .qrow__action-group {
@@ -8027,15 +7969,6 @@ body {
   /* The wider 6-track grid needs a roomier plan column than 1360px. */
   .cockpit {
     --plan-max-width: 1440px;
-  }
-}
-
-/* Reveal actions and steppers for coarse pointers even without hover. */
-@media (hover: none) {
-  .qrow__actions,
-  .qrow__time .alloc-step {
-    opacity: 1;
-    pointer-events: auto;
   }
 }
 

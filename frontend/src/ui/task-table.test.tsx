@@ -1,8 +1,8 @@
 /* task-table.test.tsx — U11 "Fit-today task table" (R20b; KTD10, KTD12,
    KTD13). Re-composes the assigned queue into the mockup's grouped, compact
    table: "Assigned this morning" + scope note, a hint row, lane headers with
-   collapse toggles, and dense single-line rows whose actions appear on hover
-   or keyboard focus. Grouping maps the existing band/state model (KTD12) —
+   collapse toggles, and dense single-line rows whose actions and steppers
+   stay visible. Grouping maps the existing band/state model (KTD12) —
    the trim plan and sequencing order are unchanged.
 
    Fixture adapters only: no live adapter, no billed call, no source write. */
@@ -93,13 +93,14 @@ describe("U11 headings: Assigned this morning replaces Today's work", () => {
 });
 
 describe("U11 hint row lists exactly the shortcuts that work", () => {
-  it("renders the hover/keys hint with the today-only scope note", () => {
+  it("renders the row-shortcuts hint with the today-only scope note", () => {
     const h = makeHarness("ready");
     const r = h.ui(<Queue />);
     const hint = r.container.querySelector(".queue__hint");
     expect(hint).toBeTruthy();
     const text = hint?.textContent ?? "";
-    expect(text).toContain("Hover a row for actions");
+    expect(text).toContain("Row shortcuts");
+    expect(text).not.toContain("Hover a row");
     expect(text).toContain("C complete");
     expect(text).toContain("E exclude");
     expect(text).toContain("D exact duration");
@@ -154,21 +155,24 @@ describe("U11 grouping maps the band/state model (KTD12)", () => {
   });
 });
 
-describe("U11 row actions reveal on hover at desktop width", () => {
-  it("keeps the action cluster in the DOM at every width", () => {
+describe("U11 row actions stay visible without a hover", () => {
+  it("keeps the action cluster in the DOM and visible at every width", () => {
     const h = makeHarness("ready");
     const { container } = h.ui(<Queue />);
     const row = rowNamed(container, "Press");
     expect(row.querySelector(".qrow__actions")).toBeTruthy();
-    // Wide: quiet at rest (opacity, not display) and revealed on hover or
-    // keyboard focus; the grid track is reserved so the row never reflows.
-    expect(APP_CSS).toMatch(/\.qrow__actions\s*\{[^}]*opacity:\s*0/);
-    expect(APP_CSS).toMatch(/\.qrow:hover\s+\.qrow__actions/);
-    expect(APP_CSS).toMatch(/\.qrow:focus-within\s+\.qrow__actions/);
-    expect(APP_CSS).toMatch(/\.qrow--focused\s+\.qrow__actions/);
-    // Narrow: the stacked layout shows the cluster without a hover.
+    // The cluster is always visible: no rule hides it at rest, and the
+    // hover/focus reveal layer is gone (removed 2026-10-12).
+    expect(APP_CSS).not.toMatch(/\.qrow__actions\s*\{[^}]*opacity:\s*0/);
+    expect(APP_CSS).not.toMatch(/\.qrow:hover\s+\.qrow__actions/);
+    expect(APP_CSS).not.toMatch(/\.qrow:focus-within\s+\.qrow__actions/);
+    expect(APP_CSS).not.toMatch(/\.qrow--focused\s+\.qrow__actions/);
+    // Each layout band shows the cluster without a hover.
     expect(APP_CSS).toMatch(
       /@media\s*\(max-width:\s*1100px\)\s*\{\s*\.qrow__actions\s*\{[^}]*opacity:\s*1/,
+    );
+    expect(APP_CSS).toMatch(
+      /@media\s*\(min-width:\s*1440px\)[\s\S]*?\.qrow__actions\s*\{[^}]*opacity:\s*1/,
     );
   });
 
@@ -290,7 +294,7 @@ describe("overflow containment (2026-10-10)", () => {
     // 1101-1439: the always-visible cluster drops to its own grid line, so
     // the due text stays readable and nothing is painted over the title.
     expect(APP_CSS).toMatch(
-      /@media\s*\(min-width:\s*1101px\)\s+and\s+\(max-width:\s*1439px\)\s*\{[\s\S]*?\.qrow\s*\{[\s\S]*?grid-template-rows:\s*auto\s+auto;[\s\S]*?\.qrow__actions,[\s\S]*?grid-row:\s*2;[\s\S]*?opacity:\s*1;/,
+      /@media\s*\(min-width:\s*1101px\)\s+and\s+\(max-width:\s*1439px\)\s*\{[\s\S]*?\.qrow\s*\{[\s\S]*?grid-template-rows:\s*auto\s+auto;[\s\S]*?\.qrow__actions\s*\{[\s\S]*?grid-row:\s*2;[\s\S]*?opacity:\s*1;/,
     );
     // Nothing hides the due text on hover.
     expect(APP_CSS).not.toMatch(/visibility:\s*hidden/);
@@ -308,13 +312,14 @@ describe("overflow containment (2026-10-10)", () => {
     expect(APP_CSS).not.toMatch(/340px\s+max-content/);
   });
 
-  it("the revealed cluster sits in flow, never over the slider", () => {
-    // The cluster owns its reserved grid track, so it cannot intercept a
-    // slider click; it is quiet at rest, not inert or removed.
-    expect(APP_CSS).toMatch(
-      /\.qrow:hover\s+\.qrow__actions,[\s\S]*?pointer-events:\s*auto/,
-    );
+  it("the always-visible cluster sits in flow, never over the slider", () => {
+    // The cluster owns its reserved grid track and is visible at rest, so it
+    // never needs a hover to sit in flow.
+    expect(APP_CSS).not.toMatch(/\.qrow:hover\s+\.qrow__actions/);
     expect(APP_CSS).not.toMatch(/\.qrow__actions\s*\{[^}]*display:\s*none/);
+    expect(APP_CSS).not.toMatch(
+      /\.qrow__actions\s*\{[^}]*pointer-events:\s*none/,
+    );
   });
 
   it("the page frame is full width with one shared side inset", () => {
