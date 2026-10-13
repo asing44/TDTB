@@ -1,16 +1,17 @@
 /* row-actions-plan.test.ts — CSS guards for the Plan task row action set
-   (2026-10-12, Adam). Two approved changes:
+   (2026-10-12 redesign). Two approved changes:
 
-   1. Row actions stay visible at every width. The cluster used to be revealed
-      by `.qrow:hover` / `.qrow:focus-within` (`opacity: 0` at rest); that
-      reveal layer must be gone, and must not come back as hover-only.
-   2. From 1500px the Plan row matches Planning Mockups screen B's action
-      sizing: 13px labels, 6px/10px padding, 31px buttons, 1px borders, 6px
-      radius, 6px gaps, and a 540px action track.
+   1. At desktop width (>=1440px) the row is one quiet line: the action cluster
+      is present but hidden at rest (opacity/pointer-events, never
+      display:none) and revealed on `.qrow:hover` / `.qrow:focus-within`. Its
+      grid track is reserved, so a revealed cluster never reflows the row.
+      Below 1440px the cluster stays visible without a hover.
+   2. The wide layout matches Planning Mockups screen B's action sizing: 13px
+      labels, 6px/10px padding, 31px buttons at >=1500px, 1px borders, 6px
+      radius, 6px gaps, and a 500px reserved action track.
 
    jsdom does no layout, so these read the cascade off disk the same way
-   mint-slider-layout.test.ts and row-rhythm.test.ts do. The spec values were
-   measured from the mockup's rendered buttons, not assumed. */
+   mint-slider-layout.test.ts and row-rhythm.test.ts do. */
 
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -61,17 +62,30 @@ function at1500(selector: string): string {
   return hits[hits.length - 1];
 }
 
-describe("Plan task row actions never depend on hover", () => {
-  it("no .qrow__actions rule hides the cluster at rest", () => {
-    expect(appCss).not.toMatch(/\.qrow__actions\s*\{[^}]*opacity:\s*0/);
-    expect(appCss).not.toMatch(/\.qrow__actions\s*\{[^}]*pointer-events:\s*none/);
-    expect(appCss).not.toMatch(/\n\s*\.qrow__actions\s*\{[^}]*?(?<!min-)width:\s*0;/);
+describe("Plan task row actions reveal on hover at desktop width", () => {
+  it("quiets the cluster at rest with opacity/pointer-events, not display", () => {
+    expect(appCss).toMatch(/\.qrow__actions\s*\{[^}]*opacity:\s*0/);
+    expect(appCss).toMatch(/\.qrow__actions\s*\{[^}]*pointer-events:\s*none/);
+    expect(appCss).not.toMatch(/\.qrow__actions\s*\{[^}]*display:\s*none/);
   });
 
-  it("keeps no hover/focus reveal rule for the cluster", () => {
-    expect(appCss).not.toMatch(/\.qrow:hover\s+\.qrow__actions\s*\{/);
-    expect(appCss).not.toMatch(/\.qrow:focus-within\s+\.qrow__actions\s*\{/);
-    expect(appCss).not.toMatch(/\.qrow--focused\s+\.qrow__actions\s*\{/);
+  it("reveals the cluster on hover, focus-within, and focus", () => {
+    expect(appCss).toMatch(/\.qrow:hover\s+\.qrow__actions/);
+    expect(appCss).toMatch(/\.qrow:focus-within\s+\.qrow__actions/);
+    expect(appCss).toMatch(/\.qrow--focused\s+\.qrow__actions/);
+    expect(appCss).toMatch(
+      /\.qrow:hover\s+\.qrow__actions,[\s\S]*?pointer-events:\s*auto/,
+    );
+  });
+
+  it("keeps the cluster visible without a hover below 1440px", () => {
+    expect(appCss).toMatch(
+      /@media\s*\(max-width:\s*1100px\)\s*\{\s*\.qrow__actions\s*\{[^}]*opacity:\s*1/,
+    );
+    // 1101-1439 keeps the cluster on its own grid line, always visible.
+    expect(appCss).toMatch(
+      /@media\s*\(min-width:\s*1101px\)\s+and\s+\(max-width:\s*1439px\)[\s\S]*?\.qrow__actions[\s\S]*?opacity:\s*1/,
+    );
   });
 
   it("the base cluster rule stays laid out and reachable, not clipped", () => {
@@ -86,23 +100,32 @@ describe("Plan task rows restore the −/+ duration steppers", () => {
   it("app.css styles an .alloc-step control again", () => {
     expect(appCss).toMatch(/\.alloc-step\s*\{/);
   });
+
+  it("reveals the steppers alongside the row actions", () => {
+    expect(appCss).toMatch(/\.qrow__time\s+\.alloc-step\s*\{[^}]*opacity:\s*0/);
+    expect(appCss).toMatch(/\.qrow:hover\s+\.qrow__time\s+\.alloc-step/);
+    expect(appCss).toMatch(
+      /\.qrow:focus-within\s+\.qrow__time\s+\.alloc-step/,
+    );
+  });
+});
+
+describe("Plan task row layout reserves the action track", () => {
+  it("uses the mockup's reserved 500px action track at desktop width", () => {
+    expect(appCss).toMatch(
+      /grid-template-columns:\s*3px\s+96px\s+minmax\(0,\s*1fr\)\s+112px\s+300px\s+500px/,
+    );
+    expect(at1500(".qrow")).toMatch(/500px/);
+  });
+
+  it("puts the cluster in its own reserved grid track, never over the slider", () => {
+    expect(appCss).toMatch(/\.qrow__actions\s*\{[^}]*grid-column:\s*6/);
+    expect(appCss).not.toMatch(/\.qrow__actions\s*\{[^}]*position:\s*absolute/);
+    expect(appCss).not.toMatch(/\.qrow__actions\s*\{[^}]*?(?<!min-)width:\s*0;/);
+  });
 });
 
 describe("Plan task action sizing matches the mockup from 1500px", () => {
-  it("keeps the compact sizing below 1500px", () => {
-    // The mockup layer is a min-width gate: the 1280-1499 band must not be
-    // touched by the 540px track.
-    const gate = minWidth1500Bodies().join("\n");
-    expect(gate).toMatch(/540px/);
-  });
-
-  it("uses the mockup's 540px action track", () => {
-    const grid = at1500(".qrow");
-    expect(grid).toMatch(
-      /grid-template-columns:[^;]*\b540px\b/,
-    );
-  });
-
   it("labels the mockup's five actions at 13px", () => {
     expect(at1500(".qrow__actions .planbtn")).toMatch(/font-size:\s*13px/);
     expect(at1500(".qrow__actions .alloc-verb")).toMatch(

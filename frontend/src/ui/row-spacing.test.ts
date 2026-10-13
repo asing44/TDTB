@@ -77,8 +77,8 @@ describe("row spacing never erodes control touch targets", () => {
     const thumb = appCss.match(
       /\.alloc-track__input::-webkit-slider-thumb\s*\{([^}]*)\}/,
     )?.[1] ?? "";
-    expect(thumb).toMatch(/width:\s*10px/);
-    expect(thumb).toMatch(/height:\s*10px/);
+    expect(thumb).toMatch(/width:\s*14px/);
+    expect(thumb).toMatch(/height:\s*14px/);
   });
 });
 

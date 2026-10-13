@@ -1,15 +1,15 @@
-/* readout-above-slider.test.tsx — Plan task row duration column (2026-10-12):
+/* readout-above-slider.test.tsx — Plan task row duration column (2026-10-12
+   redesign):
 
-   Adam's capture showed the duration readout ("2hr 30min*") wrapping onto its
-   own line BELOW the slider, under the − stepper. The column now stacks two
-   lines: the readout first, then [−] [track] [+]. The duration value keeps the
-   left edge (aligned with the − stepper); a provenance label, when the row is
-   not source-default, sits immediately after the value. The readout is never
-   allowed to wrap.
+   The duration readout moved off its own line ABOVE the slider and now sits
+   INLINE to the RIGHT of the slider: [−] [track] [+] readout. The value holds
+   a fixed width so the sliders line up between rows; a plain-word provenance
+   label, when the row is not source-default, sits immediately after the
+   value. The readout never wraps.
 
    jsdom does no layout, so ordering and membership are checked in the DOM and
-   the no-wrap / column / alignment guarantees are read off the cascade on
-   disk, the same way slider-steppers.test.tsx does. */
+   the row / nowrap / fixed-width guarantees are read off the cascade on disk,
+   the same way slider-steppers.test.tsx does. */
 
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -32,6 +32,15 @@ function ruleBody(selector: string): string {
   return match[1];
 }
 
+/** Body of the LAST `selector { … }` rule — the appended redesign layer wins
+    the cascade, so the last match is the live desktop rule. */
+function lastRuleBody(selector: string): string {
+  const re = new RegExp(`(?:^|\\n)\\s*${selector}\\s*\\{([^}]*)\\}`, "g");
+  const matches = Array.from(appCss.matchAll(re), (m) => m[1]);
+  if (matches.length === 0) throw new Error(`selector not found in app.css: ${selector}`);
+  return matches[matches.length - 1];
+}
+
 function timeColumn(): HTMLElement {
   const h = makeHarness("ready");
   const container: HTMLElement = h.ui(<Queue />).container;
@@ -44,15 +53,15 @@ function timeColumn(): HTMLElement {
   return time;
 }
 
-describe("the duration readout leads the time column", () => {
-  it("puts the readout line before the slider line", () => {
+describe("the duration readout trails the slider", () => {
+  it("puts the readout after the slider line", () => {
     const time = timeColumn();
     const readout = time.querySelector<HTMLElement>(".qrow__time-readout");
     const line = time.querySelector<HTMLElement>(".qrow__time-line");
     expect(readout).toBeTruthy();
     expect(line).toBeTruthy();
     expect(
-      readout!.compareDocumentPosition(line!) & Node.DOCUMENT_POSITION_FOLLOWING,
+      readout!.compareDocumentPosition(line!) & Node.DOCUMENT_POSITION_PRECEDING,
     ).toBeTruthy();
   });
 
@@ -107,27 +116,25 @@ describe("the duration readout leads the time column", () => {
   });
 });
 
-describe("the readout line never wraps and the column stacks", () => {
+describe("the readout is a fixed-width value area beside the slider", () => {
   it("keeps the readout on one nowrap line", () => {
     const body = ruleBody("\\.qrow__time-readout");
     expect(body).toMatch(/flex-wrap:\s*nowrap/);
     expect(body).toMatch(/white-space:\s*nowrap/);
   });
 
-  it("stacks the time column vertically by default", () => {
-    const body = ruleBody("\\.qrow__time");
-    expect(body).toMatch(/flex-direction:\s*column/);
+  it("lays the time column out as a row at desktop width", () => {
+    const body = lastRuleBody("\\.qrow__time");
+    expect(body).toMatch(/flex-direction:\s*row/);
   });
 
-  it("left-aligns the value so it lines up with the − stepper", () => {
+  it("holds a fixed-width value area so sliders line up between rows", () => {
     const body = ruleBody("\\.qrow__time-readout \\.alloc-track__value");
-    expect(body).toMatch(/text-align:\s*left/);
+    expect(body).toMatch(/width:\s*76px/);
+    expect(body).toMatch(/text-align:\s*right/);
   });
 
   it("keeps the label next to the value, left-aligned with the readout", () => {
-    // Only CSS can place the label: jsdom does no layout, so the placement is
-    // read off the readout's cascade. `flex-start` holds the label right after
-    // the value instead of pushing it to the column's right edge.
     const body = ruleBody("\\.qrow__time-readout");
     expect(body).toMatch(/justify-content:\s*flex-start/);
     expect(body).not.toMatch(/justify-content:\s*space-between/);

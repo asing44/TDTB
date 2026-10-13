@@ -421,7 +421,7 @@ function ShortcutHint() {
   return (
     <div class="queue__hint" role="note" aria-label="Task table keyboard shortcuts">
       <span class="queue__hint-keys">
-        Row shortcuts · <kbd>C</kbd> complete · <kbd>E</kbd> exclude ·{" "}
+        Hover a row for actions · <kbd>C</kbd> complete · <kbd>E</kbd> exclude ·{" "}
         <kbd>D</kbd> exact duration · <kbd>←→</kbd> ±15min · <kbd>↑↓</kbd> move
       </span>
       <span class="queue__hint-note">
@@ -635,32 +635,6 @@ function Row({
       <div class="qrow__time">
         {included ? (
           <>
-            {/* 2026-10-12 (Adam): the duration readout leads the time column
-                ABOVE the slider, on one line. The value holds the left edge;
-                a non-default provenance chip sits immediately after it. */}
-            <div class="qrow__time-readout">
-              <span
-                class={`alloc-track__value ${track.pastBudget ? "alloc-track__value--over" : ""}`}
-                aria-live="polite"
-              >
-                {blocksLabel(blocks)}
-                {overridden ? "*" : ""}
-              </span>
-              {/* FEEDBACK-10 (A08) + duration-memory MVP: provenance as a
-                  visible chip, in plain words, right after the value. Source
-                  rows are the default and render no chip; the * on the value
-                  and the slider's aria-valuetext still carry that state. */}
-              {durLabel != null && (
-                <span
-                  class={`qrow__dur-label qrow__dur-label--${srcTag}`}
-                  data-src={srcTag}
-                  title={srcTagLabel(srcTag)}
-                  aria-label={srcTagLabel(srcTag)}
-                >
-                  {durLabel}
-                </span>
-              )}
-            </div>
             <div class="qrow__time-line">
                 {/* The slider's own notch is a 30-minute block; these are the
                     half-block trim the slider can't express without becoming
@@ -728,6 +702,33 @@ function Row({
                       +
                     </button>
                   </Tooltip>
+            </div>
+            {/* 2026-10-12 redesign (owner mockup): the duration readout now
+                trails the slider on the same line. The value holds a fixed
+                width so sliders line up between rows; a non-default
+                provenance label sits immediately after the value. */}
+            <div class="qrow__time-readout">
+              <span
+                class={`alloc-track__value ${track.pastBudget ? "alloc-track__value--over" : ""}`}
+                aria-live="polite"
+              >
+                {blocksLabel(blocks)}
+                {overridden ? "*" : ""}
+              </span>
+              {/* FEEDBACK-10 (A08) + duration-memory MVP: provenance as a
+                  visible chip, in plain words, right after the value. Source
+                  rows are the default and render no chip; the * on the value
+                  and the slider's aria-valuetext still carry that state. */}
+              {durLabel != null && (
+                <span
+                  class={`qrow__dur-label qrow__dur-label--${srcTag}`}
+                  data-src={srcTag}
+                  title={srcTagLabel(srcTag)}
+                  aria-label={srcTagLabel(srcTag)}
+                >
+                  {durLabel}
+                </span>
+              )}
             </div>
           </>
         ) : (
