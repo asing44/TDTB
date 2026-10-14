@@ -344,6 +344,38 @@ function MoreMenu({
     next.focus();
   };
 
+  /** One menu verb, one boxed row. The destructive verb renders inside the
+      same component so its armed confirm never changes the box geometry. */
+  const renderMenuVerb = (spec: StagingVerbSpec) => {
+    const armed = confirming === spec.verb;
+    return (
+      <button
+        key={spec.verb}
+        role="menuitem"
+        class={`alloc-verb alloc-verb--${spec.verb} row-more__item${armed ? " alloc-verb--armed" : ""}`}
+        data-source-mutation={spec.sourceMutation ? "true" : undefined}
+        aria-label={
+          armed
+            ? `Confirm ${spec.aria.toLowerCase()}: ${item.name}`
+            : `${spec.aria}: ${item.name}`
+        }
+        onClick={() => {
+          if (spec.destructive && !armed) {
+            setConfirming(spec.verb);
+            return;
+          }
+          close(false);
+          void controller.stagingAction(spec.verb, item.id);
+        }}
+      >
+        {armed ? "Sure?" : <><span>{spec.label}</span><span class="row-more__item-detail">{spec.detail}</span></>}
+      </button>
+    );
+  };
+  /* Delete is the menu's last stop, behind the hairline divider; more
+     destructive verbs added later would join it there. */
+  const deleteSpec = MORE_VERBS.find((spec) => spec.destructive);
+
   return (
     <div class="row-more" ref={wrapRef}>
       <Tooltip
@@ -381,30 +413,14 @@ function MoreMenu({
               moved off the row's meta line into this menu as a checkbox item.
               Same handler, same wire flag, same full aria-label; a
               Fixed/native-time row no longer carries an inline checkbox. */}
-          {hasAdjustableNativeTime(item) && (
-            <button
-              role="menuitemcheckbox"
-              aria-checked={optIn}
-              class="alloc-verb row-more__item"
-              aria-label={`Allow scheduler to move existing time for ${item.name}`}
-              onClick={() => {
-                /* Toggle in place: the menu stays open, so the checkmark is
-                   visible while it flips. */
-                controller.setTimeAdjustmentOptIn(item.id, !optIn);
-              }}
-            >
-              <span>Allow move</span>
-              <span class="row-more__item-detail">
-                {optIn
-                  ? "Allowed — scheduler may move the Todoist start"
-                  : "Protected — keeps the Todoist start fixed"}
-              </span>
-            </button>
-          )}
+          {/* Fixed order (2026-10-14): row shaping (Adjust time, Allow move,
+              Unschedule), then the source write (Remove from planning), then
+              the destructive pair — Always exclude, and Delete last behind
+              the hairline divider. Every item is the same boxed row. */}
           {allowTimeAdjustment && (state === "needs-placement" || state === "scheduled") && (
             <button
               role="menuitem"
-              class="row-more__item"
+              class="alloc-verb row-more__item"
               aria-label={`Adjust time for ${item.name}`}
               onClick={() => {
                 close(false);
@@ -418,45 +434,46 @@ function MoreMenu({
               <span class="row-more__item-detail">Today’s plan only</span>
             </button>
           )}
+          {hasAdjustableNativeTime(item) && (
+            <button
+              role="menuitemcheckbox"
+              aria-checked={optIn}
+              class="alloc-verb row-more__item"
+              aria-label={`Allow scheduler to move existing time for ${item.name}`}
+              onClick={() => {
+                /* Toggle in place: the menu stays open, so the checkmark is
+                   visible while it flips. */
+                controller.setTimeAdjustmentOptIn(item.id, !optIn);
+              }}
+            >
+              <span class="row-more__item-title">
+                <span class="row-more__item-check" aria-hidden="true">
+                  {optIn ? "✓" : ""}
+                </span>
+                Allow move
+              </span>
+              <span class="row-more__item-detail">
+                {optIn
+                  ? "Allowed — scheduler may move the Todoist start"
+                  : "Protected — keeps the Todoist start fixed"}
+              </span>
+            </button>
+          )}
           {state === "scheduled" && !item.isRecurring && (
             <button
               role="menuitem"
-              class="row-more__item"
+              class="alloc-verb row-more__item"
               aria-label={`Unschedule ${item.name}`}
               onClick={() => {
                 close(false);
                 controller.releasePlacement(item.id);
               }}
             >
-              Unschedule
+              <span>Unschedule</span>
+              <span class="row-more__item-detail">Today’s plan only</span>
             </button>
           )}
-          {MORE_VERBS.map((spec) => {
-            const armed = confirming === spec.verb;
-            return (
-              <button
-                key={spec.verb}
-                role="menuitem"
-                class={`alloc-verb alloc-verb--${spec.verb} row-more__item${armed ? " alloc-verb--armed" : ""}`}
-                data-source-mutation={spec.sourceMutation ? "true" : undefined}
-                aria-label={
-                  armed
-                    ? `Confirm ${spec.aria.toLowerCase()}: ${item.name}`
-                    : `${spec.aria}: ${item.name}`
-                }
-                onClick={() => {
-                  if (spec.destructive && !armed) {
-                    setConfirming(spec.verb);
-                    return;
-                  }
-                  close(false);
-                  void controller.stagingAction(spec.verb, item.id);
-                }}
-              >
-                {armed ? "Sure?" : <><span>{spec.label}</span><span class="row-more__item-detail">{spec.detail}</span></>}
-              </button>
-            );
-          })}
+          {MORE_VERBS.filter((spec) => !spec.destructive).map((spec) => renderMenuVerb(spec))}
           {/* Planning 2a: persistent exclusion rides the More menu for rows
               the source policy can key on (todoist id + title; canonical
               Capacities identity). Destructive, so it arms first: shape the
@@ -496,6 +513,12 @@ function MoreMenu({
                   : ALWAYS_EXCLUDE_DETAIL.todoist}
               </span>
             </button>
+          )}
+          {deleteSpec && (
+            <>
+              <div class="row-more__divider" role="separator" />
+              {renderMenuVerb(deleteSpec)}
+            </>
           )}
           {excludeStatus && (
             <div class="row-more__status" role="status" aria-live="polite">

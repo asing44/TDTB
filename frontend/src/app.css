@@ -10055,3 +10055,92 @@ body {
   white-space: normal;
   overflow-wrap: anywhere;
 }
+
+/* More-menu items (2026-10-14): ONE boxed-row style for every entry. Before
+   this the border came from each verb's modifier — Remove from planning and
+   Delete painted a box while Allow move and Always exclude floated on the
+   menu surface — and Delete kept the disabled muted colour at all times. The
+   box, padding, and title/detail type are owned here; the verb modifiers keep
+   only their colour states. Geometry never changes when an item arms. */
+.row-more__menu .row-more__item {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  width: 100%;
+  min-width: 0;
+  min-height: 44px;
+  padding: 8px 10px;
+  border: 0.5px solid var(--t-border);
+  border-radius: var(--radius-sm);
+  background: var(--t-surface);
+  color: var(--t-text);
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.25;
+  text-align: left;
+  white-space: normal;
+}
+.row-more__menu .row-more__item > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.row-more__menu .row-more__item > .row-more__item-detail {
+  margin-top: 0;
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--t-muted);
+}
+.row-more__menu .row-more__item-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.row-more__item-check {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 14px;
+  height: 14px;
+  border: 1px solid var(--t-border);
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1;
+}
+.row-more__menu .row-more__item[aria-checked="true"] .row-more__item-check {
+  border-color: var(--t-accent);
+  background: var(--t-accent);
+  color: #fff;
+}
+.row-more__menu .row-more__item:hover {
+  background: var(--t-surface-2);
+  border-color: var(--t-accent);
+}
+.row-more__menu .row-more__item:active {
+  background: color-mix(in srgb, var(--t-accent) 12%, var(--t-surface));
+}
+.row-more__menu .row-more__item:focus-visible {
+  outline: 2px solid var(--t-accent);
+  outline-offset: -2px;
+}
+.row-more__menu .row-more__item:disabled {
+  cursor: default;
+}
+/* Armed confirm: same box, danger colour. Delete and Always exclude arm
+   identically; the muted text is reserved for a genuinely disabled item. */
+.row-more__menu .row-more__item.alloc-verb--armed,
+.row-more__menu .row-more__item.alloc-verb--armed:hover {
+  min-width: 0;
+  padding: 8px 10px;
+  font-size: 14px;
+  color: var(--c-overflow);
+  border-color: var(--c-overflow);
+}
+/* Destructive verbs ride last, below this hairline. */
+.row-more__divider {
+  height: 0;
+  margin: 2px;
+  border-top: 0.5px solid var(--t-border);
+}
