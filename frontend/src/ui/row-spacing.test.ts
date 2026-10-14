@@ -129,3 +129,41 @@ describe("queue controls stay inside the viewport", () => {
     );
   });
 });
+
+describe("the Complete row verb keeps its filled green contract", () => {
+  /** The last `.qrow__actions …alloc-verb--done…` rule (the Planning 2a layer). */
+  function completeRule(): { selector: string; body: string } {
+    const re = /(?:^|\n)([^\n{}]*\.qrow__actions[^\n{}]*\.alloc-verb--done[^\n{}]*)\s*\{([^}]*)\}/g;
+    const hits = Array.from(appCss.matchAll(re), (m) => ({ selector: m[1].trim(), body: m[2] }))
+      // The base fill rule only: state variants are asserted separately.
+      .filter(({ selector }) => !selector.includes(":hover"));
+    if (hits.length === 0) throw new Error("qrow Complete verb rule not found in app.css");
+    return hits[hits.length - 1];
+  }
+
+  /** Numeric specificity weight: ids > classes/pseudo-classes > types. */
+  function weight(selector: string): number {
+    const ids = (selector.match(/#[\w-]+/g) ?? []).length;
+    const classes = (selector.match(/\.[\w-]+/g) ?? []).length;
+    const pseudo = (selector.match(/:(?!:)[\w-]+/g) ?? []).length;
+    const types = (selector.match(/(?:^|[\s>+~])([a-zA-Z][\w-]*)/g) ?? []).length;
+    return ids * 100 + (classes + pseudo) * 10 + types;
+  }
+
+  it("the Complete rule outranks the shared direct-verb base and fills green", () => {
+    const complete = completeRule();
+    expect(weight(complete.selector)).toBeGreaterThanOrEqual(
+      weight(".qrow__actions .alloc-verb:not(.row-more__item)"),
+    );
+    expect(complete.body).toMatch(/background:\s*#1f9d6b/);
+    expect(complete.body).toMatch(/border-color:\s*#1f9d6b/);
+    expect(complete.body).toMatch(/color:\s*#fff/);
+  });
+
+  it("hover deepens the Complete fill instead of falling back to the outline", () => {
+    const hover = appCss.match(
+      /\.qrow__actions \.alloc-verb--done:not\(\.row-more__item\):hover\s*\{([^}]*)\}/,
+    )?.[1] ?? "";
+    expect(hover).toMatch(/background:\s*#1a8a5d/);
+  });
+});

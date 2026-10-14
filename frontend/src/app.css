@@ -8906,6 +8906,14 @@ body {
   gap: 12px;
 }
 
+/* Outside-frame explanation under the Count today switch. */
+.anchor-popover__hint {
+  margin: 6px 0 0;
+  color: #8a5a00;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
 .anchor-popover__switch {
   position: relative;
   flex: none;
@@ -9865,10 +9873,14 @@ body {
 .qrow__actions .planbtn:hover {
   border-color: #b9b6af;
 }
-.qrow__actions .alloc-verb--done {
+.qrow__actions .alloc-verb--done:not(.row-more__item) {
   background: #1f9d6b;
   border-color: #1f9d6b;
   color: #fff;
+}
+.qrow__actions .alloc-verb--done:not(.row-more__item):hover {
+  background: #1a8a5d;
+  border-color: #1a8a5d;
 }
 .qrow__actions .alloc-verb--armed {
   width: auto;

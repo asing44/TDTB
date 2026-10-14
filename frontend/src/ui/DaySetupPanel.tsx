@@ -516,6 +516,9 @@ export function DaySetupPanel({
         start: time,
         end: a.end ?? time,
         counted,
+        // The override intent, independent of frame clipping; the popover's
+        // Count today switch shows this, while `counted` stays for the strip.
+        counting: on,
         skipped: !on,
         reason: !on ? "skipped" : outside ? "outside frame" : null,
         blocks: anchoredBlocks(sourceAnchor(a.id), o),
@@ -544,7 +547,23 @@ export function DaySetupPanel({
         capacityClass: a.capacityClass,
       }));
     const freeSlots = Math.max(0, selectableMintSessionIds.length - selectedMintSessionIds.length);
-    const selectedBlock = stripAnchors.find((anchor) => anchor.id === selectedAnchor) ?? null;
+    // The popover's Count today switch shows the OVERRIDE intent, not the
+    // strip's frame-clipped drawing state: an anchor clipped at the frame's
+    // left edge draws as not counted but its override can still be on. The
+    // hint explains why it is not counted yet.
+    const selectedEntry = stripAnchors.find((anchor) => anchor.id === selectedAnchor) ?? null;
+    const selectedBlock =
+      selectedEntry && {
+        ...selectedEntry,
+        counted: selectedEntry.counting,
+        outsideFrame: selectedEntry.reason === "outside frame",
+        outsideHint:
+          selectedEntry.reason !== "outside frame"
+            ? null
+            : toMinutes(selectedEntry.start) < frameStartMin
+              ? `Starts before your day (${display12h(frameStart)}), so it isn't counted yet. Move it later or change Start.`
+              : `Starts after your day ends (${display12h(frameEnd)}), so it isn't counted yet. Move it earlier or change Start.`,
+      };
 
     return (
       <div class="settings-panel settings-panel--day day-setup-screen">

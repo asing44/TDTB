@@ -37,8 +37,13 @@ export interface AnchorPopoverAnchor {
   /** The anchor's window end, 24h HH:MM (read-only). */
   end: string;
   blocks: number;
-  /** Counting today (on and not skipped). */
+  /** Counting today (on and not skipped) — the override intent the switch
+      shows, not the strip's frame-clipped drawing state. */
   counted: boolean;
+  /** The anchor's start falls outside today's frame (clipped on the strip). */
+  outsideFrame?: boolean;
+  /** Ready-made note shown under the switch when outsideFrame and counted. */
+  outsideHint?: string | null;
   timeState: AnchorTimeState;
 }
 
@@ -158,6 +163,9 @@ export function AnchorPopover(props: AnchorPopoverProps) {
 
   const uid = anchor.id.replace(/[^a-zA-Z0-9_-]/g, "-");
   const state = anchor.timeState;
+  const outsideNoteId = `anchor-popover-outside-${uid}`;
+  const showOutsideHint =
+    anchor.outsideFrame === true && anchor.counted && Boolean(anchor.outsideHint);
 
   return (
     <div
@@ -240,10 +248,17 @@ export function AnchorPopover(props: AnchorPopoverProps) {
           role="switch"
           aria-checked={anchor.counted}
           aria-label="Count today"
+          aria-describedby={showOutsideHint ? outsideNoteId : undefined}
           class="anchor-popover__switch"
           onClick={() => props.onToggleCount(anchor.id)}
         />
       </div>
+
+      {showOutsideHint && (
+        <p class="anchor-popover__hint" role="note" id={outsideNoteId}>
+          {anchor.outsideHint}
+        </p>
+      )}
 
       <div class="anchor-popover__footer">
         <button

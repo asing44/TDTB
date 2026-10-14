@@ -103,6 +103,94 @@ describe("Set up day screen anchor persistence (popover)", () => {
     expect(r.getByRole("switch", { name: "Count today" }).getAttribute("aria-checked")).toBe("true");
   });
 
+  it("(1b) REPRO: Count today on Foods Breakfast toggles off then back on through the real screen", async () => {
+    const h = screenHarness();
+    const saveDay = vi.spyOn(FixtureAdapter.prototype, "saveDaySetup");
+    const { r } = openPopover(h, "Foods Breakfast");
+
+    const sw = r.getByRole("switch", { name: "Count today" });
+    expect(sw.getAttribute("aria-checked")).toBe("true");
+
+    fireEvent.click(sw);
+    await vi.waitFor(() =>
+      expect(saveDay.mock.calls.at(-1)![0].anchored["Foods Breakfast"]).toEqual({
+        on: false,
+        skipToday: true,
+        time: null,
+        blocks: null,
+      }),
+    );
+    await vi.waitFor(() =>
+      expect(r.getByRole("switch", { name: "Count today" }).getAttribute("aria-checked")).toBe("false"),
+    );
+
+    const sw2 = r.getByRole("switch", { name: "Count today" });
+    fireEvent.click(sw2);
+    await vi.waitFor(() =>
+      expect(saveDay.mock.calls.at(-1)![0].anchored["Foods Breakfast"]).toEqual({
+        on: true,
+        skipToday: false,
+        time: null,
+        blocks: null,
+      }),
+    );
+    expect(r.getByRole("switch", { name: "Count today" }).getAttribute("aria-checked")).toBe("true");
+  });
+
+  it("(1c) an anchor outside the day frame reports the override, hints, and still toggles", async () => {
+    // Drive the frame through the real Start field: Foods Breakfast starts
+    // 08:30, so a 09:15 start clips it before the frame. The switch must
+    // reflect the override intent (on and not skipped) rather than the
+    // frame-clipped drawing state, explain the clipping, and toggle both ways.
+    const h = screenHarness();
+    const saveDay = vi.spyOn(FixtureAdapter.prototype, "saveDaySetup");
+    const r = h.ui(<App />);
+
+    const start = r.getByLabelText("Start") as HTMLInputElement;
+    fireEvent.input(start, { target: { value: "09:15" } });
+    expect(start.value).toBe("09:15");
+
+    fireEvent.click(block(r, "Foods Breakfast"));
+    expect(r.getByRole("dialog", { name: "Foods Breakfast" })).toBeTruthy();
+
+    const sw = r.getByRole("switch", { name: "Count today" });
+    expect(sw.getAttribute("aria-checked")).toBe("true");
+    const note = r.getByRole("note");
+    expect(note.textContent).toContain("Starts before your day (9:15 AM)");
+    expect(sw.getAttribute("aria-describedby")).toBe(note.getAttribute("id"));
+
+    fireEvent.click(sw);
+    await vi.waitFor(() =>
+      expect(saveDay.mock.calls.at(-1)![0].anchored["Foods Breakfast"]).toEqual({
+        on: false,
+        skipToday: true,
+        time: null,
+        blocks: null,
+      }),
+    );
+    await vi.waitFor(() =>
+      expect(r.getByRole("switch", { name: "Count today" }).getAttribute("aria-checked")).toBe("false"),
+    );
+    // The popover stays open, and the strip now shows the block as skipped.
+    expect(r.getByRole("dialog", { name: "Foods Breakfast" })).toBeTruthy();
+    expect(block(r, "Foods Breakfast").classList.contains("strip-anchor--skipped")).toBe(true);
+
+    fireEvent.click(r.getByRole("switch", { name: "Count today" }));
+    await vi.waitFor(() =>
+      expect(saveDay.mock.calls.at(-1)![0].anchored["Foods Breakfast"]).toEqual({
+        on: true,
+        skipToday: false,
+        time: null,
+        blocks: null,
+      }),
+    );
+    await vi.waitFor(() =>
+      expect(r.getByRole("switch", { name: "Count today" }).getAttribute("aria-checked")).toBe("true"),
+    );
+    expect(block(r, "Foods Breakfast").classList.contains("strip-anchor--skipped")).toBe(false);
+    expect(block(r, "Foods Breakfast").classList.contains("strip-anchor--not-counted")).toBe(true);
+  });
+
   it("(2) editing Starts to a valid time persists a today-only override, not a config write", async () => {
     const h = screenHarness();
     const saveDay = vi.spyOn(FixtureAdapter.prototype, "saveDaySetup");
