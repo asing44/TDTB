@@ -87,6 +87,7 @@ import capacities_refresh  # noqa: E402
 import capacities_structure_titles  # noqa: E402
 import exclusion_settings  # noqa: E402
 import tag_exclusions  # noqa: E402
+import todoist_exclusions  # noqa: E402
 import app_config  # noqa: E402
 import config_write  # noqa: E402
 import artifact_source  # noqa: E402
@@ -892,6 +893,12 @@ def build_digest(
     digest as ``exclusion_policy``. Ignore List matches keep their earlier
     attribution; only rows removed at this stage are reported.
 
+    The same policy's ``todoist`` dimension runs immediately after the tag
+    stage on the same surfaces: a Todoist row is dropped when its task id is
+    listed OR its normalized title equals a listed title, so a recurring
+    series stays excluded even when Todoist re-issues a new id. Its mirrored
+    envelope rides the digest as ``todoist_exclusion_policy``.
+
     Assigned rows sort alphabetically (stable identity list, not a ranking);
     Suggested rows are the pool minus already-assigned paths, ranked per
     ``within_tier_sort``.
@@ -907,9 +914,15 @@ def build_digest(
         assigned_items = [i for i in assigned_items if _kept(i)]
         pool_items = [i for i in pool_items if _kept(i)]
     exclusion_report: dict[str, Any] | None = None
+    todoist_report: dict[str, Any] | None = None
     if exclusion_policy is not None:
         assigned_items, pool_items, exclusion_report = (
             tag_exclusions.apply_tag_exclusions(
+                assigned_items, pool_items, exclusion_policy
+            )
+        )
+        assigned_items, pool_items, todoist_report = (
+            todoist_exclusions.apply_todoist_exclusions(
                 assigned_items, pool_items, exclusion_policy
             )
         )
@@ -933,6 +946,8 @@ def build_digest(
     }
     if exclusion_report is not None:
         digest["exclusion_policy"] = exclusion_report
+    if todoist_report is not None:
+        digest["todoist_exclusion_policy"] = todoist_report
     return digest
 
 
@@ -1795,17 +1810,63 @@ class TagExclusionEntryRequest(BaseModel):
             raise ValueError(f"invalid exclusion tag id: {value!r}") from exc
 
 
-class TagExclusionDimensionsRequest(BaseModel):
+class TodoistExclusionEntryRequest(BaseModel):
+    """One persistent Todoist task exclusion in the save body.
+
+    ``id`` is the Todoist task id, ``name`` the bounded non-blank display
+    title, and ``added_at`` a bounded ISO-8601 timestamp — the same strictness
+    the store re-checks before any file access. A numeric id is rejected
+    rather than coerced.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    name: str
+    added_at: str
+
+    @field_validator("id")
+    @classmethod
+    def _id_valid(cls, value: str) -> str:
+        try:
+            return exclusion_settings.canonical_todoist_id(value)
+        except ValueError as exc:
+            raise ValueError(f"invalid Todoist task id: {value!r}") from exc
+
+    @field_validator("name")
+    @classmethod
+    def _name_valid(cls, value: str) -> str:
+        try:
+            return exclusion_settings.canonical_todoist_name(value)
+        except ValueError as exc:
+            raise ValueError(f"invalid Todoist task name: {value!r}") from exc
+
+    @field_validator("added_at")
+    @classmethod
+    def _added_at_valid(cls, value: str) -> str:
+        try:
+            return exclusion_settings.canonical_todoist_added_at(value)
+        except ValueError as exc:
+            raise ValueError(f"invalid added_at timestamp: {value!r}") from exc
+
+
+class ExclusionDimensionsRequest(BaseModel):
     """The exclusion dimension object for the save body.
 
-    Closed on purpose: the only supported dimension today is ``tags``. An
+    Closed on purpose: only ``tags`` and ``todoist`` are supported. An
     unknown dimension (``labels``, ...) is rejected here rather than silently
-    accepted — adding one later must be an explicit schema change.
+    accepted — adding one later must be an explicit schema change. ``todoist``
+    defaults to empty so a legacy tags-only payload stays valid; the save is a
+    full replacement, so an omitted dimension clears it.
     """
 
     model_config = ConfigDict(extra="forbid")
 
     tags: list[TagExclusionEntryRequest]
+    todoist: list[TodoistExclusionEntryRequest] = Field(
+        default_factory=list,
+        max_length=exclusion_settings.MAX_TODOIST_EXCLUSIONS,
+    )
 
     @field_validator("tags")
     @classmethod
@@ -1820,6 +1881,23 @@ class TagExclusionDimensionsRequest(BaseModel):
             seen.add(key)
         return value
 
+    @field_validator("todoist")
+    @classmethod
+    def _todoist_unique(
+        cls, value: list[TodoistExclusionEntryRequest]
+    ) -> list[TodoistExclusionEntryRequest]:
+        seen_ids: set[str] = set()
+        seen_names: set[str] = set()
+        for entry in value:
+            if entry.id in seen_ids:
+                raise ValueError("duplicate Todoist exclusion id")
+            normalized = exclusion_settings.normalize_todoist_name(entry.name)
+            if normalized in seen_names:
+                raise ValueError("duplicate Todoist exclusion name")
+            seen_ids.add(entry.id)
+            seen_names.add(normalized)
+        return value
+
 
 class ExclusionSettingsSaveRequest(BaseModel):
     """Full-replacement body for POST /settings/exclusions/save.
@@ -1830,7 +1908,7 @@ class ExclusionSettingsSaveRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     expected_revision: StrictInt
-    exclusions: TagExclusionDimensionsRequest
+    exclusions: ExclusionDimensionsRequest
 
     @field_validator("expected_revision")
     @classmethod
@@ -3903,6 +3981,14 @@ def create_app() -> FastAPI:
                         tag_id=entry.tag_id,
                     )
                     for entry in body.exclusions.tags
+                ],
+                todoist=[
+                    exclusion_settings.TodoistExclusion(
+                        id=entry.id,
+                        name=entry.name,
+                        added_at=entry.added_at,
+                    )
+                    for entry in body.exclusions.todoist
                 ],
             )
         except exclusion_settings.ExclusionSettingsConflictError as exc:

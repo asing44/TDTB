@@ -23,6 +23,7 @@ SPACE = "space-1"
 OTHER_SPACE = "space-2"
 TAG_A = "5a25370b-f9a0-40cf-bc3a-0cab4744913c"
 TAG_B = "0d194525-c5a1-4af5-bb62-202b83006b5e"
+ADDED_AT = "2026-10-08T09:00:00+00:00"
 
 
 def _entry(tag_id: str = TAG_A, space: str = SPACE, source: str = "capacities") -> dict:
@@ -62,7 +63,7 @@ class TestDefaults:
         assert es.ExclusionSettings().as_dict() == {
             "version": 1,
             "revision": 0,
-            "exclusions": {"tags": []},
+            "exclusions": {"tags": [], "todoist": []},
         }
 
     def test_tag_exclusion_rejects_unknown_source(self):
@@ -125,7 +126,8 @@ class TestSave:
                 "tags": [
                     {"source": "capacities", "space_id": SPACE, "tag_id": TAG_A},
                     {"source": "capacities", "space_id": OTHER_SPACE, "tag_id": TAG_B},
-                ]
+                ],
+                "todoist": [],
             },
         }
         # Round-trip read agrees with the saved settings.
@@ -232,6 +234,116 @@ class TestSave:
         assert leftovers == []
 
 
+class TestTodoistDimension:
+    def test_todoist_entries_round_trip_and_sort_deterministically(self, tmp_path):
+        vault = tmp_path / "vault-root"
+        vault.mkdir()
+
+        saved = es.save_settings(
+            expected_revision=0,
+            exclusions=[],
+            todoist=[
+                {"id": "9", "name": "zzz", "added_at": ADDED_AT},
+                {"id": "1", "name": "Pay rent", "added_at": ADDED_AT},
+            ],
+        )
+
+        assert saved.revision == 1
+        assert [e.id for e in saved.todoist] == ["1", "9"]
+        on_disk = json.loads(es.settings_path().read_text(encoding="utf-8"))
+        assert on_disk["exclusions"]["todoist"] == [
+            {"id": "1", "name": "Pay rent", "added_at": ADDED_AT},
+            {"id": "9", "name": "zzz", "added_at": ADDED_AT},
+        ]
+        assert es.read_settings().settings == saved
+
+    def test_tags_only_save_keeps_the_dimension_empty(self, tmp_path):
+        vault = tmp_path / "vault-root"
+        vault.mkdir()
+
+        saved = es.save_settings(expected_revision=0, exclusions=[_entry(TAG_A)])
+
+        assert saved.todoist == ()
+
+    def test_legacy_tags_only_file_reads_and_upgrades_on_next_save(self, tmp_path):
+        vault = tmp_path / "vault-root"
+        vault.mkdir()
+        _write_raw(json.dumps(_valid_doc(3, [_entry(TAG_A)])))
+
+        legacy = es.read_settings()
+
+        assert legacy.persisted is True
+        assert legacy.settings.revision == 3
+        assert legacy.settings.todoist == ()
+
+        es.save_settings(
+            expected_revision=3,
+            exclusions=[_entry(TAG_A)],
+            todoist=[{"id": "9001", "name": "Pay rent", "added_at": ADDED_AT}],
+        )
+
+        on_disk = json.loads(es.settings_path().read_text(encoding="utf-8"))
+        assert on_disk["exclusions"]["todoist"] == [
+            {"id": "9001", "name": "Pay rent", "added_at": ADDED_AT},
+        ]
+
+    def test_invalid_todoist_inputs_rejected_before_any_file_access(self, tmp_path):
+        vault = tmp_path / "vault-root"
+        vault.mkdir()
+        _write_raw("{not json")
+        valid = {"id": "9001", "name": "Pay rent", "added_at": ADDED_AT}
+        bad_entries = [
+            {"id": 9001, "name": "Pay rent", "added_at": ADDED_AT},
+            {"id": "", "name": "Pay rent", "added_at": ADDED_AT},
+            {"id": "9 1", "name": "Pay rent", "added_at": ADDED_AT},
+            {"id": "9001", "name": "   ", "added_at": ADDED_AT},
+            {"id": "9001", "name": 7, "added_at": ADDED_AT},
+            {"id": "9001", "name": "Pay rent", "added_at": "yesterday"},
+            {"id": "9001", "name": "Pay rent"},
+            {**valid, "extra": "x"},
+        ]
+        for entry in bad_entries:
+            with pytest.raises(ValueError):
+                es.save_settings(expected_revision=0, todoist=[entry])
+
+        with pytest.raises(ValueError):
+            es.save_settings(expected_revision=0, todoist=[valid, valid])
+        with pytest.raises(ValueError):
+            es.save_settings(
+                expected_revision=0,
+                todoist=[
+                    valid,
+                    {"id": "9", "name": "  pay   RENT ", "added_at": ADDED_AT},
+                ],
+            )
+        with pytest.raises(ValueError):
+            es.save_settings(
+                expected_revision=0,
+                todoist=[
+                    {"id": str(i), "name": f"n{i}", "added_at": ADDED_AT}
+                    for i in range(es.MAX_TODOIST_EXCLUSIONS + 1)
+                ],
+            )
+        with pytest.raises(ValueError):
+            es.save_settings(expected_revision=0, todoist="not-a-list")
+
+        assert es.settings_path().read_bytes() == b"{not json"
+
+    def test_todoist_dimension_conflict_semantics(self, tmp_path):
+        vault = tmp_path / "vault-root"
+        vault.mkdir()
+        es.save_settings(
+            expected_revision=0,
+            todoist=[{"id": "9001", "name": "Pay rent", "added_at": ADDED_AT}],
+        )
+        before = es.settings_path().read_bytes()
+
+        with pytest.raises(es.ExclusionSettingsConflictError):
+            es.save_settings(expected_revision=0, todoist=[])
+
+        assert es.settings_path().read_bytes() == before
+
+
 class TestMalformedStorage:
     @pytest.mark.parametrize(
         "raw",
@@ -303,6 +415,33 @@ class TestMalformedStorage:
         assert result.persisted is True
         assert result.settings.revision == 3
         assert [t.tag_id for t in result.settings.tags] == [TAG_A]
+
+    def test_invalid_todoist_storage_raises_and_preserves_bytes(self, tmp_path):
+        vault = tmp_path / "vault-root"
+        vault.mkdir()
+        raws = [
+            json.dumps({
+                "version": 1, "revision": 0,
+                "exclusions": {"tags": [], "todoist": {}},
+            }),
+            json.dumps({
+                "version": 1, "revision": 0,
+                "exclusions": {"tags": [], "todoist": [
+                    {"id": 1, "name": "x", "added_at": "2026-10-08"},
+                ]},
+            }),
+            json.dumps({
+                "version": 1, "revision": 0,
+                "exclusions": {"tags": [], "todoist": [
+                    {"id": "1", "name": "x", "added_at": "nope"},
+                ]},
+            }),
+        ]
+        for raw in raws:
+            path = _write_raw(raw)
+            with pytest.raises(es.ExclusionSettingsFormatError):
+                es.read_settings()
+            assert path.read_bytes() == raw.encode()
 
     def test_unreadable_directory_raises_store_error(self, tmp_path):
         vault = tmp_path / "vault-root"

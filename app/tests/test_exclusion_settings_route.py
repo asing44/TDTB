@@ -42,10 +42,18 @@ def _entry(tag_id: str = TAG_A, space: str = SPACE, source: str = "capacities") 
     return {"source": source, "space_id": space, "tag_id": tag_id}
 
 
-def _body(expected_revision: int = 0, tags: list | None = None, **overrides) -> dict:
+def _body(
+    expected_revision: int = 0,
+    tags: list | None = None,
+    todoist: list | None = None,
+    **overrides,
+) -> dict:
+    exclusions: dict = {"tags": tags if tags is not None else []}
+    if todoist is not None:
+        exclusions["todoist"] = todoist
     body = {
         "expected_revision": expected_revision,
-        "exclusions": {"tags": tags if tags is not None else []},
+        "exclusions": exclusions,
     }
     body.update(overrides)
     return body
@@ -84,7 +92,7 @@ class TestGet:
         assert body["settings"] == {
             "version": 1,
             "revision": 0,
-            "exclusions": {"tags": []},
+            "exclusions": {"tags": [], "todoist": []},
         }
         # No source record → the advisory catalog reports unconfigured and
         # reading never creates the settings file.
@@ -223,7 +231,8 @@ class TestPostPersistence:
                 "tags": [
                     _entry(TAG_A, SPACE),
                     _entry(TAG_B, OTHER_SPACE),
-                ]
+                ],
+                "todoist": [],
             },
         }
         assert es.settings_path().is_file()
@@ -329,3 +338,132 @@ class TestPostValidation:
 
         assert response.status_code == 200
         assert response.json()["settings"]["exclusions"]["tags"] == [_entry(TAG_A)]
+
+
+ADDED_AT = "2026-10-08T09:00:00+00:00"
+TODOIST_ENTRY = {"id": "9001", "name": "Pay rent", "added_at": ADDED_AT}
+
+
+class TestTodoistDimension:
+    def test_post_persists_todoist_and_get_reports_it(self, client):
+        response = client.post(
+            "/settings/exclusions/save",
+            headers=_auth(client),
+            json=_body(tags=[_entry()], todoist=[TODOIST_ENTRY]),
+        )
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["persisted"] is True
+        assert body["settings"]["revision"] == 1
+        assert body["settings"]["exclusions"]["tags"] == [_entry()]
+        assert body["settings"]["exclusions"]["todoist"] == [TODOIST_ENTRY]
+
+        got = client.get("/settings/exclusions").json()
+        assert got["settings"]["exclusions"]["todoist"] == [TODOIST_ENTRY]
+
+    def test_legacy_tags_only_payload_still_works_and_clears_todoist(self, client):
+        # Backward compatibility: a body without the todoist key is accepted;
+        # the documented full-replacement semantics make an omitted dimension
+        # empty. The tags dimension is replaced as before.
+        first = client.post(
+            "/settings/exclusions/save",
+            headers=_auth(client),
+            json=_body(todoist=[TODOIST_ENTRY]),
+        )
+        assert first.status_code == 200
+
+        second = client.post(
+            "/settings/exclusions/save",
+            headers=_auth(client),
+            json=_body(expected_revision=1, tags=[_entry()]),
+        )
+
+        assert second.status_code == 200
+        assert second.json()["settings"]["exclusions"]["tags"] == [_entry()]
+        assert second.json()["settings"]["exclusions"]["todoist"] == []
+
+    def test_todoist_entry_can_be_removed_by_full_replacement(self, client):
+        client.post(
+            "/settings/exclusions/save",
+            headers=_auth(client),
+            json=_body(todoist=[TODOIST_ENTRY]),
+        )
+
+        removed = client.post(
+            "/settings/exclusions/save",
+            headers=_auth(client),
+            json=_body(expected_revision=1, todoist=[]),
+        )
+
+        assert removed.status_code == 200
+        assert removed.json()["settings"]["exclusions"]["todoist"] == []
+
+    @pytest.mark.parametrize(
+        "entry",
+        [
+            {"id": "9001", "name": "Pay rent"},                 # missing added_at
+            {**TODOIST_ENTRY, "title": "Pay rent"},               # extra key
+            {"id": 9001, "name": "Pay rent", "added_at": ADDED_AT},  # numeric id
+            {"id": "", "name": "Pay rent", "added_at": ADDED_AT},    # empty id
+            {"id": "9 1", "name": "Pay rent", "added_at": ADDED_AT}, # whitespace id
+            {"id": "9001", "name": "   ", "added_at": ADDED_AT},    # blank name
+            {"id": "9001", "name": "Pay rent", "added_at": "yesterday"},
+            {"id": "9001", "name": "Pay rent", "added_at": 1759923600},
+        ],
+    )
+    def test_malformed_todoist_entries_are_rejected_422(self, client, entry):
+        response = client.post(
+            "/settings/exclusions/save",
+            headers=_auth(client),
+            json=_body(todoist=[entry]),
+        )
+
+        assert response.status_code == 422
+        assert not es.settings_path().exists()
+
+    def test_duplicate_todoist_identity_or_name_is_rejected_422(self, client):
+        duplicates = [
+            [TODOIST_ENTRY, TODOIST_ENTRY],
+            [TODOIST_ENTRY, {**TODOIST_ENTRY, "id": "9002", "name": "  pay   RENT "}],
+        ]
+        for entries in duplicates:
+            response = client.post(
+                "/settings/exclusions/save",
+                headers=_auth(client),
+                json=_body(todoist=entries),
+            )
+            assert response.status_code == 422
+
+    def test_too_many_todoist_entries_is_rejected_422(self, client):
+        entries = [
+            {"id": str(i), "name": f"task {i}", "added_at": ADDED_AT}
+            for i in range(es.MAX_TODOIST_EXCLUSIONS + 1)
+        ]
+
+        response = client.post(
+            "/settings/exclusions/save",
+            headers=_auth(client),
+            json=_body(todoist=entries),
+        )
+
+        assert response.status_code == 422
+        assert not es.settings_path().exists()
+
+    def test_stale_revision_with_todoist_preserves_bytes(self, client):
+        client.post(
+            "/settings/exclusions/save",
+            headers=_auth(client),
+            json=_body(todoist=[TODOIST_ENTRY]),
+        )
+        before = _settings_bytes()
+
+        response = client.post(
+            "/settings/exclusions/save",
+            headers=_auth(client),
+            json=_body(expected_revision=0, todoist=[]),
+        )
+
+        assert response.status_code == 409
+        assert response.json()["detail"]["code"] == "exclusion_settings_conflict"
+        assert _settings_bytes() == before

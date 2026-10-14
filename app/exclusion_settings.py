@@ -1,14 +1,15 @@
-"""Versioned local persistence for the TDTB tag-exclusion policy.
+"""Versioned local persistence for the TDTB exclusion policy.
 
-This module owns the ONE app-owned store the tag-exclusion settings API reads
+This module owns the ONE app-owned store the exclusion settings API reads
 and writes: ``<app home>/state/exclusions.json`` (``app_config.state_dir()``,
 Capacities-first S1); the state dir is the only location.
 
-It persists only the editable policy — a set of stable Capacities tag
-identities the planner must exclude before selection — plus a server-owned
-schema ``version`` and monotonic ``revision``. It deliberately persists no
-titles, no source properties, and no effective-planning results: the matcher
-in :mod:`tag_exclusions` stays the single source of truth for decisions.
+It persists only the editable policy — stable Capacities tag identities and
+persistent Todoist task exclusions the planner must drop before selection —
+plus a server-owned schema ``version`` and monotonic ``revision``. It
+deliberately persists no source properties and no effective-planning
+results: the matchers in :mod:`tag_exclusions` and :mod:`todoist_exclusions`
+stay the single source of truth for decisions.
 
 Contract:
 
@@ -22,9 +23,11 @@ Contract:
 - Malformed or unsupported existing storage fails closed: reads raise
   :class:`ExclusionSettingsFormatError`, and writes refuse while preserving
   the original bytes. Nothing is silently defaulted or erased.
-- The schema carries an ``exclusions`` dimension object whose only supported
-  dimension today is ``tags``. Unknown dimensions are rejected, never
-  silently accepted — a future dimension must be an explicit schema change.
+- The schema carries a closed ``exclusions`` dimension object with
+  ``tags`` (required on read; a legacy tags-only file is valid) and
+  ``todoist`` (additive to schema version 1, optional on read, always
+  emitted on write). Unknown dimensions are rejected, never silently
+  accepted — a future dimension must be an explicit schema change.
 - Tag identities are stable Capacities identities: ``source`` is exactly
   ``capacities``, ``space_id`` is a non-empty whitespace-free string, and
   ``tag_id`` is a canonical UUID. Titles, ``#``-prefixed display names,
@@ -47,6 +50,7 @@ import tempfile
 import threading
 import uuid
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -66,9 +70,23 @@ STATE_FILENAME = "exclusions.json"
 STATE_LOCK_FILENAME = "exclusions.lock"
 SCHEMA_VERSION = 1
 
-#: The only supported exclusion dimension today. The dimension object is a
-#: closed schema: adding a dimension later is an explicit, reviewed change.
-EXCLUSION_DIMENSIONS = frozenset({"tags"})
+#: The supported exclusion dimensions. The dimension object is a closed
+#: schema: adding a dimension is an explicit, reviewed change. ``todoist`` was
+#: added ADDITIVELY to schema version 1, deliberately without bumping
+#: SCHEMA_VERSION (same precedent as ``capacities_settings``): a version bump
+#: would make every already-saved version-1 file "unsupported" and fail
+#: closed, locking a user out of settings they already own. A legacy
+#: tags-only file reads as an empty ``todoist`` dimension; every freshly
+#: written file emits it.
+EXCLUSION_DIMENSIONS = frozenset({"tags", "todoist"})
+_REQUIRED_DIMENSIONS = frozenset({"tags"})
+
+#: Bounds for the Todoist dimension (the tag dimension predates bounds; the
+#: new dimension is bounded on count and on every string).
+MAX_TODOIST_EXCLUSIONS = 200
+MAX_TODOIST_ID_LENGTH = 128
+MAX_TODOIST_NAME_LENGTH = 300
+MAX_TODOIST_ADDED_AT_LENGTH = 64
 
 #: The only supported exclusion source today. Identity is stable and
 #: source-qualified; a bare title or a ``#``-prefixed display name is never an
@@ -77,6 +95,7 @@ EXCLUSION_SOURCES = frozenset({"capacities"})
 
 _TOP_KEYS = frozenset({"version", "revision", "exclusions"})
 _ENTRY_KEYS = frozenset({"source", "space_id", "tag_id"})
+_TODOIST_ENTRY_KEYS = frozenset({"id", "name", "added_at"})
 
 
 class ExclusionSettingsStoreError(Exception):
@@ -132,6 +151,51 @@ def canonical_source(value: Any) -> str:
     return value
 
 
+def normalize_todoist_name(value: Any) -> str:
+    """Canonical match form of a Todoist task title: casefolded with runs of
+    whitespace collapsed to single spaces. Non-strings normalize to ``""`` so
+    a malformed row can never match a configured name."""
+    if not isinstance(value, str):
+        return ""
+    return " ".join(value.split()).casefold()
+
+
+def canonical_todoist_id(value: Any) -> str:
+    """Validate and return a bounded, whitespace-free Todoist task id.
+
+    Strictly a string: a numeric JSON id is a different type and is rejected
+    rather than coerced."""
+    if not isinstance(value, str) or not value:
+        raise ValueError(f"{value!r} is not a valid Todoist task id")
+    if len(value) > MAX_TODOIST_ID_LENGTH:
+        raise ValueError("Todoist task id is too long")
+    if value != value.strip() or any(char.isspace() for char in value):
+        raise ValueError(f"{value!r} is not a valid Todoist task id")
+    return value
+
+
+def canonical_todoist_name(value: Any) -> str:
+    """Validate and return a bounded, non-blank Todoist display title."""
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{value!r} is not a valid Todoist task name")
+    if len(value) > MAX_TODOIST_NAME_LENGTH:
+        raise ValueError("Todoist task name is too long")
+    return value
+
+
+def canonical_todoist_added_at(value: Any) -> str:
+    """Validate and return an ISO-8601 timestamp string."""
+    if not isinstance(value, str) or not value:
+        raise ValueError(f"{value!r} is not a valid added_at timestamp")
+    if len(value) > MAX_TODOIST_ADDED_AT_LENGTH:
+        raise ValueError("added_at timestamp is too long")
+    try:
+        datetime.fromisoformat(value)
+    except ValueError as exc:
+        raise ValueError(f"{value!r} is not a valid added_at timestamp") from exc
+    return value
+
+
 @dataclass(frozen=True)
 class TagExclusion:
     """One stable tag identity the planner must exclude, any-match.
@@ -158,6 +222,30 @@ class TagExclusion:
         }
 
 
+@dataclass(frozen=True)
+class TodoistExclusion:
+    """One persistent Todoist task exclusion.
+
+    ``id`` is the Todoist task id and ``name`` the display title at add time;
+    a recurring series may carry a different id for a later occurrence, which
+    is why the title is persisted and matched by normalized-name equality.
+    ``added_at`` is the client-supplied ISO-8601 instant the entry was added;
+    full-replacement saves carry existing timestamps forward.
+    """
+
+    id: str
+    name: str
+    added_at: str
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "id", canonical_todoist_id(self.id))
+        object.__setattr__(self, "name", canonical_todoist_name(self.name))
+        object.__setattr__(self, "added_at", canonical_todoist_added_at(self.added_at))
+
+    def as_dict(self) -> dict[str, str]:
+        return {"id": self.id, "name": self.name, "added_at": self.added_at}
+
+
 def _sort_key(entry: TagExclusion) -> tuple[str, str, str]:
     return (entry.source, entry.space_id, entry.tag_id)
 
@@ -173,6 +261,7 @@ class ExclusionSettings:
 
     revision: int = 0
     tags: tuple[TagExclusion, ...] = field(default_factory=tuple)
+    todoist: tuple[TodoistExclusion, ...] = field(default_factory=tuple)
 
     def __post_init__(self) -> None:
         if type(self.revision) is not int or self.revision < 0:
@@ -189,6 +278,22 @@ class ExclusionSettings:
             entries.append(entry)
         entries.sort(key=_sort_key)
         object.__setattr__(self, "tags", tuple(entries))
+        todoist_entries: list[TodoistExclusion] = []
+        seen_ids: set[str] = set()
+        seen_names: set[str] = set()
+        for entry in self.todoist:
+            if not isinstance(entry, TodoistExclusion):
+                raise ValueError("todoist must contain TodoistExclusion entries")
+            if entry.id in seen_ids:
+                raise ValueError("duplicate Todoist exclusion id")
+            normalized = normalize_todoist_name(entry.name)
+            if normalized in seen_names:
+                raise ValueError("duplicate Todoist exclusion name")
+            seen_ids.add(entry.id)
+            seen_names.add(normalized)
+            todoist_entries.append(entry)
+        todoist_entries.sort(key=lambda e: (e.id, e.name, e.added_at))
+        object.__setattr__(self, "todoist", tuple(todoist_entries))
 
     def as_dict(self) -> dict[str, Any]:
         """The exact persisted JSON shape (sorted, deterministic)."""
@@ -197,6 +302,7 @@ class ExclusionSettings:
             "revision": self.revision,
             "exclusions": {
                 "tags": [entry.as_dict() for entry in self.tags],
+                "todoist": [entry.as_dict() for entry in self.todoist],
             },
         }
 
@@ -235,6 +341,21 @@ def _tag_exclusion_from_mapping(value: Any) -> TagExclusion:
         source=value["source"],
         space_id=value["space_id"],
         tag_id=value["tag_id"],
+    )
+
+
+def _todoist_exclusion_from_mapping(value: Any) -> TodoistExclusion:
+    """Build a strict :class:`TodoistExclusion` from a mapping or entry."""
+    if isinstance(value, TodoistExclusion):
+        return value
+    if not isinstance(value, dict):
+        raise ValueError(f"{value!r} is not a Todoist exclusion entry")
+    if set(value) != _TODOIST_ENTRY_KEYS:
+        raise ValueError("Todoist exclusion entries have unknown or missing keys")
+    return TodoistExclusion(
+        id=value["id"],
+        name=value["name"],
+        added_at=value["added_at"],
     )
 
 
@@ -277,7 +398,11 @@ def _decode(data: Any) -> ExclusionSettings:
         )
 
     exclusions = data["exclusions"]
-    if not isinstance(exclusions, dict) or set(exclusions) != EXCLUSION_DIMENSIONS:
+    if (
+        not isinstance(exclusions, dict)
+        or set(exclusions) - EXCLUSION_DIMENSIONS
+        or not set(exclusions) >= _REQUIRED_DIMENSIONS
+    ):
         raise ExclusionSettingsFormatError(
             "exclusion settings has an unknown or missing exclusion dimension"
         )
@@ -294,8 +419,27 @@ def _decode(data: Any) -> ExclusionSettings:
             raise ExclusionSettingsFormatError(
                 "exclusion settings has an invalid tag exclusion"
             ) from exc
+    todoist_raw = exclusions.get("todoist", [])
+    if not isinstance(todoist_raw, list):
+        raise ExclusionSettingsFormatError(
+            "exclusion settings todoist must be a list"
+        )
+    if len(todoist_raw) > MAX_TODOIST_EXCLUSIONS:
+        raise ExclusionSettingsFormatError(
+            "exclusion settings has too many Todoist exclusions"
+        )
+    todoist: list[TodoistExclusion] = []
+    for row in todoist_raw:
+        try:
+            todoist.append(_todoist_exclusion_from_mapping(row))
+        except ValueError as exc:
+            raise ExclusionSettingsFormatError(
+                "exclusion settings has an invalid Todoist exclusion"
+            ) from exc
     try:
-        return ExclusionSettings(revision=revision, tags=tuple(tags))
+        return ExclusionSettings(
+            revision=revision, tags=tuple(tags), todoist=tuple(todoist)
+        )
     except ValueError as exc:
         raise ExclusionSettingsFormatError(
             "exclusion settings is malformed"
@@ -413,12 +557,15 @@ def save_settings(
     *,
     expected_revision: int,
     exclusions: Any = (),
+    todoist: Any = (),
 ) -> ExclusionSettings:
-    """Explicitly replace the whole tag-exclusion policy.
+    """Explicitly replace the whole exclusion policy (tags + Todoist).
 
-    The full editable policy is supplied (full replacement), while ``version``
-    and ``revision`` stay server-owned: the saved revision is the stored
-    revision plus one. Inputs are validated BEFORE any file access.
+    The full editable policy is supplied (full replacement): ``exclusions``
+    carries the tag identities and ``todoist`` the persistent Todoist task
+    entries, so a tags-only call clears the Todoist dimension. ``version`` and
+    ``revision`` stay server-owned: the saved revision is the stored revision
+    plus one. Inputs are validated BEFORE any file access.
 
     Under the store lock the current file is read, its revision compared with
     ``expected_revision``, and only then is the file replaced atomically. A
@@ -440,6 +587,23 @@ def save_settings(
             raise ValueError("duplicate tag exclusion identity")
         seen.add(key)
         entries.append(entry)
+    if isinstance(todoist, (str, bytes)):
+        raise ValueError("todoist must be a collection of Todoist entries")
+    todoist_entries: list[TodoistExclusion] = []
+    seen_ids: set[str] = set()
+    seen_names: set[str] = set()
+    for value in todoist:
+        entry = _todoist_exclusion_from_mapping(value)
+        if entry.id in seen_ids:
+            raise ValueError("duplicate Todoist exclusion id")
+        normalized = normalize_todoist_name(entry.name)
+        if normalized in seen_names:
+            raise ValueError("duplicate Todoist exclusion name")
+        seen_ids.add(entry.id)
+        seen_names.add(normalized)
+        todoist_entries.append(entry)
+    if len(todoist_entries) > MAX_TODOIST_EXCLUSIONS:
+        raise ValueError("too many Todoist exclusions")
 
     with _store_lock():
         fh = _acquire_lock_file()
@@ -454,6 +618,7 @@ def save_settings(
             saved = ExclusionSettings(
                 revision=current.revision + 1,
                 tags=tuple(entries),
+                todoist=tuple(todoist_entries),
             )
             _atomic_write_json(settings_path(), saved.as_dict())
         finally:

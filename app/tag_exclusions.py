@@ -29,7 +29,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Iterable
 
-from exclusion_settings import SCHEMA_VERSION, ExclusionSettingsRead, TagExclusion
+from exclusion_settings import (
+    SCHEMA_VERSION,
+    ExclusionSettingsRead,
+    TagExclusion,
+    TodoistExclusion,
+)
 
 CAPACITIES_SOURCE = "capacities"
 EXCLUDE_ANY_MODE = "exclude_any"
@@ -41,13 +46,18 @@ BLOCKED_TASK_LIMIT = 10
 
 @dataclass(frozen=True)
 class ExclusionPolicy:
-    """The evaluated policy: server revision plus the stable tag identities."""
+    """The evaluated policy: server revision plus the stable tag identities.
+
+    ``todoist`` carries the persistent Todoist task exclusions from the same
+    store read. The tag matcher ignores it; :mod:`todoist_exclusions` uses it.
+    """
 
     version: int
     revision: int
     persisted: bool
     tags: tuple[TagExclusion, ...]
     mode: str = EXCLUDE_ANY_MODE
+    todoist: tuple[TodoistExclusion, ...] = ()
 
     @classmethod
     def from_read(cls, read: ExclusionSettingsRead) -> "ExclusionPolicy":
@@ -56,6 +66,7 @@ class ExclusionPolicy:
             revision=read.settings.revision,
             persisted=read.persisted,
             tags=read.settings.tags,
+            todoist=read.settings.todoist,
         )
 
 
