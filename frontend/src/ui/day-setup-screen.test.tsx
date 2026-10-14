@@ -4,7 +4,7 @@
    Continue. Behavioral coverage only — jsdom cannot judge layout (KTD13). */
 
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { act, cleanup, fireEvent } from "@testing-library/preact";
+import { cleanup, fireEvent } from "@testing-library/preact";
 import { App } from "./App";
 import { FixtureAdapter } from "../adapters/fixture";
 import { makeHarness } from "./test-harness";
@@ -45,7 +45,6 @@ function screenHarness(
     defaultAllotmentMinutes: 240,
     mintSessions: opts.mint ?? sessions(count),
   };
-  inputs.promptOptins = { optins: {}, revision: 0 };
   if (opts.pending !== undefined) {
     inputs.microAdventure = { ...inputs.microAdventure, pendingConfirm: opts.pending };
   }
@@ -64,13 +63,14 @@ const slotOf = (r: ReturnType<ReturnType<typeof makeHarness>["ui"]>, id: string)
   r.container.querySelector(`[data-slot-id="${id}"]`) as HTMLElement;
 
 describe("U12 Set up day composition", () => {
-  it("renders the Day frame, Anchors, and Morning prompts regions plus the strip", () => {
+  it("renders the Your day card and the Morning prompts card plus the strip", () => {
     const h = screenHarness();
     const r = h.ui(<App />);
-    expect(r.getByRole("heading", { name: "Day frame" })).toBeTruthy();
-    expect(r.getByRole("heading", { name: "Anchors" })).toBeTruthy();
+    expect(r.getByRole("heading", { name: "Your day" })).toBeTruthy();
     expect(r.getByRole("heading", { name: "Morning prompts" })).toBeTruthy();
-    expect(r.getByText("Drag on the strip to pick Mint sessions or move anchors")).toBeTruthy();
+    expect(r.queryByRole("heading", { name: "Anchors" })).toBeNull();    expect(
+      r.getByText("Click an anchor to edit it. Drag to move it or pick Mint sessions."),
+    ).toBeTruthy();
     expect(r.getByTestId("day-strip")).toBeTruthy();
     expect(r.getByRole("button", { name: /Continue to tasks/ })).toBeTruthy();
   });
@@ -171,30 +171,35 @@ describe("U12 Set up day composition", () => {
     expect(r.getByText(/Mint 7 of 8 sessions/)).toBeTruthy();
   });
 
-  it("opens the anchored editor from a strip block", () => {
+  it("opens the anchor popover from a strip block and the editor from Edit items", () => {
     const h = screenHarness();
     const r = h.ui(<App />);
     const block = r.container.querySelector('[data-anchor-id="Sudsing"]') as HTMLElement;
     expect(block).toBeTruthy();
     fireEvent.click(block);
+    expect(h.store.getState().ui.editorAnchor).toBeNull();
+    expect(r.getByRole("dialog", { name: "Sudsing" })).toBeTruthy();
+    fireEvent.click(r.getByRole("button", { name: "Edit items" }));
     expect(h.store.getState().ui.editorAnchor).toBe("Sudsing");
   });
 
-  it("draws out-of-frame anchors dimmed on the strip and opens the editor from their chip", () => {
+  it("drops anchors outside the day frame and keeps the in-frame ones", () => {
     const h = screenHarness("ready", 8, { frameStart: "13:30" });
     const r = h.ui(<App />);
-    expect(
-      r.container
-        .querySelector('[data-anchor-id="Morning Routine"]')
-        ?.classList.contains("strip-anchor--not-counted"),
-    ).toBe(true);
+    // Morning Routine 07:45 and Foods Breakfast 08:30 start before the frame.
+    expect(r.container.querySelector('[data-anchor-id="Morning Routine"]')).toBeNull();
     const sudsing = r.container.querySelector('[data-anchor-id="Sudsing"]') as HTMLElement;
+    expect(sudsing).toBeTruthy();
     expect(sudsing.classList.contains("strip-anchor--not-counted")).toBe(false);
-    const chip = (Array.from(r.container.querySelectorAll(".not-counted__chip")) as HTMLElement[]).find((el) =>
-      /Morning Routine.*outside frame/.test(el.textContent ?? ""),
-    ) as HTMLElement;
-    fireEvent.click(chip);
-    expect(h.store.getState().ui.editorAnchor).toBe("Morning Routine");
+  });
+
+  it("selects an anchor block when it is clicked", () => {
+    const h = screenHarness();
+    const r = h.ui(<App />);
+    const block = r.container.querySelector('[data-anchor-id="Sudsing"]') as HTMLElement;
+    fireEvent.click(block);
+    expect(block.classList.contains("strip-anchor--selected")).toBe(true);
+    expect(r.getByRole("dialog", { name: "Sudsing" })).toBeTruthy();
   });
 
   it("clips a Mint block that straddles the frame start and counts the hidden ones", () => {
@@ -206,10 +211,10 @@ describe("U12 Set up day composition", () => {
     const h = screenHarness("ready", 8, { frameStart: "13:30", mint });
     const r = h.ui(<App />);
     expect(slotOf(r, "mint:early")).toBeNull();
-    // The strip spans the whole day (8a-midnight), so the clipped block starts
-    // at the frame edge, 5.5h into a 16h ruler, and keeps its 15 clipped minutes.
-    expect(parseFloat(slotOf(r, "mint:edge").style.left)).toBeCloseTo((330 / 960) * 100, 2);
-    expect(parseFloat(slotOf(r, "mint:edge").style.width)).toBeCloseTo((15 / 960) * 100, 1);
+    // The ruler is the day frame (13:30-23:45), so the clipped block starts at
+    // the frame edge and keeps its 15 clipped minutes.
+    expect(parseFloat(slotOf(r, "mint:edge").style.left)).toBeCloseTo(0, 2);
+    expect(parseFloat(slotOf(r, "mint:edge").style.width)).toBeCloseTo((15 / 615) * 100, 1);
     expect(r.getByText("1 Mint block outside the frame")).toBeTruthy();
   });
 
@@ -251,14 +256,13 @@ describe("U12 Set up day composition", () => {
     expect(r.getByRole("button", { name: "+ Add prompt" })).toBeTruthy();
   });
 
-  it("lists skipped and out-of-frame anchors under Not counted today", () => {
+  it("draws a skipped anchor dimmed on the strip", () => {
     const h = screenHarness();
     const before = h.store.getState().daySetup;
     h.store.dispatch({
       type: "SETUP_SAVED",
       daySetup: {
         ...before,
-        anchor: "18:00",
         anchored: {
           ...before.anchored,
           Sudsing: { on: false, skipToday: true, time: null, blocks: null },
@@ -266,9 +270,9 @@ describe("U12 Set up day composition", () => {
       },
     });
     const r = h.ui(<App />);
-    expect(r.getByText(/Not counted today:/)).toBeTruthy();
-    expect(r.getByText(/Sudsing.*skipped/)).toBeTruthy();
-    expect(r.getAllByText(/outside frame/).length).toBeGreaterThan(0);
+    const sudsing = r.container.querySelector('[data-anchor-id="Sudsing"]') as HTMLElement;
+    expect(sudsing.classList.contains("strip-anchor--not-counted")).toBe(true);
+    expect(sudsing.classList.contains("strip-anchor--skipped")).toBe(true);
   });
 
   it("changes Mint availability when the preset changes and Reset restores defaults", () => {
@@ -299,16 +303,71 @@ describe("U12 Set up day composition", () => {
   });
 });
 
-describe("U12 footer and prompt persistence", () => {
-  it("persists prompt opt-ins through the U5 controller", async () => {
+describe("Planning 2a Morning prompts", () => {
+  it("renders a four-card grid under the header with an Edit prompts link and no old export UI", () => {
     const h = screenHarness();
-    const save = vi.spyOn(h.controller, "savePromptOptins");
     const r = h.ui(<App />);
-    await act(async () => {
-      fireEvent.click(r.getByLabelText(/For Meegy — create a Todoist task/));
-    });
-    expect(save).toHaveBeenCalledWith(expect.objectContaining({ megan_nicety: true }));
+    const section = r.container.querySelector(
+      '[data-settings-section="prompts"]',
+    ) as HTMLElement;
+    expect(section).toBeTruthy();
+    expect(r.getByRole("heading", { name: "Morning prompts" })).toBeTruthy();
+    expect(r.getByRole("button", { name: "Edit prompts" })).toBeTruthy();
+    const grid = section.querySelector(".prompts-grid") as HTMLElement;
+    expect(grid).toBeTruthy();
+    const cards = Array.from(grid.querySelectorAll(".prompt-card"));
+    expect(cards.length).toBe(4);
+    expect(cards[0].textContent).toContain("Live micro-adventure");
+    for (const label of ["Intention", "For Meegy", "Stoic"]) {
+      const field = r.getByLabelText(label);
+      expect(field.closest(".prompt-card")).toBeTruthy();
+    }
+    // The old mono routing tags and per-prompt export UI are gone.
+    expect(r.queryByText("text → daily note")).toBeNull();
+    expect(r.queryByText("pool → Live block")).toBeNull();
+    expect(r.queryByText("Prompt exports")).toBeNull();
+    expect(r.queryByRole("checkbox")).toBeNull();
   });
+
+  it("shows the single export line and + Add prompt under the grid", () => {
+    const h = screenHarness();
+    const r = h.ui(<App />);
+    expect(
+      r.getByText("Filled prompts are added to your Todoist Inbox when you commit."),
+    ).toBeTruthy();
+    expect(r.getByRole("button", { name: "+ Add prompt" })).toBeTruthy();
+  });
+
+  it("shows the Live meta line whose Use my own idea link replaces the Custom idea field", () => {
+    const h = screenHarness();
+    const r = h.ui(<App />);
+    const meta = r.container.querySelector(".live-micro__meta") as HTMLElement;
+    expect(meta.textContent).toContain("Nature");
+    expect(meta.textContent).toContain("streak 3");
+    expect(r.getByRole("button", { name: "Use my own idea" })).toBeTruthy();
+    expect(r.queryByLabelText("Custom idea")).toBeNull();
+    fireEvent.click(r.getByRole("button", { name: "Use my own idea" }));
+    expect(r.getByLabelText("Custom idea")).toBeTruthy();
+  });
+
+  it("persists a browser-defined prompt answer through the captures path", async () => {
+    const h = screenHarness();
+    const save = vi.spyOn(h.controller, "savePromptDrafts");
+    const r = h.ui(<App />);
+    fireEvent.click(r.getByRole("button", { name: "+ Add prompt" }));
+    fireEvent.input(r.getByLabelText("New prompt question"), {
+      target: { value: "Gratitude" },
+    });
+    fireEvent.click(r.getByRole("button", { name: "Add" }));
+    fireEvent.input(r.getByLabelText("Gratitude"), { target: { value: "the rain" } });
+    await vi.waitFor(() => {
+      expect(save.mock.calls.some(([patch]) => Object.values(patch).includes("the rain"))).toBe(
+        true,
+      );
+    });
+    expect((r.getByLabelText("Gratitude") as HTMLElement).closest(".prompt-card")).toBeTruthy();
+  });
+});
 
   it("Continue confirms the day frame and advances the stepper to Plan tasks", async () => {
     const h = screenHarness("fresh");
@@ -331,7 +390,6 @@ describe("U12 footer and prompt persistence", () => {
     fireEvent.click(r.getByRole("button", { name: "Undo" }));
     expect(r.getByText(/Mint 8 of 8 sessions/)).toBeTruthy();
   });
-});
 
 describe("default Mint fill and the Mint blocks slider", () => {
   // Helper: the screen harness with a configured allotment smaller than the
@@ -392,10 +450,10 @@ describe("anchor move and save to config", () => {
   const strip = (r: ReturnType<ReturnType<typeof makeHarness>["ui"]>, id: string) =>
     r.container.querySelector(`[data-anchor-id="${id}"]`) as HTMLElement;
 
-  // Ruler 07:00-24:00 drawn 1020px wide: 1px per minute.
+  // Ruler 07:30-23:45 drawn 975px wide: 1px per minute.
   function stubLane() {
     return vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue({
-      x: 0, y: 0, left: 0, top: 0, right: 1020, bottom: 34, width: 1020, height: 34,
+      x: 0, y: 0, left: 0, top: 0, right: 975, bottom: 96, width: 975, height: 96,
       toJSON: () => ({}),
     });
   }
@@ -407,12 +465,9 @@ describe("anchor move and save to config", () => {
   const savedTime = (h: ReturnType<typeof screenHarness>, id: string) =>
     h.store.getState().daySetup.anchored[id]?.time;
 
-  // Save time = write + billed-free source reload, each behind fixture latency.
-  const SLOW = { timeout: 5000 };
-
   afterEach(() => vi.restoreAllMocks());
 
-  it("dragging an anchor saves today's override through the existing path and updates strip and card", async () => {
+  it("dragging an anchor saves today's override through the existing path and updates the strip", async () => {
     stubLane();
     const h = screenHarness();
     const saveDay = vi.spyOn(FixtureAdapter.prototype, "saveDaySetup");
@@ -425,8 +480,6 @@ describe("anchor move and save to config", () => {
     expect(saveDay).toHaveBeenCalled();
     expect(saveDay.mock.calls.at(-1)![0].anchored.Sudsing.time).toBe("18:15");
     expect(strip(r, "Sudsing").getAttribute("aria-label")).toContain("6:15 PM");
-    expect(r.getByText("Today only")).toBeTruthy();
-    expect(r.getByRole("button", { name: "Save time" })).toBeTruthy();
   });
 
   it("moves with the arrow keys and the editor still opens from a click", async () => {
@@ -438,65 +491,10 @@ describe("anchor move and save to config", () => {
     fireEvent.keyDown(strip(r, "Sudsing"), { key: "ArrowLeft", shiftKey: true });
     await vi.waitFor(() => expect(savedTime(h, "Sudsing")).toBe("17:00"));
     fireEvent.click(strip(r, "Sudsing"));
+    // the click selects (the popover opens); the editor is reached from it
+    expect(h.store.getState().ui.editorAnchor).toBeNull();
+    fireEvent.click(r.getByRole("button", { name: "Edit items" }));
     expect(h.store.getState().ui.editorAnchor).toBe("Sudsing");
-  });
-
-  it("Save time persists to config, reloads inputs, and the tile reads Saved", async () => {
-    stubLane();
-    const h = screenHarness();
-    const save = vi.spyOn(FixtureAdapter.prototype, "saveAnchoredStart");
-    const r = h.ui(<App />);
-    drag(strip(r, "Sudsing"), 30);
-    await vi.waitFor(() => expect(r.getByRole("button", { name: "Save time" })).toBeTruthy());
-    fireEvent.click(r.getByRole("button", { name: "Save time" }));
-    await vi.waitFor(() => expect(r.getByText("Saved")).toBeTruthy(), SLOW);
-    expect(save).toHaveBeenCalledWith("Sudsing", "18:15");
-    expect(r.queryByText("Today only")).toBeNull();
-    expect(r.queryByRole("button", { name: "Save time" })).toBeNull();
-    // the reloaded inputs now carry the saved start as the configured one
-    expect(h.store.getState().inputs!.anchored.find((a) => a.id === "Sudsing")!.start).toBe("18:15");
-    expect(strip(r, "Sudsing").getAttribute("aria-label")).toContain("6:15 PM");
-  });
-
-  it("moving a saved anchor again goes back to Today only", async () => {
-    stubLane();
-    const h = screenHarness();
-    const r = h.ui(<App />);
-    drag(strip(r, "Sudsing"), 30);
-    await vi.waitFor(() => expect(r.getByRole("button", { name: "Save time" })).toBeTruthy());
-    fireEvent.click(r.getByRole("button", { name: "Save time" }));
-    await vi.waitFor(() => expect(r.getByText("Saved")).toBeTruthy(), SLOW);
-    fireEvent.keyDown(strip(r, "Sudsing"), { key: "ArrowRight" });
-    await vi.waitFor(() => expect(r.getByText("Today only")).toBeTruthy());
-    expect(r.queryByText("Saved")).toBeNull();
-  });
-
-  it("shows a refused save inline as an alert and keeps today's change", async () => {
-    stubLane();
-    const h = screenHarness();
-    vi.spyOn(FixtureAdapter.prototype, "saveAnchoredStart").mockRejectedValue(
-      new Error("The machine-local config.json overrides anchored_blocks"),
-    );
-    const r = h.ui(<App />);
-    drag(strip(r, "Sudsing"), 30);
-    await vi.waitFor(() => expect(r.getByRole("button", { name: "Save time" })).toBeTruthy());
-    fireEvent.click(r.getByRole("button", { name: "Save time" }));
-    await vi.waitFor(() => expect(r.getByRole("alert").textContent).toContain("overrides anchored_blocks"), SLOW);
-    expect(r.getByText("Today only")).toBeTruthy();
-    expect(savedTime(h, "Sudsing")).toBe("18:15");
-  });
-
-  it("Reset returns to the configured start and clears today's override time", async () => {
-    stubLane();
-    const h = screenHarness();
-    const r = h.ui(<App />);
-    drag(strip(r, "Sudsing"), 30);
-    await vi.waitFor(() => expect(r.getByRole("button", { name: "Reset" })).toBeTruthy());
-    fireEvent.click(r.getByRole("button", { name: "Reset" }));
-    await vi.waitFor(() => expect(savedTime(h, "Sudsing")).toBeNull());
-    expect(strip(r, "Sudsing").getAttribute("aria-label")).toContain("5:45 PM");
-    expect(r.queryByRole("button", { name: "Save time" })).toBeNull();
-    expect(r.queryByText("Today only")).toBeNull();
   });
 
   it("saves the moved anchor only once the server confirms, never on drag alone", async () => {
@@ -510,55 +508,3 @@ describe("anchor move and save to config", () => {
   });
 });
 
-describe("per-anchor icon actions on the anchors card", () => {
-  afterEach(() => vi.restoreAllMocks());
-
-  it("Skip today writes the same override the anchored editor's toggle applies", async () => {
-    const h = screenHarness();
-    const save = vi.spyOn(h.controller, "saveAnchoredOverride");
-    const r = h.ui(<App />);
-    fireEvent.click(r.getByRole("button", { name: "Skip Sudsing today" }));
-    await vi.waitFor(() => expect(save).toHaveBeenCalledTimes(1));
-    expect(save.mock.calls[0][0]).toBe("Sudsing");
-    expect(save.mock.calls[0][1]).toMatchObject({ on: false, skipToday: true });
-  });
-
-  it("Include today on a skipped chip flips the same override back on", async () => {
-    const h = screenHarness();
-    h.store.dispatch({
-      type: "SETUP_SAVED",
-      daySetup: {
-        ...h.store.getState().daySetup,
-        anchored: {
-          ...h.store.getState().daySetup.anchored,
-          Sudsing: { on: false, skipToday: true, time: null, blocks: null },
-        },
-      },
-    });
-    const save = vi.spyOn(h.controller, "saveAnchoredOverride");
-    const r = h.ui(<App />);
-    fireEvent.click(r.getByRole("button", { name: "Include Sudsing today" }));
-    await vi.waitFor(() => expect(save).toHaveBeenCalledTimes(1));
-    expect(save.mock.calls[0][1]).toMatchObject({ on: true, skipToday: false });
-  });
-
-  it("Adjust time opens the shared editor with the Start field focused", () => {
-    const h = screenHarness();
-    const r = h.ui(<App />);
-    fireEvent.click(r.getByRole("button", { name: "Adjust time for Sudsing" }));
-    expect(h.store.getState().ui.editorAnchor).toBe("Sudsing");
-    expect(h.store.getState().ui.editorAnchorIntent).toBe("time");
-    expect(document.activeElement?.getAttribute("aria-label")).toBe("Anchored start");
-  });
-
-  it("Adjust duration opens the shared editor with the duration stepper focused", () => {
-    const h = screenHarness();
-    const r = h.ui(<App />);
-    fireEvent.click(r.getByRole("button", { name: "Adjust duration for Sudsing" }));
-    expect(h.store.getState().ui.editorAnchor).toBe("Sudsing");
-    expect(h.store.getState().ui.editorAnchorIntent).toBe("duration");
-    expect(document.activeElement?.getAttribute("aria-label")).toBe(
-      "Anchored duration",
-    );
-  });
-});

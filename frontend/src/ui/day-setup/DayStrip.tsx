@@ -1,17 +1,24 @@
-/* U12 day-frame strip (R20a). One hour strip spans the day frame with a Mint
-   lane (30-minute session slots) and an Anchors lane. Dragging across Mint
-   slots selects those sessions; slots blocked by a fixed/work wall are not
-   selectable. Every interaction has a keyboard equivalent: focus a slot,
-   Space toggles it, Arrow keys move between slots. Anchor blocks open the
-   existing anchored editor, and a counted config anchor can also be moved:
-   pointer-drag it (snaps to 15 minutes, clamped to the ruler) or use the
-   Left/Right arrows (Shift = an hour). A press that never moves is still a
-   click, so the editor opens exactly as before.
+/* U12 day-frame strip (Planning 2a). The ruler is the day frame itself:
+   x = (minutes - frameStart) / (frameEnd - frameStart). A 90px lane-label
+   column carries Calendar / Mint / Anchors, hour ticks sit above the lanes,
+   and there is no separate frame lane or above-lane caption row.
+
+   Calendar events are read-only: the block sits on a 40px lane and its label
+   is drawn to the RIGHT of the block. The Mint lane (32px) is hatched with
+   "Off today" when nothing is selected; otherwise dragging across slots
+   selects them (Every interaction has a keyboard equivalent: focus a slot,
+   Space toggles it, Arrow keys move between slots). Anchor blocks are 38px
+   tall on a 96px lane with two sub-rows (a block takes its README-preferred
+   row when the interval is free, the other row when that is free, and is
+   staggered rather than overlapped when both rows are busy); a block is as wide as its real
+   start→end span and shows its name plus (when it fits) the time and item
+   count. Clicking one selects it; pointer-dragging moves it (snaps to 15
+   minutes, clamped to the frame) and the arrow keys move it too.
 
    Pure presentation: selection state and the Wall-filtered id sets come from
    DaySetupPanel, so the strip never re-implements the Mint/wall contract. */
 
-import { Fragment, type ComponentChildren } from "preact";
+import { Fragment } from "preact";
 import { useEffect, useRef, useState } from "preact/hooks";
 import { display12h, toHHMM, toMinutes } from "../../model/time";
 import type { CalendarCapacityClass } from "../../model/types";
@@ -20,6 +27,25 @@ import { compactClock, compactHour, compactRange } from "./compactTime";
 
 /** Pointer travel (px) before a press on an anchor becomes a drag. */
 const DRAG_THRESHOLD_PX = 4;
+/** A block shorter than this still draws one 15-minute slot wide. */
+const MIN_ANCHOR_MIN = 15;
+/** Two anchor sub-rows: top 6px, each 38px tall with an 8px gap. */
+const ANCHOR_ROW_TOP = 6;
+const ANCHOR_ROW_PITCH = 46;
+/** A staggered block keeps at least this many pixels wide so its name reads. */
+const MIN_VISIBLE_W = 56;
+/** Visible gap between a clipped block's right edge and the next block. */
+const STAGGER_GAP_PX = 2;
+/** README row preference: these ride row 0, the rest of the catalogue
+    (Foods Breakfast, Sudsing, Foods Dinner) rides row 1. */
+const ANCHOR_ROW_PREFERENCE: Record<string, number> = {
+  "Morning Routine": 0,
+  Live: 0,
+  "Night Routine": 0,
+  "Foods Breakfast": 1,
+  Sudsing: 1,
+  "Foods Dinner": 1,
+};
 
 export interface StripSession {
   id: string;
@@ -32,6 +58,8 @@ export interface StripAnchor {
   id: string;
   name: string;
   start: string;
+  /** 24h HH:MM end, so the block is as wide as its real span. */
+  end: string;
   counted: boolean;
   reason: string | null;
   blocks: number;
@@ -62,30 +90,28 @@ export interface DayStripProps {
   onSelectIds: (ids: string[]) => void;
   onToggleSession: (id: string) => void;
   anchors: StripAnchor[];
-  onEditAnchor: (id: string) => void;
+  /** Click / Enter / Space on a block selects it (the popover opens under it). */
+  onSelectAnchor: (id: string) => void;
   /** Today's calendar events, drawn on their own read-only lane. */
   calendar?: StripCalendarEvent[];
   /** Called once per completed move (pointer drop or arrow key) with the new
       24h HH:MM start. Without it no anchor is movable. */
   onMoveAnchor?: (id: string, start: string) => void;
-  /** Control rendered at the right of the Mint caption row (the Mint blocks
-      slider). Optional so the strip stays usable on its own. */
-  mintControl?: ComponentChildren;
+  /** The anchor whose popover is open, drawn in the selected treatment. */
+  selectedAnchorId?: string | null;
+  /** Planning 2a "Already placed": draw the same lanes with no interaction at
+      all — no slot buttons, no anchor buttons, no drag, no selection. The
+      strip stays a read-only picture of what is already on the day. */
+  readOnly?: boolean;
 }
 
 export function DayStrip(props: DayStripProps) {
-  // The frame is the confirmed day window; the strip itself spans the whole
-  // waking day (8a to midnight, widened when the frame reaches outside it) so
-  // the frame reads as an outlined region on the ruler and time outside it is
-  // visibly unavailable. Selection logic below still works on frame minutes.
   const startMin = toMinutes(props.frameStart);
   const endMin = toMinutes(props.frameEnd);
-  const dayStart = Math.min(8 * 60, Math.floor(startMin / 60) * 60);
-  const dayEnd = Math.max(24 * 60, Math.ceil(endMin / 60) * 60);
-  const daySpan = Math.max(1, dayEnd - dayStart);
+  const span = Math.max(1, endMin - startMin);
   const pct = (min: number) =>
-    Math.max(0, Math.min(100, ((min - dayStart) / daySpan) * 100));
-  const rawPct = (min: number) => ((min - dayStart) / daySpan) * 100;
+    Math.max(0, Math.min(100, ((min - startMin) / span) * 100));
+  const rawPct = (min: number) => ((min - startMin) / span) * 100;
   const [drag, setDrag] = useState<{ anchor: number; moved: boolean } | null>(null);
   const [suppressClick, setSuppressClick] = useState(false);
   // Anchor move: the gesture lives in a ref (pointer events outrun renders);
@@ -103,8 +129,8 @@ export function DayStrip(props: DayStripProps) {
   const suppressAnchorClick = useRef(false);
   const [preview, setPreview] = useState<{ id: string; from: number; min: number } | null>(null);
   const [announcement, setAnnouncement] = useState("");
-  // The strip's pixel width, so labels that do not fit inside a short block
-  // can be placed beside it. 900 is only the first-paint guess.
+  // The anchors-lane pixel width, so a block that cannot fit its meta line
+  // shows the name only. 900 is only the first-paint guess.
   const laneRef = useRef<HTMLDivElement>(null);
   const [laneW, setLaneW] = useState(900);
   useEffect(() => {
@@ -159,9 +185,8 @@ export function DayStrip(props: DayStripProps) {
     }
   };
 
-  const BLOCK_MIN = 30;
   const lengthOf = (anchor: StripAnchor) =>
-    anchor.counted ? Math.max(1, anchor.blocks) * BLOCK_MIN : BLOCK_MIN;
+    Math.max(MIN_ANCHOR_MIN, toMinutes(anchor.end) - toMinutes(anchor.start));
   const isMovable = (anchor: StripAnchor) =>
     anchor.movable === true && anchor.counted && props.onMoveAnchor !== undefined;
 
@@ -198,29 +223,29 @@ export function DayStrip(props: DayStripProps) {
     }
   };
   const onAnchorPointerMove = (e: PointerEvent) => {
-    const drag = anchorDrag.current;
-    if (!drag || e.pointerId !== drag.pointerId) return;
-    const dx = e.clientX - drag.x0;
-    if (!drag.moved && Math.abs(dx) < DRAG_THRESHOLD_PX) return;
-    drag.moved = true;
-    drag.target = dragTargetMinutes({
-      startMin: drag.origMin,
+    const dragState = anchorDrag.current;
+    if (!dragState || e.pointerId !== dragState.pointerId) return;
+    const dx = e.clientX - dragState.x0;
+    if (!dragState.moved && Math.abs(dx) < DRAG_THRESHOLD_PX) return;
+    dragState.moved = true;
+    dragState.target = dragTargetMinutes({
+      startMin: dragState.origMin,
       deltaPx: dx,
-      laneWidthPx: drag.laneWidth,
-      dayStart,
-      dayEnd,
-      lengthMin: drag.lengthMin,
+      laneWidthPx: dragState.laneWidth,
+      dayStart: startMin,
+      dayEnd: endMin,
+      lengthMin: dragState.lengthMin,
     });
-    setPreview({ id: drag.id, from: drag.origMin, min: drag.target });
+    setPreview({ id: dragState.id, from: dragState.origMin, min: dragState.target });
   };
   const onAnchorPointerUp = (e: PointerEvent) => {
-    const drag = anchorDrag.current;
-    if (!drag || e.pointerId !== drag.pointerId) return;
-    const { id, moved, target, origMin } = drag;
+    const dragState = anchorDrag.current;
+    if (!dragState || e.pointerId !== dragState.pointerId) return;
+    const { id, moved, target, origMin } = dragState;
     endAnchorDrag(e.currentTarget as HTMLElement, e.pointerId);
     if (!moved) return;
     // The click that follows this pointerup belongs to the drag, not to the
-    // editor. Cleared on the next tick and on the next press.
+    // popover. Cleared on the next tick and on the next press.
     suppressAnchorClick.current = true;
     setTimeout(() => {
       suppressAnchorClick.current = false;
@@ -238,7 +263,7 @@ export function DayStrip(props: DayStripProps) {
       suppressAnchorClick.current = false;
       return;
     }
-    props.onEditAnchor(id);
+    props.onSelectAnchor(id);
   };
   const onAnchorKeyDown = (e: KeyboardEvent, anchor: StripAnchor) => {
     if (e.key === "Escape" && anchorDrag.current) {
@@ -255,8 +280,8 @@ export function DayStrip(props: DayStripProps) {
     e.preventDefault();
     const from = toMinutes(anchor.start);
     const to = keyboardTargetMinutes(from, e.key === "ArrowRight" ? 1 : -1, e.shiftKey, {
-      dayStart,
-      dayEnd,
+      dayStart: startMin,
+      dayEnd: endMin,
       lengthMin: lengthOf(anchor),
     });
     if (to === from) return;
@@ -264,86 +289,107 @@ export function DayStrip(props: DayStripProps) {
     props.onMoveAnchor?.(anchor.id, toHHMM(to));
   };
 
-  // Hour marks: every hour is a gridline through all lanes; labels are every
-  // hour when the strip is wide enough for them, else every two.
-  const hourly = laneW >= 760;
-  const ticks: number[] = [];
-  for (let m = dayStart; m < dayEnd; m += hourly ? 60 : 120) ticks.push(m);
-  const gridHours: number[] = [];
-  for (let m = dayStart; m <= dayEnd; m += 60) gridHours.push(m);
+  // Hour ticks: every whole hour inside the frame (8a … 11p for 7:30a–11:45p).
+  const hours: number[] = [];
+  for (let m = Math.ceil(startMin / 60) * 60; m < endMin; m += 60) hours.push(m);
 
   // A Mint block wholly outside the frame has no place on the strip; one that
-  // straddles a frame edge is clipped to it. Hidden blocks are counted in a note.
+  // straddles a frame edge is clipped to it. Hidden blocks are counted in a
+  // note.
   const sessionOutside = (session: StripSession) =>
     toMinutes(session.end) <= startMin || toMinutes(session.start) >= endMin;
   const hiddenSessions = props.sessions.filter(sessionOutside).length;
 
-  // Anchors are drawn across the whole day, one block-length wide, and
-  // dimmed when they are not counted today (outside the frame or skipped).
-  // Blocks that would overlap are stacked into sub-rows (greedy interval
-  // scheduling); a 30-minute overlap is tolerated so a neighbouring pair such
-  // as Sudsing and Dinner share one row like the reference.
-  // A name that does not fit inside its block is drawn beside it (right,
-  // or left when the right would run off the strip) and counts toward the
-  // row's occupied span so neighbouring labels never collide.
-  const pxPerMin = laneW / daySpan;
-  const place = <T,>(
-    entries: Array<{ item: T; min: number; length: number; text: string; solid: boolean }>,
-  ) => {
-    const rowState: Array<{ end: number; outside: boolean }> = [];
-    const placed = entries
-      .filter(({ min, length }) => min + length > dayStart && min < dayEnd)
-      .sort((x, y) => x.min - y.min)
-      .map(({ item, min, length, text, solid }) => {
-        const textPx = text.length * 6.4 + 10;
-        const inside = solid && length * pxPerMin >= textPx;
-        const labelMin = textPx / pxPerMin;
-        const side: "right" | "left" =
-          (min + length - dayStart) * pxPerMin + textPx + 6 > laneW ? "left" : "right";
-        const lo = inside || side === "right" ? min : min - labelMin;
-        const hi = inside || side === "left" ? min + length : min + length + labelMin;
-        let row = rowState.findIndex(
-          (r) => r.end - (r.outside || !inside ? 0 : BLOCK_MIN) <= lo,
-        );
-        if (row === -1) {
-          row = rowState.length;
-          rowState.push({ end: 0, outside: false });
-        }
-        rowState[row] = { end: hi, outside: !inside };
-        return { item, min, length, row, inside, side, text };
-      });
-    return { placed, rows: Math.max(1, rowState.length) };
-  };
-  const anchorLayout = place(
-    props.anchors.map((anchor) => ({
-      item: anchor,
+  // Anchors draw across their real start→end span. Each takes its README
+  // preferred row when the interval is free, the other row when that is free,
+  // and otherwise stays on its preferred row to be staggered below, so two
+  // blocks never draw on top of each other.
+  const pxPerMin = laneW / span;
+  const rowIntervals: Array<Array<{ min: number; max: number }>> = [[], []];
+  const overlapsRow = (row: number, min: number, max: number) =>
+    rowIntervals[row].some((iv) => min < iv.max && max > iv.min);
+  const placedAnchors = props.anchors
+    .map((anchor) => ({
+      anchor,
       min: toMinutes(anchor.start),
       length: lengthOf(anchor),
-      text: `${anchor.name} ${compactClock(anchor.start)}`,
-      solid: anchor.counted,
-    })),
+    }))
+    .filter(({ min, length }) => min < endMin && min + length > startMin)
+    .sort((a, b) => a.min - b.min)
+    .map(({ anchor, min, length }) => {
+      const max = min + length;
+      const preferred = ANCHOR_ROW_PREFERENCE[anchor.name] ?? 0;
+      const other = preferred === 0 ? 1 : 0;
+      let row = preferred;
+      if (overlapsRow(preferred, min, max) && !overlapsRow(other, min, max)) row = other;
+      rowIntervals[row].push({ min, max });
+      return { anchor, min, length, row };
+    });
+  // Stagger: inside a row the earlier of two overlapping blocks keeps its true
+  // start but its visible width stops 2px before the next block starts, never
+  // narrower than MIN_VISIBLE_W. When that minimum cannot fit, the later
+  // block's visible left edge is nudged right just enough that neither block
+  // is hidden. True times stay in title/aria-label and the popover.
+  const anchorGeometry = new Map<string, { leftPct: number; widthPct: number }>();
+  rowIntervals.forEach((_, row) => {
+    const rowBlocks = placedAnchors.filter((p) => p.row === row).sort((a, b) => a.min - b.min);
+    let prevRight = Number.NEGATIVE_INFINITY;
+    rowBlocks.forEach((block, i) => {
+      const trueLeft = Math.max(0, (block.min - startMin) * pxPerMin);
+      const trueRight = Math.min(laneW, (block.min + block.length - startMin) * pxPerMin);
+      const left = Math.max(trueLeft, prevRight + STAGGER_GAP_PX);
+      let right = trueRight;
+      const next = rowBlocks[i + 1];
+      if (next) {
+        const nextLeft = Math.max(0, (next.min - startMin) * pxPerMin);
+        const clipLimit = nextLeft - STAGGER_GAP_PX;
+        if (right > clipLimit) right = Math.max(left + MIN_VISIBLE_W, clipLimit);
+      }
+      // A block nudged off its true start still keeps a legible minimum width.
+      if (left > trueLeft) right = Math.max(right, left + MIN_VISIBLE_W);
+      anchorGeometry.set(block.anchor.id, {
+        leftPct: (left / laneW) * 100,
+        widthPct: (Math.max(1, right - left) / laneW) * 100,
+      });
+      prevRight = right;
+    });
+  });
+  const anchorRowCount = Math.max(
+    1,
+    rowIntervals.reduce((count, blocks, row) => (blocks.length > 0 ? row + 1 : count), 1),
   );
-  const placedAnchors = anchorLayout.placed.map((p) => ({
-    anchor: p.item,
-    min: p.min,
-    length: p.length,
-    row: p.row,
-    inside: p.inside,
-    side: p.side,
-    text: p.text,
-  }));
-  const calendarLayout = place(
-    (props.calendar ?? []).map((event) => ({
-      item: event,
-      min: toMinutes(event.start),
-      length: Math.max(15, event.durationMin),
-      text: `${event.name} ${compactClock(event.start)}`,
-      solid: event.counted,
-    })),
-  );
-  const anchorRows = anchorLayout.rows;
-  const calendarRows = calendarLayout.rows;
-  const anchorRowH = 28;
+  const anchorLaneH = Math.max(96, anchorRowCount * ANCHOR_ROW_PITCH + 4);
+  const metaText = (anchor: StripAnchor, length: number) =>
+    length >= 120
+      ? `${compactClock(anchor.start)} · ${anchor.blocks} ${anchor.blocks === 1 ? "item" : "items"}`
+      : compactClock(anchor.start);
+  const showMeta = (anchor: StripAnchor, length: number, visiblePx: number) =>
+    visiblePx >= Math.max(
+      anchor.name.length * 6.6 + 20,
+      metaText(anchor, length).length * 6.4 + 20,
+    );
+
+  // Calendar events draw read-only, clipped to the frame, with the label to
+  // the right of the block. Overlapping events stack so labels never collide.
+  const calendarRowsEnd: number[] = [];
+  const placedCalendar = (props.calendar ?? [])
+    .map((event) => ({
+      event,
+      min: Math.max(toMinutes(event.start), startMin),
+      max: Math.min(toMinutes(event.start) + Math.max(15, event.durationMin), endMin),
+    }))
+    .filter(({ min, max }) => max > min && min < endMin)
+    .sort((a, b) => a.min - b.min)
+    .map(({ event, min, max }) => {
+      let row = calendarRowsEnd.findIndex((end) => end <= min);
+      if (row === -1) {
+        row = calendarRowsEnd.length;
+        calendarRowsEnd.push(0);
+      }
+      calendarRowsEnd[row] = max;
+      return { event, min, max, row };
+    });
+  const calendarLaneH = Math.max(40, calendarRowsEnd.length * 30 + 10);
 
   // Contiguous selected / wall-blocked Mint slots read as one block: a run
   // gets rounded ends and a caption ("3-5 PM", "Wall") laid over it.
@@ -382,47 +428,26 @@ export function DayStrip(props: DayStripProps) {
 
   return (
     <div class="day-strip" data-testid="day-strip">
-      <div class="day-strip__grid" aria-hidden="true">
-        {gridHours.map((m) => (
-          <span
-            class={`day-strip__gridline${(m / 60) % 2 === 0 ? " day-strip__gridline--major" : ""}`}
-            style={{ left: `${pct(m)}%` }}
-            key={m}
-          />
-        ))}
+      <div class="day-strip__row day-strip__row--ruler">
+        <span class="day-strip__lane-label" aria-hidden="true" />
+        <div class="day-strip__ticks" aria-hidden="true">
+          {hours.map((m) => (
+            <span class="day-strip__tick" style={{ left: `${pct(m)}%` }} key={m}>
+              {compactHour(m)}
+            </span>
+          ))}
+        </div>
       </div>
-      <div class="day-strip__axis" aria-hidden="true">
-        {ticks
-          // The "frame" marker sits on the frame's start; an hour label that
-          // close to it would print over it.
-          .filter((m) => Math.abs(m - startMin) * pxPerMin >= 32)
-          .map((m) => (
-          <span class="day-strip__tick" style={{ left: `${pct(m)}%` }} key={m}>
-            {compactHour(m)}
-          </span>
-        ))}
-      </div>
-      <div class="day-strip__frame" aria-hidden="true">
-        <span class="day-strip__frame-box" style={{ left: `${pct(startMin)}%`, width: `${pct(endMin) - pct(startMin)}%` }} />
-        <span class="day-strip__frame-label" style={{ left: `${pct(startMin)}%` }}>frame</span>
-        <span
-          class="day-strip__frame-range"
-          style={{ left: `${pct(startMin)}%`, width: `${pct(endMin) - pct(startMin)}%` }}
-        >
-          {compactClock(props.frameStart)} – {compactClock(props.frameEnd)}
-        </span>
-      </div>
-      {calendarLayout.placed.length > 0 && (
-        <>
-          <div class="day-strip__caption">
-            <span class="day-strip__caption-label">Calendar</span>
-          </div>
+
+      {placedCalendar.length > 0 && (
+        <div class="day-strip__row">
+          <span class="day-strip__lane-label">Calendar</span>
           <div
             class="day-strip__lane day-strip__lane--calendar"
             aria-label="Calendar"
-            style={{ height: `${calendarRows * anchorRowH + 2}px` }}
+            style={{ height: `${calendarLaneH}px` }}
           >
-            {calendarLayout.placed.map(({ item: event, min, length, row, inside, side, text }) => (
+            {placedCalendar.map(({ event, min, max, row }) => (
               <Fragment key={event.id}>
                 <span
                   class={`strip-cal${event.counted ? "" : " strip-cal--skipped"}${
@@ -430,174 +455,204 @@ export function DayStrip(props: DayStripProps) {
                   }`}
                   style={{
                     left: `${rawPct(min)}%`,
-                    width: `${(length / daySpan) * 100}%`,
-                    top: `${2 + row * anchorRowH}px`,
+                    width: `${((max - min) / span) * 100}%`,
+                    top: `${5 + row * 30}px`,
                   }}
                   title={`${event.name} ${display12h(event.start)}`}
                   role="img"
                   aria-label={`${event.name} ${display12h(event.start)} (calendar)`}
+                />
+                <span
+                  class={`strip-cal__label${event.counted ? "" : " strip-cal__label--not-counted"}`}
+                  style={{ left: `calc(${rawPct(max)}% + 8px)`, top: `${5 + row * 30}px` }}
                 >
-                  {inside ? text : null}
+                  {event.name} {compactClock(event.start)}
                 </span>
-                {!inside && (
-                  <span
-                    class={`strip-anchor__label strip-anchor__label--${side}${
-                      event.counted ? "" : " strip-anchor__label--not-counted"
-                    }`}
-                    aria-hidden="true"
-                    style={
-                      side === "right"
-                        ? { left: `calc(${rawPct(min + length)}% + 4px)`, top: `${2 + row * anchorRowH}px` }
-                        : { right: `calc(${100 - rawPct(min)}% + 4px)`, top: `${2 + row * anchorRowH}px` }
-                    }
-                  >
-                    {text}
-                  </span>
-                )}
               </Fragment>
             ))}
           </div>
-        </>
+        </div>
       )}
-      <div class="day-strip__caption">
-        <span class="day-strip__caption-label">Mint</span>
-        {props.mintControl}
+
+      <div class="day-strip__row">
+        <span class="day-strip__lane-label">Mint</span>
+        <div
+          class={`day-strip__lane day-strip__lane--mint${
+            props.sessions.length === 0 ? " day-strip__lane--mint-off" : ""
+          }`}
+          aria-label="Mint sessions"
+        >
+          {props.sessions.length === 0 ? (
+            <span class="day-strip__empty">Off today</span>
+          ) : (
+            visible.map(({ session, index }) => {
+              const state = stateOf(session);
+              const blocked = state === "blocked";
+              const selected = state === "selected";
+              const left = pct(clipStart(session));
+              const width = Math.max(1.5, pct(clipEnd(session)) - left);
+              const pos = runPos.get(session.id) ?? { first: true, last: true };
+              const slotClass = `strip-slot strip-slot--${state}${pos.first ? " strip-slot--run-first" : ""}${
+                pos.last ? " strip-slot--run-last" : ""
+              }`;
+              const slotStyle = { left: `${left}%`, width: `${width}%` };
+              const slotLabel = `${session.name} ${display12h(session.start)}–${display12h(session.end)} — ${
+                blocked ? "blocked by wall" : selected ? "selected" : "available"
+              }`;
+              if (props.readOnly) {
+                return (
+                  <span
+                    key={session.id}
+                    class={slotClass}
+                    style={slotStyle}
+                    data-slot-id={session.id}
+                    data-state={state}
+                    aria-hidden="true"
+                  >
+                    <span class="strip-slot__label">{session.name}</span>
+                  </span>
+                );
+              }
+              return (
+                <button
+                  type="button"
+                  id={`strip-slot-${session.id}`}
+                  class={slotClass}
+                  style={slotStyle}
+                  data-slot-id={session.id}
+                  data-state={state}
+                  aria-pressed={selected}
+                  aria-label={slotLabel}
+                  onMouseDown={() => onSlotMouseDown(index)}
+                  onMouseEnter={() => onSlotMouseEnter(index)}
+                  onMouseUp={onSlotMouseUp}
+                  onClick={() => onSlotClick(index)}
+                  onKeyDown={(e) => onSlotKeyDown(e as unknown as KeyboardEvent, index)}
+                  key={session.id}
+                >
+                  <span class="strip-slot__label">{session.name}</span>
+                </button>
+              );
+            })
+          )}
+          {runs.map((run) => {
+            const caption = runCaption(run);
+            if (caption === null) return null;
+            return (
+              <span
+                class={`strip-run strip-run--${run.state}`}
+                aria-hidden="true"
+                style={{ left: `${pct(run.start)}%`, width: `${pct(run.end) - pct(run.start)}%` }}
+                key={`${run.state}-${run.start}`}
+              >
+                {caption}
+              </span>
+            );
+          })}
+        </div>
       </div>
-      <div class="day-strip__lane day-strip__lane--mint" aria-label="Mint sessions">
-        <span
-          class="day-strip__free"
-          aria-hidden="true"
-          style={{ left: `${pct(startMin)}%`, width: `${pct(endMin) - pct(startMin)}%` }}
-        />
-        {props.sessions.length === 0 ? (
-          <span class="day-strip__empty">Mint off today</span>
-        ) : (
-          props.sessions.map((session, index) => {
-            if (sessionOutside(session)) return null;
-            const state = stateOf(session);
-            const blocked = state === "blocked";
-            const selected = state === "selected";
-            const left = pct(clipStart(session));
-            const width = Math.max(1.5, pct(clipEnd(session)) - left);
-            const pos = runPos.get(session.id) ?? { first: true, last: true };
+
+      <div class="day-strip__row">
+        <span class="day-strip__lane-label day-strip__lane-label--anchors">Anchors</span>
+        <div
+          class="day-strip__lane day-strip__lane--anchors"
+          ref={laneRef}
+          aria-label="Anchors"
+          style={{ height: `${anchorLaneH}px` }}
+        >
+          {placedAnchors.map(({ anchor, min, length, row }) => {
+            const dragging = preview?.id === anchor.id;
+            const drawMin = dragging ? preview.min : min;
+            const max = Math.min(drawMin + length, endMin);
+            const left = Math.max(drawMin, startMin);
+            const geom = anchorGeometry.get(anchor.id);
+            const leftPct = dragging || !geom ? rawPct(left) : geom.leftPct;
+            const widthPct = dragging || !geom ? ((max - left) / span) * 100 : geom.widthPct;
+            const visiblePx = (widthPct / 100) * laneW;
+            const movable = isMovable(anchor);
+            const reason = anchor.reason ?? "";
+            const selected = props.selectedAnchorId === anchor.id;
+            const anchorClass = `strip-anchor${anchor.counted ? "" : " strip-anchor--not-counted"}${
+              reason === "skipped" ? " strip-anchor--skipped" : ""
+            }${movable ? " strip-anchor--movable" : ""}${
+              dragging ? " strip-anchor--dragging" : ""
+            }${selected ? " strip-anchor--selected" : ""}${props.readOnly ? " strip-anchor--readonly" : ""}`;
+            const anchorStyle = {
+              left: `${leftPct}%`,
+              width: `${widthPct}%`,
+              top: `${ANCHOR_ROW_TOP + row * ANCHOR_ROW_PITCH}px`,
+            };
+            const anchorTitle = `${anchor.name} ${display12h(anchor.start)}${
+              movable ? " — drag to move, or use the arrow keys" : ""
+            }`;
+            const anchorLabel = `${anchor.name} ${display12h(anchor.start)}${
+              anchor.counted ? ` · ${anchor.blocks}` : ` — not counted (${anchor.reason})`
+            }`;
+            if (props.readOnly) {
+              return (
+                <span
+                  key={anchor.id}
+                  class={anchorClass}
+                  style={anchorStyle}
+                  data-anchor-id={anchor.id}
+                  title={anchorTitle}
+                  aria-hidden="true"
+                >
+                  <span class="strip-anchor__name">{anchor.name}</span>
+                  {showMeta(anchor, length, visiblePx) && (
+                    <span class="strip-anchor__meta">{metaText(anchor, length)}</span>
+                  )}
+                </span>
+              );
+            }
             return (
               <button
                 type="button"
-                id={`strip-slot-${session.id}`}
-                class={`strip-slot strip-slot--${state}${pos.first ? " strip-slot--run-first" : ""}${
-                  pos.last ? " strip-slot--run-last" : ""
-                }`}
-                style={{ left: `${left}%`, width: `${width}%` }}
-                data-slot-id={session.id}
-                data-state={state}
-                aria-pressed={selected}
-                aria-label={`${session.name} ${display12h(session.start)}–${display12h(session.end)} — ${
-                  blocked ? "blocked by wall" : selected ? "selected" : "available"
-                }`}
-                onMouseDown={() => onSlotMouseDown(index)}
-                onMouseEnter={() => onSlotMouseEnter(index)}
-                onMouseUp={onSlotMouseUp}
-                onClick={() => onSlotClick(index)}
-                onKeyDown={(e) => onSlotKeyDown(e as unknown as KeyboardEvent, index)}
-                key={session.id}
+                class={anchorClass}
+                style={anchorStyle}
+                data-anchor-id={anchor.id}
+                title={anchorTitle}
+                aria-label={anchorLabel}
+                onPointerDown={(e) => onAnchorPointerDown(e as unknown as PointerEvent, anchor)}
+                onPointerMove={(e) => onAnchorPointerMove(e as unknown as PointerEvent)}
+                onPointerUp={(e) => onAnchorPointerUp(e as unknown as PointerEvent)}
+                onPointerCancel={(e) => onAnchorPointerCancel(e as unknown as PointerEvent)}
+                onKeyDown={(e) => onAnchorKeyDown(e as unknown as KeyboardEvent, anchor)}
+                onClick={() => onAnchorClick(anchor.id)}
+                key={anchor.id}
               >
-                <span class="strip-slot__label">{session.name}</span>
+                <span class="strip-anchor__name">{anchor.name}</span>
+                {showMeta(anchor, length, visiblePx) && (
+                  <span class="strip-anchor__meta">{metaText(anchor, length)}</span>
+                )}
               </button>
             );
-          })
-        )}
-        {runs.map((run) => {
-          const caption = runCaption(run);
-          if (caption === null) return null;
-          return (
+          })}
+          {preview && (
             <span
-              class={`strip-run strip-run--${run.state}`}
-              aria-hidden="true"
-              style={{ left: `${pct(run.start)}%`, width: `${pct(run.end) - pct(run.start)}%` }}
-              key={`${run.state}-${run.start}`}
-            >
-              {caption}
-            </span>
-          );
-        })}
-      </div>
-      <div class="day-strip__caption">
-        <span class="day-strip__caption-label">Anchors</span>
-        {preview && (
-          <span
-            class="day-strip__drag-label"
-            style={{
-              left: `${Math.max(10, Math.min(90, pct(preview.min + (placedAnchors.find((p) => p.anchor.id === preview.id)?.length ?? BLOCK_MIN) / 2)))}%`,
-            }}
-          >
-            {display12h(toHHMM(preview.from))} → {display12h(toHHMM(preview.min))}
-          </span>
-        )}
-        <span class="sr-only" role="status" data-testid="anchor-move-status">
-          {announcement}
-        </span>
-      </div>
-      <div
-        class="day-strip__lane day-strip__lane--anchors"
-        ref={laneRef}
-        aria-label="Anchors"
-        style={{ height: `${anchorRows * anchorRowH + 2}px` }}
-      >
-        {placedAnchors.map(({ anchor, min: placedMin, length, row, inside, side, text }) => {
-          const dragging = preview?.id === anchor.id;
-          const min = dragging ? preview.min : placedMin;
-          const movable = isMovable(anchor);
-          const widthPct = (length / daySpan) * 100;
-          const reason = anchor.reason ?? "";
-          return (
-            <Fragment key={anchor.id}>
-            <button
-              type="button"
-              class={`strip-anchor${anchor.counted ? "" : " strip-anchor--not-counted"}${
-                reason === "skipped" ? " strip-anchor--skipped" : ""
-              }${widthPct < 5 ? " strip-anchor--tiny" : ""}${movable ? " strip-anchor--movable" : ""}${
-                dragging ? " strip-anchor--dragging" : ""
-              }`}
+              class="day-strip__drag-label"
               style={{
-                left: `${rawPct(min)}%`,
-                width: `${widthPct}%`,
-                top: `${2 + row * anchorRowH}px`,
+                left: `${Math.max(
+                  10,
+                  Math.min(
+                    90,
+                    pct(
+                      preview.min +
+                        (placedAnchors.find((p) => p.anchor.id === preview.id)?.length ?? MIN_ANCHOR_MIN) / 2,
+                    ),
+                  ),
+                )}%`,
               }}
-              data-anchor-id={anchor.id}
-              title={`${anchor.name} ${display12h(anchor.start)}${
-                movable ? " — drag to move, or use the arrow keys" : ""
-              }`}
-              aria-label={`${anchor.name} ${display12h(anchor.start)}${
-                anchor.counted ? ` · ${anchor.blocks}` : ` — not counted (${anchor.reason})`
-              }`}
-              onPointerDown={(e) => onAnchorPointerDown(e as unknown as PointerEvent, anchor)}
-              onPointerMove={(e) => onAnchorPointerMove(e as unknown as PointerEvent)}
-              onPointerUp={(e) => onAnchorPointerUp(e as unknown as PointerEvent)}
-              onPointerCancel={(e) => onAnchorPointerCancel(e as unknown as PointerEvent)}
-              onKeyDown={(e) => onAnchorKeyDown(e as unknown as KeyboardEvent, anchor)}
-              onClick={() => onAnchorClick(anchor.id)}
             >
-              {inside ? text : null}
-            </button>
-            {!inside && (
-              <span
-                class={`strip-anchor__label strip-anchor__label--${side}${
-                  anchor.counted ? "" : " strip-anchor__label--not-counted"
-                }`}
-                aria-hidden="true"
-                style={
-                  side === "right"
-                    ? { left: `calc(${rawPct(min + length)}% + 4px)`, top: `${2 + row * anchorRowH}px` }
-                    : { right: `calc(${100 - rawPct(min)}% + 4px)`, top: `${2 + row * anchorRowH}px` }
-                }
-              >
-                {text}
-              </span>
-            )}
-            </Fragment>
-          );
-        })}
+              {display12h(toHHMM(preview.from))} → {display12h(toHHMM(preview.min))}
+            </span>
+          )}
+          <span class="sr-only" role="status" data-testid="anchor-move-status">
+            {announcement}
+          </span>
+        </div>
       </div>
+
       {hiddenSessions > 0 && (
         <p class="day-strip__note">
           {hiddenSessions} Mint block{hiddenSessions === 1 ? "" : "s"} outside the frame

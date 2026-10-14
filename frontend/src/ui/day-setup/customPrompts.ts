@@ -1,7 +1,9 @@
-/* Local-only custom morning prompts . Each prompt is a question plus
-   a draft answer, kept in this browser's localStorage. Nothing here is sent to
-   the backend or exported to Todoist, and it never confirms the day. Reads and
-   writes tolerate malformed or unavailable storage so the card still renders. */
+/* Browser-defined custom morning prompts (Planning 2a). Each prompt is a
+   question plus a draft answer. Question definitions stay in this browser's
+   localStorage; the answer also persists through the backend captures patch
+   (``customPromptCapture``) so every non-empty prompt exports to the Todoist
+   Inbox at Commit. Reads and writes tolerate malformed or unavailable storage
+   so the card still renders. */
 
 export interface CustomPrompt {
   id: string;
@@ -82,4 +84,11 @@ export function removeCustomPrompt(list: CustomPrompt[], id: string): CustomProm
 
 export function newCustomPromptId(now: number = Date.now(), rand: () => number = Math.random): string {
   return `custom-${now.toString(36)}-${Math.floor(rand() * 1e6).toString(36)}`;
+}
+
+/** The captures patch for one custom prompt: ``{ [id]: answer }``. An empty
+    answer is sent verbatim so the server clears the draft (an omitted key
+    preserves it), matching the PATCH semantics of POST /day-setup. */
+export function customPromptCapture(id: string, answer: string): Record<string, string> {
+  return { [id]: answer };
 }

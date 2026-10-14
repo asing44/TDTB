@@ -239,14 +239,23 @@ describe("U11 keyboard shortcuts act on the focused row", () => {
 
 describe("U11 Out today collapses and restores rows", () => {
   it("announces its expanded/collapsed state in words", () => {
-    const h = makeHarness("ready");
+    // Planning 2a: Out today starts collapsed and is only rendered when there
+    // is something out, so give it a dropped row to announce.
+    const h = makeHarness("ready", (sc) => {
+      sc.inputs.droppedToday = [
+        { identity: "p1", name: "Press", droppedAt: "2026-08-13T08:00:00Z" },
+      ];
+    });
     const { container } = h.ui(<Queue />);
     const lane = laneFor(container, "Out today");
     const btn = lane.querySelector(".band--drop") as HTMLButtonElement;
-    expect(btn.getAttribute("aria-label")).toMatch(/expanded/);
-    fireEvent.click(btn);
+    expect(btn.getAttribute("aria-expanded")).toBe("false");
     expect(btn.getAttribute("aria-label")).toMatch(/collapsed/);
     expect(btn.textContent).toMatch(/collapsed/i);
+    fireEvent.click(btn);
+    expect(btn.getAttribute("aria-expanded")).toBe("true");
+    expect(btn.getAttribute("aria-label")).toMatch(/expanded/);
+    expect(btn.textContent).toMatch(/expanded/i);
   });
 
   it("Include today returns an excluded row to its group", () => {
@@ -257,12 +266,18 @@ describe("U11 Out today collapses and restores rows", () => {
       container.querySelector('button[aria-label="Exclude Press today"]')!,
     );
     expect(store.getState().overrides["Press"]).toEqual({ included: false, blocks: null });
+    // Out today is collapsed by default (Planning 2a); expand it to reach the
+    // reversible control, then include the row back into its band.
+    fireEvent.click(
+      laneFor(container, "Out today").querySelector(".band--drop") as HTMLButtonElement,
+    );
     const include = container.querySelector(
       'button[aria-label="Include Press today"]',
     ) as HTMLButtonElement;
     expect(include).toBeTruthy();
     fireEvent.click(include);
     expect(store.getState().overrides["Press"]).toEqual({ included: true, blocks: null });
+    expect(laneFor(container, "When there's room").textContent).toContain("Press");
   });
 });
 
@@ -416,15 +431,18 @@ describe("priority labels on a row", () => {
       if (it) it.urgency = "4";
     });
     const r = h.ui(<Queue />);
-    const due = rowNamed(r.container, "Review AWS module 4").querySelector(".qrow__due");
-    const texts = Array.from(due?.querySelectorAll("span") ?? []).map((n) => n.textContent);
-    expect(texts.filter((t) => t === "p1")).toHaveLength(1);
+    const row = rowNamed(r.container, "Review AWS module 4");
+    // Planning 2a: priority rides its own column as .qrow__prio; the p-level
+    // appears exactly once, never as both a chip and a duplicate badge.
+    const prios = Array.from(row.querySelectorAll(".qrow__prio")).map((n) => n.textContent);
+    expect(prios.filter((t) => t === "p1")).toHaveLength(1);
+    expect(row.querySelector(".badge")).toBeNull();
   });
 
   it("a Todoist p1 row carries no duplicate urgency badge", () => {
     const r = makeHarness("ready").ui(<Queue />);
-    const due = rowNamed(r.container, "Rowe's T-shirt Redesign 2026").querySelector(".qrow__due");
-    expect(due?.querySelector(".qrow__prio--crit")?.textContent).toBe("p1");
-    expect(due?.querySelector(".badge")).toBeNull();
+    const row = rowNamed(r.container, "Rowe's T-shirt Redesign 2026");
+    expect(row.querySelector(".qrow__prio--crit")?.textContent).toBe("p1");
+    expect(row.querySelector(".badge")).toBeNull();
   });
 });

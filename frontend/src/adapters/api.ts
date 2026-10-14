@@ -23,7 +23,6 @@ import type {
   SequenceResult,
   SourceRefreshResult,
 } from "./adapter";
-import { PromptOptinConflictError } from "./adapter";
 import type {
   Capacity,
   CapacitiesCatalog,
@@ -59,7 +58,6 @@ import {
   capacitiesSettingsToWire,
   projectDaySetupSaveResult,
   promptDraftsToWire,
-  promptOptinsToWire,
   capacitiesSourceToWire,
   capacitiesRuleSaveToWire,
   capacitiesRefreshStartToWire,
@@ -178,24 +176,6 @@ export function capacitiesSelectionsConflictOf(
   return { expectedRevision: expected, currentRevision: current };
 }
 
-/** Extract both revisions from a real 409 prompt opt-in conflict. Returns
-    null for anything else (another status, another 409 code, or a body
-    without both revisions). */
-export function promptOptinConflictOf(
-  error: unknown,
-): { expectedRevision: number; currentRevision: number } | null {
-  if (!(error instanceof ApiError) || error.status !== 409) return null;
-  const detail = error.detail;
-  if (!detail || typeof detail !== "object" || Array.isArray(detail)) return null;
-  const record = detail as Wire;
-  if (record.code !== "prompt_optins_conflict") return null;
-  const expected = record.expected_revision;
-  const current = record.current_revision;
-  if (!Number.isSafeInteger(expected) || expected < 0) return null;
-  if (!Number.isSafeInteger(current) || current < 0) return null;
-  return { expectedRevision: expected, currentRevision: current };
-}
-
 export class ApiAdapter implements Adapter {
   private token: string | null = null;
   /** Server-verbatim /plan-inputs payload — POST-body source of truth. */
@@ -307,29 +287,6 @@ export class ApiAdapter implements Adapter {
     return projectDaySetupSaveResult(
       await this.post("/day-setup", promptDraftsToWire(patch)),
     );
-  }
-
-  /** U5 opt-in-only save: exactly one POST carrying `optins` + the expected
-      revision. A stale revision (409 prompt_optins_conflict) is a typed
-      PromptOptinConflictError, never silently retried or coerced. */
-  async savePromptOptins(
-    optins: Record<string, boolean>,
-    expectedRevision: number,
-  ): Promise<DaySetupSaveResult> {
-    try {
-      return projectDaySetupSaveResult(
-        await this.post("/day-setup", promptOptinsToWire(optins, expectedRevision)),
-      );
-    } catch (error) {
-      const conflict = promptOptinConflictOf(error);
-      if (conflict) {
-        throw new PromptOptinConflictError(
-          conflict.expectedRevision,
-          conflict.currentRevision,
-        );
-      }
-      throw error;
-    }
   }
 
   async saveMicroAdventure(pick: MicroIdea | null): Promise<void> {

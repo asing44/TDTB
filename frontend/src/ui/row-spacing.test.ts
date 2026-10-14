@@ -1,9 +1,13 @@
-/* row-spacing.test.ts — CSS regression for the placement-row breathing-room
-   polish (plan tdtb-row-spacing-20260817). The main allocator rows (.qrow)
-   must carry enough vertical padding to separate adjacent rows at the
-   screenshot's density, and the polish must not erode the row's touch-target
-   floors or alignment. jsdom does no real style resolution, so these guards
-   read app.css off disk the same way the responsive/a11y suites do. */
+/* row-spacing.test.ts — CSS regression for the placement-row density (plan
+   tdtb-row-spacing-20260817; updated for Planning 2a, 2026-10-14).
+
+   The main allocator rows (.qrow) are 2a's compact card: 6px vertical / 12px
+   horizontal padding on a five-column grid, with a 4px stack gap between rows.
+   The update must not erode the shared control floors that apply outside the
+   compact row (the base verb height, the base duration track and its 44px hit
+   area), while the row's own controls carry deliberate 2a sizes. jsdom does no
+   real style resolution, so these guards read app.css off disk the same way
+   the responsive/a11y suites do. */
 
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -11,34 +15,39 @@ import { describe, expect, it } from "vitest";
 
 const appCss = readFileSync(resolve(process.cwd(), "src/app.css"), "utf8");
 
-/** Body of the `.qrow` rule that owns the row padding. Every line-anchored
-    `.qrow` block is collected — the comma-grouped `.queue__cols,\n.qrow` grid
-    rule also starts a line, but it has no padding, so the padding rule is the
-    one that matches the token. */
-function rowRule(): string {
+/** Body of the LAST `.qrow` rule that owns a `padding` declaration. The
+    appended Planning 2a layer splits the row across two `.qrow` blocks, so the
+    plain last match is not the padding rule. */
+function rowPadRule(): string {
   const re = /(?:^|\n)\.qrow\s*\{([^}]*)\}/g;
   const blocks = Array.from(appCss.matchAll(re), (m) => m[1]);
-  const row = blocks.find((b) => /padding:/.test(b));
+  const row = blocks.filter((b) => /padding:/.test(b)).pop();
   if (!row) throw new Error("standalone .qrow padding rule not found in app.css");
   return row;
 }
 
+/** Body of the LAST `selector { … }` rule anywhere in the file. */
+function lastRuleBody(selector: string): string {
+  const re = new RegExp(`(?:^|\\n)\\s*${selector}\\s*\\{([^}]*)\\}`, "g");
+  const hits = Array.from(appCss.matchAll(re), (m) => m[1]);
+  if (hits.length === 0) throw new Error(`selector not found in app.css: ${selector}`);
+  return hits[hits.length - 1];
+}
+
 /** Body of the first block matching a dotted selector anywhere in the file
-    (used for the single-selector control rules). */
+    (used for the shared single-selector control rules). */
 function firstBlock(selector: string): string {
   const m = appCss.match(new RegExp(`\\.${selector}\\s*\\{([^}]*)\\}`));
   if (!m) throw new Error(`selector not found in app.css: .${selector}`);
   return m[1];
 }
 
-describe("placement rows carry enough vertical breathing room", () => {
-  const row = rowRule();
+describe("placement rows keep the compact 2a density", () => {
+  const row = rowPadRule();
 
-  it("the standalone .qrow rule owns the padding", () => {
-    expect(row).toMatch(/padding:/);
-    // The desktop grid stays in the comma-grouped .queue__cols, .qrow rule —
-    // the spacing rule must not smuggle in alignment changes.
-    expect(row).not.toMatch(/grid-template-columns:/);
+  it("the Planning 2a .qrow rule owns the padding and the five-column grid", () => {
+    expect(row).toMatch(/padding:\s*6px 12px/);
+    expect(row).toMatch(/grid-template-columns:/);
   });
 
   it("vertical padding separates adjacent rows (≥6px each side)", () => {
@@ -48,27 +57,24 @@ describe("placement rows carry enough vertical breathing room", () => {
     expect(vertical).toBeGreaterThanOrEqual(6);
   });
 
-  it("the spacing is vertical-only — horizontal padding stays 0", () => {
+  it("the row keeps the compact 12px horizontal padding", () => {
     const pad = row.match(/padding:\s*([^;]+);/)?.[1] ?? "";
     const parts = pad.trim().split(/\s+/);
-    expect(parts[1]).toBe("0");
+    expect(parts[1]).toBe("12px");
   });
 });
 
-describe("row spacing never erodes control touch targets", () => {
-  it("direct verbs keep the 44px floor", () => {
+describe("row spacing never erodes shared control touch targets", () => {
+  it("the shared direct-verb base keeps the 44px floor", () => {
     expect(firstBlock("alloc-verb")).toMatch(/min-height:\s*44px/);
   });
 
-  it("row icon controls keep the 44px floor", () => {
+  it("the shared row icon control base keeps the 44px floor", () => {
     expect(firstBlock("qrow__controls .iconbtn")).toMatch(/min-height:\s*44px/);
   });
 
-  it("the duration track keeps its 44px hit area", () => {
+  it("the shared duration track keeps its 44px hit area", () => {
     expect(firstBlock("alloc-track")).toMatch(/height:\s*44px/);
-  });
-
-  it("the 15-minute track has enough visual room without shrinking its hit area", () => {
     expect(firstBlock("alloc-track")).toMatch(/min-width:\s*140px/);
     expect(firstBlock("alloc-track__input")).toMatch(/height:\s*44px/);
   });
@@ -79,6 +85,17 @@ describe("row spacing never erodes control touch targets", () => {
     )?.[1] ?? "";
     expect(thumb).toMatch(/width:\s*14px/);
     expect(thumb).toMatch(/height:\s*14px/);
+  });
+
+  it("scopes the 2a row to 34px icon buttons and a 22px track", () => {
+    // The compact desktop row deliberately uses smaller hit areas; the shared
+    // 44px floors above still govern the wider and coarse layouts.
+    const grouped = appCss.match(
+      /\.qrow__actions \.planbtn:not\(\.row-more__item\),[\s\S]*?\{([^}]*)\}/,
+    )?.[1] ?? "";
+    expect(grouped).toMatch(/width:\s*34px/);
+    expect(grouped).toMatch(/height:\s*34px/);
+    expect(lastRuleBody("\\.qrow__time \\.alloc-track")).toMatch(/height:\s*22px/);
   });
 });
 
@@ -101,16 +118,14 @@ describe("queue controls stay inside the viewport", () => {
     );
   });
 
-  it("compacts the tablet row to a named two-line grid (2026-10-13)", () => {
-    // 768-1100px: the old four-line stack (title/source, due, time, actions)
-    // measured ~190px; the bolder pass re-templates it to
-    // stripe | body | due / stripe | actions | time and folds the readout
-    // inline. See row-compact-1100.test.ts for the full contract.
+  it("re-templates the row to the 2a two-line grid at <=1100px", () => {
+    // Planning 2a: status spans two rows; body + priority on line 1; duration
+    // and actions on line 2. See row-compact-1100.test.ts for the full contract.
     expect(appCss).toMatch(
-      /@media\s*\(min-width:\s*768px\)\s*and\s*\(max-width:\s*1100px\)[\s\S]*?\.qrow\s*\{[\s\S]*?grid-template-areas:[\s\S]*?"stripe body due"[\s\S]*?"stripe actions time"/,
+      /@media screen and \(max-width: 1100px\)[\s\S]*?\.qrow\s*\{[\s\S]*?grid-template-columns:\s*118px minmax\(0,\s*1fr\) auto/,
     );
     expect(appCss).toMatch(
-      /@media\s*\(min-width:\s*768px\)\s*and\s*\(max-width:\s*1100px\)[\s\S]*?\.qrow__time\s*\{[^}]*flex-direction:\s*row/,
+      /@media screen and \(max-width: 1100px\)[\s\S]*?\.qrow__time\s*\{[^}]*grid-column:\s*2/,
     );
   });
 });

@@ -273,7 +273,9 @@ describe("Queue", () => {
     expect(getByText(/^Critical$/)).toBeTruthy();
     expect(getByText(/When there's room/)).toBeTruthy();
     expect(getAllByText(/^Fixed$/).length).toBeGreaterThan(0);
-    expect(getByText(/Out today/)).toBeTruthy();
+    // Planning 2a: the trailing Out today lane is collapsed by default and
+    // omitted entirely when nothing is out.
+    expect(container.querySelector(".band--drop")).toBeNull();
     // All-day rows band with the rest now — there is no trailing "All day"
     // heading to count, so the badge on the row carries the state.
     expect(getByText("All day")).toBeTruthy();
@@ -1112,18 +1114,18 @@ describe("T25 recurring duration shaping", () => {
     const { container } = ui(<Queue />);
     const rows = Array.from(container.querySelectorAll(".qrow__source")) as HTMLElement[];
     // U11 labeling (2026-10-10): provenance LEADS the line as a coloured
-    // source chip (TODOIST / CAPACITIES), then the human KIND, then
+    // source chip (Todoist / Capacities), then the human KIND, then
     // plain meta. The raw uppercase TASK/ROOTTASK/UUID badge is gone.
     expect(rows.length).toBeGreaterThan(0);
     for (const el of rows) {
       const chip = el.querySelector(".qrow__src");
       expect(chip).toBeTruthy();
       expect((chip as HTMLElement).textContent).toMatch(
-        /^(TODOIST|CAPACITIES|CALENDAR)$/,
+        /^(Todoist|Capacities|Calendar)$/,
       );
     }
     // The source itself is still named on the line.
-    expect(rows.map((el) => el.textContent).join(" ")).toMatch(/TODOIST|CAPACITIES/);
+    expect(rows.map((el) => el.textContent).join(" ")).toMatch(/Todoist|Capacities/);
     const kinds = rows.map((el) => el.querySelector(".qrow__type")?.textContent);
     expect(new Set(kinds.filter(Boolean)).size).toBeGreaterThan(0);
   });

@@ -114,6 +114,9 @@ export function ConnectionsScreen() {
   const [phase, setPhase] = useState<"loading" | "ready" | "saving" | "error">("loading");
   const [error, setError] = useState<string | null>(null);
   const [discovered, setDiscovered] = useState<CapacitiesCatalog | null>(null);
+  // Which nav item owns the detail pane. Null falls back to the first
+  // configured structure (or Advanced when the mapping lists none).
+  const [selectedNav, setSelectedNav] = useState<string | null>(null);
 
   const load = async () => {
     setPhase("loading");
@@ -338,7 +341,6 @@ export function ConnectionsScreen() {
     const title = capSettings?.structureTitles[structureId];
     return title && title !== structureId ? title : null;
   };
-  const primary = structures[0] ?? null;
 
   const known = useMemo(() => {
     const seen = new Set<string>();
@@ -368,20 +370,33 @@ export function ConnectionsScreen() {
   };
 
   const excludedTagIds = new Set((tagDraft?.tags ?? []).map((t) => t.tagId));
-  const previewRows: PreviewRow[] = known.map((item) => {
-    const tags = item.tags ?? [];
-    if (tags.some((tag) => excludedTagIds.has(tag))) {
-      return { title: item.name, reason: "left out by tag" };
-    }
-    const structure = item.capacitiesStructureId ?? "";
-    if (!(structure in (capDraft?.assignedStructures ?? {}))) {
-      return { title: item.name, reason: "waiting on mapping" };
-    }
-    return { title: item.name, reason: "admitted" };
-  });
-  const admittedCount = previewRows.filter((r) => r.reason === "admitted").length;
-  const leftOutCount = previewRows.filter((r) => r.reason === "left out by tag").length;
-  const waitingCount = previewRows.filter((r) => r.reason === "waiting on mapping").length;
+  /* The preview is per structure. An item's structure comes from the canonical
+     `capacities:<space>:<structure>:<object>` identity; the backend also emits
+     a dedicated `capacities_structure_id`, but the wire projection does not map
+     it today, so the identity is the populated path and the explicit field wins
+     when a fixture or legacy payload carries it. An item whose structure is not
+     in the configured list appears under no nav item, which is the honest
+     state rather than showing it under every structure. */
+  const structureOf = (item: AssignedItem): string => {
+    const explicit = (item.capacitiesStructureId ?? "").trim();
+    if (explicit !== "") return explicit;
+    const identity = item.capacitiesIdentity ?? item.identity ?? "";
+    const parts = identity.split(":");
+    return parts[0] === "capacities" && parts.length >= 4 ? parts[2] : "";
+  };
+  const previewRowsFor = (structureId: string): PreviewRow[] =>
+    known
+      .filter((item) => structureOf(item) === structureId)
+      .map((item) => {
+        const tags = item.tags ?? [];
+        if (tags.some((tag) => excludedTagIds.has(tag))) {
+          return { title: item.name, reason: "left out by tag" };
+        }
+        if (!(structureId in (capDraft?.assignedStructures ?? {}))) {
+          return { title: item.name, reason: "waiting on mapping" };
+        }
+        return { title: item.name, reason: "admitted" };
+      });
 
   const syncText = (() => {
     const state = s.inputs?.capacitiesIntake?.state;
@@ -396,66 +411,326 @@ export function ConnectionsScreen() {
       (p) => p.propertyId,
     ) ?? [];
 
-  /* -- render ------------------------------------------------------------- */
+  /* -- navigation helpers ------------------------------------------------ */
 
-  const renderAdmitWhen = () => {
+  const SHORT_ID_AFTER = 24;
+  const shortId = (structureId: string): string =>
+    structureId.length > SHORT_ID_AFTER ? `${structureId.slice(0, 8)}…` : structureId;
+  const navLabel = (structureId: string): string => {
+    const title = titleOf(structureId);
+    const short = shortId(structureId);
+    return title ? (short === structureId ? title : `${title} ${short}`) : short;
+  };
+  /** A structure's health dot: amber while it still needs a mapping, green
+      once it is mapped and pulling, grey when the operator turned it off. */
+  const structureDot = (structureId: string): string => {
+    const mapped = (capDraft?.assignedStructures[structureId] ?? "") !== "";
+    if (!mapped) return "#e0a020";
+    return capDraft?.activeStructures.includes(structureId) ? "#1f9d6b" : "#cfccc4";
+  };
+  /** Sources keep their own health: Todoist/Calendar from the global source
+      read, Capacities amber while any structure still waits on a mapping. */
+  const sourceDot = (source: string): string => {
+    if (source === "capacities") {
+      const state = s.inputs?.capacitiesIntake?.state;
+      const anyUnmapped = structures.some(
+        (id) => (capDraft?.assignedStructures[id] ?? "") === "",
+      );
+      return state !== "ok" || anyUnmapped ? "#e0a020" : "#1f9d6b";
+    }
+    return s.inputs?.sourceHealth === "ok" ? "#1f9d6b" : "#e0a020";
+  };
+
+  const defaultNav =
+    structures.length > 0 ? `structure:${structures[0]}` : "rule:advanced";
+  const activeNav = selectedNav ?? defaultNav;
+
+  /* -- detail renderers --------------------------------------------------- */
+
+  const renderSwitch = (name: string, checked: boolean, onChange: () => void) => (
+    <button
+      type="button"
+      role="switch"
+      class="connections-switch"
+      aria-checked={checked}
+      aria-label={name}
+      onClick={onChange}
+    />
+  );
+
+  const renderGlobalRules = () => {
     if (!capDraft) return null;
     const policy = capDraft.nativeTaskAuto;
     return (
-      <div class="connections-card__col">
-        <h4 class="connections-card__eyebrow">Admit when</h4>
-        <label class="connections-check">
-          <input
-            type="checkbox"
-            checked={policy.activeEnabled}
-            onChange={(e) => updatePolicy({ activeEnabled: (e.currentTarget as HTMLInputElement).checked })}
-          />
-          <span>Status is active</span>
-        </label>
-        <label class="connections-check">
-          <input
-            type="checkbox"
-            checked={policy.dueEnabled}
-            onChange={(e) => updatePolicy({ dueEnabled: (e.currentTarget as HTMLInputElement).checked })}
-          />
-          <span>Due today or overdue</span>
-        </label>
-        <label class="connections-check">
-          <input
-            type="checkbox"
-            checked={policy.deadlineEnabled}
-            onChange={(e) => updatePolicy({ deadlineEnabled: (e.currentTarget as HTMLInputElement).checked })}
-          />
-          <span>Deadline within</span>
-          <input
-            class="connections-check__days"
-            type="number"
-            min="0"
-            step="1"
-            aria-label="Deadline horizon"
-            value={horizonText}
-            disabled={!policy.deadlineEnabled}
-            onInput={(e) => {
-              const text = (e.currentTarget as HTMLInputElement).value;
-              setHorizonText(text);
-              const value = Number(text);
-              if (Number.isSafeInteger(value) && value >= 0) updatePolicy({ deadlineHorizonDays: value });
-            }}
-          />
-          <span>days</span>
-        </label>
+      <>
+        <div class="connections-admit__row">
+          <span class="connections-admit__name">Status is active</span>
+          {renderSwitch("Status is active", policy.activeEnabled, () =>
+            updatePolicy({ activeEnabled: !policy.activeEnabled }),
+          )}
+        </div>
+        <div class="connections-admit__row">
+          <span class="connections-admit__name">Due today or overdue</span>
+          {renderSwitch("Due today or overdue", policy.dueEnabled, () =>
+            updatePolicy({ dueEnabled: !policy.dueEnabled }),
+          )}
+        </div>
+        <div class="connections-admit__row">
+          <span class="connections-admit__name">
+            Deadline within
+            <input
+              class="connections-check__days"
+              type="number"
+              min="0"
+              step="1"
+              aria-label="Deadline horizon"
+              value={horizonText}
+              disabled={!policy.deadlineEnabled}
+              onInput={(e) => {
+                const text = (e.currentTarget as HTMLInputElement).value;
+                setHorizonText(text);
+                const value = Number(text);
+                if (Number.isSafeInteger(value) && value >= 0)
+                  updatePolicy({ deadlineHorizonDays: value });
+              }}
+            />
+            days
+          </span>
+          {renderSwitch(
+            `Deadline within ${horizonText} days`,
+            policy.deadlineEnabled,
+            () => updatePolicy({ deadlineEnabled: !policy.deadlineEnabled }),
+          )}
+        </div>
         {horizonInvalid && (
-          <span class="field-error" role="alert">Use a nonnegative whole number.</span>
+          <p class="field-error connections-admit__error" role="alert">
+            Use a nonnegative whole number.
+          </p>
         )}
-        <div class="connections-active-means">
-          <span class="connections-card__eyebrow">Active means</span>
-          {capDraft.activeStatuses.map((status) => (
-            <span class="connections-chip" key={status}>
-              {status}
+        <div class="connections-admit__row connections-admit__row--chips">
+          <span class="connections-admit__name">Active means</span>
+          <div class="connections-active-means">
+            {capDraft.activeStatuses.map((status) => (
+              <span class="connections-chip" key={status}>
+                {status}
+                <button
+                  class="connections-chip__x"
+                  aria-label={`Remove status ${status}`}
+                  onClick={() => removeStatus(status)}
+                >
+                  ×
+                </button>
+              </span>
+            ))}
+            <input
+              class="connections-chip-input"
+              type="text"
+              aria-label="Add a status value"
+              placeholder="+ add"
+              value={statusText}
+              onInput={(e) => setStatusText((e.currentTarget as HTMLInputElement).value)}
+              onKeyDown={(e) => {
+                if ((e as unknown as KeyboardEvent).key === "Enter") addStatus();
+              }}
+            />
+          </div>
+        </div>
+      </>
+    );
+  };
+
+  const renderStructureRules = (structureId: string) => (
+    <>
+      <div class="connections-admit__row">
+        <span class="connections-admit__name">Include in active pull</span>
+        {renderSwitch(
+          `Include in active pull for ${structureId}`,
+          capDraft?.activeStructures.includes(structureId) ?? false,
+          () => toggleActiveStructure(structureId),
+        )}
+      </div>
+      <div class="connections-admit__row">
+        <span class="connections-admit__name">Use native rules</span>
+        {renderSwitch(
+          `Native rules for ${structureId}`,
+          capDraft?.nativeTaskStructures.includes(structureId) ?? false,
+          () => toggleNativeStructure(structureId),
+        )}
+      </div>
+    </>
+  );
+
+  const renderMapping = (structureId: string) => {
+    const value = capDraft?.assignedStructures[structureId] ?? "";
+    return (
+      <div class="connections-mapping">
+        <span class="connections-admit__label">Property mapping</span>
+        <div class="connections-mapping__row">
+          <input
+            class="connections-mapping__input"
+            type="text"
+            list={`connections-props-${structureId}`}
+            aria-label={`Mapping for ${structureId}`}
+            placeholder="Property id"
+            value={value}
+            onInput={(e) => setMapping(structureId, (e.currentTarget as HTMLInputElement).value)}
+          />
+          <button
+            class="btn btn--primary connections-mapping__discover"
+            onClick={() => void discover()}
+          >
+            Discover from Capacities
+          </button>
+          <datalist id={`connections-props-${structureId}`}>
+            {mappingChoices(structureId).map((propertyId) => (
+              <option key={propertyId} value={propertyId} />
+            ))}
+          </datalist>
+        </div>
+      </div>
+    );
+  };
+
+  const renderStructureDetail = (structureId: string) => {
+    const previewRows = previewRowsFor(structureId);
+    const admittedCount = previewRows.filter((r) => r.reason === "admitted").length;
+    const waitingCount = previewRows.filter((r) => r.reason === "waiting on mapping").length;
+    const excludedCount = previewRows.filter((r) => r.reason === "left out by tag").length;
+    const firstWaiting = previewRows.find((r) => r.reason === "waiting on mapping");
+    const typeLabel = firstWaiting?.title ?? previewRows[0]?.title ?? "";
+    const mapped = capDraft?.assignedStructures[structureId] ?? "";
+    return (
+      <>
+        <div class="connections-detail__head">
+          <div class="connections-detail__id">
+            <span class="connections-detail__kicker">Capacities structure</span>
+            <h2 class="connections-detail__title">{titleOf(structureId) ?? structureId}</h2>
+            <p class="connections-detail__helper">
+              Items are admitted when any rule matches. Completed and dropped items are always
+              left out.
+            </p>
+            <code class="connections-detail__mapping">
+              {mapped !== "" ? `Mapped: ${mapped}` : "Not mapped"}
+            </code>
+          </div>
+          <button
+            class="connections-detail__remove"
+            aria-label={`Remove structure ${titleOf(structureId) ?? structureId}`}
+            onClick={() => removeStructure(structureId)}
+          >
+            Remove
+          </button>
+        </div>
+
+        <div class="connections-previewstrip" role="region" aria-label="Preview · today">
+          <span class="connections-previewstrip__count">{admittedCount} admitted today</span>
+          <span class="connections-previewstrip__meta">
+            {waitingCount} waiting on mapping
+            {excludedCount > 0 ? ` · ${excludedCount} left out by tag` : ""}
+            {typeLabel !== "" ? ` · ${typeLabel}` : ""}
+          </span>
+        </div>
+
+        <details class="connections-previewitems">
+          <summary class="connections-previewitems__summary">
+            Preview items ({previewRows.length})
+          </summary>
+          {previewRows.length === 0 ? (
+            <p class="connections-previewitems__empty">
+              Nothing in the current read is waiting on this structure.
+            </p>
+          ) : (
+            <ul class="connections-previewitems__list">
+              {previewRows.map((row) => (
+                <li class="connections-previewitems__row" key={`${row.title}:${row.reason}`}>
+                  <span class="connections-previewitems__title">{row.title}</span>
+                  <span class="connections-previewitems__reason">{row.reason}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </details>
+
+        <div class="connections-admit">
+          <span class="connections-admit__label">Admit when</span>
+          {structures[0] === structureId ? renderGlobalRules() : renderStructureRules(structureId)}
+        </div>
+
+        {renderMapping(structureId)}
+      </>
+    );
+  };
+
+  const renderSourceDetail = (source: string) => {
+    if (source === "capacities") {
+      return (
+        <>
+          <div class="connections-detail__head">
+            <div class="connections-detail__id">
+              <span class="connections-detail__kicker">Source</span>
+              <h2 class="connections-detail__title">Capacities</h2>
+              <p class="connections-detail__helper">
+                <span class="connections__sync" role="status" aria-live="polite">
+                  {syncText}
+                </span>
+              </p>
+            </div>
+          </div>
+          <CapacitiesRefreshPanel active={true} />
+          <CapacitiesUnknownReview active={true} />
+        </>
+      );
+    }
+    const isTodoist = source === "todoist";
+    const label = isTodoist ? "Todoist" : "Calendar";
+    const count = isTodoist
+      ? s.inputs?.sourceCounts.todoist ?? 0
+      : s.inputs?.sourceCounts.calendar ?? 0;
+    return (
+      <div class="connections-detail__head">
+        <div class="connections-detail__id">
+          <span class="connections-detail__kicker">Source</span>
+          <h2 class="connections-detail__title">{label}</h2>
+          <p class="connections-detail__helper">
+            {count} {isTodoist ? "tasks" : "events"} in the current read.
+            {s.inputs?.sourceHealth === "ok"
+              ? " Healthy."
+              : " Degraded — the last read reported a problem."}
+          </p>
+        </div>
+      </div>
+    );
+  };
+
+  const renderTagsDetail = () => {
+    if (!tagDraft) return null;
+    return (
+      <section class="connections-card connections-card--tags" aria-label="Exclude items tagged">
+        <header class="connections-card__head">
+          <h3 class="connections-card__title">Exclude items tagged</h3>
+          <span class="connections-card__note">Applies to every structure</span>
+        </header>
+        {staleTags.length > 0 && (
+          <div class="connections-stale" role="status">
+            <span>A saved tag no longer exists in Capacities.</span>
+            <code>{staleTags[0].tagId.slice(0, 8)}…</code>
+            <button
+              class="btn"
+              aria-label={`Remove saved tag ${staleTags[0].tagId}`}
+              onClick={() => toggleTag(staleTags[0])}
+            >
+              Remove
+            </button>
+          </div>
+        )}
+        <div class="connections-tags">
+          {(tagDraft.tags ?? []).map((identity) => (
+            <span class="connections-chip" key={tagKey(identity)}>
+              {tagLabelOf(identity)}
               <button
                 class="connections-chip__x"
-                aria-label={`Remove status ${status}`}
-                onClick={() => removeStatus(status)}
+                aria-label={`Remove tag ${tagLabelOf(identity)}`}
+                onClick={() => toggleTag(identity)}
               >
                 ×
               </button>
@@ -463,57 +738,107 @@ export function ConnectionsScreen() {
           ))}
           <input
             class="connections-chip-input"
-            type="text"
-            aria-label="Add a status value"
-            placeholder="+ add"
-            value={statusText}
-            onInput={(e) => setStatusText((e.currentTarget as HTMLInputElement).value)}
-            onKeyDown={(e) => {
-              if ((e as unknown as KeyboardEvent).key === "Enter") addStatus();
-            }}
+            type="search"
+            aria-label="Search tags to exclude"
+            placeholder="Search tags to exclude…"
+            value={tagQuery}
+            onInput={(e) => setTagQuery((e.currentTarget as HTMLInputElement).value)}
           />
         </div>
-      </div>
+        {tagQuery.trim() !== "" && (
+          <ul class="connections-tags__suggestions">
+            {catalogTags
+              .filter(
+                (tag) =>
+                  !selectedTagKeys.has(`capacities:${tagSettings?.catalog.spaceId}:${tag.id}`) &&
+                  (tag.title ?? "")
+                    .toLocaleLowerCase()
+                    .includes(tagQuery.trim().toLocaleLowerCase()),
+              )
+              .map((tag) => (
+                <li key={tag.id}>
+                  <button
+                    class="btn"
+                    onClick={() =>
+                      toggleTag({
+                        source: "capacities",
+                        spaceId: tagSettings?.catalog.spaceId ?? "",
+                        tagId: tag.id,
+                      })
+                    }
+                  >
+                    #{tag.title ?? tag.id}
+                  </button>
+                </li>
+              ))}
+          </ul>
+        )}
+      </section>
     );
   };
 
-  const renderMapping = (structureId: string, withDiscover: boolean) => {
-    const value = capDraft?.assignedStructures[structureId] ?? "";
-    return (
-      <div class="connections-card__col connections-card__col--mapping">
-        <div class="connections-mapping__head">
-          <h4 class="connections-card__eyebrow">Property mapping</h4>
-          {withDiscover && (
-            <button class="btn btn--primary" onClick={() => void discover()}>
-              Discover from Capacities
-            </button>
-          )}
-        </div>
-        <input
-          class="connections-mapping__input"
-          type="text"
-          list={`connections-props-${structureId}`}
-          aria-label={`Mapping for ${structureId}`}
-          placeholder="property id"
-          value={value}
-          onInput={(e) => setMapping(structureId, (e.currentTarget as HTMLInputElement).value)}
-        />
-        <datalist id={`connections-props-${structureId}`}>
-          {mappingChoices(structureId).map((propertyId) => (
-            <option key={propertyId} value={propertyId} />
+  const renderAdvancedDetail = () => (
+    <div class="connections-advanced__body">
+      <CapacitiesSourceEditor structureTitleOf={titleOf} />
+      {assignmentWarnings.length > 0 && (
+        <section class="setup-section" aria-label="Ignored declarations">
+          <h4>Ignored declarations in the current read</h4>
+          {assignmentWarnings.map((warning) => (
+            <code key={warning}>{warning}</code>
           ))}
-        </datalist>
-      </div>
-    );
+        </section>
+      )}
+      <section class="setup-section" aria-label="Known Capacities objects">
+        <h4>Known Capacities objects</h4>
+        {known.length === 0 ? (
+          <p class="capacities-settings__empty">
+            No Capacities objects are present in the current plan inputs.
+          </p>
+        ) : (
+          <div class="capacities-object-list">
+            {known.map((item) => (
+              <div class="capacities-object-row" key={item.capacitiesIdentity ?? item.id}>
+                <div class="capacities-object-row__identity">
+                  <strong>{item.name}</strong>
+                  <code>{item.capacitiesIdentity ?? item.identity}</code>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+    </div>
+  );
+
+  const navItem = (id: string, label: string, dot?: string) => (
+    <button
+      key={id}
+      type="button"
+      class={`connections-navitem${activeNav === id ? " connections-navitem--active" : ""}`}
+      aria-current={activeNav === id ? "true" : undefined}
+      onClick={() => setSelectedNav(id)}
+    >
+      <span class="connections-navitem__label">{label}</span>
+      {dot && (
+        <span class="connections-navitem__dot" style={{ background: dot }} aria-hidden="true" />
+      )}
+    </button>
+  );
+
+  const detailOf = () => {
+    if (activeNav.startsWith("structure:")) {
+      return renderStructureDetail(activeNav.slice("structure:".length));
+    }
+    if (activeNav.startsWith("source:")) {
+      return renderSourceDetail(activeNav.slice("source:".length));
+    }
+    if (activeNav === "rule:tags") return renderTagsDetail();
+    return renderAdvancedDetail();
   };
 
   return (
     <div class="connections">
-      <header class="connections__subhead">
-        <button class="connections__back" onClick={back}>← Back to planning</button>
-        <h1 class="connections__title">Connections</h1>
-        <span class="connections__sync" role="status">{syncText}</span>
-      </header>
+      <h1 class="sr-only">Connections</h1>
 
       {phase === "loading" && (
         <p class="connections__state" role="status">Loading Connections…</p>
@@ -527,229 +852,46 @@ export function ConnectionsScreen() {
       )}
 
       {phase !== "loading" && capDraft && tagDraft && (
-        <div class="connections__body">
-          <div class="connections__left">
-            <h2 class="connections__lead">Which Capacities items reach your morning list</h2>
-            <p class="connections__explainer">
-              An item is admitted when any rule below matches. Completed and dropped items are always left out.
-            </p>
-
-            <table class="connections-table" aria-label="Capacities structures">
-              <thead>
-                <tr>
-                  <th scope="col">STRUCTURE</th>
-                  <th scope="col">NATIVE RULES</th>
-                  <th scope="col">ACTIVE PULL</th>
-                  <th scope="col">ASSIGNED FLAG</th>
-                  <th scope="col">MAPPING</th>
-                </tr>
-              </thead>
-              <tbody>
-                {structures.length === 0 ? (
-                  <tr>
-                    <td colSpan={5} class="connections-table__empty">
-                      The Capacities source mapping lists no structures.
-                    </td>
-                  </tr>
-                ) : (
-                  structures.map((structureId) => (
-                    <tr key={structureId}>
-                      <td>
-                        {titleOf(structureId) && <strong>{titleOf(structureId)} </strong>}
-                        <code>{structureId}</code>
-                      </td>
-                      <td>{capDraft.nativeTaskStructures.includes(structureId) ? "On" : "Off"}</td>
-                      <td>{capDraft.activeStructures.includes(structureId) ? "On" : "Off"}</td>
-                      <td>{capDraft.assignedStructures[structureId] ?? "—"}</td>
-                      <td>{capDraft.assignedStructures[structureId] ? "Mapped" : "—"}</td>
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-
-            {structures.length === 0 ? (
-              <section class="connections-card" aria-label="Admission rules">
-                <header class="connections-card__head">
-                  <h3 class="connections-card__title">Admission rules</h3>
-                </header>
-                <div class="connections-card__cols">
-                  {renderAdmitWhen()}
-                  {renderMapping(primary ?? "", false)}
-                </div>
-              </section>
-            ) : (
-              structures.map((structureId, index) => (
-                <section class="connections-card" key={structureId} aria-label={`${titleOf(structureId) ?? structureId} ${structureId}`}>
-                  <header class="connections-card__head">
-                    <h3 class="connections-card__title">{titleOf(structureId) ?? structureId}</h3>
-                    <code class="connections-card__id">{structureId}</code>
-                    <button class="connections-card__remove" onClick={() => removeStructure(structureId)}>
-                      Remove structure
-                    </button>
-                  </header>
-                  <div class="connections-card__cols">
-                    {index === 0 ? (
-                      renderAdmitWhen()
-                    ) : (
-                      <div class="connections-card__col">
-                        <h4 class="connections-card__eyebrow">Admit when</h4>
-                        <label class="connections-check">
-                          <input
-                            type="checkbox"
-                            checked={capDraft.activeStructures.includes(structureId)}
-                            aria-label={`Include in active pull for ${structureId}`}
-                            onChange={() => toggleActiveStructure(structureId)}
-                          />
-                          <span>Include in active pull</span>
-                        </label>
-                        <label class="connections-check">
-                          <input
-                            type="checkbox"
-                            checked={capDraft.nativeTaskStructures.includes(structureId)}
-                            aria-label={`Native rules for ${structureId}`}
-                            onChange={() => toggleNativeStructure(structureId)}
-                          />
-                          <span>Use native rules</span>
-                        </label>
-                      </div>
-                    )}
-                    {renderMapping(structureId, index === 0)}
-                  </div>
-                </section>
-              ))
-            )}
-
-            <section class="connections-card connections-card--tags" aria-label="Exclude items tagged">
-              <header class="connections-card__head">
-                <h3 class="connections-card__title">Exclude items tagged</h3>
-                <span class="connections-card__note">Applies to every structure</span>
-              </header>
-              {staleTags.length > 0 && (
-                <div class="connections-stale" role="status">
-                  <span>A saved tag no longer exists in Capacities.</span>
-                  <code>{staleTags[0].tagId.slice(0, 8)}…</code>
-                  <button
-                    class="btn"
-                    aria-label={`Remove saved tag ${staleTags[0].tagId}`}
-                    onClick={() => toggleTag(staleTags[0])}
-                  >
-                    Remove
-                  </button>
-                </div>
+        <div class="connections__frame">
+          <nav class="connections__nav" aria-label="Connections sections">
+            <button class="connections__back" onClick={back}>← Back to planning</button>
+            <div class="connections__group">
+              <span class="connections__group-label">Sources</span>
+              {navItem("source:todoist", "Todoist", sourceDot("todoist"))}
+              {navItem("source:calendar", "Calendar", sourceDot("calendar"))}
+              {navItem("source:capacities", "Capacities", sourceDot("capacities"))}
+            </div>
+            <div class="connections__group">
+              <span class="connections__group-label">Capacities structures</span>
+              {structures.length === 0 ? (
+                <span class="connections__group-empty">
+                  No structures in the source mapping.
+                </span>
+              ) : (
+                structures.map((structureId) =>
+                  navItem(
+                    `structure:${structureId}`,
+                    navLabel(structureId),
+                    structureDot(structureId),
+                  ),
+                )
               )}
-              <div class="connections-tags">
-                {(tagDraft.tags ?? []).map((identity) => (
-                  <span class="connections-chip" key={tagKey(identity)}>
-                    {tagLabelOf(identity)}
-                    <button
-                      class="connections-chip__x"
-                      aria-label={`Remove tag ${tagLabelOf(identity)}`}
-                      onClick={() => toggleTag(identity)}
-                    >
-                      ×
-                    </button>
-                  </span>
-                ))}
-                <input
-                  class="connections-chip-input"
-                  type="search"
-                  aria-label="Search tags to exclude"
-                  placeholder="Search tags to exclude…"
-                  value={tagQuery}
-                  onInput={(e) => setTagQuery((e.currentTarget as HTMLInputElement).value)}
-                />
-              </div>
-              {tagQuery.trim() !== "" && (
-                <ul class="connections-tags__suggestions">
-                  {catalogTags
-                    .filter(
-                      (tag) =>
-                        !selectedTagKeys.has(`capacities:${tagSettings?.catalog.spaceId}:${tag.id}`) &&
-                        (tag.title ?? "").toLocaleLowerCase().includes(tagQuery.trim().toLocaleLowerCase()),
-                    )
-                    .map((tag) => (
-                      <li key={tag.id}>
-                        <button
-                          class="btn"
-                          onClick={() =>
-                            toggleTag({
-                              source: "capacities",
-                              spaceId: tagSettings?.catalog.spaceId ?? "",
-                              tagId: tag.id,
-                            })
-                          }
-                        >
-                          #{tag.title ?? tag.id}
-                        </button>
-                      </li>
-                    ))}
-                </ul>
-              )}
-            </section>
+            </div>
+            <div class="connections__group">
+              <span class="connections__group-label">Rules</span>
+              {navItem("rule:tags", "Exclude tags")}
+              {navItem("rule:advanced", "Advanced")}
+            </div>
+          </nav>
 
-            <details class="connections-advanced">
-              <summary>Advanced</summary>
-              <div class="connections-advanced__body">
-                <CapacitiesSourceEditor structureTitleOf={titleOf} />
-                <CapacitiesRefreshPanel active={true} />
-                <CapacitiesUnknownReview active={true} />
-                {assignmentWarnings.length > 0 && (
-                  <section class="setup-section" aria-label="Ignored declarations">
-                    <h4>Ignored declarations in the current read</h4>
-                    {assignmentWarnings.map((warning) => (
-                      <code key={warning}>{warning}</code>
-                    ))}
-                  </section>
-                )}
-                <section class="setup-section" aria-label="Known Capacities objects">
-                  <h4>Known Capacities objects</h4>
-                  {known.length === 0 ? (
-                    <p class="capacities-settings__empty">
-                      No Capacities objects are present in the current plan inputs.
-                    </p>
-                  ) : (
-                    <div class="capacities-object-list">
-                      {known.map((item) => (
-                        <div class="capacities-object-row" key={item.capacitiesIdentity ?? item.id}>
-                          <div class="capacities-object-row__identity">
-                            <strong>{item.name}</strong>
-                            <code>{item.capacitiesIdentity ?? item.identity}</code>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </section>
-              </div>
-            </details>
-
+          <section class="connections__detail">
+            {detailOf()}
             {error && (
               <div class="connections__save-error" role="alert">
                 <span>{error}</span>
               </div>
             )}
-          </div>
-
-          <aside class="connections__right">
-            <section class="connections-preview" role="region" aria-label="Preview · Today">
-              <div class="connections-preview__eyebrow">PREVIEW · TODAY</div>
-              <div class="connections-preview__count">
-                {admittedCount} item{admittedCount === 1 ? "" : "s"} admitted
-              </div>
-              <div class="connections-preview__split">
-                {leftOutCount} left out by tag · {waitingCount} waiting on mapping
-              </div>
-              <ul class="connections-preview__list">
-                {previewRows.map((row) => (
-                  <li key={row.title}>
-                    <span class="connections-preview__t">{row.title}</span>
-                    <span class="connections-preview__why">{row.reason}</span>
-                  </li>
-                ))}
-              </ul>
-            </section>
-          </aside>
+          </section>
         </div>
       )}
     </div>

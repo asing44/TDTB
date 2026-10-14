@@ -1,11 +1,17 @@
-/* custom-prompts.test.tsx: "+ Add prompt" and the Edit prompts mode
-   for local-only custom morning prompts. Everything stays in the injected
-   store (the same in-memory Storage pattern as store/persist.test.ts). */
+/* custom-prompts.test.tsx: browser-defined morning prompts (Planning 2a).
+   Question definitions stay in the injected store; answers persist through the
+   captures patch (`{ [id]: answer }`, "" clears) that the card forwards to the
+   backend. The Edit prompts toggle reveals rename and remove. */
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render } from "@testing-library/preact";
 
-import { CustomPromptList } from "./CustomPromptList";
+import {
+  CUSTOM_PROMPT_PERSIST_DELAY_MS,
+  CustomPromptAdd,
+  CustomPromptList,
+  useCustomPrompts,
+} from "./CustomPromptList";
 import { CUSTOM_PROMPTS_KEY, readCustomPrompts } from "./customPrompts";
 
 afterEach(cleanup);
@@ -24,10 +30,35 @@ function memoryStorage(seed?: [string, string][]): Storage {
   } as Storage;
 }
 
+function Host({
+  editing,
+  storage,
+  onPersist,
+}: {
+  editing: boolean;
+  storage: Storage;
+  onPersist?: (patch: Record<string, string>) => void;
+}) {
+  const custom = useCustomPrompts({ storage, onPersist });
+  return (
+    <>
+      <CustomPromptList
+        prompts={custom.list}
+        editing={editing}
+        onRename={custom.rename}
+        onAnswer={custom.answer}
+        onAnswerBlur={custom.answerBlur}
+        onRemove={custom.remove}
+      />
+      <CustomPromptAdd onAdd={custom.add} />
+    </>
+  );
+}
+
 describe("custom morning prompts", () => {
   it("adds a local prompt, answers it, and keeps both after a remount", () => {
     const store = memoryStorage();
-    const r = render(<CustomPromptList editing={false} storage={store} />);
+    const r = render(<Host editing={false} storage={store} />);
     fireEvent.click(r.getByRole("button", { name: "+ Add prompt" }));
     fireEvent.input(r.getByLabelText("New prompt question"), { target: { value: "Gratitude" } });
     fireEvent.click(r.getByRole("button", { name: "Add" }));
@@ -37,21 +68,13 @@ describe("custom morning prompts", () => {
     ]);
     r.unmount();
 
-    const again = render(<CustomPromptList editing={false} storage={store} />);
+    const again = render(<Host editing={false} storage={store} />);
     expect((again.getByLabelText("Gratitude") as HTMLTextAreaElement).value).toBe("the rain");
-  });
-
-  it("labels the prompts as local only", () => {
-    const store = memoryStorage([
-      [CUSTOM_PROMPTS_KEY, JSON.stringify([{ id: "c1", question: "Gratitude", answer: "" }])],
-    ]);
-    const r = render(<CustomPromptList editing={false} storage={store} />);
-    expect(r.getByText("local only")).toBeTruthy();
   });
 
   it("does not add a blank question", () => {
     const store = memoryStorage();
-    const r = render(<CustomPromptList editing={false} storage={store} />);
+    const r = render(<Host editing={false} storage={store} />);
     fireEvent.click(r.getByRole("button", { name: "+ Add prompt" }));
     fireEvent.input(r.getByLabelText("New prompt question"), { target: { value: "   " } });
     fireEvent.click(r.getByRole("button", { name: "Add" }));
@@ -68,7 +91,7 @@ describe("custom morning prompts", () => {
         ]),
       ],
     ]);
-    const r = render(<CustomPromptList editing={true} storage={store} />);
+    const r = render(<Host editing={true} storage={store} />);
     fireEvent.input(r.getByLabelText("Prompt question for Gratitude"), {
       target: { value: "Thanks" },
     });
@@ -81,14 +104,88 @@ describe("custom morning prompts", () => {
     const store = memoryStorage([
       [CUSTOM_PROMPTS_KEY, JSON.stringify([{ id: "c1", question: "Gratitude", answer: "" }])],
     ]);
-    const r = render(<CustomPromptList editing={false} storage={store} />);
+    const r = render(<Host editing={false} storage={store} />);
     expect(r.queryByLabelText("Prompt question for Gratitude")).toBeNull();
     expect(r.queryByRole("button", { name: "Remove Gratitude" })).toBeNull();
   });
 
-  it("explains the built-ins when editing an empty list", () => {
-    const r = render(<CustomPromptList editing={true} storage={memoryStorage()} />);
-    expect(r.getByRole("button", { name: "+ Add prompt" })).toBeTruthy();
-    expect(r.getByRole("status").textContent).toContain("built in");
+  it("coalesces keystrokes into one persist of the final text", () => {
+    vi.useFakeTimers();
+    try {
+      const store = memoryStorage();
+      const persist = vi.fn();
+      const r = render(<Host editing={false} storage={store} onPersist={persist} />);
+      fireEvent.click(r.getByRole("button", { name: "+ Add prompt" }));
+      fireEvent.input(r.getByLabelText("New prompt question"), { target: { value: "Gratitude" } });
+      fireEvent.click(r.getByRole("button", { name: "Add" }));
+      const prompt = readCustomPrompts(store)[0];
+
+      const field = r.getByLabelText("Gratitude") as HTMLTextAreaElement;
+      fireEvent.input(field, { target: { value: "t" } });
+      fireEvent.input(field, { target: { value: "th" } });
+      fireEvent.input(field, { target: { value: "the rain" } });
+      expect(persist).not.toHaveBeenCalled();
+
+      vi.advanceTimersByTime(CUSTOM_PROMPT_PERSIST_DELAY_MS);
+      expect(persist).toHaveBeenCalledTimes(1);
+      expect(persist).toHaveBeenCalledWith({ [prompt.id]: "the rain" });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("persists immediately on blur and does not double-send", () => {
+    vi.useFakeTimers();
+    try {
+      const store = memoryStorage();
+      const persist = vi.fn();
+      const r = render(<Host editing={false} storage={store} onPersist={persist} />);
+      fireEvent.click(r.getByRole("button", { name: "+ Add prompt" }));
+      fireEvent.input(r.getByLabelText("New prompt question"), { target: { value: "Gratitude" } });
+      fireEvent.click(r.getByRole("button", { name: "Add" }));
+      const prompt = readCustomPrompts(store)[0];
+
+      const field = r.getByLabelText("Gratitude") as HTMLTextAreaElement;
+      fireEvent.input(field, { target: { value: "the rain" } });
+      fireEvent.blur(field);
+      expect(persist).toHaveBeenCalledTimes(1);
+      expect(persist).toHaveBeenCalledWith({ [prompt.id]: "the rain" });
+
+      vi.advanceTimersByTime(CUSTOM_PROMPT_PERSIST_DELAY_MS);
+      expect(persist).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("flushes a still-pending answer when the card unmounts", () => {
+    vi.useFakeTimers();
+    try {
+      const store = memoryStorage();
+      const persist = vi.fn();
+      const r = render(<Host editing={false} storage={store} onPersist={persist} />);
+      fireEvent.click(r.getByRole("button", { name: "+ Add prompt" }));
+      fireEvent.input(r.getByLabelText("New prompt question"), { target: { value: "Gratitude" } });
+      fireEvent.click(r.getByRole("button", { name: "Add" }));
+      const prompt = readCustomPrompts(store)[0];
+
+      fireEvent.input(r.getByLabelText("Gratitude"), { target: { value: "the rain" } });
+      r.unmount();
+      expect(persist).toHaveBeenCalledWith({ [prompt.id]: "the rain" });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("clears a removed prompt on the server with an empty answer", () => {
+    const store = memoryStorage([
+      [CUSTOM_PROMPTS_KEY, JSON.stringify([{ id: "c1", question: "Gratitude", answer: "keep" }])],
+    ]);
+    const persist = vi.fn();
+    const r = render(<Host editing={true} storage={store} onPersist={persist} />);
+    fireEvent.click(r.getByRole("button", { name: "Remove Gratitude" }));
+    expect(persist).toHaveBeenCalledTimes(1);
+    expect(persist).toHaveBeenLastCalledWith({ c1: "" });
+    expect(readCustomPrompts(store)).toEqual([]);
   });
 });

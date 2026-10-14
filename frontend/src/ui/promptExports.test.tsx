@@ -1,7 +1,7 @@
-/* U5 Set up day prompts + commit prompt-export outcomes.
+/* U5 Set up day prompts + commit prompt-export outcomes (Planning 2a).
    - Prompt drafts save through a captures-only PATCH and never confirm the day.
-   - Intention never gets an export toggle; opted prompts persist immediately.
-   - Preferences are unavailable (not false) until the server exposes a read.
+   - There are no per-prompt export opt-ins any more (the block and the store
+     state were removed); every non-empty prompt exports on Commit.
    - A landed main commit with unclean exports reads as a partial/failure, and
      the __main_failure__ sentinel is never rendered as a prompt name. */
 
@@ -16,28 +16,14 @@ import type { CommitReport } from "../model/types";
 // text queries do not match a previous render.
 afterEach(() => cleanup());
 
-function makePrefsAvailable(harness: ReturnType<typeof makeHarness>) {
-  const { store } = harness;
-  store.dispatch({
-    type: "INPUTS_LOADED",
-    inputs: {
-      ...store.getState().inputs!,
-      promptOptins: {
-        optins: { intention: false, megan_nicety: false, stoic_intention: false },
-        revision: 0,
-      },
-    },
-    ledger: { ...store.getState().ledger! },
-  });
-}
-
 describe("U5 Set up day prompts", () => {
-  it("saves drafts through a captures-only PATCH and never confirms the day", () => {
+  it("autosaves drafts through a captures-only PATCH and never confirms the day", () => {
     const h = makeHarness("fresh");
     const spy = vi.spyOn(h.controller, "savePromptDrafts").mockResolvedValue(undefined);
     const r = h.ui(<DaySetupPanel active={true} />);
-    fireEvent.input(r.getByLabelText("Intention"), { target: { value: "one focus" } });
-    fireEvent.click(r.getByText("Save prompts"));
+    const intention = r.getByLabelText("Intention");
+    fireEvent.input(intention, { target: { value: "one focus" } });
+    fireEvent.blur(intention);
     expect(spy).toHaveBeenCalledWith({
       intention: "one focus",
       megan_nicety: "",
@@ -46,25 +32,12 @@ describe("U5 Set up day prompts", () => {
     expect(h.store.getState().daySetup.confirmed).toBe(false);
   });
 
-  it("shows preferences as unavailable rather than false until a server read exists", () => {
+  it("renders no Prompt exports block and no per-prompt export checkbox", () => {
     const h = makeHarness("fresh");
     const r = h.ui(<DaySetupPanel active={true} />);
-    expect(r.getByText(/Export preferences are unavailable/)).toBeTruthy();
+    expect(r.queryByText("Prompt exports")).toBeNull();
+    expect(r.queryByText(/Intention is never exported/)).toBeNull();
     expect(r.queryByRole("checkbox")).toBeNull();
-  });
-
-  it("offers export toggles for Meegy and Stoic only, and persists on toggle", () => {
-    const h = makeHarness("fresh");
-    makePrefsAvailable(h);
-    const spy = vi.spyOn(h.controller, "savePromptOptins").mockResolvedValue(undefined);
-    const r = h.ui(<DaySetupPanel active={true} />);
-    const boxes = r.getAllByRole("checkbox");
-    expect(boxes).toHaveLength(2);
-    expect(r.getByText(/Intention is never exported/)).toBeTruthy();
-    fireEvent.click(boxes[0]);
-    expect(spy).toHaveBeenCalledWith(
-      expect.objectContaining({ megan_nicety: true, intention: false }),
-    );
   });
 });
 

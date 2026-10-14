@@ -103,6 +103,8 @@ export function CapacityCard() {
         >
           {headline}
         </p>
+        {/* Planning 2a: the head reads "6 blk left" + "of 31" (mockup). */}
+        <span class="cap-card__of">of {total}</span>
         <p class="cap-card__cause">
           {cause} Your {taskCount} {taskCount === 1 ? "task" : "tasks"} add{" "}
           {formatBlockAmount(tasks)}.

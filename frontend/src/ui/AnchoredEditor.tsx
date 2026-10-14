@@ -17,18 +17,15 @@ export function AnchoredEditor() {
   const [skip, setSkip] = useState(initial ? !initial.on || initial.skipToday : false);
   const [saving, setSaving] = useState(false);
   // The opener may ask for a specific field: the chip's Adjust time focuses the
-  // Start input, Adjust duration the block stepper. Default focus stays with
-  // useDialog's first-focusable behaviour.
+  // Start input. Default focus stays with useDialog's first-focusable behaviour.
   const intent = s.ui.editorAnchorIntent;
   const startRef = useRef<HTMLInputElement>(null);
-  const durationRef = useRef<HTMLDivElement>(null);
   const close = () =>
     store.dispatch({ type: "UI", patch: { editorAnchor: null, editorAnchorIntent: null } });
   const dialog = useDialog(close);
   // Declared after useDialog so it runs last and wins the mount focus.
   useEffect(() => {
-    if (intent === "duration") durationRef.current?.focus();
-    else if (intent === "time") startRef.current?.focus();
+    if (intent === "time") startRef.current?.focus();
     // Intent is read once on mount; the dialog is keyed by anchor id.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -71,7 +68,7 @@ export function AnchoredEditor() {
         </div>
         <div class="field">
           <label>Duration</label>
-          <div class="stepper" ref={durationRef} role="group" aria-label="Anchored duration" tabIndex={-1}>
+          <div class="stepper" role="group" aria-label="Anchored duration" tabIndex={-1}>
             <button
               type="button"
               onClick={() => setBlocks((b) => Math.max(0, b - 1))}

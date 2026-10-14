@@ -127,8 +127,9 @@ describe("S2 row actions: planning adjustments carry visible labels", () => {
     let press = rowFor(container, "Press");
     fireEvent.click(buttonIn(press, "Exclude Press today"));
     // Exclusion is a grouping change: the row leaves its band for the trailing
-    // "Excluded today" section, so Preact mounts a fresh DOM node there and the
-    // pre-click reference is stale. Re-query before touching the row again.
+    // Out today lane, which starts collapsed (Planning 2a). Expand it before
+    // re-querying — the pre-click reference is stale either way.
+    fireEvent.click(container.querySelector(".band--drop") as HTMLButtonElement);
     press = rowFor(container, "Press");
     expect(press.classList.contains("qrow--excluded")).toBe(true);
     const include = buttonIn(press, "Include Press today");
@@ -205,38 +206,31 @@ describe("S2 row actions: scope notes and grouping", () => {
     fireEvent.blur(leave);
   });
 
-  it("groups planning adjustments apart from item-handling verbs", () => {
+  it("keeps planning adjustments apart from item-handling verbs without nesting", () => {
     const h = makeHarness("ready");
     const { container } = h.ui(<Queue />);
     const press = rowFor(container, "Press");
-
-    const plan = press.querySelector(
-      '[role="group"][aria-label="Planning adjustments for Press"]',
+    const actions = press.querySelector(".qrow__actions") as HTMLElement;
+    // Planning 2a flattened the two labelled sub-clusters into one icon
+    // cluster: the role=group wrappers are gone.
+    expect(actions.querySelector('[role="group"]')).toBeNull();
+    expect(
+      press.querySelector('[role="group"][aria-label="Planning adjustments for Press"]'),
+    ).toBeNull();
+    expect(
+      press.querySelector('[role="group"][aria-label="Item handling for Press"]'),
+    ).toBeNull();
+    const labels = Array.from(actions.querySelectorAll("button")).map((b) =>
+      b.getAttribute("aria-label"),
     );
-    const item = press.querySelector(
-      '[role="group"][aria-label="Item handling for Press"]',
-    );
-    expect(plan).toBeTruthy();
-    expect(item).toBeTruthy();
-    expect(
-      plan!.querySelector('button[aria-label="Exclude Press today"]'),
-    ).toBeTruthy();
-    expect(
-      plan!.querySelector('button[aria-label="Exact duration for Press"]'),
-    ).toBeTruthy();
-    expect(
-      item!.querySelector(
-        'button[aria-label="Mark complete in source: Press"]',
-      ),
-    ).toBeTruthy();
-    expect(
-      item!.querySelector(
-        'button[aria-label="Leave as-is today without changing source: Press"]',
-      ),
-    ).toBeTruthy();
-    expect(
-      item!.querySelector('button[aria-label="More actions for Press"]'),
-    ).toBeTruthy();
+    // The separation survives as adjacency: the planning pair (Exclude, Exact
+    // duration) sits together, between Complete and the trailing item verbs.
+    const excludeAt = labels.indexOf("Exclude Press today");
+    expect(excludeAt).toBeGreaterThanOrEqual(0);
+    expect(labels[excludeAt + 1]).toBe("Exact duration for Press");
+    expect(labels).toContain("Mark complete in source: Press");
+    expect(labels).toContain("Leave as-is today without changing source: Press");
+    expect(labels[labels.length - 1]).toBe("More actions for Press");
   });
 
   it("keeps source removal and Delete behind More, not in the labelled cluster", () => {
@@ -250,7 +244,7 @@ describe("S2 row actions: scope notes and grouping", () => {
     expect(menu!.textContent).toContain("Delete");
   });
 
-  it("keeps DOM/focus order: planning toggle, duration, direct verbs, More", () => {
+  it("keeps DOM/focus order: Complete, Exclude, Exact duration, Leave as-is, More", () => {
     const h = makeHarness("ready");
     const { container } = h.ui(<Queue />);
     const press = rowFor(container, "Press");
@@ -258,9 +252,9 @@ describe("S2 row actions: scope notes and grouping", () => {
       press.querySelectorAll(".qrow__actions button"),
     ).map((b) => b.getAttribute("aria-label"));
     expect(labels).toEqual([
+      "Mark complete in source: Press",
       "Exclude Press today",
       "Exact duration for Press",
-      "Mark complete in source: Press",
       "Leave as-is today without changing source: Press",
       "More actions for Press",
     ]);
@@ -274,8 +268,10 @@ describe("S2 row actions: excluded rows and busy state", () => {
     let press = rowFor(container, "Press");
     fireEvent.click(buttonIn(press, "Exclude Press today"));
 
-    // The row re-mounts into the trailing "Excluded today" section; re-query
-    // so these assertions read the node that is actually on screen.
+    // The row re-mounts into the trailing Out today lane, which starts
+    // collapsed (Planning 2a); expand it so these assertions read the node
+    // that is actually on screen.
+    fireEvent.click(container.querySelector(".band--drop") as HTMLButtonElement);
     press = rowFor(container, "Press");
     expect(press.classList.contains("qrow--excluded")).toBe(true);
     expect(
@@ -385,10 +381,11 @@ describe("S2 row actions: dispatch mapping is unchanged", () => {
 });
 
 describe("S2 row actions: responsive reachability", () => {
-  it("keeps the labelled cluster wrapping instead of clipping", () => {
+  it("keeps the flat cluster wrapping instead of clipping", () => {
     expect(cssBlock("qrow__actions")).toMatch(/flex-wrap:\s*wrap/);
-    expect(cssBlock("qrow__action-group")).toMatch(/flex-wrap:\s*wrap/);
-    expect(cssBlock("qrow__action-group")).toMatch(/min-width:\s*0/);
+    // Planning 2a flattened the two labelled sub-clusters; the cluster itself
+    // must be allowed to shrink and wrap, never clip.
+    expect(cssBlock("qrow__actions")).toMatch(/min-width:\s*0/);
     // The 1100px re-template moves the whole cluster out of the fixed
     // desktop track and onto its own full-width line.
     expect(APP_CSS).toMatch(

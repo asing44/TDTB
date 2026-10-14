@@ -87,10 +87,11 @@ export function trimForState(s: AppState): TrimPlan {
 
 /** KTD12 view grouping: the task table's section membership. This is a
     DISPLAY projection only — the trim plan and sequencing order in the model
-    are untouched. "Critical" is the Critical band; "When there's room" merges
-    the High and Everything-else bands in their original (trim) order; "Fixed"
-    is the scheduled/native-fixed set; "Out today" combines the Excluded-today
-    rows with the dropped-today ledger so one reversible section owns both. */
+    are untouched. Planning 2a order: "Critical" is the Critical band, then
+    "Fixed" (scheduled/native times), then "When there's room" (the High and
+    Everything-else bands in their original trim order). "Out today" comes
+    last and combines the Excluded-today rows with the dropped-today ledger so
+    one reversible section owns both. */
 export interface DroppedTodayRow {
   identity: string;
   name: string;
@@ -117,17 +118,17 @@ export function taskTableSections(s: AppState): TaskTableSection[] {
       dropped: [],
     },
     {
-      key: "room",
-      label: "When there's room",
-      sub: "High and everything else, in trim order",
-      rows: [...g.high, ...g.else],
-      dropped: [],
-    },
-    {
       key: "fixed",
       label: "Fixed",
       sub: "Scheduled and native times",
       rows: g.scheduled,
+      dropped: [],
+    },
+    {
+      key: "room",
+      label: "When there's room",
+      sub: "High and everything else, in trim order",
+      rows: [...g.high, ...g.else],
       dropped: [],
     },
     {

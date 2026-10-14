@@ -1,18 +1,19 @@
-/* row-compact-1100.test.ts — CSS contract for the "bolder pass" row density
-   fix at <=1100px (2026-10-13).
+/* row-compact-1100.test.ts — CSS contract for the Plan task row reflow at
+   <=1100px (Planning 2a, 2026-10-14, superseding the 2026-10-13 "bolder pass").
 
-   Measured defect: at ~900px every Plan tasks row stacked four lines
-   (title/source, due, duration control, actions) and stood ~190px tall. This
-   layer re-templates the row to a named two-line grid (stripe | body | due on
-   line 1; stripe | time | actions on line 2), folds the duration readout
-   inline beside the slider, and — on fine pointers only — reveals the three
-   secondary verbs (Exclude today, Exact duration, Leave as-is) on
-   row hover/keyboard focus while Mark complete and More stay visible.
+   Planning 2a replaces the row's stripe / due / time / actions areas with the
+   real five-column model (status toggle | body | duration | priority |
+   actions). At <=1100px the row re-templates into a two-line grid: the status
+   toggle spans both lines at the left, the body and priority take line 1, and
+   the duration control and action cluster take line 2. The older fine-pointer
+   hover reveal that hid the two secondary verbs is neutralized — 2a shows all
+   five row verbs as expanded icon buttons at every width. The 768-1100px
+   tablet layer still keeps the duration control on one inline row.
 
    jsdom does no layout, so the cascade is read off disk the same way
    row-actions-plan.test.ts and row-spacing.test.ts do. The contract keeps the
-   protected guarantees: the reveal targets individual verb anchors, never
-   `.qrow__actions`, so the cluster is never hidden as a whole. */
+   protected guarantee: the reveal never targeted `.qrow__actions`, so the
+   cluster is never hidden as a whole. */
 
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -49,73 +50,64 @@ function ruleIn(body: string, selector: string): string {
   return hits[hits.length - 1];
 }
 
-const compact = lastMediaBody(
+const compact = lastMediaBody("screen\\s+and\\s*\\(max-width:\\s*1100px\\)");
+const tablet = lastMediaBody(
   "\\(min-width:\\s*768px\\)\\s*and\\s*\\(max-width:\\s*1100px\\)",
 );
 
 describe("Plan task rows compact to a two-line grid at <=1100px", () => {
-  it("re-templates the row with named grid areas", () => {
+  it("re-templates the row into two stack lines", () => {
     const row = ruleIn(compact, "\\.qrow");
-    expect(row).toMatch(/grid-template-areas/);
-    expect(row).toMatch(/"stripe\s+body\s+due"/);
-    // Actions take the flexible column and time the max-content column, so a
-    // dense verb set wraps inside its cell instead of clipping the slider.
-    expect(row).toMatch(/"stripe\s+actions\s+time"/);
+    expect(row).toMatch(
+      /grid-template-columns:\s*118px\s+minmax\(0,\s*1fr\)\s+auto/,
+    );
+    expect(row).toMatch(/grid-template-rows:\s*auto auto/);
+    // The older named-area template is neutralized so line placement wins.
+    expect(row).toMatch(/grid-template-areas:\s*none/);
   });
 
-  it("places every row child in its named area", () => {
-    const areas: Array<[string, string]> = [
-      ["\\.qrow__stripe", "stripe"],
-      ["\\.qrow__body", "body"],
-      ["\\.qrow__due", "due"],
-      ["\\.qrow__time", "time"],
-      ["\\.qrow__actions", "actions"],
-    ];
-    for (const [selector, area] of areas) {
-      expect(ruleIn(compact, selector)).toMatch(
-        new RegExp(`grid-area:\\s*${area}`),
-      );
-    }
+  it("places every row child in its column and row", () => {
+    expect(ruleIn(compact, "\\.qrow__assign")).toMatch(/grid-column:\s*1/);
+    expect(ruleIn(compact, "\\.qrow__assign")).toMatch(/grid-row:\s*1\s*\/\s*3/);
+    expect(ruleIn(compact, "\\.qrow__body")).toMatch(/grid-column:\s*2/);
+    expect(ruleIn(compact, "\\.qrow__body")).toMatch(/grid-row:\s*1/);
+    expect(ruleIn(compact, "\\.qrow__priority")).toMatch(/grid-column:\s*3/);
+    expect(ruleIn(compact, "\\.qrow__priority")).toMatch(/grid-row:\s*1/);
+    expect(ruleIn(compact, "\\.qrow__time")).toMatch(/grid-column:\s*2/);
+    expect(ruleIn(compact, "\\.qrow__time")).toMatch(/grid-row:\s*2/);
   });
 
-  it("keeps the duration control on one inline row with the readout", () => {
-    const time = ruleIn(compact, "\\.qrow__time");
-    expect(time).toMatch(/flex-direction:\s*row/);
-    // The readout trails the slider, the desktop convention, instead of the
-    // stacked readout-above-slider order it takes below 1440px.
-    expect(ruleIn(compact, "\\.qrow__time-readout")).toMatch(/order:\s*0/);
+  it("keeps the status toggle at the top of its spanning cell", () => {
+    expect(ruleIn(compact, "\\.qrow__assign")).toMatch(/align-self:\s*start/);
   });
 
-  it("puts the actions on the same line as the duration control", () => {
+  it("puts the actions on the second line, right-aligned", () => {
     const actions = ruleIn(compact, "\\.qrow__actions");
-    expect(actions).toMatch(/grid-area:\s*actions/);
+    expect(actions).toMatch(/grid-column:\s*3/);
+    expect(actions).toMatch(/grid-row:\s*2/);
     expect(actions).toMatch(/justify-content:\s*flex-end/);
+  });
+
+  it("keeps the duration control on one inline row on the tablet layer", () => {
+    expect(ruleIn(tablet, "\\.qrow__time")).toMatch(/flex-direction:\s*row/);
+    expect(ruleIn(tablet, "\\.qrow__time-readout")).toMatch(/order:\s*0/);
   });
 });
 
-describe("secondary row verbs reveal only on fine-pointer hover/focus", () => {
-  const reveal = () =>
-    lastMediaBody(
-      "\\(max-width:\\s*1100px\\)\\s*and\\s*\\(hover:\\s*hover\\)\\s*and\\s*\\(pointer:\\s*fine\\)",
-    );
-
-  it("hides the three secondary verbs at rest on fine pointers", () => {
-    expect(ruleIn(reveal(), "\\.qrow__tip--plan")).toMatch(/display:\s*none/);
-    expect(ruleIn(reveal(), "\\.qrow__tip--drop_from_plan")).toMatch(
-      /display:\s*none/,
-    );
-  });
-
-  it("reveals them on row hover and on keyboard focus", () => {
-    expect(reveal()).toMatch(/\.qrow:hover\s+\.qrow__tip--plan/);
-    expect(reveal()).toMatch(/\.qrow:focus-within\s+\.qrow__tip--plan/);
-    expect(reveal()).toMatch(/\.qrow:hover\s+\.qrow__tip--drop_from_plan/);
-    expect(reveal()).toMatch(/\.qrow:focus-within\s+\.qrow__tip--drop_from_plan/);
+describe("every row verb stays visible at <=1100px (Planning 2a)", () => {
+  it("restores the two secondary verb anchors the older reveal hid", () => {
+    // The Planning 2a rule groups both anchors on `.qrow__actions`, so it is
+    // the only grouped selector list for these classes.
+    const restored =
+      appCss.match(
+        /\.qrow__actions \.qrow__tip--plan,\s*\.qrow__actions \.qrow__tip--drop_from_plan\s*\{([^}]*)\}/,
+      )?.[1] ?? "";
+    expect(restored).toMatch(/display:\s*inline-flex/);
   });
 
   it("never hides the primary verb or the More trigger", () => {
-    expect(reveal()).not.toMatch(/\.qrow__tip--done\s*\{[^}]*display:\s*none/);
-    expect(reveal()).not.toMatch(/\.row-more\s*\{[^}]*display:\s*none/);
+    expect(appCss).not.toMatch(/\.qrow__tip--done\s*\{[^}]*display:\s*none/);
+    expect(appCss).not.toMatch(/\.row-more\s*\{[^}]*display:\s*none/);
   });
 });
 

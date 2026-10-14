@@ -7,6 +7,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import {
   CUSTOM_PROMPTS_KEY,
   addCustomPrompt,
+  customPromptCapture,
   parseCustomPrompts,
   readCustomPrompts,
   removeCustomPrompt,
@@ -60,6 +61,13 @@ describe("custom prompt list", () => {
     const two = [ONE, { id: "custom-c", question: "Other", answer: "keep" }];
     expect(setCustomAnswer(two, "custom-a", "new")[1]).toEqual(two[1]);
     expect(setCustomAnswer(two, "custom-a", "new")[0].answer).toBe("new");
+  });
+
+  it("builds a single-key captures patch, sending'' verbatim to clear", () => {
+    expect(customPromptCapture("custom-abc-1", "the rain")).toEqual({
+      "custom-abc-1": "the rain",
+    });
+    expect(customPromptCapture("custom-abc-1", "")).toEqual({ "custom-abc-1": "" });
   });
 });
 

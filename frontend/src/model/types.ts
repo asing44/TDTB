@@ -352,19 +352,6 @@ export interface DaySetup {
   schedulable?: Record<string, SchedulableOverride>;
 }
 
-/** U5 prompt opt-in keys — the server's canonical wire keys. */
-export type PromptOptinKey = "intention" | "megan_nicety" | "stoic_intention";
-
-/** U5 persistent prompt opt-ins plus the optimistic revision.
-    `available: false` means the server exposes no read route yet — the UI
-    must show preferences as unknown rather than defaulting false and then
-    silently overwriting saved opt-ins. */
-export interface PromptOptinState {
-  optins: Record<PromptOptinKey, boolean>;
-  revision: number;
-  available: boolean;
-}
-
 /** One bounded, content-free prompt-export outcome from a live Commit. */
 export interface PromptExportOutcome {
   promptKey: string;
@@ -374,16 +361,12 @@ export interface PromptExportOutcome {
   reason: string | null;
 }
 
-/** Result of a prompt-only or opt-in-only POST /day-setup. `daySetupConfirmed`
-    is the server's explicit flag — a prompt-only save never confirms.
-    `optinsAvailable` is false when the server omitted the opt-in block (an
-    unreadable store); the echo must then never be hydrated as all-false. */
+/** Result of a prompt-only POST /day-setup. `daySetupConfirmed` is the
+    server's explicit flag — a prompt-only save never confirms. Legacy
+    `optins`/`optins_revision` fields in the echo are ignored. */
 export interface DaySetupSaveResult {
   ok: boolean;
   daySetupConfirmed: boolean;
-  optinsAvailable: boolean;
-  optins: Record<string, boolean>;
-  optinsRevision: number;
   promptWarnings: string[];
 }
 
@@ -860,9 +843,6 @@ export interface PlanInputs {
   /** S7a: typed direct-intake block. Absent for legacy payloads or the
       legacy intake mode — the key is omitted, never fabricated. */
   capacitiesIntake?: CapacitiesIntake;
-  /** U5 additive opt-in metadata when the server exposes a read; absent when
-      no read route exists (the UI then shows prefs unavailable). */
-  promptOptins?: { optins: Record<string, boolean>; revision: number };
 }
 
 /** Fixed-input snapshot for the drift fingerprint (locked decision 17):

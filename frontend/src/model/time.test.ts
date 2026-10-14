@@ -5,7 +5,25 @@ import {
   display12h,
   formatBlockAmount,
   formatDurationMinutes,
+  isValidHHMM,
 } from "./time";
+
+describe("isValidHHMM", () => {
+  it("accepts a complete 24h HH:MM clock", () => {
+    expect(isValidHHMM("00:00")).toBe(true);
+    expect(isValidHHMM("07:30")).toBe(true);
+    expect(isValidHHMM("23:59")).toBe(true);
+  });
+
+  it("rejects cleared, partial, and out-of-range values", () => {
+    expect(isValidHHMM("")).toBe(false);
+    expect(isValidHHMM("09:")).toBe(false);
+    expect(isValidHHMM("9:00")).toBe(false);
+    expect(isValidHHMM("24:00")).toBe(false);
+    expect(isValidHHMM("12:60")).toBe(false);
+    expect(isValidHHMM("noon")).toBe(false);
+  });
+});
 
 describe("formatBlockAmount", () => {
   it("keeps exact whole blocks as integer counts", () => {

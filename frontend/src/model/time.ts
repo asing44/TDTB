@@ -8,6 +8,13 @@ export function toMinutes(hhmm: string): number {
   return h * 60 + m;
 }
 
+/** True for a complete 24h HH:MM clock string (00:00–23:59). The same rule
+    validateAnchoredOverride's non-empty start check embodies: a cleared or
+    partial value ("", "09:") must never be persisted or timed. */
+export function isValidHHMM(value: string): boolean {
+  return /^([01]\d|2[0-3]):[0-5]\d$/.test(value);
+}
+
 export function toHHMM(minutes: number): string {
   const m = ((minutes % 1440) + 1440) % 1440;
   const h = Math.floor(m / 60);

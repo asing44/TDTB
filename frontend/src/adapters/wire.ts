@@ -1776,7 +1776,6 @@ export function projectPlanInputs(wire: Wire): PlanInputs {
   const capacitiesIntake = projectCapacitiesIntake(
     wire.capacities_intake ?? wire.digest?.capacities_intake,
   );
-  const promptOptins = projectPromptOptins(wire.prompt_optins);
   return {
     validDate: String(wire.digest?.valid_date ?? ""),
     assigned: (wire.digest?.assigned ?? []).map(projectAssigned),
@@ -1812,7 +1811,6 @@ export function projectPlanInputs(wire: Wire): PlanInputs {
     // fallback is defensive only. Legacy payloads omit it, so the key stays
     // absent rather than being fabricated.
     ...(capacitiesIntake !== null ? { capacitiesIntake } : {}),
-    ...(promptOptins !== null ? { promptOptins } : {}),
   };
 }
 
@@ -2115,61 +2113,24 @@ export function projectPromptExportOutcome(wire: Wire): PromptExportOutcome {
   };
 }
 
-/** U5: the prompt-only / opt-in-only POST /day-setup echo. `daySetupConfirmed`
-    is the server's explicit flag — a prompt-only save never confirms the day. */
+/** U5: the prompt-only POST /day-setup echo. `daySetupConfirmed` is the
+    server's explicit flag — a prompt-only save never confirms the day.
+    Legacy `optins`/`optins_revision` fields are tolerated and ignored. */
 export function projectDaySetupSaveResult(wire: Wire): DaySetupSaveResult {
-  // Reuse the strict opt-in projection so an absent or malformed echo block is
-  // unavailable (fail-closed), never hydrated as an all-false default.
-  const projected = projectPromptOptins(
-    wire.optins && typeof wire.optins === "object"
-      ? { optins: wire.optins, revision: wire.optins_revision }
-      : null,
-  );
   return {
     ok: wire.ok === true,
     daySetupConfirmed: wire.day_setup_confirmed === true,
-    optinsAvailable: projected !== null,
-    optins: projected ? projected.optins : {},
-    optinsRevision: projected ? projected.revision : 0,
     promptWarnings: Array.isArray(wire.prompt_warnings)
       ? wire.prompt_warnings.map(String)
       : [],
   };
 }
 
-/** U5 additive opt-in metadata. Returns null when the server exposes no read
-    (the UI then shows prefs unavailable rather than assuming false).
-    Fail-closed: only a well-formed block — an object `optins` map plus a
-    nonnegative safe-integer `revision` — counts as readable. A partial or
-    malformed block is unavailable, never a fabricated all-false default. */
-export function projectPromptOptins(
-  raw: unknown,
-): { optins: Record<string, boolean>; revision: number } | null {
-  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
-  const record = raw as Wire;
-  const source = record.optins;
-  if (!source || typeof source !== "object" || Array.isArray(source)) return null;
-  if (!Number.isSafeInteger(record.revision) || record.revision < 0) return null;
-  const optins: Record<string, boolean> = {};
-  for (const [key, value] of Object.entries(source as Wire)) {
-    optins[key] = value === true;
-  }
-  return { optins, revision: record.revision as number };
-}
-
 /** U5: a captures-only PATCH body. Sending only `captures` makes the save a
-    prompt-only write that never confirms the day. */
+    prompt-only write that never confirms the day. Custom prompt keys ride the
+    same patch; an omitted key preserves and an empty string clears. */
 export function promptDraftsToWire(patch: Record<string, string>): Wire {
   return { captures: { ...patch } };
-}
-
-/** U5: an opt-in-only body with the expected store revision for optimistic
-    concurrency. Sending only these keys never confirms the day. */
-export function promptOptinsToWire(
-  optins: Record<string, boolean>,
-  expectedRevision: number,
-): Wire {
-  return { optins: { ...optins }, optins_revision: expectedRevision };
 }
 
 export function daySetupToWire(d: DaySetup): Wire {

@@ -43,7 +43,6 @@ import {
 import type { QueueState } from "../model/types";
 import {
   budgetTotal,
-  includedDisplayOrder,
   type HierarchyRow,
 } from "../model/allocatorView";
 import { taskTableSections } from "../store/allocatorView";
@@ -57,26 +56,26 @@ import {
   stepDownBlocks,
   stepUpBlocks,
 } from "../model/allocator";
-import { stripeColor, trackFor, trackGradient } from "../model/bands";
-import { DIRECT_VERBS, MORE_VERBS } from "../model/staging";
+import { trackFor, trackGradient } from "../model/bands";
+import { DIRECT_VERBS, MORE_VERBS, type StagingVerbSpec } from "../model/staging";
 import { sourceContext } from "../model/sourceContext";
 import { dueLabel, normalizeUrgency } from "../model/urgency";
 import type { AssignedItem } from "../model/types";
-import { CalendarImpact } from "./CalendarImpact";
+import { AlreadyPlaced } from "./AlreadyPlaced";
 import { CapacityCard } from "./CapacityCard";
 import { Tooltip } from "./Tooltip";
 import { RowIcon } from "./RowIcon";
 
-/** U11 labeling pass: the row's provenance as a chip a scan can read without
-    parsing a sentence — TODOIST / CAPACITIES (plus the CALENDAR
-    vocabulary the source counts already use). An unrecognized source reads
-    as a neutral OTHER chip. Colour tints live in app.css. */
+/** U11 labeling pass → Planning 2a: the row's provenance as the mockup's small
+    source swatch plus its human source name ("Todoist", "Capacities"). An
+    unrecognized source reads as a neutral OTHER. The colour tints live in
+    app.css; the key selects the swatch hue. */
 export function sourceChip(item: AssignedItem): { key: string; label: string } {
   const source = String(item.source);
-  if (source === "todoist") return { key: "todoist", label: "TODOIST" };
-  if (source === "capacities") return { key: "capacities", label: "CAPACITIES" };
-  if (source === "calendar") return { key: "calendar", label: "CALENDAR" };
-  return { key: "other", label: "OTHER" };
+  if (source === "todoist") return { key: "todoist", label: "Todoist" };
+  if (source === "capacities") return { key: "capacities", label: "Capacities" };
+  if (source === "calendar") return { key: "calendar", label: "Calendar" };
+  return { key: "other", label: "Other" };
 }
 
 /** The row's KIND as a human label. Capacities rows resolve their structure id
@@ -151,47 +150,52 @@ const VERB_HINT: Record<string, string> = {
     "Takes it out of today's plan and leaves the source untouched. Today only.",
 };
 
-/** IMP-07: direct verbs (Done, Drop from plan) render on the row — one click,
-    journaled through the staging path. Unassign and Delete live in MoreMenu. */
-function StagingVerbs({ item, busy }: { item: AssignedItem; busy: boolean }) {
+/** IMP-07: one direct verb as a row button. Planning 2a composes the row's
+    action cluster from individual verbs (Complete, Exclude today, Exact
+    duration, Leave as-is, More) instead of two labelled groups, so each verb
+    owns its button. Directness, the frozen verb mapping, and every aria name
+    are unchanged. */
+function VerbButton({
+  spec,
+  item,
+  busy,
+  armed,
+  onArm,
+}: {
+  spec: StagingVerbSpec;
+  item: AssignedItem;
+  busy: boolean;
+  armed: boolean;
+  onArm: (verb: string | null) => void;
+}) {
   const { controller } = useApp();
-  const [confirming, setConfirming] = useState<string | null>(null);
-
   return (
-    <>
-      {DIRECT_VERBS.map((spec) => {
-        const armed = confirming === spec.verb;
-        return (
-          <Tooltip
-            key={spec.verb}
-            label={spec.label}
-            detail={VERB_HINT[spec.verb]}
-            anchorClass={`qrow__tip qrow__tip--${spec.verb}`}
-          >
-          <button
-            class={`alloc-verb alloc-verb--${spec.verb}${armed ? " alloc-verb--armed" : ""}`}
-            disabled={busy}
-            aria-label={
-              armed
-                ? `Confirm ${spec.aria.toLowerCase()}: ${item.name}`
-                : `${spec.aria}: ${item.name}`
-            }
-            onClick={() => {
-              if (spec.destructive && !armed) {
-                setConfirming(spec.verb);
-                return;
-              }
-              setConfirming(null);
-              void controller.stagingAction(spec.verb, item.id);
-            }}
-            onBlur={() => armed && setConfirming(null)}
-          >
-            {armed ? "Sure?" : <RowIcon name={spec.verb === "done" ? "check" : "undo"} />}
-          </button>
-          </Tooltip>
-        );
-      })}
-    </>
+    <Tooltip
+      label={spec.label}
+      detail={VERB_HINT[spec.verb]}
+      anchorClass={`qrow__tip qrow__tip--${spec.verb}`}
+    >
+      <button
+        class={`alloc-verb alloc-verb--${spec.verb}${armed ? " alloc-verb--armed" : ""}`}
+        disabled={busy}
+        aria-label={
+          armed
+            ? `Confirm ${spec.aria.toLowerCase()}: ${item.name}`
+            : `${spec.aria}: ${item.name}`
+        }
+        onClick={() => {
+          if (spec.destructive && !armed) {
+            onArm(spec.verb);
+            return;
+          }
+          onArm(null);
+          void controller.stagingAction(spec.verb, item.id);
+        }}
+        onBlur={() => armed && onArm(null)}
+      >
+        {armed ? "Sure?" : <RowIcon name={spec.verb === "done" ? "check" : "undo"} />}
+      </button>
+    </Tooltip>
   );
 }
 
@@ -520,6 +524,12 @@ function Row({
   const durLabel = durLabelText(srcTag);
   const scheduledRow = s.sequence?.find((r) => r.id === item.id && r.kind === "work");
   const track = trackFor(cumBefore, blocks, budgetTotal(s), MAX_BLOCKS);
+  // Planning 2a action row: Complete, Exclude today, Exact duration, Leave
+  // as-is, More — one flat icon cluster in that order. The armed state for a
+  // destructive verb stays on the row.
+  const [confirming, setConfirming] = useState<string | null>(null);
+  const doneSpec = DIRECT_VERBS.find((spec) => spec.verb === "done")!;
+  const leaveSpec = DIRECT_VERBS.find((spec) => spec.verb === "drop_from_plan")!;
 
   return (
     <div
@@ -529,33 +539,29 @@ function Row({
       tabIndex={0}
       onKeyDown={(e) => rowKeydown(e as unknown as KeyboardEvent, item, s, controller, store)}
     >
-      <span class="qrow__stripe" style={{ background: stripeColor(item) }} />
+      {/* Planning 2a status control: a toggle button reading Assigned /
+          Unassigned in its own leading column. It flips the SAME today-only
+          inclusion the eye control flips — the checkbox and its pill label are
+          gone, the action and the keyboard shortcut (E) are unchanged. */}
+      <button
+        type="button"
+        class={`qrow__assign ${included ? "qrow__assign--on" : "qrow__assign--off"}`}
+        aria-pressed={included}
+        aria-label={`${included ? "Unassign" : "Assign"} ${item.name} for today`}
+        title={
+          included
+            ? "Assigned today — activate to exclude it from today's plan"
+            : "Unassigned today — activate to put it back in today's plan"
+        }
+        onClick={(e) => {
+          e.stopPropagation();
+          controller.setOverride(item.id, !included, s.overrides[item.id]?.blocks ?? null);
+        }}
+      >
+        <span class="qrow__assign-text">{included ? "Assigned" : "Unassigned"}</span>
+      </button>
       <div class="qrow__body">
-        <div class="qrow__nameline">
-          {/* The native checkbox stays the control (name, toggle, keyboard);
-              the pill is its visual face. The label swallows clicks so the
-              pill never opens the row. */}
-          <label
-            class={`qrow__assign ${included ? "qrow__assign--on" : "qrow__assign--off"}`}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <input
-              type="checkbox"
-              class="qrow__check"
-              checked={included}
-              aria-label={`Include ${item.name} in today's plan`}
-              onClick={(e) => e.stopPropagation()}
-              onKeyDown={(e) => e.stopPropagation()}
-              onChange={(e) =>
-                controller.setOverride(
-                  item.id,
-                  (e.target as HTMLInputElement).checked,
-                  s.overrides[item.id]?.blocks ?? null,
-                )
-              }
-            />
-            <span class="qrow__assign-text">{included ? "Assigned" : "Unassigned"}</span>
-          </label>
+        <span class="qrow__nameline">
           {hierarchy?.depth ? (
             <span class="qrow__branch" aria-hidden="true">↳</span>
           ) : null}
@@ -567,7 +573,7 @@ function Row({
           <span class="qrow__name" title={item.path ?? item.name}>
             {item.name}
           </span>
-        </div>
+        </span>
         {hierarchy?.depth && hierarchy.parentName ? (
           <span class="qrow__relationship">child of {hierarchy.parentName}</span>
         ) : null}
@@ -577,11 +583,12 @@ function Row({
             the plan only when the operator excludes, completes, or deletes
             it. */}
         <span class="qrow__source" title={item.path ?? undefined}>
-          {/* U11 labeling: provenance leads as a coloured chip (TODOIST /
-              CAPACITIES), then the row's human KIND, then plain meta.
-              The raw uppercase type badge is gone — a Capacities structure id
-              resolves through the structure-titles cache to its title, and an
-              untitled one reads "Capacities item", never a UUID. */}
+          {/* Planning 2a meta line: an 8px source swatch, the source name,
+              then the row's human KIND, then plain meta. The raw uppercase
+              type badge is gone — a Capacities structure id resolves through
+              the structure-titles cache to its title, and an untitled one
+              reads "Capacities item", never a UUID. */}
+          <span class={`qrow__swatch qrow__swatch--${chip.key}`} aria-hidden="true" />
           <span class={`qrow__src qrow__src--${chip.key}`}>{chip.label}</span>
           {kind && (
             <span
@@ -602,6 +609,17 @@ function Row({
               .filter(Boolean)
               .join(" · ")}
           </span>
+          {/* Planning 2a: the due date folds onto the meta line (source
+              swatch + source name + due date); there is no separate due
+              column. A "due tomorrow" reads in the warning colour. */}
+          {due && (
+            <span
+              class={due.tone ? `due due--${due.tone}` : "due"}
+              title={item.deadline ?? undefined}
+            >
+              {due.text}
+            </span>
+          )}
           {/* A zero-duration row stays exactly where it is and says what it
               became. Previously it jumped to a trailing All-day section the
               moment the slider hit bottom. */}
@@ -616,7 +634,7 @@ function Row({
           <TimeAdjustmentOptIn item={item} s={s} />
         </span>
       </div>
-      <div class="qrow__due">
+      <div class="qrow__priority">
         {urgency?.tier && (
           <span
             class={`qrow__prio qrow__prio--${urgency.tier}`}
@@ -625,18 +643,29 @@ function Row({
             {PRIORITY_LABEL[urgency.tier]}
           </span>
         )}
-        {due && (
-          <span
-            class={due.tone ? `due due--${due.tone}` : "due"}
-            title={item.deadline ?? undefined}
-          >
-            {due.text}
-          </span>
-        )}
       </div>
       <div class="qrow__time">
         {included ? (
           <>
+            <div class="qrow__time-readout">
+              <span
+                class={`alloc-track__value ${track.pastBudget ? "alloc-track__value--over" : ""}`}
+                aria-live="polite"
+              >
+                {blocksLabel(blocks)}
+                {overridden ? "*" : ""}
+              </span>
+              {durLabel != null && (
+                <span
+                  class={`qrow__dur-label qrow__dur-label--${srcTag}`}
+                  data-src={srcTag}
+                  title={srcTagLabel(srcTag)}
+                  aria-label={srcTagLabel(srcTag)}
+                >
+                  {durLabel}
+                </span>
+              )}
+            </div>
             <div class="qrow__time-line">
                 {/* The slider's own notch is a 30-minute block; these are the
                     half-block trim the slider can't express without becoming
@@ -705,110 +734,79 @@ function Row({
                     </button>
                   </Tooltip>
             </div>
-            {/* 2026-10-12 redesign (owner mockup): the duration readout now
-                trails the slider on the same line. The value holds a fixed
-                width so sliders line up between rows; a non-default
-                provenance label sits immediately after the value. */}
-            <div class="qrow__time-readout">
-              <span
-                class={`alloc-track__value ${track.pastBudget ? "alloc-track__value--over" : ""}`}
-                aria-live="polite"
-              >
-                {blocksLabel(blocks)}
-                {overridden ? "*" : ""}
-              </span>
-              {/* FEEDBACK-10 (A08) + duration-memory MVP: provenance as a
-                  visible chip, in plain words, right after the value. Source
-                  rows are the default and render no chip; the * on the value
-                  and the slider's aria-valuetext still carry that state. */}
-              {durLabel != null && (
-                <span
-                  class={`qrow__dur-label qrow__dur-label--${srcTag}`}
-                  data-src={srcTag}
-                  title={srcTagLabel(srcTag)}
-                  aria-label={srcTagLabel(srcTag)}
-                >
-                  {durLabel}
-                </span>
-              )}
-            </div>
           </>
         ) : (
           <span class="qrow__excluded-note">excluded today</span>
         )}
       </div>
       <div class="qrow__actions">
-        {/* S2 (feedback 1+5): the unlabelled ⊘/✎ pair left the operator
-            guessing. Planning adjustments are labelled controls in a named
-            group: both are today-only local selection/shaping and neither
-            writes source, so they read as planning — not as verbs. The
-            scope note spells the reversibility out. */}
-        <div
-          class="qrow__action-group qrow__action-group--plan"
-          role="group"
-          aria-label={`Planning adjustments for ${item.name}`}
+        {/* Planning 2a: five 34px icon buttons — Complete (filled green
+            check), Exclude today, Exact duration, Leave as-is, More. The old
+            two labelled groups and the divider are gone; every aria name,
+            tooltip, and frozen verb mapping is unchanged. */}
+        <VerbButton
+          spec={doneSpec}
+          item={item}
+          busy={s.runtimeBusy}
+          armed={confirming === doneSpec.verb}
+          onArm={setConfirming}
+        />
+        <Tooltip
+          label={included ? "Exclude today" : "Include today"}
+          detail={
+            included
+              ? "Skips it for today only; reversible, source unchanged. Shortcut E."
+              : "Puts it back in today's plan; source unchanged. Shortcut E."
+          }
+          anchorClass="qrow__tip qrow__tip--plan"
         >
+          <button
+            class="planbtn"
+            aria-label={`${included ? "Exclude" : "Include"} ${item.name} today`}
+            onClick={() => controller.setOverride(item.id, !included, s.overrides[item.id]?.blocks ?? null)}
+          >
+            <RowIcon name={included ? "eye-off" : "eye"} />
+          </button>
+        </Tooltip>
+        {/* T7: fine shaping on EVERY included row — the slider's 30-minute
+            notches can't express 15/5-minute shaping. T12e: this editor is
+            duration-only now; placement is its own More-menu action. */}
+        {included && (
           <Tooltip
-            label={included ? "Exclude today" : "Include today"}
-            detail={
-              included
-                ? "Skips it for today only; reversible, source unchanged. Shortcut E."
-                : "Puts it back in today's plan; source unchanged. Shortcut E."
-            }
+            label="Exact duration"
+            detail="Sets the minutes precisely for today; source unchanged. Shortcut D."
             anchorClass="qrow__tip qrow__tip--plan"
           >
             <button
               class="planbtn"
-              aria-label={`${included ? "Exclude" : "Include"} ${item.name} today`}
-              onClick={() => controller.setOverride(item.id, !included, s.overrides[item.id]?.blocks ?? null)}
+              aria-label={`Exact duration for ${item.name}`}
+              onClick={() =>
+                store.dispatch({
+                  type: "UI",
+                  patch: { editorItem: item.id, editorIntent: "duration" },
+                })
+              }
             >
-              <RowIcon name={included ? "eye-off" : "eye"} />
+              <RowIcon name="clock" />
             </button>
           </Tooltip>
-          {/* T7: fine shaping on EVERY included row — the slider's 30-minute
-              notches can't express 15/5-minute shaping. T12e: this editor is
-              duration-only now; placement is its own More-menu action. */}
-          {included && (
-            <Tooltip
-              label="Exact duration"
-              detail="Sets the minutes precisely for today; source unchanged. Shortcut D."
-              anchorClass="qrow__tip qrow__tip--plan"
-            >
-              <button
-                class="planbtn"
-                aria-label={`Exact duration for ${item.name}`}
-                onClick={() =>
-                  store.dispatch({
-                    type: "UI",
-                    patch: { editorItem: item.id, editorIntent: "duration" },
-                  })
-                }
-              >
-                <RowIcon name="clock" />
-              </button>
-            </Tooltip>
-          )}
-        </div>
-        <span class="qrow__divider" />
-        {/* Item handling keeps the frozen IMP-07 directness: Mark complete
-            and Leave as-is fire in one click; source removal/Delete and the
-            placement actions stay behind More (FEEDBACK-10 A13). */}
-        <div
-          class="qrow__action-group qrow__action-group--item"
-          role="group"
-          aria-label={`Item handling for ${item.name}`}
-        >
-          <StagingVerbs item={item} busy={s.runtimeBusy} />
-          <MoreMenu
-            item={item}
-            busy={s.runtimeBusy}
-            state={state}
-            allowTimeAdjustment={
-              !item.isRecurring &&
-              (!hasAdjustableNativeTime(item) || s.timeAdjustmentOptIns[item.id] === true)
-            }
-          />
-        </div>
+        )}
+        <VerbButton
+          spec={leaveSpec}
+          item={item}
+          busy={s.runtimeBusy}
+          armed={confirming === leaveSpec.verb}
+          onArm={setConfirming}
+        />
+        <MoreMenu
+          item={item}
+          busy={s.runtimeBusy}
+          state={state}
+          allowTimeAdjustment={
+            !item.isRecurring &&
+            (!hasAdjustableNativeTime(item) || s.timeAdjustmentOptIns[item.id] === true)
+          }
+        />
       </div>
     </div>
   );
@@ -860,7 +858,11 @@ function LaneHeader({
 export function Queue() {
   const s = useAppState();
   const { controller } = useApp();
-  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
+  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({
+    // Planning 2a: the trailing "Out today" lane starts collapsed, so the
+    // plan reads as one scan of what is in today.
+    out: true,
+  });
   // Capacities rows carry a raw structure id; the machine-local
   // structure-titles cache turns it into a human name. Loaded once, and only
   // when a Capacities row is actually on the table (most days: never), so the
@@ -893,24 +895,26 @@ export function Queue() {
   if (items.length === 0) {
     return (
       <section class="queue" aria-label="Assigned this morning">
-        {/* U9/U11: the capacity card heads the frame even when nothing is
-            assigned — a quiet day still needs its capacity story named. */}
         <header class="queue__head">
           <div>
             <h1>Assigned this morning</h1>
             <p>Edits here affect today only. Mark complete writes back to the source.</p>
           </div>
-          <span class="queue__assigned-chip">assigned only</span>
         </header>
-        <CapacityCard />
-        {/* S5: calendar evidence stays with the work surface even on a quiet
-            day — the empty-assigned branch keeps the inline band. */}
-        <CalendarImpact inline />
-        <div class="queue__quiet" role="status">
-          <p>
-            No assigned items today. Assignment happens upstream — Todoist
-            Today and Capacities. A quiet day is a valid day.
-          </p>
+        {/* Planning 2a: the timeline is the same card on a quiet day too. */}
+        <AlreadyPlaced />
+        <div class="plan-grid">
+          <div class="plan-grid__groups">
+            <div class="queue__quiet" role="status">
+              <p>
+                No assigned items today. Assignment happens upstream — Todoist
+                Today and Capacities. A quiet day is a valid day.
+              </p>
+            </div>
+          </div>
+          <div class="plan-grid__capacity">
+            <CapacityCard />
+          </div>
         </div>
       </section>
     );
@@ -919,14 +923,18 @@ export function Queue() {
   // KTD12: section membership is a view projection over the band/state model.
   const sections = taskTableSections(s);
 
-  // One cumulative-spend walk shared with the rail (allocatorView), so the
-  // budget line lands on exactly one row's track.
-  const ordered = includedDisplayOrder(s);
+  // One cumulative-spend walk in the table's own display order (Critical →
+  // Fixed → When there's room), so the budget line lands on exactly one row's
+  // track in the order the operator is reading.
   const cumBefore = new Map<string, number>();
   let cum = 0;
-  for (const r of ordered) {
-    cumBefore.set(r.id, cum);
-    cum += r.blocks;
+  for (const sec of sections) {
+    if (sec.key === "out") continue;
+    for (const entry of sec.rows) {
+      if (!(s.overrides[entry.item.id]?.included ?? true)) continue;
+      cumBefore.set(entry.item.id, cum);
+      cum += effectiveBlocks(s, entry.item.id);
+    }
   }
 
   const hierarchyById = new Map(
@@ -950,66 +958,74 @@ export function Queue() {
           <h1>Assigned this morning</h1>
           <p>Edits here affect today only. Mark complete writes back to the source.</p>
         </div>
-        <span class="queue__assigned-chip">assigned only</span>
       </header>
-      <CapacityCard />
-      <CalendarImpact inline />
-      <ShortcutHint />
-      {sections.map((sec) => {
-        const open = isOpen(sec.key);
-        const regionId = `tasktable-${sec.key}`;
-        const count = sec.rows.length + sec.dropped.length;
-        const blocks = sec.rows
-          .filter((e) => s.overrides[e.item.id]?.included ?? true)
-          .reduce((sum, e) => sum + effectiveBlocks(s, e.item.id), 0);
-        return (
-          <div
-            key={sec.key}
-            class={`queue__band tasktable tasktable--${sec.key}`}
-            data-section={sec.key}
-          >
-            <LaneHeader
-              label={sec.label}
-              sub={sec.sub}
-              count={count}
-              open={open}
-              onToggle={() => toggle(sec.key)}
-              controlsId={regionId}
-              drop={sec.key === "out"}
-            />
-            {open && (
-              <div id={regionId} class="queue__band-rows tasktable__rows">
-                <div class="tasktable__grouplabel">
-                  <span class="tasktable__grouplabel-name">{sec.sub}</span>
-                  <span class="tasktable__grouplabel-total">
-                    {formatBlockAmount(blocks)} selected
-                  </span>
-                </div>
-                {sec.rows.map((e) => row(e.item))}
-                {sec.dropped.map((d) => (
-                  <div key={d.identity} class="qrow qrow--dropped">
-                    <span class="qrow__stripe" />
-                    <div class="qrow__body">
-                      <div class="qrow__nameline">
-                        <span class="qrow__name">{d.name}</span>
-                      </div>
-                      <span class="qrow__source">
-                        dropped{d.droppedAt ? ` · ${droppedTimeLabel(d.droppedAt)}` : ""}
+      <AlreadyPlaced />
+      <div class="plan-grid">
+        <div class="plan-grid__groups">
+          {sections.map((sec) => {
+            const count = sec.rows.length + sec.dropped.length;
+            // Planning 2a: "Out today" is only rendered when something is
+            // actually out, and it is placed last.
+            if (sec.key === "out" && count === 0) return null;
+            const open = isOpen(sec.key);
+            const regionId = `tasktable-${sec.key}`;
+            const blocks = sec.rows
+              .filter((e) => s.overrides[e.item.id]?.included ?? true)
+              .reduce((sum, e) => sum + effectiveBlocks(s, e.item.id), 0);
+            return (
+              <div
+                key={sec.key}
+                class={`queue__band tasktable tasktable--${sec.key}`}
+                data-section={sec.key}
+              >
+                <LaneHeader
+                  label={sec.label}
+                  sub={sec.sub}
+                  count={count}
+                  open={open}
+                  onToggle={() => toggle(sec.key)}
+                  controlsId={regionId}
+                  drop={sec.key === "out"}
+                />
+                {open && (
+                  <div id={regionId} class="queue__band-rows tasktable__rows">
+                    <div class="tasktable__grouplabel">
+                      <span class="tasktable__grouplabel-name">{sec.sub}</span>
+                      <span class="tasktable__grouplabel-total">
+                        {formatBlockAmount(blocks)} selected
                       </span>
                     </div>
-                    <div class="qrow__due" />
-                    <div class="qrow__time">
-                      <span class="qrow__excluded-note">out today</span>
-                    </div>
-                    <div class="qrow__actions" />
+                    {sec.rows.map((e) => row(e.item))}
+                    {sec.dropped.map((d) => (
+                      <div key={d.identity} class="qrow qrow--dropped">
+                        <span class="qrow__assign qrow__assign--none" aria-hidden="true" />
+                        <div class="qrow__body">
+                          <span class="qrow__nameline">
+                            <span class="qrow__name">{d.name}</span>
+                          </span>
+                          <span class="qrow__source">
+                            dropped{d.droppedAt ? ` · ${droppedTimeLabel(d.droppedAt)}` : ""}
+                          </span>
+                        </div>
+                        <div class="qrow__time">
+                          <span class="qrow__excluded-note">out today</span>
+                        </div>
+                        <div class="qrow__priority" />
+                        <div class="qrow__actions" />
+                      </div>
+                    ))}
+                    {count === 0 && <div class="queue__empty">nothing here</div>}
                   </div>
-                ))}
-                {count === 0 && <div class="queue__empty">nothing here</div>}
+                )}
               </div>
-            )}
-          </div>
-        );
-      })}
+            );
+          })}
+        </div>
+        <div class="plan-grid__capacity">
+          <CapacityCard />
+        </div>
+      </div>
+      <ShortcutHint />
     </section>
   );
 }

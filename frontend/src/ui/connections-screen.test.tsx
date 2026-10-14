@@ -4,9 +4,9 @@
    one page. These tests pin the composition contract: one unsaved-changes bar
    aggregating every edited slice, Discard restoring all of them, Save
    persisting them under their loaded revisions, the stale-tag notice, the
-   admission preview, the invalid-rule guard (R33), unsaved-edit survival
-   across the Back-to-planning link, and the absence of the Plan footer's
-   primary action on this screen. */
+   admission preview (the aggregate strip plus the per-item disclosure), the
+   invalid-rule guard (R33), unsaved-edit survival across the Back-to-planning
+   link, and the absence of the Plan footer's primary action on this screen. */
 
 import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, waitFor, within } from "@testing-library/preact";
@@ -128,24 +128,37 @@ async function ready(rendered: ReturnType<ReturnType<typeof makeHarness>["ui"]>)
   await waitFor(() => expect(rendered.getByRole("heading", { name: "Connections" })).toBeTruthy());
 }
 
+const openExcludeTags = (rendered: ReturnType<ReturnType<typeof makeHarness>["ui"]>) =>
+  fireEvent.click(rendered.getByRole("button", { name: "Exclude tags" }));
+
+const openStructure = (
+  rendered: ReturnType<ReturnType<typeof makeHarness>["ui"]>,
+  name = "Task",
+) => fireEvent.click(rendered.getByRole("button", { name }));
+
 describe("Connections screen (U13)", () => {
   it("counts a rule, a mapping and a tag edit as three unsaved changes and Discard restores all three", async () => {
     const { rendered } = openConnections();
     await ready(rendered);
 
     // Rule: turn the Active status rule off.
-    fireEvent.click(rendered.getByRole("checkbox", { name: /Status is active/ }));
+    fireEvent.click(rendered.getByRole("switch", { name: /Status is active/ }));
     // Mapping: clear the RootTask property mapping.
     fireEvent.input(rendered.getByLabelText(/mapping for RootTask/i), { target: { value: "" } });
-    // Tag list: remove the excluded tag.
+    // Tag list: remove the excluded tag (behind the Exclude tags nav item).
+    openExcludeTags(rendered);
     fireEvent.click(rendered.getByRole("button", { name: /Remove tag #habituals/i }));
 
     await waitFor(() => expect(rendered.getByText(/3 unsaved changes/)).toBeTruthy());
 
     fireEvent.click(rendered.getByRole("button", { name: "Discard" }));
     await waitFor(() => expect(rendered.getByText(/No unsaved changes/)).toBeTruthy());
-    expect((rendered.getByRole("checkbox", { name: /Status is active/ }) as HTMLInputElement).checked).toBe(true);
+    openStructure(rendered);
+    expect(
+      rendered.getByRole("switch", { name: /Status is active/ }).getAttribute("aria-checked"),
+    ).toBe("true");
     expect((rendered.getByLabelText(/mapping for RootTask/i) as HTMLInputElement).value).toBe("assigned");
+    openExcludeTags(rendered);
     expect(rendered.getByRole("button", { name: /Remove tag #habituals/i })).toBeTruthy();
   });
 
@@ -153,8 +166,9 @@ describe("Connections screen (U13)", () => {
     const { h, rendered } = openConnections();
     await ready(rendered);
 
-    fireEvent.click(rendered.getByRole("checkbox", { name: /Status is active/ }));
+    fireEvent.click(rendered.getByRole("switch", { name: /Status is active/ }));
     fireEvent.input(rendered.getByLabelText(/mapping for RootTask/i), { target: { value: "" } });
+    openExcludeTags(rendered);
     fireEvent.click(rendered.getByRole("button", { name: /Remove tag #habituals/i }));
     await waitFor(() => expect(rendered.getByText(/3 unsaved changes/)).toBeTruthy());
 
@@ -183,6 +197,7 @@ describe("Connections screen (U13)", () => {
       ],
     }));
     await ready(rendered);
+    openExcludeTags(rendered);
 
     const stale = await waitFor(() =>
       rendered.getByText(/A saved tag no longer exists in Capacities/),
@@ -194,7 +209,7 @@ describe("Connections screen (U13)", () => {
     );
   });
 
-  it("previews admitted and left-out counts with a reason per item and updates as the draft changes", async () => {
+  it("scopes the preview rows and counts to the selected structure", async () => {
     const { rendered } = openConnections([
       capacitiesRow({
         id: "Tagged",
@@ -213,33 +228,75 @@ describe("Connections screen (U13)", () => {
       capacitiesRow({
         id: "Unmapped",
         name: "Unmapped task",
-        capacitiesStructureId: "Other",
+        // No explicit structure id: the identity's third segment scopes it.
+        capacitiesStructureId: null,
         identity: "capacities:space-1:Other:row",
         capacitiesIdentity: "capacities:space-1:Other:row",
       }),
     ]);
     await ready(rendered);
 
-    const preview = rendered.getByRole("region", { name: /Preview/i });
-    await waitFor(() => expect(within(preview).getByText(/1 item admitted/)).toBeTruthy());
-    expect(within(preview).getByText(/1 left out by tag/)).toBeTruthy();
-    expect(within(preview).getByText(/1 waiting on mapping/)).toBeTruthy();
-    expect(within(preview).getByText("Tagged task")).toBeTruthy();
-    expect(within(preview).getByText("left out by tag")).toBeTruthy();
-    expect(within(preview).getByText("waiting on mapping")).toBeTruthy();
-    expect(within(preview).getByText("admitted")).toBeTruthy();
+    // Task (RootTask, mapped): Tagged is left out, Mapped is admitted, and the
+    // item waiting on Other never leaks into this structure.
+    const strip = rendered.getByRole("region", { name: /Preview/i });
+    await waitFor(() => expect(within(strip).getByText(/1 admitted today/)).toBeTruthy());
+    expect(within(strip).getByText(/0 waiting on mapping/)).toBeTruthy();
+    expect(within(strip).getByText(/1 left out by tag/)).toBeTruthy();
+
+    // The per-item rows live in the collapsed-by-default disclosure.
+    const disclosure = rendered.getByText(/Preview items/).closest("details")!;
+    expect(disclosure.hasAttribute("open")).toBe(false);
+    fireEvent.click(within(disclosure).getByText(/Preview items/));
+    expect(within(disclosure).getByText("Tagged task")).toBeTruthy();
+    expect(within(disclosure).getByText("left out by tag")).toBeTruthy();
+    expect(within(disclosure).getByText("Mapped task")).toBeTruthy();
+    expect(within(disclosure).getByText("admitted")).toBeTruthy();
+    expect(within(disclosure).queryByText("Unmapped task")).toBeNull();
+    expect(within(disclosure).queryByText("waiting on mapping")).toBeNull();
+
+    // Project (Other, unmapped): only its own waiting item shows.
+    fireEvent.click(rendered.getByRole("button", { name: "Project" }));
+    const otherStrip = rendered.getByRole("region", { name: /Preview/i });
+    await waitFor(() => expect(within(otherStrip).getByText(/1 waiting on mapping/)).toBeTruthy());
+    expect(within(otherStrip).getByText(/0 admitted today/)).toBeTruthy();
+    const otherDisclosure = rendered.getByText(/Preview items/).closest("details")!;
+    fireEvent.click(within(otherDisclosure).getByText(/Preview items/));
+    expect(within(otherDisclosure).getByText("Unmapped task")).toBeTruthy();
+    expect(within(otherDisclosure).queryByText("Mapped task")).toBeNull();
 
     // Removing the tag exclusion moves the tagged item out of "left out".
+    openExcludeTags(rendered);
     fireEvent.click(rendered.getByRole("button", { name: /Remove tag #habituals/i }));
-    await waitFor(() => expect(within(preview).getByText(/0 left out by tag/)).toBeTruthy());
-    await waitFor(() => expect(within(preview).getByText(/2 items admitted/)).toBeTruthy());
+    openStructure(rendered);
+    const freshStrip = rendered.getByRole("region", { name: /Preview/i });
+    await waitFor(() => expect(within(freshStrip).getByText(/2 admitted today/)).toBeTruthy());
+    expect(rendered.queryByText(/left out by tag/)).toBeNull();
+  });
+
+  it("shows the mapping hint, a structure-specific Remove name, and the Capacities sync pill", async () => {
+    const { rendered } = openConnections();
+    await ready(rendered);
+
+    // Default structure is Task ("RootTask"), mapped to "assigned".
+    expect(rendered.getByText("Mapped: assigned")).toBeTruthy();
+    expect(rendered.getByRole("button", { name: "Remove structure Task" })).toBeTruthy();
+
+    // An unmapped structure reads "Not mapped".
+    fireEvent.click(rendered.getByRole("button", { name: "Project" }));
+    expect(rendered.getByText("Not mapped")).toBeTruthy();
+
+    // The Capacities source detail restores the aria-live sync pill.
+    fireEvent.click(rendered.getByRole("button", { name: "Capacities" }));
+    const pill = rendered.getByText("Capacities not synced");
+    expect(pill.getAttribute("role")).toBe("status");
+    expect(pill.getAttribute("aria-live")).toBe("polite");
   });
 
   it("refuses an invalid rule, states why, and keeps Save disabled (R33)", async () => {
     const { rendered } = openConnections();
     await ready(rendered);
 
-    fireEvent.click(rendered.getByRole("checkbox", { name: /Deadline within/ }));
+    fireEvent.click(rendered.getByRole("switch", { name: /Deadline within/ }));
     fireEvent.input(rendered.getByLabelText(/Deadline horizon/i), { target: { value: "" } });
 
     await waitFor(() =>
@@ -252,7 +309,7 @@ describe("Connections screen (U13)", () => {
     const { h, rendered } = openConnections();
     await ready(rendered);
 
-    fireEvent.click(rendered.getByRole("checkbox", { name: /Status is active/ }));
+    fireEvent.click(rendered.getByRole("switch", { name: /Status is active/ }));
     await waitFor(() => expect(rendered.getByText(/1 unsaved change/)).toBeTruthy());
 
     fireEvent.click(rendered.getByRole("button", { name: /Back to planning/ }));
@@ -270,13 +327,17 @@ describe("Connections screen (U13)", () => {
     expect(rendered.getByRole("button", { name: "Save" })).toBeTruthy();
   });
 
-  it("renders the structures table columns and keeps the Advanced region present", async () => {
+  it("renders the nav groups and the selected structure detail", async () => {
     const { rendered } = openConnections();
     await ready(rendered);
-    for (const header of ["STRUCTURE", "NATIVE RULES", "ACTIVE PULL", "ASSIGNED FLAG", "MAPPING"]) {
-      expect(rendered.getByText(header)).toBeTruthy();
+    for (const group of ["Sources", "Capacities structures", "Rules"]) {
+      expect(rendered.getByText(group)).toBeTruthy();
     }
-    expect(rendered.getByText("Advanced")).toBeTruthy();
+    for (const item of ["Todoist", "Calendar", "Capacities", "Exclude tags", "Advanced"]) {
+      expect(rendered.getByRole("button", { name: item })).toBeTruthy();
+    }
+    expect(rendered.getByText("Capacities structure")).toBeTruthy();
+    expect(rendered.getByRole("heading", { name: "Task" })).toBeTruthy();
     expect(rendered.getByRole("button", { name: /Discover from Capacities/ })).toBeTruthy();
   });
 });

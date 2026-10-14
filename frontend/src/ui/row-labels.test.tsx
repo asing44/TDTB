@@ -44,22 +44,22 @@ function rowNamed(container: Element, name: string): HTMLElement {
 }
 
 describe("sourceChip: the provenance vocabulary", () => {
-  it("labels todoist and capacities rows; anything else is a neutral OTHER", () => {
+  it("labels todoist and capacities rows; anything else is a neutral Other", () => {
     expect(sourceChip(item({ source: "todoist" }))).toEqual({
       key: "todoist",
-      label: "TODOIST",
+      label: "Todoist",
     });
     expect(sourceChip(item({ source: "capacities" }))).toEqual({
       key: "capacities",
-      label: "CAPACITIES",
+      label: "Capacities",
     });
     expect(sourceChip(item({ source: "calendar" }))).toEqual({
       key: "calendar",
-      label: "CALENDAR",
+      label: "Calendar",
     });
     expect(sourceChip(item({ source: "legacy" as never }))).toEqual({
       key: "other",
-      label: "OTHER",
+      label: "Other",
     });
   });
 });
@@ -88,9 +88,9 @@ describe("rendered rows carry the clearer labels", () => {
     const chips = Array.from((container as HTMLElement).querySelectorAll(".qrow__src"));
     expect(chips.length).toBeGreaterThan(0);
     const labels = chips.map((c) => c.textContent);
-    expect(labels).toContain("TODOIST");
-    expect(labels).toContain("CAPACITIES");
-    expect(labels).not.toContain("OTHER");
+    expect(labels).toContain("Todoist");
+    expect(labels).toContain("Capacities");
+    expect(labels).not.toContain("Other");
     // A todoist row carries the source chip but no redundant KIND chip.
     const todoistRow = rowNamed(container, "Review AWS module 4");
     expect(todoistRow.querySelector(".qrow__src--todoist")).toBeTruthy();
@@ -118,7 +118,7 @@ describe("rendered rows carry the clearer labels", () => {
     h.store.dispatch({ type: "INPUTS_LOADED", inputs, ledger: { ...h.scenario.ledger } });
     const { container } = h.ui(<Queue />);
     const row = rowNamed(container, "Team offsite");
-    expect(row.querySelector(".qrow__src--calendar")?.textContent).toBe("CALENDAR");
+    expect(row.querySelector(".qrow__src--calendar")?.textContent).toBe("Calendar");
     // A calendar row carries no Capacities-style KIND chip.
     expect(row.querySelector(".qrow__type")).toBeNull();
   });

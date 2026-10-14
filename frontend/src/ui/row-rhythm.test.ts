@@ -1,9 +1,13 @@
-/* row-rhythm.test.ts — CSS guards for the plan-tasks row rhythm (2026-10-11).
-   Two operator asks: more air between adjacent task rows, and a narrower work
-   surface than the full viewport. The density layer is appended at the end of
-   app.css so it wins the cascade without rewriting the blocks it overrides.
-   jsdom does no layout, so these read the cascade off disk the same way
-   row-spacing.test.ts does. */
+/* row-rhythm.test.ts — CSS guards for the plan-tasks row rhythm (Planning 2a,
+   2026-10-14, superseding 2026-10-11).
+
+   The operator asks are unchanged in spirit — rows read as one calm, scannable
+   stack, and the work surface is narrower than the full viewport — but 2a
+   answers them with compact 6x12 row cards separated by a 4px stack gap rather
+   than tall vertical padding. The layer is appended at the end of app.css so
+   it wins the cascade without rewriting the blocks it overrides. jsdom does no
+   layout, so these read the cascade off disk the same way row-spacing.test.ts
+   does. */
 
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -11,8 +15,7 @@ import { describe, expect, it } from "vitest";
 
 const appCss = readFileSync(resolve(process.cwd(), "src/app.css"), "utf8");
 
-/** Body of the LAST top-level `selector { … }` rule. The rhythm layer is the
-    final block in app.css, so the last match is the rule that wins. */
+/** Body of the LAST top-level `selector { … }` rule. */
 function lastTopLevelBlock(selector: string): string {
   const re = new RegExp(`(?:^|\\n)${selector}\\s*\\{([^}]*)\\}`, "g");
   const matches = Array.from(appCss.matchAll(re), (m) => m[1]);
@@ -20,18 +23,33 @@ function lastTopLevelBlock(selector: string): string {
   return matches[matches.length - 1];
 }
 
-describe("task rows carry more air between them", () => {
-  const row = lastTopLevelBlock("\\.qrow");
+/** Body of the LAST top-level `.qrow { … }` rule that owns a `padding`
+    declaration. The appended 2a layer splits the row across two `.qrow`
+    blocks, so the plain last match is not the padding rule. */
+function lastRowPadBlock(): string {
+  const re = /(?:^|\n)\.qrow\s*\{([^}]*)\}/g;
+  const blocks = Array.from(appCss.matchAll(re), (m) => m[1]);
+  const row = blocks.filter((b) => /padding:/.test(b)).pop();
+  if (!row) throw new Error("standalone .qrow padding rule not found in app.css");
+  return row;
+}
 
-  it("the final .qrow rule sets at least 12px of vertical padding", () => {
-    const m = row.match(/padding-block:\s*(\d+(?:\.\d+)?)px/);
-    expect(m).not.toBeNull();
-    expect(parseFloat(m?.[1] ?? "0")).toBeGreaterThanOrEqual(12);
+describe("task rows keep the compact 2a rhythm", () => {
+  const row = lastRowPadBlock();
+
+  it("the final .qrow padding rule uses the compact 6x12 padding", () => {
+    expect(row).toMatch(/padding:\s*6px 12px/);
   });
 
-  it("keeps the spacing vertical-only (no horizontal padding change)", () => {
-    expect(row).not.toMatch(/padding-(left|right|inline)/);
-    expect(row).not.toMatch(/grid-template-columns:/);
+  it("the row owns the five-column grid (status | body | duration | priority | actions)", () => {
+    expect(row).toMatch(
+      /grid-template-columns:\s*130px\s+minmax\(0,\s*1fr\)\s+200px\s+50px\s+194px/,
+    );
+  });
+
+  it("separates adjacent rows with a 4px stack gap instead of tall padding", () => {
+    const rows = lastTopLevelBlock("\\.tasktable__rows");
+    expect(rows).toMatch(/gap:\s*4px/);
   });
 });
 

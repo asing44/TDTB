@@ -14,7 +14,7 @@ import { cleanup, fireEvent, waitFor } from "@testing-library/preact";
 afterEach(cleanup);
 
 import { CalendarImpact } from "./CalendarImpact";
-import { Queue } from "./Queue";
+import { CapacityCard } from "./CapacityCard";
 import { makeHarness } from "./test-harness";
 import { toMinutes } from "../model/time";
 import type { AnchoredBlock } from "../model/types";
@@ -218,7 +218,15 @@ describe("U10 timeline — keyboard select", () => {
 describe("U10 timeline — accounting actions reach the capacity card", () => {
   it("duration ± and Exclude on a block move the capacity card headline", async () => {
     const h = makeHarness("ready");
-    const r = h.ui(<Queue />);
+    // Planning 2a makes the Plan screen's timeline read-only (Already placed),
+    // so the accounting controls are exercised on CalendarImpact directly,
+    // beside the capacity card it feeds.
+    const r = h.ui(
+      <>
+        <CalendarImpact />
+        <CapacityCard />
+      </>,
+    );
     const headline = () => r.container.querySelector(".cap-card__headline")!.textContent ?? "";
     const amount = () => parseInt(headline().match(/(\d+)\s*blk/)?.[1] ?? "NaN", 10);
 

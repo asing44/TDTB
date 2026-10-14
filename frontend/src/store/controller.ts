@@ -10,7 +10,6 @@
      canLiveCommit at call time — the second-click gate (locked decision 9). */
 
 import type { Adapter, SequenceContext } from "../adapters/adapter";
-import { PromptOptinConflictError } from "../adapters/adapter";
 import { ApiError } from "../adapters/api";
 import { itemIdentity, projectSequenceRow } from "../adapters/wire";
 import { fingerprintFixedInputs } from "../model/fingerprint";
@@ -432,7 +431,8 @@ export class Controller {
   }
 
   /** U5: PATCH the local prompt drafts. Captures-only, so the server treats
-      it as a prompt-only write that never confirms the day. */
+      it as a prompt-only write that never confirms the day. Browser-defined
+      custom keys (custom-<id>) ride the same patch. */
   async savePromptDrafts(patch: Record<string, string>): Promise<void> {
     this.dispatch({ type: "PROMPT_SAVE_START" });
     try {
@@ -446,42 +446,9 @@ export class Controller {
       this.dispatch({
         type: "PROMPT_DRAFTS_SAVED",
         captures,
-        // An unavailable echo must not overwrite known prefs with a fabricated
-        // all-false map; null tells the reducer to keep them unavailable.
-        optins: result.optinsAvailable ? result.optins : null,
-        revision: result.optinsRevision,
         warnings: result.promptWarnings,
       });
     } catch (e) {
-      this.dispatch({
-        type: "PROMPT_SAVE_ERROR",
-        error: String(e instanceof Error ? e.message : e),
-      });
-    }
-  }
-
-  /** U5: persist the undated opt-ins with the last-known revision. A stale
-      revision keeps the user's unsaved selection — the conflict is surfaced,
-      never resolved by overwriting saved preferences. */
-  async savePromptOptins(optins: Record<string, boolean>): Promise<void> {
-    const revision = this.getState().promptOptins.revision;
-    this.dispatch({ type: "PROMPT_SAVE_START" });
-    try {
-      const result = await this.adapter.savePromptOptins(optins, revision);
-      this.dispatch({
-        type: "PROMPT_OPTINS_SAVED",
-        optins: result.optins,
-        revision: result.optinsRevision,
-      });
-    } catch (e) {
-      if (e instanceof PromptOptinConflictError) {
-        this.dispatch({
-          type: "PROMPT_OPTIN_CONFLICT",
-          expectedRevision: e.expectedRevision,
-          currentRevision: e.currentRevision,
-        });
-        return;
-      }
       this.dispatch({
         type: "PROMPT_SAVE_ERROR",
         error: String(e instanceof Error ? e.message : e),

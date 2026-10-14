@@ -18,7 +18,7 @@
 
 import { useEffect, useRef, useState } from "preact/hooks";
 import { useApp, useAppState } from "./context";
-import { display12h, formatBlockAmount, formatDurationMinutes, toMinutes } from "../model/time";
+import { display12h, formatBlockAmount, formatDurationMinutes, isValidHHMM, toMinutes } from "../model/time";
 import {
   explicitMintCapMinutes,
   fillMintSessionIds,
@@ -37,10 +37,11 @@ import {
   validateAnchoredOverride,
 } from "../model/anchored";
 import { calendarWalls } from "../model/overflow";
+import { dayFrame } from "../model/dayFrame";
 import { effectiveAnchoredBlocks } from "../store/store";
 import { displayAnchored } from "../model/calendarEvents";
 import { DayStrip } from "./day-setup/DayStrip";
-import { AnchorsCard, type AnchorTimeState } from "./day-setup/AnchorsCard";
+import { AnchorPopover, type AnchorTimeState } from "./day-setup/AnchorPopover";
 import { PromptsCard } from "./day-setup/PromptsCard";
 import { LooseEndBanner } from "./day-setup/LooseEndBanner";
 import { onSetupContinue, onSetupUndo } from "./day-setup/commands";
@@ -118,12 +119,6 @@ export function DaySetupPanel({
   );
   const [saving, setSaving] = useState(false);
   const [liveCustom, setLiveCustom] = useState("");
-  // U5: prompt opt-ins are a local optimistic draft. They persist immediately
-  // on toggle; a stale revision keeps the unsaved choice and surfaces the
-  // conflict instead of overwriting saved preferences.
-  const [optins, setOptins] = useState<Record<string, boolean>>({
-    ...s.promptOptins.optins,
-  });
   const [promptDirty, setPromptDirty] = useState(false);
   // U12 Undo restores the uncommitted day-frame edits to the last saved state.
   const initialRef = useRef({
@@ -151,12 +146,6 @@ export function DaySetupPanel({
     });
   };
 
-  const toggleOptin = (key: "megan_nicety" | "stoic_intention", value: boolean) => {
-    const next = { ...optins, [key]: value };
-    setOptins(next);
-    void controller.savePromptOptins(next);
-  };
-
   const autosavePrompts = () => {
     if (promptDirty) savePrompts();
   };
@@ -182,6 +171,9 @@ export function DaySetupPanel({
   const [timeUi, setTimeUi] = useState<
     Record<string, { saving?: boolean; saved?: boolean; error?: string | null }>
   >({});
+  // Planning 2a: the anchor whose block is selected (the popover will anchor to
+  // it). Selecting keeps the existing editor path so nothing regresses yet.
+  const [selectedAnchor, setSelectedAnchor] = useState<string | null>(null);
   const persistChain = useRef<Promise<void>>(Promise.resolve());
   const pendingPersists = useRef(0);
   useEffect(() => {
@@ -296,6 +288,11 @@ export function DaySetupPanel({
 
   /** Strip drag / arrow keys: today's start for one config anchor. */
   const moveAnchor = (id: string, time: string | null) => {
+    // The strip only ever sends a valid snapped clock, but the popover's
+    // free-text Starts field can clear or partially type; refuse anything that
+    // is not a complete HH:MM so "" never reaches the server. Reset passes
+    // null deliberately and is allowed through.
+    if (time !== null && !isValidHHMM(time)) return;
     const next: AnchoredOverride = { ...overrideOf(id), time };
     setDraft((d) => ({ ...d, anchored: { ...d.anchored, [id]: next } }));
     patchTimeUi(id, { saved: false, error: null });
@@ -469,10 +466,7 @@ export function DaySetupPanel({
   const editAnchor = (id: string) =>
     store.dispatch({ type: "UI", patch: { editorAnchor: id } });
 
-  /** Chip Adjust time / Adjust duration: open the same shared AnchoredEditor
-      the chip click opens, told which field to focus. */
-  const openAnchorEditor = (id: string, intent: "time" | "duration") =>
-    store.dispatch({ type: "UI", patch: { editorAnchor: id, editorAnchorIntent: intent } });
+
 
   // U12: the footer's Continue confirms the day frame (preserving the existing
   // day-setup confirm contract) and then advances the stepper to Plan tasks.
@@ -493,8 +487,10 @@ export function DaySetupPanel({
   };
 
   if (variant === "screen") {
-    const frameStart = mintAnchor ?? s.inputs.time.anchor;
-    const frameEnd = draft.eod ?? s.inputs.time.effectiveEod;
+    const { start: frameStart, end: frameEnd } = dayFrame(s.inputs.time, {
+      anchor: draft.anchor,
+      eod: draft.eod,
+    });
     const frameStartMin = toMinutes(frameStart);
     const frameEndMin = toMinutes(frameEnd);
     const stripAnchors = editableAnchors.map((a) => {
@@ -518,6 +514,7 @@ export function DaySetupPanel({
         id: a.id,
         name: a.name,
         start: time,
+        end: a.end ?? time,
         counted,
         skipped: !on,
         reason: !on ? "skipped" : outside ? "outside frame" : null,
@@ -546,14 +543,12 @@ export function DaySetupPanel({
         // Work-class (Mint) rows draw yellow on the lane; fixed stays blue.
         capacityClass: a.capacityClass,
       }));
-    const countedAnchors = stripAnchors.filter((anchor) => anchor.counted);
-    const notCountedAnchors = stripAnchors.filter((anchor) => !anchor.counted);
     const freeSlots = Math.max(0, selectableMintSessionIds.length - selectedMintSessionIds.length);
+    const selectedBlock = stripAnchors.find((anchor) => anchor.id === selectedAnchor) ?? null;
 
     return (
       <div class="settings-panel settings-panel--day day-setup-screen">
-        <div class="day-setup-screen__grid">
-          <div class="day-setup-screen__main">
+        <div class="day-setup-screen__stack">
             {micro.pendingConfirm && (
               <LooseEndBanner
                 pending={micro.pendingConfirm}
@@ -563,17 +558,17 @@ export function DaySetupPanel({
               />
             )}
             <section
-              class="setup-section setup-section--frame"
+              class="setup-section setup-section--your-day"
               data-settings-section="frame"
               aria-labelledby="setup-sec-frame"
             >
-              <div class="setup-section__head">
-                <h3 id="setup-sec-frame">Day frame</h3>
-                <p class="setup-section__hint">
-                  Drag on the strip to pick Mint sessions or move anchors
-                </p>
-              </div>
-              <div class="setup-section__body">
+              <div class="your-day__head">
+                <div class="your-day__title">
+                  <h3 id="setup-sec-frame">Your day</h3>
+                  <p class="setup-section__hint">
+                    Click an anchor to edit it. Drag to move it or pick Mint sessions.
+                  </p>
+                </div>
                 <div class="frame-fields">
                   <div class="field">
                     <label for="setup-preset">Preset</label>
@@ -634,91 +629,76 @@ export function DaySetupPanel({
                     </select>
                   </div>
                 </div>
-
-                <DayStrip
-                  frameStart={frameStart}
-                  frameEnd={frameEnd}
-                  sessions={availableMintSessions}
-                  selectedIds={selectedMintSessionIds}
-                  selectableIds={selectableMintSessionIds}
-                  onSelectIds={(ids) => setMintSelection(ids)}
-                  onToggleSession={toggleMintSession}
-                  anchors={stripAnchors}
-                  calendar={stripCalendar}
-                  onEditAnchor={editAnchor}
-                  onMoveAnchor={(id, start) => moveAnchor(id, start)}
-                  mintControl={
-                    availableMintSessions.length > 0 ? (
-                      <label class="frame-summary__blocks" for="setup-mint-blocks">
-                        <span>Mint blocks</span>
-                        <input
-                          id="setup-mint-blocks"
-                          type="range"
-                          class="field__range"
-                          min={0}
-                          max={mintSelectionMax}
-                          step={1}
-                          value={selectedMintSessionIds.length}
-                          aria-valuetext={`${selectedMintSessionIds.length} of ${mintSelectionMax} blocks`}
-                          onInput={(e) =>
-                            setMintSessionCount(Number((e.target as HTMLInputElement).value))
-                          }
-                        />
-                      </label>
-                    ) : null
-                  }
-                />
-
-                {availableMintSessions.length > 0 && (
-                  <div class="frame-summary" role="status">
-                    <span class="frame-summary__mint">
-                      Mint {selectedMintSessionIds.length} of {availableMintSessions.length} sessions ·{" "}
-                      {allotmentLabel}
-                    </span>
-                    <span class="frame-summary__free">
-                      Only {freeSlots} free slot{freeSlots === 1 ? "" : "s"} inside the frame today.
-                    </span>
-                    <button type="button" class="btn frame-summary__reset" onClick={resetAllotment}>
-                      Reset to config
-                    </button>
-                  </div>
-                )}
-                {allotmentError && (
-                  <span class="field-error" role="alert">Use nonnegative 15-minute increments.</span>
-                )}
-                {mintWarning && (
-                  <span class="field-warning" role="status">{mintWarning}</span>
-                )}
               </div>
+
+              <DayStrip
+                frameStart={frameStart}
+                frameEnd={frameEnd}
+                sessions={availableMintSessions}
+                selectedIds={selectedMintSessionIds}
+                selectableIds={selectableMintSessionIds}
+                onSelectIds={(ids) => setMintSelection(ids)}
+                onToggleSession={toggleMintSession}
+                anchors={stripAnchors}
+                calendar={stripCalendar}
+                selectedAnchorId={selectedAnchor}
+                onSelectAnchor={(id) => setSelectedAnchor(id)}
+                onMoveAnchor={(id, start) => moveAnchor(id, start)}
+              />
+
+              {availableMintSessions.length > 0 && (
+                <div class="frame-summary" role="status">
+                  <span class="frame-summary__mint">
+                    Mint {selectedMintSessionIds.length} of {availableMintSessions.length} sessions ·{" "}
+                    {allotmentLabel}
+                  </span>
+                  <span class="frame-summary__free">
+                    Only {freeSlots} free slot{freeSlots === 1 ? "" : "s"} inside the frame today.
+                  </span>
+                  <label class="frame-summary__blocks" for="setup-mint-blocks">
+                    <span>Mint blocks</span>
+                    <input
+                      id="setup-mint-blocks"
+                      type="range"
+                      class="field__range"
+                      min={0}
+                      max={mintSelectionMax}
+                      step={1}
+                      value={selectedMintSessionIds.length}
+                      aria-valuetext={`${selectedMintSessionIds.length} of ${mintSelectionMax} blocks`}
+                      onInput={(e) =>
+                        setMintSessionCount(Number((e.target as HTMLInputElement).value))
+                      }
+                    />
+                  </label>
+                  <button type="button" class="btn frame-summary__reset" onClick={resetAllotment}>
+                    Reset to config
+                  </button>
+                </div>
+              )}
+              {allotmentError && (
+                <span class="field-error" role="alert">Use nonnegative 15-minute increments.</span>
+              )}
+              {mintWarning && (
+                <span class="field-warning" role="status">{mintWarning}</span>
+              )}
             </section>
 
-            <AnchorsCard
-              counted={countedAnchors.map((anchor) => ({
-                id: anchor.id,
-                name: anchor.name,
-                time: anchor.start,
-                blocks: anchor.blocks,
-                skipped: anchor.skipped,
-                timeState: anchor.timeState,
-              }))}
-              notCounted={notCountedAnchors.map((anchor) => ({
-                id: anchor.id,
-                name: anchor.name,
-                time: anchor.start,
-                reason: anchor.reason ?? "outside frame",
-                skipped: anchor.skipped,
-                timeState: anchor.timeState,
-              }))}
-              onEdit={editAnchor}
-              onSaveTime={(id) => void saveAnchorTime(id)}
-              onResetTime={(id) => moveAnchor(id, null)}
-              onToggleSkip={toggleAnchorSkip}
-              onAdjustTime={(id) => openAnchorEditor(id, "time")}
-              onAdjustDuration={(id) => openAnchorEditor(id, "duration")}
-            />
-          </div>
+            {selectedBlock && (
+              <AnchorPopover
+                anchor={selectedBlock}
+                onMoveTime={(id, time) => moveAnchor(id, time)}
+                onToggleCount={toggleAnchorSkip}
+                onEdit={(id) => {
+                  setSelectedAnchor(null);
+                  editAnchor(id);
+                }}
+                onResetDefault={(id) => moveAnchor(id, null)}
+                onSaveDefault={(id) => void saveAnchorTime(id)}
+                onClose={() => setSelectedAnchor(null)}
+              />
+            )}
 
-          <div class="day-setup-screen__side">
             <PromptsCard
               micro={micro}
               liveCustom={liveCustom}
@@ -744,13 +724,9 @@ export function DaySetupPanel({
                 }));
               }}
               onAutosave={autosavePrompts}
-              optinsAvailable={s.promptOptins.available}
-              optins={optins}
-              onToggleOptin={toggleOptin}
+              onPersistCustom={(patch) => void controller.savePromptDrafts(patch)}
               promptSave={s.promptSave}
-              onSavePrompts={savePrompts}
             />
-          </div>
         </div>
       </div>
     );
@@ -1110,72 +1086,6 @@ export function DaySetupPanel({
             }}
             onBlur={autosavePrompts}
           />
-        </div>
-        {/* U5: prompt drafts save separately from the day confirmation, and
-            opted-in prompts export to Todoist Inbox on Commit only. */}
-        <div class="field prompt-exports" data-settings-section="prompt-exports">
-          <span class="field__label">Prompt exports</span>
-          {!s.promptOptins.available ? (
-            <p class="field__hint" role="status">
-              Export preferences are unavailable — waiting on a server read; no
-              preference is assumed and nothing is overwritten.
-            </p>
-          ) : (
-            <>
-              <p class="field__hint">
-                Opted-in prompts become Todoist Inbox tasks on Commit only.
-                Intention is never exported.
-              </p>
-              <label class="prompt-optin">
-                <input
-                  type="checkbox"
-                  checked={optins.megan_nicety === true}
-                  onChange={(e) =>
-                    toggleOptin("megan_nicety", e.currentTarget.checked)
-                  }
-                />
-                For Meegy — create a Todoist task on Commit
-              </label>
-              <label class="prompt-optin">
-                <input
-                  type="checkbox"
-                  checked={optins.stoic_intention === true}
-                  onChange={(e) =>
-                    toggleOptin("stoic_intention", e.currentTarget.checked)
-                  }
-                />
-                Stoic — create a Todoist task on Commit
-              </label>
-            </>
-          )}
-          {s.promptSave.conflict && (
-            <p class="field-error" role="alert">
-              Export preferences changed elsewhere (stored revision{" "}
-              {s.promptSave.conflict.currentRevision}). Your unsaved choice is
-              kept — reload to reconcile.
-            </p>
-          )}
-          {s.promptSave.error && (
-            <p class="field-error" role="alert">
-              Prompts could not be saved: {s.promptSave.error}
-            </p>
-          )}
-          {s.promptSave.warnings.map((warning) => (
-            <p class="field-warning" role="status">{warning}</p>
-          ))}
-          <div class="prompt-exports__actions">
-            <button
-              type="button"
-              class="btn"
-              onClick={savePrompts}
-              disabled={s.promptSave.phase === "saving"}
-            >
-              {s.promptSave.phase === "saving" ? "Saving prompts…" : "Save prompts"}
-            </button>
-            <span class="field__hint">
-              Drafts save separately — they never confirm the day.
-            </span>
-          </div>
         </div>
           </div>
         </section>

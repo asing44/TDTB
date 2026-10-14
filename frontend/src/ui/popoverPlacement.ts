@@ -38,6 +38,7 @@ export function computePopoverPlacement(
   trigger: PopoverRect,
   viewport: ViewportSize,
   panel: { width: number; height: number },
+  prefer: "up" | "down" = "up",
 ): PopoverPlacement {
   const above = Math.max(0, trigger.top - POPOVER_EDGE - POPOVER_GAP);
   const below = Math.max(
@@ -45,13 +46,21 @@ export function computePopoverPlacement(
     viewport.height - trigger.bottom - POPOVER_EDGE - POPOVER_GAP,
   );
   const placement: "up" | "down" =
-    above >= panel.height
-      ? "up"
-      : below >= panel.height
+    prefer === "down"
+      ? below >= panel.height
         ? "down"
-        : above >= below
+        : above >= panel.height
           ? "up"
-          : "down";
+          : above >= below
+            ? "up"
+            : "down"
+      : above >= panel.height
+        ? "up"
+        : below >= panel.height
+          ? "down"
+          : above >= below
+            ? "up"
+            : "down";
   const available = placement === "up" ? above : below;
   const maxHeight = Math.max(0, Math.min(panel.height, available));
   const desiredTop =

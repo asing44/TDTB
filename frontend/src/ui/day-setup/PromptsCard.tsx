@@ -1,16 +1,24 @@
-/* U12 Morning prompts card. Re-homes the existing Live micro-adventure picker
-   and the three optional prompt drafts with their U5 opt-ins and save state.
-   The Plan-only copy-prompt fallback stays off this screen (R20b), and no
-   prompt text renders outside this card. */
+/* Morning prompts (Planning 2a). A header row with the "Edit prompts" link,
+   a four-column grid of prompt cards (Live micro-adventure + Intention + For
+   Meegy + Stoic, then browser-defined custom prompts), and a foot row with the
+   export line and "+ Add prompt".
+
+   There are no mono routing tags, no per-prompt export checkboxes, and no
+   "Prompt exports" block any more: the backend exports every non-empty prompt
+   to the Todoist Inbox at Commit. Custom prompt answers persist through the
+   captures patch (`onPersistCustom`) rather than the retired opt-in store. */
 
 import { useState } from "preact/hooks";
 
 import type { MicroAdventure } from "../../model/types";
-import { CustomPromptList } from "./CustomPromptList";
+import {
+  CustomPromptAdd,
+  CustomPromptList,
+  useCustomPrompts,
+} from "./CustomPromptList";
 
 export interface PromptSaveState {
   phase: string;
-  conflict: { currentRevision: number } | null;
   error: string | null;
   warnings: string[];
 }
@@ -26,17 +34,29 @@ export interface PromptsCardProps {
   captures: { intention: string; forMeegy: string; stoic: string };
   onCapture: (key: "intention" | "forMeegy" | "stoic", value: string) => void;
   onAutosave: () => void;
-  optinsAvailable: boolean;
-  optins: Record<string, boolean>;
-  onToggleOptin: (key: "megan_nicety" | "stoic_intention", value: boolean) => void;
+  /** Persist a custom prompt answer through POST /day-setup captures:
+      `{ [id]: answer }`; "" clears on the server. */
+  onPersistCustom: (patch: Record<string, string>) => void;
   promptSave: PromptSaveState;
-  onSavePrompts: () => void;
+  /** Injected for tests; defaults to the browser's localStorage. */
+  customStorage?: Storage;
+}
+
+/** The mockup sentence-cases the category ("nature" → "Nature"). */
+function categoryLabel(category: string): string {
+  return category.charAt(0).toUpperCase() + category.slice(1);
 }
 
 export function PromptsCard(props: PromptsCardProps) {
   const micro = props.micro;
-  // Edit prompts reveals rename and remove for the local custom prompts.
+  // Edit prompts reveals rename and remove for the browser-defined prompts.
   const [editingPrompts, setEditingPrompts] = useState(false);
+  const [customOpen, setCustomOpen] = useState(false);
+  const custom = useCustomPrompts({
+    storage: props.customStorage,
+    onPersist: props.onPersistCustom,
+  });
+
   return (
     <section
       class="setup-section setup-section--prompts"
@@ -55,10 +75,12 @@ export function PromptsCard(props: PromptsCardProps) {
         </button>
       </div>
       <div class="setup-section__body">
-        <div class="prompts-live">
-          <div class="field field--stacked">
-            <div class="field__labelrow"><label for="live-pick">Live micro-adventure</label><span class="field__tag">pool → Live block</span></div>
-            <div class="field__controls">
+        <div class="prompts-grid">
+          <article class="prompt-card prompt-card--live">
+            <div class="prompt-card__labelrow">
+              <label for="live-pick">Live micro-adventure</label>
+            </div>
+            <div class="prompt-card__controls field__controls">
               <select
                 id="live-pick"
                 value={micro.pick?.id ?? ""}
@@ -77,136 +99,126 @@ export function PromptsCard(props: PromptsCardProps) {
                 Shuffle
               </button>
             </div>
-          </div>
-          <p class="live-micro__status" aria-live="polite">
-            {micro.pick ? (
-              <span>
-                🌱 {micro.pick.idea}
-                {micro.pick.category ? ` · ${micro.pick.category}` : ""}{" "}
-                <em>({micro.source === "override" ? "your pick" : "auto"})</em>
-              </span>
-            ) : (
-              <span>No micro-adventure today</span>
+            <p class="live-micro__meta" aria-live="polite">
+              {micro.pick?.category ? (
+                <span>{categoryLabel(micro.pick.category)} · </span>
+              ) : null}
+              {micro.streak > 0 ? <span>streak {micro.streak} · </span> : null}
+              <button
+                type="button"
+                class="live-micro__custom-link"
+                aria-expanded={customOpen}
+                onClick={() => setCustomOpen(!customOpen)}
+              >
+                Use my own idea
+              </button>
+            </p>
+            {customOpen && (
+              <div class="prompt-card__controls field__controls">
+                <input
+                  id="live-custom"
+                  type="text"
+                  aria-label="Custom idea"
+                  value={props.liveCustom}
+                  onInput={(e) => props.onLiveCustom((e.target as HTMLInputElement).value)}
+                />
+                <button
+                  class="btn"
+                  disabled={!props.liveCustom.trim()}
+                  onClick={props.onSetCustom}
+                >
+                  Set custom
+                </button>
+              </div>
             )}
-            {micro.streak > 0 && <span> · streak {micro.streak}</span>}
+            {micro.source === "override" && (
+              <div class="live-micro__actions">
+                <button class="btn" onClick={props.onResetAuto}>
+                  Reset to auto
+                </button>
+              </div>
+            )}
+          </article>
+
+          <article class="prompt-card">
+            <div class="prompt-card__labelrow">
+              <label for="cap-intention">Intention</label>
+            </div>
+            <textarea
+              id="cap-intention"
+              class="cap-intention"
+              placeholder="One thing to focus on today"
+              value={props.captures.intention}
+              onInput={(e) =>
+                props.onCapture("intention", (e.target as HTMLTextAreaElement).value)
+              }
+              onBlur={props.onAutosave}
+            />
+          </article>
+          <article class="prompt-card">
+            <div class="prompt-card__labelrow">
+              <label for="cap-meegy">For Meegy</label>
+            </div>
+            <textarea
+              id="cap-meegy"
+              value={props.captures.forMeegy}
+              onInput={(e) =>
+                props.onCapture("forMeegy", (e.target as HTMLTextAreaElement).value)
+              }
+              onBlur={props.onAutosave}
+            />
+          </article>
+          <article class="prompt-card">
+            <div class="prompt-card__labelrow">
+              <label for="cap-stoic">Stoic</label>
+            </div>
+            <textarea
+              id="cap-stoic"
+              value={props.captures.stoic}
+              onInput={(e) =>
+                props.onCapture("stoic", (e.target as HTMLTextAreaElement).value)
+              }
+              onBlur={props.onAutosave}
+            />
+          </article>
+
+          {custom.list.length > 0 && (
+            <CustomPromptList
+              prompts={custom.list}
+              editing={editingPrompts}
+              onRename={custom.rename}
+              onAnswer={custom.answer}
+              onAnswerBlur={custom.answerBlur}
+              onRemove={custom.remove}
+            />
+          )}
+        </div>
+
+        {editingPrompts && (
+          <p class="field__hint custom-prompt__edit-note" role="status">
+            {custom.list.length === 0
+              ? "Intention, For Meegy and Stoic are built in and can't be renamed or removed. Use + Add prompt to add your own."
+              : "Rename or remove your own prompts. Intention, For Meegy and Stoic are built in and stay as they are."}
           </p>
-          <div class="field field--stacked">
-            <div class="field__labelrow"><label for="live-custom">Custom idea</label><span class="field__tag">overrides the pick</span></div>
-            <div class="field__controls">
-              <input
-                id="live-custom"
-                type="text"
-                value={props.liveCustom}
-                onInput={(e) => props.onLiveCustom((e.target as HTMLInputElement).value)}
-              />
-              <button class="btn" disabled={!props.liveCustom.trim()} onClick={props.onSetCustom}>
-                Set custom
-              </button>
-            </div>
-          </div>
-          {micro.source === "override" && (
-            <div class="live-micro__actions">
-              <button class="btn" onClick={props.onResetAuto}>
-                Reset to auto
-              </button>
-            </div>
-          )}
+        )}
+
+        <div class="prompts-foot">
+          <p class="prompts-export-line">
+            Filled prompts are added to your Todoist Inbox when you commit.
+          </p>
+          <CustomPromptAdd onAdd={custom.add} />
         </div>
 
-        <div class="field field--stacked">
-          <div class="field__labelrow"><label for="cap-intention">Intention</label><span class="field__tag">text → daily note</span></div>
-          <textarea
-            id="cap-intention"
-            class="cap-intention"
-            placeholder="One thing to focus on today"
-            value={props.captures.intention}
-            onInput={(e) =>
-              props.onCapture("intention", (e.target as HTMLTextAreaElement).value)
-            }
-            onBlur={props.onAutosave}
-          />
-        </div>
-        <div class="field field--stacked">
-          <div class="field__labelrow"><label for="cap-meegy">For Meegy</label><span class="field__tag">text → daily note</span></div>
-          <textarea
-            id="cap-meegy"
-            value={props.captures.forMeegy}
-            onInput={(e) => props.onCapture("forMeegy", (e.target as HTMLTextAreaElement).value)}
-            onBlur={props.onAutosave}
-          />
-        </div>
-        <div class="field field--stacked">
-          <div class="field__labelrow"><label for="cap-stoic">Stoic</label><span class="field__tag">text → daily note</span></div>
-          <textarea
-            id="cap-stoic"
-            value={props.captures.stoic}
-            onInput={(e) => props.onCapture("stoic", (e.target as HTMLTextAreaElement).value)}
-            onBlur={props.onAutosave}
-          />
-        </div>
-
-        <CustomPromptList editing={editingPrompts} />
-
-        <div class="field field--stacked prompt-exports" data-settings-section="prompt-exports">
-          <span class="field__label">Prompt exports</span>
-          {!props.optinsAvailable ? (
-            <p class="field__hint" role="status">
-              Export preferences are unavailable — waiting on a server read; no preference is
-              assumed and nothing is overwritten.
-            </p>
-          ) : (
-            <>
-              <p class="field__hint">
-                Opted-in prompts become Todoist Inbox tasks on Commit only. Intention is never
-                exported.
-              </p>
-              <label class="prompt-optin">
-                <input
-                  type="checkbox"
-                  checked={props.optins.megan_nicety === true}
-                  onChange={(e) => props.onToggleOptin("megan_nicety", e.currentTarget.checked)}
-                />
-                For Meegy — create a Todoist task on Commit
-              </label>
-              <label class="prompt-optin">
-                <input
-                  type="checkbox"
-                  checked={props.optins.stoic_intention === true}
-                  onChange={(e) => props.onToggleOptin("stoic_intention", e.currentTarget.checked)}
-                />
-                Stoic — create a Todoist task on Commit
-              </label>
-            </>
-          )}
-          {props.promptSave.conflict && (
-            <p class="field-error" role="alert">
-              Export preferences changed elsewhere (stored revision{" "}
-              {props.promptSave.conflict.currentRevision}). Your unsaved choice is kept — reload to
-              reconcile.
-            </p>
-          )}
-          {props.promptSave.error && (
-            <p class="field-error" role="alert">
-              Prompts could not be saved: {props.promptSave.error}
-            </p>
-          )}
-          {props.promptSave.warnings.map((warning) => (
-            <p class="field-warning" role="status">
-              {warning}
-            </p>
-          ))}
-          <div class="prompt-exports__actions">
-            <button
-              type="button"
-              class="btn"
-              onClick={props.onSavePrompts}
-              disabled={props.promptSave.phase === "saving"}
-            >
-              {props.promptSave.phase === "saving" ? "Saving prompts…" : "Save prompts"}
-            </button>
-            <span class="field__hint">Drafts save separately — they never confirm the day.</span>
-          </div>
-        </div>
+        {props.promptSave.error && (
+          <p class="field-error" role="alert">
+            Prompts could not be saved: {props.promptSave.error}
+          </p>
+        )}
+        {props.promptSave.warnings.map((warning) => (
+          <p class="field-warning" role="status">
+            {warning}
+          </p>
+        ))}
       </div>
     </section>
   );

@@ -3,11 +3,10 @@
    1. The −/+ duration steppers return to the row, flanking the slider:
       [−] [slider] [+] readout. Each steps by HALF_BLOCK (15 min) and pins at
       the MIN/MAX bounds.
-   2. The track must not flex while it is dragged. The readout's text changes
-      every step ("All day" → "15min" → "1hr" …) and the old `min-width: 0`
-      override let the readout size to its text, so the flex track beside it
-      re-laid-out mid-drag and the native thumb re-snapped. The readout now
-      holds a fixed width.
+   2. The track must not flex while it is dragged. The readout now sits on its
+      own line above the slider (Planning 2a), so its text changes ("All day"
+      → "15min" → "1hr" …) can no longer reflow the track beside it or
+      re-snap the native thumb.
    3. A stored override above the shrunk range (e.g. 12 blocks saved before
       MAX_BLOCKS dropped to 10) must not disagree with the thumb.
 
@@ -129,12 +128,12 @@ describe("Plan row duration steppers are restored", () => {
   });
 });
 
-describe("the duration readout holds a fixed width beside the slider", () => {
-  it("holds a fixed value area so sliders line up between rows", () => {
+describe("the readout sits above the slider so it cannot reflow the track", () => {
+  it("left-aligns the value and shrinks it to its text", () => {
     const body = lastRuleBody("\\.qrow__time-readout \\.alloc-track__value");
-    expect(body).toMatch(/width:\s*88px/);
-    expect(body).toMatch(/min-width:\s*88px/);
-    expect(body).toMatch(/text-align:\s*right/);
+    expect(body).toMatch(/width:\s*auto/);
+    expect(body).toMatch(/min-width:\s*0/);
+    expect(body).toMatch(/text-align:\s*left/);
   });
 
   it("never wraps the value; the base value rule stays right-aligned", () => {
@@ -163,12 +162,12 @@ describe("a stored override above the shrunk range still agrees with the thumb",
   });
 });
 
-describe("the readout fits beside the track at 1101-1439px", () => {
-  it("lets the track shrink to 120px so the readout fits beside it", () => {
-    // The time column is 300px at 1101-1439px. Two 32px steppers, the fixed
-    // readout and the gaps leave little room; a 140px track floor overflowed
-    // the column, so the track keeps a 120px floor.
-    const body = ruleBody("\\.qrow__time \\.alloc-track");
-    expect(body).toMatch(/min-width:\s*120px/);
+describe("the track shrinks to fit between the steppers", () => {
+  it("gives the track a flexible basis and no min-width floor in the row", () => {
+    // Planning 2a: the two steppers and the track share one 200px column, so
+    // the track must be able to shrink instead of holding a 120/140px floor.
+    const body = lastRuleBody("\\.qrow__time \\.alloc-track");
+    expect(body).toMatch(/flex:\s*1 1 auto/);
+    expect(body).toMatch(/min-width:\s*0/);
   });
 });

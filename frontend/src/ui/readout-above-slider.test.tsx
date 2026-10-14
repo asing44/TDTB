@@ -1,14 +1,15 @@
-/* readout-above-slider.test.tsx — Plan task row duration column (2026-10-12
+/* readout-above-slider.test.tsx — Plan task row duration column (Planning 2a
    redesign):
 
-   The duration readout sits INLINE to the RIGHT of the slider in the one-line
-   desktop row: [−] [track] [+] readout. The readout is a FIXED-width cell; a
-   plain-word provenance label, when the row is not source-default, stacks on a
-   second line beneath the value so every row keeps the same cell box and the
-   sliders line up. The readout never wraps.
+   The duration readout sits ABOVE the slider on its own line: the value is
+   left-aligned over the − stepper, with a plain-word provenance label, when
+   the row is not source-default, immediately after the value. The earlier
+   fixed-width inline cell (an 88px box trailing the track) is retired — the
+   readout no longer shares the slider's line, so its text width cannot reflow
+   the track mid-drag. The readout never wraps.
 
    jsdom does no layout, so ordering and membership are checked in the DOM and
-   the row / nowrap / fixed-width guarantees are read off the cascade on disk,
+   the nowrap / left-alignment guarantees are read off the cascade on disk,
    the same way slider-steppers.test.tsx does. */
 
 import { readFileSync } from "node:fs";
@@ -32,39 +33,13 @@ function ruleBody(selector: string): string {
   return match[1];
 }
 
-/** Body of the LAST `selector { … }` rule — the appended redesign layer wins
-    the cascade, so the last match is the live desktop rule. */
+/** Body of the LAST `selector { … }` rule — the appended Planning 2a layer
+    wins the cascade, so the last match is the live desktop rule. */
 function lastRuleBody(selector: string): string {
   const re = new RegExp(`(?:^|\\n)\\s*${selector}\\s*\\{([^}]*)\\}`, "g");
   const matches = Array.from(appCss.matchAll(re), (m) => m[1]);
   if (matches.length === 0) throw new Error(`selector not found in app.css: ${selector}`);
   return matches[matches.length - 1];
-}
-
-/** Body of the LAST `selector { … }` rule inside the `@media (min-width: 1440px)`
-    layers only (brace-balanced). The file ends with `max-width: 1439px` blocks
-    that re-declare some selectors for the stacked layout, so the plain last
-    match is not the live desktop rule. */
-function desktopRuleBody(selector: string): string {
-  const bodies: string[] = [];
-  const open = /@media\s*\(min-width:\s*1440px\)\s*\{/g;
-  while (open.exec(appCss) !== null) {
-    let depth = 1;
-    let i = open.lastIndex;
-    const start = i;
-    while (i < appCss.length && depth > 0) {
-      if (appCss[i] === "{") depth += 1;
-      else if (appCss[i] === "}") depth -= 1;
-      i += 1;
-    }
-    bodies.push(appCss.slice(start, i - 1));
-  }
-  const re = new RegExp(`(?:^|\\n)\\s*${selector}\\s*\\{([^}]*)\\}`, "g");
-  const hits = bodies.flatMap((b) => Array.from(b.matchAll(re), (x) => x[1]));
-  if (hits.length === 0) {
-    throw new Error(`no @media (min-width: 1440px) rule for ${selector}`);
-  }
-  return hits[hits.length - 1];
 }
 
 function timeColumn(): HTMLElement {
@@ -79,15 +54,17 @@ function timeColumn(): HTMLElement {
   return time;
 }
 
-describe("the duration readout trails the slider", () => {
-  it("puts the readout after the slider line", () => {
+describe("the duration readout leads the slider", () => {
+  it("puts the readout on the line before the slider line", () => {
     const time = timeColumn();
     const readout = time.querySelector<HTMLElement>(".qrow__time-readout");
     const line = time.querySelector<HTMLElement>(".qrow__time-line");
     expect(readout).toBeTruthy();
     expect(line).toBeTruthy();
+    // DOM order is readout, then the slider line — readout.compareDocumentPosition
+    // returns FOLLOWING when the line comes after it.
     expect(
-      readout!.compareDocumentPosition(line!) & Node.DOCUMENT_POSITION_PRECEDING,
+      readout!.compareDocumentPosition(line!) & Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
   });
 
@@ -142,37 +119,41 @@ describe("the duration readout trails the slider", () => {
   });
 });
 
-describe("the readout is a fixed-width cell beside the slider", () => {
+describe("the readout is a single left-aligned line above the slider", () => {
   it("keeps the readout on one nowrap line", () => {
-    const body = desktopRuleBody("\\.qrow__time-readout");
+    const body = lastRuleBody("\\.qrow__time-readout");
     expect(body).toMatch(/flex-wrap:\s*nowrap/);
     expect(body).toMatch(/white-space:\s*nowrap/);
   });
 
-  it("lays the time column out as a row at desktop width", () => {
-    const body = lastRuleBody("\\.qrow__time");
+  it("stacks the time column as readout over slider at desktop width", () => {
+    // The <=1100px layer re-places `.qrow__time` without touching its axis, so
+    // filter to the last rule that owns the desktop placement and axis.
+    const blocks = Array.from(
+      appCss.matchAll(/(?:^|\n)\s*\.qrow__time\s*\{([^}]*)\}/g),
+      (m) => m[1],
+    );
+    const desktop = blocks.filter((b) => /grid-column:\s*3/.test(b)).pop() ?? "";
+    expect(desktop).toMatch(/flex-direction:\s*column/);
+  });
+
+  it("shrinks the readout to its text instead of a fixed 88px cell", () => {
+    const body = lastRuleBody("\\.qrow__time-readout");
+    expect(body).toMatch(/width:\s*auto/);
+    expect(body).toMatch(/min-width:\s*0/);
+    expect(body).toMatch(/min-height:\s*0/);
     expect(body).toMatch(/flex-direction:\s*row/);
   });
 
-  it("stacks the value over the chip in a fixed-width cell", () => {
-    const body = desktopRuleBody("\\.qrow__time-readout");
-    expect(body).toMatch(/width:\s*88px/);
-    expect(body).toMatch(/min-width:\s*88px/);
-    expect(body).toMatch(/min-height:\s*34px/);
-    expect(body).toMatch(/flex-direction:\s*column/);
-    expect(body).toMatch(/align-items:\s*flex-end/);
+  it("left-aligns the value so its edge lines up with the − stepper", () => {
+    const body = lastRuleBody("\\.qrow__time-readout \\.alloc-track__value");
+    expect(body).toMatch(/width:\s*auto/);
+    expect(body).toMatch(/min-width:\s*0/);
+    expect(body).toMatch(/text-align:\s*left/);
   });
 
-  it("holds a fixed-width value area so sliders line up between rows", () => {
-    const body = desktopRuleBody("\\.qrow__time-readout \\.alloc-track__value");
-    expect(body).toMatch(/width:\s*88px/);
-    expect(body).toMatch(/text-align:\s*right/);
-  });
-
-  it("never lets the chip wrap or exceed the readout cell", () => {
-    const body = desktopRuleBody("\\.qrow__time-readout \\.qrow__dur-label");
-    expect(body).toMatch(/max-width:\s*100%/);
-    expect(body).toMatch(/overflow:\s*hidden/);
-    expect(ruleBody("\\.qrow__dur-label")).toMatch(/white-space:\s*nowrap/);
+  it("never lets the provenance chip wrap", () => {
+    const body = ruleBody("\\.qrow__dur-label");
+    expect(body).toMatch(/white-space:\s*nowrap/);
   });
 });

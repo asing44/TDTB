@@ -102,12 +102,14 @@ describe("FEEDBACK-10 collapsed state is unmistakable (A11)", () => {
     });
     const { container } = h.ui(<Queue />);
     const btn = container.querySelector(".band--drop")?.closest("button") as HTMLButtonElement;
-    expect(btn.getAttribute("aria-expanded")).toBe("true");
-    fireEvent.click(btn);
+    // Planning 2a: Out today starts collapsed, so its state words lead with it.
     expect(btn.getAttribute("aria-expanded")).toBe("false");
     expect(btn.getAttribute("aria-label")).toMatch(/collapsed/);
     expect(btn.getAttribute("aria-label")).toMatch(/1 row hidden/);
     expect(btn.textContent).toMatch(/collapsed/i);
+    fireEvent.click(btn);
+    expect(btn.getAttribute("aria-expanded")).toBe("true");
+    expect(btn.getAttribute("aria-label")).toMatch(/expanded/);
   });
 });
 
@@ -234,6 +236,9 @@ describe("over-allotment is reported, never converted into a proposed drop (supe
       override: { included: false, blocks: null },
     });
     const { container } = h.ui(<Queue />);
+    // Planning 2a: excluded rows live in the collapsed Out today lane; expand
+    // it before reading the row that is actually rendered there.
+    fireEvent.click(container.querySelector(".band--drop") as HTMLButtonElement);
     const rows = Array.from(container.querySelectorAll(".qrow")) as HTMLElement[];
     const press = rows.find(
       (r) => r.className.includes("qrow--excluded") && r.textContent?.includes("Press"),
@@ -545,7 +550,9 @@ describe("FEEDBACK-12 queue scheduled rows render 12-hour", () => {
     });
     const { container } = h.ui(<Queue />);
     // U11: the dropped ledger row renders inside the "Out today" lane as
-    // .qrow--dropped, with its 12-hour drop time on the source line.
+    // .qrow--dropped, with its 12-hour drop time on the source line. Planning
+    // 2a collapsed that lane by default, so expand it first.
+    fireEvent.click(container.querySelector(".band--drop") as HTMLButtonElement);
     const dropped = container.querySelector(".qrow--dropped");
     expect(dropped?.textContent).toMatch(/dropped · \d{1,2}(:\d{2})? (AM|PM)/);
   });

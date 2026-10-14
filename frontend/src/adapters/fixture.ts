@@ -13,7 +13,6 @@ import type {
   SequenceResult,
   SourceRefreshResult,
 } from "./adapter";
-import { PromptOptinConflictError } from "./adapter";
 import type {
   Capacity,
   CapacitiesCatalog,
@@ -525,13 +524,6 @@ export class FixtureAdapter implements Adapter {
   async loadPlanInputs(): Promise<PlanInputs> {
     await wait(LATENCY_MS);
     const inputs = this.applyCapacitiesCoverage(structuredClone(this.inputs));
-    // U5 fixture mirrors the additive opt-in metadata the real read route will
-    // carry once it lands; production omits it until then, and the store then
-    // reports prefs unavailable rather than assuming false.
-    inputs.promptOptins = {
-      optins: { ...this.promptOptins },
-      revision: this.promptOptinsRevision,
-    };
     return this.applyPromotedSelections(this.applyCapacitiesIntake(inputs));
   }
 
@@ -720,20 +712,17 @@ export class FixtureAdapter implements Adapter {
   }
 
   /** U5 fixture mirrors the server's prompt-only semantics in memory: a
-      captures PATCH never confirms the day, an opt-in save is a full
-      replacement guarded by the optimistic revision. */
+      captures PATCH never confirms the day. Built-in prompt keys and
+      browser-defined custom keys (``custom-<id>``) are accepted; any other
+      key is ignored. */
   private promptDrafts: Record<string, string> = {};
-  private promptOptins: Record<string, boolean> = {
-    intention: false,
-    megan_nicety: false,
-    stoic_intention: false,
-  };
-  private promptOptinsRevision = 0;
+  private static readonly CUSTOM_PROMPT_KEY = /^custom-[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
 
   async savePromptDrafts(patch: Record<string, string>): Promise<DaySetupSaveResult> {
     await wait(LATENCY_MS);
     for (const [key, value] of Object.entries(patch)) {
-      if (key !== "intention" && key !== "megan_nicety" && key !== "stoic_intention") continue;
+      if (key !== "intention" && key !== "megan_nicety" && key !== "stoic_intention" &&
+          !FixtureAdapter.CUSTOM_PROMPT_KEY.test(key)) continue;
       if (typeof value !== "string") continue;
       if (value === "") delete this.promptDrafts[key];
       else this.promptDrafts[key] = value;
@@ -741,31 +730,10 @@ export class FixtureAdapter implements Adapter {
     return this.promptEcho();
   }
 
-  async savePromptOptins(
-    optins: Record<string, boolean>,
-    expectedRevision: number,
-  ): Promise<DaySetupSaveResult> {
-    await wait(LATENCY_MS);
-    if (expectedRevision !== this.promptOptinsRevision) {
-      throw new PromptOptinConflictError(expectedRevision, this.promptOptinsRevision);
-    }
-    this.promptOptins = {
-      intention: false,
-      megan_nicety: false,
-      stoic_intention: false,
-      ...optins,
-    };
-    this.promptOptinsRevision += 1;
-    return this.promptEcho();
-  }
-
   private promptEcho(): DaySetupSaveResult {
     return {
       ok: true,
       daySetupConfirmed: false,
-      optinsAvailable: true,
-      optins: { ...this.promptOptins },
-      optinsRevision: this.promptOptinsRevision,
       promptWarnings: [],
     };
   }

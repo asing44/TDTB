@@ -39,21 +39,6 @@ export interface SequenceResult {
   pinnedRows?: SequenceRow[];
 }
 
-/** U5: the server's opt-in store changed since it was read. Carries both
-    revisions so the caller can surface the conflict and keep the user's
-    unsaved selection instead of overwriting saved preferences. */
-export class PromptOptinConflictError extends Error {
-  constructor(
-    readonly expectedRevision: number,
-    readonly currentRevision: number,
-  ) {
-    super(
-      `prompt opt-ins changed since they were read (stored revision ${currentRevision}, expected ${expectedRevision})`,
-    );
-    this.name = "PromptOptinConflictError";
-  }
-}
-
 /** Today-only shaping context for POST bodies (locked decision 16): the
     included assigned rows with their EFFECTIVE blocks (override or resolved).
     The API adapter maps these onto the raw wire digest rows; excluded rows
@@ -119,15 +104,9 @@ export interface Adapter {
   /** POST /day-setup — persist session/day-scoped setup, never persistent config. */
   saveDaySetup(daySetup: DaySetup): Promise<void>;
   /** U5 POST /day-setup {captures} — PATCH the local prompt drafts.
-      Prompt-only: never confirms the day. */
+      Prompt-only: never confirms the day. Custom prompt keys (custom-<id>)
+      ride the same captures patch. */
   savePromptDrafts(patch: Record<string, string>): Promise<DaySetupSaveResult>;
-  /** U5 POST /day-setup {optins, optins_revision} — persist the undated
-      opt-ins with optimistic concurrency. Never confirms the day. A stale
-      revision throws PromptOptinConflictError. */
-  savePromptOptins(
-    optins: Record<string, boolean>,
-    expectedRevision: number,
-  ): Promise<DaySetupSaveResult>;
   /** POST /day-setup {micro_adventure} — T19 free Live override (shuffle /
       pick / custom); null clears the dated override back to the auto-pick.
       Never billed, never a history write. */

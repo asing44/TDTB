@@ -8533,96 +8533,1473 @@ body {
   }
 }
 
-/* 2026-10-13 anchor actions (per-anchor icon actions on the Set up day screen).
-   The three actions that used to live only inside the anchored editor —
-   Skip/Include today, Adjust time, Adjust duration — render as icon buttons on
-   every Anchors-card chip. Scoped to .anchor-actions so the shared row/planbtn
-   system is untouched.
-
-   2026-10-13 polish: the faces mirror the Plan row icon buttons (44px touch
-   floor, --radius-sm, the mixed hairline border and --t-surface-2 fill) instead
-   of the old 32px sharp squares, and the group sits inline at the right end of
-   the chip row above 700px, wrapping below the chip only on narrower widths. */
-.anchor-actions {
+/* Planning 2a — Set up day "Your day" card and timeline. The ruler is the day
+   frame itself: x = (minute - frameStart) / (frameEnd - frameStart). A 90px
+   lane-label column precedes every lane and the hour ticks sit above them;
+   there is no separate frame lane and no above-lane caption row. Sizes and
+   colors are the mockup's inline values. */
+.day-setup-screen__stack {
   display: flex;
-  flex-wrap: wrap;
+  flex-direction: column;
+  gap: 24px;
+  min-width: 0;
+}
+
+.day-setup-screen .setup-section--your-day {
+  padding: 22px 24px;
+}
+
+.setup-section--your-day .your-day__head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 24px;
+}
+
+.setup-section--your-day .your-day__title {
+  display: flex;
+  flex-direction: column;
   gap: 4px;
   min-width: 0;
 }
 
-/* The chip row: the chip takes the flexible width and the actions stay pinned
-   at its right end. `flex-wrap` is added below 700px (see the media block at
-   the end of the layer) so the group drops under the chip rather than
-   squeezing it. */
-.anchor-tile__head {
+.setup-section--your-day .frame-fields {
+  flex: none;
+  display: flex;
+  gap: 10px;
+}
+
+.setup-section--your-day .frame-fields .field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.setup-section--your-day .frame-fields .field label {
+  font-size: 11px;
+  color: #6b6862;
+}
+
+.setup-section--your-day .frame-fields .field select,
+.setup-section--your-day .frame-fields .field input {
+  padding: 7px 10px;
+  border: 1px solid #dedbd3;
+  border-radius: 6px;
+  background: #fbfaf7;
+  font-size: 13px;
+}
+
+.setup-section--your-day .frame-summary {
+  margin-top: 0;
+}
+
+.day-setup-screen .day-strip {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 0;
+  padding-top: 0;
+}
+
+.day-strip__row {
+  display: grid;
+  grid-template-columns: 90px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+}
+
+.day-strip__row--ruler {
+  align-items: end;
+}
+
+.day-strip__lane-label {
+  font-size: 12px;
+  color: #4a4843;
+}
+
+.day-strip__lane-label--anchors {
+  align-self: start;
+  padding-top: 12px;
+}
+
+.day-strip__ticks {
+  position: relative;
+  height: 16px;
+  color: #6b6862;
+}
+
+.day-strip__tick {
+  position: absolute;
+  top: 0;
+  transform: translateX(-50%);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.day-strip__lane {
+  position: relative;
+  border-radius: 6px;
+  background: #f4f3ef;
+  overflow: hidden;
+}
+
+.day-strip__lane--calendar {
+  height: 40px;
+}
+
+.day-strip__lane--mint {
+  height: 32px;
+  background: #f4f3ef;
+}
+
+.day-strip__lane--anchors {
+  overflow: visible;
+}
+
+.day-strip__lane--mint-off {
+  background: repeating-linear-gradient(135deg, #f4f3ef 0 6px, #ecebe6 6px 12px);
+}
+
+.day-setup-screen .day-strip__empty {
+  display: inline-block;
+  padding: 0 10px;
+  font-size: 12px;
+  line-height: 32px;
+  color: #6b6862;
+}
+
+.day-strip__lane--mint .strip-slot {
+  top: 2px;
+  height: 28px;
+}
+
+.day-strip__lane--mint .strip-run {
+  top: 2px;
+  bottom: 2px;
+}
+
+/* Calendar: block fill by class, label to the right of the block. */
+.strip-cal {
+  position: absolute;
+  height: 30px;
+  box-sizing: border-box;
+  border: 1px solid #8fd0f0;
+  border-radius: 5px;
+  background: #cdebfa;
+}
+
+.strip-cal--work {
+  border-color: #f2b866;
+  background: #fde2b0;
+}
+
+.strip-cal--skipped {
+  opacity: 0.5;
+}
+
+.strip-cal__label {
+  position: absolute;
   display: flex;
   align-items: center;
-  gap: 6px;
-  min-width: 0;
-}
-
-.anchor-tile__head .anchor-chip {
-  flex: 1 1 auto;
-  min-width: 0;
-}
-
-.anchor-tile__head .anchor-actions {
-  flex: none;
-}
-
-.anchor-actions .anchor-action {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 0;
-  width: 44px;
-  min-width: 44px;
-  height: 44px;
-  min-height: 44px;
-  padding: 0;
-  border: 0.5px solid color-mix(in srgb, var(--t-border) 85%, transparent);
-  border-radius: var(--radius-sm);
-  background: var(--t-surface-2);
+  height: 30px;
+  font-size: 12px;
+  white-space: nowrap;
   color: var(--t-text);
-  line-height: 1;
+  pointer-events: none;
+}
+
+.strip-cal__label--not-counted {
+  color: var(--t-muted);
+}
+
+/* Anchors: 38px blocks, two sub-rows on a 96px lane, real start→end width. */
+.strip-anchor {
+  position: absolute;
+  height: 38px;
+  width: auto;
+  max-width: none;
+  box-sizing: border-box;
+  padding: 0 9px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+  overflow: hidden;
+  border: 1px solid #b9b6af;
+  border-radius: 6px;
+  background: #dedcd6;
+  color: var(--t-text);
+  font-size: 12px;
+  text-align: left;
   cursor: pointer;
 }
 
-.anchor-actions .anchor-action:hover {
-  border-color: var(--t-accent);
+.strip-anchor__name {
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
-.anchor-actions .anchor-action:focus-visible {
+.strip-anchor__meta {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: #4a4843;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.strip-anchor--not-counted {
+  border-style: dashed;
+  background: #ecebe6;
+  color: var(--t-muted);
+}
+
+.strip-anchor--skipped {
+  opacity: 0.7;
+}
+
+.strip-anchor--selected {
+  background: #ecebe6;
+  border: 2px solid #1d1c1a;
+}
+
+.strip-anchor--movable {
+  cursor: grab;
+  touch-action: pan-y;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.strip-anchor--dragging {
+  cursor: grabbing;
+  z-index: 3;
   outline: 2px solid var(--t-accent);
   outline-offset: 1px;
 }
 
-.anchor-actions .anchor-action:disabled {
-  opacity: 0.5;
+.day-strip__drag-label {
+  position: absolute;
+  top: -14px;
+  transform: translateX(-50%);
+  padding: 1px 10px;
+  border-radius: 999px;
+  background: var(--t-text);
+  color: var(--t-surface);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 16px;
+  white-space: nowrap;
+  pointer-events: none;
+  z-index: 4;
+}
+
+/* Planning 2a anchor popover: the 300px card under a selected block. Values
+   are the mockup's inline styles. */
+.anchor-popover {
+  z-index: 60;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow: auto;
+  padding: 16px;
+  border: 1px solid #d6d3cb;
+  border-radius: 10px;
+  background: #fff;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.14);
+  font-size: 13px;
+  color: var(--t-text);
+}
+
+.anchor-popover:focus-visible {
+  outline: 2px solid var(--t-accent);
+  outline-offset: 1px;
+}
+
+.anchor-popover__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.anchor-popover__name {
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.anchor-popover__count {
+  font-size: 12px;
+  color: #6b6862;
+  white-space: nowrap;
+}
+
+.anchor-popover__fields {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.anchor-popover__field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.anchor-popover__field > label,
+.anchor-popover__field > span:first-child {
+  font-size: 11px;
+  color: #6b6862;
+}
+
+.anchor-popover__time,
+.anchor-popover__window {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 7px 9px;
+  border: 1px solid #dedbd3;
+  border-radius: 6px;
+  background: #fff;
+  font-size: 13px;
+}
+
+.anchor-popover__time {
+  font-family: var(--font-mono);
+}
+
+.anchor-popover__window {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.anchor-popover__save-default {
+  align-self: flex-start;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: #1f8a5e;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.anchor-popover__save-default:disabled {
+  opacity: 0.6;
   cursor: default;
 }
 
-/* Not-counted items are a wrapped inline row; keep the chip and its actions
-   together and let the group wrap as a unit. */
-.not-counted__item .anchor-actions {
+.anchor-popover__saved {
+  font-size: 12px;
+  font-weight: 600;
+  color: #1f8a5e;
+}
+
+.anchor-popover__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.anchor-popover__switch {
+  position: relative;
+  flex: none;
+  width: 34px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: #dedbd3;
+  cursor: pointer;
+}
+
+.anchor-popover__switch::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #fff;
+  transition: left 0.12s ease;
+}
+
+.anchor-popover__switch[aria-checked="true"] {
+  background: #1f9d6b;
+}
+
+.anchor-popover__switch[aria-checked="true"]::after {
+  left: 16px;
+}
+
+.anchor-popover__footer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-top: 12px;
+  border-top: 1px solid #eeece6;
+}
+
+.anchor-popover__link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: #1f8a5e;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.anchor-popover__link--muted {
+  color: #4a4843;
+}
+
+/* ---- Planning 2a prompts (Morning prompts) ------------------------------
+   Self-contained block for the prompts card only. It deliberately does not
+   touch the timeline/anchors regions, and it is appended last so it wins the
+   cascade without rewriting earlier prompt rules. */
+
+.day-setup-screen .setup-section--prompts {
+  gap: 16px;
+}
+
+.day-setup-screen .setup-section--prompts .setup-section__head h3 {
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.day-setup-screen .setup-section--prompts .setup-section__head-action {
+  color: #1f8a5e;
+  font-size: 13px;
+}
+
+.prompts-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.prompt-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  padding: 16px;
+  border: 1px solid light-dark(#e3e0d8, var(--t-border));
+  border-radius: 12px;
+  background: light-dark(#fff, var(--t-surface));
+}
+
+.prompt-card__labelrow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.prompt-card__labelrow label {
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.day-setup-screen .setup-section--prompts .prompt-card textarea {
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 60px;
+  padding: 8px 10px;
+  border: 1px solid var(--t-border);
+  border-radius: 6px;
+  background-color: light-dark(#fff, var(--t-surface-2));
+  font: inherit;
+  font-size: 14px;
+  resize: vertical;
+}
+
+.prompt-card__controls {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.prompt-card__controls select,
+.prompt-card__controls input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.day-setup-screen .setup-section--prompts .prompt-card__controls .btn {
+  min-height: 0;
+  padding: 8px 12px;
+  border-width: 1px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 400;
+}
+
+.live-micro__meta {
+  margin: 0;
+  font-size: 12px;
+  color: var(--t-muted);
+}
+
+.live-micro__custom-link {
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: 12px;
+  color: #1f8a5e;
+  cursor: pointer;
+}
+
+.live-micro__custom-link:hover {
+  text-decoration: underline;
+}
+
+.prompts-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.prompts-export-line {
+  margin: 0;
+  font-size: 13px;
+  color: var(--t-muted);
+}
+
+.prompts-foot .custom-prompt__open {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: #1f8a5e;
+  font-size: 13px;
+}
+
+/* Planning 2a: connections */
+.connections {
+  gap: 0;
+  padding: 0;
+}
+
+.connections__frame {
+  display: grid;
+  grid-template-columns: 300px minmax(0, 1fr);
+  align-items: stretch;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.connections__nav {
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+  padding: 28px 18px;
+  border-right: 1px solid #e3e0d8;
+  overflow-y: auto;
+}
+
+.connections__back {
+  padding: 0 10px;
+  border: 0;
+  background: none;
+  text-align: left;
+  font: inherit;
+  font-size: 13px;
+  color: #4a4843;
+  cursor: pointer;
+}
+
+.connections__back:hover {
+  color: #1d1c1a;
+}
+
+.connections__group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.connections__group-label {
+  padding: 0 10px 6px;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #6b6862;
+}
+
+.connections__group-empty {
+  padding: 0 10px;
+  font-size: 12px;
+  color: #9a968e;
+}
+
+.connections-navitem {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  padding: 9px 10px;
+  border: 0;
+  border-radius: 7px;
+  background: none;
+  font: inherit;
+  font-size: 14px;
+  text-align: left;
+  color: #1d1c1a;
+  cursor: pointer;
+}
+
+.connections-navitem:hover {
+  background: #f4f3ef;
+}
+
+.connections-navitem--active {
+  background: #efede8;
+}
+
+.connections-navitem__dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+}
+
+.connections__detail {
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+  min-width: 0;
+  max-width: 880px;
+  padding: 28px 36px;
+}
+
+.connections-detail__head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 20px;
+}
+
+.connections-detail__id {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.connections-detail__kicker {
+  font-size: 12px;
+  color: #6b6862;
+}
+
+.connections-detail__title {
+  margin: 0;
+  font-size: 24px;
+  font-weight: 600;
+  color: #1d1c1a;
+}
+
+.connections-detail__helper {
+  margin: 0;
+  font-size: 13px;
+  color: #6b6862;
+}
+
+.connections-detail__remove {
+  flex: none;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: 13px;
+  color: #9a968e;
+  cursor: pointer;
+}
+
+.connections-detail__remove:hover {
+  color: #1d1c1a;
+}
+
+.connections-previewstrip {
+  display: flex;
+  align-items: center;
+  gap: 28px;
+  flex-wrap: wrap;
+  padding: 14px 18px;
+  background: #fff;
+  border: 1px solid #e3e0d8;
+  border-radius: 10px;
+  font-size: 13px;
+  color: #6b6862;
+}
+
+.connections-previewstrip__count {
+  font-size: 15px;
+  font-weight: 600;
+  color: #1d1c1a;
+}
+
+.connections-previewitems {
+  background: #fff;
+  border: 1px solid #e3e0d8;
+  border-radius: 10px;
+}
+
+.connections-previewitems__summary {
+  padding: 10px 18px;
+  font-size: 12px;
+  color: #6b6862;
+  cursor: pointer;
+}
+
+.connections-previewitems__list {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0 18px 12px;
+  list-style: none;
+}
+
+.connections-previewitems__row {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 8px 0;
+  border-top: 1px solid #f1efea;
+  font-size: 13px;
+}
+
+.connections-previewitems__title {
+  color: #1d1c1a;
+}
+
+.connections-previewitems__reason {
+  flex: none;
+  color: #6b6862;
+}
+
+.connections-previewitems__empty {
+  margin: 0;
+  padding: 0 18px 14px;
+  font-size: 13px;
+  color: #6b6862;
+}
+
+.connections-admit {
+  display: flex;
+  flex-direction: column;
+  background: #fff;
+  border: 1px solid #e3e0d8;
+  border-radius: 12px;
+}
+
+.connections-admit__label {
+  padding: 14px 20px 4px;
+  font-size: 12px;
+  color: #6b6862;
+}
+
+.connections-admit__row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  padding: 13px 20px;
+  border-bottom: 1px solid #f1efea;
+  font-size: 14px;
+}
+
+.connections-admit__row:last-child {
+  border-bottom: 0;
+}
+
+.connections-admit__name {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.connections-admit__error {
+  margin: 0;
+  padding: 0 20px 10px;
+}
+
+.connections-check__days {
+  width: 52px;
+  border: 1px solid #dedbd3;
+  border-radius: 5px;
+  padding: 2px 6px;
+  font: inherit;
+  font-size: 13px;
+  text-align: center;
+}
+
+.connections-switch {
+  position: relative;
+  flex: none;
+  width: 34px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: #d6d3cb;
+  cursor: pointer;
+  transition: background 0.12s ease;
+}
+
+.connections-switch::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #fff;
+  transition: left 0.12s ease;
+}
+
+.connections-switch[aria-checked="true"] {
+  background: #1f9d6b;
+}
+
+.connections-switch[aria-checked="true"]::after {
+  left: 16px;
+}
+
+.connections-active-means {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.connections-chip {
   display: inline-flex;
-  vertical-align: middle;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: #efede8;
+  font-size: 12px;
+  color: #1d1c1a;
 }
 
-/* Below 700px the chip columns are single-column and narrow: the actions wrap
-   onto their own line under the chip (still visible and reachable on touch)
-   rather than squeezing the chip name. */
-@media (max-width: 699px) {
-  .anchor-tile__head {
-    flex-wrap: wrap;
-  }
+.connections-chip__x {
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  line-height: 1;
+  color: #6b6862;
+  cursor: pointer;
+}
 
-  .anchor-actions {
-    width: 100%;
-    justify-content: flex-start;
-  }
+.connections-chip-input {
+  width: 64px;
+  padding: 4px 6px;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: 12px;
+  color: #6b6862;
+}
 
-  .not-counted__item .anchor-actions {
-    width: auto;
+.connections-chip-input:focus {
+  outline: none;
+}
+
+.connections-mapping {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.connections-mapping__row {
+  display: flex;
+  gap: 8px;
+}
+
+.connections-mapping__input {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid #dedbd3;
+  border-radius: 6px;
+  background: #fff;
+  font: inherit;
+  font-size: 13px;
+}
+
+.connections-mapping__discover {
+  flex: none;
+  padding: 10px 14px;
+  border: 1px solid #1f9d6b;
+  border-radius: 6px;
+  background: #1f9d6b;
+  color: #fff;
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.connections-tags .connections-chip-input {
+  width: 160px;
+}
+
+/* Planning 2a: plan tasks */
+/* Screen 2 ("Plan tasks", flavor 2a "Merged"). Appended at the very end of
+   app.css so this layer wins the cascade over the earlier U11/U12 blocks and
+   the POLISH-3 passes without rewriting them. Palette and metrics come from
+   the handoff mockup; the surface keeps the real data and over-capacity
+   states the previous layers implemented. */
+
+/* Heading scale: "Assigned this morning" 24/600 over the 13px scope note. */
+.queue__head {
+  display: block;
+  padding: 28px 0 0;
+  border-bottom: 0;
+}
+.queue__head h1 {
+  font-size: 24px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+.queue__head p {
+  margin-top: 4px;
+  font-size: 13px;
+}
+
+/* Already placed — the read-only lane timeline card (Screen 2 item 2). */
+.already-placed {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin: 18px 0 24px;
+  padding: 18px 24px 20px;
+  border: 1px solid #e3e0d8;
+  border-radius: 12px;
+  background: #fff;
+}
+.already-placed__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+}
+.already-placed__head h2 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--t-text);
+}
+.already-placed__note {
+  margin: 0;
+  font-size: 12px;
+  color: #6b6862;
+}
+/* Read-only strip: no pointer affordance, no hover lift. */
+.already-placed .day-strip *,
+.already-placed .strip-anchor--readonly {
+  cursor: default;
+}
+.already-placed .strip-anchor--readonly:hover {
+  outline: none;
+  transform: none;
+}
+
+/* Two-column plan grid: task groups left, capacity card right. */
+.plan-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 380px;
+  gap: 28px;
+  align-items: start;
+  margin-top: 4px;
+}
+.plan-grid__groups {
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+  min-width: 0;
+}
+.plan-grid__capacity {
+  min-width: 0;
+}
+
+@media screen and (max-width: 1100px) {
+  .plan-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .plan-grid__capacity {
+    order: -1;
   }
 }
+
+/* Group header: a 3px left rule in the band colour, uppercase name, muted
+   description. The disclosure stays a real button for keyboard + AT, but
+   reads like the mockup's static rule (no tick, rule, count, or chevron). */
+.tasktable {
+  padding-inline: 0;
+}
+.tasktable + .tasktable {
+  margin-top: 0;
+}
+.band.band--lane {
+  position: static;
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin: 0;
+  padding: 0 0 0 12px;
+  border-left: 3px solid var(--band-color);
+  border-bottom: 0;
+  background: transparent;
+  box-shadow: none;
+}
+.band.band--lane .band__tick,
+.band.band--lane .band__rule,
+.band.band--lane .band__count,
+.band.band--lane .band__state,
+.band.band--lane .band__chevron {
+  display: none;
+}
+.band.band--lane .band__label {
+  flex: none;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--t-text);
+}
+.band.band--lane .band__note {
+  flex: 0 1 auto;
+  font-size: 13px;
+  color: #6b6862;
+}
+/* The sub/summary label duplicates the group header; the mockup has no
+   second line, so the total is folded away. */
+.tasktable__grouplabel {
+  display: none;
+}
+.tasktable__rows {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 4px;
+}
+
+/* Row card: white, 1px border, radius 10, compact 6x12 padding, five fixed
+   columns (status | name+meta | duration | priority | actions). */
+.qrow {
+  grid-template-columns: 130px minmax(0, 1fr) 200px 50px 194px;
+  grid-template-rows: auto;
+  grid-template-areas: none;
+  gap: 14px;
+  align-items: center;
+  min-height: 0;
+  padding: 6px 12px;
+  border: 1px solid #e3e0d8;
+  border-radius: 10px;
+  background: #fff;
+}
+.queue__band .qrow {
+  --qrow-bg: #fff;
+  background: #fff;
+}
+.queue__band .qrow:hover {
+  background: #fff;
+}
+.qrow {
+  display: grid;
+}
+.qrow__assign {
+  grid-column: 1;
+  grid-row: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  min-height: 36px;
+  padding: 9px 10px;
+  border: 1px solid #d6d3cb;
+  border-radius: 7px;
+  background: #fff;
+  color: var(--t-text);
+  font-size: 13px;
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.qrow__assign--on {
+  background: #1f9d6b;
+  border-color: #1f9d6b;
+  color: var(--t-on-accent);
+}
+.qrow__assign--off {
+  background: #fff;
+  border-color: #d6d3cb;
+  color: var(--t-text);
+}
+.qrow__assign:focus-visible {
+  outline: 2px solid #1f9d6b;
+  outline-offset: 2px;
+}
+.qrow__assign--none {
+  border: 0;
+  background: none;
+}
+
+.qrow__body {
+  grid-column: 2;
+  grid-row: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.qrow__nameline {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+.qrow__name {
+  font-size: 15px;
+  font-weight: 500;
+}
+.qrow__source {
+  gap: 8px;
+  font-size: 12px;
+  color: #6b6862;
+}
+.qrow__swatch {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  background: #a9a6a0;
+}
+.qrow__swatch--todoist {
+  background: #e5484d;
+}
+.qrow__swatch--capacities {
+  background: #8b5cf6;
+}
+.qrow__swatch--calendar {
+  background: #7cc8f0;
+}
+.qrow__swatch--other {
+  background: #a9a6a0;
+}
+/* Source name is plain text now (the mockup has no chip box). */
+.qrow__src {
+  flex: none;
+  padding: 0;
+  border: 0;
+  background: none;
+  font-size: 12px;
+  font-weight: 400;
+  letter-spacing: 0;
+  text-transform: none;
+  color: #6b6862;
+}
+.qrow__src--todoist,
+.qrow__src--capacities,
+.qrow__src--calendar,
+.qrow__src--other {
+  border: 0;
+  background: none;
+  color: #6b6862;
+}
+/* The mockup meta reads swatch · source · due; the KIND chip is folded away. */
+.qrow__type {
+  display: none;
+}
+.qrow__meta {
+  margin-top: 0;
+  font-size: 12px;
+  color: #6b6862;
+}
+.qrow__source .due {
+  color: #6b6862;
+}
+.qrow__source .due--soon {
+  color: #c27a00;
+}
+.qrow__source .due--today {
+  color: #c27a00;
+}
+
+.qrow__priority {
+  grid-column: 4;
+  grid-row: 1;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  font-size: 12px;
+  color: #6b6862;
+}
+.qrow__prio {
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 400;
+  color: #6b6862;
+}
+
+/* Duration column: label over the slider, blue fill and knob. */
+.qrow__time {
+  grid-column: 3;
+  grid-row: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+}
+/* The readout is a single left-aligned line above the track (the mockup), not
+   the earlier fixed 88px two-line cell. The width/height/flex reset overrides
+   the >=1440px and >=1100px layers so the cell shrinks to its text. */
+.qrow__time-readout {
+  width: auto;
+  min-width: 0;
+  min-height: 0;
+  flex: none;
+  flex-direction: row;
+  align-items: baseline;
+  justify-content: flex-start;
+  flex-wrap: nowrap;
+  white-space: nowrap;
+}
+.qrow__time-readout .alloc-track__value {
+  width: auto;
+  min-width: 0;
+  text-align: left;
+  font-size: 13px;
+  font-weight: 500;
+}
+.qrow__time-line {
+  gap: 6px;
+}
+/* Compact slider line (Planning 2a): a small track and 28px steppers keep the
+   duration block ~52px so the row lands near the mockup's 60px. The 44px
+   control floor stays in force at <=1100px, where the old layers apply. */
+.qrow__time .alloc-track {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 22px;
+}
+.qrow__time .alloc-track__input {
+  height: 22px;
+}
+.qrow__time .alloc-step {
+  width: 28px;
+  min-width: 28px;
+  height: 28px;
+  min-height: 28px;
+  padding: 0;
+}
+.qrow__time .alloc-track__input::-webkit-slider-runnable-track {
+  background-color: #ebe9e3;
+  background-image: var(--trackbg);
+}
+.qrow__time .alloc-track__input::-moz-range-track {
+  background-color: #ebe9e3;
+  background-image: var(--trackbg);
+}
+.qrow__time .alloc-track__input::-webkit-slider-thumb {
+  background: #fff;
+  border: 1.5px solid #3b7be8;
+}
+.qrow__time .alloc-track__input::-moz-range-thumb {
+  background: #fff;
+  border: 1.5px solid #3b7be8;
+}
+
+/* Action cluster: five flat 34px icon buttons, radius 7, gap 6. */
+.qrow__actions {
+  grid-column: 5;
+  grid-row: 1;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  min-width: 0;
+  flex-wrap: nowrap;
+}
+.qrow__actions .planbtn:not(.row-more__item),
+.qrow__actions .alloc-verb:not(.row-more__item),
+.qrow__actions .row-more__trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  min-width: 34px;
+  height: 34px;
+  min-height: 34px;
+  max-width: none;
+  padding: 0;
+  border: 1px solid #dedbd3;
+  border-radius: 7px;
+  background: #fff;
+  color: #4a4843;
+  font-size: 14px;
+}
+.qrow__actions .alloc-verb:hover,
+.qrow__actions .planbtn:hover {
+  border-color: #b9b6af;
+}
+.qrow__actions .alloc-verb--done {
+  background: #1f9d6b;
+  border-color: #1f9d6b;
+  color: #fff;
+}
+.qrow__actions .alloc-verb--armed {
+  width: auto;
+  min-width: 34px;
+  padding: 0 8px;
+  font-size: 12px;
+}
+.qrow__actions .row-more {
+  display: inline-flex;
+}
+/* Planning 2a exposes all five row verbs as expanded icon buttons at every
+   width, so neutralize the older fine-pointer hover reveal (which hid the two
+   secondary anchors at <=1100px). */
+.qrow__actions .qrow__tip--plan,
+.qrow__actions .qrow__tip--drop_from_plan {
+  display: inline-flex;
+}
+
+/* Dropped rows keep the same five-column frame. */
+.qrow--dropped .qrow__assign {
+  border: 0;
+  background: none;
+}
+
+/* Compact/laptop reflow: status spans two rows, name+priority over
+   duration+actions. Below 1100px the plan grid is already single-column. */
+@media screen and (max-width: 1100px) {
+  .qrow {
+    grid-template-columns: 118px minmax(0, 1fr) auto;
+    grid-template-rows: auto auto;
+    grid-template-areas: none;
+    gap: 6px 12px;
+  }
+  .qrow__assign {
+    grid-column: 1;
+    grid-row: 1 / 3;
+    align-self: start;
+  }
+  .qrow__body {
+    grid-column: 2;
+    grid-row: 1;
+  }
+  .qrow__priority {
+    grid-column: 3;
+    grid-row: 1;
+    justify-content: flex-end;
+  }
+  .qrow__time {
+    grid-column: 2;
+    grid-row: 2;
+  }
+  .qrow__actions {
+    grid-column: 3;
+    grid-row: 2;
+    justify-content: flex-end;
+  }
+}
+
+/* Capacity card: right-rail head, 10px stacked bar, mono legend counts. */
+.cap-card {
+  --c-event: #7cc8f0;
+  --c-minting: #f2a93b;
+  --c-anchored: #a9a6a0;
+  --c-habit: #f06fb4;
+  --c-selected: #3b7be8;
+  margin: 0;
+  padding: 18px 20px;
+  border: 1px solid #e3e0d8;
+  border-radius: 12px;
+  background: #fff;
+}
+.cap-card__head {
+  grid-template-columns: minmax(0, 1fr) auto;
+  row-gap: 8px;
+}
+.cap-card__headline {
+  grid-column: 1;
+  grid-row: 1;
+  font-size: 22px;
+  font-weight: 600;
+}
+.cap-card__of {
+  grid-column: 2;
+  grid-row: 1;
+  justify-self: end;
+  font-size: 12px;
+  color: #6b6862;
+}
+.cap-card__cause {
+  display: none;
+}
+.cap-card__details {
+  grid-column: 1 / -1;
+  grid-row: 2;
+  justify-self: end;
+}
+.cap-card__barwrap {
+  margin-top: 12px;
+}
+.cap-card__bar {
+  height: 10px;
+  border-radius: 5px;
+  background: #efede8;
+}
+.cap-card__foot {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 10px;
+  margin-top: 12px;
+}
+.cap-card__legend {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--t-text);
+}
+.cap-card__legend-item {
+  width: 100%;
+  justify-content: space-between;
+  gap: 12px;
+}
+.cap-card__legend-label {
+  color: var(--t-text);
+}
+.cap-card__legend-value {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--t-text);
+}
+

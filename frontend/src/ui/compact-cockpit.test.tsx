@@ -25,48 +25,40 @@ describe("compact planning cockpit", () => {
     const h = makeHarness("ready");
     const r = h.ui(<App />);
     const queue = r.container.querySelector(".queue")!;
-    const calendar = queue.querySelector(".calendar-impact")!;
+    const calendar = queue.querySelector(".already-placed")!;
 
-    // Containment: the compact sibling mount is replaced — calendar evidence
-    // is a band of the work surface, never a separate section beside it.
+    // Containment: the compact sibling mount is replaced — the day timeline is
+    // a card of the work surface, never a separate section beside it.
     expect(calendar).toBeTruthy();
+    expect(queue.contains(calendar)).toBe(true);
     expect(r.container.querySelector(".cockpit__main > .calendar-impact")).toBeNull();
-    expect(calendar.classList.contains("calendar-impact--inline")).toBe(true);
 
-    // Visible blocks: the review disclosure is gone; the timeline renders
-    // directly with both in-frame rows placed.
-    expect(calendar.querySelector(".calendar-impact__review")).toBeNull();
-    expect(calendar.querySelector(".timeline")).toBeTruthy();
-    expect(
-      queue.querySelectorAll(
-        ".timeline__lane--calendar .timeline__block, .timeline__lane--work .timeline__block",
-      ).length,
-    ).toBe(2);
-    expect(r.getByText("Trinoor Standup")).toBeTruthy();
-    expect(r.getByText("PHEP sync (Vlad)")).toBeTruthy();
+    // Visible blocks: the read-only DayStrip renders directly with both in-frame
+    // calendar rows placed.
+    expect(calendar.querySelector(".day-strip")).toBeTruthy();
+    expect(calendar.querySelectorAll(".strip-cal").length).toBe(2);
+    expect(r.getByText(/Trinoor Standup/)).toBeTruthy();
+    expect(r.getByText(/PHEP sync \(Vlad\)/)).toBeTruthy();
   });
 
-  it("renders the inline timeline expanded by default and never writes on selection (S5 round 2)", () => {
+  it("renders the read-only timeline expanded by default and never writes on selection (S5 round 2)", () => {
     const h = makeHarness("ready");
     const save = vi.spyOn(h.controller, "saveAnchoredOverride").mockResolvedValue();
     const r = h.ui(<App />);
     const queue = r.container.querySelector(".queue")!;
-    const calendar = queue.querySelector(".calendar-impact")!;
+    const calendar = queue.querySelector(".already-placed")!;
 
-    // The retired band disclosure is gone; the timeline renders its blocks
+    // The retired band disclosure is gone; the DayStrip renders its rows
     // directly, expanded by default.
     expect(calendar.querySelector(".band")).toBeNull();
-    expect(calendar.querySelector(".timeline")).toBeTruthy();
-    expect(
-      queue.querySelectorAll(
-        ".timeline__lane--calendar .timeline__block, .timeline__lane--work .timeline__block",
-      ).length,
-    ).toBe(2);
+    expect(calendar.querySelector(".day-strip")).toBeTruthy();
+    expect(calendar.querySelectorAll(".strip-cal").length).toBe(2);
 
-    // Selecting a block is presentation-only: it opens the detail row but
-    // never writes accounting state.
-    fireEvent.click(r.getByRole("button", { name: /Trinoor Standup/ }));
-    expect(calendar.querySelector(".timeline__detail")).toBeTruthy();
+    // The Plan-screen timeline is read-only: blocks are inert spans, not
+    // buttons, so selecting one can never write accounting state.
+    expect(calendar.querySelector("button")).toBeNull();
+    fireEvent.click(calendar.querySelector(".strip-cal") as Element);
+    fireEvent.click(calendar.querySelector(".strip-anchor") as Element);
     expect(save).not.toHaveBeenCalled();
   });
 
@@ -74,7 +66,7 @@ describe("compact planning cockpit", () => {
     const h = makeHarness("ready");
     const r = h.ui(<App />);
     const queue = r.container.querySelector(".queue")!;
-    const calendar = queue.querySelector(".calendar-impact")!;
+    const calendar = queue.querySelector(".already-placed")!;
     const urgencyHeaders = Array.from(
       queue.querySelectorAll(".queue__band .band"),
     ) as Element[];
@@ -109,13 +101,15 @@ describe("compact planning cockpit", () => {
     });
     const r = h.ui(<App />);
     const queue = r.container.querySelector(".queue")!;
-    const names = (
+    const labels = (
       Array.from(
-        queue.querySelectorAll(".timeline__lane--calendar .timeline__block-name"),
+        queue.querySelectorAll(".day-strip__lane--calendar .strip-cal__label"),
       ) as HTMLElement[]
-    ).map((el) => el.textContent);
+    ).map((el) => el.textContent ?? "");
 
-    expect(names).toEqual(["Earlier sync", "Later sync"]);
+    expect(labels.length).toBe(2);
+    expect(labels[0]).toContain("Earlier sync");
+    expect(labels[1]).toContain("Later sync");
   });
 
   it("keeps ignored-only calendar evidence inline without rendering an empty list", () => {
@@ -139,21 +133,32 @@ describe("compact planning cockpit", () => {
     });
     const r = h.ui(<App />);
     const queue = r.container.querySelector(".queue")!;
-    const calendar = queue.querySelector(".calendar-impact")!;
+    const calendar = queue.querySelector(".already-placed")!;
 
-    expect(calendar.classList.contains("calendar-impact--inline")).toBe(true);
-    expect(r.getByText("1 ignored calendar source excluded")).toBeTruthy();
+    // The card frame stays in the work surface; an ignored-only day draws no
+    // calendar lane and no empty list.
+    expect(calendar.querySelector(".day-strip")).toBeTruthy();
+    expect(calendar.querySelector(".day-strip__lane--calendar")).toBeNull();
+    expect(calendar.querySelectorAll(".strip-cal").length).toBe(0);
     expect(calendar.querySelector(".calendar-impact__list")).toBeNull();
   });
 
-  it("keeps a truly empty calendar frame absent from the work surface", () => {
+  it("keeps a calendar-free frame as the same Already placed card, not a stray band", () => {
     const h = makeHarness("ready", (scenario) => {
       scenario.inputs.anchored = [];
     });
     const r = h.ui(<App />);
     const queue = r.container.querySelector(".queue")!;
 
+    // Planning 2a: the timeline card is always on the Plan screen; a frame
+    // with no calendar rows simply draws no calendar lane. The retired
+    // CalendarImpact band never comes back beside the work surface.
+    const calendar = queue.querySelector(".already-placed") as HTMLElement;
+    expect(calendar).toBeTruthy();
+    expect(calendar.querySelector(".day-strip")).toBeTruthy();
+    expect(calendar.querySelector(".day-strip__lane--calendar")).toBeNull();
     expect(queue.querySelector(".calendar-impact")).toBeNull();
+    expect(r.container.querySelector(".cockpit__main > .calendar-impact")).toBeNull();
   });
 
   it("keeps inline calendar evidence in the empty-assigned branch", () => {
@@ -164,13 +169,9 @@ describe("compact planning cockpit", () => {
     const queue = r.container.querySelector(".queue")!;
 
     expect(queue.querySelector(".queue__quiet")).toBeTruthy();
-    const calendar = queue.querySelector(".calendar-impact")!;
-    expect(calendar.classList.contains("calendar-impact--inline")).toBe(true);
-    expect(
-      queue.querySelectorAll(
-        ".timeline__lane--calendar .timeline__block, .timeline__lane--work .timeline__block",
-      ).length,
-    ).toBe(2);
+    const calendar = queue.querySelector(".already-placed")!;
+    expect(queue.contains(calendar)).toBe(true);
+    expect(calendar.querySelectorAll(".strip-cal").length).toBe(2);
   });
 
   it("puts the committed execution view before the planning surface", () => {
@@ -179,7 +180,7 @@ describe("compact planning cockpit", () => {
     const main = r.container.querySelector(".cockpit__main")!;
     const execution = main.querySelector(".execution")!;
     const queue = main.querySelector(".queue")!;
-    const calendar = queue.querySelector(".calendar-impact")!;
+    const calendar = queue.querySelector(".already-placed")!;
 
     // Committed execution stays ahead of every planning surface; the calendar
     // band now lives inside the work surface it precedes.
