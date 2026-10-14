@@ -1711,6 +1711,14 @@ class CapacitiesSettingsSaveRequest(BaseModel):
     #: replacement to the empty map — no override anywhere, so each structure
     #: keeps the source mapping's own assignment declaration.
     assigned_structures: dict[str, StrictStr] = Field(default_factory=dict)
+    #: Settings-declared ``Assigned On`` marker: ``{structure_id:
+    #: property_id}`` naming a raw Capacities DATE/DATETIME property. When a
+    #: structure is declared here, only that property decides
+    #: ``source_assigned`` (the boolean declaration is ignored for it), and
+    #: the value's civil date in the app's local timezone must equal the
+    #: read's logical day. Omission is a full replacement to the empty map.
+    #: The marker is READ-ONLY: TDTB never writes the Capacities property.
+    assigned_on_structures: dict[str, StrictStr] = Field(default_factory=dict)
 
     @field_validator("expected_revision")
     @classmethod
@@ -1757,6 +1765,22 @@ class CapacitiesSettingsSaveRequest(BaseModel):
         # deep inside ``save_settings``.
         try:
             return capacities_settings.canonical_assignment_declarations(value)
+        except ValueError as exc:
+            raise ValueError(str(exc)) from exc
+
+    @field_validator("assigned_on_structures")
+    @classmethod
+    def _assigned_on_structures_valid(
+        cls, value: dict[str, str]
+    ) -> dict[str, str]:
+        # Same 422-before-any-file-access contract as ``assigned_structures``.
+        # Property-type validation is deliberately absent here: the save route
+        # has no discovery data, so a non-date property is reported at read
+        # time as one bounded, content-free warning instead.
+        try:
+            return capacities_settings.canonical_assignment_declarations(
+                value, key="assigned_on_structures"
+            )
         except ValueError as exc:
             raise ValueError(str(exc)) from exc
 
@@ -3118,6 +3142,7 @@ def create_app() -> FastAPI:
                 native_task_structures=body.native_task_structures,
                 active_statuses=body.active_statuses,
                 assigned_structures=body.assigned_structures,
+                assigned_on_structures=body.assigned_on_structures,
             )
         except capacities_settings.SettingsConflictError as exc:
             raise HTTPException(

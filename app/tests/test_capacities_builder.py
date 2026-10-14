@@ -278,13 +278,16 @@ SETTINGS_ASSIGNED_PROPERTY = "f779f78a-settings-assigned"
 ADVENTURE_ASSIGNED_PROPERTY = "c19f9b95-settings-assigned"
 
 
-def _write_settings_with_declarations(declarations: dict) -> None:
+def _write_settings_with_declarations(
+    declarations: dict, on_declarations: dict | None = None
+) -> None:
     cs.save_settings(
         expected_revision=0,
         native_task_auto=cs.NativeTaskAutoPolicy(),
         excluded=(EXCLUDED,),
         active_structures=(),
         assigned_structures=declarations,
+        assigned_on_structures=on_declarations or {},
     )
 
 
@@ -382,7 +385,12 @@ def _declared_contract_rows() -> list[dict]:
                     "id": SETTINGS_ASSIGNED_PROPERTY,
                     "name": "Assigned",
                     "type": "boolean",
-                }
+                },
+                {
+                    "id": SETTINGS_ASSIGNED_ON_PROPERTY,
+                    "name": "Assigned On",
+                    "type": "date",
+                },
             ],
         },
     ]
@@ -2097,3 +2105,118 @@ def test_refresh_coordinator_serializes_publication_with_settings_saves(tmp_path
     assert finished.wait(timeout=5)
     saver.join(timeout=5)
     assert errors == []
+
+
+# ---------------------------------------------------------------------------
+# Settings-declared read-only ``Assigned On`` (``assigned_on_structures``)
+# ---------------------------------------------------------------------------
+# The builder resolves the second declaration onto the same mapping without
+# touching ``assignment_property``: the declared date property is an assignment
+# check only and must never change which structures the adapter enumerates.
+
+SETTINGS_ASSIGNED_ON_PROPERTY = "a1b2c3d4-5e6f-4788-9a0b-1c2d3e4f5a6b"
+
+
+def test_assigned_on_declaration_resolves_only_the_declared_structure(tmp_path):
+    _write_settings_with_declarations(
+        {}, {"custom-project": SETTINGS_ASSIGNED_ON_PROPERTY}
+    )
+
+    mappings = {
+        m.structure_id: m for m in _built_mappings(tmp_path, _assignment_payload())
+    }
+
+    assert (
+        mappings["custom-project"].assigned_on_property
+        == SETTINGS_ASSIGNED_ON_PROPERTY
+    )
+    assert mappings["RootTask"].assigned_on_property is None
+    # The enumeration gate and the boolean declaration stay exactly as stored.
+    assert mappings["custom-project"].assigned_property is None
+    assert mappings["custom-project"].assignment_property == "tdtb"
+    assert mappings["custom-project"].assignment_values == frozenset({"yes"})
+
+
+def test_assigned_on_and_boolean_declarations_coexist_on_one_structure(tmp_path):
+    _write_settings_with_declarations(
+        {"custom-project": SETTINGS_ASSIGNED_PROPERTY},
+        {"custom-project": SETTINGS_ASSIGNED_ON_PROPERTY},
+    )
+
+    mappings = {
+        m.structure_id: m for m in _built_mappings(tmp_path, _assignment_payload())
+    }
+
+    assert (
+        mappings["custom-project"].assigned_property == SETTINGS_ASSIGNED_PROPERTY
+    )
+    assert (
+        mappings["custom-project"].assigned_on_property
+        == SETTINGS_ASSIGNED_ON_PROPERTY
+    )
+
+
+def test_no_assigned_on_declaration_leaves_every_mapping_at_its_default(tmp_path):
+    _write_settings_with_declarations({})
+
+    mappings = _built_mappings(tmp_path, _assignment_payload())
+
+    assert all(m.assigned_on_property is None for m in mappings)
+
+
+def test_legacy_settings_file_without_the_assigned_on_key_falls_back(tmp_path):
+    _write_legacy_settings()
+
+    mappings = _built_mappings(tmp_path, _assignment_payload())
+
+    assert all(m.assigned_on_property is None for m in mappings)
+
+
+def test_assigned_on_declaration_for_an_unmapped_structure_is_ignored(tmp_path):
+    _write_settings_with_declarations(
+        {}, {"Adventure": SETTINGS_ASSIGNED_ON_PROPERTY}
+    )
+
+    mappings = _built_mappings(tmp_path, _valid_payload())
+
+    assert mappings == _expected_mappings()
+
+
+def test_assigned_on_declaration_does_not_supply_an_assignment_property(tmp_path):
+    # The declaration is an assignment check only: it must not reach the
+    # enumeration gate (``assignment_property``) on the resolved mapping.
+    _write_settings_with_declarations(
+        {}, {"RootTask": SETTINGS_ASSIGNED_ON_PROPERTY}
+    )
+
+    mappings = {
+        m.structure_id: m for m in _built_mappings(tmp_path, _valid_payload())
+    }
+
+    assert mappings["RootTask"].assigned_on_property == SETTINGS_ASSIGNED_ON_PROPERTY
+    assert mappings["RootTask"].assignment_property is None
+    assert mappings["RootTask"].assignment_values == frozenset()
+
+
+def test_assigned_on_declaration_reaches_a_real_read_through_the_production_path(
+    tmp_path,
+):
+    _write_source(_valid_payload())
+    _write_settings_with_declarations(
+        {}, {"custom-project": SETTINGS_ASSIGNED_ON_PROPERTY}
+    )
+    token = _valid_token_file(tmp_path)
+    adapter = cb.build_capacities_adapter(
+        cb.CapacitiesBuilderConfig(token_path=token, transport=_StructuresTransport()),
+    )
+    obj = _declared_object("project-1", boolean=False)
+    obj["properties"][SETTINGS_ASSIGNED_ON_PROPERTY] = {
+        "type": "date",
+        "date": {"start": TODAY.isoformat()},
+    }
+
+    result = adapter.items_for_day_from_objects(TODAY, [obj])
+
+    assert [row["capacities_id"] for row in result.items] == ["project-1"]
+    assert result.items[0]["capacities_assignment"]["mode"] == "assigned"
+    assert result.items[0]["capacities_assignment"]["source_assigned"] is True

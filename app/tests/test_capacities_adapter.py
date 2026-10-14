@@ -1,8 +1,11 @@
 """Contract tests for the application-owned Capacities source adapter."""
 from __future__ import annotations
 
+from contextlib import contextmanager
 from datetime import date, timedelta
+import os
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -2397,3 +2400,480 @@ def test_unknown_declaration_warns_once_for_multiple_projected_objects():
 
     assert len(result.items) == 3
     assert result.warnings.count(_declaration_warning()) == 1
+
+
+# ---------------------------------------------------------------------------
+# Settings-declared read-only ``Assigned On`` date marker
+# ---------------------------------------------------------------------------
+# A structure declared in ``assigned_on_structures`` resolves
+# ``StructureMapping.assigned_on_property`` to a DATE/DATETIME property id.
+# When present it TAKES PRECEDENCE over the boolean declaration: the object is
+# source-assigned only when the value's civil date (host-local ``astimezone``
+# convention for Z/offset values, naive treated as local) equals the read's
+# logical day, and every non-match is a definitive negative. TDTB never writes
+# the property.
+
+ASSIGNED_ON_PROPERTY = "assigned-on"
+ASSIGNED_ON_DATETIME_PROPERTY = "assigned-on-at"
+ASSIGNED_ON_WRONG_TYPE_PROPERTY = "assigned-on-number"
+UNDEFINED_ASSIGNED_ON_PROPERTY = "ghost-assigned-on"
+
+
+def _assigned_on_structures():
+    return [
+        {
+            **row,
+            "propertyDefinitions": [
+                *row["propertyDefinitions"],
+                _definition(SETTINGS_ASSIGNED_PROPERTY, "boolean"),
+                _definition(ASSIGNED_ON_PROPERTY, "date"),
+                _definition(ASSIGNED_ON_DATETIME_PROPERTY, "datetime"),
+                _definition(ASSIGNED_ON_WRONG_TYPE_PROPERTY, "number"),
+            ],
+        }
+        for row in _structures()
+    ]
+
+
+def _assigned_on_provider(objects):
+    return FakeProvider(
+        _assigned_on_structures(),
+        {(OVERRIDE_STRUCTURE, None): {"objects": list(objects), "next_cursor": None}},
+    )
+
+
+def _assigned_on_mapping(**overrides):
+    base = dict(
+        structure_id=OVERRIDE_STRUCTURE,
+        title_property="title",
+        open_status_property="state",
+        open_status_values=frozenset({"active"}),
+        assigned_on_property=ASSIGNED_ON_PROPERTY,
+    )
+    base.update(overrides)
+    return StructureMapping(**base)
+
+
+def _assigned_on_object(object_id, properties):
+    return _object(
+        object_id,
+        OVERRIDE_STRUCTURE,
+        {
+            "title": _prop("title", "title", {"value": "Assigned On row"}),
+            **properties,
+        },
+    )
+
+
+def _active_state():
+    return _prop("label", "label", [{"id": "active", "name": "Active"}])
+
+
+def _date_value(value):
+    return _prop("date", "date", {"start": value})
+
+
+def _datetime_value(value):
+    return _prop("datetime", "datetime", {"start": value})
+
+
+def _source_assigned_by_id(result):
+    return {
+        row["capacities_id"]: row["capacities_assignment"]["source_assigned"]
+        for row in result.items
+    }
+
+
+@contextmanager
+def _host_tz(name):
+    previous = os.environ.get("TZ")
+    os.environ["TZ"] = name
+    time.tzset()
+    try:
+        yield
+    finally:
+        if previous is None:
+            os.environ.pop("TZ", None)
+        else:
+            os.environ["TZ"] = previous
+        time.tzset()
+
+
+def test_assigned_on_equal_to_the_logical_day_is_source_assigned():
+    provider = _assigned_on_provider([
+        _assigned_on_object(
+            "project-1",
+            {
+                "state": _active_state(),
+                ASSIGNED_ON_PROPERTY: _date_value(TODAY.isoformat()),
+            },
+        ),
+    ])
+
+    result = _override_adapter(
+        provider, _assigned_on_mapping(), assignment_settings=_active_settings()
+    ).items_for_day(TODAY)
+
+    assert [row["capacities_id"] for row in result.items] == ["project-1"]
+    assert _source_assigned_by_id(result) == {"project-1": True}
+    assert result.items[0]["capacities_assignment"]["reasons"] == ["source-assigned"]
+    assert result.warnings == []
+
+
+def test_assigned_on_yesterday_and_tomorrow_are_definitive_negatives():
+    provider = _assigned_on_provider([
+        _assigned_on_object(
+            "yesterday",
+            {
+                "state": _active_state(),
+                ASSIGNED_ON_PROPERTY: _date_value(
+                    (TODAY - timedelta(days=1)).isoformat()
+                ),
+            },
+        ),
+        _assigned_on_object(
+            "tomorrow",
+            {
+                "state": _active_state(),
+                ASSIGNED_ON_PROPERTY: _date_value(
+                    (TODAY + timedelta(days=1)).isoformat()
+                ),
+            },
+        ),
+    ])
+
+    result = _override_adapter(
+        provider, _assigned_on_mapping(), assignment_settings=_active_settings()
+    ).items_for_day(TODAY)
+
+    assert sorted(row["capacities_id"] for row in result.items) == [
+        "tomorrow",
+        "yesterday",
+    ]
+    assert _source_assigned_by_id(result) == {
+        "tomorrow": False,
+        "yesterday": False,
+    }
+    # A mapped structure with nothing assigned today is normal: no warning.
+    assert result.warnings == []
+
+
+def test_assigned_on_date_only_never_shifts_with_the_host_timezone():
+    # ``Pacific/Midway`` is UTC-11: a date-only value parsed as UTC midnight
+    # would drift to the previous civil date, so a match here pins the
+    # date-only no-shift contract.
+    with _host_tz("Pacific/Midway"):
+        provider = _assigned_on_provider([
+            _assigned_on_object(
+                "project-1",
+                {
+                    "state": _active_state(),
+                    ASSIGNED_ON_PROPERTY: _date_value(TODAY.isoformat()),
+                },
+            ),
+        ])
+        result = _override_adapter(
+            provider, _assigned_on_mapping(), assignment_settings=_active_settings()
+        ).items_for_day(TODAY)
+
+    assert _source_assigned_by_id(result) == {"project-1": True}
+
+
+def test_assigned_on_offset_datetime_uses_the_host_civil_date():
+    # 2026-09-28T12:00Z is 2026-09-29 02:00 in UTC+14, so the UTC offset value
+    # matches the 29th only through the host-local conversion.
+    with _host_tz("Pacific/Kiritimati"):
+        provider = _assigned_on_provider([
+            _assigned_on_object(
+                "project-1",
+                {
+                    "state": _active_state(),
+                    ASSIGNED_ON_DATETIME_PROPERTY: _datetime_value(
+                        "2026-09-28T12:00:00Z"
+                    ),
+                },
+            ),
+        ])
+        result = _override_adapter(
+            provider,
+            _assigned_on_mapping(
+                assigned_on_property=ASSIGNED_ON_DATETIME_PROPERTY
+            ),
+            assignment_settings=_active_settings(),
+        ).items_for_day(TODAY)
+
+    assert _source_assigned_by_id(result) == {"project-1": True}
+
+
+def test_assigned_on_near_midnight_boundary_moves_with_the_host_timezone():
+    value = _datetime_value("2026-09-29T03:30:00Z")
+
+    def _project():
+        provider = _assigned_on_provider([
+            _assigned_on_object(
+                "project-1",
+                {"state": _active_state(), ASSIGNED_ON_DATETIME_PROPERTY: value},
+            ),
+        ])
+        return _override_adapter(
+            provider,
+            _assigned_on_mapping(
+                assigned_on_property=ASSIGNED_ON_DATETIME_PROPERTY
+            ),
+            assignment_settings=_active_settings(),
+        ).items_for_day(TODAY)
+
+    with _host_tz("UTC"):
+        assert _source_assigned_by_id(_project()) == {"project-1": True}
+    # 03:30Z is 23:30 the previous civil day in America/New_York (EDT).
+    with _host_tz("America/New_York"):
+        assert _source_assigned_by_id(_project()) == {"project-1": False}
+
+
+def test_assigned_on_naive_datetime_is_treated_as_local_time():
+    # Under UTC-11 a naive value parsed as UTC would land on the 28th; local
+    # time keeps it on the 29th.
+    with _host_tz("Pacific/Midway"):
+        provider = _assigned_on_provider([
+            _assigned_on_object(
+                "project-1",
+                {
+                    "state": _active_state(),
+                    ASSIGNED_ON_DATETIME_PROPERTY: _datetime_value(
+                        "2026-09-29T00:30:00"
+                    ),
+                },
+            ),
+        ])
+        result = _override_adapter(
+            provider,
+            _assigned_on_mapping(
+                assigned_on_property=ASSIGNED_ON_DATETIME_PROPERTY
+            ),
+            assignment_settings=_active_settings(),
+        ).items_for_day(TODAY)
+
+    assert _source_assigned_by_id(result) == {"project-1": True}
+
+
+def test_assigned_on_absent_empty_and_null_are_negatives_without_raising():
+    provider = _assigned_on_provider([
+        _assigned_on_object("absent", {"state": _active_state()}),
+        _assigned_on_object(
+            "empty",
+            {
+                "state": _active_state(),
+                ASSIGNED_ON_PROPERTY: _date_value(""),
+            },
+        ),
+        _assigned_on_object(
+            "null",
+            {
+                "state": _active_state(),
+                ASSIGNED_ON_PROPERTY: {"type": "date", "date": None},
+            },
+        ),
+    ])
+
+    result = _override_adapter(
+        provider, _assigned_on_mapping(), assignment_settings=_active_settings()
+    ).items_for_day(TODAY)
+
+    assert _source_assigned_by_id(result) == {
+        "absent": False,
+        "empty": False,
+        "null": False,
+    }
+    # A mapped structure with nothing assigned today is normal: no warning.
+    assert result.warnings == []
+
+
+def test_assigned_on_garbage_is_a_negative_with_a_content_free_warning():
+    provider = _assigned_on_provider([
+        _assigned_on_object(
+            "project-1",
+            {
+                "state": _active_state(),
+                ASSIGNED_ON_PROPERTY: _date_value("not-a-date"),
+            },
+        ),
+    ])
+
+    result = _override_adapter(
+        provider, _assigned_on_mapping(), assignment_settings=_active_settings()
+    ).items_for_day(TODAY)
+
+    assert _source_assigned_by_id(result) == {"project-1": False}
+    assert len(result.warnings) == 1
+    warning = result.warnings[0]
+    assert "could not be parsed" in warning
+    assert OVERRIDE_STRUCTURE in warning
+    assert "not-a-date" not in warning
+    assert "Assigned On row" not in warning
+
+
+def test_assigned_on_list_and_range_payloads_use_the_first_start():
+    provider = _assigned_on_provider([
+        _assigned_on_object(
+            "range",
+            {
+                "state": _active_state(),
+                ASSIGNED_ON_PROPERTY: {
+                    "type": "date",
+                    "date": [
+                        {"start": TODAY.isoformat()},
+                        {"start": (TODAY + timedelta(days=1)).isoformat()},
+                    ],
+                },
+            },
+        ),
+        _assigned_on_object(
+            "plain-string",
+            {
+                "state": _active_state(),
+                ASSIGNED_ON_PROPERTY: {
+                    "type": "date",
+                    "date": TODAY.isoformat(),
+                },
+            },
+        ),
+    ])
+
+    result = _override_adapter(
+        provider, _assigned_on_mapping(), assignment_settings=_active_settings()
+    ).items_for_day(TODAY)
+
+    assert _source_assigned_by_id(result) == {
+        "range": True,
+        "plain-string": True,
+    }
+    assert result.warnings == []
+
+
+def test_assigned_on_wrong_type_declaration_warns_and_falls_back():
+    provider = _assigned_on_provider([
+        _assigned_on_object(
+            "project-1",
+            {
+                "state": _active_state(),
+                MAPPING_ASSIGNED_PROPERTY: _prop(
+                    "label", "label", [{"id": "yes", "name": "TDTB"}]
+                ),
+            },
+        ),
+    ])
+    mapping = _assigned_on_mapping(
+        assigned_on_property=ASSIGNED_ON_WRONG_TYPE_PROPERTY,
+        assignment_property=MAPPING_ASSIGNED_PROPERTY,
+        assignment_values=frozenset({"yes"}),
+    )
+
+    result = _override_adapter(provider, mapping).items_for_day(TODAY)
+
+    assert _source_assigned_by_id(result) == {"project-1": True}
+    assert any(
+        "is not a date" in warning
+        and ASSIGNED_ON_WRONG_TYPE_PROPERTY in warning
+        for warning in result.warnings
+    )
+    assert not any("could not be parsed" in warning for warning in result.warnings)
+
+
+def test_assigned_on_unknown_property_declaration_warns_and_falls_back():
+    provider = _assigned_on_provider([
+        _assigned_on_object(
+            "project-1",
+            {
+                "state": _active_state(),
+                MAPPING_ASSIGNED_PROPERTY: _prop(
+                    "label", "label", [{"id": "yes", "name": "TDTB"}]
+                ),
+            },
+        ),
+    ])
+    mapping = _assigned_on_mapping(
+        assigned_on_property=UNDEFINED_ASSIGNED_ON_PROPERTY,
+        assignment_property=MAPPING_ASSIGNED_PROPERTY,
+        assignment_values=frozenset({"yes"}),
+    )
+
+    result = _override_adapter(provider, mapping).items_for_day(TODAY)
+
+    assert _source_assigned_by_id(result) == {"project-1": True}
+    assert any(
+        "unknown property" in warning
+        and UNDEFINED_ASSIGNED_ON_PROPERTY in warning
+        for warning in result.warnings
+    )
+
+
+def test_assigned_on_alone_decides_over_the_boolean_declaration():
+    provider = _assigned_on_provider([
+        _assigned_on_object(
+            "marker-wins",
+            {
+                "state": _active_state(),
+                SETTINGS_ASSIGNED_PROPERTY: _prop("boolean", "boolean", False),
+                ASSIGNED_ON_PROPERTY: _date_value(TODAY.isoformat()),
+            },
+        ),
+        _assigned_on_object(
+            "boolean-loses",
+            {
+                "state": _active_state(),
+                SETTINGS_ASSIGNED_PROPERTY: _prop("boolean", "boolean", True),
+                ASSIGNED_ON_PROPERTY: _date_value(
+                    (TODAY - timedelta(days=1)).isoformat()
+                ),
+            },
+        ),
+    ])
+    mapping = _assigned_on_mapping(assigned_property=SETTINGS_ASSIGNED_PROPERTY)
+
+    result = _override_adapter(
+        provider, mapping, assignment_settings=_active_settings()
+    ).items_for_day(TODAY)
+
+    assert _source_assigned_by_id(result) == {
+        "marker-wins": True,
+        "boolean-loses": False,
+    }
+
+
+def test_assigned_on_does_not_change_which_structures_are_enumerated():
+    provider = _assigned_on_provider([])
+
+    result = _override_adapter(provider, _assigned_on_mapping()).items_for_day(TODAY)
+
+    assert provider.list_calls == [("RootTask", None)]
+    assert result.items == []
+
+
+def test_assigned_on_state_is_reset_by_every_projection_entry_point():
+    # ``items_for_day_from_objects`` is a read of its own: an unparsed flag
+    # from an earlier call must not leak into the next one's diagnostics.
+    provider = _assigned_on_provider([])
+    adapter = _override_adapter(
+        provider, _assigned_on_mapping(), assignment_settings=_active_settings()
+    )
+    garbage = _assigned_on_object(
+        "project-1",
+        {
+            "state": _active_state(),
+            ASSIGNED_ON_PROPERTY: _date_value("not-a-date"),
+        },
+    )
+    clean = _assigned_on_object(
+        "project-1",
+        {
+            "state": _active_state(),
+            ASSIGNED_ON_PROPERTY: _date_value(TODAY.isoformat()),
+        },
+    )
+
+    first = adapter.items_for_day_from_objects(TODAY, [garbage])
+    second = adapter.items_for_day_from_objects(TODAY, [clean])
+
+    assert any("could not be parsed" in warning for warning in first.warnings)
+    assert second.warnings == []
+    assert _source_assigned_by_id(second) == {"project-1": True}

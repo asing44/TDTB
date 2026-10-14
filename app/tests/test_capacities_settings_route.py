@@ -113,6 +113,7 @@ class TestGet:
             "excluded": {},
             "active_structures": {},
             "assigned_structures": {},
+            "assigned_on_structures": {},
             "native_task_structures": ["RootTask"],
             "active_statuses": ["active"],
         }
@@ -875,6 +876,7 @@ class TestStructureTitles:
             "excluded",
             "active_structures",
             "assigned_structures",
+            "assigned_on_structures",
             "native_task_structures",
             "active_statuses",
         }
@@ -937,3 +939,126 @@ class TestStructureTitlesNoProviderContact:
             PROJECT_STRUCTURE: "Project"
         }
         assert calls == []
+
+
+PROJECT_ASSIGNED_ON_PROPERTY = "1a2b3c4d-5e6f-4788-9a0b-1c2d3e4f5a6b"
+
+
+class TestAssignedOnStructuresRoute:
+    """POST/GET round-trip for the additive ``assigned_on_structures`` key.
+
+    The read-only marker must survive the route in both directions, omission
+    stays a full replacement to the empty default, and a malformed payload is
+    a 422 before any file access."""
+
+    def test_get_returns_the_key_and_post_round_trips_it(self, client):
+        declarations = {
+            PROJECT_STRUCTURE: PROJECT_ASSIGNED_ON_PROPERTY,
+            PRESS_STRUCTURE: ADVENTURE_ASSIGNED_PROPERTY,
+        }
+        response = client.post(
+            "/settings/capacities/save",
+            headers=_auth(client),
+            json=_body(assigned_on_structures=declarations),
+        )
+
+        assert response.status_code == 200
+        assert response.json()["settings"]["assigned_on_structures"] == declarations
+
+        body = client.get("/settings/capacities").json()
+        assert body["settings"]["assigned_on_structures"] == declarations
+
+        stored = json.loads(_settings_bytes().decode("utf-8"))
+        assert stored["assigned_on_structures"] == declarations
+
+    def test_omitting_the_key_is_a_full_replacement_to_empty(self, client):
+        first = client.post(
+            "/settings/capacities/save",
+            headers=_auth(client),
+            json=_body(
+                assigned_on_structures={
+                    PROJECT_STRUCTURE: PROJECT_ASSIGNED_ON_PROPERTY
+                }
+            ),
+        )
+        assert first.status_code == 200
+
+        second = client.post(
+            "/settings/capacities/save",
+            headers=_auth(client),
+            json=_body(expected_revision=1),
+        )
+
+        assert second.status_code == 200
+        assert second.json()["settings"]["assigned_on_structures"] == {}
+        assert (
+            client.get("/settings/capacities").json()["settings"][
+                "assigned_on_structures"
+            ]
+            == {}
+        )
+
+    def test_empty_object_is_a_legitimate_replacement(self, client):
+        response = client.post(
+            "/settings/capacities/save",
+            headers=_auth(client),
+            json=_body(assigned_on_structures={}),
+        )
+
+        assert response.status_code == 200
+        assert response.json()["settings"]["assigned_on_structures"] == {}
+
+    @pytest.mark.parametrize(
+        "bad",
+        [
+            [],                                                     # list
+            "custom-project",                                       # string
+            None,                                                   # null
+            {PROJECT_STRUCTURE: False},                             # flag
+            {PROJECT_STRUCTURE: 1},                                 # int value
+            {PROJECT_STRUCTURE: None},                              # null value
+            {PROJECT_STRUCTURE: ""},                                # empty property id
+            {"": PROJECT_ASSIGNED_ON_PROPERTY},                     # empty structure id
+            {" custom-project ": PROJECT_ASSIGNED_ON_PROPERTY},     # whitespace alias
+        ],
+    )
+    def test_post_rejects_malformed_declarations_422(self, client, bad):
+        response = client.post(
+            "/settings/capacities/save",
+            headers=_auth(client),
+            json=_body(assigned_on_structures=bad),
+        )
+
+        assert response.status_code == 422
+        assert any(
+            "assigned_on_structures" in entry["loc"]
+            for entry in response.json()["detail"]
+        )
+        assert not cs.settings_path().exists()
+
+    def test_stale_revision_conflicts_and_preserves_bytes(self, client):
+        first = client.post(
+            "/settings/capacities/save",
+            headers=_auth(client),
+            json=_body(
+                assigned_on_structures={
+                    PROJECT_STRUCTURE: PROJECT_ASSIGNED_ON_PROPERTY
+                }
+            ),
+        )
+        assert first.status_code == 200
+        before = _settings_bytes()
+
+        response = client.post(
+            "/settings/capacities/save",
+            headers=_auth(client),
+            json=_body(
+                expected_revision=0,
+                assigned_on_structures={
+                    PRESS_STRUCTURE: ADVENTURE_ASSIGNED_PROPERTY
+                },
+            ),
+        )
+
+        assert response.status_code == 409
+        assert _settings_bytes() == before

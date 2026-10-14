@@ -4,13 +4,15 @@ The adapter is deliberately contract-driven: structure definitions and
 per-structure mappings are supplied by TDTB configuration, candidate objects
 are enumerated with bounded pagination, and eligibility is evaluated locally
 from typed properties.  It does not use the Capacities MCP server, title-based
-matching, or a generic synchronization model.
+matching, or a generic synchronization model. The optional settings-declared
+``Assigned On`` marker is READ-ONLY: a date/datetime property is compared to
+the read's logical day and TDTB never writes it.
 """
 from __future__ import annotations
 
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
-from datetime import date
+from datetime import date, datetime
 import hashlib
 import json
 from typing import Any, Callable, Protocol, Sequence
@@ -116,6 +118,15 @@ class StructureMapping:
     #: not define is ignored with one bounded warning; the mapping's own
     #: marker then applies as the fallback.
     assigned_property: str | None = None
+    #: Builder-resolved settings declaration: the raw Capacities DATE/DATETIME
+    #: property id whose civil date (in the app's local timezone) must equal
+    #: the read's logical day for the object to read source-assigned. When set
+    #: it takes PRECEDENCE over ``assigned_property`` for this structure: the
+    #: boolean marker is ignored entirely. Like ``assigned_property`` it never
+    #: gates enumeration. A declaration the structure does not define, or one
+    #: that is not date-typed, is ignored with one bounded warning. The marker
+    #: is READ-ONLY — TDTB never writes it.
+    assigned_on_property: str | None = None
 
 
 @dataclass(frozen=True)
@@ -760,6 +771,89 @@ def _property_date(prop: Any, prop_id: str) -> date | None:
         ) from None
 
 
+# ---------------------------------------------------------------------------
+# Assigned On (read-only settings-declared date marker)
+# ---------------------------------------------------------------------------
+# The source-assigned signal can come from a DATE/DATETIME property instead
+# of a boolean: the object is source-assigned only when the value's civil date
+# equals the read's logical day. The reading must never raise — an absent,
+# empty, malformed, or unmapped-typed value is a definitive negative — and the
+# projection records parse failures so at most one content-free diagnostic per
+# structure reaches the warnings surface. TDTB never writes this property.
+
+_ASSIGNED_ON_MATCH = "match"
+_ASSIGNED_ON_NOMATCH = "nomatch"
+_ASSIGNED_ON_UNPARSED = "unparsed"
+_ASSIGNED_ON_ABSENT = "absent"
+
+
+def _assigned_on_raw(value: Any) -> str | None:
+    """Best-effort raw string from known Capacities date payload shapes.
+
+    Tolerates a plain string, a ``{"start": ...}`` object, and a list/range
+    whose first element carries the start. Anything else is ``None``.
+    """
+    current = value
+    for _ in range(4):
+        if isinstance(current, str):
+            return current
+        if isinstance(current, dict):
+            current = current.get("start")
+        elif isinstance(current, (list, tuple)):
+            current = current[0] if current else None
+        else:
+            return None
+    return None
+
+
+def _parse_assigned_on(raw: str) -> date | None:
+    """Civil date for a Capacities date/datetime string, or ``None``.
+
+    A date-only ``YYYY-MM-DD`` value compares as that civil date with no
+    timezone shifting. A datetime with an offset or ``Z`` converts to the
+    app's local timezone (the same host-local convention
+    ``producer_rules._parse_iso`` uses); a naive datetime is treated as local
+    time. An unparseable value returns ``None`` rather than raising.
+    """
+    text = raw.strip()
+    if not text:
+        return None
+    if len(text) == 10:
+        try:
+            return date.fromisoformat(text)
+        except ValueError:
+            pass
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed.astimezone().date()
+
+
+def _assigned_on_state(prop: Any, prop_id: str, logical_day: date) -> str:
+    """Classify one mapped Assigned On value against the logical day.
+
+    Never raises: a missing property is ``absent``, an empty payload is
+    ``absent``, an unsupported property kind or unparseable value is
+    ``unparsed``, and a parsed value is ``match`` only when its civil date
+    equals ``logical_day``.
+    """
+    if prop is None:
+        return _ASSIGNED_ON_ABSENT
+    if not isinstance(prop, dict):
+        return _ASSIGNED_ON_UNPARSED
+    kind = _text(prop.get("type"))
+    if kind not in {"date", "datetime"}:
+        return _ASSIGNED_ON_UNPARSED
+    raw = _assigned_on_raw(prop.get(kind))
+    if raw is None or not raw.strip():
+        return _ASSIGNED_ON_ABSENT
+    parsed = _parse_assigned_on(raw)
+    if parsed is None:
+        return _ASSIGNED_ON_UNPARSED
+    return _ASSIGNED_ON_MATCH if parsed == logical_day else _ASSIGNED_ON_NOMATCH
+
+
 def _skip_reason(exc: _MalformedObject) -> str:
     """The fixed operator-facing bucket for a projection failure."""
     return getattr(exc, "reason", None) or _SKIP_REASON_UNKNOWN
@@ -954,6 +1048,11 @@ class CapacitiesAdapter:
         #: inflate coverage.
         self._deferred_identities: set[str] = set()
         self._rate_limited = False
+        #: Per-read Assigned On diagnostics, keyed by structure id and reset
+        #: by every projection entry point: at most one content-free warning
+        #: per structure reaches the warnings surface.
+        self._assigned_on_unparsed: set[str] = set()
+        self._assigned_on_matched: set[str] = set()
 
     def close(self) -> None:
         """Close an injected transport when it owns a closeable client."""
@@ -1049,6 +1148,27 @@ class CapacitiesAdapter:
                     f"{sid!r}: unknown property {mapping.assigned_property!r}"
                 )
                 mapping = replace(mapping, assigned_property=None)
+            # The Assigned On declaration follows the same fail-open contract:
+            # unknown or non-date declarations are ignored with one bounded
+            # warning so the mapping's own seams keep working, and nothing
+            # changes which structures are enumerated.
+            if (
+                mapping.assigned_on_property
+                and mapping.assigned_on_property not in definitions
+            ):
+                declaration_warnings.append(
+                    "ignored Capacities Assigned On declaration for structure "
+                    f"{sid!r}: unknown property {mapping.assigned_on_property!r}"
+                )
+                mapping = replace(mapping, assigned_on_property=None)
+            elif mapping.assigned_on_property and _text(
+                definitions[mapping.assigned_on_property].get("type")
+            ) not in {"date", "datetime"}:
+                declaration_warnings.append(
+                    "ignored Capacities Assigned On declaration for structure "
+                    f"{sid!r}: property {mapping.assigned_on_property!r} is not a date"
+                )
+                mapping = replace(mapping, assigned_on_property=None)
             if mapping.open_status_property and not mapping.open_status_values:
                 raise CapacitiesContractError(f"mapping {sid!r} has no open status values")
             if mapping.completion_property:
@@ -1253,7 +1373,9 @@ class CapacitiesAdapter:
         # candidate rather than a contract failure (KTD5, R27/R29).
         active_rule = self._active_rule(mapping.structure_id)
         has_assignment_mapping = bool(
-            mapping.assignment_property or mapping.assigned_property
+            mapping.assignment_property
+            or mapping.assigned_property
+            or mapping.assigned_on_property
         )
 
         # Source-assigned signal. A mapped assignment property that is present
@@ -1262,7 +1384,27 @@ class CapacitiesAdapter:
         # the native Auto rule. The evaluator, not this projection, decides
         # precedence and eligibility.
         source_assigned: bool | None = None
-        if mapping.assigned_property:
+        if mapping.assigned_on_property:
+            # A builder-resolved settings declaration names a DATE/DATETIME
+            # property whose civil date, converted to the app's local
+            # timezone, must equal this read's logical day. The declaration
+            # TAKES PRECEDENCE: a boolean ``assigned_property`` for the same
+            # structure is ignored entirely. Every non-match — past, future,
+            # empty, absent, or unparseable — is a definitive negative. An
+            # unparseable value is counted so at most one content-free line
+            # per structure reaches the warnings surface; the marker is
+            # read-only and TDTB never writes it.
+            state = _assigned_on_state(
+                properties.get(mapping.assigned_on_property),
+                mapping.assigned_on_property,
+                logical_day,
+            )
+            source_assigned = state == _ASSIGNED_ON_MATCH
+            if state == _ASSIGNED_ON_UNPARSED:
+                self._assigned_on_unparsed.add(mapping.structure_id)
+            elif source_assigned:
+                self._assigned_on_matched.add(mapping.structure_id)
+        elif mapping.assigned_property:
             # A builder-resolved settings declaration names a boolean property
             # whose ``true`` is the source-assigned signal. This is a separate
             # read from the mapping's own declaration below, so the declared
@@ -1683,10 +1825,19 @@ class CapacitiesAdapter:
     def items_for_day_from_objects(
         self, logical_day: date, objects: Sequence[dict[str, Any]]
     ) -> CapacitiesReadResult:
+        # Every projection entry point resets the per-read Assigned On
+        # diagnostics: a stale flag from an earlier read on the same adapter
+        # must not suppress or fabricate a warning on this one.
+        self._assigned_on_unparsed = set()
+        self._assigned_on_matched = set()
         items, warnings, evaluated, malformed, skipped = self._project_objects(
             logical_day, objects
         )
-        warnings = [*self._contract_warnings, *warnings]
+        warnings = [
+            *self._contract_warnings,
+            *warnings,
+            *self._assigned_on_warnings(),
+        ]
         return CapacitiesReadResult(
             items=items,
             warnings=warnings,
@@ -1731,6 +1882,28 @@ class CapacitiesAdapter:
             return True
         return self._active_rule(mapping.structure_id) is not None
 
+    def _assigned_on_warnings(self) -> list[str]:
+        """At most one content-free diagnostic per mapped Assigned On structure.
+
+        A structure whose mapped values never parsed reports the parse
+        failure. The line carries only the structure id — never a property
+        value — so the warning surface cannot leak source content.
+        """
+        warnings: list[str] = []
+        for mapping in (self._mappings or {}).values():
+            structure_id = mapping.structure_id
+            if not mapping.assigned_on_property:
+                continue
+            if structure_id in self._assigned_on_unparsed:
+                warnings.append(
+                    "Capacities Assigned On values could not be parsed for "
+                    f"structure {structure_id!r}; treated as not assigned"
+                )
+            # A mapped structure with nothing assigned today is the normal
+            # case, not a fault: no "never matched" line, which would fire on
+            # every read and bury real warnings.
+        return warnings
+
     def _drain_cache_warnings(self) -> list[str]:
         """Collect content-cache diagnostics recorded since the last read.
 
@@ -1757,6 +1930,8 @@ class CapacitiesAdapter:
         self._content_reads_left = self.config.max_content_reads
         self._deferred_identities = set()
         self._rate_limited = False
+        self._assigned_on_unparsed = set()
+        self._assigned_on_matched = set()
         all_items: list[dict[str, Any]] = []
         warnings: list[str] = list(self._contract_warnings)
         evaluated: set[str] = set()
@@ -1801,6 +1976,7 @@ class CapacitiesAdapter:
                 "contributing structures. Content-read budget reached. Wait at "
                 "least a minute, then Refresh sources to continue."
             )
+        warnings.extend(self._assigned_on_warnings())
         warnings.extend(self._drain_cache_warnings())
         all_items.sort(key=lambda row: (_normalized(row["name"]), row["identity"]))
         return CapacitiesReadResult(

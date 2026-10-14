@@ -1116,29 +1116,44 @@ class CapacitiesBuilderConfig:
 def _resolve_assigned_structures(
     mappings: Iterable[StructureMapping],
     declarations: dict[str, str],
+    on_declarations: dict[str, str] | None = None,
 ) -> tuple[StructureMapping, ...]:
     """Resolve the settings declaration onto the source mappings.
 
     This is the only place the two persisted surfaces — the app-owned
     source record and the settings store — meet, so the precedence lives
     here: a structure declared in ``assigned_structures`` reads the declared
-    raw property id with ``true`` implied, and every other structure keeps
+    raw property id with ``true`` implied, every other structure keeps
     the mapping's own ``assignment_property`` / ``assignment_values``
-    untouched. A declaration for a structure the source record does not map
-    is ignored.
+    untouched, and a declaration for a structure the source record does not
+    map is ignored. A structure declared in ``assigned_on_structures``
+    (the read-only ``Assigned On`` date marker) gets ``assigned_on_property``
+    resolved alongside; the adapter then gives it precedence over the
+    boolean for that structure.
 
-    Resolution sets ONLY ``assigned_property``. ``assignment_property`` stays
-    exactly as stored, so the declaration cannot reach the adapter's
-    enumeration gate (``_structure_can_contribute``) — the operator chose an
-    assignment check only, and a misconfiguration must never drop work from
-    the plan.
+    Resolution sets ONLY ``assigned_property`` / ``assigned_on_property``.
+    ``assignment_property`` stays exactly as stored, so neither declaration
+    can reach the adapter's enumeration gate
+    (``_structure_can_contribute``) — the operator chose an assignment check
+    only, and a misconfiguration must never drop work from the plan.
     """
-    if not declarations:
+    on_declarations = on_declarations or {}
+    if not declarations and not on_declarations:
         return tuple(mappings)
     return tuple(
-        replace(mapping, assigned_property=declarations[mapping.structure_id])
-        if mapping.structure_id in declarations
-        else mapping
+        replace(
+            mapping,
+            assigned_property=(
+                declarations[mapping.structure_id]
+                if mapping.structure_id in declarations
+                else mapping.assigned_property
+            ),
+            assigned_on_property=(
+                on_declarations[mapping.structure_id]
+                if mapping.structure_id in on_declarations
+                else mapping.assigned_on_property
+            ),
+        )
         for mapping in mappings
     )
 
@@ -1234,7 +1249,9 @@ def build_capacities_adapter(
         CapacitiesConfig(
             space_id=record.space_id,
             mappings=_resolve_assigned_structures(
-                record.to_mappings(), settings.assigned_structures
+                record.to_mappings(),
+                settings.assigned_structures,
+                settings.assigned_on_structures,
             ),
             max_pages=cfg.max_pages,
             assignment_settings=assignment_settings,
@@ -1333,7 +1350,9 @@ def read_direct_intake() -> DirectIntakeRead | None:
     return DirectIntakeRead(
         space_id=record.space_id,
         mappings=_resolve_assigned_structures(
-            record.to_mappings(), settings.assigned_structures
+            record.to_mappings(),
+            settings.assigned_structures,
+            settings.assigned_on_structures,
         ),
         settings=settings,
         snapshot=snapshot,
@@ -1521,7 +1540,9 @@ def build_refresh_coordinator(
         provider=client,
         space_id=record.space_id,
         mappings=_resolve_assigned_structures(
-            record.to_mappings(), settings.assigned_structures
+            record.to_mappings(),
+            settings.assigned_structures,
+            settings.assigned_on_structures,
         ),
         revision_supplier=lambda: refresh_config_revision(),
         space_id_supplier=lambda: refresh_source_space_id(),

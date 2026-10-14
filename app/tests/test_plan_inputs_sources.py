@@ -9,7 +9,7 @@ from __future__ import annotations
 import dataclasses
 import json
 import sys
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -23,6 +23,7 @@ import artifact_source as art  # noqa: E402
 import capacities_builder as cap_builder  # noqa: E402
 import capacities_refresh_state as crs  # noqa: E402
 import capacities_selections as sel  # noqa: E402
+import capacities_settings as cs  # noqa: E402
 import exclusion_settings as es  # noqa: E402
 import runstate as runstate_mod  # noqa: E402
 from calendar_bridge import CalendarInfo  # noqa: E402
@@ -1208,3 +1209,140 @@ def test_selection_excluded_before_promotion_gets_no_ignore_list_notice(vault):
     assert _ignore_notices(body) == []
     notices = [w for w in body["source_warnings"] if f"capacities:{SPACE}:RootTask:drop" in w]
     assert len(notices) == 1 and "excluded" in notices[0]
+
+
+# ---------------------------------------------------------------------------
+# Direct intake: the settings-declared read-only ``Assigned On`` marker
+# ---------------------------------------------------------------------------
+# The marker is the operator's date column (the mapping's ``date_property`` in
+# this fixture) and, when declared, ALONE decides ``source_assigned``: the
+# object is assigned only when its civil date equals the read's logical day.
+
+DIRECT_ASSIGNED_ON_PROPERTY = "due"
+
+
+def _save_assigned_on_settings(*, structures, excluded=(), active=()):
+    cs.save_settings(
+        expected_revision=0,
+        native_task_auto=cs.NativeTaskAutoPolicy(),
+        excluded=list(excluded),
+        active_structures=list(active),
+        assigned_on_structures=dict(structures),
+    )
+
+
+def _direct_marker_object(object_id, type_id, *, due, assigned=False, tags=None):
+    obj = _direct_object(object_id, type_id, assigned=assigned)
+    obj["properties"][DIRECT_ASSIGNED_ON_PROPERTY] = {
+        "type": "date",
+        "date": {"start": due},
+    }
+    if tags is not None:
+        obj["properties"]["tags"] = {"type": "entity", "entity": tags}
+    return obj
+
+
+def test_direct_assigned_on_today_lands_on_the_assigned_surface(vault):
+    _set_sources(mode="artifact", capacities_intake="direct")
+    _save_direct_source()
+    today = gather.effective_date(datetime.now())
+    _publish_direct([
+        _direct_marker_object("obj-a", DIRECT_ROOT, due=str(today)),
+    ])
+    _save_assigned_on_settings(
+        structures={DIRECT_ROOT: DIRECT_ASSIGNED_ON_PROPERTY}
+    )
+    client = _direct_client(
+        build_clients=_CallRecorder(), build_capacities=_CallRecorder(),
+    )
+
+    body = client.get("/plan-inputs").json()
+
+    assert _names(body, "assigned") == ["obj-a"]
+    row = _surface(body, "assigned")[0]
+    assert row["capacities_assignment"]["source_assigned"] is True
+    assert row["capacities_assignment"]["reasons"] == ["source-assigned"]
+    # Basis semantics are unchanged: the server-owned index still stamps an
+    # assigned Capacities row as a rule/source assignment.
+    (entry,) = main_mod.build_digest_index({"assigned": [row]})
+    assert entry["capacities_assignment_basis"] == "rule"
+
+
+def test_direct_assigned_on_yesterday_stays_in_the_pool(vault):
+    _set_sources(mode="artifact", capacities_intake="direct")
+    _save_direct_source()
+    today = gather.effective_date(datetime.now())
+    yesterday = today - timedelta(days=1)
+    _publish_direct([
+        _direct_marker_object("obj-yesterday", DIRECT_CUSTOM, due=str(yesterday)),
+    ])
+    _save_assigned_on_settings(
+        structures={DIRECT_CUSTOM: DIRECT_ASSIGNED_ON_PROPERTY},
+        active=(DIRECT_CUSTOM,),
+    )
+    client = _direct_client(
+        build_clients=_CallRecorder(), build_capacities=_CallRecorder(),
+    )
+
+    body = client.get("/plan-inputs").json()
+
+    assert _names(body, "assigned") == []
+    pool = [
+        row for row in _surface(body, "suggested") if row["name"] == "obj-yesterday"
+    ]
+    assert len(pool) == 1
+    assert pool[0]["capacities_assignment"]["source_assigned"] is False
+    # A mapped structure with nothing assigned today is normal: no Assigned On
+    # warning, and the stored date never leaks into any warning.
+    assert not [w for w in body["source_warnings"] if "Assigned On" in w]
+    assert not [w for w in body["source_warnings"] if str(yesterday) in w]
+
+
+def test_direct_assigned_on_outranks_a_tdtb_exclusion(vault):
+    _set_sources(mode="artifact", capacities_intake="direct")
+    _save_direct_source()
+    today = gather.effective_date(datetime.now())
+    identity = f"capacities:{DIRECT_SPACE}:{DIRECT_ROOT}:obj-a"
+    _publish_direct([
+        _direct_marker_object("obj-a", DIRECT_ROOT, due=str(today)),
+    ])
+    _save_assigned_on_settings(
+        structures={DIRECT_ROOT: DIRECT_ASSIGNED_ON_PROPERTY},
+        excluded=(identity,),
+    )
+    client = _direct_client(
+        build_clients=_CallRecorder(), build_capacities=_CallRecorder(),
+    )
+
+    body = client.get("/plan-inputs").json()
+
+    # A source-assigned marker outranks the TDTB exclusion, exactly like the
+    # boolean declaration it replaces for this structure.
+    assert _names(body, "assigned") == ["obj-a"]
+
+
+def test_direct_assigned_on_still_yields_to_tag_exclusions(vault):
+    _set_sources(mode="artifact", capacities_intake="direct")
+    _save_direct_source()
+    _save_tag_exclusion(TAG_A)
+    today = gather.effective_date(datetime.now())
+    _publish_direct([
+        _direct_marker_object(
+            "obj-a",
+            DIRECT_ROOT,
+            due=str(today),
+            tags=[{"id": TAG_A, "title": "habituals"}],
+        ),
+    ])
+    _save_assigned_on_settings(
+        structures={DIRECT_ROOT: DIRECT_ASSIGNED_ON_PROPERTY}
+    )
+    client = _direct_client(
+        build_clients=_CallRecorder(), build_capacities=_CallRecorder(),
+    )
+
+    body = client.get("/plan-inputs").json()
+
+    # The tag-exclusion policy runs after assignment and wins: a source
+    # Assigned marker does not override it.
+    assert "obj-a" not in _names(body, "assigned") + _names(body, "suggested")

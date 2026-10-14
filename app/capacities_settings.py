@@ -9,8 +9,10 @@ It persists only the editable assignment policy — the native Auto toggles,
 the stable-identity exclusion set, the custom structures whose ``Active``
 status is an inclusion signal, the two configured admission inputs (which
 structures participate in the native Auto rules and which status values
-satisfy the native status condition), and the settings-declared source
-assignment map (structure id -> raw Capacities property id, ``true`` implied)
+satisfy the native status condition), the settings-declared source
+assignment map (structure id -> raw Capacities property id, ``true`` implied),
+and the settings-declared read-only ``Assigned On`` map (structure id -> raw
+Capacities date/datetime property id compared against the logical day)
 — plus a server-owned schema ``version`` and monotonic ``revision``. It
 deliberately persists no titles, source properties, credentials, structure
 mappings, or effective-assignment results: the evaluator in
@@ -76,8 +78,9 @@ STATE_FILENAME = "capacities-settings.json"
 STATE_LOCK_FILENAME = "capacities-settings.lock"
 SCHEMA_VERSION = 1
 
-# ``active_structures``, ``native_task_structures``, ``active_statuses``, and
-# ``assigned_structures`` were added ADDITIVELY to schema version 1,
+# ``active_structures``, ``native_task_structures``, ``active_statuses``,
+# ``assigned_structures``, and ``assigned_on_structures`` were added
+# ADDITIVELY to schema version 1,
 # deliberately without bumping SCHEMA_VERSION. A version bump would make every
 # already-saved version-1 file "unsupported" and fail closed (reads would
 # raise and writes would refuse), locking a user out of the settings they
@@ -93,6 +96,7 @@ _ADDITIVE_KEYS = frozenset(
         "native_task_structures",
         "active_statuses",
         "assigned_structures",
+        "assigned_on_structures",
     }
 )
 _TOP_KEYS = frozenset(
@@ -188,6 +192,16 @@ class CapacitiesSettings:
     #: ``assignment_property`` / ``assignment_values`` is resolved by the
     #: builder — this key is an adapter/mapping input, never an evaluator one.
     assigned_structures: dict[str, str] = field(default_factory=dict)
+    #: Settings-declared ``Assigned On`` marker: a ``{structure_id:
+    #: property_id}`` map naming the RAW Capacities DATE/DATETIME property
+    #: whose civil date (in the app's local timezone) must equal the read's
+    #: logical day for the object to read source-assigned (additive to schema
+    #: version 1; absence means no override anywhere). When a structure is
+    #: declared here, this marker ALONE decides ``source_assigned`` for that
+    #: structure — a boolean ``assigned_structures`` entry for the same
+    #: structure is ignored. The marker is READ-ONLY: TDTB never writes the
+    #: property, it is source-owned in Capacities.
+    assigned_on_structures: dict[str, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if type(self.revision) is not int or self.revision < 0:
@@ -214,6 +228,13 @@ class CapacitiesSettings:
             "assigned_structures",
             canonical_assignment_declarations(self.assigned_structures),
         )
+        object.__setattr__(
+            self,
+            "assigned_on_structures",
+            canonical_assignment_declarations(
+                self.assigned_on_structures, key="assigned_on_structures"
+            ),
+        )
         for name in ("native_task_structures", "active_statuses"):
             values = canonical_unique_admission_values(getattr(self, name), name)
             object.__setattr__(self, name, frozenset(values))
@@ -234,6 +255,12 @@ class CapacitiesSettings:
                 structure_id: property_id
                 for structure_id, property_id in sorted(
                     self.assigned_structures.items()
+                )
+            },
+            "assigned_on_structures": {
+                structure_id: property_id
+                for structure_id, property_id in sorted(
+                    self.assigned_on_structures.items()
                 )
             },
         }
@@ -515,6 +542,23 @@ def _decode(data: Any) -> CapacitiesSettings:
             "capacities settings has an invalid assignment declaration"
         ) from exc
 
+    # ``assigned_on_structures`` follows the identical additive-key contract:
+    # optional on read (a legacy version-1 file means no Assigned On override
+    # anywhere), emitted on every write, strictly validated when present.
+    assigned_on_raw = data.get("assigned_on_structures", {})
+    if not isinstance(assigned_on_raw, dict):
+        raise SettingsFormatError(
+            "capacities settings assigned_on_structures must be an object"
+        )
+    try:
+        assigned_on = canonical_assignment_declarations(
+            assigned_on_raw, key="assigned_on_structures"
+        )
+    except ValueError as exc:
+        raise SettingsFormatError(
+            "capacities settings has an invalid Assigned On declaration"
+        ) from exc
+
     return CapacitiesSettings(
         revision=revision,
         native_task_auto=NativeTaskAutoPolicy(
@@ -528,6 +572,7 @@ def _decode(data: Any) -> CapacitiesSettings:
         native_task_structures=frozenset(native_structures),
         active_statuses=frozenset(statuses),
         assigned_structures=assigned,
+        assigned_on_structures=assigned_on,
     )
 
 
@@ -647,6 +692,7 @@ def save_settings(
     native_task_structures: Any = NATIVE_TASK_STRUCTURES,
     active_statuses: Any = DEFAULT_ACTIVE_STATUSES,
     assigned_structures: Any = {},
+    assigned_on_structures: Any = {},
 ) -> CapacitiesSettings:
     """Explicitly replace the whole Capacities assignment policy.
 
@@ -661,7 +707,11 @@ def save_settings(
     legitimate configuration: nothing is native and every structure falls to
     the custom path. An omitted ``assigned_structures`` likewise replaces the
     declaration map with the empty default: no override anywhere, so each
-    structure keeps the source mapping's own assignment declaration.
+    structure keeps the source mapping's own assignment declaration. The same
+    full-replacement rule applies to ``assigned_on_structures``, the READ-ONLY
+    ``Assigned On`` marker: when a structure is declared there, only that
+    date property decides ``source_assigned`` for it; TDTB never writes the
+    Capacities property.
 
     Under the process lock the current file is read, its revision compared
     with ``expected_revision``, and only then is the file replaced atomically.
@@ -688,6 +738,9 @@ def save_settings(
         canonical_unique_admission_values(active_statuses, "active_statuses")
     )
     declarations = canonical_assignment_declarations(assigned_structures)
+    on_declarations = canonical_assignment_declarations(
+        assigned_on_structures, key="assigned_on_structures"
+    )
 
     with _store_lock():
         fh = _acquire_lock_file()
@@ -707,6 +760,7 @@ def save_settings(
                 native_task_structures=native_ids,
                 active_statuses=status_values,
                 assigned_structures=declarations,
+                assigned_on_structures=on_declarations,
             )
             _atomic_write_json(settings_path(), saved.as_dict())
         finally:

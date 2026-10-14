@@ -98,6 +98,7 @@ class TestPathsAndDefault:
         expected["native_task_structures"] = DEFAULT_NATIVE_STRUCTURES
         expected["active_statuses"] = DEFAULT_ACTIVE_STATUSES
         expected["assigned_structures"] = {}
+        expected["assigned_on_structures"] = {}
         assert result.settings.as_dict() == expected
 
     def test_vault_isolation(self, tmp_path, monkeypatch):
@@ -168,6 +169,7 @@ class TestRoundTrip:
             "native_task_structures": DEFAULT_NATIVE_STRUCTURES,
             "active_statuses": DEFAULT_ACTIVE_STATUSES,
             "assigned_structures": {},
+            "assigned_on_structures": {},
         }
 
     def test_saved_settings_bridge_to_the_evaluator_seam(self, tmp_path):
@@ -1067,3 +1069,181 @@ class TestAssignedStructures:
             with pytest.raises(ValueError):
                 cs.CapacitiesSettings(assigned_structures=declarations)
         assert cs.CapacitiesSettings().assigned_structures == {}
+
+
+PROJECT_ASSIGNED_ON_PROPERTY = "1a2b3c4d-5e6f-4788-9a0b-1c2d3e4f5a6b"
+ADVENTURE_ASSIGNED_ON_PROPERTY = "2b3c4d5e-6f70-4899-8b1c-2d3e4f5a6b7c"
+
+
+class TestAssignedOnStructures:
+    """The additive read-only ``assigned_on_structures`` declaration.
+
+    The key follows the same contract as ``assigned_structures``: optional on
+    read (a legacy version-1 file means no Assigned On override anywhere),
+    emitted on every write, strictly validated when present, and never
+    perturbing the evaluator seam."""
+
+    def test_schema_version_is_unchanged(self):
+        assert cs.SCHEMA_VERSION == 1
+
+    def test_default_has_no_declarations(self, tmp_path):
+        settings = cs.read_settings().settings
+
+        assert settings.assigned_on_structures == {}
+        assert settings.as_dict()["assigned_on_structures"] == {}
+
+    def test_round_trip_and_property_ids_are_preserved_exactly(self, tmp_path):
+        declarations = {
+            PROJECT_STRUCTURE: PROJECT_ASSIGNED_ON_PROPERTY,
+            PRESS_STRUCTURE: ADVENTURE_ASSIGNED_ON_PROPERTY,
+        }
+        saved = cs.save_settings(
+            expected_revision=0,
+            native_task_auto=_default_policy(),
+            excluded=[],
+            assigned_on_structures=declarations,
+        )
+
+        assert saved.assigned_on_structures == declarations
+        result = cs.read_settings()
+        assert result.settings.assigned_on_structures == declarations
+        assert result.settings.as_dict()["assigned_on_structures"] == declarations
+
+    def test_every_fresh_write_emits_the_key_even_when_omitted(self, tmp_path):
+        cs.save_settings(
+            expected_revision=0,
+            native_task_auto=_default_policy(), excluded=[],
+        )
+
+        data = json.loads(_bytes().decode("utf-8"))
+        assert data["assigned_on_structures"] == {}
+
+    def test_written_sorted_and_deterministic(self, tmp_path):
+        cs.save_settings(
+            expected_revision=0,
+            native_task_auto=_default_policy(), excluded=[],
+            assigned_on_structures={"zeta": "p2", "alpha": "p1"},
+        )
+
+        data = json.loads(_bytes().decode("utf-8"))
+        assert list(data["assigned_on_structures"]) == ["alpha", "zeta"]
+        assert data["assigned_on_structures"] == {"alpha": "p1", "zeta": "p2"}
+
+    def test_version_1_file_without_the_key_reads_as_empty(self, tmp_path):
+        _write_json(_legacy_version_1_payload())
+
+        result = cs.read_settings()
+
+        assert result.persisted is True
+        assert result.settings.assigned_on_structures == {}
+        assert result.settings.as_dict()["assigned_on_structures"] == {}
+
+    def test_omitted_key_on_a_later_save_is_a_full_replacement_to_empty(self, tmp_path):
+        cs.save_settings(
+            expected_revision=0,
+            native_task_auto=_default_policy(), excluded=[],
+            assigned_on_structures={PROJECT_STRUCTURE: PROJECT_ASSIGNED_ON_PROPERTY},
+        )
+
+        saved = cs.save_settings(
+            expected_revision=1,
+            native_task_auto=_default_policy(), excluded=[],
+        )
+
+        assert saved.assigned_on_structures == {}
+        assert cs.read_settings().settings.assigned_on_structures == {}
+
+    def test_absent_key_does_not_reach_the_evaluator_seam(self, tmp_path):
+        baseline = cs.save_settings(
+            expected_revision=0,
+            native_task_auto=_default_policy(), excluded=[],
+        ).to_assignment_settings()
+        declared = cs.save_settings(
+            expected_revision=1,
+            native_task_auto=_default_policy(), excluded=[],
+            assigned_on_structures={PROJECT_STRUCTURE: PROJECT_ASSIGNED_ON_PROPERTY},
+        ).to_assignment_settings()
+
+        assert declared == baseline
+
+    @pytest.mark.parametrize(
+        "declarations",
+        [
+            [],                                             # list, not an object
+            "custom-project",                               # string
+            1,                                              # number
+            None,                                           # null
+            True,                                           # bool
+            {PROJECT_STRUCTURE: False},                     # flag, not a property id
+            {PROJECT_STRUCTURE: 1},                         # int property id
+            {PROJECT_STRUCTURE: None},                      # null property id
+            {PROJECT_STRUCTURE: ["prop"]},                  # list property id
+            {"": PROJECT_ASSIGNED_ON_PROPERTY},             # empty structure id
+            {" ": PROJECT_ASSIGNED_ON_PROPERTY},            # whitespace structure id
+            {" custom-project ": PROJECT_ASSIGNED_ON_PROPERTY},  # whitespace alias
+            {"custom project": PROJECT_ASSIGNED_ON_PROPERTY},   # inner whitespace
+            {PROJECT_STRUCTURE: ""},                        # empty property id
+        ],
+    )
+    def test_malformed_stored_declarations_fail_closed(self, tmp_path, declarations):
+        _write_json(_valid_payload(assigned_on_structures=declarations))
+        before = _bytes()
+
+        with pytest.raises(cs.SettingsFormatError):
+            cs.read_settings()
+        with pytest.raises(cs.SettingsFormatError):
+            cs.save_settings(
+                expected_revision=0,
+                native_task_auto=_default_policy(), excluded=[],
+            )
+        assert _bytes() == before
+
+    def test_duplicate_declared_structure_keys_are_rejected(self, tmp_path):
+        _write_raw(
+            '{"version": 1, "revision": 0, '
+            '"native_task_auto": {"active_enabled": true, "due_enabled": true, '
+            '"deadline_enabled": true, "deadline_horizon_days": 2}, '
+            '"excluded": {}, '
+            '"assigned_on_structures": {"alpha": "p1", "alpha": "p2"}}',
+        )
+
+        with pytest.raises(cs.SettingsFormatError):
+            cs.read_settings()
+
+    @pytest.mark.parametrize(
+        "declarations",
+        [
+            "custom-project",
+            [],
+            None,
+            {PROJECT_STRUCTURE: ""},
+            {"": PROJECT_ASSIGNED_ON_PROPERTY},
+            {" custom-project ": PROJECT_ASSIGNED_ON_PROPERTY},
+            {PROJECT_STRUCTURE: 1},
+        ],
+    )
+    def test_save_rejects_invalid_declaration_before_any_file_access(
+        self, tmp_path, declarations
+    ):
+        with pytest.raises(ValueError):
+            cs.save_settings(
+                expected_revision=0,
+                native_task_auto=_default_policy(), excluded=[],
+                assigned_on_structures=declarations,
+            )
+
+        assert not cs.settings_path().exists()
+        assert not cs.lock_path().exists()
+
+    def test_constructed_model_is_strict_about_assigned_on_structures(self):
+        for declarations in (
+            "custom-project",
+            None,
+            {PROJECT_STRUCTURE: ""},
+            {"": PROJECT_ASSIGNED_ON_PROPERTY},
+            {" custom-project ": PROJECT_ASSIGNED_ON_PROPERTY},
+            {PROJECT_STRUCTURE: True},
+        ):
+            with pytest.raises(ValueError):
+                cs.CapacitiesSettings(assigned_on_structures=declarations)
+        assert cs.CapacitiesSettings().assigned_on_structures == {}
