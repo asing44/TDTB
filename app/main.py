@@ -1715,8 +1715,9 @@ class CapacitiesSettingsSaveRequest(BaseModel):
     #: property_id}`` naming a raw Capacities DATE/DATETIME property. When a
     #: structure is declared here, only that property decides
     #: ``source_assigned`` (the boolean declaration is ignored for it), and
-    #: the value's civil date in the app's local timezone must equal the
-    #: read's logical day. Omission is a full replacement to the empty map.
+    #: the value's civil date in the app's local timezone must fall on or
+    #: before the read's logical day; a future date is not assigned yet.
+    #: Omission is a full replacement to the empty map.
     #: The marker is READ-ONLY: TDTB never writes the Capacities property.
     assigned_on_structures: dict[str, StrictStr] = Field(default_factory=dict)
 

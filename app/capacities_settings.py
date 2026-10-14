@@ -12,7 +12,8 @@ structures participate in the native Auto rules and which status values
 satisfy the native status condition), the settings-declared source
 assignment map (structure id -> raw Capacities property id, ``true`` implied),
 and the settings-declared read-only ``Assigned On`` map (structure id -> raw
-Capacities date/datetime property id compared against the logical day)
+Capacities date/datetime property id whose civil date must fall on or before
+the logical day to read assigned)
 — plus a server-owned schema ``version`` and monotonic ``revision``. It
 deliberately persists no titles, source properties, credentials, structure
 mappings, or effective-assignment results: the evaluator in
@@ -194,9 +195,10 @@ class CapacitiesSettings:
     assigned_structures: dict[str, str] = field(default_factory=dict)
     #: Settings-declared ``Assigned On`` marker: a ``{structure_id:
     #: property_id}`` map naming the RAW Capacities DATE/DATETIME property
-    #: whose civil date (in the app's local timezone) must equal the read's
-    #: logical day for the object to read source-assigned (additive to schema
-    #: version 1; absence means no override anywhere). When a structure is
+    #: whose civil date (in the app's local timezone) must fall on or before
+    #: the read's logical day for the object to read source-assigned; a future
+    #: date is not assigned yet (additive to schema version 1; absence means
+    #: no override anywhere). When a structure is
     #: declared here, this marker ALONE decides ``source_assigned`` for that
     #: structure — a boolean ``assigned_structures`` entry for the same
     #: structure is ignored. The marker is READ-ONLY: TDTB never writes the

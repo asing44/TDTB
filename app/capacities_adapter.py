@@ -5,8 +5,9 @@ per-structure mappings are supplied by TDTB configuration, candidate objects
 are enumerated with bounded pagination, and eligibility is evaluated locally
 from typed properties.  It does not use the Capacities MCP server, title-based
 matching, or a generic synchronization model. The optional settings-declared
-``Assigned On`` marker is READ-ONLY: a date/datetime property is compared to
-the read's logical day and TDTB never writes it.
+``Assigned On`` marker is READ-ONLY: a date/datetime property whose civil
+date falls on or before the read's logical day is source-assigned, and TDTB
+never writes it.
 """
 from __future__ import annotations
 
@@ -776,8 +777,9 @@ def _property_date(prop: Any, prop_id: str) -> date | None:
 # ---------------------------------------------------------------------------
 # The source-assigned signal can come from a DATE/DATETIME property instead
 # of a boolean: the object is source-assigned only when the value's civil date
-# equals the read's logical day. The reading must never raise — an absent,
-# empty, malformed, or unmapped-typed value is a definitive negative — and the
+# falls on or before the read's logical day; a future date is not assigned
+# yet. The reading must never raise — an absent, empty, malformed, or
+# unmapped-typed value is a definitive negative — and the
 # projection records parse failures so at most one content-free diagnostic per
 # structure reaches the warnings surface. TDTB never writes this property.
 
@@ -835,8 +837,8 @@ def _assigned_on_state(prop: Any, prop_id: str, logical_day: date) -> str:
 
     Never raises: a missing property is ``absent``, an empty payload is
     ``absent``, an unsupported property kind or unparseable value is
-    ``unparsed``, and a parsed value is ``match`` only when its civil date
-    equals ``logical_day``.
+    ``unparsed``, and a parsed value is ``match`` when its civil date is on or
+    before ``logical_day`` (a future date is ``nomatch``).
     """
     if prop is None:
         return _ASSIGNED_ON_ABSENT
@@ -851,7 +853,7 @@ def _assigned_on_state(prop: Any, prop_id: str, logical_day: date) -> str:
     parsed = _parse_assigned_on(raw)
     if parsed is None:
         return _ASSIGNED_ON_UNPARSED
-    return _ASSIGNED_ON_MATCH if parsed == logical_day else _ASSIGNED_ON_NOMATCH
+    return _ASSIGNED_ON_MATCH if parsed <= logical_day else _ASSIGNED_ON_NOMATCH
 
 
 def _skip_reason(exc: _MalformedObject) -> str:
@@ -1052,6 +1054,8 @@ class CapacitiesAdapter:
         #: by every projection entry point: at most one content-free warning
         #: per structure reaches the warnings surface.
         self._assigned_on_unparsed: set[str] = set()
+        #: Structures whose marker read as assigned this projection
+        #: (bookkeeping only; no warning is derived from it).
         self._assigned_on_matched: set[str] = set()
 
     def close(self) -> None:
@@ -1387,10 +1391,10 @@ class CapacitiesAdapter:
         if mapping.assigned_on_property:
             # A builder-resolved settings declaration names a DATE/DATETIME
             # property whose civil date, converted to the app's local
-            # timezone, must equal this read's logical day. The declaration
-            # TAKES PRECEDENCE: a boolean ``assigned_property`` for the same
-            # structure is ignored entirely. Every non-match — past, future,
-            # empty, absent, or unparseable — is a definitive negative. An
+            # timezone, must fall on or before this read's logical day. The
+            # declaration TAKES PRECEDENCE: a boolean ``assigned_property``
+            # for the same structure is ignored entirely. A future date,
+            # empty, absent, or unparseable value is a definitive negative. An
             # unparseable value is counted so at most one content-free line
             # per structure reaches the warnings surface; the marker is
             # read-only and TDTB never writes it.
@@ -1899,9 +1903,9 @@ class CapacitiesAdapter:
                     "Capacities Assigned On values could not be parsed for "
                     f"structure {structure_id!r}; treated as not assigned"
                 )
-            # A mapped structure with nothing assigned today is the normal
-            # case, not a fault: no "never matched" line, which would fire on
-            # every read and bury real warnings.
+            # A mapped structure with nothing assigned (today or earlier) is
+            # the normal case, not a fault: no "never matched" line, which
+            # would fire on every read and bury real warnings.
         return warnings
 
     def _drain_cache_warnings(self) -> list[str]:

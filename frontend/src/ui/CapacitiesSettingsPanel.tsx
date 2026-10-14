@@ -522,7 +522,7 @@ export function CapacitiesSettingsPanel({ active }: { active: boolean }) {
                                 </button>
                               </span>
                               <small class="capacities-object-row__field-help">
-                                Date-time property set in Capacities. An item counts as assigned today when this falls on today's date.
+                                Date-time property set in Capacities. An item counts as assigned when this is today or earlier; a future date is not assigned yet.
                               </small>
                             </label>
                             <label class="capacities-object-row__field">

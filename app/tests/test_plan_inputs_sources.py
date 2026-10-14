@@ -727,6 +727,7 @@ def _direct_contract():
         {"id": "status", "type": "label", "labelSet": [
             {"id": "active", "name": "Active"}, {"id": "done", "name": "Done"}]},
         {"id": "due", "type": "date"},
+        {"id": "assigned-on", "type": "date"},
         {"id": "completion", "type": "label", "writable": True, "labelSet": [
             {"id": "done", "name": "Done"}]},
     ]
@@ -1216,9 +1217,14 @@ def test_selection_excluded_before_promotion_gets_no_ignore_list_notice(vault):
 # ---------------------------------------------------------------------------
 # The marker is the operator's date column (the mapping's ``date_property`` in
 # this fixture) and, when declared, ALONE decides ``source_assigned``: the
-# object is assigned only when its civil date equals the read's logical day.
+# object is assigned when its civil date falls on or before the read's logical
+# day; a future date is not assigned yet.
 
 DIRECT_ASSIGNED_ON_PROPERTY = "due"
+#: A separate date property for cases where the marker must not double as the
+#: mapping's ``date_property`` day filter (a future ``due`` drops the object
+#: before the assignment check runs).
+DIRECT_SPARE_ASSIGNED_ON_PROPERTY = "assigned-on"
 
 
 def _save_assigned_on_settings(*, structures, excluded=(), active=()):
@@ -1268,16 +1274,63 @@ def test_direct_assigned_on_today_lands_on_the_assigned_surface(vault):
     assert entry["capacities_assignment_basis"] == "rule"
 
 
-def test_direct_assigned_on_yesterday_stays_in_the_pool(vault):
+def test_direct_assigned_on_past_lands_on_the_assigned_surface(vault):
     _set_sources(mode="artifact", capacities_intake="direct")
     _save_direct_source()
     today = gather.effective_date(datetime.now())
     yesterday = today - timedelta(days=1)
+    far_past = today - timedelta(days=400)
     _publish_direct([
-        _direct_marker_object("obj-yesterday", DIRECT_CUSTOM, due=str(yesterday)),
+        _direct_marker_object("obj-yesterday", DIRECT_ROOT, due=str(yesterday)),
+        _direct_marker_object("obj-far-past", DIRECT_ROOT, due=str(far_past)),
     ])
     _save_assigned_on_settings(
-        structures={DIRECT_CUSTOM: DIRECT_ASSIGNED_ON_PROPERTY},
+        structures={DIRECT_ROOT: DIRECT_ASSIGNED_ON_PROPERTY},
+    )
+    client = _direct_client(
+        build_clients=_CallRecorder(), build_capacities=_CallRecorder(),
+    )
+
+    body = client.get("/plan-inputs").json()
+
+    assert sorted(_names(body, "assigned")) == ["obj-far-past", "obj-yesterday"]
+    assigned = {row["name"]: row for row in _surface(body, "assigned")}
+    for name in ("obj-far-past", "obj-yesterday"):
+        assert assigned[name]["capacities_assignment"]["source_assigned"] is True
+        assert assigned[name]["capacities_assignment"]["reasons"] == [
+            "source-assigned"
+        ]
+    # Basis semantics are unchanged: a past marker still stamps the row as a
+    # rule/source assignment.
+    (entry,) = main_mod.build_digest_index(
+        {"assigned": [assigned["obj-yesterday"]]}
+    )
+    assert entry["capacities_assignment_basis"] == "rule"
+    # A fully parsed past marker is normal: no Assigned On warning, and the
+    # stored dates never leak into any warning.
+    assert not [w for w in body["source_warnings"] if "Assigned On" in w]
+    assert not [
+        w
+        for w in body["source_warnings"]
+        if str(yesterday) in w or str(far_past) in w
+    ]
+
+
+def test_direct_assigned_on_tomorrow_stays_in_the_pool(vault):
+    _set_sources(mode="artifact", capacities_intake="direct")
+    _save_direct_source()
+    today = gather.effective_date(datetime.now())
+    tomorrow = today + timedelta(days=1)
+    obj = _direct_marker_object("obj-tomorrow", DIRECT_CUSTOM, due=str(tomorrow))
+    # The marker rides its own date property: the mapping's ``date_property``
+    # ("due") is a day filter that drops future-dated objects before the
+    # assignment check, so a future marker on ``due`` could not be observed.
+    obj["properties"][DIRECT_SPARE_ASSIGNED_ON_PROPERTY] = obj["properties"].pop(
+        DIRECT_ASSIGNED_ON_PROPERTY
+    )
+    _publish_direct([obj])
+    _save_assigned_on_settings(
+        structures={DIRECT_CUSTOM: DIRECT_SPARE_ASSIGNED_ON_PROPERTY},
         active=(DIRECT_CUSTOM,),
     )
     client = _direct_client(
@@ -1288,14 +1341,14 @@ def test_direct_assigned_on_yesterday_stays_in_the_pool(vault):
 
     assert _names(body, "assigned") == []
     pool = [
-        row for row in _surface(body, "suggested") if row["name"] == "obj-yesterday"
+        row for row in _surface(body, "suggested") if row["name"] == "obj-tomorrow"
     ]
     assert len(pool) == 1
     assert pool[0]["capacities_assignment"]["source_assigned"] is False
-    # A mapped structure with nothing assigned today is normal: no Assigned On
-    # warning, and the stored date never leaks into any warning.
+    # A mapped structure whose marker is still in the future is normal: no
+    # Assigned On warning, and the stored date never leaks into any warning.
     assert not [w for w in body["source_warnings"] if "Assigned On" in w]
-    assert not [w for w in body["source_warnings"] if str(yesterday) in w]
+    assert not [w for w in body["source_warnings"] if str(tomorrow) in w]
 
 
 def test_direct_assigned_on_outranks_a_tdtb_exclusion(vault):

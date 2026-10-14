@@ -652,8 +652,8 @@ export function ConnectionsScreen() {
           </datalist>
         </div>
         <p class="connections-mapping__help">
-          Date-time property set in Capacities. An item counts as assigned today when this falls
-          on today's date.
+          Date-time property set in Capacities. An item counts as assigned when this is today or
+          earlier; a future date is not assigned yet.
         </p>
         <div class="connections-mapping__row">
           <span class="connections-mapping__name">Assigned flag (legacy)</span>

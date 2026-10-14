@@ -2408,10 +2408,10 @@ def test_unknown_declaration_warns_once_for_multiple_projected_objects():
 # A structure declared in ``assigned_on_structures`` resolves
 # ``StructureMapping.assigned_on_property`` to a DATE/DATETIME property id.
 # When present it TAKES PRECEDENCE over the boolean declaration: the object is
-# source-assigned only when the value's civil date (host-local ``astimezone``
-# convention for Z/offset values, naive treated as local) equals the read's
-# logical day, and every non-match is a definitive negative. TDTB never writes
-# the property.
+# source-assigned when the value's civil date (host-local ``astimezone``
+# convention for Z/offset values, naive treated as local) falls on or before
+# the read's logical day, and a future date is a definitive negative. TDTB
+# never writes the property.
 
 ASSIGNED_ON_PROPERTY = "assigned-on"
 ASSIGNED_ON_DATETIME_PROPERTY = "assigned-on-at"
@@ -2520,7 +2520,7 @@ def test_assigned_on_equal_to_the_logical_day_is_source_assigned():
     assert result.warnings == []
 
 
-def test_assigned_on_yesterday_and_tomorrow_are_definitive_negatives():
+def test_assigned_on_past_is_assigned_and_future_is_a_negative():
     provider = _assigned_on_provider([
         _assigned_on_object(
             "yesterday",
@@ -2528,6 +2528,15 @@ def test_assigned_on_yesterday_and_tomorrow_are_definitive_negatives():
                 "state": _active_state(),
                 ASSIGNED_ON_PROPERTY: _date_value(
                     (TODAY - timedelta(days=1)).isoformat()
+                ),
+            },
+        ),
+        _assigned_on_object(
+            "far-past",
+            {
+                "state": _active_state(),
+                ASSIGNED_ON_PROPERTY: _date_value(
+                    (TODAY - timedelta(days=400)).isoformat()
                 ),
             },
         ),
@@ -2547,28 +2556,39 @@ def test_assigned_on_yesterday_and_tomorrow_are_definitive_negatives():
     ).items_for_day(TODAY)
 
     assert sorted(row["capacities_id"] for row in result.items) == [
+        "far-past",
         "tomorrow",
         "yesterday",
     ]
     assert _source_assigned_by_id(result) == {
+        "far-past": True,
         "tomorrow": False,
-        "yesterday": False,
+        "yesterday": True,
     }
-    # A mapped structure with nothing assigned today is normal: no warning.
+    # A past value carries the same assigned reasons as an exact-day match,
+    # and a future-only structure is normal, not a fault.
+    by_id = {row["capacities_id"]: row for row in result.items}
+    assert by_id["yesterday"]["capacities_assignment"]["reasons"] == [
+        "source-assigned"
+    ]
     assert result.warnings == []
 
 
 def test_assigned_on_date_only_never_shifts_with_the_host_timezone():
-    # ``Pacific/Midway`` is UTC-11: a date-only value parsed as UTC midnight
-    # would drift to the previous civil date, so a match here pins the
-    # date-only no-shift contract.
+    # ``Pacific/Midway`` is UTC-11: a date-only value misread as UTC midnight
+    # would drift to the previous civil date. A future date-only value must
+    # stay a future negative — a backward drift would land it on the logical
+    # day and wrongly read assigned — which pins the date-only no-shift
+    # contract under the past-is-assigned rule.
     with _host_tz("Pacific/Midway"):
         provider = _assigned_on_provider([
             _assigned_on_object(
                 "project-1",
                 {
                     "state": _active_state(),
-                    ASSIGNED_ON_PROPERTY: _date_value(TODAY.isoformat()),
+                    ASSIGNED_ON_PROPERTY: _date_value(
+                        (TODAY + timedelta(days=1)).isoformat()
+                    ),
                 },
             ),
         ])
@@ -2576,25 +2596,27 @@ def test_assigned_on_date_only_never_shifts_with_the_host_timezone():
             provider, _assigned_on_mapping(), assignment_settings=_active_settings()
         ).items_for_day(TODAY)
 
-    assert _source_assigned_by_id(result) == {"project-1": True}
+    assert _source_assigned_by_id(result) == {"project-1": False}
 
 
 def test_assigned_on_offset_datetime_uses_the_host_civil_date():
-    # 2026-09-28T12:00Z is 2026-09-29 02:00 in UTC+14, so the UTC offset value
-    # matches the 29th only through the host-local conversion.
-    with _host_tz("Pacific/Kiritimati"):
+    # 2026-09-29T12:00Z is 2026-09-30 02:00 in UTC+14, so the offset value's
+    # local civil date is the day AFTER the logical day: a future date, not
+    # assigned yet. The same instant read as UTC is the logical day itself,
+    # so only the host-local conversion decides the outcome.
+    value = "2026-09-29T12:00:00Z"
+
+    def _project():
         provider = _assigned_on_provider([
             _assigned_on_object(
                 "project-1",
                 {
                     "state": _active_state(),
-                    ASSIGNED_ON_DATETIME_PROPERTY: _datetime_value(
-                        "2026-09-28T12:00:00Z"
-                    ),
+                    ASSIGNED_ON_DATETIME_PROPERTY: _datetime_value(value),
                 },
             ),
         ])
-        result = _override_adapter(
+        return _override_adapter(
             provider,
             _assigned_on_mapping(
                 assigned_on_property=ASSIGNED_ON_DATETIME_PROPERTY
@@ -2602,10 +2624,13 @@ def test_assigned_on_offset_datetime_uses_the_host_civil_date():
             assignment_settings=_active_settings(),
         ).items_for_day(TODAY)
 
-    assert _source_assigned_by_id(result) == {"project-1": True}
+    with _host_tz("Pacific/Kiritimati"):
+        assert _source_assigned_by_id(_project()) == {"project-1": False}
+    with _host_tz("UTC"):
+        assert _source_assigned_by_id(_project()) == {"project-1": True}
 
 
-def test_assigned_on_near_midnight_boundary_moves_with_the_host_timezone():
+def test_assigned_on_previous_day_boundary_is_assigned_with_the_host_timezone():
     value = _datetime_value("2026-09-29T03:30:00Z")
 
     def _project():
@@ -2625,22 +2650,25 @@ def test_assigned_on_near_midnight_boundary_moves_with_the_host_timezone():
 
     with _host_tz("UTC"):
         assert _source_assigned_by_id(_project()) == {"project-1": True}
-    # 03:30Z is 23:30 the previous civil day in America/New_York (EDT).
+    # 03:30Z is 23:30 the previous civil day in America/New_York (EDT). A
+    # past civil date is assigned, so the host conversion no longer flips
+    # this value to a negative.
     with _host_tz("America/New_York"):
-        assert _source_assigned_by_id(_project()) == {"project-1": False}
+        assert _source_assigned_by_id(_project()) == {"project-1": True}
 
 
 def test_assigned_on_naive_datetime_is_treated_as_local_time():
-    # Under UTC-11 a naive value parsed as UTC would land on the 28th; local
-    # time keeps it on the 29th.
-    with _host_tz("Pacific/Midway"):
+    # Under UTC+14 a naive value misparsed as UTC would convert to 13:30 on
+    # the day after the logical day. Treated as local time it stays on the
+    # 29th, so this pins naive-values-are-local under the new rule.
+    with _host_tz("Pacific/Kiritimati"):
         provider = _assigned_on_provider([
             _assigned_on_object(
                 "project-1",
                 {
                     "state": _active_state(),
                     ASSIGNED_ON_DATETIME_PROPERTY: _datetime_value(
-                        "2026-09-29T00:30:00"
+                        "2026-09-29T23:30:00"
                     ),
                 },
             ),
@@ -2823,7 +2851,7 @@ def test_assigned_on_alone_decides_over_the_boolean_declaration():
                 "state": _active_state(),
                 SETTINGS_ASSIGNED_PROPERTY: _prop("boolean", "boolean", True),
                 ASSIGNED_ON_PROPERTY: _date_value(
-                    (TODAY - timedelta(days=1)).isoformat()
+                    (TODAY + timedelta(days=1)).isoformat()
                 ),
             },
         ),
