@@ -1,21 +1,26 @@
-"""U5 B2 — the Commit-only prompt export lane (``prompt_export.py``).
+"""U5 B2 / operator 2026-10-14 — the Commit-only prompt export lane
+(``prompt_export.py``).
 
-Unit coverage pins authorization and privacy:
+Unit coverage pins the new authorization and privacy contract:
 
-- only ``megan_nicety``/``stoic_intention`` ever export; ``intention`` never;
-- an opt-out or a blank draft produces no task;
-- authorization is read from server opt-ins + local logical-day drafts, never
-  from a request body;
-- the due is the CIVIL calendar date;
-- an already-``done`` receipt skips; a provider error never auto-retries; a
-  corrupt receipt store blocks without creating and preserves bytes;
+- EVERY non-empty server draft exports: Intention, For Meegy, Stoic, and
+  browser-defined custom prompts (``custom-<id>`` draft keys);
+- the legacy per-prompt opt-in store is NO LONGER consulted (values ignored);
+- a blank/absent/non-string draft produces no task;
+- authorization is read from server drafts (the logical-day draft store),
+  never from a request body;
+- the due is the CIVIL calendar date and routing is the project_id-less Inbox;
+- an already-``done`` receipt skips (idempotent, including custom keys); a
+  provider error never auto-retries; a corrupt receipt store blocks without
+  creating and preserves bytes;
 - no prompt text reaches a receipt, an outcome, an error, or a response.
 
 Route coverage (``TestPromptExportRoute``) drives the real ``POST /commit``
 path with a fake injected client after the established token + Day Setup
 confirmation, and asserts the shadow preview writes no receipt and calls no
-provider. Fixture-only: the autouse ``_isolated_app_home`` fixture puts
-``TDTB_HOME`` in a per-test tmp dir.
+provider. It also pins that the legacy opt-in GET/PUT routes still respond OK
+while their values are ignored. Fixture-only: the autouse
+``_isolated_app_home`` fixture puts ``TDTB_HOME`` in a per-test tmp dir.
 """
 from __future__ import annotations
 
@@ -40,7 +45,14 @@ import tdtb_gather as gather  # noqa: E402
 from tests.config_markdown import write_config_note  # noqa: E402
 
 DAY = "2026-07-12"
+CIVIL = "2026-07-13"
 SECRET = "SYNTHETIC-SECRET-7c1f-nicety"
+INTENTION = "SYNTHETIC-INTENTION-1a2b"
+STOIC = "SYNTHETIC-STOIC-3c4d"
+# A browser-defined custom prompt id shaped exactly like
+# ``customPrompts.newCustomPromptId`` (``custom-<base36>-<base36>``).
+CUSTOM_KEY = "custom-m1abcde-xy9"
+CUSTOM_ANSWER = "SYNTHETIC-CUSTOM-ANSWER-9f0e"
 
 
 class RecordingTodoist:
@@ -115,43 +127,64 @@ class NoIdTodoist(RecordingTodoist):
 # ---------------------------------------------------------------------------
 
 class TestPlan:
-    def test_only_opted_in_nonblank_drafts_plan(self):
+    def test_every_non_empty_prompt_plans_in_canonical_order(self):
         plans = pe.plan_prompt_exports(
-            day=DAY, civil_date="2026-07-13",
-            optins={"intention": True, "megan_nicety": True,
-                    "stoic_intention": False},
+            day=DAY, civil_date=CIVIL,
             drafts={"intention": "private intent", "megan_nicety": "  hello  ",
-                    "stoic_intention": "not opted in"},
+                    "stoic_intention": "stoic text", CUSTOM_KEY: CUSTOM_ANSWER},
         )
-        assert [p.prompt_key for p in plans] == ["megan_nicety"]
-        assert plans[0].content == "hello"  # stripped, in-memory only
+        assert [p.prompt_key for p in plans] == [
+            "intention", "megan_nicety", "stoic_intention", CUSTOM_KEY,
+        ]
+        assert plans[1].content == "hello"  # stripped, in-memory only
 
-    def test_intention_is_never_planned(self):
+    def test_intention_plans_when_non_empty(self):
         plans = pe.plan_prompt_exports(
-            day=DAY, civil_date="2026-07-13",
-            optins={"intention": True}, drafts={"intention": "private intent"},
+            day=DAY, civil_date=CIVIL, drafts={"intention": "private intent"},
         )
-        assert plans == []
+        assert [p.prompt_key for p in plans] == ["intention"]
+        assert plans[0].content == "private intent"
+
+    def test_custom_prompt_plans_from_its_draft_key(self):
+        plans = pe.plan_prompt_exports(
+            day=DAY, civil_date=CIVIL, drafts={CUSTOM_KEY: "  custom answer  "},
+        )
+        assert [p.prompt_key for p in plans] == [CUSTOM_KEY]
+        assert plans[0].content == "custom answer"
+        assert plans[0].action == pe.EXPORT_ACTION
 
     @pytest.mark.parametrize("drafts", [
-        {"megan_nicety": ""}, {"megan_nicety": "   "}, {"megan_nicety": None},
-        {"megan_nicety": 5}, {},
+        {"intention": ""}, {"intention": "   "}, {"intention": None},
+        {"intention": 5}, {CUSTOM_KEY: ""}, {"megan_nicety": ""}, {},
     ])
     def test_blank_or_nonstring_draft_never_plans(self, drafts):
+        assert pe.plan_prompt_exports(day=DAY, civil_date=CIVIL, drafts=drafts) == []
+
+    def test_unrecognized_keys_are_ignored(self):
         plans = pe.plan_prompt_exports(
-            day=DAY, civil_date="2026-07-13",
-            optins={"megan_nicety": True}, drafts=drafts,
+            day=DAY, civil_date=CIVIL,
+            drafts={"unknown_prompt": "x", "customprompt": "y",
+                    "custom_underscore": "z"},
         )
         assert plans == []
 
     def test_preview_is_content_free(self):
         preview = pe.preview_prompt_exports(
-            day=DAY, civil_date="2026-07-13",
-            optins={"megan_nicety": True}, drafts={"megan_nicety": SECRET},
+            day=DAY, civil_date=CIVIL,
+            drafts={"intention": INTENTION, "megan_nicety": SECRET,
+                    CUSTOM_KEY: CUSTOM_ANSWER},
         )
-        assert preview == [{"prompt_key": "megan_nicety",
-                            "action": pe.EXPORT_ACTION, "status": "planned"}]
+        assert preview == [
+            {"prompt_key": "intention", "action": pe.EXPORT_ACTION,
+             "status": "planned"},
+            {"prompt_key": "megan_nicety", "action": pe.EXPORT_ACTION,
+             "status": "planned"},
+            {"prompt_key": CUSTOM_KEY, "action": pe.EXPORT_ACTION,
+             "status": "planned"},
+        ]
         assert SECRET not in repr(preview)
+        assert INTENTION not in repr(preview)
+        assert CUSTOM_ANSWER not in repr(preview)
 
 
 # ---------------------------------------------------------------------------
@@ -162,57 +195,99 @@ class TestRun:
     def test_creates_with_civil_due_and_inbox_routing(self):
         client = RecordingTodoist()
         outcomes = pe.run_prompt_exports(
-            day=DAY, civil_date="2026-07-13", todoist=client,
-            optins={"megan_nicety": True}, drafts={"megan_nicety": SECRET},
+            day=DAY, civil_date=CIVIL, todoist=client,
+            drafts={"megan_nicety": SECRET},
         )
         assert [o.status for o in outcomes] == [pe.OUTCOME_DONE]
         assert outcomes[0].task_id
         [created] = client.created
         assert created["content"] == SECRET
-        assert created["due_date"] == "2026-07-13"  # civil date, not DAY
+        assert created["due_date"] == CIVIL  # civil date, not DAY
         assert created["project_id"] is None  # Inbox continuity default
 
-    def test_optout_or_blank_creates_nothing(self):
+    def test_intention_and_custom_prompts_export_to_inbox(self):
         client = RecordingTodoist()
-        assert pe.run_prompt_exports(
-            day=DAY, civil_date="2026-07-13", todoist=client,
-            optins={"megan_nicety": False}, drafts={"megan_nicety": SECRET},
-        ) == []
-        assert pe.run_prompt_exports(
-            day=DAY, civil_date="2026-07-13", todoist=client,
-            optins={"megan_nicety": True}, drafts={"megan_nicety": "  "},
-        ) == []
+        outcomes = pe.run_prompt_exports(
+            day=DAY, civil_date=CIVIL, todoist=client,
+            drafts={"intention": INTENTION, CUSTOM_KEY: CUSTOM_ANSWER},
+        )
+        assert [o.prompt_key for o in outcomes] == ["intention", CUSTOM_KEY]
+        assert all(o.status == pe.OUTCOME_DONE for o in outcomes)
+        by_content = {c["content"]: c for c in client.created}
+        assert by_content[INTENTION]["project_id"] is None
+        assert by_content[INTENTION]["due_date"] == CIVIL
+        assert by_content[CUSTOM_ANSWER]["project_id"] is None
+        assert by_content[CUSTOM_ANSWER]["due_date"] == CIVIL
+
+    def test_blank_drafts_export_nothing(self):
+        client = RecordingTodoist()
+        for drafts in ({"intention": ""}, {"megan_nicety": "   "},
+                       {CUSTOM_KEY: ""}, {"stoic_intention": None}, {}):
+            assert pe.run_prompt_exports(
+                day=DAY, civil_date=CIVIL, todoist=client, drafts=drafts,
+            ) == []
         assert client.created == []
 
     def test_reads_server_state_when_not_injected(self):
-        ps.save_optins(expected_revision=0, optins={"megan_nicety": True})
-        ps.save_drafts(day=DAY, patch={"megan_nicety": SECRET})
+        ps.save_drafts(day=DAY, patch={
+            "intention": INTENTION, "megan_nicety": SECRET, CUSTOM_KEY: CUSTOM_ANSWER,
+        })
         client = RecordingTodoist()
-        outcomes = pe.run_prompt_exports(
-            day=DAY, civil_date="2026-07-13", todoist=client,
-        )
-        assert [o.status for o in outcomes] == [pe.OUTCOME_DONE]
-        assert client.created[0]["content"] == SECRET
+        outcomes = pe.run_prompt_exports(day=DAY, civil_date=CIVIL, todoist=client)
+        assert [o.prompt_key for o in outcomes] == [
+            "intention", "megan_nicety", CUSTOM_KEY,
+        ]
+        assert {c["content"] for c in client.created} == {
+            INTENTION, SECRET, CUSTOM_ANSWER,
+        }
+
+    def test_optin_store_is_not_consulted(self):
+        # The persistent opt-in store is legacy: an explicit all-false record
+        # must not suppress a non-empty prompt.
+        ps.save_optins(expected_revision=0, optins={
+            "intention": False, "megan_nicety": False,
+            "stoic_intention": False,
+        })
+        ps.save_drafts(day=DAY, patch={"intention": INTENTION,
+                                       "megan_nicety": SECRET})
+        client = RecordingTodoist()
+        outcomes = pe.run_prompt_exports(day=DAY, civil_date=CIVIL, todoist=client)
+        assert [o.prompt_key for o in outcomes] == ["intention", "megan_nicety"]
 
     def test_duplicate_done_skips_second_attempt(self):
         client = RecordingTodoist()
         first = pe.run_prompt_exports(
-            day=DAY, civil_date="2026-07-13", todoist=client,
-            optins={"megan_nicety": True}, drafts={"megan_nicety": SECRET},
+            day=DAY, civil_date=CIVIL, todoist=client,
+            drafts={"megan_nicety": SECRET},
         )
         second = pe.run_prompt_exports(
-            day=DAY, civil_date="2026-07-13", todoist=client,
-            optins={"megan_nicety": True}, drafts={"megan_nicety": SECRET},
+            day=DAY, civil_date=CIVIL, todoist=client,
+            drafts={"megan_nicety": SECRET},
         )
         assert first[0].status == pe.OUTCOME_DONE
         assert second[0].status == pe.OUTCOME_DONE
         assert len(client.created) == 1  # no duplicate task
 
+    def test_custom_prompt_export_is_idempotent_with_a_receipt(self):
+        client = RecordingTodoist()
+        drafts = {CUSTOM_KEY: CUSTOM_ANSWER}
+        first = pe.run_prompt_exports(
+            day=DAY, civil_date=CIVIL, todoist=client, drafts=drafts,
+        )
+        second = pe.run_prompt_exports(
+            day=DAY, civil_date=CIVIL, todoist=client, drafts=drafts,
+        )
+        assert first[0].status == pe.OUTCOME_DONE
+        assert second[0].status == pe.OUTCOME_DONE
+        assert len(client.created) == 1
+        receipt = er.load_receipts().get(DAY, CUSTOM_KEY, pe.EXPORT_ACTION)
+        assert receipt.status == er.STATUS_DONE
+
     def test_provider_error_never_auto_retries(self):
         client = RecordingTodoist(raise_on_create=True)
         first = pe.run_prompt_exports(
-            day=DAY, civil_date="2026-07-13", todoist=client,
-            optins={"megan_nicety": True}, drafts={"megan_nicety": SECRET},
+            day=DAY, civil_date=CIVIL, todoist=client,
+            drafts={"megan_nicety": SECRET},
         )
         assert first[0].status == pe.OUTCOME_NEEDS_REVIEW
         assert er.load_receipts().get(DAY, "megan_nicety",
@@ -220,8 +295,8 @@ class TestRun:
         # A second run strands as needs_review and never touches the provider.
         client.raise_on_create = False
         second = pe.run_prompt_exports(
-            day=DAY, civil_date="2026-07-13", todoist=client,
-            optins={"megan_nicety": True}, drafts={"megan_nicety": SECRET},
+            day=DAY, civil_date=CIVIL, todoist=client,
+            drafts={"megan_nicety": SECRET},
         )
         assert second[0].status == pe.OUTCOME_NEEDS_REVIEW
         assert client.created == []
@@ -233,8 +308,8 @@ class TestRun:
         target.write_text(raw, encoding="utf-8")
         client = RecordingTodoist()
         outcomes = pe.run_prompt_exports(
-            day=DAY, civil_date="2026-07-13", todoist=client,
-            optins={"megan_nicety": True}, drafts={"megan_nicety": SECRET},
+            day=DAY, civil_date=CIVIL, todoist=client,
+            drafts={"megan_nicety": SECRET},
         )
         assert [o.status for o in outcomes] == [pe.OUTCOME_BLOCKED]
         assert client.created == []
@@ -242,15 +317,15 @@ class TestRun:
 
     def test_missing_client_blocks_planned_export(self):
         outcomes = pe.run_prompt_exports(
-            day=DAY, civil_date="2026-07-13", todoist=None,
-            optins={"megan_nicety": True}, drafts={"megan_nicety": SECRET},
+            day=DAY, civil_date=CIVIL, todoist=None,
+            drafts={"megan_nicety": SECRET},
         )
         assert [o.status for o in outcomes] == [pe.OUTCOME_BLOCKED]
 
     def test_client_without_create_task_fails_content_free(self):
         outcomes = pe.run_prompt_exports(
-            day=DAY, civil_date="2026-07-13", todoist=NoCreateTodoist(),
-            optins={"megan_nicety": True}, drafts={"megan_nicety": SECRET},
+            day=DAY, civil_date=CIVIL, todoist=NoCreateTodoist(),
+            drafts={"megan_nicety": SECRET},
         )
         assert [o.status for o in outcomes] == [pe.OUTCOME_NEEDS_REVIEW]
         assert SECRET not in repr(outcomes[0])
@@ -258,12 +333,14 @@ class TestRun:
     def test_no_prompt_text_reaches_receipt_or_outcome(self):
         client = RecordingTodoist()
         outcomes = pe.run_prompt_exports(
-            day=DAY, civil_date="2026-07-13", todoist=client,
-            optins={"megan_nicety": True, "stoic_intention": True},
-            drafts={"megan_nicety": SECRET, "stoic_intention": SECRET + "-2"},
+            day=DAY, civil_date=CIVIL, todoist=client,
+            drafts={"intention": INTENTION, "megan_nicety": SECRET,
+                    "stoic_intention": STOIC, CUSTOM_KEY: CUSTOM_ANSWER},
         )
-        assert SECRET not in er.receipts_path().read_text(encoding="utf-8")
-        assert SECRET not in repr([o.as_dict() for o in outcomes])
+        raw = er.receipts_path().read_text(encoding="utf-8")
+        for secret in (SECRET, INTENTION, STOIC, CUSTOM_ANSWER):
+            assert secret not in raw
+            assert secret not in repr([o.as_dict() for o in outcomes])
 
     def test_attach_to_report_surfaces_statuses_without_masking_ok(self):
         report = {"ok": True, "surfaces": {}}
@@ -286,8 +363,8 @@ class TestMainFailureGate:
         client = RecordingTodoist()
         outcomes = pe.run_prompt_exports_for_report(
             {"ok": False, "surfaces": {"todoist": {"status": "failed"}}},
-            day=DAY, civil_date="2026-07-13", todoist=client,
-            optins={"megan_nicety": True}, drafts={"megan_nicety": SECRET},
+            day=DAY, civil_date=CIVIL, todoist=client,
+            drafts={"megan_nicety": SECRET},
         )
         assert [o.status for o in outcomes] == [pe.OUTCOME_SKIPPED_MAIN_FAILURE]
         assert outcomes[0].prompt_key == pe.SKIPPED_MAIN_FAILURE_KEY
@@ -298,8 +375,8 @@ class TestMainFailureGate:
     def test_non_mapping_report_also_skips(self):
         client = RecordingTodoist()
         outcomes = pe.run_prompt_exports_for_report(
-            None, day=DAY, civil_date="2026-07-13", todoist=client,
-            optins={"megan_nicety": True}, drafts={"megan_nicety": SECRET},
+            None, day=DAY, civil_date=CIVIL, todoist=client,
+            drafts={"megan_nicety": SECRET},
         )
         assert [o.status for o in outcomes] == [pe.OUTCOME_SKIPPED_MAIN_FAILURE]
         assert client.created == []
@@ -308,8 +385,8 @@ class TestMainFailureGate:
     def test_ok_report_runs_the_lane(self):
         client = RecordingTodoist()
         outcomes = pe.run_prompt_exports_for_report(
-            {"ok": True}, day=DAY, civil_date="2026-07-13", todoist=client,
-            optins={"megan_nicety": True}, drafts={"megan_nicety": SECRET},
+            {"ok": True}, day=DAY, civil_date=CIVIL, todoist=client,
+            drafts={"megan_nicety": SECRET},
         )
         assert [o.status for o in outcomes] == [pe.OUTCOME_DONE]
         assert len(client.created) == 1
@@ -345,8 +422,8 @@ class TestStorageFailureLane:
         _fail_atomic_write_on(monkeypatch, 1, OSError(28, "No space left on device"))
         client = RecordingTodoist()
         outcomes = pe.run_prompt_exports(
-            day=DAY, civil_date="2026-07-13", todoist=client,
-            optins={"megan_nicety": True}, drafts={"megan_nicety": SECRET},
+            day=DAY, civil_date=CIVIL, todoist=client,
+            drafts={"megan_nicety": SECRET},
         )
         assert [o.status for o in outcomes] == [pe.OUTCOME_BLOCKED]
         assert client.created == []
@@ -358,8 +435,8 @@ class TestStorageFailureLane:
         client = RecordingTodoist()
         _fail_atomic_write_on(monkeypatch, 2, OSError(28, "No space left on device"))
         outcomes = pe.run_prompt_exports(
-            day=DAY, civil_date="2026-07-13", todoist=client,
-            optins={"megan_nicety": True}, drafts={"megan_nicety": SECRET},
+            day=DAY, civil_date=CIVIL, todoist=client,
+            drafts={"megan_nicety": SECRET},
         )
         assert [o.status for o in outcomes] == [pe.OUTCOME_NEEDS_REVIEW]
         assert len(client.created) == 1  # provider called exactly once
@@ -373,15 +450,15 @@ class TestStorageFailureLane:
         state = _fail_atomic_write_on(
             monkeypatch, 2, OSError(28, "No space left on device"))
         first = pe.run_prompt_exports(
-            day=DAY, civil_date="2026-07-13", todoist=client,
-            optins={"megan_nicety": True}, drafts={"megan_nicety": SECRET},
+            day=DAY, civil_date=CIVIL, todoist=client,
+            drafts={"megan_nicety": SECRET},
         )
         assert first[0].status == pe.OUTCOME_NEEDS_REVIEW
         assert len(client.created) == 1
         monkeypatch.setattr(capacities_cache_io, "atomic_write_json", real)
         second = pe.run_prompt_exports(
-            day=DAY, civil_date="2026-07-13", todoist=client,
-            optins={"megan_nicety": True}, drafts={"megan_nicety": SECRET},
+            day=DAY, civil_date=CIVIL, todoist=client,
+            drafts={"megan_nicety": SECRET},
         )
         assert second[0].status == pe.OUTCOME_NEEDS_REVIEW
         assert len(client.created) == 1  # no duplicate task on retry
@@ -391,8 +468,8 @@ class TestStorageFailureLane:
         client = RecordingTodoist(raise_on_create=True)
         _fail_atomic_write_on(monkeypatch, 2, PermissionError(13, "Permission denied"))
         outcomes = pe.run_prompt_exports(
-            day=DAY, civil_date="2026-07-13", todoist=client,
-            optins={"megan_nicety": True}, drafts={"megan_nicety": SECRET},
+            day=DAY, civil_date=CIVIL, todoist=client,
+            drafts={"megan_nicety": SECRET},
         )
         assert [o.status for o in outcomes] == [pe.OUTCOME_NEEDS_REVIEW]
         assert SECRET not in repr(outcomes[0].as_dict())
@@ -469,7 +546,6 @@ class TestPromptExportRoute:
     def test_live_commit_exports_after_day_confirmation(self, client, vault, monkeypatch):
         _freeze(monkeypatch)
         monkeypatch.setattr(shadow, "gather_live_state", _live_state(garage_live=False))
-        ps.save_optins(expected_revision=0, optins={"megan_nicety": True})
         ps.save_drafts(day=DAY, patch={"megan_nicety": SECRET})
         todoist = RecordingTodoist()
         client.app.state.build_commit_clients = lambda cfg: (todoist, None)
@@ -494,10 +570,72 @@ class TestPromptExportRoute:
         receipt = er.load_receipts().get(DAY, "megan_nicety", pe.EXPORT_ACTION)
         assert receipt.status == er.STATUS_DONE
 
+    def test_intention_and_custom_prompts_export_at_commit(
+            self, client, vault, monkeypatch):
+        _freeze(monkeypatch)
+        monkeypatch.setattr(shadow, "gather_live_state", _live_state(garage_live=False))
+        ps.save_drafts(day=DAY, patch={
+            "intention": INTENTION, CUSTOM_KEY: CUSTOM_ANSWER,
+        })
+        todoist = RecordingTodoist()
+        client.app.state.build_commit_clients = lambda cfg: (todoist, None)
+        self._confirm(client)
+        r = client.post("/commit?mode=live", headers=_auth(client),
+                        json={"digest": DIGEST, "sequence": SEQUENCE, "config": {}})
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["prompt_exports_ok"] is True
+        assert [e["prompt_key"] for e in body["prompt_exports"]] == [
+            "intention", CUSTOM_KEY,
+        ]
+        by_content = {c["content"]: c for c in todoist.created}
+        assert by_content[INTENTION]["project_id"] is None
+        assert by_content[INTENTION]["due_date"] == datetime.now().date().isoformat()
+        assert by_content[CUSTOM_ANSWER]["project_id"] is None
+        assert SECRET not in r.text
+        assert INTENTION not in r.text
+        assert CUSTOM_ANSWER not in r.text
+        assert er.load_receipts().get(
+            DAY, CUSTOM_KEY, pe.EXPORT_ACTION).status == er.STATUS_DONE
+
+    def test_legacy_optin_routes_still_ok_and_values_ignored(
+            self, client, vault, monkeypatch):
+        _freeze(monkeypatch)
+        monkeypatch.setattr(shadow, "gather_live_state", _live_state(garage_live=False))
+        # A legacy opt-in write still round-trips OK (mixed values preserved)...
+        r = client.post("/day-setup", headers=_auth(client), json={
+            "optins": {"intention": True, "megan_nicety": False,
+                       "stoic_intention": False},
+            "optins_revision": 0,
+        })
+        assert r.status_code == 200, r.text
+        assert r.json()["optins"] == {"intention": True, "megan_nicety": False,
+                                      "stoic_intention": False}
+        ps.save_drafts(day=DAY, patch={"stoic_intention": STOIC})
+        todoist = RecordingTodoist()
+        client.app.state.build_commit_clients = lambda cfg: (todoist, None)
+        self._confirm(client)
+        resp = client.post("/commit?mode=live", headers=_auth(client),
+                           json={"digest": DIGEST, "sequence": SEQUENCE,
+                                 "config": {}})
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["prompt_exports_ok"] is True
+        # stoic_intention's opt-in is explicitly False, yet its non-empty draft
+        # still exports: the legacy value is ignored, never a gate.
+        assert [e["prompt_key"] for e in body["prompt_exports"]] == ["stoic_intention"]
+        assert [c["content"] for c in todoist.created if c["content"] == STOIC]
+        # The legacy GET metadata block still round-trips truthfully. Read it
+        # AFTER the commit: GET /plan-inputs refreshes the digest cache, which
+        # commit eligibility reads from, so it must not run before the commit.
+        meta = client.get("/plan-inputs").json()["prompt_optins"]
+        assert meta["optins"] == {"intention": True, "megan_nicety": False,
+                                  "stoic_intention": False}
+        assert meta["revision"] == 1
+
     def test_repeated_live_commit_does_not_duplicate(self, client, vault, monkeypatch):
         _freeze(monkeypatch)
         monkeypatch.setattr(shadow, "gather_live_state", _live_state(garage_live=False))
-        ps.save_optins(expected_revision=0, optins={"megan_nicety": True})
         ps.save_drafts(day=DAY, patch={"megan_nicety": SECRET})
         todoist = RecordingTodoist()
         client.app.state.build_commit_clients = lambda cfg: (todoist, None)
@@ -531,7 +669,6 @@ class TestPromptExportRoute:
     def test_shadow_preview_is_content_free_and_writes_nothing(self, client, vault, monkeypatch):
         _freeze(monkeypatch)
         monkeypatch.setattr(shadow, "gather_live_state", _live_state(garage_live=False))
-        ps.save_optins(expected_revision=0, optins={"megan_nicety": True})
         ps.save_drafts(day=DAY, patch={"megan_nicety": SECRET})
 
         def _boom(cfg):
@@ -554,7 +691,6 @@ class TestPromptExportRoute:
         # A live Garage task makes Step A an UPDATE, so the export lane is the
         # only caller that needs create_task.
         monkeypatch.setattr(shadow, "gather_live_state", _live_state(garage_live=True))
-        ps.save_optins(expected_revision=0, optins={"megan_nicety": True})
         ps.save_drafts(day=DAY, patch={"megan_nicety": SECRET})
         client.app.state.build_commit_clients = (
             lambda cfg: (NoCreateTodoist([{"id": "T1", "content": "Garage",
@@ -575,7 +711,6 @@ class TestPromptExportRoute:
             self, client, vault, monkeypatch):
         _freeze(monkeypatch)
         monkeypatch.setattr(shadow, "gather_live_state", _live_state(garage_live=False))
-        ps.save_optins(expected_revision=0, optins={"megan_nicety": True})
         ps.save_drafts(day=DAY, patch={"megan_nicety": SECRET})
         todoist = NoIdTodoist()
         client.app.state.build_commit_clients = lambda cfg: (todoist, None)
@@ -597,7 +732,6 @@ class TestPromptExportRoute:
 
     def test_unauthorized_commit_writes_no_export(self, client, vault, monkeypatch):
         _freeze(monkeypatch)
-        ps.save_optins(expected_revision=0, optins={"megan_nicety": True})
         ps.save_drafts(day=DAY, patch={"megan_nicety": SECRET})
         todoist = RecordingTodoist()
         client.app.state.build_commit_clients = lambda cfg: (todoist, None)

@@ -1,14 +1,16 @@
 """prompt_export.py — the dedicated Commit-only Todoist export lane (U5 B2).
 
-The morning prompts are private local runtime state (``prompt_state.py``).
-This module is the ONLY surface that may turn a prompt draft into an external
+The morning prompts are local runtime state (``prompt_state.py``). This
+module is the ONLY surface that may turn a prompt draft into an external
 Todoist task, and only when an explicit live Commit dispatch calls it:
 
-* ``megan_nicety`` and ``stoic_intention`` export; ``intention`` NEVER does.
-* Authorization is read from server state — the persistent undated opt-in
-  record and the current logical-day draft store. Browser captures/opt-ins
-  in a request body are never authorization.
-* An opt-out or an empty draft produces no task.
+* EVERY non-empty draft exports — ``intention``, ``megan_nicety``,
+  ``stoic_intention``, and browser-defined custom prompts
+  (``custom-<id>`` keys). Nothing is per-prompt opted into any more.
+* Authorization is read from server state — the current logical-day draft
+  store. Browser captures/opt-ins in a request body are never authorization,
+  and the legacy per-prompt opt-in store is not consulted at all.
+* An empty/absent/non-string draft produces no task.
 * The due is the CIVIL calendar date (``datetime.now().date()``), not the
   logical-day date, so a pre-02:00 commit never back-dates the task.
 * Routing reuses the retired capture lane's Inbox default (``project_id``
@@ -27,14 +29,15 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date
-from typing import Any, Protocol
+from typing import Any, Mapping, Protocol
 
 import export_receipts
 import prompt_state
 
-#: Prompt keys that export to Todoist. ``intention`` is deliberately absent —
-#: it is private and never leaves the local draft store.
-PROMPT_EXPORT_KEYS: tuple[str, ...] = ("megan_nicety", "stoic_intention")
+#: Prompt keys that export to Todoist. Every built-in prompt now exports
+#: (including ``intention``); browser-defined custom prompts are discovered
+#: from the draft store at plan time (see :func:`plan_prompt_exports`).
+PROMPT_EXPORT_KEYS: tuple[str, ...] = prompt_state.PROMPT_KEYS
 
 #: The single export action. Extending this set is a contract change.
 EXPORT_ACTION = export_receipts.ACTION_TODOIST_TASK
@@ -124,17 +127,15 @@ def plan_prompt_exports(
     *,
     day: str,
     civil_date: str,
-    optins: dict[str, bool] | Any,
     drafts: dict[str, str] | Any,
 ) -> list[PromptExportPlan]:
-    """Authorized exports for ``day`` from server opt-ins and local drafts.
+    """Every non-empty draft for ``day`` exports; no opt-in is consulted.
 
-    ``intention`` is never planned. An opt-in that is not exactly ``True``, or
-    a draft that is absent/blank/non-string, contributes nothing."""
+    Built-in keys plan in canonical order, then browser-defined custom keys
+    (``custom-<id>``) in sorted order. A draft that is absent/blank/non-string,
+    or a key that is neither built-in nor custom, contributes nothing."""
     plans: list[PromptExportPlan] = []
-    for key in PROMPT_EXPORT_KEYS:
-        if optins.get(key) is not True:
-            continue
+    for key in _planned_keys(drafts):
         text = drafts.get(key)
         if not isinstance(text, str) or not text.strip():
             continue
@@ -145,31 +146,34 @@ def plan_prompt_exports(
     return plans
 
 
+def _planned_keys(drafts: Any) -> list[str]:
+    """The recognized draft keys to consider, in deterministic order."""
+    if not isinstance(drafts, Mapping):
+        return []
+    known = [key for key in PROMPT_EXPORT_KEYS if key in drafts]
+    custom = sorted(
+        key for key in drafts if prompt_state.is_custom_prompt_key(key)
+    )
+    return known + custom
+
+
 def preview_prompt_exports(
     *,
     day: str,
     civil_date: str,
-    optins: dict[str, bool] | Any,
     drafts: dict[str, str] | Any,
 ) -> list[dict[str, Any]]:
     """Content-free read-only preview for the shadow manifest.
 
     Never writes a receipt and never performs a provider call."""
     return [p.as_preview() for p in plan_prompt_exports(
-        day=day, civil_date=civil_date, optins=optins, drafts=drafts,
+        day=day, civil_date=civil_date, drafts=drafts,
     )]
 
 
 # ---------------------------------------------------------------------------
 # Server-state reads (fail closed)
 # ---------------------------------------------------------------------------
-
-def _server_optins() -> dict[str, bool]:
-    try:
-        return dict(prompt_state.load_optins().optins)
-    except prompt_state.PromptStateError:
-        return {}
-
 
 def _server_drafts(day: str) -> dict[str, str]:
     try:
@@ -275,20 +279,17 @@ def run_prompt_exports(
     day: str,
     civil_date: str,
     todoist: TodoistExportLike | None,
-    optins: dict[str, bool] | None = None,
     drafts: dict[str, str] | None = None,
 ) -> list[PromptExportOutcome]:
     """Run the Commit-only export lane for the current logical day.
 
-    Reads server opt-ins/drafts unless explicitly supplied. ``intention`` is
-    never exported. A missing client blocks any planned export (nothing is
-    created) without raising."""
-    if optins is None:
-        optins = _server_optins()
+    Reads server drafts unless explicitly supplied. Every non-empty draft
+    exports (including ``intention`` and custom prompts). A missing client
+    blocks any planned export (nothing is created) without raising."""
     if drafts is None:
         drafts = _server_drafts(day)
     plans = plan_prompt_exports(
-        day=day, civil_date=civil_date, optins=optins, drafts=drafts,
+        day=day, civil_date=civil_date, drafts=drafts,
     )
     if todoist is None:
         return [
@@ -319,7 +320,6 @@ def run_prompt_exports_for_report(
     day: str,
     civil_date: str,
     todoist: TodoistExportLike | None,
-    optins: dict[str, bool] | None = None,
     drafts: dict[str, str] | None = None,
 ) -> list[PromptExportOutcome]:
     """Fail-closed gate: export ONLY after the main commit landed ok.
@@ -332,8 +332,7 @@ def run_prompt_exports_for_report(
     if not (isinstance(report, dict) and report.get("ok") is True):
         return skipped_main_failure_outcomes(day=day)
     return run_prompt_exports(
-        day=day, civil_date=civil_date, todoist=todoist,
-        optins=optins, drafts=drafts,
+        day=day, civil_date=civil_date, todoist=todoist, drafts=drafts,
     )
 
 

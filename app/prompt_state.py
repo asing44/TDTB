@@ -43,10 +43,21 @@ from typing import Any
 import app_config
 import capacities_cache_io
 
-#: The known morning-prompt keys. Any other key is rejected on save and on
-#: decode; the set is fixed by the product contract, not caller-supplied.
+#: The known built-in morning-prompt keys. Any other key is rejected on save
+#: and on decode UNLESS it is a browser-defined custom prompt key (see
+#: :func:`is_custom_prompt_key`); the built-in set is fixed by the product
+#: contract, not caller-supplied.
 PROMPT_KEYS: tuple[str, ...] = ("intention", "megan_nicety", "stoic_intention")
 _KNOWN_PROMPT_KEYS = frozenset(PROMPT_KEYS)
+
+#: Browser-defined custom prompts are stored in the same logical-day draft
+#: store under a namespaced key: the frontend ``CustomPrompt.id`` (shaped
+#: ``custom-<base36>-<base36>`` by ``customPrompts.newCustomPromptId``). The
+#: prefix keeps custom keys disjoint from the built-in prompt keys.
+CUSTOM_PROMPT_PREFIX = "custom-"
+#: A bounded, control-free custom key: prefix, then at least one id character.
+#: Matched with ``fullmatch`` so a trailing newline can never sneak through.
+_CUSTOM_PROMPT_KEY_RE = re.compile(r"custom-[A-Za-z0-9][A-Za-z0-9_-]{0,127}")
 
 DRAFTS_SCHEMA_VERSION = 1
 OPTINS_SCHEMA_VERSION = 1
@@ -109,6 +120,27 @@ class PromptOptinConflict(PromptStateError):
 # Validation helpers
 # ---------------------------------------------------------------------------
 
+def is_custom_prompt_key(key: Any) -> bool:
+    """True when ``key`` names a browser-defined custom prompt draft.
+
+    Accepts exactly :data:`CUSTOM_PROMPT_PREFIX` followed by a bounded,
+    control-free id. Anything else (a built-in key, a near-miss such as
+    ``custom_underscore``, a non-string, or an over-long/whitespace id) is
+    refused, so a client can never smuggle an arbitrary key into the store."""
+    return (
+        isinstance(key, str)
+        and _CUSTOM_PROMPT_KEY_RE.fullmatch(key) is not None
+    )
+
+
+def is_prompt_key(key: Any) -> bool:
+    """True for a recognized draft/export key: a built-in prompt or a
+    browser-defined custom prompt."""
+    return isinstance(key, str) and (
+        key in _KNOWN_PROMPT_KEYS or is_custom_prompt_key(key)
+    )
+
+
 def _parse_day(value: Any) -> str:
     """Validate and normalize an ISO logical-day string (``YYYY-MM-DD``).
 
@@ -133,7 +165,7 @@ def _normalize_drafts(value: Any) -> dict[str, str]:
         raise ValueError("drafts must be a JSON object")
     result: dict[str, str] = {}
     for key, text in value.items():
-        if key not in _KNOWN_PROMPT_KEYS:
+        if not is_prompt_key(key):
             raise ValueError("drafts contain an unknown prompt key")
         if not isinstance(text, str):
             raise ValueError("draft text must be a string")
@@ -152,7 +184,7 @@ def _normalize_patch(value: Any) -> dict[str, str]:
         raise ValueError("draft patch must be a JSON object")
     result: dict[str, str] = {}
     for key, text in value.items():
-        if key not in _KNOWN_PROMPT_KEYS:
+        if not is_prompt_key(key):
             raise ValueError("draft patch contains an unknown prompt key")
         if not isinstance(text, str):
             raise ValueError("draft text must be a string")

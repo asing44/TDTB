@@ -2132,16 +2132,6 @@ def _read_day_setup(today: date) -> tuple[dict[str, Any], list[str]]:
     return _day_setup_with_prompts(_read_today_runstate(today), today)
 
 
-def _read_prompt_optins() -> tuple[dict[str, bool], int]:
-    """The persistent opt-in map + revision; a failed read degrades to
-    all-false at revision 0 (content-free)."""
-    try:
-        record = prompt_state.load_optins()
-    except prompt_state.PromptStateError:
-        return {key: False for key in prompt_state.PROMPT_KEYS}, 0
-    return dict(record.optins), record.revision
-
-
 def _read_prompt_optins_metadata() -> tuple[dict[str, Any] | None, list[str]]:
     """Top-level ``/plan-inputs`` opt-in metadata, or ``None`` when unreadable.
 
@@ -5360,11 +5350,9 @@ def create_app() -> FastAPI:
         # server opt-ins + local logical-day drafts only. A shadow build writes
         # no receipt and performs no provider call; the preview is content-free.
         preview_drafts, _ = _read_prompt_drafts(shadow_today)
-        preview_optins, _ = _read_prompt_optins()
         result["prompt_exports"] = prompt_export.preview_prompt_exports(
             day=shadow_today.isoformat(),
             civil_date=prompt_export.civil_date_for(datetime.now()).isoformat(),
-            optins=preview_optins,
             drafts=preview_drafts,
         )
         return result

@@ -163,6 +163,33 @@ def test_unknown_prompt_key_is_rejected_and_writes_nothing():
     assert not ps.drafts_path(DAY).exists()
 
 
+def test_custom_prompt_draft_keys_round_trip():
+    key = "custom-m1abcde-xy9"
+    saved = ps.save_drafts(day=DAY, patch={key: "custom answer"})
+    assert saved.drafts == {key: "custom answer"}
+    assert dict(ps.load_drafts(DAY).drafts) == {key: "custom answer"}
+    # A custom prompt key is recognized for drafts but is not a built-in key.
+    assert ps.is_custom_prompt_key(key) is True
+    assert ps.is_prompt_key(key) is True
+    assert ps.is_prompt_key("intention") is True
+    assert key not in ps.PROMPT_KEYS
+
+
+def test_custom_prompt_key_format_is_strict():
+    for bad in ("custom-", "customprompt", "custom_underscore", "xcustom-a",
+                "custom a", "custom-a\n", 5, None):
+        assert ps.is_prompt_key(bad) is False
+        with pytest.raises(ps.PromptValidationError):
+            ps.save_drafts(day=DAY, patch={bad: "x"})
+    assert not ps.drafts_path(DAY).exists()
+
+
+def test_custom_prompt_keys_are_not_optin_keys():
+    with pytest.raises(ps.PromptValidationError):
+        ps.save_optins(expected_revision=0, optins={"custom-m1abcde-xy9": True})
+    assert not ps.optins_path().exists()
+
+
 def test_draft_text_must_be_a_string():
     for bad in (5, None, True, ["x"], {"k": "v"}):
         with pytest.raises(ps.PromptValidationError):

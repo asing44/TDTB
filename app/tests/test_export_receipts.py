@@ -96,6 +96,16 @@ def test_unknown_action_or_key_is_rejected_without_writing():
     assert not er.receipts_path().exists()
 
 
+def test_custom_prompt_key_receipt_round_trips():
+    key = "custom-m1abcde-xy9"
+    outcome = er.begin_export(day=DAY, prompt_key=key, action=ACTION)
+    assert outcome.action == er.BEGIN
+    er.complete_export(day=DAY, prompt_key=key, action=ACTION, task_id="t1")
+    stored = er.load_receipts().get(DAY, key, ACTION)
+    assert stored.prompt_key == key
+    assert stored.status == er.STATUS_DONE
+
+
 # ---------------------------------------------------------------------------
 # Content-free + bounded
 # ---------------------------------------------------------------------------

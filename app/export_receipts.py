@@ -157,7 +157,7 @@ class ExportReceipt:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "day", _parse_day(self.day))
-        if self.prompt_key not in prompt_state.PROMPT_KEYS:
+        if not prompt_state.is_prompt_key(self.prompt_key):
             raise ValueError("unknown prompt key")
         if self.action not in KNOWN_ACTIONS:
             raise ValueError("unknown export action")
@@ -351,7 +351,7 @@ def _validate_inputs(day: Any, prompt_key: Any, action: Any) -> str:
         valid_day = _parse_day(day)
     except ValueError as exc:
         raise ExportReceiptValidationError(str(exc)) from exc
-    if prompt_key not in prompt_state.PROMPT_KEYS:
+    if not prompt_state.is_prompt_key(prompt_key):
         raise ExportReceiptValidationError("unknown prompt key")
     if action not in KNOWN_ACTIONS:
         raise ExportReceiptValidationError("unknown export action")
