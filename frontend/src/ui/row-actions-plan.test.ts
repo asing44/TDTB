@@ -6,9 +6,11 @@
       and −/+ steppers are always visible: no rule quiets them at rest, and no
       `.qrow:hover` / `.qrow:focus-within` layer reveals them. The cluster's
       grid track stays reserved, so it never reflows the row.
-   2. The wide layout matches Planning Mockups screen B's action sizing: 13px
-      labels, 6px/10px padding, 31px buttons at >=1500px, 1px borders, 6px
-      radius, 6px gaps, and a 500px reserved action track.
+   2. The wide layout keeps the reserved 500px action track and, after the
+      2026-10-13 icon pass, the row verbs are square icon buttons (32px at
+      >=1500px) with 1px borders, 6px radius, and 6px gaps. The sizing is
+      scoped `:not(.row-more__item)` so the More-menu's word-labelled items
+      keep their own stacked height.
 
    jsdom does no layout, so these read the cascade off disk the same way
    mint-slider-layout.test.ts and row-rhythm.test.ts do. */
@@ -152,29 +154,49 @@ describe("Plan task row layout reserves the action track", () => {
   });
 });
 
-describe("Plan task action sizing matches the mockup from 1500px", () => {
-  it("labels the mockup's five actions at 13px", () => {
-    expect(at1500(".qrow__actions .planbtn")).toMatch(/font-size:\s*13px/);
-    expect(at1500(".qrow__actions .alloc-verb")).toMatch(
-      /font-size:\s*13px/,
-    );
+describe("Plan task action sizing is square icon buttons from 1500px", () => {
+  const PLANBTN = ".qrow__actions .planbtn:not(.row-more__item)";
+  const VERB = ".qrow__actions .alloc-verb:not(.row-more__item)";
+
+  it("makes the planning buttons 32px square", () => {
+    const planbtn = at1500(PLANBTN);
+    expect(planbtn).toMatch(/width:\s*32px/);
+    expect(planbtn).toMatch(/height:\s*32px/);
+    expect(planbtn).toMatch(/padding:\s*0(?:;|\s|$)/);
   });
 
-  it("uses the mockup's 6px/10px padding and 31px button height", () => {
-    const planbtn = at1500(".qrow__actions .planbtn");
-    expect(planbtn).toMatch(/padding:\s*6px\s+10px/);
-    expect(planbtn).toMatch(/height:\s*31px/);
-    const verb = at1500(".qrow__actions .alloc-verb");
-    expect(verb).toMatch(/padding:\s*6px\s+10px/);
-    expect(verb).toMatch(/height:\s*31px/);
+  it("makes the direct verbs 32px square", () => {
+    const verb = at1500(VERB);
+    expect(verb).toMatch(/width:\s*32px/);
+    expect(verb).toMatch(/height:\s*32px/);
+    expect(verb).toMatch(/padding:\s*0(?:;|\s|$)/);
   });
 
-  it("uses the mockup's 1px border and 6px radius", () => {
-    for (const sel of [".qrow__actions .planbtn", ".qrow__actions .alloc-verb"]) {
+  it("keeps the 1px border and 6px radius on both faces", () => {
+    for (const sel of [PLANBTN, VERB]) {
       const body = at1500(sel);
       expect(body).toMatch(/border-width:\s*1px/);
       expect(body).toMatch(/border-radius:\s*6px/);
     }
+  });
+
+  it("scopes the icon sizing away from the word-labelled More-menu items", () => {
+    // CSS-TRAP guard: a bare `.qrow__actions .alloc-verb` also matches the
+    // menu items nested in `.row-more`; the icon rule excludes them.
+    expect(appCss).toMatch(
+      /\.qrow__actions\s+\.alloc-verb:not\(\.row-more__item\)\s*\{/,
+    );
+    // The menu items keep their own stacked, word-labelled height.
+    expect(at1500(".qrow__actions .row-more__menu .alloc-verb")).toMatch(
+      /height:\s*auto/,
+    );
+  });
+
+  it("right-aligns the icon cluster in the reserved action track", () => {
+    const last1500 = minWidth1500Bodies().join("\n");
+    expect(last1500).toMatch(
+      /\.qrow__actions\s*\{[^}]*justify-content:\s*flex-end/,
+    );
   });
 
   it("keeps the mockup's 6px gaps between actions", () => {

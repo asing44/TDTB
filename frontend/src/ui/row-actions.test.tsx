@@ -1,10 +1,15 @@
 /* row-actions.test.tsx — S2 of the cockpit UI feedback plan (items 1 + 5):
-   the row action set is ONE coherent affordance. The unlabelled ⊘/✎ icons
-   become visible "Exclude today" / "Include today" and "Exact duration"
-   controls with scope notes; planning adjustments (local, reversible) are
-   grouped apart from item-handling verbs (Mark complete / Leave as-is /
-   More). Directness is deliberately UNCHANGED: Mark complete and Leave as-is
-   stay direct, source removal and Delete stay behind More.
+   the row action set is ONE coherent affordance. Planning adjustments
+   (Exclude/Include today, Exact duration) are grouped apart from
+   item-handling verbs (Mark complete / Leave as-is / More). Directness is
+   deliberately UNCHANGED: Mark complete and Leave as-is stay direct, source
+   removal and Delete stay behind More.
+
+   2026-10-13 icon pass (operator request: "row button functionality same but
+   with icons instead of words but still tooltip hover"): each row verb face
+   is now an inline SVG icon. Accessible names are byte-for-byte unchanged and
+   the words stay visible in the hover/focus tooltip; only the face changed.
+   The More-menu ITEMS keep their word labels.
 
    Fixture adapters only: no live adapter, no billed call, no source write.
    The dispatch-mapping checks spy the fake adapter's runtimeAction so the
@@ -60,6 +65,14 @@ function buttonIn(root: Element, label: string): HTMLButtonElement {
   return btn;
 }
 
+/** The tooltip bubble rendered for a row action button (the button's parent
+    is the Tooltip anchor span; the bubble is its sibling). */
+function tooltipFor(btn: HTMLElement): string {
+  return (
+    btn.parentElement?.querySelector('[role="tooltip"]')?.textContent ?? ""
+  );
+}
+
 /** Same fixture harness as test-harness, but with a spy wrapped around the
     fake adapter's runtimeAction so wire mapping is observable. */
 function spyHarness() {
@@ -88,22 +101,24 @@ function spyHarness() {
 }
 
 describe("S2 row actions: planning adjustments carry visible labels", () => {
-  it("names exclusion Exclude today instead of the bare ⊘ icon", () => {
+  it("renders the exclusion control as an icon button with the unchanged name", () => {
     const h = makeHarness("ready");
     const { container } = h.ui(<Queue />);
     const press = rowFor(container, "Press");
     const exclude = buttonIn(press, "Exclude Press today");
-    expect(exclude.textContent).toContain("Exclude today");
-    expect(exclude.textContent).not.toContain("⊘");
+    expect(exclude.getAttribute("aria-label")).toBe("Exclude Press today");
+    expect(exclude.querySelector("svg")).toBeTruthy();
+    expect((exclude.textContent ?? "").trim()).toBe("");
   });
 
-  it("names the duration editor Exact duration instead of the bare ✎ icon", () => {
+  it("renders the duration editor as an icon button with the unchanged name", () => {
     const h = makeHarness("ready");
     const { container } = h.ui(<Queue />);
     const press = rowFor(container, "Press");
     const exact = buttonIn(press, "Exact duration for Press");
-    expect(exact.textContent).toContain("Exact duration");
-    expect(exact.textContent).not.toContain("✎");
+    expect(exact.getAttribute("aria-label")).toBe("Exact duration for Press");
+    expect(exact.querySelector("svg")).toBeTruthy();
+    expect((exact.textContent ?? "").trim()).toBe("");
   });
 
   it("the same control reads Include today once the row is excluded", () => {
@@ -117,14 +132,15 @@ describe("S2 row actions: planning adjustments carry visible labels", () => {
     press = rowFor(container, "Press");
     expect(press.classList.contains("qrow--excluded")).toBe(true);
     const include = buttonIn(press, "Include Press today");
-    expect(include.textContent).toContain("Include today");
+    expect(include.getAttribute("aria-label")).toBe("Include Press today");
+    expect(include.querySelector("svg")).toBeTruthy();
     fireEvent.click(include);
     // Re-included rows return to the Exclude label — the toggle is reversible.
     press = rowFor(container, "Press");
     expect(press.classList.contains("qrow--excluded")).toBe(false);
-    expect(buttonIn(press, "Exclude Press today").textContent).toContain(
-      "Exclude today",
-    );
+    expect(
+      buttonIn(press, "Exclude Press today").getAttribute("aria-label"),
+    ).toBe("Exclude Press today");
   });
 
   it("keeps the exact accessible-name construction: verb + verbatim item name + today", () => {
@@ -148,7 +164,7 @@ describe("S2 row actions: planning adjustments carry visible labels", () => {
       container,
       "Exclude Upper Fast — Active today",
     );
-    expect(exclude.textContent).toContain("Exclude today");
+    expect(exclude.querySelector("svg")).toBeTruthy();
     expect(exclude.getAttribute("aria-label")).toBe(
       "Exclude Upper Fast — Active today",
     );
@@ -156,29 +172,37 @@ describe("S2 row actions: planning adjustments carry visible labels", () => {
 });
 
 describe("S2 row actions: scope notes and grouping", () => {
-  it("shows visible scope notes that separate today-only planning from source writes", () => {
+  it("carries the scope notes in the tooltip, separating today-only planning from source writes", () => {
     const h = makeHarness("ready");
     const { container } = h.ui(<Queue />);
     const press = rowFor(container, "Press");
 
     const exclude = buttonIn(press, "Exclude Press today");
-    expect(exclude.textContent).toContain("today only");
-    expect(exclude.textContent).toContain("reversible");
-    expect(exclude.textContent).toContain("source unchanged");
+    fireEvent.focus(exclude);
+    expect(tooltipFor(exclude)).toContain("Exclude today");
+    expect(tooltipFor(exclude)).toContain("reversible");
+    expect(tooltipFor(exclude)).toContain("source unchanged");
+    fireEvent.blur(exclude);
 
     const exact = buttonIn(press, "Exact duration for Press");
-    expect(exact.textContent).toContain("today only");
-    expect(exact.textContent).toContain("source unchanged");
+    fireEvent.focus(exact);
+    expect(tooltipFor(exact)).toContain("Exact duration");
+    expect(tooltipFor(exact)).toContain("source unchanged");
+    fireEvent.blur(exact);
 
     const done = buttonIn(press, "Mark complete in source: Press");
-    expect(done.textContent).toContain("updates source");
+    fireEvent.focus(done);
+    expect(tooltipFor(done)).toContain("Completes it in the source");
+    fireEvent.blur(done);
 
     const leave = buttonIn(
       press,
       "Leave as-is today without changing source: Press",
     );
-    expect(leave.textContent).toContain("today only");
-    expect(leave.textContent).toContain("source unchanged");
+    fireEvent.focus(leave);
+    expect(tooltipFor(leave)).toContain("today's plan");
+    expect(tooltipFor(leave)).toContain("source untouched");
+    fireEvent.blur(leave);
   });
 
   it("groups planning adjustments apart from item-handling verbs", () => {
@@ -258,8 +282,8 @@ describe("S2 row actions: excluded rows and busy state", () => {
       press.querySelector(".qrow__excluded-note")?.textContent,
     ).toBe("excluded today");
     const include = buttonIn(press, "Include Press today");
-    expect(include.textContent).toContain("Include today");
-    expect(include.textContent).toContain("source unchanged");
+    expect(include.querySelector("svg")).toBeTruthy();
+    expect((include.textContent ?? "").trim()).toBe("");
 
     fireEvent.click(include);
     press = rowFor(container, "Press");
@@ -283,7 +307,7 @@ describe("S2 row actions: excluded rows and busy state", () => {
     // their labels stay visible and the toggle keeps working while busy.
     const exclude = buttonIn(press, "Exclude Press today");
     expect(exclude.disabled).toBe(false);
-    expect(exclude.textContent).toContain("Exclude today");
+    expect(exclude.querySelector("svg")).toBeTruthy();
   });
 });
 
@@ -379,5 +403,70 @@ describe("S2 row actions: responsive reachability", () => {
   it("keeps the 44px control floor on the new labelled buttons", () => {
     expect(cssBlock("planbtn")).toMatch(/min-height:\s*44px/);
     expect(cssBlock("planbtn")).toMatch(/min-width:\s*44px/);
+  });
+});
+
+describe("S2 row actions: icon-only faces keep every word in aria + tooltip", () => {
+  const faces: Array<[label: string, bubble: string]> = [
+    ["Exclude Press today", "Exclude today"],
+    ["Exact duration for Press", "Exact duration"],
+    ["Mark complete in source: Press", "Mark complete"],
+    ["Leave as-is today without changing source: Press", "Leave as-is"],
+    ["More actions for Press", "More"],
+  ];
+
+  it("renders each row action as a button with an icon and no visible word label", () => {
+    const h = makeHarness("ready");
+    const { container } = h.ui(<Queue />);
+    const press = rowFor(container, "Press");
+    for (const [label] of faces) {
+      const btn = buttonIn(press, label);
+      expect(btn.querySelector("svg")).toBeTruthy();
+      expect((btn.textContent ?? "").trim()).toBe("");
+    }
+  });
+
+  it("keeps the accessible name on the button, unchanged", () => {
+    const h = makeHarness("ready");
+    const { container } = h.ui(<Queue />);
+    const press = rowFor(container, "Press");
+    for (const [label] of faces) {
+      expect(buttonIn(press, label).getAttribute("aria-label")).toBe(label);
+    }
+  });
+
+  it("shows the label and detail in the tooltip on keyboard focus", () => {
+    const h = makeHarness("ready");
+    const { container } = h.ui(<Queue />);
+    const press = rowFor(container, "Press");
+    for (const [label, bubble] of faces) {
+      const btn = buttonIn(press, label);
+      fireEvent.focus(btn);
+      expect(tooltipFor(btn)).toContain(bubble);
+      // Label plus the second detail line — not just the one word.
+      expect(tooltipFor(btn).length).toBeGreaterThan(bubble.length);
+      fireEvent.blur(btn);
+    }
+  });
+
+  it("shows the tooltip on pointer hover too", () => {
+    const h = makeHarness("ready");
+    const { container } = h.ui(<Queue />);
+    const press = rowFor(container, "Press");
+    const btn = buttonIn(press, "Mark complete in source: Press");
+    expect(tooltipFor(btn)).toBe("");
+    fireEvent.mouseEnter(btn);
+    expect(tooltipFor(btn)).toContain("Mark complete");
+    expect(tooltipFor(btn)).toContain("Completes it in the source");
+  });
+
+  it("leaves the More-menu items word-labelled", () => {
+    const h = makeHarness("ready");
+    const { container } = h.ui(<Queue />);
+    const press = rowFor(container, "Press");
+    fireEvent.click(buttonIn(press, "More actions for Press"));
+    const menu = press.querySelector('[role="menu"]');
+    expect(menu?.textContent).toContain("Remove from planning");
+    expect(menu?.textContent).toContain("Delete");
   });
 });

@@ -4,7 +4,7 @@
    shout, two-gate commit) stay unchanged; these tests guard the panel
    reachability and focus guarantees only. */
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent } from "@testing-library/preact";
 
 afterEach(cleanup);
@@ -45,11 +45,37 @@ describe("FEEDBACK-08 Results/SOW reachability", () => {
     expect(r.getAllByText("Preview writes").length).toBeGreaterThan(0);
   });
 
-  it("review Results drawer explains how to build the preview instead of trapping", () => {
+  it("review Results drawer offers a Build preview CTA instead of trapping", () => {
     const h = makeHarness("sequenced");
     const r = dockWithDrawer(h);
     fireEvent.click(r.getByRole("button", { name: /^Results/ }));
-    expect(r.getByText(/Run Preview commit/)).toBeTruthy();
+    expect(
+      r.getByText(/No preview yet\. Build one to see the exact writes\./),
+    ).toBeTruthy();
+  });
+
+  it("Build preview CTA calls shadowPreview when the gates allow", () => {
+    const h = makeHarness("sequenced");
+    const r = dockWithDrawer(h);
+    fireEvent.click(r.getByRole("button", { name: /^Results/ }));
+    const spy = vi
+      .spyOn(h.controller, "shadowPreview")
+      .mockResolvedValue(undefined);
+    const build = r.getByRole("button", { name: "Build preview" }) as HTMLButtonElement;
+    expect(build.disabled).toBe(false);
+    fireEvent.click(build);
+    expect(spy).toHaveBeenCalledTimes(1);
+    spy.mockRestore();
+  });
+
+  it("Build preview CTA is disabled when canShadow is blocked", () => {
+    const h = makeHarness("sequenced", (sc) => {
+      sc.inputs.sourceHealth = "degraded";
+    });
+    h.store.dispatch({ type: "UI", patch: { approvalOpen: true } });
+    const r = dockWithDrawer(h);
+    const build = r.getByRole("button", { name: "Build preview" }) as HTMLButtonElement;
+    expect(build.disabled).toBe(true);
   });
 
   it("preview state labels the primary entry Results and opens the drawer", () => {

@@ -1146,6 +1146,30 @@ describe("model → wire body builders", () => {
     expect(shaped[0].blocks).toBe(4);
   });
 
+  it("preserves a calendar row's source, identity, path, and event id through shaping", () => {
+    const raw = [
+      {
+        name: "Team offsite",
+        source: "calendar",
+        assigned: true,
+        blocks: 1,
+        identity: "calendar:ev-1:2026-10-13",
+        path: "calendar://ev-1/2026-10-13",
+        event_id: "ev-1",
+        calendar_id: "cal-1",
+        calendar_title: "Evan & Nate",
+        capacity_class: "work",
+      },
+    ];
+    const shaped = shapeAssignedWire(raw as any, [{ id: "Team offsite", blocks: 2 }]);
+    expect(shaped[0].source).toBe("calendar");
+    expect(shaped[0].identity).toBe("calendar:ev-1:2026-10-13");
+    expect(shaped[0].path).toBe("calendar://ev-1/2026-10-13");
+    expect(shaped[0].event_id).toBe("ev-1");
+    expect(shaped[0].id).toBe("Team offsite");
+    expect(shaped[0].blocks).toBe(2);
+  });
+
   it("emits an explicit per-item time-adjustment permission", () => {
     const raw = [
       { name: "Native", blocks: 2, allow_time_adjustment: true },
@@ -1223,6 +1247,18 @@ describe("duration-memory wire projection (MVP)", () => {
       path: "capacities://sp/obj-1", blocks: 2,
     });
     expect(cap.identity).toBe("capacities:sp:struct-a:obj-1");
+    // Unit 3: a schedulable all-day calendar row keeps its own source,
+    // calendar:// path, and calendar:<event>:<day> identity — it must NOT
+    // fall into the neutral Todoist-like branch (which nulls both).
+    const calendar = projectAssigned({
+      name: "Team offsite", source: "calendar", assigned: true, blocks: 1,
+      identity: "calendar:ev-1:2026-10-13",
+      path: "calendar://ev-1/2026-10-13",
+      event_id: "ev-1", calendar_id: "cal-1", calendar_title: "Evan & Nate",
+    });
+    expect(calendar.source).toBe("calendar");
+    expect(calendar.path).toBe("calendar://ev-1/2026-10-13");
+    expect(calendar.identity).toBe("calendar:ev-1:2026-10-13");
   });
 
   it("projectAssigned maps duration_source to a remembered/source label", () => {
@@ -1259,6 +1295,14 @@ describe("duration-memory wire projection (MVP)", () => {
     expect(itemIdentity({ source: "todoist", todoistId: "9001", path: "todoist://9001" })).toBe("todoist:9001");
     expect(itemIdentity({ source: "capacities", identity: "capacities:sp:s:o" })).toBe("capacities:sp:s:o");
     expect(itemIdentity({ source: "capacities", path: null })).toBeNull();
+    // Unit 3: calendar identity wins over its calendar:// path fallback.
+    expect(
+      itemIdentity({
+        source: "calendar",
+        identity: "calendar:ev-1:2026-10-13",
+        path: "calendar://ev-1/2026-10-13",
+      }),
+    ).toBe("calendar:ev-1:2026-10-13");
     expect(itemIdentity({ source: "todoist", todoistId: null, path: null })).toBeNull();
   });
 

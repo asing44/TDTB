@@ -190,4 +190,23 @@ describe("controller.stagingAction", () => {
     await controller.stagingAction("done", "Press");
     expect(store.getState().runtimeError).toBeNull();
   });
+
+  it("surfaces a refused staging verb for a calendar row as runtimeError", async () => {
+    // Unit 3: until commit eligibility lands, the server refuses a
+    // calendar-sourced row. The refusal must reach the banner, never read as
+    // a silent success that also refreshes the row away.
+    const { adapter, controller, store } = harness();
+    const spy = vi.spyOn(adapter, "refreshSources");
+    adapter.runtimeAction = async (verb: string, target: string) => ({
+      id: "ra-cal-1",
+      verb,
+      targetName: target,
+      status: "failed" as const,
+      error: "calendar row has no commit eligibility",
+      duplicate: false,
+    });
+    await controller.stagingAction("done", "Team offsite");
+    expect(store.getState().runtimeError).toMatch(/no commit eligibility/);
+    expect(spy).not.toHaveBeenCalled();
+  });
 });

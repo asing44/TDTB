@@ -266,6 +266,18 @@ export function DaySetupPanel({
       anchored: { ...d.anchored, [id]: { ...overrideOf(id), ...patch } },
     }));
 
+  /** Chip Skip/Include today: writes the same today's override the anchored
+      editor's On/Skip toggle applies through Apply. Keeps the draft in step so
+      the chip flips immediately, then persists via the editor's own path. */
+  const toggleAnchorSkip = (id: string) => {
+    const o = overrideOf(id);
+    const active = o.on && !o.skipToday;
+    const next: AnchoredOverride = { ...o, on: !active, skipToday: active };
+    setDraft((d) => ({ ...d, anchored: { ...d.anchored, [id]: next } }));
+    patchTimeUi(id, { saved: false, error: null });
+    persistAnchoredOverride(id, next);
+  };
+
   const patchTimeUi = (id: string, patch: { saving?: boolean; saved?: boolean; error?: string | null }) =>
     setTimeUi((current) => ({ ...current, [id]: { ...current[id], ...patch } }));
   const errorText = (e: unknown) => String(e instanceof Error ? e.message : e);
@@ -457,6 +469,11 @@ export function DaySetupPanel({
   const editAnchor = (id: string) =>
     store.dispatch({ type: "UI", patch: { editorAnchor: id } });
 
+  /** Chip Adjust time / Adjust duration: open the same shared AnchoredEditor
+      the chip click opens, told which field to focus. */
+  const openAnchorEditor = (id: string, intent: "time" | "duration") =>
+    store.dispatch({ type: "UI", patch: { editorAnchor: id, editorAnchorIntent: intent } });
+
   // U12: the footer's Continue confirms the day frame (preserving the existing
   // day-setup confirm contract) and then advances the stepper to Plan tasks.
   continueRef.current = async () => {
@@ -502,6 +519,7 @@ export function DaySetupPanel({
         name: a.name,
         start: time,
         counted,
+        skipped: !on,
         reason: !on ? "skipped" : outside ? "outside frame" : null,
         blocks: anchoredBlocks(sourceAnchor(a.id), o),
         // Calendar rows never reach editableAnchors; counted config anchors move.
@@ -680,6 +698,7 @@ export function DaySetupPanel({
                 name: anchor.name,
                 time: anchor.start,
                 blocks: anchor.blocks,
+                skipped: anchor.skipped,
                 timeState: anchor.timeState,
               }))}
               notCounted={notCountedAnchors.map((anchor) => ({
@@ -687,11 +706,15 @@ export function DaySetupPanel({
                 name: anchor.name,
                 time: anchor.start,
                 reason: anchor.reason ?? "outside frame",
+                skipped: anchor.skipped,
                 timeState: anchor.timeState,
               }))}
               onEdit={editAnchor}
               onSaveTime={(id) => void saveAnchorTime(id)}
               onResetTime={(id) => moveAnchor(id, null)}
+              onToggleSkip={toggleAnchorSkip}
+              onAdjustTime={(id) => openAnchorEditor(id, "time")}
+              onAdjustDuration={(id) => openAnchorEditor(id, "duration")}
             />
           </div>
 

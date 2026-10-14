@@ -2,7 +2,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render, fireEvent, act } from "@testing-library/preact";
 
 // globals:false → testing-library can't self-register its cleanup hook.
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  Object.defineProperty(navigator, "clipboard", { value: undefined, configurable: true });
+});
 import { Ctx, useAppState } from "./context";
 import { BlockEditor } from "./BlockEditor";
 import { ActionDock } from "./ActionDock";
@@ -79,7 +82,7 @@ describe("ActionDock", () => {
     const { getByText } = ui(<ActionDock />);
     // T12e: the block count being committed is part of the label.
     expect(getByText(/^Sequence & commit \d+ blk$/)).toBeTruthy();
-    expect(getByText(/1 billed call · 4 left today/)).toBeTruthy();
+    expect(getByText("1 billed call")).toBeTruthy();
   });
 
   it("sequenced scenario offers shadow preview, labeled as writing nothing", () => {
@@ -103,15 +106,61 @@ describe("ActionDock", () => {
     expect(getByText(/Committed and verified/)).toBeTruthy();
   });
 
-  it("retired manual prompt-export bypass is disabled", () => {
+  it("Plan-only Copy prompt carries the full day-prompt content and reports success", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+    const { ui, controller } = makeHarness("ready");
+    const seqSpy = vi.spyOn(controller, "autoSequence");
+    const { getByRole, getByText } = ui(<ActionDock />);
+    const button = getByRole("button", { name: "Copy plan prompt for an external LLM" });
+    expect(button.textContent).toContain("Copy prompt");
+    fireEvent.click(button);
+    await vi.waitFor(() => expect(writeText).toHaveBeenCalledTimes(1));
+    const text = writeText.mock.calls[0][0] as string;
+    expect(text).toMatch(/^# Schedule my day/);
+    expect(text).toContain("## Capacity");
+    expect(text).toContain("## Fixed commitments");
+    await vi.waitFor(() => expect(getByText(/Copied to clipboard/)).toBeTruthy());
+    // Pure local: no billed sequence, no controller write.
+    expect(seqSpy).not.toHaveBeenCalled();
+  });
+
+  it("falls back to a selectable read-only textarea when the clipboard rejects", async () => {
+    const writeText = vi.fn().mockRejectedValue(new Error("clipboard denied"));
+    Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
     const { ui } = makeHarness("ready");
-    const { queryByRole, getByText } = ui(<ActionDock />);
-    // U5: the copy-prompt shortcut is retired — prompts are private local
-    // state and the only path to Todoist is an opted-in Commit.
-    expect(
-      queryByRole("button", { name: "Copy plan prompt for an external LLM" }),
-    ).toBeNull();
-    expect(getByText(/export on Commit only/)).toBeTruthy();
+    const { getByRole, getByLabelText } = ui(<ActionDock />);
+    fireEvent.click(getByRole("button", { name: "Copy plan prompt for an external LLM" }));
+    const area = await vi.waitFor(
+      () => getByLabelText("Prompt text to copy manually") as HTMLTextAreaElement,
+    );
+    expect(area.readOnly).toBe(true);
+    expect(area.value).toMatch(/^# Schedule my day/);
+    expect(area.value).toContain("## Capacity");
+  });
+
+  it("keeps Copy prompt available while sources are degraded", () => {
+    const sc = makeScenario("ready");
+    sc.inputs.sourceHealth = "degraded";
+    const { ui, store } = makeHarness("ready");
+    store.dispatch({ type: "INPUTS_LOADED", inputs: sc.inputs, ledger: { ...sc.ledger } });
+    const { getByRole } = ui(<ActionDock />);
+    expect(getByRole("button", { name: "Copy plan prompt for an external LLM" })).toBeTruthy();
+  });
+
+  it("keeps Copy prompt available when the billed budget is spent", () => {
+    const sc = makeScenario("ready");
+    const { ui, store } = makeHarness("ready");
+    store.dispatch({
+      type: "INPUTS_LOADED",
+      inputs: sc.inputs,
+      ledger: { ...sc.ledger, spent: 4, remaining: 0 },
+    });
+    const { getByRole, getByText } = ui(<ActionDock />);
+    expect(getByRole("button", { name: "Copy plan prompt for an external LLM" })).toBeTruthy();
+    // The clarification keeps copying plan context distinct from the
+    // opt-in prompt-task export, which stays Commit-only.
+    expect(getByText(/Commit-only/)).toBeTruthy();
   });
 
   it("never renders a live-commit control — that lives behind the approval drawer", () => {
@@ -238,7 +287,11 @@ describe("Queue", () => {
     expect(queryByText(/Suggested/i)).toBeNull();
     expect(queryByText(/Add item/i)).toBeNull();
     expect(queryByText(/Deassign/i)).toBeNull();
-    expect(container.textContent).toMatch(/Mark complete/i);
+    // 2026-10-13 icon pass: the verb face is an icon; the completion control is
+    // asserted through its unchanged accessible name, not visible text.
+    expect(
+      container.querySelector('button[aria-label^="Mark complete in source:"]'),
+    ).toBeTruthy();
   });
 
   it("shows parent-child and related-tag context without duplicate rows", () => {

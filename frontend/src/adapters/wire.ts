@@ -146,9 +146,10 @@ export function durationSourceOf(label: unknown): DurationSourceLabel {
 }
 
 /** Canonical stable source identity for a row (mirrors the backend
-    item_identity rule): todoist:<id> for todoist rows, the row's own path
-    otherwise, null when neither is present. A display name alone is
-    never an identity. */
+    item_identity rule): todoist:<id> for todoist rows, the row's own
+    capacities/calendar identity otherwise, the row's path as a fallback,
+    and null when none is present. A display name alone is never an
+    identity. */
 export function itemIdentity(item: {
   source?: string;
   identity?: string | null;
@@ -156,6 +157,7 @@ export function itemIdentity(item: {
   path?: string | null;
 }): string | null {
   if (item.source === "capacities" && item.identity) return String(item.identity);
+  if (item.source === "calendar" && item.identity) return String(item.identity);
   if (item.source === "todoist" && item.todoistId) return `todoist:${item.todoistId}`;
   if (item.path && !String(item.path).startsWith("todoist://")) return String(item.path);
   return null;
@@ -942,10 +944,12 @@ export function projectAssigned(row: Wire): AssignedItem {
       ? "todoist"
       : row.source === "capacities"
         ? "capacities"
-        // Unknown source (an old or foreign payload): render as a neutral
-        // Todoist-like row. It carries no todoistId or identity,
-        // so it is unidentified and no source-specific verb can address it.
-        : "todoist";
+        : row.source === "calendar"
+          ? "calendar"
+          // Unknown source (an old or foreign payload): render as a neutral
+          // Todoist-like row. It carries no todoistId or identity,
+          // so it is unidentified and no source-specific verb can address it.
+          : "todoist";
   const blocks =
     typeof row.blocks === "number" && Number.isFinite(row.blocks) ? row.blocks : 1;
   // FT-05 F1: exact remembered minutes win for the user-visible label —
@@ -982,7 +986,7 @@ export function projectAssigned(row: Wire): AssignedItem {
         source === "todoist" && row.todoist_id != null && String(row.todoist_id) !== ""
           ? String(row.todoist_id)
           : null,
-      path: source === "capacities" ? (row.path ?? null) : null,
+      path: source === "capacities" || source === "calendar" ? (row.path ?? null) : null,
     }),
     durationSource: durationSourceOf(row.duration_source),
     isRecurring: source === "todoist" && row.is_recurring === true,

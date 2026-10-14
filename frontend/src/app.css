@@ -2182,19 +2182,17 @@
 }
 /* -- floating alert pills (T12i) -------------------------------------------- */
 /* Even collapsed to a count, the alert roll-up was two full-width footer
-   stripes covering the table they describe. The pills float above the sticky
-   footer's right edge (the footer is the positioning context — it's sticky,
-   so it's positioned) and take only the space of their own label; the detail
-   pile is an on-demand popover that scrolls inside itself. */
+   stripes covering the table they describe. It now rides in the footer flow
+   as a right-aligned row above the footer controls, so it pushes the content
+   instead of floating over the last rows (an absolute overlay covered them
+   because only the footer band was reserved); the detail pile stays an
+   on-demand popover that scrolls inside itself. */
 .alert-pills {
-  position: absolute;
-  right: 12px;
-  bottom: calc(100% + 10px);
   display: flex;
   flex-direction: column;
   align-items: flex-end;
   gap: 8px;
-  z-index: 11;
+  padding: 8px var(--page-pad, clamp(16px, 2.5vw, 40px)) 0;
 }
 .alert-pills__row {
   display: flex;
@@ -2334,6 +2332,10 @@
   color: var(--c-overflow);
   font-size: 12px;
 }
+.copy-prompt-status {
+  color: var(--t-accent-strong);
+  font-size: 12px;
+}
 .copy-prompt-fallback textarea {
   width: 100%;
   min-height: 96px;
@@ -2370,6 +2372,19 @@
   font-size: 16px;
   font-weight: 500;
   margin: 0 0 4px;
+  /* The close control is a 44x44 target pinned at top:16 right:18; keep the
+     heading (and the first body line below it) clear of its footprint. */
+  padding-right: 56px;
+}
+/* The empty-preview notice sits directly under the close target, so it needs
+   the same reserved gutter; the Build preview CTA rides at its end. */
+.drawer-empty {
+  padding-right: 56px;
+  align-items: center;
+}
+.drawer-empty__build {
+  margin-left: auto;
+  white-space: nowrap;
 }
 .drawer h3 {
   font-size: 12px;
@@ -4919,6 +4934,10 @@ body {
   gap: 12px;
   flex: 1 1 auto;
   min-width: 0;
+  flex-wrap: wrap;
+}
+.footer__budget {
+  white-space: nowrap;
 }
 .footer__right {
   display: flex;
@@ -4959,6 +4978,29 @@ body {
    setup") stays when setup is still the next action. */
 .footer__right .dock__setup:not(.btn--primary) {
   display: none;
+}
+
+/* Footer crowding at narrow widths: the left cluster (Day setup, budget chip)
+   and the right cluster (Copy prompt + dock buttons) each wrap deliberately
+   with tighter gutters, so the bar reads as at most two rows at 900px instead
+   of three or four. The budget chip and Copy prompt stay visible. */
+@media (max-width: 1100px) {
+  .footer__row {
+    gap: 10px 12px;
+    padding-top: 6px;
+    padding-bottom: 10px;
+  }
+  .footer__left {
+    gap: 8px 10px;
+  }
+  .footer__right {
+    margin-left: auto;
+    gap: 8px;
+  }
+  .footer__right .dock {
+    gap: 8px;
+    row-gap: 8px;
+  }
 }
 
 /* U9 — capacity headline card. One white card heads the Plan tasks body: a
@@ -5705,6 +5747,19 @@ body {
   cursor: pointer;
 }
 
+/* Inline disclosure link-button (the Exact writes toggle in the approval
+   drawer). Same quiet, chrome-less link treatment as the other unterlined
+   text buttons; the uppercase/size it inherits from its `<h3>` row stands. */
+.capacity__disclose {
+  border: none;
+  background: none;
+  padding: 0;
+  color: var(--t-muted);
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
 .anchor-chips {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -6156,12 +6211,27 @@ body {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
+  /* Separate the "Discover from Capacities" control from the input it acts
+     on, so at 900px the control no longer touches the field. */
+  margin-bottom: 8px;
 }
 
+/* Match the other field controls (border, surface, radius, accent focus)
+   instead of a bare, chrome-less text row. The focus ring itself comes from
+   the global :focus-visible rule in tokens.css. */
 .connections-mapping__input {
   width: 100%;
   padding: 6px 8px;
   font-size: 13px;
+  border: 0.5px solid var(--t-border);
+  border-radius: var(--radius-sm);
+  background: var(--t-surface);
+  color: var(--t-text);
+  font-family: inherit;
+}
+
+.connections-mapping__input:focus-visible {
+  border-color: var(--t-accent);
 }
 
 .connections-stale {
@@ -7053,6 +7123,15 @@ body {
     font-size: 13px;
     border-width: 1px;
     border-radius: 6px;
+  }
+
+  /* The 31px mockup line reads for the row verbs only. `.row-more__menu`
+     renders inside `.qrow__actions`, so without this exclusion the menu's
+     44px items (label over detail) were capped at 31px and the detail text
+     collided with the verb below it. */
+  .qrow__actions .row-more__menu .alloc-verb {
+    height: auto;
+    min-height: 44px;
   }
 }
 
@@ -8137,5 +8216,413 @@ body {
 @media (max-width: 1439px) {
   .qrow__time-readout {
     order: -1;
+  }
+}
+
+/* ---- Bolder pass: compact Plan task rows (2026-10-13) ----------------------
+   At 768-1100px the stacked row stood ~190px tall: four lines, one each for
+   title/source, due, the duration control, and the action cluster. Re-template
+   the same children into a named two-line grid — line 1 `stripe | body | due`,
+   line 2 `stripe | actions | time` — so the duration control and the row verbs
+   share one line (~90px, set by the 44px control floor). The readout folds
+   inline beside the slider. Actions own the flexible column and time the
+   trailing auto column, so a dense verb set wraps inside its cell instead of
+   clipping the slider. Scoped to >=768px so the <=767px phone stack keeps its
+   own template. Appended so it wins the cascade. */
+@media (min-width: 768px) and (max-width: 1100px) {
+  .qrow {
+    min-height: 0;
+    padding-block: 6px;
+    grid-template-columns: 3px minmax(0, 1fr) auto;
+    grid-template-areas:
+      "stripe body due"
+      "stripe actions time";
+    align-items: center;
+    align-content: start;
+    gap: 4px 10px;
+  }
+
+  .qrow__stripe {
+    grid-area: stripe;
+  }
+
+  .qrow__body {
+    grid-area: body;
+  }
+
+  .qrow__due {
+    grid-area: due;
+    align-self: start;
+    justify-content: flex-end;
+  }
+
+  .qrow__time {
+    grid-area: time;
+    flex-direction: row;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .qrow__time-line {
+    flex: 1 1 auto;
+  }
+
+  .qrow__time .alloc-track {
+    min-width: 120px;
+  }
+
+  /* The readout trails the slider here (the desktop convention); override the
+     stacked readout-above-slider order that applies below 1440px. */
+  .qrow__time-readout {
+    order: 0;
+  }
+
+  .qrow__actions {
+    grid-area: actions;
+    justify-content: flex-end;
+  }
+}
+
+/* Fine pointers only: a row shows its one primary verb (Mark complete) and the
+   More menu at rest; the three secondary verbs (Exclude today, Exact duration,
+   Leave as-is) reveal on row hover or keyboard focus. Touch/coarse pointers
+   keep every verb visible because this block never matches there. The reveal
+   targets the individual `.qrow__tip--*` anchors — never `.qrow__actions` — so
+   the cluster is never hidden as a whole and the primary verbs never vanish. */
+@media (max-width: 1100px) and (hover: hover) and (pointer: fine) {
+  .qrow__tip--plan {
+    display: none;
+  }
+
+  .qrow__tip--drop_from_plan {
+    display: none;
+  }
+
+  .qrow:hover .qrow__tip--plan,
+  .qrow:focus-within .qrow__tip--plan,
+  .qrow:hover .qrow__tip--drop_from_plan,
+  .qrow:focus-within .qrow__tip--drop_from_plan {
+    display: inline-flex;
+  }
+}
+
+/* ---- Icon row actions (2026-10-13) -----------------------------------------
+   Operator request: the same row buttons, same tooltips, icons instead of
+   words. Each face is a square icon button; the word and its scope note moved
+   off the face and stay available through the button's aria-label and the
+   existing hover/focus tooltip. `currentColor` on the glyph keeps it legible
+   in both themes, and the global `:focus-visible` ring from tokens.css still
+   marks the control.
+
+   CSS-TRAP: `.qrow__actions .alloc-verb` also matches the word-labelled items
+   inside the More menu (`.row-more__item`), so the icon sizing is scoped with
+   `:not(.row-more__item)`. The menu items keep their own stacked height. */
+.qrow__actions .planbtn:not(.row-more__item) {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0;
+  width: 44px;
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0;
+  border-radius: var(--radius-sm);
+  line-height: 1;
+}
+.qrow__actions .alloc-verb:not(.row-more__item) {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0;
+  width: 44px;
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0;
+  border-radius: var(--radius-sm);
+  line-height: 1;
+}
+.row-icon {
+  display: block;
+  width: 16px;
+  height: 16px;
+  flex: none;
+}
+
+/* The 31px mockup line is retired with the word faces: at >=1500px the icon
+   buttons are a deliberate 32px square, right-aligned in the reserved 500px
+   action track. The 44px touch floor above still governs narrower and coarse
+   layouts. */
+@media (min-width: 1500px) {
+  .qrow__actions {
+    justify-content: flex-end;
+    gap: 6px;
+  }
+
+  .qrow__actions .planbtn:not(.row-more__item) {
+    width: 32px;
+    min-width: 32px;
+    height: 32px;
+    min-height: 32px;
+    padding: 0;
+    border-width: 1px;
+    border-radius: 6px;
+  }
+
+  .qrow__actions .alloc-verb:not(.row-more__item) {
+    width: 32px;
+    min-width: 32px;
+    height: 32px;
+    min-height: 32px;
+    padding: 0;
+    border-width: 1px;
+    border-radius: 6px;
+  }
+}
+
+/* ---- Footer/header compaction (2026-10-13) ---------------------------------
+   Measured defect at 900x1000: the Plan footer stood 2-3 rows tall (Day setup,
+   the Day budget chip and a long blocked-reason line on the left; Copy prompt,
+   Revalidate and Sequence & commit with stacked sub-labels on the right), and
+   the header wrapped to a second row whenever the source pill said "Sources
+   degraded · commit blocked".
+
+   This appended layer keeps the footer at most two rows in EVERY state: the
+   left cluster (back link + Day budget chip) and the right cluster (the dock
+   controls) each stay on one nowrap line and shrink (min-width:0) instead of
+   wrapping; the stacked .btn__sub labels collapse (their full text stays on the
+   control's title/aria); and the blocked/status reason becomes a single
+   truncating line inside the same controls row, so it never adds a third row.
+   The header right cluster stays on one row with a compact, ellipsized pill.
+
+   Protected guarantees are preserved: no visibility-based hiding, no primary
+   control is hidden, and keyboard reachability is untouched (only presentation
+   changes). The live @media (max-width: 1100px) block below is the LAST such
+   block in the file, so it wins the cascade over the earlier tightened-gap
+   layer at the U7 footer rules. */
+@media (max-width: 1100px) {
+  .footer__row {
+    flex-wrap: nowrap;
+    gap: 10px 12px;
+    padding-top: 6px;
+    padding-bottom: 10px;
+  }
+  .footer__left {
+    flex-wrap: nowrap;
+    gap: 8px 10px;
+    min-width: 0;
+  }
+  /* Polish: "← Day setup" must never break across two lines. It is rigid, the
+     blocked/status line takes the leftover width, and the Day budget chip
+     yields its width first (ellipsized, never hidden). */
+  .footer__back {
+    flex: none;
+    white-space: nowrap;
+  }
+  .footer__budget {
+    display: inline-block;
+    flex: 0 6 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .footer__right {
+    flex-wrap: nowrap;
+    margin-left: auto;
+    gap: 8px;
+    flex: none;
+  }
+  .footer__right .dock {
+    flex-wrap: nowrap;
+    gap: 8px;
+  }
+  .footer__right .dock__controls {
+    flex-wrap: nowrap;
+    gap: 8px;
+    min-width: 0;
+  }
+  /* The stacked sub-labels collapse at <=1100px; the buttons keep their face
+     text, aria-label, and title, so nothing is lost to the accessible tree. */
+  .footer .btn__sub {
+    display: none;
+  }
+  /* The blocked/status reason truncates to one line in the controls row; the
+     full sentence stays in the control's title. */
+  .footer__blocked {
+    min-width: 0;
+    flex: 1 1 auto;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  /* Header: one row even when sources are degraded. The header and the stepper
+     stop wrapping; the date block, step padding, and separators tighten so the
+     pill + Retry + Connections stay on the same row. If the pill still cannot
+     fit it ellipsizes (its title carries the full sentence) rather than
+     wrapping to a second row. */
+  .app-header {
+    flex-wrap: nowrap;
+    gap: 10px;
+  }
+  .app-header__date {
+    min-width: 0;
+  }
+  .app-header__frame {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .app-stepper {
+    flex-wrap: nowrap;
+    gap: 4px;
+  }
+  .app-stepper__sep {
+    width: 10px;
+  }
+  .app-stepper__step {
+    padding: 4px 8px;
+  }
+  .app-header__right {
+    flex-wrap: nowrap;
+    gap: 8px;
+  }
+  .app-header__right .health-pill {
+    min-width: 0;
+    max-width: 52vw;
+    padding: 3px 10px;
+    overflow: hidden;
+  }
+  .health-pill__text {
+    display: block;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .app-header__right .health-pill__retry {
+    flex: none;
+    padding: 3px 6px;
+    white-space: nowrap;
+  }
+  .app-header__right .header__connections {
+    flex: none;
+    padding: 3px 6px;
+    white-space: nowrap;
+  }
+}
+
+/* Phones keep the previous wrapping behavior: the nowrap compaction above
+   targets the 768-1100 tablet band where the 900x1000 defect was measured, and
+   a 3-button dock cannot stay on one line in a 375px viewport. */
+@media (max-width: 767px) {
+  .footer__row,
+  .footer__left,
+  .footer__right,
+  .footer__right .dock,
+  .footer__right .dock__controls {
+    flex-wrap: wrap;
+  }
+
+  /* The one-row header compaction targets the 768-1100 tablet band; a phone
+     viewport wraps again rather than overflowing. */
+  .app-header,
+  .app-stepper {
+    flex-wrap: wrap;
+  }
+  .app-header__date {
+    min-width: 140px;
+  }
+}
+
+/* 2026-10-13 anchor actions (per-anchor icon actions on the Set up day screen).
+   The three actions that used to live only inside the anchored editor —
+   Skip/Include today, Adjust time, Adjust duration — render as icon buttons on
+   every Anchors-card chip. Scoped to .anchor-actions so the shared row/planbtn
+   system is untouched.
+
+   2026-10-13 polish: the faces mirror the Plan row icon buttons (44px touch
+   floor, --radius-sm, the mixed hairline border and --t-surface-2 fill) instead
+   of the old 32px sharp squares, and the group sits inline at the right end of
+   the chip row above 700px, wrapping below the chip only on narrower widths. */
+.anchor-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  min-width: 0;
+}
+
+/* The chip row: the chip takes the flexible width and the actions stay pinned
+   at its right end. `flex-wrap` is added below 700px (see the media block at
+   the end of the layer) so the group drops under the chip rather than
+   squeezing it. */
+.anchor-tile__head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.anchor-tile__head .anchor-chip {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.anchor-tile__head .anchor-actions {
+  flex: none;
+}
+
+.anchor-actions .anchor-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0;
+  width: 44px;
+  min-width: 44px;
+  height: 44px;
+  min-height: 44px;
+  padding: 0;
+  border: 0.5px solid color-mix(in srgb, var(--t-border) 85%, transparent);
+  border-radius: var(--radius-sm);
+  background: var(--t-surface-2);
+  color: var(--t-text);
+  line-height: 1;
+  cursor: pointer;
+}
+
+.anchor-actions .anchor-action:hover {
+  border-color: var(--t-accent);
+}
+
+.anchor-actions .anchor-action:focus-visible {
+  outline: 2px solid var(--t-accent);
+  outline-offset: 1px;
+}
+
+.anchor-actions .anchor-action:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* Not-counted items are a wrapped inline row; keep the chip and its actions
+   together and let the group wrap as a unit. */
+.not-counted__item .anchor-actions {
+  display: inline-flex;
+  vertical-align: middle;
+}
+
+/* Below 700px the chip columns are single-column and narrow: the actions wrap
+   onto their own line under the chip (still visible and reachable on touch)
+   rather than squeezing the chip name. */
+@media (max-width: 699px) {
+  .anchor-tile__head {
+    flex-wrap: wrap;
+  }
+
+  .anchor-actions {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .not-counted__item .anchor-actions {
+    width: auto;
   }
 }

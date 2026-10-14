@@ -548,6 +548,20 @@ describe("S1 external scheduling handoff", () => {
             durationLabel: "30min",
             todoistId: null,
           },
+          {
+            id: "Team offsite",
+            name: "Team offsite",
+            path: "calendar://ev-1/2026-10-13",
+            source: "calendar",
+            types: [],
+            urgency: null,
+            deadline: null,
+            priorityScore: 6,
+            blocks: 1,
+            durationLabel: "30min",
+            todoistId: null,
+            identity: "calendar:ev-1:2026-10-13",
+          },
         ]);
       }),
     );
@@ -555,6 +569,9 @@ describe("S1 external scheduling handoff", () => {
     expect(p).not.toMatch(/vault/i);
     expect(p).toContain("(capacities · capacities:space-1:structure-2:object-3)");
     expect(p).toContain("(todoist · unidentified)");
+    // Unit 3: a calendar row is identified by its calendar identity, never
+    // reported to the external scheduler as "(unidentified)".
+    expect(p).toContain("(calendar · calendar:ev-1:2026-10-13)");
     expect(p).toMatch(/no write route from this prompt/i);
     expect(p).toMatch(/unidentified[\s\S]*do not write/i);
   });

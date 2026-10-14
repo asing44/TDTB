@@ -4,10 +4,12 @@
    from the existing readiness logic, and the existing dock controls (primary
    action, billed-call note, approval flow) on the right.
 
-   No copy-prompt control exists anywhere (R20b, retired in U5). Every
-   existing safety gate is preserved: the dock still disables its billed
-   actions for degraded sources, spent budget, unconfirmed setup, and
-   unresolved defects, and the approval drawer still owns live commit.
+   The Plan-only "Copy prompt" fallback is restored (R20b) in the ActionDock;
+   it is pure-local and never a source write. Every existing safety gate is
+   preserved: the dock still disables its billed actions for degraded sources,
+   spent budget, unconfirmed setup, and unresolved defects, and the approval
+   drawer still owns live commit. The daily LLM call allowance is shown in all
+   three footer variants so the cap is visible without opening Details.
 
    U13 adds a third footer body: on the Connections screen the bar is the
    unsaved-changes surface — the dirty count and names on the left, Discard
@@ -54,6 +56,33 @@ export function footerBlockedReason(s: AppState): string | null {
   return null;
 }
 
+/** The persistent daily LLM call allowance (backend MAX_CALLS_PER_RUN). Reads
+    only the existing `s.ledger` — no extra fetch, no billing. It stays visible
+    outside the collapsed Capacity Details in every footer variant, shows the
+    accurate exhausted state, and states "unavailable" rather than inventing a
+    count when no ledger has loaded. */
+export function DayBudgetChip() {
+  const s = useAppState();
+  const ledger = s.ledger;
+  if (!ledger) {
+    return (
+      <span class="chip footer__budget" role="status" aria-label="Daily LLM call allowance">
+        Day budget: unavailable
+      </span>
+    );
+  }
+  const exhausted = ledger.remaining <= 0;
+  return (
+    <span
+      class={`chip footer__budget ${exhausted ? "chip--warn" : ""}`}
+      role="status"
+      aria-label="Daily LLM call allowance"
+    >
+      Day budget: {ledger.remaining}/{ledger.cap} calls left
+    </span>
+  );
+}
+
 /** U13: the Connections unsaved-changes bar. The count and names come from
     the Connections body over the in-module channel; the buttons only REQUEST
     save and discard, so the draft and its revision stay owned by the body. */
@@ -69,6 +98,7 @@ function ConnectionsBar() {
     <div class="footer__row">
       <div class="footer__left">
         <span class="footer__saved" role="status">{label}</span>
+        <DayBudgetChip />
       </div>
       <div class="footer__right">
         <button class="btn footer__discard" onClick={() => requestConnectionsDiscard()}>
@@ -108,7 +138,7 @@ export function Footer() {
   // U12: the Set up day footer is its own bar — the save state on the left and
   // Undo + the primary "Continue to tasks" on the right. Continue confirms the
   // day frame (existing day-setup contract) and advances the stepper to Plan
-  // tasks. No copy-prompt control exists anywhere (R20b).
+  // tasks. The Plan-only Copy prompt stays off this screen.
   if (onSetup && s.inputs) {
     return (
       <footer class="footer footer--setup" aria-label="Actions">
@@ -120,6 +150,7 @@ export function Footer() {
                 ? `Saved ${display12h(s.inputs.time.now)}`
                 : "Not saved yet"}
             </span>
+            <DayBudgetChip />
           </div>
           <div class="footer__right">
             <button class="footer__undo" onClick={() => requestSetupUndo()}>
@@ -153,10 +184,11 @@ export function Footer() {
             </button>
           )}
           {blocked && (
-            <span class="footer__blocked" role="status">
+            <span class="footer__blocked" role="status" title={blocked}>
               {blocked}
             </span>
           )}
+          <DayBudgetChip />
         </div>
         <div class="footer__right">
           <ActionDock />

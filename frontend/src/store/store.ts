@@ -218,6 +218,12 @@ export interface AppState {
   currentRunCalendarSkips: string[];
   shadow: ShadowDiff | null;
   shadowPhase: ShadowPhase;
+  /** Last preview-failure message (transient, session-only). A Build preview
+      that fails must not vanish silently: SHADOW_FAIL records the server/read
+      error here so alerts() surfaces it. Cleared by a retry, a successful
+      preview, a new sequence, drift invalidation, or a same-date restore —
+      never persisted (preview must rerun after any reload). */
+  shadowError: string | null;
   liveArmed: boolean; // second-click reveal (locked decision 9)
   commitPhase: CommitPhase;
   commitReport: CommitReport | null;
@@ -263,6 +269,10 @@ export interface AppState {
         (✎, duration-only fields) or "place" (start pre-focused). */
     editorIntent: "duration" | "place" | null;
     editorAnchor: string | null; // non-Calendar anchored editor target
+    /** Which anchored-editor field its opener wanted focused: "time" (Start)
+        or "duration" (the block stepper). Null keeps the default first-field
+        focus. Mirrors editorIntent for the item editor. */
+    editorAnchorIntent: "time" | "duration" | null;
     capacityDetail: boolean;
     /** T12e trim assist: ids excluded by the last Accept trim, held so Undo
         can re-include exactly that set. Today-only UI state, never persisted. */
@@ -310,6 +320,7 @@ export const initialState: AppState = {
   currentRunCalendarSkips: [],
   shadow: null,
   shadowPhase: "none",
+  shadowError: null,
   liveArmed: false,
   commitPhase: "idle",
   commitReport: null,
@@ -323,7 +334,7 @@ export const initialState: AppState = {
   refresh: { phase: "idle", error: null, lastRefreshed: null, summary: null, coverage: null },
   ledger: null,
   theme: "system",
-  ui: { screen: "plan", settingsPanel: null, settingsSection: null, setupOpen: false, capacitiesSettingsOpen: false, tagExclusionSettingsOpen: false, approvalOpen: false, editorItem: null, editorIntent: null, editorAnchor: null, capacityDetail: false, trimUndo: null },
+  ui: { screen: "plan", settingsPanel: null, settingsSection: null, setupOpen: false, capacitiesSettingsOpen: false, tagExclusionSettingsOpen: false, approvalOpen: false, editorItem: null, editorIntent: null, editorAnchor: null, editorAnchorIntent: null, capacityDetail: false, trimUndo: null },
 };
 
 export type Action =
@@ -453,10 +464,12 @@ export type Action =
     };
 
 /** Any staged-plan edit after a current shadow makes it stale + disarms live. */
-function staleShadow(s: AppState): Pick<AppState, "shadowPhase" | "liveArmed"> {
+function staleShadow(
+  s: AppState,
+): Pick<AppState, "shadowPhase" | "liveArmed" | "shadowError"> {
   return s.shadowPhase === "current" || s.shadowPhase === "loading"
-    ? { shadowPhase: "stale", liveArmed: false }
-    : { shadowPhase: s.shadowPhase, liveArmed: s.liveArmed };
+    ? { shadowPhase: "stale", liveArmed: false, shadowError: null }
+    : { shadowPhase: s.shadowPhase, liveArmed: s.liveArmed, shadowError: s.shadowError };
 }
 
 /** Sequence exists and this edit touches plan content → dirty (revalidate). */
@@ -725,6 +738,7 @@ export function reducer(s: AppState, a: Action): AppState {
         ledger: a.ledger,
         shadow: null,
         shadowPhase: "none",
+        shadowError: null,
         liveArmed: false,
       };
     }
@@ -814,11 +828,13 @@ export function reducer(s: AppState, a: Action): AppState {
         driftNotice: a.validation.ok ? null : s.driftNotice,
       };
     case "SHADOW_START":
-      return { ...s, shadowPhase: "loading", liveArmed: false };
+      return { ...s, shadowPhase: "loading", liveArmed: false, shadowError: null };
     case "SHADOW_OK":
-      return { ...s, shadow: a.shadow, shadowPhase: "current" };
+      return { ...s, shadow: a.shadow, shadowPhase: "current", shadowError: null };
     case "SHADOW_FAIL":
-      return { ...s, shadowPhase: "none", liveArmed: false };
+      // A failed preview is not a silent no-op: keep the message visible until
+      // the next attempt, success, new plan, or drift invalidation clears it.
+      return { ...s, shadowPhase: "none", liveArmed: false, shadowError: a.error };
     case "FINGERPRINT_MISMATCH":
       // External drift: staged sequence + shadow are no longer trustworthy
       // (locked decision 17). Requires resequence or manual revalidation.
@@ -836,6 +852,7 @@ export function reducer(s: AppState, a: Action): AppState {
         pendingPinnedRows: [],
         shadow: null,
         shadowPhase: "none",
+        shadowError: null,
         liveArmed: false,
         acceptedDefects: null,
         driftNotice:
@@ -981,6 +998,7 @@ export function reducer(s: AppState, a: Action): AppState {
         validation: null,
         shadow: null,
         shadowPhase: "none",
+        shadowError: null,
         liveArmed: false,
       };
     case "SOURCE_REFRESH_START":
@@ -1069,6 +1087,7 @@ export function reducer(s: AppState, a: Action): AppState {
           planningConfigFingerprint: null,
           shadow: null,
           shadowPhase: "none",
+          shadowError: null,
           liveArmed: false,
           acceptedDefects: null,
           driftNotice:
@@ -1459,6 +1478,7 @@ export interface Alert {
 export function alerts(s: AppState): Alert[] {
   const out: Alert[] = [];
   if (s.driftNotice) out.push({ level: "error", text: s.driftNotice });
+  if (s.shadowError) out.push({ level: "error", text: s.shadowError });
   for (const w of s.inputs?.sourceWarnings ?? [])
     out.push({ level: "warning", text: w });
   for (const e of s.validation?.hardErrors ?? [])

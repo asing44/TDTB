@@ -432,6 +432,69 @@ describe("alerts roll-up", () => {
   });
 });
 
+describe("shadow preview failure visibility (2026-10-13)", () => {
+  it("SHADOW_FAIL records the message and alerts() surfaces it as a blocking issue", () => {
+    let s = sequenced();
+    s = reducer(s, { type: "SHADOW_FAIL", error: "Preview failed: calendar source read failed" });
+    expect(s.shadowPhase).toBe("none");
+    expect(s.shadowError).toBe("Preview failed: calendar source read failed");
+    expect(alerts(s)).toContainEqual({
+      level: "error",
+      text: "Preview failed: calendar source read failed",
+    });
+  });
+
+  it("a retry (SHADOW_START) clears the stale preview error before the new attempt", () => {
+    let s = reducer(sequenced(), { type: "SHADOW_FAIL", error: "boom" });
+    s = reducer(s, { type: "SHADOW_START" });
+    expect(s.shadowError).toBeNull();
+    expect(alerts(s).some((a) => a.text === "boom")).toBe(false);
+  });
+
+  it("a successful preview (SHADOW_OK) clears the stale preview error", () => {
+    const sc = makeScenario("commit-preview");
+    let s = reducer(sequenced(), { type: "SHADOW_FAIL", error: "boom" });
+    s = reducer(s, { type: "SHADOW_OK", shadow: sc.shadow });
+    expect(s.shadowError).toBeNull();
+    expect(alerts(s).some((a) => a.text === "boom")).toBe(false);
+  });
+
+  it("a new plan (SEQUENCE_OK) clears the stale preview error", () => {
+    const sc = makeScenario("ready");
+    let s = reducer(sequenced(), { type: "SHADOW_FAIL", error: "boom" });
+    s = reducer(s, {
+      type: "SEQUENCE_OK",
+      sequence: sc.proposal!.sequence as SequenceRow[],
+      warnings: [],
+      fingerprint: "fp2",
+      anchoredSourceFingerprint: sc.inputs.anchoredSourceFingerprint,
+      ledger,
+    });
+    expect(s.shadowError).toBeNull();
+  });
+
+  it("drift invalidation (FINGERPRINT_MISMATCH) clears the stale preview error", () => {
+    let s = reducer(sequenced(), { type: "SHADOW_FAIL", error: "boom" });
+    s = reducer(s, { type: "FINGERPRINT_MISMATCH" });
+    expect(s.shadowError).toBeNull();
+    expect(s.driftNotice).not.toBeNull();
+  });
+
+  it("a same-date session restore never rehydrates a preview error", () => {
+    let s = reducer(sequenced(), { type: "SHADOW_FAIL", error: "boom" });
+    s = reducer(s, {
+      type: "SESSION_RESTORED",
+      overrides: {},
+      placements: {},
+      sequence: s.sequence,
+      fingerprint: s.fingerprint,
+      anchoredSourceFingerprint: s.anchoredSourceFingerprint,
+    });
+    expect(s.shadowError).toBeNull();
+    expect(alerts(s).some((a) => a.text === "boom")).toBe(false);
+  });
+});
+
 describe("sequence rows from proposal", () => {
   it("SEQUENCE_OK resets any prior shadow", () => {
     let s = shadowed();

@@ -1,7 +1,7 @@
 /* U12 Morning prompts card. Re-homes the existing Live micro-adventure picker
    and the three optional prompt drafts with their U5 opt-ins and save state.
-   No copy-prompt control exists anywhere (R20b, retired in U5), and no prompt
-   text renders outside this card. */
+   The Plan-only copy-prompt fallback stays off this screen (R20b), and no
+   prompt text renders outside this card. */
 
 import { useState } from "preact/hooks";
 

@@ -1,4 +1,4 @@
-import { useState } from "preact/hooks";
+import { useEffect, useRef, useState } from "preact/hooks";
 import { anchoredBlocks, anchoredOverrideOf, validateAnchoredOverride } from "../model/anchored";
 import { display12h, formatBlockAmount } from "../model/time";
 import { useApp, useAppState } from "./context";
@@ -16,8 +16,22 @@ export function AnchoredEditor() {
   // so the skip/on choice belongs here too.
   const [skip, setSkip] = useState(initial ? !initial.on || initial.skipToday : false);
   const [saving, setSaving] = useState(false);
-  const close = () => store.dispatch({ type: "UI", patch: { editorAnchor: null } });
+  // The opener may ask for a specific field: the chip's Adjust time focuses the
+  // Start input, Adjust duration the block stepper. Default focus stays with
+  // useDialog's first-focusable behaviour.
+  const intent = s.ui.editorAnchorIntent;
+  const startRef = useRef<HTMLInputElement>(null);
+  const durationRef = useRef<HTMLDivElement>(null);
+  const close = () =>
+    store.dispatch({ type: "UI", patch: { editorAnchor: null, editorAnchorIntent: null } });
   const dialog = useDialog(close);
+  // Declared after useDialog so it runs last and wins the mount focus.
+  useEffect(() => {
+    if (intent === "duration") durationRef.current?.focus();
+    else if (intent === "time") startRef.current?.focus();
+    // Intent is read once on mount; the dialog is keyed by anchor id.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   if (!id || !block || !initial || !s.inputs) return null;
   const override = { ...initial, time: start, blocks, on: !skip, skipToday: skip };
@@ -51,12 +65,13 @@ export function AnchoredEditor() {
             type="time"
             step={1800}
             value={start}
+            ref={startRef}
             onInput={(e) => setStart((e.target as HTMLInputElement).value)}
           />
         </div>
         <div class="field">
           <label>Duration</label>
-          <div class="stepper">
+          <div class="stepper" ref={durationRef} role="group" aria-label="Anchored duration" tabIndex={-1}>
             <button
               type="button"
               onClick={() => setBlocks((b) => Math.max(0, b - 1))}

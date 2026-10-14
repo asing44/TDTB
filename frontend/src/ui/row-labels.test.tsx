@@ -11,6 +11,7 @@ import { cleanup, waitFor } from "@testing-library/preact";
 afterEach(cleanup);
 
 import { Queue, kindLabel, sourceChip } from "./Queue";
+import { projectAssigned } from "../adapters/wire";
 import { makeHarness } from "./test-harness";
 import type { AssignedItem } from "../model/types";
 
@@ -52,6 +53,10 @@ describe("sourceChip: the provenance vocabulary", () => {
       key: "capacities",
       label: "CAPACITIES",
     });
+    expect(sourceChip(item({ source: "calendar" }))).toEqual({
+      key: "calendar",
+      label: "CALENDAR",
+    });
     expect(sourceChip(item({ source: "legacy" as never }))).toEqual({
       key: "other",
       label: "OTHER",
@@ -90,6 +95,32 @@ describe("rendered rows carry the clearer labels", () => {
     const todoistRow = rowNamed(container, "Review AWS module 4");
     expect(todoistRow.querySelector(".qrow__src--todoist")).toBeTruthy();
     expect(todoistRow.querySelector(".qrow__type")).toBeNull();
+  });
+
+  it("renders a projected calendar row with the CALENDAR chip", () => {
+    // Unit 3: the chip mapping already knew CALENDAR, but a row reached it as
+    // an unidentified Todoist-like row until projectAssigned kept the source.
+    const h = makeHarness("ready");
+    const inputs = structuredClone(h.store.getState().inputs!);
+    inputs.assigned.push(
+      projectAssigned({
+        name: "Team offsite",
+        source: "calendar",
+        assigned: true,
+        blocks: 1,
+        identity: "calendar:ev-1:2026-10-13",
+        path: "calendar://ev-1/2026-10-13",
+        event_id: "ev-1",
+        calendar_id: "cal-1",
+        calendar_title: "Evan & Nate",
+      }),
+    );
+    h.store.dispatch({ type: "INPUTS_LOADED", inputs, ledger: { ...h.scenario.ledger } });
+    const { container } = h.ui(<Queue />);
+    const row = rowNamed(container, "Team offsite");
+    expect(row.querySelector(".qrow__src--calendar")?.textContent).toBe("CALENDAR");
+    // A calendar row carries no Capacities-style KIND chip.
+    expect(row.querySelector(".qrow__type")).toBeNull();
   });
 
   it("resolves a Capacities structure title from the machine-local cache", async () => {

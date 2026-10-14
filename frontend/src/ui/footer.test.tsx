@@ -1,24 +1,41 @@
 /* U7 page frame — one footer owns the back link, the blocked reason, and the
-   primary action. No copy-prompt exists (R20b, retired in U5); every existing
+   primary action. The Plan-only "Copy prompt" fallback is restored (R20b) and
+   the daily LLM call allowance is visible in all three footers; every existing
    safety gate is preserved. */
 
 import { afterEach, describe, expect, it } from "vitest";
-import { cleanup, fireEvent } from "@testing-library/preact";
+import { cleanup, fireEvent, render } from "@testing-library/preact";
 import { makeHarness } from "./test-harness";
 import { Footer } from "./Footer";
+import { Ctx } from "./context";
+import { createStore, type Store } from "../store/createStore";
+import { Controller } from "../store/controller";
+import { FixtureAdapter } from "../adapters/fixture";
 import { sourceHealthOf } from "../adapters/wire";
+
+function renderFooterWithStore(store: Store) {
+  const controller = new Controller(new FixtureAdapter("ready"), store.dispatch, store.getState);
+  return render(
+    <Ctx.Provider value={{ store, controller }}>
+      <Footer />
+    </Ctx.Provider>,
+  );
+}
 
 afterEach(() => cleanup());
 
 describe("U7 footer", () => {
-  it("shows the blocked reason and no copy-prompt when sources are degraded", () => {
+  it("shows the blocked reason and keeps the Plan-only Copy prompt when sources are degraded", () => {
     const h = makeHarness("ready", (sc) => {
       sc.inputs.sourceHealth = "degraded";
     });
     const r = h.ui(<Footer />);
     expect(r.getByText(/Can't sequence until sources are healthy\./)).toBeTruthy();
-    expect(r.queryByText(/copy prompt/i)).toBeNull();
-    expect(r.queryByRole("button", { name: /copy prompt/i })).toBeNull();
+    // The Plan footer keeps the copy fallback available while degraded, and
+    // the source-health alert itself stays truthful (it does not advertise it).
+    expect(
+      r.getByRole("button", { name: "Copy plan prompt for an external LLM" }),
+    ).toBeTruthy();
   });
 
   it("enables the primary action with its billed-call note when healthy and sequenceable", () => {
@@ -28,7 +45,7 @@ describe("U7 footer", () => {
       .getByText(/^Sequence & commit \d+ blk$/)
       .closest("button") as HTMLButtonElement;
     expect(primary.disabled).toBe(false);
-    expect(r.getByText(/1 billed call · 4 left today/)).toBeTruthy();
+    expect(r.getByText("1 billed call")).toBeTruthy();
     expect(r.container.querySelector(".footer__blocked")).toBeNull();
   });
 
@@ -71,5 +88,53 @@ describe("U7 footer", () => {
     h.store.dispatch({ type: "UI", patch: { screen: "connections" } });
     const r = h.ui(<Footer />);
     expect(r.queryByRole("button", { name: "← Day setup" })).toBeNull();
+  });
+
+  it("keeps the Plan-only Copy prompt off the Set up day and Connections footers", () => {
+    for (const screen of ["setup", "connections"] as const) {
+      const h = makeHarness("ready");
+      h.store.dispatch({ type: "UI", patch: { screen } });
+      const r = h.ui(<Footer />);
+      expect(
+        r.queryByRole("button", { name: "Copy plan prompt for an external LLM" }),
+      ).toBeNull();
+      r.unmount();
+    }
+  });
+});
+
+describe("Day budget allowance", () => {
+  it("shows the ledger allowance on the Plan footer", () => {
+    const h = makeHarness("ready");
+    const r = h.ui(<Footer />);
+    expect(r.getByText("Day budget: 4/4 calls left")).toBeTruthy();
+  });
+
+  it("shows the exhausted state accurately in the warn style", () => {
+    const h = makeHarness("ready", (sc) => {
+      sc.ledger = { ...sc.ledger, spent: 4, remaining: 0 };
+    });
+    const r = h.ui(<Footer />);
+    const chip = r.getByText("Day budget: 0/4 calls left");
+    expect(chip.className).toContain("chip--warn");
+  });
+
+  it("shows the allowance on the Set up day footer", () => {
+    const h = makeHarness("ready");
+    h.store.dispatch({ type: "UI", patch: { screen: "setup" } });
+    const r = h.ui(<Footer />);
+    expect(r.getByText("Day budget: 4/4 calls left")).toBeTruthy();
+  });
+
+  it("shows the allowance on the Connections footer", () => {
+    const h = makeHarness("ready");
+    h.store.dispatch({ type: "UI", patch: { screen: "connections" } });
+    const r = h.ui(<Footer />);
+    expect(r.getByText("Day budget: 4/4 calls left")).toBeTruthy();
+  });
+
+  it("states unavailable rather than inventing a count when there is no ledger", () => {
+    const r = renderFooterWithStore(createStore());
+    expect(r.getByText("Day budget: unavailable")).toBeTruthy();
   });
 });

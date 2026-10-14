@@ -103,7 +103,7 @@ describe("U12 Set up day composition", () => {
     expect(el.classList.contains("strip-cal--work")).toBe(true);
   });
 
-  it("keeps every prompt textarea inside the Morning prompts card and ships no copy-prompt", () => {
+  it("keeps every prompt textarea inside the Morning prompts card, with the Plan-only copy prompt off this screen", () => {
     const h = screenHarness();
     const r = h.ui(<App />);
     const prompts = r.container.querySelector('[data-settings-section="prompts"]') as HTMLElement;
@@ -507,5 +507,58 @@ describe("anchor move and save to config", () => {
     drag(strip(r, "Sudsing"), 30);
     await vi.waitFor(() => expect(savedTime(h, "Sudsing")).toBe("18:15"));
     expect(save).not.toHaveBeenCalled();
+  });
+});
+
+describe("per-anchor icon actions on the anchors card", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it("Skip today writes the same override the anchored editor's toggle applies", async () => {
+    const h = screenHarness();
+    const save = vi.spyOn(h.controller, "saveAnchoredOverride");
+    const r = h.ui(<App />);
+    fireEvent.click(r.getByRole("button", { name: "Skip Sudsing today" }));
+    await vi.waitFor(() => expect(save).toHaveBeenCalledTimes(1));
+    expect(save.mock.calls[0][0]).toBe("Sudsing");
+    expect(save.mock.calls[0][1]).toMatchObject({ on: false, skipToday: true });
+  });
+
+  it("Include today on a skipped chip flips the same override back on", async () => {
+    const h = screenHarness();
+    h.store.dispatch({
+      type: "SETUP_SAVED",
+      daySetup: {
+        ...h.store.getState().daySetup,
+        anchored: {
+          ...h.store.getState().daySetup.anchored,
+          Sudsing: { on: false, skipToday: true, time: null, blocks: null },
+        },
+      },
+    });
+    const save = vi.spyOn(h.controller, "saveAnchoredOverride");
+    const r = h.ui(<App />);
+    fireEvent.click(r.getByRole("button", { name: "Include Sudsing today" }));
+    await vi.waitFor(() => expect(save).toHaveBeenCalledTimes(1));
+    expect(save.mock.calls[0][1]).toMatchObject({ on: true, skipToday: false });
+  });
+
+  it("Adjust time opens the shared editor with the Start field focused", () => {
+    const h = screenHarness();
+    const r = h.ui(<App />);
+    fireEvent.click(r.getByRole("button", { name: "Adjust time for Sudsing" }));
+    expect(h.store.getState().ui.editorAnchor).toBe("Sudsing");
+    expect(h.store.getState().ui.editorAnchorIntent).toBe("time");
+    expect(document.activeElement?.getAttribute("aria-label")).toBe("Anchored start");
+  });
+
+  it("Adjust duration opens the shared editor with the duration stepper focused", () => {
+    const h = screenHarness();
+    const r = h.ui(<App />);
+    fireEvent.click(r.getByRole("button", { name: "Adjust duration for Sudsing" }));
+    expect(h.store.getState().ui.editorAnchor).toBe("Sudsing");
+    expect(h.store.getState().ui.editorAnchorIntent).toBe("duration");
+    expect(document.activeElement?.getAttribute("aria-label")).toBe(
+      "Anchored duration",
+    );
   });
 });

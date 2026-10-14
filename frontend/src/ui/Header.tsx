@@ -185,7 +185,7 @@ export function Header() {
           title={pillHint}
           aria-label={pillHint}
         >
-          {pillText}
+          <span class="health-pill__text">{pillText}</span>
         </span>
         {pillState === "degraded" && (
           <button

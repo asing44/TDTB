@@ -65,6 +65,7 @@ import type { AssignedItem } from "../model/types";
 import { CalendarImpact } from "./CalendarImpact";
 import { CapacityCard } from "./CapacityCard";
 import { Tooltip } from "./Tooltip";
+import { RowIcon } from "./RowIcon";
 
 /** U11 labeling pass: the row's provenance as a chip a scan can read without
     parsing a sentence — TODOIST / CAPACITIES (plus the CALENDAR
@@ -185,7 +186,7 @@ function StagingVerbs({ item, busy }: { item: AssignedItem; busy: boolean }) {
             }}
             onBlur={() => armed && setConfirming(null)}
           >
-            {armed ? "Sure?" : <><span>{spec.label}</span><span class="alloc-verb__detail">{spec.detail}</span></>}
+            {armed ? "Sure?" : <RowIcon name={spec.verb === "done" ? "check" : "undo"} />}
           </button>
           </Tooltip>
         );
@@ -266,6 +267,7 @@ function MoreMenu({
         label="More"
         detail="Remove from planning, Delete, adjust time, unschedule."
         align="end"
+        suppress={open}
       >
       <button
         ref={triggerRef}
@@ -280,7 +282,7 @@ function MoreMenu({
           setConfirming(null);
         }}
       >
-        More
+        <RowIcon name="ellipsis" />
       </button>
       </Tooltip>
       {open && (
@@ -760,12 +762,7 @@ function Row({
               aria-label={`${included ? "Exclude" : "Include"} ${item.name} today`}
               onClick={() => controller.setOverride(item.id, !included, s.overrides[item.id]?.blocks ?? null)}
             >
-              <span class="planbtn__label">
-                {included ? "Exclude today" : "Include today"}
-              </span>
-              <span class="planbtn__detail">
-                today only · reversible · source unchanged
-              </span>
+              <RowIcon name={included ? "eye-off" : "eye"} />
             </button>
           </Tooltip>
           {/* T7: fine shaping on EVERY included row — the slider's 30-minute
@@ -787,10 +784,7 @@ function Row({
                   })
                 }
               >
-                <span class="planbtn__label">Exact duration</span>
-                <span class="planbtn__detail">
-                  today only · source unchanged
-                </span>
+                <RowIcon name="clock" />
               </button>
             </Tooltip>
           )}

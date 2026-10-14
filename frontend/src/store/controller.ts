@@ -812,14 +812,30 @@ export class Controller {
     }
   }
 
-  /** Deterministic revalidation (free) — after placement edits or exclusions. */
+  /** Deterministic revalidation (free) — after placement edits or exclusions.
+      A rejected validate call must not vanish as an unhandled rejection: it is
+      surfaced as a visible invalid validation so the plan stays dirty and the
+      user sees why. A superseded rejection is ignored exactly like a
+      superseded success — only the newest request may write state. */
   async revalidate(): Promise<void> {
     const s = this.getState();
     if (!s.sequence || s.sequence.every((r) => r.kind === "zone")) return;
     const token = ++this.revalidateToken;
-    const validation = await this.adapter.validateSequence(s.sequence, this.sequenceContext());
-    if (token !== this.revalidateToken) return; // superseded by a newer edit
-    this.dispatch({ type: "VALIDATED", validation });
+    try {
+      const validation = await this.adapter.validateSequence(s.sequence, this.sequenceContext());
+      if (token !== this.revalidateToken) return; // superseded by a newer edit
+      this.dispatch({ type: "VALIDATED", validation });
+    } catch (e) {
+      if (token !== this.revalidateToken) return; // superseded failure — ignore
+      this.dispatch({
+        type: "VALIDATED",
+        validation: {
+          ok: false,
+          hardErrors: [`Revalidation failed: ${String(e instanceof Error ? e.message : e)}`],
+          warnings: [],
+        },
+      });
+    }
   }
 
   moveRow(id: string, start: string): void {

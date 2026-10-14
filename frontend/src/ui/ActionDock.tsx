@@ -3,6 +3,7 @@
    deterministic recovery path. Live commit never appears here — it lives
    behind the approval drawer's second gate. */
 
+import { useState } from "preact/hooks";
 import { useApp, useAppState } from "./context";
 import {
   acceptableDefects,
@@ -12,11 +13,67 @@ import {
   dockState,
 } from "../store/store";
 import { budgetTotal, localSelected } from "../store/allocatorView";
+import { buildDayPrompt } from "../store/exportPrompt";
 import { formatBlockAmount } from "../model/time";
 
-/* U5: the retired manual prompt-export bypass is disabled. Prompts are private
-   local state; the ONLY path to Todoist is an opted-in Commit, so the dock
-   states that instead of offering a copy shortcut. */
+/* R20b (restored): the Plan screen keeps a pure-local "Copy prompt" fallback
+   that serializes today's plan for an external LLM. It is NOT the opt-in
+   prompt-task export, which remains Commit-only, and it never writes to
+   Todoist, Calendar, or the ledger. */
+function CopyPromptButton() {
+  const s = useAppState();
+  const [status, setStatus] = useState<"idle" | "copied" | "unavailable">("idle");
+  const [fallbackPrompt, setFallbackPrompt] = useState("");
+
+  const copy = async () => {
+    const text = buildDayPrompt(s);
+    try {
+      if (typeof navigator.clipboard?.writeText === "function") {
+        await navigator.clipboard.writeText(text);
+        setFallbackPrompt("");
+        setStatus("copied");
+        setTimeout(() => setStatus("idle"), 2000);
+        return;
+      }
+    } catch {
+      // Rejected or unavailable clipboard falls through to the readable
+      // fallback below — never an unhandled rejection, never a success lie.
+    }
+    setFallbackPrompt(text);
+    setStatus("unavailable");
+  };
+
+  return (
+    <>
+      <button
+        class="btn"
+        onClick={() => void copy()}
+        aria-label="Copy plan prompt for an external LLM"
+        title="local plan context · export stays Commit-only"
+      >
+        Copy prompt
+        <span class="btn__sub">local plan context · export stays Commit-only</span>
+      </button>
+      {status === "copied" && (
+        <span class="copy-prompt-status" role="status">
+          Copied to clipboard
+        </span>
+      )}
+      {status === "unavailable" && (
+        <div class="copy-prompt-fallback" role="alert">
+          <span>Clipboard unavailable — select the prompt below</span>
+          <textarea
+            aria-label="Prompt text to copy manually"
+            value={fallbackPrompt}
+            readOnly
+            onFocus={(event) => event.currentTarget.select()}
+            onClick={(event) => event.currentTarget.select()}
+          />
+        </div>
+      )}
+    </>
+  );
+}
 export function ActionDock() {
   const s = useAppState();
   const { controller, store } = useApp();
@@ -80,8 +137,9 @@ export function ActionDock() {
       )}
 
       <div class="dock__controls">
+        <CopyPromptButton />
         <span class="dock__prompt-note" role="note">
-          Prompts stay local; opted-in prompts export on Commit only.
+          Copy prompt shares this plan locally; opt-in prompt tasks still export on Commit only.
         </span>
 
       {/* Day setup reaches the frame, allotment, anchored blocks and the Live
@@ -125,7 +183,11 @@ export function ActionDock() {
       {(state === "sequence" || state === "fix" || state === "budget-manual") && (
         <>
           {s.sequence && s.seqPhase === "dirty" && (
-            <button class="btn" onClick={() => void controller.revalidate()}>
+            <button
+              class="btn"
+              onClick={() => void controller.revalidate()}
+              title="deterministic · free"
+            >
               Revalidate
               <span class="btn__sub">deterministic · free</span>
             </button>
@@ -143,9 +205,7 @@ export function ActionDock() {
             }
           >
             Sequence & commit {formatBlockAmount(spend)}
-            <span class="btn__sub">
-              1 billed call · {s.ledger?.remaining ?? 0} left today
-            </span>
+            <span class="btn__sub">1 billed call</span>
           </button>
         </>
       )}

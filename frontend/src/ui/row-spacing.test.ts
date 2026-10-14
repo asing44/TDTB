@@ -92,11 +92,25 @@ describe("queue controls stay inside the viewport", () => {
   });
 
   it("switches to full-width two-column rows before the narrow phone layout", () => {
+    // Phone width still moves the whole cluster onto its own full-width line.
     expect(appCss).toMatch(
-      /@media\s*\(max-width:\s*1100px\)[\s\S]*\.qrow__actions\s*\{[^}]*grid-column:\s*1\s*\/\s*-1/,
+      /@media\s*\(max-width:\s*767px\)[\s\S]*\.qrow__actions\s*\{[^}]*grid-column:\s*1\s*\/\s*-1/,
     );
     expect(appCss).toMatch(
-      /@media\s*\(max-width:\s*1100px\)[\s\S]*\.qrow__time\s*\{[^}]*grid-column:\s*2/,
+      /@media\s*\(max-width:\s*767px\)[\s\S]*\.qrow__time\s*\{[^}]*grid-column:\s*2/,
+    );
+  });
+
+  it("compacts the tablet row to a named two-line grid (2026-10-13)", () => {
+    // 768-1100px: the old four-line stack (title/source, due, time, actions)
+    // measured ~190px; the bolder pass re-templates it to
+    // stripe | body | due / stripe | actions | time and folds the readout
+    // inline. See row-compact-1100.test.ts for the full contract.
+    expect(appCss).toMatch(
+      /@media\s*\(min-width:\s*768px\)\s*and\s*\(max-width:\s*1100px\)[\s\S]*?\.qrow\s*\{[\s\S]*?grid-template-areas:[\s\S]*?"stripe body due"[\s\S]*?"stripe actions time"/,
+    );
+    expect(appCss).toMatch(
+      /@media\s*\(min-width:\s*768px\)\s*and\s*\(max-width:\s*1100px\)[\s\S]*?\.qrow__time\s*\{[^}]*flex-direction:\s*row/,
     );
   });
 });

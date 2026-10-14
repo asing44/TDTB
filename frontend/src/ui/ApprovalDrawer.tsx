@@ -6,7 +6,7 @@
 import { useState } from "preact/hooks";
 import { useApp, useAppState } from "./context";
 import { useDialog } from "./useDialog";
-import { canLiveCommit, shadowBlockers } from "../store/store";
+import { canLiveCommit, canShadow, shadowBlockers } from "../store/store";
 import { display12h } from "../model/time";
 import type { PromptExportOutcome, ShadowEntry } from "../model/types";
 
@@ -161,11 +161,16 @@ export function ApprovalDrawer() {
             preview exists — say what to do instead of rendering an empty
             panel. */}
         {!shadow && !committed && (
-          <div class="alerts__item">
+          <div class="alerts__item drawer-empty">
             <span aria-hidden="true">ℹ</span>
-            <span>
-              Run Preview commit from the dock to build the exact-writes preview.
-            </span>
+            <span>No preview yet. Build one to see the exact writes.</span>
+            <button
+              class="btn drawer-empty__build"
+              onClick={() => void controller.shadowPreview()}
+              disabled={!canShadow(s)}
+            >
+              Build preview
+            </button>
           </div>
         )}
 

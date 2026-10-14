@@ -90,3 +90,62 @@ describe("AnchorsCard time controls", () => {
     expect(onSaveTime).toHaveBeenCalledWith("Sudsing");
   });
 });
+
+describe("AnchorsCard per-anchor icon actions", () => {
+  it("shows Skip / Adjust time / Adjust duration icon buttons on a counted chip", () => {
+    const { r } = setup(clean);
+    const skip = r.getByRole("button", { name: "Skip Sudsing today" });
+    expect(skip.querySelector("svg")).toBeTruthy();
+    expect(
+      r.getByRole("button", { name: "Adjust time for Sudsing" }).querySelector("svg"),
+    ).toBeTruthy();
+    expect(
+      r.getByRole("button", { name: "Adjust duration for Sudsing" }).querySelector("svg"),
+    ).toBeTruthy();
+  });
+
+  it("shows the label + detail tooltip when an action gains focus", () => {
+    const { r } = setup(clean);
+    const skip = r.getByRole("button", { name: "Skip Sudsing today" });
+    fireEvent.focus(skip);
+    const bubble = skip.parentElement?.querySelector('[role="tooltip"]');
+    expect(bubble?.textContent).toContain("Skip today");
+    expect(bubble?.textContent).toContain("reversible");
+  });
+
+  it("toggles today through the supplied callback without opening the editor", () => {
+    const onToggleSkip = vi.fn();
+    const { r, onEdit } = setup(clean, { onToggleSkip });
+    fireEvent.click(r.getByRole("button", { name: "Skip Sudsing today" }));
+    expect(onToggleSkip).toHaveBeenCalledWith("Sudsing");
+    expect(onEdit).not.toHaveBeenCalled();
+  });
+
+  it("offers Include today on a skipped not-counted chip", () => {
+    const onToggleSkip = vi.fn();
+    const r = render(
+      <AnchorsCard
+        counted={[]}
+        notCounted={[{
+          id: "Sudsing", name: "Sudsing", time: "06:00", reason: "skipped",
+          skipped: true,
+        }]}
+        onEdit={() => {}}
+        onToggleSkip={onToggleSkip}
+      />,
+    );
+    fireEvent.click(r.getByRole("button", { name: "Include Sudsing today" }));
+    expect(onToggleSkip).toHaveBeenCalledWith("Sudsing");
+  });
+
+  it("routes Adjust time and Adjust duration to their own callbacks", () => {
+    const onAdjustTime = vi.fn();
+    const onAdjustDuration = vi.fn();
+    const { r, onEdit } = setup(clean, { onAdjustTime, onAdjustDuration });
+    fireEvent.click(r.getByRole("button", { name: "Adjust time for Sudsing" }));
+    expect(onAdjustTime).toHaveBeenCalledWith("Sudsing");
+    fireEvent.click(r.getByRole("button", { name: "Adjust duration for Sudsing" }));
+    expect(onAdjustDuration).toHaveBeenCalledWith("Sudsing");
+    expect(onEdit).not.toHaveBeenCalled();
+  });
+});

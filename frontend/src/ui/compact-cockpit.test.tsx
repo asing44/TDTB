@@ -197,12 +197,13 @@ describe("compact planning cockpit", () => {
 
     expect(sequence.disabled).toBe(true);
     expect(r.getByRole("alert").textContent).toMatch(/Sources degraded — sequencing and commit are blocked until the read is healthy\./);
-    // The alert must not advertise the retired copy-prompt fallback.
+    // The source-health alert stays truthful — it does not advertise the
+    // Plan-only copy fallback.
     expect(r.getByRole("alert").textContent).not.toMatch(/copy prompt|fallback/i);
-    // U5: the manual copy-prompt bypass is retired; the dock states that
-    // prompts stay local and export only on an opted-in Commit.
-    expect(r.queryByRole("button", { name: "Copy plan prompt for an external LLM" })).toBeNull();
-    expect(r.getByText(/export on Commit only/)).toBeTruthy();
+    // R20b: the Plan-only copy fallback is restored while degraded; the note
+    // keeps it distinct from the opt-in prompt-task export (Commit-only).
+    expect(r.getByRole("button", { name: "Copy plan prompt for an external LLM" })).toBeTruthy();
+    expect(r.getByText(/Commit-only/)).toBeTruthy();
   });
 
   it("does not block sequencing when the only warnings are skipped Capacities objects", () => {

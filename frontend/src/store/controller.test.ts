@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { createStore } from "./createStore";
 import { Controller } from "./controller";
 import { FixtureAdapter } from "../adapters/fixture";
-import { canLiveCommit, defectsResolved, dockState, effectiveAnchoredBlocks, sourceHealthBlocked } from "./store";
+import { alerts, canLiveCommit, defectsResolved, dockState, effectiveAnchoredBlocks, sourceHealthBlocked } from "./store";
 import { calendarWalls, mintWalls } from "../model/overflow";
 import { ApiError } from "../adapters/api";
 import type { ScenarioName } from "../fixtures/scenarios";
@@ -629,6 +629,101 @@ describe("out-of-order response guard", () => {
     const s = store.getState();
     expect(s.validation?.hardErrors ?? []).not.toContain("stale response — must be dropped");
   });
+});
+
+describe("preview / revalidation error visibility (2026-10-13)", () => {
+  /** Fully staged, acceptable-defect-accepted plan — the state a Build
+      preview / Revalidate click actually starts from. */
+  async function stagedHarness() {
+    const h = harness("ready");
+    await h.controller.load();
+    await h.controller.saveDaySetup({ ...h.store.getState().daySetup, confirmed: true });
+    await h.controller.autoSequence();
+    h.store.dispatch({ type: "ACCEPT_DEFECTS" });
+    return h;
+  }
+
+  it("a fixed-source read failure during preview surfaces shadowError with zero billed/source calls", async () => {
+    const { store, adapter, controller } = await stagedHarness();
+    adapter.simulateSourceFailure();
+    const billed = vi.spyOn(adapter, "autoSequence");
+    const shadow = vi.spyOn(adapter, "shadowCommit");
+
+    await controller.shadowPreview();
+
+    const s = store.getState();
+    expect(s.shadowPhase).toBe("none");
+    expect(s.shadowError ?? "").toContain("calendar source read failed");
+    expect(
+      alerts(s).some((a) => a.level === "error" && a.text.includes("calendar source read failed")),
+    ).toBe(true);
+    expect(shadow).not.toHaveBeenCalled();
+    expect(billed).not.toHaveBeenCalled();
+  }, 15000);
+
+  it("a failing preview is visible; a retry clears it and a success restores current", async () => {
+    const { store, adapter, controller } = await stagedHarness();
+    vi.spyOn(adapter, "shadowCommit").mockRejectedValueOnce(new Error("preview endpoint down"));
+
+    await controller.shadowPreview();
+    expect(store.getState().shadowPhase).toBe("none");
+    expect(store.getState().shadowError).toContain("preview endpoint down");
+    expect(alerts(store.getState()).some((a) => a.text.includes("preview endpoint down"))).toBe(true);
+
+    await controller.shadowPreview();
+    expect(store.getState().shadowPhase).toBe("current");
+    expect(store.getState().shadowError).toBeNull();
+    expect(alerts(store.getState()).some((a) => a.text.includes("preview endpoint down"))).toBe(false);
+  }, 15000);
+
+  it("a rejected revalidation is a visible invalid validation, not an unhandled rejection", async () => {
+    const { store, adapter, controller } = await stagedHarness();
+    vi.spyOn(adapter, "validateSequence").mockRejectedValueOnce(new Error("validate endpoint down"));
+    const billed = vi.spyOn(adapter, "autoSequence");
+
+    await controller.revalidate();
+
+    const s = store.getState();
+    expect(s.validation?.ok).toBe(false);
+    expect(s.validation?.hardErrors).toEqual(["Revalidation failed: validate endpoint down"]);
+    expect(s.seqPhase).toBe("dirty");
+    expect(alerts(s).some((a) => a.level === "error" && a.text.includes("Revalidation failed"))).toBe(true);
+    expect(billed).not.toHaveBeenCalled();
+  }, 15000);
+
+  it("a superseded revalidation rejection never overwrites a newer success", async () => {
+    const { store, adapter, controller } = await stagedHarness();
+    const real = adapter.validateSequence.bind(adapter);
+    let call = 0;
+    vi.spyOn(adapter, "validateSequence").mockImplementation(async (rows, ctx) => {
+      const n = ++call;
+      if (n === 1) {
+        await new Promise((r) => setTimeout(r, 60));
+        throw new Error("stale revalidation failure — must be ignored");
+      }
+      return real(rows, ctx);
+    });
+
+    const p1 = controller.revalidate();
+    const p2 = controller.revalidate();
+    await Promise.all([p1, p2]);
+
+    const s = store.getState();
+    expect(s.validation?.ok).toBe(true);
+    expect(alerts(s).some((a) => a.text.includes("stale revalidation failure"))).toBe(false);
+  }, 15000);
+
+  it("a later deterministic success clears a prior revalidation failure", async () => {
+    const { store, adapter, controller } = await stagedHarness();
+    vi.spyOn(adapter, "validateSequence").mockRejectedValueOnce(new Error("flaky validate"));
+    await controller.revalidate();
+    expect(store.getState().validation?.ok).toBe(false);
+
+    await controller.revalidate();
+    const s = store.getState();
+    expect(s.validation?.ok).toBe(true);
+    expect(alerts(s).some((a) => a.text.includes("Revalidation failed"))).toBe(false);
+  }, 15000);
 });
 
 describe("T13a drop placement validation (locked decision 23)", () => {

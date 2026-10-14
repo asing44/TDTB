@@ -22,6 +22,7 @@ export function Tooltip({
   detail,
   anchorClass,
   align = "center",
+  suppress = false,
   children,
 }: {
   label: string;
@@ -33,10 +34,15 @@ export function Tooltip({
   /** "center" keeps the bubble centred on the trigger; "end" right-aligns it
       so the right-edge row triggers (More) stay in view. */
   align?: "center" | "end";
+  /** Force-hide the bubble while true, regardless of hover/focus. A trigger
+      that expands its own popover (the More menu) would otherwise keep the
+      tooltip pinned open underneath the menu it just revealed. */
+  suppress?: boolean;
   children: ComponentChildren;
 }) {
   const [show, setShow] = useState(false);
   const [tipId] = useState(() => `tip-${++tooltipSeq}`);
+  const visible = show && !suppress;
 
   const child = isValidElement(children) ? children : <span>{children}</span>;
   const trigger = cloneElement(child as never, {
@@ -56,13 +62,13 @@ export function Tooltip({
       setShow(false);
       (child.props as { onBlur?: (ev: FocusEvent) => void }).onBlur?.(e);
     },
-    "aria-describedby": show ? tipId : undefined,
+    "aria-describedby": visible ? tipId : undefined,
   });
 
   return (
     <span class={`tooltip-anchor tooltip-anchor--${align}${anchorClass ? ` ${anchorClass}` : ""}`}>
       {trigger}
-      {show && (
+      {visible && (
         <span id={tipId} class="tooltip" role="tooltip">
           {label}
           {detail && <span class="tooltip__detail">{detail}</span>}

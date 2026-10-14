@@ -11,7 +11,7 @@
    Sequence identity is name-keyed — `id` = the digest item's `name`
    (T1 contract in main.py). */
 
-export type Source = "todoist" | "capacities";
+export type Source = "todoist" | "capacities" | "calendar";
 
 /** TDTB-owned native Capacities Task Auto policy. Each condition is an
     independent OR rule; the backend persists the exact policy and revision. */

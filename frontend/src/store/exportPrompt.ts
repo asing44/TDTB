@@ -47,6 +47,12 @@ function sourceIdentity(item: AssignedItem): string {
       ? `(capacities · ${identity})`
       : "(capacities · unidentified)";
   }
+  if (item.source === "calendar") {
+    // A schedulable all-day calendar row keys on its calendar identity, with
+    // the calendar:// path as the observable fallback.
+    const identity = item.identity ?? item.path ?? null;
+    return identity ? `(calendar · ${identity})` : "(calendar · unidentified)";
+  }
   return "(unidentified)";
 }
 

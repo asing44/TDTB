@@ -332,6 +332,14 @@ describe("FEEDBACK-10 More menu is an opaque, layered surface (A14)", () => {
   });
 });
 
+describe("FEEDBACK-10 More-menu items keep their own height (A14)", () => {
+  it("the row-verb 31px cap does not apply inside the More menu", () => {
+    const item = cssBlock("qrow__actions .row-more__menu .alloc-verb");
+    expect(item).toMatch(/height:\s*auto/);
+    expect(item).toMatch(/min-height:\s*44px/);
+  });
+});
+
 describe("FEEDBACK-10 icon actions expose hover/focus tooltips (A12)", () => {
   it("hover shows the tooltip, mouse leave hides it", () => {
     const h = makeHarness("ready");
@@ -376,6 +384,19 @@ describe("FEEDBACK-10 icon actions expose hover/focus tooltips (A12)", () => {
     expect(container.querySelector('[role="tooltip"]')?.textContent).toContain(
       "Exact duration",
     );
+  });
+
+  it("the More tooltip is suppressed while its menu is open", () => {
+    const h = makeHarness("ready");
+    const { container } = h.ui(<Queue />);
+    const trigger = menuTriggers(container, "Magic Mirror");
+    fireEvent.mouseEnter(trigger);
+    expect(container.querySelector('[role="tooltip"]')?.textContent).toContain("More");
+    fireEvent.click(trigger);
+    expect(trigger.getAttribute("aria-expanded")).toBe("true");
+    expect(container.querySelector('[role="tooltip"]')).toBeNull();
+    fireEvent.click(trigger);
+    expect(container.querySelector('[role="tooltip"]')?.textContent).toContain("More");
   });
 });
 
