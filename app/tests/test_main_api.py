@@ -653,10 +653,10 @@ class TestDaySetup:
     def test_day_setup_persists_blob_and_derives_re_included(self, client, vault):
         _write_min_config(vault)
         payload = {
-            "anchor": "18:00", "eod": "22:00", "buffering": "standard",
+            "anchor": "18:30", "eod": "22:00", "buffering": "standard",
             "schedulable": {"minting": {"on": False, "n": 2},
                             "qt": {"on": True, "n": 1}},
-            "anchored": [{"id": "Sudsing", "on": True},          # past 17:45 -> re-include
+            "anchored": [{"id": "Sudsing", "on": True},          # 17:45 + 30m ends 18:15, fully elapsed by 18:30 -> re-include
                           {"id": "Foods Dinner", "skip_today": True}],
             "captures": {"intention": "ship T4", "megan_nicety": "hi Meegy",
                           "stoic_intention": "temperance"},
@@ -670,7 +670,7 @@ class TestDaySetup:
         note = rs.runstate_read_path(today)
         assert note.is_file()
         state = gather._extract_json_block(note.read_text(encoding="utf-8"))
-        assert state["anchor"] == "18:00" and state["eod"] == "22:00"
+        assert state["anchor"] == "18:30" and state["eod"] == "22:00"
         assert state["buffering"] == "standard"
         # U5: legacy runstate prompt keys stay INERT (skeleton empty); the
         # captures persist to the local prompt draft store instead.

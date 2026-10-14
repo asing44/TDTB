@@ -961,9 +961,13 @@ class TestDaySetupOverrides:
 class TestPastWindowDefaults:
     CFG = {
         "anchored_blocks": [
-            {"id": "Morning Routine", "Type": "hard", "Start": "7:45 AM"},
-            {"id": "Sudsing", "Type": "hard", "Start": "5:45 PM"},
-            {"id": "Foods Dinner", "Type": "window", "Start": "6:00 PM", "End": "8:30 PM"},
+            # 80m Duration -> 3 counted blocks (90m) from 07:45, so it is fully
+            # elapsed from 09:15 on and started-but-unfinished before then.
+            {"id": "Morning Routine", "Type": "hard", "Start": "7:45 AM",
+             "Duration": "80m"},
+            {"id": "Sudsing", "Type": "hard", "Start": "5:45 PM", "Duration": "30m"},
+            {"id": "Foods Dinner", "Type": "window", "Start": "6:00 PM",
+             "End": "8:30 PM", "Duration": "60m"},
         ],
         "Template Blocks": {"Trinoor Hours": [
             {"Slot": "Morning", "Start": "8:30 AM", "End": "12:30 PM"},
@@ -974,8 +978,30 @@ class TestPastWindowDefaults:
     SATURDAY = __import__("datetime").date(2026, 7, 11)
 
     def test_hard_block_past_start_defaults_off(self):
+        # Fully elapsed (07:45 + 90m counted ends 09:15) -> defaults off.
         off = shadow.past_window_defaults(self.CFG, "14:30", self.MONDAY)
         assert "Morning Routine" in off and "Sudsing" not in off
+
+    def test_hard_block_started_but_unfinished_stays_on(self):
+        # 08:50 is past the 07:45 start but before the counted 09:15 end, so a
+        # start<anchor test would wrongly drop it; it stays on.
+        off = shadow.past_window_defaults(self.CFG, "08:50", self.MONDAY)
+        assert "Morning Routine" not in off
+        # At the exact counted end it is fully elapsed and defaults off.
+        assert "Morning Routine" in shadow.past_window_defaults(self.CFG, "09:15", self.MONDAY)
+
+    def test_hard_block_fully_elapsed_defaults_off(self):
+        off = shadow.past_window_defaults(self.CFG, "09:20", self.MONDAY)
+        assert "Morning Routine" in off
+
+    def test_hard_calendar_sourced_spec_keeps_start_rule(self):
+        # Calendar rows are real walls: a long calendar event whose counted
+        # end is still in the future still defaults off past its start.
+        cfg = {"anchored_blocks": [
+            {"id": "Working Session", "Type": "hard", "Start": "7:45 AM",
+             "Duration": "5h", "source": "calendar"},
+        ]}
+        assert "Working Session" in shadow.past_window_defaults(cfg, "09:00", self.MONDAY)
 
     def test_window_block_off_only_past_window_end(self):
         assert "Foods Dinner" not in shadow.past_window_defaults(self.CFG, "19:00", self.MONDAY)

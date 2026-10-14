@@ -224,6 +224,17 @@ def _anchored_block_off(spec: dict[str, Any]) -> bool:
     return False
 
 
+def _counted_minutes(spec: dict[str, Any]) -> int | None:
+    """A config anchor's counted length in minutes: its Duration rounded up to
+    whole 30-minute blocks (the same counted-duration rule capacity uses),
+    never the real window span. None when Duration is missing/unparseable so
+    the caller falls back to the legacy ``start < anchor`` test."""
+    mins = time_engine.duration_minutes(spec.get("Duration") or spec.get("duration"))
+    if mins is None:
+        return None
+    return ((max(0, mins) + 29) // 30) * 30
+
+
 def apply_calendar_participation(
     busy_blocks: list[dict[str, Any]], day_setup: dict[str, Any] | None
 ) -> list[dict[str, Any]]:
@@ -303,10 +314,12 @@ def past_window_defaults(
     config: dict[str, Any], anchor: str, today: date
 ) -> set[str]:
     """Block names that DEFAULT off/skipped at this anchor (skill 813 + 797):
-    hard anchored blocks whose start < anchor; window blocks whose window end
-    < anchor; "Minting" on weekends or when anchor ≥ Trinoor work-end. These
-    are defaults only — Phase 1 toggles stay operable, and a block in this set
-    that the confirmed payload turns on enters ``re_included``."""
+    hard anchored blocks whose counted end has fully elapsed; window blocks
+    whose window end < anchor; "Minting" on weekends or when anchor ≥ Trinoor
+    work-end. These are defaults only — Phase 1 toggles stay operable, and a
+    block in this set that the confirmed payload turns on enters
+    ``re_included``. Calendar-sourced specs (real walls) keep the legacy
+    ``start < anchor`` rule."""
     anchor_min = _cfg_time_min(anchor)
     off: set[str] = set()
     if anchor_min is None:
@@ -319,8 +332,21 @@ def past_window_defaults(
         if btype == "window":
             if end is not None and end < anchor_min:
                 off.add(name)
-        elif start is not None and start < anchor_min:
-            off.add(name)
+        elif start is not None:
+            # Calendar rows are immutable walls: keep the start<anchor test.
+            if str(spec.get("source") or "").strip().casefold() == "calendar":
+                if start < anchor_min:
+                    off.add(name)
+                continue
+            counted = _counted_minutes(spec)
+            if counted is None:
+                # No Duration: fail to the legacy rule.
+                if start < anchor_min:
+                    off.add(name)
+            elif start + counted <= anchor_min:
+                # Only a FULLY elapsed anchor defaults off; one that started but
+                # has counted time left stays on for the rest of its span.
+                off.add(name)
 
     if today.weekday() >= 5:
         off.add("Minting")
