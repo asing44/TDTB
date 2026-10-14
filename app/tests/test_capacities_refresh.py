@@ -806,19 +806,22 @@ def test_vanished_legacy_assignment_property_completes_when_assigned_on_mapped(
     assert len(warnings) == 2
     assert (
         "Legacy assignment property 'assigned' for structure 'RootTask' is no "
-        "longer defined; ignored because Assigned On is mapped" in warnings
+        "longer defined in Capacities; ignored. Map Assigned On in Connections "
+        "to restore assignment." in warnings
     )
     assert (
         "Legacy assignment property 'assigned' for structure 'T2' is no "
-        "longer defined; ignored because Assigned On is mapped" in warnings
+        "longer defined in Capacities; ignored. Map Assigned On in Connections "
+        "to restore assignment." in warnings
     )
 
 
-def test_vanished_legacy_assignment_property_fails_with_detail_without_assigned_on(
+def test_vanished_legacy_assignment_property_completes_without_assigned_on(
     tmp_path,
 ):
-    """Without Assigned On the same state stays a strict contract failure, and
-    the diagnostic names the vanished property id."""
+    """Without Assigned On the vanished marker is still dropped fail-open with
+    the same bounded warning, and the mapping's status seam keeps the
+    structure contributing: the refresh completes."""
     _write_settings(_legacy_settings_doc())
     provider = _paged_provider(
         objects={PRIMARY: ["a"], "T2": ["c"]},
@@ -827,10 +830,88 @@ def test_vanished_legacy_assignment_property_fails_with_detail_without_assigned_
 
     status = _settings_refresh(tmp_path, provider)
 
+    assert status["phase"] == "complete", status
+    warnings = [
+        warning
+        for warning in status["warnings"]
+        if warning.startswith("Legacy assignment property")
+    ]
+    assert len(warnings) == 2
+    assert (
+        "Legacy assignment property 'assigned' for structure 'RootTask' is no "
+        "longer defined in Capacities; ignored. Map Assigned On in Connections "
+        "to restore assignment." in warnings
+    )
+
+
+def test_vanished_marker_without_status_or_rule_skips_structure_with_warning(
+    tmp_path,
+):
+    """After the marker and any status property are gone and no rule or Active
+    enable exists, the structure is not an assignment source: it is not
+    enumerated, one warning names the vanished marker, and the refresh still
+    completes."""
+    structures = _structures(PRIMARY)
+    structures.append(
+        {
+            "id": "custom-project",
+            "title": "Custom",
+            "propertyDefinitions": [{"id": "title", "type": "title"}],
+        }
+    )
+    provider = _paged_provider(
+        objects={PRIMARY: ["a"], "custom-project": ["c"]},
+        structures=structures,
+    )
+    coordinator, _, _, _ = _coordinator(
+        tmp_path,
+        provider,
+        mappings=(
+            _mapping(PRIMARY),
+            ca.StructureMapping(
+                structure_id="custom-project",
+                assignment_property="assigned",
+                assignment_values=frozenset({"true"}),
+                title_property="title",
+            ),
+        ),
+    )
+    coordinator.start()
+    status = coordinator.wait(timeout=5)
+
+    assert status["phase"] == "complete", status
+    assert ("custom-project", None) not in provider.list_calls
+    assert [
+        warning
+        for warning in status["warnings"]
+        if warning.startswith("Legacy assignment property")
+    ] == [
+        "Legacy assignment property 'assigned' for structure 'custom-project' "
+        "is no longer defined in Capacities; ignored. Map Assigned On in "
+        "Connections to restore assignment."
+    ]
+
+
+def test_truly_empty_mapping_still_fails_the_refresh(tmp_path):
+    """A mapping that never configured an assignment property or a status
+    property is genuine misconfiguration: the refresh still fails with the
+    id-only contract detail."""
+    provider = _paged_provider(objects={PRIMARY: ["a"], "T2": ["c"]})
+    coordinator, _, _, _ = _coordinator(
+        tmp_path,
+        provider,
+        mappings=(
+            _mapping(PRIMARY),
+            ca.StructureMapping(structure_id="T2", title_property="title"),
+        ),
+    )
+    coordinator.start()
+    status = coordinator.wait(timeout=5)
+
     assert status["phase"] == "failed", status
     assert (
         "Cause: CapacitiesContractError "
-        "(structure=RootTask property=assigned)" in status["warnings"]
+        "(assignment or status mapping required structure=T2)" in status["warnings"]
     )
     assert "Where: list" in status["warnings"]
 

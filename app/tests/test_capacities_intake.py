@@ -358,11 +358,11 @@ def test_damaged_cached_member_serves_no_rows_and_counts_it(
 def test_contract_shape_error_maps_to_refresh_required_without_rows(
     no_token_no_provider
 ):
-    """A property removed upstream is a contract error, not a crash."""
+    """A mapped property removed upstream is a contract error, not a crash."""
     _save_record()
     _publish(
         [_object("root-assigned", ROOT)],
-        structures=_contract(drop=frozenset({"assigned"})),
+        structures=_contract(drop=frozenset({"title"})),
     )
 
     assigned, pool, warnings, _ = _load()

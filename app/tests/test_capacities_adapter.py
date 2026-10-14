@@ -287,13 +287,14 @@ def test_contract_error_detail_names_configured_ids_or_is_absent():
                 _mapping()[0],
                 StructureMapping(
                     structure_id="custom-project",
-                    assignment_property="ghost-assigned",
-                    assignment_values=frozenset({"true"}),
+                    assignment_property="tdtb",
+                    assignment_values=frozenset({"yes"}),
+                    date_property="ghost-date",
                 ),
             ),
         ).items_for_day(TODAY)
     assert unknown.value.detail == (
-        "structure=custom-project property=ghost-assigned"
+        "structure=custom-project property=ghost-date"
     )
 
     missing_provider = FakeProvider(_structures(), {})
@@ -315,6 +316,41 @@ def test_contract_error_detail_names_configured_ids_or_is_absent():
     with pytest.raises(CapacitiesContractError) as malformed:
         _adapter(malformed_provider).items_for_day(TODAY)
     assert malformed.value.detail is None
+
+
+def test_vanished_legacy_assignment_property_is_dropped_fail_open_with_warning():
+    """A legacy marker the structure no longer defines is always fail-open at
+    the contract build, with or without Assigned On: the mapping's remaining
+    seams keep working, the row still projects with a neutral source signal,
+    and one id-only warning names the vanished property."""
+    provider = _override_provider([
+        _override_object(
+            "project-1",
+            {"state": _prop("label", "label", [{"id": "active", "name": "Active"}])},
+        ),
+    ])
+    mapping = _override_mapping(
+        assigned_property=None,
+        assignment_property="ghost-assigned",
+        assignment_values=frozenset({"true"}),
+    )
+
+    result = _override_adapter(
+        provider, mapping, assignment_settings=_active_settings()
+    ).items_for_day(TODAY)
+
+    assert [row["capacities_id"] for row in result.items] == ["project-1"]
+    assert result.items[0]["capacities_assignment"]["source_assigned"] is None
+    vanished = [
+        warning
+        for warning in result.warnings
+        if warning.startswith("Legacy assignment property")
+    ]
+    assert vanished == [
+        "Legacy assignment property 'ghost-assigned' for structure "
+        "'custom-project' is no longer defined in Capacities; ignored. "
+        "Map Assigned On in Connections to restore assignment."
+    ]
 
 
 def test_incomplete_pagination_does_not_return_partial_items():

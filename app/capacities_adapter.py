@@ -1156,15 +1156,44 @@ class CapacitiesAdapter:
                     detail=_contract_detail(structure=sid),
                 )
             definitions = structure["_definitions"]
-            # Any mapping without a source Assigned marker must map a status
-            # property. For a custom structure that mapping does NOT include
-            # anything on its own: the evaluator still requires the structure
-            # to be Active-enabled (or the object source-assigned). Requiring
-            # Active-enabled membership here would be circular, because a
-            # structure has to be enumerable before the Settings drawer can
-            # offer it for enabling.
+            # A legacy assignment marker the structure no longer defines is
+            # ALWAYS fail-open, whether or not Assigned On is mapped: the
+            # operator removed the boolean property in Capacities, and
+            # refusing the read would strand every mapped object over a seam
+            # that no longer exists. Marker and accepted values are dropped
+            # together with one bounded, content-free warning naming only the
+            # ids. A structure left without a marker, a status property, and
+            # an active/stored rule is then simply not an assignment source:
+            # it is not enumerated (unless native, Active-enabled,
+            # stored-rule, or Assigned On-mapped) and cannot fail the run.
+            vanished_assignment = bool(
+                mapping.assignment_property
+                and mapping.assignment_property not in definitions
+            )
+            if vanished_assignment:
+                declaration_warnings.append(
+                    "Legacy assignment property "
+                    f"{mapping.assignment_property!r} for structure {sid!r} is "
+                    "no longer defined in Capacities; ignored. Map Assigned On "
+                    "in Connections to restore assignment."
+                )
+                mapping = replace(
+                    mapping,
+                    assignment_property=None,
+                    assignment_values=frozenset(),
+                )
+            # Any mapping that was configured without a source Assigned marker
+            # must map a status property. For a custom structure that mapping
+            # does NOT include anything on its own: the evaluator still
+            # requires the structure to be Active-enabled (or the object
+            # source-assigned). Requiring Active-enabled membership here would
+            # be circular, because a structure has to be enumerable before the
+            # Settings drawer can offer it for enabling. A mapping whose only
+            # marker vanished above is exempt: it is treated as unable to
+            # contribute rather than as a fresh misconfiguration.
             if (
-                not mapping.assignment_property
+                not vanished_assignment
+                and not mapping.assignment_property
                 and not mapping.open_status_property
                 and not mapping.assigned_on_property
             ):
@@ -1194,29 +1223,6 @@ class CapacitiesAdapter:
                             phrase="assignment or status mapping required",
                         ),
                     )
-            # A legacy assignment property the structure no longer defines is
-            # fail-open ONLY while an Assigned On declaration supersedes it:
-            # the operator's migration removed the boolean marker, and
-            # refusing the read would strand every mapped object over a seam
-            # that is no longer used. Marker and accepted values are dropped
-            # together; the declaration now owns assignment. Without a mapped
-            # Assigned On the same state stays a strict contract failure, so a
-            # genuinely missing marker is never hidden.
-            if (
-                mapping.assigned_on_property
-                and mapping.assignment_property
-                and mapping.assignment_property not in definitions
-            ):
-                declaration_warnings.append(
-                    "Legacy assignment property "
-                    f"{mapping.assignment_property!r} for structure {sid!r} is "
-                    "no longer defined; ignored because Assigned On is mapped"
-                )
-                mapping = replace(
-                    mapping,
-                    assignment_property=None,
-                    assignment_values=frozenset(),
-                )
             if mapping.assignment_property and not mapping.assignment_values:
                 raise CapacitiesContractError(
                     f"mapping {sid!r} has no assignment values",
@@ -1382,8 +1388,15 @@ class CapacitiesAdapter:
         self._ensure_contract()
 
     def can_contribute(self, mapping: StructureMapping) -> bool:
-        """Public enumeration-gate seam for the paced coordinator."""
-        return self._structure_can_contribute(mapping)
+        """Public enumeration-gate seam for the paced coordinator.
+
+        The coordinator holds the stored mapping objects, while the contract
+        build may have substituted one after dropping a vanished legacy
+        assignment marker; the resolved mapping governs enumeration so a
+        structure left with no assignment source is not listed.
+        """
+        resolved = (self._mappings or {}).get(mapping.structure_id, mapping)
+        return self._structure_can_contribute(resolved)
 
     def _list_objects(self, structure_id: str) -> tuple[list[dict[str, Any]], int]:
         rows, pages, complete, reason = self._enumerate_listing(structure_id)
