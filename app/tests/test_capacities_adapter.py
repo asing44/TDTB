@@ -2910,13 +2910,51 @@ def test_assigned_on_alone_decides_over_the_boolean_declaration():
     }
 
 
-def test_assigned_on_does_not_change_which_structures_are_enumerated():
+def test_assigned_on_mapping_alone_enumerates_its_structure():
+    # A valid Assigned On mapping is an enumeration path of its own: with no
+    # legacy marker, Active enable, or stored rule the structure must still be
+    # listed, or its date property could never be read and no object could
+    # ever reach the assigned surface. The marker value decides object by
+    # object afterwards.
     provider = _assigned_on_provider([])
 
     result = _override_adapter(provider, _assigned_on_mapping()).items_for_day(TODAY)
 
-    assert provider.list_calls == [("RootTask", None)]
+    assert provider.list_calls == [("RootTask", None), ("custom-project", None)]
     assert result.items == []
+
+
+def test_assigned_on_alone_admits_marked_objects_and_never_force_admits_the_rest():
+    # The structure has no legacy marker and is NOT Active-enabled: only the
+    # read-only Assigned On date decides. Today and past marks are
+    # source-assigned; an empty or future marker follows the ordinary
+    # unassigned/pool rules and is not admitted (custom Auto is not specified,
+    # so a non-active custom row is not eligible).
+    provider = _assigned_on_provider([
+        _assigned_on_object(
+            "marked-today",
+            {
+                "state": _active_state(),
+                ASSIGNED_ON_PROPERTY: _date_value(TODAY.isoformat()),
+            },
+        ),
+        _assigned_on_object(
+            "marked-future",
+            {
+                "state": _active_state(),
+                ASSIGNED_ON_PROPERTY: _date_value(
+                    (TODAY + timedelta(days=1)).isoformat()
+                ),
+            },
+        ),
+        _assigned_on_object("marker-empty", {"state": _active_state()}),
+    ])
+
+    result = _override_adapter(provider, _assigned_on_mapping()).items_for_day(TODAY)
+
+    assert provider.list_calls == [("RootTask", None), ("custom-project", None)]
+    assert [row["capacities_id"] for row in result.items] == ["marked-today"]
+    assert _source_assigned_by_id(result) == {"marked-today": True}
 
 
 def test_assigned_on_state_is_reset_by_every_projection_entry_point():

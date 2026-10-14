@@ -131,13 +131,19 @@ class StructureMapping:
     #: marker then applies as the fallback.
     assigned_property: str | None = None
     #: Builder-resolved settings declaration: the raw Capacities DATE/DATETIME
-    #: property id whose civil date (in the app's local timezone) must equal
-    #: the read's logical day for the object to read source-assigned. When set
-    #: it takes PRECEDENCE over ``assigned_property`` for this structure: the
-    #: boolean marker is ignored entirely. Like ``assigned_property`` it never
-    #: gates enumeration. A declaration the structure does not define, or one
-    #: that is not date-typed, is ignored with one bounded warning. The marker
-    #: is READ-ONLY — TDTB never writes it.
+    #: property id whose civil date (in the app's local timezone) must fall on
+    #: or before the read's logical day for the object to read source-assigned.
+    #: When set it takes PRECEDENCE over ``assigned_property`` for this
+    #: structure: the boolean marker is ignored entirely. Unlike
+    #: ``assigned_property``, a valid declaration is itself an enumeration path
+    #: (``_structure_can_contribute``): the structure may have no legacy
+    #: marker, no Active enable, and no stored rule, so its objects must still
+    #: be listed and hydrated for the date property to be readable. The marker
+    #: value then decides object by object; an empty or future date follows the
+    #: ordinary unassigned/pool rules. A declaration the structure does not
+    #: define, or one that is not date-typed, is dropped during contract
+    #: resolution and therefore never enumerates anything. The marker is
+    #: READ-ONLY — TDTB never writes it.
     assigned_on_property: str | None = None
 
 
@@ -2004,17 +2010,25 @@ class CapacitiesAdapter:
 
         A structure configured as native is always evaluated (its Auto rules
         are the only inclusion path). A custom structure with a source
-        assignment property can contribute a source-assigned row. A structure
-        with an ACTIVE stored rule contributes even without a legacy
-        assignment property or Active enable, because the rule is its
-        eligibility path. A custom structure with none of those can never
-        include anything, so it is not enumerated and its objects are never
-        hydrated — which matters because the live API allows 30 requests per
-        minute and enumeration plus hydration is otherwise an N+1 burst.
+        assignment property can contribute a source-assigned row. A custom
+        structure mapped only by the read-only Assigned On declaration also
+        contributes: with no legacy marker, Active enable, or stored rule the
+        declaration is its only assignment path, and its objects must be
+        listed so the date property can be read — the marker value then decides
+        object by object, with an empty or future date following the ordinary
+        unassigned/pool rules. A structure with an ACTIVE stored rule
+        contributes even without a legacy assignment property or Active
+        enable, because the rule is its eligibility path. A custom structure
+        with none of those can never include anything, so it is not enumerated
+        and its objects are never hydrated — which matters because the live API
+        allows 30 requests per minute and enumeration plus hydration is
+        otherwise an N+1 burst.
         """
         if mapping.structure_id in self.config.assignment_settings.native_task_structures:
             return True
         if mapping.assignment_property:
+            return True
+        if mapping.assigned_on_property:
             return True
         if mapping.structure_id in self.config.assignment_settings.active_structures:
             return True

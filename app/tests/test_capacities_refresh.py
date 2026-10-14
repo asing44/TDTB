@@ -839,7 +839,8 @@ def test_assigned_on_only_mapping_without_status_or_assignment_property_complete
     tmp_path,
 ):
     """An Assigned On-mapped structure needs no legacy marker and no status
-    property: the declaration alone satisfies the contract."""
+    property: the declaration alone satisfies the contract, and it is also the
+    enumeration path, so the structure is listed for the date read."""
     _write_settings(
         _legacy_settings_doc(
             assigned_on_structures={"custom-project": "assigned_on"},
@@ -879,7 +880,7 @@ def test_assigned_on_only_mapping_without_status_or_assignment_property_complete
     status = coordinator.wait(timeout=5)
 
     assert status["phase"] == "complete", status
-    assert provider.list_calls == [(PRIMARY, None)]
+    assert provider.list_calls == [(PRIMARY, None), ("custom-project", None)]
 
 
 def test_legacy_exclusions_without_todoist_dimension_completes(tmp_path):

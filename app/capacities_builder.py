@@ -1132,10 +1132,15 @@ def _resolve_assigned_structures(
     boolean for that structure.
 
     Resolution sets ONLY ``assigned_property`` / ``assigned_on_property``.
-    ``assignment_property`` stays exactly as stored, so neither declaration
-    can reach the adapter's enumeration gate
+    ``assignment_property`` stays exactly as stored, so the boolean
+    declaration cannot reach the adapter's enumeration gate
     (``_structure_can_contribute``) — the operator chose an assignment check
-    only, and a misconfiguration must never drop work from the plan.
+    only, and a misconfiguration must never drop work from the plan. A valid
+    ``assigned_on_property`` declaration IS itself an enumeration contributor:
+    with no legacy marker, Active enable, or stored rule the structure would
+    otherwise never be listed, so its date property could never be read and no
+    object could ever reach the assigned surface. An invalid declaration is
+    dropped before the gate, so it enumerates nothing.
     """
     on_declarations = on_declarations or {}
     if not declarations and not on_declarations:

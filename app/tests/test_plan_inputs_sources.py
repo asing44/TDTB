@@ -1399,3 +1399,82 @@ def test_direct_assigned_on_still_yields_to_tag_exclusions(vault):
     # The tag-exclusion policy runs after assignment and wins: a source
     # Assigned marker does not override it.
     assert "obj-a" not in _names(body, "assigned") + _names(body, "suggested")
+
+
+def _save_assigned_on_only_source() -> None:
+    """A source mapping where the custom structure carries NO legacy marker.
+
+    ``T2`` keeps only its status/date/completion mappings: the read-only
+    Assigned On declaration is its single assignment path.
+    """
+    cap_builder.save_source(
+        expected_revision=0,
+        space_id=DIRECT_SPACE,
+        structures=[
+            cap_builder.SourceStructureRecord(
+                structure_id=DIRECT_ROOT,
+                title_property="title",
+                status_property="status",
+                open_status_values=("active",),
+                date_property="due",
+                assignment_property="assigned",
+                assignment_values=("true",),
+            ),
+            cap_builder.SourceStructureRecord(
+                structure_id=DIRECT_CUSTOM,
+                title_property="title",
+                status_property="status",
+                open_status_values=("active",),
+                date_property="due",
+            ),
+        ],
+    )
+
+
+def _direct_assigned_on_object(object_id, *, marker=None):
+    """A ``T2`` object whose only assignment signal is the Assigned On date."""
+    obj = _direct_object(object_id, DIRECT_CUSTOM)
+    del obj["properties"]["assigned"]
+    if marker is not None:
+        obj["properties"][DIRECT_SPARE_ASSIGNED_ON_PROPERTY] = {
+            "type": "date",
+            "date": {"start": marker},
+        }
+    return obj
+
+
+def test_direct_assigned_on_only_structure_needs_no_active_enable(vault):
+    # A custom structure mapped ONLY by the read-only Assigned On declaration
+    # (no legacy marker, not Active-enabled) must still contribute: past and
+    # today markers land on the assigned surface, while empty/future markers
+    # follow the ordinary unassigned rules and are never force-admitted.
+    _set_sources(mode="artifact", capacities_intake="direct")
+    _save_assigned_on_only_source()
+    today = gather.effective_date(datetime.now())
+    yesterday = today - timedelta(days=1)
+    tomorrow = today + timedelta(days=1)
+    _publish_direct([
+        _direct_assigned_on_object("obj-past", marker=str(yesterday)),
+        _direct_assigned_on_object("obj-today", marker=str(today)),
+        _direct_assigned_on_object("obj-future", marker=str(tomorrow)),
+        _direct_assigned_on_object("obj-empty"),
+    ])
+    _save_assigned_on_settings(
+        structures={DIRECT_CUSTOM: DIRECT_SPARE_ASSIGNED_ON_PROPERTY},
+    )
+    client = _direct_client(
+        build_clients=_CallRecorder(), build_capacities=_CallRecorder(),
+    )
+
+    body = client.get("/plan-inputs").json()
+
+    assert sorted(_names(body, "assigned")) == ["obj-past", "obj-today"]
+    assigned = {row["name"]: row for row in _surface(body, "assigned")}
+    for name in ("obj-past", "obj-today"):
+        assert assigned[name]["capacities_assignment"]["source_assigned"] is True
+        assert assigned[name]["capacities_assignment"]["reasons"] == [
+            "source-assigned"
+        ]
+    rest = _names(body, "assigned") + _names(body, "suggested")
+    assert "obj-future" not in rest
+    assert "obj-empty" not in rest
