@@ -892,6 +892,44 @@ def test_vanished_marker_without_status_or_rule_skips_structure_with_warning(
     ]
 
 
+@pytest.mark.parametrize("mode", ["refresh", "rescan"])
+def test_vanished_marker_retains_prior_members_without_claiming_freshness(tmp_path, mode):
+    custom = "custom-project"
+    mappings = (
+        _mapping(PRIMARY),
+        ca.StructureMapping(
+            structure_id=custom, assignment_property="assigned",
+            assignment_values=frozenset({"true"}), title_property="title",
+        ),
+    )
+    first = _paged_provider(objects={PRIMARY: ["a"], custom: ["c"]},
+                            structures=_structures(PRIMARY, custom))
+    coordinator, store, _, _ = _coordinator(tmp_path, first, mappings=mappings)
+    coordinator.start()
+    assert coordinator.wait(timeout=5)["phase"] == "complete"
+    prior = store.load_snapshot("all")
+
+    structures = _structures(PRIMARY)
+    structures.append({"id": custom, "title": "Custom",
+                       "propertyDefinitions": [{"id": "title", "type": "title"}]})
+    provider = _paged_provider(objects={PRIMARY: ["a"], custom: ["c"]},
+                               structures=structures)
+    coordinator, store, _, _ = _coordinator(tmp_path, provider, mappings=mappings)
+    coordinator.start(mode=mode)
+    status = coordinator.wait(timeout=5)
+
+    assert status["phase"] == "complete", status
+    snapshot = store.load_snapshot("all")
+    assert snapshot.generation == prior.generation + 1
+    assert {m.object_id for m in snapshot.members} == {"a", "c"}
+    assert snapshot.check_time(custom) == prior.check_time(custom)
+    assert next(m for m in snapshot.members if m.object_id == "c") == next(
+        m for m in prior.members if m.object_id == "c"
+    )
+    assert provider.list_calls == [(PRIMARY, None)]
+    assert any("retained" in w and "not refreshed" in w for w in status["warnings"])
+
+
 def test_truly_empty_mapping_still_fails_the_refresh(tmp_path):
     """A mapping that never configured an assignment property or a status
     property is genuine misconfiguration: the refresh still fails with the

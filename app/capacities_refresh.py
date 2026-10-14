@@ -898,7 +898,10 @@ class RefreshCoordinator:
         else:
             listing_types = configured_types
             required_types = configured_types
-            retained_types = []
+            # Losing eligibility is not evidence that previously listed objects
+            # were deleted. Preserve their dated membership, as scoped Rescan
+            # does, without claiming a fresh listing for inactive types.
+            retained_types = [t for t in prior_types if t not in configured_types]
 
         mode = job.get("mode")
         logical_day = self.logical_day or date.today()
@@ -1002,7 +1005,13 @@ class RefreshCoordinator:
         # The projection warnings — including the bounded review surface for
         # under-evaluated rows — ride the successful finish; the publication
         # itself stays one complete generation with every candidate retained.
-        self._finish("complete", "published", list(_result.warnings))
+        warnings = list(_result.warnings)
+        if retained_types:
+            warnings.append(
+                "Previously cached Capacities types outside this refresh scope "
+                "were retained with their original timestamps; not refreshed."
+            )
+        self._finish("complete", "published", warnings)
 
     def _read_or_reuse(self, object_id: str, type_key: str, *, rescan: bool):
         if not rescan:
