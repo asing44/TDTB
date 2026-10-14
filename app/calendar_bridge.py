@@ -182,6 +182,44 @@ def normalize_disabled_calendars(raw: Any) -> set[str]:
     return out
 
 
+def normalize_schedulable_all_day(raw: Any) -> set[str]:
+    """Normalize a ``## Schedulable All-Day Calendars`` config value into a
+    casefolded set of calendar titles/identifiers whose all-day events become
+    schedulable planning rows (one 30-minute block each).
+
+    The config schema is a LIST of calendar titles or identifiers. Each entry
+    may be a plain string or a row dict (``Title`` / ``BusyCal title`` /
+    ``Calendar title`` / ``Identifier``); string values are split on commas so
+    a compact ``"A, B"`` entry still works. Matching downstream is an EXACT
+    casefolded title-or-identifier match against the live calendar inventory.
+
+    Deliberately stricter than :func:`normalize_disabled_calendars`: a missing
+    or non-list value (a bare string, a number, an object, ``None``) opts
+    NOTHING in. Schedulability is an opt-in, so an ambiguous or corrupt key
+    must degrade to today's behaviour rather than accidentally converting a
+    calendar's all-day events into plan rows. Blank entries are dropped.
+    """
+    if not isinstance(raw, list):
+        return set()
+    out: set[str] = set()
+    for entry in raw:
+        if isinstance(entry, dict):
+            candidates = (
+                entry.get(key)
+                for key in ("Title", "BusyCal title", "Calendar title", "Identifier")
+            )
+        else:
+            candidates = (entry,)
+        for candidate in candidates:
+            if not isinstance(candidate, str):
+                continue
+            for piece in candidate.split(","):
+                text = piece.strip().casefold()
+                if text:
+                    out.add(text)
+    return out
+
+
 def _calendar_planning_disabled_flag(cal: Any) -> bool:
     """Read an intrinsic per-calendar disable flag from a CalendarInfo, fake,
     or dict. Returns True only for an explicit truthy disable marker."""

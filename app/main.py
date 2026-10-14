@@ -77,6 +77,7 @@ import orchestrate  # noqa: E402
 import time_engine  # noqa: E402
 import capacity as capacity_mod  # noqa: E402
 import capacities_settings  # noqa: E402
+import capacities_mirror  # noqa: E402
 import capacities_builder  # noqa: E402
 import capacities_intake  # noqa: E402
 import capacities_rules  # noqa: E402
@@ -513,6 +514,12 @@ def _promote_selected_capacities(
         },
         hard_excluded=frozenset(hard_excluded),
     )
+    for row in promoted:
+        # Server-owned basis marker (U4 rule-assigned admission): this row
+        # reached the assigned surface through an explicit selection record,
+        # not a rule. The commit gate requires a CURRENT selection record for
+        # this basis. The copy is shallow, so the cached pool row is untouched.
+        row["capacities_assignment_basis"] = "selection"
     promoted_identities = {row["identity"] for row in promoted}
     pool_items = [
         row for row in pool_items
@@ -538,6 +545,66 @@ def _is_capacities_source_row(row: dict[str, Any]) -> bool:
         str(row.get("source") or "").strip().casefold() == "capacities"
         or str(row.get("path") or "").strip().casefold().startswith("capacities://")
     )
+
+
+def _is_calendar_source_row(row: dict[str, Any]) -> bool:
+    """A schedulable all-day calendar row by source or ``calendar://`` path."""
+    return (
+        str(row.get("source") or "").strip().casefold() == "calendar"
+        or str(row.get("path") or "").strip().casefold().startswith("calendar://")
+    )
+
+
+def _calendar_identity_matches(
+    submitted: dict[str, Any], candidate: dict[str, Any],
+) -> bool:
+    """A calendar row matches only on its canonical source identity.
+
+    Never a name or a path alone: the ``calendar://<event_id>/<date>`` path and
+    the ``calendar:<event_id>:<date>`` identity must agree exactly on BOTH the
+    server candidate and the submitted row, and a Todoist id contradicts a
+    calendar identity. The original all-day source event is never resolved.
+    """
+    identity = _canonical_calendar_identity(
+        str(candidate.get("identity") or ""), str(candidate.get("path") or ""))
+    if not identity:
+        return False
+    submitted_identity = _canonical_calendar_identity(
+        str(submitted.get("identity") or ""), str(submitted.get("path") or ""))
+    if submitted_identity != identity:
+        return False
+    if str(submitted.get("todoist_id") or "").strip():
+        return False
+    submitted_path = str(submitted.get("path") or "").strip()
+    return not submitted_path or submitted_path == str(candidate.get("path") or "").strip()
+
+
+def _mirror_intake_exclusions() -> tuple[set[str], list[str]]:
+    """The Capacities mirror Todoist ids to hide from intake, plus warnings.
+
+    Reads the machine-local mirror store. A malformed/unreadable store yields
+    an empty exclusion set (no row is dropped on a guess) plus one loud
+    warning, matching the source-boundary degrade contract: intake never
+    crashes, but the operator sees the degraded state."""
+    try:
+        return set(capacities_mirror.excluded_task_ids()), []
+    except capacities_mirror.MirrorStoreError:
+        return set(), [capacities_mirror.UNREADABLE_WARNING]
+
+
+def _drop_excluded_todoist_rows(
+    rows: list[dict[str, Any]], excluded: set[str],
+) -> list[dict[str, Any]]:
+    """Drop Todoist-sourced rows whose id is an app-created Capacities mirror.
+
+    Applied to artifact-sourced rows too, so a mirror cannot re-enter planning
+    through the artifact door (and therefore the digest index)."""
+    if not excluded:
+        return rows
+    return [
+        row for row in rows
+        if str(row.get("todoist_id") or "").strip() not in excluded
+    ]
 
 
 def _capacities_identity_matches(
@@ -577,12 +644,17 @@ def _capacities_commit_refusals(
 ) -> list[str]:
     """Commit-time admission of the authorized Capacities rows, one reason each.
 
-    A row is admitted only when its index entry is complete, its identity is
-    still selected in the CURRENT selection store, its review reasons (if any)
-    were acknowledged, and no hard exclusion has caught it since indexing. The
-    selection store and tag-exclusion policy are re-read here, never trusted
-    from the index. A failed read raises 503 and admits nothing. Todoist and
-    note-path rows never reach this function.
+    A row is admitted only when its index entry is complete, its review reasons
+    (if any) were acknowledged, and no hard exclusion has caught it since
+    indexing. The assignment basis is read ONLY from the server index entry,
+    never from the browser submission: a ``capacities_assignment_basis`` of
+    ``"rule"`` marks a row the server assigned from an active stored rule, and
+    such a row needs no selection record. A ``"selection"`` basis, or a LEGACY
+    index row with no marker at all, still requires the identity to be selected
+    in the CURRENT selection store (fail closed). The selection store and
+    tag-exclusion policy are re-read here, never trusted from the index. A
+    failed read raises 503 and admits nothing. Todoist and note-path rows never
+    reach this function.
     """
     candidates = [
         candidate for candidate, _submitted in matches
@@ -626,8 +698,21 @@ def _capacities_commit_refusals(
     for candidate in complete:
         name = str(candidate.get("name") or "<unnamed>")
         record = selected.get(candidate.get("identity"))
+        # Read the basis from the SERVER index row; a browser-supplied value on
+        # the submission is never consulted (identity match is the only
+        # browser input that reaches this gate).
+        basis = str(candidate.get("capacities_assignment_basis") or "").strip()
         if candidate.get("identity") in excluded:
             refusals.append(f"{name!r} is excluded since it was indexed")
+        elif basis == "rule":
+            # Rule/source-assigned: no selection record is required. Review
+            # reasons still need an acknowledging selection record.
+            if candidate.get("capacities_review_reasons") and not (
+                record is not None and record.acknowledged
+            ):
+                refusals.append(
+                    f"{name!r} is not acknowledged (it carries review reasons)"
+                )
         elif record is None:
             refusals.append(
                 f"{name!r} is not selected (never selected, or withdrawn "
@@ -973,6 +1058,25 @@ def build_digest_index(digest: dict[str, Any]) -> list[dict[str, Any]]:
             ):
                 if key in row and row.get(key) is not None:
                     entry[key] = row[key]
+            # U4 rule-assigned admission: stamp the server-owned basis so the
+            # commit gate can tell a rule/source-assigned row (no selection
+            # record required) from a selection-promoted row (a CURRENT
+            # selection record is required). Promotion sets
+            # ``capacities_assignment_basis = "selection"`` on the shallow copy
+            # in ``_promote_selected_capacities``; an assigned Capacities row
+            # with no marker is a server rule/source assignment. An unmarked
+            # pool row earns no basis (it is not commit-eligible), and a LEGACY
+            # index row written before this field existed stays unmarked and
+            # fails closed at commit.
+            if str(row.get("source") or "").strip().casefold() == "capacities":
+                basis = str(row.get("capacities_assignment_basis") or "").strip()
+                if basis not in ("rule", "selection"):
+                    basis = "rule" if row.get("assigned") is True else ""
+                elif basis == "rule" and row.get("assigned") is not True:
+                    # "rule" is derived strictly from the server assigned flag.
+                    basis = ""
+                if basis:
+                    entry["capacities_assignment_basis"] = basis
             # Todoist rows retain their server-native duration provenance in
             # the index so the route/commit boundaries never need the client
             # to supply it. Existing ``native_blocks`` wins; otherwise the
@@ -1015,6 +1119,26 @@ def _route_name(value: Any) -> str:
     return " ".join(str(value or "").strip().split()).casefold()
 
 
+def _canonical_calendar_identity(identity: str, path: str) -> str | None:
+    """Canonical ``calendar:<event_id>:<YYYY-MM-DD>`` for a calendar row.
+
+    Requires the ``calendar://<event_id>/<YYYY-MM-DD>`` path AND an identity
+    that agrees with it exactly. A missing, forged, or mismatched path/identity
+    yields ``None`` so the row can never be authorized (a mismatch between the
+    two forms is rejected rather than reconciled).
+    """
+    text = str(path or "").strip()
+    if not text.casefold().startswith("calendar://"):
+        return None
+    parts = text[len("calendar://"):].split("/")
+    if len(parts) != 2 or not parts[0] or not parts[1]:
+        return None
+    canonical = f"calendar:{parts[0]}:{parts[1]}"
+    if str(identity or "").strip() != canonical:
+        return None
+    return canonical
+
+
 def _route_source_identity(
     row: dict[str, Any],
 ) -> tuple[str, str] | None:
@@ -1030,6 +1154,15 @@ def _route_source_identity(
         if not capacities_path or (identity and not identity.casefold().startswith("capacities:")):
             return None
         return "capacities", identity or path
+
+    calendar_path = path.casefold().startswith("calendar://")
+    if source == "calendar" or calendar_path:
+        if todoist_id or not calendar_path:
+            return None
+        canonical = _canonical_calendar_identity(identity, path)
+        if canonical is None:
+            return None
+        return "calendar", canonical
 
     if todoist_id:
         if path:
@@ -3855,6 +3988,9 @@ def create_app() -> FastAPI:
             # Issue #6: canonical config section for disabled calendars,
             # so route-level exclusions become diagnosable via calendar_decisions.
             "calendar_disabled": config.get("Disabled Calendars"),
+            # Unit 1: the user-chosen list of calendars whose all-day events
+            # become schedulable plan rows instead of all-day strip entries.
+            "schedulable_all_day": config.get("Schedulable All-Day Calendars"),
         }
         build_clients = app.state.build_read_clients or (lambda c: (None, None))
         build_store = app.state.build_calendar_store or (lambda c: None)
@@ -3890,6 +4026,12 @@ def create_app() -> FastAPI:
         # in live mode, where every Capacities row keeps its existing routing.
         c_pool: list[dict[str, Any]] = []
         w_todo: list[str] = []
+        # PHep mirror exclusion (contract change 2026-10-13): tasks this app
+        # created as Capacities mirrors are hidden from Todoist intake so a
+        # mirror never re-appears as a Todoist row (any day, while open) and
+        # never collides with its own Capacities row. A store read failure
+        # degrades visibly here; it never crashes plan-inputs.
+        mirror_excluded, mirror_warnings = _mirror_intake_exclusions()
         # Habits are agent-fetched data either way (the REST Todoist client
         # exposes no completed-tasks read), so the summary rides the artifact
         # in BOTH source modes. Never a note fallback; no data -> zeroed block
@@ -3975,7 +4117,7 @@ def create_app() -> FastAPI:
         try:
             if source_mode != app_config.SOURCES_MODE_ARTIFACT:
                 t_assigned, t_pool, w_todo = external_sources.fetch_todoist_items(
-                    todoist_c, ext_cfg
+                    todoist_c, ext_cfg, exclude_ids=mirror_excluded
                 )
             if store is not None:
                 try:
@@ -3991,6 +4133,23 @@ def create_app() -> FastAPI:
             busy_blocks, w_cal, calendar_decisions = (
                 external_sources.fetch_calendar_decisions(store, ext_cfg, today)
             )
+            # Unit 1: opted-in all-day events are schedulable plan rows, not
+            # busy walls. Split them out of the busy frame, then drop any row
+            # already committed as a timed event on TDTB's own Blocks
+            # calendar so it is never double-placed. Both steps are inert
+            # unless a calendar is opted in (the split is a pass-through and
+            # the dedup finds nothing).
+            busy_blocks, schedulable_all_day_rows = (
+                external_sources.split_schedulable_all_day(busy_blocks)
+            )
+            schedulable_all_day_rows, already_committed_decisions = (
+                external_sources.exclude_already_committed(
+                    schedulable_all_day_rows, busy_blocks
+                )
+            )
+            calendar_decisions = (
+                calendar_decisions + already_committed_decisions
+            )
             # T19: deterministic micro-adventure state — pure reads (config
             # section, state-dir log, Todoist completion probe
             # on the already-open read client). Never writes, never consumes.
@@ -4001,6 +4160,15 @@ def create_app() -> FastAPI:
                     todoist_c.close()
                 except Exception:  # noqa: BLE001
                     pass
+
+        # PHep mirror exclusion: the live fetch already drops excluded ids;
+        # this also covers artifact-sourced Todoist rows, so the digest (and
+        # therefore the persisted digest index, commit eligibility, sequencing
+        # and prompts) can never see a mirror task. The unreadable-store
+        # warning rides the Todoist warnings the UI renders loudly.
+        t_assigned = _drop_excluded_todoist_rows(t_assigned, mirror_excluded)
+        t_pool = _drop_excluded_todoist_rows(t_pool, mirror_excluded)
+        w_todo = [*w_todo, *mirror_warnings]
 
         # Sequence identity downstream is name-keyed (timeline id = name) —
         # rename Todoist items that collide with existing row names before merging.
@@ -4015,11 +4183,20 @@ def create_app() -> FastAPI:
             existing_rows + t_assigned + t_pool + capacities_items,
             c_pool,
         )
+        # Unit 1: calendar schedulable rows join the same disambiguation chain
+        # so a name collision never reaches the name-keyed sequence identity.
+        schedulable_all_day_rows = external_sources.disambiguate_names(
+            existing_rows + t_assigned + t_pool + capacities_items + c_pool,
+            schedulable_all_day_rows,
+        )
         exclusion_policy = _exclusion_policy_or_block()
         try:
             # U3c-2: selected Capacities rows are promoted BEFORE build_digest,
             # so they pass the same exclusion stages as every other row.
-            assigned_input = run_data["assigned_items"] + t_assigned + capacities_items
+            assigned_input = (
+                run_data["assigned_items"] + t_assigned + capacities_items
+                + schedulable_all_day_rows
+            )
             pool_rows, assigned_rows, selection_warnings = (
                 _promote_selected_capacities(
                     today,
@@ -4329,6 +4506,10 @@ def create_app() -> FastAPI:
             # Issue #6: canonical config section for disabled calendars,
             # so route-level exclusions become diagnosable via calendar_decisions.
             "calendar_disabled": config.get("Disabled Calendars"),
+            # Unit 1: keep the frame consistent with /plan-inputs — an opted-in
+            # all-day event leaves the busy frame instead of riding the strip
+            # (its all-day cost was already zero capacity).
+            "schedulable_all_day": config.get("Schedulable All-Day Calendars"),
         }
         build_clients = app.state.build_read_clients or (lambda c: (None, None))
         todoist_c, store = build_clients(config)
@@ -4346,6 +4527,12 @@ def create_app() -> FastAPI:
                     pass
             busy_blocks, _w_cal = external_sources.fetch_calendar_busy(
                 store, ext_cfg, today
+            )
+            # Unit 1: same split as /plan-inputs so the two consumers agree on
+            # the busy frame; the schedulable rows themselves are not part of
+            # the capacity math (they are assigned plan rows).
+            busy_blocks, _schedulable_all_day_rows = (
+                external_sources.split_schedulable_all_day(busy_blocks)
             )
             # Habits ride the artifact here too — no note read.
             habits, _w_hab = artifact_source.load_habits()
@@ -4401,6 +4588,10 @@ def create_app() -> FastAPI:
             dict(result.config.sections) if result.config is not None else {}
         )
         presets = result.config.get_presets() if result.config is not None else []
+        # PHep mirror exclusion: this read resolves a specific identity for the
+        # duration-memory reset route; exclude app-created mirrors so they can
+        # never be resolved as a source row here either.
+        mirror_excluded, _mirror_warnings = _mirror_intake_exclusions()
         rows: list[dict[str, Any]] = []
         build_clients = app.state.build_read_clients or (lambda c: (None, None))
         todoist_c, _store = build_clients(config)
@@ -4411,9 +4602,10 @@ def create_app() -> FastAPI:
                     "calendar_capacity_classes": config.get("Calendar Capacity Classes"),
                 }
                 t_assigned, t_pool, _w = external_sources.fetch_todoist_items(
-                    todoist_c, ext_cfg
+                    todoist_c, ext_cfg, exclude_ids=mirror_excluded
                 )
-                rows = rows + list(t_assigned) + list(t_pool)
+                rows = rows + _drop_excluded_todoist_rows(
+                    list(t_assigned) + list(t_pool), mirror_excluded)
         finally:
             if todoist_c is not None and hasattr(todoist_c, "close"):
                 try:
@@ -5230,7 +5422,8 @@ def create_app() -> FastAPI:
         the dated server digest index immediately before the manifest boundary.
 
         Capacities rows (U4 S6) are admitted only by canonical identity, and only
-        while still selected, acknowledged if they carry review reasons, and not
+        while still selected (selection-basis rows; rule-assigned rows need no
+        selection record), acknowledged if they carry review reasons, and not
         hard-excluded since indexing; see ``_capacities_commit_refusals``.
 
         Returns the server-authoritative effective config plus a SANITIZED
@@ -5317,6 +5510,8 @@ def create_app() -> FastAPI:
             matches only on its canonical identity (see
             ``_capacities_identity_matches``).
             """
+            if _is_calendar_source_row(candidate):
+                return _calendar_identity_matches(submitted, candidate)
             if _is_capacities_source_row(candidate):
                 return _capacities_identity_matches(submitted, candidate)
             submitted_path = str(submitted.get("path") or "").strip()

@@ -559,7 +559,7 @@ class TestCapacitiesMixedPlanCommit:
             },
         )
 
-    def test_mixed_plan_admits_capacities_as_calendar_only_and_todoist_unchanged(
+    def test_mixed_plan_admits_capacities_as_calendar_and_phep_mirror_with_todoist_unchanged(
         self, client, vault, monkeypatch
     ):
         today = gather.effective_date(datetime.now())
@@ -577,14 +577,20 @@ class TestCapacitiesMixedPlanCommit:
         assert alone.status_code == 200, alone.text
         mixed_manifest = [e["manifest"] for e in mixed.json()["entries"]]
         cap = [m for m in mixed_manifest if m["name"] == "Ship project"]
-        assert [(m["system"], m["action"]) for m in cap] == [("calendar", "create-event")]
-        mixed_todoist = [m for m in mixed_manifest if m["system"] == "todoist"]
+        # PHep mirror: the calendar block plus a PHEP Todoist create.
+        assert [(m["system"], m["action"]) for m in cap] == [
+            ("calendar", "create-event"), ("todoist", "schedule")]
+        assert [m["routing"] for m in cap if m["system"] == "todoist"] == ["PHEP"]
         alone_todoist = [
             e["manifest"] for e in alone.json()["entries"]
             if e["manifest"]["system"] == "todoist"
         ]
         assert alone_todoist, "the Todoist row must plan a Todoist entry on its own"
-        assert mixed_todoist == alone_todoist
+        # The non-Capacities Todoist row keeps exactly the manifest it gets
+        # alone; the mixed plan only adds the Capacities mirror on top.
+        mixed_loots = [m for m in mixed_manifest
+                       if m["system"] == "todoist" and m["name"] == "LOOTS"]
+        assert mixed_loots == alone_todoist
         assert before == {p: p.read_bytes() for p in vault.rglob("*") if p.is_file()}
 
     def test_cross_boundary_name_collision_is_422_and_writes_nothing(

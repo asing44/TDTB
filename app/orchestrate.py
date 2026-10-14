@@ -88,7 +88,7 @@ def _dispatch(
     today: date,
 ) -> commit.WriterResult:
     if key == "todoist":
-        return commit.write_todoist(subset, todoist)
+        return commit.write_todoist(subset, todoist, today)
     if key == "calendar":
         return commit.write_calendar(subset, store, today)
     raise ValueError(f"unknown surface key {key!r}")  # pragma: no cover — SURFACES is closed

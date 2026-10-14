@@ -110,6 +110,10 @@ STAGING_VERBS = (
 # identity, not a location — nothing may join it to a filesystem root.
 TODOIST_PATH_PREFIX = "todoist://"
 CAPACITIES_PATH_PREFIX = "capacities://"
+# Unit 2: a schedulable all-day calendar row's ``calendar://`` URI is a source
+# identity marker. The original all-day event is NEVER touched; only runstate
+# exclusions (drop/unassign) act on it.
+CALENDAR_PATH_PREFIX = "calendar://"
 
 class RuntimeActionError(Exception):
     """Refused/failed runtime action — message is the user-facing detail."""
@@ -196,6 +200,16 @@ def _resolve_from_digest_index(
     for row in rows:
         path = str(row.get("path") or "")
         source = str(row.get("source") or "").strip().casefold()
+        if source == "calendar" or path.startswith(CALENDAR_PATH_PREFIX):
+            # Unit 2: a calendar row resolves to its canonical source identity
+            # only. Never the source event id — no code path may touch the
+            # original all-day event; the index deliberately drops event_id.
+            if "identity" not in out:
+                for key in ("identity", "path"):
+                    if row.get(key) is not None:
+                        out[key] = row[key]
+                out["source"] = "calendar"
+            continue
         if source == "capacities" or path.startswith(CAPACITIES_PATH_PREFIX):
             # A Capacities URI is a source identity, not a file path. Copy
             # only server-derived provider metadata into the guarded action.
@@ -273,6 +287,8 @@ def drop_identity_of(target_or_row: dict[str, Any]) -> str:
     path = str(target_or_row.get("path") or "")
     if source == "capacities" or path.startswith(CAPACITIES_PATH_PREFIX):
         return identity or path
+    if source == "calendar" or path.startswith(CALENDAR_PATH_PREFIX):
+        return identity or path
     return str(target_or_row.get("name") or target_or_row.get("id") or "")
 
 
@@ -294,6 +310,22 @@ def _event_snapshot(store: Any, event_id: str) -> dict | None:
     if ev is None:
         return None
     return {k: _iso(v) for k, v in ev.items()}
+
+
+def _runstate_drop_step(target: dict, valid_date: date) -> dict:
+    """One runstate-only Drop step keyed by the row's canonical identity.
+
+    Carries ``identity``/``path``/``source`` so a calendar or Capacities row
+    keys on its source identity rather than its name (Unit 2 decision b).
+    """
+    return {
+        "kind": "runstate.drop",
+        "surface": "runstate",
+        "system": "runstate",
+        "item": {k: target.get(k) for k in
+                 ("name", "todoist_id", "id", "identity", "path", "source")},
+        "date": str(valid_date),
+    }
 
 
 def plan_steps(verb: str, target: dict, args: dict, valid_date: date) -> list[dict]:
@@ -324,28 +356,29 @@ def plan_steps(verb: str, target: dict, args: dict, valid_date: date) -> list[di
                 f"{target['name']!r}: no completable source in today's manifest")
     elif verb == "drop_from_plan":
         # IMP-05: a date-scoped TDTB exclusion. One runstate-only step — the
-        # identity is the stable source identity (todoist:<id> / capacities)
-        # so the same name across surfaces dedupes; the dated runstate note
-        # scopes it to today, making the item eligible again tomorrow.
-        steps.append({
-            "kind": "runstate.drop",
-            "surface": "runstate",
-            "system": "runstate",
-            "item": {k: target.get(k) for k in
-                     ("name", "todoist_id", "id")},
-            "date": str(valid_date),
-        })
+        # identity is the stable source identity (todoist:<id> / capacities /
+        # calendar) so the same name across surfaces dedupes; the dated runstate
+        # note scopes it to today, making the item eligible again tomorrow.
+        steps.append(_runstate_drop_step(target, valid_date))
     elif verb == "unassign":
-        # IMP-05: Todoist date clear (non-recurring) or
-        # non-completing due advance (recurring). No deferral-memory nudge.
-        task_id = target.get("todoist_id") or target.get("id")
-        if task_id:
-            steps.append({"kind": "todoist.unassign", "surface": "todoist",
-                          "system": "todoist", "task_id": str(task_id),
-                          "close": False})
-        if not steps:
-            raise RuntimeActionError(
-                f"{target['name']!r}: no unassignable source")
+        # Unit 2 decision b: a calendar row has no source write path, so
+        # unassign is a runstate-only Drop keyed by the calendar identity. The
+        # original all-day event is never touched.
+        source = str(target.get("source") or "").strip().casefold()
+        path = str(target.get("path") or "")
+        if source == "calendar" or path.startswith(CALENDAR_PATH_PREFIX):
+            steps.append(_runstate_drop_step(target, valid_date))
+        else:
+            # IMP-05: Todoist date clear (non-recurring) or
+            # non-completing due advance (recurring). No deferral-memory nudge.
+            task_id = target.get("todoist_id") or target.get("id")
+            if task_id:
+                steps.append({"kind": "todoist.unassign", "surface": "todoist",
+                              "system": "todoist", "task_id": str(task_id),
+                              "close": False})
+            if not steps:
+                raise RuntimeActionError(
+                    f"{target['name']!r}: no unassignable source")
     elif verb in ("skip_today", "remove_from_today"):
         if target.get("event_id"):
             steps.append({"kind": "calendar.delete", "surface": "calendar",
@@ -510,7 +543,7 @@ def _apply_step(step: dict, valid_date: date,
         due = task.get("due") or {}
         if due.get("is_recurring"):
             advance = _next_recurring_due(task)  # raises -> fail closed
-            if due.get("datetime"):
+            if "T" in advance:
                 todoist.reschedule_task_datetime(step["task_id"], advance)
             else:
                 todoist.reschedule_task_date(step["task_id"], advance)
@@ -627,7 +660,10 @@ def _reverse_step(step: dict, valid_date: date,
         if due.get("datetime"):
             todoist.reschedule_task_datetime(step["task_id"], due["datetime"])
         elif due.get("date"):
-            todoist.reschedule_task_date(step["task_id"], due["date"])
+            if "T" in str(due["date"]):
+                todoist.reschedule_task_datetime(step["task_id"], due["date"])
+            else:
+                todoist.reschedule_task_date(step["task_id"], due["date"])
         elif due.get("string"):
             todoist.reschedule_task(step["task_id"], due["string"])
         # no due at all — the clear was reversed by not writing anything
@@ -716,8 +752,10 @@ def _next_recurring_due(task: dict[str, Any]) -> str:
     a datetime due advances as a datetime, a date-only due as a date.
     """
     due = task.get("due") or {}
-    is_dt = bool(due.get("datetime"))
     raw = due.get("datetime") or due.get("date")
+    # Todoist also returns floating timed dues in `date`, without a
+    # `datetime` key. Preserve the value's time-bearing shape in both cases.
+    is_dt = bool(due.get("datetime")) or "T" in str(raw)
     if not raw:
         raise RuntimeActionError(
             "recurring task has no parseable due to advance — fail closed; "

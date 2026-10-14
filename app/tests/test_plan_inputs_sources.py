@@ -286,6 +286,93 @@ def test_todoist_items_merge_into_digest(vault, live_sources_mode):
     assert body["source_warnings"] == []
 
 
+def test_mirror_task_is_excluded_from_intake_on_a_later_day(vault, live_sources_mode):
+    import external_sources as ext
+    import capacities_mirror as mirror
+
+    # Created on an EARLIER day; the exclusion list is global, so an open
+    # mirror must not reappear on today's plan.
+    mirror.complete_mirror(
+        day="2026-10-12", identity="capacities:space-1:RootTask:object-1",
+        task_id="2")
+    mirror.complete_mirror(
+        day="2026-10-12", identity="capacities:space-1:RootTask:object-2",
+        task_id="3")
+    todoist = FakeTodoist({
+        ext.ASSIGNED_QUERY_FALLBACK: [
+            {"id": "1", "content": "Call Vlad", "priority": 4,
+             "due": {"date": "2026-07-14"}, "labels": []},
+            {"id": "2", "content": "Cleanups", "priority": 1,
+             "due": {"date": "2026-07-14"}, "labels": []},
+        ],
+        ext.QUICK_QUERY_FALLBACK: [
+            {"id": "3", "content": "Garage Buildout", "priority": 1, "labels": []},
+        ],
+    })
+    body = _client(todoist=todoist, store=FakeStore([])).get("/plan-inputs").json()
+    assert "Call Vlad" in _names(body, "assigned")
+    assert "Cleanups" not in _names(body, "assigned")
+    assert _names(body, "suggested") == []
+
+
+def test_mirror_store_read_failure_degrades_visibly(vault, live_sources_mode):
+    import external_sources as ext
+    import capacities_mirror as mirror
+
+    path = mirror.store_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("garbage", encoding="utf-8")
+    todoist = FakeTodoist({
+        ext.ASSIGNED_QUERY_FALLBACK: [
+            {"id": "1", "content": "Call Vlad", "priority": 4,
+             "due": {"date": "2026-07-14"}, "labels": []},
+        ],
+        ext.QUICK_QUERY_FALLBACK: [],
+    })
+    response = _client(todoist=todoist, store=FakeStore([])).get("/plan-inputs")
+    assert response.status_code == 200
+    body = response.json()
+    assert "Call Vlad" in _names(body, "assigned")
+    assert any("mirror" in w.lower() for w in body["source_warnings"])
+
+
+def test_mirror_does_not_rename_its_capacities_row(vault, live_sources_mode):
+    import external_sources as ext
+    import capacities_mirror as mirror
+
+    row = _capacities_row("Cleanups", [])
+    mirror.complete_mirror(
+        day="2026-10-12", identity=row["identity"], task_id="2")
+    todoist = FakeTodoist({
+        ext.ASSIGNED_QUERY_FALLBACK: [
+            {"id": "2", "content": "Cleanups", "priority": 1,
+             "due": {"date": "2026-07-14"}, "labels": []},
+        ],
+        ext.QUICK_QUERY_FALLBACK: [],
+    })
+    body = _client_with_capacities([row], todoist=todoist).get("/plan-inputs").json()
+    assert _names(body, "assigned") == ["Cleanups"]
+
+
+def test_same_name_todoist_task_not_in_store_still_disambiguates(vault, live_sources_mode):
+    import external_sources as ext
+
+    # No mirror receipt exists, so an ordinary same-name Todoist task keeps
+    # its canonical name and the Capacities row is tagged as before.
+    todoist = FakeTodoist({
+        ext.ASSIGNED_QUERY_FALLBACK: [
+            {"id": "9", "content": "Cleanups", "priority": 1,
+             "due": {"date": "2026-07-14"}, "labels": []},
+        ],
+        ext.QUICK_QUERY_FALLBACK: [],
+    })
+    body = _client_with_capacities(
+        [_capacities_row("Cleanups", [])], todoist=todoist).get("/plan-inputs").json()
+    names = _names(body, "assigned")
+    assert "Cleanups" in names
+    assert "Cleanups (Capacities)" in names
+
+
 def test_calendar_busy_blocks_join_anchored(vault, live_sources_mode):
     store = FakeStore([{
         "title": "Dentist",

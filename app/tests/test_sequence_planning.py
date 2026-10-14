@@ -221,3 +221,292 @@ def test_invalid_post_judgment_proposal_is_returned_as_rejected_proposal():
     assert outcome.rejected_proposal is not None
     assert outcome.result is None
     assert outcome.validation.ok is False
+
+
+# ---------------------------------------------------------------------------
+# 2026-10-13 clock-anchor staleness.
+#
+# A successful proposal must not go stale merely because the wall clock
+# advanced. Snapshots now record the anchor *intent* (clock vs explicit
+# override) instead of the moving clock anchor, while still comparing the
+# stable effective/config EOD and every legacy snapshot field.
+# ---------------------------------------------------------------------------
+
+_CLOCK_FRAME = {
+    "anchor": "15:30", "effective_eod": "23:00", "config_eod": "23:59",
+}
+_NEW_CLOCK_SNAPSHOT = {
+    "anchor_source": "clock", "anchor_override": None,
+    "effective_eod": "23:00", "config_eod": "23:59",
+}
+_VALID_ROW = {"id": "A", "start": "15:30", "end": "16:00", "zone": "any"}
+
+
+def _revalidation(*, day_setup=None, time_frame=None, snapshot=None,
+                  config=None, sequence=None, assigned=None):
+    return planning.prepare_sequence(_inputs(
+        assigned=assigned if assigned is not None else [
+            {"id": "A", "name": "A", "blocks": 1}],
+        config=config if config is not None else {},
+        day_setup=day_setup if day_setup is not None else {},
+        time_frame=time_frame or dict(_CLOCK_FRAME),
+        snapshot=snapshot if snapshot is not None else {},
+        sequence=sequence if sequence is not None else [dict(_VALID_ROW)],
+    ), mode="revalidation")
+
+
+def _snapshot_with_frame(frame, *, fp="fp"):
+    return {
+        "time_frame": frame,
+        "pinned_rows": [],
+        "overlap_grants": [],
+        "planning_config_fingerprint": fp,
+    }
+
+
+def test_run_proposal_records_clock_intent_without_the_volatile_anchor():
+    prepared = planning.prepare_sequence(_inputs(
+        day_setup={"schedulable": {"qt": {"on": False}}},
+        time_frame={"anchor": "15:15", "effective_eod": "23:00",
+                    "config_eod": "23:59"},
+    ), mode="proposal")
+    outcome = planning.run_proposal(prepared, _adapter([
+        {"id": "A", "start": "15:15", "end": "15:45", "zone": "any"},
+    ]))
+    assert outcome.result is not None
+    assert outcome.snapshot["time_frame"] == {
+        "anchor_source": "clock",
+        "anchor_override": None,
+        "effective_eod": "23:00",
+        "config_eod": "23:59",
+    }
+
+
+def test_run_proposal_records_override_intent_from_day_setup_anchor():
+    prepared = planning.prepare_sequence(_inputs(
+        day_setup={"anchor": "7:45 AM", "schedulable": {"qt": {"on": False}}},
+        time_frame={"anchor": "07:45", "effective_eod": "23:00",
+                    "config_eod": "23:59"},
+    ), mode="proposal")
+    outcome = planning.run_proposal(prepared, _adapter([
+        {"id": "A", "start": "07:45", "end": "08:15", "zone": "any"},
+    ]))
+    assert outcome.snapshot["time_frame"]["anchor_source"] == "override"
+    assert outcome.snapshot["time_frame"]["anchor_override"] == "07:45"
+
+
+def test_revalidation_new_clock_snapshot_survives_clock_advance():
+    prepared = _revalidation(
+        day_setup={},
+        time_frame=dict(_CLOCK_FRAME),
+        snapshot=_snapshot_with_frame(dict(_NEW_CLOCK_SNAPSHOT)),
+    )
+    assert planning.validate_revalidation(prepared).ok is True
+
+
+def test_revalidation_new_clock_snapshot_stale_when_override_added():
+    prepared = _revalidation(
+        day_setup={"anchor": "09:00"},
+        time_frame={"anchor": "09:00", "effective_eod": "23:00",
+                    "config_eod": "23:59"},
+        snapshot=_snapshot_with_frame(dict(_NEW_CLOCK_SNAPSHOT)),
+        sequence=[{"id": "A", "start": "09:00", "end": "09:30",
+                   "zone": "any"}],
+    )
+    assert planning.validate_revalidation(prepared).ok is False
+
+
+def test_revalidation_new_override_snapshot_stale_when_override_changed():
+    prepared = _revalidation(
+        day_setup={"anchor": "10:00"},
+        time_frame={"anchor": "10:00", "effective_eod": "23:00",
+                    "config_eod": "23:59"},
+        snapshot=_snapshot_with_frame({
+            "anchor_source": "override", "anchor_override": "09:00",
+            "effective_eod": "23:00", "config_eod": "23:59",
+        }),
+        sequence=[{"id": "A", "start": "10:00", "end": "10:30",
+                   "zone": "any"}],
+    )
+    assert planning.validate_revalidation(prepared).ok is False
+
+
+def test_revalidation_new_override_snapshot_stale_when_override_removed():
+    prepared = _revalidation(
+        day_setup={},
+        time_frame=dict(_CLOCK_FRAME),
+        snapshot=_snapshot_with_frame({
+            "anchor_source": "override", "anchor_override": "09:00",
+            "effective_eod": "23:00", "config_eod": "23:59",
+        }),
+    )
+    assert planning.validate_revalidation(prepared).ok is False
+
+
+def test_revalidation_new_clock_snapshot_stale_on_effective_eod_change():
+    prepared = _revalidation(
+        day_setup={},
+        time_frame={"anchor": "15:30", "effective_eod": "18:00",
+                    "config_eod": "23:59"},
+        snapshot=_snapshot_with_frame(dict(_NEW_CLOCK_SNAPSHOT)),
+    )
+    assert planning.validate_revalidation(prepared).ok is False
+
+
+def test_revalidation_new_clock_snapshot_stale_on_config_eod_change():
+    prepared = _revalidation(
+        day_setup={},
+        time_frame={"anchor": "15:30", "effective_eod": "23:00",
+                    "config_eod": "21:00"},
+        snapshot=_snapshot_with_frame(dict(_NEW_CLOCK_SNAPSHOT)),
+    )
+    assert planning.validate_revalidation(prepared).ok is False
+
+
+def test_revalidation_legacy_clock_anchor_aligned_and_past_is_accepted():
+    prepared = _revalidation(
+        day_setup={},
+        time_frame=dict(_CLOCK_FRAME),
+        snapshot=_snapshot_with_frame({
+            "anchor": "15:15", "effective_eod": "23:00",
+            "config_eod": "23:59",
+        }),
+    )
+    assert planning.validate_revalidation(prepared).ok is True
+
+
+def test_revalidation_legacy_clock_anchor_ahead_of_live_anchor_is_rejected():
+    prepared = _revalidation(
+        day_setup={},
+        time_frame=dict(_CLOCK_FRAME),
+        snapshot=_snapshot_with_frame({
+            "anchor": "16:00", "effective_eod": "23:00",
+            "config_eod": "23:59",
+        }),
+    )
+    assert planning.validate_revalidation(prepared).ok is False
+
+
+def test_revalidation_legacy_clock_anchor_off_grid_is_rejected():
+    prepared = _revalidation(
+        day_setup={},
+        config={"Defaults": {"anchor.round_to_minutes": 30}},
+        time_frame=dict(_CLOCK_FRAME),
+        snapshot=_snapshot_with_frame({
+            "anchor": "15:15", "effective_eod": "23:00",
+            "config_eod": "23:59",
+        }),
+    )
+    assert planning.validate_revalidation(prepared).ok is False
+
+
+def test_revalidation_legacy_clock_anchor_malformed_is_rejected():
+    prepared = _revalidation(
+        day_setup={},
+        time_frame=dict(_CLOCK_FRAME),
+        snapshot=_snapshot_with_frame({
+            "anchor": "later", "effective_eod": "23:00",
+            "config_eod": "23:59",
+        }),
+    )
+    assert planning.validate_revalidation(prepared).ok is False
+
+
+def test_revalidation_legacy_anchor_missing_is_rejected():
+    prepared = _revalidation(
+        day_setup={},
+        time_frame=dict(_CLOCK_FRAME),
+        snapshot=_snapshot_with_frame({
+            "effective_eod": "23:00", "config_eod": "23:59",
+        }),
+    )
+    assert planning.validate_revalidation(prepared).ok is False
+
+
+def test_revalidation_legacy_override_snapshot_equal_is_accepted():
+    prepared = _revalidation(
+        day_setup={"anchor": "09:00"},
+        time_frame={"anchor": "09:00", "effective_eod": "23:00",
+                    "config_eod": "23:59"},
+        snapshot=_snapshot_with_frame({
+            "anchor": "09:00", "effective_eod": "23:00",
+            "config_eod": "23:59",
+        }),
+        sequence=[{"id": "A", "start": "09:00", "end": "09:30",
+                   "zone": "any"}],
+    )
+    assert planning.validate_revalidation(prepared).ok is True
+
+
+def test_revalidation_legacy_override_snapshot_different_is_rejected():
+    prepared = _revalidation(
+        day_setup={"anchor": "10:00"},
+        time_frame={"anchor": "10:00", "effective_eod": "23:00",
+                    "config_eod": "23:59"},
+        snapshot=_snapshot_with_frame({
+            "anchor": "09:00", "effective_eod": "23:00",
+            "config_eod": "23:59",
+        }),
+        sequence=[{"id": "A", "start": "10:00", "end": "10:30",
+                   "zone": "any"}],
+    )
+    assert planning.validate_revalidation(prepared).ok is False
+
+
+def test_revalidation_empty_snapshot_remains_exempt():
+    prepared = _revalidation(snapshot={})
+    assert planning.validate_revalidation(prepared).ok is True
+
+
+def test_revalidation_still_flags_placement_past_before_live_anchor():
+    # The live frame still feeds placement validation: a row ahead of the
+    # stored snapshot but before the advanced clock anchor is a soft
+    # acceptable defect, not a stale snapshot.
+    prepared = _revalidation(
+        day_setup={},
+        time_frame=dict(_CLOCK_FRAME),
+        snapshot=_snapshot_with_frame(dict(_NEW_CLOCK_SNAPSHOT)),
+        sequence=[{"id": "A", "start": "09:00", "end": "09:30",
+                   "zone": "any"}],
+    )
+    result = planning.validate_revalidation(prepared)
+    assert result.ok is True
+    assert any(
+        isinstance(w, dict) and w.get("rule") == "placement_past"
+        for w in result.warnings
+    )
+
+
+def test_default_mint_fill_disappears_past_last_session_fails_closed():
+    # Characterization only (2026-10-13), not a repair: the default Mint fill
+    # is derived from the live anchor, so once the clock passes the last
+    # window session the aggregate Minting row is no longer injected and a
+    # stored plan that still contains it revalidates as a foreign row.
+    config = {"Template Blocks": {"Trinoor Hours": [
+        {"Slot": "Morning", "Start": "8:30 AM", "End": "12:30 PM"},
+        {"Slot": "Afternoon", "Start": "1:30 PM", "End": "5:00 PM"},
+    ]}}
+    mint_row = {"id": "Minting", "start": "16:30", "end": "17:00",
+                "zone": "work_hours"}
+
+    def run(anchor):
+        inputs = _inputs(
+            assigned=[],
+            config=config,
+            day_setup={},
+            time_frame={"anchor": anchor, "effective_eod": "23:00",
+                        "config_eod": "23:59"},
+            snapshot={},
+            sequence=[mint_row],
+        )
+        prepared = planning.prepare_sequence(inputs, mode="revalidation")
+        return prepared, planning.validate_revalidation(prepared)
+
+    on_grid, on_result = run("16:30")
+    assert any(block.get("name") == "Minting" for block in on_grid.blocks)
+    assert on_result.ok is True
+
+    past_last, past_result = run("16:45")
+    assert all(block.get("name") != "Minting" for block in past_last.blocks)
+    assert past_result.ok is False
+    assert any("Minting" in error for error in past_result.hard_errors)

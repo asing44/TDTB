@@ -180,6 +180,8 @@ class TodoistClient:
         duration: int | None = None,
         duration_unit: str | None = None,
         due_date: str | None = None,
+        due_datetime: str | None = None,
+        description: str | None = None,
     ) -> dict:
         payload: dict[str, Any] = {"content": content}
         if project_id is not None:
@@ -190,6 +192,10 @@ class TodoistClient:
             # Date-only due (YYYY-MM-DD) for the civil-calendar export lane:
             # never a time-bearing due_string that a provider could shift.
             payload["due_date"] = due_date
+        if due_datetime is not None:
+            # "YYYY-MM-DDTHH:MM:SS" local wall clock — the Capacities mirror
+            # lane's block start, the same form reschedule_task_datetime uses.
+            payload["due_datetime"] = due_datetime
         if due_string is not None:
             payload["due_string"] = due_string
         if priority is not None:
@@ -200,6 +206,8 @@ class TodoistClient:
             payload["duration"] = duration
         if duration_unit is not None:
             payload["duration_unit"] = duration_unit
+        if description is not None:
+            payload["description"] = description
         response = self._request("POST", "/tasks", json=payload)
         return response.json()
 

@@ -96,6 +96,20 @@ class ManifestEntry:
     # True when the row's identity came from a Capacities assigned row (S6b).
     # The Todoist writer refuses such an entry; kept out of ``as_dict``.
     capacities: bool = False
+    # True when the row is a Unit-2 schedulable all-day calendar row. Its
+    # calendar create may be diffed only against TDTB's own write calendars
+    # (the same scoping ``commit.write_calendar`` uses, FEEDBACK-26): an
+    # imported source event sharing the title must never collapse the create
+    # into a no-op. Kept out of ``as_dict``.
+    calendar_source: bool = False
+    # True when the row is the PHEP Todoist mirror of a Capacities row that
+    # also got a calendar block (contract change 2026-10-13). Unlike
+    # ``capacities``, this row IS a Todoist create. Kept out of ``as_dict``.
+    capacities_mirror: bool = False
+    # Stable Capacities identity for the (day, identity) receipt key and the
+    # description link. Internal — never rendered.
+    capacities_identity: str | None = None
+    capacities_link: str | None = None
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -136,6 +150,10 @@ class ShadowDiffEntry:
 class ShadowDiff:
     entries: list[ShadowDiffEntry]
     unavailable_surfaces: list[str] = field(default_factory=list)
+    #: Bounded, content-free operator notes about rows the manifest builder
+    #: deliberately withheld from the write contract (e.g. a Capacities row
+    #: whose PHEP mirror was skipped for lack of a usable block time).
+    notes: list[str] = field(default_factory=list)
 
     def counts(self) -> dict[str, int]:
         out = {CREATE: 0, UPDATE: 0, NOOP: 0, CONFLICT: 0, UNAVAILABLE: 0}
@@ -148,6 +166,7 @@ class ShadowDiff:
             "entries": [e.as_dict() for e in self.entries],
             "unavailable_surfaces": self.unavailable_surfaces,
             "counts": self.counts(),
+            "notes": self.notes,
         }
 
 
@@ -364,16 +383,47 @@ def _is_capacities_assigned(item: dict[str, Any]) -> bool:
     return source == "capacities" or path.startswith("capacities://")
 
 
-def _capacities_name_collisions(assigned_items: list[dict[str, Any]]) -> list[str]:
-    """Names held by both a Capacities row and a non-Capacities row (S6b).
+def _is_calendar_assigned(item: dict[str, Any]) -> bool:
+    """Identify a schedulable all-day calendar assigned row (Unit 2).
+
+    The sanitized ``source`` field classifies the row; a ``calendar://`` path
+    is the same fail-closed backstop the eligibility gate uses.
+    """
+    source = str(item.get("source") or "").strip().casefold()
+    path = str(item.get("path") or "").strip().casefold()
+    return source == "calendar" or path.startswith("calendar://")
+
+
+def _is_non_todoist_source_assigned(item: dict[str, Any]) -> bool:
+    """A Capacities or schedulable calendar row (a non-Todoist source row).
+
+    Path backstops match ``main._is_capacities_source_row`` /
+    ``main._is_calendar_source_row`` so the manifest boundary fails closed the
+    same way the eligibility gate does.
+    """
+    source = str(item.get("source") or "").strip().casefold()
+    path = str(item.get("path") or "").strip().casefold()
+    return source in ("capacities", "calendar") or path.startswith(
+        ("capacities://", "calendar://"))
+
+
+def _source_name_collisions(assigned_items: list[dict[str, Any]]) -> list[str]:
+    """Names held by both a source row (Capacities or calendar) and a
+    non-source row (Todoist/vault) (S6b, generalized by Unit 2).
 
     Sequence rows are name-keyed, so such a name cannot say which identity it
-    means. The builder refuses it rather than let the name cross the Capacities
+    means. The builder refuses it rather than let the name cross the source
     boundary in either direction.
     """
-    capacities = {item.get("name") for item in assigned_items if _is_capacities_assigned(item)}
-    others = {item.get("name") for item in assigned_items if not _is_capacities_assigned(item)}
-    return sorted(str(name) for name in capacities & others)
+    source_names = {
+        item.get("name") for item in assigned_items
+        if _is_non_todoist_source_assigned(item)
+    }
+    other_names = {
+        item.get("name") for item in assigned_items
+        if not _is_non_todoist_source_assigned(item)
+    }
+    return sorted(str(name) for name in source_names & other_names)
 
 
 def _todoist_manifest_metadata(item: dict[str, Any]) -> dict[str, Any]:
@@ -475,11 +525,12 @@ def build_plan_manifest(
       - anything else -> Step D (schedulable block: Minting / Shivery Jigs).
     """
     config = config or {}
-    collisions = _capacities_name_collisions(digest.get("assigned") or [])
+    collisions = _source_name_collisions(digest.get("assigned") or [])
     if collisions:
         raise ValueError(
-            "Capacities and non-Capacities assigned rows share a name; refusing "
-            "to build a manifest that cannot tell them apart: " + ", ".join(collisions)
+            "Source-identity (Capacities/calendar) and other assigned rows "
+            "share a name; refusing to build a manifest that cannot tell them "
+            "apart: " + ", ".join(collisions)
         )
     assigned = {item.get("name"): item for item in (digest.get("assigned") or [])}
     anchored = _anchored_specs(config)
@@ -497,15 +548,54 @@ def build_plan_manifest(
         if row_id in assigned:
             item = assigned[row_id]
             sequenced_assigned.add(row_id)
+            if _is_calendar_assigned(item):
+                # Unit 2: a schedulable all-day calendar row is calendar-only —
+                # exactly one ⬜ Blocks create-event, never a Todoist task or a
+                # PHEP mirror, and never a write to the source event. Zero or
+                # missing blocks (or an unplaceable row) writes nothing.
+                blocks = item.get("blocks")
+                if (isinstance(blocks, bool)
+                        or not isinstance(blocks, (int, float))
+                        or blocks <= 0):
+                    continue
+                if not start or duration <= 0:
+                    continue
+                entries.append(ManifestEntry(
+                    step="D", system="calendar", action="create-event",
+                    name=str(row_id), id_or_path=str(row_id),
+                    time=start, duration_min=duration, routing="⬜ Blocks",
+                    calendar_source=True,
+                ))
+                continue
             if _is_capacities_assigned(item):
-                # S6b: plan-only. One calendar block on the ⬜ Blocks class (the
-                # Step D default for non-Mint rows), resolved by plan_writes like
-                # every other calendar row. No Todoist task and no name-derived Mint class.
+                # S6b + PHep mirror: one calendar block on the ⬜ Blocks class
+                # (the Step D default for non-Mint rows), resolved by
+                # plan_writes like every other calendar row, PLUS one Todoist
+                # create under PHEP at the same block start/duration. The
+                # mirror is hard-routed PHEP and keyed by the Capacities
+                # identity, so a client type/project can never reroute it and
+                # a later commit can never duplicate it.
                 entries.append(ManifestEntry(
                     step="D", system="calendar", action="create-event",
                     name=str(row_id), id_or_path=str(row_id),
                     time=start, duration_min=duration, routing="⬜ Blocks",
                     capacities=True,
+                ))
+                if not start or duration <= 0:
+                    # No usable block time (missing or zero-length start/end):
+                    # never emit an undated/durationless mirror. The calendar
+                    # row above is unchanged; diff_against_live notes the skip.
+                    continue
+                capacities_identity = str(
+                    item.get("identity") or item.get("path") or row_id).strip()
+                capacities_link = str(item.get("path") or capacities_identity).strip()
+                entries.append(ManifestEntry(
+                    step="A", system="todoist", action="schedule",
+                    name=str(row_id), id_or_path=capacities_link or str(row_id),
+                    time=start, duration_min=duration, routing="PHEP",
+                    capacities_mirror=True,
+                    capacities_identity=capacities_identity,
+                    capacities_link=capacities_link,
                 ))
                 continue
             # Routing reads the digest item's own types first (shakedown
@@ -615,6 +705,8 @@ def build_plan_manifest(
             continue
         if _is_capacities_assigned(item):
             continue  # S6b: no Todoist due; no timeline row means no calendar time
+        if _is_calendar_assigned(item):
+            continue  # Unit 2: a calendar row is calendar-only — no date-only due
         entries.append(ManifestEntry(
             step="A", system="todoist", action="schedule-all-day",
             name=name, id_or_path=item.get("path") or name,
@@ -833,6 +925,12 @@ def diff_against_live(manifest: list[ManifestEntry], live_state: dict[str, Any])
 
     todoist_tasks = live_state.get("todoist_tasks") or []
     calendar_events = live_state.get("calendar_events") or []
+    # FEEDBACK-26 scoping for Unit-2 calendar rows: the ids of TDTB's own
+    # write calendars, resolved by ``gather_live_state``. ``None`` means the
+    # caller supplied no scoping inventory (legacy direct calls) — fall back
+    # to the unscoped match; a present-but-empty set scopes nothing, which
+    # the write path independently refuses as unresolvable.
+    calendar_own_ids = live_state.get("calendar_own_ids")
 
     # T21 claim pre-pass: id-ref'd todoist rows own their task outright, in
     # any manifest order — content-fallback rows may only match what's left.
@@ -850,6 +948,19 @@ def diff_against_live(manifest: list[ManifestEntry], live_state: dict[str, Any])
             match = _match_todoist(m.name, todoist_tasks, m.id_or_path, claimed)
             if match is not None:
                 claimed.add(str(match.get("id")))
+            if m.capacities_mirror:
+                # The mirror lane may only CREATE. A live same-content task (at
+                # any time or project) is the covering work, so it is a NOOP:
+                # the mirror never retimes or claims a pre-existing task.
+                if match is None:
+                    entries.append(ShadowDiffEntry(
+                        m, CREATE, {"content": m.name, "due_time": m.time}))
+                else:
+                    reading = _todoist_due_reading(match)
+                    entries.append(ShadowDiffEntry(
+                        m, NOOP,
+                        _todoist_due_detail(m, match, reading, False, False)))
+                continue
             if match is None:
                 if m.native_start is not None:
                     entries.append(ShadowDiffEntry(
@@ -962,7 +1073,14 @@ def diff_against_live(manifest: list[ManifestEntry], live_state: dict[str, Any])
             if live_state.get("calendar_unavailable"):
                 entries.append(ShadowDiffEntry(m, UNAVAILABLE, {"reason": "calendar surface unavailable"}))
                 continue
-            match = _match_calendar_event(m.name, m.time, calendar_events)
+            candidates = calendar_events
+            if m.calendar_source and calendar_own_ids is not None:
+                own = {str(c) for c in calendar_own_ids}
+                candidates = [
+                    e for e in calendar_events
+                    if str(e.get("calendar_id") or "") in own
+                ]
+            match = _match_calendar_event(m.name, m.time, candidates)
             if match is None:
                 entries.append(ShadowDiffEntry(m, CREATE, {"title": m.name, "start": m.time}))
             else:
@@ -975,12 +1093,50 @@ def diff_against_live(manifest: list[ManifestEntry], live_state: dict[str, Any])
         else:
             entries.append(ShadowDiffEntry(m, CONFLICT, {"reason": f"unrecognized manifest row: {m.step}/{m.action}"}))
 
-    return ShadowDiff(entries=entries, unavailable_surfaces=unavailable)
+    return ShadowDiff(
+        entries=entries,
+        unavailable_surfaces=unavailable,
+        notes=[
+            f"Capacities row {m.name!r} has no block time — PHEP mirror skipped"
+            for m in manifest
+            if m.capacities and (not m.time or m.duration_min <= 0)
+        ],
+    )
 
 
 # ---------------------------------------------------------------------------
 # 3. gather_live_state — the I/O layer
 # ---------------------------------------------------------------------------
+
+def _own_calendar_ids(config: Any, store: Any) -> set[str]:
+    """Resolve TDTB's own write calendars (the configured title map, e.g.
+    ``"⬜ Blocks"``) to live calendar ids.
+
+    Mirrors ``commit_run._resolve_calendar_ids`` / ``commit.plan_writes`` so
+    the shadow diff can scope a calendar row's match to the calendar TDTB
+    actually writes (FEEDBACK-26). An imported source event that happens to
+    share the title must never collapse our create into a no-op. A missing,
+    malformed, or unresolvable title map returns an empty set: the write path
+    independently refuses such rows, so the empty scope stays fail-closed.
+    """
+    if not isinstance(config, dict):
+        return set()
+    raw = (
+        config.get("Calendar Titles")
+        or config.get("calendar_ids")
+        or config.get("Calendar IDs")
+    )
+    title_map = calendar_bridge.normalize_title_map(raw)
+    if not title_map:
+        return set()
+    try:
+        resolved, _failures = calendar_bridge.resolve_titles_to_ids(
+            title_map, store.calendars()
+        )
+    except Exception:  # noqa: BLE001 — a degraded inventory scopes to nothing
+        return set()
+    return set(resolved.values())
+
 
 def gather_live_state(config: Any) -> dict[str, Any]:
     """Read the current live state of every Phase-5 write target.
@@ -1035,6 +1191,7 @@ def gather_live_state(config: Any) -> dict[str, Any]:
         start = datetime.combine(today, datetime.min.time())
         end = datetime.combine(today, datetime.max.time())
         state["calendar_events"] = store.query_events(start, end)
+        state["calendar_own_ids"] = _own_calendar_ids(config, store)
     except Exception as exc:  # noqa: BLE001 — consent/import errors degrade, never crash
         state["calendar_unavailable"] = True
         state["calendar_error"] = str(exc)

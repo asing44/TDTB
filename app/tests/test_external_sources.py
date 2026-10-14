@@ -107,6 +107,29 @@ class TestFetchTodoistItems:
         assert [i["name"] for i in pool] == ["Water plants"]
         assert assigned[0]["assigned"] is True and pool[0]["assigned"] is False
 
+    def test_exclude_ids_drops_assigned_and_pool(self):
+        # A Capacities mirror id (already created by the commit lane) is hidden
+        # from BOTH intake surfaces so it never re-enters planning.
+        client = FakeTodoist({
+            ext.ASSIGNED_QUERY_FALLBACK: [
+                _task("1", "Keep me"), _task("2", "Mirror assigned")],
+            ext.QUICK_QUERY_FALLBACK: [
+                _task("3", "Mirror pool"), _task("4", "Keep pool")],
+        })
+        assigned, pool, warnings = ext.fetch_todoist_items(
+            client, {}, exclude_ids={"2", "3"})
+        assert warnings == []
+        assert [i["name"] for i in assigned] == ["Keep me"]
+        assert [i["name"] for i in pool] == ["Keep pool"]
+
+    def test_exclude_ids_none_is_a_noop(self):
+        client = FakeTodoist({
+            ext.ASSIGNED_QUERY_FALLBACK: [_task("1", "Call Vlad")],
+            ext.QUICK_QUERY_FALLBACK: [],
+        })
+        assigned, _, _ = ext.fetch_todoist_items(client, {}, exclude_ids=None)
+        assert [i["name"] for i in assigned] == ["Call Vlad"]
+
     def test_item_shape(self):
         client = FakeTodoist({ext.ASSIGNED_QUERY_FALLBACK: [
             _task("42", "Ship memo", priority=3, due="2026-07-14",

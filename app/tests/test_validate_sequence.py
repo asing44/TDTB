@@ -398,3 +398,38 @@ class TestValidateSequenceRoute:
 
         assert r.status_code == 200
         assert r.json()["hard_errors"] == ["planning snapshot is stale"]
+
+    def test_new_clock_snapshot_survives_the_live_clock_at_the_route(self, client):
+        # 2026-10-13: a clock-mode proposal stores anchor intent, not the
+        # moving clock anchor, so the route revalidates it as current even
+        # though the live anchor has advanced past the proposal's frame.
+        today = gather.effective_date(datetime.now())
+        rs.write_runstate(today, rs.build_runstate({
+            "time_frame": {
+                "anchor_source": "clock",
+                "anchor_override": None,
+                "effective_eod": "23:59",
+                "config_eod": "23:59",
+            },
+            "pinned_rows": [],
+            "overlap_grants": [],
+            "planning_config_fingerprint": "fp-current",
+        }))
+        r = client.post(
+            "/validate-sequence",
+            headers=_auth(client),
+            json={
+                "sequence": [{"id": "A", "start": "13:00", "end": "13:30", "zone": "any"}],
+                "assigned": [{"id": "A", "zone": "any"}],
+                "anchored_blocks": [],
+                "config": {},
+                "pinned_rows": [],
+                "overlap_grants": [],
+                "planning_config_fingerprint": "fp-current",
+            },
+        )
+
+        assert r.status_code == 200
+        body = r.json()
+        assert body["hard_errors"] == []
+        assert body["ok"] is True

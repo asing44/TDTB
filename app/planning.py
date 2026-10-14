@@ -14,7 +14,9 @@ from datetime import date
 from typing import Any, Callable
 
 import external_sources
+import placement_rules
 import sequence
+import time_engine
 
 
 class PlanningError(Exception):
@@ -66,18 +68,113 @@ def _id(item: dict[str, Any]) -> str:
     return str(item.get("id") or item.get("name") or "")
 
 
-def _time_frame_identity(frame: dict[str, Any] | None) -> dict[str, Any]:
-    """Keep only stable frame fields when comparing a planning snapshot."""
+def _time_frame_identity(
+    frame: dict[str, Any] | None,
+    day_setup: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """The stable identity of a NEW snapshot's time frame.
+
+    The moving clock anchor is deliberately excluded so a clock-mode proposal
+    does not become stale merely because the wall clock advanced. Only the
+    anchor *intent* — clock or an explicit canonical override — plus the
+    stable EOD bounds are recorded for a later exact comparison."""
     canonical = sequence.canonicalize_time_frame(frame)
-    return {
-        key: canonical[key]
-        for key in ("anchor", "effective_eod", "config_eod")
-        if key in canonical
+    source, override = _anchor_intent(day_setup)
+    identity: dict[str, Any] = {
+        "anchor_source": source,
+        "anchor_override": override,
     }
+    for key in ("effective_eod", "config_eod"):
+        if key in canonical:
+            identity[key] = canonical[key]
+    return identity
+
+
+_TIME_FRAME_IDENTITY_KEYS = (
+    "anchor_source", "anchor_override", "effective_eod", "config_eod",
+)
+
+
+def _anchor_intent(day_setup: dict[str, Any] | None) -> tuple[str, str | None]:
+    """The day's anchor intent: an explicit canonical override, else clock.
+
+    Mirrors ``main.py``'s ``anchor_override=time_engine.to_hhmm(...)`` so a
+    junk/absent day-setup anchor means clock mode, exactly as the live frame
+    computes it."""
+    override = time_engine.to_hhmm((day_setup or {}).get("anchor"))
+    return ("override", override) if override else ("clock", None)
+
+
+def _round_to_minutes(config: dict[str, Any] | None) -> int:
+    """The anchor grid the live frame used (mirrors main.py's resolution)."""
+    defaults = config.get("Defaults") if isinstance(config, dict) else None
+    raw = (
+        (defaults or {}).get("anchor.round_to_minutes")
+        if isinstance(defaults, dict) else None
+    )
+    try:
+        value = int(raw or 15)
+    except (TypeError, ValueError):
+        value = 15
+    return max(1, value)
+
+
+def _time_frame_matches(
+    stored: dict[str, Any], prepared: PreparedSequence
+) -> bool:
+    """Whether a stored snapshot time_frame still matches the live frame.
+
+    A new-format snapshot (``anchor_source`` present) compares the stable
+    intent identity exactly. A legacy snapshot predates that field and carries
+    the raw clock anchor, so it is accepted only under ``_legacy_time_frame_matches``."""
+    actual = _time_frame_identity(prepared.time_frame, prepared.day_setup)
+    if "anchor_source" in stored:
+        return {
+            key: stored.get(key) for key in _TIME_FRAME_IDENTITY_KEYS
+        } == {key: actual.get(key) for key in _TIME_FRAME_IDENTITY_KEYS}
+    return _legacy_time_frame_matches(stored, prepared, actual)
+
+
+def _legacy_time_frame_matches(
+    stored: dict[str, Any],
+    prepared: PreparedSequence,
+    actual: dict[str, Any],
+) -> bool:
+    """Accept a legacy snapshot's raw anchor only under the safe rules.
+
+    The stable EOD bounds must still match. With a live explicit override the
+    stored anchor must equal it; with no override the stored anchor is trusted
+    only when it is a valid, grid-aligned clock anchor at or before the live
+    anchor and within the effective EOD. Out-of-band override removal cannot
+    be reconstructed from a legacy snapshot, so every other case fails closed.
+    """
+    for key in ("effective_eod", "config_eod"):
+        if key in stored and stored.get(key) != actual.get(key):
+            return False
+    override = _anchor_intent(prepared.day_setup)[1]
+    if override is not None:
+        return stored.get("anchor") == override
+    stored_anchor = stored.get("anchor")
+    canonical = placement_rules.canonical_time(stored_anchor)
+    if canonical is None or canonical != stored_anchor:
+        return False
+    current = sequence.canonicalize_time_frame(prepared.time_frame)
+    stored_min = placement_rules.time_to_minutes(canonical)
+    current_min = placement_rules.time_to_minutes(current.get("anchor"))
+    eod_min = placement_rules.time_to_minutes(current.get("effective_eod"))
+    if stored_min is None or current_min is None or eod_min is None:
+        return False
+    if stored_min % _round_to_minutes(prepared.config) != 0:
+        return False
+    return stored_min <= current_min and stored_min <= eod_min
 
 
 def _snapshot_projection(snapshot: dict[str, Any]) -> dict[str, Any]:
-    """Canonicalize snapshot metadata without comparing volatile clock fields."""
+    """Canonicalize a stored snapshot without inventing an anchor intent.
+
+    The stored time_frame keeps exactly the keys it was written with, so a
+    legacy snapshot (raw ``anchor``) and a new snapshot (``anchor_source``)
+    can be told apart during revalidation."""
     projection: dict[str, Any] = {
         "overlap_grants": sequence.canonicalize_overlap_grants(
             snapshot.get("overlap_grants", [])
@@ -90,7 +187,9 @@ def _snapshot_projection(snapshot: dict[str, Any]) -> dict[str, Any]:
         ),
     }
     if "time_frame" in snapshot:
-        projection["time_frame"] = _time_frame_identity(snapshot.get("time_frame"))
+        projection["time_frame"] = sequence.canonicalize_time_frame(
+            snapshot.get("time_frame")
+        )
     return projection
 
 
@@ -348,7 +447,7 @@ def run_proposal(
         ),
         "pinned_rows": copy.deepcopy(prepared.effective_pins),
         "planning_config_fingerprint": prepared.planning_config_fingerprint,
-        "time_frame": _time_frame_identity(prepared.time_frame),
+        "time_frame": _time_frame_identity(prepared.time_frame, prepared.day_setup),
     }
     if not validation.ok:
         return PlanningOutcome(
@@ -384,9 +483,14 @@ def validate_revalidation(prepared: PreparedSequence) -> sequence.ValidationResu
         "pinned_rows": sequence.canonicalize_pinned_rows(prepared.effective_pins),
         "planning_config_fingerprint": prepared.planning_config_fingerprint,
     }
-    if "time_frame" in expected_snapshot:
-        actual_snapshot["time_frame"] = _time_frame_identity(prepared.time_frame)
-    if actual_snapshot != expected_snapshot and prepared.snapshot:
+    stale = any(
+        actual_snapshot[key] != expected_snapshot.get(key)
+        for key in ("overlap_grants", "pinned_rows",
+                    "planning_config_fingerprint")
+    )
+    if not stale and "time_frame" in expected_snapshot:
+        stale = not _time_frame_matches(expected_snapshot["time_frame"], prepared)
+    if stale and prepared.snapshot:
         detail = "planning snapshot is stale"
         return sequence.ValidationResult(
             ok=False,

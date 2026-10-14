@@ -15,6 +15,7 @@ from pathlib import Path
 import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
+import capacities_mirror  # noqa: E402
 import calendar_bridge  # noqa: E402
 import commit  # noqa: E402
 import orchestrate  # noqa: E402
@@ -479,6 +480,167 @@ class TestRunCommit:
         for name in ("write_daily_note", "write_frontmatter_flips",
                      "_set_assigned_true", "_patch_plan_section", "_plan_vault"):
             assert not hasattr(commit, name), name
+
+
+# ---------------------------------------------------------------------------
+# Capacities -> PHEP Todoist mirror (contract change 2026-10-13)
+# ---------------------------------------------------------------------------
+
+class MirrorTodoist(FakeTodoist):
+    """FakeTodoist that records create calls and can delay index visibility
+    (``lag_index``) so the write-ahead receipt — not the live snapshot — is
+    what proves idempotency."""
+
+    def __init__(self, tasks=None, lag_index=False):
+        super().__init__(tasks)
+        self.calls = []
+        self.fail_next = False
+        self.lag_index = lag_index
+        self._snapshot = list(self._tasks.values()) if lag_index else None
+
+    def get_filter_tasks(self, filter_id_or_query, limit=None):
+        if self.lag_index and self._snapshot is not None:
+            return list(self._snapshot)
+        return list(self._tasks.values())
+
+    def create_task(self, content, project_id=None, due_string=None,
+                    duration=None, duration_unit=None, due_datetime=None,
+                    description=None, **_):
+        self.calls.append({
+            "content": content, "project_id": project_id,
+            "due_datetime": due_datetime, "description": description,
+            "duration": duration, "duration_unit": duration_unit,
+        })
+        if self.fail_next:
+            raise RuntimeError("provider down")
+        self._seq += 1
+        tid = f"t{self._seq}"
+        due = ({"date": due_datetime} if due_datetime else
+               {"date": TODAY.isoformat()} if due_string == "today" else None)
+        self._tasks[tid] = {"id": tid, "content": content, "due": due,
+                            "description": description, "project_id": project_id}
+        self.created_calls += 1
+        return self._tasks[tid]
+
+
+class TestCapacitiesMirrorWrite:
+    IDENTITY = "capacities:space-1:RootTask:object-1"
+    ITEM = {
+        "name": "Cleanups",
+        "path": "capacities://space-1/object-1",
+        "source": "capacities",
+        "identity": IDENTITY,
+    }
+    SEQ = {"sequence": [{"id": "Cleanups", "start": "09:00", "end": "10:00"}]}
+
+    def _intents(self):
+        manifest = build_plan_manifest({"assigned": [dict(self.ITEM)]}, self.SEQ, {})
+        diff = diff_against_live(
+            manifest, {"todoist_tasks": [], "calendar_events": []})
+        return commit.plan_writes(diff, CAL_IDS, {}, TODAY)
+
+    def _mirror_intent(self):
+        [mirror] = [i for i in self._intents() if i.surface == "todoist"]
+        return mirror
+
+    def test_mirror_intent_carries_phep_due_duration_and_link(self):
+        mirror = self._mirror_intent()
+        assert mirror.op == "create" and mirror.capacities_mirror is True
+        assert mirror.project_id == commit._FALLBACK_PHEP_PROJECT_ID
+        assert mirror.due_datetime == "2026-07-12T09:00:00"
+        assert mirror.duration_min == 60
+        assert "capacities://space-1/object-1" in (mirror.description or "")
+
+    def test_plan_resolves_phep_from_server_config_not_reference(self):
+        manifest = build_plan_manifest({"assigned": [dict(self.ITEM)]}, self.SEQ, {})
+        diff = diff_against_live(
+            manifest, {"todoist_tasks": [], "calendar_events": []})
+        intents = commit.plan_writes(
+            diff, CAL_IDS, {"todoist_projects": {"PHEP": "P-REAL"}}, TODAY)
+        [mirror] = [i for i in intents if i.surface == "todoist"]
+        assert mirror.project_id == "P-REAL"
+
+    def test_same_name_live_task_is_never_updated_or_claimed(self):
+        # BLOCKING review finding: a same-name live task at a different time
+        # (15:00 vs the 09:00 block) is a NOOP for the mirror lane. The commit
+        # must not retime it, claim it, record a receipt, or exclude it.
+        live = {"todoist_tasks": [
+            {"id": "t-user", "content": "Cleanups",
+             "due": {"date": "2026-07-12T15:00:00"}},
+        ]}
+        manifest = build_plan_manifest({"assigned": [dict(self.ITEM)]}, self.SEQ, {})
+        diff = diff_against_live(manifest, live)
+        todoist = [i for i in commit.plan_writes(diff, CAL_IDS, {}, TODAY)
+                   if i.surface == "todoist"]
+        assert [i.op for i in todoist] == ["noop"]
+        client = MirrorTodoist(tasks=[
+            {"id": "t-user", "content": "Cleanups",
+             "due": {"date": "2026-07-12T15:00:00"}},
+        ])
+        result = commit.write_todoist(todoist, client, TODAY)
+        assert result.ok, result.error
+        assert client.created_calls == 0 and client.calls == []
+        # due 15:00 is untouched (no reschedule/update call)
+        assert client._tasks["t-user"]["due"] == {"date": "2026-07-12T15:00:00"}
+        # no receipt and no excluded id were recorded
+        assert dict(capacities_mirror.load_mirror().receipts) == {}
+        assert capacities_mirror.excluded_task_ids() == ()
+
+    def test_creates_once_and_second_run_is_noop(self):
+        mirror = self._mirror_intent()
+        client = MirrorTodoist(lag_index=True)
+        first = commit.write_todoist([mirror], client, TODAY)
+        assert first.ok, first.error
+        assert first.created and client.created_calls == 1
+        assert client.calls[0]["project_id"] == commit._FALLBACK_PHEP_PROJECT_ID
+        assert client.calls[0]["due_datetime"] == "2026-07-12T09:00:00"
+        assert client.calls[0]["duration"] == 60
+        assert "capacities://space-1/object-1" in client.calls[0]["description"]
+        second = commit.write_todoist([mirror], client, TODAY)
+        assert second.ok, second.error
+        assert second.noops and client.created_calls == 1
+        assert mirror.capacities_identity is not None
+        assert capacities_mirror.excluded_task_ids() == (first.created[0],)
+
+    def test_ambiguous_pending_receipt_blocks_create(self):
+        capacities_mirror.begin_mirror(day=TODAY.isoformat(), identity=self.IDENTITY)
+        client = MirrorTodoist()
+        result = commit.write_todoist([self._mirror_intent()], client, TODAY)
+        assert not result.ok and client.created_calls == 0
+        assert any("unconfirmed" in f for f in result.verify_failures)
+
+    def test_provider_failure_is_reported_and_calendar_survives(self):
+        client = MirrorTodoist()
+        client.fail_next = True
+        store = FakeStore()
+        results = commit.run_commit(
+            self._intents(), todoist=client, store=store, today=TODAY)
+        by_surface = {r.surface: r for r in results}
+        assert by_surface["todoist"].ok is False
+        assert any("capacities mirror" in f
+                   for f in by_surface["todoist"].verify_failures)
+        assert by_surface["calendar"].ok is True
+        assert store.created_calls == 1
+
+    def test_store_read_failure_fails_closed(self):
+        path = capacities_mirror.store_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("garbage", encoding="utf-8")
+        client = MirrorTodoist()
+        result = commit.write_todoist([self._mirror_intent()], client, TODAY)
+        assert not result.ok and client.created_calls == 0
+        assert any("fail closed" in f for f in result.verify_failures)
+        assert path.read_text(encoding="utf-8") == "garbage"
+
+    def test_resume_does_not_recreate_the_mirror(self):
+        mirror = self._mirror_intent()
+        client = MirrorTodoist(lag_index=True)
+        first = orchestrate.run_orchestrated(
+            [mirror], todoist=client, store=None, today=TODAY)
+        assert first["ok"] is True and client.created_calls == 1
+        second = orchestrate.run_orchestrated(
+            [mirror], todoist=client, store=None, today=TODAY, resume=True)
+        assert second["ok"] is True and client.created_calls == 1
 
 
 # ---------------------------------------------------------------------------

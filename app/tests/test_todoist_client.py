@@ -144,6 +144,35 @@ def test_create_task_minimal_payload_omits_optional_fields():
     assert captured["body"] == {"content": "minimal", "project_id": "p1"}
 
 
+def test_create_task_carries_due_datetime_and_description():
+    """The Capacities mirror lane creates a task at a block start with a
+    link description; both fields must reach the POST body."""
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(200, json={"id": "1"})
+
+    client = make_client(handler)
+    client.create_task(
+        content="Cleanups",
+        project_id="phep",
+        due_datetime="2026-10-13T09:00:00",
+        description="Capacities: capacities://space-1/object-1",
+        duration=60,
+        duration_unit="minute",
+    )
+
+    assert captured["body"] == {
+        "content": "Cleanups",
+        "project_id": "phep",
+        "due_datetime": "2026-10-13T09:00:00",
+        "description": "Capacities: capacities://space-1/object-1",
+        "duration": 60,
+        "duration_unit": "minute",
+    }
+
+
 # ---------------------------------------------------------------------------
 # update_task / reschedule_task
 # ---------------------------------------------------------------------------

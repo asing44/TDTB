@@ -66,7 +66,21 @@ class FakeTodoist:
 
     def reschedule_task_datetime(self, task_id: str, due_datetime: str) -> dict:
         self.calls.append(("reschedule_task_datetime", task_id, due_datetime))
-        self.tasks[task_id]["due"] = {"datetime": due_datetime}
+        due = dict(self.tasks[task_id].get("due") or {})
+        due.update({"datetime": due_datetime, "date": None})
+        self.tasks[task_id]["due"] = due
+        return json.loads(json.dumps(self.tasks[task_id]))
+
+    def reschedule_task_date(self, task_id: str, due_date: str) -> dict:
+        self.calls.append(("reschedule_task_date", task_id, due_date))
+        due = dict(self.tasks[task_id].get("due") or {})
+        due.update({"date": due_date, "datetime": None})
+        self.tasks[task_id]["due"] = due
+        return json.loads(json.dumps(self.tasks[task_id]))
+
+    def clear_task_date(self, task_id: str) -> dict:
+        self.calls.append(("clear_task_date", task_id))
+        self.tasks[task_id]["due"] = None
         return json.loads(json.dumps(self.tasks[task_id]))
 
 
@@ -206,6 +220,13 @@ def fresh_clients() -> tuple[FakeTodoist, FakeStore]:
                  "notes": None},
     })
     return todoist, store
+
+
+def recurring_todoist(due: dict) -> FakeTodoist:
+    return FakeTodoist({
+        "task-1": {"id": "task-1", "content": "Press", "project_id": "p1",
+                   "is_completed": False, "completed_count": 0, "due": due},
+    })
 
 
 # ---------------------------------------------------------------------------
@@ -423,6 +444,71 @@ class TestDeletePermanent:
         assert any(t["content"] == "Press" for t in todoist.tasks.values())
         assert (vault / "Projects" / "Press.md").read_text() == NOTE_TEXT
         assert any(e["title"] == "Press" for e in store.events.values())
+
+
+class TestRecurringUnassignDueShapes:
+    """A timed due value can arrive under ``date`` with no ``datetime`` key
+    (root reproduced ``date='2026-10-13T22:00:00'``). The engine must classify
+    the value by its time-bearing shape: timed values use the datetime API and
+    keep the wall time; date-only values are unchanged; malformed values fail
+    closed with no write and never complete or clear the task."""
+
+    def test_timed_date_without_datetime_key_advances_as_datetime(self, vault: Path):
+        todoist = recurring_todoist({
+            "date": "2026-10-13T22:00:00", "is_recurring": True,
+            "string": "every 2 days",
+        })
+        action = ra.apply_action(TODAY, "unassign", "Press", {},
+                                 todoist=todoist, store=None)
+        assert action["status"] == "applied"
+        assert ("reschedule_task_datetime", "task-1", "2026-10-15T22:00:00") in todoist.calls
+        assert not any(c[0] in ("reschedule_task_date", "clear_task_date",
+                                "close_task") for c in todoist.calls)
+        due = todoist.tasks["task-1"]["due"]
+        assert due["datetime"] == "2026-10-15T22:00:00"
+        assert due["string"] == "every 2 days"
+        assert due["is_recurring"] is True
+        assert todoist.tasks["task-1"]["is_completed"] is False
+
+    def test_timed_date_undo_restores_original_time_via_datetime_api(self, vault: Path):
+        todoist = recurring_todoist({
+            "date": "2026-10-13T22:00:00", "is_recurring": True,
+            "string": "every 2 days",
+        })
+        action = ra.apply_action(TODAY, "unassign", "Press", {},
+                                 todoist=todoist, store=None)
+        undone = ra.undo_action(TODAY, action["id"], todoist=todoist, store=None)
+        assert undone["status"] == "undone"
+        assert ("reschedule_task_datetime", "task-1", "2026-10-13T22:00:00") in todoist.calls
+        assert not any(c[0] == "reschedule_task_date" for c in todoist.calls)
+        assert todoist.tasks["task-1"]["due"]["datetime"] == "2026-10-13T22:00:00"
+
+    def test_date_only_advance_and_undo_still_use_the_date_api(self, vault: Path):
+        todoist = recurring_todoist({
+            "date": "2026-10-13", "is_recurring": True, "string": "every 2 days",
+        })
+        action = ra.apply_action(TODAY, "unassign", "Press", {},
+                                 todoist=todoist, store=None)
+        assert action["status"] == "applied"
+        assert ("reschedule_task_date", "task-1", "2026-10-15") in todoist.calls
+        assert not any(c[0] == "reschedule_task_datetime" for c in todoist.calls)
+        ra.undo_action(TODAY, action["id"], todoist=todoist, store=None)
+        assert ("reschedule_task_date", "task-1", "2026-10-13") in todoist.calls
+
+    def test_malformed_timed_value_fails_closed_with_no_write(self, vault: Path):
+        todoist = recurring_todoist({
+            "date": "not-a-date", "is_recurring": True, "string": "every 2 days",
+        })
+        action = ra.apply_action(TODAY, "unassign", "Press", {},
+                                 todoist=todoist, store=None)
+        assert action["status"] in ("compensated", "failed")
+        assert not any(c[0] in ("reschedule_task", "reschedule_task_datetime",
+                                "reschedule_task_date", "clear_task_date",
+                                "close_task", "update_task") for c in todoist.calls)
+        assert todoist.tasks["task-1"]["due"]["date"] == "not-a-date"
+        assert todoist.tasks["task-1"]["is_completed"] is False
+        assert not any(s.get("applied") and not s.get("compensated")
+                       for s in action["steps"])
 
 
 class TestRetiredNoteRows:

@@ -376,6 +376,11 @@ def sections_from_document(document: dict[str, Any]) -> dict[str, Any]:
             out["Disabled Calendars"] = [
                 {"Title": str(value)} for value in _as_list(calendar["disabled"])
             ]
+        if "schedulable_all_day" in calendar:
+            # Unit 1: the user-chosen list of calendars whose all-day events
+            # become schedulable plan rows. Passed through verbatim; the
+            # normalizer owns the fail-safe shape handling.
+            out["Schedulable All-Day Calendars"] = calendar["schedulable_all_day"]
 
     if "ignore" in document:
         out["Ignore List"] = _ignore_section(document["ignore"])

@@ -115,22 +115,29 @@ def _to_item(task: dict[str, Any], assigned: bool) -> dict[str, Any]:
 
 
 def fetch_todoist_items(
-    client: Any, config: dict[str, Any]
+    client: Any, config: dict[str, Any], exclude_ids: set[str] | None = None
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[str]]:
     """Pull assigned (due today/overdue) + quick-pool tasks.
+
+    ``exclude_ids`` drops app-created Capacities mirror tasks by Todoist id so
+    a mirror never re-appears as a Todoist-sourced row on a later load
+    (including later days while it is still open).
 
     Returns ``(assigned_items, pool_items, warnings)``; never raises.
     """
     if client is None:
         return [], [], ["Todoist unavailable (no client/token) — digest is missing Todoist items"]
 
+    excluded = {str(value) for value in (exclude_ids or ())}
     assigned_q = str(config.get("todoist.read_query.assigned") or ASSIGNED_QUERY_FALLBACK)
     quick_q = str(config.get("todoist.read_query.quick") or QUICK_QUERY_FALLBACK)
     try:
         habit_projects = _habit_project_ids(client)
 
         def _plannable(t: dict[str, Any]) -> bool:
-            return not _is_reminder(t) and str(t.get("project_id")) not in habit_projects
+            return (not _is_reminder(t)
+                    and str(t.get("project_id")) not in habit_projects
+                    and str(t.get("id")) not in excluded)
 
         assigned_tasks = [t for t in client.get_filter_tasks(assigned_q) if _plannable(t)]
         quick_tasks = [t for t in client.get_filter_tasks(quick_q) if _plannable(t)]
@@ -303,6 +310,14 @@ def fetch_calendar_decisions(
     title_classes = calendar_bridge.normalize_capacity_class_map(
         config.get("calendar_capacity_classes")
         or config.get("Calendar Capacity Classes")
+    )
+    # Unit 1: the user-chosen list of calendars whose all-day events become
+    # schedulable planning rows. Fail-safe: only a list opts anything in, and
+    # an empty/absent key leaves every calendar on the frozen contract-18
+    # all-day path.
+    schedulable_all_day = calendar_bridge.normalize_schedulable_all_day(
+        config.get("schedulable_all_day")
+        or config.get("Schedulable All-Day Calendars")
     )
 
     def _cal_value(cal: Any, attr: str) -> Any:
@@ -576,6 +591,52 @@ def fetch_calendar_decisions(
         # Contract 18: all-day events remain all-day and non-timed — emitted
         # without Start/End so no timed planning path can convert them.
         if ev.get("all_day"):
+            # Unit 1: an all-day event on an OPTED-IN calendar with a stable
+            # event id becomes a schedulable planning row (one 30-minute
+            # block) instead of a non-timed all-day strip entry. The disabled
+            # (excluded_disabled_calendar) and unknown
+            # (unresolved_unknown_calendar) branches above already ran FIRST,
+            # and the ignored/quarantined capacity classes still win here: a
+            # classified own-write or quarantined calendar keeps the frozen
+            # contract-18 behaviour. An event without a stable id is
+            # unchanged. The original source event is never modified.
+            cal_keys = {
+                str(value).strip().casefold()
+                for value in (calendar_id, calendar_title, source_calendar_id)
+                if value
+            }
+            if (
+                has_stable_id
+                and schedulable_all_day
+                and (cal_keys & schedulable_all_day)
+                and calendar_id not in own_ids
+                and capacity_class != "quarantined"
+            ):
+                # Identity keys off the LOGICAL day the route is planning
+                # (``today``), not the raw event start: the day is the
+                # contract unit a schedulable row belongs to, and it matches
+                # the Ignore List's path form.
+                event_day = today.isoformat()
+                blocks.append({
+                    "Block": title_disp,
+                    "source": "calendar",
+                    "calendar_id": calendar_id or None,
+                    "calendar_title": calendar_title,
+                    "capacity_class": capacity_class,
+                    "all_day": True,
+                    "schedulable_all_day": True,
+                    "event_id": identity,
+                    "identity": f"calendar:{identity}:{event_day}",
+                    "path": f"calendar://{identity}/{event_day}",
+                })
+                decisions.append(_build_decision(
+                    identity, title_disp, source_calendar_id, calendar_id,
+                    calendar_title, "included", "included_schedulable_all_day",
+                    "all-day event on an opted-in calendar emitted as a "
+                    "schedulable planning row",
+                    capacity_class=capacity_class, all_day=True,
+                ))
+                continue
             blocks.append({
                 "Block": title_disp,
                 "source": "calendar",
@@ -633,6 +694,8 @@ def fetch_calendar_decisions(
             "calendar_title": calendar_title,
             "capacity_class": capacity_class,
         }
+        if calendar_id and calendar_id in own_ids:
+            block["own_write"] = True
         blocks.append(block)
         decisions.append(_build_decision(
             identity, title_disp, source_calendar_id, calendar_id,
@@ -661,6 +724,91 @@ def fetch_calendar_busy(
     """
     blocks, warnings, _decisions = fetch_calendar_decisions(store, config, today)
     return blocks, warnings
+
+
+# ---------------------------------------------------------------------------
+# Unit 1: schedulable all-day intake
+# ---------------------------------------------------------------------------
+
+def split_schedulable_all_day(
+    blocks: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Split opted-in all-day events out of the calendar busy frame.
+
+    A block emitted by :func:`fetch_calendar_decisions` with
+    ``schedulable_all_day`` is a schedulable planning row, not a busy wall.
+    Returns ``(busy_blocks_without_them, rows)``. Without any opt-in this is
+    a pass-through that preserves every input block unchanged. Each row
+    carries the digest identity/source/path the plan-inputs assembly needs;
+    the row shape matches an assigned digest row (``blocks: 1``).
+    """
+    busy: list[dict[str, Any]] = []
+    rows: list[dict[str, Any]] = []
+    for block in blocks:
+        if block.get("schedulable_all_day") is True:
+            rows.append({
+                "name": block.get("Block"),
+                "source": "calendar",
+                "assigned": True,
+                "blocks": 1,
+                "identity": block.get("identity"),
+                "path": block.get("path"),
+                "event_id": block.get("event_id"),
+                "calendar_id": block.get("calendar_id"),
+                "calendar_title": block.get("calendar_title"),
+                "capacity_class": block.get("capacity_class"),
+            })
+        else:
+            busy.append(block)
+    return busy, rows
+
+
+def exclude_already_committed(
+    rows: list[dict[str, Any]],
+    blocks: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Drop schedulable rows already committed as timed own-calendar events.
+
+    A row is dropped when a TIMED event on TDTB's own zone-write calendar
+    (``capacity_class == "ignored"``, i.e. an own_ids match) has an exactly
+    equal title: that work is already on the timeline as a real commitment, so
+    emitting a second schedulable copy would double-place it. Title-only
+    match per the unit-1 contract — a non-ignored class or an all-day own
+    block never dedupes. Returns ``(kept_rows, decision_rows)``.
+    """
+    committed = [
+        block for block in blocks
+        if str(block.get("source") or "").strip().casefold() == "calendar"
+        and block.get("own_write") is True
+        and not block.get("all_day")
+        and block.get("Start") is not None
+        and block.get("End") is not None
+    ]
+    kept: list[dict[str, Any]] = []
+    decisions: list[dict[str, Any]] = []
+    for row in rows:
+        title = row.get("name")
+        if not any(block.get("Block") == title for block in committed):
+            kept.append(row)
+            continue
+        decisions.append({
+            "identity": row.get("identity"),
+            "title": title,
+            "source_calendar_id": row.get("calendar_id"),
+            "calendar_id": row.get("calendar_id"),
+            "calendar_title": row.get("calendar_title"),
+            "decision": "excluded",
+            "reason_code": "excluded_already_committed",
+            "reason": (
+                f"{title}: already committed as a timed event on the "
+                "TDTB Blocks calendar"
+            ),
+            "capacity_class": row.get("capacity_class"),
+            "start": None,
+            "end": None,
+            "all_day": True,
+        })
+    return kept, decisions
 
 
 # ---------------------------------------------------------------------------

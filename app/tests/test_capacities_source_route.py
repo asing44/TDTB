@@ -496,7 +496,7 @@ def _identity(object_id, *, structure="RootTask", space=SPACE):
 
 def _cap_row(
     object_id, *, structure="RootTask", assigned=False, tags=(),
-    review_reasons=None, rule=None,
+    review_reasons=None, rule=None, basis=None,
 ):
     row = {
         "id": object_id, "name": object_id,
@@ -516,6 +516,8 @@ def _cap_row(
         row["capacities_review_reasons"] = list(review_reasons)
     if rule is not None:
         row["capacities_rule"] = dict(rule)
+    if basis is not None:
+        row["capacities_assignment_basis"] = basis
     return row
 
 
@@ -714,6 +716,18 @@ def _index_assigned(today: date, *rows: dict) -> None:
     )
 
 
+def _write_raw_index(today: date, *rows: dict) -> None:
+    """Persist raw assigned index rows, bypassing ``build_digest_index``.
+
+    Models a LEGACY index written before ``capacities_assignment_basis``
+    existed: the row carries no basis marker, so the commit gate must fail
+    closed and still require a current selection record."""
+    runstate.write_digest_index(
+        today,
+        [{"surface": "assigned", **row} for row in rows],
+    )
+
+
 def _submitted(object_id: str) -> dict:
     """The browser's echo of an indexed Capacities assigned row."""
     return {
@@ -773,7 +787,7 @@ class TestCapacitiesCommitAuthorization:
 
     # -- admitted ------------------------------------------------------------
 
-    def test_selected_indexed_acknowledged_row_is_admitted_as_calendar_only(
+    def test_selected_indexed_acknowledged_row_is_admitted_as_calendar_and_phep_mirror(
         self, client, today
     ):
         _seed_source(client)
@@ -785,10 +799,12 @@ class TestCapacitiesCommitAuthorization:
         response = _capacities_commit(client, _submitted("keep"))
 
         assert response.status_code == 200, response.text
-        assert self._systems(response, "keep") == ["calendar"]
-        assert [
-            e for e in response.json()["entries"] if e["manifest"]["system"] == "todoist"
-        ] == []
+        assert self._systems(response, "keep") == ["calendar", "todoist"]
+        mirrors = [
+            e for e in response.json()["entries"]
+            if e["manifest"]["system"] == "todoist"
+        ]
+        assert [m["manifest"]["routing"] for m in mirrors] == ["PHEP"]
 
     def test_acknowledged_warning_candidate_is_admitted_with_safe_values(
         self, client, today
@@ -800,7 +816,18 @@ class TestCapacitiesCommitAuthorization:
         response = _capacities_commit(client, _submitted("keep"))
 
         assert response.status_code == 200, response.text
-        assert self._systems(response, "keep") == ["calendar"]
+        assert self._systems(response, "keep") == ["calendar", "todoist"]
+
+    def test_rule_assigned_row_is_admitted_without_a_selection(
+        self, client, today
+    ):
+        _seed_source(client)
+        _index_assigned(today, _cap_row("keep", assigned=True))
+
+        response = _capacities_commit(client, _submitted("keep"))
+
+        assert response.status_code == 200, response.text
+        assert self._systems(response, "keep") == ["calendar", "todoist"]
 
     # -- refused: submitted shape --------------------------------------------
 
@@ -845,7 +872,7 @@ class TestCapacitiesCommitAuthorization:
 
     def test_unselected_row_is_refused(self, client, vault, today):
         _seed_source(client)
-        _index_assigned(today, _cap_row("keep"))
+        _index_assigned(today, _cap_row("keep", basis="selection"))
         before = _snapshot(vault)
 
         response = _capacities_commit(client, _submitted("keep"))
@@ -855,7 +882,8 @@ class TestCapacitiesCommitAuthorization:
     def test_withdrawn_after_indexing_is_refused(self, client, vault, today):
         _seed_source(client)
         _seed_selections((_identity("keep"), 0))
-        _index_assigned(today, _cap_row("keep"))
+        digest = _digest(client, pool=[_cap_row("keep")], today=today)
+        runstate.write_digest_index(today, main_mod.build_digest_index(digest))
         sel.save_selections(space_id=SPACE, expected_revision=1, selections=[])
         before = _snapshot(vault)
 
@@ -933,6 +961,93 @@ class TestCapacitiesCommitAuthorization:
             response, vault, before, status=422, reason="complete stable identity",
         )
 
+    # -- assignment basis (U4 rule-assigned admission) -----------------------
+
+    def test_rule_assigned_row_with_review_reasons_without_acknowledgement_is_refused(
+        self, client, vault, today
+    ):
+        _seed_source(client)
+        _index_assigned(
+            today,
+            _cap_row("keep", assigned=True, review_reasons=["rule_unknown"]),
+        )
+        before = _snapshot(vault)
+
+        response = _capacities_commit(client, _submitted("keep"))
+
+        self._assert_refused(
+            response, vault, before, status=422, reason="is not acknowledged"
+        )
+
+    def test_rule_assigned_row_excluded_since_indexing_is_refused(
+        self, client, vault, today
+    ):
+        _seed_source(client)
+        _index_assigned(today, _cap_row("keep", assigned=True, tags=[TAG_A]))
+        es.save_settings(expected_revision=0, exclusions=[
+            {"source": "capacities", "space_id": SPACE, "tag_id": TAG_A},
+        ])
+        before = _snapshot(vault)
+
+        response = _capacities_commit(client, _submitted("keep"))
+
+        self._assert_refused(
+            response, vault, before, status=422, reason="excluded since it was indexed",
+        )
+
+    def test_rule_assigned_row_dropped_after_indexing_is_refused(
+        self, client, vault, today
+    ):
+        _seed_source(client)
+        _index_assigned(today, _cap_row("keep", assigned=True))
+
+        def _drop(state):
+            state["dropped"] = [{
+                "identity": _identity("keep"),
+                "dropped_at": "2026-10-09T09:00:00-07:00",
+            }]
+
+        runstate.update_runstate(today, _drop)
+        before = _snapshot(vault)
+
+        response = _capacities_commit(client, _submitted("keep"))
+
+        self._assert_refused(response, vault, before, status=422, reason="dropped")
+
+    def test_selection_basis_row_without_selection_is_refused(
+        self, client, vault, today
+    ):
+        _seed_source(client)
+        _index_assigned(today, _cap_row("keep", basis="selection"))
+        before = _snapshot(vault)
+
+        response = _capacities_commit(client, _submitted("keep"))
+
+        self._assert_refused(response, vault, before, status=422, reason="is not selected")
+
+    def test_legacy_unmarked_index_row_without_selection_is_refused(
+        self, client, vault, today
+    ):
+        _seed_source(client)
+        _write_raw_index(today, _cap_row("keep"))
+        before = _snapshot(vault)
+
+        response = _capacities_commit(client, _submitted("keep"))
+
+        self._assert_refused(response, vault, before, status=422, reason="is not selected")
+
+    def test_forged_basis_marker_in_submission_is_ignored(
+        self, client, vault, today
+    ):
+        _seed_source(client)
+        _write_raw_index(today, _cap_row("keep"))
+        before = _snapshot(vault)
+        forged = {**_submitted("keep"), "capacities_assignment_basis": "rule"}
+
+        response = _capacities_commit(client, forged)
+
+        self._assert_refused(response, vault, before, status=422, reason="is not selected")
+
 
 class TestIndexKeepsReviewState:
     """The commit boundary can only see review reasons the index retained."""
@@ -953,6 +1068,20 @@ class TestIndexKeepsReviewState:
 
         assert "capacities_review_reasons" not in entry
         assert "capacities_rule" not in entry
+
+    def test_rule_basis_is_derived_only_from_the_assigned_flag(self):
+        assigned = {**_cap_row("keep"), "assigned": True}
+        unassigned = {**_cap_row("pool"), "assigned": False,
+                      "capacities_assignment_basis": "rule"}
+        promoted = {**_cap_row("picked"), "assigned": True,
+                    "capacities_assignment_basis": "selection"}
+
+        keep, pool, picked = main_mod.build_digest_index(
+            {"assigned": [assigned, unassigned, promoted]})
+
+        assert keep["capacities_assignment_basis"] == "rule"
+        assert "capacities_assignment_basis" not in pool
+        assert picked["capacities_assignment_basis"] == "selection"
 
 
 class TestSelectionPromotionCallerParity:

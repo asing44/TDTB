@@ -121,18 +121,40 @@ a lingering warning cannot read as success.
 - [ ] `legacy` responses have NO `capacities_intake` block and keep today's
       shape.
 
-## 5. Calendar-only Commit safety
+## 5. Commit safety: calendar block + PHEP mirror task
 
-Capacities rows are calendar-only. At commit the server admits a Capacities row
-only when its index entry is complete, its identity is still in the current
-selection store, any review reasons were acknowledged, and no hard exclusion
-has caught it since indexing. A row that fails any of these is refused with
-`422 commit refused: Capacities rows not admitted: …`, and nothing is written.
+**Contract change 2026-10-13 (supersedes "Capacities rows are
+calendar-only").** A Capacities row admitted at commit now writes TWO things:
 
-- [ ] The Step B plan body omits Capacities rows (they are calendar-only).
-- [ ] The commit manifest emits calendar writes only for Capacities rows. **If
-      it could emit any non-calendar write for a Capacities row, STOP** (O6
-      gate) and do not commit.
+1. a calendar `create-event` on the ⬜ Blocks class at the block start
+   (unchanged; title + start dedup, idempotent), and
+2. one Todoist task under the **PHEP** project at the same block start and
+   duration, with a `capacities://` link description.
+
+A row that gets no calendar block gets no mirror task. Full detail:
+`docs/plan/2026-10-13-capacities-phep-mirror.md`.
+
+At commit the server still admits a Capacities row only when its index entry
+is complete, its identity is still in the current selection store (or it is a
+rule-assigned row), any review reasons were acknowledged, and no hard
+exclusion has caught it since indexing. A row that fails any of these is
+refused with `422 commit refused: Capacities rows not admitted: …`, and
+nothing is written.
+
+- [ ] The commit manifest emits BOTH a calendar write and a PHEP Todoist
+      create for each admitted Capacities row (and neither for a row that got
+      no calendar block).
+- [ ] The PHEP project id comes from `_config_phep_project_id(config)`, never
+      from a client-supplied project or type.
+- [ ] The Capacities mirror receipt store is
+      `<app home>/state/capacities-mirror.json`; a mirror is created once per
+      `(logical day, Capacities identity)` and re-running the commit creates
+      nothing twice.
+- [ ] A mirror create failure is surfaced in the commit report and leaves the
+      calendar write intact.
+- [ ] Created mirror ids are excluded from Todoist intake, so a mirror never
+      re-enters the plan (any day, while open) and never triggers the
+      `(Capacities)` rename of its own row.
 - [ ] `POST /commit` is token-guarded and is only ever sent on Adam's explicit
       instruction.
 
@@ -170,8 +192,8 @@ PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m pytest tests/test_capacities_intak
   billed, and reaches the provider. Attended only.
 - **Selections** — `POST /capacities/selections` is token-guarded and writes
   the machine-local selection store. Direct-intake only.
-- **Commit** — `POST /commit` is token-guarded and writes live sources.
-  Calendar-only for Capacities rows (section 5).
+- **Commit** — `POST /commit` is token-guarded and writes live sources. A
+  Capacities row writes a calendar block plus a PHEP mirror task (section 5).
 
 ## 8. Cutover record (to be completed at the attended window)
 

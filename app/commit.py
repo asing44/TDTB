@@ -48,6 +48,7 @@ if _GATHER_DIR not in sys.path:
     sys.path.insert(0, _GATHER_DIR)
 
 import calendar_bridge  # noqa: E402
+import capacities_mirror  # noqa: E402
 from shadow import (  # noqa: E402
     CONFLICT,
     CREATE,
@@ -129,6 +130,12 @@ class WriteIntent:
     # date-only Todoist work / captures
     due_all_day_today: bool = False   # due_string "today", no time
     payload: dict[str, Any] | None = None  # B6: the captures key/value map
+    # Capacities mirror lane (contract change 2026-10-13): a PHEP Todoist
+    # create mirroring a Capacities calendar block. The receipt store keys on
+    # ``capacities_identity``; ``description`` carries the capacities link.
+    capacities_mirror: bool = False
+    capacities_identity: str | None = None
+    description: str | None = None
 
     def as_dict(self) -> dict[str, Any]:
         d = {
@@ -452,6 +459,17 @@ def _plan_todoist(m: ManifestEntry, e: ShadowDiffEntry, config: Any, today: date
         raise CommitPlanError(
             f"{m.step}/{m.name}: retired capture-nicety action — refusing commit"
         )
+    if m.capacities_mirror and e.classification == NOOP:
+        # The mirror lane may only CREATE. A same-name live task (any time,
+        # any project) is a true no-op: it is never retimed, claimed, or
+        # receipted. ``write_todoist`` drops this intent before any provider
+        # interaction, so the preview and the commit agree.
+        return WriteIntent(
+            step=m.step, surface="todoist", op="noop", name=m.name,
+            due_time=m.time, duration_min=m.duration_min,
+            capacities_mirror=True,
+            capacities_identity=m.capacities_identity,
+        )
     all_day = m.action == "schedule-all-day"
     detail_recurring = e.detail.get("is_recurring")
     recurring = (
@@ -534,6 +552,20 @@ def _plan_todoist(m: ManifestEntry, e: ShadowDiffEntry, config: Any, today: date
             due_all_day_today=all_day,
         )
     # CREATE: route to PHEP project (project efforts) or Todoist Inbox (None).
+    if m.capacities_mirror:
+        # The Capacities mirror is always PHEP — resolved from the server
+        # config, never from any client-supplied type/project.
+        due_dt = _hhmm_to_dt(today, m.time)
+        link = str(m.capacities_link or m.capacities_identity or m.id_or_path).strip()
+        return WriteIntent(
+            step=m.step, surface="todoist", op="create", name=m.name,
+            project_id=_config_phep_project_id(config),
+            due_time=m.time, duration_min=m.duration_min,
+            due_datetime=due_dt.strftime("%Y-%m-%dT%H:%M:%S") if due_dt else None,
+            capacities_mirror=True,
+            capacities_identity=m.capacities_identity,
+            description=f"Capacities: {link}" if link else None,
+        )
     project_id = _config_phep_project_id(config) if m.routing == "PHEP" else None
     return WriteIntent(
         step=m.step, surface="todoist", op="create", name=m.name,
@@ -725,19 +757,42 @@ def _match_by_content(
     return None
 
 
-def write_todoist(intents: list[WriteIntent], client: TodoistLike) -> WriterResult:
+def _record_mirror_review(day: date, identity: str, reason: str) -> None:
+    """Record a bounded, content-free ``needs_review`` receipt, never raising.
+
+    A failure to update the durable state is itself fail-closed: the pending
+    receipt (if any) blocks a blind retry, so the outcome is surfaced by the
+    caller's WriterResult rather than swallowed."""
+    try:
+        capacities_mirror.fail_mirror(
+            day=day.isoformat(), identity=identity, reason=reason)
+    except capacities_mirror.MirrorStoreError:
+        pass
+
+
+def write_todoist(
+    intents: list[WriteIntent], client: TodoistLike, today: date | None = None
+) -> WriterResult:
     """Step A: retime existing / create new timed Todoist tasks.
 
     Idempotency: re-queries the live ``today`` filter and matches creates by
     content — a create whose task already exists collapses to a no-op (never a
-    second task). Reconciliation: every touched task is re-read and its due
+    second task). The Capacities mirror lane is the exception: its live-task
+    no-op is decided by the shadow diff, and a mirror NOOP intent is dropped
+    here before any provider call (a same-name task is never retimed, claimed,
+    or receipted). Reconciliation: every touched task is re-read and its due
     time asserted against intent; an intent with no surviving task is a silent
     drop → ``ok = False``.
     """
-    todo = [i for i in intents if i.surface == "todoist"]
+    todo = [
+        i for i in intents
+        if i.surface == "todoist"
+        and not (i.capacities_mirror and i.op == "noop")
+    ]
     result = WriterResult(step="A", surface="todoist")
     if not todo:
         return result
+    day = today or date.today()
 
     # G30: match shadow.py's gather_live_state filter — "today" alone
     # excludes OVERDUE tasks (due yesterday or earlier, still open), so the
@@ -809,6 +864,71 @@ def write_todoist(intents: list[WriteIntent], client: TodoistLike) -> WriterResu
             claimed.add(eid)
             result.noops.append(eid)
             record_landing(i, eid)
+            continue
+        if i.capacities_mirror:
+            # Capacities mirror lane: the write-ahead receipt, not the live
+            # snapshot, is the idempotency authority. A receipt-store read
+            # failure fails closed (no create); an unconfirmed prior attempt
+            # is never blind-retried. A failure here is surfaced on this
+            # surface only and never touches the calendar writer.
+            identity = i.capacities_identity or i.name
+            try:
+                outcome = capacities_mirror.begin_mirror(
+                    day=day.isoformat(), identity=identity)
+            except capacities_mirror.MirrorStoreError:
+                result.fail(
+                    f"capacities mirror: receipt store unavailable for "
+                    f"{i.name!r} — not created (fail closed)"
+                )
+                continue
+            if outcome.action == capacities_mirror.SKIP_DONE:
+                tid = outcome.receipt.task_id or ""
+                if tid:
+                    claimed.add(tid)
+                    result.noops.append(tid)
+                    record_landing(i, tid)
+                continue
+            if outcome.action == capacities_mirror.NEEDS_REVIEW:
+                result.fail(
+                    f"capacities mirror: {i.name!r} has an unconfirmed prior "
+                    "attempt — needs review, not re-created"
+                )
+                continue
+            try:
+                created = client.create_task(
+                    i.name, i.project_id,
+                    due_datetime=i.due_datetime,
+                    description=i.description,
+                    duration=i.duration_min or None,
+                    duration_unit="minute" if i.duration_min else None,
+                )
+            except Exception:  # noqa: BLE001 — bounded, content-free failure
+                _record_mirror_review(day, identity, "provider create failed")
+                result.fail(
+                    f"capacities mirror: create failed for {i.name!r} "
+                    "(provider error) — task not confirmed"
+                )
+                continue
+            cid = str(created.get("id") or "") if isinstance(created, dict) else ""
+            if not cid:
+                _record_mirror_review(day, identity, "provider returned no task id")
+                result.fail(
+                    f"capacities mirror: create returned no task id for {i.name!r}"
+                )
+                continue
+            try:
+                capacities_mirror.complete_mirror(
+                    day=day.isoformat(), identity=identity, task_id=cid)
+            except capacities_mirror.MirrorStoreError:
+                # The task landed but its id could not be persisted. The
+                # pending receipt still blocks a duplicate; surface the gap.
+                result.fail(
+                    f"capacities mirror: created {i.name!r} but could not "
+                    "persist its id — needs review"
+                )
+            claimed.add(cid)
+            result.created.append(cid)
+            record_landing(i, cid)
             continue
         created = client.create_task(
             i.name, i.project_id,
@@ -1122,7 +1242,7 @@ def run_commit(
     skipped."""
     results: list[WriterResult] = []
     if todoist is not None:
-        results.append(write_todoist(intents, todoist))
+        results.append(write_todoist(intents, todoist, today))
     if store is not None:
         results.append(write_calendar(intents, store, today))
     return results
