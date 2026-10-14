@@ -207,11 +207,27 @@ def _bounded_identifier(value: Any) -> str | None:
     return token
 
 
+def _bounded_detail(value: Any) -> str | None:
+    """A <=200-character printable diagnostic string.
+
+    The adapter sets ``detail`` only from configured identifiers and fixed
+    phrases, but the renderer bounds it anyway so no exception field can
+    widen a warning or a log line.
+    """
+    if not isinstance(value, str):
+        return None
+    cleaned = "".join(char for char in value if char.isprintable())
+    cleaned = " ".join(cleaned.split())
+    if not cleaned:
+        return None
+    return cleaned[:200]
+
+
 def _failure_cause_line(exc: BaseException) -> str:
     """One bounded cause line: the exception CLASS NAME, plus only the
     structured facts the exception itself already exposes — the retry-after
-    seconds for a rate limit, or a bounded code/kind field for a contract
-    error. The exception message is deliberately never included."""
+    seconds for a rate limit, or a bounded code/kind/detail field for a
+    contract error. The exception message is deliberately never included."""
     name = type(exc).__name__
     detail: str | None = None
     if isinstance(exc, capacities_adapter.CapacitiesRateLimited):
@@ -219,9 +235,11 @@ def _failure_cause_line(exc: BaseException) -> str:
         if seconds is not None:
             detail = f"retry after {seconds:g}s"
     elif isinstance(exc, capacities_adapter.CapacitiesContractError):
-        detail = _bounded_identifier(
-            getattr(exc, "code", None)
-        ) or _bounded_identifier(getattr(exc, "kind", None))
+        detail = (
+            _bounded_detail(getattr(exc, "detail", None))
+            or _bounded_identifier(getattr(exc, "code", None))
+            or _bounded_identifier(getattr(exc, "kind", None))
+        )
     return f"{CAUSE_PREFIX}{name} ({detail})" if detail else f"{CAUSE_PREFIX}{name}"
 
 

@@ -275,6 +275,48 @@ def test_unknown_allowlisted_structure_fails_closed_before_listing():
     assert provider.list_calls == []
 
 
+def test_contract_error_detail_names_configured_ids_or_is_absent():
+    """Configured contract failures carry a closed-format id detail for the
+    refresh job; payload-shape failures carry none because their message may
+    echo provider content."""
+    unknown_provider = FakeProvider(_structures(), {})
+    with pytest.raises(CapacitiesContractError) as unknown:
+        _adapter(
+            unknown_provider,
+            mappings=(
+                _mapping()[0],
+                StructureMapping(
+                    structure_id="custom-project",
+                    assignment_property="ghost-assigned",
+                    assignment_values=frozenset({"true"}),
+                ),
+            ),
+        ).items_for_day(TODAY)
+    assert unknown.value.detail == (
+        "structure=custom-project property=ghost-assigned"
+    )
+
+    missing_provider = FakeProvider(_structures(), {})
+    with pytest.raises(CapacitiesContractError) as missing:
+        _adapter(
+            missing_provider,
+            mappings=(
+                *_mapping(),
+                StructureMapping(
+                    structure_id="custom-missing",
+                    assignment_property="assigned",
+                    assignment_values=frozenset({"true"}),
+                ),
+            ),
+        ).items_for_day(TODAY)
+    assert missing.value.detail == "structure=custom-missing"
+
+    malformed_provider = FakeProvider("not-a-list", {})
+    with pytest.raises(CapacitiesContractError) as malformed:
+        _adapter(malformed_provider).items_for_day(TODAY)
+    assert malformed.value.detail is None
+
+
 def test_incomplete_pagination_does_not_return_partial_items():
     provider = FakeProvider(
         _structures(),

@@ -765,6 +765,123 @@ def test_assigned_on_declaration_non_date_or_unknown_still_completes(
     assert property_id in ignored[0]
 
 
+def _structures_without_legacy_assignment(*type_ids: str) -> list[dict]:
+    """Definitions after the operator removed the boolean Assigned property,
+    keeping the Assigned On date declaration available."""
+    structures = _structures_with_assigned_on(*type_ids)
+    for row in structures:
+        row["propertyDefinitions"] = [
+            definition
+            for definition in row["propertyDefinitions"]
+            if definition["id"] != "assigned"
+        ]
+    return structures
+
+
+def test_vanished_legacy_assignment_property_completes_when_assigned_on_mapped(
+    tmp_path,
+):
+    """The boolean Assigned marker vanished from the definitions while the
+    persisted legacy mapping still names it. With Assigned On mapped, the
+    legacy marker and its values are dropped fail-open with one bounded
+    warning per structure, and the refresh still completes."""
+    _write_settings(
+        _legacy_settings_doc(
+            assigned_on_structures={PRIMARY: "assigned_on", "T2": "assigned_on"},
+        )
+    )
+    provider = _paged_provider(
+        objects={PRIMARY: ["a"], "T2": ["c"]},
+        structures=_structures_without_legacy_assignment(*TYPES),
+    )
+
+    status = _settings_refresh(tmp_path, provider)
+
+    assert status["phase"] == "complete", status
+    warnings = [
+        warning
+        for warning in status["warnings"]
+        if warning.startswith("Legacy assignment property")
+    ]
+    assert len(warnings) == 2
+    assert (
+        "Legacy assignment property 'assigned' for structure 'RootTask' is no "
+        "longer defined; ignored because Assigned On is mapped" in warnings
+    )
+    assert (
+        "Legacy assignment property 'assigned' for structure 'T2' is no "
+        "longer defined; ignored because Assigned On is mapped" in warnings
+    )
+
+
+def test_vanished_legacy_assignment_property_fails_with_detail_without_assigned_on(
+    tmp_path,
+):
+    """Without Assigned On the same state stays a strict contract failure, and
+    the diagnostic names the vanished property id."""
+    _write_settings(_legacy_settings_doc())
+    provider = _paged_provider(
+        objects={PRIMARY: ["a"], "T2": ["c"]},
+        structures=_structures_without_legacy_assignment(*TYPES),
+    )
+
+    status = _settings_refresh(tmp_path, provider)
+
+    assert status["phase"] == "failed", status
+    assert (
+        "Cause: CapacitiesContractError "
+        "(structure=RootTask property=assigned)" in status["warnings"]
+    )
+    assert "Where: list" in status["warnings"]
+
+
+def test_assigned_on_only_mapping_without_status_or_assignment_property_completes(
+    tmp_path,
+):
+    """An Assigned On-mapped structure needs no legacy marker and no status
+    property: the declaration alone satisfies the contract."""
+    _write_settings(
+        _legacy_settings_doc(
+            assigned_on_structures={"custom-project": "assigned_on"},
+        )
+    )
+    settings = cs.read_settings().settings
+    mappings = cb._resolve_assigned_structures(
+        (
+            _mapping(PRIMARY),
+            ca.StructureMapping(structure_id="custom-project", title_property="title"),
+        ),
+        settings.assigned_structures,
+        settings.assigned_on_structures,
+    )
+    structures = _structures(PRIMARY)
+    structures.append(
+        {
+            "id": "custom-project",
+            "title": "Custom",
+            "propertyDefinitions": [
+                {"id": "title", "type": "title"},
+                {"id": "assigned_on", "type": "date"},
+            ],
+        }
+    )
+    provider = _paged_provider(
+        objects={PRIMARY: ["a"], "custom-project": []},
+        structures=structures,
+    )
+    coordinator, _, _, _ = _coordinator(
+        tmp_path,
+        provider,
+        mappings=mappings,
+        assignment_settings=settings.to_assignment_settings(),
+    )
+    coordinator.start()
+    status = coordinator.wait(timeout=5)
+
+    assert status["phase"] == "complete", status
+    assert provider.list_calls == [(PRIMARY, None)]
+
+
 def test_legacy_exclusions_without_todoist_dimension_completes(tmp_path):
     """A tags-only exclusions file reads as an empty Todoist dimension and the
     refresh still publishes with the policy applied."""
@@ -856,6 +973,42 @@ def test_contract_failure_records_class_and_stage(tmp_path):
     assert "Where: list" in status["warnings"]
     assert all(
         "secret contract text" not in warning for warning in status["warnings"]
+    )
+
+
+def test_contract_failure_records_bounded_identifier_detail(tmp_path):
+    provider = _paged_provider(objects={PRIMARY: ["a"], "T2": []})
+    provider.list_error = ca.CapacitiesContractError(
+        "secret contract text",
+        detail="structure=RootTask property=assigned",
+    )
+    coordinator, _, _, _ = _coordinator(tmp_path, provider, max_retries=0)
+
+    coordinator.start()
+    status = coordinator.wait(timeout=5)
+
+    assert status["phase"] == "failed"
+    assert (
+        "Cause: CapacitiesContractError (structure=RootTask property=assigned)"
+        in status["warnings"]
+    )
+    assert all(
+        "secret contract text" not in warning for warning in status["warnings"]
+    )
+
+
+def test_contract_detail_is_bounded_and_payload_shaped_errors_have_none():
+    assert (
+        rr._failure_cause_line(
+            ca.CapacitiesContractError("secret", detail="p" * 500)
+        )
+        == "Cause: CapacitiesContractError (" + "p" * 200 + ")"
+    )
+    assert (
+        rr._failure_cause_line(
+            ca.CapacitiesContractError("Capacities structures response is malformed")
+        )
+        == "Cause: CapacitiesContractError"
     )
 
 

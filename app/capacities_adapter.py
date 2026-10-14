@@ -37,7 +37,18 @@ else:
 
 
 class CapacitiesContractError(RuntimeError):
-    """The provider response or configured mapping is unsafe to consume."""
+    """The provider response or configured mapping is unsafe to consume.
+
+    ``detail`` is an optional short, closed-format diagnostic assembled only
+    from configured structure/property ids and code-authored phrases. It is
+    set for configuration-contract failures so a refresh job can name the
+    offending id without echoing the exception message (which may carry
+    provider payload content). Response-shape failures leave it ``None``.
+    """
+
+    def __init__(self, message: str = "", *, detail: str | None = None) -> None:
+        super().__init__(message)
+        self.detail = detail
 
 
 class CapacitiesWriteError(RuntimeError):
@@ -287,6 +298,36 @@ def _status_token(tokens: set[str], settings: AssignmentSettings) -> str | None:
 
 def _structure_id(row: dict[str, Any]) -> str:
     return _text(row.get("id") or row.get("structureId"))
+
+
+def _detail_token(value: Any) -> str:
+    """One identifier-shaped token for a bounded contract diagnostic."""
+    token = _text(value)
+    if not token:
+        return "?"
+    return "".join(
+        char if char.isalnum() or char in "_.-" else "?" for char in token[:64]
+    )
+
+
+def _contract_detail(
+    *, structure: Any = None, prop: Any = None, phrase: str | None = None
+) -> str:
+    """Closed-format detail for a configured contract failure.
+
+    Only configured structure/property identifiers and code-authored phrases
+    are ever included, so the detail can be rendered in a job warning without
+    leaking source content, titles, or values. Response-shape failures do not
+    pass a detail at all.
+    """
+    parts: list[str] = []
+    if phrase:
+        parts.append(phrase)
+    if structure is not None:
+        parts.append(f"structure={_detail_token(structure)}")
+    if prop is not None:
+        parts.append(f"property={_detail_token(prop)}")
+    return " ".join(parts)
 
 
 def _definitions(row: dict[str, Any]) -> dict[str, dict[str, Any]]:
@@ -1029,13 +1070,25 @@ def _is_provider_timeout(exc: BaseException) -> bool:
 class CapacitiesAdapter:
     def __init__(self, provider: CapacitiesProvider, config: CapacitiesConfig) -> None:
         if not _text(config.space_id):
-            raise CapacitiesContractError("Capacities space_id is required")
+            raise CapacitiesContractError(
+                "Capacities space_id is required",
+                detail=_contract_detail(phrase="space_id required"),
+            )
         if not config.mappings:
-            raise CapacitiesContractError("at least one Capacities structure mapping is required")
+            raise CapacitiesContractError(
+                "at least one Capacities structure mapping is required",
+                detail=_contract_detail(phrase="at least one mapping required"),
+            )
         if config.max_pages < 1:
-            raise CapacitiesContractError("max_pages must be positive")
+            raise CapacitiesContractError(
+                "max_pages must be positive",
+                detail=_contract_detail(phrase="max_pages must be positive"),
+            )
         if config.max_content_reads < 0:
-            raise CapacitiesContractError("max_content_reads must be non-negative")
+            raise CapacitiesContractError(
+                "max_content_reads must be non-negative",
+                detail=_contract_detail(phrase="max_content_reads must be non-negative"),
+            )
         self.provider = provider
         self.config = config
         self._structure_defs: dict[str, dict[str, Any]] | None = None
@@ -1086,10 +1139,16 @@ class CapacitiesAdapter:
         for mapping in self.config.mappings:
             sid = _text(mapping.structure_id)
             if not sid or sid in mappings:
-                raise CapacitiesContractError(f"duplicate or empty mapping for {sid!r}")
+                raise CapacitiesContractError(
+                    f"duplicate or empty mapping for {sid!r}",
+                    detail=_contract_detail(structure=sid),
+                )
             structure = structures.get(sid)
             if structure is None:
-                raise CapacitiesContractError(f"configured Capacities structure {sid!r} is unavailable")
+                raise CapacitiesContractError(
+                    f"configured Capacities structure {sid!r} is unavailable",
+                    detail=_contract_detail(structure=sid),
+                )
             definitions = structure["_definitions"]
             # Any mapping without a source Assigned marker must map a status
             # property. For a custom structure that mapping does NOT include
@@ -1098,28 +1157,71 @@ class CapacitiesAdapter:
             # Active-enabled membership here would be circular, because a
             # structure has to be enumerable before the Settings drawer can
             # offer it for enabling.
-            if not mapping.assignment_property and not mapping.open_status_property:
+            if (
+                not mapping.assignment_property
+                and not mapping.open_status_property
+                and not mapping.assigned_on_property
+            ):
                 # A stored ACTIVE rule is the structure's single eligibility
                 # authority, so neither legacy mapping is required: the rule
                 # (and the operator's explicit selection) can admit objects
                 # the legacy seams cannot describe, and missing mappings are
                 # manual-assignment candidates rather than a contract failure.
                 # No record, a draft-only entry, and a record for another
-                # space keep the legacy requirement unchanged.
+                # space keep the legacy requirement unchanged. A mapped
+                # Assigned On declaration satisfies the requirement by itself:
+                # it needs no legacy marker and no status property.
                 if self._active_rule(sid) is None:
                     if sid in self.config.assignment_settings.native_task_structures:
                         raise CapacitiesContractError(
-                            f"native mapping {sid!r} requires a mapped status property"
+                            f"native mapping {sid!r} requires a mapped status property",
+                            detail=_contract_detail(
+                                structure=sid,
+                                phrase="status mapping required",
+                            ),
                         )
                     raise CapacitiesContractError(
                         f"mapping {sid!r} requires an assignment property or a "
-                        "mapped status property"
+                        "mapped status property",
+                        detail=_contract_detail(
+                            structure=sid,
+                            phrase="assignment or status mapping required",
+                        ),
                     )
+            # A legacy assignment property the structure no longer defines is
+            # fail-open ONLY while an Assigned On declaration supersedes it:
+            # the operator's migration removed the boolean marker, and
+            # refusing the read would strand every mapped object over a seam
+            # that is no longer used. Marker and accepted values are dropped
+            # together; the declaration now owns assignment. Without a mapped
+            # Assigned On the same state stays a strict contract failure, so a
+            # genuinely missing marker is never hidden.
+            if (
+                mapping.assigned_on_property
+                and mapping.assignment_property
+                and mapping.assignment_property not in definitions
+            ):
+                declaration_warnings.append(
+                    "Legacy assignment property "
+                    f"{mapping.assignment_property!r} for structure {sid!r} is "
+                    "no longer defined; ignored because Assigned On is mapped"
+                )
+                mapping = replace(
+                    mapping,
+                    assignment_property=None,
+                    assignment_values=frozenset(),
+                )
             if mapping.assignment_property and not mapping.assignment_values:
-                raise CapacitiesContractError(f"mapping {sid!r} has no assignment values")
+                raise CapacitiesContractError(
+                    f"mapping {sid!r} has no assignment values",
+                    detail=_contract_detail(
+                        structure=sid, prop=mapping.assignment_property
+                    ),
+                )
             if mapping.assignment_values and not mapping.assignment_property:
                 raise CapacitiesContractError(
-                    f"mapping {sid!r} has assignment values without an assignment property"
+                    f"mapping {sid!r} has assignment values without an assignment property",
+                    detail=_contract_detail(structure=sid),
                 )
             required = [mapping.title_property]
             if mapping.assignment_property:
@@ -1134,7 +1236,8 @@ class CapacitiesAdapter:
             for prop_id in [*required, *(p for p in optional if p)]:
                 if prop_id not in definitions:
                     raise CapacitiesContractError(
-                        f"mapping {sid!r} references unknown property {prop_id!r}"
+                        f"mapping {sid!r} references unknown property {prop_id!r}",
+                        detail=_contract_detail(structure=sid, prop=prop_id),
                     )
             # A settings-declared assignment property the structure does not
             # define is a mistyped declaration, not a contract failure. Left
@@ -1174,22 +1277,41 @@ class CapacitiesAdapter:
                 )
                 mapping = replace(mapping, assigned_on_property=None)
             if mapping.open_status_property and not mapping.open_status_values:
-                raise CapacitiesContractError(f"mapping {sid!r} has no open status values")
+                raise CapacitiesContractError(
+                    f"mapping {sid!r} has no open status values",
+                    detail=_contract_detail(
+                        structure=sid, prop=mapping.open_status_property
+                    ),
+                )
             if mapping.completion_property:
                 if not mapping.completion_value:
-                    raise CapacitiesContractError(f"mapping {sid!r} has no completion value")
+                    raise CapacitiesContractError(
+                        f"mapping {sid!r} has no completion value",
+                        detail=_contract_detail(
+                            structure=sid, prop=mapping.completion_property
+                        ),
+                    )
                 completion = definitions[mapping.completion_property]
                 if completion.get("writable") is not True:
                     raise CapacitiesContractError(
-                        f"completion property {mapping.completion_property!r} on {sid!r} is not writable"
+                        f"completion property {mapping.completion_property!r} on {sid!r} is not writable",
+                        detail=_contract_detail(
+                            structure=sid, prop=mapping.completion_property
+                        ),
                     )
                 if _text(completion.get("type")) != "label":
                     raise CapacitiesContractError(
-                        f"completion property {mapping.completion_property!r} on {sid!r} is not a label"
+                        f"completion property {mapping.completion_property!r} on {sid!r} is not a label",
+                        detail=_contract_detail(
+                            structure=sid, prop=mapping.completion_property
+                        ),
                     )
                 if _normalized(mapping.completion_value) not in _label_options(completion):
                     raise CapacitiesContractError(
-                        f"completion value {mapping.completion_value!r} is not defined for {sid!r}"
+                        f"completion value {mapping.completion_value!r} is not defined for {sid!r}",
+                        detail=_contract_detail(
+                            structure=sid, prop=mapping.completion_property
+                        ),
                     )
             mappings[sid] = mapping
         # Fail closed on an allowlist that silently omits the canonical native
@@ -1198,7 +1320,10 @@ class CapacitiesAdapter:
         # exists to prevent. A deliberate native-free configuration must be an
         # explicit, reviewed decision rather than an omission.
         if "RootTask" not in mappings:
-            raise CapacitiesContractError("RootTask must be explicitly mapped")
+            raise CapacitiesContractError(
+                "RootTask must be explicitly mapped",
+                detail=_contract_detail(phrase="RootTask missing"),
+            )
         self._structure_defs = structures
         self._mappings = mappings
         self._contract_warnings = declaration_warnings
@@ -1259,14 +1384,23 @@ class CapacitiesAdapter:
         if not complete:
             if reason == "page_bound":
                 raise CapacitiesContractError(
-                    f"Capacities pagination exceeded max_pages for {structure_id!r}"
+                    f"Capacities pagination exceeded max_pages for {structure_id!r}",
+                    detail=_contract_detail(
+                        structure=structure_id, phrase="page bound"
+                    ),
                 )
             if reason == "repeated_cursor":
                 raise CapacitiesContractError(
-                    f"Capacities pagination repeated cursor for {structure_id!r}"
+                    f"Capacities pagination repeated cursor for {structure_id!r}",
+                    detail=_contract_detail(
+                        structure=structure_id, phrase="repeated cursor"
+                    ),
                 )
             raise CapacitiesContractError(
-                f"Capacities object page for {structure_id!r} is malformed"
+                f"Capacities object page for {structure_id!r} is malformed",
+                detail=_contract_detail(
+                    structure=structure_id, phrase="malformed page"
+                ),
             )
         objects: list[dict[str, Any]] = []
         for row in rows:
