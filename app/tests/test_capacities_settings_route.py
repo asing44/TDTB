@@ -941,6 +941,49 @@ class TestStructureTitlesNoProviderContact:
         assert calls == []
 
 
+class TestPostStructureMetadata:
+    """POST /settings/capacities/save returns the same advisory structure
+    metadata as GET.
+
+    The Connections drawer adopts the save response as its whole settings
+    state, so a save that drops ``available_structures``/``structure_titles``
+    erases the cached structure names until the drawer is reopened. Both
+    routes must therefore carry the same advisory metadata, computed from the
+    same machine-local mapping record and title cache with no adapter,
+    credential, or provider contact."""
+
+    def test_save_response_metadata_matches_get(self, client, titles_cache):
+        _write_source_record([PROJECT_STRUCTURE, PRESS_STRUCTURE])
+        assert cst.remember_titles(
+            SPACE,
+            cb.CAPACITIES_BASE_URL,
+            {PROJECT_STRUCTURE: "Project", PRESS_STRUCTURE: "Press"},
+        ) is True
+
+        saved = client.post(
+            "/settings/capacities/save",
+            headers=_auth(client),
+            json=_body(),
+        )
+
+        assert saved.status_code == 200
+        body = saved.json()
+        assert body["persisted"] is True
+        assert body["available_structures"] == [
+            PROJECT_STRUCTURE,
+            PRESS_STRUCTURE,
+        ]
+        assert body["structure_titles"] == {
+            PROJECT_STRUCTURE: "Project",
+            PRESS_STRUCTURE: "Press",
+        }
+        # The save response and the next read must agree, so a drawer that
+        # reopens sees no metadata delta from the save it just made.
+        after = client.get("/settings/capacities").json()
+        assert body["available_structures"] == after["available_structures"]
+        assert body["structure_titles"] == after["structure_titles"]
+
+
 PROJECT_ASSIGNED_ON_PROPERTY = "1a2b3c4d-5e6f-4788-9a0b-1c2d3e4f5a6b"
 
 

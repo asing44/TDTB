@@ -3127,7 +3127,11 @@ def create_app() -> FastAPI:
         ``revision`` are server-owned. The current revision is compared under
         the store lock: a stale ``expected_revision`` is a 409, malformed
         existing storage is a 409, and a lock/read/write failure is a 500 —
-        every failure path preserves the original bytes."""
+        every failure path preserves the original bytes. The success response
+        also carries the same advisory structure metadata as the GET route
+        (computed once, from the same machine-local sources) so a client that
+        adopts the response as its whole settings state keeps its cached
+        structure names."""
         policy = capacities_settings.NativeTaskAutoPolicy(
             active_enabled=body.native_task_auto.active_enabled,
             due_enabled=body.native_task_auto.due_enabled,
@@ -3180,7 +3184,15 @@ def create_app() -> FastAPI:
                     ),
                 },
             ) from exc
-        return {"settings": saved.as_dict(), "persisted": True}
+        available_structures = _available_capacities_structures()
+        return {
+            "settings": saved.as_dict(),
+            "persisted": True,
+            "available_structures": available_structures,
+            "structure_titles": _capacities_structure_titles(
+                available_structures
+            ),
+        }
 
     @app.get("/settings/capacities/source")
     def get_capacities_source() -> dict:
