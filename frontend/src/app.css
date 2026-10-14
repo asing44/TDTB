@@ -2110,12 +2110,14 @@
 }
 /* -- floating alert pills (T12i) -------------------------------------------- */
 /* Even collapsed to a count, the alert roll-up was two full-width footer
-   stripes covering the table they describe. It now rides in the footer flow
-   as a right-aligned row above the footer controls, so it pushes the content
-   instead of floating over the last rows (an absolute overlay covered them
-   because only the footer band was reserved); the detail pile stays an
-   on-demand popover that scrolls inside itself. */
+   stripes covering the table they describe. The pill row itself rides in the
+   footer flow, right-aligned above the footer controls. The expanded detail
+   panel is a popover anchored to that row: absolutely positioned above it, it
+   floats over the page instead of growing the sticky footer (which previously
+   stretched to ~40vh and covered the bottom of the window), and still scrolls
+   inside itself when the pile is tall. */
 .alert-pills {
+  position: relative;
   display: flex;
   flex-direction: column;
   align-items: flex-end;
@@ -2152,6 +2154,13 @@
   border-color: color-mix(in srgb, var(--c-minting) 45%, transparent);
 }
 .alert-pills__panel {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  /* The wrapper spans the footer, so page-pad lands the panel's right edge on
+     the pill row's right edge; right:0 would anchor to the footer's inner
+     edge, page-pad to the right of the chip. */
+  right: var(--page-pad, clamp(16px, 2.5vw, 40px));
+  z-index: 11;
   width: min(440px, calc(100vw - 24px));
   max-height: 40vh;
   overflow-y: auto;
