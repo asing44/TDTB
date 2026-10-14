@@ -99,6 +99,37 @@ describe("row spacing never erodes shared control touch targets", () => {
   });
 });
 
+describe("a Fixed row's permission control never paints across the duration column", () => {
+  it("re-stretches the meta line inside the 2a flex body", () => {
+    // The retired >=1500px six-cell layer set `align-self: start` on
+    // .qrow__source. In the 2a column-flex body that shrink-wraps the meta
+    // line to max-content, so a Fixed row's checkbox and label painted over
+    // the slider and its stepper. The 2a rule must reset the cross-axis
+    // alignment so `overflow: hidden` clips at the real column edge.
+    expect(lastRuleBody("\\.qrow__source")).toMatch(/align-self:\s*auto/);
+  });
+
+  it("keeps the control inline, shrinkable, and out of the duration column", () => {
+    const body = lastRuleBody("\\.qrow__source \\.qrow__time-adjustment");
+    expect(body).toMatch(/flex:\s*0\s+1\s+auto/);
+    expect(body).toMatch(/min-width:\s*0/);
+    expect(body).not.toMatch(/position:\s*absolute/);
+    expect(body).not.toMatch(/opacity:/);
+  });
+
+  it("stacks the readout 4px directly over the slider line", () => {
+    // The <=1100px layer re-places .qrow__time without touching its axis, so
+    // filter to the rule that owns the desktop placement and axis.
+    const blocks = Array.from(
+      appCss.matchAll(/(?:^|\n)\s*\.qrow__time\s*\{([^}]*)\}/g),
+      (m) => m[1],
+    );
+    const desktop = blocks.filter((b) => /grid-column:\s*3/.test(b)).pop() ?? "";
+    expect(desktop).toMatch(/gap:\s*4px/);
+    expect(lastRuleBody("\\.qrow__time-readout")).toMatch(/line-height:\s*16px/);
+  });
+});
+
 describe("queue controls stay inside the viewport", () => {
   it("lets desktop action columns shrink while row controls wrap", () => {
     const grid = appCss.match(/\.queue__cols,\s*\.qrow\s*\{([^}]*)\}/)?.[1] ?? "";

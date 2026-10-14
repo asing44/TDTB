@@ -360,9 +360,9 @@ function MoreMenu({
 }
 
 /** Native Todoist times are protected until the user authorizes this specific
-    row to move. Keep the permission beside the time evidence, rather than in
-    the row action cluster, so it reads as planning input and not as a source
-    mutation. */
+    row to move. The permission rides the end of the row's meta line, beside
+    the time evidence, rather than the row action cluster or the duration
+    column, so it reads as planning input and not as a source mutation. */
 function TimeAdjustmentOptIn({
   item,
   s,
@@ -399,10 +399,11 @@ function TimeAdjustmentOptIn({
             )
           }
         />
-        {/* Compact one-line note; the full sentence rides title + aria-label
-            so a dense row never wraps the permission into a one-char column. */}
+        {/* Compact visible label; the full sentence rides title + aria-label
+            and the sr-only status carries the protected/allowed state, so a
+            dense row never wraps the permission into a one-char column. */}
         <span class="qrow__time-adjustment-note" aria-hidden="true">
-          {checked ? "🔓 Allow move" : "🔒 Protected · Allow move"}
+          Allow move
         </span>
       </label>
       <span id={statusId} class="qrow__time-adjustment-status sr-only" role="status">

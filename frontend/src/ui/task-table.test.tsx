@@ -419,7 +419,7 @@ describe("POLISH-3 lane header, footer clearance, one action layout", () => {
 
   it("the fixed-row permission rides the meta line", () => {
     expect(APP_CSS).toMatch(
-      /\.qrow__source\s+\.qrow__time-adjustment\s*\{[^}]*flex:\s*0\s+0\s+auto/,
+      /\.qrow__source\s+\.qrow__time-adjustment\s*\{[^}]*flex:\s*0\s+1\s+auto/,
     );
   });
 });

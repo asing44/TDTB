@@ -6877,16 +6877,36 @@ body {
   flex: 0 0 auto;
 }
 
-/* (4b) Fixed rows: the "🔒 Protected · Allow move" permission rides the meta
-   line (right after `fixed · recurring · 10 PM`) instead of a third line under
-   the slider, so a Fixed row matches every other row's ~60px height. The
-   control keeps its full sentence in title/aria-label. */
+/* (4b) Fixed rows: the "Allow move" permission rides the meta line (right
+   after `fixed · recurring · 10 PM`) as a compact inline control — a small
+   checkbox and a visible 12px muted label in normal flow — instead of a third
+   line under the slider, so a Fixed row matches every other row's ~60px
+   height. The control shrinks with the line (it can never push past the body
+   column) and keeps its full sentence in title/aria-label. */
 .qrow__source .qrow__time-adjustment {
-  flex: 0 0 auto;
+  flex: 0 1 auto;
+  min-width: 0;
+  gap: 4px;
+}
+
+.qrow__source .qrow__time-adjustment label {
+  gap: 4px;
+  font-size: 12px;
+}
+
+.qrow__source .qrow__time-adjustment input {
+  flex: none;
+  width: 14px;
+  height: 14px;
 }
 
 .qrow__source .qrow__time-adjustment-note {
-  flex: none;
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+.qrow__source .qrow__time-adjustment--allowed label {
+  color: var(--t-accent-text);
 }
 
 /* ---- Row rhythm and plan width (2026-10-11) -------------------------------
@@ -9692,6 +9712,12 @@ body {
   gap: 8px;
   font-size: 12px;
   color: #6b6862;
+  /* The retired >=1500px six-cell layer still sets `align-self: start` on
+     this line. In 2a's column-flex body that shrink-wraps the meta line to
+     max-content, so a Fixed row's permission control painted across the
+     duration column. Stretch to the body instead, so `overflow: hidden`
+     clips at the real column edge. */
+  align-self: auto;
 }
 .qrow__swatch {
   flex: none;
@@ -9790,10 +9816,15 @@ body {
   min-height: 0;
   flex: none;
   flex-direction: row;
-  align-items: baseline;
+  align-items: center;
   justify-content: flex-start;
   flex-wrap: nowrap;
   white-space: nowrap;
+  /* One compact line directly over the slider: 16px readout + the column's
+     4px gap + a 28px slider line keeps the row at ~62px, with or without the
+     provenance chip (baseline alignment let the 9px chip grow the line to
+     20px and the row to 66px). */
+  line-height: 16px;
 }
 .qrow__time-readout .alloc-track__value {
   width: auto;

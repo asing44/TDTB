@@ -213,15 +213,23 @@ describe("rendered rows carry the clearer labels", () => {
       ledger: { ...h.scenario.ledger },
     });
     const { container, getByLabelText } = h.ui(<Queue />);
-    const note = rowNamed(container, "M1.5").querySelector(
+    const row = rowNamed(container, "M1.5");
+    const note = row.querySelector(
       ".qrow__time-adjustment-note",
     ) as HTMLElement;
-    expect(note.textContent).toContain("Protected");
-    expect(note.textContent).toContain("Allow move");
+    expect(note.textContent?.trim()).toBe("Allow move");
     // The full sentence stays on the control for assistive tech.
     const box = getByLabelText(
       "Allow scheduler to move existing time for M1.5",
     ) as HTMLInputElement;
     expect(box.type).toBe("checkbox");
+    // The permission rides the END of the meta line in .qrow__body — never
+    // the duration column, where it used to paint over the slider.
+    const control = row.querySelector(".qrow__time-adjustment") as HTMLElement;
+    expect(control.closest(".qrow__source")).toBeTruthy();
+    expect(control.closest(".qrow__body")).toBeTruthy();
+    expect(control.closest(".qrow__time")).toBeNull();
+    expect(row.querySelector(".qrow__time .qrow__time-adjustment")).toBeNull();
+    expect(control.parentElement?.classList.contains("qrow__source")).toBe(true);
   });
 });
