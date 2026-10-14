@@ -208,6 +208,7 @@ const SHADOW: ShadowDiff = {
   ],
   unavailableSurfaces: [],
   counts: { "would-create": 3, "would-update": 2, "no-op": 0, conflict: 0, unavailable: 0 },
+  notes: [],
 };
 
 const REPORT_OK: CommitReport = {

@@ -574,6 +574,7 @@ describe("T8 shadow blockers gate arm at the STATE level", () => {
     entries: [],
     unavailableSurfaces: [],
     counts: { "would-create": 0, "would-update": 0, "no-op": 0, conflict: 0, unavailable: 0 },
+    notes: [],
     ...patch,
   });
 

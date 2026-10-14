@@ -546,6 +546,10 @@ export interface ShadowDiff {
   entries: ShadowEntry[];
   unavailableSurfaces: string[];
   counts: Record<ShadowClassification, number>;
+  /** Bounded, content-free operator notes about rows the backend withheld
+      from the write contract (e.g. a Capacities row missing a block time).
+      The server always emits the list (possibly empty). */
+  notes: string[];
 }
 
 export interface CommitSurface {

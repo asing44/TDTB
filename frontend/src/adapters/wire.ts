@@ -2258,6 +2258,9 @@ export function projectShadow(wire: Wire): ShadowDiff {
     entries,
     unavailableSurfaces: (wire.unavailable_surfaces ?? []).map(String),
     counts,
+    // shadow.py always emits `notes`; a withheld write (a Capacities row left
+    // out of the manifest) must reach the drawer instead of vanishing here.
+    notes: (wire.notes ?? []).map(String),
   };
 }
 

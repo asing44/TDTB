@@ -160,16 +160,17 @@ describe("FEEDBACK-18 — scan hierarchy CSS and narrow-width no-overlap", () =>
 });
 
 describe("FEEDBACK-18 — preserved FEEDBACK-13/23 contracts", () => {
-  it("exact-write disclosure still collapses by default and expands on click", () => {
+  it("exact-write disclosure opens for a small preview and folds on click", () => {
     const { r } = previewDrawer();
-    expect(r.container.querySelectorAll(".write-row").length).toBe(0);
-    fireEvent.click(r.getByRole("button", { name: /Exact writes/ }));
+    // A small preview opens expanded by default (operator fix); the toggle
+    // still folds it so the disclosure behaviour is preserved.
     expect(r.container.querySelectorAll(".write-row").length).toBeGreaterThan(0);
+    fireEvent.click(r.getByRole("button", { name: /Exact writes/ }));
+    expect(r.container.querySelectorAll(".write-row").length).toBe(0);
   });
 
   it("expanded exact writes stay 12-hour with AM/PM", async () => {
     const { r } = previewDrawer();
-    fireEvent.click(r.getByRole("button", { name: /Exact writes/ }));
     await act(async () => {});
     expect(r.getByText("schedule · Pick up prescription @ 4 PM")).toBeTruthy();
     expect(r.getByText("create-event · ⬜ Magic Mirror @ 10:45 AM")).toBeTruthy();

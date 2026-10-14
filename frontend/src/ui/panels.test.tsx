@@ -203,7 +203,8 @@ describe("FEEDBACK-12 exact-write times render 12-hour", () => {
   it("expanded exact writes show AM/PM times, never 24-hour", () => {
     const h = makeHarness("commit-preview");
     const r = dockWithDrawer(h);
-    fireEvent.click(r.getByRole("button", { name: /Exact writes/ }));
+    // A small preview opens the exact-write disclosure by default (operator
+    // fix), so the 12-hour rows are visible without expanding first.
     expect(r.getByText("schedule · Pick up prescription @ 4 PM")).toBeTruthy();
     expect(r.getByText("schedule · Review AWS module 4 @ 12:30 PM")).toBeTruthy();
     expect(r.getByText("create-event · ⬜ Magic Mirror @ 10:45 AM")).toBeTruthy();

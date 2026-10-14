@@ -124,13 +124,13 @@ describe("FEEDBACK-13 obs 4 — results/preview hierarchy (desktop + narrow, no 
     const { container } = r;
 
     expect(container.querySelector(".surface-totals")).toBeTruthy();
-    // Exact writes (and thus .write-row name/path) render only after the
-    // disclosure is opened — the hierarchy is collapsed by default.
-    expect(container.querySelectorAll(".write-row").length).toBe(0);
-    fireEvent.click(r.getByRole("button", { name: /Exact writes/ }));
+    // A small preview (5 entries) opens the exact-write disclosure by default,
+    // so name/path are visible immediately; the toggle still folds it.
     expect(container.querySelectorAll(".write-row").length).toBeGreaterThan(0);
     expect(container.querySelector(".write-row__name")).toBeTruthy();
     expect(container.querySelector(".write-row__path")).toBeTruthy();
+    fireEvent.click(r.getByRole("button", { name: /Exact writes/ }));
+    expect(container.querySelectorAll(".write-row").length).toBe(0);
   });
 
   it("verified commit renders the verification result", () => {

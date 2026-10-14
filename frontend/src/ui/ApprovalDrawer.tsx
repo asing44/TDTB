@@ -17,6 +17,13 @@ import type { PromptExportOutcome, ShadowEntry } from "../model/types";
     it's actually needed (chasing a bad write afterwards). */
 function writeTarget(e: ShadowEntry): { label: string; title: string } {
   const raw = e.idOrPath;
+  // A Capacities row is keyed by ``capacities:<space>:<structure>:<object>`` —
+  // its destination is Capacities, not BusyCal, and the space/structure ids
+  // are noise to the reader. Show the object's short id instead.
+  if (raw.startsWith("capacities:")) {
+    const objectId = raw.split(":").pop() || raw;
+    return { label: `Capacities · ${objectId}`, title: raw };
+  }
   if (e.system === "todoist") return { label: "Todoist task", title: raw };
   if (e.system === "calendar") {
     const cal = raw.includes(":") ? raw.slice(raw.indexOf(":") + 1) : raw;
@@ -48,6 +55,22 @@ function SurfaceTotals({ entries }: { entries: ShadowEntry[] }) {
   );
 }
 
+/** Friendly names for the built-in prompt keys. A browser-defined
+    ``custom-<id>`` key has no in-state registry (custom prompts live in this
+    browser's localStorage, not the store), so it reads generically rather
+    than leaking the raw handle. */
+const BUILT_IN_PROMPT_LABELS: Record<string, string> = {
+  intention: "Intention",
+  megan_nicety: "For Meegy",
+  stoic_intention: "Stoic",
+};
+
+export function promptKeyLabel(promptKey: string): string {
+  if (promptKey in BUILT_IN_PROMPT_LABELS) return BUILT_IN_PROMPT_LABELS[promptKey];
+  if (promptKey.startsWith("custom-")) return "Custom prompt";
+  return promptKey.replace(/_/g, " ");
+}
+
 /** U5: content-free prompt-export outcomes. The `__main_failure__` sentinel is
     a lane-level marker, never a prompt name — it renders as a skip, and a
     `needs_review` outcome carries an actionable non-retry hint (a blind retry
@@ -62,14 +85,14 @@ function PromptExports({ exports }: { exports: PromptExportOutcome[] }) {
           const skipped = outcome.promptKey === "__main_failure__";
           const label = skipped
             ? "Prompt exports skipped"
-            : outcome.promptKey.replace(/_/g, " ");
+            : promptKeyLabel(outcome.promptKey);
           const detail = skipped
             ? outcome.reason ?? "main commit did not land — exports skipped"
             : outcome.status === "done"
               ? `exported to Todoist Inbox${outcome.taskId ? ` · task ${outcome.taskId}` : ""}`
               : outcome.status === "needs_review"
                 ? `${outcome.reason ?? "unconfirmed prior attempt"} — review before retrying`
-                : outcome.reason ?? "blocked";
+                : outcome.reason ?? "Blocked — no reason given";
           return (
             <li key={`${outcome.promptKey}-${index}`}>
               <span aria-hidden="true">
@@ -93,13 +116,22 @@ function PromptExports({ exports }: { exports: PromptExportOutcome[] }) {
 export function ApprovalDrawer() {
   const s = useAppState();
   const { controller, store } = useApp();
-  const [expanded, setExpanded] = useState(false);
+  const [expandOverride, setExpandOverride] = useState<boolean | null>(null);
   const close = () => store.dispatch({ type: "UI", patch: { approvalOpen: false } });
   const dialog = useDialog(close);
 
   if (!s.ui.approvalOpen) return null;
 
   const shadow = s.shadow;
+  // A small preview — or one carrying a problem row — opens by default so the
+  // exact writes are visible without a second click; a big list stays folded.
+  const autoExpand = shadow
+    ? shadow.entries.length <= 12 ||
+      shadow.entries.some(
+        (e) => e.classification === "conflict" || e.classification === "unavailable",
+      )
+    : false;
+  const expanded = expandOverride ?? autoExpand;
   // Source-health blockers — mirrored in canAutoSequence/canShadow/canLiveCommit
   // selectors so state can't outrun the UI. A degraded/failed source read is
   // not a usable planning snapshot; refresh before approving writes.
@@ -160,7 +192,21 @@ export function ApprovalDrawer() {
         {/* FEEDBACK-08: the Results entry is reachable from review before a
             preview exists — say what to do instead of rendering an empty
             panel. */}
-        {!shadow && !committed && (
+        {!shadow && !committed && s.shadowError && (
+          <div class="alerts__item alerts__item--error drawer-empty" role="alert">
+            <span aria-hidden="true">⛔</span>
+            <span>{s.shadowError}</span>
+            <button
+              class="btn drawer-empty__build"
+              onClick={() => void controller.shadowPreview()}
+              disabled={!canShadow(s)}
+            >
+              Retry preview
+            </button>
+          </div>
+        )}
+
+        {!shadow && !committed && !s.shadowError && (
           <div class="alerts__item drawer-empty">
             <span aria-hidden="true">ℹ</span>
             <span>No preview yet. Build one to see the exact writes.</span>
@@ -199,6 +245,19 @@ export function ApprovalDrawer() {
             </div>
             <h3>Writes by surface</h3>
             <SurfaceTotals entries={shadow.entries} />
+            {shadow.notes.length > 0 && (
+              <>
+                <h3>Not included in this preview</h3>
+                <ul class="alerts__list" aria-label="Not included in this preview">
+                  {shadow.notes.map((note, i) => (
+                    <li key={i} class="alerts__item alerts__item--warning">
+                      <span aria-hidden="true">⚠</span>
+                      <span>{note}</span>
+                    </li>
+                  ))}
+                </ul>
+              </>
+            )}
             {(s.acceptedDefects?.length ?? 0) > 0 && (
               <>
                 <h3>Accepted defects</h3>
@@ -229,7 +288,7 @@ export function ApprovalDrawer() {
               <button
                 class="capacity__disclose"
                 style={{ marginLeft: 0, padding: 0 }}
-                onClick={() => setExpanded(!expanded)}
+                onClick={() => setExpandOverride(!expanded)}
                 aria-expanded={expanded}
               >
                 Exact writes ({shadow.entries.length}) {expanded ? "▴" : "▾"}
@@ -325,8 +384,17 @@ export function ApprovalDrawer() {
                     {surf.status === "ok" ? "✅" : surf.status === "skipped" ? "⏭" : "⛔"}
                   </span>
                   <span>
-                    {surf.system} — {surf.status}
-                    {surf.detail ? ` · ${surf.detail}` : ""}
+                    {surf.status === "ok" && !surf.detail ? (
+                      <>
+                        {surf.system} —{" "}
+                        <span class="verify-list__status verify-list__status--ok">ok</span>
+                      </>
+                    ) : (
+                      <>
+                        {surf.system} — {surf.status}
+                        {surf.detail ? ` · ${surf.detail}` : ""}
+                      </>
+                    )}
                   </span>
                 </li>
               ))}

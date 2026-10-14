@@ -62,6 +62,7 @@ function conflictShadow(): ShadowDiff {
     ],
     unavailableSurfaces: [],
     counts: { "would-create": 0, "would-update": 0, "no-op": 0, conflict: 1, unavailable: 0 },
+    notes: [],
   };
 }
 
