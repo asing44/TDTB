@@ -4818,6 +4818,17 @@ body {
   gap: 12px;
   margin-left: auto;
   flex-wrap: wrap;
+  /* Shared pill metric for the three controls (source-status pill,
+     Refresh/Retry, Connections): one height, radius, padding, border width,
+     and type size so they line up. `.header-pill` consumes these tokens; the
+     <=1100px layer only retunes width/padding. */
+  --header-pill-height: 32px;
+  --header-pill-radius: 999px;
+  --header-pill-pad-x: 12px;
+  --header-pill-border: 1px;
+  --header-pill-font-size: 12px;
+  --header-pill-font-weight: 500;
+  --header-pill-line-height: 1;
 }
 
 /* U7 header stepper. Distinct from the compact editor `.stepper` (± buttons
@@ -4874,14 +4885,28 @@ body {
   background: var(--t-border);
 }
 
-.health-pill {
+/* One pill metric for the header trio. `.header-pill` owns the geometry and
+   type; the health/action rules below only repaint, so healthy, refreshing,
+   and degraded states never change the pill's height or width. */
+.header-pill {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  padding: 4px 12px;
-  border: 1px solid var(--t-border);
-  border-radius: 999px;
-  font-size: 12px;
+  justify-content: center;
+  gap: 6px;
+  box-sizing: border-box;
+  height: var(--header-pill-height, 32px);
+  min-height: var(--header-pill-height, 32px);
+  padding: 0 var(--header-pill-pad-x, 12px);
+  border: var(--header-pill-border, 1px) solid var(--t-border);
+  border-radius: var(--header-pill-radius, 999px);
+  font-family: inherit;
+  font-size: var(--header-pill-font-size, 12px);
+  font-weight: var(--header-pill-font-weight, 500);
+  line-height: var(--header-pill-line-height, 1);
+  white-space: nowrap;
+  vertical-align: middle;
+}
+.health-pill {
   color: var(--t-muted);
 }
 .health-pill--healthy {
@@ -4891,22 +4916,11 @@ body {
   color: var(--t-text);
   border-color: var(--state-warning);
 }
-.health-pill__retry {
-  padding: 0;
-  border: 0;
-  background: transparent;
-  color: var(--t-accent-strong);
-  font: inherit;
-  text-decoration: underline;
-  cursor: pointer;
-}
+.health-pill__retry,
 .header__connections {
-  padding: 4px;
-  border: 0;
-  background: transparent;
+  background: var(--t-surface);
   color: var(--t-text);
-  font: inherit;
-  text-decoration: underline;
+  text-decoration: none;
   cursor: pointer;
 }
 
@@ -6480,17 +6494,8 @@ body {
   }
 }
 
-/* Tweaks (2026-10-10): header actions as buttons, gray anchors, prompts card. */
-.health-pill__retry,
-.header__connections {
-  padding: 4px 12px;
-  border: 1px solid var(--t-border);
-  border-radius: 999px;
-  background: var(--t-surface);
-  color: var(--t-text);
-  text-decoration: none;
-  font-size: 13px;
-}
+/* Tweaks (2026-10-10): header actions as buttons, gray anchors, prompts card.
+   Geometry comes from `.header-pill`; this only paints the hovered state. */
 .health-pill__retry:hover,
 .header__connections:hover {
   background: var(--t-surface-2);
@@ -7716,7 +7721,6 @@ body {
   border-color: color-mix(in srgb, var(--c-minting) 35%, var(--t-border));
   background: color-mix(in srgb, var(--c-minting) 14%, var(--t-surface));
   color: color-mix(in srgb, var(--c-minting) 45%, var(--t-text));
-  font-size: 13px;
 }
 
 .health-pill--refreshing::before {
@@ -10270,4 +10274,38 @@ body {
   height: 0;
   margin: 2px;
   border-top: 0.5px solid var(--t-border);
+}
+
+/* Header actions + footer alert pills share one motion: a short, transform-
+   only lift on hover, a pressed return to rest, and a visible focus ring.
+   Colour shifts stay available under reduced motion; the lift, shadow, and
+   their transitions are gated. The non-interactive status pill is excluded. */
+.health-pill__retry:focus-visible,
+.header__connections:focus-visible,
+.alert-pill:focus-visible {
+  outline: 2px solid var(--t-accent);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .health-pill__retry,
+  .header__connections,
+  .alert-pill {
+    transition:
+      background-color 140ms ease-out,
+      border-color 140ms ease-out,
+      box-shadow 140ms ease-out,
+      transform 140ms ease-out;
+  }
+  .health-pill__retry:hover,
+  .header__connections:hover,
+  .alert-pill:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 2px 6px color-mix(in srgb, var(--t-text) 12%, transparent);
+  }
+  .health-pill__retry:active,
+  .header__connections:active,
+  .alert-pill:active {
+    transform: translateY(0);
+  }
 }

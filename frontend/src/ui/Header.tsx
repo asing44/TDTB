@@ -194,7 +194,7 @@ export function Header() {
 
       <div class="app-header__right">
         <span
-          class={`health-pill health-pill--${pillState}`}
+          class={`header-pill health-pill health-pill--${pillState}`}
           role="status"
           aria-live="polite"
           title={pillHint}
@@ -209,7 +209,7 @@ export function Header() {
           // Capacities refresh job; degraded Retry keeps the existing
           // snapshot-only retry path.
           <button
-            class="btn health-pill__retry"
+            class="header-pill btn health-pill__retry"
             onClick={() =>
               void (pillState === "healthy" ? job.start("refresh") : controller.refreshSources())
             }
@@ -220,7 +220,7 @@ export function Header() {
           </button>
         )}
         <button
-          class="btn header__connections"
+          class="header-pill btn header__connections"
           onClick={() =>
             store.dispatch({ type: "UI", patch: { screen: "connections", settingsPanel: null } })
           }
