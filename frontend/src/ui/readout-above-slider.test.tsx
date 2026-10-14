@@ -96,26 +96,17 @@ describe("the duration readout leads the slider", () => {
     expect(kids[1].getAttribute("data-src")).toBe("memory");
   });
 
-  it("holds −, the track, and +, in that order", () => {
+  it("holds only the track — the −/+ steppers are gone (Planning 2a)", () => {
     const line = timeColumn().querySelector<HTMLElement>(".qrow__time-line")!;
-    const less = line.querySelector<HTMLButtonElement>(
-      'button[aria-label="15 minutes less for Magic Mirror"]',
-    );
     const track = line.querySelector<HTMLElement>(".alloc-track");
-    const more = line.querySelector<HTMLButtonElement>(
-      'button[aria-label="15 minutes more for Magic Mirror"]',
-    );
-    expect(less).toBeTruthy();
+    const slider = line.querySelector<HTMLInputElement>(".alloc-track__input");
     expect(track).toBeTruthy();
-    expect(more).toBeTruthy();
-    expect(
-      less!.compareDocumentPosition(track!) & Node.DOCUMENT_POSITION_FOLLOWING,
-    ).toBeTruthy();
-    expect(
-      more!.compareDocumentPosition(track!) & Node.DOCUMENT_POSITION_PRECEDING,
-    ).toBeTruthy();
-    // The steppers are still the only two .alloc-step in the column.
-    expect(line.querySelectorAll(".alloc-step")).toHaveLength(2);
+    expect(slider).toBeTruthy();
+    expect(slider!.getAttribute("aria-valuetext")).toBeTruthy();
+    // The track is the column's only control: no buttons share the line.
+    expect(line.querySelectorAll(".alloc-step")).toHaveLength(0);
+    expect(line.querySelectorAll("button")).toHaveLength(0);
+    expect(Array.from(line.children)).toHaveLength(1);
   });
 });
 
@@ -145,7 +136,7 @@ describe("the readout is a single left-aligned line above the slider", () => {
     expect(body).toMatch(/flex-direction:\s*row/);
   });
 
-  it("left-aligns the value so its edge lines up with the − stepper", () => {
+  it("left-aligns the value so its edge lines up with the track", () => {
     const body = lastRuleBody("\\.qrow__time-readout \\.alloc-track__value");
     expect(body).toMatch(/width:\s*auto/);
     expect(body).toMatch(/min-width:\s*0/);

@@ -417,10 +417,10 @@ describe("POLISH-3 lane header, footer clearance, one action layout", () => {
     );
   });
 
-  it("the fixed-row permission rides the meta line", () => {
-    expect(APP_CSS).toMatch(
-      /\.qrow__source\s+\.qrow__time-adjustment\s*\{[^}]*flex:\s*0\s+1\s+auto/,
-    );
+  it("keeps the fixed-row permission out of the row CSS (the More menu owns it)", () => {
+    // Planning 2a cleanup (2026-10-14): the inline "Allow move" checkbox left
+    // the meta line; the permission is a menuitemcheckbox inside More now.
+    expect(APP_CSS).not.toMatch(/\.qrow__time-adjustment/);
   });
 });
 

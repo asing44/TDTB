@@ -1643,87 +1643,10 @@
   gap: 6px;
   min-width: 0;
 }
-/* P4-03: native Todoist starts are protected planning evidence. The opt-in
-   stays in the existing time track, below its readout, rather than becoming a
-   persistent action column. A full-width, calm line makes the default and the
-   exceptional permission legible without competing with row verbs. */
-.qrow__time-adjustment {
-  flex: 1 1 100%;
-  min-width: 0;
-  min-height: 0;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 0;
-  border-top: 0;
-}
-.qrow__time-adjustment-control {
-  min-width: 0;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  min-height: 0;
-  cursor: pointer;
-}
-.qrow__time-adjustment-note {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.qrow__time-adjustment input {
-  width: 18px;
-  height: 18px;
-  margin: 0;
-  accent-color: var(--t-accent);
-  cursor: pointer;
-}
-.qrow__time-adjustment label {
-  min-width: 0;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  color: var(--t-muted);
-  font-size: 10px;
-  line-height: 1.35;
-  cursor: pointer;
-  white-space: nowrap;
-}
-.qrow__time-adjustment-status {
-  grid-column: 2;
-  min-width: 0;
-  color: var(--t-muted);
-  font-size: 10px;
-  line-height: 1.35;
-}
-.qrow__time-adjustment--allowed {
-  border-top-color: color-mix(in srgb, var(--t-accent) 55%, var(--t-border));
-}
-.qrow__time-adjustment--allowed label,
-.qrow__time-adjustment--allowed .qrow__time-adjustment-status {
-  color: var(--t-accent-text);
-}
-.qrow__time-adjustment:focus-within {
-  border-top-color: var(--t-accent);
-}
-/* Flanking half-block trim. Deliberately quieter than the row's verbs — these
-   nudge a number, they don't act on the item. */
-.alloc-step {
-  flex: none;
-  width: 32px;
-  min-width: 32px;
-  /* These carry the 15-minute grid AND the only drag-free route to all-day,
-     so they hold the same 44px vertical floor as the row verbs. Kept narrow
-     so the time column stays compact. */
-  min-height: 44px;
-  padding: 0;
-  font-size: 15px;
-  line-height: 1;
-  color: var(--t-muted);
-}
-.alloc-step:disabled {
-  opacity: 0.35;
-}
+/* (4b) Fixed rows: "Allow move" used to ride this row's meta line as an
+   inline checkbox. Planning 2a (2026-10-14) moved it into the More menu as a
+   menuitemcheckbox; no row-level rule for it survives. */
+/* Action cluster: five flat 34px icon buttons, radius 7, gap 6. */
 .qrow__actions {
   display: flex;
   align-items: center;
@@ -6877,38 +6800,6 @@ body {
   flex: 0 0 auto;
 }
 
-/* (4b) Fixed rows: the "Allow move" permission rides the meta line (right
-   after `fixed · recurring · 10 PM`) as a compact inline control — a small
-   checkbox and a visible 12px muted label in normal flow — instead of a third
-   line under the slider, so a Fixed row matches every other row's ~60px
-   height. The control shrinks with the line (it can never push past the body
-   column) and keeps its full sentence in title/aria-label. */
-.qrow__source .qrow__time-adjustment {
-  flex: 0 1 auto;
-  min-width: 0;
-  gap: 4px;
-}
-
-.qrow__source .qrow__time-adjustment label {
-  gap: 4px;
-  font-size: 12px;
-}
-
-.qrow__source .qrow__time-adjustment input {
-  flex: none;
-  width: 14px;
-  height: 14px;
-}
-
-.qrow__source .qrow__time-adjustment-note {
-  flex: 0 1 auto;
-  min-width: 0;
-}
-
-.qrow__source .qrow__time-adjustment--allowed label {
-  color: var(--t-accent-text);
-}
-
 /* ---- Row rhythm and plan width (2026-10-11) -------------------------------
    Two operator asks on the Plan tasks table. (1) Adjacent rows touched: the
    44px control floor plus 6px padding left about 12px between one row's
@@ -9632,7 +9523,7 @@ body {
 /* Row card: white, 1px border, radius 10, compact 6x12 padding, five fixed
    columns (status | name+meta | duration | priority | actions). */
 .qrow {
-  grid-template-columns: 130px minmax(0, 1fr) 200px 50px 194px;
+  grid-template-columns: 130px minmax(0, 1fr) 154px 50px 194px;
   grid-template-rows: auto;
   grid-template-areas: none;
   gap: 14px;
@@ -9821,9 +9712,10 @@ body {
   flex-wrap: nowrap;
   white-space: nowrap;
   /* One compact line directly over the slider: 16px readout + the column's
-     4px gap + a 28px slider line keeps the row at ~62px, with or without the
-     provenance chip (baseline alignment let the 9px chip grow the line to
-     20px and the row to 66px). */
+     4px gap + a 22px slider line keeps the row near the mockup's 60px. The
+     saved ✓ is absolutely positioned and the provenance words are sr-only,
+     so neither can grow the line. */
+  position: relative;
   line-height: 16px;
 }
 .qrow__time-readout .alloc-track__value {
@@ -9836,23 +9728,17 @@ body {
 .qrow__time-line {
   gap: 6px;
 }
-/* Compact slider line (Planning 2a): a small track and 28px steppers keep the
-   duration block ~52px so the row lands near the mockup's 60px. The 44px
-   control floor stays in force at <=1100px, where the old layers apply. */
+/* Compact slider line (Planning 2a, decluttered 2026-10-14): the −/+ steppers
+   are gone, so the track is a plain ~140px control in its own column — no
+   overlap with the name line, no shrink fight with the action cluster. */
 .qrow__time .alloc-track {
-  flex: 1 1 auto;
-  min-width: 0;
+  flex: none;
+  width: 140px;
+  max-width: 100%;
   height: 22px;
 }
 .qrow__time .alloc-track__input {
   height: 22px;
-}
-.qrow__time .alloc-step {
-  width: 28px;
-  min-width: 28px;
-  height: 28px;
-  min-height: 28px;
-  padding: 0;
 }
 .qrow__time .alloc-track__input::-webkit-slider-runnable-track {
   background-color: #ebe9e3;
@@ -9869,6 +9755,53 @@ body {
 .qrow__time .alloc-track__input::-moz-range-thumb {
   background: #fff;
   border: 1.5px solid #3b7be8;
+}
+/* An all-day row (0 blocks) has nothing left to trim: the readout says "All
+   day" and the track is inert, as in the mockup. Exact duration (clock, D)
+   still gives it time, and the row's ←/→ keys still step it by 15 min. */
+.qrow__time .alloc-track__input:disabled {
+  cursor: default;
+  opacity: 1;
+}
+.qrow__time .alloc-track__input:disabled::-webkit-slider-thumb {
+  background: #fff;
+  border-color: #b9b6af;
+}
+.qrow__time .alloc-track__input:disabled::-moz-range-thumb {
+  background: #fff;
+  border-color: #b9b6af;
+}
+
+/* A remembered duration flashes a tiny green ✓ beside the readout for ~1.5s.
+   Absolutely positioned, so the readout can never shift; the words themselves
+   live in the sr-only `.qrow__dur-label` live region below. */
+.qrow__saved-tick {
+  position: absolute;
+  left: 100%;
+  margin-left: 6px;
+  color: #1f8a5e;
+  font-size: 11px;
+  line-height: 16px;
+}
+
+/* The provenance chip ("saved" / "today only"), the folded meta detail, and
+   the all-day marker no longer paint in the row. They stay in the DOM as
+   sr-only text — the chip is the polite live region that tells assistive tech
+   a duration was saved — and the meta line's title carries the same facts on
+   hover. */
+.qrow__dur-label,
+.qrow__meta.sr-only,
+.qrow__allday.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  border: 0;
+  background: none;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
 }
 
 /* Action cluster: five flat 34px icon buttons, radius 7, gap 6. */

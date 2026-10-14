@@ -210,11 +210,13 @@ function MoreMenu({
   busy,
   state,
   allowTimeAdjustment,
+  optIn,
 }: {
   item: AssignedItem;
   busy: boolean;
   state: QueueState;
   allowTimeAdjustment: boolean;
+  optIn: boolean;
 }) {
   const { controller, store } = useApp();
   const [open, setOpen] = useState(false);
@@ -256,7 +258,9 @@ function MoreMenu({
     if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
     e.preventDefault();
     const items = Array.from(
-      wrapRef.current?.querySelectorAll<HTMLElement>('[role="menuitem"]') ?? [],
+      wrapRef.current?.querySelectorAll<HTMLElement>(
+        '[role="menuitem"], [role="menuitemcheckbox"]',
+      ) ?? [],
     );
     const i = items.indexOf(document.activeElement as HTMLElement);
     if (i < 0) return;
@@ -269,7 +273,7 @@ function MoreMenu({
     <div class="row-more" ref={wrapRef}>
       <Tooltip
         label="More"
-        detail="Remove from planning, Delete, adjust time, unschedule."
+        detail="Remove from planning, Delete, adjust time, allow move, unschedule."
         align="end"
         suppress={open}
       >
@@ -297,6 +301,30 @@ function MoreMenu({
           aria-label={`Actions for ${item.name}`}
           onKeyDown={onMenuKeyDown}
         >
+          {/* Planning 2a cleanup (2026-10-14): the "Allow move" permission
+              moved off the row's meta line into this menu as a checkbox item.
+              Same handler, same wire flag, same full aria-label; a
+              Fixed/native-time row no longer carries an inline checkbox. */}
+          {hasAdjustableNativeTime(item) && (
+            <button
+              role="menuitemcheckbox"
+              aria-checked={optIn}
+              class="alloc-verb row-more__item"
+              aria-label={`Allow scheduler to move existing time for ${item.name}`}
+              onClick={() => {
+                /* Toggle in place: the menu stays open, so the checkmark is
+                   visible while it flips. */
+                controller.setTimeAdjustmentOptIn(item.id, !optIn);
+              }}
+            >
+              <span>Allow move</span>
+              <span class="row-more__item-detail">
+                {optIn
+                  ? "Allowed — scheduler may move the Todoist start"
+                  : "Protected — keeps the Todoist start fixed"}
+              </span>
+            </button>
+          )}
           {allowTimeAdjustment && (state === "needs-placement" || state === "scheduled") && (
             <button
               role="menuitem"
@@ -355,62 +383,6 @@ function MoreMenu({
           })}
         </div>
       )}
-    </div>
-  );
-}
-
-/** Native Todoist times are protected until the user authorizes this specific
-    row to move. The permission rides the end of the row's meta line, beside
-    the time evidence, rather than the row action cluster or the duration
-    column, so it reads as planning input and not as a source mutation. */
-function TimeAdjustmentOptIn({
-  item,
-  s,
-}: {
-  item: AssignedItem;
-  s: AppState;
-}) {
-  const { controller } = useApp();
-  if (!hasAdjustableNativeTime(item)) return null;
-
-  const checked = s.timeAdjustmentOptIns[item.id] === true;
-  const controlId = rowId(item, "time-adjustment");
-  const statusId = `${controlId}-status`;
-  const label = `Allow scheduler to move existing time for ${item.name}`;
-
-  return (
-    <div
-      class={`qrow__time-adjustment${checked ? " qrow__time-adjustment--allowed" : ""}`}
-      title={label}
-      onClick={(e) => e.stopPropagation()}
-      onKeyDown={(e) => e.stopPropagation()}
-    >
-      <label class="qrow__time-adjustment-control" htmlFor={controlId}>
-        <input
-          id={controlId}
-          type="checkbox"
-          checked={checked}
-          aria-label={label}
-          aria-describedby={statusId}
-          onChange={(e) =>
-            controller.setTimeAdjustmentOptIn(
-              item.id,
-              (e.target as HTMLInputElement).checked,
-            )
-          }
-        />
-        {/* Compact visible label; the full sentence rides title + aria-label
-            and the sr-only status carries the protected/allowed state, so a
-            dense row never wraps the permission into a one-char column. */}
-        <span class="qrow__time-adjustment-note" aria-hidden="true">
-          Allow move
-        </span>
-      </label>
-      <span id={statusId} class="qrow__time-adjustment-status sr-only" role="status">
-        {checked
-          ? "Allowed — scheduler may move the Todoist start"
-          : "Protected — keeps the Todoist start fixed"}
-      </span>
     </div>
   );
 }
@@ -509,9 +481,6 @@ function Row({
   // blocks saved before MAX_BLOCKS dropped to 10) must not show a readout the
   // thumb cannot reach. The override in state is left untouched.
   const blocks = clampDisplayBlocks(effectiveBlocks(s, item.id));
-  const stepDown = stepDownBlocks(blocks);
-  const stepUp = stepUpBlocks(blocks);
-  const minusMinutes = Math.round((blocks - stepDown) * 30);
   const included = s.overrides[item.id]?.included ?? true;
   const overridden = s.overrides[item.id]?.blocks != null;
   // Duration-memory MVP: three distinct provenance states — "memory" (a
@@ -523,8 +492,36 @@ function Row({
       ? "remembered"
       : "source";
   const durLabel = durLabelText(srcTag);
+  // Planning 2a cleanup (2026-10-14): the "saved" chip no longer paints
+  // inside the readout. Its words stay for assistive tech (the sr-only
+  // `.qrow__dur-label` live region in the column); a sighted user gets a tiny
+  // green ✓ for ~1.5s, absolutely positioned so the readout cannot reflow.
+  const [savedTick, setSavedTick] = useState(false);
+  useEffect(() => {
+    if (srcTag !== "remembered") {
+      setSavedTick(false);
+      return;
+    }
+    setSavedTick(true);
+    const t = window.setTimeout(() => setSavedTick(false), 1500);
+    return () => window.clearTimeout(t);
+  }, [srcTag]);
+
   const scheduledRow = s.sequence?.find((r) => r.id === item.id && r.kind === "work");
   const track = trackFor(cumBefore, blocks, budgetTotal(s), MAX_BLOCKS);
+  // Row meta detail: everything the mockup folds off the visible line (the
+  // estimate, provenance context, scheduled time, fixed/recurring note). It
+  // rides the meta line's title and an sr-only span, never the paint.
+  const metaDetail = [
+    srcTag === "source" ? `est ${blocksLabel(blocks)}` : "",
+    sourceContext(item),
+    scheduledRow ? display12h(scheduledRow.start) : "",
+    item.isRecurring && item.scheduledStart
+      ? `fixed · recurring · ${display12h(item.scheduledStart)}`
+      : "",
+  ]
+    .filter(Boolean)
+    .join(" · ");
   // Planning 2a action row: Complete, Exclude today, Exact duration, Leave
   // as-is, More — one flat icon cluster in that order. The armed state for a
   // destructive verb stays on the row.
@@ -583,7 +580,7 @@ function Row({
             selected/budget/overage (queue header, rail, dock); a row leaves
             the plan only when the operator excludes, completes, or deletes
             it. */}
-        <span class="qrow__source" title={item.path ?? undefined}>
+        <span class="qrow__source" title={metaDetail || (item.path ?? undefined)}>
           {/* Planning 2a meta line: an 8px source swatch, the source name,
               then the row's human KIND, then plain meta. The raw uppercase
               type badge is gone — a Capacities structure id resolves through
@@ -598,17 +595,13 @@ function Row({
               {kind}
             </span>
           )}
-          <span class="qrow__meta">
-            {[
-              srcTag === "source" ? `est ${blocksLabel(blocks)}` : "",
-              sourceContext(item),
-              scheduledRow ? display12h(scheduledRow.start) : "",
-              item.isRecurring && item.scheduledStart
-                ? `fixed · recurring · ${display12h(item.scheduledStart)}`
-                : "",
-            ]
-              .filter(Boolean)
-              .join(" · ")}
+          {/* Planning 2a cleanup (2026-10-14): the visible meta line is just
+              swatch · source · due. The estimate, provenance context, and
+              scheduled/fixed time stay in the DOM as sr-only text (and in
+              this line's title), so the row reads clean while assistive tech
+              and the tests keep reading the same facts. */}
+          <span class="qrow__meta sr-only">
+            {metaDetail}
           </span>
           {/* Planning 2a: the due date folds onto the meta line (source
               swatch + source name + due date); there is no separate due
@@ -623,16 +616,14 @@ function Row({
           )}
           {/* A zero-duration row stays exactly where it is and says what it
               became. Previously it jumped to a trailing All-day section the
-              moment the slider hit bottom. */}
+              moment the slider hit bottom. Planning 2a: the marker is sr-only
+              (the duration column already reads "All day") and the same
+              sentence rides the row's title for hover. */}
           {state === "background" && (
-            <span class="qrow__allday" title="All day — included, unscheduled, uses no capacity">
+            <span class="qrow__allday sr-only" title="All day — included, unscheduled, uses no capacity">
               all day
             </span>
           )}
-          {/* POLISH-3: fixed rows carry the permission on the meta line, right
-              after `fixed · recurring · 10 PM`, instead of a third line under
-              the slider — so a Fixed row matches every other row's ~60px. */}
-          <TimeAdjustmentOptIn item={item} s={s} />
         </span>
       </div>
       <div class="qrow__priority">
@@ -662,35 +653,19 @@ function Row({
                   data-src={srcTag}
                   title={srcTagLabel(srcTag)}
                   aria-label={srcTagLabel(srcTag)}
+                  role="status"
+                  aria-live="polite"
                 >
                   {durLabel}
                 </span>
               )}
+              {savedTick && (
+                <span class="qrow__saved-tick" aria-hidden="true">
+                  ✓
+                </span>
+              )}
             </div>
             <div class="qrow__time-line">
-                {/* The slider's own notch is a 30-minute block; these are the
-                    half-block trim the slider can't express without becoming
-                    twice as twitchy to drag. They snap to the HALF-block grid —
-                    routing them through clampBlocks made − a no-op at every
-                    integer and turned + into a 30-minute jump. */}
-                  <Tooltip
-                    label={stepDown <= MIN_BLOCKS ? "All day (no capacity)" : `−${minusMinutes} min`}
-                  >
-                    <button
-                      class="iconbtn alloc-step"
-                      aria-label={
-                        stepDown <= MIN_BLOCKS
-                          ? `Make ${item.name} all day`
-                          : `${minusMinutes} minutes less for ${item.name}`
-                      }
-                      disabled={blocks <= MIN_BLOCKS}
-                      onClick={() =>
-                        controller.setOverride(item.id, included, stepDown)
-                      }
-                    >
-                      −
-                    </button>
-                  </Tooltip>
                   <span class="alloc-track" style={{ "--trackbg": trackGradient(track) }}>
                     <input
                       type="range"
@@ -698,12 +673,23 @@ function Row({
                       /* Half-block notches, all the way down to All day: 30min →
                          15min → All day. The row no longer relocates when it hits
                          zero (see bandedRows), so the bottom of the track is a
-                         place you can safely drag to. Same grid as the ± steppers,
-                         so the two controls can't disagree. */
+                         place you can safely drag to. Planning 2a: the ±
+                         steppers are gone — the track itself is the pointer
+                         control, the row's ←/→ keys trim by 15 min, and Exact
+                         duration (clock, D) covers precise entry. */
                       min={MIN_BLOCKS}
                       max={MAX_BLOCKS}
                       step={HALF_BLOCK}
                       value={blocks}
+                      /* An all-day row (0 blocks) has nothing to trim: the
+                         label reads "All day" and the track is inert, as in
+                         the mockup. Exact duration still gives it time. */
+                      disabled={state === "background"}
+                      title={
+                        state === "background"
+                          ? "All day — no capacity; use Exact duration to give it time"
+                          : undefined
+                      }
                       aria-label={`${item.name} duration in 15-minute steps`}
                       /* FEEDBACK-10 (A08): the spoken value names WHERE the duration
                          came from — a session memory override, durable memory, or
@@ -722,18 +708,6 @@ function Row({
                       <span class="alloc-track__mark" style={{ left: `${track.markPct}%` }} />
                     )}
                   </span>
-                  <Tooltip label="+15 min">
-                    <button
-                      class="iconbtn alloc-step"
-                      aria-label={`15 minutes more for ${item.name}`}
-                      disabled={blocks >= MAX_BLOCKS}
-                      onClick={() =>
-                        controller.setOverride(item.id, included, stepUp)
-                      }
-                    >
-                      +
-                    </button>
-                  </Tooltip>
             </div>
           </>
         ) : (
@@ -803,6 +777,7 @@ function Row({
           item={item}
           busy={s.runtimeBusy}
           state={state}
+          optIn={s.timeAdjustmentOptIns[item.id] === true}
           allowTimeAdjustment={
             !item.isRecurring &&
             (!hasAdjustableNativeTime(item) || s.timeAdjustmentOptIns[item.id] === true)

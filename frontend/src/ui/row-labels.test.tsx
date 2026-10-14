@@ -6,7 +6,7 @@
    Fixture adapters only: no live adapter, no billed call, no source write. */
 
 import { afterEach, describe, expect, it } from "vitest";
-import { cleanup, waitFor } from "@testing-library/preact";
+import { cleanup, fireEvent, waitFor } from "@testing-library/preact";
 
 afterEach(cleanup);
 
@@ -193,7 +193,7 @@ describe("rendered rows carry the clearer labels", () => {
     expect(todayOnly.getAttribute("data-src")).toBe("memory");
   });
 
-  it("renders the fixed-row permission as one compact line, not a one-char column", () => {
+  it("carries the fixed-row permission in the More menu, not on the row", () => {
     const h = makeHarness("ready");
     const inputs = structuredClone(h.store.getState().inputs!);
     const base = inputs.assigned.find((i) => i.source === "todoist")!;
@@ -214,22 +214,26 @@ describe("rendered rows carry the clearer labels", () => {
     });
     const { container, getByLabelText } = h.ui(<Queue />);
     const row = rowNamed(container, "M1.5");
-    const note = row.querySelector(
-      ".qrow__time-adjustment-note",
-    ) as HTMLElement;
-    expect(note.textContent?.trim()).toBe("Allow move");
-    // The full sentence stays on the control for assistive tech.
-    const box = getByLabelText(
+    // Planning 2a cleanup (2026-10-14): no inline checkbox or label is left
+    // anywhere on the row — the permission is a menu item now.
+    expect(row.querySelector(".qrow__time-adjustment")).toBeNull();
+    expect(row.querySelector(".qrow__time-adjustment-note")).toBeNull();
+    expect(row.textContent).not.toContain("Allow move");
+    // Reachable from ⋯ with the same handler and the same full aria name.
+    fireEvent.click(getByLabelText("More actions for M1.5"));
+    const control = getByLabelText(
       "Allow scheduler to move existing time for M1.5",
-    ) as HTMLInputElement;
-    expect(box.type).toBe("checkbox");
-    // The permission rides the END of the meta line in .qrow__body — never
-    // the duration column, where it used to paint over the slider.
-    const control = row.querySelector(".qrow__time-adjustment") as HTMLElement;
-    expect(control.closest(".qrow__source")).toBeTruthy();
-    expect(control.closest(".qrow__body")).toBeTruthy();
-    expect(control.closest(".qrow__time")).toBeNull();
-    expect(row.querySelector(".qrow__time .qrow__time-adjustment")).toBeNull();
-    expect(control.parentElement?.classList.contains("qrow__source")).toBe(true);
+    );
+    expect(control.getAttribute("role")).toBe("menuitemcheckbox");
+    expect(control.textContent?.trim()).toContain("Allow move");
+    expect(control.getAttribute("aria-checked")).toBe("false");
+    fireEvent.click(control);
+    expect(h.store.getState().timeAdjustmentOptIns["M1.5"]).toBe(true);
+    // Toggling keeps the menu open and flips the checkmark in place.
+    expect(
+      getByLabelText("Allow scheduler to move existing time for M1.5").getAttribute(
+        "aria-checked",
+      ),
+    ).toBe("true");
   });
 });

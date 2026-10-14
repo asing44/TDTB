@@ -1,13 +1,20 @@
-/* slider-steppers.test.tsx — Plan task row duration control (2026-10-12, Adam):
+/* slider-steppers.test.tsx — Plan task row duration control.
 
-   1. The −/+ duration steppers return to the row, flanking the slider:
-      [−] [slider] [+] readout. Each steps by HALF_BLOCK (15 min) and pins at
-      the MIN/MAX bounds.
-   2. The track must not flex while it is dragged. The readout now sits on its
-      own line above the slider (Planning 2a), so its text changes ("All day"
-      → "15min" → "1hr" …) can no longer reflow the track beside it or
-      re-snap the native thumb.
-   3. A stored override above the shrunk range (e.g. 12 blocks saved before
+   2026-10-14 (Planning 2a declutter): the −/+ steppers were removed from the
+   row. The commands below moved, they were not dropped:
+
+   1. Keyboard: the row's ←/→ keys walk the same stepDownBlocks/stepUpBlocks
+      grid the −/+ buttons used (HALF_BLOCK steps, pinned at MIN/MAX).
+   2. Pointer: the slider itself is the only control left in the column, and
+      its step is still a half block.
+   3. Precise entry: the Exact duration (clock, shortcut D) editor.
+   4. An all-day row (0 blocks) shows "All day" over an inert track — the
+      mockup's Charge GoPro row — while ←/→ and the exact editor can still
+      give it time.
+   5. The track must not flex while it is dragged. The readout sits on its own
+      line above the slider (Planning 2a), so its text changes ("All day" →
+      "15min" → "1hr" …) can no longer reflow the track or re-snap the thumb.
+   6. A stored override above the shrunk range (e.g. 12 blocks saved before
       MAX_BLOCKS dropped to 10) must not disagree with the thumb.
 
    jsdom does no layout, so the width guard reads the cascade off disk the same
@@ -23,7 +30,7 @@ afterEach(cleanup);
 import { Queue } from "./Queue";
 import { makeHarness } from "./test-harness";
 import { effectiveBlocks } from "../store/store";
-import { HALF_BLOCK, MAX_BLOCKS, MIN_BLOCKS } from "../model/allocator";
+import { HALF_BLOCK, MAX_BLOCKS } from "../model/allocator";
 
 const appCss = readFileSync(resolve(process.cwd(), "src/app.css"), "utf8");
 
@@ -53,78 +60,45 @@ function rowFor(container: HTMLElement, name: string): HTMLElement {
   return found;
 }
 
-describe("Plan row duration steppers are restored", () => {
-  it("flanks the slider with a −15 and a +15 control", () => {
+describe("the row's −/+ duration steppers are gone (Planning 2a, 2026-10-14)", () => {
+  it("renders no stepper buttons around the track", () => {
     const h = makeHarness("ready");
     const { container } = h.ui(<Queue />);
     const row = rowFor(container, "Magic Mirror");
-    const steps = Array.from(
-      row.querySelectorAll<HTMLButtonElement>(".qrow__time .alloc-step"),
-    );
-    expect(steps).toHaveLength(2);
-
-    const less = row.querySelector<HTMLButtonElement>(
-      'button[aria-label="15 minutes less for Magic Mirror"]',
-    );
-    const more = row.querySelector<HTMLButtonElement>(
-      'button[aria-label="15 minutes more for Magic Mirror"]',
-    );
-    expect(less).toBeTruthy();
-    expect(more).toBeTruthy();
-
-    const track = row.querySelector(".qrow__time .alloc-track");
-    expect(track).toBeTruthy();
-    // [−] then track then [+]
-    expect(steps[0]).toBe(less);
-    expect(steps[1]).toBe(more);
-    expect(
-      less!.compareDocumentPosition(track!) & Node.DOCUMENT_POSITION_FOLLOWING,
-    ).toBeTruthy();
-    expect(
-      more!.compareDocumentPosition(track!) & Node.DOCUMENT_POSITION_PRECEDING,
-    ).toBeTruthy();
+    const line = row.querySelector<HTMLElement>(".qrow__time-line")!;
+    expect(line).toBeTruthy();
+    expect(line.querySelectorAll(".alloc-step")).toHaveLength(0);
+    expect(line.querySelectorAll("button")).toHaveLength(0);
+    // Only the track remains: the readout sits on its own line above it.
+    expect(Array.from(line.children)).toHaveLength(1);
+    expect(line.querySelector(".alloc-track__input")).toBeTruthy();
   });
 
-  it("steps 15 minutes each way and persists the override", () => {
+  it("keeps the 15-minute grid on the slider and on the row's ←/→ keys", () => {
     const h = makeHarness("ready");
     const { container } = h.ui(<Queue />);
     const row = rowFor(container, "Magic Mirror");
-    const less = row.querySelector<HTMLButtonElement>(
-      'button[aria-label="15 minutes less for Magic Mirror"]',
-    );
-    const more = row.querySelector<HTMLButtonElement>(
-      'button[aria-label="15 minutes more for Magic Mirror"]',
-    );
-    fireEvent.click(more!);
+    const slider = row.querySelector<HTMLInputElement>(".alloc-track__input")!;
+    expect(slider.step).toBe(String(HALF_BLOCK));
+    expect(slider.getAttribute("aria-valuetext")).toMatch(/\(source\)$/);
+    fireEvent.keyDown(row, { key: "ArrowRight" });
     expect(effectiveBlocks(h.store.getState(), "Magic Mirror")).toBe(3 + HALF_BLOCK);
-    fireEvent.click(less!);
+    fireEvent.keyDown(row, { key: "ArrowLeft" });
     expect(effectiveBlocks(h.store.getState(), "Magic Mirror")).toBe(3);
   });
 
-  it("disables − at all-day and + at the range ceiling", () => {
-    const atMin = makeHarness("ready");
-    atMin.store.dispatch({
-      type: "OVERRIDE_SET",
-      id: "Magic Mirror",
-      override: { included: true, blocks: MIN_BLOCKS },
-    });
-    const minRow = atMin.ui(<Queue />).container;
-    const minLess = rowFor(minRow, "Magic Mirror").querySelector<HTMLButtonElement>(
-      ".alloc-step",
-    );
-    expect(minLess!.disabled).toBe(true);
-
-    const atMax = makeHarness("ready");
-    atMax.store.dispatch({
-      type: "OVERRIDE_SET",
-      id: "Magic Mirror",
-      override: { included: true, blocks: MAX_BLOCKS },
-    });
-    const maxRow = atMax.ui(<Queue />).container;
-    const maxSteps = rowFor(maxRow, "Magic Mirror").querySelectorAll<HTMLButtonElement>(
-      ".alloc-step",
-    );
-    expect(maxSteps[maxSteps.length - 1].disabled).toBe(true);
+  it("reads \"All day\" over an inert track on a zero-block row", () => {
+    const h = makeHarness("ready");
+    const { container } = h.ui(<Queue />);
+    const row = rowFor(container, "Charge GoPro");
+    const slider = row.querySelector<HTMLInputElement>(".alloc-track__input")!;
+    expect(slider.disabled).toBe(true);
+    expect(
+      row.querySelector<HTMLElement>(".alloc-track__value")!.textContent,
+    ).toBe("All day");
+    // The drag-free routes to time stay: the row keys and Exact duration.
+    fireEvent.keyDown(row, { key: "ArrowRight" });
+    expect(effectiveBlocks(h.store.getState(), "Charge GoPro")).toBe(HALF_BLOCK);
   });
 });
 
@@ -162,12 +136,13 @@ describe("a stored override above the shrunk range still agrees with the thumb",
   });
 });
 
-describe("the track shrinks to fit between the steppers", () => {
-  it("gives the track a flexible basis and no min-width floor in the row", () => {
-    // Planning 2a: the two steppers and the track share one 200px column, so
-    // the track must be able to shrink instead of holding a 120/140px floor.
+describe("the track takes a fixed 140px slot in the duration column", () => {
+  it("is not stretched and cannot overflow its column", () => {
+    // Planning 2a declutter: with the steppers gone there is nothing left for
+    // the track to share the column with, so it holds the mockup's ~140px.
     const body = lastRuleBody("\\.qrow__time \\.alloc-track");
-    expect(body).toMatch(/flex:\s*1 1 auto/);
-    expect(body).toMatch(/min-width:\s*0/);
+    expect(body).toMatch(/flex:\s*none/);
+    expect(body).toMatch(/width:\s*140px/);
+    expect(body).toMatch(/max-width:\s*100%/);
   });
 });

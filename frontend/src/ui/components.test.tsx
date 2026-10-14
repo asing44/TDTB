@@ -1169,22 +1169,28 @@ describe("T25 recurring duration shaping", () => {
     expect(h.store.getState().overrides["LOOTS"].included).toBe(false);
   });
 
-  it("shows a protected-by-default, keyboard-accessible time-movement opt-in per timed row", () => {
+  it("shows a protected-by-default time-movement opt-in per timed row", () => {
     const h = makeHarness("ready");
     withRecurring(h);
     const { getByLabelText } = h.ui(<Queue />);
-    const optIn = getByLabelText("Allow scheduler to move existing time for LOOTS") as HTMLInputElement;
-    expect(optIn.type).toBe("checkbox");
-    expect(optIn.checked).toBe(false);
+    // Planning 2a cleanup (2026-10-14): the opt-in left the row's meta line
+    // for the More menu, as a menuitemcheckbox with the same aria-label.
+    fireEvent.click(getByLabelText("More actions for LOOTS"));
+    const optIn = getByLabelText(
+      "Allow scheduler to move existing time for LOOTS",
+    );
+    expect(optIn.getAttribute("role")).toBe("menuitemcheckbox");
+    expect(optIn.getAttribute("aria-checked")).toBe("false");
+    expect(optIn.textContent).toContain("Allow move");
     expect(optIn.getAttribute("aria-label")).toContain("existing time");
-
-    // A native checkbox keeps Space/Enter activation in the browser's normal
-    // keyboard path; the click here is the testing-library activation event.
-    optIn.focus();
-    fireEvent.keyDown(optIn, { key: " " });
     fireEvent.click(optIn);
-    expect(optIn.checked).toBe(true);
     expect(h.store.getState().timeAdjustmentOptIns).toEqual({ LOOTS: true });
+    // The check flips in place; the menu stays open so it is visible.
+    expect(
+      getByLabelText("Allow scheduler to move existing time for LOOTS").getAttribute(
+        "aria-checked",
+      ),
+    ).toBe("true");
   });
 
   it("shows time adjustment only for Todoist rows with a native start", () => {
@@ -1226,8 +1232,13 @@ describe("T25 recurring duration shaping", () => {
       ledger: { today: inputs.validDate, spent: 0, cap: 7, remaining: 7 },
     });
     const { getByLabelText, queryByLabelText } = h.ui(<Queue />);
+    // Planning 2a (2026-10-14): each row's permission is a More-menu item now,
+    // so presence is checked with the row's own menu open.
+    fireEvent.click(getByLabelText("More actions for Timed Todoist"));
     expect(getByLabelText("Allow scheduler to move existing time for Timed Todoist")).toBeTruthy();
+    fireEvent.click(getByLabelText("More actions for Untimed Todoist"));
     expect(queryByLabelText("Allow scheduler to move existing time for Untimed Todoist")).toBeNull();
+    fireEvent.click(getByLabelText("More actions for All-day Todoist"));
     expect(queryByLabelText("Allow scheduler to move existing time for All-day Todoist")).toBeNull();
   });
 

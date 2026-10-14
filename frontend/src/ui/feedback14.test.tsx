@@ -122,7 +122,7 @@ describe("FEEDBACK-14: pointer controls and persistence consistency", () => {
     expect(h.store.getState().overrides["Note Processing"]?.blocks).toBe(0.5);
   });
 
-  it("the slider grid matches the ±15 min steppers and keyboard", () => {
+  it("the slider grid matches the ±15 min keyboard grid", () => {
     const h = makeHarness("ready");
     const { container } = h.ui(<Queue />);
     const slider = container.querySelector(

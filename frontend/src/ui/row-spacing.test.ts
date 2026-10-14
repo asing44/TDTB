@@ -99,22 +99,36 @@ describe("row spacing never erodes shared control touch targets", () => {
   });
 });
 
-describe("a Fixed row's permission control never paints across the duration column", () => {
+describe("the retired inline Fixed-row permission leaves no row CSS behind", () => {
   it("re-stretches the meta line inside the 2a flex body", () => {
     // The retired >=1500px six-cell layer set `align-self: start` on
     // .qrow__source. In the 2a column-flex body that shrink-wraps the meta
     // line to max-content, so a Fixed row's checkbox and label painted over
-    // the slider and its stepper. The 2a rule must reset the cross-axis
-    // alignment so `overflow: hidden` clips at the real column edge.
+    // the slider. The 2a rule must reset the cross-axis alignment so
+    // `overflow: hidden` clips at the real column edge.
     expect(lastRuleBody("\\.qrow__source")).toMatch(/align-self:\s*auto/);
   });
 
-  it("keeps the control inline, shrinkable, and out of the duration column", () => {
-    const body = lastRuleBody("\\.qrow__source \\.qrow__time-adjustment");
-    expect(body).toMatch(/flex:\s*0\s+1\s+auto/);
-    expect(body).toMatch(/min-width:\s*0/);
-    expect(body).not.toMatch(/position:\s*absolute/);
-    expect(body).not.toMatch(/opacity:/);
+  it("removes the inline control from the row entirely (More menu owns it)", () => {
+    // Planning 2a cleanup (2026-10-14): "Allow move" moved into the More menu
+    // as a menuitemcheckbox, so no row-level rule for it survives.
+    expect(appCss).not.toMatch(/\.qrow__time-adjustment/);
+  });
+
+  it("clips the provenance chip, folded meta detail, and all-day marker", () => {
+    const clipped = appCss.match(
+      /\.qrow__dur-label,\s*\n\s*\.qrow__meta\.sr-only,\s*\n\s*\.qrow__allday\.sr-only\s*\{([^}]*)\}/,
+    )?.[1] ?? "";
+    expect(clipped).toMatch(/position:\s*absolute/);
+    expect(clipped).toMatch(/width:\s*1px/);
+    expect(clipped).toMatch(/clip:\s*rect\(0 0 0 0\)/);
+  });
+
+  it("frees the duration column: a 140px track and no stepper rule", () => {
+    const track = lastRuleBody("\\.qrow__time \\.alloc-track");
+    expect(track).toMatch(/width:\s*140px/);
+    expect(track).toMatch(/flex:\s*none/);
+    expect(appCss).not.toMatch(/\.qrow__time\s+\.alloc-step/);
   });
 
   it("stacks the readout 4px directly over the slider line", () => {

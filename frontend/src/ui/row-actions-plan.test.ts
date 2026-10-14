@@ -123,19 +123,23 @@ describe("Plan task row actions stay visible without a hover", () => {
   });
 });
 
-describe("Plan task rows restore the −/+ duration steppers", () => {
-  it("app.css styles an .alloc-step control again", () => {
-    expect(appCss).toMatch(/\.alloc-step\s*\{/);
+describe("Plan task rows no longer render −/+ duration steppers (Planning 2a, 2026-10-14)", () => {
+  it("leaves no .alloc-step rule in app.css", () => {
+    expect(appCss).not.toMatch(/\.alloc-step\s*\{/);
+    expect(appCss).not.toMatch(/\.qrow__time\s+\.alloc-step/);
   });
 
-  it("keeps the steppers always visible, never quieted at rest", () => {
-    expect(appCss).not.toMatch(
-      /\.qrow__time\s+\.alloc-step\s*\{[^}]*opacity:\s*0/,
+  it("makes the 140px track the duration column's only control", () => {
+    // The 2a layer is appended last, so the final rule for the track wins.
+    const bodies = Array.from(
+      appCss.matchAll(/\.qrow__time\s+\.alloc-track\s*\{([^}]*)\}/g),
+      (m) => m[1],
     );
-    expect(appCss).not.toMatch(/\.qrow:hover\s+\.qrow__time\s+\.alloc-step/);
-    expect(appCss).not.toMatch(
-      /\.qrow:focus-within\s+\.qrow__time\s+\.alloc-step/,
-    );
+    const track = bodies[bodies.length - 1] ?? "";
+    expect(track).toMatch(/width:\s*140px/);
+    // The keyboard path and Exact duration keep the shaping commands reachable
+    // without a drag-only regression.
+    expect(appCss).toMatch(/\.qrow__time \.alloc-track__input:disabled/);
   });
 });
 

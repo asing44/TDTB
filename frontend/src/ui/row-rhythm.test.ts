@@ -43,7 +43,7 @@ describe("task rows keep the compact 2a rhythm", () => {
 
   it("the row owns the five-column grid (status | body | duration | priority | actions)", () => {
     expect(row).toMatch(
-      /grid-template-columns:\s*130px\s+minmax\(0,\s*1fr\)\s+200px\s+50px\s+194px/,
+      /grid-template-columns:\s*130px\s+minmax\(0,\s*1fr\)\s+154px\s+50px\s+194px/,
     );
   });
 
