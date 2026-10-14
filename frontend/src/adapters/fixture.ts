@@ -367,6 +367,7 @@ export class FixtureAdapter implements Adapter {
     nativeTaskStructures: ["RootTask", "Task"],
     activeStatuses: ["active"],
     assignedStructures: {},
+    assignedOnStructures: {},
     availableStructures: [
       "custom-project",
       "0d194525-c5a1-4af5-bb62-202b83006b5e",
@@ -809,6 +810,7 @@ export class FixtureAdapter implements Adapter {
       nativeTaskStructures: [...draft.nativeTaskStructures].sort(),
       activeStatuses: [...draft.activeStatuses].sort(),
       assignedStructures: { ...draft.assignedStructures },
+      assignedOnStructures: { ...draft.assignedOnStructures },
       availableStructures: [...this.capacitiesSettings.availableStructures],
       // Titles are read-only advisory metadata, never part of the save
       // payload, so a save carries the observed ones through unchanged.

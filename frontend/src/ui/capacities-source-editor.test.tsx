@@ -49,6 +49,7 @@ function settingsFixture(
     nativeTaskStructures: [],
     activeStatuses: [],
     assignedStructures: {},
+    assignedOnStructures: {},
     availableStructures: [],
     structureTitles: {},
     ...overrides,

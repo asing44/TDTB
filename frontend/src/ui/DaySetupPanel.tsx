@@ -500,7 +500,8 @@ export function DaySetupPanel({
       const startMin = toMinutes(time);
       const outside = startMin < frameStartMin || startMin > frameEndMin;
       const counted = on && !outside;
-      const configTime = sourceAnchor(a.id).start;
+      const source = sourceAnchor(a.id);
+      const configTime = source.start;
       const ui = timeUi[a.id] ?? {};
       const timeState: AnchorTimeState = {
         configTime,
@@ -514,14 +515,20 @@ export function DaySetupPanel({
         id: a.id,
         name: a.name,
         start: time,
-        end: a.end ?? time,
+        // The popover's read-only Window field keeps consuming `end`; for
+        // window/template kinds it is the source window close.
+        end: source.end ?? time,
+        window:
+          (a.kind === "window" || a.kind === "template") && source.start !== null && source.end !== null
+            ? { start: source.start, end: source.end }
+            : undefined,
         counted,
         // The override intent, independent of frame clipping; the popover's
         // Count today switch shows this, while `counted` stays for the strip.
         counting: on,
         skipped: !on,
         reason: !on ? "skipped" : outside ? "outside frame" : null,
-        blocks: anchoredBlocks(sourceAnchor(a.id), o),
+        blocks: anchoredBlocks(source, o),
         // Calendar rows never reach editableAnchors; counted config anchors move.
         movable: counted,
         timeState,

@@ -187,7 +187,7 @@ export function AnchorPopover(props: AnchorPopoverProps) {
           {anchor.name}
         </span>
         <span class="anchor-popover__count">
-          {anchor.blocks} {anchor.blocks === 1 ? "item" : "items"}
+          {anchor.blocks} {anchor.blocks === 1 ? "block" : "blocks"}
         </span>
       </div>
 

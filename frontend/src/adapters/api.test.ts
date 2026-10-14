@@ -111,6 +111,7 @@ describe("reads", () => {
       nativeTaskStructures: ["RootTask", "Task"],
       activeStatuses: ["In Progress", "active"],
       assignedStructures: { "custom-project": "assigned-prop" },
+      assignedOnStructures: {},
       availableStructures: [
         "0d194525-c5a1-4af5-bb62-202b83006b5e",
         "custom-project",
@@ -193,6 +194,7 @@ describe("reads", () => {
       nativeTaskStructures: [...loaded.nativeTaskStructures],
       activeStatuses: [...loaded.activeStatuses],
       assignedStructures: { ...loaded.assignedStructures },
+      assignedOnStructures: { ...loaded.assignedOnStructures },
     });
     expect(saved.assignedStructures).toEqual({ "custom-project": "assigned-prop" });
     expect(saved.activeStructures).toEqual(["custom-project"]);
@@ -398,6 +400,7 @@ describe("Capacities settings save", () => {
       nativeTaskStructures: ["RootTask", "Task"],
       activeStatuses: ["active"],
       assignedStructures: {},
+      assignedOnStructures: {},
     });
     expect(result.revision).toBe(1);
     expect(calls.filter((call) => call.init?.method === "POST")).toHaveLength(1);
@@ -416,6 +419,7 @@ describe("Capacities settings save", () => {
       native_task_structures: ["RootTask", "Task"],
       active_statuses: ["active"],
       assigned_structures: {},
+      assigned_on_structures: {},
     });
   });
 
@@ -451,6 +455,7 @@ describe("Capacities settings save", () => {
       nativeTaskStructures: [],
       activeStatuses: [],
       assignedStructures: {},
+      assignedOnStructures: {},
     });
     const body = postBody("/settings/capacities/save");
     expect("native_task_structures" in body).toBe(true);
@@ -481,6 +486,7 @@ describe("Capacities settings save", () => {
       nativeTaskStructures: [],
       activeStatuses: [],
       assignedStructures: {},
+      assignedOnStructures: {},
     }).catch((e) => e);
     expect(error).toBeInstanceOf(ApiError);
     expect(error.status).toBe(409);

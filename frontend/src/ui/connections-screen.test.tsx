@@ -46,6 +46,7 @@ function capSettings(overrides: Partial<CapacitiesSettings> = {}): CapacitiesSet
     nativeTaskStructures: ["RootTask"],
     activeStatuses: ["Started"],
     assignedStructures: { RootTask: "assigned" },
+    assignedOnStructures: {},
     availableStructures: ["RootTask", "Other"],
     structureTitles: { RootTask: "Task", Other: "Project" },
     ...overrides,
@@ -114,6 +115,7 @@ function openConnections(
       nativeTaskStructures: draft.nativeTaskStructures,
       activeStatuses: draft.activeStatuses,
       assignedStructures: draft.assignedStructures,
+      assignedOnStructures: draft.assignedOnStructures,
     }),
   );
   vi.spyOn(h.controller, "saveTagExclusionSettings").mockImplementation(async (draft) => ({
@@ -181,6 +183,7 @@ describe("Connections screen (U13)", () => {
         expectedRevision: 0,
         nativeTaskAuto: expect.objectContaining({ activeEnabled: false }),
         assignedStructures: {},
+        assignedOnStructures: {},
       }),
     );
     expect(h.controller.saveTagExclusionSettings).toHaveBeenCalledWith({

@@ -20,7 +20,11 @@ import type {
   CapacitiesSettings,
   CapacitiesSettingsDraft,
 } from "../model/types";
-import { capacitiesAssignmentWarnings, isCanonicalCapacitiesIdentity } from "../adapters/wire";
+import {
+  capacitiesAssignedOnWarnings,
+  capacitiesAssignmentWarnings,
+  isCanonicalCapacitiesIdentity,
+} from "../adapters/wire";
 
 function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -42,6 +46,8 @@ function draftOf(settings: CapacitiesSettings): CapacitiesSettingsDraft {
     // The settings-declared assignment map is always sent: the save route is
     // a full replacement, so omitting it would wipe every declaration.
     assignedStructures: { ...settings.assignedStructures },
+    // The read-only Assigned On map follows the same full-replacement rule.
+    assignedOnStructures: { ...settings.assignedOnStructures },
   };
 }
 
@@ -125,12 +131,19 @@ export function CapacitiesSettingsPanel({ active }: { active: boolean }) {
   const staleAssignedStructures = Object.keys(assignedStructures)
     .filter((structureId) => !availableStructureIds.has(structureId))
     .sort();
+  const assignedOnStructures = draft?.assignedOnStructures ?? {};
+  const staleAssignedOnStructures = Object.keys(assignedOnStructures)
+    .filter((structureId) => !availableStructureIds.has(structureId))
+    .sort();
   // The backend emits one warning per declaration it could not honour. The
   // text is the server's own; the panel shows it verbatim. This is
   // deliberately NOT part of the readiness rail (the operator flagged the
   // rail as too verbose, and a configuration fact belongs beside the control
   // that declares it).
   const assignmentWarnings = capacitiesAssignmentWarnings(
+    s.inputs?.sourceWarnings ?? [],
+  );
+  const assignedOnWarnings = capacitiesAssignedOnWarnings(
     s.inputs?.sourceWarnings ?? [],
   );
   const horizonValue = Number(horizonText);
@@ -186,6 +199,16 @@ export function CapacitiesSettingsPanel({ active }: { active: boolean }) {
       if (propertyId === "") delete next[structureId];
       else next[structureId] = propertyId;
       return { ...current, assignedStructures: next };
+    });
+  };
+
+  const setAssignedOnProperty = (structureId: string, propertyId: string) => {
+    setDraft((current) => {
+      if (!current) return current;
+      const next = { ...current.assignedOnStructures };
+      if (propertyId === "") delete next[structureId];
+      else next[structureId] = propertyId;
+      return { ...current, assignedOnStructures: next };
     });
   };
 
@@ -434,7 +457,7 @@ export function CapacitiesSettingsPanel({ active }: { active: boolean }) {
               </div>
               <div class="setup-section__body">
                 <p class="capacities-settings__hint">
-                  Declare the raw Capacities property id whose boolean true means "assigned at TDTB level" for a structure. The property is read as present true / present false / absent neutral, so a declaration can never change which structures are enumerated. A blank field declares nothing.
+                  Declare the raw Capacities property id whose boolean true means "assigned at TDTB level" for a structure, and optionally the read-only date-time Assigned On property whose fall on today's date marks an item as assigned. The legacy flag is read as present true / present false / absent neutral, so a declaration can never change which structures are enumerated. A blank field declares nothing.
                 </p>
                 {assignmentWarnings.length > 0 && (
                   <div class="capacities-exclusion-list">
@@ -449,6 +472,19 @@ export function CapacitiesSettingsPanel({ active }: { active: boolean }) {
                     ))}
                   </div>
                 )}
+                {assignedOnWarnings.length > 0 && (
+                  <div class="capacities-exclusion-list">
+                    <h4>Assigned On diagnostics in the current read</h4>
+                    <p class="capacities-settings__hint">
+                      The server reported these read-time Assigned On diagnostics. The wording is the server's own.
+                    </p>
+                    {assignedOnWarnings.map((warning) => (
+                      <div class="capacities-exclusion-row" key={warning}>
+                        <code>{warning}</code>
+                      </div>
+                    ))}
+                  </div>
+                )}
                 {availableStructures.length === 0 ? (
                   <p class="capacities-settings__empty">
                     The Capacities source mapping lists no structures; saved declarations are preserved on save.
@@ -457,20 +493,55 @@ export function CapacitiesSettingsPanel({ active }: { active: boolean }) {
                   <div class="capacities-object-list" role="group" aria-label="Capacities structures with a declared assignment property">
                     {availableStructures.map((structureId) => {
                       const title = structureTitleOf(structureId);
+                      const assignedOn = assignedOnStructures[structureId] ?? "";
                       return (
-                        <div class="capacities-object-row" key={structureId}>
+                        <div class="capacities-object-row capacities-object-row--mapping" key={structureId}>
                           <div class="capacities-object-row__identity">
                             {title !== null && <strong>{title}</strong>}
                             <code>{structureId}</code>
                           </div>
-                          <input
-                            class="capacities-object-row__property"
-                            type="text"
-                            value={assignedStructures[structureId] ?? ""}
-                            placeholder="property id"
-                            aria-label={`Assigned property for ${structureId}`}
-                            onInput={(e) => setAssignedProperty(structureId, (e.currentTarget as HTMLInputElement).value)}
-                          />
+                          <div class="capacities-object-row__fields">
+                            <label class="capacities-object-row__field">
+                              <span class="capacities-object-row__field-label">Assigned On property</span>
+                              <span class="capacities-object-row__field-row">
+                                <input
+                                  class="capacities-object-row__property"
+                                  type="text"
+                                  value={assignedOn}
+                                  placeholder="property id"
+                                  aria-label={`Assigned On property for ${structureId}`}
+                                  onInput={(e) => setAssignedOnProperty(structureId, (e.currentTarget as HTMLInputElement).value)}
+                                />
+                                <button
+                                  class="btn"
+                                  aria-label={`Clear Assigned On property for ${structureId}`}
+                                  disabled={assignedOn === ""}
+                                  onClick={() => setAssignedOnProperty(structureId, "")}
+                                >
+                                  Clear
+                                </button>
+                              </span>
+                              <small class="capacities-object-row__field-help">
+                                Date-time property set in Capacities. An item counts as assigned today when this falls on today's date.
+                              </small>
+                            </label>
+                            <label class="capacities-object-row__field">
+                              <span class="capacities-object-row__field-label">Assigned flag (legacy)</span>
+                              <input
+                                class="capacities-object-row__property"
+                                type="text"
+                                value={assignedStructures[structureId] ?? ""}
+                                placeholder="property id"
+                                aria-label={`Assigned property for ${structureId}`}
+                                disabled={assignedOn !== ""}
+                                onInput={(e) => setAssignedProperty(structureId, (e.currentTarget as HTMLInputElement).value)}
+                              />
+                              <small class="capacities-object-row__field-help">
+                                Used only when no Assigned On property is mapped.
+                                {assignedOn !== "" ? " Ignored while Assigned On is mapped" : ""}
+                              </small>
+                            </label>
+                          </div>
                         </div>
                       );
                     })}
@@ -487,6 +558,21 @@ export function CapacitiesSettingsPanel({ active }: { active: boolean }) {
                         <code>{structureId}</code>
                         <code>{assignedStructures[structureId]}</code>
                         <button class="btn" onClick={() => setAssignedProperty(structureId, "")}>Remove</button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {staleAssignedOnStructures.length > 0 && (
+                  <div class="capacities-exclusion-list">
+                    <h4>Assigned On structures outside the source mapping</h4>
+                    <p class="capacities-settings__hint">
+                      These {staleAssignedOnStructures.length} saved {staleAssignedOnStructures.length === 1 ? "id is" : "ids are"} not in the Capacities source mapping. They are retained unchanged on save.
+                    </p>
+                    {staleAssignedOnStructures.map((structureId) => (
+                      <div class="capacities-exclusion-row" key={structureId}>
+                        <code>{structureId}</code>
+                        <code>{assignedOnStructures[structureId]}</code>
+                        <button class="btn" onClick={() => setAssignedOnProperty(structureId, "")}>Remove</button>
                       </div>
                     ))}
                   </div>

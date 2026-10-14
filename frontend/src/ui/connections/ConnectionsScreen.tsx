@@ -20,7 +20,11 @@ import { useApp, useAppState } from "../context";
 import { CapacitiesSourceEditor } from "../CapacitiesSourceEditor";
 import { CapacitiesRefreshPanel } from "../CapacitiesRefreshPanel";
 import { CapacitiesUnknownReview } from "../CapacitiesUnknownReview";
-import { capacitiesAssignmentWarnings, isCanonicalCapacitiesIdentity } from "../../adapters/wire";
+import {
+  capacitiesAssignedOnWarnings,
+  capacitiesAssignmentWarnings,
+  isCanonicalCapacitiesIdentity,
+} from "../../adapters/wire";
 import {
   clearConnectionsCache,
   onConnectionsDiscard,
@@ -53,6 +57,7 @@ function draftOf(settings: CapacitiesSettings): CapacitiesSettingsDraft {
     nativeTaskStructures: [...settings.nativeTaskStructures],
     activeStatuses: [...settings.activeStatuses],
     assignedStructures: { ...settings.assignedStructures },
+    assignedOnStructures: { ...settings.assignedOnStructures },
   };
 }
 
@@ -94,7 +99,10 @@ function capacitiesChanges(
   if (!sameJson(draft.nativeTaskAuto, base.nativeTaskAuto)) {
     out.push({ key: "rules", label: "Native rules" });
   }
-  if (!sameJson(draft.assignedStructures, base.assignedStructures)) {
+  if (
+    !sameJson(draft.assignedStructures, base.assignedStructures) ||
+    !sameJson(draft.assignedOnStructures, base.assignedOnStructures)
+  ) {
     out.push({ key: "mapping", label: "Task mapping" });
   }
   if (!sameJson([...draft.excluded].sort(), [...base.excluded].sort())) {
@@ -283,6 +291,15 @@ export function ConnectionsScreen() {
       return { ...current, assignedStructures: next };
     });
 
+  const setAssignedOn = (structureId: string, propertyId: string) =>
+    setCapDraft((current) => {
+      if (!current) return current;
+      const next = { ...current.assignedOnStructures };
+      if (propertyId === "") delete next[structureId];
+      else next[structureId] = propertyId;
+      return { ...current, assignedOnStructures: next };
+    });
+
   const toggleActiveStructure = (structureId: string) =>
     setCapDraft((current) => {
       if (!current) return current;
@@ -306,11 +323,14 @@ export function ConnectionsScreen() {
       if (!current) return current;
       const next = { ...current.assignedStructures };
       delete next[structureId];
+      const nextOn = { ...current.assignedOnStructures };
+      delete nextOn[structureId];
       return {
         ...current,
         activeStructures: current.activeStructures.filter((v) => v !== structureId),
         nativeTaskStructures: current.nativeTaskStructures.filter((v) => v !== structureId),
         assignedStructures: next,
+        assignedOnStructures: nextOn,
       };
     });
 
@@ -383,6 +403,7 @@ export function ConnectionsScreen() {
   }, [s.inputs]);
 
   const assignmentWarnings = capacitiesAssignmentWarnings(s.inputs?.sourceWarnings ?? []);
+  const assignedOnWarnings = capacitiesAssignedOnWarnings(s.inputs?.sourceWarnings ?? []);
 
   const selectedTagKeys = new Set((tagDraft?.tags ?? []).map(tagKey));
   const catalogTags = tagSettings?.catalog.tags ?? [];
@@ -413,6 +434,12 @@ export function ConnectionsScreen() {
     const parts = identity.split(":");
     return parts[0] === "capacities" && parts.length >= 4 ? parts[2] : "";
   };
+  /* A structure counts as mapped when either declaration is set: the legacy
+     boolean `assigned_structures` marker, or the read-only `Assigned On`
+     date marker (which wins for that structure). */
+  const hasMapping = (structureId: string): boolean =>
+    (capDraft?.assignedStructures[structureId] ?? "") !== "" ||
+    (capDraft?.assignedOnStructures[structureId] ?? "") !== "";
   const previewRowsFor = (structureId: string): PreviewRow[] =>
     known
       .filter((item) => structureOf(item) === structureId)
@@ -421,7 +448,7 @@ export function ConnectionsScreen() {
         if (tags.some((tag) => excludedTagIds.has(tag))) {
           return { title: item.name, reason: "left out by tag" };
         }
-        if (!(structureId in (capDraft?.assignedStructures ?? {}))) {
+        if (!hasMapping(structureId)) {
           return { title: item.name, reason: "waiting on mapping" };
         }
         return { title: item.name, reason: "admitted" };
@@ -439,6 +466,12 @@ export function ConnectionsScreen() {
     discovered?.structures.find((st) => st.structureId === structureId)?.properties.map(
       (p) => p.propertyId,
     ) ?? [];
+  /** The Assigned On marker is READ-ONLY date data: only date/datetime
+      properties are offered as choices, and only as suggestions. */
+  const assignedOnChoices = (structureId: string): string[] =>
+    (discovered?.structures.find((st) => st.structureId === structureId)?.properties ?? [])
+      .filter((property) => property.type === "date" || property.type === "datetime")
+      .map((property) => property.propertyId);
 
   /* -- navigation helpers ------------------------------------------------ */
 
@@ -453,8 +486,7 @@ export function ConnectionsScreen() {
   /** A structure's health dot: amber while it still needs a mapping, green
       once it is mapped and pulling, grey when the operator turned it off. */
   const structureDot = (structureId: string): string => {
-    const mapped = (capDraft?.assignedStructures[structureId] ?? "") !== "";
-    if (!mapped) return "#e0a020";
+    if (!hasMapping(structureId)) return "#e0a020";
     return capDraft?.activeStructures.includes(structureId) ? "#1f9d6b" : "#cfccc4";
   };
   /** Sources keep their own health: Todoist/Calendar from the global source
@@ -462,9 +494,7 @@ export function ConnectionsScreen() {
   const sourceDot = (source: string): string => {
     if (source === "capacities") {
       const state = s.inputs?.capacitiesIntake?.state;
-      const anyUnmapped = structures.some(
-        (id) => (capDraft?.assignedStructures[id] ?? "") === "",
-      );
+      const anyUnmapped = structures.some((id) => !hasMapping(id));
       return state !== "ok" || anyUnmapped ? "#e0a020" : "#1f9d6b";
     }
     return s.inputs?.sourceHealth === "ok" ? "#1f9d6b" : "#e0a020";
@@ -590,18 +620,51 @@ export function ConnectionsScreen() {
   );
 
   const renderMapping = (structureId: string) => {
-    const value = capDraft?.assignedStructures[structureId] ?? "";
+    const legacy = capDraft?.assignedStructures[structureId] ?? "";
+    const assignedOn = capDraft?.assignedOnStructures[structureId] ?? "";
+    const onMapped = assignedOn !== "";
     return (
       <div class="connections-mapping">
         <span class="connections-admit__label">Property mapping</span>
         <div class="connections-mapping__row">
+          <span class="connections-mapping__name">Assigned On property</span>
+          <input
+            class="connections-mapping__input"
+            type="text"
+            list={`connections-assigned-on-props-${structureId}`}
+            aria-label={`Assigned On property for ${structureId}`}
+            placeholder="Property id"
+            value={assignedOn}
+            onInput={(e) => setAssignedOn(structureId, (e.currentTarget as HTMLInputElement).value)}
+          />
+          <button
+            class="btn connections-mapping__clear"
+            aria-label={`Clear Assigned On property for ${structureId}`}
+            disabled={assignedOn === ""}
+            onClick={() => setAssignedOn(structureId, "")}
+          >
+            Clear
+          </button>
+          <datalist id={`connections-assigned-on-props-${structureId}`}>
+            {assignedOnChoices(structureId).map((propertyId) => (
+              <option key={propertyId} value={propertyId} />
+            ))}
+          </datalist>
+        </div>
+        <p class="connections-mapping__help">
+          Date-time property set in Capacities. An item counts as assigned today when this falls
+          on today's date.
+        </p>
+        <div class="connections-mapping__row">
+          <span class="connections-mapping__name">Assigned flag (legacy)</span>
           <input
             class="connections-mapping__input"
             type="text"
             list={`connections-props-${structureId}`}
             aria-label={`Mapping for ${structureId}`}
             placeholder="Property id"
-            value={value}
+            value={legacy}
+            disabled={onMapped}
             onInput={(e) => setMapping(structureId, (e.currentTarget as HTMLInputElement).value)}
           />
           <button
@@ -616,6 +679,8 @@ export function ConnectionsScreen() {
             ))}
           </datalist>
         </div>
+        <p class="connections-mapping__help">Used only when no Assigned On property is mapped.</p>
+        {onMapped && <p class="connections-mapping__inactive">Ignored while Assigned On is mapped</p>}
       </div>
     );
   };
@@ -627,7 +692,10 @@ export function ConnectionsScreen() {
     const excludedCount = previewRows.filter((r) => r.reason === "left out by tag").length;
     const firstWaiting = previewRows.find((r) => r.reason === "waiting on mapping");
     const typeLabel = firstWaiting?.title ?? previewRows[0]?.title ?? "";
-    const mapped = capDraft?.assignedStructures[structureId] ?? "";
+    const mappedLegacy = capDraft?.assignedStructures[structureId] ?? "";
+    const mappedOn = capDraft?.assignedOnStructures[structureId] ?? "";
+    const mappedHint =
+      mappedLegacy !== "" ? `Mapped: ${mappedLegacy}` : mappedOn !== "" ? `Mapped: ${mappedOn}` : "Not mapped";
     return (
       <>
         <div class="connections-detail__head">
@@ -638,9 +706,7 @@ export function ConnectionsScreen() {
               Items are admitted when any rule matches. Completed and dropped items are always
               left out.
             </p>
-            <code class="connections-detail__mapping">
-              {mapped !== "" ? `Mapped: ${mapped}` : "Not mapped"}
-            </code>
+            <code class="connections-detail__mapping">{mappedHint}</code>
           </div>
           <button
             class="connections-detail__remove"
@@ -851,6 +917,14 @@ export function ConnectionsScreen() {
         <section class="setup-section" aria-label="Ignored declarations">
           <h4>Ignored declarations in the current read</h4>
           {assignmentWarnings.map((warning) => (
+            <code key={warning}>{warning}</code>
+          ))}
+        </section>
+      )}
+      {assignedOnWarnings.length > 0 && (
+        <section class="setup-section" aria-label="Assigned On diagnostics">
+          <h4>Assigned On diagnostics in the current read</h4>
+          {assignedOnWarnings.map((warning) => (
             <code key={warning}>{warning}</code>
           ))}
         </section>

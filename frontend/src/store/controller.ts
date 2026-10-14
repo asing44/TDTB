@@ -453,6 +453,7 @@ export class Controller {
         nativeTaskStructures: [...current.nativeTaskStructures],
         activeStatuses: [...current.activeStatuses],
         assignedStructures: { ...current.assignedStructures },
+        assignedOnStructures: { ...current.assignedOnStructures },
       });
     try {
       return await write(settings);

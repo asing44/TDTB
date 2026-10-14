@@ -1448,6 +1448,7 @@ describe("capacities settings active_structures (additive schema v1)", () => {
       nativeTaskStructures: [],
       activeStatuses: [],
       assignedStructures: {},
+      assignedOnStructures: {},
     });
     expect(wire.active_structures).toEqual({ a: true, b: true });
   });
@@ -1462,6 +1463,7 @@ describe("capacities settings active_structures (additive schema v1)", () => {
         nativeTaskStructures: [],
         activeStatuses: [],
         assignedStructures: {},
+        assignedOnStructures: {},
       }),
     ).toThrow(/invalid structure id/);
   });
@@ -1642,6 +1644,7 @@ describe("capacities settings admission keys (additive schema v1)", () => {
       nativeTaskStructures: [],
       activeStatuses: [],
       assignedStructures: {},
+      assignedOnStructures: {},
     });
     // Full replacement: the key must be present, never omitted — omission
     // would make the server reset it to the documented default.
@@ -1660,6 +1663,7 @@ describe("capacities settings admission keys (additive schema v1)", () => {
       nativeTaskStructures: ["Task", "RootTask", "Task"],
       activeStatuses: ["active", "In Progress", "active"],
       assignedStructures: {},
+      assignedOnStructures: {},
     });
     expect(wire.native_task_structures).toEqual(["RootTask", "Task"]);
     expect(wire.active_statuses).toEqual(["In Progress", "active"]);
@@ -1672,6 +1676,7 @@ describe("capacities settings admission keys (additive schema v1)", () => {
       excluded: [],
       activeStructures: [],
       assignedStructures: {},
+      assignedOnStructures: {},
     };
     expect(() =>
       capacitiesSettingsToWire({ ...base, nativeTaskStructures: [""], activeStatuses: [] }),
@@ -1707,6 +1712,7 @@ describe("capacities assigned_structures declarations (additive schema v1)", () 
     nativeTaskStructures: [],
     activeStatuses: [],
     assignedStructures: {},
+    assignedOnStructures: {},
   });
 
   it("projects an absent assigned_structures key to the empty map (older backend)", () => {
@@ -1807,6 +1813,152 @@ describe("capacities assigned_structures declarations (additive schema v1)", () 
       },
     });
     expect(projected.assignedStructures).toEqual({ "custom-project": "assigned-prop" });
+  });
+});
+
+describe("capacities assigned_on_structures declarations (additive schema v1)", () => {
+  const baseSettings = () => ({
+    version: 1,
+    revision: 0,
+    native_task_auto: {
+      active_enabled: true,
+      due_enabled: true,
+      deadline_enabled: true,
+      deadline_horizon_days: 2,
+    },
+    excluded: {},
+  });
+  const baseDraft = () => ({
+    expectedRevision: 0,
+    nativeTaskAuto: {
+      activeEnabled: true,
+      dueEnabled: true,
+      deadlineEnabled: true,
+      deadlineHorizonDays: 2,
+    },
+    excluded: [],
+    activeStructures: [],
+    nativeTaskStructures: [],
+    activeStatuses: [],
+    assignedStructures: {},
+    assignedOnStructures: {},
+  });
+
+  it("projects an absent assigned_on_structures key to the empty map (older backend)", () => {
+    const projected = projectCapacitiesSettings({ persisted: false, settings: baseSettings() });
+    expect(projected.assignedOnStructures).toEqual({});
+  });
+
+  it("parses a well-formed map and keeps property ids exactly as declared", () => {
+    const projected = projectCapacitiesSettings({
+      persisted: false,
+      settings: {
+        ...baseSettings(),
+        assigned_on_structures: {
+          "custom-project": "Assigned-On-ID_CaseSensitive",
+          b: " padded-is-opaque ",
+        },
+      },
+    });
+    expect(projected.assignedOnStructures).toEqual({
+      "custom-project": "Assigned-On-ID_CaseSensitive",
+      b: " padded-is-opaque ",
+    });
+  });
+
+  it("throws when assigned_on_structures is not an object", () => {
+    for (const bad of [[], "custom-project", null, 1]) {
+      expect(() =>
+        projectCapacitiesSettings({
+          persisted: false,
+          settings: { ...baseSettings(), assigned_on_structures: bad },
+        }),
+      ).toThrow(/assigned_on_structures/);
+    }
+  });
+
+  it("throws on an invalid structure id or an empty property id", () => {
+    for (const bad of [
+      { "": "p1" },
+      { " custom-project ": "p1" },
+      { "custom project": "p1" },
+      { "custom-project": "" },
+      { "custom-project": 1 },
+      { "custom-project": null },
+    ]) {
+      expect(() =>
+        projectCapacitiesSettings({
+          persisted: false,
+          settings: { ...baseSettings(), assigned_on_structures: bad },
+        }),
+      ).toThrow(/assigned_on_structures/);
+    }
+  });
+
+  it("always emits assigned_on_structures in the save body, even when empty", () => {
+    const wire = capacitiesSettingsToWire(baseDraft());
+    expect("assigned_on_structures" in wire).toBe(true);
+    expect(wire.assigned_on_structures).toEqual({});
+  });
+
+  it("emits a sorted Assigned On map, keeping property ids exactly", () => {
+    const wire = capacitiesSettingsToWire({
+      ...baseDraft(),
+      assignedOnStructures: { zeta: "p2", alpha: " p1 " },
+    });
+    expect(Object.keys(wire.assigned_on_structures)).toEqual(["alpha", "zeta"]);
+    expect(wire.assigned_on_structures).toEqual({ alpha: " p1 ", zeta: "p2" });
+  });
+
+  it("throws on an invalid Assigned On declaration in the save draft", () => {
+    expect(() =>
+      capacitiesSettingsToWire({ ...baseDraft(), assignedOnStructures: { "bad id": "p1" } }),
+    ).toThrow(/assignedOnStructures/);
+    expect(() =>
+      capacitiesSettingsToWire({
+        ...baseDraft(),
+        assignedOnStructures: { "custom-project": "" },
+      }),
+    ).toThrow(/assignedOnStructures/);
+  });
+
+  it("round-trips both declaration maps together through the save body and the GET projection", () => {
+    const wire = capacitiesSettingsToWire({
+      ...baseDraft(),
+      assignedStructures: { "custom-project": "assigned-prop" },
+      assignedOnStructures: { RootTask: "assigned-on-prop" },
+    });
+    expect(wire.assigned_structures).toEqual({ "custom-project": "assigned-prop" });
+    expect(wire.assigned_on_structures).toEqual({ RootTask: "assigned-on-prop" });
+    const projected = projectCapacitiesSettings({
+      persisted: true,
+      available_structures: ["RootTask", "custom-project"],
+      settings: {
+        version: 1,
+        revision: 1,
+        native_task_auto: wire.native_task_auto,
+        excluded: wire.excluded,
+        active_structures: wire.active_structures,
+        native_task_structures: wire.native_task_structures,
+        active_statuses: wire.active_statuses,
+        assigned_structures: wire.assigned_structures,
+        assigned_on_structures: wire.assigned_on_structures,
+      },
+    });
+    expect(projected.assignedStructures).toEqual({ "custom-project": "assigned-prop" });
+    expect(projected.assignedOnStructures).toEqual({ RootTask: "assigned-on-prop" });
+  });
+
+  it("keeps both maps unchanged when only one declaration map is populated", () => {
+    const wire = capacitiesSettingsToWire({
+      ...baseDraft(),
+      assignedStructures: { RootTask: "legacy-prop" },
+      assignedOnStructures: { Other: "other-on-prop" },
+    });
+    // The full-replacement body carries both maps verbatim: populating one
+    // never clears the other, and a per-structure edit only changes its key.
+    expect(wire.assigned_structures).toEqual({ RootTask: "legacy-prop" });
+    expect(wire.assigned_on_structures).toEqual({ Other: "other-on-prop" });
   });
 });
 

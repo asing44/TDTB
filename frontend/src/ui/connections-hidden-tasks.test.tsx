@@ -47,6 +47,7 @@ function capSettings(overrides: Partial<CapacitiesSettings> = {}): CapacitiesSet
     nativeTaskStructures: ["RootTask"],
     activeStatuses: ["Started"],
     assignedStructures: { RootTask: "assigned" },
+    assignedOnStructures: {},
     availableStructures: ["RootTask"],
     structureTitles: { RootTask: "Task" },
     ...overrides,
@@ -83,6 +84,7 @@ function openConnections(tag: TagExclusionSettings = tagSettings()) {
       nativeTaskStructures: draft.nativeTaskStructures,
       activeStatuses: draft.activeStatuses,
       assignedStructures: draft.assignedStructures,
+      assignedOnStructures: draft.assignedOnStructures,
     }),
   );
   vi.spyOn(h.controller, "saveTagExclusionSettings").mockImplementation(async (draft) => ({

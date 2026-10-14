@@ -24,11 +24,21 @@ beforeEach(() => {
 });
 
 const anchors: StripAnchor[] = [
-  { id: "Sudsing", name: "Sudsing", start: "17:45", end: "18:15", counted: true, reason: null, blocks: 1, movable: true },
-  { id: "Night Routine", name: "Night Routine", start: "23:00", end: "23:45", counted: true, reason: null, blocks: 2, movable: true },
-  { id: "Foods Dinner", name: "Foods Dinner", start: "18:00", end: "20:30", counted: true, reason: null, blocks: 2, movable: true },
-  { id: "Dentist", name: "Dentist", start: "10:00", end: "10:30", counted: true, reason: null, blocks: 1, movable: false },
-  { id: "Morning Routine", name: "Morning Routine", start: "07:45", end: "09:05", counted: false, reason: "skipped", blocks: 3, movable: false },
+  { id: "Sudsing", name: "Sudsing", start: "17:45", counted: true, reason: null, blocks: 2, movable: true },
+  { id: "Night Routine", name: "Night Routine", start: "23:00", counted: true, reason: null, blocks: 2, movable: true },
+  { id: "Foods Dinner", name: "Foods Dinner", start: "18:00", counted: true, reason: null, blocks: 2, movable: true },
+  {
+    id: "Live",
+    name: "Live",
+    start: "12:00",
+    counted: true,
+    reason: null,
+    blocks: 1,
+    movable: true,
+    window: { start: "12:00", end: "20:00" },
+  },
+  { id: "Dentist", name: "Dentist", start: "10:00", counted: true, reason: null, blocks: 1, movable: false },
+  { id: "Morning Routine", name: "Morning Routine", start: "07:45", counted: false, reason: "skipped", blocks: 3, movable: false },
 ];
 
 function setup(overrides: Partial<Parameters<typeof DayStrip>[0]> = {}) {
@@ -85,7 +95,7 @@ describe("anchor drag", () => {
 
   it("clamps to the frame: the block never leaves the day frame", () => {
     const { block, onMoveAnchor } = setup();
-    const dinner = block("Foods Dinner"); // 18:00-20:30, so the latest start is 21:15
+    const dinner = block("Foods Dinner"); // 2 blocks = 60min, so the latest start is 22:45
     fireEvent.pointerDown(dinner, { ...pointer, clientX: 900 });
     fireEvent.pointerMove(dinner, { ...pointer, clientX: -4000 });
     fireEvent.pointerUp(dinner, { ...pointer, clientX: -4000 });
@@ -94,7 +104,7 @@ describe("anchor drag", () => {
     fireEvent.pointerDown(dinner, { ...pointer, clientX: 100 });
     fireEvent.pointerMove(dinner, { ...pointer, clientX: 4000 });
     fireEvent.pointerUp(dinner, { ...pointer, clientX: 4000 });
-    expect(onMoveAnchor).toHaveBeenLastCalledWith("Foods Dinner", "21:15");
+    expect(onMoveAnchor).toHaveBeenLastCalledWith("Foods Dinner", "22:45");
   });
 
   it("treats a press with no real movement as a click that selects the anchor", () => {
@@ -167,14 +177,14 @@ describe("anchor keyboard move", () => {
   });
 
   it("does nothing at the frame edge", () => {
-    const late: StripAnchor = { ...anchors[1], start: "23:00" }; // 45min block: 23:00 is the latest legal start
+    const late: StripAnchor = { ...anchors[1], start: "22:45" }; // 60min block: 22:45 is the latest legal start
     const { block, onMoveAnchor } = setup({ anchors: [late] });
     const el = block("Night Routine");
     fireEvent.keyDown(el, { key: "ArrowRight", shiftKey: true });
     fireEvent.keyDown(el, { key: "ArrowRight" });
     expect(onMoveAnchor).not.toHaveBeenCalled();
     fireEvent.keyDown(el, { key: "ArrowLeft" });
-    expect(onMoveAnchor).toHaveBeenCalledWith("Night Routine", "22:45");
+    expect(onMoveAnchor).toHaveBeenCalledWith("Night Routine", "22:30");
   });
 
   it("leaves Enter and Space to select the anchor, keeping the aria-label", () => {
@@ -184,7 +194,7 @@ describe("anchor keyboard move", () => {
     expect(fireEvent.keyDown(el, { key: " " })).toBe(true);
     fireEvent.click(el); // what the browser does for Enter/Space on a button
     expect(onSelectAnchor).toHaveBeenCalledWith("Sudsing");
-    expect(el.getAttribute("aria-label")).toBe("Sudsing 5:45 PM · 1");
+    expect(el.getAttribute("aria-label")).toBe("Sudsing 5:45 PM · 2 blocks");
   });
 });
 
@@ -224,23 +234,56 @@ describe("Planning 2a timeline geometry", () => {
     const { block } = setup();
     const sudsing = block("Sudsing");
     expect(parseFloat(sudsing.style.left)).toBeCloseTo(((17 * 60 + 45 - FRAME_START) / SPAN) * 100, 2);
-    expect(parseFloat(sudsing.style.width)).toBeCloseTo((30 / SPAN) * 100, 2);
-    // A block is as wide as its real start→end span, not blocks * 30.
+    // A block is as wide as its COUNTED duration: blocks × 30 minutes, not the
+    // source window: Sudsing is 2 blocks = 60 minutes.
+    expect(parseFloat(sudsing.style.width)).toBeCloseTo((60 / SPAN) * 100, 2);
     const dinner = block("Foods Dinner");
-    expect(parseFloat(dinner.style.width)).toBeCloseTo((150 / SPAN) * 100, 2);
+    expect(parseFloat(dinner.style.width)).toBeCloseTo((60 / SPAN) * 100, 2);
+    // Live is 1 block = 30 minutes wide even though its window is 12:00→20:00.
+    const live = block("Live");
+    expect(parseFloat(live.style.width)).toBeCloseTo((30 / SPAN) * 100, 2);
     // Night Routine ends exactly on the frame end.
     const night = block("Night Routine");
     expect(parseFloat(night.style.left) + parseFloat(night.style.width)).toBeCloseTo(100, 2);
   });
 
-  it("lays the anchors into two sub-rows: MR/Live/Night row 0, Breakfast/Sudsing/Dinner row 1", () => {
+  it("scales the block width with the block count, including today's override", () => {
+    const widthPxFor = (blocks: number) => {
+      const { r } = setup({
+        anchors: [{ id: "Live", name: "Live", start: "12:00", counted: true, reason: null, blocks }],
+      });
+      const el = r.container.querySelector('[data-anchor-id="Live"]') as HTMLElement;
+      return (parseFloat(el.style.width) / 100) * SPAN;
+    };
+    expect(widthPxFor(1)).toBeCloseTo(30, 1);
+    expect(widthPxFor(3)).toBeCloseTo(90, 1);
+  });
+
+  it("draws a window-kind anchor's window as a light non-interactive track behind the counted block", () => {
+    const { r, block } = setup();
+    const track = r.container.querySelector('[data-anchor-window-id="Live"]') as HTMLElement;
+    expect(track).toBeTruthy();
+    expect(track.tagName).toBe("SPAN");
+    expect(track.getAttribute("aria-hidden")).toBe("true");
+    expect(parseFloat(track.style.left)).toBeCloseTo(((12 * 60 - FRAME_START) / SPAN) * 100, 2);
+    expect(parseFloat(track.style.width)).toBeCloseTo((480 / SPAN) * 100, 2);
+    expect(track.style.top).toBe("6px");
+    // The solid block stays the interactive element and keeps the count width.
+    const live = block("Live");
+    expect(live.tagName).toBe("BUTTON");
+    expect(parseFloat(live.style.width)).toBeCloseTo((30 / SPAN) * 100, 2);
+    // Hard anchors have no window track.
+    expect(r.container.querySelector('[data-anchor-window-id="Sudsing"]')).toBeNull();
+  });
+
+  it("lays the anchors into two sub-rows, moving an overlapped block to the free row", () => {
     const rows: StripAnchor[] = [
-      { id: "Morning Routine", name: "Morning Routine", start: "07:45", end: "09:05", counted: true, reason: null, blocks: 3 },
-      { id: "Foods Breakfast", name: "Foods Breakfast", start: "08:30", end: "13:00", counted: true, reason: null, blocks: 2 },
-      { id: "Live", name: "Live", start: "12:00", end: "20:00", counted: true, reason: null, blocks: 1 },
-      { id: "Sudsing", name: "Sudsing", start: "17:45", end: "18:15", counted: true, reason: null, blocks: 1 },
-      { id: "Foods Dinner", name: "Foods Dinner", start: "18:00", end: "20:30", counted: true, reason: null, blocks: 2 },
-      { id: "Night Routine", name: "Night Routine", start: "23:00", end: "23:45", counted: true, reason: null, blocks: 2 },
+      { id: "Morning Routine", name: "Morning Routine", start: "07:45", counted: true, reason: null, blocks: 3 },
+      { id: "Foods Breakfast", name: "Foods Breakfast", start: "08:30", counted: true, reason: null, blocks: 2 },
+      { id: "Live", name: "Live", start: "12:00", counted: true, reason: null, blocks: 1, window: { start: "12:00", end: "20:00" } },
+      { id: "Sudsing", name: "Sudsing", start: "17:45", counted: true, reason: null, blocks: 2 },
+      { id: "Foods Dinner", name: "Foods Dinner", start: "18:00", counted: true, reason: null, blocks: 2 },
+      { id: "Night Routine", name: "Night Routine", start: "23:00", counted: true, reason: null, blocks: 2 },
     ];
     const { block } = setup({ anchors: rows });
     const top = (id: string) => block(id).style.top;
@@ -249,67 +292,81 @@ describe("Planning 2a timeline geometry", () => {
     expect(top("Night Routine")).toBe("6px");
     expect(top("Foods Breakfast")).toBe("52px");
     expect(top("Sudsing")).toBe("52px");
-    expect(top("Foods Dinner")).toBe("52px");
+    // Sudsing 17:45×2 and Dinner 18:00×2 overlap on their shared preferred
+    // row, so Dinner takes the free row 0: still never a visual overlap.
+    expect(top("Foods Dinner")).toBe("6px");
   });
 
-  it("packs overlapping anchors without hiding either: Sudsing and Dinner share a row", () => {
+  it("packs the counted spans without hiding either block", () => {
     const rows: StripAnchor[] = [
-      { id: "Live", name: "Live", start: "12:00", end: "20:00", counted: true, reason: null, blocks: 1 },
-      { id: "Sudsing", name: "Sudsing", start: "17:45", end: "18:15", counted: true, reason: null, blocks: 1 },
-      { id: "Foods Dinner", name: "Foods Dinner", start: "18:00", end: "20:30", counted: true, reason: null, blocks: 2 },
+      { id: "Live", name: "Live", start: "12:00", counted: true, reason: null, blocks: 1, window: { start: "12:00", end: "20:00" } },
+      { id: "Sudsing", name: "Sudsing", start: "17:45", counted: true, reason: null, blocks: 2 },
+      { id: "Foods Dinner", name: "Foods Dinner", start: "18:00", counted: true, reason: null, blocks: 2 },
     ];
     const { block } = setup({ anchors: rows });
     const sudsing = block("Sudsing");
     const dinner = block("Foods Dinner");
-    // Live occupies row 0 across 18:00, so the pair has to share row 1.
+    // Sudsing 17:45–18:45 and Dinner 18:00–19:00 overlap, so Dinner moves to
+    // the free row 0 (Live's window track is non-interactive background).
     expect(sudsing.style.top).toBe("52px");
-    expect(dinner.style.top).toBe("52px");
-    const left = (el: HTMLElement) => parseFloat(el.style.left);
+    expect(dinner.style.top).toBe("6px");
     const widthPx = (el: HTMLElement) => (parseFloat(el.style.width) / 100) * SPAN;
-    // No overlap: Sudsing's visible right edge sits before Dinner's left edge.
-    expect(left(sudsing) + parseFloat(sudsing.style.width)).toBeLessThan(left(dinner));
-    // Both names stay legible (the 56px minimum), never one hidden behind the other.
-    expect(widthPx(sudsing)).toBeGreaterThanOrEqual(55);
-    expect(widthPx(dinner)).toBeGreaterThanOrEqual(55);
+    // Widths are the counted duration, not the source window span.
+    expect(widthPx(sudsing)).toBeCloseTo(60, 1);
+    expect(widthPx(dinner)).toBeCloseTo(60, 1);
     expect(sudsing.querySelector(".strip-anchor__name")?.textContent).toBe("Sudsing");
     expect(dinner.querySelector(".strip-anchor__name")?.textContent).toBe("Foods Dinner");
-    // The true times are preserved in the accessible labels.
-    expect(sudsing.getAttribute("aria-label")).toContain("5:45 PM");
-    expect(dinner.getAttribute("aria-label")).toContain("6 PM");
-    expect(sudsing.getAttribute("title")).toContain("5:45 PM");
-    expect(dinner.getAttribute("title")).toContain("6 PM");
+    // The true times and counts are preserved in the accessible labels.
+    expect(sudsing.getAttribute("aria-label")).toContain("5:45 PM · 2 blocks");
+    expect(dinner.getAttribute("aria-label")).toContain("6 PM · 2 blocks");
+    expect(sudsing.getAttribute("title")).toContain("5:45 PM · 2 blocks");
+    expect(dinner.getAttribute("title")).toContain("6 PM · 2 blocks");
   });
 
-  it("stagger-packs three anchors that all collide on one row", () => {
+  it("stagger-packs blocks that must share a row, never overlapping or hiding a name", () => {
     const rows: StripAnchor[] = [
-      { id: "Live", name: "Live", start: "12:00", end: "22:00", counted: true, reason: null, blocks: 1 },
-      { id: "Sudsing", name: "Sudsing", start: "17:45", end: "18:15", counted: true, reason: null, blocks: 1 },
-      { id: "Foods Breakfast", name: "Foods Breakfast", start: "17:50", end: "19:00", counted: true, reason: null, blocks: 2 },
-      { id: "Foods Dinner", name: "Foods Dinner", start: "18:00", end: "20:30", counted: true, reason: null, blocks: 2 },
+      // Night Routine occupies row 0 across the collision, forcing all three
+      // foods onto row 1, where they must be staggered sideways.
+      { id: "Night Routine", name: "Night Routine", start: "17:00", counted: true, reason: null, blocks: 3 },
+      { id: "Sudsing", name: "Sudsing", start: "17:45", counted: true, reason: null, blocks: 2 },
+      { id: "Foods Breakfast", name: "Foods Breakfast", start: "17:50", counted: true, reason: null, blocks: 2 },
+      { id: "Foods Dinner", name: "Foods Dinner", start: "18:00", counted: true, reason: null, blocks: 2 },
     ];
     const { block } = setup({ anchors: rows });
     const order = ["Sudsing", "Foods Breakfast", "Foods Dinner"].map((id) => block(id));
     for (const el of order) expect(el.style.top).toBe("52px");
     const left = (el: HTMLElement) => parseFloat(el.style.left);
     const right = (el: HTMLElement) => left(el) + parseFloat(el.style.width);
-    // Every pair is disjoint and every block clears the legibility minimum.
+    // Every pair is disjoint with a visible gap.
     expect(right(order[0])).toBeLessThan(left(order[1]));
     expect(right(order[1])).toBeLessThan(left(order[2]));
     for (const el of order) {
-      expect((parseFloat(el.style.width) / 100) * SPAN).toBeGreaterThanOrEqual(55);
+      // The 12px legibility floor, never the old 56px exaggeration.
+      expect((parseFloat(el.style.width) / 100) * SPAN).toBeGreaterThanOrEqual(11.9);
+      expect((parseFloat(el.style.width) / 100) * SPAN).toBeLessThan(56);
       expect(el.querySelector(".strip-anchor__name")?.textContent).toBeTruthy();
     }
+    // The full name, time and count stay in the accessible labels.
+    expect(order[0].getAttribute("aria-label")).toContain("Sudsing 5:45 PM · 2 blocks");
+    expect(order[1].getAttribute("aria-label")).toContain("Foods Breakfast 5:50 PM · 2 blocks");
+    expect(order[2].getAttribute("title")).toContain("6 PM · 2 blocks");
   });
 
-  it("shows the time only for a block under two hours, and the item count above it", () => {
-    const { r, block } = setup();
-    // Sudsing is 30 min: no room for the meta line.
+  it("shows the mono time · N blocks meta when it fits, keeping the count in the label otherwise", () => {
+    const wide: StripAnchor[] = [
+      { id: "Focus", name: "Focus", start: "13:00", counted: true, reason: null, blocks: 6 },
+      { id: "Sudsing", name: "Sudsing", start: "17:45", counted: true, reason: null, blocks: 2 },
+    ];
+    const { r, block } = setup({ anchors: wide });
+    // 6 blocks = 180px wide: the meta line fits and counts in blocks.
+    expect(block("Focus").querySelector(".strip-anchor__meta")?.textContent).toBe("1:00p · 6 blocks");
+    expect(block("Focus").querySelector(".strip-anchor__name")?.textContent).toBe("Focus");
+    // Sudsing's 60 counted minutes cannot fit the meta line: the name is the
+    // compact label; the full time and count live in title + aria-label.
     expect(block("Sudsing").querySelector(".strip-anchor__meta")).toBeNull();
     expect(block("Sudsing").querySelector(".strip-anchor__name")).toBeTruthy();
-    // Foods Dinner is 2.5h and shows its time and item count.
-    expect(block("Foods Dinner").querySelector(".strip-anchor__meta")?.textContent).toBe(
-      "6:00p · 2 items",
-    );
+    expect(block("Sudsing").getAttribute("aria-label")).toBe("Sudsing 5:45 PM · 2 blocks");
+    expect(block("Sudsing").getAttribute("title")).toContain("5:45 PM · 2 blocks");
     expect(r.container.querySelector('[aria-label="Anchors"]')).toBeTruthy();
   });
 

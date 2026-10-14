@@ -51,12 +51,12 @@ function setup(overrides: Partial<Parameters<typeof AnchorPopover>[0]> = {}) {
 }
 
 describe("AnchorPopover content", () => {
-  it("shows the name and item count under the selected block, as a labelled dialog", () => {
+  it("shows the name and block count under the selected block, as a labelled dialog", () => {
     const { r } = setup();
     const dialog = r.getByRole("dialog", { name: "Foods Breakfast" });
     expect(dialog).toBeTruthy();
     expect(r.getByText("Foods Breakfast")).toBeTruthy();
-    expect(r.getByText("2 items")).toBeTruthy();
+    expect(r.getByText("2 blocks")).toBeTruthy();
   });
 
   it("edits today's start through the move handler once for a valid time, and shows the read-only window", () => {

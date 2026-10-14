@@ -10,10 +10,13 @@
    Space toggles it, Arrow keys move between slots). Anchor blocks are 38px
    tall on a 96px lane with two sub-rows (a block takes its README-preferred
    row when the interval is free, the other row when that is free, and is
-   staggered rather than overlapped when both rows are busy); a block is as wide as its real
-   start→end span and shows its name plus (when it fits) the time and item
-   count. Clicking one selects it; pointer-dragging moves it (snaps to 15
-   minutes, clamped to the frame) and the arrow keys move it too.
+   staggered rather than overlapped when both rows are busy); a block is as
+   wide as its COUNTED duration (blocks × 30 minutes from its start, never the
+   source start→end window) and shows its name plus (when it fits) the time
+   and block count. A window-kind/template anchor also draws its allowed
+   window as a light dashed track behind the counted block. Clicking one
+   selects it; pointer-dragging moves it (snaps to 15 minutes, clamped to the
+   frame) and the arrow keys move it too.
 
    Pure presentation: selection state and the Wall-filtered id sets come from
    DaySetupPanel, so the strip never re-implements the Mint/wall contract. */
@@ -27,13 +30,14 @@ import { compactClock, compactHour, compactRange } from "./compactTime";
 
 /** Pointer travel (px) before a press on an anchor becomes a drag. */
 const DRAG_THRESHOLD_PX = 4;
-/** A block shorter than this still draws one 15-minute slot wide. */
-const MIN_ANCHOR_MIN = 15;
+/** One counted block is 30 minutes: block width = blocks × BLOCK_MIN. */
+const BLOCK_MIN = 30;
 /** Two anchor sub-rows: top 6px, each 38px tall with an 8px gap. */
 const ANCHOR_ROW_TOP = 6;
 const ANCHOR_ROW_PITCH = 46;
-/** A staggered block keeps at least this many pixels wide so its name reads. */
-const MIN_VISIBLE_W = 56;
+/** The floor that keeps a very short block visible/clickable. Widths are
+    never exaggerated past it; the full name/time/count stay in title + aria. */
+const MIN_VISIBLE_W = 12;
 /** Visible gap between a clipped block's right edge and the next block. */
 const STAGGER_GAP_PX = 2;
 /** README row preference: these ride row 0, the rest of the catalogue
@@ -57,12 +61,16 @@ export interface StripSession {
 export interface StripAnchor {
   id: string;
   name: string;
+  /** 24h HH:MM today's start — the counted block's left edge. */
   start: string;
-  /** 24h HH:MM end, so the block is as wide as its real span. */
-  end: string;
+  /** Counted duration in 30-minute blocks: the visible width is exactly
+      blocks × 30 minutes from `start`, never the source window span. */
+  blocks: number;
+  /** Window-kind/template anchors only: the window the item may float in,
+      drawn as a light dashed non-interactive track behind the counted block. */
+  window?: { start: string; end: string };
   counted: boolean;
   reason: string | null;
-  blocks: number;
   /** Counted, config-sourced anchors only: calendar rows and anything not
       counted today stay put. Absent means not movable. */
   movable?: boolean;
@@ -185,8 +193,8 @@ export function DayStrip(props: DayStripProps) {
     }
   };
 
-  const lengthOf = (anchor: StripAnchor) =>
-    Math.max(MIN_ANCHOR_MIN, toMinutes(anchor.end) - toMinutes(anchor.start));
+  /** Counted duration in minutes: the block's visible width. */
+  const lengthOf = (anchor: StripAnchor) => Math.max(0, anchor.blocks) * BLOCK_MIN;
   const isMovable = (anchor: StripAnchor) =>
     anchor.movable === true && anchor.counted && props.onMoveAnchor !== undefined;
 
@@ -300,10 +308,10 @@ export function DayStrip(props: DayStripProps) {
     toMinutes(session.end) <= startMin || toMinutes(session.start) >= endMin;
   const hiddenSessions = props.sessions.filter(sessionOutside).length;
 
-  // Anchors draw across their real start→end span. Each takes its README
-  // preferred row when the interval is free, the other row when that is free,
-  // and otherwise stays on its preferred row to be staggered below, so two
-  // blocks never draw on top of each other.
+  // Anchors draw across their counted span (blocks × 30 minutes from start).
+  // Each takes its README preferred row when the interval is free, the other
+  // row when that is free, and otherwise stays on its preferred row to be
+  // staggered sideways, so two blocks never draw on top of each other.
   const pxPerMin = laneW / span;
   const rowIntervals: Array<Array<{ min: number; max: number }>> = [[], []];
   const overlapsRow = (row: number, min: number, max: number) =>
@@ -327,9 +335,10 @@ export function DayStrip(props: DayStripProps) {
     });
   // Stagger: inside a row the earlier of two overlapping blocks keeps its true
   // start but its visible width stops 2px before the next block starts, never
-  // narrower than MIN_VISIBLE_W. When that minimum cannot fit, the later
-  // block's visible left edge is nudged right just enough that neither block
-  // is hidden. True times stay in title/aria-label and the popover.
+  // narrower than MIN_VISIBLE_W. When that floor cannot fit, the later block's
+  // visible left edge is nudged right just enough that neither block is
+  // hidden. Widths stay true to the counted span; the floor is the only
+  // exaggeration, and true times/counts stay in title/aria-label.
   const anchorGeometry = new Map<string, { leftPct: number; widthPct: number }>();
   rowIntervals.forEach((_, row) => {
     const rowBlocks = placedAnchors.filter((p) => p.row === row).sort((a, b) => a.min - b.min);
@@ -338,15 +347,15 @@ export function DayStrip(props: DayStripProps) {
       const trueLeft = Math.max(0, (block.min - startMin) * pxPerMin);
       const trueRight = Math.min(laneW, (block.min + block.length - startMin) * pxPerMin);
       const left = Math.max(trueLeft, prevRight + STAGGER_GAP_PX);
-      let right = trueRight;
+      // The counted width wins; the 12px floor only keeps a short block
+      // visible and never stretches it toward its source span.
+      let right = Math.max(trueRight, left + MIN_VISIBLE_W);
       const next = rowBlocks[i + 1];
       if (next) {
         const nextLeft = Math.max(0, (next.min - startMin) * pxPerMin);
         const clipLimit = nextLeft - STAGGER_GAP_PX;
         if (right > clipLimit) right = Math.max(left + MIN_VISIBLE_W, clipLimit);
       }
-      // A block nudged off its true start still keeps a legible minimum width.
-      if (left > trueLeft) right = Math.max(right, left + MIN_VISIBLE_W);
       anchorGeometry.set(block.anchor.id, {
         leftPct: (left / laneW) * 100,
         widthPct: (Math.max(1, right - left) / laneW) * 100,
@@ -359,14 +368,33 @@ export function DayStrip(props: DayStripProps) {
     rowIntervals.reduce((count, blocks, row) => (blocks.length > 0 ? row + 1 : count), 1),
   );
   const anchorLaneH = Math.max(96, anchorRowCount * ANCHOR_ROW_PITCH + 4);
-  const metaText = (anchor: StripAnchor, length: number) =>
-    length >= 120
-      ? `${compactClock(anchor.start)} · ${anchor.blocks} ${anchor.blocks === 1 ? "item" : "items"}`
-      : compactClock(anchor.start);
-  const showMeta = (anchor: StripAnchor, length: number, visiblePx: number) =>
+
+  // Window-kind/template anchors keep their allowed window visible as a light
+  // dashed track behind the solid counted block. The track is background: it
+  // never takes part in row packing or staggering, carries no text and is not
+  // interactive; the solid block is the click/drag target.
+  const anchorRowById = new Map(placedAnchors.map((placed) => [placed.anchor.id, placed.row]));
+  const anchorWindows = props.anchors
+    .filter((anchor) => anchor.window != null)
+    .map((anchor) => {
+      const windowRange = anchor.window as { start: string; end: string };
+      const left = Math.max(toMinutes(windowRange.start), startMin);
+      const right = Math.min(toMinutes(windowRange.end), endMin);
+      return {
+        anchor,
+        left,
+        right,
+        row: anchorRowById.get(anchor.id) ?? ANCHOR_ROW_PREFERENCE[anchor.name] ?? 0,
+      };
+    })
+    .filter(({ left, right }) => right > left);
+  const blockAmount = (blocks: number) => `${blocks} ${blocks === 1 ? "block" : "blocks"}`;
+  const metaText = (anchor: StripAnchor) =>
+    `${compactClock(anchor.start)} · ${blockAmount(anchor.blocks)}`;
+  const showMeta = (anchor: StripAnchor, visiblePx: number) =>
     visiblePx >= Math.max(
       anchor.name.length * 6.6 + 20,
-      metaText(anchor, length).length * 6.4 + 20,
+      metaText(anchor).length * 6.4 + 20,
     );
 
   // Calendar events draw read-only, clipped to the frame, with the label to
@@ -560,6 +588,19 @@ export function DayStrip(props: DayStripProps) {
           aria-label="Anchors"
           style={{ height: `${anchorLaneH}px` }}
         >
+          {anchorWindows.map(({ anchor, left, right, row }) => (
+            <span
+              key={`window-${anchor.id}`}
+              class="strip-anchor__window"
+              data-anchor-window-id={anchor.id}
+              aria-hidden="true"
+              style={{
+                left: `${rawPct(left)}%`,
+                width: `${((right - left) / span) * 100}%`,
+                top: `${ANCHOR_ROW_TOP + row * ANCHOR_ROW_PITCH}px`,
+              }}
+            />
+          ))}
           {placedAnchors.map(({ anchor, min, length, row }) => {
             const dragging = preview?.id === anchor.id;
             const drawMin = dragging ? preview.min : min;
@@ -572,6 +613,10 @@ export function DayStrip(props: DayStripProps) {
             const movable = isMovable(anchor);
             const reason = anchor.reason ?? "";
             const selected = props.selectedAnchorId === anchor.id;
+            const windowRange = anchor.window;
+            const windowText = windowRange
+              ? ` (window ${display12h(windowRange.start)}–${display12h(windowRange.end)})`
+              : "";
             const anchorClass = `strip-anchor${anchor.counted ? "" : " strip-anchor--not-counted"}${
               reason === "skipped" ? " strip-anchor--skipped" : ""
             }${movable ? " strip-anchor--movable" : ""}${
@@ -582,11 +627,13 @@ export function DayStrip(props: DayStripProps) {
               width: `${widthPct}%`,
               top: `${ANCHOR_ROW_TOP + row * ANCHOR_ROW_PITCH}px`,
             };
-            const anchorTitle = `${anchor.name} ${display12h(anchor.start)}${
+            const anchorTitle = `${anchor.name} ${display12h(anchor.start)} · ${blockAmount(anchor.blocks)}${windowText}${
               movable ? " — drag to move, or use the arrow keys" : ""
             }`;
             const anchorLabel = `${anchor.name} ${display12h(anchor.start)}${
-              anchor.counted ? ` · ${anchor.blocks}` : ` — not counted (${anchor.reason})`
+              anchor.counted
+                ? ` · ${blockAmount(anchor.blocks)}${windowText}`
+                : ` — not counted (${anchor.reason})`
             }`;
             if (props.readOnly) {
               return (
@@ -599,8 +646,8 @@ export function DayStrip(props: DayStripProps) {
                   aria-hidden="true"
                 >
                   <span class="strip-anchor__name">{anchor.name}</span>
-                  {showMeta(anchor, length, visiblePx) && (
-                    <span class="strip-anchor__meta">{metaText(anchor, length)}</span>
+                  {showMeta(anchor, visiblePx) && (
+                    <span class="strip-anchor__meta">{metaText(anchor)}</span>
                   )}
                 </span>
               );
@@ -622,8 +669,8 @@ export function DayStrip(props: DayStripProps) {
                 key={anchor.id}
               >
                 <span class="strip-anchor__name">{anchor.name}</span>
-                {showMeta(anchor, length, visiblePx) && (
-                  <span class="strip-anchor__meta">{metaText(anchor, length)}</span>
+                {showMeta(anchor, visiblePx) && (
+                  <span class="strip-anchor__meta">{metaText(anchor)}</span>
                 )}
               </button>
             );
@@ -638,7 +685,7 @@ export function DayStrip(props: DayStripProps) {
                     90,
                     pct(
                       preview.min +
-                        (placedAnchors.find((p) => p.anchor.id === preview.id)?.length ?? MIN_ANCHOR_MIN) / 2,
+                        (placedAnchors.find((p) => p.anchor.id === preview.id)?.length ?? BLOCK_MIN) / 2,
                     ),
                   ),
                 )}%`,

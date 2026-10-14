@@ -70,6 +70,7 @@ describe("CapacitiesSettingsDrawer", () => {
       nativeTaskStructures: ["RootTask", "Task"],
       activeStatuses: ["active"],
       assignedStructures: {},
+      assignedOnStructures: {},
     });
     await waitFor(() => expect(h.store.getState().ui.capacitiesSettingsOpen).toBe(false));
   });
@@ -107,6 +108,7 @@ describe("CapacitiesSettingsDrawer", () => {
       nativeTaskStructures: ["Task"],
       activeStatuses: ["active", "In Progress"],
       assignedStructures: {},
+      assignedOnStructures: {},
       availableStructures: ["custom-project", "0d194525-c5a1-4af5-bb62-202b83006b5e"],
       structureTitles: {},
     });
@@ -181,6 +183,7 @@ describe("CapacitiesSettingsDrawer", () => {
       nativeTaskStructures: ["RootTask", "Task"],
       activeStatuses: ["active"],
       assignedStructures: {},
+      assignedOnStructures: {},
       availableStructures: ["custom-project", "0d194525-c5a1-4af5-bb62-202b83006b5e"],
       structureTitles: {},
     });
@@ -219,6 +222,7 @@ describe("CapacitiesSettingsDrawer", () => {
       nativeTaskStructures: ["RootTask", "Task"],
       activeStatuses: ["active"],
       assignedStructures: {},
+      assignedOnStructures: {},
       availableStructures: ["custom-project"],
       structureTitles: {},
     });
@@ -258,6 +262,7 @@ describe("CapacitiesSettingsDrawer", () => {
       nativeTaskStructures: [],
       activeStatuses: [],
       assignedStructures: {},
+      assignedOnStructures: {},
       availableStructures: [],
       structureTitles: {},
     });
@@ -286,6 +291,7 @@ describe("CapacitiesSettingsDrawer", () => {
       nativeTaskStructures: ["custom-project"],
       activeStatuses: ["In Progress", "active"],
       assignedStructures: {},
+      assignedOnStructures: {},
       availableStructures: ["custom-project", "0d194525-c5a1-4af5-bb62-202b83006b5e"],
       structureTitles: {},
     });
@@ -372,6 +378,7 @@ describe("CapacitiesSettingsDrawer", () => {
       nativeTaskStructures: ["RootTask", "Task"],
       activeStatuses: ["active"],
       assignedStructures: { "custom-project": "old-prop" },
+      assignedOnStructures: {},
       availableStructures: ["custom-project"],
       structureTitles: {},
     });
@@ -409,6 +416,7 @@ describe("CapacitiesSettingsDrawer", () => {
         "legacy-declared": "legacy-prop",
         "custom-project": "current-prop",
       },
+      assignedOnStructures: {},
       availableStructures: ["custom-project"],
       structureTitles: {},
     });
@@ -463,6 +471,7 @@ describe("CapacitiesSettingsDrawer", () => {
       nativeTaskStructures: ["RootTask", "Task"],
       activeStatuses: ["active"],
       assignedStructures: { "custom-project": "assigned-prop" },
+      assignedOnStructures: {},
       availableStructures: ["custom-project"],
       structureTitles: {},
     });
@@ -497,6 +506,7 @@ describe("CapacitiesSettingsDrawer", () => {
       nativeTaskStructures: ["legacy-native", "custom-project"],
       activeStatuses: ["active"],
       assignedStructures: {},
+      assignedOnStructures: {},
       availableStructures: ["custom-project"],
       structureTitles: {},
     });
@@ -619,6 +629,7 @@ describe("CapacitiesSettingsDrawer", () => {
       nativeTaskStructures: [],
       activeStatuses: ["active"],
       assignedStructures: {},
+      assignedOnStructures: {},
       availableStructures: ["root-task"],
       // The server falls back to the id when a structure has no display
       // name, so the repeated title must render as the id, not twice.
@@ -655,6 +666,7 @@ describe("CapacitiesSettingsDrawer", () => {
       nativeTaskStructures: [],
       activeStatuses: ["active"],
       assignedStructures: {},
+      assignedOnStructures: {},
       availableStructures: ["custom-project"],
       structureTitles: { "legacy-structure": "Legacy Project" },
     });

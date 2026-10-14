@@ -4105,6 +4105,56 @@ body {
 .capacities-object-row__property:focus-visible {
   border-color: var(--t-accent);
 }
+
+/* Assigned On (1a): one structure pairs the read-only date-time control with
+   the legacy flag. The legacy input dims behind a dashed border while the
+   Assigned On property owns the decision. */
+.capacities-object-row--mapping {
+  align-items: stretch;
+}
+
+.capacities-object-row__fields {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-width: 0;
+  gap: 8px;
+}
+
+.capacities-object-row__field {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
+.capacities-object-row__field-label {
+  color: #6b6862;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.capacities-object-row__field-row {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  gap: 8px;
+}
+
+.capacities-object-row__field-row .capacities-object-row__property {
+  flex: 1 1 auto;
+}
+
+.capacities-object-row__field-help {
+  color: #6b6862;
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.capacities-object-row__field .capacities-object-row__property:disabled {
+  border-style: dashed;
+  background: #faf9f6;
+  color: #9a968e;
+}
 .capacities-exclusion-list {
   margin-top: 14px;
   padding-top: 12px;
@@ -8624,7 +8674,8 @@ body {
   color: var(--t-muted);
 }
 
-/* Anchors: 38px blocks, two sub-rows on a 96px lane, real start→end width. */
+/* Anchors: 38px blocks, two sub-rows on a 96px lane, counted block width
+   (blocks × 30 minutes) with a light dashed window track behind. */
 .strip-anchor {
   position: absolute;
   height: 38px;
@@ -8644,6 +8695,18 @@ body {
   font-size: 12px;
   text-align: left;
   cursor: pointer;
+}
+
+/* Window-kind/template anchors: the allowed window as a light dashed,
+   unfilled, non-interactive track behind the solid counted block. */
+.strip-anchor__window {
+  position: absolute;
+  height: 38px;
+  box-sizing: border-box;
+  border: 1px dashed color-mix(in srgb, var(--t-text) 18%, transparent);
+  border-radius: 6px;
+  pointer-events: none;
+  z-index: 1;
 }
 
 .strip-anchor__name {
@@ -9371,6 +9434,40 @@ body {
   color: #fff;
   font-size: 13px;
   white-space: nowrap;
+}
+
+/* Assigned On (1a): the read-only date-time marker. The help lines stay in the
+   mapping row's 11px muted register; the legacy flag dims behind a dashed
+   border while the Assigned On property owns the decision. */
+.connections-mapping__name {
+  flex: 0 0 auto;
+  align-self: center;
+  color: #6b6862;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.connections-mapping__clear {
+  flex: none;
+}
+
+.connections-mapping__help {
+  margin: 0;
+  color: #6b6862;
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.connections-mapping__inactive {
+  margin: 0;
+  color: #9a968e;
+  font-size: 11px;
+}
+
+.connections-mapping__input:disabled {
+  border-style: dashed;
+  background: #faf9f6;
+  color: #9a968e;
 }
 
 .connections-tags .connections-chip-input {

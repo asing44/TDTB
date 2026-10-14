@@ -64,11 +64,18 @@ export function AlreadyPlaced() {
       const startMin = toMinutes(time);
       const outside = startMin < frameStartMin || startMin > frameEndMin;
       const counted = on && !outside;
+      const source = s.inputs!.anchored.find((a) => a.id === row.id);
       return {
         id: row.id,
         name: row.name,
         start: time,
-        end: row.end ?? time,
+        window:
+          (row.kind === "window" || row.kind === "template") &&
+          source != null &&
+          source.start !== null &&
+          source.end !== null
+            ? { start: source.start, end: source.end }
+            : undefined,
         counted,
         reason: !on ? "skipped" : outside ? "outside frame" : null,
         blocks: anchoredBlocks(row, override),

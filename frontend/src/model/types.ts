@@ -46,6 +46,14 @@ export interface CapacitiesSettings {
       property id is opaque and kept exactly as declared; additive to schema
       version 1, and an absent key means no declarations. */
   assignedStructures: Record<string, string>;
+  /** Settings-declared read-only Assigned On marker: structure id -> RAW
+      Capacities property id of a date/datetime property set inside Capacities.
+      Per structure, when mapped, an item counts as assigned today iff its
+      date (in the app's local timezone) equals today's date, and the legacy
+      `assignedStructures` marker is ignored for that structure. Properties
+      are opaque and kept exactly as declared; additive to schema version 1,
+      and an absent key means no declarations. */
+  assignedOnStructures: Record<string, string>;
   /** Read-only structure ids the drawer offers as Active-pull
       choices. Advisory UI metadata sourced from the Capacities source mapping;
       empty when none are configured or the record is unreadable. */
@@ -78,6 +86,10 @@ export interface CapacitiesSettingsDraft {
       declaration map wholesale, so omission would wipe the operator's
       declared assignment properties. */
   assignedStructures: Record<string, string>;
+  /** Always sent on save: the full-replacement route replaces the
+      Assigned On map wholesale, so omission would wipe the operator's
+      declared read-only date markers. */
+  assignedOnStructures: Record<string, string>;
 }
 
 /** One per-structure row in the Capacities source mapping record. Property

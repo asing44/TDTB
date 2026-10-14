@@ -347,6 +347,23 @@ export function projectCapacitiesSettings(wire: Wire): CapacitiesSettings {
       assignedStructures[structureId] = propertyId;
     }
   }
+  // ``assigned_on_structures`` follows the identical additive-key contract:
+  // optional on read (an absent key means no declarations), strict when
+  // present, canonical structure ids with non-empty opaque property ids kept
+  // exactly as stored. It declares READ-ONLY date/datetime markers.
+  const assignedOnRaw = raw.assigned_on_structures;
+  let assignedOnStructures: Record<string, string> = {};
+  if (assignedOnRaw !== undefined) {
+    if (!assignedOnRaw || typeof assignedOnRaw !== "object" || Array.isArray(assignedOnRaw)) {
+      throw capacitiesSettingsError("assigned_on_structures must be an object");
+    }
+    for (const [structureId, propertyId] of Object.entries(assignedOnRaw)) {
+      if (!isCanonicalCapacitiesStructureId(structureId) || !isCanonicalAdmissionValue(propertyId)) {
+        throw capacitiesSettingsError("assigned_on_structures contains an invalid declaration");
+      }
+      assignedOnStructures[structureId] = propertyId;
+    }
+  }
   // ``available_structures`` is read-only advisory metadata added at the top
   // level of the settings response. It is tolerant when absent (an older
   // backend) and strict when present.
@@ -396,6 +413,7 @@ export function projectCapacitiesSettings(wire: Wire): CapacitiesSettings {
     nativeTaskStructures,
     activeStatuses,
     assignedStructures,
+    assignedOnStructures,
     availableStructures,
     structureTitles,
   };
@@ -446,6 +464,17 @@ export function capacitiesSettingsToWire(draft: CapacitiesSettingsDraft): Wire {
   const assignedStructures = Object.fromEntries(
     assignedEntries.sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)),
   );
+  // The Assigned On map is emitted for the same reason: the full-replacement
+  // route replaces it wholesale, so omission would wipe every declaration.
+  const assignedOnEntries = Object.entries(draft.assignedOnStructures);
+  for (const [structureId, propertyId] of assignedOnEntries) {
+    if (!isCanonicalCapacitiesStructureId(structureId) || !isCanonicalAdmissionValue(propertyId)) {
+      throw new Error("assignedOnStructures contains an invalid declaration");
+    }
+  }
+  const assignedOnStructures = Object.fromEntries(
+    assignedOnEntries.sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)),
+  );
   return {
     expected_revision: draft.expectedRevision,
     native_task_auto: {
@@ -459,6 +488,7 @@ export function capacitiesSettingsToWire(draft: CapacitiesSettingsDraft): Wire {
     native_task_structures: nativeTaskStructures,
     active_statuses: activeStatuses,
     assigned_structures: assignedStructures,
+    assigned_on_structures: assignedOnStructures,
   };
 }
 
@@ -1465,6 +1495,20 @@ export function capacitiesCoverageOf(
 export function capacitiesAssignmentWarnings(warnings: string[]): string[] {
   return warnings.filter((warning) =>
     warning.startsWith("ignored Capacities assignment declaration"),
+  );
+}
+
+/** The backend's Assigned On diagnostics: declaration rejections and the two
+    content-free read outcomes (unparsable values, or a configured mapping
+    that matched no object on the logical day). Each line carries only the
+    structure id, so the panel can render them verbatim like the assignment
+    warnings above. */
+export function capacitiesAssignedOnWarnings(warnings: string[]): string[] {
+  return warnings.filter(
+    (warning) =>
+      warning.startsWith("ignored Capacities Assigned On declaration") ||
+      warning.startsWith("Capacities Assigned On values could not be parsed") ||
+      warning.startsWith("Capacities Assigned On is configured"),
   );
 }
 
