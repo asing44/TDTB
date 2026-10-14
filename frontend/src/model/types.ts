@@ -187,19 +187,50 @@ export interface TagCatalog {
   warnings: string[];
 }
 
-/** The local, versioned tag-exclusion policy returned by the settings API. */
+/** One named Todoist task in the app-managed exclusion policy. Matching is by
+    task id OR normalized name (casefolded, whitespace collapsed), so a
+    recurring series stays hidden when Todoist re-issues a new id. */
+export interface TodoistExclusionEntry {
+  id: string;
+  name: string;
+  addedAt: string; // ISO-8601 timestamp
+}
+
+/** The local, versioned exclusion policy returned by the settings API. Both
+    dimensions are returned by the settings API; the save route is a full
+    replacement of both, so a draft always carries both lists. */
 export interface TagExclusionSettings {
   version: number;
   revision: number;
   persisted: boolean;
   tags: TagExclusionIdentity[];
+  todoist: TodoistExclusionEntry[];
   catalog: TagCatalog;
 }
 
-/** Full replacement body for the tag-exclusion save route. */
+/** Full replacement body for the exclusion-settings save route. */
 export interface TagExclusionSettingsDraft {
   expectedRevision: number;
   tags: TagExclusionIdentity[];
+  todoist: TodoistExclusionEntry[];
+}
+
+/** Digest diagnostics for the Todoist exclusion stage (server envelope).
+    Advisory and tolerant: a malformed block is dropped, never fabricated. */
+export interface TodoistExclusionPolicy {
+  revision: number;
+  persisted: boolean;
+  mode: string;
+  evaluatedCounts: { assigned: number; pool: number };
+  excludedCounts: { assigned: number; pool: number; total: number };
+  decisions: Array<{
+    identity: string;
+    name: string;
+    surface: string;
+    matched: string;
+    reason: string;
+  }>;
+  warnings: string[];
 }
 
 /** Resolved duration source label (mirrors the backend resolver's
@@ -843,6 +874,9 @@ export interface PlanInputs {
   /** S7a: typed direct-intake block. Absent for legacy payloads or the
       legacy intake mode — the key is omitted, never fabricated. */
   capacitiesIntake?: CapacitiesIntake;
+  /** Todoist exclusion diagnostics riding the digest. Optional and advisory:
+      absent for legacy payloads or when the envelope is malformed. */
+  todoistExclusionPolicy?: TodoistExclusionPolicy;
 }
 
 /** Fixed-input snapshot for the drift fingerprint (locked decision 17):

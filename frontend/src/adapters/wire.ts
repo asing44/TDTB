@@ -64,6 +64,8 @@ import type {
   TagExclusionIdentity,
   TagExclusionSettings,
   TagExclusionSettingsDraft,
+  TodoistExclusionEntry,
+  TodoistExclusionPolicy,
   ShadowDiff,
   ShadowClassification,
   ShadowEntry,
@@ -732,6 +734,47 @@ export function projectCapacitiesCatalog(wire: Wire): CapacitiesCatalog {
 
 const TAG_CATALOG_STATUSES = ["complete", "partial", "unavailable", "unconfigured"] as const;
 const TAG_ENTRY_KEYS = ["source", "space_id", "tag_id"] as const;
+const TODOIST_ENTRY_KEYS = ["id", "name", "added_at"] as const;
+
+/** Bounds mirror the backend store (exclusion_settings.py). The save builder
+    truncates a too-long name instead of rejecting the operator's click; ids
+    and timestamps are never coerced. */
+export const MAX_TODOIST_EXCLUSIONS = 200;
+const MAX_TODOIST_ID_LENGTH = 128;
+const MAX_TODOIST_NAME_LENGTH = 300;
+const MAX_TODOIST_ADDED_AT_LENGTH = 64;
+
+/** Canonical match form of a Todoist task title: casefolded with runs of
+    whitespace collapsed to single spaces (same rule the backend applies). */
+export function normalizeTodoistExclusionName(value: string): string {
+  return value.split(/\s+/).filter(Boolean).join(" ").toLowerCase();
+}
+
+/** Bound a display title without ever producing an empty name. */
+function boundedTodoistName(value: string): string {
+  const trimmed = value.trim();
+  if (trimmed.length <= MAX_TODOIST_NAME_LENGTH) return trimmed;
+  return trimmed.slice(0, MAX_TODOIST_NAME_LENGTH);
+}
+
+function validTodoistId(value: unknown): value is string {
+  return (
+    typeof value === "string" &&
+    value.length > 0 &&
+    value.length <= MAX_TODOIST_ID_LENGTH &&
+    value === value.trim() &&
+    !/\s/.test(value)
+  );
+}
+
+function validTodoistAddedAt(value: unknown): value is string {
+  return (
+    typeof value === "string" &&
+    value.length > 0 &&
+    value.length <= MAX_TODOIST_ADDED_AT_LENGTH &&
+    !Number.isNaN(Date.parse(value))
+  );
+}
 
 /** Canonical UUID tag ids only — the same strictness the backend store
     applies. A non-canonical spelling is a different identity and never
@@ -821,8 +864,11 @@ export function projectTagExclusionSettings(
     throw tagExclusionError("exclusions must be an object");
   }
   const dimensionKeys = Object.keys(exclusions);
-  if (dimensionKeys.length !== 1 || dimensionKeys[0] !== "tags") {
-    throw tagExclusionError("exclusions has an unknown or missing dimension");
+  if (dimensionKeys.some((key) => key !== "tags" && key !== "todoist")) {
+    throw tagExclusionError("exclusions has an unknown dimension");
+  }
+  if (!dimensionKeys.includes("tags")) {
+    throw tagExclusionError("exclusions is missing the tags dimension");
   }
   if (!Array.isArray(exclusions.tags)) {
     throw tagExclusionError("exclusions.tags must be an array");
@@ -861,11 +907,59 @@ export function projectTagExclusionSettings(
     seen.add(key);
   }
   tags.sort((a, b) => (tagIdentityKey(a) < tagIdentityKey(b) ? -1 : 1));
+  // ``todoist`` was added additively to schema version 1: a legacy tags-only
+  // file reads as the empty dimension, matching the backend. When present it
+  // is strict, and duplicates are a malformed response rather than a policy.
+  const todoistRaw = exclusions.todoist ?? [];
+  if (!Array.isArray(todoistRaw)) {
+    throw tagExclusionError("exclusions.todoist must be an array");
+  }
+  if (todoistRaw.length > MAX_TODOIST_EXCLUSIONS) {
+    throw tagExclusionError("exclusions.todoist contains too many entries");
+  }
+  const todoist: TodoistExclusionEntry[] = todoistRaw.map((entry: unknown) => {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+      throw tagExclusionError("exclusions.todoist contains a malformed entry");
+    }
+    const row = entry as Wire;
+    const keys = Object.keys(row).sort().join(",");
+    if (keys !== [...TODOIST_ENTRY_KEYS].sort().join(",")) {
+      throw tagExclusionError("Todoist entries have unknown or missing keys");
+    }
+    if (!validTodoistId(row.id)) {
+      throw tagExclusionError("Todoist entry id is malformed");
+    }
+    if (typeof row.name !== "string" || row.name.trim() === "") {
+      throw tagExclusionError("Todoist entry name is malformed");
+    }
+    if (!validTodoistAddedAt(row.added_at)) {
+      throw tagExclusionError("Todoist entry added_at is malformed");
+    }
+    return {
+      id: row.id,
+      name: boundedTodoistName(row.name),
+      addedAt: row.added_at,
+    };
+  });
+  const seenIds = new Set<string>();
+  const seenNames = new Set<string>();
+  for (const entry of todoist) {
+    const normalized = normalizeTodoistExclusionName(entry.name);
+    if (seenIds.has(entry.id) || seenNames.has(normalized)) {
+      throw tagExclusionError("duplicate Todoist exclusion identity");
+    }
+    seenIds.add(entry.id);
+    seenNames.add(normalized);
+  }
+  todoist.sort((a, b) =>
+    a.id < b.id ? -1 : a.id > b.id ? 1 : a.name < b.name ? -1 : a.name > b.name ? 1 : 0,
+  );
   return {
     version: raw.version,
     revision: raw.revision,
     persisted: wire.persisted,
     tags,
+    todoist,
     catalog:
       wire.tag_catalog !== undefined
         ? projectTagCatalog(wire.tag_catalog)
@@ -903,9 +997,101 @@ export function tagExclusionSettingsToWire(draft: TagExclusionSettingsDraft): Wi
     }
     seen.add(key);
   }
+  // The route is a full replacement of BOTH dimensions: a draft that omitted
+  // the Todoist list would silently clear every hidden task, so the builder
+  // always emits it (empty when the draft carries none).
+  if (draft.todoist.length > MAX_TODOIST_EXCLUSIONS) {
+    throw new Error("too many Todoist exclusions");
+  }
+  const todoist = draft.todoist.map((entry) => {
+    if (!validTodoistId(entry.id)) {
+      throw new Error("Todoist exclusion id is malformed");
+    }
+    if (typeof entry.name !== "string" || entry.name.trim() === "") {
+      throw new Error("Todoist exclusion name is malformed");
+    }
+    if (!validTodoistAddedAt(entry.addedAt)) {
+      throw new Error("Todoist exclusion addedAt is malformed");
+    }
+    return {
+      id: entry.id,
+      name: boundedTodoistName(entry.name),
+      added_at: entry.addedAt,
+    };
+  });
+  const seenIds = new Set<string>();
+  const seenNames = new Set<string>();
+  for (const entry of todoist) {
+    const normalized = normalizeTodoistExclusionName(entry.name);
+    if (seenIds.has(entry.id) || seenNames.has(normalized)) {
+      throw new Error("duplicate Todoist exclusion identity");
+    }
+    seenIds.add(entry.id);
+    seenNames.add(normalized);
+  }
   return {
     expected_revision: draft.expectedRevision,
-    exclusions: { tags },
+    exclusions: { tags, todoist },
+  };
+}
+
+/** Tolerant projection of the digest's ``todoist_exclusion_policy``
+    diagnostics envelope. This is advisory read-side telemetry: a malformed
+    or absent block returns null (nothing rendered) and never fails a plan
+    load, unlike the strict settings projection above. */
+export function projectTodoistExclusionPolicy(raw: unknown): TodoistExclusionPolicy | null {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const record = raw as Wire;
+  if (typeof record.revision !== "number" || !Number.isSafeInteger(record.revision)) {
+    return null;
+  }
+  if (typeof record.persisted !== "boolean" || typeof record.mode !== "string") {
+    return null;
+  }
+  const evaluated = record.evaluated_counts;
+  const excluded = record.excluded_counts;
+  if (!evaluated || typeof evaluated !== "object" || Array.isArray(evaluated)) return null;
+  if (!excluded || typeof excluded !== "object" || Array.isArray(excluded)) return null;
+  const counts = (value: unknown): number | null =>
+    typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : null;
+  const evaluatedAssigned = counts((evaluated as Wire).assigned);
+  const evaluatedPool = counts((evaluated as Wire).pool);
+  const excludedAssigned = counts((excluded as Wire).assigned);
+  const excludedPool = counts((excluded as Wire).pool);
+  const excludedTotal = counts((excluded as Wire).total);
+  if (
+    evaluatedAssigned === null ||
+    evaluatedPool === null ||
+    excludedAssigned === null ||
+    excludedPool === null ||
+    excludedTotal === null
+  ) {
+    return null;
+  }
+  const decisionsRaw = Array.isArray(record.decisions) ? record.decisions : [];
+  const decisions = decisionsRaw
+    .filter((row): row is Wire => !!row && typeof row === "object" && !Array.isArray(row))
+    .map((row) => ({
+      identity: String(row.identity ?? ""),
+      name: String(row.name ?? ""),
+      surface: String(row.surface ?? ""),
+      matched: String(row.matched ?? ""),
+      reason: String(row.reason ?? ""),
+    }))
+    .filter((row) => row.identity !== "" || row.name !== "");
+  const warnings = Array.isArray(record.warnings) ? record.warnings.map(String) : [];
+  return {
+    revision: record.revision,
+    persisted: record.persisted,
+    mode: record.mode,
+    evaluatedCounts: { assigned: evaluatedAssigned, pool: evaluatedPool },
+    excludedCounts: {
+      assigned: excludedAssigned,
+      pool: excludedPool,
+      total: excludedTotal,
+    },
+    decisions,
+    warnings,
   };
 }
 
@@ -1776,6 +1962,11 @@ export function projectPlanInputs(wire: Wire): PlanInputs {
   const capacitiesIntake = projectCapacitiesIntake(
     wire.capacities_intake ?? wire.digest?.capacities_intake,
   );
+  // Advisory digest diagnostics: projected tolerantly so a malformed or
+  // legacy envelope never fails a plan load, and never fabricated.
+  const todoistExclusionPolicy = projectTodoistExclusionPolicy(
+    wire.todoist_exclusion_policy ?? wire.digest?.todoist_exclusion_policy,
+  );
   return {
     validDate: String(wire.digest?.valid_date ?? ""),
     assigned: (wire.digest?.assigned ?? []).map(projectAssigned),
@@ -1811,6 +2002,7 @@ export function projectPlanInputs(wire: Wire): PlanInputs {
     // fallback is defensive only. Legacy payloads omit it, so the key stays
     // absent rather than being fabricated.
     ...(capacitiesIntake !== null ? { capacitiesIntake } : {}),
+    ...(todoistExclusionPolicy !== null ? { todoistExclusionPolicy } : {}),
   };
 }
 

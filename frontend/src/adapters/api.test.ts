@@ -840,6 +840,7 @@ describe("tag exclusion settings routes", () => {
         { source: "capacities", spaceId: "space-1", tagId: TAG_B },
         { source: "capacities", spaceId: "space-1", tagId: TAG_A },
       ],
+      todoist: [],
     });
 
     expect(saved.revision).toBe(3);
@@ -857,6 +858,7 @@ describe("tag exclusion settings routes", () => {
           { source: "capacities", space_id: "space-1", tag_id: TAG_B },
           { source: "capacities", space_id: "space-1", tag_id: TAG_A },
         ],
+        todoist: [],
       },
     });
     const post = calls.find((c) => c.path === "/settings/exclusions/save");
@@ -872,7 +874,7 @@ describe("tag exclusion settings routes", () => {
     const a = new ApiAdapter();
 
     const err = await a
-      .saveTagExclusionSettings({ expectedRevision: 0, tags: [] })
+      .saveTagExclusionSettings({ expectedRevision: 0, tags: [], todoist: [] })
       .catch((e) => e);
 
     expect(err).toBeInstanceOf(ApiError);

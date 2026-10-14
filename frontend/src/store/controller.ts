@@ -10,8 +10,8 @@
      canLiveCommit at call time — the second-click gate (locked decision 9). */
 
 import type { Adapter, SequenceContext } from "../adapters/adapter";
-import { ApiError } from "../adapters/api";
-import { itemIdentity, projectSequenceRow } from "../adapters/wire";
+import { ApiError, capacitiesSettingsConflictOf, exclusionSettingsConflictOf } from "../adapters/api";
+import { itemIdentity, normalizeTodoistExclusionName, projectSequenceRow } from "../adapters/wire";
 import { fingerprintFixedInputs } from "../model/fingerprint";
 import { isStagingVerb } from "../model/staging";
 import { prunePins } from "../model/pins";
@@ -55,6 +55,7 @@ import type {
   SequenceRow,
   TagExclusionSettings,
   TagExclusionSettingsDraft,
+  TodoistExclusionEntry,
 } from "../model/types";
 
 export type Dispatch = (a: Action) => void;
@@ -379,6 +380,87 @@ export class Controller {
     const settings = await this.adapter.saveTagExclusionSettings(draft);
     await this.refreshSources();
     return { settings, refreshError: this.getState().refresh.error };
+  }
+
+  /** "Always exclude" for one Todoist task: add it to the persistent
+      exclusion list (id OR normalized-name match) and re-earn planning
+      inputs through the SAME refresh path as the tag-exclusion save. An
+      entry already present (same id or normalized name) is already
+      excluded: the read is adopted and no write is attempted. A 409
+      stale-revision conflict reloads and retries ONCE, then surfaces. */
+  async alwaysExcludeTodoist(input: {
+    todoistId: string;
+    name: string;
+  }): Promise<{ settings: TagExclusionSettings; refreshError: string | null }> {
+    const entry: TodoistExclusionEntry = {
+      id: input.todoistId,
+      name: input.name,
+      addedAt: new Date().toISOString(),
+    };
+    const settings = await this.writeTodoistExclusion(entry);
+    await this.refreshSources();
+    return { settings, refreshError: this.getState().refresh.error };
+  }
+
+  private async writeTodoistExclusion(
+    entry: TodoistExclusionEntry,
+  ): Promise<TagExclusionSettings> {
+    let settings = await this.adapter.loadTagExclusionSettings();
+    const normalized = normalizeTodoistExclusionName(entry.name);
+    const present = settings.todoist.some(
+      (row) => row.id === entry.id || normalizeTodoistExclusionName(row.name) === normalized,
+    );
+    if (present) return settings;
+    const write = (current: TagExclusionSettings) =>
+      this.adapter.saveTagExclusionSettings({
+        expectedRevision: current.revision,
+        tags: current.tags,
+        todoist: [...current.todoist, entry],
+      });
+    try {
+      return await write(settings);
+    } catch (e) {
+      if (exclusionSettingsConflictOf(e) === null) throw e;
+      settings = await this.adapter.loadTagExclusionSettings();
+      // Retry once on the reloaded revision; a second conflict surfaces.
+      return await write(settings);
+    }
+  }
+
+  /** "Always exclude" for one Capacities object: add its canonical identity
+      to the EXISTING per-object exclusion set and save the full settings
+      policy (same route, revision guard, and refresh path as the Connections
+      save). A 409 reloads and retries once, then surfaces. */
+  async alwaysExcludeCapacitiesObject(
+    identity: string,
+  ): Promise<{ settings: CapacitiesSettings; refreshError: string | null }> {
+    const settings = await this.writeCapacitiesExclusion(identity);
+    await this.refreshSources();
+    return { settings, refreshError: this.getState().refresh.error };
+  }
+
+  private async writeCapacitiesExclusion(
+    identity: string,
+  ): Promise<CapacitiesSettings> {
+    let settings = await this.adapter.loadCapacitiesSettings();
+    if (settings.excluded.includes(identity)) return settings;
+    const write = (current: CapacitiesSettings) =>
+      this.saveCapacitiesSettings({
+        expectedRevision: current.revision,
+        nativeTaskAuto: { ...current.nativeTaskAuto },
+        excluded: [...current.excluded, identity].sort(),
+        activeStructures: [...current.activeStructures],
+        nativeTaskStructures: [...current.nativeTaskStructures],
+        activeStatuses: [...current.activeStatuses],
+        assignedStructures: { ...current.assignedStructures },
+      });
+    try {
+      return await write(settings);
+    } catch (e) {
+      if (capacitiesSettingsConflictOf(e) === null) throw e;
+      settings = await this.adapter.loadCapacitiesSettings();
+      return await write(settings);
+    }
   }
 
   async saveDaySetup(daySetup: AppState["daySetup"]): Promise<void> {

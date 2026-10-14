@@ -59,6 +59,7 @@ import {
 import { trackFor, trackGradient } from "../model/bands";
 import { DIRECT_VERBS, MORE_VERBS, type StagingVerbSpec } from "../model/staging";
 import { sourceContext } from "../model/sourceContext";
+import { isCanonicalCapacitiesIdentity } from "../adapters/wire";
 import { dueLabel, normalizeUrgency } from "../model/urgency";
 import type { AssignedItem } from "../model/types";
 import { AlreadyPlaced } from "./AlreadyPlaced";
@@ -112,6 +113,43 @@ function srcTagLabel(tag: "memory" | "remembered" | "source"): string {
 function durLabelText(tag: "memory" | "remembered" | "source"): string | null {
   if (tag === "memory") return "today only";
   if (tag === "remembered") return "saved";
+  return null;
+}
+
+/** More-menu armed-confirm sentinel for "Always exclude". It has no staging
+    verb id: the commit runs through the controller's persistent-exclusion
+    methods, not runtimeAction. Distinct from every StagingVerb string. */
+const ALWAYS_EXCLUDE_CONFIRM = "always_exclude";
+
+/** Undo-path copy for the always-exclude description line, per source
+    surface (Todoist hidden list vs Capacities known objects). */
+const ALWAYS_EXCLUDE_DETAIL = {
+  todoist:
+    "Hides this task from planning every day. Undo in Connections > Hidden tasks.",
+  capacities:
+    "Hides this task from planning every day. Undo in Connections > Capacities > Known objects.",
+} as const;
+
+/** The persistent-exclusion target a row can offer, or null. Todoist rows
+    exclude by task id + title; Capacities rows exclude by the canonical
+    object identity the settings route accepts. Calendar rows and rows without
+    a stable identity offer nothing. */
+type AlwaysExcludeTarget =
+  | { kind: "todoist"; todoistId: string }
+  | { kind: "capacities"; identity: string };
+
+function alwaysExcludeTarget(item: AssignedItem): AlwaysExcludeTarget | null {
+  if (item.source === "todoist") {
+    return item.todoistId && item.todoistId.length > 0
+      ? { kind: "todoist", todoistId: item.todoistId }
+      : null;
+  }
+  if (item.source === "capacities") {
+    const identity = item.capacitiesIdentity ?? item.identity ?? null;
+    return isCanonicalCapacitiesIdentity(identity)
+      ? { kind: "capacities", identity }
+      : null;
+  }
   return null;
 }
 
@@ -221,14 +259,51 @@ function MoreMenu({
   const { controller, store } = useApp();
   const [open, setOpen] = useState(false);
   const [confirming, setConfirming] = useState<string | null>(null);
+  const [excludeBusy, setExcludeBusy] = useState(false);
+  const [excludeStatus, setExcludeStatus] = useState<string | null>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const menuId = rowId(item, "more");
+  const excludeArmed = confirming === ALWAYS_EXCLUDE_CONFIRM;
+  const excludeTarget = alwaysExcludeTarget(item);
 
   const close = (refocus: boolean) => {
     setOpen(false);
     setConfirming(null);
+    setExcludeStatus(null);
     if (refocus) triggerRef.current?.focus();
+  };
+
+  /** Commit the armed always-exclude through the controller's persistent
+      exclusion methods. The controller saves the full policy (409 retry
+      included) and re-earns planning inputs itself, so the row leaves the
+      plan on success. A save that throws leaves the row exactly as it was and
+      the menu reports the error text; a failed post-save refresh is reported
+      distinctly, because the exclusion DID persist. */
+  const commitAlwaysExclude = async (target: AlwaysExcludeTarget) => {
+    setConfirming(null);
+    setExcludeBusy(true);
+    setExcludeStatus(null);
+    try {
+      const result =
+        target.kind === "todoist"
+          ? await controller.alwaysExcludeTodoist({
+              todoistId: target.todoistId,
+              name: item.name,
+            })
+          : await controller.alwaysExcludeCapacitiesObject(target.identity);
+      setExcludeStatus(
+        result.refreshError
+          ? `Always excluded, but the planning refresh failed: ${result.refreshError}`
+          : `Always excluded: ${item.name}.`,
+      );
+    } catch (e) {
+      setExcludeStatus(
+        `Could not always exclude: ${e instanceof Error ? e.message : String(e)}`,
+      );
+    } finally {
+      setExcludeBusy(false);
+    }
   };
 
   useEffect(() => {
@@ -288,6 +363,7 @@ function MoreMenu({
         onClick={() => {
           setOpen((o) => !o);
           setConfirming(null);
+          setExcludeStatus(null);
         }}
       >
         <RowIcon name="ellipsis" />
@@ -381,6 +457,51 @@ function MoreMenu({
               </button>
             );
           })}
+          {/* Planning 2a: persistent exclusion rides the More menu for rows
+              the source policy can key on (todoist id + title; canonical
+              Capacities identity). Destructive, so it arms first: shape the
+              same armed-confirm as Delete, with the confirm question and the
+              undo path in words. Escape, outside click, or moving focus away
+              disarms. The commit disables the item while the save is in
+              flight and reports the outcome (or the error text) in the
+              menu's live status line. */}
+          {excludeTarget && (
+            <button
+              role="menuitem"
+              class={`alloc-verb row-more__item${excludeArmed ? " alloc-verb--armed" : ""}`}
+              aria-label={
+                excludeArmed
+                  ? `Confirm always exclude: ${item.name}`
+                  : `Always exclude: ${item.name}`
+              }
+              disabled={excludeBusy}
+              onClick={() => {
+                if (!excludeArmed) {
+                  setExcludeStatus(null);
+                  setConfirming(ALWAYS_EXCLUDE_CONFIRM);
+                  return;
+                }
+                void commitAlwaysExclude(excludeTarget);
+              }}
+              onBlur={() => excludeArmed && setConfirming(null)}
+            >
+              <span>
+                {excludeArmed
+                  ? `Confirm: always exclude "${item.name}"?`
+                  : "Always exclude"}
+              </span>
+              <span class="row-more__item-detail">
+                {excludeTarget.kind === "capacities"
+                  ? ALWAYS_EXCLUDE_DETAIL.capacities
+                  : ALWAYS_EXCLUDE_DETAIL.todoist}
+              </span>
+            </button>
+          )}
+          {excludeStatus && (
+            <div class="row-more__status" role="status" aria-live="polite">
+              {excludeStatus}
+            </div>
+          )}
         </div>
       )}
     </div>

@@ -436,6 +436,7 @@ describe("controller: tag exclusion save refreshes planning inputs", () => {
     const result = await controller.saveTagExclusionSettings({
       expectedRevision: loaded.revision,
       tags: [{ source: "capacities", spaceId: loaded.catalog.spaceId!, tagId }],
+      todoist: [],
     });
 
     expect(result.settings.revision).toBe(1);
@@ -455,6 +456,7 @@ describe("controller: tag exclusion save refreshes planning inputs", () => {
     await controller.saveTagExclusionSettings({
       expectedRevision: loaded.revision,
       tags: [{ source: "capacities", spaceId: "space-1", tagId }],
+      todoist: [],
     });
 
     const reopened = await controller.loadTagExclusionSettings();
@@ -475,6 +477,7 @@ describe("controller: tag exclusion save refreshes planning inputs", () => {
     const result = await controller.saveTagExclusionSettings({
       expectedRevision: loaded.revision,
       tags: [],
+      todoist: [],
     });
 
     // The save itself landed; only the planning refresh failed, and the
@@ -489,7 +492,7 @@ describe("controller: tag exclusion save refreshes planning inputs", () => {
     await controller.load();
 
     await expect(
-      controller.saveTagExclusionSettings({ expectedRevision: 99, tags: [] }),
+      controller.saveTagExclusionSettings({ expectedRevision: 99, tags: [], todoist: [] }),
     ).rejects.toThrow(/changed since they were read/);
 
     const s = store.getState();

@@ -44,7 +44,7 @@ import type {
 } from "../model/types";
 import { makeScenario, fixedInputsOf, type Scenario, type ScenarioName } from "../fixtures/scenarios";
 import { toMinutes } from "../model/time";
-import { itemIdentity } from "./wire";
+import { itemIdentity, normalizeTodoistExclusionName } from "./wire";
 
 const LATENCY_MS = 350;
 
@@ -383,6 +383,7 @@ export class FixtureAdapter implements Adapter {
     revision: 0,
     persisted: false,
     tags: [],
+    todoist: [],
     catalog: {
       status: "complete",
       spaceId: "space-1",
@@ -512,8 +513,10 @@ export class FixtureAdapter implements Adapter {
     if (this.anchoredSourceDrifted) {
       fixed.anchoredSourceFingerprint += "-drifted";
     }
-    const inputs = this.applyPromotedSelections(
-      this.applyCapacitiesIntake(this.applyCapacitiesCoverage(structuredClone(this.inputs))),
+    const inputs = this.applyTodoistExclusions(
+      this.applyPromotedSelections(
+        this.applyCapacitiesIntake(this.applyCapacitiesCoverage(structuredClone(this.inputs))),
+      ),
     );
     if (this.anchoredSourceDrifted) {
       inputs.anchoredSourceFingerprint += "-drifted";
@@ -524,7 +527,53 @@ export class FixtureAdapter implements Adapter {
   async loadPlanInputs(): Promise<PlanInputs> {
     await wait(LATENCY_MS);
     const inputs = this.applyCapacitiesCoverage(structuredClone(this.inputs));
-    return this.applyPromotedSelections(this.applyCapacitiesIntake(inputs));
+    return this.applyTodoistExclusions(
+      this.applyPromotedSelections(this.applyCapacitiesIntake(inputs)),
+    );
+  }
+
+  /** Server-mirror of the Todoist exclusion stage: drop assigned rows whose
+      task id is listed OR whose normalized title matches, and attach the
+      diagnostics envelope the digest carries. The source inputs are never
+      mutated — a Show again re-read brings the row back. */
+  private applyTodoistExclusions(inputs: PlanInputs): PlanInputs {
+    const policy = this.tagExclusionSettings.todoist;
+    if (policy.length === 0) return inputs;
+    const wantedIds = new Set(policy.map((entry) => entry.id));
+    const wantedNames = new Set(policy.map((entry) => normalizeTodoistExclusionName(entry.name)));
+    const rows: typeof inputs.assigned = [];
+    const removed: Array<{ identity: string; name: string; surface: string; matched: string }> = [];
+    for (const item of inputs.assigned) {
+      if (item.source !== "todoist") {
+        rows.push(item);
+        continue;
+      }
+      const idMatch = item.todoistId != null && wantedIds.has(item.todoistId);
+      const nameMatch = wantedNames.has(normalizeTodoistExclusionName(item.name));
+      if (!idMatch && !nameMatch) {
+        rows.push(item);
+        continue;
+      }
+      removed.push({
+        identity: item.identity ?? item.todoistId ?? item.id,
+        name: item.name,
+        surface: "assigned",
+        matched: idMatch ? `id:${item.todoistId}` : `name:${item.name}`,
+      });
+    }
+    return {
+      ...inputs,
+      assigned: rows,
+      todoistExclusionPolicy: {
+        revision: this.tagExclusionSettings.revision,
+        persisted: this.tagExclusionSettings.persisted,
+        mode: "todoist",
+        evaluatedCounts: { assigned: inputs.assigned.length, pool: 0 },
+        excludedCounts: { assigned: removed.length, pool: 0, total: removed.length },
+        decisions: removed.map((row) => ({ ...row, reason: "excluded_todoist" })),
+        warnings: [],
+      },
+    };
   }
 
   /** Mirror of the server's selection promotion: a selected canonical
@@ -985,6 +1034,7 @@ export class FixtureAdapter implements Adapter {
       revision: this.tagExclusionSettings.revision + 1,
       persisted: true,
       tags: draft.tags.map((tag) => ({ ...tag })),
+      todoist: draft.todoist.map((entry) => ({ ...entry })),
       catalog: structuredClone(this.tagExclusionSettings.catalog),
     };
     return structuredClone(this.tagExclusionSettings);

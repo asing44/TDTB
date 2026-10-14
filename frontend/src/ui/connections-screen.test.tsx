@@ -58,6 +58,7 @@ function tagSettings(overrides: Partial<TagExclusionSettings> = {}): TagExclusio
     revision: 0,
     persisted: true,
     tags: [{ source: "capacities", spaceId: "space-1", tagId: TAG_LIVE }],
+    todoist: [],
     catalog: {
       status: "complete",
       spaceId: "space-1",
@@ -185,6 +186,7 @@ describe("Connections screen (U13)", () => {
     expect(h.controller.saveTagExclusionSettings).toHaveBeenCalledWith({
       expectedRevision: 0,
       tags: [],
+      todoist: [],
     });
     await waitFor(() => expect(rendered.getByText(/No unsaved changes/)).toBeTruthy());
   });

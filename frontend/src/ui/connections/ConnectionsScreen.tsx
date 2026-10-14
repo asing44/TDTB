@@ -57,7 +57,24 @@ function draftOf(settings: CapacitiesSettings): CapacitiesSettingsDraft {
 }
 
 function tagDraftOf(settings: TagExclusionSettings): TagExclusionSettingsDraft {
-  return { expectedRevision: settings.revision, tags: [...settings.tags] };
+  // The save route is a full replacement of both dimensions: the draft always
+  // carries the Todoist list so a tag edit never wipes hidden tasks.
+  return {
+    expectedRevision: settings.revision,
+    tags: [...settings.tags],
+    todoist: [...settings.todoist],
+  };
+}
+
+/** Short, human label for a hidden task's added_at timestamp (e.g. "Mar 4, 2026"). */
+function shortAddedDate(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  }).format(date);
 }
 
 function tagKey(identity: TagExclusionIdentity): string {
@@ -161,6 +178,9 @@ export function ConnectionsScreen() {
     const list = capacitiesChanges(capDraft, capBase);
     if (tagDraft && tagBase && !sameJson(tagDraft.tags, tagBase.tags)) {
       list.push({ key: "tags", label: "tag list" });
+    }
+    if (tagDraft && tagBase && !sameJson(tagDraft.todoist, tagBase.todoist)) {
+      list.push({ key: "hidden", label: "hidden tasks" });
     }
     return list;
   }, [capDraft, capBase, tagDraft, tagBase]);
@@ -322,6 +342,15 @@ export function ConnectionsScreen() {
         : [...current.tags, { ...identity }].sort((a, b) => (tagKey(a) < tagKey(b) ? -1 : 1));
       return { ...current, tags };
     });
+
+  /** Show again: drop the hidden task from the DRAFT only. The footer Save
+      commits the full replacement; Discard restores from the loaded base. */
+  const showTodoistAgain = (id: string) =>
+    setTagDraft((current) =>
+      current
+        ? { ...current, todoist: current.todoist.filter((entry) => entry.id !== id) }
+        : current,
+    );
 
   const discover = async () => {
     try {
@@ -777,6 +806,44 @@ export function ConnectionsScreen() {
     );
   };
 
+  const renderHiddenTasksDetail = () => {
+    if (!tagDraft) return null;
+    return (
+      <section class="connections-card connections-card--hidden" aria-label="Hidden tasks">
+        <header class="connections-card__head">
+          <h3 class="connections-card__title">Hidden tasks</h3>
+          <span class="connections-card__note">Hidden from planning every day</span>
+        </header>
+        {tagDraft.todoist.length === 0 ? (
+          <p class="connections-hidden__empty">
+            Nothing hidden. Use ⋯ &gt; Always exclude on a task to hide it every day.
+          </p>
+        ) : (
+          <ul class="connections-hidden__list">
+            {tagDraft.todoist.map((entry) => (
+              <li class="connections-hidden__row" key={entry.id}>
+                <div class="connections-hidden__identity">
+                  <strong class="connections-hidden__name">{entry.name}</strong>
+                  <span class="connections-hidden__date">{shortAddedDate(entry.addedAt)}</span>
+                </div>
+                <button
+                  class="btn connections-hidden__show"
+                  aria-label={`Show again ${entry.name}`}
+                  onClick={() => showTodoistAgain(entry.id)}
+                >
+                  Show again
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+        <p class="connections-hidden__note">
+          Capacities objects are managed under Known objects in Advanced.
+        </p>
+      </section>
+    );
+  };
+
   const renderAdvancedDetail = () => (
     <div class="connections-advanced__body">
       <CapacitiesSourceEditor structureTitleOf={titleOf} />
@@ -810,6 +877,7 @@ export function ConnectionsScreen() {
     </div>
   );
 
+  const hiddenCount = tagDraft?.todoist.length ?? 0;
   const navItem = (id: string, label: string, dot?: string) => (
     <button
       key={id}
@@ -833,6 +901,7 @@ export function ConnectionsScreen() {
       return renderSourceDetail(activeNav.slice("source:".length));
     }
     if (activeNav === "rule:tags") return renderTagsDetail();
+    if (activeNav === "rule:hidden") return renderHiddenTasksDetail();
     return renderAdvancedDetail();
   };
 
@@ -880,6 +949,10 @@ export function ConnectionsScreen() {
             <div class="connections__group">
               <span class="connections__group-label">Rules</span>
               {navItem("rule:tags", "Exclude tags")}
+              {navItem(
+                "rule:hidden",
+                hiddenCount > 0 ? `Hidden tasks (${hiddenCount})` : "Hidden tasks",
+              )}
               {navItem("rule:advanced", "Advanced")}
             </div>
           </nav>

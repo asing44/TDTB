@@ -1870,6 +1870,7 @@ describe("tag exclusion settings", () => {
       revision: 2,
       persisted: true,
       tags: [{ source: "capacities", spaceId: "space-1", tagId: TAG_A }],
+      todoist: [],
       catalog: {
         status: "complete",
         spaceId: "space-1",
@@ -1938,6 +1939,45 @@ describe("tag exclusion settings", () => {
     expect(bare.catalog).toEqual(emptyTagCatalog());
   });
 
+  it("projects the Todoist dimension and tolerates a legacy tags-only payload", () => {
+    const legacy = projectTagExclusionSettings({
+      persisted: true,
+      settings: { version: 1, revision: 3, exclusions: { tags: [] } },
+    });
+    expect(legacy.todoist).toEqual([]);
+
+    const projected = projectTagExclusionSettings({
+      persisted: true,
+      settings: {
+        version: 1,
+        revision: 4,
+        exclusions: {
+          tags: [],
+          todoist: [
+            { id: "td-2", name: "Water plants", added_at: "2026-03-04T10:00:00.000Z" },
+            { id: "td-1", name: "Call bank", added_at: "2026-03-01T09:00:00.000Z" },
+          ],
+        },
+      },
+    });
+    // Sorted by id, matching the backend's stable ordering.
+    expect(projected.todoist).toEqual([
+      { id: "td-1", name: "Call bank", addedAt: "2026-03-01T09:00:00.000Z" },
+      { id: "td-2", name: "Water plants", addedAt: "2026-03-04T10:00:00.000Z" },
+    ]);
+
+    expect(() =>
+      projectTagExclusionSettings({
+        persisted: true,
+        settings: {
+          version: 1,
+          revision: 4,
+          exclusions: { tags: [], todoist: [{ id: "td-1", name: "A", added_at: "soon" }] },
+        },
+      }),
+    ).toThrow(/added_at/);
+  });
+
   it("rejects a malformed catalog instead of rendering it", () => {
     expect(() =>
       projectTagExclusionSettings(
@@ -1959,6 +1999,7 @@ describe("tag exclusion settings", () => {
           { source: "capacities", spaceId: "space-1", tagId: TAG_B },
           { source: "capacities", spaceId: "space-1", tagId: TAG_A },
         ],
+        todoist: [{ id: "td-1", name: "Water plants", addedAt: "2026-03-04T10:00:00.000Z" }],
       }),
     ).toEqual({
       expected_revision: 2,
@@ -1967,15 +2008,19 @@ describe("tag exclusion settings", () => {
           { source: "capacities", space_id: "space-1", tag_id: TAG_B },
           { source: "capacities", space_id: "space-1", tag_id: TAG_A },
         ],
+        todoist: [
+          { id: "td-1", name: "Water plants", added_at: "2026-03-04T10:00:00.000Z" },
+        ],
       },
     });
-    expect(() => tagExclusionSettingsToWire({ expectedRevision: -1, tags: [] })).toThrow(
+    expect(() => tagExclusionSettingsToWire({ expectedRevision: -1, tags: [], todoist: [] })).toThrow(
       /expectedRevision/,
     );
     expect(() =>
       tagExclusionSettingsToWire({
         expectedRevision: 0,
         tags: [{ source: "capacities", spaceId: "space-1", tagId: "nope" }],
+        todoist: [],
       }),
     ).toThrow(/UUID/);
     expect(() =>
@@ -1985,6 +2030,7 @@ describe("tag exclusion settings", () => {
           { source: "capacities", spaceId: "space-1", tagId: TAG_A },
           { source: "capacities", spaceId: "space-1", tagId: TAG_A },
         ],
+        todoist: [],
       }),
     ).toThrow(/duplicate/);
   });

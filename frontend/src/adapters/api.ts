@@ -176,6 +176,42 @@ export function capacitiesSelectionsConflictOf(
   return { expectedRevision: expected, currentRevision: current };
 }
 
+/** Extract both revisions from a real 409 Capacities settings conflict.
+    Returns null for anything else (another status, another 409 code, or a
+    body without both revisions) so callers narrow to a typed value. */
+export function capacitiesSettingsConflictOf(
+  error: unknown,
+): { expectedRevision: number; currentRevision: number } | null {
+  if (!(error instanceof ApiError) || error.status !== 409) return null;
+  const detail = error.detail;
+  if (!detail || typeof detail !== "object" || Array.isArray(detail)) return null;
+  const record = detail as Wire;
+  if (record.code !== "capacities_settings_conflict") return null;
+  const expected = record.expected_revision;
+  const current = record.current_revision;
+  if (!Number.isSafeInteger(expected) || expected < 0) return null;
+  if (!Number.isSafeInteger(current) || current < 0) return null;
+  return { expectedRevision: expected, currentRevision: current };
+}
+
+/** Extract both revisions from a real 409 exclusion-settings conflict.
+    Returns null for anything else (another status, another 409 code, or a
+    body without both revisions) so callers narrow to a typed value. */
+export function exclusionSettingsConflictOf(
+  error: unknown,
+): { expectedRevision: number; currentRevision: number } | null {
+  if (!(error instanceof ApiError) || error.status !== 409) return null;
+  const detail = error.detail;
+  if (!detail || typeof detail !== "object" || Array.isArray(detail)) return null;
+  const record = detail as Wire;
+  if (record.code !== "exclusion_settings_conflict") return null;
+  const expected = record.expected_revision;
+  const current = record.current_revision;
+  if (!Number.isSafeInteger(expected) || expected < 0) return null;
+  if (!Number.isSafeInteger(current) || current < 0) return null;
+  return { expectedRevision: expected, currentRevision: current };
+}
+
 export class ApiAdapter implements Adapter {
   private token: string | null = null;
   /** Server-verbatim /plan-inputs payload — POST-body source of truth. */

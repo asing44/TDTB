@@ -118,4 +118,29 @@ describe("FixtureAdapter", () => {
     expect((inputs as unknown as Record<string, unknown>)["suggested"]).toBeUndefined();
     expect((inputs as unknown as Record<string, unknown>)["pool"]).toBeUndefined();
   });
+
+  it("removes Todoist tasks matched by id or normalized name", async () => {
+    const a = new FixtureAdapter("ready");
+    const before = await a.loadPlanInputs();
+    expect(before.assigned.some((row) => row.todoistId === "6fx00xMIRROR")).toBe(true);
+    expect(before.assigned.some((row) => row.name === "Press")).toBe(true);
+
+    await a.saveTagExclusionSettings({
+      expectedRevision: 0,
+      tags: [],
+      todoist: [
+        { id: "6fx00xMIRROR", name: "Magic Mirror", addedAt: "2026-03-04T10:00:00.000Z" },
+        { id: "reissued-id", name: "  press ", addedAt: "2026-03-04T10:00:00.000Z" },
+      ],
+    });
+    const after = await a.loadPlanInputs();
+
+    expect(after.assigned.some((row) => row.name === "Magic Mirror")).toBe(false);
+    expect(after.assigned.some((row) => row.name === "Press")).toBe(false);
+    expect(after.assigned.length).toBe(before.assigned.length - 2);
+    expect(after.todoistExclusionPolicy?.revision).toBe(1);
+    expect(
+      after.todoistExclusionPolicy?.decisions.map((decision) => decision.name).sort(),
+    ).toEqual(["Magic Mirror", "Press"]);
+  });
 });

@@ -9377,6 +9377,68 @@ body {
   width: 160px;
 }
 
+.connections-hidden__empty {
+  margin: 0;
+  color: #6b6862;
+  font-size: 13px;
+}
+
+.connections-hidden__list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.connections-hidden__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid #dedbd3;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.connections-hidden__identity {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.connections-hidden__name {
+  overflow: hidden;
+  color: #1d1c1a;
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.connections-hidden__date {
+  color: #6b6862;
+  font-size: 12px;
+}
+
+.connections-hidden__show {
+  flex: none;
+  padding: 6px 12px;
+  border: 1px solid #dedbd3;
+  border-radius: 6px;
+  background: #fff;
+  color: #1d1c1a;
+  font-size: 12px;
+}
+
+.connections-hidden__note {
+  margin: 0;
+  color: #6b6862;
+  font-size: 12px;
+}
+
 /* Planning 2a: plan tasks */
 /* Screen 2 ("Plan tasks", flavor 2a "Merged"). Appended at the very end of
    app.css so this layer wins the cascade over the earlier U11/U12 blocks and
@@ -9979,3 +10041,17 @@ body {
   color: var(--t-text);
 }
 
+/* More-menu live status line (Planning 2a always-exclude): the menu's own
+   outcome/error readout, so a failed save is legible beside the row it left
+   untouched. Separated by a hairline so it reads as the menu's footer, never
+   as another action. */
+.row-more__status {
+  margin: 4px 2px 2px;
+  padding: 6px 10px 0;
+  border-top: 0.5px solid var(--t-border);
+  font-size: 11px;
+  line-height: 1.35;
+  color: var(--t-muted);
+  white-space: normal;
+  overflow-wrap: anywhere;
+}

@@ -30,6 +30,7 @@ function settingsFixture(
     revision: 0,
     persisted: false,
     tags: [],
+    todoist: [],
     catalog: {
       status: "complete",
       spaceId: "space-1",
@@ -123,7 +124,7 @@ describe("TagExclusionSettingsDrawer", () => {
       .mockResolvedValue({ settings: load, refreshError: null });
     fireEvent.click(rendered.getByRole("button", { name: "Save tag exclusions" }));
     await waitFor(() => expect(save).toHaveBeenCalledTimes(1));
-    expect(save.mock.calls[0][0]).toEqual({ expectedRevision: 4, tags: [] });
+    expect(save.mock.calls[0][0]).toEqual({ expectedRevision: 4, tags: [], todoist: [] });
   });
 
   it("labels an absent saved id as gone only when the inventory is complete", async () => {
@@ -169,6 +170,7 @@ describe("TagExclusionSettingsDrawer", () => {
     expect(save.mock.calls[0][0]).toEqual({
       expectedRevision: 2,
       tags: [identity(TAG_B), identity(TAG_A)],
+      todoist: [],
     });
     await waitFor(() => expect(rendered.getByText("Saved revision 3")).toBeTruthy());
     expect(rendered.getByText("Saved.")).toBeTruthy();

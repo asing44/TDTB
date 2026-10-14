@@ -29,7 +29,13 @@ function identityKey(identity: TagExclusionIdentity): string {
 }
 
 function draftOf(settings: TagExclusionSettings): TagExclusionSettingsDraft {
-  return { expectedRevision: settings.revision, tags: [...settings.tags] };
+  // Full replacement on save: the draft always carries BOTH dimensions, so a
+  // tag edit can never wipe the hidden-task list (and vice versa).
+  return {
+    expectedRevision: settings.revision,
+    tags: [...settings.tags],
+    todoist: [...settings.todoist],
+  };
 }
 
 function statusText(catalog: TagCatalog): string {

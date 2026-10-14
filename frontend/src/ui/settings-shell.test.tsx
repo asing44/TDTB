@@ -58,6 +58,7 @@ function tagFixture(
     revision: 0,
     persisted: false,
     tags: [],
+    todoist: [],
     catalog: { status: "complete", spaceId: "space-1", tags: [], warnings: [] },
     ...overrides,
   };
