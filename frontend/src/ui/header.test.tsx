@@ -4,11 +4,81 @@
    Refresh/Retry action, and the Connections link. */
 
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { act, cleanup, fireEvent } from "@testing-library/preact";
+import { act, cleanup, fireEvent, waitFor } from "@testing-library/preact";
 import { makeHarness } from "./test-harness";
 import { Header } from "./Header";
+import { ApiError } from "../adapters/api";
 import { fingerprintFixedInputs } from "../model/fingerprint";
 import { fixedInputsOf } from "../fixtures/scenarios";
+import type { CapacitiesRefreshStatus } from "../model/types";
+
+/** A complete job status for the header refresh flow (fixtures only). */
+function refreshStatus(
+  over: Partial<CapacitiesRefreshStatus> & Pick<CapacitiesRefreshStatus, "phase" | "outcome">,
+): CapacitiesRefreshStatus {
+  const base: CapacitiesRefreshStatus = {
+    configured: true,
+    phase: over.phase,
+    outcome: over.outcome,
+    mode: "refresh",
+    scope: "all",
+    job: null,
+    progress: { listed: 0, read: 0, types: {} },
+    warnings: [],
+    coverage: {},
+    snapshot: {
+      present: true,
+      generation: 1,
+      revision: null,
+      installedAt: null,
+      memberCount: 1,
+      typeCheckTimes: {},
+    },
+  };
+  return { ...base, ...over };
+}
+
+function runningStatus(): CapacitiesRefreshStatus {
+  const status = refreshStatus({ phase: "listing", outcome: null });
+  return {
+    ...status,
+    job: {
+      jobId: "job-header",
+      mode: "refresh",
+      scope: "all",
+      phase: "listing",
+      outcome: null,
+      revision: 0,
+      generation: 0,
+      startedAt: 1,
+      updatedAt: 1,
+      finishedAt: null,
+      progress: { listed: 0, read: 0, types: {} },
+      warnings: [],
+    },
+  };
+}
+
+function completeStatus(): CapacitiesRefreshStatus {
+  const status = refreshStatus({ phase: "complete", outcome: "published" });
+  return {
+    ...status,
+    job: {
+      jobId: "job-header",
+      mode: "refresh",
+      scope: "all",
+      phase: "complete",
+      outcome: "published",
+      revision: 0,
+      generation: 1,
+      startedAt: 1,
+      updatedAt: 2,
+      finishedAt: 2,
+      progress: { listed: 1, read: 1, types: {} },
+      warnings: [],
+    },
+  };
+}
 
 afterEach(() => {
   cleanup();
@@ -115,7 +185,7 @@ describe("U7 stepper header", () => {
     expect(spy).toHaveBeenCalledTimes(1);
   });
 
-  it("offers an enabled Refresh wired to the refresh lifecycle when sources are healthy", () => {
+  it("starts the Capacities refresh job when healthy, then reloads the snapshot on completion", async () => {
     const h = makeHarness("ready");
     const r = h.ui(<Header />);
     expect(r.getByText(/Sources healthy/)).toBeTruthy();
@@ -123,9 +193,44 @@ describe("U7 stepper header", () => {
     const refresh = r.getByRole("button", { name: "Refresh sources" });
     expect(refresh.textContent).toBe("Refresh");
     expect((refresh as HTMLButtonElement).disabled).toBe(false);
-    const spy = vi.spyOn(h.controller, "refreshSources").mockResolvedValue();
+
+    const start = vi.spyOn(h.controller, "startCapacitiesRefresh").mockResolvedValue(runningStatus());
+    const status = vi
+      .spyOn(h.controller, "loadCapacitiesRefreshStatus")
+      .mockResolvedValue(runningStatus());
+    const reload = vi.spyOn(h.controller, "refreshSources").mockResolvedValue();
+
     fireEvent.click(refresh);
-    expect(spy).toHaveBeenCalledTimes(1);
+    expect(start).toHaveBeenCalledWith("refresh", "all");
+    // The first status read is the first poll (1200ms) after the POST.
+    await waitFor(() => expect(status).toHaveBeenCalled(), { timeout: 5000 });
+    expect(reload).not.toHaveBeenCalled();
+
+    // The job reaches a terminal phase: the snapshot read is requested once.
+    status.mockResolvedValue(completeStatus());
+    await waitFor(() => expect(reload).toHaveBeenCalledTimes(1), { timeout: 5000 });
+  });
+
+  it("treats a 409 as already running and still reloads on the next terminal phase", async () => {
+    const h = makeHarness("ready");
+    const r = h.ui(<Header />);
+    const refresh = r.getByRole("button", { name: "Refresh sources" });
+
+    vi.spyOn(h.controller, "startCapacitiesRefresh").mockRejectedValue(
+      new ApiError(409, { code: "capacities_refresh_busy" }, "A Capacities refresh job is already running."),
+    );
+    const status = vi
+      .spyOn(h.controller, "loadCapacitiesRefreshStatus")
+      .mockResolvedValue(runningStatus());
+    const reload = vi.spyOn(h.controller, "refreshSources").mockResolvedValue();
+
+    fireEvent.click(refresh);
+    // No new error surface: the pill reports the in-flight refresh instead.
+    expect(r.queryByRole("alert")).toBeNull();
+    await waitFor(() => expect(status).toHaveBeenCalled());
+
+    status.mockResolvedValue(completeStatus());
+    await waitFor(() => expect(reload).toHaveBeenCalledTimes(1), { timeout: 5000 });
   });
 
   it("keeps the Refresh action out of the row while a refresh is in flight", () => {
@@ -137,6 +242,17 @@ describe("U7 stepper header", () => {
     expect(r.getByText(/Sources refreshing/)).toBeTruthy();
     expect(r.queryByRole("button", { name: "Refresh sources" })).toBeNull();
     expect(r.queryByRole("button", { name: "Retry source refresh" })).toBeNull();
+  });
+
+  it("shows the refreshing pill while the Capacities job runs", async () => {
+    const h = makeHarness("ready");
+    const r = h.ui(<Header />);
+    vi.spyOn(h.controller, "startCapacitiesRefresh").mockResolvedValue(runningStatus());
+    vi.spyOn(h.controller, "loadCapacitiesRefreshStatus").mockResolvedValue(runningStatus());
+    vi.spyOn(h.controller, "refreshSources").mockResolvedValue();
+    fireEvent.click(r.getByRole("button", { name: "Refresh sources" }));
+    await waitFor(() => expect(r.getByText(/Sources refreshing/)).toBeTruthy());
+    expect(r.queryByRole("button", { name: "Refresh sources" })).toBeNull();
   });
 
   it("appends the refresh age and a discovery tooltip to the pill", () => {

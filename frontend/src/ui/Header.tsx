@@ -15,6 +15,7 @@ import { useApp, useAppState } from "./context";
 import { display12h } from "../model/time";
 import { formatRelativeShort } from "../model/relative";
 import { countAdvisorySkipped } from "../adapters/wire";
+import { useCapacitiesRefreshJob } from "./useCapacitiesRefreshJob";
 
 const DAY = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -45,6 +46,13 @@ const stepId = (step: StepId) => `step-tab-${step}`;
 export function Header() {
   const s = useAppState();
   const { controller, store } = useApp();
+  // The healthy-state Refresh is a real Capacities refresh job: the pill
+  // reports the job (and the snapshot reload that follows it) as refreshing
+  // instead of briefly flashing through the in-flight read. Called before the
+  // `s.inputs` guard so the hook order stays stable across renders.
+  const job = useCapacitiesRefreshJob(s.inputs !== null, () => {
+    void controller.refreshSources();
+  });
   if (!s.inputs) return null;
 
   const screen = s.ui.screen;
@@ -99,7 +107,11 @@ export function Header() {
   };
 
   const health = s.inputs.sourceHealth;
-  const refreshing = s.refresh.phase === "loading";
+  const refreshing = s.refresh.phase === "loading" || job.running;
+  // A click is in flight from the POST until the job's first status read: the
+  // action stays disabled across that handoff so a double click cannot race a
+  // second start (which the server would answer with a single-flight 409).
+  const refreshBusy = refreshing || job.busy === "starting";
   const pillState = refreshing ? "refreshing" : health === "ok" ? "healthy" : "degraded";
   const pillBase = refreshing
     ? "Sources refreshing…"
@@ -191,11 +203,15 @@ export function Header() {
         {pillState !== "refreshing" && (
           // One shared class for the pill action (healthy Refresh / degraded
           // Retry): the <=1100px compaction styles it by class and must keep
-          // seeing it regardless of label.
+          // seeing it regardless of label. Healthy Refresh starts the real
+          // Capacities refresh job; degraded Retry keeps the existing
+          // snapshot-only retry path.
           <button
             class="btn health-pill__retry"
-            onClick={() => void controller.refreshSources()}
-            disabled={refreshing}
+            onClick={() =>
+              void (pillState === "healthy" ? job.start("refresh") : controller.refreshSources())
+            }
+            disabled={refreshBusy}
             aria-label={pillState === "healthy" ? "Refresh sources" : "Retry source refresh"}
           >
             {pillState === "healthy" ? "Refresh" : "Retry"}

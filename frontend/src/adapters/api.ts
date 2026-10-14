@@ -102,6 +102,21 @@ export class ApiError extends Error {
   }
 }
 
+/** The single-flight 409 from POST /capacities/refresh/start. Returns the
+    server's message when the error is that conflict, null for anything else
+    (another status, another 409 body), so callers can treat "a job is already
+    running" as state rather than as a failure. */
+export function capacitiesRefreshBusyOf(error: unknown): string | null {
+  if (!(error instanceof ApiError) || error.status !== 409) return null;
+  const detail = error.detail;
+  if (detail && typeof detail === "object" && !Array.isArray(detail)) {
+    const record = detail as Wire;
+    if (record.code !== undefined && record.code !== "capacities_refresh_busy") return null;
+    if (typeof record.message === "string") return record.message;
+  }
+  return "A Capacities refresh job is already running.";
+}
+
 function detailMessage(status: number, detail: unknown): string {
   if (typeof detail === "string") return detail;
   if (detail && typeof detail === "object" && "message" in (detail as Wire)) {
