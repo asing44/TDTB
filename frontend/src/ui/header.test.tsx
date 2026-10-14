@@ -239,7 +239,7 @@ describe("U7 stepper header", () => {
     const h = makeHarness("ready");
     const r = h.ui(<Header />);
     act(() => h.store.dispatch({ type: "SOURCE_REFRESH_START" }));
-    expect(r.getByText(/Sources refreshing/)).toBeTruthy();
+    expect(r.getByText(/Refreshing sources/)).toBeTruthy();
     expect(r.queryByRole("button", { name: "Refresh sources" })).toBeNull();
     expect(r.queryByRole("button", { name: "Retry source refresh" })).toBeNull();
   });
@@ -251,8 +251,39 @@ describe("U7 stepper header", () => {
     vi.spyOn(h.controller, "loadCapacitiesRefreshStatus").mockResolvedValue(runningStatus());
     vi.spyOn(h.controller, "refreshSources").mockResolvedValue();
     fireEvent.click(r.getByRole("button", { name: "Refresh sources" }));
-    await waitFor(() => expect(r.getByText(/Sources refreshing/)).toBeTruthy());
+    await waitFor(() => expect(r.getByText(/Refreshing sources/)).toBeTruthy());
     expect(r.queryByRole("button", { name: "Refresh sources" })).toBeNull();
+  });
+
+  it("reflects a panel-started refresh job and reloads the snapshot once on completion", async () => {
+    // The Connections panel starts the shared job through the same
+    // controller entry the header uses. The header never started this run,
+    // yet the pill must show it and the terminal phase must reload once.
+    const h = makeHarness("ready");
+    const r = h.ui(<Header />);
+    expect(r.getByText(/Sources healthy/)).toBeTruthy();
+    const reload = vi.spyOn(h.controller, "refreshSources").mockResolvedValue();
+
+    await act(async () => {
+      await h.controller.startCapacitiesRefresh("refresh", "all");
+    });
+    await waitFor(() => expect(r.getByText("Refreshing sources…")).toBeTruthy(), { timeout: 5000 });
+    expect(r.queryByRole("button", { name: "Refresh sources" })).toBeNull();
+    expect(reload).not.toHaveBeenCalled();
+
+    h.adapter.completeCapacitiesRefresh();
+    await waitFor(() => expect(reload).toHaveBeenCalledTimes(1), { timeout: 5000 });
+    expect(reload).toHaveBeenCalledTimes(1);
+  });
+
+  it("labels a panel-started rescan as rescanning sources", async () => {
+    const h = makeHarness("ready");
+    const r = h.ui(<Header />);
+    await act(async () => {
+      await h.controller.startCapacitiesRefresh("rescan", "all");
+    });
+    await waitFor(() => expect(r.getByText("Rescanning sources…")).toBeTruthy(), { timeout: 5000 });
+    expect(r.queryByText(/Refreshing sources/)).toBeNull();
   });
 
   it("appends the refresh age and a discovery tooltip to the pill", () => {

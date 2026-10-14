@@ -113,8 +113,10 @@ export function Header() {
   // second start (which the server would answer with a single-flight 409).
   const refreshBusy = refreshing || job.busy === "starting";
   const pillState = refreshing ? "refreshing" : health === "ok" ? "healthy" : "degraded";
+  const refreshingLabel =
+    job.running && job.status?.mode === "rescan" ? "Rescanning sources…" : "Refreshing sources…";
   const pillBase = refreshing
-    ? "Sources refreshing…"
+    ? refreshingLabel
     : health === "ok"
       ? "Sources healthy"
       : "Sources degraded · commit blocked";

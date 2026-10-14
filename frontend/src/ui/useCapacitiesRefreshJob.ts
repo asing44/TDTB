@@ -1,11 +1,13 @@
 /* useCapacitiesRefreshJob — the Capacities refresh-job lifecycle backing the
-   cockpit header's healthy-state Refresh action. The Connections panel keeps
-   its own inline copy of this lifecycle; this hook does not change it.
+   cockpit header's healthy-state Refresh action.
 
    Contract:
    - Refresh and Rescan are two DISTINCT explicit actions: each is one
      token-guarded POST /capacities/refresh/start with its own mode. The only
      read on mount is the tokenless status read.
+   - The hook watches ONE shared job whoever started it: the controller's
+     start signal attaches the bounded poll when the Connections panel starts
+     a run, and the mount status read covers a run already in flight.
    - Status is truthful: a running job shows its phase; a terminal job shows
      its outcome.
    - Polling runs ONLY while a job is active, and the interval is cleared on
@@ -67,12 +69,12 @@ export function useCapacitiesRefreshJob(
   // mount-time status read resolving after a start) can never overwrite the
   // newer truth and stop the poll.
   const readEpoch = useRef(0);
-  // Set only once a start attempt has produced a status to track. The
+  // Set while this hook is watching a live run, from any surface. The
   // terminal report fires once per tracked run; a terminal status merely
-  // observed on mount — or already held when the user clicks — is never
-  // reported. State, not a ref: an effect flushed for a pre-click render
-  // must not read a later click's tracking flag and report that stale
-  // status as a completion.
+  // observed on mount — or already held when the user clicks — never sets
+  // this and never fires. State, not a ref: an effect flushed for a
+  // pre-click render must not read a later click's tracking flag and report
+  // that stale status as a completion.
   const [tracking, setTracking] = useState(false);
   const onTerminalRef = useRef(onTerminal);
   onTerminalRef.current = onTerminal;
@@ -112,6 +114,24 @@ export function useCapacitiesRefreshJob(
     }, CAPACITIES_REFRESH_POLL_MS);
     return () => clearInterval(id);
   }, [active, running, controller]);
+
+  // A Refresh/Rescan started by ANY surface goes through the same controller
+  // entry, so its start signal attaches this hook's bounded poll to a run the
+  // header did not start (for example the Connections panel). The read is
+  // epoch-guarded like every other status read.
+  useEffect(() => {
+    if (!active) return;
+    return controller.subscribeCapacitiesRefreshStart(() => {
+      void load();
+    });
+  }, [active, controller]);
+
+  // Any live run this hook is watching — its own, one adopted from a 409, one
+  // the panel started, or one already running when the page loaded — is
+  // tracked so its terminal phase reloads the snapshot exactly once.
+  useEffect(() => {
+    if (active && running) setTracking(true);
+  }, [active, running]);
 
   useEffect(() => {
     if (!tracking || running || !status) return;

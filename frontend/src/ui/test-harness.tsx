@@ -18,6 +18,7 @@ import type { ComponentChildren } from "preact";
 export interface Harness {
   store: Store;
   controller: Controller;
+  adapter: FixtureAdapter;
   scenario: Scenario;
   ui: (children: ComponentChildren) => ReturnType<typeof render>;
 }
@@ -59,8 +60,9 @@ export function makeHarness(
   if (sc.staged.committed) {
     store.dispatch({ type: "COMMIT_DONE", report: structuredClone(sc.commitReport) });
   }
-  const controller = new Controller(new FixtureAdapter(name), store.dispatch, store.getState);
+  const adapter = new FixtureAdapter(name);
+  const controller = new Controller(adapter, store.dispatch, store.getState);
   const ui = (children: ComponentChildren) =>
     render(<Ctx.Provider value={{ store, controller }}>{children}</Ctx.Provider>);
-  return { store, controller, scenario: sc, ui };
+  return { store, controller, adapter, scenario: sc, ui };
 }

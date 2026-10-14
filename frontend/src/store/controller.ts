@@ -192,6 +192,11 @@ export class Controller {
   private revalidateToken = 0;
   private capacityToken = 0;
   private overrideTimer: ReturnType<typeof setTimeout> | null = null;
+  // Capacities refresh-job start signals: any surface that starts the shared
+  // job through this controller (the Connections panel and the header both
+  // do) announces it here, so the header's job hook can attach its bounded
+  // status poll to a run it did not start.
+  private capacitiesRefreshStartSignals = new Set<() => void>();
 
   constructor(
     private adapter: Adapter,
@@ -332,12 +337,33 @@ export class Controller {
     return this.adapter.capacitiesRefreshStatus();
   }
 
-  /** Start one paced Refresh/Rescan job (explicit user action). */
+  /** Start one paced Refresh/Rescan job (explicit user action). Announces
+      the start to subscribers after the adapter accepts it, whatever surface
+      called it, so every observer can track the SAME shared job. */
   async startCapacitiesRefresh(
     mode: CapacitiesRefreshMode,
     scope: string,
   ): Promise<CapacitiesRefreshStatus> {
-    return this.adapter.startCapacitiesRefresh(mode, scope);
+    const status = await this.adapter.startCapacitiesRefresh(mode, scope);
+    for (const listener of [...this.capacitiesRefreshStartSignals]) {
+      try {
+        listener();
+      } catch {
+        // A listener must never make a successful start look failed.
+      }
+    }
+    return status;
+  }
+
+  /** Subscribe to Capacities refresh-job starts from ANY surface. Returns an
+      unsubscribe function; listeners run synchronously after a successful
+      start. A rejected start (for example a single-flight 409) signals
+      nothing — callers handle that themselves. */
+  subscribeCapacitiesRefreshStart(listener: () => void): () => void {
+    this.capacitiesRefreshStartSignals.add(listener);
+    return () => {
+      this.capacitiesRefreshStartSignals.delete(listener);
+    };
   }
 
   /** Cancel the running refresh job; returns the current truthful status. */
