@@ -32,6 +32,7 @@ import {
 } from "../model/mint";
 import type { AnchoredOverride, Buffering, DaySetup } from "../model/types";
 import {
+  anchorFrameStart,
   anchoredBlocks,
   anchoredOverrideOf,
   validateAnchoredOverride,
@@ -492,15 +493,23 @@ export function DaySetupPanel({
       eod: draft.eod,
     });
     const frameStartMin = toMinutes(frameStart);
-    const frameEndMin = toMinutes(frameEnd);
     const stripAnchors = editableAnchors.map((a) => {
       const o = overrideOf(a.id);
       const on = o.on && !o.skipToday;
-      const time = o.time ?? a.start ?? frameStart;
-      const startMin = toMinutes(time);
-      const outside = startMin < frameStartMin || startMin > frameEndMin;
-      const counted = on && !outside;
       const source = sourceAnchor(a.id);
+      const blocks = anchoredBlocks(source, o);
+      const placement = anchorFrameStart(a.kind, {
+        start: o.time ?? a.start,
+        end: source.end,
+        blocks,
+        frameStart,
+        frameEnd,
+      });
+      const time = placement.start ?? frameStart;
+      // Only a start after the frame end is "outside frame"; a config anchor
+      // that began before the frame stays live (clipped) or sits at the edge.
+      const outside = placement.afterFrame;
+      const counted = on && !outside;
       const configTime = source.start;
       const ui = timeUi[a.id] ?? {};
       const timeState: AnchorTimeState = {
@@ -528,7 +537,7 @@ export function DaySetupPanel({
         counting: on,
         skipped: !on,
         reason: !on ? "skipped" : outside ? "outside frame" : null,
-        blocks: anchoredBlocks(source, o),
+        blocks,
         // Calendar rows never reach editableAnchors; counted config anchors move.
         movable: counted,
         timeState,

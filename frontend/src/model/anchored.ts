@@ -42,6 +42,45 @@ export function anchoredOverrideOf(
   };
 }
 
+/** Resolve a config anchor's effective strip start against the day frame.
+
+    A config anchor whose counted span began but has not ended stays live and
+    is clipped at the frame edge by DayStrip; a fully elapsed one sits at the
+    frame edge (off unless re-included, and re-placed from the frame start when
+    it is); an open window stays live from the frame start. Only a start AFTER
+    the frame end stays "outside frame". Calendar rows never reach this. */
+export function anchorFrameStart(
+  kind: string,
+  opts: {
+    start: string | null;
+    end: string | null;
+    blocks: number;
+    frameStart: string;
+    frameEnd: string;
+  },
+): { start: string | null; afterFrame: boolean } {
+  const start = opts.start;
+  if (start == null) return { start, afterFrame: false };
+  const startMin = toMinutes(start);
+  const frameStartMin = toMinutes(opts.frameStart);
+  const frameEndMin = toMinutes(opts.frameEnd);
+  if (startMin > frameEndMin) return { start, afterFrame: true };
+  if (startMin >= frameStartMin) return { start, afterFrame: false };
+  // The block starts before the frame.
+  const windowKind = kind === "window" || kind === "template";
+  if (windowKind) {
+    // Mirrors the server rule: off only once the window has closed.
+    return { start: opts.frameStart, afterFrame: false };
+  }
+  const countedEndMin = startMin + Math.max(0, opts.blocks) * 30;
+  if (countedEndMin > frameStartMin) {
+    // Started but unfinished: stays live, clipped by the strip.
+    return { start, afterFrame: false };
+  }
+  // Fully elapsed: sits at the frame edge, re-includable.
+  return { start: opts.frameStart, afterFrame: false };
+}
+
 export interface AnchoredFindings {
   /** Structural findings: block Save/Apply. Calendar immutability and missing
       or malformed start/duration only. */

@@ -183,14 +183,84 @@ describe("U12 Set up day composition", () => {
     expect(h.store.getState().ui.editorAnchor).toBe("Sudsing");
   });
 
-  it("drops anchors outside the day frame and keeps the in-frame ones", () => {
+  it("keeps a config anchor that started before the frame at the frame edge, and the in-frame ones", () => {
     const h = screenHarness("ready", 8, { frameStart: "13:30" });
     const r = h.ui(<App />);
-    // Morning Routine 07:45 and Foods Breakfast 08:30 start before the frame.
-    expect(r.container.querySelector('[data-anchor-id="Morning Routine"]')).toBeNull();
+    // Morning Routine 07:45 with 3 counted blocks (90 min) is fully elapsed
+    // before the frame; it is no longer dropped — it sits at the frame edge.
+    const mr = r.container.querySelector('[data-anchor-id="Morning Routine"]') as HTMLElement;
+    expect(mr).toBeTruthy();
+    expect(parseFloat(mr.style.left)).toBeCloseTo(0, 2);
+    expect(mr.classList.contains("strip-anchor--not-counted")).toBe(false);
     const sudsing = r.container.querySelector('[data-anchor-id="Sudsing"]') as HTMLElement;
     expect(sudsing).toBeTruthy();
     expect(sudsing.classList.contains("strip-anchor--not-counted")).toBe(false);
+  });
+
+  it("keeps a started-but-unfinished config anchor live at the frame edge, counted and movable", () => {
+    const h = screenHarness("ready", 8, { frameStart: "15:45" });
+    const daySetup = h.store.getState().daySetup;
+    const inputs = structuredClone(h.store.getState().inputs!);
+    inputs.daySetup = daySetup;
+    // Showering 15:10 for 80 min => 3 counted blocks (90 min) ending 16:40.
+    inputs.anchored = [
+      {
+        id: "Showering",
+        name: "Showering",
+        kind: "hard",
+        start: "15:10",
+        end: "16:30",
+        durationMin: 80,
+        overlapAllowed: false,
+        on: true,
+        skipToday: false,
+      },
+    ];
+    h.store.dispatch({ type: "INPUTS_LOADED", inputs, ledger: h.store.getState().ledger! });
+    const r = h.ui(<App />);
+    const sh = r.container.querySelector('[data-anchor-id="Showering"]') as HTMLElement;
+    expect(sh).toBeTruthy();
+    // The ruler is 15:45-23:45 (480 min); the counted span runs to 16:40, so
+    // the strip clips the block to the 55 minutes left in the frame.
+    expect(parseFloat(sh.style.left)).toBeCloseTo(0, 2);
+    expect(parseFloat(sh.style.width)).toBeCloseTo((55 / 480) * 100, 1);
+    expect(sh.classList.contains("strip-anchor--not-counted")).toBe(false);
+    expect(sh.classList.contains("strip-anchor--movable")).toBe(true);
+    // No outside-frame reason or "isn't counted" hint: the switch is on.
+    fireEvent.click(sh);
+    expect(r.getByRole("switch", { name: "Count today" }).getAttribute("aria-checked")).toBe("true");
+    expect(r.queryByRole("note")).toBeNull();
+  });
+
+  it("keeps a fully elapsed config anchor off but re-includable, placed from the frame start when included", async () => {
+    const h = screenHarness("ready", 8, { frameStart: "13:30" });
+    const before = h.store.getState().daySetup;
+    h.store.dispatch({
+      type: "SETUP_SAVED",
+      daySetup: {
+        ...before,
+        anchored: {
+          ...before.anchored,
+          "Morning Routine": { on: false, skipToday: true, time: null, blocks: null },
+        },
+      },
+    });
+    const r = h.ui(<App />);
+    const mr = () =>
+      r.container.querySelector('[data-anchor-id="Morning Routine"]') as HTMLElement;
+    // Morning Routine 07:45 + 90 min ends 09:15, before the 13:30 frame; it is
+    // off but stays visible and re-includable, drawn at the frame edge.
+    expect(mr()).toBeTruthy();
+    expect(mr().classList.contains("strip-anchor--not-counted")).toBe(true);
+    expect(mr().getAttribute("aria-label")).toContain("1:30 PM");
+    fireEvent.click(mr());
+    expect(r.getByRole("switch", { name: "Count today" }).getAttribute("aria-checked")).toBe("false");
+    fireEvent.click(r.getByRole("switch", { name: "Count today" }));
+    await vi.waitFor(() =>
+      expect(mr().classList.contains("strip-anchor--not-counted")).toBe(false),
+    );
+    expect(mr().getAttribute("aria-label")).toContain("1:30 PM");
+    expect(mr().getAttribute("aria-label")).toContain("3 blocks");
   });
 
   it("selects an anchor block when it is clicked", () => {

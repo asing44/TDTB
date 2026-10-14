@@ -137,11 +137,12 @@ describe("Set up day screen anchor persistence (popover)", () => {
     expect(r.getByRole("switch", { name: "Count today" }).getAttribute("aria-checked")).toBe("true");
   });
 
-  it("(1c) an anchor outside the day frame reports the override, hints, and still toggles", async () => {
+  it("(1c) a window anchor that started before the frame is live and counted, with no outside-frame hint, and still toggles", async () => {
     // Drive the frame through the real Start field: Foods Breakfast starts
-    // 08:30, so a 09:15 start clips it before the frame. The switch must
-    // reflect the override intent (on and not skipped) rather than the
-    // frame-clipped drawing state, explain the clipping, and toggle both ways.
+    // 08:30, so a 09:15 start used to clip it as "outside the frame". It now
+    // rides the frame edge as live and counted. The switch must reflect the
+    // override intent (on and not skipped) rather than a frame-clipped drawing
+    // state, show no clipping hint, and toggle both ways.
     const h = screenHarness();
     const saveDay = vi.spyOn(FixtureAdapter.prototype, "saveDaySetup");
     const r = h.ui(<App />);
@@ -155,9 +156,11 @@ describe("Set up day screen anchor persistence (popover)", () => {
 
     const sw = r.getByRole("switch", { name: "Count today" });
     expect(sw.getAttribute("aria-checked")).toBe("true");
-    const note = r.getByRole("note");
-    expect(note.textContent).toContain("Starts before your day (9:15 AM)");
-    expect(sw.getAttribute("aria-describedby")).toBe(note.getAttribute("id"));
+    // Live from the frame edge: no outside-frame note and no describedby hint.
+    expect(r.queryByRole("note")).toBeNull();
+    expect(sw.getAttribute("aria-describedby")).toBeNull();
+    expect(block(r, "Foods Breakfast").classList.contains("strip-anchor--not-counted")).toBe(false);
+    expect(block(r, "Foods Breakfast").classList.contains("strip-anchor--movable")).toBe(true);
 
     fireEvent.click(sw);
     await vi.waitFor(() =>
@@ -188,7 +191,7 @@ describe("Set up day screen anchor persistence (popover)", () => {
       expect(r.getByRole("switch", { name: "Count today" }).getAttribute("aria-checked")).toBe("true"),
     );
     expect(block(r, "Foods Breakfast").classList.contains("strip-anchor--skipped")).toBe(false);
-    expect(block(r, "Foods Breakfast").classList.contains("strip-anchor--not-counted")).toBe(true);
+    expect(block(r, "Foods Breakfast").classList.contains("strip-anchor--not-counted")).toBe(false);
   });
 
   it("(2) editing Starts to a valid time persists a today-only override, not a config write", async () => {
