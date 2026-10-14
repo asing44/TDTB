@@ -9,7 +9,9 @@
    response; "Reset duration" clears the remembered value through ONE mutation
    and applies the returned source fallback. Pending and error states are
    exposed with aria-busy and role="alert". Plain Apply keeps its existing
-   session-only behavior (LD22 5-minute snapping included). */
+   session-only behavior (LD22 5-minute snapping included). Capacities rows own
+   their source duration and have no duration-memory key, so they never offer
+   the durable actions — only the note and the today-only Apply path. */
 
 import { useEffect, useRef, useState } from "preact/hooks";
 import { useApp, useAppState } from "./context";
@@ -70,6 +72,15 @@ export function BlockEditor() {
   }, [id]);
 
   if (!id || !item) return null;
+
+  /** Capacities rows own their source duration: the backend's item_identity
+      deliberately returns no duration-memory key for them, so a durable
+      Save/Reset would always 422 (mirrors backend item_identity: source
+      "capacities" or a capacities:// path). Hide the durable actions and say
+      why; today-only Apply and the duration controls are unchanged. */
+  const sourceOwnsDuration =
+    item.source === "capacities" ||
+    (typeof item.path === "string" && item.path.startsWith("capacities://"));
 
   // T12e (brief problem 7): the modal adapts to its caller. ✎ asked for
   // duration — never re-ask for (or touch) the start its caller didn't
@@ -240,22 +251,30 @@ export function BlockEditor() {
               Unplace
             </button>
           )}
-          <button
-            class="btn"
-            onClick={saveDuration}
-            disabled={busy}
-            aria-busy={busy}
-          >
-            Save duration
-          </button>
-          <button
-            class="btn"
-            onClick={resetDuration}
-            disabled={busy}
-            aria-busy={busy}
-          >
-            Reset duration
-          </button>
+          {sourceOwnsDuration ? (
+            <span class="editor__note">
+              Duration is owned by Capacities; Apply changes today only.
+            </span>
+          ) : (
+            <>
+              <button
+                class="btn"
+                onClick={saveDuration}
+                disabled={busy}
+                aria-busy={busy}
+              >
+                Save duration
+              </button>
+              <button
+                class="btn"
+                onClick={resetDuration}
+                disabled={busy}
+                aria-busy={busy}
+              >
+                Reset duration
+              </button>
+            </>
+          )}
           <button class="btn" onClick={close}>
             Cancel
           </button>

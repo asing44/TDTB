@@ -2759,6 +2759,14 @@
   color: var(--t-muted);
   margin-top: 8px;
 }
+.editor__note {
+  margin-right: auto;
+  align-self: center;
+  font-size: 10px;
+  color: var(--t-muted);
+  text-align: left;
+  max-width: 60%;
+}
 .editor__actions {
   display: flex;
   gap: 8px;

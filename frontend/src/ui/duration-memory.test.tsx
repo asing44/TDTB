@@ -251,6 +251,54 @@ describe("duration-memory MVP: per-item reset in the exact editor", () => {
   });
 });
 
+const CAPACITIES = "Note Processing"; // capacities row, no duration-memory key
+
+describe("duration-memory MVP: source-owned durations never offer durable actions", () => {
+  it("a Capacities row hides Save/Reset and shows the ownership note", () => {
+    const h = memoryHarness();
+    h.store.dispatch({
+      type: "UI",
+      patch: { editorItem: CAPACITIES, editorIntent: "duration" },
+    });
+    const { getByText, queryByText, queryByRole } = h.ui(<BlockEditor />);
+    expect(queryByText("Save duration")).toBeNull();
+    expect(queryByText("Reset duration")).toBeNull();
+    expect(queryByRole("button", { name: "Save duration" })).toBeNull();
+    expect(queryByRole("button", { name: "Reset duration" })).toBeNull();
+    expect(
+      getByText("Duration is owned by Capacities; Apply changes today only."),
+    ).toBeTruthy();
+  });
+
+  it("Apply still shapes a Capacities row today-only with no durable call", () => {
+    const h = memoryHarness();
+    const save = vi.spyOn(h.adapter, "saveDurationMemory");
+    const reset = vi.spyOn(h.adapter, "resetDurationMemory");
+    h.store.dispatch({
+      type: "UI",
+      patch: { editorItem: CAPACITIES, editorIntent: "duration" },
+    });
+    const { getByLabelText, getByText } = h.ui(<BlockEditor />);
+    fireEvent.input(getByLabelText("Exact minutes (5-minute steps)"), {
+      target: { value: "90" },
+    });
+    fireEvent.click(getByText("Apply"));
+    expect(h.store.getState().overrides[CAPACITIES]?.blocks).toBe(3);
+    expect(save).not.toHaveBeenCalled();
+    expect(reset).not.toHaveBeenCalled();
+    expect(h.store.getState().ui.editorItem).toBeNull();
+  });
+
+  it("a Todoist row keeps both durable actions", () => {
+    const h = memoryHarness();
+    openEditor(h);
+    const { getByRole, queryByText } = h.ui(<BlockEditor />);
+    expect(getByRole("button", { name: "Save duration" }).tagName).toBe("BUTTON");
+    expect(getByRole("button", { name: "Reset duration" }).tagName).toBe("BUTTON");
+    expect(queryByText(/Duration is owned by Capacities/)).toBeNull();
+  });
+});
+
 describe("duration-memory MVP: keyboard-operable controls", () => {
   it("save and reset are native focusable buttons with accessible labels", () => {
     const h = memoryHarness();
