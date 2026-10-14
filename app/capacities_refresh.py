@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import threading
 import time
 from collections import deque
@@ -50,6 +51,8 @@ import capacities_adapter
 import capacities_cache_io
 import capacities_refresh_state as refresh_state
 import tag_exclusions
+
+logger = logging.getLogger("tdtb.capacities_refresh")
 
 #: Endpoint identities shared with the adapter's transport observer.
 ENDPOINT_STRUCTURES = "structures"
@@ -73,6 +76,17 @@ FAILURE_WARNING = (
     "Capacities could not complete a full refresh; the previous complete "
     "result is preserved and no partial result was published."
 )
+#: Prefixes for the bounded, content-free failure diagnostics appended to the
+#: job after FAILURE_WARNING: one ``Cause:`` line (exception class name plus
+#: retry-after or a bounded exception code/kind when present) and one
+#: ``Where:`` line for the acquisition stage. The exception message is never
+#: included.
+CAUSE_PREFIX = "Cause: "
+WHERE_PREFIX = "Where: "
+#: The fixed acquisition-stage vocabulary a failure can be attributed to.
+#: Bounded and closed so neither the job document nor the server log can
+#: carry source content.
+FAILURE_STAGES = ("list", "read", "assemble", "install")
 NO_RESULT_WARNING = (
     "No complete Capacities result is available; Capacities rows are omitted "
     "until a refresh completes."
@@ -174,6 +188,48 @@ def _coerce_seconds(value: Any) -> float | None:
     if number < 0:
         return None
     return number
+
+
+def _bounded_identifier(value: Any) -> str | None:
+    """A short, content-free token from an exception's own code/kind field.
+
+    Anything that is not a plain identifier-shaped string (or is longer than
+    64 characters) is dropped rather than surfaced, so a diagnostic field
+    can never smuggle source content into a warning or a log line.
+    """
+    if not isinstance(value, str):
+        return None
+    token = value.strip()
+    if not token or len(token) > 64:
+        return None
+    if not all(char.isalnum() or char in "_.-" for char in token):
+        return None
+    return token
+
+
+def _failure_cause_line(exc: BaseException) -> str:
+    """One bounded cause line: the exception CLASS NAME, plus only the
+    structured facts the exception itself already exposes — the retry-after
+    seconds for a rate limit, or a bounded code/kind field for a contract
+    error. The exception message is deliberately never included."""
+    name = type(exc).__name__
+    detail: str | None = None
+    if isinstance(exc, capacities_adapter.CapacitiesRateLimited):
+        seconds = _coerce_seconds(getattr(exc, "retry_after", None))
+        if seconds is not None:
+            detail = f"retry after {seconds:g}s"
+    elif isinstance(exc, capacities_adapter.CapacitiesContractError):
+        detail = _bounded_identifier(
+            getattr(exc, "code", None)
+        ) or _bounded_identifier(getattr(exc, "kind", None))
+    return f"{CAUSE_PREFIX}{name} ({detail})" if detail else f"{CAUSE_PREFIX}{name}"
+
+
+def _failure_where_line(stage: Any) -> str | None:
+    """The fixed acquisition-stage line, or ``None`` for an unknown stage."""
+    if stage in FAILURE_STAGES:
+        return f"{WHERE_PREFIX}{stage}"
+    return None
 
 
 class ProviderPacer:
@@ -488,6 +544,9 @@ class RefreshCoordinator:
         self._file_lock: Any = None
         self._thread: threading.Thread | None = None
         self._job: dict[str, Any] | None = None
+        #: The bounded acquisition stage the job is currently in; used only to
+        #: attribute a catch-all failure (``Where: list|read|assemble|install``).
+        self._stage: str | None = "list"
 
     # -- paths / persistence -------------------------------------------
 
@@ -707,16 +766,46 @@ class RefreshCoordinator:
             capacities_adapter.CapacitiesContractError,
             capacities_adapter.CapacitiesRateLimited,
             refresh_state.RefreshStateError,
-        ):
-            self._finish("failed", "noCapacities", [FAILURE_WARNING])
-        except Exception:  # noqa: BLE001 — provider boundary, bounded warning
-            self._finish("failed", "noCapacities", [FAILURE_WARNING])
+        ) as exc:
+            self._finish(
+                "failed",
+                "noCapacities",
+                [FAILURE_WARNING, *self._failure_detail(exc)],
+            )
+        except Exception as exc:  # noqa: BLE001 — provider boundary, bounded warning
+            self._finish(
+                "failed",
+                "noCapacities",
+                [FAILURE_WARNING, *self._failure_detail(exc)],
+            )
         finally:
             try:
                 self.store.note_run_finished(self.scope_key)
             except refresh_state.RefreshStateError:
                 pass
             self._release_locks()
+
+    def _failure_detail(self, exc: BaseException) -> list[str]:
+        """Bounded, content-free failure detail for the job and the log.
+
+        The job gains a ``Cause:`` line (exception class name plus the
+        retry-after seconds or a bounded exception code/kind when the
+        exception itself carries one — never its message) and, when the
+        acquisition stage is known, a ``Where:`` line. The server log carries
+        the same facts at WARNING under this module's logger; neither surface
+        can leak source content.
+        """
+        cause = _failure_cause_line(exc)
+        detail = [cause]
+        where = _failure_where_line(self._stage)
+        if where is not None:
+            detail.append(where)
+        logger.warning(
+            "Capacities refresh failed: %s stage=%s",
+            cause,
+            self._stage if self._stage in FAILURE_STAGES else "unknown",
+        )
+        return detail
 
     def _finish(self, phase: str, outcome: str, warnings: list[str]) -> None:
         job = self._job or {}
@@ -765,6 +854,7 @@ class RefreshCoordinator:
 
     def _acquire(self) -> None:
         job = self._job or {}
+        self._stage = "list"
         self.adapter.ensure_contract()
         structures_payload = self.provider.structures_payload
         contributing = [m for m in self.mappings if self.adapter.can_contribute(m)]
@@ -828,6 +918,7 @@ class RefreshCoordinator:
 
         # Hydrate: read only new/uncached content (ordinary) or the whole
         # scoped type (Rescan). Successful reads persist immediately.
+        self._stage = "read"
         merged: list[dict[str, Any]] = []
         unreadable = False
         for type_key in listing_types:
@@ -854,11 +945,13 @@ class RefreshCoordinator:
                 "the previous complete result is preserved."
             )
 
+        self._stage = "assemble"
         self._set_phase("evaluating")
         if self.cancel_event.is_set():
             _raise_cancelled()
         _result = self.adapter.items_for_day_from_objects(logical_day, merged)
 
+        self._stage = "install"
         self._set_phase("publishing")
         if self.cancel_event.is_set():
             _raise_cancelled()

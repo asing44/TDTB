@@ -8,6 +8,8 @@ pacing, single-flight, cancellation, freshness, and publication behavior.
 """
 from __future__ import annotations
 
+import json
+import logging
 import sys
 import threading
 from pathlib import Path
@@ -19,6 +21,9 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 import capacities_adapter as ca  # noqa: E402
 import capacities_builder as cb  # noqa: E402
 import capacities_refresh as rr  # noqa: E402
+import capacities_settings as cs  # noqa: E402
+import exclusion_settings as es  # noqa: E402
+import tag_exclusions as tx  # noqa: E402
 
 sys.path.insert(0, str(Path(__file__).parent))
 from capacities_refresh_helpers import (  # noqa: E402
@@ -56,6 +61,8 @@ def _coordinator(
     max_retries=3,
     config_guard=None,
     configuration_revision=None,
+    assignment_settings=None,
+    exclusion_policy=None,
 ):
     clock = clock or Clock()
     sleeper = sleeper if sleeper is not None else Sleeper(clock)
@@ -71,7 +78,10 @@ def _coordinator(
             store=store,
             provider=provider,
             space_id=SPACE,
-            mappings=tuple(_mapping(t) for t in mappings),
+            mappings=tuple(
+                m if isinstance(m, ca.StructureMapping) else _mapping(m)
+                for m in mappings
+            ),
             revision_supplier=revision or Revision(),
             scope_key="all",
             max_pages=max_pages,
@@ -79,6 +89,8 @@ def _coordinator(
             sleeper=sleeper,
             max_retries=max_retries,
             config_guard=config_guard,
+            assignment_settings=assignment_settings,
+            exclusion_policy=exclusion_policy,
             **frozen,
         ),
         store,
@@ -638,3 +650,250 @@ def test_a_refused_refresh_keeps_the_previous_generations_contract(tmp_path):
     assert kept is not None
     assert kept.generation == 1
     assert kept.structures == previous.structures
+
+
+# ---------------------------------------------------------------------------
+# Persisted-settings compatibility — legacy files and Assigned On declarations
+# ---------------------------------------------------------------------------
+
+def _legacy_settings_doc(**overrides) -> dict:
+    """A version-1 save written BEFORE ``assigned_on_structures`` existed."""
+    doc = {
+        "version": 1,
+        "revision": 3,
+        "native_task_auto": {
+            "active_enabled": True,
+            "due_enabled": True,
+            "deadline_enabled": True,
+            "deadline_horizon_days": 2,
+        },
+        "excluded": {},
+        "active_structures": {},
+    }
+    doc.update(overrides)
+    return doc
+
+
+def _write_settings(doc: dict) -> None:
+    path = cs.settings_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(doc), encoding="utf-8")
+
+
+def _settings_refresh(tmp_path, provider, *, exclusion_policy=None):
+    """Run one full refresh through the settings-resolved mappings."""
+    settings = cs.read_settings().settings
+    mappings = cb._resolve_assigned_structures(
+        tuple(_mapping(t) for t in TYPES),
+        settings.assigned_structures,
+        settings.assigned_on_structures,
+    )
+    coordinator, store, _, _ = _coordinator(
+        tmp_path,
+        provider,
+        mappings=mappings,
+        assignment_settings=settings.to_assignment_settings(),
+        exclusion_policy=exclusion_policy,
+    )
+    coordinator.start()
+    return coordinator.wait(timeout=5)
+
+
+def _structures_with_assigned_on(*type_ids: str) -> list[dict]:
+    structures = _structures(*type_ids)
+    for row in structures:
+        row["propertyDefinitions"].append({"id": "assigned_on", "type": "date"})
+    return structures
+
+
+def test_legacy_settings_without_assigned_on_structures_completes(tmp_path):
+    """A pre-Assigned-On settings file is valid on read and cannot fail a run."""
+    _write_settings(_legacy_settings_doc())
+    provider = _paged_provider(objects={PRIMARY: ["a"], "T2": ["c"]})
+
+    status = _settings_refresh(tmp_path, provider)
+
+    assert status["phase"] == "complete", status
+    assert status["outcome"] == "published"
+    assert cs.read_settings().settings.assigned_on_structures == {}
+    assert cs.read_settings().settings.assigned_structures == {}
+
+
+def test_assigned_on_mapped_to_date_property_completes(tmp_path):
+    """A saved Assigned On declaration resolves and never gates the run."""
+    _write_settings(
+        _legacy_settings_doc(
+            assigned_on_structures={PRIMARY: "assigned_on"},
+        )
+    )
+    provider = _paged_provider(
+        objects={PRIMARY: ["a"], "T2": ["c"]},
+        structures=_structures_with_assigned_on(*TYPES),
+    )
+    provider._objects["a"]["properties"]["assigned_on"] = {
+        "type": "date",
+        "date": {"start": "2026-10-13"},
+    }
+
+    status = _settings_refresh(tmp_path, provider)
+
+    assert status["phase"] == "complete", status
+
+
+@pytest.mark.parametrize("property_id", ["assigned", "ghost-property"])
+def test_assigned_on_declaration_non_date_or_unknown_still_completes(
+    tmp_path, property_id
+):
+    """A mistyped Assigned On declaration is ignored with one bounded warning
+    and cannot fail the refresh (fail-open contract)."""
+    _write_settings(
+        _legacy_settings_doc(
+            assigned_on_structures={PRIMARY: property_id},
+        )
+    )
+    provider = _paged_provider(objects={PRIMARY: ["a"], "T2": ["c"]})
+
+    status = _settings_refresh(tmp_path, provider)
+
+    assert status["phase"] == "complete", status
+    ignored = [
+        warning
+        for warning in status["warnings"]
+        if "ignored Capacities Assigned On declaration" in warning
+    ]
+    assert len(ignored) == 1
+    assert property_id in ignored[0]
+
+
+def test_legacy_exclusions_without_todoist_dimension_completes(tmp_path):
+    """A tags-only exclusions file reads as an empty Todoist dimension and the
+    refresh still publishes with the policy applied."""
+    path = es.settings_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "revision": 3,
+                "exclusions": {"tags": []},
+            }
+        ),
+        encoding="utf-8",
+    )
+    policy = tx.ExclusionPolicy.from_read(es.read_settings())
+    assert policy.todoist == ()
+    provider = _paged_provider(objects={PRIMARY: ["a"], "T2": ["c"]})
+
+    status = _settings_refresh(tmp_path, provider, exclusion_policy=policy)
+
+    assert status["phase"] == "complete", status
+
+
+# ---------------------------------------------------------------------------
+# Bounded failure cause + stage — diagnosable without leaking content
+# ---------------------------------------------------------------------------
+
+def test_unexpected_failure_records_class_and_stage_without_message(
+    tmp_path, caplog
+):
+    provider = _paged_provider(objects={PRIMARY: ["a"], "T2": []})
+    provider.list_error = KeyError("secret-key-text")
+    coordinator, _, _, _ = _coordinator(tmp_path, provider, max_retries=0)
+
+    caplog.set_level(logging.WARNING, logger="tdtb.capacities_refresh")
+    coordinator.start()
+    status = coordinator.wait(timeout=5)
+
+    assert status["phase"] == "failed"
+    assert rr.FAILURE_WARNING in status["warnings"]
+    assert "Cause: KeyError" in status["warnings"]
+    assert "Where: list" in status["warnings"]
+    assert all("secret-key-text" not in warning for warning in status["warnings"])
+    messages = [
+        record.getMessage()
+        for record in caplog.records
+        if record.name == "tdtb.capacities_refresh"
+    ]
+    assert any("KeyError" in message for message in messages)
+    assert all("secret-key-text" not in message for message in messages)
+
+
+def test_rate_limited_failure_records_retry_after_and_stage(tmp_path, caplog):
+    provider = _paged_provider(objects={PRIMARY: ["a"], "T2": []})
+    provider.list_error = ca.CapacitiesRateLimited(
+        "secret retry text", retry_after=60.0
+    )
+    coordinator, _, _, sleeper = _coordinator(tmp_path, provider, max_retries=0)
+
+    caplog.set_level(logging.WARNING, logger="tdtb.capacities_refresh")
+    coordinator.start()
+    status = coordinator.wait(timeout=5)
+
+    assert status["phase"] == "failed"
+    assert "Cause: CapacitiesRateLimited (retry after 60s)" in status["warnings"]
+    assert "Where: list" in status["warnings"]
+    assert all("secret retry text" not in warning for warning in status["warnings"])
+    assert sleeper.calls == []
+    messages = [
+        record.getMessage()
+        for record in caplog.records
+        if record.name == "tdtb.capacities_refresh"
+    ]
+    assert any("CapacitiesRateLimited" in message for message in messages)
+    assert all("secret retry text" not in message for message in messages)
+
+
+def test_contract_failure_records_class_and_stage(tmp_path):
+    provider = _paged_provider(objects={PRIMARY: ["a"], "T2": []})
+    provider.list_error = ca.CapacitiesContractError("secret contract text")
+    coordinator, _, _, _ = _coordinator(tmp_path, provider, max_retries=0)
+
+    coordinator.start()
+    status = coordinator.wait(timeout=5)
+
+    assert status["phase"] == "failed"
+    assert "Cause: CapacitiesContractError" in status["warnings"]
+    assert "Where: list" in status["warnings"]
+    assert all(
+        "secret contract text" not in warning for warning in status["warnings"]
+    )
+
+
+def test_assemble_failure_records_stage_without_message(tmp_path):
+    provider = _paged_provider(objects={PRIMARY: ["a"], "T2": ["c"]})
+    coordinator, _, _, _ = _coordinator(tmp_path, provider)
+
+    def boom(logical_day, objects):
+        raise RuntimeError("secret assemble text")
+
+    coordinator.adapter.items_for_day_from_objects = boom
+    coordinator.start()
+    status = coordinator.wait(timeout=5)
+
+    assert status["phase"] == "failed"
+    assert "Cause: RuntimeError" in status["warnings"]
+    assert "Where: assemble" in status["warnings"]
+    assert all(
+        "secret assemble text" not in warning for warning in status["warnings"]
+    )
+
+
+def test_install_failure_records_stage_without_message(tmp_path):
+    provider = _paged_provider(objects={PRIMARY: ["a"], "T2": []})
+    coordinator, _, _, _ = _coordinator(
+        tmp_path, provider, configuration_revision=1
+    )
+
+    def boom():
+        raise RuntimeError("secret install text")
+
+    coordinator.revision_supplier = boom
+    coordinator.start()
+    status = coordinator.wait(timeout=5)
+
+    assert status["phase"] == "failed"
+    assert "Cause: RuntimeError" in status["warnings"]
+    assert "Where: install" in status["warnings"]
+    assert all(
+        "secret install text" not in warning for warning in status["warnings"]
+    )
