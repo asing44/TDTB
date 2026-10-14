@@ -189,6 +189,46 @@ class TestFetchTodoistItems:
         ext.fetch_todoist_items(client, cfg)
         assert client.calls == ["p1 & today", "@zap"]
 
+    def test_quick_query_fallback_escapes_the_label_space(self):
+        # The live Todoist label is "🚀 10min" (with a space). /tasks/filter
+        # needs the space backslash-escaped and rejects quotes, so the bare
+        # "@🚀10min" form matched zero tasks and silently emptied the Pool.
+        assert ext.QUICK_QUERY_FALLBACK == "@\U0001F680\\ 10min"
+
+    def test_quick_pool_reads_through_the_escaped_fallback_query(self):
+        client = FakeTodoist({
+            ext.ASSIGNED_QUERY_FALLBACK: [_task("1", "Call Vlad")],
+            "@\U0001F680\\ 10min": [_task("2", "Water plants", priority=1, due=None)],
+        })
+        assigned, pool, warnings = ext.fetch_todoist_items(client, {})
+        assert warnings == []
+        assert [i["name"] for i in assigned] == ["Call Vlad"]
+        assert [i["name"] for i in pool] == ["Water plants"]
+        assert client.calls == [ext.ASSIGNED_QUERY_FALLBACK, ext.QUICK_QUERY_FALLBACK]
+
+    def test_zero_quick_tasks_is_not_a_warning(self):
+        # An empty quick pool can be legitimate; only a read failure warns.
+        client = FakeTodoist({ext.ASSIGNED_QUERY_FALLBACK: [_task("1", "Call Vlad")]})
+        assigned, pool, warnings = ext.fetch_todoist_items(client, {})
+        assert warnings == []
+        assert pool == []
+        assert [i["name"] for i in assigned] == ["Call Vlad"]
+
+    def test_quick_task_tag_accepts_spaced_and_unspaced_label_forms(self):
+        from duration_tags import is_quick_task_tag
+
+        assert is_quick_task_tag("\U0001F680 10min") is True
+        assert is_quick_task_tag("\U0001F68010min") is True
+
+        client = FakeTodoist({
+            ext.ASSIGNED_QUERY_FALLBACK: [
+                _task("1", "Water plants", priority=1, due=None,
+                      labels=["\U0001F680 10min"]),
+            ],
+        })
+        assigned, _, _ = ext.fetch_todoist_items(client, {})
+        assert [i["name"] for i in assigned] == ["Water plants"]
+
     def test_error_degrades_with_warning(self):
         client = FakeTodoist(raise_exc=RuntimeError("401"))
         assigned, pool, warnings = ext.fetch_todoist_items(client, {})

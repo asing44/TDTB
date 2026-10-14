@@ -26,7 +26,10 @@ from duration_tags import is_quick_task_tag
 # existing live callers pass "today" — shadow.py). Saved-filter IDs from the
 # config Schema Reference stay write-path-only.
 ASSIGNED_QUERY_FALLBACK = "today | overdue"
-QUICK_QUERY_FALLBACK = "@🚀10min"
+# The live label is "🚀 10min" WITH A SPACE. Todoist /tasks/filter treats an
+# unescaped space as a token boundary (the bare "@🚀10min" matches nothing) and
+# does not accept a quoted form, so the space must be backslash-escaped.
+QUICK_QUERY_FALLBACK = "@🚀\\ 10min"
 
 _REMINDER_LABEL = "🔔Reminder"
 _NUDGE_PREFIX = "🔔 Nudge:"
