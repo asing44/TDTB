@@ -2065,6 +2065,11 @@
   right: 0;
   transform: none;
 }
+/* The native-rules explanation is a paragraph, not a row-action label, so it
+   gets a wider measure than the base .tooltip rule allows. */
+.tooltip--wide {
+  max-width: 340px;
+}
 
 /* -- footer banners (T12e, brief problem 6) --------------------------------- */
 /* Undo chip + EVERY runtime-action failure live here, above the dock. */
@@ -4088,6 +4093,15 @@ body {
 }
 .capacities-object-row__toggle input:checked + span {
   color: var(--state-danger);
+}
+/* Native-rules admission: the checkbox and its "Native rules on / off" label
+   stay beside the shared explanation trigger, which the label element cannot
+   carry itself (a button inside a label is invalid HTML). */
+.capacities-object-row__admission {
+  display: flex;
+  align-items: center;
+  flex: none;
+  gap: 6px;
 }
 .capacities-object-row__property {
   flex: 0 1 260px;
@@ -9290,6 +9304,13 @@ body {
   padding: 14px 20px 4px;
   font-size: 12px;
   color: #6b6862;
+}
+/* The Admit-when heading carries the shared native-rules explanation; the
+   info trigger sits inline after the words. */
+.connections-admit__label--info {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .connections-admit__row {

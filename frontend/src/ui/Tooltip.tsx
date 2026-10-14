@@ -21,6 +21,7 @@ export function Tooltip({
   label,
   detail,
   anchorClass,
+  bubbleClass,
   align = "center",
   suppress = false,
   children,
@@ -31,6 +32,9 @@ export function Tooltip({
   detail?: string;
   /** Extra class on the anchor span, for layout hooks (row action order). */
   anchorClass?: string;
+  /** Extra class on the bubble, for a wider variant when the detail needs more
+      room than the row-action label measure. */
+  bubbleClass?: string;
   /** "center" keeps the bubble centred on the trigger; "end" right-aligns it
       so the right-edge row triggers (More) stay in view. */
   align?: "center" | "end";
@@ -69,7 +73,7 @@ export function Tooltip({
     <span class={`tooltip-anchor tooltip-anchor--${align}${anchorClass ? ` ${anchorClass}` : ""}`}>
       {trigger}
       {visible && (
-        <span id={tipId} class="tooltip" role="tooltip">
+        <span id={tipId} class={`tooltip${bubbleClass ? ` ${bubbleClass}` : ""}`} role="tooltip">
           {label}
           {detail && <span class="tooltip__detail">{detail}</span>}
         </span>

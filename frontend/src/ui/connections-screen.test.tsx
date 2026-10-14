@@ -345,4 +345,35 @@ describe("Connections screen (U13)", () => {
     expect(rendered.getByRole("heading", { name: "Task" })).toBeTruthy();
     expect(rendered.getByRole("button", { name: /Discover from Capacities/ })).toBeTruthy();
   });
+
+  it("explains what native rules are from the Admit when heading", async () => {
+    const { rendered } = openConnections();
+    await ready(rendered);
+
+    const heading = rendered.getByText("Admit when");
+    const info = within(heading.parentElement as HTMLElement).getByRole("button", {
+      name: "What native rules are",
+    });
+    expect(info.getAttribute("title")).toBeNull();
+    expect(rendered.queryByRole("tooltip")).toBeNull();
+
+    // Focus opens the bubble and points the trigger at it.
+    fireEvent.focus(info);
+    const tooltip = rendered.getByRole("tooltip");
+    expect(tooltip.textContent).toContain("Native rules");
+    expect(tooltip.textContent).toMatch(/built-in admission rules/i);
+    expect(tooltip.textContent).toMatch(/any one of them matches/i);
+    expect(tooltip.textContent).toMatch(/completed and dropped/i);
+    expect(tooltip.textContent).not.toMatch(/assigned/i);
+    expect(info.getAttribute("aria-describedby")).toBe(tooltip.getAttribute("id"));
+
+    fireEvent.blur(info);
+    expect(rendered.queryByRole("tooltip")).toBeNull();
+
+    // Hover serves pointer users from the same trigger.
+    fireEvent.mouseEnter(info);
+    expect(rendered.getByRole("tooltip").textContent).toMatch(/built-in admission rules/i);
+    fireEvent.mouseLeave(info);
+    expect(rendered.queryByRole("tooltip")).toBeNull();
+  });
 });

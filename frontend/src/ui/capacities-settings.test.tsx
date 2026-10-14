@@ -46,6 +46,50 @@ describe("CapacitiesSettingsDrawer", () => {
     expect(rendered.getByText(/not a provider inventory browser/)).toBeTruthy();
   });
 
+  it("explains native rules from the section heading and the per-structure label", async () => {
+    const { rendered } = openWithCapacityRow();
+    await waitFor(() => expect(rendered.getByText("Native Task Auto rules")).toBeTruthy());
+
+    // The affordance is reachable by role and accessible name, and it is not
+    // a pointer-only native title=.
+    const section = rendered.getByRole("heading", { name: "Native Task Auto rules" }).closest(
+      ".setup-section",
+    ) as HTMLElement;
+    const headingInfo = within(section).getByRole("button", { name: "What native rules are" });
+    expect(headingInfo.getAttribute("title")).toBeNull();
+    expect(rendered.queryByRole("tooltip")).toBeNull();
+
+    // Focus produces the bubble and wires the trigger to it.
+    fireEvent.focus(headingInfo);
+    const tooltip = rendered.getByRole("tooltip");
+    expect(tooltip.textContent).toContain("Native rules");
+    expect(tooltip.textContent).toMatch(/built-in admission rules/i);
+    expect(tooltip.textContent).toMatch(/due date is today or earlier/i);
+    expect(tooltip.textContent).toMatch(/deadline is overdue or within the horizon/i);
+    expect(tooltip.textContent).toMatch(/completed and dropped/i);
+    expect(tooltip.textContent).toMatch(/own per-structure rule/i);
+    // The assignment mapping is a separate concern and must not blend in here.
+    expect(tooltip.textContent).not.toMatch(/assigned/i);
+    expect(headingInfo.getAttribute("aria-describedby")).toBe(tooltip.getAttribute("id"));
+    fireEvent.blur(headingInfo);
+    expect(rendered.queryByRole("tooltip")).toBeNull();
+
+    // The per-structure "Native rules on / off" label carries the same text.
+    const row = rendered
+      .getByRole("checkbox", { name: "Native admission for custom-project" })
+      .closest(".capacities-object-row") as HTMLElement;
+    const rowInfo = within(row).getByRole("button", { name: "What native rules are" });
+    // This trigger sits at the right edge of the panel, so its bubble is
+    // right-aligned; a centred one runs past the window and clips its text.
+    expect(rowInfo.closest(".tooltip-anchor")?.className).toContain("tooltip-anchor--end");
+    fireEvent.focus(rowInfo);
+    const rowTooltip = rendered.getByRole("tooltip");
+    expect(rowTooltip.textContent).toMatch(/built-in admission rules/i);
+    expect(rowInfo.getAttribute("aria-describedby")).toBe(rowTooltip.getAttribute("id"));
+    fireEvent.blur(rowInfo);
+    expect(rendered.queryByRole("tooltip")).toBeNull();
+  });
+
   it("saves the full replacement draft with the loaded revision and keeps exclusions local", async () => {
     const { h, rendered } = openWithCapacityRow();
     await waitFor(() => expect(rendered.getByText("Capacity task")).toBeTruthy());

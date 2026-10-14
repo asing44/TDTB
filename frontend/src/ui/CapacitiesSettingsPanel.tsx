@@ -13,6 +13,12 @@ import { CapacitiesSourceEditor } from "./CapacitiesSourceEditor";
 import { CapacitiesRefreshPanel } from "./CapacitiesRefreshPanel";
 import { CapacitiesRulesEditor } from "./CapacitiesRulesEditor";
 import { CapacitiesUnknownReview } from "./CapacitiesUnknownReview";
+import { Tooltip } from "./Tooltip";
+import {
+  NATIVE_RULES_DETAIL,
+  NATIVE_RULES_LABEL,
+  NATIVE_RULES_TRIGGER_LABEL,
+} from "./nativeRulesCopy";
 import { useApp, useAppState } from "./context";
 import type {
   AssignedItem,
@@ -287,6 +293,15 @@ export function CapacitiesSettingsPanel({ active }: { active: boolean }) {
             <section class="setup-section capacities-settings__section" aria-labelledby="capacities-sec-auto">
               <div class="setup-section__head">
                 <h3 id="capacities-sec-auto">Native Task Auto rules</h3>
+                <Tooltip
+                  label={NATIVE_RULES_LABEL}
+                  detail={NATIVE_RULES_DETAIL}
+                  bubbleClass="tooltip--wide"
+                >
+                  <button type="button" class="iconbtn" aria-label={NATIVE_RULES_TRIGGER_LABEL}>
+                    ?
+                  </button>
+                </Tooltip>
                 <span class="capacities-settings__revision">
                   {settings?.persisted ? `Saved revision ${settings.revision}` : "Using defaults"}
                 </span>
@@ -383,15 +398,34 @@ export function CapacitiesSettingsPanel({ active }: { active: boolean }) {
                             {title !== null && <strong>{title}</strong>}
                             <code>{structureId}</code>
                           </div>
-                          <label class="capacities-object-row__toggle">
-                            <input
-                              type="checkbox"
-                              checked={admitted}
-                              aria-label={`Native admission for ${structureId}`}
-                              onChange={() => toggleNativeStructure(structureId)}
-                            />
-                            <span>{admitted ? "Native rules on" : "Native rules off"}</span>
-                          </label>
+                          <div class="capacities-object-row__admission">
+                            <label class="capacities-object-row__toggle">
+                              <input
+                                type="checkbox"
+                                checked={admitted}
+                                aria-label={`Native admission for ${structureId}`}
+                                onChange={() => toggleNativeStructure(structureId)}
+                              />
+                              <span>{admitted ? "Native rules on" : "Native rules off"}</span>
+                            </label>
+                            {/* The row sits at the right edge of the panel, so
+                                a centred 340px bubble would run off the window
+                                and clip its own text. */}
+                            <Tooltip
+                              label={NATIVE_RULES_LABEL}
+                              detail={NATIVE_RULES_DETAIL}
+                              bubbleClass="tooltip--wide"
+                              align="end"
+                            >
+                              <button
+                                type="button"
+                                class="iconbtn"
+                                aria-label={NATIVE_RULES_TRIGGER_LABEL}
+                              >
+                                ?
+                              </button>
+                            </Tooltip>
+                          </div>
                         </div>
                       );
                     })}

@@ -20,6 +20,12 @@ import { useApp, useAppState } from "../context";
 import { CapacitiesSourceEditor } from "../CapacitiesSourceEditor";
 import { CapacitiesRefreshPanel } from "../CapacitiesRefreshPanel";
 import { CapacitiesUnknownReview } from "../CapacitiesUnknownReview";
+import { Tooltip } from "../Tooltip";
+import {
+  NATIVE_RULES_DETAIL,
+  NATIVE_RULES_LABEL,
+  NATIVE_RULES_TRIGGER_LABEL,
+} from "../nativeRulesCopy";
 import {
   capacitiesAssignedOnWarnings,
   capacitiesAssignmentWarnings,
@@ -747,7 +753,18 @@ export function ConnectionsScreen() {
         </details>
 
         <div class="connections-admit">
-          <span class="connections-admit__label">Admit when</span>
+          <span class="connections-admit__label connections-admit__label--info">
+            Admit when
+            <Tooltip
+              label={NATIVE_RULES_LABEL}
+              detail={NATIVE_RULES_DETAIL}
+              bubbleClass="tooltip--wide"
+            >
+              <button type="button" class="iconbtn" aria-label={NATIVE_RULES_TRIGGER_LABEL}>
+                ?
+              </button>
+            </Tooltip>
+          </span>
           {structures[0] === structureId ? renderGlobalRules() : renderStructureRules(structureId)}
         </div>
 
