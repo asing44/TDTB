@@ -1,8 +1,9 @@
 /* Header — U7 page frame (KTD11). The retired left rail and floating tab pill
    are replaced by one persistent header: the date and workday-frame line, a
    three-step stepper bound to the existing `ui.screen` state, a source-health
-   pill with Retry wired to the existing refresh lifecycle, and a Connections
-   link that opens the existing connections screen.
+   pill with a Refresh action (Retry while degraded) wired to the existing
+   refresh lifecycle, and a Connections link that opens the existing
+   connections screen.
 
    The stepper preserves ScreenNav's keyboard behavior (roving tabindex,
    Arrow/Home/End, visible focus, ARIA roles). Step 3 (Commit) maps onto the
@@ -187,14 +188,17 @@ export function Header() {
         >
           <span class="health-pill__text">{pillText}</span>
         </span>
-        {pillState === "degraded" && (
+        {pillState !== "refreshing" && (
+          // One shared class for the pill action (healthy Refresh / degraded
+          // Retry): the <=1100px compaction styles it by class and must keep
+          // seeing it regardless of label.
           <button
             class="btn health-pill__retry"
             onClick={() => void controller.refreshSources()}
             disabled={refreshing}
-            aria-label="Retry source refresh"
+            aria-label={pillState === "healthy" ? "Refresh sources" : "Retry source refresh"}
           >
-            Retry
+            {pillState === "healthy" ? "Refresh" : "Retry"}
           </button>
         )}
         <button

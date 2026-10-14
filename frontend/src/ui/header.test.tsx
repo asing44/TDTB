@@ -1,7 +1,7 @@
 /* U7 page frame — the stepper header replaces the retired ScreenNav tab pill
    and the left rail's source-health chip. These tests cover the step
-   activation, keyboard navigation, the source-health pill with Retry, and the
-   Connections link. */
+   activation, keyboard navigation, the source-health pill with a
+   Refresh/Retry action, and the Connections link. */
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent } from "@testing-library/preact";
@@ -108,14 +108,34 @@ describe("U7 stepper header", () => {
     const r = h.ui(<Header />);
     expect(r.getByText(/Sources degraded/)).toBeTruthy();
     const spy = vi.spyOn(h.controller, "refreshSources").mockResolvedValue();
-    fireEvent.click(r.getByRole("button", { name: "Retry source refresh" }));
+    const retry = r.getByRole("button", { name: "Retry source refresh" });
+    expect(retry.textContent).toBe("Retry");
+    expect((retry as HTMLButtonElement).disabled).toBe(false);
+    fireEvent.click(retry);
     expect(spy).toHaveBeenCalledTimes(1);
   });
 
-  it("shows a healthy pill with no Retry when sources are healthy", () => {
+  it("offers an enabled Refresh wired to the refresh lifecycle when sources are healthy", () => {
     const h = makeHarness("ready");
     const r = h.ui(<Header />);
     expect(r.getByText(/Sources healthy/)).toBeTruthy();
+    expect(r.queryByRole("button", { name: "Retry source refresh" })).toBeNull();
+    const refresh = r.getByRole("button", { name: "Refresh sources" });
+    expect(refresh.textContent).toBe("Refresh");
+    expect((refresh as HTMLButtonElement).disabled).toBe(false);
+    const spy = vi.spyOn(h.controller, "refreshSources").mockResolvedValue();
+    fireEvent.click(refresh);
+    expect(spy).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the Refresh action out of the row while a refresh is in flight", () => {
+    // Parity with the existing Retry: the pill becomes the progress surface
+    // and the action is not shown; the controller also no-ops while loading.
+    const h = makeHarness("ready");
+    const r = h.ui(<Header />);
+    act(() => h.store.dispatch({ type: "SOURCE_REFRESH_START" }));
+    expect(r.getByText(/Sources refreshing/)).toBeTruthy();
+    expect(r.queryByRole("button", { name: "Refresh sources" })).toBeNull();
     expect(r.queryByRole("button", { name: "Retry source refresh" })).toBeNull();
   });
 
