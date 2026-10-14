@@ -755,8 +755,8 @@ def _capacities_commit(client, *assigned: dict):
 
 class TestCapacitiesCommitAuthorization:
     """U4 S6: a selected, indexed, acknowledged Capacities row is admitted at
-    Commit as one calendar entry. Each failed check refuses with its own reason
-    and leaves the vault byte-identical."""
+    Commit as one PHEP Todoist mirror (no calendar entry). Each failed check
+    refuses with its own reason and leaves the vault byte-identical."""
 
     @pytest.fixture(autouse=True)
     def _no_live_state(self, monkeypatch):
@@ -787,7 +787,7 @@ class TestCapacitiesCommitAuthorization:
 
     # -- admitted ------------------------------------------------------------
 
-    def test_selected_indexed_acknowledged_row_is_admitted_as_calendar_and_phep_mirror(
+    def test_selected_indexed_acknowledged_row_is_admitted_as_phep_mirror(
         self, client, today
     ):
         _seed_source(client)
@@ -799,7 +799,7 @@ class TestCapacitiesCommitAuthorization:
         response = _capacities_commit(client, _submitted("keep"))
 
         assert response.status_code == 200, response.text
-        assert self._systems(response, "keep") == ["calendar", "todoist"]
+        assert self._systems(response, "keep") == ["todoist"]
         mirrors = [
             e for e in response.json()["entries"]
             if e["manifest"]["system"] == "todoist"
@@ -816,7 +816,7 @@ class TestCapacitiesCommitAuthorization:
         response = _capacities_commit(client, _submitted("keep"))
 
         assert response.status_code == 200, response.text
-        assert self._systems(response, "keep") == ["calendar", "todoist"]
+        assert self._systems(response, "keep") == ["todoist"]
 
     def test_rule_assigned_row_is_admitted_without_a_selection(
         self, client, today
@@ -827,7 +827,7 @@ class TestCapacitiesCommitAuthorization:
         response = _capacities_commit(client, _submitted("keep"))
 
         assert response.status_code == 200, response.text
-        assert self._systems(response, "keep") == ["calendar", "todoist"]
+        assert self._systems(response, "keep") == ["todoist"]
 
     # -- refused: submitted shape --------------------------------------------
 

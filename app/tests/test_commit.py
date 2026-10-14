@@ -609,7 +609,7 @@ class TestCapacitiesMirrorWrite:
         assert not result.ok and client.created_calls == 0
         assert any("unconfirmed" in f for f in result.verify_failures)
 
-    def test_provider_failure_is_reported_and_calendar_survives(self):
+    def test_provider_failure_is_reported_and_writes_no_calendar(self):
         client = MirrorTodoist()
         client.fail_next = True
         store = FakeStore()
@@ -619,8 +619,9 @@ class TestCapacitiesMirrorWrite:
         assert by_surface["todoist"].ok is False
         assert any("capacities mirror" in f
                    for f in by_surface["todoist"].verify_failures)
+        # A Capacities row has no calendar intent, so nothing lands there.
         assert by_surface["calendar"].ok is True
-        assert store.created_calls == 1
+        assert store.created_calls == 0
 
     def test_store_read_failure_fails_closed(self):
         path = capacities_mirror.store_path()

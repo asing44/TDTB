@@ -94,7 +94,10 @@ class ManifestEntry:
     native_start: str | None = None
     retiming_authorized: bool | None = None
     # True when the row's identity came from a Capacities assigned row (S6b).
-    # The Todoist writer refuses such an entry; kept out of ``as_dict``.
+    # ``build_plan_manifest`` no longer emits it (a Capacities row is now a
+    # PHEP Todoist mirror only, never a calendar entry); retained as a
+    # fail-closed guard so any crafted calendar-provenance row that reaches
+    # the Todoist writer is refused. Kept out of ``as_dict``.
     capacities: bool = False
     # True when the row is a Unit-2 schedulable all-day calendar row. Its
     # calendar create may be diffed only against TDTB's own write calendars
@@ -515,8 +518,9 @@ def build_plan_manifest(
 
     Row partition (SKILL.md Phase 5 semantics):
       - id matches an Assigned digest item's name -> Step A (Todoist), unless
-        the item is a Capacities row (S6b): then Step D calendar only. A name
-        shared across the Capacities boundary raises ValueError.
+        the item is a Capacities row (S6b): then a hard-routed PHEP Todoist
+        mirror only (no calendar event). A name shared across the Capacities
+        boundary raises ValueError.
       - id names a Trinoor work zone -> Step D′ (calendar).
       - id matches a ``config["anchored_blocks"]`` entry -> Step E
         (calendar), skipping blocks toggled off / skipped today, and
@@ -568,23 +572,19 @@ def build_plan_manifest(
                 ))
                 continue
             if _is_capacities_assigned(item):
-                # S6b + PHep mirror: one calendar block on the ⬜ Blocks class
-                # (the Step D default for non-Mint rows), resolved by
-                # plan_writes like every other calendar row, PLUS one Todoist
-                # create under PHEP at the same block start/duration. The
-                # mirror is hard-routed PHEP and keyed by the Capacities
-                # identity, so a client type/project can never reroute it and
-                # a later commit can never duplicate it.
-                entries.append(ManifestEntry(
-                    step="D", system="calendar", action="create-event",
-                    name=str(row_id), id_or_path=str(row_id),
-                    time=start, duration_min=duration, routing="⬜ Blocks",
-                    capacities=True,
-                ))
+                # S6b + PHep mirror (contract change 2026-10-13, revised): a
+                # Capacities row is written ONLY as one Todoist create under
+                # PHEP at the block start/duration, never as a ⬜ Blocks
+                # calendar event. The operator's daily lookahead already
+                # renders the PHEP mirror, so the calendar block duplicated it
+                # (grey plain-title event on the Blocks calendar). The mirror
+                # is hard-routed PHEP and keyed by the Capacities identity, so
+                # a client type/project can never reroute it and a later
+                # commit can never duplicate it.
                 if not start or duration <= 0:
                     # No usable block time (missing or zero-length start/end):
-                    # never emit an undated/durationless mirror. The calendar
-                    # row above is unchanged; diff_against_live notes the skip.
+                    # never emit an undated/durationless mirror, and never a
+                    # calendar event either — nothing is written for the row.
                     continue
                 capacities_identity = str(
                     item.get("identity") or item.get("path") or row_id).strip()

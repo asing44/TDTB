@@ -519,7 +519,8 @@ class TestLiveCommit:
 
 class TestCapacitiesMixedPlanCommit:
     """U4 S6 endpoint: a mixed plan admits its selected Capacities row as one
-    calendar entry, and its Todoist row keeps exactly the manifest it gets alone."""
+    PHEP Todoist mirror (never a calendar entry), and its Todoist row keeps
+    exactly the manifest it gets alone."""
 
     CAP_IDENTITY = "capacities:space-1:RootTask:object-1"
     CAP_DIGEST = {
@@ -559,7 +560,7 @@ class TestCapacitiesMixedPlanCommit:
             },
         )
 
-    def test_mixed_plan_admits_capacities_as_calendar_and_phep_mirror_with_todoist_unchanged(
+    def test_mixed_plan_admits_capacities_as_phep_mirror_with_todoist_unchanged(
         self, client, vault, monkeypatch
     ):
         today = gather.effective_date(datetime.now())
@@ -577,10 +578,9 @@ class TestCapacitiesMixedPlanCommit:
         assert alone.status_code == 200, alone.text
         mixed_manifest = [e["manifest"] for e in mixed.json()["entries"]]
         cap = [m for m in mixed_manifest if m["name"] == "Ship project"]
-        # PHep mirror: the calendar block plus a PHEP Todoist create.
-        assert [(m["system"], m["action"]) for m in cap] == [
-            ("calendar", "create-event"), ("todoist", "schedule")]
-        assert [m["routing"] for m in cap if m["system"] == "todoist"] == ["PHEP"]
+        # PHep mirror only: one PHEP Todoist create, no ⬜ Blocks calendar event.
+        assert [(m["system"], m["action"]) for m in cap] == [("todoist", "schedule")]
+        assert [m["routing"] for m in cap] == ["PHEP"]
         alone_todoist = [
             e["manifest"] for e in alone.json()["entries"]
             if e["manifest"]["system"] == "todoist"

@@ -199,7 +199,7 @@ class TestCommitEligibility:
             "surface": "assigned",
         }])
 
-    def test_selected_capacities_row_is_admitted_as_calendar_and_phep_mirror(
+    def test_selected_capacities_row_is_admitted_as_phep_mirror(
         self, client, vault, monkeypatch
     ):
         self._seed_ship_project_index()
@@ -235,11 +235,10 @@ class TestCommitEligibility:
         assert response.status_code == 200, response.text
         manifest = [e["manifest"] for e in response.json()["entries"]]
         ship = [m for m in manifest if m["name"] == "Ship project"]
-        # PHep mirror (contract change 2026-10-13): the calendar block plus a
-        # PHEP Todoist create. The Capacities-only plan still writes no vault
-        # intent and nothing live (shadow mode).
+        # PHep mirror (contract change 2026-10-13, revised): only a PHEP
+        # Todoist create, no ⬜ Blocks calendar event. The Capacities-only
+        # plan still writes no vault intent and nothing live (shadow mode).
         assert [(m["system"], m["action"], m["routing"]) for m in ship] == [
-            ("calendar", "create-event", "⬜ Blocks"),
             ("todoist", "schedule", "PHEP"),
         ]
         assert [m for m in manifest if m["system"] == "todoist"] == [
@@ -984,11 +983,12 @@ def _run_commit_run_live(monkeypatch, tmp_path, digest, sequence) -> dict:
     return captured
 
 
-class TestCapacitiesRowsAreCalendarOnly:
-    """U4 S6b + PHep mirror (contract change 2026-10-13): a Capacities assigned
-    row is one calendar create-event on the existing ⬜ Blocks class PLUS one
-    Todoist task under the PHEP project (so the work is actionable without a
-    second plan item), and no Step C vault flip. Classification reads the
+class TestCapacitiesRowsArePhepMirrorOnly:
+    """U4 S6b + PHep mirror (contract change 2026-10-13, revised): a Capacities
+    assigned row is exactly ONE Todoist create under the PHEP project (timed
+    ``due_datetime`` + duration), and never a ⬜ Blocks calendar event — the
+    operator's daily lookahead already renders the mirror, so a calendar block
+    duplicated the row. No Step C vault flip either. Classification reads the
     sanitized ``source`` field; a name shared with a Todoist or vault row fails
     closed. The mirror is keyed off the server-built manifest, never a client
     type or project."""
@@ -1001,20 +1001,14 @@ class TestCapacitiesRowsAreCalendarOnly:
     }
     SEQ = {"sequence": [{"id": "Ship project", "start": "09:00", "end": "10:00", "zone": "any"}]}
 
-    def test_capacities_row_emits_calendar_and_phep_mirror(self, monkeypatch, tmp_path):
+    def test_capacities_row_emits_only_phep_mirror(self, monkeypatch, tmp_path):
         entries = shadow.build_plan_manifest({"assigned": [dict(self.CAP_ITEM)]}, self.SEQ, {})
         assert [e.step for e in entries if e.step == "C"] == []
         # V3: no vault rows at all (the Step B daily-note patch is gone).
         assert [e.step for e in entries if e.system == "vault"] == []
-        calendar = [e for e in entries if e.system == "calendar"]
-        assert len(calendar) == 1
-        cal = calendar[0]
-        assert (cal.step, cal.action, cal.name, cal.id_or_path) == (
-            "D", "create-event", "Ship project", "Ship project")
-        assert (cal.time, cal.duration_min, cal.routing) == ("09:00", 60, "⬜ Blocks")
-        assert cal.capacities is True
-        # PHep mirror: one PHEP Todoist create at the block start/duration,
-        # carrying the Capacities identity link.
+        # No ⬜ Blocks calendar event for a Capacities row: the PHEP mirror is
+        # the row's single representation.
+        assert [e for e in entries if e.system == "calendar"] == []
         todoist = [e for e in entries if e.system == "todoist"]
         assert len(todoist) == 1
         m = todoist[0]
@@ -1023,17 +1017,49 @@ class TestCapacitiesRowsAreCalendarOnly:
         assert m.capacities_identity == "capacities:space-1:RootTask:object-1"
         assert m.capacities_link == "capacities://space-1/object-1"
         assert (m.time, m.duration_min) == ("09:00", 60)
-        # Capacities-only plan: calendar + mirror todoist intents, no vault
-        # intent and no plan body handed to the writers.
+        # Capacities-only plan: one mirror todoist intent, no calendar intent,
+        # no vault intent, and no plan body handed to the writers.
         captured = _run_commit_run_live(
             monkeypatch, tmp_path, {"assigned": [dict(self.CAP_ITEM)]}, self.SEQ)
         assert "plan_body" not in captured["kwargs"]
-        assert [i.surface for i in captured["intents"]] == ["calendar", "todoist"]
+        assert [i.surface for i in captured["intents"]] == ["todoist"]
+
+    def test_capacities_row_yields_only_phep_mirror_while_others_keep_entries(self):
+        """Manifest contract: the Capacities row is exactly one PHEP mirror
+        with no calendar event, while non-Capacities rows are untouched — a
+        Todoist-source row keeps its Step A create and a plain schedulable row
+        still gets its ⬜ Blocks calendar event."""
+        digest = {"assigned": [
+            dict(self.CAP_ITEM),
+            {"name": "LOOTS", "path": "todoist://T9", "source": "todoist"},
+        ]}
+        sequence = {"sequence": [
+            {"id": "Ship project", "start": "09:00", "end": "10:00"},
+            {"id": "LOOTS", "start": "10:00", "end": "10:30"},
+            {"id": "Schedulable", "start": "11:00", "end": "12:00"},
+        ]}
+        entries = shadow.build_plan_manifest(digest, sequence, {})
+        ship = [e for e in entries if e.name == "Ship project"]
+        assert len(ship) == 1
+        assert (ship[0].system, ship[0].action, ship[0].routing) == (
+            "todoist", "schedule", "PHEP")
+        assert ship[0].capacities_mirror is True
+        assert (ship[0].time, ship[0].duration_min) == ("09:00", 60)
+        assert not any(
+            e.system == "calendar" and e.name == "Ship project" for e in entries)
+        others = [
+            (e.system, e.name, e.routing) for e in entries if e.name != "Ship project"
+        ]
+        assert others == [
+            ("todoist", "LOOTS", "Inbox"),
+            ("calendar", "Schedulable", "⬜ Blocks"),
+        ]
 
     def test_mixed_plan_keeps_todoist_row_and_writes_no_vault_intent(
             self, monkeypatch, tmp_path):
-        """S6b: a mixed plan still plans its Todoist row; the Capacities row is
-        calendar-only; nothing targets the vault."""
+        """S6b: a mixed plan still plans its Todoist row; the Capacities row
+        contributes only its PHEP mirror (no calendar event); nothing targets
+        the vault."""
         digest = {"assigned": [
             dict(self.CAP_ITEM),
             {"name": "LOOTS", "path": "todoist://T1", "source": "todoist", "todoist_id": "T1"},
@@ -1043,17 +1069,21 @@ class TestCapacitiesRowsAreCalendarOnly:
             {"id": "LOOTS", "start": "10:00", "end": "10:30", "zone": "any"},
         ]}
         captured = _run_commit_run_live(monkeypatch, tmp_path, digest, sequence)
-        # The Capacities row now contributes its PHEP mirror alongside LOOTS.
+        # The Capacities row contributes only its PHEP mirror alongside LOOTS.
         assert [i.name for i in captured["intents"] if i.surface == "todoist"] == [
             "Ship project", "LOOTS"]
+        assert [i for i in captured["intents"] if i.surface == "calendar"] == []
         assert [i for i in captured["intents"] if i.surface == "vault"] == []
 
-    def test_capacities_row_with_mint_like_name_keeps_blocks_class(self):
+    def test_capacities_row_with_mint_like_name_stays_phep_mirror_only(self):
+        # Name-based calendar routing is irrelevant to a Capacities row: it
+        # never gets a calendar event, mint-like name or not, and its mirror
+        # stays hard-routed PHEP.
         item = dict(self.CAP_ITEM, name="Minting", path="capacities://space-1/object-2")
         seq = {"sequence": [{"id": "Minting", "start": "09:00", "end": "10:00"}]}
-        cal = [e for e in shadow.build_plan_manifest({"assigned": [item]}, seq, {})
-               if e.system == "calendar"]
-        assert [e.routing for e in cal] == ["⬜ Blocks"]
+        entries = shadow.build_plan_manifest({"assigned": [item]}, seq, {})
+        assert [e for e in entries if e.system == "calendar"] == []
+        assert [e.routing for e in entries if e.system == "todoist"] == ["PHEP"]
 
     def test_capacities_mirror_same_name_live_task_is_a_noop(self):
         # The mirror classifies against live like any other Todoist create:
@@ -1085,22 +1115,17 @@ class TestCapacitiesRowsAreCalendarOnly:
         assert len(todoist) == 1
         assert todoist[0].classification == shadow.NOOP
 
-    def test_capacities_row_without_usable_time_skips_mirror(self):
-        # A Capacities row with a missing or zero-length start/end still gets
-        # its (unchanged) calendar row, but never an undated/durationless PHEP
-        # mirror. The skip is noted on the report.
+    def test_capacities_row_without_usable_time_writes_nothing(self):
+        # A Capacities row with a missing or zero-length start/end has no place
+        # on the timeline: it produces no calendar event and no
+        # undated/durationless PHEP mirror — nothing is written for the row.
         for seq in (
             {"sequence": [{"id": "Ship project"}]},
             {"sequence": [{"id": "Ship project", "start": "09:00", "end": "09:00"}]},
         ):
             manifest = shadow.build_plan_manifest(
                 {"assigned": [dict(self.CAP_ITEM)]}, seq, {})
-            assert [e.name for e in manifest if e.system == "calendar"] == [
-                "Ship project"]
-            assert [e for e in manifest if e.system == "todoist"] == []
-            diff = shadow.diff_against_live(
-                manifest, {"todoist_tasks": [], "calendar_events": []})
-            assert any("Ship project" in n for n in diff.as_dict()["notes"])
+            assert manifest == []
 
     def test_capacities_zero_block_row_gets_no_calendar_and_no_mirror(self):
         item = dict(self.CAP_ITEM, blocks=0)
@@ -1124,7 +1149,7 @@ class TestCapacitiesRowsAreCalendarOnly:
             with pytest.raises(ValueError, match="Press"):
                 shadow.build_plan_manifest({"assigned": assigned}, seq, {})
 
-    def test_capacities_row_plans_calendar_and_phep_todoist_create(self):
+    def test_capacities_row_plans_only_phep_todoist_create(self):
         manifest = shadow.build_plan_manifest({"assigned": [dict(self.CAP_ITEM)]}, self.SEQ, {})
         live = {"todoist_tasks": [], "calendar_events": []}
         diff = shadow.diff_against_live(manifest, live)
@@ -1138,8 +1163,7 @@ class TestCapacitiesRowsAreCalendarOnly:
         assert mirror.capacities_identity == "capacities:space-1:RootTask:object-1"
         assert mirror.due_datetime == "2026-10-10T09:00:00"
         assert "capacities://space-1/object-1" in (mirror.description or "")
-        cal = [i for i in intents if i.surface == "calendar"]
-        assert [(i.op, i.calendar_id, i.name) for i in cal] == [("create", "cal-blocks", "Ship project")]
+        assert [i for i in intents if i.surface == "calendar"] == []
         assert [i for i in intents if i.surface == "vault"] == []
 
     def test_todoist_writer_refuses_capacities_provenance(self):
