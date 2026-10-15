@@ -44,6 +44,7 @@ import type {
 } from "../model/types";
 import { makeScenario, fixedInputsOf, type Scenario, type ScenarioName } from "../fixtures/scenarios";
 import { toMinutes } from "../model/time";
+import { habitsView } from "../model/habits";
 import { itemIdentity, normalizeTodoistExclusionName } from "./wire";
 
 const LATENCY_MS = 350;
@@ -754,7 +755,13 @@ export class FixtureAdapter implements Adapter {
         : 0;
       anchored += after - before;
     }
-    return fixtureCapacity(c.total, c.fixed, anchored, c.habits, selected, pct);
+    // Habits follow the per-day overrides like the server's _habits_segment:
+    // the counted minutes round up to whole blocks.
+    const view = this.inputs.habits
+      ? habitsView(this.inputs.habits, daySetup.habits)
+      : null;
+    const habits = view ? Math.ceil(view.countedMinutes / 30) : c.habits;
+    return fixtureCapacity(c.total, c.fixed, anchored, habits, selected, pct);
   }
 
   async saveDaySetup(_daySetup: DaySetup): Promise<void> {

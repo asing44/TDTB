@@ -156,6 +156,13 @@ function inputs(overrides: Partial<PlanInputs> = {}): PlanInputs {
     anchored: ANCHORED.map((a) => ({ ...a })),
     anchoredSourceFingerprint: "fixture-anchored-v1",
     habitsNote: "2 habits outstanding · ~30min",
+    habits: {
+      total: 3, done: 1, outstanding: 2, estMinutes: 30,
+      items: [
+        { id: "habit-stretch", name: "Stretch", minutes: 15 },
+        { id: "habit-journal", name: "Evening journal", minutes: 15 },
+      ],
+    },
     time: { ...TIME },
     capacity: cap(13),
     daySetup: { ...emptySetup },

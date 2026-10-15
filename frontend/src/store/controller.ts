@@ -43,6 +43,7 @@ import {
 } from "./store";
 import type {
   AnchoredOverride,
+  HabitOverrides,
   CapacitiesCatalog,
   CapacitiesRefreshMode,
   CapacitiesRefreshStatus,
@@ -803,6 +804,30 @@ export class Controller {
         this.dispatch({
           type: "SETUP_SAVED",
           daySetup: { ...current.daySetup, anchored },
+        });
+      }
+      throw e;
+    }
+  }
+
+  /** Save today's habit overrides (full replace) through the ordinary
+      day-setup save. Local-only: it never touches Todoist or the calendar.
+      The edit reads back instantly; a refused save rolls the overrides back to
+      what was there — but only while this edit is still the current one — and
+      rethrows so the caller can surface the failure. */
+  async saveHabitOverrides(habits: HabitOverrides): Promise<void> {
+    const setup = this.getState().daySetup;
+    const previous = setup.habits;
+    const nextSetup = { ...setup, habits, confirmed: true };
+    this.dispatch({ type: "SETUP_SAVED", daySetup: nextSetup });
+    try {
+      await this.saveDaySetup(nextSetup);
+    } catch (e) {
+      const current = this.getState();
+      if (current.daySetup.habits === habits) {
+        this.dispatch({
+          type: "SETUP_SAVED",
+          daySetup: { ...current.daySetup, habits: previous },
         });
       }
       throw e;
