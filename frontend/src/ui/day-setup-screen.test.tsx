@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, waitFor, within } from "@testing-library/preact";
 import { App } from "./App";
 import { FixtureAdapter } from "../adapters/fixture";
+import { effectiveAnchoredBlocks } from "../store/store";
 import { makeHarness } from "./test-harness";
 import type { AnchoredBlock, AnchoredOverride } from "../model/types";
 
@@ -945,9 +946,12 @@ describe("elapsed anchors default off and are assignable", () => {
 describe("Already placed follows the elapsed default", () => {
   it("hides an untouched elapsed anchor and draws it once explicitly on", async () => {
     const h = makeHarness("ready");
-    const inputs = structuredClone(h.store.getState().inputs!);
-    inputs.time = { ...inputs.time, anchor: "13:30", configEod: "23:45" };
-    h.store.dispatch({ type: "INPUTS_LOADED", inputs, ledger: h.store.getState().ledger! });
+    // The operator saves a Start of 13:30 on Set up and continues to tasks:
+    // SETUP_SAVED carries daySetup.anchor — inputs.time.anchor is untouched.
+    h.store.dispatch({
+      type: "SETUP_SAVED",
+      daySetup: { ...h.store.getState().daySetup, anchor: "13:30" },
+    });
     const r = h.ui(<App />);
     const lane = () => r.container.querySelector(".already-placed") as HTMLElement;
     // No override: the read-only Plan lane must not draw the elapsed anchor.
@@ -969,6 +973,32 @@ describe("Already placed follows the elapsed default", () => {
     await waitFor(() =>
       expect(lane().querySelector('[data-anchor-id="Morning Routine"]')).toBeTruthy(),
     );
+  });
+
+  it("draws the lane on the saved frame and hides elapsed config anchors", () => {
+    const h = makeHarness("ready");
+    // A late Start saved on Set up lives only on daySetup.anchor; inputs.time
+    // still reads 07:30 — the exact disagreement the shared selector ends.
+    h.store.dispatch({
+      type: "SETUP_SAVED",
+      daySetup: { ...h.store.getState().daySetup, anchor: "20:30" },
+    });
+    const r = h.ui(<App />);
+    const lane = () => r.container.querySelector(".already-placed") as HTMLElement;
+    // The ruler opens at the saved 20:30 (first tick 9p), never 07:30's 8a.
+    const ticks = Array.from(lane().querySelectorAll(".day-strip__tick")).map(
+      (t) => t.textContent,
+    );
+    expect(ticks).toContain("9p");
+    expect(ticks).not.toContain("8a");
+    // An elapsed config anchor with no override is not drawn, and the shared
+    // selector excludes it from the effective blocks (the capacity input) too.
+    expect(lane().querySelector('[data-anchor-id="Foods Breakfast"]')).toBeNull();
+    expect(lane().textContent).toContain("hidden today");
+    const breakfast = effectiveAnchoredBlocks(h.store.getState()).find(
+      (a) => a.id === "Foods Breakfast",
+    )!;
+    expect(breakfast.on).toBe(false);
   });
 });
 

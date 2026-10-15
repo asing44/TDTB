@@ -9,6 +9,7 @@ import {
   initialState,
   queueState,
   reducer,
+  selectDayFrame,
   sourceHealthBlocked,
   type AppState,
 } from "./store";
@@ -844,5 +845,33 @@ describe("source-health gate (selectors)", () => {
     let sh = shadowed();
     sh = reducer(sh, { type: "ARM_LIVE" });
     expect(canLiveCommit(sh)).toBe(true);
+  });
+});
+
+describe("selectDayFrame (the saved Set up frame the Plan screen draws)", () => {
+  /* The operator edits Start/End on Set up and continues: SETUP_SAVED stores
+     daySetup.anchor/eod but NEVER rewrites inputs.time. The Plan screen must
+     resolve the same frame, so it reads the saved setup, not inputs.time. */
+  it("returns the saved daySetup anchor/end and falls back to inputs.time", () => {
+    let s = loaded();
+    // ready: daySetup.anchor "07:30", eod null; inputs.time.anchor "07:30".
+    expect(selectDayFrame(s)).toEqual({ start: "07:30", end: "23:45" });
+    s = reducer(s, {
+      type: "SETUP_SAVED",
+      daySetup: { ...s.daySetup, anchor: "20:30" },
+    });
+    // The saved anchor wins even though inputs.time.anchor is untouched.
+    expect(s.inputs!.time.anchor).toBe("07:30");
+    expect(selectDayFrame(s)).toEqual({ start: "20:30", end: "23:45" });
+  });
+
+  it("uses a saved End override and stays null without inputs", () => {
+    let s = loaded();
+    s = reducer(s, {
+      type: "SETUP_SAVED",
+      daySetup: { ...s.daySetup, anchor: "20:30", eod: "22:00" },
+    });
+    expect(selectDayFrame(s)).toEqual({ start: "20:30", end: "22:00" });
+    expect(selectDayFrame(initialState)).toBeNull();
   });
 });

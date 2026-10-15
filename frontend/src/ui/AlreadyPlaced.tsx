@@ -15,18 +15,17 @@
 
 import { useAppState } from "./context";
 import { DayStrip, type StripAnchor, type StripCalendarEvent, type StripSession } from "./day-setup/DayStrip";
-import { effectiveAnchoredBlocks } from "../store/store";
+import { effectiveAnchoredBlocks, selectDayFrame } from "../store/store";
 import { displayAnchored } from "../model/calendarEvents";
 import { anchorFrameStart, anchoredBlocks, anchoredOverrideOf } from "../model/anchored";
 import { explicitMintCapMinutes, initialMintSessionIds } from "../model/mint";
 import { calendarWalls } from "../model/overflow";
-import { dayFrame } from "../model/dayFrame";
 
 export function AlreadyPlaced() {
   const s = useAppState();
   if (!s.inputs) return null;
 
-  const { start: frameStart, end: frameEnd } = dayFrame(s.inputs.time);
+  const { start: frameStart, end: frameEnd } = selectDayFrame(s)!;
 
   const effective = effectiveAnchoredBlocks(s);
   const walls = calendarWalls(effective);

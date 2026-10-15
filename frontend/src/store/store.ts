@@ -37,7 +37,7 @@ import {
 import { allowedOverlaps, defectsCovered, workOverlaps } from "../model/findings";
 import { blocksLabel } from "../model/time";
 import { anchoredBlocks, anchoredDefaultOff } from "../model/anchored";
-import { dayFrame } from "../model/dayFrame";
+import { dayFrame, type DayFrame } from "../model/dayFrame";
 import { remainingLabel } from "../model/allocator";
 import { capacitiesCoverageOf, durationSourceOf } from "../adapters/wire";
 
@@ -1205,13 +1205,21 @@ export function effectiveBlocks(s: AppState, id: string): number {
   return s.overrides[id]?.blocks ?? item.blocks;
 }
 
+/** The one saved Set up/Plan day frame: SETUP_SAVED stores daySetup.anchor/eod
+    but never rewrites inputs.time, so the Plan side must read the saved setup
+    (falling back to inputs.time) or the two screens disagree. */
+export function selectDayFrame(s: AppState): DayFrame | null {
+  if (!s.inputs) return null;
+  return dayFrame(s.inputs.time, { anchor: s.daySetup.anchor, eod: s.daySetup.eod });
+}
+
 /** Apply dated anchored overrides to the read model without pretending they
     changed upstream config. Calendar rows are immutable and never receive an
     override. */
 export function effectiveAnchoredBlocks(s: AppState) {
   // The day frame the elapsed defaults resolve against: the identical
   // `dayFrame` the Plan screen's Already placed lane draws.
-  const frame = s.inputs ? dayFrame(s.inputs.time) : null;
+  const frame = selectDayFrame(s);
   return (s.inputs?.anchored ?? []).map((block) => {
     if (block.kind === "calendar") {
       // T28 + FEEDBACK-09: the only overrides a calendar row honors are
