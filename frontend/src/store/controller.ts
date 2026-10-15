@@ -9,9 +9,10 @@
    - Live commit dispatches only through requestLiveCommit, which re-checks
      canLiveCommit at call time — the second-click gate (locked decision 9). */
 
-import type { Adapter, SequenceContext } from "../adapters/adapter";
+import type { Adapter, SequenceContext, SequenceResult } from "../adapters/adapter";
 import {
   ApiError,
+  apiFailurePathOf,
   capacitiesSettingsConflictOf,
   exclusionSettingsConflictOf,
   isNetworkError,
@@ -57,6 +58,7 @@ import type {
   CapacitiesSourceDraft,
   CapacitiesSourceRead,
   DaySetup,
+  FixedInputs,
   MicroIdea,
   PlanInputs,
   SequenceRow,
@@ -72,6 +74,13 @@ export type GetState = () => AppState;
     a capacity + validate round trip. Long enough to swallow a drag's worth of
     input events, short enough that releasing the thumb feels immediate. */
 const OVERRIDE_SETTLE_MS = 140;
+
+/** A sequence attempt that never reached POST /sequence: the day's fixed
+    inputs could not be read, or the session token could not be fetched. The
+    user must be told plainly that nothing was billed — the billed-attempt
+    warning would be false here. */
+export const SEQUENCE_NOT_REQUESTED_MESSAGE =
+  "The sequence was not requested and no billed call was made.";
 
 /** Deterministic chronological sort key for a final sequence (FEEDBACK-01).
     HH:MM strings compare lexicographically; id breaks ties so equal starts
@@ -894,15 +903,44 @@ export class Controller {
     const s = this.getState();
     if (!canAutoSequence(s)) return;
     this.dispatch({ type: "SEQUENCE_START" });
+
+    // Phase 1 — preflight (free). readFixedInputs refreshes the adapter's raw
+    // contract after a setup save. A failure here never reached the billed
+    // POST, so it must not be reported as a billing risk.
+    let fixed: FixedInputs;
     try {
-      const fixed = await this.adapter.readFixedInputs();
-      const context = this.sequenceContext(this.getState().pendingPinnedRows);
-      // readFixedInputs refreshes the adapter's raw contract after a setup
-      // save. Use that same fresh planning fingerprint for the paid request;
-      // the store still reflects the prior read until SEQUENCE_OK lands.
-      context.planningConfigFingerprint =
-        fixed.planningConfigFingerprint ?? context.planningConfigFingerprint;
-      const result = await this.adapter.autoSequence(context);
+      fixed = await this.adapter.readFixedInputs();
+    } catch (e) {
+      await this.sequenceFailure(e, "preflight");
+      return;
+    }
+
+    const context = this.sequenceContext(this.getState().pendingPinnedRows);
+    // Use the fresh planning fingerprint from the same read for the paid
+    // request; the store still reflects the prior read until SEQUENCE_OK lands.
+    context.planningConfigFingerprint =
+      fixed.planningConfigFingerprint ?? context.planningConfigFingerprint;
+
+    // Phase 2 — the ONE billed request. Nothing here retries automatically:
+    // a transport rejection leaves the billed outcome unknown.
+    let result: SequenceResult;
+    try {
+      result = await this.adapter.autoSequence(context);
+    } catch (e) {
+      await this.sequenceFailure(e, "request");
+      return;
+    }
+
+    // Phase 3 — result processing (free). A TypeError while laying out the
+    // returned rows is a display bug, never a transport failure; keep any
+    // rows the server did return read-only and stage nothing partial.
+    let outcome: {
+      sequence: SequenceRow[];
+      overflowIds: string[];
+      warnings: string[];
+      pinnedRows: SequenceRow[];
+    };
+    try {
       const included = new Set(includedItems(this.getState()).map((i) => i.id));
       const injected = (r: SequenceRow) =>
         r.wire?.source === "schedulable" ||
@@ -954,51 +992,91 @@ export class Controller {
       // sequence by start time (id tiebreak, mirroring merge_immutable_rows)
       // so what the UI stages is exactly what validation accepts; the sort
       // reorders, never drops.
-      const sequence = [...rows, ...overflow].sort(byStartThenId);
-      const ledger = await this.adapter.billedLedger();
-      this.dispatch({
-        type: "SEQUENCE_OK",
-        sequence,
+      outcome = {
+        sequence: [...rows, ...overflow].sort(byStartThenId),
         overflowIds: overflow.map((r) => r.id),
         warnings: [...result.warnings, ...infeasibleWarnings],
-        fingerprint: fingerprintFixedInputs(fixed),
-        anchoredSourceFingerprint: fixed.anchoredSourceFingerprint,
-        planningConfigFingerprint: fixed.planningConfigFingerprint,
-        overlapGrants: result.overlapGrants,
         // Prefer the server's effective pin set (client + native timed
         // auto-pins) so validate/commit snapshots stay byte-exact.
         pinnedRows: result.pinnedRows ?? this.getState().pendingPinnedRows,
-        ledger,
-      });
+      };
     } catch (e) {
-      const ledger = await this.adapter.billedLedger().catch(() => null);
-      // T12 qualification: a hard validation failure arrives AFTER the SDK
-      // call was made and the ledger charged. The server now returns the
-      // rejected body so the paid plan is at least readable instead of
-      // vanishing; it is held separately from `sequence` so nothing can
-      // mistake it for something committable.
-      let rejectedProposal: SequenceRow[] | null = null;
-      if (e instanceof ApiError && e.status === 422) {
-        const detail = e.detail as { rejected_proposal?: { sequence?: unknown[] } } | undefined;
-        const rows = detail?.rejected_proposal?.sequence;
-        if (Array.isArray(rows) && rows.length > 0) {
-          rejectedProposal = rows.map((r) => projectSequenceRow(r as never));
-        }
-      }
+      await this.sequenceFailure(
+        e,
+        "result",
+        Array.isArray(result.sequence) && result.sequence.length > 0 ? result.sequence : null,
+      );
+      return;
+    }
+
+    // Phase 4 — budget refresh, independent of the plan. A failed ledger read
+    // must never throw away a paid plan or read as a sequence failure.
+    const ledger = await this.adapter.billedLedger().catch(() => null);
+    this.dispatch({
+      type: "SEQUENCE_OK",
+      ...outcome,
+      fingerprint: fingerprintFixedInputs(fixed),
+      anchoredSourceFingerprint: fixed.anchoredSourceFingerprint,
+      planningConfigFingerprint: fixed.planningConfigFingerprint,
+      overlapGrants: result.overlapGrants,
+      ledger,
+    });
+  }
+
+  /** One truthful failure surface for the three sequence phases. Preflight and
+      session-token failures say the call was never requested; a transport
+      rejection on POST /sequence keeps the unknown billed outcome; a result
+      layout failure keeps the returned rows read-only. */
+  private async sequenceFailure(
+    e: unknown,
+    phase: "preflight" | "request" | "result",
+    proposal: SequenceRow[] | null = null,
+  ): Promise<void> {
+    const ledger = await this.adapter.billedLedger().catch(() => null);
+    const text = String(e instanceof Error ? e.message : e);
+    if (phase === "result") {
       this.dispatch({
         type: "SEQUENCE_FAIL",
-        // 2026-10-15 (Firefox incident): a fetch rejection during POST
-        // /sequence surfaces the browser's raw "NetworkError when attempting
-        // to fetch resource." — which says nothing about the billed attempt.
-        // Map it to the honest message; real HTTP errors (422/502) keep their
-        // server detail untouched.
-        error: isNetworkError(e)
-          ? SEQUENCE_NETWORK_ERROR_MESSAGE
-          : String(e instanceof Error ? e.message : e),
+        error: `The sequencer returned a plan this app could not display (${text}). Nothing was staged — use manual placement.`,
         ledger,
-        rejectedProposal,
+        rejectedProposal: proposal,
       });
+      return;
     }
+    if (phase === "preflight" || apiFailurePathOf(e) === "/session-token") {
+      this.dispatch({
+        type: "SEQUENCE_FAIL",
+        error: `Could not prepare before sequencing (${text}). ${SEQUENCE_NOT_REQUESTED_MESSAGE}`,
+        ledger,
+        rejectedProposal: null,
+      });
+      return;
+    }
+    // T12 qualification: a hard validation failure arrives AFTER the SDK
+    // call was made and the ledger charged. The server now returns the
+    // rejected body so the paid plan is at least readable instead of
+    // vanishing; it is held separately from `sequence` so nothing can
+    // mistake it for something committable.
+    let rejectedProposal: SequenceRow[] | null = null;
+    if (e instanceof ApiError && e.status === 422) {
+      const detail = e.detail as { rejected_proposal?: { sequence?: unknown[] } } | undefined;
+      const rows = detail?.rejected_proposal?.sequence;
+      if (Array.isArray(rows) && rows.length > 0) {
+        rejectedProposal = rows.map((r) => projectSequenceRow(r as never));
+      }
+    }
+    this.dispatch({
+      type: "SEQUENCE_FAIL",
+      // 2026-10-15 (Firefox incident): a fetch rejection during POST
+      // /sequence surfaces the browser's raw "NetworkError when attempting
+      // to fetch resource." — which says nothing about the billed attempt.
+      // Map it to the honest message; real HTTP errors (422/502) keep their
+      // server detail untouched. A generic TypeError is not evidence of
+      // transport, so it is never mapped to this message.
+      error: isNetworkError(e) ? SEQUENCE_NETWORK_ERROR_MESSAGE : text,
+      ledger,
+      rejectedProposal,
+    });
   }
 
   /** Deterministic revalidation (free) — after placement edits or exclusions.

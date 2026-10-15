@@ -343,7 +343,9 @@ export type Action =
       pinnedRows?: SequenceRow[];
       pendingPinnedRows?: SequenceRow[];
       overflowIds?: string[];
-      ledger: Ledger;
+      /** Null when the independent /billed-ledger refresh failed: the paid
+          plan is still valid and must be preserved. */
+      ledger: Ledger | null;
     }
   | {
       type: "SEQUENCE_FAIL";

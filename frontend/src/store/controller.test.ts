@@ -4,7 +4,7 @@ import { Controller } from "./controller";
 import { FixtureAdapter } from "../adapters/fixture";
 import { alerts, canLiveCommit, defectsResolved, dockState, effectiveAnchoredBlocks, sourceHealthBlocked } from "./store";
 import { calendarWalls, mintWalls } from "../model/overflow";
-import { ApiError } from "../adapters/api";
+import { ApiError, ApiTransportError } from "../adapters/api";
 import type { ScenarioName } from "../fixtures/scenarios";
 import type { ShadowDiff, Source } from "../model/types";
 
@@ -1548,5 +1548,137 @@ describe("saveAnchoredStart (persist an anchor's time to config)", () => {
     const result = await controller.saveAnchoredStart("Sudsing", "18:15");
     expect(result.reloaded).toBe(false);
     expect(result.refreshError).toMatch(/degraded/);
+  });
+});
+
+describe("truthful sequence failure staging (2026-10-15)", () => {
+  it("a preflight read failure says the sequence was not requested and makes zero billed calls", async () => {
+    const { store, adapter, controller } = harness("ready");
+    await controller.load();
+    await controller.saveDaySetup({ ...store.getState().daySetup, confirmed: true });
+    vi.spyOn(adapter, "readFixedInputs").mockRejectedValueOnce(new Error("calendar read degraded"));
+    const billed = vi.spyOn(adapter, "autoSequence");
+
+    await controller.autoSequence();
+
+    const s = store.getState();
+    expect(billed).not.toHaveBeenCalled();
+    expect(s.seqPhase).toBe("failed");
+    expect(s.seqError).toMatch(/not requested/);
+    expect(s.seqError).toMatch(/no billed call/);
+    expect(s.seqError).not.toContain("Lost the connection");
+  });
+
+  it("a /session-token transport failure is not reported as a billed sequence failure", async () => {
+    const { store, adapter, controller } = harness("ready");
+    await controller.load();
+    await controller.saveDaySetup({ ...store.getState().daySetup, confirmed: true });
+    vi.spyOn(adapter, "autoSequence").mockRejectedValueOnce(
+      new ApiTransportError("/session-token", "TDTB request did not reach the server (/session-token)"),
+    );
+
+    await controller.autoSequence();
+
+    const s = store.getState();
+    expect(s.seqPhase).toBe("failed");
+    expect(s.seqError).toMatch(/not requested/);
+    expect(s.seqError).toMatch(/no billed call/);
+    expect(s.seqError).not.toContain("Lost the connection");
+  });
+
+  it("a failed billed-ledger refresh keeps the paid plan and never re-sequences", async () => {
+    const { store, adapter, controller } = harness("ready");
+    await controller.load();
+    await controller.saveDaySetup({ ...store.getState().daySetup, confirmed: true });
+    const billed = vi.spyOn(adapter, "autoSequence");
+    vi.spyOn(adapter, "billedLedger").mockRejectedValueOnce(new Error("ledger read down"));
+
+    await controller.autoSequence();
+
+    const s = store.getState();
+    expect(billed).toHaveBeenCalledTimes(1);
+    expect(s.seqPhase).toBe("valid");
+    expect(s.sequence).not.toBeNull();
+    expect(s.seqError).toBeNull();
+    // Root decision: unknown budget stays null rather than retaining a stale
+    // allowance that could encourage another billed attempt.
+    expect(s.ledger).toBeNull();
+  });
+
+  it("a result-processing failure is not labelled network and keeps returned rows read-only", async () => {
+    const { store, adapter, controller } = harness("ready");
+    await controller.load();
+    await controller.saveDaySetup({ ...store.getState().daySetup, confirmed: true });
+    vi.spyOn(adapter, "autoSequence").mockResolvedValueOnce({
+      sequence: [{ id: "Make", name: "Make", kind: "work", start: "09:00", end: "10:00", zone: null }],
+      warnings: null,
+      overlapGrants: [],
+    } as never);
+
+    await controller.autoSequence();
+
+    const s = store.getState();
+    expect(s.seqPhase).toBe("failed");
+    expect(s.seqError).not.toContain("Lost the connection");
+    expect(s.seqError).toMatch(/could not display/);
+    expect(s.rejectedProposal).toEqual([expect.objectContaining({ id: "Make" })]);
+    expect(s.sequence).toBeNull();
+  });
+
+  it("a genuine /sequence transport rejection keeps the unknown billed outcome", async () => {
+    const { store, adapter, controller } = harness("ready");
+    await controller.load();
+    await controller.saveDaySetup({ ...store.getState().daySetup, confirmed: true });
+    const billed = vi.spyOn(adapter, "autoSequence").mockRejectedValueOnce(
+      new ApiTransportError("/sequence", "TDTB request did not reach the server (/sequence)"),
+    );
+
+    await controller.autoSequence();
+
+    const s = store.getState();
+    expect(billed).toHaveBeenCalledTimes(1);
+    expect(s.seqPhase).toBe("failed");
+    expect(s.seqError).toContain("Lost the connection to TDTB while sequencing");
+    expect(s.seqError).toContain("may still have been billed");
+  });
+
+  it("a 429 keeps its server detail (unchanged path)", async () => {
+    const { store, adapter, controller } = harness("ready");
+    await controller.load();
+    await controller.saveDaySetup({ ...store.getState().daySetup, confirmed: true });
+    vi.spyOn(adapter, "autoSequence").mockRejectedValueOnce(
+      new ApiError(429, { message: "billed budget exhausted" }, "billed budget exhausted"),
+    );
+
+    await controller.autoSequence();
+
+    const s = store.getState();
+    expect(s.seqPhase).toBe("failed");
+    expect(s.seqError).toContain("billed budget exhausted");
+    expect(s.seqError).not.toContain("Lost the connection");
+  });
+
+  it("a 422 rejected_proposal is held read-only, not staged", async () => {
+    const { store, adapter, controller } = harness("ready");
+    await controller.load();
+    await controller.saveDaySetup({ ...store.getState().daySetup, confirmed: true });
+    vi.spyOn(adapter, "autoSequence").mockRejectedValueOnce(
+      new ApiError(
+        422,
+        {
+          message: "overlaps Sudsing",
+          rejected_proposal: { sequence: [{ id: "Make", name: "Make", start: "09:00", end: "10:00" }] },
+        },
+        "overlaps Sudsing",
+      ),
+    );
+
+    await controller.autoSequence();
+
+    const s = store.getState();
+    expect(s.seqPhase).toBe("failed");
+    expect(s.seqError).toContain("overlaps Sudsing");
+    expect(s.rejectedProposal?.map((r) => r.id)).toEqual(["Make"]);
+    expect(s.sequence).toBeNull();
   });
 });

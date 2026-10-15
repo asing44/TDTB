@@ -4,7 +4,7 @@
    fixed-input gate. */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { ApiAdapter, ApiError, capacitiesSourceConflictOf, isNetworkError, SEQUENCE_NETWORK_ERROR_MESSAGE } from "./api";
+import { ApiAdapter, ApiError, ApiProtocolError, ApiTransportError, capacitiesSourceConflictOf, isNetworkError, SEQUENCE_NETWORK_ERROR_MESSAGE } from "./api";
 
 import planInputs from "./contract-fixtures/plan-inputs.json";
 import planInputsDegraded from "./contract-fixtures/plan-inputs-degraded.json";
@@ -1168,5 +1168,60 @@ describe("transport (network) error classification — 2026-10-15 Firefox incide
     expect(SEQUENCE_NETWORK_ERROR_MESSAGE).toMatch(/Lost the connection to TDTB while sequencing/);
     expect(SEQUENCE_NETWORK_ERROR_MESSAGE).toMatch(/may still have been billed/);
     expect(SEQUENCE_NETWORK_ERROR_MESSAGE).toMatch(/check the day budget before retrying/);
+  });
+});
+
+describe("typed transport vs protocol errors (2026-10-15)", () => {
+  it("wraps a fetch rejection in a typed transport error carrying the request path", async () => {
+    (globalThis.fetch as any).mockRejectedValue(new TypeError("Failed to fetch"));
+    const err = await new ApiAdapter().loadPlanInputs().catch((e) => e);
+    expect(err).toBeInstanceOf(ApiTransportError);
+    expect(err.path).toBe("/plan-inputs");
+    expect(isNetworkError(err)).toBe(true);
+  });
+
+  it("does not call a generic TypeError or client bug a network error", () => {
+    expect(isNetworkError(new TypeError("result.sequence.filter is not a function"))).toBe(false);
+    expect(isNetworkError(new Error("cannot read properties of null"))).toBe(false);
+  });
+
+  it("throws a descriptive protocol error for a 200 with unreadable JSON", async () => {
+    (globalThis.fetch as any).mockImplementation(async (url: string) => {
+      const path = url.split("?")[0];
+      calls.push({ path: url });
+      if (path === "/plan-inputs") return new Response("not-json", { status: 200 });
+      return new Response(JSON.stringify(routes[path]?.body ?? {}), { status: 200 });
+    });
+    const err = await new ApiAdapter().loadPlanInputs().catch((e) => e);
+    expect(err).toBeInstanceOf(ApiProtocolError);
+    expect(err.path).toBe("/plan-inputs");
+    expect(err.status).toBe(200);
+    expect(err.message).toMatch(/unreadable/i);
+    expect(isNetworkError(err)).toBe(false);
+  });
+
+  it("keeps the HTTP status for a non-OK response whose body is unreadable", async () => {
+    (globalThis.fetch as any).mockImplementation(async () =>
+      new Response("garbage", { status: 502 }),
+    );
+    const err = await new ApiAdapter().billedLedger().catch((e) => e);
+    expect(err).toBeInstanceOf(ApiError);
+    expect(err.status).toBe(502);
+    expect(isNetworkError(err)).toBe(false);
+  });
+
+  it("a failed /session-token fetch never sends POST /sequence", async () => {
+    (globalThis.fetch as any).mockImplementation(async (url: string, init?: RequestInit) => {
+      const path = url.split("?")[0];
+      calls.push({ path: url, init });
+      if (path === "/session-token") throw new TypeError("Failed to fetch");
+      return new Response(JSON.stringify(routes[path]?.body ?? {}), { status: 200 });
+    });
+    const a = new ApiAdapter();
+    await a.loadPlanInputs();
+    const err = await a.autoSequence(CTX as any).catch((e) => e);
+    expect(err).toBeInstanceOf(ApiTransportError);
+    expect(err.path).toBe("/session-token");
+    expect(calls.some((c) => c.path.includes("/sequence"))).toBe(false);
   });
 });

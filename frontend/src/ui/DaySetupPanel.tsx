@@ -343,7 +343,7 @@ export function DaySetupPanel({
       duration edits, exactly like CalendarImpact's per-row toggle. The
       participation-only wire shape is kept when the row carries no edit. */
   const calendarSkipOverride = (id: string, skipToday: boolean): AnchoredOverride => {
-    const saved = s.daySetup.anchored[id];
+    const saved = savedOverrideOf(id);
     const next: AnchoredOverride = { on: true, skipToday, time: null };
     if (saved?.blocks != null) next.blocks = saved.blocks;
     if (saved?.start != null) {
@@ -352,15 +352,28 @@ export function DaySetupPanel({
     }
     return next;
   };
+
+  /** Calendar participation toggles (All blocks + the popover's Count today)
+      must merge the override into the DRAFT exactly like toggleAnchorSkip,
+      then persist that same value once. Without the draft patch the resync
+      effect skips its store update while a persist is queued, so the later
+      Continue/save sent `{...draft, confirmed:true}` and overwrote the good
+      server override with the stale pre-toggle one — the 2026-10-15
+      "Count today off is lost" bug. */
+  const applyCalendarOverride = (id: string, next: AnchoredOverride) => {
+    setDraft((d) => ({ ...d, anchored: { ...d.anchored, [id]: next } }));
+    patchTimeUi(id, { saved: false, error: null });
+    persistAnchoredOverride(id, next);
+  };
   const toggleAllBlocksCalendar = (id: string, nextCounting: boolean) => {
-    persistAnchoredOverride(id, calendarSkipOverride(id, !nextCounting));
+    applyCalendarOverride(id, calendarSkipOverride(id, !nextCounting));
   };
 
   /** The calendar popover's Count today: flip the participation intent while
       keeping any local start/duration edit. */
   const calendarToggleCount = (id: string) => {
     const row = effectiveAnchoredBlocks(s).find((a) => a.id === id && a.kind === "calendar");
-    persistAnchoredOverride(id, calendarSkipOverride(id, row ? row.on && !row.skipToday : true));
+    applyCalendarOverride(id, calendarSkipOverride(id, row ? row.on && !row.skipToday : true));
   };
 
   const isCalendarRow = (id: string) =>

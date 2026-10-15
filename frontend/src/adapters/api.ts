@@ -90,16 +90,57 @@ import {
   type Wire,
 } from "./wire";
 
-/** HTTP failure with the server's error detail preserved (409/422/429/...). */
+/** HTTP failure with the server's error detail preserved (409/422/429/...).
+    `path` names the request so callers can tell a /session-token failure from
+    a billed /sequence failure instead of assuming the worst. */
 export class ApiError extends Error {
   constructor(
     readonly status: number,
     readonly detail: unknown,
     message: string,
+    readonly path: string | null = null,
   ) {
     super(message);
     this.name = "ApiError";
   }
+}
+
+/** A request that died before any HTTP status existed (fetch rejection, DNS,
+    offline, browser abort). The path lets the controller say whether the
+    billed POST was even attempted; a generic TypeError is NOT this. */
+export class ApiTransportError extends Error {
+  constructor(
+    readonly path: string,
+    message: string,
+    readonly cause?: unknown,
+  ) {
+    super(message);
+    this.name = "ApiTransportError";
+  }
+}
+
+/** The server answered but the client could not read the response body (not
+    valid JSON). Distinct from a transport failure: the reply DID arrive, so
+    this must never be reported as "connection lost". Carries path + status,
+    never the raw payload. */
+export class ApiProtocolError extends Error {
+  constructor(
+    readonly path: string,
+    readonly status: number,
+    message: string,
+  ) {
+    super(message);
+    this.name = "ApiProtocolError";
+  }
+}
+
+/** The request path carried by a typed API failure, or null. Lets the
+    controller narrow a failure to the exact request that produced it. */
+export function apiFailurePathOf(error: unknown): string | null {
+  if (error instanceof ApiTransportError) return error.path;
+  if (error instanceof ApiError) return error.path;
+  if (error instanceof ApiProtocolError) return error.path;
+  return null;
 }
 
 /** The single-flight 409 from POST /capacities/refresh/start. Returns the
@@ -136,14 +177,15 @@ function detailMessage(status: number, detail: unknown): string {
 }
 
 /** True when a request died at the transport layer rather than returning an
-    HTTP status: browser-specific messages — Firefox "NetworkError when
-    attempting to fetch resource.", Chrome "Failed to fetch", Safari "Load
-    failed" — arrive as a TypeError, and an ApiError is never a network error.
-    Live case (2026-10-15, Firefox): the browser aborted POST /sequence at its
-    own 300s deadline and the operator saw that raw string. */
+    HTTP status. Only the adapter's typed ApiTransportError and known browser
+    fetch-rejection messages count — a generic JS TypeError (a client bug, a
+    result-processing failure) is NOT evidence of transport. ApiError and
+    ApiProtocolError mean the server DID respond and are never network errors.
+    Live case (2026-10-15, Firefox): the operator saw the raw string after a
+    long /sequence wait; the browser 300s race is an INFERENCE, not proven. */
 export function isNetworkError(error: unknown): boolean {
-  if (error instanceof ApiError) return false;
-  if (error instanceof TypeError) return true;
+  if (error instanceof ApiTransportError) return true;
+  if (error instanceof ApiError || error instanceof ApiProtocolError) return false;
   const message = error instanceof Error ? error.message : String(error);
   return /network\s?error|failed to fetch|load failed|network request failed/i.test(message);
 }
@@ -254,16 +296,38 @@ export class ApiAdapter implements Adapter {
   constructor(private base: string = "") {}
 
   private async request(path: string, init?: RequestInit): Promise<Wire> {
-    const res = await fetch(this.base + path, init);
+    let res: Response;
+    try {
+      res = await fetch(this.base + path, init);
+    } catch (e) {
+      // The ONLY genuine transport failure: fetch itself rejected. Carry the
+      // path so a /session-token failure is never called a billed failure.
+      throw new ApiTransportError(
+        path,
+        `TDTB request failed before a response was available (${path})`,
+        e,
+      );
+    }
     let body: Wire | string | null = null;
+    let readable = true;
     try {
       body = await res.json();
     } catch {
       body = null;
+      readable = false;
     }
     if (!res.ok) {
+      // Preserve the original HTTP status/detail even when the body was
+      // unreadable — an error response is not a transport failure.
       const detail = (body as Wire)?.detail ?? body;
-      throw new ApiError(res.status, detail, detailMessage(res.status, detail));
+      throw new ApiError(res.status, detail, detailMessage(res.status, detail), path);
+    }
+    if (!readable || body === null) {
+      throw new ApiProtocolError(
+        path,
+        res.status,
+        `TDTB returned an unreadable response (${path} · HTTP ${res.status})`,
+      );
     }
     return body as Wire;
   }

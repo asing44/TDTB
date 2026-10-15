@@ -207,3 +207,65 @@ describe("overlap warning", () => {
     expect(r.container.textContent).toMatch(/Edited calendar event 'Trinoor Standup' \(14:45-15:15\) overlaps 'PHEP sync \(Vlad\)'/);
   });
 });
+
+describe("calendar Count today survives Continue (2026-10-15 stale draft)", () => {
+  it("keeps a popover Count today OFF through Continue to tasks", async () => {
+    const h = screenHarness();
+    const save = vi.spyOn(FixtureAdapter.prototype, "saveDaySetup");
+    const { r } = open(h);
+    fireEvent.click(r.getByRole("switch", { name: "Count today" }));
+    await waitFor(() => expect(saved(h)?.skipToday).toBe(true));
+    save.mockClear();
+    fireEvent.click(r.getByRole("button", { name: /Continue to tasks/ }));
+    await waitFor(() => expect(h.store.getState().ui.screen).toBe("plan"));
+    expect(save.mock.calls.at(-1)![0].anchored[ID].skipToday).toBe(true);
+    expect(saved(h)?.skipToday).toBe(true);
+  });
+
+  it("keeps an All blocks calendar OFF through Continue", async () => {
+    const h = screenHarness();
+    const save = vi.spyOn(FixtureAdapter.prototype, "saveDaySetup");
+    const r = h.ui(<App />);
+    fireEvent.click(r.getByRole("button", { name: /^All blocks/ }));
+    fireEvent.click(r.getByRole("switch", { name: `Count ${ID} today` }));
+    await waitFor(() => expect(saved(h)?.skipToday).toBe(true));
+    fireEvent.click(r.getByRole("button", { name: "Done" }));
+    save.mockClear();
+    fireEvent.click(r.getByRole("button", { name: /Continue to tasks/ }));
+    await waitFor(() => expect(h.store.getState().ui.screen).toBe("plan"));
+    expect(save.mock.calls.at(-1)![0].anchored[ID].skipToday).toBe(true);
+    expect(saved(h)?.skipToday).toBe(true);
+  });
+
+  it("keeps Count today ON through Continue after toggling off then back on", async () => {
+    const h = screenHarness();
+    const save = vi.spyOn(FixtureAdapter.prototype, "saveDaySetup");
+    const { r } = open(h);
+    const sw = () => r.getByRole("switch", { name: "Count today" });
+    fireEvent.click(sw());
+    await waitFor(() => expect(sw().getAttribute("aria-checked")).toBe("false"));
+    fireEvent.click(sw());
+    await waitFor(() => expect(sw().getAttribute("aria-checked")).toBe("true"));
+    save.mockClear();
+    fireEvent.click(r.getByRole("button", { name: /Continue to tasks/ }));
+    await waitFor(() => expect(h.store.getState().ui.screen).toBe("plan"));
+    expect(save.mock.calls.at(-1)![0].anchored[ID].skipToday).toBe(false);
+    expect(saved(h)?.skipToday).toBe(false);
+  });
+
+  it("keeps a local Starts edit while Count today flips", async () => {
+    const h = screenHarness({
+      [ID]: { on: true, skipToday: false, time: null, start: "10:00", calendarStartAtEdit: "09:15" },
+    });
+    const save = vi.spyOn(FixtureAdapter.prototype, "saveDaySetup");
+    const { r } = open(h);
+    fireEvent.click(r.getByRole("switch", { name: "Count today" }));
+    await waitFor(() => expect(saved(h)?.skipToday).toBe(true));
+    expect(save.mock.calls.at(-1)![0].anchored[ID]).toMatchObject({
+      skipToday: true,
+      start: "10:00",
+      calendarStartAtEdit: "09:15",
+      time: null,
+    });
+  });
+});
