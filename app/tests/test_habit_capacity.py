@@ -124,9 +124,15 @@ class TestComputeHabitSummary:
             {"id": "c", "content": "C", "duration": "5m"},
         ])
         # 25 + 10 + 5 = 40 min -> round up to the 15-min grain = 45
-        assert pr.compute_habit_summary(entry) == {
-            "total": 3, "done": 0, "outstanding": 3, "est_minutes": 45,
-        }
+        result = pr.compute_habit_summary(entry)
+        assert {k: result[k] for k in (
+            "total", "done", "outstanding", "est_minutes",
+        )} == {"total": 3, "done": 0, "outstanding": 3, "est_minutes": 45}
+        assert result["items"] == [
+            {"id": "a", "content": "A", "minutes": 25},
+            {"id": "b", "content": "B", "minutes": 10},
+            {"id": "c", "content": "C", "minutes": 5},
+        ]
 
     def test_unset_duration_uses_the_per_habit_fallback(self):
         entry = _habit_entry([{"id": "a", "content": "A"}])  # fallback 4 min
@@ -152,9 +158,11 @@ class TestComputeHabitSummary:
              {"id": "b", "content": "B", "duration": "25m"}],
             completed=[{"task_id": "a"}],
         )
-        assert pr.compute_habit_summary(entry) == {
-            "total": 2, "done": 1, "outstanding": 1, "est_minutes": 30,
-        }
+        result = pr.compute_habit_summary(entry)
+        assert {k: result[k] for k in (
+            "total", "done", "outstanding", "est_minutes",
+        )} == {"total": 2, "done": 1, "outstanding": 1, "est_minutes": 30}
+        assert result["items"] == [{"id": "b", "content": "B", "minutes": 25}]
 
     def test_a_completion_from_another_day_is_not_done_today(self):
         """``find-completed-tasks`` defaults to a WEEK-long window, so the fetch
@@ -167,9 +175,14 @@ class TestComputeHabitSummary:
                         "completedAt": _local_stamp("2026-10-06")}],
         )
         # 25 + 25 = 50 min -> 60 at the 15-min grain; nothing counts as done.
-        assert pr.compute_habit_summary(entry, logical_day="2026-10-08") == {
-            "total": 2, "done": 0, "outstanding": 2, "est_minutes": 60,
-        }
+        result = pr.compute_habit_summary(entry, logical_day="2026-10-08")
+        assert {k: result[k] for k in (
+            "total", "done", "outstanding", "est_minutes",
+        )} == {"total": 2, "done": 0, "outstanding": 2, "est_minutes": 60}
+        assert result["items"] == [
+            {"id": "a", "content": "A", "minutes": 25},
+            {"id": "b", "content": "B", "minutes": 25},
+        ]
 
     def test_a_completion_on_the_logical_day_is_done(self):
         entry = _habit_entry(
@@ -178,9 +191,11 @@ class TestComputeHabitSummary:
             completed=[{"task_id": "a",
                         "completedAt": _local_stamp("2026-10-08")}],
         )
-        assert pr.compute_habit_summary(entry, logical_day="2026-10-08") == {
-            "total": 2, "done": 1, "outstanding": 1, "est_minutes": 30,
-        }
+        result = pr.compute_habit_summary(entry, logical_day="2026-10-08")
+        assert {k: result[k] for k in (
+            "total", "done", "outstanding", "est_minutes",
+        )} == {"total": 2, "done": 1, "outstanding": 1, "est_minutes": 30}
+        assert result["items"] == [{"id": "b", "content": "B", "minutes": 25}]
 
     def test_an_undated_completion_still_counts(self):
         """The fetch window is the only guard for an undated completion."""
