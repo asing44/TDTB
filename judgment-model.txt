@@ -10,3 +10,16 @@ deepseek/deepseek-v4.1-flash
 # top_p: 1
 # seed: 7
 # stream: false
+
+# Optional OpenRouter PROVIDER ROUTING (the request's `provider` object).
+# require_parameters stays true always and is not editable here.
+# provider_order: together
+# provider_only: together
+# provider_ignore: deepinfra
+# provider_quantizations: fp8,int8
+# provider_sort: latency
+# provider_allow_fallbacks: true
+# provider_data_collection: deny
+# provider_zdr: true
+# provider_max_latency: 60
+# provider_min_throughput: 20

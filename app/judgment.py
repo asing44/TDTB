@@ -80,9 +80,39 @@ _MODEL_ID_RE = re.compile(r"^[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)+(?::[A-Za-z0-9.
 # from the built-in payload" — an empty parameter set is byte-identical to the
 # pre-parameter behavior. The strict response_format and provider
 # require_parameters pins are NOT tunable here.
-_EFFORT_VALUES = frozenset({"none", "minimal", "low", "medium", "high", "xhigh"})
+_EFFORT_VALUES = frozenset(
+    {"none", "minimal", "low", "medium", "high", "xhigh", "max"}
+)
 _MAX_TOKENS_CEILING = 131072
 _INT_RE = re.compile(r"^-?\d+$")
+
+# OpenRouter PROVIDER ROUTING knobs (2026-10-15, Adam): operator-selected
+# endpoint filters that map onto the request's ``provider`` object. The strict
+# ``require_parameters`` pin is NOT tunable here and stays ``True`` always. A
+# provider slug is ``^[a-z0-9][a-z0-9._-]*(/[a-z0-9._-]+)?$`` (lowercased);
+# quantizations come from OpenRouter's documented set.
+_PROVIDER_SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9._-]*(/[a-z0-9._-]+)?$")
+_PROVIDER_QUANTIZATION_VALUES = frozenset(
+    {"int4", "int8", "fp4", "fp6", "fp8", "fp16", "bf16", "fp32", "unknown"}
+)
+_PROVIDER_SORT_VALUES = frozenset({"price", "throughput", "latency"})
+_PROVIDER_DATA_COLLECTION_VALUES = frozenset({"allow", "deny"})
+_PROVIDER_MAX_LATENCY_CEILING = 600.0
+# Keys that look like provider knobs but must never be settable.
+_NON_TUNABLE_PARAM_KEYS = frozenset({"provider_require_parameters"})
+# judgment-model.txt key -> field name inside the ``provider`` object.
+_PROVIDER_PARAM_FIELDS = {
+    "provider_order": "order",
+    "provider_only": "only",
+    "provider_ignore": "ignore",
+    "provider_quantizations": "quantizations",
+    "provider_sort": "sort",
+    "provider_allow_fallbacks": "allow_fallbacks",
+    "provider_data_collection": "data_collection",
+    "provider_zdr": "zdr",
+    "provider_max_latency": "preferred_max_latency",
+    "provider_min_throughput": "preferred_min_throughput",
+}
 
 
 def _param_value_error(source: Path, key: str) -> ValueError:
@@ -141,6 +171,70 @@ def _parse_bool(value: str, key: str, source: Path) -> bool:
     raise _param_value_error(source, key)
 
 
+def _parse_provider_slug_list(value: str, key: str, source: Path) -> list[str]:
+    """Comma-separated provider slugs: trimmed, lowercased, no empties, no dups."""
+    slugs: list[str] = []
+    seen: set[str] = set()
+    for item in value.split(","):
+        slug = item.strip().lower()
+        if not slug or not _PROVIDER_SLUG_RE.match(slug):
+            raise _param_value_error(source, key)
+        if slug in seen:
+            raise _param_value_error(source, key)
+        seen.add(slug)
+        slugs.append(slug)
+    return slugs
+
+
+def _parse_provider_quantizations(
+    value: str, key: str, source: Path
+) -> list[str]:
+    """Comma-separated quantization filters from the documented set."""
+    quants: list[str] = []
+    seen: set[str] = set()
+    for item in value.split(","):
+        quant = item.strip().lower()
+        if quant not in _PROVIDER_QUANTIZATION_VALUES or quant in seen:
+            raise _param_value_error(source, key)
+        seen.add(quant)
+        quants.append(quant)
+    return quants
+
+
+def _parse_provider_enum(allowed: frozenset[str]):
+    """Build a validator accepting only one of ``allowed``."""
+
+    def _parse(value: str, key: str, source: Path) -> str:
+        if value not in allowed:
+            raise _param_value_error(source, key)
+        return value
+
+    return _parse
+
+
+def _validate_provider_consistency(
+    params: Mapping[str, Any], source: Path
+) -> None:
+    """Reject provider routing combinations that contradict each other.
+
+    Names the offending KEYS (never the slugs): ``only`` and ``ignore`` may
+    not overlap, and a provider listed in ``order`` may not be ignored.
+    """
+    only = set(params.get("provider_only", ()))
+    ignore = set(params.get("provider_ignore", ()))
+    order = set(params.get("provider_order", ()))
+    if only & ignore:
+        raise ValueError(
+            f"{source}: judgment parameters 'provider_only' and "
+            f"'provider_ignore' contradict — a provider is both allowed and ignored"
+        )
+    if order & ignore:
+        raise ValueError(
+            f"{source}: judgment parameters 'provider_order' and "
+            f"'provider_ignore' contradict — an ordered provider is ignored"
+        )
+
+
 # key -> validator. Adding a knob is: one entry here, one overlay line in
 # ``_apply_judgment_params``, one README row.
 _JUDGMENT_PARAM_VALIDATORS: dict[str, Any] = {
@@ -154,6 +248,23 @@ _JUDGMENT_PARAM_VALIDATORS: dict[str, Any] = {
     ),
     "seed": lambda v, k, s: _parse_bound_int(v, k, s),
     "stream": _parse_bool,
+    "provider_order": _parse_provider_slug_list,
+    "provider_only": _parse_provider_slug_list,
+    "provider_ignore": _parse_provider_slug_list,
+    "provider_quantizations": _parse_provider_quantizations,
+    "provider_sort": _parse_provider_enum(_PROVIDER_SORT_VALUES),
+    "provider_allow_fallbacks": _parse_bool,
+    "provider_data_collection": _parse_provider_enum(
+        _PROVIDER_DATA_COLLECTION_VALUES
+    ),
+    "provider_zdr": _parse_bool,
+    "provider_max_latency": lambda v, k, s: _parse_bound_float(
+        v, k, s, minimum=0.0, maximum=_PROVIDER_MAX_LATENCY_CEILING,
+        exclusive_minimum=True,
+    ),
+    "provider_min_throughput": lambda v, k, s: _parse_bound_float(
+        v, k, s, minimum=0.0, exclusive_minimum=True
+    ),
 }
 
 
@@ -198,14 +309,28 @@ def _parse_judgment_selector(raw: str, source: Path) -> tuple[str, dict[str, Any
             model = text
             continue
         key, value = _split_param_line(text)
+        key = key.strip()
+        if key in _NON_TUNABLE_PARAM_KEYS:
+            raise ValueError(
+                f"{source}: unknown judgment parameter {key!r} — "
+                f"require_parameters is always true and is not tunable here"
+            )
         if not value:
+            if key in _JUDGMENT_PARAM_VALIDATORS:
+                # A known key with no value is still a bad value: hand it to
+                # its validator so the error names the key, not just the line.
+                if key in params:
+                    raise ValueError(
+                        f"{source}: duplicate judgment parameter {key!r}"
+                    )
+                params[key] = _JUDGMENT_PARAM_VALIDATORS[key]("", key, source)
+                continue
             # A second bare model id (or any line with no separator) is the
             # classic "added a second model by accident" edit.
             raise ValueError(
                 f"{source}: line {lineno} is not a known judgment parameter "
                 f"(expected 'key: value')"
             )
-        key = key.strip()
         if key not in _JUDGMENT_PARAM_VALIDATORS:
             raise ValueError(f"{source}: unknown judgment parameter {key!r}")
         if key in params:
@@ -213,6 +338,7 @@ def _parse_judgment_selector(raw: str, source: Path) -> tuple[str, dict[str, Any
         params[key] = _JUDGMENT_PARAM_VALIDATORS[key](value.strip(), key, source)
     if model is None:
         raise ValueError(f"{source}: judgment model selector is empty")
+    _validate_provider_consistency(params, source)
     return model, params
 
 
@@ -468,6 +594,18 @@ def _apply_judgment_params(
         payload["seed"] = params["seed"]
     if params.get("stream"):
         payload["stream"] = True
+    # Provider routing overrides: merge onto the always-present provider pin so
+    # ``require_parameters`` keeps its first position and stays ``True``. With
+    # no provider_* keys set this block is skipped entirely, leaving the
+    # provider object byte-identical to the pre-provider payload.
+    provider_overrides = {
+        field: params[key]
+        for key, field in _PROVIDER_PARAM_FIELDS.items()
+        if key in params
+    }
+    if provider_overrides:
+        provider = payload.setdefault("provider", {"require_parameters": True})
+        provider.update(provider_overrides)
     return payload
 
 

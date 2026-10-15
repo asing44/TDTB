@@ -122,7 +122,7 @@ default or the `openai/*` temperature omission — the operator owns that risk.
 
 | Key | Range / meaning | Sent as |
 |---|---|---|
-| `reasoning_effort` | one of `none`, `minimal`, `low`, `medium`, `high`, `xhigh` | `reasoning: {effort: …}` |
+| `reasoning_effort` | one of `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max` | `reasoning: {effort: …}` |
 | `max_tokens` | integer `1`–`131072` | `max_tokens` |
 | `temperature` | float `0`–`2` | `temperature` |
 | `top_p` | float greater than `0`, at most `1` | `top_p` |
@@ -136,11 +136,52 @@ Notes:
 - `reasoning_effort` support depends on the model and the selected provider —
   verify it on that model's OpenRouter API page. This file accepts the syntax;
   it does not qualify the model, and a rejecting provider fails the call.
+  `max` is accepted by the file, but support is model-specific: GLM-5.3
+  (`z-ai/glm-5.3-flash`) supports `low`/`high`/`max`, defaults to `max`, and
+  cannot disable reasoning; OpenRouter's own documented enum may not list
+  `max` for every route, so syntax acceptance is not qualification and a
+  provider may still 400.
 - The selector is read once at server startup: an edit needs a restart, and
   changing it makes no call and does not touch credentials or the billed-call
   ledger.
 - These parameters do **not** fix, and do not claim to fix, the known SEQUENCE
   timeout; `TDTB_SEQUENCE_TIMEOUT_S` governs that ceiling separately.
+
+### Provider routing
+
+Optional `provider_*` keys map onto OpenRouter's request `provider` object, so
+an operator can steer which upstream endpoints serve judgment. The payload's
+`provider.require_parameters` stays `true` always — it is not settable here (a
+`provider_require_parameters` key is rejected as unknown at startup).
+
+| Key | Meaning | Example |
+|---|---|---|
+| `provider_order` | try these providers first, in order | `provider_order: together,openai` |
+| `provider_only` | allow only these providers | `provider_only: together` |
+| `provider_ignore` | never use these providers | `provider_ignore: deepinfra` |
+| `provider_quantizations` | allow only these quantizations (`int4`, `int8`, `fp4`, `fp6`, `fp8`, `fp16`, `bf16`, `fp32`, `unknown`) | `provider_quantizations: fp8,int8` |
+| `provider_sort` | rank endpoints by `price`, `throughput`, or `latency` | `provider_sort: latency` |
+| `provider_allow_fallbacks` | `true`/`false` — allow fallback providers when the preferred one fails | `provider_allow_fallbacks: false` |
+| `provider_data_collection` | `allow` or `deny` data-collection endpoints | `provider_data_collection: deny` |
+| `provider_zdr` | `true` restricts to zero-data-retention endpoints | `provider_zdr: true` |
+| `provider_max_latency` | preferred max latency in seconds (positive, at most `600`) | `provider_max_latency: 60` |
+| `provider_min_throughput` | preferred min throughput in tokens/sec (positive) | `provider_min_throughput: 20` |
+
+Warnings:
+
+- Pinning `provider_only` (or any narrow filter) together with
+  `provider_allow_fallbacks: false` removes failover: if that provider cannot
+  serve the request, the call fails instead of routing elsewhere.
+- Quantization or other endpoint filters can leave zero eligible endpoints,
+  which surfaces as an OpenRouter 404 ("no provider can serve" the request).
+- `provider_order`, `provider_only`, and `provider_ignore` may not contradict
+  each other: a provider listed in both `only` and `ignore`, or an `order`
+  provider also in `ignore`, is rejected at startup (the error names the
+  keys).
+- Provider keys do **not** bypass the strict JSON-schema `response_format`;
+  the payload still pins a strict schema, and provider selection is not a
+  claim that the chosen endpoint honors it. Like the model id, provider
+  syntax acceptance is not qualification.
 
 Validation is syntax only: an accepted id is **not** a claim that the model
 is available, affordable, or correct. Pick an OpenRouter model that supports

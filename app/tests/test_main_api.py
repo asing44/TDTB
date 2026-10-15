@@ -70,7 +70,13 @@ class TestRouteShape:
         monkeypatch.setattr(
             main_mod.judgment,
             "JUDGMENT_PARAMS",
-            {"reasoning_effort": "xhigh", "max_tokens": 4096, "stream": True},
+            {
+                "reasoning_effort": "max",
+                "max_tokens": 4096,
+                "stream": True,
+                "provider_order": ["together"],
+                "provider_allow_fallbacks": False,
+            },
         )
         r = client.get("/health")
         assert r.status_code == 200
@@ -78,9 +84,11 @@ class TestRouteShape:
             "status": "ok",
             "judgment_model": "fixture/selected-model",
             "judgment_params": {
-                "reasoning_effort": "xhigh",
+                "reasoning_effort": "max",
                 "max_tokens": 4096,
                 "stream": True,
+                "provider_order": ["together"],
+                "provider_allow_fallbacks": False,
             },
         }
 
