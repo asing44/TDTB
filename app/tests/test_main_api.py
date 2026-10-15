@@ -60,12 +60,18 @@ def _auth(client: TestClient) -> dict:
 
 
 class TestRouteShape:
-    def test_health_tokenless(self, client):
+    def test_health_tokenless(self, client, monkeypatch):
+        # The tokenless /health field must FOLLOW the configured selection, not
+        # pin any operator's choice. A synthetic sentinel proves the route reads
+        # the live module value and needs no token.
+        monkeypatch.setattr(
+            main_mod.judgment, "OPENROUTER_MODEL", "fixture/selected-model"
+        )
         r = client.get("/health")
         assert r.status_code == 200
         assert r.json() == {
             "status": "ok",
-            "judgment_model": "deepseek/deepseek-v4.1-flash",
+            "judgment_model": "fixture/selected-model",
         }
 
     def test_config_tokenless_bootstrap(self, client):

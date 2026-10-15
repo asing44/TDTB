@@ -6,7 +6,9 @@ judgment model by editing one file and running ``tdtb-restart``, instead of
 editing a launchd plist.
 
 Precedence (``_configured_openrouter_model``):
-  1. explicit nonblank ``TDTB_JUDGMENT_MODEL`` env (unchanged legacy handling),
+  1. an explicit NONEMPTY ``TDTB_JUDGMENT_MODEL`` env value, returned verbatim
+     (unchanged legacy handling; whitespace-only counts as nonempty and does
+     not fall through),
   2. the repo-root selector file,
   3. the built-in ``DEFAULT_OPENROUTER_MODEL`` (DeepSeek) when the file is
      absent (legacy/synthetic copies).
@@ -17,6 +19,7 @@ credential: ZERO real calls.
 """
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
@@ -40,12 +43,17 @@ def _selector(tmp_path: Path, content: str) -> Path:
 # ---------------------------------------------------------------------------
 
 class TestCanonicalSelector:
-    def test_repo_root_selector_is_one_plain_deepseek_line(self):
+    def test_repo_root_selector_is_one_plain_model_id_line(self):
         path = REPO_ROOT / SELECTOR_NAME
         assert path.is_file(), "repo-root judgment-model.txt must exist"
-        assert path.read_text(encoding="utf-8") == (
-            "deepseek/deepseek-v4.1-flash\n"
-        )
+        raw = path.read_text(encoding="utf-8")
+        # Canonical formatting: exactly one plain model-id line — no comments,
+        # quotes, keys, or extra blank lines. The value itself is deliberately
+        # NOT asserted, so editing the selector (its whole purpose) keeps this
+        # test green.
+        model = j._parse_judgment_model_file(raw, path)
+        assert raw == f"{model}\n"
+        assert j._MODEL_ID_RE.fullmatch(model)
 
     def test_default_path_is_module_relative_not_home_literal(self):
         # Portable per worktree: derived from judgment.py's own location, so a
@@ -56,11 +64,24 @@ class TestCanonicalSelector:
         # parents[1] is the repo root that contains app/
         assert (expected.parent / "app").is_dir()
 
-    def test_startup_resolution_keeps_default_deepseek(self):
-        # No env override, real selector file present -> DeepSeek.
-        assert j.OPENROUTER_MODEL == j.DEFAULT_OPENROUTER_MODEL == (
-            "deepseek/deepseek-v4.1-flash"
+    def test_startup_resolution_matches_configured_source(self):
+        # Startup resolves whichever source is active: env override, else the
+        # repo-root selector file if present, else the built-in default. It is
+        # deliberately NOT pinned to DeepSeek, so a legitimate alternate
+        # selector file (or a fresh import in a copy) stays valid.
+        assert j.OPENROUTER_MODEL == j._configured_openrouter_model()
+
+    def test_alternate_selector_file_resolves_deterministically(
+        self, tmp_path, monkeypatch
+    ):
+        # A deterministic proof that resolution follows a selector file other
+        # than the canonical one, without mutating canonical judgment-model.txt.
+        monkeypatch.setattr(j, "JUDGMENT_MODEL_FILE", tmp_path / SELECTOR_NAME)
+        (tmp_path / SELECTOR_NAME).write_text(
+            "google/gemini-2.5-pro\n", encoding="utf-8"
         )
+        monkeypatch.delenv("TDTB_JUDGMENT_MODEL", raising=False)
+        assert j._configured_openrouter_model() == "google/gemini-2.5-pro"
 
 
 # ---------------------------------------------------------------------------
@@ -130,6 +151,15 @@ class TestEnvPrecedence:
         assert j._configured_openrouter_model(env, model_file=path) == (
             "openai/gpt-6-luna"
         )
+
+    def test_whitespace_only_env_passes_through_not_fall_through(self, tmp_path):
+        # Legacy behavior, deliberately unchanged: any NONEMPTY env string is
+        # returned verbatim, including whitespace-only. The file is NOT read
+        # and no strip/validation is applied to the env value.
+        path = _selector(tmp_path, "meta-llama/llama-3.1-70b-instruct\n")
+        assert j._configured_openrouter_model(
+            {"TDTB_JUDGMENT_MODEL": "   "}, model_file=path
+        ) == "   "
 
 
 # ---------------------------------------------------------------------------

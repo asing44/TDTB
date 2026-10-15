@@ -661,11 +661,17 @@ class TestOpenRouterProvider:
         assert cap["headers"]["Authorization"] == "Bearer sk-or-test"
         assert cap["timeout"] == j.SEQUENCE_QUERY_TIMEOUT_S
 
-    def test_missing_model_env_uses_qualified_luna_default(self):
-        assert j._configured_openrouter_model({}) == "deepseek/deepseek-v4.1-flash"
-        assert j._configured_openrouter_model({
-            "TDTB_JUDGMENT_MODEL": "openrouter/deepseek/deepseek-v4.1-flash",
-        }) == "openrouter/deepseek/deepseek-v4.1-flash"
+    def test_missing_model_file_falls_back_to_builtin_default(self, tmp_path):
+        # Independent of the real editable selector file: an injected MISSING
+        # path falls back to the built-in DeepSeek default.
+        missing = tmp_path / "missing-judgment-model.txt"
+        assert j._configured_openrouter_model({}, model_file=missing) == (
+            "deepseek/deepseek-v4.1-flash"
+        )
+        assert j._configured_openrouter_model(
+            {"TDTB_JUDGMENT_MODEL": "openrouter/deepseek/deepseek-v4.1-flash"},
+            model_file=missing,
+        ) == "openrouter/deepseek/deepseek-v4.1-flash"
 
     def test_openrouter_payload_requires_strict_schema_and_provider_support(self, monkeypatch):
         import asyncio

@@ -63,8 +63,9 @@ You can run `tdtb-bootstrap` from anywhere after the first bootstrap completes.
 - **uv** (any version supporting `--python 3.12`)
 - **Node.js** + **npm** (used by `npm ci`)
 - **plutil** (macOS built-in; needed by `--launchd`)
-- EventKit permission, Todoist credentials, and an
-  `ANTHROPIC_CLAUDE_CODE` / `TDTB_JUDGMENT_MODEL` token for live operation
+- EventKit permission, Todoist credentials, and the OpenRouter provider
+  credentials needed for live calls. Provider credentials are separate from
+  the non-secret judgment-model selector (`judgment-model.txt`).
 
 **Single-writer constraint:** Only one seat may boot the live `:8746` service.
 `bootstrap-seat.sh` does not activate or restart the service; use
@@ -92,15 +93,21 @@ example `deepseek/deepseek-v4.1-flash`.
 
 Precedence, highest first:
 
-1. a nonblank `TDTB_JUDGMENT_MODEL` environment variable (explicit operator
-   override, unchanged legacy behavior);
+1. a nonempty `TDTB_JUDGMENT_MODEL` environment variable, returned verbatim
+   (explicit operator override, unchanged legacy behavior; whitespace-only
+   counts as nonempty and does not fall through);
 2. the repo-root `judgment-model.txt`;
 3. the built-in default (`deepseek/deepseek-v4.1-flash`) when the file is
    absent (legacy/synthetic copies).
 
 The file is read once at server startup, so an edit needs an attended restart
-to take effect. Changing the model makes no call by itself, does not reset or
-consume the daily billed-call counter, and does not touch credentials.
+to take effect. **The first attended `tdtb-restart` after this change
+re-renders the installed `~/Library/LaunchAgents/com.walle.tdtb.plist` from
+the canonical template**, which no longer pins a model. Until that restart the
+installed plist's old `TDTB_JUDGMENT_MODEL` pin still overrides the selector
+file; the agent does not perform this restart. Changing the model makes no call
+by itself, does not reset or consume the daily billed-call counter, and does
+not touch credentials.
 
 Validation is syntax only: an accepted id is **not** a claim that the model
 is available, affordable, or correct. Pick an OpenRouter model that supports

@@ -102,9 +102,10 @@ def _configured_openrouter_model(
 ) -> str:
     """Resolve the judgment model.
 
-    Precedence: an explicit nonblank ``TDTB_JUDGMENT_MODEL`` env value
-    (legacy handling, returned verbatim) > the repo-root selector file > the
-    built-in ``DEFAULT_OPENROUTER_MODEL``. Only a MISSING file
+    Precedence: an explicit nonempty ``TDTB_JUDGMENT_MODEL`` env value,
+    returned verbatim (legacy handling; whitespace-only counts as nonempty and
+    does not fall through) > the repo-root selector file > the built-in
+    ``DEFAULT_OPENROUTER_MODEL``. Only a MISSING file
     (``FileNotFoundError``, e.g. a legacy/synthetic copy) falls back to the
     built-in default; every other read failure or invalid content is surfaced
     so a broken selector cannot quietly redirect judgment. ``model_file`` is

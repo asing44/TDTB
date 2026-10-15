@@ -17,10 +17,12 @@
   <key>EnvironmentVariables</key>
   <dict>
     <!-- Judgment model: the default is the repo-root judgment-model.txt
-         selector, not this plist. A nonblank TDTB_JUDGMENT_MODEL in the
-         operator environment still overrides the file, and the file overrides
-         the built-in default. To change models, edit judgment-model.txt and
-         run tdtb-restart (attended); no plist edit is needed. No model is
+         selector, not this plist. A nonempty TDTB_JUDGMENT_MODEL in the
+         operator environment is returned verbatim and still overrides the
+         file, and the file overrides the built-in default. To change models,
+         edit judgment-model.txt and run tdtb-restart (attended); no plist
+         edit is needed. The first attended restart re-renders the installed
+         plist from this template, dropping the old model pin. Nothing is
          pinned here so the selector file stays the default source of truth. -->
     <!-- launchd children get a bare PATH; the judgment layer's Agent SDK
          needs node (homebrew) + the claude CLI (~/.local/bin) or /sequence
