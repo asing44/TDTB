@@ -28,7 +28,7 @@
 
 import { Fragment } from "preact";
 import { useEffect, useRef, useState } from "preact/hooks";
-import { display12h, toHHMM, toMinutes } from "../../model/time";
+import { display12h, display12hExact, toHHMM, toMinutes } from "../../model/time";
 import type { CalendarCapacityClass } from "../../model/types";
 import { dragTargetMinutes, keyboardTargetMinutes } from "./anchorDrag";
 import { compactClock, compactHour, compactRange } from "./compactTime";
@@ -637,49 +637,133 @@ export function DayStrip(props: DayStripProps) {
             aria-label="Calendar"
             style={{ height: `${calendarLaneH}px` }}
           >
-            {placedCalendar.map(({ event, min, max, row, text, fit }) => (
-              <Fragment key={event.id}>
-                <span
-                  class={`strip-cal${event.counted ? "" : " strip-cal--skipped"}${
-                    event.capacityClass === "work" ? " strip-cal--work" : ""
-                  }`}
-                  style={{
-                    left: `${rawPct(min)}%`,
-                    width: `${((max - min) / span) * 100}%`,
-                    top: `${5 + row * 30}px`,
-                  }}
-                  title={`${event.name} ${display12h(event.start)}`}
-                  role="img"
-                  aria-label={`${event.name} ${display12h(event.start)} (calendar)`}
-                >
-                  {(fit === "inside" || fit === "clip") && (
+            {placedCalendar.map(({ event, min, max, row, text, fit }) => {
+              // An editable event is a button: click selects, a counted one
+              // drags with the same 15-minute snap as an anchor. `min`/`max`
+              // are already frame-clipped; a drag overlays the target span.
+              const editable = isCalendarEditable(event);
+              const movable = isCalendarMovable(event);
+              const dragging = preview?.id === event.id && preview.lane === "calendar";
+              const lengthMin = Math.max(15, event.durationMin);
+              const drawMin = dragging && preview ? preview.min : min;
+              const drawEnd = Math.min(drawMin + lengthMin, endMin);
+              const drawLeft = Math.max(drawMin, startMin);
+              const leftPct = dragging ? rawPct(drawLeft) : rawPct(min);
+              const widthPct = dragging
+                ? ((drawEnd - drawLeft) / span) * 100
+                : ((max - min) / span) * 100;
+              const selected = props.selectedAnchorId === event.id;
+              const className = `strip-cal${event.counted ? "" : " strip-cal--skipped"}${
+                event.capacityClass === "work" ? " strip-cal--work" : ""
+              }${event.edited ? " strip-cal--edited" : ""}${
+                selected ? " strip-cal--selected" : ""
+              }${editable ? " strip-cal--editable" : ""}${
+                dragging ? " strip-cal--dragging" : ""
+              }`;
+              const style = {
+                left: `${leftPct}%`,
+                width: `${widthPct}%`,
+                top: `${5 + row * 30}px`,
+              };
+              const title = `${event.name} ${display12h(event.start)}`;
+              const clock = `${event.name} ${display12hExact(event.start)} (calendar)`;
+              const inside =
+                (fit === "inside" || fit === "clip") && (
+                  <span
+                    class={`strip-cal__label strip-cal__label--inside${
+                      event.counted ? "" : " strip-cal__label--not-counted"
+                    }`}
+                    data-fit={fit}
+                  >
+                    {text}
+                  </span>
+                );
+              return (
+                <Fragment key={event.id}>
+                  {editable ? (
+                    <button
+                      type="button"
+                      class={className}
+                      style={style}
+                      data-anchor-id={event.id}
+                      data-band={row}
+                      title={`${title}${
+                        movable ? " — drag to move, or use the arrow keys" : ""
+                      }`}
+                      aria-label={`${clock}${event.edited ? " — edited" : ""}`}
+                      onPointerDown={(e) =>
+                        onAnchorPointerDown(
+                          e as unknown as PointerEvent,
+                          calendarSubject(event),
+                          movable,
+                        )
+                      }
+                      onPointerMove={(e) => onAnchorPointerMove(e as unknown as PointerEvent)}
+                      onPointerUp={(e) => onAnchorPointerUp(e as unknown as PointerEvent)}
+                      onPointerCancel={(e) => onAnchorPointerCancel(e as unknown as PointerEvent)}
+                      onKeyDown={(e) =>
+                        onAnchorKeyDown(
+                          e as unknown as KeyboardEvent,
+                          calendarSubject(event),
+                          movable,
+                        )
+                      }
+                      onClick={() => onAnchorClick(event.id)}
+                    >
+                      {inside}
+                    </button>
+                  ) : (
                     <span
-                      class={`strip-cal__label strip-cal__label--inside${
+                      class={className}
+                      style={style}
+                      title={title}
+                      role="img"
+                      aria-label={clock}
+                    >
+                      {inside}
+                    </span>
+                  )}
+                  {(fit === "right" || fit === "left") && !dragging && (
+                    <span
+                      class={`strip-cal__label strip-cal__label--${fit}${
                         event.counted ? "" : " strip-cal__label--not-counted"
                       }`}
                       data-fit={fit}
+                      style={
+                        fit === "right"
+                          ? { left: `calc(${rawPct(max)}% + ${CAL_LABEL_GAP_PX}px)`, top: `${5 + row * 30}px` }
+                          : { right: `calc(${100 - rawPct(min)}% + ${CAL_LABEL_GAP_PX}px)`, top: `${5 + row * 30}px` }
+                      }
                     >
                       {text}
                     </span>
                   )}
-                </span>
-                {(fit === "right" || fit === "left") && (
-                  <span
-                    class={`strip-cal__label strip-cal__label--${fit}${
-                      event.counted ? "" : " strip-cal__label--not-counted"
-                    }`}
-                    data-fit={fit}
-                    style={
-                      fit === "right"
-                        ? { left: `calc(${rawPct(max)}% + ${CAL_LABEL_GAP_PX}px)`, top: `${5 + row * 30}px` }
-                        : { right: `calc(${100 - rawPct(min)}% + ${CAL_LABEL_GAP_PX}px)`, top: `${5 + row * 30}px` }
-                    }
-                  >
-                    {text}
-                  </span>
-                )}
-              </Fragment>
-            ))}
+                </Fragment>
+              );
+            })}
+            {preview && preview.lane === "calendar" && (
+              <span
+                class="day-strip__drag-label"
+                style={{
+                  left: `${Math.max(
+                    10,
+                    Math.min(
+                      90,
+                      pct(
+                        preview.min +
+                          Math.max(
+                            15,
+                            props.calendar?.find((c) => c.id === preview.id)?.durationMin ?? 30,
+                          ) /
+                            2,
+                      ),
+                    ),
+                  )}%`,
+                }}
+              >
+                {display12hExact(toHHMM(preview.from))} → {display12hExact(toHHMM(preview.min))}
+              </span>
+            )}
           </div>
         </div>
       )}

@@ -34,6 +34,17 @@ export function display12h(hhmm: string | null): string {
   return m === 0 ? `${hour} ${suffix}` : `${hour}:${String(m).padStart(2, "0")} ${suffix}`;
 }
 
+/** 12-hour display that always keeps the minutes: "7:00 PM", "12:00 PM",
+    "11:45 PM". Calendar rows use it so an edited event's clock never reads
+    differently from the live one just because it landed on the hour. */
+export function display12hExact(hhmm: string | null): string {
+  if (!hhmm) return "—";
+  const [h, m] = hhmm.split(":").map(Number);
+  const suffix = h < 12 ? "AM" : "PM";
+  const hour = h % 12 === 0 ? 12 : h % 12;
+  return `${hour}:${String(m).padStart(2, "0")} ${suffix}`;
+}
+
 /** A small tolerance for arithmetic that should have landed on a block
     boundary. Capacity subtraction can produce values such as
     9.000000000000002; those are still nine blocks to a person reading the
