@@ -313,16 +313,17 @@ describe("Planning 2a timeline geometry", () => {
     // Widths are the counted duration, not the source window span.
     expect(widthPx(sudsing)).toBeCloseTo(60, 1);
     expect(widthPx(dinner)).toBeCloseTo(60, 1);
-    expect(sudsing.querySelector(".strip-anchor__name")?.textContent).toBe("Sudsing");
-    expect(dinner.querySelector(".strip-anchor__name")?.textContent).toBe("Foods Dinner");
-    // The true times and counts are preserved in the accessible labels.
-    expect(sudsing.getAttribute("aria-label")).toContain("5:45 PM · 2 blocks");
-    expect(dinner.getAttribute("aria-label")).toContain("6 PM · 2 blocks");
-    expect(sudsing.getAttribute("title")).toContain("5:45 PM · 2 blocks");
-    expect(dinner.getAttribute("title")).toContain("6 PM · 2 blocks");
+    // 60px fits neither name, so no stub text is drawn; the true names, times
+    // and counts are preserved in the accessible labels.
+    expect(sudsing.querySelector(".strip-anchor__name")).toBeNull();
+    expect(dinner.querySelector(".strip-anchor__name")).toBeNull();
+    expect(sudsing.getAttribute("aria-label")).toContain("Sudsing 5:45 PM · 2 blocks");
+    expect(dinner.getAttribute("aria-label")).toContain("Foods Dinner 6 PM · 2 blocks");
+    expect(sudsing.getAttribute("title")).toContain("Sudsing 5:45 PM · 2 blocks");
+    expect(dinner.getAttribute("title")).toContain("Foods Dinner 6 PM · 2 blocks");
   });
 
-  it("stagger-packs blocks that must share a row, never overlapping or hiding a name", () => {
+  it("stagger-packs blocks that must share a row without overlapping, dropping names too narrow to fit", () => {
     const rows: StripAnchor[] = [
       // Night Routine occupies row 0 across the collision, forcing all three
       // foods onto row 1, where they must be staggered sideways.
@@ -343,7 +344,9 @@ describe("Planning 2a timeline geometry", () => {
       // The 28px legibility floor, never the old 56px exaggeration.
       expect((parseFloat(el.style.width) / 100) * SPAN).toBeGreaterThanOrEqual(27.9);
       expect((parseFloat(el.style.width) / 100) * SPAN).toBeLessThan(56);
-      expect(el.querySelector(".strip-anchor__name")?.textContent).toBeTruthy();
+      // At the floor no name fits, so no stub is drawn; the name stays in the
+      // accessible label asserted below.
+      expect(el.querySelector(".strip-anchor__name")).toBeNull();
     }
     // The full name, time and count stay in the accessible labels.
     expect(order[0].getAttribute("aria-label")).toContain("Sudsing 5:45 PM · 2 blocks");
@@ -360,10 +363,10 @@ describe("Planning 2a timeline geometry", () => {
     // 6 blocks = 180px wide: the meta line fits and counts in blocks.
     expect(block("Focus").querySelector(".strip-anchor__meta")?.textContent).toBe("1:00p · 6 blocks");
     expect(block("Focus").querySelector(".strip-anchor__name")?.textContent).toBe("Focus");
-    // Sudsing's 60 counted minutes cannot fit the meta line: the name is the
-    // compact label; the full time and count live in title + aria-label.
+    // Sudsing's 60 counted minutes fit neither the meta line nor the name: no
+    // stub is drawn and the full label lives in title + aria-label.
     expect(block("Sudsing").querySelector(".strip-anchor__meta")).toBeNull();
-    expect(block("Sudsing").querySelector(".strip-anchor__name")).toBeTruthy();
+    expect(block("Sudsing").querySelector(".strip-anchor__name")).toBeNull();
     expect(block("Sudsing").getAttribute("aria-label")).toBe("Sudsing 5:45 PM · 2 blocks");
     expect(block("Sudsing").getAttribute("title")).toContain("5:45 PM · 2 blocks");
     expect(r.container.querySelector('[aria-label="Anchors"]')).toBeTruthy();
@@ -388,6 +391,43 @@ describe("Planning 2a timeline geometry", () => {
     const ticks = Array.from(r.container.querySelectorAll(".day-strip__tick")).map((el) => el.textContent);
     expect(ticks[0]).toBe("8a");
     expect(ticks[ticks.length - 1]).toBe("11p");
+  });
+});
+
+describe("anchor name fitting", () => {
+  const laneWidth = (width: number) => {
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue({
+      x: 0, y: 0, left: 0, top: 0, right: width, bottom: 96, width, height: 96,
+      toJSON: () => ({}),
+    });
+  };
+
+  it("drops the name text on three same-minute blocks floored to 28px, keeping it in title and aria-label", () => {
+    const width = 200;
+    laneWidth(width);
+    const rows: StripAnchor[] = [
+      { id: "Foods Dinner", name: "Foods Dinner", start: "12:00", counted: true, reason: null, blocks: 1, movable: true },
+      { id: "Foods Breakfast", name: "Foods Breakfast", start: "12:00", counted: true, reason: null, blocks: 1, movable: true },
+      { id: "Sudsing", name: "Sudsing", start: "12:00", counted: true, reason: null, blocks: 1, movable: true },
+    ];
+    const { block } = setup({ anchors: rows });
+    for (const id of ["Foods Dinner", "Foods Breakfast", "Sudsing"]) {
+      const el = block(id);
+      const px = (parseFloat(el.style.width) / 100) * width;
+      expect(px).toBeGreaterThanOrEqual(27.9);
+      expect(px).toBeLessThan(30);
+      expect(el.textContent).toBe("");
+      expect(el.querySelector(".strip-anchor__name")).toBeNull();
+      expect(el.getAttribute("title")).toContain(id);
+      expect(el.getAttribute("aria-label")).toContain(id);
+    }
+  });
+
+  it("keeps the name text on a block wide enough to show it", () => {
+    const { block } = setup({
+      anchors: [{ id: "Focus", name: "Focus", start: "13:00", counted: true, reason: null, blocks: 6, movable: true }],
+    });
+    expect(block("Focus").querySelector(".strip-anchor__name")?.textContent).toBe("Focus");
   });
 });
 

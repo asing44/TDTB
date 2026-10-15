@@ -420,6 +420,8 @@ export function DayStrip(props: DayStripProps) {
   const blockAmount = (blocks: number) => `${blocks} ${blocks === 1 ? "block" : "blocks"}`;
   const metaText = (anchor: StripAnchor) =>
     `${compactClock(anchor.start)} · ${blockAmount(anchor.blocks)}`;
+  const showName = (anchor: StripAnchor, visiblePx: number) =>
+    visiblePx >= anchor.name.length * 6.6 + 20;
   const showMeta = (anchor: StripAnchor, visiblePx: number) =>
     visiblePx >= Math.max(
       anchor.name.length * 6.6 + 20,
@@ -710,7 +712,9 @@ export function DayStrip(props: DayStripProps) {
                   title={anchorTitle}
                   aria-hidden="true"
                 >
-                  <span class="strip-anchor__name">{anchor.name}</span>
+                  {showName(anchor, visiblePx) && (
+                    <span class="strip-anchor__name">{anchor.name}</span>
+                  )}
                   {showMeta(anchor, visiblePx) && (
                     <span class="strip-anchor__meta">{metaText(anchor)}</span>
                   )}
@@ -733,7 +737,9 @@ export function DayStrip(props: DayStripProps) {
                 onClick={() => onAnchorClick(anchor.id)}
                 key={anchor.id}
               >
-                <span class="strip-anchor__name">{anchor.name}</span>
+                {showName(anchor, visiblePx) && (
+                  <span class="strip-anchor__name">{anchor.name}</span>
+                )}
                 {showMeta(anchor, visiblePx) && (
                   <span class="strip-anchor__meta">{metaText(anchor)}</span>
                 )}
