@@ -1210,6 +1210,19 @@ class TestAnchoredStepEParity:
         assert len(e) == 1
         assert e[0].time == "09:00"  # sequence placement wins
 
+    def test_populated_configured_span_row_matched_not_duplicated(self):
+        # populate_remaining_anchors injects the block at its configured span
+        # (17:45-18:15 here). The manifest must match that row and never also
+        # emit the absent-block fallback (no duplicate calendar events).
+        seq = {"sequence": [
+            {"id": "Sudsing", "start": "17:45", "end": "18:15"},
+        ]}
+        entries = shadow.build_plan_manifest({}, seq, self._config())
+        e = [x for x in entries if x.step == "E" and x.name == "Sudsing"]
+        assert len(e) == 1
+        assert e[0].time == "17:45"
+        assert e[0].duration_min == 30
+
     def test_off_and_skipped_specs_emit_nothing(self):
         cfg = self._config(blocks=[
             {"Block": "Night Routine", "Type": "hard", "Start": "11:00 PM",

@@ -31,6 +31,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 import placement_rules
+import time_engine
 
 _HHMM_RE = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
 _WORKOUT_TYPES = frozenset({"workout", "exercise", "fitness"})
@@ -1087,6 +1088,131 @@ def _row_start_sort_key(row: Any) -> int:
     return 24 * 60 + 1
 
 
+def _anchored_block_id(block: Any) -> str | None:
+    """An anchored block's id, accepting the ``Block`` (skill) and ``id`` /
+    ``name`` (app fixture) shapes."""
+    if not isinstance(block, dict):
+        return None
+    value = block.get("Block") or block.get("id") or block.get("name")
+    return str(value) if value else None
+
+
+def _anchored_duration_minutes(block: dict[str, Any]) -> int | None:
+    return time_engine.duration_minutes(
+        block.get("Duration") or block.get("duration")
+    )
+
+
+def _anchored_row_span(block: dict[str, Any]) -> tuple[int, int] | None:
+    """The configured placement span for an injected anchored row.
+
+    A ``Type: window`` block's ``[Start, End]`` is a floating window, so the
+    row uses the window START with its Duration footprint. Every other block
+    uses ``_anchored_span`` (End, or Start + Duration for duration-only rows).
+    """
+    btype = str(block.get("Type") or block.get("type") or "hard").strip().lower()
+    if btype == "window":
+        start = _normalize_time(block.get("Start") or block.get("start"))
+        duration = _anchored_duration_minutes(block)
+        if start and duration:
+            start_min = _to_minutes(start)
+            return (start_min, start_min + duration)
+    span = _anchored_span(block)
+    return span if span else None
+
+
+def _anchored_elapsed(block: dict[str, Any], anchor_min: int) -> bool:
+    """Whether an anchored block has elapsed at the anchor (shadow's default).
+
+    Hard / duration blocks stop being 'remaining' once their counted end has
+    passed the anchor; a window block once its window end has. The weekend
+    Minting default is handled upstream (this helper never injects Minting).
+    """
+    btype = str(block.get("Type") or block.get("type") or "hard").strip().lower()
+    if btype == "window":
+        end = _normalize_time(block.get("End") or block.get("end"))
+        return end is not None and _to_minutes(end) < anchor_min
+    span = _anchored_span(block)
+    return bool(span) and span[1] <= anchor_min
+
+
+def populate_remaining_anchors(
+    proposal: dict[str, Any],
+    anchored_blocks: list[dict[str, Any]],
+    time_frame: dict[str, Any] | None,
+) -> list[dict[str, str]]:
+    """Ensure every still-remaining anchored block appears in the sequence.
+
+    The prompt tells the model every anchored block MUST appear, but nothing
+    enforced it. For each judged anchored block that is remaining (not elapsed
+    at the frame anchor), not calendar-sourced, not off/skipped, not ignored /
+    quarantined, not pinned, not a Minting/Trinoor zone row, and absent from
+    the sequence, inject a row ``{id, start, end, zone}`` at its configured
+    span. ``overlap_allowed`` (permeable) blocks inject as ``backdrop: true``
+    zone rows so they stay exempt from validation. Mutates ``proposal`` rows in
+    place, re-sorts chronologically, and returns one ``anchor_populated``
+    warning per injected row. Idempotent: a row already present is left alone.
+    """
+    sequence = proposal.get("sequence")
+    if not isinstance(sequence, list):
+        return []
+    frame = time_frame or {}
+    anchor = _normalize_time(frame.get("anchor"))
+    if anchor is None:
+        return []
+    anchor_min = _to_minutes(anchor)
+    covered = {
+        str(row.get("id"))
+        for row in sequence
+        if isinstance(row, dict) and row.get("id") is not None
+    }
+    injected: list[dict[str, str]] = []
+    for block in anchored_blocks or []:
+        if not isinstance(block, dict) or block.get("pinned") is True:
+            continue
+        name = _anchored_block_id(block)
+        if not name or name in covered:
+            continue
+        if str(block.get("source") or "").strip().casefold() == "calendar":
+            continue
+        if block.get("on") is False or block.get("skip_today") is True:
+            continue
+        if str(block.get("capacity_class") or "fixed").strip().casefold() \
+                in _CALENDAR_EXCLUDED_CLASSES:
+            continue
+        folded = name.casefold()
+        # Minting (weekend default) and Trinoor zone rows are scheduled by the
+        # zone layer, never re-injected here.
+        if folded == "minting" or "trinoor" in folded:
+            continue
+        if _anchored_elapsed(block, anchor_min):
+            continue
+        span = _anchored_row_span(block)
+        if not span or span[1] <= span[0]:
+            continue
+        row: dict[str, Any] = {
+            "id": name,
+            "start": _minutes_to_hhmm(span[0]),
+            "end": _minutes_to_hhmm(span[1]),
+            "zone": str(block.get("Zone") or block.get("zone") or "any"),
+        }
+        if block.get("overlap_allowed"):
+            row["backdrop"] = True
+        sequence.append(row)
+        covered.add(name)
+        injected.append({
+            "id": name,
+            "rule": "anchor_populated",
+            "detail": (
+                f"{name!r} was missing from the proposal — added at "
+                f"{row['start']}-{row['end']}"
+            ),
+        })
+    if injected:
+        sequence.sort(key=_row_start_sort_key)
+    return injected
+
+
 # ---------------------------------------------------------------------------
 # Main entry point
 # ---------------------------------------------------------------------------
@@ -1188,6 +1314,18 @@ def validate_sequence(
                 "intervals": [],
                 "detail": detail,
             }],
+        )
+    # Always populate still-remaining anchored blocks (user decision
+    # 2026-10-15): the prompt demands every anchored_block, but nothing
+    # enforced it. Inject absent, non-elapsed, non-calendar anchors BEFORE
+    # re-seat/normalization so both /sequence (proposal) and /validate-sequence
+    # (revalidation) see the same rows and the returned plan carries them.
+    injected_anchor_ids: set[str] = set()
+    for item in populate_remaining_anchors(proposal, anchored_blocks, time_frame):
+        injected_anchor_ids.add(item["id"])
+        add_warning(
+            {"id": item["id"], "rule": item["rule"], "detail": item["detail"]},
+            affected_rows=[item["id"]],
         )
     # G16: over-capacity must degrade, never 422. Re-seat overflowing-tail
     # rows BEFORE normalization/canonicalization so both /sequence (proposal)
@@ -1351,12 +1489,12 @@ def validate_sequence(
 
     # extras not in assigned (and not an anchored block passthrough or an
     # optional id — e.g. QT-absorbed items a manual layout places directly)
-    anchored_ids = {str(b.get("Block")) for b in anchored_blocks}
+    anchored_ids = {str(_anchored_block_id(b)) for b in anchored_blocks}
     # /sequence and /validate-sequence append synthetic pinned walls to this
     # list. They are immutable movable rows, not source anchored passthroughs,
     # so keep a separate identity set for exemptions below.
     source_anchored_ids = {
-        str(b.get("Block"))
+        str(_anchored_block_id(b))
         for b in anchored_blocks
         if b.get("pinned") is not True
     }
@@ -1602,6 +1740,10 @@ def validate_sequence(
     # -- HARD: morning workout ban (before 12:00), Press before_work excepted --
     for row in rows:
         row_id = str(row.get("id"))
+        # Injected anchored rows are source walls, not movable work: the park
+        # must not create a new hard failure of its own.
+        if row_id in injected_anchor_ids:
+            continue
         item = item_by_id.get(row_id, {"id": row_id, "zone": row.get("zone", "")})
         # fold in the proposal row's own zone/id for detection robustness
         probe = {"id": row_id, "zone": row.get("zone") or item.get("zone", ""), "type": item.get("type", "")}
