@@ -168,6 +168,110 @@ class TestMorningWorkoutHardRejection:
 
 
 # ---------------------------------------------------------------------------
+# Model-echo ID escapes — repair, ambiguity, hard-rule preservation
+# ---------------------------------------------------------------------------
+
+class TestModelEchoIdEscapes:
+    """Live 2026-10-15: the sequence prompt serialized IDs with the default
+    ``ensure_ascii=True``, so the model was shown the six-character text
+    ``\u22c5`` and echoed a pseudo-escape (``chr(0x12)+'c5'``). The repaired
+    rows are accepted only when exactly one canonical ID matches, and every
+    repair is recorded — never silent. The hard never-bump / Mint-wall rules
+    themselves are never loosened."""
+
+    CANONICAL_WALL = "WALL\u22c5E-OS Capacities Buildout"
+    CANONICAL_MINT = "Mint Afternoon \u22c5 13:30"
+
+    @staticmethod
+    def _proposal(row_id, start="13:00", end="13:30"):
+        return {"sequence": [{"id": row_id, "start": start, "end": end, "zone": "any"}]}
+
+    def test_mangled_control_echo_is_repaired_and_noted(self):
+        mangled = "WALL" + chr(0x12) + "c5E-OS Capacities Buildout"
+        notes: list[dict[str, str]] = []
+        result = canonicalize_sequence_ids(
+            self._proposal(mangled),
+            [{"id": self.CANONICAL_WALL, "name": self.CANONICAL_WALL}],
+            notes=notes,
+        )
+        assert result["sequence"][0]["id"] == self.CANONICAL_WALL
+        assert notes and notes[0]["rule"] == "sequence_id_repaired"
+        assert notes[0]["id"] == self.CANONICAL_WALL
+        assert "\\x12" in notes[0]["detail"]
+
+    def test_literal_backslash_u_echo_is_repaired_and_noted(self):
+        notes: list[dict[str, str]] = []
+        result = canonicalize_sequence_ids(
+            self._proposal("Mint Afternoon \\u22c5 13:30"),
+            [{"id": self.CANONICAL_MINT, "name": self.CANONICAL_MINT}],
+            notes=notes,
+        )
+        assert result["sequence"][0]["id"] == self.CANONICAL_MINT
+        assert notes and notes[0]["id"] == self.CANONICAL_MINT
+
+    def test_ambiguous_echo_stays_unrepaired_and_hard_fails(self):
+        other = "WALL\u00b7E-OS Capacities Buildout"  # same fuzzy identity
+        mangled = "WALL" + chr(0x12) + "c5E-OS Capacities Buildout"
+        notes: list[dict[str, str]] = []
+        result = canonicalize_sequence_ids(
+            self._proposal(mangled),
+            [{"id": self.CANONICAL_WALL}, {"id": other}],
+            notes=notes,
+        )
+        assert result["sequence"][0]["id"] == mangled
+        assert notes == []
+        validation = validate_sequence(
+            result, [_item(self.CANONICAL_WALL), _item(other)], [], CONFIG
+        )
+        assert validation.ok is False
+        assert any("never-bump" in e for e in validation.hard_errors)
+
+    def test_genuinely_unknown_echo_still_hard_fails_repr_safe(self):
+        mangled = "WALL" + chr(0x12) + "c5"
+        notes: list[dict[str, str]] = []
+        result = canonicalize_sequence_ids(
+            self._proposal(mangled), [{"id": self.CANONICAL_WALL}], notes=notes
+        )
+        assert result["sequence"][0]["id"] == mangled
+        assert notes == []
+        validation = validate_sequence(
+            result, [_item(self.CANONICAL_WALL)], [], CONFIG
+        )
+        assert validation.ok is False
+        assert any("never-bump" in e for e in validation.hard_errors)
+        # The unknown-row error names the control char with repr escaping.
+        assert any("\\x12" in e for e in validation.hard_errors)
+
+    def test_never_bump_still_fires_when_assigned_row_is_absent(self):
+        result = validate_sequence(
+            self._proposal("some-other-row"), [_item(self.CANONICAL_WALL)], [], CONFIG
+        )
+        assert result.ok is False
+        assert any(
+            "missing from sequence (never-bump violated)" in e
+            for e in result.hard_errors
+        )
+
+    def test_mint_hard_wall_still_fires_for_overlap(self):
+        mint = {
+            "id": "Mint Morning \u22c5 08:30",
+            "zone": "work_hours",
+            "placement_window": {"start": "08:30", "end": "09:00"},
+            "mint_session": True,
+        }
+        result = validate_sequence(
+            {"sequence": [{"id": "task-1", "start": "08:45",
+                           "end": "09:15", "zone": "any"}]},
+            [_item("task-1")],
+            [],
+            CONFIG,
+            optional_items=[mint],
+        )
+        assert result.ok is False
+        assert any("overlaps selected Mint session" in e for e in result.hard_errors)
+
+
+# ---------------------------------------------------------------------------
 # Zone violations — soft (warnings)
 # ---------------------------------------------------------------------------
 

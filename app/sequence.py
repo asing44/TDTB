@@ -671,15 +671,107 @@ def _identity_key(value: Any) -> str:
     )
 
 
+def _ascii_identity_key(value: Any) -> str:
+    """Identity key that also ignores non-ASCII decoration and control bytes.
+
+    Repair-only fallback for an ID the model echoed back through an escaped
+    text / lossy-decode round trip (live 2026-10-15). An empty result means
+    the value carried no comparable ASCII identity, so it never matches.
+    """
+    text = "".join(
+        char for char in str(value)
+        if char.isascii() and not (0x01 <= ord(char) <= 0x1F)
+    )
+    return _identity_key(text)
+
+
+_JSON_ESCAPE_TEXT_RE = re.compile(r"\\u([0-9a-fA-F]{4})")
+_CONTROL_CHAR_RE = re.compile(r"[\x00-\x1f]")
+_HEX_DIGITS = frozenset("0123456789abcdefABCDEF")
+
+
+def _decode_json_escape_text(value: str) -> str | None:
+    r"""Decode literal ``\uXXXX`` escape text the model copied from the prompt."""
+    if "\\u" not in value:
+        return None
+    decoded = _JSON_ESCAPE_TEXT_RE.sub(
+        lambda match: chr(int(match.group(1), 16)), value
+    )
+    return decoded if decoded != value else None
+
+
+def _rebuild_mangled_escapes(value: str) -> str | None:
+    r"""Rebuild ``\uXXXX`` escapes a lossy decoder turned into C0 controls.
+
+    The 2026-10-15 incident: the prompt showed ``\u22c5``; the first two hex
+    digits ``22`` were read as an octal escape (``0o22 == 18 == chr(0x12)``)
+    and the trailing digits stayed, yielding ``chr(0x12) + "c5"``. Rebuilding
+    is safe only when the original two digits were valid octal digits, because
+    re-rendering the control byte as octal then reproduces them exactly.
+    """
+    if not _CONTROL_CHAR_RE.search(value):
+        return None
+    rebuilt: list[str] = []
+    changed = False
+    index = 0
+    while index < len(value):
+        char = value[index]
+        code = ord(char)
+        if 0x01 <= code <= 0x1F and index + 2 < len(value):
+            octal = format(code, "o")
+            hex_pair = value[index + 1:index + 3]
+            if len(octal) == 2 and all(digit in _HEX_DIGITS for digit in hex_pair):
+                rebuilt.append("\\u" + octal + hex_pair)
+                index += 3
+                changed = True
+                continue
+        rebuilt.append(char)
+        index += 1
+    if not changed:
+        return None
+    return _decode_json_escape_text("".join(rebuilt))
+
+
+def _id_repair_candidates(raw_id: str) -> list[str]:
+    """Ordered candidate repairs for one model-supplied ID."""
+    candidates: list[str] = []
+
+    def add(candidate: str | None) -> None:
+        if candidate and candidate != raw_id and candidate not in candidates:
+            candidates.append(candidate)
+
+    add(unicodedata.normalize("NFC", raw_id))
+    decoded = _decode_json_escape_text(raw_id)
+    add(decoded)
+    add(_rebuild_mangled_escapes(raw_id))
+    if decoded is not None:
+        add(_rebuild_mangled_escapes(decoded))
+    return candidates
+
+
+def _id_repair_note(raw_id: str, canonical_id: str) -> dict[str, str]:
+    return {
+        "id": canonical_id,
+        "rule": "sequence_id_repaired",
+        "detail": (
+            f"repaired model-supplied ID {raw_id!r} to canonical {canonical_id!r}"
+        ),
+    }
+
+
 def canonicalize_sequence_ids(
-    proposal: dict[str, Any], canonical_items: list[dict[str, Any]]
+    proposal: dict[str, Any],
+    canonical_items: list[dict[str, Any]],
+    notes: list[dict[str, str]] | None = None,
 ) -> dict[str, Any]:
     """Restore canonical item IDs when the model only changes decoration.
 
     Sequence identity is name-keyed, but models occasionally omit a leading
-    emoji from a task title.  Exact IDs always win; a decorated fallback is
-    applied only when the normalized display name maps to one canonical ID.
-    Ambiguous names are left untouched so validation still fails loudly.
+    emoji from a task title, or echo an ID that was JSON-escaped / lossily
+    decoded on the way out. Exact IDs always win; a decorated or repaired
+    fallback is applied only when it maps to one canonical ID. Ambiguous
+    names are left untouched so validation still fails loudly, and each
+    accepted repair is appended to ``notes`` when provided so it is visible.
     """
     sequence = proposal.get("sequence")
     if not isinstance(sequence, list):
@@ -687,12 +779,26 @@ def canonicalize_sequence_ids(
 
     exact: dict[str, str] = {}
     normalized: dict[str, set[str]] = {}
+    ascii_normalized: dict[str, set[str]] = {}
     for item in canonical_items:
         item_id = str(item.get("id") or item.get("name") or "")
         if not item_id:
             continue
         exact[item_id] = item_id
         normalized.setdefault(_identity_key(item_id), set()).add(item_id)
+        ascii_key = _ascii_identity_key(item_id)
+        if ascii_key:
+            ascii_normalized.setdefault(ascii_key, set()).add(item_id)
+
+    def _matches(candidate: str) -> set[str]:
+        found: set[str] = set()
+        if candidate in exact:
+            found.add(candidate)
+        found |= normalized.get(_identity_key(candidate), set())
+        ascii_key = _ascii_identity_key(candidate)
+        if ascii_key:
+            found |= ascii_normalized.get(ascii_key, set())
+        return found
 
     rows: list[dict[str, Any]] = []
     for row in sequence:
@@ -703,11 +809,17 @@ def canonicalize_sequence_ids(
         if row_id in exact:
             rows.append(row)
             continue
-        matches = normalized.get(_identity_key(row_id), set())
-        if len(matches) == 1:
-            rows.append({**row, "id": next(iter(matches))})
-        else:
-            rows.append(row)
+        matched: set[str] = set()
+        for candidate in _id_repair_candidates(row_id) + [row_id]:
+            matched |= _matches(candidate)
+        if len(matched) == 1:
+            canonical_id = next(iter(matched))
+            if canonical_id != row_id:
+                rows.append({**row, "id": canonical_id})
+                if notes is not None:
+                    notes.append(_id_repair_note(row_id, canonical_id))
+                continue
+        rows.append(row)
     return {**proposal, "sequence": rows}
 
 

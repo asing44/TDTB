@@ -510,7 +510,7 @@ AuditReport = dict  # JSON-shape alias; see _validate_audit_report for the contr
 async def audit_pipeline_async(run_data: dict, ctx: RunContext) -> "AuditReport":
     user_prompt = (
         "Audit this run's pipeline data. Return ONLY the JSON object described in your "
-        "system prompt.\n\nrun_data:\n" + json.dumps(run_data, default=str)
+        "system prompt.\n\nrun_data:\n" + json.dumps(run_data, default=str, ensure_ascii=False)
     )
     return await _call_and_validate(
         ctx, "audit_pipeline", AUDIT_SYSTEM_PROMPT, user_prompt, _validate_audit_report
@@ -573,8 +573,8 @@ DigestSuggestions = dict
 async def suggest_digest_async(digest: dict, config: dict, ctx: RunContext) -> "DigestSuggestions":
     user_prompt = (
         "Select at most 5 digest suggestions. Return ONLY the JSON object described in your "
-        "system prompt.\n\ndigest:\n" + json.dumps(digest, default=str)
-        + "\n\nconfig:\n" + json.dumps(config, default=str)
+        "system prompt.\n\ndigest:\n" + json.dumps(digest, default=str, ensure_ascii=False)
+        + "\n\nconfig:\n" + json.dumps(config, default=str, ensure_ascii=False)
     )
     return await _call_and_validate(
         ctx, "suggest_digest", DIGEST_SYSTEM_PROMPT, user_prompt, _validate_digest_suggestions
@@ -640,7 +640,7 @@ async def adjust_freetext_async(instruction: str, digest: dict, ctx: RunContext)
     user_prompt = (
         f"Translate this instruction into ops. Return ONLY the JSON object described in your "
         f"system prompt.\n\ninstruction: {instruction!r}\n\ndigest:\n"
-        + json.dumps(digest, default=str)
+        + json.dumps(digest, default=str, ensure_ascii=False)
     )
     return await _call_and_validate(
         ctx, "adjust_freetext", ADJUST_SYSTEM_PROMPT, user_prompt, _validate_adjustment_plan
@@ -1013,7 +1013,7 @@ async def propose_sequence_async(
         "contain every exact ID in this list exactly once. Copy the IDs verbatim, "
         "including long, misspelled, or low-priority-looking names; never omit an "
         "item because the day is over capacity. Never invent an ID: "
-        + json.dumps(assigned_ids, default=str)
+        + json.dumps(assigned_ids, default=str, ensure_ascii=False)
     )
     uniqueness_instruction = (
         "\n\nOUTPUT UNIQUENESS CHECK (hard): before returning JSON, compare every "
@@ -1033,9 +1033,9 @@ async def propose_sequence_async(
         + placement_context_instruction(config)
         + placement_semantic_instruction(assigned, anchored_blocks)
         + "\n\n"
-        "assigned:\n" + json.dumps(prompt_assigned, default=str)
-        + "\n\nconfig:\n" + json.dumps(config, default=str)
-        + "\n\nanchored_blocks:\n" + json.dumps(anchored_blocks, default=str)
+        "assigned:\n" + json.dumps(prompt_assigned, default=str, ensure_ascii=False)
+        + "\n\nconfig:\n" + json.dumps(config, default=str, ensure_ascii=False)
+        + "\n\nanchored_blocks:\n" + json.dumps(anchored_blocks, default=str, ensure_ascii=False)
     )
 
     def _validate(d: Any) -> None:

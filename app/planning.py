@@ -421,12 +421,14 @@ def run_proposal(
     proposal["overlap_grants"] = sequence.canonicalize_overlap_grants(
         proposal.get("overlap_grants") or []
     )
+    repair_notes: list[dict[str, str]] = []
     proposal = sequence.canonicalize_sequence_ids(
         proposal,
         prepared.assigned + [
             {"id": block.get("Block"), "name": block.get("Block")}
             for block in prepared.anchored_blocks if block.get("Block")
         ],
+        notes=repair_notes,
     )
     proposal["sequence"] = sequence.merge_immutable_rows(
         list(proposal.get("sequence") or []),
@@ -441,6 +443,10 @@ def run_proposal(
         optional_items=prepared.blocks,
         planning_config_fingerprint=prepared.planning_config_fingerprint,
     )
+    if repair_notes:
+        # Accepted model-ID repairs are recorded on the validation result so
+        # they are visible on success (proposal warnings) and on rejection.
+        validation.warnings = list(repair_notes) + list(validation.warnings)
     snapshot = {
         "overlap_grants": sequence.canonicalize_overlap_grants(
             proposal.get("overlap_grants") or []

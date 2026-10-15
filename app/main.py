@@ -5297,11 +5297,18 @@ def create_app() -> FastAPI:
         except judgment.JudgmentError as exc:
             raise HTTPException(status_code=502, detail=f"judgment error: {exc}") from exc
         if not outcome.validation.ok:
+            detail: dict[str, Any] = {
+                "message": "sequence validation failed",
+                "hard_errors": outcome.validation.hard_errors,
+                "rejected_proposal": outcome.rejected_proposal,
+            }
+            if outcome.validation.warnings:
+                # Includes any accepted model-ID repairs, so a repaired-but-
+                # still-rejected proposal never hides what was changed.
+                detail["warnings"] = outcome.validation.warnings
             raise HTTPException(
                 status_code=422,
-                detail={"message": "sequence validation failed",
-                        "hard_errors": outcome.validation.hard_errors,
-                        "rejected_proposal": outcome.rejected_proposal},
+                detail=detail,
             )
         runstate.update_runstate(today, outcome.snapshot)
         assert outcome.result is not None

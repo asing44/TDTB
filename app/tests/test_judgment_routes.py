@@ -92,6 +92,67 @@ class TestSequenceRoute:
         assert r.status_code == 200
         assert r.json()["sequence"][0]["id"] == "A"
 
+    def test_mangled_non_ascii_id_repair_returns_200_with_warning(
+        self, client, monkeypatch
+    ):
+        canonical = "WALL\u22c5E-OS Capacities Buildout"
+        mangled = "WALL" + chr(0x12) + "c5E-OS Capacities Buildout"
+
+        def _place_repair(assigned, config, anchored_blocks, ctx=None):
+            rows, t = [], 9 * 60
+            for a in assigned:
+                item_id = a.get("id") or a.get("name")
+                dur = int(a.get("duration") or 30)
+                rows.append({
+                    "id": mangled if item_id == canonical else item_id,
+                    "start": f"{t // 60:02d}:{t % 60:02d}",
+                    "end": f"{(t + dur) // 60:02d}:{(t + dur) % 60:02d}",
+                    "zone": "any",
+                })
+                t += dur
+            return {"sequence": rows}
+
+        monkeypatch.setattr(judgment, "propose_sequence", _place_repair)
+        r = client.post(
+            "/sequence",
+            headers=_auth(client),
+            json={"assigned": [{"id": canonical}], "config": {},
+                  "anchored_blocks": []},
+        )
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert any(
+            row["id"] == canonical for row in body["sequence"]
+        )
+        assert any(
+            w.get("rule") == "sequence_id_repaired" for w in body["warnings"]
+        )
+
+    def test_repaired_id_still_rejects_missing_item_and_surfaces_warning(
+        self, client, monkeypatch
+    ):
+        canonical = "WALL\u22c5E-OS Capacities Buildout"
+        mangled = "WALL" + chr(0x12) + "c5E-OS Capacities Buildout"
+
+        def _partial(assigned, config, anchored_blocks, ctx=None):
+            return {"sequence": [{"id": mangled, "start": "23:00",
+                                  "end": "23:30", "zone": "any"}]}
+
+        monkeypatch.setattr(judgment, "propose_sequence", _partial)
+        r = client.post(
+            "/sequence",
+            headers=_auth(client),
+            json={"assigned": [{"id": canonical}, {"id": "other"}],
+                  "config": {}, "anchored_blocks": []},
+        )
+        assert r.status_code == 422, r.text
+        detail = r.json()["detail"]
+        assert any("never-bump" in error for error in detail["hard_errors"])
+        assert any(
+            w.get("rule") == "sequence_id_repaired" for w in detail["warnings"]
+        )
+        assert detail["rejected_proposal"]["sequence"][0]["id"] == canonical
+
     def test_judgment_error_returns_502(self, client, monkeypatch):
         def _raise(assigned, config, anchored_blocks, ctx=None):
             raise judgment.JudgmentError("workout before noon")

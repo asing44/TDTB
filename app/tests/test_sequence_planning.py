@@ -124,6 +124,36 @@ def test_proposal_requires_injected_schedulable_rows_and_returns_effective_pins(
     assert outcome.result["pinned_rows"] == []
 
 
+def test_run_proposal_records_model_id_repair_in_warnings():
+    canonical = "WALL\u22c5E-OS Capacities Buildout"
+    mangled = "WALL" + chr(0x12) + "c5E-OS Capacities Buildout"
+    inputs = _inputs(assigned=[{"id": canonical, "name": canonical, "blocks": 1}])
+    prepared = planning.prepare_sequence(inputs, mode="proposal")
+    rows = []
+    start = 9 * 60
+    for item in prepared.assigned:
+        item_id = item.get("id") or item.get("name")
+        duration = int((item.get("blocks") or 1) * 30)
+        rows.append({
+            "id": mangled if item_id == canonical else item_id,
+            "start": f"{start // 60:02d}:{start % 60:02d}",
+            "end": f"{(start + duration) // 60:02d}:{(start + duration) % 60:02d}",
+            "zone": "any",
+        })
+        start += duration
+    outcome = planning.run_proposal(prepared, _adapter(rows))
+    assert outcome.result is not None
+    assert outcome.result["sequence"][0]["id"] == canonical
+    assert any(
+        warning.get("rule") == "sequence_id_repaired"
+        for warning in outcome.validation.warnings
+    )
+    assert any(
+        warning.get("rule") == "sequence_id_repaired"
+        for warning in outcome.result["warnings"]
+    )
+
+
 def test_revalidation_keeps_injected_rows_optional_and_preserves_descending_order():
     inputs = _inputs(
         assigned=[],

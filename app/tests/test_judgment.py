@@ -466,6 +466,31 @@ class TestProposeSequence:
         assert "OUTPUT UNIQUENESS CHECK" in captured["user"]
         assert "remove the duplicate row" in captured["user"]
 
+    def test_prompt_renders_non_ascii_ids_literally_not_escaped(self, monkeypatch):
+        # Live 2026-10-15: the sequence prompt serialized IDs with the default
+        # ensure_ascii=True, so the model saw the six-character text `\u22c5`
+        # instead of the real '⋅'. The echoed pseudo-escape then failed
+        # never-bump. The prompt must carry the literal characters.
+        captured = {}
+
+        async def fake_run_query(system_prompt, user_prompt):
+            captured["user"] = user_prompt
+            return (
+                '{"sequence": [{"id": "WALL\u22c5E-OS Capacities Buildout", '
+                '"start": "13:00", "end": "13:30", "zone": "any"}]}'
+            )
+
+        assigned = [
+            {"id": "WALL\u22c5E-OS Capacities Buildout"},
+            {"id": "Mint Afternoon \u22c5 13:30"},
+        ]
+        monkeypatch.setattr(j, "_run_query", fake_run_query)
+        j.propose_sequence(assigned, {}, [])
+
+        assert "WALL\u22c5E-OS Capacities Buildout" in captured["user"]
+        assert "Mint Afternoon \u22c5 13:30" in captured["user"]
+        assert "\\u22c5" not in captured["user"]
+
     def test_anchor_absent_no_past_check(self, monkeypatch):
         _queue(monkeypatch, [
             '{"sequence": [{"id": "A", "start": "07:45", "end": "08:15", "zone": "any"}]}'
