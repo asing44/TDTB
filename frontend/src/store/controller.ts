@@ -22,7 +22,7 @@ import {
   MINT_SESSION_MINUTES,
 } from "../model/mint";
 import type { WallInterval } from "../model/overflow";
-import { toMinutes } from "../model/time";
+import { isValidHHMM, toMinutes } from "../model/time";
 import { droppedItems } from "../model/placement";
 import type { AppState, Action } from "./store";
 import {
@@ -96,6 +96,12 @@ function calendarParticipation(
     time: null,
   };
   if (o.blocks != null) out.blocks = o.blocks;
+  // Local-only start edit: kept with the calendar's start at edit time. It is
+  // day-setup data on our own server, never a calendar write.
+  if (o.start != null) {
+    out.start = o.start;
+    if (o.calendarStartAtEdit != null) out.calendarStartAtEdit = o.calendarStartAtEdit;
+  }
   return out;
 }
 
@@ -732,6 +738,47 @@ export class Controller {
       anchored: { ...setup.anchored, [id]: sanitized },
       confirmed: true,
     });
+  }
+
+  /** Local-only edit of one calendar event for today: Start (HH:MM, null
+      clears it) and/or Duration in 30-minute blocks (null clears it). Goes
+      through the ordinary day-setup save; it never touches a calendar write
+      and never records an explicit skip, so the saved skip state is kept as is.
+      A start edit records the calendar's own live start for the "changed in
+      calendar" check. An invalid start is refused without saving. */
+  async saveCalendarEdit(
+    id: string,
+    patch: { start?: string | null; blocks?: number | null },
+  ): Promise<void> {
+    const state = this.getState();
+    const block = state.inputs?.anchored.find((a) => a.id === id && a.kind === "calendar");
+    if (!block) return;
+    if (patch.start != null && !isValidHHMM(patch.start)) return;
+    const saved = state.daySetup.anchored[id];
+    const next: AnchoredOverride = {
+      on: true,
+      skipToday: saved?.skipToday ?? false,
+      time: null,
+    };
+    const blocks = "blocks" in patch ? patch.blocks : saved?.blocks;
+    if (blocks != null) next.blocks = blocks;
+    const start = "start" in patch ? patch.start : saved?.start;
+    if (start != null) {
+      next.start = start;
+      next.calendarStartAtEdit = block.start;
+    }
+    const setup = state.daySetup;
+    await this.saveDaySetup({
+      ...setup,
+      anchored: { ...setup.anchored, [id]: next },
+      confirmed: true,
+    });
+  }
+
+  /** Reset to calendar: drop the local start and duration edits, keeping the
+      saved Count today choice. */
+  async resetCalendarEdit(id: string): Promise<void> {
+    await this.saveCalendarEdit(id, { start: null, blocks: null });
   }
 
   /** `defer` coalesces the two follow-up round trips instead of firing them

@@ -107,6 +107,22 @@ export interface StripCalendarEvent {
   /** 'work' is a Mint work block and draws in the minting family, not the
       calendar blue. Absent is treated as 'fixed'. */
   capacityClass?: CalendarCapacityClass;
+  /** Local-only editing (the panel opts in): click selects, a counted event
+      drags with a 15-minute snap, arrow keys move it. Absent keeps the event a
+      read-only picture. Nothing is ever written to the calendar. */
+  editable?: boolean;
+  /** A local start edit is in force; drawn at the edited start. */
+  edited?: boolean;
+}
+
+/** What a pointer drag or arrow key moves: a config anchor or an editable
+    calendar event, in their own lane. */
+interface DragSubject {
+  id: string;
+  name: string;
+  lane: "anchor" | "calendar";
+  start: string;
+  lengthMin: number;
 }
 
 export interface DayStripProps {
@@ -155,9 +171,15 @@ export function DayStrip(props: DayStripProps) {
     lengthMin: number;
     moved: boolean;
     target: number;
+    lane: "anchor" | "calendar";
   } | null>(null);
   const suppressAnchorClick = useRef(false);
-  const [preview, setPreview] = useState<{ id: string; from: number; min: number } | null>(null);
+  const [preview, setPreview] = useState<{
+    id: string;
+    lane: "anchor" | "calendar";
+    from: number;
+    min: number;
+  } | null>(null);
   const [announcement, setAnnouncement] = useState("");
   // The anchors-lane pixel width, so a block that cannot fit its meta line
   // shows the name only. 900 is only the first-paint guess.
@@ -219,6 +241,24 @@ export function DayStrip(props: DayStripProps) {
   const lengthOf = (anchor: StripAnchor) => Math.max(0, anchor.blocks) * BLOCK_MIN;
   const isMovable = (anchor: StripAnchor) =>
     anchor.movable === true && anchor.counted && props.onMoveAnchor !== undefined;
+  const isCalendarEditable = (event: StripCalendarEvent) =>
+    event.editable === true && !props.readOnly;
+  const isCalendarMovable = (event: StripCalendarEvent) =>
+    isCalendarEditable(event) && event.counted && props.onMoveAnchor !== undefined;
+  const anchorSubject = (anchor: StripAnchor): DragSubject => ({
+    id: anchor.id,
+    name: anchor.name,
+    lane: "anchor",
+    start: anchor.start,
+    lengthMin: lengthOf(anchor),
+  });
+  const calendarSubject = (event: StripCalendarEvent): DragSubject => ({
+    id: event.id,
+    name: event.name,
+    lane: "calendar",
+    start: event.start,
+    lengthMin: Math.max(15, event.durationMin),
+  });
 
   const endAnchorDrag = (target: HTMLElement | null, pointerId: number | undefined) => {
     anchorDrag.current = null;
@@ -231,20 +271,21 @@ export function DayStrip(props: DayStripProps) {
       }
     }
   };
-  const onAnchorPointerDown = (e: PointerEvent, anchor: StripAnchor) => {
-    if (!isMovable(anchor) || e.button !== 0) return;
+  const onAnchorPointerDown = (e: PointerEvent, subject: DragSubject, movable: boolean) => {
+    if (!movable || e.button !== 0) return;
     const el = e.currentTarget as HTMLElement;
     const lane = el.parentElement;
     suppressAnchorClick.current = false;
     anchorDrag.current = {
-      id: anchor.id,
+      id: subject.id,
       pointerId: e.pointerId,
       x0: e.clientX,
       laneWidth: lane ? lane.getBoundingClientRect().width : 0,
-      origMin: toMinutes(anchor.start),
-      lengthMin: lengthOf(anchor),
+      origMin: toMinutes(subject.start),
+      lengthMin: subject.lengthMin,
       moved: false,
-      target: toMinutes(anchor.start),
+      target: toMinutes(subject.start),
+      lane: subject.lane,
     };
     try {
       el.setPointerCapture?.(e.pointerId);
@@ -266,12 +307,17 @@ export function DayStrip(props: DayStripProps) {
       dayEnd: endMin,
       lengthMin: dragState.lengthMin,
     });
-    setPreview({ id: dragState.id, from: dragState.origMin, min: dragState.target });
+    setPreview({
+      id: dragState.id,
+      lane: dragState.lane,
+      from: dragState.origMin,
+      min: dragState.target,
+    });
   };
   const onAnchorPointerUp = (e: PointerEvent) => {
     const dragState = anchorDrag.current;
     if (!dragState || e.pointerId !== dragState.pointerId) return;
-    const { id, moved, target, origMin } = dragState;
+    const { id, moved, target, origMin, lane } = dragState;
     endAnchorDrag(e.currentTarget as HTMLElement, e.pointerId);
     if (!moved) return;
     // The click that follows this pointerup belongs to the drag, not to the
@@ -281,7 +327,11 @@ export function DayStrip(props: DayStripProps) {
       suppressAnchorClick.current = false;
     }, 0);
     if (target !== origMin) {
-      setAnnouncement(`${props.anchors.find((a) => a.id === id)?.name ?? id} moved to ${display12h(toHHMM(target))}`);
+      const name =
+        lane === "calendar"
+          ? props.calendar?.find((e) => e.id === id)?.name
+          : props.anchors.find((a) => a.id === id)?.name;
+      setAnnouncement(`${name ?? id} moved to ${display12h(toHHMM(target))}`);
       props.onMoveAnchor?.(id, toHHMM(target));
     }
   };
@@ -295,7 +345,7 @@ export function DayStrip(props: DayStripProps) {
     }
     props.onSelectAnchor(id);
   };
-  const onAnchorKeyDown = (e: KeyboardEvent, anchor: StripAnchor) => {
+  const onAnchorKeyDown = (e: KeyboardEvent, subject: DragSubject, movable: boolean) => {
     if (e.key === "Escape" && anchorDrag.current) {
       // Abandon the gesture; the drop that follows must not commit it.
       anchorDrag.current = null;
@@ -306,17 +356,17 @@ export function DayStrip(props: DayStripProps) {
       }, 0);
       return;
     }
-    if (!isMovable(anchor) || (e.key !== "ArrowLeft" && e.key !== "ArrowRight")) return;
+    if (!movable || (e.key !== "ArrowLeft" && e.key !== "ArrowRight")) return;
     e.preventDefault();
-    const from = toMinutes(anchor.start);
+    const from = toMinutes(subject.start);
     const to = keyboardTargetMinutes(from, e.key === "ArrowRight" ? 1 : -1, e.shiftKey, {
       dayStart: startMin,
       dayEnd: endMin,
-      lengthMin: lengthOf(anchor),
+      lengthMin: subject.lengthMin,
     });
     if (to === from) return;
-    setAnnouncement(`${anchor.name} moved to ${display12h(toHHMM(to))}`);
-    props.onMoveAnchor?.(anchor.id, toHHMM(to));
+    setAnnouncement(`${subject.name} moved to ${display12h(toHHMM(to))}`);
+    props.onMoveAnchor?.(subject.id, toHHMM(to));
   };
 
   // Hour ticks: every whole hour inside the frame (8a … 11p for 7:30a–11:45p).
@@ -734,7 +784,7 @@ export function DayStrip(props: DayStripProps) {
             />
           ))}
           {placedAnchors.map(({ anchor, min, length, row }) => {
-            const dragging = preview?.id === anchor.id;
+            const dragging = preview?.id === anchor.id && preview.lane === "anchor";
             const drawMin = dragging ? preview.min : min;
             const max = Math.min(drawMin + length, endMin);
             const left = Math.max(drawMin, startMin);
@@ -796,11 +846,15 @@ export function DayStrip(props: DayStripProps) {
                 data-band={row}
                 title={anchorTitle}
                 aria-label={anchorLabel}
-                onPointerDown={(e) => onAnchorPointerDown(e as unknown as PointerEvent, anchor)}
+                onPointerDown={(e) =>
+                  onAnchorPointerDown(e as unknown as PointerEvent, anchorSubject(anchor), movable)
+                }
                 onPointerMove={(e) => onAnchorPointerMove(e as unknown as PointerEvent)}
                 onPointerUp={(e) => onAnchorPointerUp(e as unknown as PointerEvent)}
                 onPointerCancel={(e) => onAnchorPointerCancel(e as unknown as PointerEvent)}
-                onKeyDown={(e) => onAnchorKeyDown(e as unknown as KeyboardEvent, anchor)}
+                onKeyDown={(e) =>
+                  onAnchorKeyDown(e as unknown as KeyboardEvent, anchorSubject(anchor), movable)
+                }
                 onClick={() => onAnchorClick(anchor.id)}
                 key={anchor.id}
               >
@@ -815,7 +869,7 @@ export function DayStrip(props: DayStripProps) {
           })}
           {placedAnchors.map(({ anchor }) => {
             const label = anchorLabels.get(anchor.id);
-            if (!label || preview?.id === anchor.id) return null;
+            if (!label || (preview?.id === anchor.id && preview.lane === "anchor")) return null;
             const style =
               label.fit === "left"
                 ? { right: `${((laneW - label.x1) / laneW) * 100}%` }
@@ -838,7 +892,7 @@ export function DayStrip(props: DayStripProps) {
               </span>
             );
           })}
-          {preview && (
+          {preview && preview.lane === "anchor" && (
             <span
               class="day-strip__drag-label"
               style={{

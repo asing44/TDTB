@@ -1317,6 +1317,16 @@ export function projectDaySetup(wire: Wire, confirmed: boolean): DaySetup {
           typeof o.blocks === "number" && Number.isFinite(o.blocks)
             ? Math.max(0, Math.trunc(o.blocks))
             : null,
+        // Calendar rows only: a local start edit and the calendar's start at
+        // edit time. Absent on the wire stays absent in the model.
+        ...(to24h(o.start) != null
+          ? {
+              start: to24h(o.start),
+              ...(to24h(o.calendar_start_at_edit) != null
+                ? { calendarStartAtEdit: to24h(o.calendar_start_at_edit) }
+                : {}),
+            }
+          : {}),
       };
     }
   }
@@ -2383,6 +2393,14 @@ export function daySetupToWire(d: DaySetup): Wire {
       skip_today: o.skipToday,
       time: o.time,
       ...(o.blocks == null ? {} : { blocks: o.blocks }),
+      ...(o.start == null
+        ? {}
+        : {
+            start: o.start,
+            ...(o.calendarStartAtEdit == null
+              ? {}
+              : { calendar_start_at_edit: o.calendarStartAtEdit }),
+          }),
     })),
     captures: {
       intention: d.captures.intention,

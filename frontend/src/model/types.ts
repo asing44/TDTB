@@ -372,6 +372,12 @@ export interface AnchoredOverride {
   time: string | null; // HH:MM start override
   /** Today-only 30-minute blocks. 0 is legal: visible background/no capacity. */
   blocks?: number | null;
+  /** Calendar rows only: the operator's LOCAL start edit (HH:MM). Never
+      written to the calendar; absent/null means the calendar's own start. */
+  start?: string | null;
+  /** Calendar rows only: the calendar's own start when `start` was edited, so
+      a later live difference can surface as "changed in calendar". */
+  calendarStartAtEdit?: string | null;
 }
 
 export interface Captures {

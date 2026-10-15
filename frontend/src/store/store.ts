@@ -35,7 +35,8 @@ import {
   type RefreshSummary,
 } from "../model/refresh";
 import { allowedOverlaps, defectsCovered, workOverlaps } from "../model/findings";
-import { blocksLabel } from "../model/time";
+import { blocksLabel, toHHMM, toMinutes } from "../model/time";
+import { calendarEditOverlaps } from "../model/calendarEdit";
 import { anchoredBlocks, anchoredDefaultOff } from "../model/anchored";
 import { dayFrame, type DayFrame } from "../model/dayFrame";
 import { remainingLabel } from "../model/allocator";
@@ -1245,6 +1246,26 @@ export function effectiveAnchoredBlocks(s: AppState) {
         ? (o ? o.skipToday === true : block.skipToday === true)
         : false;
       const durationMin = o?.blocks == null ? block.durationMin : o.blocks * 30;
+      // Calendar edits (local only, never written to the calendar): a start
+      // override moves the event and its end follows the duration, so walls,
+      // Mint free-slot math and Already placed all read the edited interval.
+      // A duration-only edit also re-derives the end for the same reason.
+      const start = o?.start ?? null;
+      if (start != null && block.start != null) {
+        const startMin = toMinutes(start);
+        return {
+          ...block,
+          on: true,
+          skipToday: skip,
+          durationMin,
+          start,
+          end: toHHMM(Math.min(startMin + durationMin, 1439)),
+        };
+      }
+      if (durationMin !== block.durationMin && block.start != null) {
+        const end = toHHMM(Math.min(toMinutes(block.start) + durationMin, 1439));
+        return { ...block, on: true, skipToday: skip, durationMin, end };
+      }
       return skip === block.skipToday && durationMin === block.durationMin
         ? block
         : { ...block, on: true, skipToday: skip, durationMin };
@@ -1421,6 +1442,21 @@ export interface Alert {
   text: string;
 }
 
+/** Overlap warnings for edited calendar events (local start moves). Reuses the
+    quoted-repr style of the other client overlap findings; a warning, never a
+    block on the move. */
+export function calendarEditAlerts(s: AppState): string[] {
+  const editedIds = Object.entries(s.daySetup.anchored)
+    .filter(([, o]) => o.start != null)
+    .map(([id]) => id);
+  if (editedIds.length === 0 || !s.inputs) return [];
+  const chosen = new Set(s.daySetup.schedulable?.minting?.on === false ? [] : s.daySetup.schedulable?.minting?.sessions ?? []);
+  const mint = (s.inputs.daySemantics.mintSessions ?? [])
+    .filter((m) => chosen.has(m.id))
+    .map((m) => ({ id: m.id, name: m.name, start: m.start, end: m.end }));
+  return calendarEditOverlaps({ blocks: effectiveAnchoredBlocks(s), editedIds, mint });
+}
+
 export function alerts(s: AppState): Alert[] {
   const out: Alert[] = [];
   if (s.driftNotice) out.push({ level: "error", text: s.driftNotice });
@@ -1435,6 +1471,7 @@ export function alerts(s: AppState): Alert[] {
     out.push({ level: "warning", text: o });
   for (const o of allowedOverlaps(s.sequence, s.overlapGrants, grantFingerprint(s)))
     out.push({ level: "info", text: o });
+  for (const o of calendarEditAlerts(s)) out.push({ level: "warning", text: o });
   if (s.capacity?.overassigned)
     out.push({ level: "warning", text: `Overassigned — ${remainingLabel(s.capacity.free)}` });
   if (s.seqPhase === "failed" && s.seqError)
