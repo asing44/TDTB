@@ -1249,7 +1249,6 @@ export function effectiveAnchoredBlocks(s: AppState) {
       // Calendar edits (local only, never written to the calendar): a start
       // override moves the event and its end follows the duration, so walls,
       // Mint free-slot math and Already placed all read the edited interval.
-      // A duration-only edit also re-derives the end for the same reason.
       const start = o?.start ?? null;
       if (start != null && block.start != null) {
         const startMin = toMinutes(start);
@@ -1262,10 +1261,9 @@ export function effectiveAnchoredBlocks(s: AppState) {
           end: toHHMM(Math.min(startMin + durationMin, 1439)),
         };
       }
-      if (durationMin !== block.durationMin && block.start != null) {
-        const end = toHHMM(Math.min(toMinutes(block.start) + durationMin, 1439));
-        return { ...block, on: true, skipToday: skip, durationMin, end };
-      }
+      // A blocks-only edit is a local accounting projection (FEEDBACK-09): it
+      // changes the counted duration, never the event's own start or end, so
+      // the wall-clock window on every surface stays the calendar's.
       return skip === block.skipToday && durationMin === block.durationMin
         ? block
         : { ...block, on: true, skipToday: skip, durationMin };
