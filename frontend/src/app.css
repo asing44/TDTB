@@ -8630,6 +8630,21 @@ body {
   gap: 10px;
 }
 
+/* Narrow widths: the header wraps and the frame fields wrap on their own line,
+   so the intrinsically-wide Preset select can never sit on top of the All
+   blocks trigger. Scoped to the existing 900px breakpoint so the desktop
+   (>=901px) layout is unchanged. */
+@media (max-width: 900px) {
+  .setup-section--your-day .your-day__head {
+    flex-wrap: wrap;
+  }
+
+  .setup-section--your-day .frame-fields {
+    flex: 1 1 auto;
+    flex-wrap: wrap;
+  }
+}
+
 .setup-section--your-day .frame-fields .field {
   display: flex;
   flex-direction: column;
@@ -10591,7 +10606,7 @@ body {
 }
 
 .all-blocks__switch[aria-checked="true"]::after {
-  left: 18px;
+  transform: translateX(16px);
 }
 
 .all-blocks__footer {
@@ -10641,7 +10656,7 @@ body {
       transform 140ms ease-out;
   }
   .all-blocks__switch::after {
-    transition: left 140ms ease-out;
+    transition: transform 140ms ease-out;
   }
   .all-blocks__reset:hover,
   .all-blocks__done:hover,
