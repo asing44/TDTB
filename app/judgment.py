@@ -614,6 +614,36 @@ def _trace_event(name: Any) -> str:
     return ".".join(parts[-2:]) if len(parts) >= 2 else str(name)
 
 
+# httpcore emits ``started``/``complete``/``failed`` for each stage. Only the
+# ``complete`` event of a request-progress stage qualifies as ``last_phase``:
+# a ``started`` event names a stage we merely entered, and on a wall-clock
+# cancel httpcore's http11 handler runs ``except BaseException`` and emits
+# ``response_closed`` (plus a ``.failed`` for the stage in flight) while the
+# waiter unwinds. Recording those froze the field on teardown instead of on
+# the phase that actually hung.
+_TIMING_PROGRESS_STAGES = frozenset(
+    {
+        "connect_tcp",
+        "start_tls",
+        "send_request_headers",
+        "send_request_body",
+        "receive_response_headers",
+        "receive_response_body",
+    }
+)
+
+
+def _completed_progress_phase(event: str) -> str | None:
+    """``send_request_body.complete`` -> ``send_request_body_complete``, or
+    ``None`` for a ``started``/``failed`` event, a teardown stage
+    (``response_closed``), or anything not a request-progress stage."""
+    if not event.endswith(".complete"):
+        return None
+    if event.split(".", 1)[0] not in _TIMING_PROGRESS_STAGES:
+        return None
+    return event.replace(".", "_")
+
+
 def _header_value(headers: Any, name: str) -> str | None:
     if headers is None:
         return None
@@ -692,7 +722,7 @@ class _OpenRouterTiming:
             if isinstance(value, bool):
                 value = "true" if value else "false"
             parts.append(f"{key}={value}")
-        logger.info("%s", " ".join(parts))
+        logger.warning("%s", " ".join(parts))
 
     async def _on_request(self, request: Any) -> None:
         # Attach the httpcore trace extension; the request hook runs before the
@@ -724,7 +754,9 @@ class _OpenRouterTiming:
     async def _atrace(self, name: Any, info: Any = None) -> None:
         try:
             event = _trace_event(name)
-            self.last_phase = event.replace(".", "_")
+            phase = _completed_progress_phase(event)
+            if phase is not None:
+                self.last_phase = phase
             if event not in _TIMING_TRACE_EVENTS:
                 return
             status = None
@@ -732,7 +764,7 @@ class _OpenRouterTiming:
                 return_value = info.get("return_value")
                 if isinstance(return_value, (tuple, list)) and len(return_value) >= 2:
                     status = return_value[1]
-            self.log(self.last_phase, status=status)
+            self.log(event.replace(".", "_"), status=status)
         except Exception:
             pass
 
