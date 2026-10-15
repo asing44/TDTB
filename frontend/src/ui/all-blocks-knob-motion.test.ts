@@ -48,7 +48,21 @@ const switchKnobOn = () =>
 describe("the All blocks switch knob animates with transform, not left", () => {
   it("keeps the knob at a constant left offset", () => {
     expect(switchKnob()).toMatch(/left:\s*2px/);
-    expect(switchKnobOn()).not.toMatch(/left:/);
+    // The checked state must re-pin `left`. `.all-blocks__switch` also
+    // carries the `.anchor-popover__switch` class, whose checked-state knob
+    // is parked at `left: 16px`; without this override the knob inherits
+    // that offset and slides off the 40px track.
+    expect(switchKnobOn()).toMatch(/left:\s*2px/);
+  });
+
+  it("keeps the checked knob inside its 40px track", () => {
+    const track = 40;
+    const knob = 20;
+    const on = switchKnobOn();
+    const left = Number(on.match(/left:\s*(\d+(?:\.\d+)?)px/)?.[1]);
+    const shift = Number(on.match(/translateX\((\d+(?:\.\d+)?)px\)/)?.[1]);
+    expect(Number.isFinite(left) && Number.isFinite(shift)).toBe(true);
+    expect(left + shift + knob).toBeLessThanOrEqual(track);
   });
 
   it("moves the on-state with a transform instead of a layout property", () => {

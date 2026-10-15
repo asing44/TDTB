@@ -10652,6 +10652,7 @@ body {
 }
 
 .all-blocks__switch[aria-checked="true"]::after {
+  left: 2px;
   transform: translateX(16px);
 }
 
