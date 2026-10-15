@@ -10382,3 +10382,105 @@ body {
     transform: translateY(0);
   }
 }
+
+/* All blocks modal (Set up day). One list of every anchor and calendar row,
+   including the off-frame, elapsed, and skipped ones the drag strip cannot
+   reach, each with a Count today switch. Geometry reuses the .editor dialog
+   shell and the .header-pill/.anchor-popover__switch metrics. */
+.all-blocks {
+  width: min(560px, calc(100vw - 32px));
+  max-width: min(560px, calc(100vw - 32px));
+  max-height: min(640px, calc(100vh - 64px));
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.all-blocks__title {
+  margin: 0;
+  font-size: 16px;
+}
+
+.all-blocks__body {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.all-blocks__group-title {
+  margin: 0 0 6px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--t-muted);
+}
+
+.all-blocks__empty {
+  margin: 0;
+  font-size: 13px;
+  color: var(--t-muted);
+}
+
+.all-blocks__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 0;
+  border-top: 1px solid var(--t-border);
+}
+
+.all-blocks__group .all-blocks__row:first-of-type {
+  border-top: 0;
+}
+
+.all-blocks__row-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.all-blocks__name {
+  font-size: 14px;
+  color: var(--t-text);
+  overflow-wrap: anywhere;
+}
+
+.all-blocks__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--t-muted);
+}
+
+.all-blocks__time {
+  font-family: var(--font-mono);
+}
+
+.all-blocks__status--outside-frame,
+.all-blocks__status--elapsed,
+.all-blocks__status--after-day-end {
+  color: #8a5a00;
+}
+
+.all-blocks__switch {
+  flex: none;
+}
+
+.all-blocks__footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding-top: 12px;
+  border-top: 1px solid var(--t-border);
+}
+
+.all-blocks__trigger {
+  align-self: flex-start;
+}

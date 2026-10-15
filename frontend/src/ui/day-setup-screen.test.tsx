@@ -4,10 +4,11 @@
    Continue. Behavioral coverage only — jsdom cannot judge layout (KTD13). */
 
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent } from "@testing-library/preact";
+import { cleanup, fireEvent, within } from "@testing-library/preact";
 import { App } from "./App";
 import { FixtureAdapter } from "../adapters/fixture";
 import { makeHarness } from "./test-harness";
+import type { AnchoredBlock, AnchoredOverride } from "../model/types";
 
 afterEach(cleanup);
 
@@ -575,6 +576,221 @@ describe("anchor move and save to config", () => {
     drag(strip(r, "Sudsing"), 30);
     await vi.waitFor(() => expect(savedTime(h, "Sudsing")).toBe("18:15"));
     expect(save).not.toHaveBeenCalled();
+  });
+});
+
+describe("All blocks modal (Set up day)", () => {
+  const hard = (
+    id: string,
+    start: string,
+    end: string,
+    durationMin: number,
+  ): AnchoredBlock => ({
+    id,
+    name: id,
+    kind: "hard",
+    start,
+    end,
+    durationMin,
+    overlapAllowed: false,
+    on: true,
+    skipToday: false,
+  });
+  const cal = (
+    id: string,
+    start: string,
+    end: string,
+    durationMin: number,
+    capacityClass: "work" | "fixed",
+  ): AnchoredBlock => ({
+    id,
+    name: id,
+    kind: "calendar",
+    start,
+    end,
+    durationMin,
+    overlapAllowed: false,
+    on: true,
+    skipToday: false,
+    calendarId: id,
+    calendarTitle: capacityClass === "work" ? "Trinoor" : "Personal",
+    capacityClass,
+  });
+
+  /** Stage extra anchors/calendar rows plus a frame start and today-only
+      overrides onto the ready scenario the screen harness already built. */
+  function stageAllBlocks(
+    h: ReturnType<typeof screenHarness>,
+    anchors: AnchoredBlock[] = [],
+    overrides: Record<string, AnchoredOverride> = {},
+    frameStart = "07:30",
+  ) {
+    const inputs = structuredClone(h.store.getState().inputs!);
+    inputs.anchored = [...inputs.anchored, ...anchors];
+    h.store.dispatch({ type: "INPUTS_LOADED", inputs, ledger: h.store.getState().ledger! });
+    const daySetup = h.store.getState().daySetup;
+    h.store.dispatch({
+      type: "SETUP_SAVED",
+      daySetup: {
+        ...daySetup,
+        anchor: frameStart,
+        anchored: { ...daySetup.anchored, ...overrides },
+      },
+    });
+  }
+
+  const openAllBlocks = (r: ReturnType<ReturnType<typeof makeHarness>["ui"]>) =>
+    fireEvent.click(r.getByRole("button", { name: /All blocks/ }));
+
+  const chipOf = (dialog: HTMLElement, name: string) => {
+    const row = within(dialog).getByText(name).closest(".all-blocks__row") as HTMLElement;
+    return (row.querySelector(".all-blocks__status") as HTMLElement).textContent;
+  };
+
+  it("lists every anchor and calendar row, including the off-frame ones the strip drops", () => {
+    const h = screenHarness();
+    stageAllBlocks(
+      h,
+      [
+        cal("Trinoor Standup", "09:15", "09:45", 30, "work"),
+        cal("PHEP sync (Vlad)", "14:45", "15:30", 45, "fixed"),
+        hard("Early Task", "06:00", "06:30", 30),
+        hard("Late Task", "23:50", "00:20", 30),
+      ],
+      { "Morning Routine": { on: false, skipToday: true, time: null, blocks: null } },
+      "13:30",
+    );
+    const r = h.ui(<App />);
+    // The strip drops the after-frame anchor and the out-of-frame calendar
+    // event entirely; they must still be reachable in the modal.
+    const strip = r.getByTestId("day-strip");
+    expect(strip.querySelector('[data-anchor-id="Late Task"]')).toBeNull();
+    expect(strip.textContent).not.toContain("Late Task");
+    expect(strip.textContent).not.toContain("Trinoor Standup");
+
+    openAllBlocks(r);
+    const dialog = r.getByRole("dialog", { name: "All blocks" });
+    const anchors = within(dialog).getByRole("region", { name: "Anchors" });
+    const calendar = within(dialog).getByRole("region", { name: "Calendar events" });
+    for (const name of ["Morning Routine", "Early Task", "Late Task", "Sudsing"]) {
+      expect(within(anchors).getByText(name)).toBeTruthy();
+    }
+    for (const name of ["Trinoor Standup", "PHEP sync (Vlad)"]) {
+      expect(within(calendar).getByText(name)).toBeTruthy();
+    }
+    // Count chip reflects the one skipped row (Morning Routine).
+    expect(r.getByRole("button", { name: /All blocks/ }).textContent).toContain("1 off");
+  });
+
+  it("renders the elapsed, outside-frame, after-day-end, skipped, and counted status chips", () => {
+    const h = screenHarness();
+    stageAllBlocks(
+      h,
+      [hard("Early Task", "06:00", "06:30", 30), hard("Late Task", "23:50", "00:20", 30), hard("Night Owl", "23:30", "00:30", 60)],
+      { "Morning Routine": { on: false, skipToday: true, time: null, blocks: null } },
+      "13:30",
+    );
+    const r = h.ui(<App />);
+    openAllBlocks(r);
+    const dialog = r.getByRole("dialog", { name: "All blocks" }) as HTMLElement;
+    expect(chipOf(dialog, "Early Task")).toBe("elapsed");
+    expect(chipOf(dialog, "Late Task")).toBe("outside frame");
+    expect(chipOf(dialog, "Night Owl")).toBe("after day end");
+    expect(chipOf(dialog, "Morning Routine")).toBe("skipped");
+    expect(chipOf(dialog, "Sudsing")).toBe("counted");
+  });
+
+  it("toggling a config anchor saves the today-only override keyed by id", async () => {
+    const h = screenHarness();
+    const save = vi.spyOn(h.controller, "saveAnchoredOverride").mockResolvedValue();
+    const r = h.ui(<App />);
+    openAllBlocks(r);
+    const sw = r.getByRole("switch", { name: "Count Sudsing today" });
+    expect(sw.getAttribute("aria-checked")).toBe("true");
+    fireEvent.click(sw);
+    await vi.waitFor(() => {
+      expect(save).toHaveBeenCalledWith(
+        "Sudsing",
+        expect.objectContaining({ on: false, skipToday: true }),
+      );
+    });
+    await vi.waitFor(() =>
+      expect(
+        r.getByRole("switch", { name: "Count Sudsing today" }).getAttribute("aria-checked"),
+      ).toBe("false"),
+    );
+    fireEvent.click(r.getByRole("switch", { name: "Count Sudsing today" }));
+    await vi.waitFor(() => {
+      expect(save).toHaveBeenLastCalledWith(
+        "Sudsing",
+        expect.objectContaining({ on: true, skipToday: false }),
+      );
+    });
+  });
+
+  it("toggling a calendar event sends a participation-only override with no time or blocks", async () => {
+    const h = screenHarness();
+    stageAllBlocks(h, [cal("Trinoor Standup", "09:15", "09:45", 30, "work")]);
+    const save = vi.spyOn(h.controller, "saveAnchoredOverride").mockResolvedValue();
+    const r = h.ui(<App />);
+    openAllBlocks(r);
+    const sw = r.getByRole("switch", { name: "Count Trinoor Standup today" });
+    expect(sw.getAttribute("aria-checked")).toBe("true");
+    fireEvent.click(sw);
+    await vi.waitFor(() => {
+      // Exact-shape match: no time or blocks key may ride along.
+      expect(save).toHaveBeenCalledWith("Trinoor Standup", { on: true, skipToday: true, time: null });
+    });
+  });
+
+  it("Escape closes the modal and returns focus to the trigger; Done also closes", () => {
+    const h = screenHarness();
+    const r = h.ui(<App />);
+    const trigger = r.getByRole("button", { name: /All blocks/ }) as HTMLElement;
+    trigger.focus();
+    openAllBlocks(r);
+    const dialog = r.getByRole("dialog", { name: "All blocks" }) as HTMLElement;
+    expect(dialog.getAttribute("aria-modal")).toBe("true");
+    expect(dialog.contains(document.activeElement)).toBe(true);
+    fireEvent.keyDown(dialog, { key: "Escape" });
+    expect(r.queryByRole("dialog", { name: "All blocks" })).toBeNull();
+    expect(document.activeElement).toBe(trigger);
+
+    openAllBlocks(r);
+    fireEvent.click(r.getByRole("button", { name: "Done" }));
+    expect(r.queryByRole("dialog", { name: "All blocks" })).toBeNull();
+  });
+
+  it("names every Count-today switch and exposes the switch role and aria-checked", () => {
+    const h = screenHarness();
+    stageAllBlocks(h, [cal("Trinoor Standup", "09:15", "09:45", 30, "work")]);
+    const r = h.ui(<App />);
+    openAllBlocks(r);
+    const dialog = r.getByRole("dialog", { name: "All blocks" });
+    const switches = within(dialog).getAllByRole("switch");
+    expect(switches.length).toBeGreaterThan(0);
+    for (const sw of switches) {
+      expect(sw.getAttribute("aria-checked")).toBe("true");
+      expect(sw.getAttribute("aria-label")).toMatch(/^Count .+ today$/);
+    }
+  });
+
+  it("Reset all to config clears config anchors only, never calendar rows", async () => {
+    const h = screenHarness();
+    stageAllBlocks(h, [cal("Trinoor Standup", "09:15", "09:45", 30, "work")]);
+    const save = vi.spyOn(h.controller, "saveAnchoredOverride").mockResolvedValue();
+    const r = h.ui(<App />);
+    openAllBlocks(r);
+    fireEvent.click(r.getByRole("button", { name: "Reset all to config" }));
+    await vi.waitFor(() => {
+      expect(save).toHaveBeenCalledWith("Sudsing", {
+        on: true,
+        skipToday: false,
+        time: null,
+        blocks: null,
+      });
+    });
+    expect(save.mock.calls.some(([id]) => id === "Trinoor Standup")).toBe(false);
   });
 });
 

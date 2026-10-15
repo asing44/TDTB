@@ -18,7 +18,7 @@
 
 import { useEffect, useRef, useState } from "preact/hooks";
 import { useApp, useAppState } from "./context";
-import { display12h, formatBlockAmount, formatDurationMinutes, isValidHHMM, toMinutes } from "../model/time";
+import { display12h, formatBlockAmount, formatDurationMinutes, isValidHHMM, toHHMM, toMinutes } from "../model/time";
 import {
   explicitMintCapMinutes,
   fillMintSessionIds,
@@ -45,6 +45,7 @@ import { DayStrip } from "./day-setup/DayStrip";
 import { AnchorPopover, type AnchorTimeState } from "./day-setup/AnchorPopover";
 import { PromptsCard } from "./day-setup/PromptsCard";
 import { LooseEndBanner } from "./day-setup/LooseEndBanner";
+import { AllBlocksModal, type AllBlocksRow, type AllBlocksStatus } from "./day-setup/AllBlocksModal";
 import { onSetupContinue, onSetupUndo } from "./day-setup/commands";
 
 export function DaySetupPanel({
@@ -175,6 +176,9 @@ export function DaySetupPanel({
   // Planning 2a: the anchor whose block is selected (the popover will anchor to
   // it). Selecting keeps the existing editor path so nothing regresses yet.
   const [selectedAnchor, setSelectedAnchor] = useState<string | null>(null);
+  // U12: "All blocks" lists every anchor/calendar row (even off-frame ones
+  // the strip cannot reach) with a Count today switch. Local to the panel.
+  const [allBlocksOpen, setAllBlocksOpen] = useState(false);
   const persistChain = useRef<Promise<void>>(Promise.resolve());
   const pendingPersists = useRef(0);
   useEffect(() => {
@@ -285,6 +289,27 @@ export function DaySetupPanel({
       .finally(() => {
         pendingPersists.current -= 1;
       });
+  };
+
+  /** All blocks: calendar rows accept participation only (never time/blocks),
+      exactly like CalendarImpact's per-row toggle. */
+  const toggleAllBlocksCalendar = (id: string, nextCounting: boolean) => {
+    persistAnchoredOverride(id, { on: true, skipToday: !nextCounting, time: null });
+  };
+
+  /** All blocks footer: clear every config anchor's today-only override back
+      to its config default in one pass, through the same per-id call. */
+  const resetAllAnchorsToConfig = () => {
+    const reset: AnchoredOverride = { on: true, skipToday: false, time: null, blocks: null };
+    setDraft((d) => {
+      const anchored = { ...d.anchored };
+      for (const a of editableAnchors) anchored[a.id] = { ...reset };
+      return { ...d, anchored };
+    });
+    for (const a of editableAnchors) {
+      patchTimeUi(a.id, { saved: false, error: null });
+      persistAnchoredOverride(a.id, { ...reset });
+    }
   };
 
   /** Strip drag / arrow keys: today's start for one config anchor. */
@@ -562,6 +587,64 @@ export function DaySetupPanel({
         // Work-class (Mint) rows draw yellow on the lane; fixed stays blue.
         capacityClass: a.capacityClass,
       }));
+    // All blocks: every anchor and calendar row, regardless of the frame.
+    // Status is the operator's story: skipped, outside the frame, elapsed
+    // (a counted config anchor that began and ended before the frame), or
+    // running past midnight; everything else counts.
+    const frameEndMin = toMinutes(frameEnd);
+    const allBlockAnchors: AllBlocksRow[] = editableAnchors.map((a) => {
+      const o = overrideOf(a.id);
+      const on = o.on && !o.skipToday;
+      const source = sourceAnchor(a.id);
+      const blocks = anchoredBlocks(source, o);
+      const start = o.time ?? a.start;
+      const startMin = start ? toMinutes(start) : null;
+      const endMin = startMin == null ? null : startMin + blocks * 30;
+      let status: AllBlocksStatus;
+      if (!on) status = "skipped";
+      else if (startMin == null) status = "counted";
+      else if (startMin > frameEndMin) status = "outside frame";
+      else if (endMin! > 1440) status = "after day end";
+      else if (a.kind !== "window" && a.kind !== "template" && endMin! <= frameStartMin)
+        status = "elapsed";
+      else status = "counted";
+      return {
+        id: a.id,
+        name: a.name,
+        time: `${display12h(start)}–${endMin == null ? "—" : display12h(toHHMM(endMin))}`,
+        blocks,
+        status,
+        counting: on,
+      };
+    });
+    const allBlockCalendar: AllBlocksRow[] = displayAnchored(effectiveAnchoredBlocks(s), {
+      sessionCalendars: true,
+    })
+      // Same exclusions as the strip: ignored calendars, zero-duration and
+      // all-day events have no place among the day's commitments.
+      .filter(
+        (a) =>
+          a.kind === "calendar" &&
+          a.start !== null &&
+          a.durationMin > 0 &&
+          (a.capacityClass ?? "fixed") !== "ignored",
+      )
+      .map((a) => {
+        const blocks = Math.ceil(a.durationMin / 30);
+        const counting = !a.skipToday;
+        const status: AllBlocksStatus = counting ? "counted" : "skipped";
+        return {
+          id: a.id,
+          name: a.name,
+          time: `${display12h(a.start)}–${display12h(a.end ?? a.start)}`,
+          blocks,
+          status,
+          counting,
+        };
+      });
+    const allBlocksOff = [...allBlockAnchors, ...allBlockCalendar].filter(
+      (row) => !row.counting,
+    ).length;
     const freeSlots = Math.max(0, selectableMintSessionIds.length - selectedMintSessionIds.length);
     // The popover's Count today switch shows the OVERRIDE intent, not the
     // strip's frame-clipped drawing state: an anchor clipped at the frame's
@@ -603,6 +686,13 @@ export function DaySetupPanel({
                   <p class="setup-section__hint">
                     Click an anchor to edit it. Drag to move it or pick Mint sessions.
                   </p>
+                  <button
+                    type="button"
+                    class="header-pill all-blocks__trigger"
+                    onClick={() => setAllBlocksOpen(true)}
+                  >
+                    All blocks{allBlocksOff > 0 ? ` · ${allBlocksOff} off` : ""}
+                  </button>
                 </div>
                 <div class="frame-fields">
                   <div class="field">
@@ -762,6 +852,17 @@ export function DaySetupPanel({
               onPersistCustom={(patch) => void controller.savePromptDrafts(patch)}
               promptSave={s.promptSave}
             />
+
+            {allBlocksOpen && (
+              <AllBlocksModal
+                anchors={allBlockAnchors}
+                calendar={allBlockCalendar}
+                onToggleAnchor={toggleAnchorSkip}
+                onToggleCalendar={toggleAllBlocksCalendar}
+                onResetAll={resetAllAnchorsToConfig}
+                onClose={() => setAllBlocksOpen(false)}
+              />
+            )}
         </div>
       </div>
     );
