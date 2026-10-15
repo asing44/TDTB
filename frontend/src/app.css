@@ -7910,6 +7910,13 @@ body {
   color: var(--t-muted);
 }
 
+/* Outside name for a block too narrow to carry it: height is set inline per
+   band (38px beside a block, 16px on a stacked row). */
+.strip-anchor__label--left {
+  justify-content: flex-end;
+  text-align: right;
+}
+
 .strip-anchor {
   overflow: hidden;
   white-space: nowrap;

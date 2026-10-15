@@ -49,6 +49,12 @@ const CAL_CHAR_PX = 6.6;
 const CAL_PAD_PX = 16;
 const CAL_MIN_INSIDE_PX = 44;
 const CAL_LABEL_GAP_PX = 8;
+/** Outside anchor labels: estimated glyph width (12px type), gap to the block,
+    breathing room between neighbours, and the height of a stacked label row. */
+const ANCHOR_LABEL_CHAR_PX = 6.6;
+const ANCHOR_LABEL_GAP_PX = 8;
+const ANCHOR_LABEL_PAD_PX = 4;
+const ANCHOR_LABEL_ROW_H = 16;
 /** Visible gap between a clipped block's right edge and the next block. */
 const STAGGER_GAP_PX = 2;
 /** README row preference: these ride row 0, the rest of the catalogue
@@ -396,7 +402,77 @@ export function DayStrip(props: DayStripProps) {
     1,
     rowIntervals.reduce((count, blocks, row) => (blocks.length > 0 ? row + 1 : count), 1),
   );
-  const anchorLaneH = Math.max(96, anchorRowCount * ANCHOR_ROW_PITCH + 4);
+
+  const blockAmount = (blocks: number) => `${blocks} ${blocks === 1 ? "block" : "blocks"}`;
+  const metaText = (anchor: StripAnchor) =>
+    `${compactClock(anchor.start)} · ${blockAmount(anchor.blocks)}`;
+  const showName = (anchor: StripAnchor, visiblePx: number) =>
+    visiblePx >= anchor.name.length * 6.6 + 20;
+  const showMeta = (anchor: StripAnchor, visiblePx: number) =>
+    visiblePx >= Math.max(
+      anchor.name.length * 6.6 + 20,
+      metaText(anchor).length * 6.4 + 20,
+    );
+
+  // Every drawn block shows its name. A block too narrow for it draws the name
+  // OUTSIDE: right of the block, else left (never past the lane), else on a
+  // stacked label row under the block rows. Labels share the row bands with
+  // the blocks and with each other, so none overlaps another label or block.
+  const labelOcc: Array<Array<{ x0: number; x1: number }>> = rowIntervals.map(() => []);
+  placedAnchors.forEach(({ anchor, row }) => {
+    const geom = anchorGeometry.get(anchor.id);
+    if (!geom) return;
+    const x0 = (geom.leftPct / 100) * laneW;
+    labelOcc[row].push({ x0, x1: x0 + (geom.widthPct / 100) * laneW });
+  });
+  const belowOcc: Array<Array<{ x0: number; x1: number }>> = [];
+  const isFree = (list: Array<{ x0: number; x1: number }>, x0: number, x1: number) =>
+    !list.some((iv) => x0 - ANCHOR_LABEL_PAD_PX < iv.x1 && x1 + ANCHOR_LABEL_PAD_PX > iv.x0);
+  const belowTop = ANCHOR_ROW_TOP + anchorRowCount * ANCHOR_ROW_PITCH - 4;
+  const anchorLabels = new Map<
+    string,
+    { fit: "right" | "left" | "below"; band: string; x0: number; x1: number; top: number; height: number }
+  >();
+  placedAnchors.forEach(({ anchor, row }) => {
+    const geom = anchorGeometry.get(anchor.id);
+    if (!geom) return;
+    const bx0 = (geom.leftPct / 100) * laneW;
+    const bx1 = bx0 + (geom.widthPct / 100) * laneW;
+    if (showName(anchor, bx1 - bx0)) return;
+    const textPx = anchor.name.length * ANCHOR_LABEL_CHAR_PX;
+    const rowTop = ANCHOR_ROW_TOP + row * ANCHOR_ROW_PITCH;
+    const place = (
+      fit: "right" | "left" | "below",
+      band: string,
+      x0: number,
+      list: Array<{ x0: number; x1: number }>,
+      top: number,
+      height: number,
+    ) => {
+      list.push({ x0, x1: x0 + textPx });
+      anchorLabels.set(anchor.id, { fit, band, x0, x1: x0 + textPx, top, height });
+    };
+    const rightX = bx1 + ANCHOR_LABEL_GAP_PX;
+    const leftX = bx0 - ANCHOR_LABEL_GAP_PX - textPx;
+    if (rightX + textPx <= laneW && isFree(labelOcc[row], rightX, rightX + textPx)) {
+      place("right", String(row), rightX, labelOcc[row], rowTop, 38);
+    } else if (leftX >= 0 && isFree(labelOcc[row], leftX, leftX + textPx)) {
+      place("left", String(row), leftX, labelOcc[row], rowTop, 38);
+    } else {
+      const x0 = Math.max(0, Math.min(bx0, laneW - textPx));
+      let k = belowOcc.findIndex((list) => isFree(list, x0, x0 + textPx));
+      if (k === -1) {
+        k = belowOcc.length;
+        belowOcc.push([]);
+      }
+      place("below", `below-${k}`, x0, belowOcc[k], belowTop + k * ANCHOR_LABEL_ROW_H, ANCHOR_LABEL_ROW_H);
+    }
+  });
+  const anchorLaneH = Math.max(
+    96,
+    anchorRowCount * ANCHOR_ROW_PITCH + 4,
+    belowOcc.length > 0 ? belowTop + belowOcc.length * ANCHOR_LABEL_ROW_H + 4 : 0,
+  );
 
   // Window-kind/template anchors keep their allowed window visible as a light
   // dashed track behind the solid counted block. The track is background: it
@@ -417,17 +493,6 @@ export function DayStrip(props: DayStripProps) {
       };
     })
     .filter(({ left, right }) => right > left);
-  const blockAmount = (blocks: number) => `${blocks} ${blocks === 1 ? "block" : "blocks"}`;
-  const metaText = (anchor: StripAnchor) =>
-    `${compactClock(anchor.start)} · ${blockAmount(anchor.blocks)}`;
-  const showName = (anchor: StripAnchor, visiblePx: number) =>
-    visiblePx >= anchor.name.length * 6.6 + 20;
-  const showMeta = (anchor: StripAnchor, visiblePx: number) =>
-    visiblePx >= Math.max(
-      anchor.name.length * 6.6 + 20,
-      metaText(anchor).length * 6.4 + 20,
-    );
-
   // Calendar events draw read-only, clipped to the frame. The title goes
   // inside the block when it fits (ellipsized when it partly fits); a block
   // under CAL_MIN_INSIDE_PX labels itself outside, right then left, never past
@@ -709,6 +774,7 @@ export function DayStrip(props: DayStripProps) {
                   class={anchorClass}
                   style={anchorStyle}
                   data-anchor-id={anchor.id}
+                  data-band={row}
                   title={anchorTitle}
                   aria-hidden="true"
                 >
@@ -727,6 +793,7 @@ export function DayStrip(props: DayStripProps) {
                 class={anchorClass}
                 style={anchorStyle}
                 data-anchor-id={anchor.id}
+                data-band={row}
                 title={anchorTitle}
                 aria-label={anchorLabel}
                 onPointerDown={(e) => onAnchorPointerDown(e as unknown as PointerEvent, anchor)}
@@ -744,6 +811,31 @@ export function DayStrip(props: DayStripProps) {
                   <span class="strip-anchor__meta">{metaText(anchor)}</span>
                 )}
               </button>
+            );
+          })}
+          {placedAnchors.map(({ anchor }) => {
+            const label = anchorLabels.get(anchor.id);
+            if (!label || preview?.id === anchor.id) return null;
+            const style =
+              label.fit === "left"
+                ? { right: `${((laneW - label.x1) / laneW) * 100}%` }
+                : { left: `${(label.x0 / laneW) * 100}%` };
+            return (
+              <span
+                key={`label-${anchor.id}`}
+                class={`strip-anchor__label strip-anchor__label--${label.fit}${
+                  anchor.counted ? "" : " strip-anchor__label--not-counted"
+                }`}
+                style={{ ...style, top: `${label.top}px`, height: `${label.height}px` }}
+                data-label-for={anchor.id}
+                data-fit={label.fit}
+                data-band={label.band}
+                data-x0={Math.round(label.x0)}
+                data-x1={Math.round(label.x1)}
+                aria-hidden="true"
+              >
+                {anchor.name}
+              </span>
             );
           })}
           {preview && (
