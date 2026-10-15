@@ -658,8 +658,8 @@ export function DayStrip(props: DayStripProps) {
               }${event.edited ? " strip-cal--edited" : ""}${
                 selected ? " strip-cal--selected" : ""
               }${editable ? " strip-cal--editable" : ""}${
-                dragging ? " strip-cal--dragging" : ""
-              }`;
+                movable ? " strip-cal--movable" : ""
+              }${dragging ? " strip-cal--dragging" : ""}`;
               const style = {
                 left: `${leftPct}%`,
                 width: `${widthPct}%`,

@@ -10753,3 +10753,77 @@ body {
     grid-row: 1 / span 2;
   }
 }
+
+/* ---- Calendar event editing on the Set up day strip ----------------------
+   Editable calendar blocks are buttons wearing the same .strip-cal card, plus
+   a click/drag affordance, an edited marker and a selected treatment. The
+   popover reuses the anchor card; only the drift chip, the unit caption and
+   the All blocks chips are new. Appended last so it wins the cascade. */
+button.strip-cal {
+  appearance: none;
+  font-family: inherit;
+  color: var(--t-text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.strip-cal--movable {
+  cursor: grab;
+  touch-action: pan-y;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.strip-cal--dragging {
+  cursor: grabbing;
+  z-index: 3;
+  outline: 2px solid var(--t-accent);
+  outline-offset: 1px;
+}
+
+/* A local edit reads as dashed and accent-bordered so it is never mistaken
+   for the calendar's own position. */
+.strip-cal--edited {
+  border-style: dashed;
+  border-color: color-mix(in srgb, var(--t-accent) 65%, transparent);
+}
+
+.strip-cal--selected {
+  border: 2px solid #1d1c1a;
+}
+
+.anchor-popover__unit {
+  font-size: 11px;
+  color: var(--t-muted);
+}
+
+.anchor-popover__changed {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.anchor-popover__chip,
+.all-blocks__chip {
+  padding: 1px 7px;
+  border: 1px solid color-mix(in srgb, var(--state-warning) 60%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--state-warning) 14%, transparent);
+  color: var(--t-text);
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: nowrap;
+}
+
+.all-blocks__use-calendar {
+  align-self: flex-start;
+  margin-top: 2px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: #1f8a5e;
+  font-size: 12px;
+  cursor: pointer;
+}
