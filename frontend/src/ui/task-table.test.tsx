@@ -106,7 +106,8 @@ describe("U11 hint row lists exactly the shortcuts that work", () => {
     expect(text).toContain("D exact duration");
     expect(text).toContain("±15min");
     expect(text).toContain("move");
-    expect(text).toContain("apply to today only and can be undone");
+    expect(text).toContain("hides it in this browser");
+    expect(text).toContain("records it on the server");
     // The retired keys are not advertised.
     expect(text).not.toMatch(/\bx\b/);
   });

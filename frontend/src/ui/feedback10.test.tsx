@@ -359,7 +359,7 @@ describe("FEEDBACK-10 icon actions expose hover/focus tooltips (A12)", () => {
     );
     // The bubble also says what the button does.
     expect(container.querySelector('[role="tooltip"]')?.textContent).toContain(
-      "source unchanged",
+      "Source unchanged",
     );
     fireEvent.mouseLeave(btn);
     expect(container.querySelector('[role="tooltip"]')).toBeNull();
@@ -561,7 +561,7 @@ describe("FEEDBACK-12 queue scheduled rows render 12-hour", () => {
 describe("row action buttons describe themselves on hover", () => {
   it.each([
     ['button[aria-label^="Mark complete in source"]', "Completes it in the source"],
-    ['button[aria-label^="Leave as-is today"]', "leaves the source untouched"],
+    ['button[aria-label^="Leave as-is today"]', "records that on the server"],
     ['button[aria-label^="More actions for"]', "Remove from planning"],
   ])("%s", (selector, text) => {
     const { container } = makeHarness("ready").ui(<Queue />);

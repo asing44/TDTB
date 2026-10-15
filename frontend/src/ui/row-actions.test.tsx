@@ -181,8 +181,8 @@ describe("S2 row actions: scope notes and grouping", () => {
     const exclude = buttonIn(press, "Exclude Press today");
     fireEvent.focus(exclude);
     expect(tooltipFor(exclude)).toContain("Exclude today");
-    expect(tooltipFor(exclude)).toContain("reversible");
-    expect(tooltipFor(exclude)).toContain("source unchanged");
+    expect(tooltipFor(exclude)).toContain("this browser");
+    expect(tooltipFor(exclude)).toContain("Source unchanged");
     fireEvent.blur(exclude);
 
     const exact = buttonIn(press, "Exact duration for Press");
@@ -201,9 +201,32 @@ describe("S2 row actions: scope notes and grouping", () => {
       "Leave as-is today without changing source: Press",
     );
     fireEvent.focus(leave);
-    expect(tooltipFor(leave)).toContain("today's plan");
-    expect(tooltipFor(leave)).toContain("source untouched");
+    expect(tooltipFor(leave)).toContain("records that on the server");
+    expect(tooltipFor(leave)).toContain("Source unchanged");
     fireEvent.blur(leave);
+  });
+
+  it("distinguishes Exclude today (this browser) from Leave as-is (server)", () => {
+    const h = makeHarness("ready");
+    const { container } = h.ui(<Queue />);
+    const press = rowFor(container, "Press");
+
+    const exclude = buttonIn(press, "Exclude Press today");
+    fireEvent.focus(exclude);
+    const excludeDetail = tooltipFor(exclude);
+    fireEvent.blur(exclude);
+
+    const leave = buttonIn(
+      press,
+      "Leave as-is today without changing source: Press",
+    );
+    fireEvent.focus(leave);
+    const leaveDetail = tooltipFor(leave);
+    fireEvent.blur(leave);
+
+    expect(excludeDetail).toContain("this browser");
+    expect(leaveDetail).toContain("server");
+    expect(excludeDetail).not.toBe(leaveDetail);
   });
 
   it("keeps planning adjustments apart from item-handling verbs without nesting", () => {
