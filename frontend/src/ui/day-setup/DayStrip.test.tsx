@@ -325,7 +325,7 @@ describe("Planning 2a timeline geometry", () => {
     expect(dinner.getAttribute("title")).toContain("Foods Dinner 6 PM · 2 blocks");
   });
 
-  it("stagger-packs blocks that must share a row without overlapping, dropping names too narrow to fit", () => {
+  it("stagger-packs blocks that must share a row without overlapping, labelling too-narrow names outside", () => {
     const rows: StripAnchor[] = [
       // Night Routine occupies row 0 across the collision, forcing all three
       // foods onto row 1, where they must be staggered sideways.
@@ -346,8 +346,8 @@ describe("Planning 2a timeline geometry", () => {
       // The 28px legibility floor, never the old 56px exaggeration.
       expect((parseFloat(el.style.width) / 100) * SPAN).toBeGreaterThanOrEqual(27.9);
       expect((parseFloat(el.style.width) / 100) * SPAN).toBeLessThan(56);
-      // At the floor no name fits, so no stub is drawn; the name stays in the
-      // accessible label asserted below.
+      // A block at the floor draws no in-block name; the name is labelled
+      // outside instead, and the accessible label asserted below still has it.
       expect(el.querySelector(".strip-anchor__name")).toBeNull();
     }
     // The full name, time and count stay in the accessible labels.
@@ -406,7 +406,7 @@ describe("anchor name fitting", () => {
     });
   };
 
-  it("drops the name text on three same-minute blocks floored to 28px, keeping it in title and aria-label", () => {
+  it("moves the name text outside on three same-minute blocks floored to 28px, keeping it in title and aria-label", () => {
     const width = 200;
     laneWidth(width);
     const rows: StripAnchor[] = [

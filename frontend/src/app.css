@@ -7897,7 +7897,6 @@ body {
 .strip-anchor__label {
   position: absolute;
   z-index: 2;
-  height: 26px;
   display: flex;
   align-items: center;
   font-size: 11px;

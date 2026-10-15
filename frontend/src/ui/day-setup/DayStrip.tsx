@@ -467,7 +467,7 @@ export function DayStrip(props: DayStripProps) {
     visiblePx >= anchor.name.length * ANCHOR_LABEL_CHAR_PX + 20;
   const showMeta = (anchor: StripAnchor, visiblePx: number) =>
     visiblePx >= Math.max(
-      anchor.name.length * 6.6 + 20,
+      anchor.name.length * ANCHOR_LABEL_CHAR_PX + 20,
       metaText(anchor).length * 6.4 + 20,
     );
 
