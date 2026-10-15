@@ -135,6 +135,25 @@ function detailMessage(status: number, detail: unknown): string {
   return `request failed (${status})`;
 }
 
+/** True when a request died at the transport layer rather than returning an
+    HTTP status: browser-specific messages — Firefox "NetworkError when
+    attempting to fetch resource.", Chrome "Failed to fetch", Safari "Load
+    failed" — arrive as a TypeError, and an ApiError is never a network error.
+    Live case (2026-10-15, Firefox): the browser aborted POST /sequence at its
+    own 300s deadline and the operator saw that raw string. */
+export function isNetworkError(error: unknown): boolean {
+  if (error instanceof ApiError) return false;
+  if (error instanceof TypeError) return true;
+  const message = error instanceof Error ? error.message : String(error);
+  return /network\s?error|failed to fetch|load failed|network request failed/i.test(message);
+}
+
+/** Shown when POST /sequence dies at the transport layer (no server status):
+    the billed attempt may already have been charged, so say that plainly
+    rather than echoing the browser's raw NetworkError. */
+export const SEQUENCE_NETWORK_ERROR_MESSAGE =
+  "Lost the connection to TDTB while sequencing. The call may still have been billed — check the day budget before retrying.";
+
 /** Extract the stale-mapping revisions from a real 409 source-save conflict.
     Returns null for anything else — another status, another 409 code such as
     the route's storage error, or a body without both revisions — so callers

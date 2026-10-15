@@ -477,6 +477,60 @@ describe("budget exhaustion", () => {
   }, 15000);
 });
 
+describe("sequence transport failure (2026-10-15 Firefox incident)", () => {
+  it("a rejected fetch during sequence surfaces the billed-attempt message, not the raw NetworkError", async () => {
+    const { store, adapter, controller } = harness("ready");
+    await controller.load();
+    await controller.saveDaySetup({ ...store.getState().daySetup, confirmed: true });
+    await controller.autoSequence();
+    const previous = store.getState().sequence;
+    vi.spyOn(adapter, "autoSequence").mockRejectedValueOnce(
+      new TypeError("NetworkError when attempting to fetch resource."),
+    );
+
+    await controller.autoSequence();
+
+    const s = store.getState();
+    expect(s.seqPhase).toBe("failed");
+    expect(s.sequence).toBe(previous);
+    expect(s.seqError).toContain("Lost the connection to TDTB while sequencing");
+    expect(s.seqError).toContain("may still have been billed");
+    expect(s.seqError).not.toContain("NetworkError");
+  }, 15000);
+
+  it("a 502 judgment error keeps its server detail (unchanged path)", async () => {
+    const { store, adapter, controller } = harness("ready");
+    await controller.load();
+    await controller.saveDaySetup({ ...store.getState().daySetup, confirmed: true });
+    vi.spyOn(adapter, "autoSequence").mockRejectedValueOnce(
+      new ApiError(502, "judgment error: no response from the model", "judgment error: no response from the model"),
+    );
+
+    await controller.autoSequence();
+
+    const s = store.getState();
+    expect(s.seqPhase).toBe("failed");
+    expect(s.seqError).toContain("judgment error: no response");
+    expect(s.seqError).not.toContain("Lost the connection");
+  }, 15000);
+
+  it("a 422 validation failure keeps its server detail (unchanged path)", async () => {
+    const { store, adapter, controller } = harness("ready");
+    await controller.load();
+    await controller.saveDaySetup({ ...store.getState().daySetup, confirmed: true });
+    vi.spyOn(adapter, "autoSequence").mockRejectedValueOnce(
+      new ApiError(422, { message: "overlaps Sudsing" }, "overlaps Sudsing"),
+    );
+
+    await controller.autoSequence();
+
+    const s = store.getState();
+    expect(s.seqPhase).toBe("failed");
+    expect(s.seqError).toContain("overlaps Sudsing");
+    expect(s.seqError).not.toContain("Lost the connection");
+  }, 15000);
+});
+
 describe("T8 live-commit failure handling (mocked — no real writes)", () => {
   async function armedHarness() {
     const h = harness("ready");

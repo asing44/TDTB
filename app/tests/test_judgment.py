@@ -659,7 +659,7 @@ class TestOpenRouterProvider:
         assert cap["payload"]["messages"][0] == {"role": "system", "content": j.SEQUENCE_SYSTEM_PROMPT}
         assert cap["payload"]["messages"][1] == {"role": "user", "content": "user prompt"}
         assert cap["headers"]["Authorization"] == "Bearer sk-or-test"
-        assert cap["timeout"] == j.QUERY_TIMEOUT_S
+        assert cap["timeout"] == j.SEQUENCE_QUERY_TIMEOUT_S
 
     def test_missing_model_env_uses_qualified_luna_default(self):
         assert j._configured_openrouter_model({}) == "deepseek/deepseek-v4.1-flash"
@@ -808,4 +808,71 @@ class TestOpenRouterWallClock:
         monkeypatch.setattr(j.httpx, "AsyncClient", FakeClient)
 
         with pytest.raises(asyncio.TimeoutError):
-            asyncio.run(j._run_query_openrouter(j.SEQUENCE_SYSTEM_PROMPT, "user"))
+            asyncio.run(j._run_query_openrouter(j.AUDIT_SYSTEM_PROMPT, "user"))
+
+
+class TestSequenceTimeoutConfig:
+    """2026-10-15: the SEQUENCE call gets its own browser-safe ceiling,
+    TDTB_SEQUENCE_TIMEOUT_S, validated finite and in [30, 290]."""
+
+    def test_default_without_env_is_240(self):
+        assert j._configured_sequence_timeout({}) == 240.0
+        assert j.SEQUENCE_QUERY_TIMEOUT_S <= j.BROWSER_RESPONSE_TIMEOUT_CEILING_S
+
+    def test_valid_env_override_is_used(self):
+        assert j._configured_sequence_timeout({"TDTB_SEQUENCE_TIMEOUT_S": "120"}) == 120.0
+        assert j._configured_sequence_timeout({"TDTB_SEQUENCE_TIMEOUT_S": "30"}) == 30.0
+        assert j._configured_sequence_timeout({"TDTB_SEQUENCE_TIMEOUT_S": "290"}) == 290.0
+
+    @pytest.mark.parametrize("raw", ["10", "500", "0", "-1", "abc", "", "nan", "inf", "-inf"])
+    def test_out_of_range_or_nonfinite_falls_back_to_240(self, raw):
+        assert j._configured_sequence_timeout({"TDTB_SEQUENCE_TIMEOUT_S": raw}) == 240.0
+
+
+class TestSequenceCeilingDispatch:
+    def test_sequence_uses_its_own_ceiling(self):
+        assert j._query_ceiling_for(j.SEQUENCE_SYSTEM_PROMPT)[0] == j.SEQUENCE_QUERY_TIMEOUT_S
+
+    def test_browser_reachable_adjust_is_capped_under_the_browser_abort(self):
+        ceiling, _hint = j._query_ceiling_for(j.ADJUST_SYSTEM_PROMPT)
+        assert ceiling == j.BROWSER_QUERY_TIMEOUT_S
+        assert ceiling <= j.BROWSER_RESPONSE_TIMEOUT_CEILING_S < 300.0
+
+    def test_non_browser_calls_keep_the_original_ceiling(self):
+        for prompt in (j.AUDIT_SYSTEM_PROMPT, j.DIGEST_SYSTEM_PROMPT):
+            assert j._query_ceiling_for(prompt)[0] == j.QUERY_TIMEOUT_S
+
+
+class TestSequenceWallClock:
+    def test_wedged_sequence_call_is_cut_at_the_sequence_ceiling(self, monkeypatch):
+        """A stub that never answers is cut at the SEQUENCE ceiling, not the
+        generic 300s QUERY_TIMEOUT_S — no real waiting. The surfaced error
+        must still say the attempt was charged."""
+        import asyncio
+
+        monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-test")
+        monkeypatch.setattr(j, "SEQUENCE_QUERY_TIMEOUT_S", 0.05)
+
+        class FakeClient:
+            def __init__(self, **kwargs):
+                pass
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *args):
+                return False
+
+            async def post(self, *args, **kwargs):
+                await asyncio.sleep(30)
+
+        monkeypatch.setattr(j.httpx, "AsyncClient", FakeClient)
+
+        async def run():
+            return await j.propose_sequence_async([{"id": "A"}], {}, [], j.RunContext())
+
+        with pytest.raises(j.JudgmentError) as ei:
+            asyncio.run(run())
+        message = str(ei.value)
+        assert "charged" in message
+        assert "TDTB_SEQUENCE_TIMEOUT_S" in message

@@ -25,6 +25,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import math
 import os
 import re
 import time
@@ -70,7 +71,7 @@ OPENROUTER_MODEL = _configured_openrouter_model()
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 _OPENCODE_AUTH = Path.home() / ".local/share/opencode/auth.json"
 MAX_CALLS_PER_RUN = 4
-# G15: hard ceiling on one query — a wedged SDK subprocess otherwise hangs the
+# G15: hard ceiling on one query — a wedged SDK/HTTP call otherwise hangs the
 # route forever.
 #
 # 2026-07-27: raised 120 -> 300. The old comment called 120s "generous vs the
@@ -82,7 +83,62 @@ MAX_CALLS_PER_RUN = 4
 # the inference server-side after we have stopped listening. The user pays and
 # gets nothing, with no retry to recover it. A ceiling exists to catch a WEDGE,
 # so it belongs well past the slowest healthy call, not near the median.
+#
+# 2026-10-15 (live incident, Firefox): 300 == Firefox's default
+# network.http.response.timeout, so the browser aborts the fetch at the same
+# instant the server gives up — the operator saw a raw "NetworkError when
+# attempting to fetch resource." instead of the server's 502 judgment error,
+# and no access-log line was written for the POST. Browser-reachable judgment
+# calls must therefore always answer BEFORE that 300s deadline: they are
+# capped at BROWSER_RESPONSE_TIMEOUT_CEILING_S, and the SEQUENCE POST the
+# operator actually clicks gets its own shorter SEQUENCE_QUERY_TIMEOUT_S.
+# Trade-off, stated plainly: a slow but healthy SEQUENCE call is now cut at
+# 240s and it is STILL CHARGED — the billed attempt is spent before the
+# request starts and OpenRouter may finish server-side after we stop listening.
+# 240s remains far past the observed ~1-3 min happy path, so the ceiling still
+# only catches a wedge.
 QUERY_TIMEOUT_S = 300.0
+# Any judgment call a browser can block on must return just inside the 300s
+# browser fetch deadline, so its ceiling is capped there.
+BROWSER_RESPONSE_TIMEOUT_CEILING_S = 290.0
+BROWSER_QUERY_TIMEOUT_S = min(QUERY_TIMEOUT_S, BROWSER_RESPONSE_TIMEOUT_CEILING_S)
+# The SEQUENCE POST is the one the operator starts by hand, over the largest
+# prompt; give it clear headroom under the browser deadline.
+_SEQUENCE_QUERY_TIMEOUT_DEFAULT_S = 240.0
+_SEQUENCE_QUERY_TIMEOUT_MIN_S = 30.0
+_SEQUENCE_QUERY_TIMEOUT_MAX_S = 290.0
+
+
+def _configured_sequence_timeout(environ: Mapping[str, str] | None = None) -> float:
+    """TDTB_SEQUENCE_TIMEOUT_S override for the SEQUENCE ceiling, validated to
+    a finite value in [30, 290] so a typo cannot disable the browser deadline
+    (0 or negative) or exceed it (>290). Missing or invalid input falls back
+    to 240s."""
+    values = os.environ if environ is None else environ
+    raw = values.get("TDTB_SEQUENCE_TIMEOUT_S")
+    if raw is None or not str(raw).strip():
+        return _SEQUENCE_QUERY_TIMEOUT_DEFAULT_S
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        logger.warning(
+            "TDTB_SEQUENCE_TIMEOUT_S=%r is not a number — using %.0fs",
+            raw, _SEQUENCE_QUERY_TIMEOUT_DEFAULT_S,
+        )
+        return _SEQUENCE_QUERY_TIMEOUT_DEFAULT_S
+    if not math.isfinite(value) or not (
+        _SEQUENCE_QUERY_TIMEOUT_MIN_S <= value <= _SEQUENCE_QUERY_TIMEOUT_MAX_S
+    ):
+        logger.warning(
+            "TDTB_SEQUENCE_TIMEOUT_S=%r outside [%.0f, %.0f] — using %.0fs",
+            raw, _SEQUENCE_QUERY_TIMEOUT_MIN_S, _SEQUENCE_QUERY_TIMEOUT_MAX_S,
+            _SEQUENCE_QUERY_TIMEOUT_DEFAULT_S,
+        )
+        return _SEQUENCE_QUERY_TIMEOUT_DEFAULT_S
+    return value
+
+
+SEQUENCE_QUERY_TIMEOUT_S = _configured_sequence_timeout()
 # Ring buffer of CLI-child stderr kept per query for failure forensics.
 STDERR_TAIL_LINES = 40
 # G22: pause before retrying a transient SDK/process failure so a crashed CLI
@@ -182,6 +238,7 @@ def _openrouter_key() -> str:
 
 async def _run_query_openrouter(system_prompt: str, user_prompt: str) -> str:
     """One OpenRouter chat completion — plain HTTPS, no subprocess to wedge."""
+    ceiling, ceiling_hint = _query_ceiling_for(system_prompt)
     key = _openrouter_key()
     payload = {
         "model": OPENROUTER_MODEL,
@@ -208,7 +265,7 @@ async def _run_query_openrouter(system_prompt: str, user_prompt: str) -> str:
     if OPENROUTER_MODEL == "minimax/minimax-m3":
         payload["reasoning"] = {"effort": "none"}
     async def _request() -> dict[str, Any]:
-        async with httpx.AsyncClient(timeout=QUERY_TIMEOUT_S) as client:
+        async with httpx.AsyncClient(timeout=ceiling) as client:
             resp = await client.post(
                 OPENROUTER_URL,
                 json=payload,
@@ -230,7 +287,7 @@ async def _run_query_openrouter(system_prompt: str, user_prompt: str) -> str:
     # httpx's timeout is inactivity-based, so a trickling provider can keep
     # resetting it indefinitely. Match the SDK path's G15 wall-clock ceiling.
     try:
-        data = await asyncio.wait_for(_request(), timeout=QUERY_TIMEOUT_S)
+        data = await asyncio.wait_for(_request(), timeout=ceiling)
     except (asyncio.TimeoutError, TimeoutError) as exc:
         # A bare asyncio.TimeoutError stringifies to "" — the caller reports
         # the class name and the operator learns nothing (2026-07-27: the
@@ -238,8 +295,8 @@ async def _run_query_openrouter(system_prompt: str, user_prompt: str) -> str:
         # and the ceiling that fired, since those are the two things you
         # change in response.
         raise TimeoutError(
-            f"no response from {OPENROUTER_MODEL} within {QUERY_TIMEOUT_S:.0f}s "
-            f"(TDTB_JUDGMENT_MODEL / QUERY_TIMEOUT_S) — the billed attempt is "
+            f"no response from {OPENROUTER_MODEL} within {ceiling:.0f}s "
+            f"({ceiling_hint}) — the billed attempt is "
             f"already charged and is not retried"
         ) from exc
     if "error" in data:
@@ -268,6 +325,7 @@ async def _run_query_sdk(system_prompt: str, user_prompt: str) -> str:
     No tools are attached (pure text in, JSON out) so the only work here is
     draining the async iterator and joining text.
     """
+    ceiling, _ceiling_hint = _query_ceiling_for(system_prompt)
     stderr_tail: deque[str] = deque(maxlen=STDERR_TAIL_LINES)
 
     async def _drain() -> str:
@@ -282,7 +340,7 @@ async def _run_query_sdk(system_prompt: str, user_prompt: str) -> str:
 
     try:
         # G15: without a ceiling a wedged CLI subprocess hangs the route forever.
-        return await asyncio.wait_for(_drain(), timeout=QUERY_TIMEOUT_S)
+        return await asyncio.wait_for(_drain(), timeout=ceiling)
     except BaseException:
         # Surface the child's stderr — the only forensic evidence on a wedge.
         if stderr_tail:
@@ -1120,6 +1178,23 @@ JUDGMENT_RESPONSE_SCHEMAS = {
         }}}, "required": ["sequence", "overlap_grants"], **_NO_EXTRA,
     }),
 }
+
+
+def _query_ceiling_for(system_prompt: str) -> tuple[float, str]:
+    """Wall-clock ceiling (seconds) and its operator-facing source label for one
+    judgment call, dispatched on the system prompt exactly like
+    ``_response_format_for`` below.
+
+    SEQUENCE is the operator's hand-clicked POST over the largest prompt, so it
+    gets a ceiling with clear headroom under the browser's 300s fetch abort
+    (2026-10-15 incident). ADJUST is the other browser-reachable call and is
+    capped just under the same abort. The non-browser calls keep G15.
+    """
+    if system_prompt is SEQUENCE_SYSTEM_PROMPT:
+        return SEQUENCE_QUERY_TIMEOUT_S, "TDTB_JUDGMENT_MODEL / TDTB_SEQUENCE_TIMEOUT_S"
+    if system_prompt is ADJUST_SYSTEM_PROMPT:
+        return BROWSER_QUERY_TIMEOUT_S, "TDTB_JUDGMENT_MODEL / QUERY_TIMEOUT_S (browser cap)"
+    return QUERY_TIMEOUT_S, "TDTB_JUDGMENT_MODEL / QUERY_TIMEOUT_S"
 
 
 def _response_format_for(system_prompt: str) -> dict[str, Any]:

@@ -4,7 +4,7 @@
    fixed-input gate. */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { ApiAdapter, ApiError, capacitiesSourceConflictOf } from "./api";
+import { ApiAdapter, ApiError, capacitiesSourceConflictOf, isNetworkError, SEQUENCE_NETWORK_ERROR_MESSAGE } from "./api";
 
 import planInputs from "./contract-fixtures/plan-inputs.json";
 import planInputsDegraded from "./contract-fixtures/plan-inputs-degraded.json";
@@ -1147,5 +1147,26 @@ describe("Capacities source mapping", () => {
       structures: [],
       warnings: [],
     });
+  });
+});
+
+describe("transport (network) error classification — 2026-10-15 Firefox incident", () => {
+  it("classifies browser fetch rejections, never HTTP responses", () => {
+    expect(isNetworkError(new TypeError("NetworkError when attempting to fetch resource."))).toBe(true);
+    expect(isNetworkError(new TypeError("Failed to fetch"))).toBe(true);
+    expect(isNetworkError(new Error("Load failed"))).toBe(true);
+    expect(
+      isNetworkError(new ApiError(502, "judgment error: boom", "judgment error: boom")),
+    ).toBe(false);
+    expect(
+      isNetworkError(new ApiError(422, { message: "overlaps Sudsing" }, "overlaps Sudsing")),
+    ).toBe(false);
+    expect(isNetworkError(new Error("judgment unavailable"))).toBe(false);
+  });
+
+  it("names the billed-attempt risk in the sequence transport message", () => {
+    expect(SEQUENCE_NETWORK_ERROR_MESSAGE).toMatch(/Lost the connection to TDTB while sequencing/);
+    expect(SEQUENCE_NETWORK_ERROR_MESSAGE).toMatch(/may still have been billed/);
+    expect(SEQUENCE_NETWORK_ERROR_MESSAGE).toMatch(/check the day budget before retrying/);
   });
 });

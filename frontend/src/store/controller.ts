@@ -10,7 +10,13 @@
      canLiveCommit at call time — the second-click gate (locked decision 9). */
 
 import type { Adapter, SequenceContext } from "../adapters/adapter";
-import { ApiError, capacitiesSettingsConflictOf, exclusionSettingsConflictOf } from "../adapters/api";
+import {
+  ApiError,
+  capacitiesSettingsConflictOf,
+  exclusionSettingsConflictOf,
+  isNetworkError,
+  SEQUENCE_NETWORK_ERROR_MESSAGE,
+} from "../adapters/api";
 import { itemIdentity, normalizeTodoistExclusionName, projectSequenceRow } from "../adapters/wire";
 import { fingerprintFixedInputs } from "../model/fingerprint";
 import { isStagingVerb } from "../model/staging";
@@ -956,7 +962,14 @@ export class Controller {
       }
       this.dispatch({
         type: "SEQUENCE_FAIL",
-        error: String(e instanceof Error ? e.message : e),
+        // 2026-10-15 (Firefox incident): a fetch rejection during POST
+        // /sequence surfaces the browser's raw "NetworkError when attempting
+        // to fetch resource." — which says nothing about the billed attempt.
+        // Map it to the honest message; real HTTP errors (422/502) keep their
+        // server detail untouched.
+        error: isNetworkError(e)
+          ? SEQUENCE_NETWORK_ERROR_MESSAGE
+          : String(e instanceof Error ? e.message : e),
         ledger,
         rejectedProposal,
       });
