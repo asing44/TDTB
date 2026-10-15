@@ -10827,3 +10827,8 @@ button.strip-cal {
   font-size: 12px;
   cursor: pointer;
 }
+
+.anchor-popover__link:disabled {
+  color: var(--t-muted);
+  cursor: default;
+}
