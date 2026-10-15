@@ -56,7 +56,7 @@ export const STAGING_VERBS: readonly StagingVerbSpec[] = [
     verb: "drop_from_plan",
     label: "Leave as-is",
     aria: "Leave as-is today without changing source",
-    detail: "today only · source unchanged",
+    detail: "saved for today · back tomorrow · source unchanged",
     destructive: false,
     sourceMutation: false,
     direct: true,

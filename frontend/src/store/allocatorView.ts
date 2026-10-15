@@ -134,7 +134,7 @@ export function taskTableSections(s: AppState): TaskTableSection[] {
     {
       key: "out",
       label: "Out today",
-      sub: "Excluded and dropped — Include today restores",
+      sub: "Hidden for today — Include today or Undo restores",
       rows: g.excluded,
       dropped,
     },

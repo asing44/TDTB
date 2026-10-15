@@ -185,7 +185,7 @@ function droppedTimeLabel(iso: string | null): string {
 const VERB_HINT: Record<string, string> = {
   done: "Completes it in the source (Todoist or Capacities). Shortcut C.",
   drop_from_plan:
-    "Takes it out of today's plan and leaves the source untouched. Today only.",
+    "Hands it back for today and records that on the server, so a reload or another device keeps it. Undo from Out today. Source unchanged.",
 };
 
 /** IMP-07: one direct verb as a row button. Planning 2a composes the row's
@@ -548,7 +548,8 @@ function ShortcutHint() {
         <kbd>D</kbd> exact duration · <kbd>←→</kbd> ±15min · <kbd>↑↓</kbd> move
       </span>
       <span class="queue__hint-note">
-        Exclude, Exact, and Leave as-is apply to today only and can be undone.
+        Exclude hides it in this browser; Leave as-is records it on the server.
+        Both are today only, can be undone, and leave the source untouched.
         Complete updates the source.
       </span>
     </div>
@@ -874,8 +875,8 @@ function Row({
           label={included ? "Exclude today" : "Include today"}
           detail={
             included
-              ? "Skips it for today only; reversible, source unchanged. Shortcut E."
-              : "Puts it back in today's plan; source unchanged. Shortcut E."
+              ? "Hides it from today's plan in this browser only. Source unchanged. Shortcut E."
+              : "Puts it back in today's plan. Source unchanged. Shortcut E."
           }
           anchorClass="qrow__tip qrow__tip--plan"
         >
