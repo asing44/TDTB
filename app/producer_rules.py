@@ -815,6 +815,33 @@ def _habit_duration_minutes(task: dict[str, Any]) -> int | None:
     return None
 
 
+def _habit_due_date(task: Any) -> date | None:
+    """The civil due date a raw habit task carries, or None when it has none.
+
+    Habits reach the producer as RAW Todoist records (the habit source bypasses
+    :func:`normalize_task`), so this reads both shapes directly: the MCP flat
+    ``dueDate`` and the REST nested ``due.date`` / ``due.datetime``. Only a
+    *due* date qualifies — a ``deadlineDate`` is a deliver-by date, not the day
+    the habit is scheduled, so it never stands in. A missing or malformed value
+    yields ``None``, which callers read as "undated" and include."""
+    if not isinstance(task, dict):
+        return None
+    flat = task.get("dueDate")
+    if isinstance(flat, str) and flat.strip():
+        parsed = _as_date(flat)
+        if parsed is not None:
+            return parsed
+    due = task.get("due")
+    if isinstance(due, dict):
+        for key in ("date", "datetime"):
+            raw = due.get(key)
+            if isinstance(raw, str) and raw.strip():
+                parsed = _as_date(raw)
+                if parsed is not None:
+                    return parsed
+    return None
+
+
 def _completion_local_date(item: dict[str, Any]) -> str | None:
     """The local calendar date a completion happened, when Todoist sent one.
 
@@ -887,7 +914,16 @@ def compute_habit_summary(
     The additive ``items`` list carries one ``{id, content, minutes}`` entry per
     OUTSTANDING habit (raw per-habit minutes, not grain-rounded); it is emitted
     only when at least one habit is outstanding, so an all-done block stays the
-    four-field ``HABITS_EMPTY`` shape."""
+    four-field ``HABITS_EMPTY`` shape.
+
+    A raw habit task is admitted only when it has no due date or its CIVIL due
+    date is on or before ``logical_day`` (see :func:`_habit_due_date`). A task
+    due strictly after the logical day is not part of that day's plan and is
+    excluded from ``total``, from done-matching, and from the minutes sum. The
+    comparison uses the caller's logical day, never the wall clock, and does
+    not remap a due date through the 02:00 cutoff again. When ``logical_day`` is
+    absent or unparseable the scope is off and every task counts, exactly as
+    before."""
     empty = dict(artifact_source.HABITS_EMPTY)
     if not isinstance(entry, dict):
         return empty
@@ -902,12 +938,18 @@ def compute_habit_summary(
         grain = DEFAULT_HABIT_GRAIN_MINUTES
 
     done_ids, done_names = _habit_completed_tokens(entry, logical_day)
+    scope_day = _as_date(logical_day)
     total = done = 0
     outstanding_minutes = 0
     items: list[dict[str, Any]] = []
     for task in tasks:
         if not isinstance(task, dict):
             continue
+        if scope_day is not None:
+            due = _habit_due_date(task)
+            if due is not None and due > scope_day:
+                # Scheduled after the logical day: not one of today's habits.
+                continue
         total += 1
         task_id = task.get("id")
         name = task.get("content") or task.get("name") or task.get("title")

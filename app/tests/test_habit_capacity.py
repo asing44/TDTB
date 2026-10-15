@@ -9,7 +9,7 @@ the end-to-end capacity effect through /plan-inputs.
 from __future__ import annotations
 
 import json
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -23,6 +23,8 @@ from tests.config_markdown import write_config_note  # noqa: E402
 
 TODAY = date(2026, 7, 26)
 LOGICAL_DAY = TODAY.isoformat()
+#: The day strictly after the logical day: a habit due then is not today's.
+FUTURE = (TODAY + timedelta(days=1)).isoformat()
 
 CONFIG = """\
 ---
@@ -65,6 +67,14 @@ def _write_artifact(habits, *, logical_day=LOGICAL_DAY, path=None) -> Path:
     }
     if habits is not None:
         document["habits"] = habits
+    target = Path(path) if path is not None else art.artifact_path()
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(json.dumps(document), encoding="utf-8")
+    return target
+
+
+def _write_document(document: dict, path: Path | None = None) -> Path:
+    """Persist a producer-built artifact document where the app reads it."""
     target = Path(path) if path is not None else art.artifact_path()
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(json.dumps(document), encoding="utf-8")
@@ -219,6 +229,175 @@ class TestComputeHabitSummary:
 
 
 # ---------------------------------------------------------------------------
+# Producer — due-date eligibility against the caller's logical day
+# ---------------------------------------------------------------------------
+
+class TestHabitDueDateScope:
+    """Habit tasks are scheduled only for a day on or before the logical day.
+
+    The habit source carries RAW Todoist records (it bypasses ``normalize_task``),
+    so the producer reads the MCP flat ``dueDate`` and the REST nested ``due``
+    directly. A task due strictly AFTER the caller's logical day is not part of
+    that day's plan; counting it inflates both the estimate and the item list.
+    The scope compares CIVIL due dates, never the wall clock, and never remaps a
+    due date through the 02:00 cutoff a second time."""
+
+    def test_mcp_due_dates_keep_today_overdue_and_undated(self):
+        entry = _habit_entry([
+            {"id": "today", "content": "Habit today", "duration": "10m",
+             "dueDate": LOGICAL_DAY},
+            {"id": "overdue", "content": "Habit overdue", "duration": "10m",
+             "dueDate": "2026-07-25"},
+            {"id": "future", "content": "Habit future", "duration": "10m",
+             "dueDate": FUTURE},
+            {"id": "undated", "content": "Habit undated", "duration": "10m"},
+        ])
+        result = pr.compute_habit_summary(entry, logical_day=LOGICAL_DAY)
+        assert result == {
+            "total": 3, "done": 0, "outstanding": 3, "est_minutes": 30,
+            "items": [
+                {"id": "today", "content": "Habit today", "minutes": 10},
+                {"id": "overdue", "content": "Habit overdue", "minutes": 10},
+                {"id": "undated", "content": "Habit undated", "minutes": 10},
+            ],
+        }
+
+    def test_mcp_timed_due_date_uses_its_civil_day(self):
+        entry = _habit_entry([
+            {"id": "today", "content": "Habit today", "duration": "10m",
+             "dueDate": "2026-07-26T22:00:00"},
+            {"id": "future", "content": "Habit future", "duration": "10m",
+             "dueDate": "2026-07-27T22:00:00"},
+        ])
+        result = pr.compute_habit_summary(entry, logical_day=LOGICAL_DAY)
+        assert [i["id"] for i in result["items"]] == ["today"]
+        assert result["total"] == 1
+
+    def test_rest_due_date_and_datetime_are_read(self):
+        entry = _habit_entry([
+            {"id": "date", "content": "Habit date", "duration": "10m",
+             "due": {"date": "2026-07-26"}},
+            {"id": "timed", "content": "Habit timed", "duration": "10m",
+             "due": {"date": "2026-07-26T09:00:00"}},
+            {"id": "dt", "content": "Habit datetime", "duration": "10m",
+             "due": {"datetime": "2026-07-26T09:00:00"}},
+            {"id": "future", "content": "Habit future", "duration": "10m",
+             "due": {"date": "2026-07-27"}},
+        ])
+        result = pr.compute_habit_summary(entry, logical_day=LOGICAL_DAY)
+        assert [i["id"] for i in result["items"]] == ["date", "timed", "dt"]
+        assert result["total"] == 3
+
+    @pytest.mark.parametrize("task", [
+        {"id": "a", "duration": "10m", "due": "tomorrow"},
+        {"id": "b", "duration": "10m", "due": ["2026-07-27"]},
+        {"id": "c", "duration": "10m", "due": {"date": "not-a-date"}},
+        {"id": "d", "duration": "10m", "due": {"datetime": 20260727}},
+        {"id": "e", "duration": "10m", "dueDate": "2026-13-40"},
+        {"id": "f", "duration": "10m", "dueDate": 20260727},
+        {"id": "g", "duration": "10m", "dueDate": None, "due": None},
+    ])
+    def test_malformed_due_values_keep_old_inclusion(self, task):
+        # A malformed due value is not evidence of a future task; the task stays
+        # counted exactly as it was before the scope existed.
+        result = pr.compute_habit_summary(
+            _habit_entry([task]), logical_day=LOGICAL_DAY
+        )
+        assert result["total"] == 1
+        assert result["est_minutes"] == 15  # 10 -> 15 at the grain
+
+    def test_deadline_never_stands_in_for_a_due_date(self):
+        task = {"id": "d", "content": "Habit deadline", "duration": "10m",
+                "deadlineDate": "2029-01-01"}
+        result = pr.compute_habit_summary(
+            _habit_entry([task]), logical_day=LOGICAL_DAY
+        )
+        assert result["total"] == 1
+
+    def test_missing_or_invalid_logical_day_stays_unscoped(self):
+        entry = _habit_entry([
+            {"id": "today", "content": "Habit today", "duration": "10m",
+             "dueDate": LOGICAL_DAY},
+            {"id": "future", "content": "Habit future", "duration": "10m",
+             "dueDate": "2027-01-01"},
+        ])
+        assert pr.compute_habit_summary(entry)["total"] == 2
+        assert pr.compute_habit_summary(entry, logical_day="garbage")["total"] == 2
+
+    def test_future_completion_does_not_leak_into_done(self):
+        entry = _habit_entry(
+            [{"id": "today", "content": "Habit today", "duration": "10m",
+              "dueDate": LOGICAL_DAY},
+             {"id": "future", "content": "Habit future", "duration": "10m",
+              "dueDate": FUTURE}],
+            completed=[{"task_id": "future"}],
+        )
+        result = pr.compute_habit_summary(entry, logical_day=LOGICAL_DAY)
+        assert result == {
+            "total": 1, "done": 0, "outstanding": 1, "est_minutes": 15,
+            "items": [{"id": "today", "content": "Habit today", "minutes": 10}],
+        }
+
+    def test_eligible_completed_today_is_done_without_minutes(self):
+        entry = _habit_entry(
+            [{"id": "a", "content": "Habit A", "duration": "25m",
+              "dueDate": LOGICAL_DAY},
+             {"id": "b", "content": "Habit B", "duration": "25m",
+              "dueDate": LOGICAL_DAY}],
+            completed=[{"task_id": "a"}],
+        )
+        result = pr.compute_habit_summary(entry, logical_day=LOGICAL_DAY)
+        assert {k: result[k] for k in (
+            "total", "done", "outstanding", "est_minutes",
+        )} == {"total": 2, "done": 1, "outstanding": 1, "est_minutes": 30}
+        assert result["items"] == [{"id": "b", "content": "Habit B", "minutes": 25}]
+
+    def test_caller_logical_day_governs_not_the_wall_clock(self):
+        # At 01:00 the 02:00 cutoff still puts the caller on the previous civil
+        # day. The scope must follow THAT logical day, so a habit due the actual
+        # wall-clock day is future and stays out of today's plan.
+        logical = date.today() - timedelta(days=1)
+        entry = _habit_entry([
+            {"id": "logical", "content": "Habit logical", "duration": "10m",
+             "dueDate": logical.isoformat()},
+            {"id": "wall", "content": "Habit wall", "duration": "10m",
+             "dueDate": date.today().isoformat()},
+        ])
+        result = pr.compute_habit_summary(entry, logical_day=logical.isoformat())
+        assert [i["id"] for i in result["items"]] == ["logical"]
+        assert result["total"] == 1
+
+    def test_regression_nine_today_and_five_future(self):
+        tasks = [
+            {"id": f"t{i}", "content": f"Habit T{i}", "duration": "10m",
+             "dueDate": LOGICAL_DAY}
+            for i in range(9)
+        ] + [
+            {"id": f"f{i}", "content": f"Habit F{i}", "duration": "6m",
+             "dueDate": FUTURE}
+            for i in range(5)
+        ]
+        result = pr.compute_habit_summary(
+            _habit_entry(tasks), logical_day=LOGICAL_DAY
+        )
+        assert (result["total"], result["outstanding"]) == (9, 9)
+        assert result["est_minutes"] == 90
+        assert len(result["items"]) == 9
+
+    def test_all_future_is_the_empty_sentinel(self):
+        tasks = [
+            {"id": f"f{i}", "content": f"Habit F{i}", "duration": "10m",
+             "dueDate": FUTURE}
+            for i in range(3)
+        ]
+        result = pr.compute_habit_summary(
+            _habit_entry(tasks), logical_day=LOGICAL_DAY
+        )
+        assert result == art.HABITS_EMPTY
+        assert "items" not in result
+
+
+# ---------------------------------------------------------------------------
 # Artifact seam — the block is exposed, absent means zeroed plus a warning
 # ---------------------------------------------------------------------------
 
@@ -293,3 +472,50 @@ class TestCapacitySegment:
             "total", "done", "outstanding", "est_minutes",
         }
         assert body["habits"]["est_minutes"] == 30
+
+    def _built(self, tasks, **knobs) -> dict:
+        """A producer-built artifact document whose only content is habits."""
+        source = {
+            "todoist": {"status": "ok", "read_at": _now(), "tasks": []},
+            "habits": _habit_entry(tasks, **knobs),
+        }
+        return pr.build_artifact(
+            source, {"version": 1, "rules": []},
+            logical_day=LOGICAL_DAY, generated_at=_now(), run_id="habit-scope",
+        )
+
+    def test_due_dates_scope_the_built_block_and_capacity(self, vault, monkeypatch):
+        tasks = [
+            {"id": "t1", "content": "Habit T1", "duration": "25m",
+             "dueDate": LOGICAL_DAY},
+            {"id": "t2", "content": "Habit T2", "duration": "25m",
+             "dueDate": LOGICAL_DAY},
+            {"id": "t3", "content": "Habit T3", "duration": "25m",
+             "dueDate": LOGICAL_DAY},
+            {"id": "f1", "content": "Habit F1", "duration": "25m",
+             "dueDate": FUTURE},
+        ]
+        document = self._built(tasks)
+        assert document["habits"] == {
+            "total": 3, "done": 0, "outstanding": 3, "est_minutes": 75,
+            "items": [
+                {"id": "t1", "content": "Habit T1", "minutes": 25},
+                {"id": "t2", "content": "Habit T2", "minutes": 25},
+                {"id": "t3", "content": "Habit T3", "minutes": 25},
+            ],
+        }
+        _write_document(document)
+        # 75 min = three 30-min blocks; the future task must not make it four.
+        assert _body(monkeypatch)["capacity"]["habits"] == 3
+
+    def test_all_future_built_block_zeroes_capacity(self, vault, monkeypatch):
+        tasks = [
+            {"id": "f1", "content": "Habit F1", "duration": "25m",
+             "dueDate": FUTURE},
+            {"id": "f2", "content": "Habit F2", "duration": "25m",
+             "dueDate": FUTURE},
+        ]
+        document = self._built(tasks)
+        assert document["habits"] == art.HABITS_EMPTY
+        _write_document(document)
+        assert _body(monkeypatch)["capacity"]["habits"] == 0
