@@ -209,6 +209,37 @@ class TestModelEchoIdEscapes:
         assert result["sequence"][0]["id"] == self.CANONICAL_MINT
         assert notes and notes[0]["id"] == self.CANONICAL_MINT
 
+    def test_plain_truncated_ascii_id_is_not_repaired(self):
+        # The ASCII-identity fallback is reserved for escape-mangled echoes.
+        # A plain near-id ('Caf') must not silently map onto a real item
+        # ('Café'): it stays unrepaired and never-bump hard-fails.
+        notes: list[dict[str, str]] = []
+        result = canonicalize_sequence_ids(
+            self._proposal("Caf"),
+            [{"id": "Caf\u00e9", "name": "Caf\u00e9"}],
+            notes=notes,
+        )
+        assert result["sequence"][0]["id"] == "Caf"
+        assert notes == []
+        validation = validate_sequence(result, [_item("Caf\u00e9")], [], CONFIG)
+        assert validation.ok is False
+        assert any("never-bump" in e for e in validation.hard_errors)
+
+    def test_escape_mangled_echo_still_uses_ascii_identity(self):
+        # Evidence of escape/lossy-decode mangling (a C0 control char) keeps
+        # the ASCII-identity fallback reachable, so a genuinely mangled echo
+        # whose exact rebuild fails can still reconcile.
+        canonical = "Caf\u00e9"
+        mangled = "Caf" + chr(0x12)
+        notes: list[dict[str, str]] = []
+        result = canonicalize_sequence_ids(
+            self._proposal(mangled),
+            [{"id": canonical, "name": canonical}],
+            notes=notes,
+        )
+        assert result["sequence"][0]["id"] == canonical
+        assert notes and notes[0]["id"] == canonical
+
     def test_ambiguous_echo_stays_unrepaired_and_hard_fails(self):
         other = "WALL\u00b7E-OS Capacities Buildout"  # same fuzzy identity
         mangled = "WALL" + chr(0x12) + "c5E-OS Capacities Buildout"
@@ -269,6 +300,54 @@ class TestModelEchoIdEscapes:
         )
         assert result.ok is False
         assert any("overlaps selected Mint session" in e for e in result.hard_errors)
+
+
+# ---------------------------------------------------------------------------
+# Overlap-grant ID escapes — same repair path as sequence rows
+# ---------------------------------------------------------------------------
+
+class TestOverlapGrantIdRepair:
+    """A mangled overlap-grant id must be repaired through the same identity
+    path as sequence rows so a legitimate grant survives the model echo; an
+    ambiguous id must never be repaired onto an unrelated canonical id."""
+
+    CANONICAL_WALL = "WALL\u22c5E-OS Capacities Buildout"
+
+    @staticmethod
+    def _grant(companion_id, primary_id="task-1"):
+        return {
+            "primary_id": primary_id,
+            "companion_id": companion_id,
+            "primary_interval": {"start": "10:30", "end": "11:30"},
+            "companion_interval": {"start": "10:00", "end": "11:00"},
+            "reason": "intentional companion work",
+            "planning_config_fingerprint": "fp-current",
+        }
+
+    def test_mangled_grant_id_is_repaired_and_noted(self):
+        mangled = "WALL" + chr(0x12) + "c5E-OS Capacities Buildout"
+        notes: list[dict[str, str]] = []
+        result = canonicalize_sequence_ids(
+            {"sequence": [], "overlap_grants": [self._grant(mangled)]},
+            [{"id": self.CANONICAL_WALL}],
+            notes=notes,
+        )
+        assert result["overlap_grants"][0]["companion_id"] == self.CANONICAL_WALL
+        assert any(n["rule"] == "overlap_grant_id_repaired" for n in notes)
+
+    def test_ambiguous_mangled_grant_id_is_not_repaired(self):
+        other = "WALL\u00b7E-OS Capacities Buildout"  # same fuzzy identity
+        mangled = "WALL" + chr(0x12) + "c5E-OS Capacities Buildout"
+        notes: list[dict[str, str]] = []
+        result = canonicalize_sequence_ids(
+            {"sequence": [], "overlap_grants": [self._grant(mangled)]},
+            [{"id": self.CANONICAL_WALL}, {"id": other}],
+            notes=notes,
+        )
+        # No unique repair -> the grant keeps its raw id and is never created
+        # against a canonical item it cannot be proven to name.
+        assert result["overlap_grants"][0]["companion_id"] == mangled
+        assert notes == []
 
 
 # ---------------------------------------------------------------------------

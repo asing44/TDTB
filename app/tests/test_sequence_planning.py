@@ -154,6 +154,87 @@ def test_run_proposal_records_model_id_repair_in_warnings():
     )
 
 
+def test_run_proposal_repairs_mangled_overlap_grant_id():
+    canonical_wall = "WALL\u22c5E-OS Capacities Buildout"
+    mangled_wall = "WALL" + chr(0x12) + "c5E-OS Capacities Buildout"
+    inputs = _inputs(
+        assigned=[{"id": "task-1", "name": "task-1", "blocks": 1}],
+        day_setup={"schedulable": {"qt": {"on": False},
+                                  "minting": {"on": False}}},
+        anchored_blocks=[{
+            "Block": canonical_wall, "Type": "hard", "Start": "10:00",
+            "End": "11:00", "overlap_allowed": False,
+        }],
+    )
+    prepared = planning.prepare_sequence(inputs, mode="proposal")
+
+    def adapter(assigned, config, anchored_blocks, ctx=None):
+        return {
+            "sequence": [{"id": "task-1", "start": "10:30",
+                          "end": "11:30", "zone": "any"}],
+            "overlap_grants": [{
+                "primary_id": "task-1",
+                "companion_id": mangled_wall,
+                "primary_interval": {"start": "10:30", "end": "11:30"},
+                "companion_interval": {"start": "10:00", "end": "11:00"},
+                "reason": "intentional",
+                "planning_config_fingerprint": "fp",
+            }],
+        }
+
+    outcome = planning.run_proposal(prepared, adapter)
+    assert outcome.result is not None
+    assert outcome.result["overlap_grants"][0]["companion_id"] == canonical_wall
+    assert any(
+        warning.get("rule") == "allowed_overlap"
+        for warning in outcome.validation.warnings
+    )
+    assert any(
+        warning.get("rule") == "overlap_grant_id_repaired"
+        for warning in outcome.validation.warnings
+    )
+
+
+def test_run_proposal_never_creates_grant_for_ambiguous_mangled_id():
+    canonical_wall = "WALL\u22c5E-OS Capacities Buildout"
+    other_wall = "WALL\u00b7E-OS Capacities Buildout"
+    mangled_wall = "WALL" + chr(0x12) + "c5E-OS Capacities Buildout"
+    inputs = _inputs(
+        assigned=[{"id": "task-1", "name": "task-1", "blocks": 1}],
+        day_setup={"schedulable": {"qt": {"on": False},
+                                  "minting": {"on": False}}},
+        anchored_blocks=[
+            {"Block": canonical_wall, "Type": "hard", "Start": "10:00",
+             "End": "11:00", "overlap_allowed": False},
+            {"Block": other_wall, "Type": "hard", "Start": "10:00",
+             "End": "11:00", "overlap_allowed": False},
+        ],
+    )
+    prepared = planning.prepare_sequence(inputs, mode="proposal")
+
+    def adapter(assigned, config, anchored_blocks, ctx=None):
+        return {
+            "sequence": [{"id": "task-1", "start": "10:30",
+                          "end": "11:30", "zone": "any"}],
+            "overlap_grants": [{
+                "primary_id": "task-1",
+                "companion_id": mangled_wall,
+                "primary_interval": {"start": "10:30", "end": "11:30"},
+                "companion_interval": {"start": "10:00", "end": "11:00"},
+                "reason": "intentional",
+                "planning_config_fingerprint": "fp",
+            }],
+        }
+
+    outcome = planning.run_proposal(prepared, adapter)
+    assert outcome.result is not None
+    assert outcome.result["overlap_grants"][0]["companion_id"] == mangled_wall
+    assert not any(
+        warning.get("rule") == "allowed_overlap"
+        for warning in outcome.validation.warnings
+    )
+
+
 def test_revalidation_keeps_injected_rows_optional_and_preserves_descending_order():
     inputs = _inputs(
         assigned=[],

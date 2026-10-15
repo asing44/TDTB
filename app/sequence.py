@@ -687,7 +687,19 @@ def _ascii_identity_key(value: Any) -> str:
 
 _JSON_ESCAPE_TEXT_RE = re.compile(r"\\u([0-9a-fA-F]{4})")
 _CONTROL_CHAR_RE = re.compile(r"[\x00-\x1f]")
+_MANGLING_EVIDENCE_RE = re.compile(r"[\x01-\x1f]|\\u[0-9a-fA-F]{4}")
 _HEX_DIGITS = frozenset("0123456789abcdefABCDEF")
+
+
+def _shows_escape_mangling(value: str) -> bool:
+    r"""True when an id carries evidence of an escape/lossy-decode echo.
+
+    The ASCII-identity fallback is only safe for an id the model round-tripped
+    through escape text (literal ``\uXXXX``) or a lossy decoder (a stray C0
+    control byte). A plain near-id such as ``Caf`` must never silently map
+    onto a real item such as ``Caf\u00e9``.
+    """
+    return bool(_MANGLING_EVIDENCE_RE.search(value))
 
 
 def _decode_json_escape_text(value: str) -> str | None:
@@ -759,6 +771,19 @@ def _id_repair_note(raw_id: str, canonical_id: str) -> dict[str, str]:
     }
 
 
+def _grant_id_repair_note(
+    field: str, raw_id: str, canonical_id: str
+) -> dict[str, str]:
+    return {
+        "id": canonical_id,
+        "rule": "overlap_grant_id_repaired",
+        "detail": (
+            f"repaired model-supplied overlap grant {field} {raw_id!r} "
+            f"to canonical {canonical_id!r}"
+        ),
+    }
+
+
 def canonicalize_sequence_ids(
     proposal: dict[str, Any],
     canonical_items: list[dict[str, Any]],
@@ -772,6 +797,10 @@ def canonicalize_sequence_ids(
     fallback is applied only when it maps to one canonical ID. Ambiguous
     names are left untouched so validation still fails loudly, and each
     accepted repair is appended to ``notes`` when provided so it is visible.
+    Overlap-grant ``primary_id`` / ``companion_id`` values are repaired
+    through the same unique-match rule, so a mangled grant survives instead
+    of dropping the grant and hard-failing the anchored overlap; a grant id
+    that is not uniquely repaired is left untouched and creates no grant.
     """
     sequence = proposal.get("sequence")
     if not isinstance(sequence, list):
@@ -795,10 +824,27 @@ def canonicalize_sequence_ids(
         if candidate in exact:
             found.add(candidate)
         found |= normalized.get(_identity_key(candidate), set())
-        ascii_key = _ascii_identity_key(candidate)
-        if ascii_key:
-            found |= ascii_normalized.get(ascii_key, set())
+        # The ASCII-identity fallback ignores non-ASCII decoration, so it is
+        # consulted only for an id that shows escape/lossy-decode mangling.
+        # Otherwise a fabricated near-id ('Caf') could silently map onto a
+        # real item ('Caf\u00e9') with no evidence of a round trip.
+        if _shows_escape_mangling(candidate):
+            ascii_key = _ascii_identity_key(candidate)
+            if ascii_key:
+                found |= ascii_normalized.get(ascii_key, set())
         return found
+
+    def _repair_id(raw_id: str) -> str | None:
+        """Return the unique canonical id a mangled echo resolves to, or None."""
+        if not raw_id or raw_id in exact:
+            return None
+        matched: set[str] = set()
+        for candidate in _id_repair_candidates(raw_id) + [raw_id]:
+            matched |= _matches(candidate)
+        if len(matched) != 1:
+            return None
+        canonical_id = next(iter(matched))
+        return canonical_id if canonical_id != raw_id else None
 
     rows: list[dict[str, Any]] = []
     for row in sequence:
@@ -806,21 +852,46 @@ def canonicalize_sequence_ids(
             rows.append(row)
             continue
         row_id = str(row.get("id") or "")
-        if row_id in exact:
-            rows.append(row)
+        canonical_id = _repair_id(row_id)
+        if canonical_id is not None:
+            rows.append({**row, "id": canonical_id})
+            if notes is not None:
+                notes.append(_id_repair_note(row_id, canonical_id))
             continue
-        matched: set[str] = set()
-        for candidate in _id_repair_candidates(row_id) + [row_id]:
-            matched |= _matches(candidate)
-        if len(matched) == 1:
-            canonical_id = next(iter(matched))
-            if canonical_id != row_id:
-                rows.append({**row, "id": canonical_id})
-                if notes is not None:
-                    notes.append(_id_repair_note(row_id, canonical_id))
-                continue
         rows.append(row)
-    return {**proposal, "sequence": rows}
+    proposal = {**proposal, "sequence": rows}
+
+    # Overlap grants name sequence rows and anchored blocks by the same
+    # identity the model may have escaped on the way out. Repairing them here,
+    # through the same unique-match rule, keeps a legitimate grant from being
+    # dropped (and the anchored overlap from hard-failing) without ever
+    # inventing a grant for an id that is not uniquely repaired.
+    grants = proposal.get("overlap_grants")
+    if isinstance(grants, list):
+        repaired_grants: list[Any] = []
+        for grant in grants:
+            if not isinstance(grant, dict):
+                repaired_grants.append(grant)
+                continue
+            updated = grant
+            for field in ("primary_id", "companion_id"):
+                raw_value = grant.get(field)
+                if raw_value is None:
+                    continue
+                canonical_id = _repair_id(str(raw_value))
+                if canonical_id is None:
+                    continue
+                if updated is grant:
+                    updated = dict(grant)
+                updated[field] = canonical_id
+                if notes is not None:
+                    notes.append(_grant_id_repair_note(
+                        field, str(raw_value), canonical_id
+                    ))
+            repaired_grants.append(updated)
+        proposal = {**proposal, "overlap_grants": repaired_grants}
+
+    return proposal
 
 
 # ---------------------------------------------------------------------------
