@@ -511,22 +511,167 @@ def _build_openrouter_payload(
     return _apply_judgment_params(payload, active_params)
 
 
+def _stream_error_from_event(event: Any) -> dict[str, Any] | None:
+    """Return the OpenRouter error object carried by one SSE event, else None.
+
+    Covers both shapes: a top-level ``{"error": {...}}`` event, and a choice
+    whose ``finish_reason`` is ``error`` (with or without an ``error`` field).
+    """
+    if not isinstance(event, dict):
+        return None
+    err = event.get("error")
+    if isinstance(err, dict):
+        return err
+    choices = event.get("choices")
+    if isinstance(choices, list) and choices and isinstance(choices[0], dict):
+        entry = choices[0]
+        if entry.get("finish_reason") == "error":
+            inner = entry.get("error")
+            if isinstance(inner, dict):
+                return inner
+            return {"message": "finish_reason=error"}
+    return None
+
+
+def _format_stream_error(err: Mapping[str, Any]) -> str:
+    code = err.get("code")
+    message = err.get("message")
+    if code is None:
+        return f"OpenRouter stream error: {message}"
+    return f"OpenRouter error {code}: {message}"
+
+
+def _stream_delta_text(event: Any) -> str:
+    """Text carried by one event's ``choices[0].delta.content``, else ""."""
+    if not isinstance(event, dict):
+        return ""
+    choices = event.get("choices")
+    if not isinstance(choices, list) or not choices:
+        return ""
+    first = choices[0]
+    if not isinstance(first, dict):
+        return ""
+    delta = first.get("delta")
+    if not isinstance(delta, dict):
+        return ""
+    content = delta.get("content")
+    return content if isinstance(content, str) else ""
+
+
+def _stream_finished(event: Any) -> bool:
+    """True when one event reports a terminal (non-error) finish_reason."""
+    if not isinstance(event, dict):
+        return False
+    choices = event.get("choices")
+    if not isinstance(choices, list) or not choices:
+        return False
+    first = choices[0]
+    if not isinstance(first, dict):
+        return False
+    finish = first.get("finish_reason")
+    return finish is not None and finish != "error"
+
+
+async def _stream_openrouter(
+    payload: dict[str, Any],
+    headers: Mapping[str, str],
+    ceiling: float,
+    ceiling_hint: str,
+) -> str:
+    """Read one OpenRouter SSE stream, returning the accumulated content.
+
+    Line protocol: ``data: {json}`` events, ``: comment`` lines and blanks
+    ignored, ``data: [DONE]`` terminates. Content accumulates from
+    ``choices[0].delta.content``. A mid-stream or top-level ``error`` object,
+    or a ``finish_reason`` of ``error``, is surfaced as a failure carrying the
+    status/message (never a credential). A stream with no content, or one that
+    ends without ``[DONE]`` or a finish reason, fails clearly.
+    """
+
+    async def _read() -> str:
+        chunks: list[str] = []
+        saw_done = False
+        saw_finish = False
+        async with httpx.AsyncClient(timeout=ceiling) as client:
+            async with client.stream(
+                "POST", OPENROUTER_URL, json=payload, headers=headers
+            ) as resp:
+                if resp.is_error:
+                    # Same forensic intent as the non-stream path: OpenRouter's
+                    # body carries the actual reason (never the key).
+                    body = await resp.aread()
+                    detail = (
+                        body[:400]
+                        .decode("utf-8", "replace")
+                        .strip()
+                        .replace("\n", " ")
+                    )
+                    raise RuntimeError(
+                        f"OpenRouter HTTP {resp.status_code}"
+                        + (f" — {detail}" if detail else "")
+                    )
+                async for line in resp.aiter_lines():
+                    text = line.strip()
+                    if not text or text.startswith(":"):
+                        continue
+                    if not text.startswith("data:"):
+                        continue
+                    data = text[len("data:"):].strip()
+                    if data == "[DONE]":
+                        saw_done = True
+                        break
+                    if not data:
+                        continue
+                    try:
+                        event = json.loads(data)
+                    except json.JSONDecodeError as exc:
+                        raise ValueError(
+                            f"OpenRouter stream sent unparseable data: {data[:120]}"
+                        ) from exc
+                    err = _stream_error_from_event(event)
+                    if err is not None:
+                        raise RuntimeError(_format_stream_error(err))
+                    chunk = _stream_delta_text(event)
+                    if chunk:
+                        chunks.append(chunk)
+                    if _stream_finished(event):
+                        saw_finish = True
+                        break
+        if not chunks:
+            raise ValueError("OpenRouter stream returned empty content")
+        if not (saw_done or saw_finish):
+            raise ValueError(
+                "OpenRouter stream ended without [DONE] or a finish reason"
+            )
+        return "".join(chunks)
+
+    # Same wall-clock ceiling as the non-stream path: httpx's inactivity
+    # timeout alone lets a trickling provider reset it indefinitely.
+    try:
+        return await asyncio.wait_for(_read(), timeout=ceiling)
+    except (asyncio.TimeoutError, TimeoutError) as exc:
+        raise TimeoutError(
+            f"no response from {OPENROUTER_MODEL} within {ceiling:.0f}s "
+            f"({ceiling_hint}) — the billed attempt is "
+            f"already charged and is not retried"
+        ) from exc
+
+
 async def _run_query_openrouter(system_prompt: str, user_prompt: str) -> str:
     """One OpenRouter chat completion — plain HTTPS, no subprocess to wedge."""
     ceiling, ceiling_hint = _query_ceiling_for(system_prompt)
     key = _openrouter_key()
     payload = _build_openrouter_payload(system_prompt, user_prompt)
+    headers = {"Authorization": f"Bearer {key}"}
     if payload.get("stream"):
-        raise ValueError(
-            "judgment-model.txt: stream is not supported yet "
-            "(remove 'stream: true' or use a non-streaming response)"
-        )
+        return await _stream_openrouter(payload, headers, ceiling, ceiling_hint)
+
     async def _request() -> dict[str, Any]:
         async with httpx.AsyncClient(timeout=ceiling) as client:
             resp = await client.post(
                 OPENROUTER_URL,
                 json=payload,
-                headers={"Authorization": f"Bearer {key}"},
+                headers=headers,
             )
             if resp.is_error:
                 # httpx's own message is the status line plus a link to MDN,

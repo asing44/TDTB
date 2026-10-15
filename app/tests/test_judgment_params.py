@@ -354,18 +354,186 @@ class TestCallPathUsesParams:
         assert cap["payload"]["model"] == "openai/gpt-6-luna"
         assert cap["payload"]["max_tokens"] == 1024
 
-    def test_stream_true_is_rejected_not_silently_ignored(self, monkeypatch):
-        # Commit 1 boundary: until SSE reading ships, a stream request must fail
-        # loudly rather than send stream:true and misparse a JSON response.
+    def test_stream_false_uses_the_non_streaming_path(self, monkeypatch):
         monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-test")
         monkeypatch.setattr(j, "OPENROUTER_MODEL", MODEL)
-        monkeypatch.setattr(j, "JUDGMENT_PARAMS", {"stream": True})
+        monkeypatch.setattr(j, "JUDGMENT_PARAMS", {"stream": False})
         cap = self._fake_client(
             monkeypatch, {"choices": [{"message": {"content": '{"ok": 1}'}}]}
         )
-        with pytest.raises(ValueError, match="stream is not supported yet"):
-            asyncio.run(j._run_query_openrouter(j.SEQUENCE_SYSTEM_PROMPT, "u"))
-        assert "payload" not in cap
+        out = asyncio.run(j._run_query_openrouter(j.SEQUENCE_SYSTEM_PROMPT, "u"))
+        assert out == '{"ok": 1}'
+        assert "stream" not in cap["payload"]
+
+
+# ---------------------------------------------------------------------------
+# stream: true — SSE reading (all offline, stubbed client)
+# ---------------------------------------------------------------------------
+
+class TestRequestStream:
+    def _stream_client(self, monkeypatch, lines, *, status=200, body=b""):
+        captured = {}
+
+        class FakeStreamResp:
+            status_code = status
+            is_error = status >= 400
+
+            async def aread(self):
+                return body
+
+            async def aiter_lines(self):
+                for line in lines:
+                    yield line
+
+        class FakeStreamCM:
+            async def __aenter__(self):
+                return FakeStreamResp()
+
+            async def __aexit__(self, *args):
+                return False
+
+        class FakeClient:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *args):
+                return False
+
+            def stream(self, method, url, json=None, headers=None):
+                captured["method"] = method
+                captured["url"] = url
+                captured["payload"] = json
+                captured["headers"] = headers
+                return FakeStreamCM()
+
+        monkeypatch.setattr(j.httpx, "AsyncClient", FakeClient)
+        return captured
+
+    def _run(self, monkeypatch, lines, *, status=200, body=b"", params=None):
+        monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-test")
+        monkeypatch.setattr(j, "OPENROUTER_MODEL", MODEL)
+        monkeypatch.setattr(j, "JUDGMENT_PARAMS", params or {"stream": True})
+        cap = self._stream_client(monkeypatch, lines, status=status, body=body)
+        return cap, asyncio.run(
+            j._run_query_openrouter(j.SEQUENCE_SYSTEM_PROMPT, "u")
+        )
+
+    def test_stream_accumulates_delta_content_and_sends_stream_true(self, monkeypatch):
+        def event(payload):
+            return "data: " + json.dumps(payload)
+
+        lines = [
+            ": OPENROUTER PROCESSING",
+            "",
+            event({"choices": [{"delta": {"content": '{"a":'}}]}),
+            "not-a-data-line",
+            event({"choices": [{"delta": {"content": " 1}"}}]}),
+            "data: [DONE]",
+        ]
+        cap, out = self._run(monkeypatch, lines)
+        assert out == '{"a": 1}'
+        assert cap["payload"]["stream"] is True
+        assert cap["method"] == "POST"
+        assert cap["headers"]["Authorization"] == "Bearer sk-or-test"
+
+    def test_finish_reason_terminates_without_done(self, monkeypatch):
+        lines = [
+            'data: {"choices": [{"delta": {"content": "ok"}}]}',
+            'data: {"choices": [{"delta": {}, "finish_reason": "stop"}]}',
+        ]
+        _cap, out = self._run(monkeypatch, lines)
+        assert out == "ok"
+
+    def test_top_level_error_event_raises_with_status_and_message(self, monkeypatch):
+        lines = [
+            'data: {"error": {"code": 429, "message": "rate limited"}}',
+        ]
+        with pytest.raises(RuntimeError) as ei:
+            self._run(monkeypatch, lines)
+        assert "429" in str(ei.value)
+        assert "rate limited" in str(ei.value)
+
+    def test_finish_reason_error_raises(self, monkeypatch):
+        lines = [
+            'data: {"choices": [{"delta": {"content": "x"}, '
+            '"finish_reason": "error"}]}',
+        ]
+        with pytest.raises(RuntimeError, match="finish_reason=error"):
+            self._run(monkeypatch, lines)
+
+    def test_empty_stream_fails_clearly(self, monkeypatch):
+        lines = ['data: {"choices": [{"delta": {}, "finish_reason": "stop"}]}']
+        with pytest.raises(ValueError, match="empty content"):
+            self._run(monkeypatch, lines)
+
+    def test_stream_without_done_or_finish_fails_clearly(self, monkeypatch):
+        lines = ['data: {"choices": [{"delta": {"content": "partial"}}]}']
+        with pytest.raises(ValueError, match=r"without \[DONE\]"):
+            self._run(monkeypatch, lines)
+
+    def test_unparseable_data_line_fails_clearly(self, monkeypatch):
+        lines = ["data: {not json"]
+        with pytest.raises(ValueError, match="unparseable data"):
+            self._run(monkeypatch, lines)
+
+    def test_http_error_surfaces_status_and_reason(self, monkeypatch):
+        lines = []
+        with pytest.raises(RuntimeError) as ei:
+            self._run(
+                monkeypatch,
+                lines,
+                status=403,
+                body=b'{"error":{"message":"Key limit exceeded"}}',
+            )
+        msg = str(ei.value)
+        assert "403" in msg
+        assert "Key limit exceeded" in msg
+
+    def test_stream_honors_the_wall_clock_ceiling(self, monkeypatch):
+        import asyncio
+
+        monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-test")
+        monkeypatch.setattr(j, "OPENROUTER_MODEL", MODEL)
+        monkeypatch.setattr(j, "JUDGMENT_PARAMS", {"stream": True})
+        monkeypatch.setattr(j, "QUERY_TIMEOUT_S", 0.05)
+
+        class SlowResp:
+            status_code = 200
+            is_error = False
+
+            async def aread(self):
+                return b""
+
+            async def aiter_lines(self):
+                await asyncio.sleep(30)
+                yield "data: [DONE]"
+
+        class SlowCM:
+            async def __aenter__(self):
+                return SlowResp()
+
+            async def __aexit__(self, *args):
+                return False
+
+        class SlowClient:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *args):
+                return False
+
+            def stream(self, *args, **kwargs):
+                return SlowCM()
+
+        monkeypatch.setattr(j.httpx, "AsyncClient", SlowClient)
+        with pytest.raises(asyncio.TimeoutError):
+            asyncio.run(j._run_query_openrouter(j.AUDIT_SYSTEM_PROMPT, "user"))
 
 
 # ---------------------------------------------------------------------------
