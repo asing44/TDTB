@@ -9,7 +9,18 @@ import { cleanup, fireEvent } from "@testing-library/preact";
 import { App } from "./App";
 import { AllocationPie } from "./AllocationPie";
 import { Queue } from "./Queue";
-import { makeHarness } from "./test-harness";
+import { makeHarness as stageHarness, type Harness } from "./test-harness";
+
+/** These tests exercise the Plan work surface. The app now boots on Set up
+    day, so stage the scenario and explicitly land on the Plan screen. */
+function makeHarness(
+  name: Parameters<typeof stageHarness>[0],
+  mutate?: Parameters<typeof stageHarness>[1],
+): Harness {
+  const h = stageHarness(name, mutate);
+  h.store.dispatch({ type: "UI", patch: { screen: "plan", settingsPanel: null } });
+  return h;
+}
 
 afterEach(cleanup);
 

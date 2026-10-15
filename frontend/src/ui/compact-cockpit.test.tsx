@@ -6,8 +6,19 @@ afterEach(cleanup);
 import { App } from "./App";
 import { ActionDock } from "./ActionDock";
 import { ApprovalDrawer } from "./ApprovalDrawer";
-import { makeHarness } from "./test-harness";
+import { makeHarness as stageHarness, type Harness } from "./test-harness";
 import { sourceHealthOf } from "../adapters/wire";
+
+/** These tests exercise the Plan work surface. The app now boots on Set up
+    day, so stage the scenario and explicitly land on the Plan screen. */
+function makeHarness(
+  name: Parameters<typeof stageHarness>[0],
+  mutate?: Parameters<typeof stageHarness>[1],
+): Harness {
+  const h = stageHarness(name, mutate);
+  h.store.dispatch({ type: "UI", patch: { screen: "plan", settingsPanel: null } });
+  return h;
+}
 
 describe("compact planning cockpit", () => {
   it("keeps the assigned work list as the primary surface with a local capacity readout", () => {

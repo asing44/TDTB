@@ -946,6 +946,8 @@ describe("elapsed anchors default off and are assignable", () => {
 describe("Already placed follows the elapsed default", () => {
   it("hides an untouched elapsed anchor and draws it once explicitly on", async () => {
     const h = makeHarness("ready");
+    // Plan-lane test: the app now boots on Set up day, so select Plan.
+    h.store.dispatch({ type: "UI", patch: { screen: "plan", settingsPanel: null } });
     // The operator saves a Start of 13:30 on Set up and continues to tasks:
     // SETUP_SAVED carries daySetup.anchor — inputs.time.anchor is untouched.
     h.store.dispatch({
@@ -977,6 +979,8 @@ describe("Already placed follows the elapsed default", () => {
 
   it("draws the lane on the saved frame and hides elapsed config anchors", () => {
     const h = makeHarness("ready");
+    // Plan-lane test: the app now boots on Set up day, so select Plan.
+    h.store.dispatch({ type: "UI", patch: { screen: "plan", settingsPanel: null } });
     // A late Start saved on Set up lives only on daySetup.anchor; inputs.time
     // still reads 07:30 — the exact disagreement the shared selector ends.
     h.store.dispatch({

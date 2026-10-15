@@ -12,8 +12,21 @@ import { act, cleanup, fireEvent, waitFor } from "@testing-library/preact";
 import { App } from "./App";
 import { SettingsShell } from "./SettingsShell";
 import { SettingsUrlSync } from "./settingsUrl";
-import { makeHarness } from "./test-harness";
+import { makeHarness as stageHarness, type Harness } from "./test-harness";
 import type { CapacitiesSettings, TagExclusionSettings } from "../model/types";
+
+/** Cockpit-entry tests reach the shell through the Plan-surface shortcuts
+    (rail chips, ActionDock). The app now boots on Set up day, so stage the
+    scenario and explicitly land on the Plan screen. Settings-shell tests that
+    render the host directly are unaffected. */
+function makeHarness(
+  name: Parameters<typeof stageHarness>[0],
+  mutate?: Parameters<typeof stageHarness>[1],
+): Harness {
+  const h = stageHarness(name, mutate);
+  h.store.dispatch({ type: "UI", patch: { screen: "plan", settingsPanel: null } });
+  return h;
+}
 
 beforeEach(() => {
   window.history.replaceState(null, "", "/");

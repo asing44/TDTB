@@ -20,8 +20,20 @@ afterEach(cleanup);
 import { App } from "./App";
 import { Queue } from "./Queue";
 import { Rail } from "./Rail";
-import { makeHarness } from "./test-harness";
+import { makeHarness as stageHarness, type Harness } from "./test-harness";
 import { SCENARIO_NAMES } from "../fixtures/scenarios";
+
+/** The full-App audit exercises the Plan work surface (the surface the old
+    default landed on). The app now boots on Set up day, so stage the scenario
+    and explicitly land on the Plan screen to preserve that coverage. */
+function makeHarness(
+  name: Parameters<typeof stageHarness>[0],
+  mutate?: Parameters<typeof stageHarness>[1],
+): Harness {
+  const h = stageHarness(name, mutate);
+  h.store.dispatch({ type: "UI", patch: { screen: "plan", settingsPanel: null } });
+  return h;
+}
 
 // -- audit helpers -----------------------------------------------------------
 

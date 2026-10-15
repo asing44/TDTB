@@ -804,7 +804,9 @@ describe("T18g Day Setup semantics", () => {
 
 describe("T13 canvas deletion", () => {
   it("keeps the allocator and editor paths but serves no timeline or Edit-day canvas", () => {
-    const { ui } = makeHarness("fresh");
+    const { ui, store } = makeHarness("fresh");
+    // Plan-surface test: the app now boots on Set up day, so select Plan.
+    store.dispatch({ type: "UI", patch: { screen: "plan", settingsPanel: null } });
     const { queryByRole, queryByLabelText, queryByText, container } = ui(<App />);
     // Pre-commit NOW/NEXT is dead space — absent by design (brief problem 5).
     expect(container.querySelector(".execution")).toBeNull();

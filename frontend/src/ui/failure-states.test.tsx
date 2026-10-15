@@ -251,7 +251,10 @@ describe("sequence failure", () => {
 describe("stale date rollover", () => {
   it("a new valid_date resets the cockpit to setup with no staged plan", () => {
     const { ui, store, scenario } = makeHarness("sequenced");
-    const { getByText, getAllByText, queryByText } = ui(<App />);
+    // Start on Plan (the app now boots on Set up day) so the rollover reset is
+    // observable as a return to the starting step.
+    store.dispatch({ type: "UI", patch: { screen: "plan", settingsPanel: null } });
+    const { getByRole, getAllByText, queryByText } = ui(<App />);
     expect(queryByText(/Sequence staged and valid|Preview the exact writes/)).toBeTruthy();
     act(() => {
       const rolled = structuredClone(scenario.inputs);
@@ -268,7 +271,9 @@ describe("stale date rollover", () => {
     expect(s.shadow).toBeNull();
     expect(s.overrides).toEqual({});
     expect(getAllByText(/19 Jul/).length).toBeGreaterThan(0);
-    expect(getByText(/Confirm your day frame/)).toBeTruthy();
+    // The full reset re-enters at the starting step: the Set up day screen.
+    expect(s.ui.screen).toBe("setup");
+    expect(getByRole("main", { name: "Set up day" })).toBeTruthy();
   });
 });
 

@@ -104,17 +104,19 @@ describe("U7 stepper header", () => {
     const h = makeHarness("ready");
     const r = h.ui(<Header />);
     const tabs = r.getAllByRole("tab") as HTMLElement[];
+    // The app boots on Set up day (the starting step), so the first tab is
+    // selected and carries the roving tabindex.
     expect(tabs.map((t) => t.getAttribute("aria-selected"))).toEqual([
-      "false",
       "true",
+      "false",
       "false",
     ]);
     // Accessible names are the labels; the step number/check mark is decorative.
     expect(r.getByRole("tab", { name: "Set up day" })).toBeTruthy();
     expect(r.getByRole("tab", { name: "Plan tasks" })).toBeTruthy();
     expect(r.getByRole("tab", { name: "Commit" })).toBeTruthy();
-    expect(tabs[1].tabIndex).toBe(0);
-    expect(tabs[0].tabIndex).toBe(-1);
+    expect(tabs[0].tabIndex).toBe(0);
+    expect(tabs[1].tabIndex).toBe(-1);
     expect(tabs[2].tabIndex).toBe(-1);
   });
 
@@ -137,6 +139,9 @@ describe("U7 stepper header", () => {
 
   it("Arrow, Home, and End move the step selection and focus", () => {
     const h = makeHarness("ready");
+    // Navigation semantics are unchanged; start from Plan (the app now boots
+    // on Set up day, where ArrowLeft wraps differently).
+    h.store.dispatch({ type: "UI", patch: { screen: "plan", settingsPanel: null } });
     const r = h.ui(<Header />);
     const tablist = r.getByRole("tablist", { name: "Planning steps" });
 
@@ -157,6 +162,7 @@ describe("U7 stepper header", () => {
 
   it("Commit reflects the approval/commit phase and is never a separate screen", () => {
     const h = makeHarness("commit-preview");
+    h.store.dispatch({ type: "UI", patch: { screen: "plan", settingsPanel: null } });
     const r = h.ui(<Header />);
     expect(h.store.getState().ui.screen).toBe("plan");
     expect(h.store.getState().ui.approvalOpen).toBe(true);
@@ -165,6 +171,7 @@ describe("U7 stepper header", () => {
 
   it("activating Commit opens the approval flow without changing the screen", () => {
     const h = makeHarness("sequenced");
+    h.store.dispatch({ type: "UI", patch: { screen: "plan", settingsPanel: null } });
     const r = h.ui(<Header />);
     fireEvent.click(r.getByRole("tab", { name: "Commit" }));
     expect(h.store.getState().ui.screen).toBe("plan");

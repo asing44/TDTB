@@ -222,7 +222,10 @@ export interface AppState {
   ledger: Ledger | null;
   theme: Theme;
   ui: {
-    /** B3 promoted top-level screen (plan / set up day / connections). */
+    /** B3 promoted top-level screen (plan / set up day / connections). The
+        starting step is Set up day: a fresh boot lands here, and only boot
+        (the initial state) applies it — INPUTS_LOADED and same-date refreshes
+        preserve whatever screen the user is on. */
     screen: Screen;
     /** Canonical settings destination — one settings host, at most one panel. */
     settingsPanel: SettingsPanel | null;
@@ -298,7 +301,7 @@ export const initialState: AppState = {
   refresh: { phase: "idle", error: null, lastRefreshed: null, summary: null, coverage: null },
   ledger: null,
   theme: "system",
-  ui: { screen: "plan", settingsPanel: null, settingsSection: null, setupOpen: false, capacitiesSettingsOpen: false, tagExclusionSettingsOpen: false, approvalOpen: false, editorItem: null, editorIntent: null, editorAnchor: null, editorAnchorIntent: null, capacityDetail: false, trimUndo: null },
+  ui: { screen: "setup", settingsPanel: null, settingsSection: null, setupOpen: false, capacitiesSettingsOpen: false, tagExclusionSettingsOpen: false, approvalOpen: false, editorItem: null, editorIntent: null, editorAnchor: null, editorAnchorIntent: null, capacityDetail: false, trimUndo: null },
 };
 
 export type Action =

@@ -5,13 +5,25 @@
 
 import { afterEach, describe, expect, it } from "vitest";
 import { cleanup, fireEvent, render } from "@testing-library/preact";
-import { makeHarness } from "./test-harness";
+import { makeHarness as stageHarness, type Harness } from "./test-harness";
 import { Footer } from "./Footer";
 import { Ctx } from "./context";
 import { createStore, type Store } from "../store/createStore";
 import { Controller } from "../store/controller";
 import { FixtureAdapter } from "../adapters/fixture";
 import { sourceHealthOf } from "../adapters/wire";
+
+/** Footer variants are selected by ui.screen. The app now boots on Set up day,
+    so these Plan-footer tests explicitly land on the Plan screen; the
+    off-Plan tests set their own screen. */
+function makeHarness(
+  name: Parameters<typeof stageHarness>[0],
+  mutate?: Parameters<typeof stageHarness>[1],
+): Harness {
+  const h = stageHarness(name, mutate);
+  h.store.dispatch({ type: "UI", patch: { screen: "plan", settingsPanel: null } });
+  return h;
+}
 
 function renderFooterWithStore(store: Store) {
   const controller = new Controller(new FixtureAdapter("ready"), store.dispatch, store.getState);
