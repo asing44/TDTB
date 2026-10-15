@@ -17,9 +17,11 @@ Verification:
 
 The source and rebuilt bundles are on `main`. The live UI was not clicked; attempted root/cockpit URL probes returned 404, so no live frontend-serving claim is made.
 
-## Model change — blocked, not enabled
+## Model decision — retain DeepSeek
 
-The user approved `openai/gpt-5.4-mini` through OpenRouter, reasoning `low`, strict JSON, 4,096 output/reasoning tokens, latency-prioritized standard providers, and token-price ceilings of $0.75 input / $4.50 output per million tokens. Flex and priority OpenAI endpoints are excluded.
+The operator subsequently chose to keep `deepseek/deepseek-v4.1-flash`. The model-switch workstream is closed; GPT-5.4 Mini is not selected. No further qualification, routing diagnostics, credential access, or provider calls are authorized by the completed run. Existing candidate files and evidence are retained, not deleted.
+
+Earlier in this workstream, the user approved `openai/gpt-5.4-mini` through OpenRouter, reasoning `low`, strict JSON, 4,096 output/reasoning tokens, latency-prioritized standard providers, and token-price ceilings of $0.75 input / $4.50 output per million tokens. Flex and priority OpenAI endpoints are excluded.
 
 Candidate source, archive, tests, and snapshot are retained in the [isolated candidate worktree](/Users/walle-mini/Repos/Projects/TDTB/.worktrees/judgment-mini-20261015). They are **not merged into main**. The live health endpoint still reports `deepseek/deepseek-v4.1-flash`. No service restart or installed launchd projection change occurred.
 
@@ -46,9 +48,9 @@ Public model metadata is reachable and advertises the candidate and compatible s
 
 ## Next restartable action
 
-Diagnose OpenRouter's authenticated 404 before attempting another model change. Testing has stopped. The one-time credential approvals do not authorize future automatic reads or reruns. Obtain explicit approval before any further credential-assisted or paid diagnostic; retain a cumulative request/cost ledger and safe status/error-category evidence.
+No further model action: keep the existing DeepSeek route. Do not automatically resume OpenRouter diagnostics or candidate qualification. Any future model-switch effort requires a new explicit request and separate approval for credential-assisted or paid operations.
 
-Do not merge the candidate default/plist or restart the live service until qualification supports adoption. Any eventual restart is an attended deployment with GET-only proof afterward. Do not modify global Pi models, credentials, source systems, or today's allowance as a workaround.
+Do not merge the unselected candidate default/plist, restart the live service, alter global Pi models or today's allowance, or remove the retained candidate worktree as part of this decision.
 
 Capacities calls-per-minute tuning remains backlog [issue #12](https://github.com/asing44/TDTB/issues/12); it was not implemented here.
 
@@ -58,7 +60,7 @@ Five pre-existing foreign dirty/untracked paths remain byte-for-byte unchanged: 
 
 Calendar worktree: [retained integration context](/Users/walle-mini/Repos/Projects/TDTB/.worktrees/calendar-sequence-state-20261015), branch `TDTB/calendar-sequence-state-20261015`; source is integrated, generated bundles verified, dependency symlink retained. Named worktree: out of scope for automatic janitor removal.
 
-Candidate worktree: [retained unmerged source](/Users/walle-mini/Repos/Projects/TDTB/.worktrees/judgment-mini-20261015), branch `TDTB/judgment-mini-20261015`; disposition retained/blocked. It is not janitor-eligible.
+Candidate worktree: [retained unmerged source](/Users/walle-mini/Repos/Projects/TDTB/.worktrees/judgment-mini-20261015), branch `TDTB/judgment-mini-20261015`; disposition retained/unselected. Its blocked qualification evidence is historical, not active work. It is not janitor-eligible.
 
 ```text
 accepted frontend source HEAD: 6d41122fe17c8e6e0663a8c8bbab3ab6dcc0ba8f
