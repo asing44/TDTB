@@ -1,12 +1,13 @@
 """capacities_refresh.py — paced, single-flight direct Capacities refresh.
 
 This module owns the acquisition half of the direct Capacities refresh (U2):
-it enumerates every configured type completely, reads only the content that is
-new or uncached (or every scoped object for a Rescan), paces every provider
-read, and installs exactly one complete generation through the U1 store
-(``capacities_refresh_state``). It never rewrites the legacy live reader; it
-reuses the adapter's transport contract, pagination, object normalization, and
-projection through public seams.
+it enumerates every configured type completely, re-reads only the content that
+is new, uncached, or older than the refresh-mode read-through TTL (and every
+scoped object for a Rescan), paces every provider read, and installs exactly
+one complete generation through the U1 store (``capacities_refresh_state``).
+It never rewrites the legacy live reader; it reuses the adapter's transport
+contract, pagination, object normalization, and projection through public
+seams.
 
 Contract (KTD1–KTD3):
 
@@ -18,6 +19,12 @@ Contract (KTD1–KTD3):
   ``Retry-After``/rate-limit-reset headers are honored when present and a
   conservative clock pacing is used when they are absent. Retries are bounded,
   errors stay truthful, and cancellation interrupts backoff.
+* **Read-through refresh TTL.** An explicit Refresh reuses cached object
+  content younger than :data:`DEFAULT_CONTENT_TTL_SECONDS` (10 minutes) with
+  zero provider reads, so a back-to-back Refresh stays cheap, and re-reads
+  older content so an Assigned On/status/title edit made in Capacities reaches
+  TDTB on the next Refresh. A Rescan ignores the TTL and re-reads every scoped
+  object. The U1 store itself never expires an entry.
 * **Complete scope or nothing.** Any incomplete listing, failed required read,
   changed configuration revision, or changed source space prevents
   installation. The previous complete generation and every successful read are
@@ -33,6 +40,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import math
 import threading
 import time
 from collections import deque
@@ -67,6 +75,14 @@ JOB_SCHEMA_VERSION = 1
 #: configured Capacities scope. A scoped Rescan updates a member type but
 #: still installs (or refuses) the one whole-scope generation.
 DEFAULT_SCOPE_KEY = "all"
+
+#: Refresh-mode read-through TTL (seconds). During an explicit Refresh a
+#: cached object whose ``content_read_at`` is older than this is re-read and
+#: renewed; younger content is reused with zero provider reads. A Rescan
+#: ignores the TTL and re-reads every scoped object. Ten minutes keeps a
+#: back-to-back Refresh cheap while still letting a Capacities edit reach TDTB
+#: on the next Refresh.
+DEFAULT_CONTENT_TTL_SECONDS = 600.0
 
 TERMINAL_PHASES = frozenset(
     {"complete", "failed", "cancelled", "interrupted"}
@@ -499,6 +515,7 @@ class RefreshCoordinator:
         namespace: str | None = None,
         config_guard: Callable[[], Any] | None = None,
         wall_clock: Callable[[], float] = time.time,
+        content_ttl: float = DEFAULT_CONTENT_TTL_SECONDS,
         configuration_revision: int | None = None,
         space_id_supplier: Callable[[], str | None] | None = None,
     ) -> None:
@@ -508,6 +525,14 @@ class RefreshCoordinator:
             raise ValueError("at least one Capacities mapping is required")
         if max_pages < 1:
             raise ValueError("max_pages must be positive")
+        try:
+            ttl_seconds = float(content_ttl)
+        except (TypeError, ValueError):
+            raise ValueError(
+                "content_ttl must be a nonnegative finite number"
+            ) from None
+        if not math.isfinite(ttl_seconds) or ttl_seconds < 0:
+            raise ValueError("content_ttl must be a nonnegative finite number")
         self.store = store
         self.root = Path(root)
         self.scope_key = scope_key
@@ -525,6 +550,7 @@ class RefreshCoordinator:
         self.logical_day = logical_day
         self.config_guard = config_guard
         self._wall_clock = wall_clock
+        self._content_ttl = ttl_seconds
         self._namespace = namespace or _digest(self.space_id)
         self.cancel_event = threading.Event()
         self.pacer = ProviderPacer(
@@ -937,8 +963,11 @@ class RefreshCoordinator:
             )
             self._progress(type_key=type_key, listed=len(object_ids))
 
-        # Hydrate: read only new/uncached content (ordinary) or the whole
-        # scoped type (Rescan). Successful reads persist immediately.
+        # Hydrate: reuse cached content younger than the refresh TTL, re-read
+        # stale or uncached content (ordinary) or the whole scoped type
+        # (Rescan). Successful reads persist immediately. Types are visited in
+        # sorted configured order and each listing in its own order, so a
+        # Refresh always re-reads stale objects in the same stable sequence.
         self._stage = "read"
         merged: list[dict[str, Any]] = []
         unreadable = False
@@ -948,7 +977,7 @@ class RefreshCoordinator:
                     _raise_cancelled()
                 object_id = _text(row.get("id"))
                 try:
-                    content, _fresh = self._read_or_reuse(
+                    content, fresh = self._read_or_reuse(
                         object_id, type_key, rescan=(mode == "rescan")
                     )
                 except RefreshCancelled:
@@ -959,7 +988,10 @@ class RefreshCoordinator:
                     unreadable = True
                     continue
                 merged.append({**row, **content})
-                self._progress(type_key=type_key, read=1)
+                if fresh:
+                    # Only an actual provider read advances the read counter, so
+                    # the job's progress stays truthful when content is reused.
+                    self._progress(type_key=type_key, read=1)
         if unreadable:
             raise RefreshIncomplete(
                 "One or more required Capacities objects could not be read; "
@@ -1014,9 +1046,20 @@ class RefreshCoordinator:
         self._finish("complete", "published", warnings)
 
     def _read_or_reuse(self, object_id: str, type_key: str, *, rescan: bool):
+        """Return ``(content, fresh)`` for one required object.
+
+        ``fresh`` is True only when this call actually read the provider. A
+        Rescan always reads. An ordinary Refresh reuses cached content while it
+        is younger than the refresh-mode TTL and re-reads older content through
+        the paced provider, renewing ``content_read_at`` with the coordinator's
+        wall clock (the same clock :func:`_coverage` compares against).
+        """
         if not rescan:
             cached = self.store.get(object_id, type_key)
-            if cached is not None:
+            if (
+                cached is not None
+                and self._wall_clock() - cached.content_read_at < self._content_ttl
+            ):
                 return cached.content, False
         content = self.provider.get_object(object_id)
         if not isinstance(content, dict) or not isinstance(content.get("properties"), dict):
@@ -1024,7 +1067,9 @@ class RefreshCoordinator:
                 "A required Capacities object read was malformed; no complete "
                 "result was published."
             )
-        self.store.put(object_id, type_key, content)
+        self.store.put(
+            object_id, type_key, content, content_read_at=self._wall_clock()
+        )
         return content, True
 
 

@@ -8,9 +8,13 @@ complete generation can be installed.
 
 Contract (KTD2/KTD3):
 
-* **No TTL on cached properties.** A valid cached object keeps its original
-  ``content_read_at``; only an explicit re-read (a Rescan) replaces it. A
-  read never renews a timestamp.
+* **The store never expires a cached object (no store-level TTL).** A valid
+  cached object keeps its original ``content_read_at`` until an explicit write
+  replaces it, and a bare read never renews a timestamp. The refresh-mode
+  read-through TTL lives in U2 (``capacities_refresh``): an explicit Refresh
+  re-reads a cached object whose ``content_read_at`` is older than
+  ``capacities_refresh.DEFAULT_CONTENT_TTL_SECONDS`` and renews it through
+  :meth:`RefreshStateStore.put`, while a Rescan re-reads every scoped object.
 * **Per-object atomic writes.** Each object is its own versioned JSON file,
   written through the shared atomic-write primitive, so an interruption
   keeps every successful read.
@@ -556,8 +560,10 @@ class RefreshStateStore:
     def get(self, object_id: str, type_key: str) -> CachedObject | None:
         """The cached read for one object, or ``None`` when absent/unusable.
 
-        There is deliberately no TTL: a valid entry keeps its original
-        ``content_read_at`` until an explicit re-read replaces it.
+        There is deliberately no store-level TTL: a valid entry keeps its
+        original ``content_read_at`` until an explicit write replaces it. The
+        refresh-mode read-through TTL is applied by U2 (``capacities_refresh``)
+        before it decides whether to reuse or re-read an entry.
         """
         oid = _require_text(object_id, "object_id")
         tkey = _require_text(type_key, "type_key")

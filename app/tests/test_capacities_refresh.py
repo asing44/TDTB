@@ -63,6 +63,8 @@ def _coordinator(
     configuration_revision=None,
     assignment_settings=None,
     exclusion_policy=None,
+    wall_clock=None,
+    content_ttl=None,
 ):
     clock = clock or Clock()
     sleeper = sleeper if sleeper is not None else Sleeper(clock)
@@ -72,6 +74,13 @@ def _coordinator(
         if configuration_revision is None
         else {"configuration_revision": configuration_revision}
     )
+    # Only pass the wall clock / TTL overrides the caller supplied so the
+    # coordinator's own defaults keep applying elsewhere.
+    overrides = {}
+    if wall_clock is not None:
+        overrides["wall_clock"] = wall_clock
+    if content_ttl is not None:
+        overrides["content_ttl"] = content_ttl
     return (
         rr.RefreshCoordinator(
             root=tmp_path / "state",
@@ -92,6 +101,7 @@ def _coordinator(
             assignment_settings=assignment_settings,
             exclusion_policy=exclusion_policy,
             **frozen,
+            **overrides,
         ),
         store,
         clock,
@@ -134,6 +144,130 @@ def test_one_new_object_costs_exactly_one_content_read(tmp_path):
     assert provider.get_calls == ["b"]
     snapshot = store.load_snapshot("all")
     assert {m.object_id for m in snapshot.members} == {"a", "b", "c"}
+
+
+# ---------------------------------------------------------------------------
+# Refresh read-through TTL — stale content is re-read, fresh content is reused
+# ---------------------------------------------------------------------------
+
+def test_default_refresh_content_ttl_is_ten_minutes():
+    assert rr.DEFAULT_CONTENT_TTL_SECONDS == 600.0
+
+
+def test_warm_refresh_reverifies_content_older_than_ttl(tmp_path):
+    wall = Clock(now=10_000.0)
+    provider = _paged_provider(objects={PRIMARY: ["a", "b"], "T2": []})
+    # The provider holds the edited content the stale cache is missing.
+    provider._objects["a"] = _content("a", PRIMARY, assigned=False)
+    coordinator, store, _, _ = _coordinator(
+        tmp_path, provider, wall_clock=wall, content_ttl=600.0
+    )
+    # 'a' was cached long before the TTL; 'b' was cached just now.
+    store.put("a", PRIMARY, _content("a", PRIMARY), content_read_at=9_000.0)
+    store.put("b", PRIMARY, _content("b", PRIMARY), content_read_at=10_000.0)
+
+    coordinator.start()
+    status = coordinator.wait(timeout=5)
+
+    assert status["phase"] == "complete", status
+    assert provider.get_calls == ["a"]
+    cached = store.get("a", PRIMARY)
+    assert cached.content == _content("a", PRIMARY, assigned=False)
+    assert cached.content_read_at == 10_000.0  # renewed by the re-read
+    snapshot = store.load_snapshot("all")
+    assert snapshot is not None and snapshot.generation == 1
+    assert {m.object_id for m in snapshot.members} == {"a", "b"}
+    # Only the stale object cost a read; the fresh one was reused.
+    assert status["job"]["progress"]["read"] == 1
+    assert status["job"]["progress"]["types"][PRIMARY]["read"] == 1
+
+
+def test_warm_refresh_reuses_content_within_the_ttl(tmp_path):
+    wall = Clock(now=10_000.0)
+    provider = _paged_provider(objects={PRIMARY: ["a"], "T2": ["c"]})
+    coordinator, store, _, _ = _coordinator(
+        tmp_path, provider, wall_clock=wall, content_ttl=600.0
+    )
+    store.put("a", PRIMARY, _content("a", PRIMARY), content_read_at=9_500.0)
+    store.put("c", "T2", _content("c", "T2"), content_read_at=10_000.0)
+
+    coordinator.start()
+    status = coordinator.wait(timeout=5)
+
+    assert status["phase"] == "complete", status
+    assert provider.get_calls == []
+    assert status["job"]["progress"]["read"] == 0
+    assert {m.object_id for m in store.load_snapshot("all").members} == {"a", "c"}
+
+
+def test_refresh_publishes_the_changed_property_from_a_stale_reread(tmp_path):
+    wall = Clock(now=10_000.0)
+    provider = _paged_provider(objects={PRIMARY: ["a"], "T2": []})
+    provider._objects["a"]["properties"]["title"]["title"]["value"] = "Renamed"
+    coordinator, store, _, _ = _coordinator(
+        tmp_path, provider, wall_clock=wall, content_ttl=600.0
+    )
+    store.put("a", PRIMARY, _content("a", PRIMARY), content_read_at=9_000.0)
+    assert (
+        store.get("a", PRIMARY).content["properties"]["title"]["title"]["value"]
+        == "A"
+    )
+
+    coordinator.start()
+    status = coordinator.wait(timeout=5)
+
+    assert status["phase"] == "complete", status
+    snapshot = store.load_snapshot("all")
+    assert snapshot is not None and snapshot.has("a", PRIMARY)
+    # The installed generation points at this cached read (read_direct_intake
+    # projects exactly ``store.get(member)``), so the edit reaches TDTB.
+    assert (
+        store.get("a", PRIMARY).content["properties"]["title"]["title"]["value"]
+        == "Renamed"
+    )
+
+
+def test_rescan_rereads_fresh_content_ignoring_the_ttl(tmp_path):
+    wall = Clock(now=10_000.0)
+    provider = _paged_provider(objects={PRIMARY: ["a", "b"], "T2": []})
+    coordinator, store, _, _ = _coordinator(
+        tmp_path, provider, wall_clock=wall, content_ttl=600.0
+    )
+    # Both objects are well inside the TTL, yet a Rescan must still read them.
+    store.put("a", PRIMARY, _content("a", PRIMARY), content_read_at=10_000.0)
+    store.put("b", PRIMARY, _content("b", PRIMARY), content_read_at=10_000.0)
+
+    coordinator.start(mode="rescan", scope=PRIMARY)
+    status = coordinator.wait(timeout=5)
+
+    assert status["phase"] == "complete", status
+    assert set(provider.get_calls) == {"a", "b"}
+    assert status["job"]["progress"]["read"] == 2
+
+
+def test_stale_reread_failure_keeps_the_prior_generation(tmp_path):
+    wall = Clock(now=10_000.0)
+    provider = _paged_provider(objects={PRIMARY: ["a"], "T2": []})
+    coordinator, store, _, _ = _coordinator(
+        tmp_path, provider, wall_clock=wall, content_ttl=600.0
+    )
+    # Establish one complete generation, then age its cached content past the
+    # TTL and make the required re-read fail.
+    coordinator.start()
+    assert coordinator.wait(timeout=5)["phase"] == "complete"
+    prior = store.load_snapshot("all")
+    assert prior is not None and prior.generation == 1
+    store.put("a", PRIMARY, _content("a", PRIMARY), content_read_at=9_000.0)
+    provider.get_error = RuntimeError("boom")
+
+    coordinator.start()
+    status = coordinator.wait(timeout=5)
+
+    assert status["phase"] == "failed"
+    assert status["outcome"] == "noCapacities"
+    # No partial generation: the previous complete result is preserved.
+    kept = store.load_snapshot("all")
+    assert kept is not None and kept.generation == prior.generation
 
 
 # ---------------------------------------------------------------------------
