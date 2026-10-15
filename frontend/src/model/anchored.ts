@@ -47,8 +47,10 @@ export function anchoredOverrideOf(
     A config anchor whose counted span began but has not ended stays live and
     is clipped at the frame edge by DayStrip; a fully elapsed one sits at the
     frame edge (off unless re-included, and re-placed from the frame start when
-    it is); an open window stays live from the frame start. Only a start AFTER
-    the frame end stays "outside frame". Calendar rows never reach this. */
+    it is). A window-kind anchor stays live from the frame start while its
+    window is open, and is elapsed once that window closed before the frame.
+    Only a start AFTER the frame end stays "outside frame". Calendar rows never
+    reach this. */
 export function anchorFrameStart(
   kind: string,
   opts: {
@@ -58,7 +60,7 @@ export function anchorFrameStart(
     frameStart: string;
     frameEnd: string;
   },
-): { start: string | null; afterFrame: boolean } {
+): { start: string | null; afterFrame: boolean; windowClosed?: boolean } {
   const start = opts.start;
   if (start == null) return { start, afterFrame: false };
   const startMin = toMinutes(start);
@@ -69,8 +71,16 @@ export function anchorFrameStart(
   // The block starts before the frame.
   const windowKind = kind === "window" || kind === "template";
   if (windowKind) {
-    // Mirrors the server rule: off only once the window has closed.
-    return { start: opts.frameStart, afterFrame: false };
+    // Mirrors the server rule (`past_window_defaults`): the block defaults off
+    // only once its window close is strictly before the frame anchor, so an
+    // end exactly at the frame stays live. A window with no parseable end
+    // stays live.
+    const endMin = opts.end == null ? null : toMinutes(opts.end);
+    return {
+      start: opts.frameStart,
+      afterFrame: false,
+      windowClosed: endMin != null && endMin < frameStartMin,
+    };
   }
   const countedEndMin = startMin + Math.max(0, opts.blocks) * 30;
   if (countedEndMin > frameStartMin) {

@@ -557,13 +557,15 @@ export function DaySetupPanel({
             ? { start: source.start, end: source.end }
             : undefined,
         counted,
-        // Fully elapsed config anchors sit at the frame edge but are not drawn.
+        // Fully elapsed config anchors sit at the frame edge but are not drawn;
+        // a window anchor is elapsed once its window closed before the frame.
         elapsed:
           counted &&
-          a.kind !== "window" &&
-          a.kind !== "template" &&
-          placement.start === frameStart &&
-          toMinutes(o.time ?? a.start ?? frameStart) < frameStartMin,
+          (placement.windowClosed === true ||
+            (a.kind !== "window" &&
+              a.kind !== "template" &&
+              placement.start === frameStart &&
+              toMinutes(o.time ?? a.start ?? frameStart) < frameStartMin)),
         // The override intent, independent of frame clipping; the popover's
         // Count today switch shows this, while `counted` stays for the strip.
         counting: on,
@@ -612,8 +614,9 @@ export function DaySetupPanel({
       else if (startMin == null) status = "counted";
       else if (startMin > frameEndMin) status = "outside frame";
       else if (endMin! > 1440) status = "after day end";
-      else if (a.kind !== "window" && a.kind !== "template" && endMin! <= frameStartMin)
-        status = "elapsed";
+      else if (a.kind === "window" || a.kind === "template")
+        status = source.end != null && toMinutes(source.end) < frameStartMin ? "elapsed" : "counted";
+      else if (endMin! <= frameStartMin) status = "elapsed";
       else status = "counted";
       return {
         id: a.id,

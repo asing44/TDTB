@@ -698,6 +698,48 @@ describe("All blocks modal (Set up day)", () => {
     expect(chipOf(dialog, "Sudsing")).toBe("counted");
   });
 
+  it("reports a window anchor whose window closed before the frame as elapsed and keeps an edge-closing one live", () => {
+    const h = screenHarness("ready", 8, { frameStart: "20:30" });
+    const r = h.ui(<App />);
+    // Foods Breakfast (window 08:30-13:00) and Live (12:00-20:00) are long
+    // closed at the 20:30 frame and come off the strip; Foods Dinner
+    // (18:00-20:30) ends exactly at the frame, so it stays live.
+    expect(r.container.querySelector('[data-anchor-id="Foods Breakfast"]')).toBeNull();
+    expect(r.container.querySelector('[data-anchor-id="Live"]')).toBeNull();
+    expect(r.container.querySelector('[data-anchor-id="Foods Dinner"]')).toBeTruthy();
+    expect(r.getByRole("button", { name: /hidden today/ })).toBeTruthy();
+    openAllBlocks(r);
+    const dialog = r.getByRole("dialog", { name: "All blocks" }) as HTMLElement;
+    expect(chipOf(dialog, "Foods Breakfast")).toBe("elapsed");
+    expect(chipOf(dialog, "Live")).toBe("elapsed");
+    expect(chipOf(dialog, "Foods Dinner")).toBe("counted");
+  });
+
+  it("keeps a window anchor with no parseable end live", () => {
+    const h = screenHarness("ready", 8, { frameStart: "20:30" });
+    const inputs = structuredClone(h.store.getState().inputs!);
+    inputs.anchored = [
+      ...inputs.anchored,
+      {
+        id: "Open Window",
+        name: "Open Window",
+        kind: "window",
+        start: "08:30",
+        end: null,
+        durationMin: 30,
+        overlapAllowed: false,
+        on: true,
+        skipToday: false,
+      },
+    ];
+    h.store.dispatch({ type: "INPUTS_LOADED", inputs, ledger: h.store.getState().ledger! });
+    const r = h.ui(<App />);
+    expect(r.container.querySelector('[data-anchor-id="Open Window"]')).toBeTruthy();
+    openAllBlocks(r);
+    const dialog = r.getByRole("dialog", { name: "All blocks" }) as HTMLElement;
+    expect(chipOf(dialog, "Open Window")).toBe("counted");
+  });
+
   it("toggling a config anchor saves the today-only override keyed by id", async () => {
     const h = screenHarness();
     const save = vi.spyOn(h.controller, "saveAnchoredOverride").mockResolvedValue();
