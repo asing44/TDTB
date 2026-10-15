@@ -155,3 +155,31 @@ this change re-renders the installed
 which no longer pins a model. Until that restart the installed plist's old
 `TDTB_JUDGMENT_MODEL` pin still overrides the selector file; the agent does not
 perform this restart.
+
+### Diagnosing slow calls
+
+Every OpenRouter judgment call writes free, non-secret `openrouter-timing`
+lines (logger `tdtb.judgment`, emitted at WARNING so the app's root logger —
+WARNING with no handlers under uvicorn/launchd — still writes them to the
+server log), one per phase, each with a UTC millisecond timestamp, the model,
+the ceiling, and `elapsed_ms` since call start:
+
+- `call_start` — includes `proxy_env=true|false` (presence only, never a value);
+- `request_sent`, then `connect_tcp_started`/`connect_tcp_complete` (DNS is
+  inside this span), `start_tls_started`/`start_tls_complete`,
+  `send_request_headers_complete`,
+  `receive_response_headers_complete` (with `status`);
+- `response_headers` — `generation_id`/`request_id`/`cf_ray` when present, to
+  match OpenRouter Activity; `first_body_byte` (stream only);
+  `response_complete` with `bytes`;
+- on timeout or cancel: `openrouter-timing timeout last_phase=<phase>`, naming
+  the last COMPLETED request-progress phase — the key discriminator. Teardown
+  traces (`response_closed`, and a `.failed` for the stage in flight while the
+  waiter unwinds) never overwrite it, so the field names where the call
+  actually hung.
+
+A stall before `connect_tcp_complete` is local (DNS/TCP/TLS/proxy); after
+`send_request_headers_complete`/`send_request_body_complete` it is in-transit;
+after `receive_response_headers_complete` it is the response read. The lines
+never contain the key, prompt, or response content, and change no request,
+timeout, retry, or error text.

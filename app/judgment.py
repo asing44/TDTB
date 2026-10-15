@@ -32,6 +32,7 @@ import time
 from collections import deque
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -572,11 +573,208 @@ def _stream_finished(event: Any) -> bool:
     return finish is not None and finish != "error"
 
 
+# ---------------------------------------------------------------------------
+# Diagnostic timing (2026-10-15): free, non-secret forensic lines for one
+# OpenRouter call. An unexplained 240s no-response (the request reached the
+# provider within 1.9s and was marked FAILED with no stored generation) is only
+# diagnosable if a single call's wall time can be attributed to one stage:
+# local pre-send (DNS/TCP/TLS or a proxy), in-transit, or response read. These
+# lines change no payload, timeout, retry, or error message and never raise
+# into the call path. A standalone getaddrinfo probe is intentionally NOT made:
+# the httpcore ``connect_tcp`` trace below already spans the resolver, and a
+# separate lookup would add an outbound call and warm the cache it measures.
+# ---------------------------------------------------------------------------
+
+_TIMING_PREFIX = "openrouter-timing"
+_TIMING_TRACE_EVENTS = {
+    "connect_tcp.started",
+    "connect_tcp.complete",
+    "start_tls.started",
+    "start_tls.complete",
+    "send_request_headers.complete",
+    "receive_response_headers.complete",
+}
+# Presence-only proxy detection: a proxy URL may carry credentials, so only a
+# boolean is ever derived and logged.
+_PROXY_ENV_KEYS = (
+    "HTTPS_PROXY", "https_proxy", "ALL_PROXY", "all_proxy",
+    "HTTP_PROXY", "http_proxy",
+)
+
+
+def _proxy_env_present(environ: Mapping[str, str] | None = None) -> bool:
+    env = os.environ if environ is None else environ
+    return any(env.get(key) for key in _PROXY_ENV_KEYS)
+
+
+def _trace_event(name: Any) -> str:
+    """Drop httpcore's component prefix: ``http11.receive_response_headers.complete``
+    -> ``receive_response_headers.complete``."""
+    parts = str(name).split(".")
+    return ".".join(parts[-2:]) if len(parts) >= 2 else str(name)
+
+
+# httpcore emits ``started``/``complete``/``failed`` for each stage. Only the
+# ``complete`` event of a request-progress stage qualifies as ``last_phase``:
+# a ``started`` event names a stage we merely entered, and on a wall-clock
+# cancel httpcore's http11 handler runs ``except BaseException`` and emits
+# ``response_closed`` (plus a ``.failed`` for the stage in flight) while the
+# waiter unwinds. Recording those froze the field on teardown instead of on
+# the phase that actually hung.
+_TIMING_PROGRESS_STAGES = frozenset(
+    {
+        "connect_tcp",
+        "start_tls",
+        "send_request_headers",
+        "send_request_body",
+        "receive_response_headers",
+        "receive_response_body",
+    }
+)
+
+
+def _completed_progress_phase(event: str) -> str | None:
+    """``send_request_body.complete`` -> ``send_request_body_complete``, or
+    ``None`` for a ``started``/``failed`` event, a teardown stage
+    (``response_closed``), or anything not a request-progress stage."""
+    if not event.endswith(".complete"):
+        return None
+    if event.split(".", 1)[0] not in _TIMING_PROGRESS_STAGES:
+        return None
+    return event.replace(".", "_")
+
+
+def _header_value(headers: Any, name: str) -> str | None:
+    if headers is None:
+        return None
+    try:
+        value = headers.get(name)
+    except Exception:
+        value = None
+    if value is not None:
+        return value
+    try:
+        for key, val in headers.items():
+            if str(key).lower() == name:
+                return val
+    except Exception:
+        return None
+    return None
+
+
+def _response_body_len(resp: Any) -> int | None:
+    try:
+        content = getattr(resp, "content", None)
+    except Exception:
+        return None
+    return len(content) if content is not None else None
+
+
+class _OpenRouterTiming:
+    """Forensic single-line timing records for one OpenRouter call.
+
+    Emitting never raises into the call path: every failure is swallowed, and
+    the trace callback is wrapped because an exception there would break the
+    request. Never logs the key, request body, prompt, response body content,
+    or a proxy URL; only a ``proxy_env`` boolean is derived.
+    """
+
+    PREFIX = _TIMING_PREFIX
+
+    def __init__(self, model: str, ceiling: float) -> None:
+        self.model = model
+        self.ceiling = ceiling
+        self.t0 = time.monotonic()
+        self.last_phase = "call_start"
+        self._saw_first_byte = False
+        self.log("call_start", proxy_env=_proxy_env_present())
+
+    def event_hooks(self) -> dict[str, list[Any]]:
+        return {"request": [self._on_request], "response": [self._on_response]}
+
+    def log(self, phase: str, **fields: Any) -> None:
+        try:
+            self._emit(phase, **fields)
+        except Exception:
+            pass
+
+    def timeout(self) -> None:
+        self.log("timeout", last_phase=self.last_phase)
+
+    def note_first_byte(self) -> None:
+        if not self._saw_first_byte:
+            self._saw_first_byte = True
+            self.log("first_body_byte")
+
+    def _emit(self, phase: str, **fields: Any) -> None:
+        now = datetime.now(timezone.utc)
+        stamp = now.strftime("%Y-%m-%dT%H:%M:%S.") + f"{now.microsecond // 1000:03d}Z"
+        parts = [
+            f"{self.PREFIX} {phase}",
+            f"ts={stamp}",
+            f"elapsed_ms={int((time.monotonic() - self.t0) * 1000)}",
+            f"model={self.model}",
+            f"ceiling={self.ceiling:g}",
+        ]
+        for key, value in fields.items():
+            if value is None:
+                continue
+            if isinstance(value, bool):
+                value = "true" if value else "false"
+            parts.append(f"{key}={value}")
+        logger.warning("%s", " ".join(parts))
+
+    async def _on_request(self, request: Any) -> None:
+        # Attach the httpcore trace extension; the request hook runs before the
+        # transport sends, so the extension is in place for connect/TLS/send.
+        try:
+            request.extensions["trace"] = self._atrace
+        except Exception:
+            pass
+        self.log("request_sent")
+
+    async def _on_response(self, response: Any) -> None:
+        status = generation = request_id = ray = None
+        try:
+            status = getattr(response, "status_code", None)
+            headers = getattr(response, "headers", None)
+            generation = _header_value(headers, "x-generation-id")
+            request_id = _header_value(headers, "x-request-id")
+            ray = _header_value(headers, "cf-ray")
+        except Exception:
+            pass
+        self.log(
+            "response_headers",
+            status=status,
+            generation_id=generation,
+            request_id=request_id,
+            cf_ray=ray,
+        )
+
+    async def _atrace(self, name: Any, info: Any = None) -> None:
+        try:
+            event = _trace_event(name)
+            phase = _completed_progress_phase(event)
+            if phase is not None:
+                self.last_phase = phase
+            if event not in _TIMING_TRACE_EVENTS:
+                return
+            status = None
+            if event == "receive_response_headers.complete" and isinstance(info, dict):
+                return_value = info.get("return_value")
+                if isinstance(return_value, (tuple, list)) and len(return_value) >= 2:
+                    status = return_value[1]
+            self.log(event.replace(".", "_"), status=status)
+        except Exception:
+            pass
+
+
 async def _stream_openrouter(
     payload: dict[str, Any],
     headers: Mapping[str, str],
     ceiling: float,
     ceiling_hint: str,
+    timing: _OpenRouterTiming | None = None,
 ) -> str:
     """Read one OpenRouter SSE stream, returning the accumulated content.
 
@@ -592,7 +790,10 @@ async def _stream_openrouter(
         chunks: list[str] = []
         saw_done = False
         saw_finish = False
-        async with httpx.AsyncClient(timeout=ceiling) as client:
+        async with httpx.AsyncClient(
+            timeout=ceiling,
+            event_hooks=(timing.event_hooks() if timing is not None else None),
+        ) as client:
             async with client.stream(
                 "POST", OPENROUTER_URL, json=payload, headers=headers
             ) as resp:
@@ -600,6 +801,8 @@ async def _stream_openrouter(
                     # Same forensic intent as the non-stream path: OpenRouter's
                     # body carries the actual reason (never the key).
                     body = await resp.aread()
+                    if timing is not None:
+                        timing.log("response_complete", bytes=len(body))
                     detail = (
                         body[:400]
                         .decode("utf-8", "replace")
@@ -611,6 +814,8 @@ async def _stream_openrouter(
                         + (f" — {detail}" if detail else "")
                     )
                 async for line in resp.aiter_lines():
+                    if timing is not None:
+                        timing.note_first_byte()
                     text = line.strip()
                     if not text or text.startswith(":"):
                         continue
@@ -637,6 +842,8 @@ async def _stream_openrouter(
                     if _stream_finished(event):
                         saw_finish = True
                         break
+        if timing is not None:
+            timing.log("response_complete", bytes=len("".join(chunks).encode("utf-8")))
         if not chunks:
             raise ValueError("OpenRouter stream returned empty content")
         if not (saw_done or saw_finish):
@@ -649,7 +856,13 @@ async def _stream_openrouter(
     # timeout alone lets a trickling provider reset it indefinitely.
     try:
         return await asyncio.wait_for(_read(), timeout=ceiling)
+    except asyncio.CancelledError:
+        if timing is not None:
+            timing.timeout()
+        raise
     except (asyncio.TimeoutError, TimeoutError) as exc:
+        if timing is not None:
+            timing.timeout()
         raise TimeoutError(
             f"no response from {OPENROUTER_MODEL} within {ceiling:.0f}s "
             f"({ceiling_hint}) — the billed attempt is "
@@ -663,16 +876,22 @@ async def _run_query_openrouter(system_prompt: str, user_prompt: str) -> str:
     key = _openrouter_key()
     payload = _build_openrouter_payload(system_prompt, user_prompt)
     headers = {"Authorization": f"Bearer {key}"}
+    timing = _OpenRouterTiming(OPENROUTER_MODEL, ceiling)
     if payload.get("stream"):
-        return await _stream_openrouter(payload, headers, ceiling, ceiling_hint)
+        return await _stream_openrouter(payload, headers, ceiling, ceiling_hint, timing)
+
+    event_hooks = timing.event_hooks()
 
     async def _request() -> dict[str, Any]:
-        async with httpx.AsyncClient(timeout=ceiling) as client:
+        async with httpx.AsyncClient(
+            timeout=ceiling, event_hooks=event_hooks
+        ) as client:
             resp = await client.post(
                 OPENROUTER_URL,
                 json=payload,
                 headers=headers,
             )
+            timing.log("response_complete", bytes=_response_body_len(resp))
             if resp.is_error:
                 # httpx's own message is the status line plus a link to MDN,
                 # which says nothing about WHY. OpenRouter puts the actual
@@ -690,7 +909,11 @@ async def _run_query_openrouter(system_prompt: str, user_prompt: str) -> str:
     # resetting it indefinitely. Match the SDK path's G15 wall-clock ceiling.
     try:
         data = await asyncio.wait_for(_request(), timeout=ceiling)
+    except asyncio.CancelledError:
+        timing.timeout()
+        raise
     except (asyncio.TimeoutError, TimeoutError) as exc:
+        timing.timeout()
         # A bare asyncio.TimeoutError stringifies to "" — the caller reports
         # the class name and the operator learns nothing (2026-07-27: the
         # surfaced error was the single word "TimeoutError"). Name the model
