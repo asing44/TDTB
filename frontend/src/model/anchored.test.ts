@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isMintingName, validateAnchoredOverride } from "./anchored";
+import { anchoredDefaultOff, isMintingName, validateAnchoredOverride } from "./anchored";
 import type { AnchoredBlock } from "./types";
 
 const windowBlock: AnchoredBlock = {
@@ -58,6 +58,35 @@ describe("validateAnchoredOverride", () => {
     expect(validateAnchoredOverride({ ...windowBlock, kind: "calendar" }, {
       on: true, skipToday: false, time: "19:00", blocks: 1,
     }, frame).errors).toEqual(["Calendar commitments are read-only."]);
+  });
+});
+
+describe("anchoredDefaultOff", () => {
+  const frame = { frameStart: "13:30", frameEnd: "23:45" };
+
+  it("defaults off a hard anchor whose counted span ended before the frame", () => {
+    // Morning Routine 07:45, 3 counted blocks (90 min) ends 09:15.
+    expect(anchoredDefaultOff("hard", { start: "07:45", end: "09:05", blocks: 3, ...frame })).toBe(true);
+  });
+
+  it("keeps a started-but-unfinished hard anchor live", () => {
+    // Showering 15:10, 3 blocks ends 16:40; 16:40 > 15:45 so it is not elapsed.
+    expect(
+      anchoredDefaultOff("hard", { start: "15:10", end: "16:30", blocks: 3, frameStart: "15:45", frameEnd: "23:45" }),
+    ).toBe(false);
+  });
+
+  it("defaults off a window that closed before the frame and keeps an edge one live", () => {
+    expect(anchoredDefaultOff("window", { start: "08:30", end: "13:00", blocks: 2, ...frame })).toBe(true);
+    // End exactly at the frame stays live (the server's strict-before rule).
+    expect(
+      anchoredDefaultOff("window", { start: "18:00", end: "13:30", blocks: 2, ...frame }),
+    ).toBe(false);
+  });
+
+  it("leaves an anchor at or after the frame start and one after the frame end untouched", () => {
+    expect(anchoredDefaultOff("hard", { start: "13:30", end: null, blocks: 3, ...frame })).toBe(false);
+    expect(anchoredDefaultOff("hard", { start: "23:50", end: "00:20", blocks: 1, frameStart: "13:30", frameEnd: "23:45" })).toBe(false);
   });
 });
 

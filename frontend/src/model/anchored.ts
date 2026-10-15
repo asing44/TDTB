@@ -50,7 +50,9 @@ export function anchoredOverrideOf(
     it is). A window-kind anchor stays live from the frame start while its
     window is open, and is elapsed once that window closed before the frame.
     Only a start AFTER the frame end stays "outside frame". Calendar rows never
-    reach this. */
+    reach this. `elapsed` is the single elapsed predicate: a hard anchor whose
+    counted span ended at or before the frame start, or a window/template whose
+    window closed strictly before it. */
 export function anchorFrameStart(
   kind: string,
   opts: {
@@ -60,14 +62,14 @@ export function anchorFrameStart(
     frameStart: string;
     frameEnd: string;
   },
-): { start: string | null; afterFrame: boolean; windowClosed?: boolean } {
+): { start: string | null; afterFrame: boolean; elapsed: boolean } {
   const start = opts.start;
-  if (start == null) return { start, afterFrame: false };
+  if (start == null) return { start, afterFrame: false, elapsed: false };
   const startMin = toMinutes(start);
   const frameStartMin = toMinutes(opts.frameStart);
   const frameEndMin = toMinutes(opts.frameEnd);
-  if (startMin > frameEndMin) return { start, afterFrame: true };
-  if (startMin >= frameStartMin) return { start, afterFrame: false };
+  if (startMin > frameEndMin) return { start, afterFrame: true, elapsed: false };
+  if (startMin >= frameStartMin) return { start, afterFrame: false, elapsed: false };
   // The block starts before the frame.
   const windowKind = kind === "window" || kind === "template";
   if (windowKind) {
@@ -79,16 +81,35 @@ export function anchorFrameStart(
     return {
       start: opts.frameStart,
       afterFrame: false,
-      windowClosed: endMin != null && endMin < frameStartMin,
+      elapsed: endMin != null && endMin < frameStartMin,
     };
   }
   const countedEndMin = startMin + Math.max(0, opts.blocks) * 30;
   if (countedEndMin > frameStartMin) {
     // Started but unfinished: stays live, clipped by the strip.
-    return { start, afterFrame: false };
+    return { start, afterFrame: false, elapsed: false };
   }
   // Fully elapsed: sits at the frame edge, re-includable.
-  return { start: opts.frameStart, afterFrame: false };
+  return { start: opts.frameStart, afterFrame: false, elapsed: true };
+}
+
+/** Mirror of the server's `past_window_defaults` at the frame on screen: a
+    config anchor with NO explicit today override defaults OFF once it is
+    already elapsed. An explicit on:true override re-includes it (the server's
+    own rule), so callers only consult this when the override is absent.
+    Shares `anchorFrameStart`, so the elapsed predicate can never drift from
+    the strip's placement. */
+export function anchoredDefaultOff(
+  kind: string,
+  opts: {
+    start: string | null;
+    end: string | null;
+    blocks: number;
+    frameStart: string;
+    frameEnd: string;
+  },
+): boolean {
+  return anchorFrameStart(kind, opts).elapsed;
 }
 
 export interface AnchoredFindings {

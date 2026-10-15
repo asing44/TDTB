@@ -36,6 +36,8 @@ import {
 } from "../model/refresh";
 import { allowedOverlaps, defectsCovered, workOverlaps } from "../model/findings";
 import { blocksLabel } from "../model/time";
+import { anchoredBlocks, anchoredDefaultOff } from "../model/anchored";
+import { dayFrame } from "../model/dayFrame";
 import { remainingLabel } from "../model/allocator";
 import { capacitiesCoverageOf, durationSourceOf } from "../adapters/wire";
 
@@ -1207,6 +1209,9 @@ export function effectiveBlocks(s: AppState, id: string): number {
     changed upstream config. Calendar rows are immutable and never receive an
     override. */
 export function effectiveAnchoredBlocks(s: AppState) {
+  // The day frame the elapsed defaults resolve against: the identical
+  // `dayFrame` the Plan screen's Already placed lane draws.
+  const frame = s.inputs ? dayFrame(s.inputs.time) : null;
   return (s.inputs?.anchored ?? []).map((block) => {
     if (block.kind === "calendar") {
       // T28 + FEEDBACK-09: the only overrides a calendar row honors are
@@ -1234,7 +1239,26 @@ export function effectiveAnchoredBlocks(s: AppState) {
         : { ...block, on: true, skipToday: skip, durationMin };
     }
     const override = s.daySetup.anchored[block.id];
-    if (!override) return block;
+    if (!override) {
+      // Server `past_window_defaults`: an anchor already elapsed at the day
+      // frame defaults off until an explicit on-override re-includes it. One
+      // shared helper with the Set up strip/modal keeps the rule in step.
+      if (
+        frame != null &&
+        block.on &&
+        !block.skipToday &&
+        anchoredDefaultOff(block.kind, {
+          start: block.start,
+          end: block.end,
+          blocks: anchoredBlocks(block),
+          frameStart: frame.start,
+          frameEnd: frame.end,
+        })
+      ) {
+        return { ...block, on: false, skipToday: false };
+      }
+      return block;
+    }
     return {
       ...block,
       start: override.time ?? block.start,

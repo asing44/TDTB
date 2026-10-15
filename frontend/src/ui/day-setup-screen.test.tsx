@@ -4,7 +4,7 @@
    Continue. Behavioral coverage only — jsdom cannot judge layout (KTD13). */
 
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, within } from "@testing-library/preact";
+import { cleanup, fireEvent, waitFor, within } from "@testing-library/preact";
 import { App } from "./App";
 import { FixtureAdapter } from "../adapters/fixture";
 import { makeHarness } from "./test-harness";
@@ -231,7 +231,7 @@ describe("U12 Set up day composition", () => {
     expect(r.queryByRole("note")).toBeNull();
   });
 
-  it("keeps a fully elapsed config anchor off the strip but re-includable from All blocks", async () => {
+  it("re-includes an explicitly off elapsed anchor from All blocks and draws it counted", async () => {
     const h = screenHarness("ready", 8, { frameStart: "13:30" });
     const before = h.store.getState().daySetup;
     h.store.dispatch({
@@ -244,19 +244,31 @@ describe("U12 Set up day composition", () => {
         },
       },
     });
+    const save = vi.spyOn(h.controller, "saveAnchoredOverride").mockResolvedValue();
     const r = h.ui(<App />);
-    const mr = () => r.container.querySelector('[data-anchor-id="Morning Routine"]');
-    // Morning Routine 07:45 + 90 min ends 09:15, before the 13:30 frame; it is
-    // off, so it is not drawn. The "hidden today" note opens All blocks, where
-    // it stays re-includable.
+    const mr = () => r.container.querySelector('[data-anchor-id="Morning Routine"]') as HTMLElement | null;
+    // Morning Routine 07:45 + 90 min ends 09:15, before the 13:30 frame; an
+    // explicit off keeps it hidden. The "hidden today" note opens All blocks.
     expect(mr()).toBeNull();
     fireEvent.click(r.getByRole("button", { name: /hidden today/ }));
     const sw = () => r.getByRole("switch", { name: "Count Morning Routine today" });
     expect(sw().getAttribute("aria-checked")).toBe("false");
     fireEvent.click(sw());
     await vi.waitFor(() => expect(sw().getAttribute("aria-checked")).toBe("true"));
-    // Counting again, it is still fully elapsed, so it stays off the strip.
-    expect(mr()).toBeNull();
+    expect(save).toHaveBeenLastCalledWith(
+      "Morning Routine",
+      expect.objectContaining({ on: true, skipToday: false }),
+    );
+    // Explicitly on, it is re-placed from the frame start as a live, counted,
+    // movable block instead of staying hidden at its config start.
+    const block = mr();
+    expect(block).toBeTruthy();
+    expect(parseFloat(block!.style.left)).toBeCloseTo(0, 1);
+    expect(block!.classList.contains("strip-anchor--movable")).toBe(true);
+    const row = within(r.getByRole("dialog", { name: "All blocks" }) as HTMLElement)
+      .getByText("Morning Routine")
+      .closest(".all-blocks__row") as HTMLElement;
+    expect((row.querySelector(".all-blocks__status") as HTMLElement).textContent).toBe("counted");
   });
 
   it("selects an anchor block when it is clicked", () => {
@@ -676,8 +688,10 @@ describe("All blocks modal (Set up day)", () => {
     for (const name of ["Trinoor Standup", "PHEP sync (Vlad)"]) {
       expect(within(calendar).getByText(name)).toBeTruthy();
     }
-    // Count chip reflects the one skipped row (Morning Routine).
-    expect(r.getByRole("button", { name: /^All blocks/ }).textContent).toContain("1 off");
+    // The Count-today switch is off for the explicitly skipped Morning Routine
+    // and the two elapsed config anchors (Early Task, Foods Breakfast) the
+    // server also defaults off.
+    expect(r.getByRole("button", { name: /^All blocks/ }).textContent).toContain("3 off");
   });
 
   it("renders the elapsed, outside-frame, after-day-end, skipped, and counted status chips", () => {
@@ -831,6 +845,130 @@ describe("All blocks modal (Set up day)", () => {
       });
     });
     expect(save.mock.calls.some(([id]) => id === "Trinoor Standup")).toBe(false);
+  });
+});
+
+describe("elapsed anchors default off and are assignable", () => {
+  // Ruler 13:30-23:45 drawn 615px wide: 1px per minute.
+  const stubLane = () =>
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue({
+      x: 0, y: 0, left: 0, top: 0, right: 615, bottom: 96, width: 615, height: 96,
+      toJSON: () => ({}),
+    });
+  const pointer = { pointerId: 1, button: 0, pointerType: "mouse" } as const;
+  const drag = (el: HTMLElement, px: number) => {
+    fireEvent.pointerDown(el, { ...pointer, clientX: 500 });
+    fireEvent.pointerMove(el, { ...pointer, clientX: 500 + px });
+    fireEvent.pointerUp(el, { ...pointer, clientX: 500 + px });
+  };
+  afterEach(() => vi.restoreAllMocks());
+
+  it("shows an untouched elapsed anchor off with an elapsed chip and assigns it from the frame start", async () => {
+    const h = screenHarness("ready", 8, { frameStart: "13:30" });
+    const save = vi.spyOn(h.controller, "saveAnchoredOverride").mockResolvedValue();
+    const r = h.ui(<App />);
+    const mr = () => r.container.querySelector('[data-anchor-id="Morning Routine"]') as HTMLElement | null;
+    // No override: the elapsed anchor is off by the server's rule, hidden, and
+    // counted in the note even though its config row says on.
+    expect(mr()).toBeNull();
+    // Morning Routine and Foods Breakfast are both elapsed with no override.
+    expect(r.getByRole("button", { name: /hidden today/ }).textContent).toContain("2");
+    fireEvent.click(r.getByRole("button", { name: /^All blocks/ }));
+    const chip = () => {
+      const row = within(r.getByRole("dialog", { name: "All blocks" }) as HTMLElement)
+        .getByText("Morning Routine")
+        .closest(".all-blocks__row") as HTMLElement;
+      return (row.querySelector(".all-blocks__status") as HTMLElement).textContent;
+    };
+    const sw = () => r.getByRole("switch", { name: "Count Morning Routine today" });
+    expect(chip()).toBe("elapsed");
+    expect(sw().getAttribute("aria-checked")).toBe("false");
+    // The first click turns it ON (never off) and writes a plain on-override.
+    fireEvent.click(sw());
+    await vi.waitFor(() => expect(sw().getAttribute("aria-checked")).toBe("true"));
+    expect(save).toHaveBeenLastCalledWith(
+      "Morning Routine",
+      expect.objectContaining({ on: true, skipToday: false }),
+    );
+    expect(chip()).toBe("counted");
+    // Drawn from the frame start as a live, counted, movable block.
+    const block = mr();
+    expect(block).toBeTruthy();
+    expect(parseFloat(block!.style.left)).toBeCloseTo(0, 1);
+    expect(block!.classList.contains("strip-anchor--not-counted")).toBe(false);
+    expect(block!.classList.contains("strip-anchor--movable")).toBe(true);
+    // Foods Breakfast stays default-off elapsed, so exactly one stays hidden;
+    // Morning Routine itself has left the hidden note.
+    expect(r.getByRole("button", { name: /hidden today/ }).textContent).toContain("1");
+    // Turning it off again hides it.
+    fireEvent.click(sw());
+    await vi.waitFor(() => expect(sw().getAttribute("aria-checked")).toBe("false"));
+    expect(mr()).toBeNull();
+  });
+
+  it("lets a re-included elapsed anchor be moved with the popover and the strip drag", async () => {
+    stubLane();
+    const h = screenHarness("ready", 8, { frameStart: "13:30" });
+    const save = vi.spyOn(h.controller, "saveAnchoredOverride").mockResolvedValue();
+    const r = h.ui(<App />);
+    fireEvent.click(r.getByRole("button", { name: /^All blocks/ }));
+    fireEvent.click(r.getByRole("switch", { name: "Count Morning Routine today" }));
+    await vi.waitFor(() =>
+      expect(
+        r.getByRole("switch", { name: "Count Morning Routine today" }).getAttribute("aria-checked"),
+      ).toBe("true"),
+    );
+    fireEvent.click(r.getByRole("button", { name: "Done" }));
+    const block = () => r.container.querySelector('[data-anchor-id="Morning Routine"]') as HTMLElement | null;
+    // The popover Start field opens at the frame start and is editable.
+    fireEvent.click(block()!);
+    const starts = r.getByLabelText("Starts") as HTMLInputElement;
+    expect(starts.value).toBe("13:30");
+    fireEvent.change(starts, { target: { value: "14:00" } });
+    await vi.waitFor(() =>
+      expect(save).toHaveBeenLastCalledWith(
+        "Morning Routine",
+        expect.objectContaining({ time: "14:00" }),
+      ),
+    );
+    // The pointer drag path moves it on the strip too.
+    drag(block()!, 30);
+    await vi.waitFor(() =>
+      expect(save).toHaveBeenLastCalledWith(
+        "Morning Routine",
+        expect.objectContaining({ time: "14:30" }),
+      ),
+    );
+  });
+});
+
+describe("Already placed follows the elapsed default", () => {
+  it("hides an untouched elapsed anchor and draws it once explicitly on", async () => {
+    const h = makeHarness("ready");
+    const inputs = structuredClone(h.store.getState().inputs!);
+    inputs.time = { ...inputs.time, anchor: "13:30", configEod: "23:45" };
+    h.store.dispatch({ type: "INPUTS_LOADED", inputs, ledger: h.store.getState().ledger! });
+    const r = h.ui(<App />);
+    const lane = () => r.container.querySelector(".already-placed") as HTMLElement;
+    // No override: the read-only Plan lane must not draw the elapsed anchor.
+    // Foods Breakfast is also elapsed, so the note counts the hidden pair.
+    expect(lane().querySelector('[data-anchor-id="Morning Routine"]')).toBeNull();
+    expect(lane().textContent).toContain("2 hidden today");
+    // An explicit on-override re-includes it.
+    const before = h.store.getState().daySetup;
+    h.store.dispatch({
+      type: "SETUP_SAVED",
+      daySetup: {
+        ...before,
+        anchored: {
+          ...before.anchored,
+          "Morning Routine": { on: true, skipToday: false, time: null, blocks: null },
+        },
+      },
+    });
+    await waitFor(() =>
+      expect(lane().querySelector('[data-anchor-id="Morning Routine"]')).toBeTruthy(),
+    );
   });
 });
 

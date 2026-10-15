@@ -34,6 +34,7 @@ import type { AnchoredOverride, Buffering, DaySetup } from "../model/types";
 import {
   anchorFrameStart,
   anchoredBlocks,
+  anchoredDefaultOff,
   anchoredOverrideOf,
   validateAnchoredOverride,
 } from "../model/anchored";
@@ -190,6 +191,13 @@ export function DaySetupPanel({
 
   if (!active || !s.inputs) return null;
 
+  // The one Setup/Plan day frame (dayFrame): a Set up draft anchor/end wins
+  // while unsaved; otherwise the configured Start/End are authoritative.
+  const { start: frameStart, end: frameEnd } = dayFrame(s.inputs.time, {
+    anchor: draft.anchor,
+    eod: draft.eod,
+  });
+
   const mintAnchor = draft.anchor ?? s.inputs.time.anchor;
   const mintOverride = draft.schedulable?.minting;
   const selectedMintSessionIds =
@@ -249,12 +257,35 @@ export function DaySetupPanel({
 
   const editableAnchors = effectiveAnchoredBlocks(s).filter((a) => a.kind !== "calendar");
   const sourceAnchor = (id: string) => s.inputs!.anchored.find((a) => a.id === id)!;
+  const savedOverrideOf = (id: string) => draft.anchored[id] ?? s.daySetup.anchored[id];
+  /** The server's `past_window_defaults` at the frame on screen: an elapsed
+      config anchor that is configured on and has no explicit today override
+      defaults off (and the first on-toggle re-includes it). */
+  const defaultsOffElapsed = (id: string): boolean => {
+    if (savedOverrideOf(id) != null) return false;
+    const block = sourceAnchor(id);
+    if (!block.on || block.skipToday) return false;
+    return anchoredDefaultOff(block.kind, {
+      start: block.start,
+      end: block.end,
+      blocks: anchoredBlocks(block),
+      frameStart,
+      frameEnd,
+    });
+  };
   const overrideOf = (id: string): AnchoredOverride => {
     const block = sourceAnchor(id);
     // U12: the screen edits anchors through the shared AnchoredEditor, which
     // saves to the store. Prefer an unsaved local patch, then fall back to the
     // saved override so a just-applied skip/edit is reflected without a remount.
-    return anchoredOverrideOf(block, draft.anchored[id] ?? s.daySetup.anchored[id]);
+    const saved = savedOverrideOf(id);
+    if (saved != null) return anchoredOverrideOf(block, saved);
+    // An untouched elapsed anchor defaults off (the server's rule), so the
+    // switch is truthful and a first click turns it on, not off.
+    if (defaultsOffElapsed(id)) {
+      return { on: false, skipToday: false, time: null, blocks: null };
+    }
+    return anchoredOverrideOf(block, saved);
   };
 
   const patchAnchored = (id: string, patch: Partial<AnchoredOverride>) =>
@@ -513,10 +544,6 @@ export function DaySetupPanel({
   };
 
   if (variant === "screen") {
-    const { start: frameStart, end: frameEnd } = dayFrame(s.inputs.time, {
-      anchor: draft.anchor,
-      eod: draft.eod,
-    });
     const frameStartMin = toMinutes(frameStart);
     const stripAnchors = editableAnchors.map((a) => {
       const o = overrideOf(a.id);
@@ -557,15 +584,6 @@ export function DaySetupPanel({
             ? { start: source.start, end: source.end }
             : undefined,
         counted,
-        // Fully elapsed config anchors sit at the frame edge but are not drawn;
-        // a window anchor is elapsed once its window closed before the frame.
-        elapsed:
-          counted &&
-          (placement.windowClosed === true ||
-            (a.kind !== "window" &&
-              a.kind !== "template" &&
-              placement.start === frameStart &&
-              toMinutes(o.time ?? a.start ?? frameStart) < frameStartMin)),
         // The override intent, independent of frame clipping; the popover's
         // Count today switch shows this, while `counted` stays for the strip.
         counting: on,
@@ -597,9 +615,9 @@ export function DaySetupPanel({
         capacityClass: a.capacityClass,
       }));
     // All blocks: every anchor and calendar row, regardless of the frame.
-    // Status is the operator's story: skipped, outside the frame, elapsed
-    // (a counted config anchor that began and ended before the frame), or
-    // running past midnight; everything else counts.
+    // Status is the operator's story: an untouched anchor that already elapsed
+    // (off by default), skipped, outside the frame, or running past midnight;
+    // an explicit override wins and everything counted stays live.
     const frameEndMin = toMinutes(frameEnd);
     const allBlockAnchors: AllBlocksRow[] = editableAnchors.map((a) => {
       const o = overrideOf(a.id);
@@ -610,13 +628,11 @@ export function DaySetupPanel({
       const startMin = start ? toMinutes(start) : null;
       const endMin = startMin == null ? null : startMin + blocks * 30;
       let status: AllBlocksStatus;
-      if (!on) status = "skipped";
+      if (defaultsOffElapsed(a.id)) status = "elapsed";
+      else if (!on) status = "skipped";
       else if (startMin == null) status = "counted";
       else if (startMin > frameEndMin) status = "outside frame";
       else if (endMin! > 1440) status = "after day end";
-      else if (a.kind === "window" || a.kind === "template")
-        status = source.end != null && toMinutes(source.end) < frameStartMin ? "elapsed" : "counted";
-      else if (endMin! <= frameStartMin) status = "elapsed";
       else status = "counted";
       return {
         id: a.id,
