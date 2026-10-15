@@ -18,7 +18,7 @@
 
 import { useEffect, useRef, useState } from "preact/hooks";
 import { useApp, useAppState } from "./context";
-import { display12h, formatBlockAmount, formatDurationMinutes, isValidHHMM, toHHMM, toMinutes } from "../model/time";
+import { display12h, display12hExact, formatBlockAmount, formatDurationMinutes, isValidHHMM, toHHMM, toMinutes } from "../model/time";
 import {
   explicitMintCapMinutes,
   fillMintSessionIds,
@@ -38,12 +38,13 @@ import {
   anchoredOverrideOf,
   validateAnchoredOverride,
 } from "../model/anchored";
+import { calendarEditState } from "../model/calendarEdit";
 import { calendarWalls } from "../model/overflow";
 import { dayFrame } from "../model/dayFrame";
 import { effectiveAnchoredBlocks } from "../store/store";
 import { displayAnchored } from "../model/calendarEvents";
 import { DayStrip } from "./day-setup/DayStrip";
-import { AnchorPopover, type AnchorTimeState } from "./day-setup/AnchorPopover";
+import { AnchorPopover, CalendarPopover, type AnchorTimeState } from "./day-setup/AnchorPopover";
 import { PromptsCard } from "./day-setup/PromptsCard";
 import { LooseEndBanner } from "./day-setup/LooseEndBanner";
 import { AllBlocksModal, type AllBlocksRow, type AllBlocksStatus } from "./day-setup/AllBlocksModal";
@@ -322,10 +323,37 @@ export function DaySetupPanel({
       });
   };
 
-  /** All blocks: calendar rows accept participation only (never time/blocks),
-      exactly like CalendarImpact's per-row toggle. */
+  /** All blocks: calendar rows accept participation plus the local start and
+      duration edits, exactly like CalendarImpact's per-row toggle. The
+      participation-only wire shape is kept when the row carries no edit. */
+  const calendarSkipOverride = (id: string, skipToday: boolean): AnchoredOverride => {
+    const saved = s.daySetup.anchored[id];
+    const next: AnchoredOverride = { on: true, skipToday, time: null };
+    if (saved?.blocks != null) next.blocks = saved.blocks;
+    if (saved?.start != null) {
+      next.start = saved.start;
+      if (saved.calendarStartAtEdit != null) next.calendarStartAtEdit = saved.calendarStartAtEdit;
+    }
+    return next;
+  };
   const toggleAllBlocksCalendar = (id: string, nextCounting: boolean) => {
-    persistAnchoredOverride(id, { on: true, skipToday: !nextCounting, time: null });
+    persistAnchoredOverride(id, calendarSkipOverride(id, !nextCounting));
+  };
+
+  /** The calendar popover's Count today: flip the participation intent while
+      keeping any local start/duration edit. */
+  const calendarToggleCount = (id: string) => {
+    const row = effectiveAnchoredBlocks(s).find((a) => a.id === id && a.kind === "calendar");
+    persistAnchoredOverride(id, calendarSkipOverride(id, row ? row.on && !row.skipToday : true));
+  };
+
+  const isCalendarRow = (id: string) =>
+    (s.inputs?.anchored ?? []).some((a) => a.id === id && a.kind === "calendar");
+  /** Strip drag / arrow keys for a calendar event: today's local start edit,
+      never a calendar write. Config anchors stay on `moveAnchor`. */
+  const moveBlock = (id: string, start: string) => {
+    if (isCalendarRow(id)) void controller.saveCalendarEdit(id, { start });
+    else moveAnchor(id, start);
   };
 
   /** All blocks footer: clear every config anchor's today-only override back
@@ -595,7 +623,10 @@ export function DaySetupPanel({
         timeState,
       };
     });
-    const stripCalendar = displayAnchored(effectiveAnchoredBlocks(s), { sessionCalendars: true })
+    // Calendar rows are editable locally (start / duration / count), never
+    // written back to the calendar. `effectiveAnchoredBlocks` already applies
+    // an edit, so `start`/`durationMin` are the effective span.
+    const calendarRows = displayAnchored(effectiveAnchoredBlocks(s), { sessionCalendars: true })
       // Ignored calendars (the same ones Plan tasks tucks behind its "ignored"
       // count) have no place among the day's commitments either.
       .filter(
@@ -604,16 +635,18 @@ export function DaySetupPanel({
           a.start !== null &&
           a.durationMin > 0 &&
           (a.capacityClass ?? "fixed") !== "ignored",
-      )
-      .map((a) => ({
-        id: a.id,
-        name: a.name,
-        start: a.start as string,
-        durationMin: a.durationMin,
-        counted: a.on && !a.skipToday,
-        // Work-class (Mint) rows draw yellow on the lane; fixed stays blue.
-        capacityClass: a.capacityClass,
-      }));
+      );
+    const stripCalendar = calendarRows.map((a) => ({
+      id: a.id,
+      name: a.name,
+      start: a.start as string,
+      durationMin: a.durationMin,
+      counted: a.on && !a.skipToday,
+      // Work-class (Mint) rows draw yellow on the lane; fixed stays blue.
+      capacityClass: a.capacityClass,
+      editable: true,
+      edited: s.daySetup.anchored[a.id]?.start != null,
+    }));
     // All blocks: every anchor and calendar row, regardless of the frame.
     // Status is the operator's story: an untouched anchor that already elapsed
     // (off by default), skipped, outside the frame, or running past midnight;
@@ -659,13 +692,19 @@ export function DaySetupPanel({
         const blocks = Math.ceil(a.durationMin / 30);
         const counting = !a.skipToday;
         const status: AllBlocksStatus = counting ? "counted" : "skipped";
+        const live = s.inputs?.anchored.find((x) => x.id === a.id) ?? null;
+        const edit = calendarEditState(s.daySetup.anchored[a.id], live?.start ?? null);
         return {
           id: a.id,
           name: a.name,
-          time: `${display12h(a.start)}–${display12h(a.end ?? a.start)}`,
+          // Exact minutes so an edited on-the-hour start reads the same as the
+          // live one in the "changed in calendar" comparison.
+          time: `${display12hExact(a.start)}–${display12hExact(a.end ?? a.start)}`,
           blocks,
           status,
           counting,
+          edited: edit.edited,
+          changedInCalendar: edit.changedInCalendar,
         };
       });
     const allBlocksOff = [...allBlockAnchors, ...allBlockCalendar].filter(
@@ -676,6 +715,30 @@ export function DaySetupPanel({
     // strip's frame-clipped drawing state: an anchor clipped at the frame's
     // left edge draws as not counted but its override can still be on. The
     // hint explains why it is not counted yet.
+    // The calendar variant of the same popover: the selected calendar row (if
+    // any) with its effective values and the live start for the drift chip.
+    const calendarEntry = calendarRows.find((a) => a.id === selectedAnchor) ?? null;
+    const liveCalendarBlock = calendarEntry
+      ? s.inputs?.anchored.find((a) => a.id === calendarEntry.id) ?? null
+      : null;
+    const calendarState = calendarEntry
+      ? calendarEditState(s.daySetup.anchored[calendarEntry.id], liveCalendarBlock?.start ?? null)
+      : null;
+    const selectedCalendar =
+      calendarEntry && calendarState && liveCalendarBlock?.start != null
+        ? {
+            id: calendarEntry.id,
+            name: calendarEntry.name,
+            start: calendarEntry.start as string,
+            calendarStart: liveCalendarBlock.start,
+            durationMin: calendarEntry.durationMin,
+            blocks: anchoredBlocks(liveCalendarBlock, s.daySetup.anchored[calendarEntry.id]),
+            counted: calendarEntry.on && !calendarEntry.skipToday,
+            edited: calendarState.edited,
+            blocksEdited: s.daySetup.anchored[calendarEntry.id]?.blocks != null,
+            changedInCalendar: calendarState.changedInCalendar,
+          }
+        : null;
     const selectedEntry = stripAnchors.find((anchor) => anchor.id === selectedAnchor) ?? null;
     const selectedBlock =
       selectedEntry && {
@@ -794,7 +857,7 @@ export function DaySetupPanel({
                 calendar={stripCalendar}
                 selectedAnchorId={selectedAnchor}
                 onSelectAnchor={(id) => setSelectedAnchor(id)}
-                onMoveAnchor={(id, start) => moveAnchor(id, start)}
+                onMoveAnchor={(id, start) => moveBlock(id, start)}
                 onShowAllBlocks={() => setAllBlocksOpen(true)}
               />
 
@@ -851,6 +914,17 @@ export function DaySetupPanel({
               />
             )}
 
+            {selectedCalendar && (
+              <CalendarPopover
+                event={selectedCalendar}
+                onMoveStart={(id, start) => void controller.saveCalendarEdit(id, { start })}
+                onSetBlocks={(id, blocks) => void controller.saveCalendarEdit(id, { blocks })}
+                onToggleCount={calendarToggleCount}
+                onReset={(id) => void controller.resetCalendarEdit(id)}
+                onClose={() => setSelectedAnchor(null)}
+              />
+            )}
+
             <PromptsCard
               micro={micro}
               liveCustom={liveCustom}
@@ -886,6 +960,7 @@ export function DaySetupPanel({
                 calendar={allBlockCalendar}
                 onToggleAnchor={toggleAnchorSkip}
                 onToggleCalendar={toggleAllBlocksCalendar}
+                onUseCalendarTime={(id) => void controller.saveCalendarEdit(id, { start: null })}
                 onResetAll={resetAllAnchorsToConfig}
                 onClose={() => setAllBlocksOpen(false)}
               />

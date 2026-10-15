@@ -30,6 +30,10 @@ export interface AllBlocksRow {
   status: AllBlocksStatus;
   /** The switch state: does this block count toward today's capacity? */
   counting: boolean;
+  /** Calendar rows only: a local start/duration edit is in force. */
+  edited?: boolean;
+  /** Calendar rows only: the live start moved since the edit; the edit kept. */
+  changedInCalendar?: boolean;
 }
 
 export interface AllBlocksModalProps {
@@ -37,6 +41,8 @@ export interface AllBlocksModalProps {
   calendar: AllBlocksRow[];
   onToggleAnchor: (id: string) => void;
   onToggleCalendar: (id: string, nextCounting: boolean) => void;
+  /** Calendar rows only: drop the local start edit and follow the calendar. */
+  onUseCalendarTime?: (id: string) => void;
   onResetAll: () => void;
   onClose: () => void;
 }
@@ -52,9 +58,11 @@ function statusClass(status: AllBlocksStatus): string {
 function AllBlocksRowView({
   row,
   onToggle,
+  onUseCalendarTime,
 }: {
   row: AllBlocksRow;
   onToggle: () => void;
+  onUseCalendarTime?: (id: string) => void;
 }) {
   return (
     <div class={`all-blocks__row${row.counting ? "" : " all-blocks__row--off"}`}>
@@ -63,7 +71,20 @@ function AllBlocksRowView({
         <span class="all-blocks__meta">
           <span class="all-blocks__time">{row.time}</span>
           <span class="all-blocks__blocks">{blockCountLabel(row.blocks)}</span>
+          {row.edited && <span class="all-blocks__chip all-blocks__chip--edited">edited</span>}
+          {row.changedInCalendar && (
+            <span class="all-blocks__chip all-blocks__chip--changed">Changed in calendar</span>
+          )}
         </span>
+        {row.changedInCalendar && onUseCalendarTime && (
+          <button
+            type="button"
+            class="all-blocks__use-calendar"
+            onClick={() => onUseCalendarTime(row.id)}
+          >
+            Use calendar time for {row.name}
+          </button>
+        )}
       </div>
       <span class={statusClass(row.status)}>{row.status}</span>
       <button
@@ -82,10 +103,12 @@ function AllBlocksGroup({
   label,
   rows,
   onToggle,
+  onUseCalendarTime,
 }: {
   label: string;
   rows: AllBlocksRow[];
   onToggle: (row: AllBlocksRow) => void;
+  onUseCalendarTime?: (id: string) => void;
 }) {
   const off = rows.filter((row) => !row.counting).length;
   return (
@@ -98,7 +121,12 @@ function AllBlocksGroup({
         </span>
       </div>
       {rows.map((row) => (
-        <AllBlocksRowView key={row.id} row={row} onToggle={() => onToggle(row)} />
+        <AllBlocksRowView
+          key={row.id}
+          row={row}
+          onToggle={() => onToggle(row)}
+          onUseCalendarTime={onUseCalendarTime}
+        />
       ))}
     </section>
   );
@@ -109,6 +137,7 @@ export function AllBlocksModal({
   calendar,
   onToggleAnchor,
   onToggleCalendar,
+  onUseCalendarTime,
   onResetAll,
   onClose,
 }: AllBlocksModalProps) {
@@ -148,6 +177,7 @@ export function AllBlocksModal({
               label="Calendar events"
               rows={calendar}
               onToggle={(row) => onToggleCalendar(row.id, !row.counting)}
+              onUseCalendarTime={onUseCalendarTime}
             />
           ) : null}
         </div>

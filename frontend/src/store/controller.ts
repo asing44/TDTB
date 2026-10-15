@@ -768,11 +768,18 @@ export class Controller {
       next.calendarStartAtEdit = block.start;
     }
     const setup = state.daySetup;
-    await this.saveDaySetup({
+    const nextSetup = {
       ...setup,
       anchored: { ...setup.anchored, [id]: next },
       confirmed: true,
-    });
+    };
+    // The edit is local-only and must read back instantly on the strip and the
+    // popover. `saveDaySetup` dispatches the sanitized copy after the adapter
+    // round trip; this optimistic dispatch gives immediate feedback without
+    // waiting on the (real, delayed) fixture/HTTP save. The final sanitized
+    // dispatch still wins, so state always converges on what was persisted.
+    this.dispatch({ type: "SETUP_SAVED", daySetup: nextSetup });
+    await this.saveDaySetup(nextSetup);
   }
 
   /** Reset to calendar: drop the local start and duration edits, keeping the
