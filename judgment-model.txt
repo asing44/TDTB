@@ -1,1 +1,12 @@
 deepseek/deepseek-v4.1-flash
+
+# Optional judgment request parameters (uncomment and edit to tune).
+# They follow the ACTIVE model above (including a TDTB_JUDGMENT_MODEL env
+# override) and are read once at startup — a change needs tdtb-restart.
+# Unset keys mean no change from today's built-in payload.
+# reasoning_effort: low
+# max_tokens: 8192
+# temperature: 0.2
+# top_p: 1
+# seed: 7
+# stream: false

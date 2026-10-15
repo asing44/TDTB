@@ -61,17 +61,27 @@ def _auth(client: TestClient) -> dict:
 
 class TestRouteShape:
     def test_health_tokenless(self, client, monkeypatch):
-        # The tokenless /health field must FOLLOW the configured selection, not
-        # pin any operator's choice. A synthetic sentinel proves the route reads
-        # the live module value and needs no token.
+        # The tokenless /health fields must FOLLOW the configured selection, not
+        # pin any operator's choice. Synthetic sentinels prove the route reads
+        # the live module values (model + operator params) and needs no token.
         monkeypatch.setattr(
             main_mod.judgment, "OPENROUTER_MODEL", "fixture/selected-model"
+        )
+        monkeypatch.setattr(
+            main_mod.judgment,
+            "JUDGMENT_PARAMS",
+            {"reasoning_effort": "xhigh", "max_tokens": 4096, "stream": True},
         )
         r = client.get("/health")
         assert r.status_code == 200
         assert r.json() == {
             "status": "ok",
             "judgment_model": "fixture/selected-model",
+            "judgment_params": {
+                "reasoning_effort": "xhigh",
+                "max_tokens": 4096,
+                "stream": True,
+            },
         }
 
     def test_config_tokenless_bootstrap(self, client):

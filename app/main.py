@@ -3180,6 +3180,10 @@ def create_app() -> FastAPI:
         return {
             "status": "ok",
             "judgment_model": judgment.OPENROUTER_MODEL,
+            # Operator request knobs from judgment-model.txt (loaded once at
+            # startup). Only explicitly-set keys appear; every value is a
+            # non-secret request parameter, so none are redacted here.
+            "judgment_params": dict(judgment.JUDGMENT_PARAMS),
         }
 
     @app.get("/version")

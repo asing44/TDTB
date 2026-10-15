@@ -1,8 +1,9 @@
 """Tests for the repo-root judgment-model selector (``judgment-model.txt``).
 
-The selector is a single-line, NON-SECRET file at the repository root naming
-the OpenRouter model id judgment uses. It exists so an operator can change the
-judgment model by editing one file and running ``tdtb-restart``, instead of
+The selector is a NON-SECRET file at the repository root naming the OpenRouter
+model id judgment uses, plus optional ``key: value`` lines for operator request
+parameters. It exists so an operator can change the judgment model (or tune a
+safe request knob) by editing one file and running ``tdtb-restart``, instead of
 editing a launchd plist.
 
 Precedence (``_configured_openrouter_model``):
@@ -12,6 +13,9 @@ Precedence (``_configured_openrouter_model``):
   2. the repo-root selector file,
   3. the built-in ``DEFAULT_OPENROUTER_MODEL`` (DeepSeek) when the file is
      absent (legacy/synthetic copies).
+
+Parameters (``_configured_judgment_params``) are resolved separately and
+follow whichever model is active, including an env override.
 
 The file is read once at import (startup); there is no per-call read and no hot
 reload. Every test here stubs the file path and touches no provider, key, or
@@ -43,17 +47,25 @@ def _selector(tmp_path: Path, content: str) -> Path:
 # ---------------------------------------------------------------------------
 
 class TestCanonicalSelector:
-    def test_repo_root_selector_is_one_plain_model_id_line(self):
+    def test_repo_root_selector_is_one_model_line_plus_comments(self):
         path = REPO_ROOT / SELECTOR_NAME
         assert path.is_file(), "repo-root judgment-model.txt must exist"
         raw = path.read_text(encoding="utf-8")
-        # Canonical formatting: exactly one plain model-id line — no comments,
-        # quotes, keys, or extra blank lines. The value itself is deliberately
-        # NOT asserted, so editing the selector (its whole purpose) keeps this
-        # test green.
+        # Canonical formatting: exactly one model-id line, then only comments /
+        # blank lines. The canonical file ships NO active parameters, so the
+        # knob keys stay documented in comments and the live payload keeps the
+        # built-in defaults. The model VALUE is deliberately not asserted, so
+        # editing the selector (its whole purpose) keeps this test green.
         model = j._parse_judgment_model_file(raw, path)
-        assert raw == f"{model}\n"
         assert j._MODEL_ID_RE.fullmatch(model)
+        remaining = [
+            line for line in raw.splitlines()
+            if line.strip() and not line.strip().startswith("#")
+        ]
+        assert remaining == [model], "only the model line may be active"
+        # No parameter line is active in the shipped canonical file.
+        _model, params = j._parse_judgment_selector(raw, path)
+        assert params == {}
 
     def test_default_path_is_module_relative_not_home_literal(self):
         # Portable per worktree: derived from judgment.py's own location, so a

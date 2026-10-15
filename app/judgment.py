@@ -73,27 +73,151 @@ JUDGMENT_MODEL_FILE = Path(__file__).resolve().parents[1] / "judgment-model.txt"
 _MODEL_ID_RE = re.compile(r"^[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)+(?::[A-Za-z0-9._-]+)?$")
 
 
-def _parse_judgment_model_file(raw: str, source: Path) -> str:
-    """Return the single model id from selector-file text.
+# Operator-tunable request parameters, set in the same selector file as the
+# model id. Deliberately a SMALL, safe set: each key is a plain OpenRouter
+# request knob that maps to one payload field. Keys left unset mean "no change
+# from the built-in payload" — an empty parameter set is byte-identical to the
+# pre-parameter behavior. The strict response_format and provider
+# require_parameters pins are NOT tunable here.
+_EFFORT_VALUES = frozenset({"none", "minimal", "low", "medium", "high", "xhigh"})
+_MAX_TOKENS_CEILING = 131072
+_INT_RE = re.compile(r"^-?\d+$")
 
-    Raises ``ValueError`` (naming the file, never echoing its contents) when
-    the file is not exactly one valid model id — empty, whitespace-only,
-    multiple lines, or not a provider/model id. Failing loudly is deliberate:
-    a malformed selector must not silently keep the old or another route.
+
+def _param_value_error(source: Path, key: str) -> ValueError:
+    """Bad-value ValueError that names the file and key but NEVER the value."""
+    return ValueError(
+        f"{source}: invalid value for judgment parameter {key!r}"
+    )
+
+
+def _parse_effort(value: str, key: str, source: Path) -> str:
+    if value not in _EFFORT_VALUES:
+        raise _param_value_error(source, key)
+    return value
+
+
+def _parse_bound_int(
+    value: str, key: str, source: Path,
+    *, minimum: int | None = None, maximum: int | None = None,
+) -> int:
+    if not _INT_RE.match(value):
+        raise _param_value_error(source, key)
+    parsed = int(value)
+    if minimum is not None and parsed < minimum:
+        raise _param_value_error(source, key)
+    if maximum is not None and parsed > maximum:
+        raise _param_value_error(source, key)
+    return parsed
+
+
+def _parse_bound_float(
+    value: str, key: str, source: Path,
+    *, minimum: float | None = None, maximum: float | None = None,
+    exclusive_minimum: bool = False,
+) -> float:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        raise _param_value_error(source, key) from None
+    if not math.isfinite(parsed):
+        raise _param_value_error(source, key)
+    if minimum is not None and (
+        parsed <= minimum if exclusive_minimum else parsed < minimum
+    ):
+        raise _param_value_error(source, key)
+    if maximum is not None and parsed > maximum:
+        raise _param_value_error(source, key)
+    return parsed
+
+
+def _parse_bool(value: str, key: str, source: Path) -> bool:
+    lowered = value.lower()
+    if lowered == "true":
+        return True
+    if lowered == "false":
+        return False
+    raise _param_value_error(source, key)
+
+
+# key -> validator. Adding a knob is: one entry here, one overlay line in
+# ``_apply_judgment_params``, one README row.
+_JUDGMENT_PARAM_VALIDATORS: dict[str, Any] = {
+    "reasoning_effort": _parse_effort,
+    "max_tokens": lambda v, k, s: _parse_bound_int(
+        v, k, s, minimum=1, maximum=_MAX_TOKENS_CEILING
+    ),
+    "temperature": lambda v, k, s: _parse_bound_float(v, k, s, minimum=0.0, maximum=2.0),
+    "top_p": lambda v, k, s: _parse_bound_float(
+        v, k, s, minimum=0.0, maximum=1.0, exclusive_minimum=True
+    ),
+    "seed": lambda v, k, s: _parse_bound_int(v, k, s),
+    "stream": _parse_bool,
+}
+
+
+def _split_param_line(text: str) -> tuple[str, str]:
+    """Split ``key: value`` / ``key=value`` at the first separator."""
+    indexes = [i for i in (text.find(":"), text.find("=")) if i != -1]
+    if not indexes:
+        return text, ""
+    index = min(indexes)
+    return text[:index], text[index + 1:]
+
+
+def _parse_judgment_selector(raw: str, source: Path) -> tuple[str, dict[str, Any]]:
+    """Return ``(model_id, params)`` from selector-file text.
+
+    Format (backward compatible with the original single-line file):
+
+      * blank lines and lines whose first non-space character is ``#`` are
+        ignored (comments can therefore document the tuning keys in place);
+      * the first remaining line is the model id, validated exactly as before;
+      * each later remaining line is ``key: value`` (or ``key=value``) for one
+        known parameter key.
+
+    Raises ``ValueError`` for a missing/bad model id, a second model-looking
+    line, an unknown key, a duplicate key, or a bad value. Messages name the
+    file and the offending key and NEVER echo the value. Failing loudly is
+    deliberate: a malformed selector must not silently keep the old route or
+    apply a mistyped knob.
     """
-    text = raw.strip()
-    if not text:
+    model: str | None = None
+    params: dict[str, Any] = {}
+    for lineno, line in enumerate(raw.splitlines(), start=1):
+        text = line.strip()
+        if not text or text.startswith("#"):
+            continue
+        if model is None:
+            if not _MODEL_ID_RE.match(text):
+                raise ValueError(
+                    f"{source}: not a valid OpenRouter model id "
+                    f"(expected provider/model)"
+                )
+            model = text
+            continue
+        key, value = _split_param_line(text)
+        if not value:
+            # A second bare model id (or any line with no separator) is the
+            # classic "added a second model by accident" edit.
+            raise ValueError(
+                f"{source}: line {lineno} is not a known judgment parameter "
+                f"(expected 'key: value')"
+            )
+        key = key.strip()
+        if key not in _JUDGMENT_PARAM_VALIDATORS:
+            raise ValueError(f"{source}: unknown judgment parameter {key!r}")
+        if key in params:
+            raise ValueError(f"{source}: duplicate judgment parameter {key!r}")
+        params[key] = _JUDGMENT_PARAM_VALIDATORS[key](value.strip(), key, source)
+    if model is None:
         raise ValueError(f"{source}: judgment model selector is empty")
-    if "\n" in text or "\r" in text:
-        raise ValueError(
-            f"{source}: judgment model selector must be a single line"
-        )
-    if not _MODEL_ID_RE.match(text):
-        raise ValueError(
-            f"{source}: not a valid OpenRouter model id "
-            f"(expected provider/model)"
-        )
-    return text
+    return model, params
+
+
+def _parse_judgment_model_file(raw: str, source: Path) -> str:
+    """Return just the model id from selector-file text (legacy seam)."""
+    return _parse_judgment_selector(raw, source)[0]
 
 
 def _configured_openrouter_model(
@@ -110,6 +234,9 @@ def _configured_openrouter_model(
     built-in default; every other read failure or invalid content is surfaced
     so a broken selector cannot quietly redirect judgment. ``model_file`` is
     injectable for tests.
+
+    Parameters are resolved separately by ``_configured_judgment_params``
+    because they follow whichever model is active, including an env override.
     """
     values = os.environ if environ is None else environ
     env_model = values.get("TDTB_JUDGMENT_MODEL")
@@ -123,7 +250,32 @@ def _configured_openrouter_model(
     return _parse_judgment_model_file(raw, path)
 
 
+def _configured_judgment_params(
+    environ: Mapping[str, str] | None = None,
+    model_file: Path | None = None,
+) -> dict[str, Any]:
+    """Resolve operator parameters from the selector file.
+
+    Independent of model precedence on purpose: ``TDTB_JUDGMENT_MODEL`` chooses
+    the model, not the knobs, so an env-overridden model still gets the file's
+    parameters. A MISSING file means no parameters; an unreadable or invalid
+    file raises, exactly as for model resolution. ``model_file`` is injectable
+    for tests.
+    """
+    path = JUDGMENT_MODEL_FILE if model_file is None else model_file
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return {}
+    _model, params = _parse_judgment_selector(raw, path)
+    return params
+
+
 OPENROUTER_MODEL = _configured_openrouter_model()
+# Operator request knobs from the same selector file, loaded ONCE at startup
+# (no per-call read, no hot reload). ``{}`` means "no change from the built-in
+# payload" — the pre-parameter behavior for every model.
+JUDGMENT_PARAMS = _configured_judgment_params()
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 _OPENCODE_AUTH = Path.home() / ".local/share/opencode/auth.json"
 MAX_CALLS_PER_RUN = 4
@@ -292,12 +444,48 @@ def _openrouter_key() -> str:
     return key
 
 
-async def _run_query_openrouter(system_prompt: str, user_prompt: str) -> str:
-    """One OpenRouter chat completion — plain HTTPS, no subprocess to wedge."""
-    ceiling, ceiling_hint = _query_ceiling_for(system_prompt)
-    key = _openrouter_key()
-    payload = {
-        "model": OPENROUTER_MODEL,
+def _apply_judgment_params(
+    payload: dict[str, Any], params: Mapping[str, Any]
+) -> dict[str, Any]:
+    """Overlay validated operator parameters onto a built payload, in place.
+
+    With no keys set this is a no-op, so the payload is byte-identical to the
+    pre-parameter construction. Explicit operator values WIN over the built-in
+    defaults, including ``temperature`` on ``openai/*`` (whose family endpoints
+    reject temperature) and ``reasoning_effort`` on minimax-m3 (whose built-in
+    pin disables reasoning) — the operator owns that risk.
+    """
+    if "temperature" in params:
+        payload["temperature"] = params["temperature"]
+    if "reasoning_effort" in params:
+        payload["reasoning"] = {"effort": params["reasoning_effort"]}
+    if "max_tokens" in params:
+        payload["max_tokens"] = params["max_tokens"]
+    if "top_p" in params:
+        payload["top_p"] = params["top_p"]
+    if "seed" in params:
+        payload["seed"] = params["seed"]
+    if params.get("stream"):
+        payload["stream"] = True
+    return payload
+
+
+def _build_openrouter_payload(
+    system_prompt: str,
+    user_prompt: str,
+    *,
+    model: str | None = None,
+    params: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Build the OpenRouter chat-completion payload for one judgment call.
+
+    ``model``/``params`` default to the startup snapshots (``OPENROUTER_MODEL``
+    and ``JUDGMENT_PARAMS``); tests inject values directly.
+    """
+    active_model = OPENROUTER_MODEL if model is None else model
+    active_params: Mapping[str, Any] = JUDGMENT_PARAMS if params is None else params
+    payload: dict[str, Any] = {
+        "model": active_model,
         "messages": [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
@@ -313,13 +501,26 @@ async def _run_query_openrouter(system_prompt: str, user_prompt: str) -> str:
     # 2026-07-27: identical payload succeeds on openai/gpt-6-luna the moment
     # temperature is dropped). Determinism for those models rides on the
     # strict response_format instead.
-    if not OPENROUTER_MODEL.startswith("openai/"):
+    if not active_model.startswith("openai/"):
         payload["temperature"] = 0.2
     # M3 must explicitly honor reasoning-off before it can qualify. If its
     # selected provider rejects this required parameter, qualification fails
     # rather than silently spending hidden reasoning tokens.
-    if OPENROUTER_MODEL == "minimax/minimax-m3":
+    if active_model == "minimax/minimax-m3":
         payload["reasoning"] = {"effort": "none"}
+    return _apply_judgment_params(payload, active_params)
+
+
+async def _run_query_openrouter(system_prompt: str, user_prompt: str) -> str:
+    """One OpenRouter chat completion — plain HTTPS, no subprocess to wedge."""
+    ceiling, ceiling_hint = _query_ceiling_for(system_prompt)
+    key = _openrouter_key()
+    payload = _build_openrouter_payload(system_prompt, user_prompt)
+    if payload.get("stream"):
+        raise ValueError(
+            "judgment-model.txt: stream is not supported yet "
+            "(remove 'stream: true' or use a non-streaming response)"
+        )
     async def _request() -> dict[str, Any]:
         async with httpx.AsyncClient(timeout=ceiling) as client:
             resp = await client.post(

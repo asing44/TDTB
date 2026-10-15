@@ -80,18 +80,27 @@ uses a temporary HOME/repo, never touches real infrastructure.
 ## Judgment model selector
 
 The judgment model is chosen by one plain, non-secret file at the repo root:
-`judgment-model.txt` — a single line holding the OpenRouter model id, for
-example `deepseek/deepseek-v4.1-flash`.
+`judgment-model.txt`. Its **first active line** holds the OpenRouter model id,
+for example `deepseek/deepseek-v4.1-flash`.
 
-**To change it (operator, attended):**
+Blank lines and lines starting with `#` are ignored. Any line after the model
+id is an optional parameter in `key: value` (or `key=value`) form. The original
+single-line file remains valid and means "built-in defaults".
 
-1. Edit and save `judgment-model.txt` (one model id; no comments, quotes, or
-   keys).
+```
+deepseek/deepseek-v4.1-flash
+# reasoning_effort: low
+# max_tokens: 8192
+```
+
+**To change model or parameters (operator, attended):**
+
+1. Edit and save `judgment-model.txt`.
 2. Run `tdtb-restart`.
-3. `GET http://127.0.0.1:8746/health` — its `judgment_model` field now shows
-   the live model.
+3. `GET http://127.0.0.1:8746/health` — `judgment_model` shows the live model
+   and `judgment_params` shows the active (non-secret) parameter set.
 
-Precedence, highest first:
+Model precedence, highest first:
 
 1. a nonempty `TDTB_JUDGMENT_MODEL` environment variable, returned verbatim
    (explicit operator override, unchanged legacy behavior; whitespace-only
@@ -100,14 +109,38 @@ Precedence, highest first:
 3. the built-in default (`deepseek/deepseek-v4.1-flash`) when the file is
    absent (legacy/synthetic copies).
 
-The file is read once at server startup, so an edit needs an attended restart
-to take effect. **The first attended `tdtb-restart` after this change
-re-renders the installed `~/Library/LaunchAgents/com.walle.tdtb.plist` from
-the canonical template**, which no longer pins a model. Until that restart the
-installed plist's old `TDTB_JUDGMENT_MODEL` pin still overrides the selector
-file; the agent does not perform this restart. Changing the model makes no call
-by itself, does not reset or consume the daily billed-call counter, and does
-not touch credentials.
+Parameters follow the **active** model, so they also apply when
+`TDTB_JUDGMENT_MODEL` overrides the model.
+
+### Parameters
+
+Each key maps to one OpenRouter request field. **An unset key means no change
+from today's payload** — the built-in defaults (including `temperature: 0.2`
+for non-`openai/*` models and reasoning-off for `minimax/minimax-m3`) are
+untouched. An explicitly set key wins, including where it overrides a built-in
+default or the `openai/*` temperature omission — the operator owns that risk.
+
+| Key | Range / meaning | Sent as |
+|---|---|---|
+| `reasoning_effort` | one of `none`, `minimal`, `low`, `medium`, `high`, `xhigh` | `reasoning: {effort: …}` |
+| `max_tokens` | integer `1`–`131072` | `max_tokens` |
+| `temperature` | float `0`–`2` | `temperature` |
+| `top_p` | float greater than `0`, at most `1` | `top_p` |
+| `seed` | integer | `seed` |
+| `stream` | `true` / `false` (default `false`) | `stream` |
+
+Notes:
+
+- `max_tokens` too low truncates the strict JSON response, so a judgment call
+  can fail validation; only narrow it deliberately.
+- `reasoning_effort` support depends on the model and the selected provider —
+  verify it on that model's OpenRouter API page. This file accepts the syntax;
+  it does not qualify the model, and a rejecting provider fails the call.
+- The selector is read once at server startup: an edit needs a restart, and
+  changing it makes no call and does not touch credentials or the billed-call
+  ledger.
+- These parameters do **not** fix, and do not claim to fix, the known SEQUENCE
+  timeout; `TDTB_SEQUENCE_TIMEOUT_S` governs that ceiling separately.
 
 Validation is syntax only: an accepted id is **not** a claim that the model
 is available, affordable, or correct. Pick an OpenRouter model that supports
@@ -115,3 +148,10 @@ strict `response_format` JSON-schema output — the payload pins
 `provider.require_parameters` and a strict schema, so an unsupported model or
 provider fails at call time rather than degrading silently. The current
 default (DeepSeek V4.1 Flash) is unchanged by this mechanism.
+
+The file is read at startup, but note the first attended `tdtb-restart` after
+this change re-renders the installed
+`~/Library/LaunchAgents/com.walle.tdtb.plist` from the canonical template,
+which no longer pins a model. Until that restart the installed plist's old
+`TDTB_JUDGMENT_MODEL` pin still overrides the selector file; the agent does not
+perform this restart.
