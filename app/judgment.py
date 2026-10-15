@@ -61,10 +61,65 @@ PROVIDER = os.environ.get("TDTB_JUDGMENT_PROVIDER", "openrouter")
 # then 300s); if V4.1 Flash does the same, override TDTB_JUDGMENT_MODEL.
 DEFAULT_OPENROUTER_MODEL = "deepseek/deepseek-v4.1-flash"
 
+# Convenient, non-secret model selector: the repo-root ``judgment-model.txt``
+# names the OpenRouter model id judgment uses, so changing models is "edit one
+# file, run tdtb-restart" rather than editing the launchd plist. Resolved from
+# judgment.py's own location so every worktree/seat reads its own repo root
+# (no home-dir literal). Loaded ONCE at startup below — no per-call read and
+# no hot reload; an edit needs an attended restart to take effect.
+JUDGMENT_MODEL_FILE = Path(__file__).resolve().parents[1] / "judgment-model.txt"
+# One OpenRouter model id: ``provider/model`` (extra path segments allowed),
+# with an optional routing suffix after a colon (e.g. ``:free``, ``:nitro``).
+_MODEL_ID_RE = re.compile(r"^[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)+(?::[A-Za-z0-9._-]+)?$")
 
-def _configured_openrouter_model(environ: Mapping[str, str] | None = None) -> str:
+
+def _parse_judgment_model_file(raw: str, source: Path) -> str:
+    """Return the single model id from selector-file text.
+
+    Raises ``ValueError`` (naming the file, never echoing its contents) when
+    the file is not exactly one valid model id — empty, whitespace-only,
+    multiple lines, or not a provider/model id. Failing loudly is deliberate:
+    a malformed selector must not silently keep the old or another route.
+    """
+    text = raw.strip()
+    if not text:
+        raise ValueError(f"{source}: judgment model selector is empty")
+    if "\n" in text or "\r" in text:
+        raise ValueError(
+            f"{source}: judgment model selector must be a single line"
+        )
+    if not _MODEL_ID_RE.match(text):
+        raise ValueError(
+            f"{source}: not a valid OpenRouter model id "
+            f"(expected provider/model)"
+        )
+    return text
+
+
+def _configured_openrouter_model(
+    environ: Mapping[str, str] | None = None,
+    model_file: Path | None = None,
+) -> str:
+    """Resolve the judgment model.
+
+    Precedence: an explicit nonblank ``TDTB_JUDGMENT_MODEL`` env value
+    (legacy handling, returned verbatim) > the repo-root selector file > the
+    built-in ``DEFAULT_OPENROUTER_MODEL``. Only a MISSING file
+    (``FileNotFoundError``, e.g. a legacy/synthetic copy) falls back to the
+    built-in default; every other read failure or invalid content is surfaced
+    so a broken selector cannot quietly redirect judgment. ``model_file`` is
+    injectable for tests.
+    """
     values = os.environ if environ is None else environ
-    return values.get("TDTB_JUDGMENT_MODEL") or DEFAULT_OPENROUTER_MODEL
+    env_model = values.get("TDTB_JUDGMENT_MODEL")
+    if env_model:
+        return env_model
+    path = JUDGMENT_MODEL_FILE if model_file is None else model_file
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return DEFAULT_OPENROUTER_MODEL
+    return _parse_judgment_model_file(raw, path)
 
 
 OPENROUTER_MODEL = _configured_openrouter_model()

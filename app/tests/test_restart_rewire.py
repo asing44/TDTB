@@ -62,6 +62,20 @@ def test_canonical_plist_template_uses_canonical_layout():
         assert marker not in text, f"old layout marker {marker!r} in plist"
 
 
+def test_canonical_plist_template_does_not_pin_judgment_model():
+    """The default judgment model comes from the repo-root judgment-model.txt
+    selector, not the plist. A TDTB_JUDGMENT_MODEL key here would re-mask the
+    selector file on every restart; the template instead points readers at it,
+    and an explicit operator env override still wins at runtime."""
+    text = PLIST_TEMPLATE.read_text()
+    assert "<key>TDTB_JUDGMENT_MODEL</key>" not in text, (
+        "plist must not pin the judgment model key; judgment-model.txt is the default"
+    )
+    assert "judgment-model.txt" in text, (
+        "plist comment should name the judgment-model.txt selector"
+    )
+
+
 def test_plist_template_renders_cleanly():
     """Dry-run: replicate the script's sed substitution into a temp file and
     lint the result. No launchctl, no ~/Library/LaunchAgents write."""

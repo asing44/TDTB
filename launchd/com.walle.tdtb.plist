@@ -16,12 +16,12 @@
 
   <key>EnvironmentVariables</key>
   <dict>
-    <!-- Judgment model (2026-10-10, Adam): deepseek/deepseek-v4.1-flash via
-         OpenRouter. The older deepseek-v4-flash timed out twice on 2026-07-27
-         (120s, then 300s); revert to openai/gpt-6-luna if V4.1 does too.
-         NOTE: judgment.py omits temperature for openai/* models only. -->
-    <key>TDTB_JUDGMENT_MODEL</key>
-    <string>deepseek/deepseek-v4.1-flash</string>
+    <!-- Judgment model: the default is the repo-root judgment-model.txt
+         selector, not this plist. A nonblank TDTB_JUDGMENT_MODEL in the
+         operator environment still overrides the file, and the file overrides
+         the built-in default. To change models, edit judgment-model.txt and
+         run tdtb-restart (attended); no plist edit is needed. No model is
+         pinned here so the selector file stays the default source of truth. -->
     <!-- launchd children get a bare PATH; the judgment layer's Agent SDK
          needs node (homebrew) + the claude CLI (~/.local/bin) or /sequence
          hangs to the 120s timeout (2026-07-17 incident). -->

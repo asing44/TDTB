@@ -75,3 +75,36 @@ switch.
 
 **Tests:** `app/tests/test_bootstrap_seat.py` — fixture-based, fakes uv/npm,
 uses a temporary HOME/repo, never touches real infrastructure.
+
+## Judgment model selector
+
+The judgment model is chosen by one plain, non-secret file at the repo root:
+`judgment-model.txt` — a single line holding the OpenRouter model id, for
+example `deepseek/deepseek-v4.1-flash`.
+
+**To change it (operator, attended):**
+
+1. Edit and save `judgment-model.txt` (one model id; no comments, quotes, or
+   keys).
+2. Run `tdtb-restart`.
+3. `GET http://127.0.0.1:8746/health` — its `judgment_model` field now shows
+   the live model.
+
+Precedence, highest first:
+
+1. a nonblank `TDTB_JUDGMENT_MODEL` environment variable (explicit operator
+   override, unchanged legacy behavior);
+2. the repo-root `judgment-model.txt`;
+3. the built-in default (`deepseek/deepseek-v4.1-flash`) when the file is
+   absent (legacy/synthetic copies).
+
+The file is read once at server startup, so an edit needs an attended restart
+to take effect. Changing the model makes no call by itself, does not reset or
+consume the daily billed-call counter, and does not touch credentials.
+
+Validation is syntax only: an accepted id is **not** a claim that the model
+is available, affordable, or correct. Pick an OpenRouter model that supports
+strict `response_format` JSON-schema output — the payload pins
+`provider.require_parameters` and a strict schema, so an unsupported model or
+provider fails at call time rather than degrading silently. The current
+default (DeepSeek V4.1 Flash) is unchanged by this mechanism.
