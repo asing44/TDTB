@@ -1628,7 +1628,7 @@ class DaySetupRequest(BaseModel):
     eod: str | None = None               # HH:MM override
     buffering: str | None = None         # standard | minimal | off
     schedulable: dict[str, Any] | None = None   # {minting:{on,n}, qt:{...}, shivery:{...}}
-    anchored: list[dict[str, Any]] | None = None  # [{id, on, skip_today, time}]
+    anchored: list[dict[str, Any]] | None = None  # [{id, on, skip_today, time[, start, calendar_start_at_edit]}]
     captures: dict[str, Any] | None = None  # {intention, megan_nicety, stoic_intention}
     # U5 additive prompt opt-ins: an undated bool map plus the expected store
     # revision for optimistic concurrency. Omitted -> no opt-in write.
@@ -1646,6 +1646,32 @@ class DaySetupRequest(BaseModel):
                 "work_allotment_minutes must be a nonnegative integer "
                 "divisible by 15"
             )
+        return value
+
+    @field_validator("anchored")
+    @classmethod
+    def validate_anchored_start(
+        cls, value: list[dict[str, Any]] | None
+    ) -> list[dict[str, Any]] | None:
+        """An optional calendar-row ``start`` edit must be a real clock time.
+
+        The calendar lanes on the Set up day strip persist a local-only start
+        override plus the calendar's start at edit time. ``start`` is
+        validated like the anchor time (any ``HH:MM``/``H:MM AM|PM`` within
+        00:00-23:59, not just 15-minute quarters); ``calendar_start_at_edit``
+        is stored verbatim. Omitted/None keeps old payloads valid."""
+        if value is None:
+            return value
+        for entry in value:
+            if not isinstance(entry, dict):
+                continue
+            raw = entry.get("start")
+            if raw is None:
+                continue
+            if time_engine.to_hhmm(raw) is None:
+                raise ValueError(
+                    "anchored start must be a valid HH:MM clock time"
+                )
         return value
 
 
