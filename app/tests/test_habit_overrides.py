@@ -156,7 +156,7 @@ class TestProducerItems:
         entry = _habit_entry(
             [{"id": "a", "content": "A", "duration": "25m"},
              {"id": "b", "content": "B", "duration": "25m"}],
-            completed=["A"],
+            completed=[{"content": "A"}],
         )
         assert [i["id"] for i in pr.compute_habit_summary(entry)["items"]] == ["b"]
 

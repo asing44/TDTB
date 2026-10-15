@@ -874,7 +874,7 @@ def _habit_completed_tokens(
 
 def compute_habit_summary(
     entry: Any, logical_day: str | None = None
-) -> dict[str, int]:
+) -> dict[str, Any]:
     """Compute the ``{total, done, outstanding, est_minutes}`` habit block.
 
     Deterministic and total: a missing/malformed entry yields the zeroed block
@@ -883,7 +883,11 @@ def compute_habit_summary(
     week by default, so the day is scoped here, not by the fetch).
     ``est_minutes`` sums only the OUTSTANDING tasks' durations (fallback
     ``fallback_minutes_per_habit`` where unset), rounded UP to the
-    ``round_to_minutes`` grain — the same semantics the retired note read used."""
+    ``round_to_minutes`` grain — the same semantics the retired note read used.
+    The additive ``items`` list carries one ``{id, content, minutes}`` entry per
+    OUTSTANDING habit (raw per-habit minutes, not grain-rounded); it is emitted
+    only when at least one habit is outstanding, so an all-done block stays the
+    four-field ``HABITS_EMPTY`` shape."""
     empty = dict(artifact_source.HABITS_EMPTY)
     if not isinstance(entry, dict):
         return empty
@@ -900,6 +904,7 @@ def compute_habit_summary(
     done_ids, done_names = _habit_completed_tokens(entry, logical_day)
     total = done = 0
     outstanding_minutes = 0
+    items: list[dict[str, Any]] = []
     for task in tasks:
         if not isinstance(task, dict):
             continue
@@ -913,15 +918,26 @@ def compute_habit_summary(
         if is_done:
             done += 1
             continue
-        outstanding_minutes += _habit_duration_minutes(task) or fallback
+        minutes = _habit_duration_minutes(task) or fallback
+        outstanding_minutes += minutes
+        item: dict[str, Any] = {}
+        if task_id is not None and str(task_id).strip():
+            item["id"] = str(task_id).strip()
+        if isinstance(name, str) and name.strip():
+            item["content"] = name.strip()
+        item["minutes"] = minutes
+        items.append(item)
     outstanding = total - done
     est = math.ceil(outstanding_minutes / grain) * grain if outstanding_minutes else 0
-    return {
+    result: dict[str, Any] = {
         "total": total,
         "done": done,
         "outstanding": outstanding,
         "est_minutes": est,
     }
+    if items:
+        result[artifact_source.HABITS_ITEMS_KEY] = items
+    return result
 
 
 # ---------------------------------------------------------------------------

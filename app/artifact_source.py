@@ -79,6 +79,17 @@ ARTIFACT_VERSION = 1
 HABITS_KEY = "habits"
 HABITS_FIELDS = ("total", "done", "outstanding", "est_minutes")
 HABITS_EMPTY: dict[str, int] = {field: 0 for field in HABITS_FIELDS}
+#: Additive per-habit detail: one entry per OUTSTANDING habit, produced
+#: alongside the aggregate block. An artifact WITHOUT ``items`` stays valid
+#: and the app keeps today's aggregate-only behaviour.
+HABITS_ITEMS_KEY = "items"
+HABITS_ITEM_FIELDS = ("id", "content", "minutes")
+#: Bounded item contract: at most this many entries, ``0..480`` minutes, and
+#: ``id``/``content`` strings no longer than this. Unknown extra keys are
+#: ignored; an invalid entry is dropped with a warning.
+HABIT_ITEMS_MAX = 200
+HABIT_MINUTES_MAX = 480
+HABIT_TEXT_MAX = 200
 
 ARTIFACT_FILENAME = "planning-artifact.json"
 PREV_ARTIFACT_FILENAME = "planning-artifact.prev.json"
@@ -198,8 +209,9 @@ class ArtifactResult:
     path: Path | None = None
     prev_available: bool = False
     overlay_rows: int = 0
-    #: Always a well-typed habit block (zeroed when the artifact carries none).
-    habits: dict[str, int] = field(default_factory=lambda: dict(HABITS_EMPTY))
+    #: Always a well-typed habit block (zeroed when the artifact carries none);
+    #: carries the additive ``items`` list when the artifact supplied one.
+    habits: dict[str, Any] = field(default_factory=lambda: dict(HABITS_EMPTY))
     #: Habit-specific degrade notes; separate from ``warnings`` so a fresh
     #: artifact with no habits block still surfaces loudly.
     habit_warnings: list[str] = field(default_factory=list)
@@ -397,13 +409,14 @@ def _read_json(path: Path) -> Any:
 # Habits (the optional capacity summary)
 # ---------------------------------------------------------------------------
 
-def habit_block_of(document: Any) -> tuple[dict[str, int], list[str]]:
+def habit_block_of(document: Any) -> tuple[dict[str, Any], list[str]]:
     """Extract the artifact's optional ``habits`` block. Never raises.
 
     A missing or ill-typed block yields the zeroed block plus one warning, so
     a caller always has a well-formed ``total/done/outstanding/est_minutes``
     summary. An artifact without the block (an older artifact) is valid and
-    loads normally.
+    loads normally. The additive ``items`` list rides through when present and
+    well formed; invalid entries are dropped with a warning, never a raise.
     """
     missing = "Planning artifact has no habits block — habit capacity treated as zero."
     if not isinstance(document, dict):
@@ -416,7 +429,7 @@ def habit_block_of(document: Any) -> tuple[dict[str, int], list[str]]:
             "Planning artifact habits block is not an object — habit capacity "
             "treated as zero."
         ]
-    block: dict[str, int] = {}
+    block: dict[str, Any] = {}
     invalid: list[str] = []
     for field_name in HABITS_FIELDS:
         value = raw.get(field_name)
@@ -432,10 +445,68 @@ def habit_block_of(document: Any) -> tuple[dict[str, int], list[str]]:
             "Planning artifact habits block has invalid field(s) "
             f"{', '.join(invalid)} — treated as 0."
         )
+    if HABITS_ITEMS_KEY in raw:
+        items, item_warnings = _habit_items_of(raw.get(HABITS_ITEMS_KEY))
+        if items is not None:
+            block[HABITS_ITEMS_KEY] = items
+        warnings.extend(item_warnings)
     return block, warnings
 
 
-def load_habits(*, path: str | Path | None = None) -> tuple[dict[str, int], list[str]]:
+def _habit_items_of(raw: Any) -> tuple[list[dict[str, Any]] | None, list[str]]:
+    """Validate the optional ``habits.items`` list. Never raises.
+
+    Returns ``(items, warnings)`` where ``items`` is ``None`` when the raw
+    value is unusable (not a list, or above the bounded count) and a list of
+    normalized ``{minutes[, id][, content]}`` entries otherwise. An invalid
+    entry is dropped and counted; unknown extra keys are ignored."""
+    if not isinstance(raw, list):
+        return None, [
+            "Planning artifact habits items is not an array — ignored."
+        ]
+    if len(raw) > HABIT_ITEMS_MAX:
+        return None, [
+            "Planning artifact habits items carries "
+            f"{len(raw)} entries (max {HABIT_ITEMS_MAX}) — ignored."
+        ]
+    items: list[dict[str, Any]] = []
+    dropped = 0
+    for entry in raw:
+        item = _habit_item_of(entry)
+        if item is None:
+            dropped += 1
+            continue
+        items.append(item)
+    warnings: list[str] = []
+    if dropped:
+        warnings.append(
+            f"Planning artifact habits items: {dropped} invalid "
+            f"entr{'y' if dropped == 1 else 'ies'} ignored."
+        )
+    return items, warnings
+
+
+def _habit_item_of(entry: Any) -> dict[str, Any] | None:
+    """One normalized item, or ``None`` when the entry violates the contract."""
+    if not isinstance(entry, dict):
+        return None
+    minutes = entry.get("minutes")
+    if (isinstance(minutes, bool) or not isinstance(minutes, int)
+            or not 0 <= minutes <= HABIT_MINUTES_MAX):
+        return None
+    item: dict[str, Any] = {"minutes": minutes}
+    for key in ("id", "content"):
+        value = entry.get(key)
+        if value is None:
+            continue
+        if (not isinstance(value, str) or not value.strip()
+                or len(value) > HABIT_TEXT_MAX):
+            return None
+        item[key] = value
+    return item
+
+
+def load_habits(*, path: str | Path | None = None) -> tuple[dict[str, Any], list[str]]:
     """Read ONLY the artifact's habit summary. Never raises.
 
     Live source mode consumes the artifact for habits too: the REST Todoist

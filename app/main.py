@@ -1637,6 +1637,60 @@ class DaySetupRequest(BaseModel):
     day_preset: str | None = None        # dated preset override (T18b.2)
     work_allotment_minutes: StrictInt | None = None  # dated Mint allotment (T18b.2)
     micro_adventure: dict[str, Any] | None = None  # T19 dated Live override; null clears to auto
+    # Additive per-day habit overrides: per-item {on, minutes} keyed by the
+    # habit's task id or name, plus an aggregate ``total`` override. Full
+    # replace per POST; explicit null clears; omitted preserves. Local-only —
+    # this never reaches a Todoist or Calendar write path.
+    habits: dict[str, Any] | None = None
+
+    @field_validator("habits")
+    @classmethod
+    def validate_habits(cls, value: dict[str, Any] | None) -> dict[str, Any] | None:
+        """Bound the additive habit-override block (T19 follow-on).
+
+        ``items`` maps a bounded id/name key to ``{on?: bool,
+        minutes?: int|null}``; ``total`` is ``null`` or the same entry shape.
+        An entry's ``minutes`` must be an integer 0..480. Unknown extra keys
+        are ignored; an omitted/None value keeps old payloads valid."""
+        if value is None:
+            return value
+        if not isinstance(value, dict):
+            raise ValueError("habits must be an object")
+        items = value.get("items")
+        if items is not None:
+            if not isinstance(items, dict):
+                raise ValueError(
+                    "habits.items must be an object keyed by habit id or name"
+                )
+            for key, entry in items.items():
+                if (not isinstance(key, str) or not key.strip()
+                        or len(key) > artifact_source.HABIT_TEXT_MAX):
+                    raise ValueError(
+                        "habits.items keys must be non-empty bounded strings"
+                    )
+                cls._validate_habit_override(entry, "habits.items")
+        total = value.get("total")
+        if total is not None:
+            cls._validate_habit_override(total, "habits.total")
+        return value
+
+    @staticmethod
+    def _validate_habit_override(entry: Any, label: str) -> None:
+        if not isinstance(entry, dict):
+            raise ValueError(f"{label} must be an object")
+        on = entry.get("on")
+        if on is not None and not isinstance(on, bool):
+            raise ValueError(f"{label}.on must be a boolean")
+        minutes = entry.get("minutes")
+        if minutes is None:
+            return
+        if isinstance(minutes, bool) or not isinstance(minutes, int):
+            raise ValueError(f"{label}.minutes must be an integer or null")
+        if minutes < 0 or minutes > artifact_source.HABIT_MINUTES_MAX:
+            raise ValueError(
+                f"{label}.minutes must be between 0 and "
+                f"{artifact_source.HABIT_MINUTES_MAX}"
+            )
 
     @field_validator("work_allotment_minutes")
     @classmethod
@@ -2189,7 +2243,7 @@ BILLED_CAP = judgment.MAX_CALLS_PER_RUN
 
 _DAY_SETUP_KEYS = ("anchor", "eod", "buffering", "schedulable", "anchored",
                    "re_included", "intention", "megan_nicety", "stoic_intention",
-                   "day_preset", "work_allotment_minutes")
+                   "day_preset", "work_allotment_minutes", "habits")
 
 
 def _read_today_runstate(today: date) -> dict[str, Any]:
@@ -2220,7 +2274,7 @@ _PROMPT_OPTINS_READ_WARNING = (
 # prompt stores without confirming the day.
 _NON_PROMPT_SETUP_FIELDS = frozenset({
     "anchor", "eod", "buffering", "schedulable", "anchored",
-    "day_preset", "work_allotment_minutes", "micro_adventure",
+    "day_preset", "work_allotment_minutes", "micro_adventure", "habits",
 })
 _PROMPT_ONLY_FIELDS = frozenset({"captures", "optins", "optins_revision"})
 
@@ -2572,6 +2626,81 @@ def _blocks_of_minutes(minutes: int) -> int:
     return (max(0, minutes) + 29) // 30
 
 
+def _override_minutes(entry: Any) -> int | None:
+    """A dated override's ``minutes`` as a nonnegative int, else ``None``."""
+    if not isinstance(entry, dict):
+        return None
+    minutes = entry.get("minutes")
+    if isinstance(minutes, bool) or not isinstance(minutes, int):
+        return None
+    return max(0, minutes)
+
+
+def _habit_override_for(overrides: dict[str, Any], item: Any) -> Any:
+    """The dated override entry for an item, matched by task id then name."""
+    if not isinstance(item, dict):
+        return None
+    for key in (item.get("id"), item.get("content")):
+        if isinstance(key, str) and key and key in overrides:
+            return overrides[key]
+    return None
+
+
+def _habits_segment(
+    habits: dict[str, Any], override: Any,
+) -> tuple[int, str]:
+    """Habits capacity blocks + legend note, honouring per-day overrides.
+
+    When the artifact carries ``items``, the segment sums each OUTSTANDING
+    habit's minutes with its dated override applied (``on: false`` skips it;
+    a set ``minutes`` replaces its duration). When no items exist the aggregate
+    ``est_minutes`` is used, still honouring the dated ``total`` override.
+    Overrides keyed to ids/names not in ``items`` are ignored (they still
+    round-trip in the dated note). The base note text is unchanged; a
+    ``· N skipped`` / ``· M adjusted`` suffix is appended only when an override
+    is actually in play."""
+    done = habits.get("done", 0)
+    outstanding = habits.get("outstanding", 0)
+    items = habits.get(artifact_source.HABITS_ITEMS_KEY)
+    ov = override if isinstance(override, dict) else {}
+    ov_items = ov.get("items") if isinstance(ov.get("items"), dict) else {}
+    ov_total = ov.get("total") if isinstance(ov.get("total"), dict) else None
+    skipped = adjusted = 0
+    if isinstance(items, list) and items:
+        total_minutes = 0
+        for item in items:
+            entry = _habit_override_for(ov_items, item)
+            if isinstance(entry, dict) and entry.get("on") is False:
+                skipped += 1
+                continue
+            minutes = _override_minutes(entry)
+            if minutes is not None:
+                total_minutes += minutes
+                adjusted += 1
+            else:
+                total_minutes += int(
+                    (item.get("minutes") if isinstance(item, dict) else 0) or 0
+                )
+    else:
+        total_minutes = int(habits.get("est_minutes") or 0)
+        if ov_total is not None:
+            if ov_total.get("on") is False:
+                total_minutes = 0
+                skipped += 1
+            elif _override_minutes(ov_total) is not None:
+                total_minutes = _override_minutes(ov_total)
+                adjusted += 1
+    note = f"habits: {done} done · {outstanding} left"
+    flags = []
+    if skipped:
+        flags.append(f"{skipped} skipped")
+    if adjusted:
+        flags.append(f"{adjusted} adjusted")
+    if flags:
+        note += " · " + " · ".join(flags)
+    return _blocks_of_minutes(total_minutes), note
+
+
 def _duration_minutes(dur: Any) -> int | None:
     """Delegates to time_engine.duration_minutes (T22 promotion — one parser
     shared with shadow's Step E anchored parity)."""
@@ -2794,7 +2923,7 @@ def _capacity_frame(
     )
     anch_blk = sum(_spec_blocks(s) for s in anchored_specs.values()
                    if not shadow._anchored_block_off(s))
-    habits_blk = _blocks_of_minutes(int(habits.get("est_minutes") or 0))
+    habits_blk, habits_note = _habits_segment(habits, day_setup.get("habits"))
     effective_today = today or effective_now.date()
     # Normalize persisted/legacy session selections at the capacity boundary
     # too. This keeps the capacity amount identical to the schedulable rows
@@ -2849,8 +2978,7 @@ def _capacity_frame(
         selected=sched_blk + extra_selected_blocks, buffering_pct=buf_pct,
         caps={"deep": int(defaults.get("caps.deep") or 0),
               "mixed": int(defaults.get("caps.mixed") or 0)},
-        habits_note=(f"habits: {habits.get('done', 0)} done "
-                     f"· {habits.get('outstanding', 0)} left"),
+        habits_note=habits_note,
         work_busy=work_busy_blk,
         work_overflow=work_overflow_blk,
     )
@@ -5088,6 +5216,10 @@ def create_app() -> FastAPI:
                     ),
                 }
             updates["micro_adventure"] = ma
+        # Additive per-day habit overrides: full replace like ``anchored``,
+        # with the tri-state null that clears. Purely local — no provider write.
+        if "habits" in present:
+            updates["habits"] = body.habits
         # U5: a prompt-only save never confirms Day Setup. Any non-prompt field
         # (or a bare {} save) preserves the existing explicit confirmation.
         confirmed = True
