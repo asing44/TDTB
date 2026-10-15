@@ -1,6 +1,13 @@
 /* app.css — cockpit layout + components. Flat bordered surfaces, 400/500
    weights, generous spacing, no gradients/shadows (locked decision 5). */
 
+.habits-card .setup-section__head { flex-wrap: wrap; gap: 12px; }
+.habits-card__row { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; padding: 12px 0; }
+.habits-card__name { flex: 1 1 180px; min-width: 0; overflow-wrap: anywhere; }
+.habits-card__row label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; }
+.habits-card__row input { width: 80px; }
+.habits-card__row .all-blocks__switch { flex-shrink: 0; }
+
 /* U7 page frame: one bounded, centered column. Header, screen body, and the
    single footer are the column's children; the body grows so the footer sits
    at the viewport bottom with no dead area. */

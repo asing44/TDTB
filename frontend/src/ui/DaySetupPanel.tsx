@@ -46,6 +46,7 @@ import { displayAnchored } from "../model/calendarEvents";
 import { DayStrip } from "./day-setup/DayStrip";
 import { AnchorPopover, CalendarPopover, type AnchorTimeState } from "./day-setup/AnchorPopover";
 import { PromptsCard } from "./day-setup/PromptsCard";
+import { HabitsCard } from "./day-setup/HabitsCard";
 import { LooseEndBanner } from "./day-setup/LooseEndBanner";
 import { AllBlocksModal, type AllBlocksRow, type AllBlocksStatus } from "./day-setup/AllBlocksModal";
 import { onSetupContinue, onSetupUndo } from "./day-setup/commands";
@@ -945,6 +946,9 @@ export function DaySetupPanel({
                 onClose={() => setSelectedAnchor(null)}
               />
             )}
+
+            <HabitsCard info={s.inputs?.habits} overrides={s.daySetup.habits}
+              onSave={(value) => controller.saveHabitOverrides(value)} />
 
             <PromptsCard
               micro={micro}
