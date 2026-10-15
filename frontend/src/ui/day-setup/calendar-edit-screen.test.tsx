@@ -129,6 +129,25 @@ describe("calendar popover", () => {
     await waitFor(() => expect(saved(h)?.start).toBe("11:00"));
     for (const s of spies) expect(s).not.toHaveBeenCalled();
   });
+
+  it("rolls the edit back and shows the error when the save is refused", async () => {
+    const h = screenHarness();
+    const { r, dialog } = open(h);
+    vi.spyOn(FixtureAdapter.prototype, "saveDaySetup").mockRejectedValueOnce(
+      new Error("network down"),
+    );
+    const input = r.getByLabelText("Starts") as HTMLInputElement;
+    fireEvent.input(input, { target: { value: "10:00" } });
+    fireEvent.change(input, { target: { value: "10:00" } });
+    await waitFor(() =>
+      expect(dialog.textContent).toMatch(/Could not save today's change/),
+    );
+    expect(r.getByRole("alert").textContent).toMatch(/network down/);
+    expect(saved(h)?.start ?? null).toBeNull();
+    await waitFor(() =>
+      expect((r.getByLabelText("Starts") as HTMLInputElement).value).toBe("09:15"),
+    );
+  });
 });
 
 describe("changed in calendar", () => {

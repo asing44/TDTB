@@ -15,6 +15,15 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import { display12h, isValidHHMM } from "../../model/time";
 import { computePopoverPlacement } from "../popoverPlacement";
 
+/** A duration is a whole number of 30-minute blocks, at least one. Empty,
+    whitespace, non-integer and below-one values are never committed. */
+const isValidBlocks = (raw: string): boolean => {
+  const trimmed = raw.trim();
+  if (trimmed === "") return false;
+  const blocks = Number(trimmed);
+  return Number.isInteger(blocks) && blocks >= 1;
+};
+
 /** Where an anchor's start stands against the configured start. */
 export interface AnchorTimeState {
   /** Configured start (24h HH:MM) the anchor returns to on Reset. */
@@ -302,6 +311,8 @@ export interface CalendarPopoverEvent {
   blocksEdited: boolean;
   /** The live calendar start moved since the edit; the edit is kept. */
   changedInCalendar: boolean;
+  /** A refused save's message, mirrored from the panel's per-row ui state. */
+  error?: string | null;
 }
 
 export interface CalendarPopoverProps {
@@ -330,6 +341,7 @@ export function CalendarPopover(props: CalendarPopoverProps) {
   const [startValue, setStartValue] = useState(event.start);
   const [startInvalid, setStartInvalid] = useState(false);
   const [blocksValue, setBlocksValue] = useState(String(event.blocks));
+  const [blocksInvalid, setBlocksInvalid] = useState(false);
   const lastSent = useRef(event.start);
   const closeRef = useRef(props.onClose);
   closeRef.current = props.onClose;
@@ -347,6 +359,7 @@ export function CalendarPopover(props: CalendarPopoverProps) {
     setStartInvalid(false);
     lastSent.current = event.start;
     setBlocksValue(String(event.blocks));
+    setBlocksInvalid(false);
   }, [event.id, event.start, event.blocks]);
 
   const commitStart = (raw: string) => {
@@ -360,8 +373,17 @@ export function CalendarPopover(props: CalendarPopoverProps) {
     props.onMoveStart(event.id, raw);
   };
   const commitBlocks = (raw: string) => {
+    // A cleared Duration is Number("") === 0: committing it would silently
+    // zero-count the event and remove its wall. Anything that is not a whole
+    // number of at least one block is refused and the field snaps back to the
+    // last committed duration, mirroring the Starts field's inline guard.
+    if (!isValidBlocks(raw)) {
+      setBlocksInvalid(true);
+      setBlocksValue(String(event.blocks));
+      return;
+    }
     const blocks = Number(raw);
-    if (!Number.isInteger(blocks) || blocks < 0) return;
+    setBlocksInvalid(false);
     if (blocks === event.blocks) return;
     props.onSetBlocks(event.id, blocks);
   };
@@ -470,14 +492,29 @@ export function CalendarPopover(props: CalendarPopoverProps) {
             id={`calendar-popover-blocks-${uid}`}
             class="anchor-popover__time"
             type="number"
-            min={0}
+            min={1}
             step={1}
             inputMode="numeric"
             value={blocksValue}
-            onInput={(e) => setBlocksValue((e.target as HTMLInputElement).value)}
+            aria-invalid={blocksInvalid || undefined}
+            aria-describedby={blocksInvalid ? `calendar-popover-blocks-error-${uid}` : undefined}
+            onInput={(e) => {
+              const value = (e.target as HTMLInputElement).value;
+              setBlocksValue(value);
+              setBlocksInvalid(!isValidBlocks(value));
+            }}
             onChange={(e) => commitBlocks((e.target as HTMLInputElement).value)}
             onBlur={(e) => commitBlocks((e.target as HTMLInputElement).value)}
           />
+          {blocksInvalid && (
+            <span
+              class="field-error"
+              id={`calendar-popover-blocks-error-${uid}`}
+              role="alert"
+            >
+              Duration must be a whole number of at least 1 block.
+            </span>
+          )}
           <span class="anchor-popover__unit">blocks · 30 min each</span>
         </div>
       </div>
@@ -493,6 +530,10 @@ export function CalendarPopover(props: CalendarPopoverProps) {
           onClick={() => props.onToggleCount(event.id)}
         />
       </div>
+
+      {event.error && (
+        <span class="field-error" role="alert">{event.error}</span>
+      )}
 
       {event.changedInCalendar && (
         <div class="anchor-popover__changed" role="status">

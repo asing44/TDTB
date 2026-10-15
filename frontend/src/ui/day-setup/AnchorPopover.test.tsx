@@ -8,7 +8,7 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render } from "@testing-library/preact";
-import { AnchorPopover, type AnchorTimeState } from "./AnchorPopover";
+import { AnchorPopover, CalendarPopover, type AnchorTimeState, type CalendarPopoverEvent } from "./AnchorPopover";
 
 afterEach(() => {
   cleanup();
@@ -234,5 +234,76 @@ describe("AnchorPopover placement and dismissal", () => {
     expect(onToggleCount).toHaveBeenCalledWith("Foods Breakfast");
     expect(onClose).not.toHaveBeenCalled();
     expect(document.activeElement).toBe(dialog);
+  });
+});
+
+/* The calendar popover holds the Duration (blocks) field locally. A cleared
+   field would otherwise read Number("") === 0 and silently zero-count the
+   event, removing its wall; only a whole number of at least one block may be
+   committed. */
+describe("CalendarPopover Duration guard", () => {
+  const event: CalendarPopoverEvent = {
+    id: "Dentist",
+    name: "Dentist",
+    start: "19:00",
+    calendarStart: "19:00",
+    durationMin: 60,
+    blocks: 2,
+    counted: true,
+    edited: false,
+    blocksEdited: false,
+    changedInCalendar: false,
+  };
+
+  function calendarSetup(overrides: Partial<Parameters<typeof CalendarPopover>[0]> = {}) {
+    const handlers = {
+      onMoveStart: vi.fn(),
+      onSetBlocks: vi.fn(),
+      onToggleCount: vi.fn(),
+      onReset: vi.fn(),
+      onClose: vi.fn(),
+    };
+    const r = render(<CalendarPopover event={event} {...handlers} {...overrides} />);
+    return { r, ...handlers };
+  }
+
+  const duration = (r: ReturnType<typeof calendarSetup>["r"]) =>
+    r.getByLabelText("Duration") as HTMLInputElement;
+
+  it("keeps the previous duration and saves nothing when the field is cleared", () => {
+    const { r, onSetBlocks } = calendarSetup();
+    const input = duration(r);
+    fireEvent.input(input, { target: { value: "" } });
+    fireEvent.change(input, { target: { value: "" } });
+    fireEvent.blur(input);
+    expect(onSetBlocks).not.toHaveBeenCalled();
+    expect(input.value).toBe("2");
+  });
+
+  it("refuses a zero duration and keeps the previous value", () => {
+    const { r, onSetBlocks } = calendarSetup();
+    const input = duration(r);
+    fireEvent.input(input, { target: { value: "0" } });
+    fireEvent.change(input, { target: { value: "0" } });
+    fireEvent.blur(input);
+    expect(onSetBlocks).not.toHaveBeenCalled();
+    expect(input.value).toBe("2");
+  });
+
+  it("refuses a non-integer duration and keeps the previous value", () => {
+    const { r, onSetBlocks } = calendarSetup();
+    const input = duration(r);
+    fireEvent.input(input, { target: { value: "2.5" } });
+    fireEvent.change(input, { target: { value: "2.5" } });
+    fireEvent.blur(input);
+    expect(onSetBlocks).not.toHaveBeenCalled();
+    expect(input.value).toBe("2");
+  });
+
+  it("commits a whole number of at least one block", () => {
+    const { r, onSetBlocks } = calendarSetup();
+    const input = duration(r);
+    fireEvent.change(input, { target: { value: "3" } });
+    expect(onSetBlocks).toHaveBeenCalledWith("Dentist", 3);
   });
 });

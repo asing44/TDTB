@@ -778,8 +778,29 @@ export class Controller {
     // round trip; this optimistic dispatch gives immediate feedback without
     // waiting on the (real, delayed) fixture/HTTP save. The final sanitized
     // dispatch still wins, so state always converges on what was persisted.
+    const previousOverride = saved;
     this.dispatch({ type: "SETUP_SAVED", daySetup: nextSetup });
-    await this.saveDaySetup(nextSetup);
+    try {
+      await this.saveDaySetup(nextSetup);
+    } catch (e) {
+      // The optimistic dispatch must not survive a refused save: a phantom
+      // edit reads back on the strip with no error. Roll this row back to the
+      // override that was there before the edit — but only while our edit is
+      // still the one on the row. A newer save (it dispatched its own override
+      // and/or the sanitized result) owns the row now, and rolling it back
+      // would clobber it. Then rethrow so the caller can surface the failure.
+      const current = this.getState();
+      if (current.daySetup.anchored[id] === next) {
+        const anchored = { ...current.daySetup.anchored };
+        if (previousOverride === undefined) delete anchored[id];
+        else anchored[id] = previousOverride;
+        this.dispatch({
+          type: "SETUP_SAVED",
+          daySetup: { ...current.daySetup, anchored },
+        });
+      }
+      throw e;
+    }
   }
 
   /** Reset to calendar: drop the local start and duration edits, keeping the

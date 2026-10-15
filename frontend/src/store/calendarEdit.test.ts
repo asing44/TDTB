@@ -200,4 +200,67 @@ describe("controller.saveCalendarEdit", () => {
     await h.controller.saveCalendarEdit("Dentist", { start: "9:" });
     expect(save).not.toHaveBeenCalled();
   });
+
+  it("keeps the committed override when a save succeeds", async () => {
+    const h = harness();
+    await h.controller.saveCalendarEdit("Dentist", { blocks: 3 });
+    expect(h.store.getState().daySetup.anchored.Dentist).toMatchObject({
+      blocks: 3,
+      skipToday: false,
+    });
+  });
+
+  it("rolls the override back to the pre-edit value and rethrows when the save is refused", async () => {
+    const h = harness();
+    await h.controller.saveCalendarEdit("Dentist", { start: "20:00" });
+    const committed = h.store.getState().daySetup.anchored.Dentist;
+    expect(committed.start).toBe("20:00");
+    const writes = [
+      vi.spyOn(FixtureAdapter.prototype, "liveCommit"),
+      vi.spyOn(FixtureAdapter.prototype, "shadowCommit"),
+      vi.spyOn(FixtureAdapter.prototype, "saveAnchoredStart"),
+      vi.spyOn(FixtureAdapter.prototype, "autoSequence"),
+    ];
+    vi.spyOn(FixtureAdapter.prototype, "saveDaySetup").mockRejectedValueOnce(
+      new Error("refused"),
+    );
+    await expect(h.controller.saveCalendarEdit("Dentist", { blocks: 3 })).rejects.toThrow(
+      "refused",
+    );
+    const after = h.store.getState().daySetup.anchored.Dentist;
+    expect(after).toBe(committed);
+    expect(after.start).toBe("20:00");
+    expect(after.blocks ?? null).toBeNull();
+    for (const w of writes) expect(w).not.toHaveBeenCalled();
+  });
+
+  it("does not roll back a newer edit when an older save fails afterwards", async () => {
+    const h = harness();
+    const save = vi.spyOn(FixtureAdapter.prototype, "saveDaySetup");
+    let rejectFirst!: (e: unknown) => void;
+    let resolveSecond!: () => void;
+    save.mockImplementationOnce(
+      () =>
+        new Promise<void>((_resolve, reject) => {
+          rejectFirst = reject;
+        }),
+    );
+    const first = h.controller.saveCalendarEdit("Dentist", { start: "20:00" });
+    const firstRejected = expect(first).rejects.toThrow("stale");
+    save.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveSecond = resolve;
+        }),
+    );
+    const second = h.controller.saveCalendarEdit("Dentist", { blocks: 3 });
+    resolveSecond();
+    await second;
+    rejectFirst(new Error("stale"));
+    await firstRejected;
+    expect(h.store.getState().daySetup.anchored.Dentist).toMatchObject({
+      start: "20:00",
+      blocks: 3,
+    });
+  });
 });

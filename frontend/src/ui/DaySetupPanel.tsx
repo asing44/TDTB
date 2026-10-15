@@ -323,6 +323,21 @@ export function DaySetupPanel({
       });
   };
 
+  /** Calendar-row edits roll back in the controller when the save is refused;
+      this wrapper surfaces the failure the same way persistAnchoredOverride
+      does, and clears an earlier error when a new edit starts. */
+  const persistCalendarEdit = (id: string, run: () => Promise<void>) => {
+    patchTimeUi(id, { error: null });
+    pendingPersists.current += 1;
+    run()
+      .catch((e) =>
+        patchTimeUi(id, { error: `Could not save today's change: ${errorText(e)}` }),
+      )
+      .finally(() => {
+        pendingPersists.current -= 1;
+      });
+  };
+
   /** All blocks: calendar rows accept participation plus the local start and
       duration edits, exactly like CalendarImpact's per-row toggle. The
       participation-only wire shape is kept when the row carries no edit. */
@@ -352,8 +367,9 @@ export function DaySetupPanel({
   /** Strip drag / arrow keys for a calendar event: today's local start edit,
       never a calendar write. Config anchors stay on `moveAnchor`. */
   const moveBlock = (id: string, start: string) => {
-    if (isCalendarRow(id)) void controller.saveCalendarEdit(id, { start });
-    else moveAnchor(id, start);
+    if (isCalendarRow(id)) {
+      persistCalendarEdit(id, () => controller.saveCalendarEdit(id, { start }));
+    } else moveAnchor(id, start);
   };
 
   /** All blocks footer: clear every config anchor's today-only override back
@@ -737,6 +753,7 @@ export function DaySetupPanel({
             edited: calendarState.edited,
             blocksEdited: s.daySetup.anchored[calendarEntry.id]?.blocks != null,
             changedInCalendar: calendarState.changedInCalendar,
+            error: timeUi[calendarEntry.id]?.error ?? null,
           }
         : null;
     const selectedEntry = stripAnchors.find((anchor) => anchor.id === selectedAnchor) ?? null;
@@ -917,10 +934,14 @@ export function DaySetupPanel({
             {selectedCalendar && (
               <CalendarPopover
                 event={selectedCalendar}
-                onMoveStart={(id, start) => void controller.saveCalendarEdit(id, { start })}
-                onSetBlocks={(id, blocks) => void controller.saveCalendarEdit(id, { blocks })}
+                onMoveStart={(id, start) =>
+                  persistCalendarEdit(id, () => controller.saveCalendarEdit(id, { start }))
+                }
+                onSetBlocks={(id, blocks) =>
+                  persistCalendarEdit(id, () => controller.saveCalendarEdit(id, { blocks }))
+                }
                 onToggleCount={calendarToggleCount}
-                onReset={(id) => void controller.resetCalendarEdit(id)}
+                onReset={(id) => persistCalendarEdit(id, () => controller.resetCalendarEdit(id))}
                 onClose={() => setSelectedAnchor(null)}
               />
             )}
@@ -960,7 +981,9 @@ export function DaySetupPanel({
                 calendar={allBlockCalendar}
                 onToggleAnchor={toggleAnchorSkip}
                 onToggleCalendar={toggleAllBlocksCalendar}
-                onUseCalendarTime={(id) => void controller.saveCalendarEdit(id, { start: null })}
+                onUseCalendarTime={(id) =>
+                  persistCalendarEdit(id, () => controller.saveCalendarEdit(id, { start: null }))
+                }
                 onResetAll={resetAllAnchorsToConfig}
                 onClose={() => setAllBlocksOpen(false)}
               />
