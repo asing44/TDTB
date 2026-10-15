@@ -1657,6 +1657,16 @@ def _validate_sequence_proposal(
     )
     duration_overrides = placement_rules.effective_duration_overrides(constraints)
 
+    # G16 overflow tail (2026-10-15): a row parked at/after the effective EOD
+    # cannot express a midnight crossing in same-day HH:MM, so the model emits
+    # start == end. That is an over-capacity degrade handled deterministically
+    # by sequence.reseat_overflow_tail_rows, never a schema retry (each retry is
+    # BILLED). Reversed ordinary ranges and non-tail / non-assigned rows still
+    # fail closed below.
+    frame_eod = placement_rules.canonical_time(
+        ((config or {}).get("time") or {}).get("effective_eod")
+    )
+
     for row in d["sequence"]:
         _require_keys(row, ("id", "start", "end", "zone"), "SequenceProposal.sequence[]")
         if not _is_hhmm(row["start"]):
@@ -1668,7 +1678,16 @@ def _validate_sequence_proposal(
         # so ordinary reversed ranges (14:00-13:00) remain invalid.
         if row["start"] >= "18:00" and row["end"] <= "06:00":
             row["end"] = "23:59"
-        if row["end"] <= row["start"]:
+        row_budget = (
+            duration_overrides.get(str(row["id"]))
+            or budgets.get(str(row["id"]))
+        )
+        overflow_tail = (
+            frame_eod is not None
+            and row["start"] >= frame_eod
+            and row_budget is not None
+        )
+        if row["end"] <= row["start"] and not overflow_tail:
             raise ValueError(
                 f"SequenceProposal.sequence[]: end {row['end']!r} not after start "
                 f"{row['start']!r} for {row['id']!r}"

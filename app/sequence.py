@@ -895,6 +895,161 @@ def canonicalize_sequence_ids(
 
 
 # ---------------------------------------------------------------------------
+# Overflow-tail re-seat (G16: over-capacity must degrade, never 422)
+# ---------------------------------------------------------------------------
+
+_TAIL_END_MIN = 23 * 60 + 59  # 23:59 — the last representable same-day minute
+
+
+def _minutes_to_hhmm(minutes: int) -> str:
+    return f"{minutes // 60:02d}:{minutes % 60:02d}"
+
+
+def _assigned_duration_minutes(item: dict[str, Any]) -> int | None:
+    """Placement duration for an assigned item: ``blocks`` x 30 minutes.
+
+    Mirrors the judgment layer's fixed-duration contract: missing, malformed,
+    or negative block counts fall back to one block. An explicit ``blocks == 0``
+    is the all-day / no-timeline state, which has no representable placement
+    duration, so it returns ``None`` (such a row is never re-seated).
+    """
+    raw_blocks = item.get("blocks")
+    if isinstance(raw_blocks, bool):
+        raw_blocks = None
+    if isinstance(raw_blocks, (int, float)):
+        if raw_blocks == 0:
+            return None
+        blocks = raw_blocks if raw_blocks > 0 else 1
+    else:
+        blocks = 1
+    return int(blocks * 30)
+
+
+def _assigned_durations(assigned: list[dict[str, Any]]) -> dict[str, int]:
+    """Map assigned item id/name to its fixed placement duration (minutes)."""
+    durations: dict[str, int] = {}
+    for item in assigned:
+        if not isinstance(item, dict):
+            continue
+        duration = _assigned_duration_minutes(item)
+        if duration is None:
+            continue
+        for key in (item.get("id"), item.get("name")):
+            if key:
+                durations.setdefault(str(key), duration)
+    return durations
+
+
+def _repair_reseated_grant_intervals(
+    grants: Any, row_id: str, old: dict[str, str], new: dict[str, str]
+) -> None:
+    """Keep an overlap grant in sync with a re-seated row's interval.
+
+    A grant stores the exact interval it was issued for. Re-seating the row
+    without repairing the grant would drop the grant and turn a legitimate
+    systems/parent overlap into a missing-grant hard error.
+    """
+    if not isinstance(grants, list):
+        return
+    for grant in grants:
+        if not isinstance(grant, dict):
+            continue
+        for id_key, interval_key in (
+            ("primary_id", "primary_interval"),
+            ("companion_id", "companion_interval"),
+        ):
+            if str(grant.get(id_key)) != row_id:
+                continue
+            interval = grant.get(interval_key)
+            if not isinstance(interval, dict):
+                continue
+            canonical = {
+                "start": placement_rules.canonical_time(interval.get("start")),
+                "end": placement_rules.canonical_time(interval.get("end")),
+            }
+            if canonical != old:
+                continue
+            grant[interval_key] = {"start": new["start"], "end": new["end"]}
+
+
+def reseat_overflow_tail_rows(
+    proposal: dict[str, Any],
+    assigned: list[dict[str, Any]],
+    time_frame: dict[str, Any] | None,
+) -> list[dict[str, str]]:
+    """Deterministically re-seat unrepresentable overflow-tail rows.
+
+    The model parks items that do not fit before midnight at 23:59 — but a
+    same-day HH:MM interval cannot express the crossing, so it emits
+    ``start == end``. Rather than reject the whole proposal (G16: over-
+    capacity degrades, never 422), each such ASSIGNED row with a known
+    duration is re-seated to the latest representable full-duration interval
+    ending at 23:59 (23:29-23:59 for a one-block item). The re-seat never
+    starts before the anchor and never before the preceding row, so
+    chronological order still holds. Mutates ``proposal`` rows and any
+    matching overlap grants in place; returns one warning descriptor per
+    re-seated row.
+    """
+    sequence = proposal.get("sequence")
+    if not isinstance(sequence, list):
+        return []
+    frame = time_frame or {}
+    anchor_norm = _normalize_time(frame.get("anchor"))
+    eod_norm = _normalize_time(frame.get("effective_eod"))
+    anchor_min = _to_minutes(anchor_norm) if anchor_norm else None
+    eod_min = _to_minutes(eod_norm) if eod_norm else None
+    durations = _assigned_durations(assigned)
+    grants = proposal.get("overlap_grants")
+    reseated: list[dict[str, str]] = []
+    prev_start_min: int | None = None
+    for row in sequence:
+        if not isinstance(row, dict) or row.get("backdrop"):
+            continue
+        row_id = str(row.get("id"))
+        start = placement_rules.canonical_time(row.get("start"))
+        end = placement_rules.canonical_time(row.get("end"))
+        if start is None or end is None:
+            continue
+        start_min = _to_minutes(start)
+        end_min = _to_minutes(end)
+        if end_min <= start_min:
+            duration = durations.get(row_id)
+            # Only the overflow tail is softened: a row that starts at/after
+            # the effective EOD. Ordinary reversed ranges stay HARD.
+            if duration and eod_min is not None and start_min >= eod_min:
+                new_end = _TAIL_END_MIN
+                new_start = new_end - duration
+                if anchor_min is not None:
+                    new_start = max(new_start, anchor_min)
+                if prev_start_min is not None:
+                    new_start = max(new_start, prev_start_min)
+                if new_start >= new_end:
+                    new_start = new_end - 1
+                new_start_str = _minutes_to_hhmm(new_start)
+                new_end_str = _minutes_to_hhmm(new_end)
+                old_interval = {"start": start, "end": end}
+                row["start"], row["end"] = new_start_str, new_end_str
+                _repair_reseated_grant_intervals(
+                    grants, row_id, old_interval,
+                    {"start": new_start_str, "end": new_end_str},
+                )
+                start_min, end_min = new_start, new_end
+                reseated.append({
+                    "id": row_id,
+                    "rule": "overflow_reseated",
+                    "detail": (
+                        f"{row_id!r} did not fit before midnight — parked at "
+                        f"{new_start_str}-{new_end_str}; defer or drop it"
+                    ),
+                    "start": new_start_str,
+                    "end": new_end_str,
+                })
+        if end_min > start_min:
+            prev_start_min = start_min
+    return reseated
+
+
+# ---------------------------------------------------------------------------
 # Main entry point
 # ---------------------------------------------------------------------------
 
@@ -995,6 +1150,16 @@ def validate_sequence(
                 "intervals": [],
                 "detail": detail,
             }],
+        )
+    # G16: over-capacity must degrade, never 422. Re-seat unrepresentable
+    # overflow-tail rows BEFORE normalization/canonicalization so both
+    # /sequence (proposal) and /validate-sequence (revalidation) see the same
+    # representable layout and the returned plan carries the re-seated times.
+    for item in reseat_overflow_tail_rows(proposal, assigned, time_frame):
+        add_warning(
+            {"id": item["id"], "rule": item["rule"], "detail": item["detail"]},
+            affected_rows=[item["id"]],
+            intervals=[interval_for(item["id"], item["start"], item["end"])],
         )
     normalized_sequence: list[dict[str, Any]] = []
     for raw_row in sequence:
