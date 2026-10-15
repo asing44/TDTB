@@ -214,7 +214,7 @@ class TestValidateSequenceRoute:
         assert body["ok"] is True
         assert body["hard_errors"] == []
 
-    def test_public_validator_exposes_structured_calendar_diagnostic_additively(
+    def test_public_validator_reports_calendar_overlap_as_soft_warning(
         self, client
     ):
         _pin_frame()
@@ -237,12 +237,15 @@ class TestValidateSequenceRoute:
 
         assert r.status_code == 200
         body = r.json()
-        assert body["ok"] is False
-        assert any("Dentist" in error and "09:00-10:00" in error
-                   for error in body["hard_errors"])
+        assert body["ok"] is True
+        assert body["hard_errors"] == []
+        assert any(w.get("rule") == "calendar_overlap"
+                   and "Dentist" in w["detail"] for w in body["warnings"])
         diagnostic = next(
-            item for item in body["diagnostics"] if item["severity"] == "error"
+            item for item in body["diagnostics"]
+            if item["rule"] == "calendar_overlap"
         )
+        assert diagnostic["severity"] == "warning"
         assert diagnostic["affected_rows"] == ["A", "Dentist"]
         assert diagnostic["intervals"] == [
             {"id": "A", "start": "09:30", "end": "10:30"},

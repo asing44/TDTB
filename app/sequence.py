@@ -1195,11 +1195,12 @@ def validate_sequence(
     # permeable to the sequence: a task inside the window is a SOFT flag, while
     # only hard/duration-only non-permeable blocks stay HARD walls.
     #
-    # FEEDBACK-02 (2026-08-13, FF-CAL-03): imported calendar events are
-    # hardened. A non-permeable calendar block (capacity fixed or work) is a
-    # HARD wall — overlap rejects the proposal deterministically, never a soft
-    # acceptable defect. Ignored/quarantined calendars are excluded from
-    # planning (frozen contract 17) and are no wall at all. Config-backed
+    # FEEDBACK-02 (2026-08-13, FF-CAL-03) hardened imported calendar events
+    # into HARD walls. REVERSED 2026-10-15 by explicit user decision ("soft
+    # warning, never reject"): a non-permeable calendar block (capacity fixed
+    # or work) is now a SOFT WARNING resolved on the timeline, never a
+    # deterministic rejection. Ignored/quarantined calendars remain excluded
+    # from planning (frozen contract 17) and are no wall at all. Config-backed
     # anchored blocks keep the LD26 acceptable-defect reading below.
     hard_spans: list[tuple[str, tuple[int, int]]] = []
     calendar_spans: list[tuple[str, tuple[int, int]]] = []
@@ -1238,16 +1239,19 @@ def validate_sequence(
         if row_id in anchored_ids:
             continue  # anchored blocks don't overlap-check against themselves
         r_start, r_end = _to_minutes(row["start"]), _to_minutes(row["end"])
-        # FEEDBACK-02: non-permeable calendar walls reject overlaps hard. The
-        # ONLY escape is an approved exact overlap grant for this exact pair
-        # and interval; overflow-tail placement is NOT an escape for a
-        # calendar wall (explicit infeasibility is the contract).
+        # 2026-10-15 (reverses FEEDBACK-02 / FF-CAL-03): overlap with a
+        # non-permeable calendar block is a SOFT WARNING, never a hard
+        # rejection. An approved exact overlap grant still records an
+        # 'allowed_overlap' warning; every other calendar overlap is a soft
+        # 'calendar_overlap' warning the user resolves on the timeline.
+        # Overflow-tail placement is soft here too — a calendar wall is a flag
+        # in every case. (Config-backed anchored walls below keep their split.)
         for block_name, (b_start, b_end) in calendar_spans:
             if r_start < b_end and b_start < r_end:
                 desc = (
-                    f"{row_id!r} ({row['start']}-{row['end']}) overlaps non-permeable "
-                    f"calendar block {block_name!r} ({b_start // 60:02d}:{b_start % 60:02d}-"
-                    f"{b_end // 60:02d}:{b_end % 60:02d})"
+                    f"{row_id!r} ({row['start']}-{row['end']}) overlaps calendar "
+                    f"block {block_name!r} ({b_start // 60:02d}:{b_start % 60:02d}-"
+                    f"{b_end // 60:02d}:{b_end % 60:02d}) — resolve on the timeline"
                 )
                 grant = _exact_grant(row, block_name, (b_start, b_end))
                 if grant is not None:
@@ -1264,9 +1268,8 @@ def validate_sequence(
                         ],
                     )
                 else:
-                    add_hard(
-                        desc,
-                        rule="calendar_overlap",
+                    add_warning(
+                        {"id": row_id, "rule": "calendar_overlap", "detail": desc},
                         affected_rows=[row_id, block_name],
                         intervals=[
                             interval_for(row_id, row["start"], row["end"]),

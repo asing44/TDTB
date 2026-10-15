@@ -11,8 +11,8 @@ deterministic synthetic fixtures and fake providers:
   Dinner -> config window, never a calendar event);
 - capacity accounting: Cooking counted exactly once, trivia inside the work
   envelope, quarantined Steelers cost ZERO and never become a hidden wall;
-- non-permeable calendar walls hard-reject assigned overlap, while the dinner
-  window stays permeable;
+- non-permeable calendar overlap is a soft warning, while the dinner window
+  stays permeable;
 - over-assignment (2 available vs 16 included) produces explicit diagnostics
   (never-bump names the missing row; a pinned-row overlap is a named warning),
   never silent placement;
@@ -211,8 +211,9 @@ class TestFeedback05CapacityAccounting:
 
 
 class TestFeedback05WallSafety:
-    """No assigned row may overlap a non-permeable calendar wall. Cooking
-    (fixed) and DCP trivia (work) are hard walls; the Foods Dinner config
+    """No assigned row is REJECTED for overlapping a non-permeable calendar
+    block (2026-10-15 soft-warning decision). Cooking (fixed) and DCP trivia
+    (work) flag a soft 'calendar_overlap' warning; the Foods Dinner config
     window stays permeable; quarantined Steelers is no wall at all."""
 
     WALLS = [
@@ -232,16 +233,19 @@ class TestFeedback05WallSafety:
             time_frame=self.FRAME,
         )
 
-    def test_row_over_cooking_fixed_wall_is_hard_rejection(self):
+    def test_row_over_cooking_fixed_wall_is_soft_warning(self):
         r = self._res([_seq_row("t1", "20:35", "21:05")])
-        assert r.ok is False
-        assert any("Cooking" in e and "overlap" in e.lower()
-                   for e in r.hard_errors)
+        assert r.ok is True
+        assert r.hard_errors == []
+        assert any(w.get("rule") == "calendar_overlap"
+                   and "Cooking" in w["detail"] for w in r.warnings)
 
-    def test_row_over_trivia_work_wall_is_hard_rejection(self):
+    def test_row_over_trivia_work_wall_is_soft_warning(self):
         r = self._res([_seq_row("t1", "19:15", "19:45")])
-        assert r.ok is False
-        assert any("DCP Bark Bar trivia" in e for e in r.hard_errors)
+        assert r.ok is True
+        assert r.hard_errors == []
+        assert any(w.get("rule") == "calendar_overlap"
+                   and "DCP Bark Bar trivia" in w["detail"] for w in r.warnings)
 
     def test_row_over_quarantined_steelers_is_no_wall(self):
         # Steelers 20:00-22:00 is quarantined (contract 17): a row may cross

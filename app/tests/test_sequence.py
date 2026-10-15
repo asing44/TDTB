@@ -703,21 +703,22 @@ class TestValidationResultShape:
 
 
 # ---------------------------------------------------------------------------
-# Calendar busy blocks (gather-parity T5) — external_sources shape is a hard
-# wall: no Type key, no overlap_allowed → non-permeable in validation.
-# FEEDBACK-02 (2026-08-13): a non-permeable calendar block is a HARD wall —
-# overlap rejects the sequence deterministically instead of a soft defect.
+# Calendar busy blocks (gather-parity T5) — external_sources shape is a wall:
+# no Type key, no overlap_allowed → non-permeable in validation.
+# 2026-10-15 (reverses FEEDBACK-02 / FF-CAL-03): a non-permeable calendar
+# block overlap is a SOFT WARNING, never a deterministic rejection.
 # ---------------------------------------------------------------------------
 
 class TestCalendarBusyBlocks:
     BUSY = {"Block": "Dentist", "Start": "09:00", "End": "10:00", "source": "calendar"}
 
-    def test_overlap_with_calendar_block_is_hard_rejection(self):
+    def test_overlap_with_calendar_block_is_soft_warning(self):
         proposal = {"sequence": [_seq_row("t1", "09:30", "10:15")]}
         result = validate_sequence(proposal, [_item("t1")], [self.BUSY], CONFIG)
-        assert result.ok is False
-        assert any("Dentist" in e and "overlap" in e.lower()
-                   for e in result.hard_errors)
+        assert result.ok is True
+        assert result.hard_errors == []
+        assert any(w.get("rule") == "calendar_overlap" and "Dentist" in str(w)
+                   for w in result.warnings)
 
     def test_no_overlap_passes(self):
         proposal = {"sequence": [_seq_row("t1", "10:30", "11:00")]}
@@ -727,16 +728,17 @@ class TestCalendarBusyBlocks:
 
 
 # ---------------------------------------------------------------------------
-# FEEDBACK-02 — non-permeable calendar events are hard walls
+# 2026-10-15 — non-permeable calendar overlap is a SOFT warning
 # ---------------------------------------------------------------------------
 
-class TestCalendarHardWalls:
-    """FF-CAL-03 contract (2026-08-13): imported calendar events classified
-    fixed or work block task placement in their occupied intervals. A sequence
-    overlapping such a wall is rejected deterministically; it is never a soft
-    acceptable defect. Permeable windows, exact overlap grants, and
+class TestCalendarSoftOverlap:
+    """Explicit user decision (2026-10-15) reverses the FEEDBACK-02 / FF-CAL-03
+    hard-wall contract: an assigned row overlapping a non-permeable calendar
+    block (fixed or work class) validates with a soft 'calendar_overlap'
+    warning and is never rejected. Permeable windows, exact overlap grants, and
     ignored/quarantined (contract 17 excluded) rows keep their old behavior.
-    Config-backed anchored blocks stay on the LD26 acceptable-defect path."""
+    Config-backed anchored blocks stay on the LD26 acceptable-defect path, and
+    the overflow tail is soft like every other calendar overlap."""
 
     def _calendar(self, block="Cooking", start="20:30", end="21:00",
                   capacity_class="fixed"):
@@ -748,32 +750,52 @@ class TestCalendarHardWalls:
             "capacity_class": capacity_class,
         }
 
-    def test_fixed_calendar_block_overlap_is_hard(self):
+    def test_fixed_calendar_block_overlap_is_soft_warning(self):
         anchored = [self._calendar()]
         proposal = {"sequence": [_seq_row("t1", "20:35", "21:05")]}
         result = validate_sequence(proposal, [_item("t1")], anchored, CONFIG)
-        assert result.ok is False
-        assert any("Cooking" in e and "overlap" in e.lower()
-                   for e in result.hard_errors)
+        assert result.ok is True
+        assert result.hard_errors == []
+        warning = next(w for w in result.warnings
+                       if w.get("rule") == "calendar_overlap")
+        assert "Cooking" in warning["detail"]
+        assert warning["detail"].endswith("resolve on the timeline")
 
-    def test_work_class_calendar_block_overlap_is_hard(self):
-        # A work-class meeting is still busy time — the planner must not place
-        # assigned work inside it.
+    def test_work_class_calendar_block_overlap_is_soft_warning(self):
+        # A work-class meeting is still busy time — the planner flags the
+        # overlap but never rejects the sequence.
         anchored = [self._calendar(block="Trinoor sync", start="09:00",
                                    end="10:00", capacity_class="work")]
         proposal = {"sequence": [_seq_row("t1", "09:30", "10:15")]}
         result = validate_sequence(proposal, [_item("t1")], anchored, CONFIG)
-        assert result.ok is False
-        assert any("Trinoor sync" in e for e in result.hard_errors)
+        assert result.ok is True
+        assert result.hard_errors == []
+        assert any(w.get("rule") == "calendar_overlap"
+                   and "Trinoor sync" in w["detail"]
+                   for w in result.warnings)
 
-    def test_calendar_block_without_class_defaults_to_hard_wall(self):
+    def test_calendar_block_without_class_is_soft_warning(self):
         # Unidentified calendars keep the historical fixed default (contract
-        # 17 default when no inventory) — still a hard wall.
+        # 17 default when no inventory) — now a soft warning, not a wall.
         anchored = [{"Block": "Dentist", "Start": "09:00", "End": "10:00",
                      "source": "calendar"}]
         proposal = {"sequence": [_seq_row("t1", "09:30", "10:15")]}
         result = validate_sequence(proposal, [_item("t1")], anchored, CONFIG)
-        assert result.ok is False
+        assert result.ok is True
+        assert any(w.get("rule") == "calendar_overlap" for w in result.warnings)
+
+    def test_calendar_warning_carries_rows_and_intervals(self):
+        anchored = [self._calendar()]
+        proposal = {"sequence": [_seq_row("t1", "20:35", "21:05")]}
+        result = validate_sequence(proposal, [_item("t1")], anchored, CONFIG)
+        diagnostic = next(d for d in result.diagnostics
+                          if d["rule"] == "calendar_overlap")
+        assert diagnostic["severity"] == "warning"
+        assert diagnostic["affected_rows"] == ["t1", "Cooking"]
+        assert diagnostic["intervals"] == [
+            {"id": "t1", "start": "20:35", "end": "21:05"},
+            {"id": "Cooking", "start": "20:30", "end": "21:00"},
+        ]
 
     def test_ignored_calendar_block_is_no_wall(self):
         anchored = [self._calendar(capacity_class="ignored")]
@@ -781,17 +803,19 @@ class TestCalendarHardWalls:
         result = validate_sequence(proposal, [_item("t1")], anchored, CONFIG)
         assert result.ok is True
         assert result.hard_errors == []
-        assert not any(w.get("rule") == "unexpected_overlap"
+        assert not any(w.get("rule") in {"unexpected_overlap", "calendar_overlap"}
                        for w in result.warnings)
 
     def test_quarantined_calendar_block_is_no_wall(self):
         # Frozen contract 17: a known-but-unreviewed calendar is excluded from
-        # planning — it must not silently become a hard wall either.
+        # planning — it must not silently become a wall either.
         anchored = [self._calendar(capacity_class="quarantined")]
         proposal = {"sequence": [_seq_row("t1", "20:35", "21:05")]}
         result = validate_sequence(proposal, [_item("t1")], anchored, CONFIG)
         assert result.ok is True
         assert result.hard_errors == []
+        assert not any(w.get("rule") == "calendar_overlap"
+                       for w in result.warnings)
 
     def test_exact_grant_keeps_calendar_overlap_allowed(self):
         anchored = [self._calendar()]
@@ -809,11 +833,12 @@ class TestCalendarHardWalls:
         )
         assert result.ok is True
         assert any(w.get("rule") == "allowed_overlap" for w in result.warnings)
+        assert not any(w.get("rule") == "calendar_overlap"
+                       for w in result.warnings)
 
-    def test_calendar_wall_overlap_in_overflow_tail_is_hard(self):
-        # G16 overflow softness applies to config blocks and movable work, NOT
-        # to non-permeable calendar walls: a wall overlap is explicit
-        # infeasibility wherever the row sits.
+    def test_calendar_wall_overlap_in_overflow_tail_is_soft(self):
+        # The overflow tail is soft for calendar walls too: a wall overlap is
+        # a flag wherever the row sits, never a hard rejection.
         anchored = [self._calendar(block="Night event", start="23:15",
                                    end="23:45")]
         proposal = {"sequence": [_seq_row("t1", "23:20", "23:40")]}
@@ -821,18 +846,78 @@ class TestCalendarHardWalls:
             proposal, [_item("t1")], anchored, CONFIG,
             time_frame={"anchor": "16:00", "effective_eod": "23:00"},
         )
-        assert result.ok is False
-        assert any("Night event" in e for e in result.hard_errors)
+        assert result.ok is True
+        assert result.hard_errors == []
+        assert any(w.get("rule") == "calendar_overlap"
+                   and "Night event" in w["detail"]
+                   for w in result.warnings)
 
     def test_config_backed_block_overlap_stays_acceptable_defect(self):
         # LD26 carve-out: non-calendar (config-backed) anchored blocks keep
-        # the acceptable-defect reading — only imported calendar walls harden.
+        # the acceptable-defect reading — only calendar rows flag softly.
         anchored = [_anchored(overlap_allowed=False, block="Morning Routine",
                               start="07:45")]
         proposal = {"sequence": [_seq_row("t1", "07:50", "08:10")]}
         result = validate_sequence(proposal, [_item("t1")], anchored, CONFIG)
         assert result.ok is True
         assert any(w.get("rule") == "unexpected_overlap" for w in result.warnings)
+
+
+# ---------------------------------------------------------------------------
+# 2026-10-15 operator regression — two rows over two fixed calendar blocks
+# ---------------------------------------------------------------------------
+
+class TestCalendarOverlapSoftRegression:
+    """Live report (2026-10-15): 'Job Searching' (18:45-19:15) over 'Adam
+    cooking' (18:30-19:30) and 'Call Ryan' (19:30-20:00) over "Order gifts for
+    Evan & Nate's birthdays?" (19:30-20:00) must validate ok=True with two soft
+    'calendar_overlap' warnings — never the old hard rejection. One block title
+    ends in '?' to pin the exact live string."""
+
+    ANCHORED = [
+        {"Block": "Adam cooking", "Start": "18:30", "End": "19:30",
+         "source": "calendar", "capacity_class": "fixed"},
+        {"Block": "Order gifts for Evan & Nate's birthdays?",
+         "Start": "19:30", "End": "20:00",
+         "source": "calendar", "capacity_class": "fixed"},
+    ]
+    SEQUENCE = [
+        _seq_row("Job Searching", "18:45", "19:15"),
+        _seq_row("Call Ryan", "19:30", "20:00"),
+    ]
+    ITEMS = [_item("Job Searching"), _item("Call Ryan")]
+
+    def test_two_rows_over_two_calendar_blocks_are_soft(self):
+        result = validate_sequence(
+            {"sequence": self.SEQUENCE}, self.ITEMS, self.ANCHORED, CONFIG,
+        )
+        assert result.ok is True
+        assert result.hard_errors == []
+        soft = [w for w in result.warnings
+                if w.get("rule") == "calendar_overlap"]
+        assert len(soft) == 2
+        assert any("Adam cooking" in w["detail"] for w in soft)
+        assert any("Order gifts for Evan & Nate's birthdays?" in w["detail"]
+                   for w in soft)
+
+    def test_regression_diagnostics_carry_exact_intervals(self):
+        result = validate_sequence(
+            {"sequence": self.SEQUENCE}, self.ITEMS, self.ANCHORED, CONFIG,
+        )
+        diagnostics = [d for d in result.diagnostics
+                       if d["rule"] == "calendar_overlap"]
+        assert len(diagnostics) == 2
+        assert all(d["severity"] == "warning" for d in diagnostics)
+        by_row = {d["affected_rows"][0]: d for d in diagnostics}
+        assert by_row["Job Searching"]["intervals"] == [
+            {"id": "Job Searching", "start": "18:45", "end": "19:15"},
+            {"id": "Adam cooking", "start": "18:30", "end": "19:30"},
+        ]
+        assert by_row["Call Ryan"]["intervals"] == [
+            {"id": "Call Ryan", "start": "19:30", "end": "20:00"},
+            {"id": "Order gifts for Evan & Nate's birthdays?",
+             "start": "19:30", "end": "20:00"},
+        ]
 
 
 # ---------------------------------------------------------------------------
@@ -1243,13 +1328,16 @@ class TestValidationTruthTable:
             CONFIG,
         )
 
-        assert result.ok is (not overlaps)
+        assert result.ok is True
+        flagged = any(w.get("rule") == "calendar_overlap"
+                      for w in result.warnings)
+        assert flagged is overlaps
         if overlaps:
-            assert any("Dentist" in error and "overlap" in error for error in result.hard_errors)
+            assert any("Dentist" in w["detail"] for w in result.warnings)
         else:
             assert result.hard_errors == []
 
-    def test_calendar_diagnostic_keeps_legacy_error_and_canonical_24_hour_interval(self):
+    def test_calendar_diagnostic_is_soft_warning_with_canonical_24_hour_interval(self):
         wall = {
             "Block": "Dentist",
             "Start": "9:00 AM",
@@ -1264,14 +1352,18 @@ class TestValidationTruthTable:
             CONFIG,
         )
 
-        assert result.ok is False
-        assert any("Dentist" in error and "09:00-10:00" in error for error in result.hard_errors)
+        assert result.ok is True
+        assert result.hard_errors == []
+        assert any(w.get("rule") == "calendar_overlap"
+                   and "Dentist" in w["detail"] and "09:00-10:00" in w["detail"]
+                   for w in result.warnings)
         payload = result.as_dict()
-        assert payload["hard_errors"] == result.hard_errors
+        assert payload["warnings"] == result.warnings
         diagnostic = next(
             item for item in payload["diagnostics"]
-            if item["severity"] == "error"
+            if item["rule"] == "calendar_overlap"
         )
+        assert diagnostic["severity"] == "warning"
         assert diagnostic["affected_rows"] == ["A", "Dentist"]
         assert diagnostic["intervals"] == [
             {"id": "A", "start": "09:30", "end": "10:30"},
