@@ -15,8 +15,10 @@
    row when the interval is free, the other row when that is free, and is
    staggered rather than overlapped when both rows are busy); a block is as
    wide as its COUNTED duration (blocks × 30 minutes from its start, never the
-   source start→end window) and shows its name plus (when it fits) the time
-   and block count. A window-kind/template anchor also draws its allowed
+   source start→end window) and shows its name INSIDE the block (ellipsized
+   when only part of it fits, the way a calendar title does) plus, when it
+   fits, the time and block count; only a stub under the 44px in-block floor
+   labels itself outside. A window-kind/template anchor also draws its allowed
    window as a light dashed track behind the counted block. Clicking one
    selects it; anchors that are off today, outside the frame or fully elapsed
    are not drawn at all (a "N hidden today" note opens All blocks); a live
@@ -49,8 +51,9 @@ const CAL_CHAR_PX = 6.6;
 const CAL_PAD_PX = 16;
 const CAL_MIN_INSIDE_PX = 44;
 const CAL_LABEL_GAP_PX = 8;
-/** Outside anchor labels: estimated glyph width (12px type), gap to the block,
-    breathing room between neighbours, and the height of a stacked label row. */
+/** Outside anchor labels: estimated glyph width (12px type, shared with the
+    in-block name fit test), gap to the block, breathing room between
+    neighbours, and the height of a stacked label row. */
 const ANCHOR_LABEL_CHAR_PX = 6.6;
 const ANCHOR_LABEL_GAP_PX = 8;
 const ANCHOR_LABEL_PAD_PX = 4;
@@ -456,18 +459,23 @@ export function DayStrip(props: DayStripProps) {
   const blockAmount = (blocks: number) => `${blocks} ${blocks === 1 ? "block" : "blocks"}`;
   const metaText = (anchor: StripAnchor) =>
     `${compactClock(anchor.start)} · ${blockAmount(anchor.blocks)}`;
-  const showName = (anchor: StripAnchor, visiblePx: number) =>
-    visiblePx >= anchor.name.length * 6.6 + 20;
+  // An anchor's name is drawn INSIDE its block with the same ellipsis the
+  // calendar lane uses: a block at least CAL_MIN_INSIDE_PX wide carries the
+  // (possibly truncated) name; only a narrower stub labels itself outside.
+  const showName = (_anchor: StripAnchor, visiblePx: number) => visiblePx >= CAL_MIN_INSIDE_PX;
+  const nameFits = (anchor: StripAnchor, visiblePx: number) =>
+    visiblePx >= anchor.name.length * ANCHOR_LABEL_CHAR_PX + 20;
   const showMeta = (anchor: StripAnchor, visiblePx: number) =>
     visiblePx >= Math.max(
       anchor.name.length * 6.6 + 20,
       metaText(anchor).length * 6.4 + 20,
     );
 
-  // Every drawn block shows its name. A block too narrow for it draws the name
-  // OUTSIDE: right of the block, else left (never past the lane), else on a
-  // stacked label row under the block rows. Labels share the row bands with
-  // the blocks and with each other, so none overlaps another label or block.
+  // Every drawn block shows its name: inside when the block clears the
+  // in-block floor, otherwise in an outside label (right of the block, else
+  // left, never past the lane, else on a stacked label row under the block
+  // rows) so no anchor is ever anonymous. Labels share the row bands with the
+  // blocks and with each other, so none overlaps another label or block.
   const labelOcc: Array<Array<{ x0: number; x1: number }>> = rowIntervals.map(() => []);
   placedAnchors.forEach(({ anchor, row }) => {
     const geom = anchorGeometry.get(anchor.id);
@@ -901,6 +909,16 @@ export function DayStrip(props: DayStripProps) {
                 ? ` · ${blockAmount(anchor.blocks)}${windowText}`
                 : ` — not counted (${anchor.reason})`
             }`;
+            // In-block name with the calendar's ellipsis: data-fit=clip marks
+            // the truncation, the class carries the ellipsis styling.
+            const nameLabel = showName(anchor, visiblePx) ? (
+              <span
+                class="strip-anchor__name"
+                data-fit={nameFits(anchor, visiblePx) ? "inside" : "clip"}
+              >
+                {anchor.name}
+              </span>
+            ) : null;
             if (props.readOnly) {
               return (
                 <span
@@ -912,9 +930,7 @@ export function DayStrip(props: DayStripProps) {
                   title={anchorTitle}
                   aria-hidden="true"
                 >
-                  {showName(anchor, visiblePx) && (
-                    <span class="strip-anchor__name">{anchor.name}</span>
-                  )}
+                  {nameLabel}
                   {showMeta(anchor, visiblePx) && (
                     <span class="strip-anchor__meta">{metaText(anchor)}</span>
                   )}
@@ -942,9 +958,7 @@ export function DayStrip(props: DayStripProps) {
                 onClick={() => onAnchorClick(anchor.id)}
                 key={anchor.id}
               >
-                {showName(anchor, visiblePx) && (
-                  <span class="strip-anchor__name">{anchor.name}</span>
-                )}
+                {nameLabel}
                 {showMeta(anchor, visiblePx) && (
                   <span class="strip-anchor__meta">{metaText(anchor)}</span>
                 )}

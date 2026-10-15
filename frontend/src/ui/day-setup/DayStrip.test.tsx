@@ -313,10 +313,12 @@ describe("Planning 2a timeline geometry", () => {
     // Widths are the counted duration, not the source window span.
     expect(widthPx(sudsing)).toBeCloseTo(60, 1);
     expect(widthPx(dinner)).toBeCloseTo(60, 1);
-    // 60px fits neither name, so no stub text is drawn; the true names, times
-    // and counts are preserved in the accessible labels.
-    expect(sudsing.querySelector(".strip-anchor__name")).toBeNull();
-    expect(dinner.querySelector(".strip-anchor__name")).toBeNull();
+    // 60px clears the in-block floor (44px), so the name is drawn INSIDE and
+    // truncated; the true names, times and counts stay in the accessible labels.
+    expect(sudsing.querySelector<HTMLElement>(".strip-anchor__name")?.textContent).toBe("Sudsing");
+    expect(dinner.querySelector<HTMLElement>(".strip-anchor__name")?.textContent).toBe("Foods Dinner");
+    expect(sudsing.querySelector<HTMLElement>(".strip-anchor__name")?.dataset.fit).toBe("clip");
+    expect(dinner.querySelector<HTMLElement>(".strip-anchor__name")?.dataset.fit).toBe("clip");
     expect(sudsing.getAttribute("aria-label")).toContain("Sudsing 5:45 PM · 2 blocks");
     expect(dinner.getAttribute("aria-label")).toContain("Foods Dinner 6 PM · 2 blocks");
     expect(sudsing.getAttribute("title")).toContain("Sudsing 5:45 PM · 2 blocks");
@@ -363,10 +365,12 @@ describe("Planning 2a timeline geometry", () => {
     // 6 blocks = 180px wide: the meta line fits and counts in blocks.
     expect(block("Focus").querySelector(".strip-anchor__meta")?.textContent).toBe("1:00p · 6 blocks");
     expect(block("Focus").querySelector(".strip-anchor__name")?.textContent).toBe("Focus");
-    // Sudsing's 60 counted minutes fit neither the meta line nor the name: no
-    // stub is drawn and the full label lives in title + aria-label.
+    // Sudsing's 60 counted minutes clear the in-block floor, so its name is
+    // drawn inside and truncated; the meta line still does not fit and the
+    // full label lives in title + aria-label.
     expect(block("Sudsing").querySelector(".strip-anchor__meta")).toBeNull();
-    expect(block("Sudsing").querySelector(".strip-anchor__name")).toBeNull();
+    expect(block("Sudsing").querySelector<HTMLElement>(".strip-anchor__name")?.textContent).toBe("Sudsing");
+    expect(block("Sudsing").querySelector<HTMLElement>(".strip-anchor__name")?.dataset.fit).toBe("clip");
     expect(block("Sudsing").getAttribute("aria-label")).toBe("Sudsing 5:45 PM · 2 blocks");
     expect(block("Sudsing").getAttribute("title")).toContain("5:45 PM · 2 blocks");
     expect(r.container.querySelector('[aria-label="Anchors"]')).toBeTruthy();

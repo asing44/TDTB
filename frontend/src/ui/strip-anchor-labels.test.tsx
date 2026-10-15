@@ -22,6 +22,18 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+// Frame 1:15 PM - 11:45 PM: the operator screenshot with the Your day Start
+// field set to 1:15 PM, where the late anchors crowd into narrow stubs.
+const lateFrame: StripAnchor[] = [
+  { id: "Morning Routine", name: "Morning Routine", start: "13:15", counted: false, reason: "skipped", blocks: 3, movable: false },
+  { id: "Live", name: "Live", start: "14:00", counted: true, reason: null, blocks: 1, movable: true,
+    window: { start: "12:00", end: "20:00" } },
+  { id: "Foods Breakfast", name: "Foods Breakfast", start: "15:00", counted: true, reason: null, blocks: 2, movable: true },
+  { id: "Sudsing", name: "Sudsing", start: "17:45", counted: true, reason: null, blocks: 1, movable: true },
+  { id: "Foods Dinner", name: "Foods Dinner", start: "18:00", counted: true, reason: null, blocks: 2, movable: true },
+  { id: "Night Routine", name: "Night Routine", start: "23:00", counted: true, reason: null, blocks: 2, movable: true },
+];
+
 // Frame 12:15 PM - 11:45 PM, as in the operator screenshot.
 const crowded: StripAnchor[] = [
   { id: "Live", name: "Live", start: "12:30", counted: true, reason: null, blocks: 1, movable: true,
@@ -33,11 +45,15 @@ const crowded: StripAnchor[] = [
   { id: "Morning Routine", name: "Morning Routine", start: "23:00", counted: false, reason: "skipped", blocks: 1, movable: false },
 ];
 
-function strip(anchors: StripAnchor[], selectedAnchorId: string | null = "Morning Routine") {
+function strip(
+  anchors: StripAnchor[],
+  selectedAnchorId: string | null = "Morning Routine",
+  frame: { start: string; end: string } = { start: "12:15", end: "23:45" },
+) {
   return render(
     <DayStrip
-      frameStart="12:15"
-      frameEnd="23:45"
+      frameStart={frame.start}
+      frameEnd={frame.end}
       sessions={[]}
       selectedIds={[]}
       selectableIds={[]}
@@ -119,5 +135,69 @@ describe("anchor outside labels", () => {
     const r = strip(crowded);
     const l = labels(r.container).find((x) => x.dataset.labelFor === "Night Routine");
     expect(l?.dataset.fit).toBe("left");
+  });
+});
+
+/* The operator screenshot: Start set to 1:15 PM crowds the late anchors into
+   narrow stubs. Anchors now behave like calendar items: a block at or above
+   the in-block floor (CAL_MIN_INSIDE_PX, shared with the calendar lane) draws
+   its name INSIDE, truncated with an ellipsis; only a narrower stub keeps the
+   outside label so no anchor is ever anonymous. */
+describe("anchor names inside the block", () => {
+  const FLOOR_PX = 44; // CAL_MIN_INSIDE_PX
+  const widthPx = (el: HTMLElement) => (parseFloat(el.style.width) / 100) * LANE_W;
+  const blockOf = (r: ReturnType<typeof strip>, id: string) =>
+    r.container.querySelector<HTMLElement>(`[data-anchor-id="${id}"]`)!;
+  const outsideOf = (r: ReturnType<typeof strip>, id: string) =>
+    labels(r.container).find((l) => l.dataset.labelFor === id);
+  const late = () => strip(lateFrame, "Morning Routine", { start: "13:15", end: "23:45" });
+
+  it("draws the (truncated) name inside every block at or above the floor, never an outside label", () => {
+    const r = late();
+    for (const a of lateFrame) {
+      const block = blockOf(r, a.id);
+      const w = widthPx(block);
+      if (w < FLOOR_PX) continue;
+      const name = block.querySelector<HTMLElement>(".strip-anchor__name");
+      expect(name?.textContent, a.id).toBe(a.name);
+      const fits = w >= a.name.length * 6.6 + 20;
+      // data-fit=clip is the ellipsis marker; the overflow-hidden/ellipsis
+      // styling itself lives on the strip-anchor__name class.
+      expect(name?.dataset.fit, a.id).toBe(fits ? "inside" : "clip");
+      expect(outsideOf(r, a.id), a.id).toBeUndefined();
+      if (!fits) expect(name!.scrollWidth <= name!.clientWidth, a.id).toBe(true);
+    }
+  });
+
+  it("keeps the outside label only for a block under the floor", () => {
+    const r = late();
+    for (const a of lateFrame) {
+      const block = blockOf(r, a.id);
+      if (widthPx(block) >= FLOOR_PX) continue;
+      expect(block.querySelector(".strip-anchor__name"), a.id).toBeNull();
+      expect(outsideOf(r, a.id)?.textContent, a.id).toBe(a.name);
+    }
+    // The fixture actually exercises both sides of the floor.
+    const widths = lateFrame.map((a) => widthPx(blockOf(r, a.id)));
+    expect(widths.some((w) => w >= FLOOR_PX)).toBe(true);
+    expect(widths.some((w) => w < FLOOR_PX)).toBe(true);
+  });
+
+  it("keeps the full name in title and aria-label when the in-block name truncates", () => {
+    const r = late();
+    for (const a of lateFrame) {
+      const block = blockOf(r, a.id);
+      expect(block.getAttribute("title"), a.id).toContain(a.name);
+      expect(block.getAttribute("aria-label"), a.id).toContain(a.name);
+    }
+  });
+
+  it("truncates a not-counted dashed block inside too, keeping the dimming", () => {
+    const r = late();
+    const morning = blockOf(r, "Morning Routine");
+    expect(widthPx(morning)).toBeGreaterThanOrEqual(FLOOR_PX);
+    expect(morning.classList.contains("strip-anchor--not-counted")).toBe(true);
+    expect(morning.querySelector<HTMLElement>(".strip-anchor__name")?.dataset.fit).toBe("clip");
+    expect(outsideOf(r, "Morning Routine")).toBeUndefined();
   });
 });

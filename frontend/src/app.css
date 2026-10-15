@@ -8878,6 +8878,7 @@ body {
 }
 
 .strip-anchor__name {
+  min-width: 0;
   font-size: 12px;
   font-weight: 500;
   white-space: nowrap;
