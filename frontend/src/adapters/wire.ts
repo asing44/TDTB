@@ -51,6 +51,10 @@ import type {
   CommitReport,
   CommitSurface,
   DaySetup,
+  HabitItem,
+  HabitOverride,
+  HabitOverrides,
+  HabitsInfo,
   DaySetupSaveResult,
   PromptExportOutcome,
   DurationSourceLabel,
@@ -81,6 +85,7 @@ import type {
   SchedulableOverride,
 } from "../model/types";
 import { blocksLabel } from "../model/time";
+import { HABIT_MINUTES_MAX } from "../model/habits";
 import type {
   AnchoredStartSaveResult,
   DurationMemoryResetResult,
@@ -1305,6 +1310,56 @@ export function projectLedger(wire: Wire): Ledger {
   };
 }
 
+function projectHabitEntry(raw: unknown): HabitOverride | null {
+  if (!raw || typeof raw !== "object") return null;
+  const value = raw as Wire;
+  const entry: HabitOverride = {};
+  if (typeof value.on === "boolean") entry.on = value.on;
+  if (
+    Number.isInteger(value.minutes) &&
+    value.minutes >= 0 &&
+    value.minutes <= HABIT_MINUTES_MAX
+  ) {
+    entry.minutes = value.minutes;
+  }
+  return entry;
+}
+
+/** Per-day habit overrides from `day_setup.habits`. Absent/garbage → undefined
+    so the save omits the key and the server preserves what it has. */
+function projectHabitOverrides(raw: unknown): HabitOverrides | undefined {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+  const value = raw as Wire;
+  const items: HabitOverrides["items"] = {};
+  if (value.items && typeof value.items === "object") {
+    for (const [key, entry] of Object.entries(value.items)) {
+      const projected = projectHabitEntry(entry);
+      if (projected) items[key] = projected;
+    }
+  }
+  return { items, total: projectHabitEntry(value.total) };
+}
+
+function projectHabitsInfo(raw: unknown): HabitsInfo | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const value = raw as Wire;
+  const items: HabitItem[] = [];
+  for (const row of Array.isArray(value.items) ? value.items : []) {
+    if (!row || typeof row !== "object") continue;
+    const name = String(row.content ?? "").trim();
+    if (name === "" || !Number.isFinite(row.minutes)) continue;
+    items.push({ id: String(row.id ?? ""), name, minutes: Math.max(0, Math.trunc(row.minutes)) });
+  }
+  const n = (v: unknown) => (Number.isFinite(v) ? Number(v) : 0);
+  return {
+    total: n(value.total),
+    done: n(value.done),
+    outstanding: n(value.outstanding),
+    estMinutes: n(value.est_minutes),
+    items,
+  };
+}
+
 export function projectDaySetup(wire: Wire, confirmed: boolean): DaySetup {
   const anchored: DaySetup["anchored"] = {};
   for (const o of wire.anchored ?? []) {
@@ -1375,6 +1430,8 @@ export function projectDaySetup(wire: Wire, confirmed: boolean): DaySetup {
       : Number(wire.work_allotment_minutes);
   }
   if (Object.keys(schedulable).length > 0) result.schedulable = schedulable;
+  const habits = projectHabitOverrides(wire.habits);
+  if (habits) result.habits = habits;
   return result;
 }
 
@@ -2009,6 +2066,7 @@ export function projectDroppedToday(rows: unknown): import("../model/types").Dro
 export function projectPlanInputs(wire: Wire): PlanInputs {
   const warnings = (wire.source_warnings ?? []).map(String);
   const habits = wire.habits ?? {};
+  const habitsInfo = projectHabitsInfo(wire.habits);
   const habitsNote =
     habits.total > 0
       ? `${habits.outstanding} of ${habits.total} habits outstanding · ~${habits.est_minutes}min`
@@ -2030,6 +2088,7 @@ export function projectPlanInputs(wire: Wire): PlanInputs {
     anchored: (wire.anchored_blocks ?? []).map(projectAnchored),
     anchoredSourceFingerprint: String(wire.anchored_source_fingerprint ?? ""),
     habitsNote,
+    ...(habitsInfo ? { habits: habitsInfo } : {}),
     time: {
       now: String(wire.time?.now ?? ""),
       anchor: String(wire.time?.anchor ?? ""),
@@ -2415,6 +2474,9 @@ export function daySetupToWire(d: DaySetup): Wire {
   if (Object.prototype.hasOwnProperty.call(d, "schedulable")) {
     wire.schedulable = d.schedulable;
   }
+  // Full replace per POST; omitted when the model carries none so the server
+  // preserves its dated overrides.
+  if (d.habits) wire.habits = { items: d.habits.items, total: d.habits.total };
   return wire;
 }
 

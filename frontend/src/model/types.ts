@@ -380,6 +380,39 @@ export interface AnchoredOverride {
   calendarStartAtEdit?: string | null;
 }
 
+/** One outstanding habit the artifact supplied (wire `habits.items`). */
+export interface HabitItem {
+  id: string;
+  name: string;
+  minutes: number;
+}
+
+/** Server-verbatim `/plan-inputs` habits block. `items` is empty when the
+    artifact only carries the aggregate. */
+export interface HabitsInfo {
+  total: number;
+  done: number;
+  outstanding: number;
+  estMinutes: number;
+  items: HabitItem[];
+}
+
+/** One per-day habit override entry. `on: false` leaves the habit out of
+    capacity; `minutes` (integer 0..480) replaces its duration. Absent/null
+    means the default. */
+export interface HabitOverride {
+  on?: boolean;
+  minutes?: number | null;
+}
+
+/** Today-only habit overrides, keyed by habit id (or name). `total` applies
+    only when the artifact carries no per-habit items. Local-only: never a
+    Todoist or Calendar write. */
+export interface HabitOverrides {
+  items: Record<string, HabitOverride>;
+  total: HabitOverride | null;
+}
+
 export interface Captures {
   intention: string;
   forMeegy: string; // megan_nicety on the wire
@@ -391,6 +424,8 @@ export interface DaySetup {
   eod: string | null;
   buffering: Buffering;
   anchored: Record<string, AnchoredOverride>;
+  /** Today-only habit overrides. Absent preserves the dated override. */
+  habits?: HabitOverrides;
   captures: Captures;
   confirmed: boolean;
   /** Absent = preserve dated override; null = reset to config. */
@@ -884,6 +919,8 @@ export interface PlanInputs {
   /** Raw config specs before Day Setup overrides (locked decision 21). */
   anchoredSourceFingerprint: string;
   habitsNote: string | null;
+  /** Outstanding-habit detail behind `habitsNote`; absent on older payloads. */
+  habits?: HabitsInfo;
   time: TimeFrame;
   capacity: Capacity;
   daySetup: DaySetup;
