@@ -280,3 +280,255 @@ export function AnchorPopover(props: AnchorPopoverProps) {
     </div>
   );
 }
+
+/** A calendar event as the popover sees it: the EFFECTIVE (already edited)
+    start/duration, plus the live calendar start so a later drift can surface as
+    "changed in calendar". Edits are local to today and never written back to
+    the calendar. */
+export interface CalendarPopoverEvent {
+  id: string;
+  name: string;
+  /** Today's effective start (an edit already applied when one is in force). */
+  start: string;
+  /** The live calendar start, unedited — the target of "Use calendar time". */
+  calendarStart: string;
+  durationMin: number;
+  /** Effective 30-minute blocks (an edit already applied). */
+  blocks: number;
+  counted: boolean;
+  /** A local start edit is in force. */
+  edited: boolean;
+  /** A local duration (blocks) edit is in force. */
+  blocksEdited: boolean;
+  /** The live calendar start moved since the edit; the edit is kept. */
+  changedInCalendar: boolean;
+}
+
+export interface CalendarPopoverProps {
+  event: CalendarPopoverEvent;
+  /** Today-only start move (the strip's drag/arrow path); null clears it. */
+  onMoveStart: (id: string, start: string | null) => void;
+  /** Today-only duration in 30-minute blocks. */
+  onSetBlocks: (id: string, blocks: number) => void;
+  /** The existing skip-today override. */
+  onToggleCount: (id: string) => void;
+  /** Clears the local start and duration edits. */
+  onReset: (id: string) => void;
+  onClose: () => void;
+}
+
+/** The calendar variant of the shared popover: same card, placement and close
+    behaviour, but local-only fields — Starts, Duration and Count today — plus a
+    "changed in calendar" chip and "Reset to calendar". Nothing here writes to
+    Google Calendar. */
+export function CalendarPopover(props: CalendarPopoverProps) {
+  const { event } = props;
+  const ref = useRef<HTMLDivElement>(null);
+  const [pos, setPos] = useState({ top: 0, left: 0, maxHeight: 0 });
+  // Both fields are held locally: a cleared or partially typed value must never
+  // flow into today's override (and so into the server).
+  const [startValue, setStartValue] = useState(event.start);
+  const [startInvalid, setStartInvalid] = useState(false);
+  const [blocksValue, setBlocksValue] = useState(String(event.blocks));
+  const lastSent = useRef(event.start);
+  const closeRef = useRef(props.onClose);
+  closeRef.current = props.onClose;
+  const eventIdRef = useRef(event.id);
+  eventIdRef.current = event.id;
+  const closePopover = () => {
+    closeRef.current();
+    document.querySelector<HTMLElement>(`[data-anchor-id="${eventIdRef.current}"]`)?.focus();
+  };
+
+  // Re-sync the fields when the event or its persisted values change (a strip
+  // move, Reset, or an external update), so the inputs never drift.
+  useEffect(() => {
+    setStartValue(event.start);
+    setStartInvalid(false);
+    lastSent.current = event.start;
+    setBlocksValue(String(event.blocks));
+  }, [event.id, event.start, event.blocks]);
+
+  const commitStart = (raw: string) => {
+    if (!isValidHHMM(raw)) {
+      setStartInvalid(true);
+      return;
+    }
+    setStartInvalid(false);
+    if (raw === lastSent.current) return;
+    lastSent.current = raw;
+    props.onMoveStart(event.id, raw);
+  };
+  const commitBlocks = (raw: string) => {
+    const blocks = Number(raw);
+    if (!Number.isInteger(blocks) || blocks < 0) return;
+    if (blocks === event.blocks) return;
+    props.onSetBlocks(event.id, blocks);
+  };
+
+  useEffect(() => {
+    const place = () => {
+      const rect = document
+        .querySelector(`[data-anchor-id="${event.id}"]`)
+        ?.getBoundingClientRect();
+      const height = ref.current?.getBoundingClientRect().height ?? 0;
+      const placed = computePopoverPlacement(
+        rect ?? { top: 0, bottom: 0, left: 0, right: 0, width: 0, height: 0 },
+        { width: window.innerWidth, height: window.innerHeight },
+        { width: POPOVER_WIDTH, height },
+        "down",
+      );
+      setPos({ top: placed.top, left: placed.left, maxHeight: placed.maxHeight });
+    };
+    place();
+    window.addEventListener("resize", place);
+    window.addEventListener("scroll", place, true);
+    return () => {
+      window.removeEventListener("resize", place);
+      window.removeEventListener("scroll", place, true);
+    };
+  }, [event.id, event.start, event.blocks, event.counted]);
+
+  useEffect(() => {
+    ref.current?.focus();
+  }, [event.id]);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") closePopover();
+    };
+    const onDown = (e: MouseEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (target && ref.current?.contains(target)) return;
+      if (target?.closest?.("[data-anchor-id]")) return;
+      closePopover();
+    };
+    document.addEventListener("keydown", onKey);
+    document.addEventListener("mousedown", onDown);
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.removeEventListener("mousedown", onDown);
+    };
+  }, []);
+
+  const uid = event.id.replace(/[^a-zA-Z0-9_-]/g, "-");
+  const resetDisabled = !(event.edited || event.blocksEdited);
+  return (
+    <div
+      class="anchor-popover anchor-popover--calendar"
+      role="dialog"
+      aria-label={event.name}
+      tabIndex={-1}
+      ref={ref}
+      style={{
+        position: "fixed",
+        top: `${pos.top}px`,
+        left: `${pos.left}px`,
+        width: `${POPOVER_WIDTH}px`,
+        maxHeight: pos.maxHeight > 0 ? `${pos.maxHeight}px` : undefined,
+      }}
+    >
+      <div class="anchor-popover__head">
+        <span class="anchor-popover__name">{event.name}</span>
+        <span class="anchor-popover__count">
+          {event.blocks} {event.blocks === 1 ? "block" : "blocks"}
+        </span>
+      </div>
+
+      <div class="anchor-popover__fields">
+        <div class="anchor-popover__field">
+          <label for={`calendar-popover-start-${uid}`}>Starts</label>
+          <input
+            id={`calendar-popover-start-${uid}`}
+            class="anchor-popover__time"
+            type="time"
+            step={900}
+            value={startValue}
+            aria-invalid={startInvalid || undefined}
+            aria-describedby={startInvalid ? `calendar-popover-start-error-${uid}` : undefined}
+            onInput={(e) => {
+              const value = (e.target as HTMLInputElement).value;
+              setStartValue(value);
+              setStartInvalid(!isValidHHMM(value));
+            }}
+            onChange={(e) => commitStart((e.target as HTMLInputElement).value)}
+            onBlur={(e) => commitStart((e.target as HTMLInputElement).value)}
+          />
+          {startInvalid && (
+            <span
+              class="field-error"
+              id={`calendar-popover-start-error-${uid}`}
+              role="alert"
+            >
+              Start time is required.
+            </span>
+          )}
+        </div>
+        <div class="anchor-popover__field">
+          <label for={`calendar-popover-blocks-${uid}`}>Duration</label>
+          <input
+            id={`calendar-popover-blocks-${uid}`}
+            class="anchor-popover__time"
+            type="number"
+            min={0}
+            step={1}
+            inputMode="numeric"
+            value={blocksValue}
+            onInput={(e) => setBlocksValue((e.target as HTMLInputElement).value)}
+            onChange={(e) => commitBlocks((e.target as HTMLInputElement).value)}
+            onBlur={(e) => commitBlocks((e.target as HTMLInputElement).value)}
+          />
+          <span class="anchor-popover__unit">blocks · 30 min each</span>
+        </div>
+      </div>
+
+      <div class="anchor-popover__row">
+        <span>Count today</span>
+        <button
+          type="button"
+          role="switch"
+          aria-checked={event.counted}
+          aria-label="Count today"
+          class="anchor-popover__switch"
+          onClick={() => props.onToggleCount(event.id)}
+        />
+      </div>
+
+      {event.changedInCalendar && (
+        <div class="anchor-popover__changed" role="status">
+          <span class="anchor-popover__chip">Changed in calendar</span>
+          <button
+            type="button"
+            class="anchor-popover__link"
+            onClick={() => props.onMoveStart(event.id, null)}
+          >
+            Use calendar time
+          </button>
+        </div>
+      )}
+
+      <p class="anchor-popover__hint" role="note">
+        Edits are for today only. Google Calendar is not changed.
+      </p>
+
+      <div class="anchor-popover__footer">
+        <button
+          type="button"
+          class="anchor-popover__link"
+          disabled={resetDisabled}
+          onClick={() => props.onReset(event.id)}
+        >
+          Reset to calendar
+        </button>
+        <span aria-hidden="true">·</span>
+        <button
+          type="button"
+          class="anchor-popover__link anchor-popover__link--muted"
+          onClick={closePopover}
+        >
+          Close
+        </button>
+      </div>
+    </div>
+  );
+}
