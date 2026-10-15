@@ -57,15 +57,15 @@ function AllBlocksRowView({
   onToggle: () => void;
 }) {
   return (
-    <div class="all-blocks__row">
+    <div class={`all-blocks__row${row.counting ? "" : " all-blocks__row--off"}`}>
       <div class="all-blocks__row-text">
         <span class="all-blocks__name">{row.name}</span>
         <span class="all-blocks__meta">
           <span class="all-blocks__time">{row.time}</span>
           <span class="all-blocks__blocks">{blockCountLabel(row.blocks)}</span>
-          <span class={statusClass(row.status)}>{row.status}</span>
         </span>
       </div>
+      <span class={statusClass(row.status)}>{row.status}</span>
       <button
         type="button"
         role="switch"
@@ -78,6 +78,32 @@ function AllBlocksRowView({
   );
 }
 
+function AllBlocksGroup({
+  label,
+  rows,
+  onToggle,
+}: {
+  label: string;
+  rows: AllBlocksRow[];
+  onToggle: (row: AllBlocksRow) => void;
+}) {
+  const off = rows.filter((row) => !row.counting).length;
+  return (
+    <section class="all-blocks__group" aria-label={label}>
+      <div class="all-blocks__group-head">
+        <h4 class="all-blocks__group-title">{label}</h4>
+        <span class="all-blocks__count">
+          {rows.length}
+          {off > 0 ? ` · ${off} off` : ""}
+        </span>
+      </div>
+      {rows.map((row) => (
+        <AllBlocksRowView key={row.id} row={row} onToggle={() => onToggle(row)} />
+      ))}
+    </section>
+  );
+}
+
 export function AllBlocksModal({
   anchors,
   calendar,
@@ -87,6 +113,9 @@ export function AllBlocksModal({
   onClose,
 }: AllBlocksModalProps) {
   const dialog = useDialog(onClose);
+  const total = anchors.length + calendar.length;
+  const off = [...anchors, ...calendar].filter((row) => !row.counting).length;
+  const summary = total === 0 ? "" : off === 0 ? "All counting" : off === total ? "All off today" : `${off} off today`;
 
   return (
     <>
@@ -100,38 +129,33 @@ export function AllBlocksModal({
         ref={dialog.ref}
         onKeyDown={(e) => dialog.onKeyDown(e as unknown as KeyboardEvent)}
       >
-        <h3 class="all-blocks__title">All blocks</h3>
+        <header class="all-blocks__head">
+          <div class="all-blocks__headline">
+            <h3 class="all-blocks__title">All blocks</h3>
+            {summary ? <span class="all-blocks__summary">{summary}</span> : null}
+          </div>
+          <p class="all-blocks__helper">
+            Turn a block off to leave it out of today's capacity. Your config is not changed.
+          </p>
+        </header>
         <div class="all-blocks__body">
-          <section class="all-blocks__group" aria-label="Anchors">
-            <h4 class="all-blocks__group-title">Anchors</h4>
-            {anchors.length === 0 ? (
-              <p class="all-blocks__empty">No anchors configured.</p>
-            ) : (
-              anchors.map((row) => (
-                <AllBlocksRowView key={row.id} row={row} onToggle={() => onToggleAnchor(row.id)} />
-              ))
-            )}
-          </section>
-          <section class="all-blocks__group" aria-label="Calendar events">
-            <h4 class="all-blocks__group-title">Calendar events</h4>
-            {calendar.length === 0 ? (
-              <p class="all-blocks__empty">No calendar events today.</p>
-            ) : (
-              calendar.map((row) => (
-                <AllBlocksRowView
-                  key={row.id}
-                  row={row}
-                  onToggle={() => onToggleCalendar(row.id, !row.counting)}
-                />
-              ))
-            )}
-          </section>
+          {total === 0 ? <p class="all-blocks__empty">No blocks to show today.</p> : null}
+          {anchors.length > 0 ? (
+            <AllBlocksGroup label="Anchors" rows={anchors} onToggle={(row) => onToggleAnchor(row.id)} />
+          ) : null}
+          {calendar.length > 0 ? (
+            <AllBlocksGroup
+              label="Calendar events"
+              rows={calendar}
+              onToggle={(row) => onToggleCalendar(row.id, !row.counting)}
+            />
+          ) : null}
         </div>
         <div class="all-blocks__footer">
           <button type="button" class="header-pill all-blocks__reset" onClick={onResetAll}>
             Reset all to config
           </button>
-          <button type="button" class="btn btn--primary" onClick={onClose}>
+          <button type="button" class="btn btn--primary all-blocks__done" onClick={onClose}>
             Done
           </button>
         </div>
