@@ -184,15 +184,13 @@ describe("U12 Set up day composition", () => {
     expect(h.store.getState().ui.editorAnchor).toBe("Sudsing");
   });
 
-  it("keeps a config anchor that started before the frame at the frame edge, and the in-frame ones", () => {
+  it("draws in-frame anchors but hides one fully elapsed before the frame, behind a note", () => {
     const h = screenHarness("ready", 8, { frameStart: "13:30" });
     const r = h.ui(<App />);
     // Morning Routine 07:45 with 3 counted blocks (90 min) is fully elapsed
-    // before the frame; it is no longer dropped — it sits at the frame edge.
-    const mr = r.container.querySelector('[data-anchor-id="Morning Routine"]') as HTMLElement;
-    expect(mr).toBeTruthy();
-    expect(parseFloat(mr.style.left)).toBeCloseTo(0, 2);
-    expect(mr.classList.contains("strip-anchor--not-counted")).toBe(false);
+    // before the frame: no stub at the frame edge, a note points at All blocks.
+    expect(r.container.querySelector('[data-anchor-id="Morning Routine"]')).toBeNull();
+    expect(r.getByRole("button", { name: /hidden today/ })).toBeTruthy();
     const sudsing = r.container.querySelector('[data-anchor-id="Sudsing"]') as HTMLElement;
     expect(sudsing).toBeTruthy();
     expect(sudsing.classList.contains("strip-anchor--not-counted")).toBe(false);
@@ -233,7 +231,7 @@ describe("U12 Set up day composition", () => {
     expect(r.queryByRole("note")).toBeNull();
   });
 
-  it("keeps a fully elapsed config anchor off but re-includable, placed from the frame start when included", async () => {
+  it("keeps a fully elapsed config anchor off the strip but re-includable from All blocks", async () => {
     const h = screenHarness("ready", 8, { frameStart: "13:30" });
     const before = h.store.getState().daySetup;
     h.store.dispatch({
@@ -247,21 +245,18 @@ describe("U12 Set up day composition", () => {
       },
     });
     const r = h.ui(<App />);
-    const mr = () =>
-      r.container.querySelector('[data-anchor-id="Morning Routine"]') as HTMLElement;
+    const mr = () => r.container.querySelector('[data-anchor-id="Morning Routine"]');
     // Morning Routine 07:45 + 90 min ends 09:15, before the 13:30 frame; it is
-    // off but stays visible and re-includable, drawn at the frame edge.
-    expect(mr()).toBeTruthy();
-    expect(mr().classList.contains("strip-anchor--not-counted")).toBe(true);
-    expect(mr().getAttribute("aria-label")).toContain("1:30 PM");
-    fireEvent.click(mr());
-    expect(r.getByRole("switch", { name: "Count today" }).getAttribute("aria-checked")).toBe("false");
-    fireEvent.click(r.getByRole("switch", { name: "Count today" }));
-    await vi.waitFor(() =>
-      expect(mr().classList.contains("strip-anchor--not-counted")).toBe(false),
-    );
-    expect(mr().getAttribute("aria-label")).toContain("1:30 PM");
-    expect(mr().getAttribute("aria-label")).toContain("3 blocks");
+    // off, so it is not drawn. The "hidden today" note opens All blocks, where
+    // it stays re-includable.
+    expect(mr()).toBeNull();
+    fireEvent.click(r.getByRole("button", { name: /hidden today/ }));
+    const sw = () => r.getByRole("switch", { name: "Count Morning Routine today" });
+    expect(sw().getAttribute("aria-checked")).toBe("false");
+    fireEvent.click(sw());
+    await vi.waitFor(() => expect(sw().getAttribute("aria-checked")).toBe("true"));
+    // Counting again, it is still fully elapsed, so it stays off the strip.
+    expect(mr()).toBeNull();
   });
 
   it("selects an anchor block when it is clicked", () => {
@@ -327,7 +322,7 @@ describe("U12 Set up day composition", () => {
     expect(r.getByRole("button", { name: "+ Add prompt" })).toBeTruthy();
   });
 
-  it("draws a skipped anchor dimmed on the strip", () => {
+  it("hides a skipped anchor from the strip and keeps it reachable via All blocks", () => {
     const h = screenHarness();
     const before = h.store.getState().daySetup;
     h.store.dispatch({
@@ -341,9 +336,12 @@ describe("U12 Set up day composition", () => {
       },
     });
     const r = h.ui(<App />);
-    const sudsing = r.container.querySelector('[data-anchor-id="Sudsing"]') as HTMLElement;
-    expect(sudsing.classList.contains("strip-anchor--not-counted")).toBe(true);
-    expect(sudsing.classList.contains("strip-anchor--skipped")).toBe(true);
+    // A skipped anchor is not drawn; the note keeps it reachable via All blocks.
+    expect(r.container.querySelector('[data-anchor-id="Sudsing"]')).toBeNull();
+    fireEvent.click(r.getByRole("button", { name: /hidden today/ }));
+    expect(
+      r.getByRole("switch", { name: "Count Sudsing today" }).getAttribute("aria-checked"),
+    ).toBe("false");
   });
 
   it("changes Mint availability when the preset changes and Reset restores defaults", () => {
@@ -640,7 +638,7 @@ describe("All blocks modal (Set up day)", () => {
   }
 
   const openAllBlocks = (r: ReturnType<ReturnType<typeof makeHarness>["ui"]>) =>
-    fireEvent.click(r.getByRole("button", { name: /All blocks/ }));
+    fireEvent.click(r.getByRole("button", { name: /^All blocks/ }));
 
   const chipOf = (dialog: HTMLElement, name: string) => {
     const row = within(dialog).getByText(name).closest(".all-blocks__row") as HTMLElement;
@@ -679,7 +677,7 @@ describe("All blocks modal (Set up day)", () => {
       expect(within(calendar).getByText(name)).toBeTruthy();
     }
     // Count chip reflects the one skipped row (Morning Routine).
-    expect(r.getByRole("button", { name: /All blocks/ }).textContent).toContain("1 off");
+    expect(r.getByRole("button", { name: /^All blocks/ }).textContent).toContain("1 off");
   });
 
   it("renders the elapsed, outside-frame, after-day-end, skipped, and counted status chips", () => {
@@ -746,7 +744,7 @@ describe("All blocks modal (Set up day)", () => {
   it("Escape closes the modal and returns focus to the trigger; Done also closes", () => {
     const h = screenHarness();
     const r = h.ui(<App />);
-    const trigger = r.getByRole("button", { name: /All blocks/ }) as HTMLElement;
+    const trigger = r.getByRole("button", { name: /^All blocks/ }) as HTMLElement;
     trigger.focus();
     openAllBlocks(r);
     const dialog = r.getByRole("dialog", { name: "All blocks" }) as HTMLElement;

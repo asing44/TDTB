@@ -199,9 +199,9 @@ describe("anchor keyboard move", () => {
 });
 
 describe("anchors that must not move", () => {
-  it("ignores pointer and keyboard on calendar-sourced and not-counted anchors", () => {
+  it("ignores pointer and keyboard on calendar-sourced anchors", () => {
     const { r, block, onMoveAnchor, onSelectAnchor } = setup();
-    for (const id of ["Dentist", "Morning Routine"]) {
+    for (const id of ["Dentist"]) {
       const el = block(id);
       expect(el.classList.contains("strip-anchor--movable")).toBe(false);
       fireEvent.pointerDown(el, { ...pointer, clientX: 100 });
@@ -211,9 +211,8 @@ describe("anchors that must not move", () => {
       fireEvent.click(el);
     }
     expect(onMoveAnchor).not.toHaveBeenCalled();
-    expect(onSelectAnchor).toHaveBeenCalledTimes(2);
+    expect(onSelectAnchor).toHaveBeenCalledTimes(1);
     expect(r.queryByText(/→/)).toBeNull();
-    expect(block("Morning Routine").classList.contains("strip-anchor--not-counted")).toBe(true);
     expect(block("Sudsing").classList.contains("strip-anchor--movable")).toBe(true);
   });
 
@@ -341,8 +340,8 @@ describe("Planning 2a timeline geometry", () => {
     expect(right(order[0])).toBeLessThan(left(order[1]));
     expect(right(order[1])).toBeLessThan(left(order[2]));
     for (const el of order) {
-      // The 12px legibility floor, never the old 56px exaggeration.
-      expect((parseFloat(el.style.width) / 100) * SPAN).toBeGreaterThanOrEqual(11.9);
+      // The 28px legibility floor, never the old 56px exaggeration.
+      expect((parseFloat(el.style.width) / 100) * SPAN).toBeGreaterThanOrEqual(27.9);
       expect((parseFloat(el.style.width) / 100) * SPAN).toBeLessThan(56);
       expect(el.querySelector(".strip-anchor__name")?.textContent).toBeTruthy();
     }
@@ -393,7 +392,7 @@ describe("Planning 2a timeline geometry", () => {
 });
 
 describe("calendar lane", () => {
-  it("draws today's calendar events read-only with the label to the right of the block", () => {
+  it("draws today's calendar events read-only; a block too narrow for its title labels it outside", () => {
     const { r } = setup({
       calendar: [
         { id: "phep", name: "PHEP sync", start: "15:00", durationMin: 60, counted: true },
@@ -406,9 +405,12 @@ describe("calendar lane", () => {
     expect(r.getByLabelText(/^Standup 9:30 AM \(calendar\)$/)).toBeTruthy();
     // Not a button: calendar rows are not editable or movable here.
     expect(lane?.querySelector("button")).toBeNull();
-    // The label sits outside the block, at block-end + 8px.
-    const label = lane?.querySelector(".strip-cal__label") as HTMLElement;
-    expect(label.textContent).toContain("Standup 9:30a");
+    // Standup is a 30px block: too narrow for text, so the label sits outside
+    // it, at block-end + 8px.
+    const label = Array.from(lane?.querySelectorAll(".strip-cal__label") ?? []).find((el) =>
+      el.textContent?.includes("Standup 9:30a"),
+    ) as HTMLElement;
+    expect(label.getAttribute("data-fit")).toBe("right");
     expect(label.style.left).toContain("calc(");
   });
 
@@ -441,6 +443,116 @@ describe("calendar lane", () => {
   it("omits the lane when there are no events", () => {
     const { r } = setup({ calendar: [] });
     expect(r.container.querySelector('[aria-label="Calendar"]')).toBeNull();
+  });
+});
+
+describe("calendar labels", () => {
+  const lane = (r: ReturnType<typeof setup>["r"]) =>
+    r.container.querySelector('[aria-label="Calendar"]') as HTMLElement;
+  const labelOf = (r: ReturnType<typeof setup>["r"], text: string) =>
+    Array.from(lane(r).querySelectorAll(".strip-cal__label")).find((el) =>
+      el.textContent?.includes(text),
+    ) as HTMLElement;
+
+  it("draws the title inside the block when it fits", () => {
+    const { r } = setup({
+      calendar: [{ id: "sync", name: "Standup", start: "09:00", durationMin: 150, counted: true }],
+    });
+    const label = labelOf(r, "Standup 9:00a");
+    expect(label.getAttribute("data-fit")).toBe("inside");
+    expect(label.parentElement?.classList.contains("strip-cal")).toBe(true);
+  });
+
+  it("ellipsizes inside a block that only partly fits the title", () => {
+    const { r } = setup({
+      calendar: [{ id: "phep", name: "PHEP quarterly sync", start: "15:00", durationMin: 60, counted: true }],
+    });
+    const label = labelOf(r, "PHEP quarterly sync");
+    expect(label.getAttribute("data-fit")).toBe("clip");
+    expect(label.parentElement?.classList.contains("strip-cal")).toBe(true);
+  });
+
+  it("puts a too-narrow block's label outside, flipped left when the right has no room", () => {
+    const { r } = setup({
+      calendar: [
+        { id: "early", name: "Early", start: "08:00", durationMin: 30, counted: true },
+        { id: "late", name: "Late wrap-up", start: "23:15", durationMin: 30, counted: true },
+      ],
+    });
+    expect(labelOf(r, "Early").getAttribute("data-fit")).toBe("right");
+    const late = labelOf(r, "Late wrap-up");
+    expect(late.getAttribute("data-fit")).toBe("left");
+    // Anchored by its right edge to the block's left edge: it cannot cross the lane end.
+    expect(late.style.right).toContain("calc(");
+    expect(late.style.left).toBe("");
+    expect(late.parentElement).toBe(lane(r));
+  });
+
+  it("keeps the real start in the title of an event clipped at the frame edge", () => {
+    const { r } = setup({
+      calendar: [{ id: "edge", name: "Edge", start: "07:00", durationMin: 60, counted: true }],
+    });
+    expect(r.container.querySelector('[aria-label^="Edge"]')?.getAttribute("title")).toBe("Edge 7 AM");
+  });
+
+  it("keeps overlapping events on separate rows so labels never collide", () => {
+    const { r } = setup({
+      calendar: [
+        { id: "a", name: "Alpha", start: "10:00", durationMin: 30, counted: true },
+        { id: "b", name: "Bravo", start: "10:10", durationMin: 30, counted: true },
+      ],
+    });
+    expect(labelOf(r, "Alpha").style.top).not.toBe(labelOf(r, "Bravo").style.top);
+  });
+});
+
+describe("hidden anchors", () => {
+  it("does not draw an off anchor and notes it, opening All blocks from the note", () => {
+    const onShowAllBlocks = vi.fn();
+    const { r } = setup({ onShowAllBlocks });
+    expect(r.container.querySelector('[data-anchor-id="Morning Routine"]')).toBeNull();
+    const note = r.getByRole("button", { name: /1 hidden today/ });
+    expect(note.textContent).toContain("All blocks");
+    fireEvent.click(note);
+    expect(onShowAllBlocks).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not draw a fully elapsed anchor either, but keeps live ones", () => {
+    const { r, block } = setup({
+      frameStart: "13:30",
+      anchors: [
+        { id: "Morning Routine", name: "Morning Routine", start: "13:30", counted: true, reason: null, blocks: 3, elapsed: true },
+        { id: "Sudsing", name: "Sudsing", start: "17:45", counted: true, reason: null, blocks: 2, movable: true },
+      ],
+    });
+    expect(r.container.querySelector('[data-anchor-id="Morning Routine"]')).toBeNull();
+    expect(block("Sudsing")).toBeTruthy();
+    expect(r.getByText(/1 hidden today/)).toBeTruthy();
+  });
+
+  it("shows no note when everything is live", () => {
+    const { r } = setup({ anchors: anchors.filter((a) => a.counted) });
+    expect(r.queryByText(/hidden today/)).toBeNull();
+  });
+
+  it("keeps the selected anchor drawn so its popover stays attached", () => {
+    const { block } = setup({ selectedAnchorId: "Morning Routine" });
+    expect(block("Morning Routine")).toBeTruthy();
+  });
+
+  it("never draws a live block narrower than 28px, even when four overlap", () => {
+    const packed: StripAnchor[] = [
+      { id: "Morning Routine", name: "Morning Routine", start: "10:00", counted: true, reason: null, blocks: 4 },
+      { id: "Live", name: "Live", start: "10:05", counted: true, reason: null, blocks: 1 },
+      { id: "Foods Breakfast", name: "Foods Breakfast", start: "10:10", counted: true, reason: null, blocks: 1 },
+      { id: "Sudsing", name: "Sudsing", start: "10:15", counted: true, reason: null, blocks: 1 },
+    ];
+    const { r } = setup({ anchors: packed });
+    const blocks = Array.from(r.container.querySelectorAll("[data-anchor-id]")) as HTMLElement[];
+    expect(blocks).toHaveLength(4);
+    for (const el of blocks) {
+      expect((parseFloat(el.style.width) / 100) * SPAN).toBeGreaterThanOrEqual(27.9);
+    }
   });
 });
 

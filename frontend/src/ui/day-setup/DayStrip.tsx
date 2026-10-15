@@ -3,8 +3,11 @@
    column carries Calendar / Mint / Anchors, hour ticks sit above the lanes,
    and there is no separate frame lane or above-lane caption row.
 
-   Calendar events are read-only: the block sits on a 40px lane and its label
-   is drawn to the RIGHT of the block. The Mint lane (32px) is hatched with
+   Calendar events are read-only: the block sits on a 40px lane and its title
+   is drawn INSIDE the block when it fits (ellipsized when it partly fits); a
+   block under ~44px wide labels itself outside, to the right and flipped to the
+   left when the lane's right edge has no room, or title-only when neither fits.
+   The Mint lane (32px) is hatched with
    "Off today" when nothing is selected; otherwise dragging across slots
    selects them (Every interaction has a keyboard equivalent: focus a slot,
    Space toggles it, Arrow keys move between slots). Anchor blocks are 38px
@@ -15,7 +18,9 @@
    source start→end window) and shows its name plus (when it fits) the time
    and block count. A window-kind/template anchor also draws its allowed
    window as a light dashed track behind the counted block. Clicking one
-   selects it; pointer-dragging moves it (snaps to 15 minutes, clamped to the
+   selects it; anchors that are off today, outside the frame or fully elapsed
+   are not drawn at all (a "N hidden today" note opens All blocks); a live
+   block is never narrower than 28px; pointer-dragging moves it (snaps to 15 minutes, clamped to the
    frame) and the arrow keys move it too.
 
    Pure presentation: selection state and the Wall-filtered id sets come from
@@ -35,9 +40,15 @@ const BLOCK_MIN = 30;
 /** Two anchor sub-rows: top 6px, each 38px tall with an 8px gap. */
 const ANCHOR_ROW_TOP = 6;
 const ANCHOR_ROW_PITCH = 46;
-/** The floor that keeps a very short block visible/clickable. Widths are
+/** The floor that keeps a very short live block visible/clickable. Widths are
     never exaggerated past it; the full name/time/count stay in title + aria. */
-const MIN_VISIBLE_W = 12;
+const MIN_VISIBLE_W = 28;
+/** Calendar label fit: estimated glyph width, padding, and the narrowest
+    block that may carry (ellipsized) text inside itself. */
+const CAL_CHAR_PX = 6.6;
+const CAL_PAD_PX = 16;
+const CAL_MIN_INSIDE_PX = 44;
+const CAL_LABEL_GAP_PX = 8;
 /** Visible gap between a clipped block's right edge and the next block. */
 const STAGGER_GAP_PX = 2;
 /** README row preference: these ride row 0, the rest of the catalogue
@@ -70,6 +81,9 @@ export interface StripAnchor {
       drawn as a light dashed non-interactive track behind the counted block. */
   window?: { start: string; end: string };
   counted: boolean;
+  /** Counted config anchor that began and ended before the frame: it sits at
+      the frame edge and is re-includable, but the strip does not draw it. */
+  elapsed?: boolean;
   reason: string | null;
   /** Counted, config-sourced anchors only: calendar rows and anything not
       counted today stay put. Absent means not movable. */
@@ -111,6 +125,8 @@ export interface DayStripProps {
       all — no slot buttons, no anchor buttons, no drag, no selection. The
       strip stays a read-only picture of what is already on the day. */
   readOnly?: boolean;
+  /** Opens the All blocks modal from the "N hidden today" note. */
+  onShowAllBlocks?: () => void;
 }
 
 export function DayStrip(props: DayStripProps) {
@@ -316,7 +332,14 @@ export function DayStrip(props: DayStripProps) {
   const rowIntervals: Array<Array<{ min: number; max: number }>> = [[], []];
   const overlapsRow = (row: number, min: number, max: number) =>
     rowIntervals[row].some((iv) => min < iv.max && max > iv.min);
-  const placedAnchors = props.anchors
+  // Off, outside-frame and fully elapsed anchors are not drawn (All blocks
+  // lists them); the open one stays so its popover keeps its anchor.
+  const isHiddenAnchor = (anchor: StripAnchor) =>
+    anchor.id !== props.selectedAnchorId && (!anchor.counted || anchor.elapsed === true);
+  const hiddenAnchors = props.anchors.filter(isHiddenAnchor).length;
+  const drawnAnchors = props.anchors.filter((anchor) => !isHiddenAnchor(anchor));
+  const floorMin = MIN_VISIBLE_W / pxPerMin;
+  const placedAnchors = drawnAnchors
     .map((anchor) => ({
       anchor,
       min: toMinutes(anchor.start),
@@ -325,7 +348,8 @@ export function DayStrip(props: DayStripProps) {
     .filter(({ min, length }) => min < endMin && min + length > startMin)
     .sort((a, b) => a.min - b.min)
     .map(({ anchor, min, length }) => {
-      const max = min + length;
+      // Rows pack on the drawn width, so a short block's 28px floor counts.
+      const max = min + Math.max(length, floorMin);
       const preferred = ANCHOR_ROW_PREFERENCE[anchor.name] ?? 0;
       const other = preferred === 0 ? 1 : 0;
       let row = preferred;
@@ -350,6 +374,11 @@ export function DayStrip(props: DayStripProps) {
       // The counted width wins; the 12px floor only keeps a short block
       // visible and never stretches it toward its source span.
       let right = Math.max(trueRight, left + MIN_VISIBLE_W);
+      let drawLeft = left;
+      if (right > laneW) {
+        right = laneW;
+        drawLeft = Math.max(0, Math.min(left, laneW - MIN_VISIBLE_W));
+      }
       const next = rowBlocks[i + 1];
       if (next) {
         const nextLeft = Math.max(0, (next.min - startMin) * pxPerMin);
@@ -357,8 +386,8 @@ export function DayStrip(props: DayStripProps) {
         if (right > clipLimit) right = Math.max(left + MIN_VISIBLE_W, clipLimit);
       }
       anchorGeometry.set(block.anchor.id, {
-        leftPct: (left / laneW) * 100,
-        widthPct: (Math.max(1, right - left) / laneW) * 100,
+        leftPct: (drawLeft / laneW) * 100,
+        widthPct: (Math.max(1, right - drawLeft) / laneW) * 100,
       });
       prevRight = right;
     });
@@ -374,7 +403,7 @@ export function DayStrip(props: DayStripProps) {
   // never takes part in row packing or staggering, carries no text and is not
   // interactive; the solid block is the click/drag target.
   const anchorRowById = new Map(placedAnchors.map((placed) => [placed.anchor.id, placed.row]));
-  const anchorWindows = props.anchors
+  const anchorWindows = drawnAnchors
     .filter((anchor) => anchor.window != null)
     .map((anchor) => {
       const windowRange = anchor.window as { start: string; end: string };
@@ -397,8 +426,10 @@ export function DayStrip(props: DayStripProps) {
       metaText(anchor).length * 6.4 + 20,
     );
 
-  // Calendar events draw read-only, clipped to the frame, with the label to
-  // the right of the block. Overlapping events stack so labels never collide.
+  // Calendar events draw read-only, clipped to the frame. The title goes
+  // inside the block when it fits (ellipsized when it partly fits); a block
+  // under CAL_MIN_INSIDE_PX labels itself outside, right then left, never past
+  // the lane. Rows reserve any outside label, so labels never collide.
   const calendarRowsEnd: number[] = [];
   const placedCalendar = (props.calendar ?? [])
     .map((event) => ({
@@ -409,13 +440,27 @@ export function DayStrip(props: DayStripProps) {
     .filter(({ min, max }) => max > min && min < endMin)
     .sort((a, b) => a.min - b.min)
     .map(({ event, min, max }) => {
-      let row = calendarRowsEnd.findIndex((end) => end <= min);
+      const text = `${event.name} ${compactClock(event.start)}`;
+      const textPx = text.length * CAL_CHAR_PX;
+      const blockPx = (max - min) * pxPerMin;
+      const rightRoom = laneW - (max - startMin) * pxPerMin - CAL_LABEL_GAP_PX;
+      const leftRoom = (min - startMin) * pxPerMin - CAL_LABEL_GAP_PX;
+      let fit: "inside" | "clip" | "right" | "left" | "none";
+      if (blockPx >= textPx + CAL_PAD_PX) fit = "inside";
+      else if (blockPx >= CAL_MIN_INSIDE_PX) fit = "clip";
+      else if (rightRoom >= textPx) fit = "right";
+      else if (leftRoom >= textPx) fit = "left";
+      else fit = "none";
+      const reserve = (textPx + CAL_LABEL_GAP_PX) / pxPerMin;
+      const occMin = fit === "left" ? min - reserve : min;
+      const occMax = fit === "right" ? max + reserve : max;
+      let row = calendarRowsEnd.findIndex((end) => end <= occMin);
       if (row === -1) {
         row = calendarRowsEnd.length;
         calendarRowsEnd.push(0);
       }
-      calendarRowsEnd[row] = max;
-      return { event, min, max, row };
+      calendarRowsEnd[row] = occMax;
+      return { event, min, max, row, text, fit };
     });
   const calendarLaneH = Math.max(40, calendarRowsEnd.length * 30 + 10);
 
@@ -475,7 +520,7 @@ export function DayStrip(props: DayStripProps) {
             aria-label="Calendar"
             style={{ height: `${calendarLaneH}px` }}
           >
-            {placedCalendar.map(({ event, min, max, row }) => (
+            {placedCalendar.map(({ event, min, max, row, text, fit }) => (
               <Fragment key={event.id}>
                 <span
                   class={`strip-cal${event.counted ? "" : " strip-cal--skipped"}${
@@ -489,13 +534,33 @@ export function DayStrip(props: DayStripProps) {
                   title={`${event.name} ${display12h(event.start)}`}
                   role="img"
                   aria-label={`${event.name} ${display12h(event.start)} (calendar)`}
-                />
-                <span
-                  class={`strip-cal__label${event.counted ? "" : " strip-cal__label--not-counted"}`}
-                  style={{ left: `calc(${rawPct(max)}% + 8px)`, top: `${5 + row * 30}px` }}
                 >
-                  {event.name} {compactClock(event.start)}
+                  {(fit === "inside" || fit === "clip") && (
+                    <span
+                      class={`strip-cal__label strip-cal__label--inside${
+                        event.counted ? "" : " strip-cal__label--not-counted"
+                      }`}
+                      data-fit={fit}
+                    >
+                      {text}
+                    </span>
+                  )}
                 </span>
+                {(fit === "right" || fit === "left") && (
+                  <span
+                    class={`strip-cal__label strip-cal__label--${fit}${
+                      event.counted ? "" : " strip-cal__label--not-counted"
+                    }`}
+                    data-fit={fit}
+                    style={
+                      fit === "right"
+                        ? { left: `calc(${rawPct(max)}% + ${CAL_LABEL_GAP_PX}px)`, top: `${5 + row * 30}px` }
+                        : { right: `calc(${100 - rawPct(min)}% + ${CAL_LABEL_GAP_PX}px)`, top: `${5 + row * 30}px` }
+                    }
+                  >
+                    {text}
+                  </span>
+                )}
               </Fragment>
             ))}
           </div>
@@ -699,6 +764,15 @@ export function DayStrip(props: DayStripProps) {
           </span>
         </div>
       </div>
+
+      {hiddenAnchors > 0 &&
+        (props.onShowAllBlocks && !props.readOnly ? (
+          <button type="button" class="day-strip__hidden-note" onClick={props.onShowAllBlocks}>
+            {hiddenAnchors} hidden today — All blocks
+          </button>
+        ) : (
+          <p class="day-strip__note">{hiddenAnchors} hidden today</p>
+        ))}
 
       {hiddenSessions > 0 && (
         <p class="day-strip__note">

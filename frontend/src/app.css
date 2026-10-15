@@ -7915,6 +7915,33 @@ body {
   white-space: nowrap;
 }
 
+/* Quiet "N hidden today" link under the lanes; opens All blocks. */
+.day-strip__hidden-note {
+  position: relative;
+  z-index: 3;
+  display: block;
+  margin: 0;
+  padding: 4px 0 0;
+  border: 0;
+  background: var(--t-surface);
+  font: inherit;
+  font-size: 11px;
+  color: var(--t-muted);
+  text-align: left;
+  text-decoration: underline dotted;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+.day-strip__hidden-note:hover {
+  color: var(--t-text);
+}
+
+.day-strip__hidden-note:focus-visible {
+  outline: 2px solid var(--t-accent);
+  outline-offset: 1px;
+}
+
 /* The gridlines stop at the lanes: the outside-frame note sits on the card. */
 .day-strip__note {
   position: relative;
@@ -8755,9 +8782,15 @@ body {
   bottom: 2px;
 }
 
-/* Calendar: block fill by class, label to the right of the block. */
+/* Calendar: block fill by class; the title sits inside the block when it fits
+   (ellipsized when it partly fits) and outside, clamped to the lane, when the
+   block is too narrow. */
 .strip-cal {
   position: absolute;
+  display: flex;
+  align-items: center;
+  overflow: hidden;
+  padding: 0 8px;
   height: 30px;
   box-sizing: border-box;
   border: 1px solid #8fd0f0;
@@ -8783,6 +8816,19 @@ body {
   white-space: nowrap;
   color: var(--t-text);
   pointer-events: none;
+}
+
+.strip-cal__label--inside {
+  position: static;
+  display: block;
+  min-width: 0;
+  height: auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.strip-cal__label--left {
+  text-align: right;
 }
 
 .strip-cal__label--not-counted {

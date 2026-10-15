@@ -557,6 +557,13 @@ export function DaySetupPanel({
             ? { start: source.start, end: source.end }
             : undefined,
         counted,
+        // Fully elapsed config anchors sit at the frame edge but are not drawn.
+        elapsed:
+          counted &&
+          a.kind !== "window" &&
+          a.kind !== "template" &&
+          placement.start === frameStart &&
+          toMinutes(o.time ?? a.start ?? frameStart) < frameStartMin,
         // The override intent, independent of frame clipping; the popover's
         // Count today switch shows this, while `counted` stays for the strip.
         counting: on,
@@ -769,6 +776,7 @@ export function DaySetupPanel({
                 selectedAnchorId={selectedAnchor}
                 onSelectAnchor={(id) => setSelectedAnchor(id)}
                 onMoveAnchor={(id, start) => moveAnchor(id, start)}
+                onShowAllBlocks={() => setAllBlocksOpen(true)}
               />
 
               {availableMintSessions.length > 0 && (
