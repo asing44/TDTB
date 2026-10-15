@@ -900,6 +900,12 @@ def canonicalize_sequence_ids(
 
 _TAIL_END_MIN = 23 * 60 + 59  # 23:59 — the last representable same-day minute
 
+# G16 overflow park (user decision 2026-10-15): overflow-tail rows are parked
+# at this same-day time regardless of the current time or the anchor, packed
+# consecutively. Single source of truth — change this one line to re-time the
+# park.
+OVERFLOW_PARK_TIME = "17:00"
+
 
 def _minutes_to_hhmm(minutes: int) -> str:
     return f"{minutes // 60:02d}:{minutes % 60:02d}"
@@ -972,36 +978,55 @@ def _repair_reseated_grant_intervals(
             grant[interval_key] = {"start": new["start"], "end": new["end"]}
 
 
+def _constraint_member_ids(constraints: list[dict[str, Any]]) -> set[str]:
+    """Every item id named by a derived semantic constraint."""
+    members: set[str] = set()
+    for constraint in constraints:
+        if not isinstance(constraint, dict):
+            continue
+        for value in constraint.get("item_ids") or []:
+            members.add(str(value))
+        for key in ("child_id", "parent_id", "item_id"):
+            if constraint.get(key) is not None:
+                members.add(str(constraint[key]))
+    return members
+
+
 def reseat_overflow_tail_rows(
     proposal: dict[str, Any],
     assigned: list[dict[str, Any]],
     time_frame: dict[str, Any] | None,
 ) -> list[dict[str, str]]:
-    """Deterministically re-seat unrepresentable overflow-tail rows.
+    """Deterministically re-seat the overflowing tail at ``OVERFLOW_PARK_TIME``.
 
-    The model parks items that do not fit before midnight at 23:59 — but a
-    same-day HH:MM interval cannot express the crossing, so it emits
-    ``start == end``. Rather than reject the whole proposal (G16: over-
-    capacity degrades, never 422), each such ASSIGNED row with a known
-    duration is re-seated to the latest representable full-duration interval
-    ending at 23:59 (23:29-23:59 for a one-block item). The re-seat never
-    starts before the anchor and never before the preceding row, so
-    chronological order still holds. Mutates ``proposal`` rows and any
-    matching overlap grants in place; returns one warning descriptor per
-    re-seated row.
+    The model parks items that do not fit before midnight at/after the
+    effective EOD — a same-day HH:MM interval cannot express the crossing, so
+    it emits ``start == end`` (or an already-truncated tail). Rather than
+    reject the whole proposal (G16: over-capacity degrades, never 422), every
+    ASSIGNED row with a known duration whose start is at/after the effective
+    EOD is parked at ``OVERFLOW_PARK_TIME`` (17:00) and packed consecutively
+    in original order (17:00-17:30, 17:30-18:00, ...). The park ignores the
+    anchor and the preceding row — the user wants 17:00 even when that is
+    before 'now'. If packing would spill past 23:59, the trailing rows are
+    shifted back so every row ends at/before 23:59 with ``start < end``.
+
+    The proposal's sequence is re-sorted chronologically (stable) afterwards
+    so downstream ordering holds. Mutates ``proposal`` rows and any matching
+    overlap grants in place; returns one warning descriptor per re-seated row.
     """
     sequence = proposal.get("sequence")
     if not isinstance(sequence, list):
         return []
     frame = time_frame or {}
-    anchor_norm = _normalize_time(frame.get("anchor"))
     eod_norm = _normalize_time(frame.get("effective_eod"))
-    anchor_min = _to_minutes(anchor_norm) if anchor_norm else None
     eod_min = _to_minutes(eod_norm) if eod_norm else None
+    if eod_min is None:
+        return []
+    park_min = _to_minutes(OVERFLOW_PARK_TIME)
     durations = _assigned_durations(assigned)
     grants = proposal.get("overlap_grants")
     reseated: list[dict[str, str]] = []
-    prev_start_min: int | None = None
+    cursor = park_min
     for row in sequence:
         if not isinstance(row, dict) or row.get("backdrop"):
             continue
@@ -1010,43 +1035,56 @@ def reseat_overflow_tail_rows(
         end = placement_rules.canonical_time(row.get("end"))
         if start is None or end is None:
             continue
+        duration = durations.get(row_id)
+        if duration is None:
+            continue
         start_min = _to_minutes(start)
-        end_min = _to_minutes(end)
-        if end_min <= start_min:
-            duration = durations.get(row_id)
-            # Only the overflow tail is softened: a row that starts at/after
-            # the effective EOD. Ordinary reversed ranges stay HARD.
-            if duration and eod_min is not None and start_min >= eod_min:
-                new_end = _TAIL_END_MIN
-                new_start = new_end - duration
-                if anchor_min is not None:
-                    new_start = max(new_start, anchor_min)
-                if prev_start_min is not None:
-                    new_start = max(new_start, prev_start_min)
-                if new_start >= new_end:
-                    new_start = new_end - 1
-                new_start_str = _minutes_to_hhmm(new_start)
-                new_end_str = _minutes_to_hhmm(new_end)
-                old_interval = {"start": start, "end": end}
-                row["start"], row["end"] = new_start_str, new_end_str
-                _repair_reseated_grant_intervals(
-                    grants, row_id, old_interval,
-                    {"start": new_start_str, "end": new_end_str},
-                )
-                start_min, end_min = new_start, new_end
-                reseated.append({
-                    "id": row_id,
-                    "rule": "overflow_reseated",
-                    "detail": (
-                        f"{row_id!r} did not fit before midnight — parked at "
-                        f"{new_start_str}-{new_end_str}; defer or drop it"
-                    ),
-                    "start": new_start_str,
-                    "end": new_end_str,
-                })
-        if end_min > start_min:
-            prev_start_min = start_min
+        # Only the overflow tail moves: a row at/after the effective EOD.
+        if start_min < eod_min:
+            continue
+        new_start = cursor
+        new_end = new_start + duration
+        if new_end > _TAIL_END_MIN:
+            # Packing spills past the last minute: pull the trailing rows
+            # back so everything ends <= 23:59 and start < end.
+            new_end = _TAIL_END_MIN
+            new_start = max(park_min, new_end - duration)
+            if new_start >= new_end:
+                new_start = new_end - 1
+        new_start_str = _minutes_to_hhmm(new_start)
+        new_end_str = _minutes_to_hhmm(new_end)
+        old_interval = {"start": start, "end": end}
+        row["start"], row["end"] = new_start_str, new_end_str
+        _repair_reseated_grant_intervals(
+            grants, row_id, old_interval,
+            {"start": new_start_str, "end": new_end_str},
+        )
+        cursor = new_end
+        reseated.append({
+            "id": row_id,
+            "rule": "overflow_reseated",
+            "detail": (
+                f"{row_id!r} exceeds the day's capacity — parked at "
+                f"{new_start_str}-{new_end_str}; defer or drop it"
+            ),
+            "start": new_start_str,
+            "end": new_end_str,
+        })
+    if reseated:
+        # The park moves rows earlier than the rest of the day; re-sort so the
+        # returned sequence (and the structural chronological-order check) is
+        # consistent. Python's sort is stable, preserving the original order
+        # of same-start rows.
+        sequence.sort(key=_row_start_sort_key)
     return reseated
+
+
+def _row_start_sort_key(row: Any) -> int:
+    if isinstance(row, dict):
+        start = placement_rules.canonical_time(row.get("start"))
+        if start is not None:
+            return _to_minutes(start)
+    return 24 * 60 + 1
 
 
 # ---------------------------------------------------------------------------
@@ -1151,11 +1189,14 @@ def validate_sequence(
                 "detail": detail,
             }],
         )
-    # G16: over-capacity must degrade, never 422. Re-seat unrepresentable
-    # overflow-tail rows BEFORE normalization/canonicalization so both
-    # /sequence (proposal) and /validate-sequence (revalidation) see the same
-    # representable layout and the returned plan carries the re-seated times.
+    # G16: over-capacity must degrade, never 422. Re-seat overflowing-tail
+    # rows BEFORE normalization/canonicalization so both /sequence (proposal)
+    # and /validate-sequence (revalidation) see the same representable layout
+    # and the returned plan carries the re-seated times. Every re-seated row
+    # is parked at OVERFLOW_PARK_TIME; overlaps it now hits are SOFT.
+    reseated_ids: set[str] = set()
     for item in reseat_overflow_tail_rows(proposal, assigned, time_frame):
+        reseated_ids.add(item["id"])
         add_warning(
             {"id": item["id"], "rule": item["rule"], "detail": item["detail"]},
             affected_rows=[item["id"]],
@@ -1346,12 +1387,23 @@ def validate_sequence(
                 f"{window[0] // 60:02d}:{window[0] % 60:02d}-"
                 f"{window[1] // 60:02d}:{window[1] % 60:02d}"
             )
-            add_hard(
-                detail,
-                rule="selected_mint_window",
-                affected_rows=[str(row["id"])],
-                intervals=[interval_for(str(row["id"]), row["start"], row["end"])],
-            )
+            if str(row.get("id")) in reseated_ids:
+                # A re-seated overflow row parked at 17:00 may sit outside its
+                # selected window; that is a soft overflow flag, not a
+                # rejection (the user resolves it on the timeline).
+                add_warning(
+                    {"id": str(row["id"]), "rule": "overflow_overlap",
+                     "detail": f"⚠ overflow — {detail}"},
+                    affected_rows=[str(row["id"])],
+                    intervals=[interval_for(str(row["id"]), row["start"], row["end"])],
+                )
+            else:
+                add_hard(
+                    detail,
+                    rule="selected_mint_window",
+                    affected_rows=[str(row["id"])],
+                    intervals=[interval_for(str(row["id"]), row["start"], row["end"])],
+                )
 
     # -- overlap with non-permeable anchored blocks --------------------------
     # ISS-6: a ``Type: window`` block's [Start, End] is a placement WINDOW (its
@@ -1463,7 +1515,7 @@ def validate_sequence(
                             span_interval(block_name, (b_start, b_end)),
                         ],
                     )
-                elif in_overflow_tail:
+                elif row_id in reseated_ids or in_overflow_tail:
                     add_warning(
                         {
                             "id": row_id, "rule": "overflow_overlap",
@@ -1516,15 +1568,28 @@ def validate_sequence(
                     f"Mint session {wall_id!r} ({w_start // 60:02d}:{w_start % 60:02d}-"
                     f"{w_end // 60:02d}:{w_end % 60:02d})"
                 )
-                add_hard(
-                    detail,
-                    rule="mint_overlap",
-                    affected_rows=[row_id, wall_id],
-                    intervals=[
-                        interval_for(row_id, row["start"], row["end"]),
-                        span_interval(wall_id, (w_start, w_end)),
-                    ],
-                )
+                if row_id in reseated_ids:
+                    # A re-seated overflow row parked at 17:00 may land on a
+                    # Mint wall; the park is soft so the plan still comes back.
+                    add_warning(
+                        {"id": row_id, "rule": "overflow_overlap",
+                         "detail": f"⚠ overflow — {detail}"},
+                        affected_rows=[row_id, wall_id],
+                        intervals=[
+                            interval_for(row_id, row["start"], row["end"]),
+                            span_interval(wall_id, (w_start, w_end)),
+                        ],
+                    )
+                else:
+                    add_hard(
+                        detail,
+                        rule="mint_overlap",
+                        affected_rows=[row_id, wall_id],
+                        intervals=[
+                            interval_for(row_id, row["start"], row["end"]),
+                            span_interval(wall_id, (w_start, w_end)),
+                        ],
+                    )
 
     for block_name, n in window_overlap_counts.items():
         add_warning({
@@ -1574,12 +1639,37 @@ def validate_sequence(
     semantic_constraints = placement_rules.derive_constraints(
         assigned, anchored_blocks
     )
-    for detail in placement_rules.validate_constraints(
+    semantic_errors = placement_rules.validate_constraints(
         {"sequence": rows, "overlap_grants": overlap_grants},
         semantic_constraints,
         planning_config_fingerprint=planning_config_fingerprint,
-    ):
-        add_hard(detail, rule="semantic_constraint")
+    )
+    if semantic_errors and reseated_ids:
+        # A re-seated overflow row parked at 17:00 can break a same-start /
+        # overlap-grant group. Errors that disappear when the re-seated rows
+        # are removed are caused by those rows and become SOFT overflow flags;
+        # every error the remaining rows still produce stays HARD.
+        residual_errors = set(placement_rules.validate_constraints(
+            {"sequence": [row for row in rows
+                          if str(row.get("id")) not in reseated_ids],
+             "overlap_grants": overlap_grants},
+            semantic_constraints,
+            planning_config_fingerprint=planning_config_fingerprint,
+        ))
+        involved = sorted(_constraint_member_ids(semantic_constraints) & reseated_ids)
+        for detail in semantic_errors:
+            if detail in residual_errors:
+                add_hard(detail, rule="semantic_constraint")
+            else:
+                add_warning(
+                    {"id": involved[0] if involved else "overflow",
+                     "rule": "overflow_overlap",
+                     "detail": f"⚠ overflow — {detail}"},
+                    affected_rows=involved or sorted(reseated_ids),
+                )
+    else:
+        for detail in semantic_errors:
+            add_hard(detail, rule="semantic_constraint")
 
     # -- SOFT: latest_start ----------------------------------------------------
     for row in rows:

@@ -80,42 +80,51 @@ class TestReseatLiveScenario:
         # never-bump: every assigned item still present exactly once
         ids = [row["id"] for row in proposal["sequence"]]
         assert sorted(ids) == sorted(a["id"] for a in assigned)
-        # the returned plan carries representable, re-seated times
-        for item_id in OVERFLOW_IDS:
+        # the returned plan parks the overflow tail at 17:00, packed in order
+        expected = {
+            "Semi-Monthly Adventure": ("17:00", "17:30"),
+            "WALL\u22c5E-SUCC clean": ("17:30", "18:00"),
+            "update gifster": ("18:00", "18:30"),
+        }
+        for item_id, span in expected.items():
             row = next(r for r in proposal["sequence"] if r["id"] == item_id)
-            assert (row["start"], row["end"]) == ("23:29", "23:59")
+            assert (row["start"], row["end"]) == span
+        # re-sorted chronologically (stable): parked rows now precede the day
+        starts = [r["start"] for r in proposal["sequence"]]
+        assert starts == sorted(starts)
         reseated = _warnings_by_rule(result, "overflow_reseated")
         assert {w["id"] for w in reseated} == set(OVERFLOW_IDS)
-        assert all("did not fit before midnight" in w["detail"] for w in reseated)
-        # the existing soft past-EOD warning still fires for each parked row
-        assert {w["id"] for w in _warnings_by_rule(result, "past_eod")} == set(
+        assert all("exceeds the day's capacity" in w["detail"] for w in reseated)
+        # parked at 17:00, before the 19:15 anchor: soft past-placement only
+        assert {w["id"] for w in _warnings_by_rule(result, "placement_past")} == set(
             OVERFLOW_IDS
         )
         assert not _has_hard(result, "not after start")
 
 
 class TestReseatRule:
-    def test_two_block_item_reseats_to_full_duration(self):
+    def test_two_block_item_parks_at_full_duration(self):
         proposal = {"sequence": [_row("Deep", "23:59", "23:59")]}
         result = validate_sequence(
             proposal, [_item("Deep", blocks=2)], [], {}, time_frame=FRAME)
         assert result.ok is True
         assert (proposal["sequence"][0]["start"],
-                proposal["sequence"][0]["end"]) == ("22:59", "23:59")
+                proposal["sequence"][0]["end"]) == ("17:00", "18:00")
 
-    def test_late_truncation_is_legal_and_not_reseated(self):
-        # start 23:45 with a 30-min budget truncates to 23:59 — representable,
-        # so it is NOT a re-seat case (matches today's contract).
+    def test_valid_length_tail_row_is_also_reseated(self):
+        # A representable tail row (23:45-23:59, start >= effective EOD) still
+        # counts as overflow and is parked at 17:00.
         proposal = {"sequence": [_row("Late", "23:45", "23:59")]}
         result = validate_sequence(
             proposal, [_item("Late")], [], {}, time_frame=FRAME)
         assert result.ok is True
-        assert not _warnings_by_rule(result, "overflow_reseated")
-        assert _warnings_by_rule(result, "past_eod")
+        assert (proposal["sequence"][0]["start"],
+                proposal["sequence"][0]["end"]) == ("17:00", "17:30")
+        assert _warnings_by_rule(result, "overflow_reseated")
 
-    def test_reseat_keeps_chronological_order(self):
-        # A preceding valid row starting later than the full-duration target
-        # must not be overtaken; the re-seated row clamps to the prior start.
+    def test_reseat_packs_consecutively_and_stays_chronological(self):
+        # Parked rows pack 17:00, 17:30, ... in original order even when the
+        # original rows were ordered earlier than the placed day.
         proposal = {"sequence": [
             _row("A", "23:45", "23:59"),
             _row("B", "23:59", "23:59"),
@@ -124,8 +133,25 @@ class TestReseatRule:
             proposal, [_item("A"), _item("B")], [], {}, time_frame=FRAME)
         assert result.ok is True
         assert not _has_hard(result, "not in chronological start order")
-        row_b = next(r for r in proposal["sequence"] if r["id"] == "B")
-        assert (row_b["start"], row_b["end"]) == ("23:45", "23:59")
+        by_id = {r["id"]: r for r in proposal["sequence"]}
+        assert (by_id["A"]["start"], by_id["A"]["end"]) == ("17:00", "17:30")
+        assert (by_id["B"]["start"], by_id["B"]["end"]) == ("17:30", "18:00")
+
+    def test_parking_spill_is_pulled_back_under_midnight(self):
+        # 15 one-block overflow rows cannot pack consecutively before 23:59;
+        # the trailing rows are shifted back so every row ends <= 23:59 with
+        # start < end and no hard error.
+        ids = [f"O{i}" for i in range(15)]
+        proposal = {"sequence": [_row(i, "23:59", "23:59") for i in ids]}
+        result = validate_sequence(
+            proposal, [_item(i) for i in ids], [], {}, time_frame=FRAME)
+        assert result.ok is True, result.hard_errors
+        for row in proposal["sequence"]:
+            start_min = int(row["start"][:2]) * 60 + int(row["start"][3:])
+            end_min = int(row["end"][:2]) * 60 + int(row["end"][3:])
+            assert start_min < end_min
+            assert end_min <= 23 * 60 + 59
+        assert len(_warnings_by_rule(result, "overflow_reseated")) == len(ids)
 
     def test_reseat_is_idempotent(self):
         proposal, assigned = _live_scenario()
@@ -135,13 +161,12 @@ class TestReseatRule:
         assert second.ok is True
         assert not _warnings_by_rule(second, "overflow_reseated")
 
-    def test_reseat_against_pre_eod_hard_wall_stays_soft(self):
-        # A config-backed hard wall before EOD would normally be an
-        # acceptable-defect warning; a re-seated tail row overlapping it must
-        # stay a warning, never a rejection.
+    def test_parked_row_over_anchor_is_soft_overflow(self):
+        # The parked 17:00 row collides with a config-backed anchored block at
+        # 17:00-17:30: soft overflow_overlap naming the pair, never a rejection.
         anchored = [{
-            "Block": "Night Routine", "Type": "hard",
-            "Start": "23:00", "End": "23:45", "Duration": "45m",
+            "Block": "Evening Block", "Type": "hard",
+            "Start": "17:00", "End": "17:30", "Duration": "30m",
             "overlap_allowed": False,
         }]
         proposal = {"sequence": [_row("A", "23:59", "23:59")]}
@@ -150,7 +175,8 @@ class TestReseatRule:
         assert result.ok is True
         assert result.hard_errors == []
         assert any(
-            w.get("rule") in ("unexpected_overlap", "overflow_overlap")
+            w.get("rule") == "overflow_overlap"
+            and "Evening Block" in (str(w.get("detail")) + str(w.get("affected_rows")))
             for w in result.warnings
         )
 
@@ -172,10 +198,13 @@ class TestReseatRule:
         result = validate_sequence(
             proposal, assigned, [], {}, time_frame=FRAME)
         assert result.ok is True, result.hard_errors
-        assert (proposal["sequence"][0]["start"],
-                proposal["sequence"][0]["end"]) == ("23:29", "23:59")
-        assert (proposal["sequence"][1]["start"],
-                proposal["sequence"][1]["end"]) == ("23:29", "23:59")
+        by_id = {r["id"]: r for r in proposal["sequence"]}
+        assert (by_id["S1"]["start"], by_id["S1"]["end"]) == ("17:00", "17:30")
+        assert (by_id["S2"]["start"], by_id["S2"]["end"]) == ("17:30", "18:00")
+        # the systems same-start rule broke because the park is consecutive:
+        # it degrades to a soft overflow flag instead of re-billing the model.
+        assert any(w.get("rule") == "overflow_overlap"
+                   for w in result.warnings)
 
 
 class TestReseatDoesNotWiden:
@@ -260,9 +289,12 @@ class TestPlannerBoundary:
         outcome = planning.run_proposal(prepared, _park_all)
         assert outcome.validation.ok is True, outcome.validation.hard_errors
         assert outcome.result is not None
-        for row in outcome.result["sequence"]:
-            if row.get("id") in OVERFLOW_IDS:
-                assert (row["start"], row["end"]) == ("23:29", "23:59")
+        parked = [row for row in outcome.result["sequence"]
+                  if row.get("id") in OVERFLOW_IDS]
+        # An injected "Quick Tasks" row occupies 17:00-17:30; the three park
+        # rows follow consecutively in order.
+        assert [(row["start"], row["end"]) for row in parked] == [
+            ("17:30", "18:00"), ("18:00", "18:30"), ("18:30", "19:00")]
         assert any(
             w.get("rule") == "overflow_reseated"
             for w in outcome.result["warnings"]
@@ -351,9 +383,10 @@ class TestSequenceRoute:
         )
         assert r.status_code == 200, r.text
         payload = r.json()
-        for item_id in OVERFLOW_IDS:
-            row = next(r_ for r_ in payload["sequence"] if r_["id"] == item_id)
-            assert (row["start"], row["end"]) == ("23:29", "23:59")
+        parked = [row for row in payload["sequence"]
+                  if row["id"] in OVERFLOW_IDS]
+        assert [(row["start"], row["end"]) for row in parked] == [
+            ("17:00", "17:30"), ("17:30", "18:00"), ("18:00", "18:30")]
         assert any(
             w.get("rule") == "overflow_reseated" for w in payload["warnings"]
         )

@@ -517,13 +517,16 @@ class TestStructural:
     def test_overflow_tail_overlap_is_soft(self):
         # G16 (2026-07-14): over-capacity must degrade, never 422. A row
         # starting at/after effective_eod may overlap a non-permeable block —
-        # soft "overflow" flag, user resolves on the timeline.
+        # soft "overflow" flag, user resolves on the timeline. Assigned tail
+        # rows are now parked at 17:00, so an optional (non-assigned) tail row
+        # is used to exercise the in-tail branch directly.
         anchored = [_anchored(overlap_allowed=False, block="Night Routine",
                               start="11:00 PM", end="11:45 PM")]
         proposal = {"sequence": [_seq_row("t1", "23:15", "23:30")]}
         result = validate_sequence(
-            proposal, [_item("t1")], anchored, CONFIG,
-            time_frame={"anchor": "16:00", "effective_eod": "23:00"})
+            proposal, [], anchored, CONFIG,
+            time_frame={"anchor": "16:00", "effective_eod": "23:00"},
+            optional_ids={"t1"}, optional_items=[_item("t1")])
         assert result.ok is True
         assert any(w.get("rule") == "overflow_overlap" for w in result.warnings)
 
@@ -838,13 +841,15 @@ class TestCalendarSoftOverlap:
 
     def test_calendar_wall_overlap_in_overflow_tail_is_soft(self):
         # The overflow tail is soft for calendar walls too: a wall overlap is
-        # a flag wherever the row sits, never a hard rejection.
+        # a flag wherever the row sits, never a hard rejection. Assigned tail
+        # rows are parked at 17:00, so this uses an optional tail row.
         anchored = [self._calendar(block="Night event", start="23:15",
                                    end="23:45")]
         proposal = {"sequence": [_seq_row("t1", "23:20", "23:40")]}
         result = validate_sequence(
-            proposal, [_item("t1")], anchored, CONFIG,
+            proposal, [], anchored, CONFIG,
             time_frame={"anchor": "16:00", "effective_eod": "23:00"},
+            optional_ids={"t1"}, optional_items=[_item("t1")],
         )
         assert result.ok is True
         assert result.hard_errors == []
@@ -1444,6 +1449,8 @@ class TestValidationTruthTable:
             assert result.hard_errors == []
 
     def test_start_at_eod_is_overflow_tail_and_anchor_equality_is_not_past(self):
+        # Assigned tail rows now park at 17:00, so this uses an optional tail
+        # row to pin the start == anchor / past-EOD overflow contract.
         anchored = [_anchored(
             overlap_allowed=False,
             block="Night Routine",
@@ -1452,10 +1459,12 @@ class TestValidationTruthTable:
         )]
         result = validate_sequence(
             {"sequence": [_seq_row("A", "23:00", "23:15")]},
-            [_item("A")],
+            [],
             anchored,
             CONFIG,
             time_frame={"anchor": "23:00", "effective_eod": "23:00"},
+            optional_ids={"A"},
+            optional_items=[_item("A")],
         )
 
         assert result.ok is True
