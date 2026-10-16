@@ -141,7 +141,7 @@ seconds**, so spend as few as possible:
    file and ask the cursor what to read:
 
    ```bash
-   TDTB_REPO=/Users/walle-mini/Repos/Projects/TDTB-worktrees/cockpit-ui-round2
+   TDTB_REPO=/Users/walle-mini/Repos/Projects/TDTB
    PY=/Users/walle-mini/Repos/Projects/TDTB/app/.venv/bin/python
    "$PY" "$TDTB_REPO/tools/read_cursor.py" plan \
      --input /tmp/tdtb-capacities-listed.json > /tmp/tdtb-capacities-plan.json
@@ -283,7 +283,7 @@ sorts the habits by section then in-section order; omit `sections`,
 Evaluate deterministically and write the artifact:
 
 ```bash
-TDTB_REPO=/Users/walle-mini/Repos/Projects/TDTB-worktrees/cockpit-ui-round2
+TDTB_REPO=/Users/walle-mini/Repos/Projects/TDTB
 PY=/Users/walle-mini/Repos/Projects/TDTB/app/.venv/bin/python
 "$PY" "$TDTB_REPO/tools/produce_rows.py" \
   --rules ~/.config/tdtb/producer-rules.json \
@@ -309,7 +309,7 @@ Always re-run the validator on what was written, and report its result:
 
 ```bash
 PY=/Users/walle-mini/Repos/Projects/TDTB/app/.venv/bin/python
-"$PY" /Users/walle-mini/Repos/Projects/TDTB-worktrees/cockpit-ui-round2/tools/validate_artifact.py \
+"$PY" /Users/walle-mini/Repos/Projects/TDTB/tools/validate_artifact.py \
   ~/.config/tdtb/state/planning-artifact.json
 ```
 
