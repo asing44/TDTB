@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { allowedOverlaps, defectsCovered, overlapNotes, workOverlaps } from "./findings";
+import {
+  allowedOverlaps,
+  defectsCovered,
+  MINT_OVERLAP_REASON,
+  mintOverlapNotes,
+  overlapNotes,
+  workOverlaps,
+} from "./findings";
 import type { OverlapGrant, SequenceRow } from "./types";
 
 const row = (id: string, start: string, end: string, kind: "work" | "zone" = "work"): SequenceRow => ({
@@ -176,6 +183,72 @@ describe("overlapNotes — per-row grant note (04-overlap-note)", () => {
     const zone = row("Trinoor", "08:00", "17:00", "zone");
     const gZone = grant("A", "Trinoor", { start: "09:00", end: "10:00" }, { start: "08:00", end: "17:00" }, "zone grant");
     expect(overlapNotes([A, zone], [gZone], "fp")).toEqual([]);
+  });
+});
+
+describe("mintOverlapNotes — operator grant note (06-may-overlap-mint-toggle)", () => {
+  const mintRow = (
+    id: string,
+    start: string,
+    end: string,
+    viaMarker = false,
+  ): SequenceRow => ({
+    id,
+    start,
+    end,
+    zone: null,
+    kind: "work",
+    ...(viaMarker ? { wire: { mint_session: true } } : {}),
+  });
+  const WORK = row("Press", "15:15", "16:15");
+  const MINT = mintRow("Mint Afternoon", "15:00", "17:00");
+  const reason = MINT_OVERLAP_REASON;
+
+  it("(i) a granted row overlapping Mint yields one note per Mint row", () => {
+    expect(mintOverlapNotes([WORK, MINT], { Press: true })).toEqual([
+      { rowId: "Press", partnerId: "Mint Afternoon", reason },
+    ]);
+  });
+
+  it("(i) also recognizes a Mint row by the wire marker, not just the name", () => {
+    const marker = mintRow("Session Alpha", "15:00", "17:00", true);
+    expect(mintOverlapNotes([WORK, marker], { Press: true })).toEqual([
+      { rowId: "Press", partnerId: "Session Alpha", reason },
+    ]);
+  });
+
+  it("(ii) a granted row that does not overlap Mint yields nothing", () => {
+    const away = mintRow("Mint Morning", "13:00", "14:00");
+    expect(mintOverlapNotes([WORK, away], { Press: true })).toEqual([]);
+  });
+
+  it("(iii) a touching boundary is abutment, not overlap", () => {
+    const press = row("Press", "14:00", "15:00");
+    expect(mintOverlapNotes([press, MINT], { Press: true })).toEqual([]);
+  });
+
+  it("(iv) an ungranted row overlapping Mint yields nothing", () => {
+    expect(mintOverlapNotes([WORK, MINT], {})).toEqual([]);
+    expect(mintOverlapNotes([WORK, MINT])).toEqual([]);
+  });
+
+  it("(v) a Mint row is never a note subject, even when itself granted", () => {
+    const later = mintRow("Mint Late", "15:30", "16:00");
+    expect(mintOverlapNotes([MINT, later], { "Mint Afternoon": true })).toEqual([]);
+  });
+
+  it("(vi) multiple Mint overlaps yield one note each", () => {
+    const late = mintRow("Mint Late", "16:00", "17:30");
+    expect(mintOverlapNotes([WORK, MINT, late], { Press: true })).toEqual([
+      { rowId: "Press", partnerId: "Mint Afternoon", reason },
+      { rowId: "Press", partnerId: "Mint Late", reason },
+    ]);
+  });
+
+  it("null sequence and a zone row contribute nothing", () => {
+    expect(mintOverlapNotes(null, { Press: true })).toEqual([]);
+    const zone = row("Trinoor", "08:00", "17:00", "zone");
+    expect(mintOverlapNotes([zone, MINT], { Trinoor: true })).toEqual([]);
   });
 });
 

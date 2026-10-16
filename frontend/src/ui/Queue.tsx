@@ -59,7 +59,7 @@ import {
 import { trackFor, trackGradient } from "../model/bands";
 import { DIRECT_VERBS, MORE_VERBS, type StagingVerbSpec } from "../model/staging";
 import { sourceContext } from "../model/sourceContext";
-import { overlapNotes } from "../model/findings";
+import { mintOverlapNotes, overlapNotes } from "../model/findings";
 import { isCanonicalCapacitiesIdentity } from "../adapters/wire";
 import { dueLabel, normalizeUrgency } from "../model/urgency";
 import type { AssignedItem, TodayOverride } from "../model/types";
@@ -807,18 +807,22 @@ function Row({
   }, [srcTag]);
 
   const scheduledRow = s.sequence?.find((r) => r.id === item.id && r.kind === "work");
-  // 04-overlap-note (2026-10-16): explicit overlap grants ONLY. Scoped by
+  // 04-overlap-note (2026-10-16): explicit overlap grants, scoped by
   // model/findings' exact-grant discipline (both rows on the plan, intervals
   // byte-equal, current planning-config fingerprint, real time overlap), so a
   // row that merely abuts or collides in time — or an anchor — never gets a
-  // note. The partner's display name resolves from the assigned list, falling
-  // back to the raw row id.
+  // note. #18 (2026-10-16) adds a SECOND source: an operator "May overlap
+  // Mint" grant on this row renders the same note for a real Mint-session
+  // overlap. The partner's display name resolves from the assigned list,
+  // falling back to the raw row id — a Mint row is not an assigned item, so it
+  // reads as its own name.
   const grantFingerprint =
     s.planningConfigFingerprint ?? s.inputs?.planningConfigFingerprint ?? null;
   const assignedNames = new Map((s.inputs?.assigned ?? []).map((a) => [a.id, a.name]));
-  const rowOverlaps = overlapNotes(s.sequence, s.overlapGrants, grantFingerprint).filter(
-    (n) => n.rowId === item.id,
-  );
+  const rowOverlaps = [
+    ...overlapNotes(s.sequence, s.overlapGrants, grantFingerprint),
+    ...mintOverlapNotes(s.sequence, s.mintOverlapOptIns),
+  ].filter((n) => n.rowId === item.id);
   const track = trackFor(cumBefore, blocks, budgetTotal(s), MAX_BLOCKS);
   // Row meta detail: everything the mockup folds off the visible line (the
   // estimate, provenance context, scheduled time, fixed/recurring note). It
