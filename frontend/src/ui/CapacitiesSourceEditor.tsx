@@ -74,6 +74,7 @@ function emptyStructure(): CapacitiesSourceStructure {
     durationProperty: null,
     assignmentProperty: null,
     assignmentValues: [],
+    assignedOnProperty: null,
     completionProperty: null,
     completionValue: null,
   };
@@ -433,6 +434,17 @@ function StructureRow({
             onEdit((current) => ({ ...current, durationProperty: next }))
           }
         />
+        <PropertyField
+          label="Assigned On property"
+          ariaLabel={`Assigned On property for ${rowRef}`}
+          value={row.assignedOnProperty ?? null}
+          placeholder="unset"
+          hint="A date on or before today marks the item assigned. Takes precedence over legacy assignment. A declaration under Connections → Capacities structures wins if both are set."
+          choices={propertyChoices}
+          onChange={(next) =>
+            onEdit((current) => ({ ...current, assignedOnProperty: next }))
+          }
+        />
         <details
           class="capacities-source-field--wide"
           open={assignmentOpen}
@@ -440,7 +452,7 @@ function StructureRow({
         >
           <summary>Legacy assignment (optional)</summary>
           <small>
-            Superseded by Assigned On under Connections → Capacities structures; kept so existing mappings keep working.
+            Superseded by Assigned On; kept so existing mappings keep working.
           </small>
           <div class="capacities-source-row__fields">
         <PropertyField

@@ -201,6 +201,7 @@ describe("CapacitiesSourceEditor", () => {
           durationProperty: null,
           assignmentProperty: null,
           assignmentValues: [],
+          assignedOnProperty: null,
           completionProperty: null,
           completionValue: null,
         },
@@ -634,6 +635,7 @@ function unconfiguredRow(structureId: string): CapacitiesSourceStructure {
     durationProperty: null,
     assignmentProperty: null,
     assignmentValues: [],
+    assignedOnProperty: null,
     completionProperty: null,
     completionValue: null,
   };
@@ -1364,7 +1366,7 @@ describe("CapacitiesSourceEditor title default and legacy assignment", () => {
     ).toBeTruthy();
     expect(
       within(empty).getByText(
-        "Superseded by Assigned On under Connections → Capacities structures; kept so existing mappings keep working.",
+        "Superseded by Assigned On; kept so existing mappings keep working.",
       ),
     ).toBeTruthy();
     expect(detailsOf("Assignment values for Task")).toBe(empty);
@@ -1374,6 +1376,89 @@ describe("CapacitiesSourceEditor title default and legacy assignment", () => {
     // Live fields stay outside the disclosure.
     expect(rendered.getByLabelText("Completion property for Task").closest("details")).toBeNull();
     expect(rendered.getByLabelText("Deadline property for Task").closest("details")).toBeNull();
+  });
+
+  it("renders an Assigned On property field outside the legacy disclosure", async () => {
+    const { rendered } = await openEditor({ source: recordFixture, persisted: true });
+    await waitFor(() =>
+      expect(rendered.getByLabelText("Assigned On property for Project")).toBeTruthy(),
+    );
+    const assignedOn = input(rendered.getByLabelText("Assigned On property for Project"));
+    expect(assignedOn.value).toBe("");
+    expect(assignedOn.placeholder).toBe("unset");
+    // It is a live field, not part of the collapsed legacy disclosure.
+    expect(assignedOn.closest("details")).toBeNull();
+    // It sits after Duration property and before the legacy disclosure.
+    const duration = rendered.getByLabelText("Duration property for Project");
+    const legacy = within(assignedOn.closest("article")!).getByText(
+      "Legacy assignment (optional)",
+    );
+    expect(duration.compareDocumentPosition(assignedOn) & 4).toBeTruthy();
+    expect(assignedOn.compareDocumentPosition(legacy) & 4).toBeTruthy();
+  });
+
+  it("shows a saved row's stored Assigned On value", async () => {
+    const withValue: CapacitiesSource = {
+      ...recordFixture,
+      structures: [
+        { ...recordFixture.structures[0], assignedOnProperty: "assigned-on-prop" },
+        recordFixture.structures[1],
+      ],
+    };
+    const { rendered } = await openEditor({ source: withValue, persisted: true });
+    await waitFor(() =>
+      expect(rendered.getByLabelText("Assigned On property for Project")).toBeTruthy(),
+    );
+    expect(input(rendered.getByLabelText("Assigned On property for Project")).value).toBe(
+      "assigned-on-prop",
+    );
+  });
+
+  it("sends assigned_on_property when the operator types an Assigned On value", async () => {
+    const { h, rendered } = await openEditor({ source: recordFixture, persisted: true });
+    await waitFor(() =>
+      expect(rendered.getByLabelText("Assigned On property for Project")).toBeTruthy(),
+    );
+    fireEvent.input(rendered.getByLabelText("Assigned On property for Project"), {
+      target: { value: "assigned-on-prop" },
+    });
+    const save = vi.spyOn(h.controller, "saveCapacitiesSource").mockResolvedValue({
+      source: savedRecord(5, recordFixture.structures),
+      persisted: true,
+    });
+    fireEvent.click(rendered.getByRole("button", { name: "Save mapping" }));
+    await waitFor(() => expect(save).toHaveBeenCalledTimes(1));
+    const draft = save.mock.calls[0][0];
+    expect(draft.structures[0].assignedOnProperty).toBe("assigned-on-prop");
+    expect(capacitiesSourceToWire(draft).structures[0].assigned_on_property).toBe(
+      "assigned-on-prop",
+    );
+  });
+
+  it("clears Assigned On to null when the field is emptied", async () => {
+    const withValue: CapacitiesSource = {
+      ...recordFixture,
+      structures: [
+        { ...recordFixture.structures[0], assignedOnProperty: "assigned-on-prop" },
+        recordFixture.structures[1],
+      ],
+    };
+    const { h, rendered } = await openEditor({ source: withValue, persisted: true });
+    await waitFor(() =>
+      expect(rendered.getByLabelText("Assigned On property for Project")).toBeTruthy(),
+    );
+    fireEvent.input(rendered.getByLabelText("Assigned On property for Project"), {
+      target: { value: "" },
+    });
+    const save = vi.spyOn(h.controller, "saveCapacitiesSource").mockResolvedValue({
+      source: savedRecord(5, recordFixture.structures),
+      persisted: true,
+    });
+    fireEvent.click(rendered.getByRole("button", { name: "Save mapping" }));
+    await waitFor(() => expect(save).toHaveBeenCalledTimes(1));
+    const draft = save.mock.calls[0][0];
+    expect(draft.structures[0].assignedOnProperty).toBeNull();
+    expect(capacitiesSourceToWire(draft).structures[0].assigned_on_property).toBeNull();
   });
 
   it("opens the disclosure when only assignment values are present", async () => {
