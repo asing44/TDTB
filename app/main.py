@@ -31,7 +31,7 @@ import re
 import subprocess
 import sys
 import threading
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any, Literal
 
@@ -70,6 +70,7 @@ sequence = planning.sequence  # compatibility alias for existing test seams
 import shadow  # noqa: E402
 import commit  # noqa: E402
 import calendar_bridge  # noqa: E402
+import calendar_drift  # noqa: E402
 import runtime_actions  # noqa: E402
 import external_sources  # noqa: E402
 import micro_adventure  # noqa: E402
@@ -3241,6 +3242,40 @@ def create_app() -> FastAPI:
                 "malformed_rows": result.validation.malformed_rows,
             },
         }
+
+    @app.get("/calendar-drift")
+    def get_calendar_drift() -> dict:
+        """Issue #19 (part A): read-only drift report between the calendar
+        blocks today's commit ledger recorded and the current Calendar state.
+
+        Tokenless read (like /config): it writes nothing, adopts nothing, and
+        never re-commits. The ledger is read by exact date; the Calendar
+        surface is one ``query_events`` read plus the inventory read the
+        ownership scope already needs. A missing/unreadable Calendar degrades
+        to a 200 ``calendar-unavailable`` body, never a 500."""
+        day = gather.effective_date(datetime.now())
+        checked_at = datetime.now().isoformat(timespec="seconds")
+        ledger = calendar_drift.read_ledger(day)
+        if not calendar_drift.ledger_touched(ledger):
+            return calendar_drift.no_commit_report(day, checked_at)
+        try:
+            store = calendar_bridge.shared_store()
+            status = store.auth_status()
+            if status not in shadow._CALENDAR_AUTH_OK:
+                raise calendar_bridge.CalendarWriteError(
+                    f"calendar consent not granted: {status}")
+            start = datetime.combine(day, datetime.min.time())
+            live_events = store.query_events(start, start + timedelta(days=1))
+            result = config_reader.read_config()
+            config = (
+                dict(result.config.sections)
+                if result.config is not None else {}
+            )
+            own_ids = shadow._own_calendar_ids(config, store)
+        except Exception as exc:  # noqa: BLE001 — degrade to a 200 body
+            return calendar_drift.unavailable_report(
+                day, checked_at, f"calendar unavailable: {exc}")
+        return calendar_drift.compare(day, ledger, live_events, own_ids, checked_at)
 
     @app.get("/settings/capacities")
     def get_capacities_settings() -> dict:
