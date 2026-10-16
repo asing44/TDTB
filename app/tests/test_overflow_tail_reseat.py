@@ -137,21 +137,36 @@ class TestReseatRule:
         assert (by_id["A"]["start"], by_id["A"]["end"]) == ("17:00", "17:30")
         assert (by_id["B"]["start"], by_id["B"]["end"]) == ("17:30", "18:00")
 
-    def test_parking_spill_is_pulled_back_under_midnight(self):
-        # 15 one-block overflow rows cannot pack consecutively before 23:59;
-        # the trailing rows are shifted back so every row ends <= 23:59 with
-        # start < end and no hard error.
+    def test_parking_spill_goes_past_eod(self):
+        # 15 one-block overflow rows cannot all pack before 23:59. The first
+        # 13 fill the free gaps (17:00-23:30, full duration, packed in
+        # order); the remaining two keep their same-day past-end-of-day
+        # marker (23:59-23:59) with a visible soft overflow_past_eod warning
+        # and stay in the sequence (never-bump). This replaces the pre
+        # 2026-10-16 clamping that piled the trailing rows on 23:59 — see
+        # asing44/TDTB#15 and app/tests/test_overflow_anchors.py.
         ids = [f"O{i}" for i in range(15)]
         proposal = {"sequence": [_row(i, "23:59", "23:59") for i in ids]}
         result = validate_sequence(
             proposal, [_item(i) for i in ids], [], {}, time_frame=FRAME)
         assert result.ok is True, result.hard_errors
-        for row in proposal["sequence"]:
-            start_min = int(row["start"][:2]) * 60 + int(row["start"][3:])
-            end_min = int(row["end"][:2]) * 60 + int(row["end"][3:])
-            assert start_min < end_min
-            assert end_min <= 23 * 60 + 59
-        assert len(_warnings_by_rule(result, "overflow_reseated")) == len(ids)
+        by_id = {row["id"]: row for row in proposal["sequence"]}
+        assert sorted(by_id) == sorted(ids)  # never-bump
+        placed = ids[:13]
+        spilled = ids[13:]
+        for offset, item_id in enumerate(placed):
+            start_min = int(by_id[item_id]["start"][:2]) * 60 + int(
+                by_id[item_id]["start"][3:])
+            end_min = int(by_id[item_id]["end"][:2]) * 60 + int(
+                by_id[item_id]["end"][3:])
+            assert (start_min, end_min) == (17 * 60 + 30 * offset,
+                                            17 * 60 + 30 * (offset + 1))
+        for item_id in spilled:
+            assert (by_id[item_id]["start"], by_id[item_id]["end"]) == (
+                "23:59", "23:59")
+        assert {w["id"] for w in _warnings_by_rule(result, "overflow_past_eod")} \
+            == set(spilled)
+        assert len(_warnings_by_rule(result, "overflow_reseated")) == len(placed)
 
     def test_reseat_is_idempotent(self):
         proposal, assigned = _live_scenario()
@@ -161,9 +176,12 @@ class TestReseatRule:
         assert second.ok is True
         assert not _warnings_by_rule(second, "overflow_reseated")
 
-    def test_parked_row_over_anchor_is_soft_overflow(self):
-        # The parked 17:00 row collides with a config-backed anchored block at
-        # 17:00-17:30: soft overflow_overlap naming the pair, never a rejection.
+    def test_parked_row_skips_anchor_span(self):
+        # asing44/TDTB#15 (2026-10-16, operator decision) reverses the earlier
+        # overflow exemption from anchored-block overlap (commit 4add629 era):
+        # anchors are NOT shareable. The parked row now starts after the
+        # 17:00-17:30 anchored block instead of sharing it, so no
+        # overflow_overlap naming the pair is emitted.
         anchored = [{
             "Block": "Evening Block", "Type": "hard",
             "Start": "17:00", "End": "17:30", "Duration": "30m",
@@ -174,11 +192,14 @@ class TestReseatRule:
             proposal, [_item("A")], anchored, {}, time_frame=FRAME)
         assert result.ok is True
         assert result.hard_errors == []
-        assert any(
+        row = next(r for r in proposal["sequence"] if r["id"] == "A")
+        assert (row["start"], row["end"]) == ("17:30", "18:00")
+        assert not any(
             w.get("rule") == "overflow_overlap"
             and "Evening Block" in (str(w.get("detail")) + str(w.get("affected_rows")))
             for w in result.warnings
         )
+        assert _warnings_by_rule(result, "overflow_reseated")
 
     def test_reseat_repairs_systems_group_overlap_grant(self):
         assigned = [

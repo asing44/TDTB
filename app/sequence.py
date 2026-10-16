@@ -997,19 +997,37 @@ def reseat_overflow_tail_rows(
     proposal: dict[str, Any],
     assigned: list[dict[str, Any]],
     time_frame: dict[str, Any] | None,
+    anchored_blocks: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, str]]:
-    """Deterministically re-seat the overflowing tail at ``OVERFLOW_PARK_TIME``.
+    """Deterministically re-seat the overflowing tail into the day's free gaps.
 
     The model parks items that do not fit before midnight at/after the
     effective EOD — a same-day HH:MM interval cannot express the crossing, so
     it emits ``start == end`` (or an already-truncated tail). Rather than
     reject the whole proposal (G16: over-capacity degrades, never 422), every
     ASSIGNED row with a known duration whose start is at/after the effective
-    EOD is parked at ``OVERFLOW_PARK_TIME`` (17:00) and packed consecutively
-    in original order (17:00-17:30, 17:30-18:00, ...). The park ignores the
-    anchor and the preceding row — the user wants 17:00 even when that is
-    before 'now'. If packing would spill past 23:59, the trailing rows are
-    shifted back so every row ends at/before 23:59 with ``start < end``.
+    EOD is packed, in original order and at its full duration, into the FREE
+    GAPS that begin at/after ``OVERFLOW_PARK_TIME`` (17:00) and skip every
+    anchored block span plus every row the day already holds. The park ignores
+    the anchor when choosing its first gap — the user wants 17:00 even when
+    that is before 'now' — but never shares a minute with an anchor.
+
+    REVERSAL (2026-10-16, GitHub asing44/TDTB#15). The pre-2026-10 park packed
+    straight from 17:00 and was exempt from anchored-block overlap, so an
+    overcommitted day stacked parked rows on anchors (live record that day:
+    Backpack 17:00 with Quick Tasks, System Improvements 17:30 with Sudsing,
+    WALL-E-OS Capacities Buildout 18:00 with Foods Dinner). The operator
+    decided anchors are NOT shareable: the park now skips every anchored block
+    span (``overlap_allowed``/permeable blocks excepted) and every row that is
+    not itself part of the tail, so a parked row never shares time with an
+    anchor. Mint-wall and calendar-wall handling is unchanged; Mint per-row
+    permeability is a later issue (#18).
+
+    A row that fits no free gap before 23:59 keeps its at/after-EOD placement
+    — the same-day past-end-of-day marker — and reports ``overflow_past_eod``
+    instead. It is never dropped (never-bump). That marker keeps ``start ==
+    end`` only for a tail row this pass could not fit, mirroring judgment.py's
+    narrow overflow-tail relaxation.
 
     The proposal's sequence is re-sorted chronologically (stable) afterwards
     so downstream ordering holds. Mutates ``proposal`` rows and any matching
@@ -1026,8 +1044,18 @@ def reseat_overflow_tail_rows(
     park_min = _to_minutes(OVERFLOW_PARK_TIME)
     durations = _assigned_durations(assigned)
     grants = proposal.get("overlap_grants")
-    reseated: list[dict[str, str]] = []
-    cursor = park_min
+
+    # Anchored block spans the park must not share. ``overlap_allowed``
+    # (permeable) blocks are explicitly shareable, so they are no obstacle.
+    obstacles: list[tuple[int, int]] = []
+    for block in anchored_blocks or []:
+        if not isinstance(block, dict) or block.get("overlap_allowed"):
+            continue
+        span = _anchored_span(block)
+        if span and span[1] > span[0]:
+            obstacles.append(span)
+
+    candidates: list[tuple[dict[str, Any], str, int, str, str]] = []
     for row in sequence:
         if not isinstance(row, dict) or row.get("backdrop"):
             continue
@@ -1036,22 +1064,54 @@ def reseat_overflow_tail_rows(
         end = placement_rules.canonical_time(row.get("end"))
         if start is None or end is None:
             continue
-        duration = durations.get(row_id)
-        if duration is None:
-            continue
         start_min = _to_minutes(start)
-        # Only the overflow tail moves: a row at/after the effective EOD.
-        if start_min < eod_min:
+        duration = durations.get(row_id)
+        # Only the overflow tail moves: an assigned row with a known duration
+        # starting at/after the effective EOD.
+        if duration is not None and start_min >= eod_min:
+            candidates.append((row, row_id, duration, start, end))
             continue
-        new_start = cursor
+        # Everything else holds its ground: the park fills the gaps around the
+        # day's existing placement (and around a previous pass's parked rows),
+        # which also keeps re-validation idempotent.
+        end_min = _to_minutes(end)
+        if end_min > start_min:
+            obstacles.append((start_min, end_min))
+    obstacles.sort()
+
+    def _free_start(cursor: int, duration: int) -> int:
+        """Advance ``cursor`` past every obstacle span it would share."""
+        start = cursor
+        progressed = True
+        while progressed:
+            progressed = False
+            for o_start, o_end in obstacles:
+                if o_start < start + duration and start < o_end:
+                    start = max(start, o_end)
+                    progressed = True
+        return start
+
+    reseated: list[dict[str, str]] = []
+    cursor = park_min
+    for row, row_id, duration, start, end in candidates:
+        new_start = _free_start(cursor, duration)
         new_end = new_start + duration
         if new_end > _TAIL_END_MIN:
-            # Packing spills past the last minute: pull the trailing rows
-            # back so everything ends <= 23:59 and start < end.
-            new_end = _TAIL_END_MIN
-            new_start = max(park_min, new_end - duration)
-            if new_start >= new_end:
-                new_start = new_end - 1
+            # No free gap before the last representable minute: leave the row
+            # at/after the effective EOD (its same-day past-end-of-day marker)
+            # and flag it softly. Never dropped.
+            reseated.append({
+                "id": row_id,
+                "rule": "overflow_past_eod",
+                "detail": (
+                    f"{row_id!r} exceeds the day's capacity — no free gap "
+                    f"before 23:59; left at {start}-{end} past end of day — "
+                    "defer or drop it"
+                ),
+                "start": start,
+                "end": end,
+            })
+            continue
         new_start_str = _minutes_to_hhmm(new_start)
         new_end_str = _minutes_to_hhmm(new_end)
         old_interval = {"start": start, "end": end}
@@ -1330,11 +1390,18 @@ def validate_sequence(
     # G16: over-capacity must degrade, never 422. Re-seat overflowing-tail
     # rows BEFORE normalization/canonicalization so both /sequence (proposal)
     # and /validate-sequence (revalidation) see the same representable layout
-    # and the returned plan carries the re-seated times. Every re-seated row
-    # is parked at OVERFLOW_PARK_TIME; overlaps it now hits are SOFT.
+    # and the returned plan carries the re-seated times. Re-seated rows are
+    # parked in the day's FREE GAPS (skipping anchored spans — asing44/TDTB#15
+    # reversed the earlier anchor exemption); a row that fits no gap keeps its
+    # past-EOD placement and reports overflow_past_eod.
     reseated_ids: set[str] = set()
-    for item in reseat_overflow_tail_rows(proposal, assigned, time_frame):
+    spill_ids: set[str] = set()
+    for item in reseat_overflow_tail_rows(
+        proposal, assigned, time_frame, anchored_blocks
+    ):
         reseated_ids.add(item["id"])
+        if item["rule"] == "overflow_past_eod":
+            spill_ids.add(item["id"])
         add_warning(
             {"id": item["id"], "rule": item["rule"], "detail": item["detail"]},
             affected_rows=[item["id"]],
@@ -1415,14 +1482,23 @@ def validate_sequence(
         end_min = _to_minutes(end)
         normalized_row = {**row, "start": start, "end": end}
         if end_min <= start_min:
-            detail = f"{row_id!r}: end {end!r} not after start {start!r}"
-            add_hard(
-                detail,
-                rule="non_positive_interval",
-                affected_rows=[row_id],
-                intervals=[interval_for(row_id, start, end)],
-            )
-            continue
+            if row_id in spill_ids:
+                # Overflow spill (asing44/TDTB#15): the park found no free gap
+                # before 23:59 for this assigned overflow-tail row, so it
+                # keeps the same-day past-end-of-day marker (start == end)
+                # exactly as judgment.py's narrow overflow-tail relaxation
+                # tolerates. The row stays in the sequence (never-bump) and
+                # carries the soft overflow_past_eod warning.
+                pass
+            else:
+                detail = f"{row_id!r}: end {end!r} not after start {start!r}"
+                add_hard(
+                    detail,
+                    rule="non_positive_interval",
+                    affected_rows=[row_id],
+                    intervals=[interval_for(row_id, start, end)],
+                )
+                continue
 
         if prev_start_min is not None and start_min < prev_start_min:
             detail = (
@@ -1585,8 +1661,14 @@ def validate_sequence(
 
     # G16 overflow contract (2026-07-14): over-capacity must degrade, never 422.
     # A row starting at/after the effective EOD sits in the overflow tail — its
-    # anchored-block overlap is a SOFT flag the user resolves on the timeline;
-    # before the effective EOD, an overlap stays a HARD wall.
+    # anchored-block overlap is a SOFT flag the user resolves on the timeline.
+    #
+    # 2026-10-16 (asing44/TDTB#15) REVERSED the earlier overflow exemption from
+    # anchored-block overlap (commit 4add629 era): the park now skips anchored
+    # spans, so a re-seated row no longer reaches this branch by virtue of
+    # being re-seated. Only a genuine at/after-EOD tail row keeps the soft
+    # `overflow_overlap` reading; every other anchored-block overlap is the
+    # ordinary LD26 acceptable-defect warning below.
     eod_min = frame_eod_min
 
     for row in rows:
@@ -1653,7 +1735,7 @@ def validate_sequence(
                             span_interval(block_name, (b_start, b_end)),
                         ],
                     )
-                elif row_id in reseated_ids or in_overflow_tail:
+                elif in_overflow_tail:
                     add_warning(
                         {
                             "id": row_id, "rule": "overflow_overlap",
