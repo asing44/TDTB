@@ -4533,6 +4533,11 @@ body {
 .capacities-source-field small {
   font-size: 10px;
 }
+/* A neighbour's hint makes the row taller; keep each field's own rows packed
+   at the top instead of stretching the input. */
+.capacities-source-row__fields > .capacities-source-field {
+  align-content: start;
+}
 .capacities-source-choices {
   display: flex;
   flex-wrap: wrap;
