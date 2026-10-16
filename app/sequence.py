@@ -1772,6 +1772,15 @@ def validate_sequence(
     # beginning exactly at its end touches, it does not overlap.
     mint_walls = selected_mint_walls(list(optional_items or []) + list(assigned))
     mint_wall_ids = {wall_id for wall_id, _ in mint_walls}
+    # #18: the per-row operator grant is read from the ASSIGNED/optional items
+    # only — never from proposal sequence rows or overlap_grants — so a model
+    # proposal cannot self-authorize a Mint overlap. Only the exact literal
+    # True on an assigned item counts.
+    granted_ids = {
+        str(item.get("id"))
+        for item in list(optional_items or []) + list(assigned)
+        if isinstance(item, dict) and item.get("may_overlap_mint") is True
+    }
     for row in rows:
         row_id = str(row.get("id"))
         # Anchored passthrough rows are source walls/windows, not movable work.
@@ -1791,9 +1800,24 @@ def validate_sequence(
                 if row_id in reseated_ids:
                     # A re-seated overflow row parked at 17:00 may land on a
                     # Mint wall; the park is soft so the plan still comes back.
+                    # Precedence (#18): a re-seated row keeps the overflow
+                    # reading even when it also carries the operator grant.
                     add_warning(
                         {"id": row_id, "rule": "overflow_overlap",
                          "detail": f"⚠ overflow — {detail}"},
+                        affected_rows=[row_id, wall_id],
+                        intervals=[
+                            interval_for(row_id, row["start"], row["end"]),
+                            span_interval(wall_id, (w_start, w_end)),
+                        ],
+                    )
+                elif row_id in granted_ids:
+                    # #18: an operator-granted row may overlap a selected Mint
+                    # session, but never silently — the overlap is always
+                    # reported as a soft named warning.
+                    add_warning(
+                        {"id": row_id, "rule": "mint_overlap_granted",
+                         "detail": f"{detail} — May overlap Mint (operator)"},
                         affected_rows=[row_id, wall_id],
                         intervals=[
                             interval_for(row_id, row["start"], row["end"]),

@@ -1119,14 +1119,14 @@ _ROUTE_TIMING_FIELDS = frozenset({
     "duration_source", "placement_window", "latest_start", "latest_end",
     "zone", "native_blocks", "allow_time_adjustment", "source_fingerprint",
     "capacities_id", "capacities_space_id", "capacities_structure_id",
-    "capacities_completion_supported",
+    "capacities_completion_supported", "may_overlap_mint",
 })
 
 _ROUTE_NATIVE_CLAIM_FIELDS = frozenset({
     "identity", "source", "scheduled_start", "is_recurring", "native_blocks",
     "allow_time_adjustment", "capacities_id", "capacities_space_id",
     "capacities_structure_id", "capacities_completion_supported",
-    "source_fingerprint",
+    "source_fingerprint", "may_overlap_mint",
 })
 
 
@@ -1282,7 +1282,14 @@ def _canonicalize_route_assigned(
     def _has_native_claim(row: dict[str, Any]) -> bool:
         return bool(
             _has_stable_claim(row)
-            or any(key in row for key in _ROUTE_NATIVE_CLAIM_FIELDS)
+            # ``may_overlap_mint`` is opt-in UI metadata (see #18), not a
+            # source/timing identity claim: it is stripped from every
+            # unmatched row rather than making an identity-less legacy row
+            # fail closed by its mere presence.
+            or any(
+                key in row for key in _ROUTE_NATIVE_CLAIM_FIELDS
+                if key != "may_overlap_mint"
+            )
             # An identity-less explicit all-day claim is still timing
             # metadata.  Do not let blocks==0 erase a native timed pin;
             # positive blocks remain valid legacy local planning shape.
@@ -1320,7 +1327,9 @@ def _canonicalize_route_assigned(
             }
             projected["id"] = str(match.get("name") or "").strip()
             projected["name"] = str(match.get("name") or "").strip()
-            for key in _ROUTE_TIMING_FIELDS - {"id", "name", "allow_time_adjustment"}:
+            for key in _ROUTE_TIMING_FIELDS - {
+                "id", "name", "allow_time_adjustment", "may_overlap_mint",
+            }:
                 if key in match and match.get(key) is not None:
                     projected[key] = match[key]
             # Todoist native provenance is server-owned: ``native_blocks``
@@ -1352,6 +1361,12 @@ def _canonicalize_route_assigned(
                 and row.get("allow_time_adjustment") is True
             ):
                 projected["allow_time_adjustment"] = True
+            # #18: the per-row Mint overlap grant is admitted onto the
+            # server-projected row ONLY for a server-matched assigned item.
+            # Any matched row (not just Todoist) may carry the operator
+            # grant; the exact literal True is the only authorization.
+            if row.get("may_overlap_mint") is True:
+                projected["may_overlap_mint"] = True
             canonical.append(projected)
             continue
 
