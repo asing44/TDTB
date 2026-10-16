@@ -137,6 +137,7 @@ _STRUCTURE_KEYS = frozenset(
         "duration_property",
         "assignment_property",
         "assignment_values",
+        "assigned_on_property",
         "completion_property",
         "completion_value",
     }
@@ -316,6 +317,12 @@ class SourceStructureRecord:
     duration_property: str | None = None
     assignment_property: str | None = None
     assignment_values: tuple[str, ...] = ()
+    #: Optional record-level ``Assigned On`` DATE/DATETIME property id
+    #: (additive; absent in older records). Resolved onto
+    #: ``StructureMapping.assigned_on_property`` by the builder precedence: a
+    #: settings ``assigned_on_structures`` declaration WINS when present,
+    #: otherwise this record value is used. The marker is READ-ONLY.
+    assigned_on_property: str | None = None
     completion_property: str | None = None
     completion_value: str | None = None
 
@@ -330,6 +337,7 @@ class SourceStructureRecord:
             "deadline_property",
             "duration_property",
             "assignment_property",
+            "assigned_on_property",
             "completion_property",
         ):
             object.__setattr__(
@@ -362,6 +370,10 @@ class SourceStructureRecord:
             duration_property=self.duration_property,
             completion_property=self.completion_property,
             completion_value=self.completion_value,
+            assigned_on_property=self.assigned_on_property,
+            # Diagnostic only: preserved so the adapter can report when a
+            # settings declaration shadowed a different record value.
+            assigned_on_record_property=self.assigned_on_property,
         )
 
     def as_dict(self) -> dict[str, Any]:
@@ -375,6 +387,7 @@ class SourceStructureRecord:
             "duration_property": self.duration_property,
             "assignment_property": self.assignment_property,
             "assignment_values": list(self.assignment_values),
+            "assigned_on_property": self.assigned_on_property,
             "completion_property": self.completion_property,
             "completion_value": self.completion_value,
         }
@@ -470,6 +483,7 @@ def _decode_structure(row: Any) -> SourceStructureRecord:
             "deadline_property",
             "duration_property",
             "assignment_property",
+            "assigned_on_property",
             "completion_property",
             "completion_value",
         ):

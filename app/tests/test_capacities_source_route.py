@@ -7,6 +7,7 @@ the no-provider test proves that with poisoned spies.
 """
 from __future__ import annotations
 
+import json
 import sys
 import threading
 from concurrent.futures import ThreadPoolExecutor
@@ -70,6 +71,7 @@ def _structure(**overrides) -> dict:
         "duration_property": None,
         "assignment_property": None,
         "assignment_values": [],
+        "assigned_on_property": None,
         "completion_property": None,
         "completion_value": None,
     }
@@ -1155,3 +1157,84 @@ class TestSelectionPromotionCallerParity:
 
         notices = [w for w in body["source_warnings"] if _identity("gone") in w]
         assert len(notices) == 1 and "no cached" in notices[0]
+
+
+class TestRecordLevelAssignedOnProperty:
+    """The additive per-structure ``assigned_on_property`` record field.
+
+    An absent key stays ``null`` on read and round-trips without changing any
+    other field; a present value survives the save/read cycle verbatim; an
+    invalid value is a bounded 422 like every other property id."""
+
+    def test_present_value_round_trips_through_save_and_read(self, client):
+        response = client.post(
+            "/settings/capacities/source/save",
+            headers=_auth(client),
+            json=_body(
+                structures=[_structure(assigned_on_property="assigned-on-id")]
+            ),
+        )
+
+        assert response.status_code == 200
+        source = response.json()["source"]
+        assert source["structures"][0]["assigned_on_property"] == "assigned-on-id"
+
+        read_back = client.get("/settings/capacities/source").json()
+        assert read_back == {"source": source, "persisted": True}
+        assert cb.read_source().as_dict() == source
+
+    def test_absent_value_projects_null_without_adding_a_sibling(self, client):
+        response = client.post(
+            "/settings/capacities/source/save",
+            headers=_auth(client),
+            json=_body(),
+        )
+
+        assert response.status_code == 200
+        row = response.json()["source"]["structures"][0]
+        assert row["assigned_on_property"] is None
+        # Every other field is exactly the submitted row.
+        assert row == _structure()
+
+    @pytest.mark.parametrize(
+        "bad", ["bad id", "", " padded ", 5, ["x"], True]
+    )
+    def test_invalid_value_is_a_bounded_422(self, client, bad):
+        response = client.post(
+            "/settings/capacities/source/save",
+            headers=_auth(client),
+            json=_body(structures=[_structure(assigned_on_property=bad)]),
+        )
+
+        assert response.status_code == 422
+        assert response.json()["detail"] == VALIDATION_ERROR
+        assert not cb.source_path().exists()
+
+    def test_stored_record_without_the_key_loads_with_a_null_default(self, client):
+        # A record persisted before the field existed: no key on disk, and the
+        # read projects the new field as null without touching the others.
+        path = cb.source_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "revision": 3,
+                    "space_id": SPACE,
+                    "structures": [
+                        {
+                            key: value
+                            for key, value in _structure().items()
+                            if key != "assigned_on_property"
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        body = client.get("/settings/capacities/source").json()
+
+        assert body["persisted"] is True
+        assert body["source"]["revision"] == 3
+        assert body["source"]["structures"][0]["assigned_on_property"] is None

@@ -570,6 +570,7 @@ function projectCapacitiesSourceStructure(raw: unknown): CapacitiesSourceStructu
     durationProperty: optionalPropertyId("duration_property"),
     assignmentProperty: optionalPropertyId("assignment_property"),
     assignmentValues: projectCapacitiesSourceValues(row.assignment_values, "assignment_values"),
+    assignedOnProperty: optionalPropertyId("assigned_on_property"),
     completionProperty: optionalPropertyId("completion_property"),
     completionValue: optionalPropertyId("completion_value"),
   };
@@ -657,6 +658,10 @@ export function capacitiesSourceToWire(draft: CapacitiesSourceDraft): Wire {
       assignment_values: capacitiesSourceValuesToWire(
         structure.assignmentValues,
         "assignmentValues",
+      ),
+      assigned_on_property: optionalPropertyId(
+        structure.assignedOnProperty ?? null,
+        "assignedOnProperty",
       ),
       completion_property: optionalPropertyId(
         structure.completionProperty,

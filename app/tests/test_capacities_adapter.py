@@ -3021,3 +3021,91 @@ def test_assigned_on_state_is_reset_by_every_projection_entry_point():
     assert any("could not be parsed" in warning for warning in first.warnings)
     assert second.warnings == []
     assert _source_assigned_by_id(second) == {"project-1": True}
+
+
+def test_record_level_assigned_on_marker_is_used_and_not_shadowed():
+    # The builder resolves a record-level Assigned On value onto
+    # ``assigned_on_property`` and preserves the same value on
+    # ``assigned_on_record_property``; with no settings declaration the two
+    # agree, so today/earlier is source-assigned and a future date is not.
+    provider = _assigned_on_provider([
+        _assigned_on_object(
+            "today",
+            {
+                "state": _active_state(),
+                ASSIGNED_ON_PROPERTY: _date_value(TODAY.isoformat()),
+            },
+        ),
+        _assigned_on_object(
+            "tomorrow",
+            {
+                "state": _active_state(),
+                ASSIGNED_ON_PROPERTY: _date_value(
+                    (TODAY + timedelta(days=1)).isoformat()
+                ),
+            },
+        ),
+    ])
+    mapping = _assigned_on_mapping(
+        assigned_on_record_property=ASSIGNED_ON_PROPERTY
+    )
+
+    result = _override_adapter(
+        provider, mapping, assignment_settings=_active_settings()
+    ).items_for_day(TODAY)
+
+    assert _source_assigned_by_id(result) == {"today": True, "tomorrow": False}
+    assert result.warnings == []
+
+
+def test_shadowed_record_assigned_on_reports_one_bounded_warning():
+    # A settings declaration wins, but when it overrides a DIFFERENT record
+    # value the override is surfaced as exactly one bounded note. The warning
+    # never changes the outcome and never carries source content.
+    provider = _assigned_on_provider([
+        _assigned_on_object(
+            "project-1",
+            {
+                "state": _active_state(),
+                ASSIGNED_ON_PROPERTY: _date_value(TODAY.isoformat()),
+            },
+        ),
+    ])
+    mapping = _assigned_on_mapping(
+        assigned_on_record_property="record-assigned-on",
+    )
+
+    result = _override_adapter(
+        provider, mapping, assignment_settings=_active_settings()
+    ).items_for_day(TODAY)
+
+    shadow = [
+        warning
+        for warning in result.warnings
+        if "shadows the source record mapping" in warning
+    ]
+    assert len(shadow) == 1
+    assert "record-assigned-on" in shadow[0]
+    assert ASSIGNED_ON_PROPERTY in shadow[0]
+    assert _source_assigned_by_id(result) == {"project-1": True}
+
+
+def test_equal_record_and_declaration_values_do_not_warn():
+    provider = _assigned_on_provider([
+        _assigned_on_object(
+            "project-1",
+            {
+                "state": _active_state(),
+                ASSIGNED_ON_PROPERTY: _date_value(TODAY.isoformat()),
+            },
+        ),
+    ])
+    mapping = _assigned_on_mapping(
+        assigned_on_record_property=ASSIGNED_ON_PROPERTY,
+    )
+
+    result = _override_adapter(
+        provider, mapping, assignment_settings=_active_settings()
+    ).items_for_day(TODAY)
+
+    assert result.warnings == []

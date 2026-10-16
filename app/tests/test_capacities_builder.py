@@ -2220,3 +2220,130 @@ def test_assigned_on_declaration_reaches_a_real_read_through_the_production_path
     assert [row["capacities_id"] for row in result.items] == ["project-1"]
     assert result.items[0]["capacities_assignment"]["mode"] == "assigned"
     assert result.items[0]["capacities_assignment"]["source_assigned"] is True
+
+
+# ---------------------------------------------------------------------------
+# Record-level read-only ``Assigned On`` (``assigned_on_property``)
+# ---------------------------------------------------------------------------
+# The record-level marker is additive: an older record without the key loads
+# and behaves exactly as before, and a settings ``assigned_on_structures``
+# declaration still WINS when present so existing operators see no change.
+
+RECORD_ASSIGNED_ON_PROPERTY = "b2c3d4e5-6f70-4812-9a3b-4c5d6e7f8a9b"
+
+
+def _record_assigned_on_payload(value) -> dict:
+    return _valid_payload(
+        structures=[
+            {
+                "structure_id": "RootTask",
+                "title_property": "title",
+                "status_property": "status",
+                "open_status_values": ["open"],
+            },
+            {
+                "structure_id": "custom-project",
+                "title_property": "title",
+                "status_property": "state",
+                "open_status_values": ["active"],
+                "assignment_property": "tdtb",
+                "assignment_values": ["yes"],
+                "assigned_on_property": value,
+            },
+        ]
+    )
+
+
+def test_record_assigned_on_value_resolves_when_no_declaration(tmp_path):
+    _write_settings_with_declarations({})
+
+    mappings = {
+        m.structure_id: m
+        for m in _built_mappings(
+            tmp_path, _record_assigned_on_payload(RECORD_ASSIGNED_ON_PROPERTY)
+        )
+    }
+
+    assert (
+        mappings["custom-project"].assigned_on_property
+        == RECORD_ASSIGNED_ON_PROPERTY
+    )
+    assert (
+        mappings["custom-project"].assigned_on_record_property
+        == RECORD_ASSIGNED_ON_PROPERTY
+    )
+    assert mappings["RootTask"].assigned_on_property is None
+
+
+def test_settings_declaration_wins_over_a_different_record_value(tmp_path):
+    _write_settings_with_declarations(
+        {}, {"custom-project": SETTINGS_ASSIGNED_ON_PROPERTY}
+    )
+
+    mappings = {
+        m.structure_id: m
+        for m in _built_mappings(
+            tmp_path, _record_assigned_on_payload(RECORD_ASSIGNED_ON_PROPERTY)
+        )
+    }
+
+    # The declaration wins; the shadowed record value is preserved only so
+    # the adapter can surface the override as a bounded note.
+    assert (
+        mappings["custom-project"].assigned_on_property
+        == SETTINGS_ASSIGNED_ON_PROPERTY
+    )
+    assert (
+        mappings["custom-project"].assigned_on_record_property
+        == RECORD_ASSIGNED_ON_PROPERTY
+    )
+
+
+def test_neither_record_nor_settings_assigned_on_leaves_the_legacy_path_intact(
+    tmp_path,
+):
+    _write_settings_with_declarations({})
+
+    mappings = {
+        m.structure_id: m for m in _built_mappings(tmp_path, _assignment_payload())
+    }
+
+    assert all(m.assigned_on_property is None for m in mappings.values())
+    assert all(m.assigned_on_record_property is None for m in mappings.values())
+    assert mappings["custom-project"].assignment_property == "tdtb"
+    assert mappings["custom-project"].assignment_values == frozenset({"yes"})
+    assert mappings["RootTask"].assignment_property == "assigned"
+
+
+def test_record_without_the_assigned_on_key_loads_with_a_null_default(tmp_path):
+    _write_source(_valid_payload())
+
+    record = cb.read_source()
+
+    assert record is not None
+    assert all(s.assigned_on_property is None for s in record.structures)
+    assert record.as_dict()["structures"][0]["assigned_on_property"] is None
+
+
+def test_record_assigned_on_value_round_trips_through_the_store(tmp_path):
+    _write_source(_record_assigned_on_payload(RECORD_ASSIGNED_ON_PROPERTY))
+
+    record = cb.read_source()
+
+    assert record is not None
+    custom = {s.structure_id: s for s in record.structures}["custom-project"]
+    assert custom.assigned_on_property == RECORD_ASSIGNED_ON_PROPERTY
+    assert custom.as_dict()["assigned_on_property"] == RECORD_ASSIGNED_ON_PROPERTY
+
+
+@pytest.mark.parametrize(
+    "bad", ["bad id", "", " padded ", 5, ["x"], True]
+)
+def test_invalid_record_assigned_on_value_is_rejected_like_any_property_id(bad):
+    with pytest.raises(cb.CapacitiesSourceFormatError):
+        cb.decode_source_payload(
+            space_id=SPACE,
+            structures=[
+                {"structure_id": "RootTask", "assigned_on_property": bad}
+            ],
+        )

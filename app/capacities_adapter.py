@@ -145,6 +145,12 @@ class StructureMapping:
     #: resolution and therefore never enumerates anything. The marker is
     #: READ-ONLY — TDTB never writes it.
     assigned_on_property: str | None = None
+    #: Diagnostic-only counterpart: the source record's own ``Assigned On``
+    #: value BEFORE the builder resolved a settings declaration onto
+    #: ``assigned_on_property``. When both are set and differ, the declaration
+    #: shadowed the record mapping and ``_ensure_contract`` emits one bounded
+    #: warning. Never used for precedence.
+    assigned_on_record_property: str | None = None
 
 
 @dataclass(frozen=True)
@@ -1267,6 +1273,22 @@ class CapacitiesAdapter:
                     f"{sid!r}: unknown property {mapping.assigned_property!r}"
                 )
                 mapping = replace(mapping, assigned_property=None)
+            # A settings declaration that overrode a DIFFERENT record-level
+            # value shadows the operator's record mapping. The declaration
+            # still wins, but the override is surfaced once as a bounded note
+            # so a stale declaration cannot silently mask a record edit.
+            if (
+                mapping.assigned_on_record_property
+                and mapping.assigned_on_property
+                and mapping.assigned_on_record_property
+                != mapping.assigned_on_property
+            ):
+                declaration_warnings.append(
+                    "settings Assigned On declaration for structure "
+                    f"{sid!r} shadows the source record mapping "
+                    f"{mapping.assigned_on_record_property!r}; using "
+                    f"{mapping.assigned_on_property!r}"
+                )
             # The Assigned On declaration follows the same fail-open contract:
             # unknown or non-date declarations are ignored with one bounded
             # warning so the mapping's own seams keep working, and nothing

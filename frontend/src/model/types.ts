@@ -106,6 +106,10 @@ export interface CapacitiesSourceStructure {
   durationProperty: string | null;
   assignmentProperty: string | null;
   assignmentValues: string[];
+  /** Optional record-level read-only Assigned On DATE marker (additive;
+      absent in older records). A settings Assigned On declaration wins when
+      present; otherwise this record value is used. */
+  assignedOnProperty?: string | null;
   completionProperty: string | null;
   completionValue: string | null;
 }
