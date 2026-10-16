@@ -14,6 +14,7 @@
 
 import type {
   RuntimeAction,
+  CalendarDrift,
   Capacity,
   CapacitiesCoverage,
   Captures,
@@ -206,6 +207,11 @@ export interface AppState {
   liveArmed: boolean; // second-click reveal (locked decision 9)
   commitPhase: CommitPhase;
   commitReport: CommitReport | null;
+  /** Issue #19 (part B): the read-only calendar drift report for today's
+      commit, and the last check failure. Informational only — it never
+      drives, adopts, or re-commits a write. */
+  calendarDrift: CalendarDrift | null;
+  calendarDriftError: string | null;
   /** T20 runtime verbs: one in-flight action at a time, last journal entry
       drives the status banner + the one scoped undo chip. */
   runtimeBusy: boolean;
@@ -302,6 +308,8 @@ export const initialState: AppState = {
   liveArmed: false,
   commitPhase: "idle",
   commitReport: null,
+  calendarDrift: null,
+  calendarDriftError: null,
   runtimeBusy: false,
   lastRuntimeAction: null,
   runtimeError: null,
@@ -387,6 +395,10 @@ export type Action =
   | { type: "COMMIT_ABORT" } // pre-write drift/failure: back to idle, no report
   | { type: "COMMIT_REJECTED"; error: string } // 409/422: nothing written, retryable
   | { type: "COMMIT_DONE"; report: CommitReport }
+  // Issue #19 (part B): read-only calendar drift check outcomes. Neither
+  // action writes; OK replaces the report, FAIL surfaces the check error.
+  | { type: "CALENDAR_DRIFT_OK"; report: CalendarDrift }
+  | { type: "CALENDAR_DRIFT_FAIL"; error: string }
   | { type: "RUNTIME_START" }
   | { type: "RUNTIME_OK"; action: RuntimeAction }
   | { type: "RUNTIME_FAIL"; error: string }
@@ -865,6 +877,10 @@ export function reducer(s: AppState, a: Action): AppState {
             : "failed";
       return { ...s, commitPhase: phase, commitReport: a.report, liveArmed: false };
     }
+    case "CALENDAR_DRIFT_OK":
+      return { ...s, calendarDrift: a.report, calendarDriftError: null };
+    case "CALENDAR_DRIFT_FAIL":
+      return { ...s, calendarDrift: null, calendarDriftError: a.error };
     case "RUNTIME_START":
       return { ...s, runtimeBusy: true, runtimeError: null };
     case "RUNTIME_OK":

@@ -14,6 +14,7 @@ import type {
   SourceRefreshResult,
 } from "./adapter";
 import type {
+  CalendarDrift,
   Capacity,
   CapacitiesCatalog,
   CapacitiesRefreshMode,
@@ -736,6 +737,23 @@ export class FixtureAdapter implements Adapter {
   async billedLedger(): Promise<Ledger> {
     await wait(60);
     return { ...this.ledger };
+  }
+
+  /** Issue #19 (part B): fixture mode has no committed ledger to compare, so
+      it always returns the canned "nothing to show" report. Tests inject
+      richer reports through their own adapter doubles. */
+  async calendarDrift(): Promise<CalendarDrift> {
+    await wait(40);
+    return {
+      status: "ok",
+      day: this.inputs.validDate,
+      hasCommit: false,
+      reason: "no commit today",
+      moved: [],
+      missing: [],
+      added: [],
+      checkedAt: "",
+    };
   }
 
   async capacityPreview(daySetup: DaySetup, selectedBlocks: number[]): Promise<Capacity> {

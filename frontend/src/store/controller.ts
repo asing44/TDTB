@@ -76,6 +76,10 @@ export type GetState = () => AppState;
     input events, short enough that releasing the thumb feels immediate. */
 const OVERRIDE_SETTLE_MS = 140;
 
+/** Issue #19 (part B): at most one window-focus drift check per 30 seconds.
+    The explicit Check calendar button is never throttled. */
+export const DRIFT_FOCUS_MIN_MS = 30_000;
+
 /** A sequence attempt that never reached POST /sequence: the day's fixed
     inputs could not be read, or the session token could not be fetched. The
     user must be told plainly that nothing was billed — the billed-attempt
@@ -230,11 +234,18 @@ export class Controller {
   // do) announces it here, so the header's job hook can attach its bounded
   // status poll to a run it did not start.
   private capacitiesRefreshStartSignals = new Set<() => void>();
+  /** Issue #19 (part B): one read-only drift check in flight at a time, and
+      the timestamp of the last window-focus-triggered check. */
+  private driftInFlight = false;
+  private lastDriftFocusAt: number | null = null;
 
   constructor(
     private adapter: Adapter,
     private dispatch: Dispatch,
     private getState: GetState,
+    /** Injectable clock for the focus throttle. Tests control it; the app
+        uses Date.now. */
+    private now: () => number = () => Date.now(),
   ) {}
 
   /** Today-only shaping context for adapter POST bodies: included rows with
@@ -907,6 +918,37 @@ export class Controller {
     const capacity = await this.adapter.capacityPreview(s.daySetup, selected);
     if (token !== this.capacityToken) return; // superseded by a newer edit
     this.dispatch({ type: "CAPACITY_UPDATED", capacity });
+  }
+
+  /** Issue #19 (part B): one read-only calendar drift check. It calls ONLY
+      adapter.calendarDrift() — never a write or billed endpoint. `fromFocus`
+      applies the window-focus throttle (at most one call per 30s); the
+      explicit Check calendar button always runs. An in-flight check is never
+      duplicated. */
+  async checkCalendarDrift(opts?: { fromFocus?: boolean }): Promise<void> {
+    if (this.driftInFlight) return;
+    if (opts?.fromFocus) {
+      const at = this.now();
+      if (
+        this.lastDriftFocusAt !== null &&
+        at - this.lastDriftFocusAt < DRIFT_FOCUS_MIN_MS
+      ) {
+        return;
+      }
+      this.lastDriftFocusAt = at;
+    }
+    this.driftInFlight = true;
+    try {
+      const report = await this.adapter.calendarDrift();
+      this.dispatch({ type: "CALENDAR_DRIFT_OK", report });
+    } catch (e) {
+      this.dispatch({
+        type: "CALENDAR_DRIFT_FAIL",
+        error: String(e instanceof Error ? e.message : e),
+      });
+    } finally {
+      this.driftInFlight = false;
+    }
   }
 
   /** The one billed action. Explicit user click only — never auto-fired. */

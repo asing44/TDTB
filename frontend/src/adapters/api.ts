@@ -24,6 +24,7 @@ import type {
   SourceRefreshResult,
 } from "./adapter";
 import type {
+  CalendarDrift,
   Capacity,
   CapacitiesCatalog,
   CapacitiesRefreshMode,
@@ -72,6 +73,7 @@ import {
   projectTagExclusionSettings,
   tagExclusionSettingsToWire,
   emptyTagCatalog,
+  projectCalendarDrift,
   projectCapacity,
   projectCommitReport,
   projectAnchoredStartSave,
@@ -392,6 +394,13 @@ export class ApiAdapter implements Adapter {
 
   async billedLedger(): Promise<Ledger> {
     return projectLedger(await this.request("/billed-ledger"));
+  }
+
+  /** GET /calendar-drift — read-only, tokenless (like GET /config): one GET
+      through the shared request helper, no token, no billed or write
+      endpoint. A degraded Calendar still answers 200 and projects normally. */
+  async calendarDrift(): Promise<CalendarDrift> {
+    return projectCalendarDrift(await this.request("/calendar-drift"));
   }
 
   /** Explicit source refresh (locked decision 20): exactly one GET

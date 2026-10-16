@@ -15,6 +15,11 @@ import type {
   AnchoredBlock,
   AnchoredKind,
   AssignedItem,
+  CalendarDrift,
+  CalendarDriftAdded,
+  CalendarDriftInterval,
+  CalendarDriftMissing,
+  CalendarDriftMoved,
   Capacity,
   CapacitiesCoverage,
   CapacitiesIntake,
@@ -2548,4 +2553,57 @@ export function shapeAssignedWire(
       // false-by-default contract, regardless of stale source payloads.
       allow_time_adjustment: timeAdjustmentOptIns[String(row.name)] === true,
     }));
+}
+
+// -- calendar drift (GET /calendar-drift) -----------------------------------
+
+function calendarDriftInterval(raw: unknown): CalendarDriftInterval {
+  const block = (raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {}) as Wire;
+  return {
+    start: typeof block.start === "string" && block.start !== "" ? block.start : null,
+    end: typeof block.end === "string" && block.end !== "" ? block.end : null,
+  };
+}
+
+function optionalCalendarDriftInterval(raw: unknown): CalendarDriftInterval | null {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  return calendarDriftInterval(raw);
+}
+
+function calendarDriftRows(value: unknown): Wire[] {
+  return Array.isArray(value)
+    ? value.filter(
+        (row): row is Wire => !!row && typeof row === "object" && !Array.isArray(row),
+      )
+    : [];
+}
+
+/** GET /calendar-drift: a read-only, purely informational projection. It is
+    deliberately tolerant — a missing optional field or an unrecognized
+    status degrades to a trailing-edge default instead of throwing, because
+    nothing here drives a write. */
+export function projectCalendarDrift(raw: Wire): CalendarDrift {
+  return {
+    status: raw.status === "calendar-unavailable" ? "calendar-unavailable" : "ok",
+    day: typeof raw.day === "string" ? raw.day : "",
+    hasCommit: raw.hasCommit === true,
+    reason: typeof raw.reason === "string" ? raw.reason : null,
+    moved: calendarDriftRows(raw.moved).map((row): CalendarDriftMoved => ({
+      name: String(row.name ?? ""),
+      id: String(row.id ?? ""),
+      committed: calendarDriftInterval(row.committed),
+      live: calendarDriftInterval(row.live),
+    })),
+    missing: calendarDriftRows(raw.missing).map((row): CalendarDriftMissing => ({
+      name: String(row.name ?? ""),
+      id: String(row.id ?? ""),
+      committed: optionalCalendarDriftInterval(row.committed),
+    })),
+    added: calendarDriftRows(raw.added).map((row): CalendarDriftAdded => ({
+      name: String(row.name ?? ""),
+      id: String(row.id ?? ""),
+      live: calendarDriftInterval(row.live),
+    })),
+    checkedAt: typeof raw.checkedAt === "string" ? raw.checkedAt : "",
+  };
 }

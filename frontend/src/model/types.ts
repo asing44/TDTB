@@ -964,3 +964,50 @@ export type QueueState =
   | "scheduled"
   | "excluded"
   | "background";
+
+// -- calendar drift (issue asing44/TDTB#19, read-only) ----------------------
+
+/** One naive-local ISO interval as GET /calendar-drift reports it. Either end
+    is null when the backend has no committed or live value to show. */
+export interface CalendarDriftInterval {
+  start: string | null;
+  end: string | null;
+}
+
+/** A committed calendar artifact whose live time no longer matches. */
+export interface CalendarDriftMoved {
+  name: string;
+  id: string;
+  committed: CalendarDriftInterval;
+  live: CalendarDriftInterval;
+}
+
+/** A committed artifact absent from the live Calendar. `committed` is null
+    for an id-only artifact (a no-op match with no recorded interval). */
+export interface CalendarDriftMissing {
+  name: string;
+  id: string;
+  committed: CalendarDriftInterval | null;
+}
+
+/** A TDTB-owned live Calendar event the day's commit did not name. */
+export interface CalendarDriftAdded {
+  name: string;
+  id: string;
+  live: CalendarDriftInterval;
+}
+
+/** GET /calendar-drift body: today's committed-vs-live comparison, purely
+    informational. `hasCommit` false means there is nothing to show; status
+    "calendar-unavailable" means the live read degraded and `reason` says why.
+    It never drives, adopts, or re-commits a write. */
+export interface CalendarDrift {
+  status: "ok" | "calendar-unavailable";
+  day: string;
+  hasCommit: boolean;
+  reason: string | null;
+  moved: CalendarDriftMoved[];
+  missing: CalendarDriftMissing[];
+  added: CalendarDriftAdded[];
+  checkedAt: string;
+}

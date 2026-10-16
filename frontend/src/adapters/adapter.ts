@@ -4,6 +4,7 @@
    FastAPI endpoints. Component code only ever sees this interface. */
 
 import type {
+  CalendarDrift,
   Capacity,
   CapacitiesCatalog,
   CapacitiesRefreshMode,
@@ -99,6 +100,10 @@ export interface Adapter {
   refreshSources(): Promise<SourceRefreshResult>;
   /** GET /billed-ledger — server-authoritative billed budget. */
   billedLedger(): Promise<Ledger>;
+  /** GET /calendar-drift — read-only comparison of today's committed blocks
+      against the live Calendar. Tokenless GET; it never writes, adopts, or
+      re-commits anything, and never touches a billed endpoint. */
+  calendarDrift(): Promise<CalendarDrift>;
   /** GET /capacity-preview — server-verbatim numbers for proposed edits. */
   capacityPreview(daySetup: DaySetup, selectedBlocks: number[]): Promise<Capacity>;
   /** POST /day-setup — persist session/day-scoped setup, never persistent config. */

@@ -6,6 +6,7 @@
 import { useState } from "preact/hooks";
 import { useApp, useAppState } from "./context";
 import { useDialog } from "./useDialog";
+import { CalendarDrift } from "./CalendarDrift";
 import { canAutoSequence, canLiveCommit, canShadow, shadowBlockers, type AppState } from "../store/store";
 import { display12h } from "../model/time";
 import type { PromptExportOutcome, ShadowEntry } from "../model/types";
@@ -468,6 +469,7 @@ export function ApprovalDrawer() {
             {report.promptExports && (
               <PromptExports exports={report.promptExports} />
             )}
+            <CalendarDrift />
             <div class="drawer-done">
               <button
                 class={`btn ${report.status === "ok" ? "btn--primary" : ""}`}
