@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { allowedOverlaps, defectsCovered, workOverlaps } from "./findings";
+import { allowedOverlaps, defectsCovered, overlapNotes, workOverlaps } from "./findings";
 import type { OverlapGrant, SequenceRow } from "./types";
 
 const row = (id: string, start: string, end: string, kind: "work" | "zone" = "work"): SequenceRow => ({
@@ -123,6 +123,59 @@ describe("allowedOverlaps (T29)", () => {
   it("null sequence and empty grants are clean", () => {
     expect(allowedOverlaps(null, [g], "fp")).toEqual([]);
     expect(allowedOverlaps([A, B], [], "fp")).toEqual([]);
+  });
+});
+
+describe("overlapNotes — per-row grant note (04-overlap-note)", () => {
+  const A = row("A", "09:00", "10:00");
+  const B = row("B", "09:30", "10:30");
+  const g = grant("A", "B", { start: "09:00", end: "10:00" }, { start: "09:30", end: "10:30" });
+
+  it("names each row's partner and the grant reason, one note per row", () => {
+    expect(overlapNotes([A, B], [g], "fp")).toEqual([
+      { rowId: "A", partnerId: "B", reason: "driving errand rides along" },
+      { rowId: "B", partnerId: "A", reason: "driving errand rides along" },
+    ]);
+  });
+
+  it("a time collision with NO grant produces no note", () => {
+    expect(overlapNotes([A, B], [], "fp")).toEqual([]);
+    expect(overlapNotes([A, B])).toEqual([]);
+  });
+
+  it("abutting rows produce no note even when a grant exists", () => {
+    const apart = row("B", "10:00", "10:30");
+    const gApart = grant("A", "B", { start: "09:00", end: "10:00" }, { start: "10:00", end: "10:30" });
+    expect(overlapNotes([A, apart], [gApart], "fp")).toEqual([]);
+  });
+
+  it("stale fingerprint or a moved row drops the note (exact-grant discipline)", () => {
+    expect(overlapNotes([A, B], [g], "other-fp")).toEqual([]);
+    expect(overlapNotes([A, B], [g], null)).toEqual([]);
+    expect(overlapNotes([A, row("B", "09:45", "10:45")], [g], "fp")).toEqual([]);
+  });
+
+  it("multiple grants on one row each render", () => {
+    const C = row("C", "09:15", "09:45");
+    const g2 = grant("A", "C", { start: "09:00", end: "10:00" }, { start: "09:15", end: "09:45" }, "paired with C");
+    const notes = overlapNotes([A, B, C], [g, g2], "fp");
+    expect(notes.filter((n) => n.rowId === "A").map((n) => n.partnerId)).toEqual(["C", "B"]);
+    expect(notes.filter((n) => n.rowId === "A").map((n) => n.reason)).toEqual([
+      "paired with C",
+      "driving errand rides along",
+    ]);
+  });
+
+  it("a grant naming a row that is not on the plan is skipped, not rendered", () => {
+    const ghost = grant("A", "ghost", { start: "09:00", end: "10:00" }, { start: "09:30", end: "10:30" }, "ghost grant");
+    expect(() => overlapNotes([A], [ghost], "fp")).not.toThrow();
+    expect(overlapNotes([A], [ghost], "fp")).toEqual([]);
+  });
+
+  it("zone/backdrop rows never carry a note", () => {
+    const zone = row("Trinoor", "08:00", "17:00", "zone");
+    const gZone = grant("A", "Trinoor", { start: "09:00", end: "10:00" }, { start: "08:00", end: "17:00" }, "zone grant");
+    expect(overlapNotes([A, zone], [gZone], "fp")).toEqual([]);
   });
 });
 

@@ -11055,3 +11055,16 @@ button.strip-cal {
     border-radius: 14px 14px 0 0;
   }
 }
+
+/* 04-overlap-note (2026-10-16): the explicit-grant note on a plan row. One
+   small muted/info-tinted line naming the partner row and the grant's reason.
+   Text-only — never a colour-only signal — and the full sentence rides the
+   title for truncation. */
+.qrow__overlap {
+  font-size: 10px;
+  line-height: 1.3;
+  color: color-mix(in srgb, var(--c-event) 45%, var(--t-muted));
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
