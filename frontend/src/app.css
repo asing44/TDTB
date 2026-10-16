@@ -10952,10 +10952,12 @@ button.strip-cal {
 }
 .habits-drawer__value small { font-size: 10px; color: var(--t-muted); font-weight: 400; }
 .habits-drawer__value[aria-expanded="true"] { background: var(--t-accent-subtle); }
-.habits-drawer__step:hover:not(:disabled),
+.habits-drawer__step:hover:not(:disabled):not([aria-disabled="true"]),
 .habits-drawer__value:hover:not(:disabled) { background: var(--t-surface-2); }
 .habits-drawer__step:disabled,
+.habits-drawer__step[aria-disabled="true"],
 .habits-drawer__value:disabled { opacity: 0.4; cursor: default; }
+.habits-drawer .btn[aria-disabled="true"] { opacity: 0.45; cursor: default; filter: saturate(0.6); }
 .habits-drawer__row--off .habits-drawer__label { opacity: 0.72; }
 .habits-drawer__row--off .habits-drawer__stepper { background: var(--t-surface-2); }
 .habits-drawer__row--off .habits-drawer__chip { color: var(--t-text); border-color: var(--t-muted); font-weight: 600; }

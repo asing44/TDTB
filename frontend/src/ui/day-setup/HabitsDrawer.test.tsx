@@ -2,6 +2,8 @@ import { render, fireEvent, cleanup, waitFor } from '@testing-library/preact';
 import { afterEach, expect, it, vi } from 'vitest';
 import { useState } from 'preact/hooks';
 import { HabitsCard } from './HabitsCard';
+import { HabitsDrawer } from './HabitsDrawer';
+import { habitsView } from '../../model/habits';
 import type { HabitOverrides } from '../../model/types';
 afterEach(cleanup);
 const info = { total: 5, done: 2, outstanding: 3, estMinutes: 60, items: [
@@ -106,4 +108,67 @@ it('failure shows error and Retry re-saves the same value', async () => {
   fireEvent.click(r.getByRole('button', {name:'Retry'}));
   expect(save).toHaveBeenLastCalledWith({items:{a:{on:false}},total:null});
   await waitFor(() => expect(r.getByText('✓ Saved for today')).toBeTruthy());
+});
+const HabitsDrawerHarness = ({ onClose }: { onClose: () => void }) =>
+  <HabitsDrawer view={habitsView(info, EMPTY)} overrides={EMPTY} done={0} dateLabel="Fri"
+    status="idle" error="" onSave={() => {}} onRetry={() => {}} onClose={onClose} />;
+/** Save that never resolves, so the drawer stays in its "saving" state. */
+const pending = () => vi.fn().mockReturnValue(new Promise<void>(() => {}));
+it('bulk stays natively enabled while saving and Esc closes from body or dialog', () => {
+  for (const target of ['body', 'dialog'] as const) {
+    const { r } = setup(pending());
+    const opener = r.getByRole('button', {name:'Review habits'});
+    const bulk = r.getByRole('button', {name:'Turn off all 3 habits'}) as HTMLButtonElement;
+    bulk.focus(); fireEvent.click(bulk);
+    expect(r.getByText('Saving…')).toBeTruthy();
+    expect(bulk.disabled).toBe(false);
+    expect(bulk.getAttribute('aria-disabled')).toBe('true');
+    expect(document.activeElement).toBe(bulk);
+    fireEvent.keyDown(target === 'body' ? document.body : r.getByRole('dialog'), {key:'Escape'});
+    expect(r.queryByRole('dialog')).toBeNull();
+    expect(document.activeElement).toBe(opener);
+    cleanup();
+  }
+});
+it('a click on aria-disabled bulk while saving is ignored', () => {
+  const { r, onSave } = setup(pending());
+  const bulk = r.getByRole('button', {name:'Turn off all 3 habits'});
+  fireEvent.click(bulk); fireEvent.click(bulk);
+  expect(onSave).toHaveBeenCalledTimes(1);
+});
+it('stepper tap keeps focus on the stepper while saving and Esc still closes', () => {
+  const { r } = setup(pending());
+  const opener = r.getByRole('button', {name:'Review habits'});
+  const inc = r.getByLabelText('Increase Reading minutes by 5') as HTMLButtonElement;
+  inc.focus(); fireEvent.click(inc);
+  expect(inc.disabled).toBe(false);
+  expect(document.activeElement).toBe(inc);
+  fireEvent.keyDown(document.body, {key:'Escape'});
+  expect(r.queryByRole('dialog')).toBeNull();
+  expect(document.activeElement).toBe(opener);
+});
+it('a stepper tapped into its limit stays focusable (aria-disabled, not native)', async () => {
+  const { r } = setup(undefined, { done: {...info, items:[{id:'a',name:'Reading',minutes:478}]} });
+  const inc = r.getByLabelText('Increase Reading minutes by 5') as HTMLButtonElement;
+  inc.focus(); fireEvent.click(inc);
+  await saved(r);
+  expect(inc.disabled).toBe(false);
+  expect(inc.getAttribute('aria-disabled')).toBe('true');
+  expect(document.activeElement).toBe(inc);
+});
+it('Reset day overrides stays focusable after it clears the overrides', async () => {
+  const { r } = setup(undefined, { initial: {items:{a:{minutes:10}},total:null} });
+  const reset = r.getByRole('button', {name:'Reset day overrides (1 changed)'}) as HTMLButtonElement;
+  reset.focus(); fireEvent.click(reset);
+  await saved(r);
+  const after = r.getByRole('button', {name:'Reset day overrides'}) as HTMLButtonElement;
+  expect(after.disabled).toBe(false);
+  expect(after.getAttribute('aria-disabled')).toBe('true');
+  expect(document.activeElement).toBe(after);
+});
+it('Esc inside the dialog closes once; the document net does not double-fire', () => {
+  const onClose = vi.fn();
+  const r = render(<HabitsDrawerHarness onClose={onClose} />);
+  fireEvent.keyDown(r.getByRole('dialog'), {key:'Escape'});
+  expect(onClose).toHaveBeenCalledTimes(1);
 });

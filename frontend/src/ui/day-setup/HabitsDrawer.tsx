@@ -5,7 +5,7 @@
    place; the rows never move. Focus, Tab wrap, Escape, and focus return come
    from useDialog. */
 
-import { useState } from "preact/hooks";
+import { useEffect, useState } from "preact/hooks";
 import { minutesToBlocks } from "../../model/time";
 import {
   HABIT_MINUTES_MAX,
@@ -18,6 +18,10 @@ import type { HabitOverrides } from "../../model/types";
 import { useDialog } from "../useDialog";
 
 export const HABIT_STEP_MINUTES = 5;
+/* A focused control must never go natively `disabled`: the browser drops
+   focus to <body>, the dialog stops seeing Escape/Tab. Busy, limit and
+   nothing-to-reset states use aria-disabled and ignore the click instead. */
+const ariaOff = (on: boolean) => (on ? "true" : undefined);
 const PRESETS = [5, 10, 15, 30];
 
 export type HabitsSaveStatus = "idle" | "saving" | "saved" | "failed";
@@ -83,17 +87,17 @@ function HabitRowView({
           ) : null}
         </div>
         <div class="habits-drawer__stepper">
-          <button type="button" class="habits-drawer__step" disabled={off || row.minutes <= 0}
+          <button type="button" class="habits-drawer__step" disabled={off} aria-disabled={ariaOff(row.minutes <= 0)}
             aria-label={`Decrease ${row.label} minutes by ${HABIT_STEP_MINUTES}`}
-            onClick={() => step(-HABIT_STEP_MINUTES)}>−</button>
+            onClick={() => { if (row.minutes > 0) step(-HABIT_STEP_MINUTES); }}>−</button>
           <button type="button" class="habits-drawer__value" disabled={off} aria-expanded={open}
             aria-label={`${row.label}: ${row.minutes} minutes. ${off ? "Turned off" : "Edit minutes"}`}
             onClick={() => { setText(String(row.minutes)); onEdit(!open); }}>
             {row.minutes}<small>min</small>
           </button>
-          <button type="button" class="habits-drawer__step" disabled={off || row.minutes >= HABIT_MINUTES_MAX}
+          <button type="button" class="habits-drawer__step" disabled={off} aria-disabled={ariaOff(row.minutes >= HABIT_MINUTES_MAX)}
             aria-label={`Increase ${row.label} minutes by ${HABIT_STEP_MINUTES}`}
-            onClick={() => step(HABIT_STEP_MINUTES)}>+</button>
+            onClick={() => { if (row.minutes < HABIT_MINUTES_MAX) step(HABIT_STEP_MINUTES); }}>+</button>
         </div>
         <button type="button" role="switch" class="anchor-popover__switch all-blocks__switch"
           aria-checked={row.on} aria-label={`Count ${row.label} today`}
@@ -115,8 +119,8 @@ function HabitRowView({
             ))}
           </div>
           <div class="habits-drawer__editor-actions">
-            <button type="button" class="btn" disabled={!row.edited}
-              onClick={() => { setText(String(row.defaultMinutes)); onPatch({ on: true, minutes: row.defaultMinutes }); }}>
+            <button type="button" class="btn" aria-disabled={ariaOff(!row.edited)}
+              onClick={() => { if (!row.edited) return; setText(String(row.defaultMinutes)); onPatch({ on: true, minutes: row.defaultMinutes }); }}>
               Reset to {row.defaultMinutes} min
             </button>
             <button type="button" class="btn btn--primary" onClick={() => onEdit(false)}>Done</button>
@@ -131,6 +135,18 @@ export function HabitsDrawer({
   view, overrides, done, dateLabel, status, error, onSave, onRetry, onClose,
 }: HabitsDrawerProps) {
   const dialog = useDialog(onClose);
+  // Safety net: if focus ever falls out of the dialog (to <body>), the dialog's
+  // own onKeyDown never sees Escape. Events from inside are already handled.
+  useEffect(() => {
+    const onDocKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      const el = dialog.ref.current;
+      if (el && e.target instanceof Node && el.contains(e.target)) return;
+      onClose();
+    };
+    document.addEventListener("keydown", onDocKey);
+    return () => document.removeEventListener("keydown", onDocKey);
+  }, [onClose]);
   const [editing, setEditing] = useState<string | null>(null);
   const [fieldError, setFieldError] = useState("");
   const off = view.rows.filter((r) => !r.on);
@@ -151,7 +167,7 @@ export function HabitsDrawer({
       (acc, r) => withHabitEntry(acc, r.key, { on: allOff }, r.defaultMinutes), overrides ?? { items: {}, total: null }));
   }
   function resetAll() {
-    if (busy) return;
+    if (busy || changed === 0) return;
     setEditing(null); setFieldError("");
     onSave({ items: {}, total: null });
   }
@@ -174,7 +190,7 @@ export function HabitsDrawer({
           <section aria-labelledby="habits-drawer-today">
             <div class="habits-drawer__group-head">
               <h3 id="habits-drawer-today">Today <span>{view.rows.length}</span></h3>
-              <button type="button" class="btn" disabled={busy || view.rows.length === 0} onClick={bulk}>
+              <button type="button" class="btn" disabled={view.rows.length === 0} aria-disabled={ariaOff(busy)} onClick={bulk}>
                 {allOff ? "Turn all back on" : `Turn off all ${view.rows.length} habits`}
               </button>
             </div>
@@ -208,7 +224,7 @@ export function HabitsDrawer({
               </>
             ) : status === "saved" ? "✓ Saved for today" : ""}
           </div>
-          <button type="button" class="btn" disabled={busy || changed === 0}
+          <button type="button" class="btn" aria-disabled={ariaOff(busy || changed === 0)}
             aria-label={`Reset day overrides${changed ? ` (${changed} changed)` : ""}`} onClick={resetAll}>
             Reset day overrides{changed > 0 && <span class="habits-drawer__chip">{changed}</span>}
           </button>
