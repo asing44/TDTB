@@ -765,6 +765,26 @@ class TestExactSequenceAuthorization:
             encoding="utf-8",
         )
 
+    def _write_overlap_anchored_vault_config(self, vault: Path) -> None:
+        """Config with one non-permeable anchored block (Press) and one
+        overlap_allowed anchored block (Live, window 12:00-20:00)."""
+        config_path = vault / "00 - META" / "Skill-Configs" / "tdtb-bridger.md"
+        config_path.parent.mkdir(parents=True, exist_ok=True)
+        write_config_note(config_path,
+            "## Defaults\n"
+            "| Key | Value |\n|---|---|\n| eod | 11:59 PM |\n\n"
+            "## Anchored Lifestyle Blocks\n"
+            "| Block | Type | Start | End | Duration | Days | overlap_allowed |\n"
+            "|---|---|---|---|---|---|---|\n"
+            "| Press | hard | 7:00 AM | — | 60m | daily | no |\n"
+            "| Live | window | 12:00 PM | 8:00 PM | 30m | daily | yes |\n\n"
+            "## Template Blocks\n"
+            "### Trinoor Hours\n"
+            "| Slot | Start | End |\n|---|---|---|\n"
+            "| Morning | 8:30 AM | 12:30 PM |\n",
+            encoding="utf-8",
+        )
+
     def test_forged_anchored_timing_is_422(self, client, vault, monkeypatch):
         """A valid anchored ID with a forged start must not be authorized."""
         monkeypatch.setattr(shadow, "gather_live_state", lambda c: {
@@ -815,6 +835,68 @@ class TestExactSequenceAuthorization:
         r = client.post(
             "/commit?mode=shadow", headers=_auth(client),
             json={"digest": DIGEST, "sequence": seq, "config": {}},
+        )
+        assert r.status_code == 422
+        assert "backdrop" in r.json()["detail"]
+
+    def test_overlap_allowed_anchor_backdrop_echo_is_ok(
+        self, client, vault, monkeypatch
+    ):
+        """A server-injected overlap_allowed anchored row echoed with
+        ``backdrop: true`` and its server-matching span previews OK."""
+        monkeypatch.setattr(shadow, "gather_live_state", lambda c: {
+            "todoist_tasks": [], "calendar_events": [],
+            "vault_frontmatter": {}, "daily_note_text": None,
+        })
+        self._write_overlap_anchored_vault_config(vault)
+        seq = {"sequence": [
+            {"id": "Live", "start": "12:00", "end": "20:00",
+             "zone": "any", "backdrop": True},
+        ]}
+        r = client.post(
+            "/commit?mode=shadow", headers=_auth(client),
+            json={"digest": {"assigned": []}, "sequence": seq, "config": {}},
+        )
+        assert r.status_code == 200, r.json()
+
+    def test_overlap_allowed_anchor_backdrop_forged_timing_is_422(
+        self, client, vault, monkeypatch
+    ):
+        """The backdrop widening does not waive exact anchored timing."""
+        monkeypatch.setattr(shadow, "gather_live_state", lambda c: {
+            "todoist_tasks": [], "calendar_events": [],
+            "vault_frontmatter": {}, "daily_note_text": None,
+        })
+        self._write_overlap_anchored_vault_config(vault)
+        for start, end in (("11:00", "20:00"), ("12:00", "19:00")):
+            seq = {"sequence": [
+                {"id": "Live", "start": start, "end": end,
+                 "zone": "any", "backdrop": True},
+            ]}
+            r = client.post(
+                "/commit?mode=shadow", headers=_auth(client),
+                json={"digest": {"assigned": []}, "sequence": seq, "config": {}},
+            )
+            assert r.status_code == 422, r.json()
+            assert "does not match" in r.json()["detail"]
+
+    def test_backdrop_on_non_overlap_anchored_row_is_422(
+        self, client, vault, monkeypatch
+    ):
+        """A backdrop on an anchored block without overlap_allowed still fails
+        closed even when its timing matches the server projection."""
+        monkeypatch.setattr(shadow, "gather_live_state", lambda c: {
+            "todoist_tasks": [], "calendar_events": [],
+            "vault_frontmatter": {}, "daily_note_text": None,
+        })
+        self._write_overlap_anchored_vault_config(vault)
+        seq = {"sequence": [
+            {"id": "Press", "start": "07:00", "end": "08:00",
+             "zone": "any", "backdrop": True},
+        ]}
+        r = client.post(
+            "/commit?mode=shadow", headers=_auth(client),
+            json={"digest": {"assigned": []}, "sequence": seq, "config": {}},
         )
         assert r.status_code == 422
         assert "backdrop" in r.json()["detail"]

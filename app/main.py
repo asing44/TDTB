@@ -5698,7 +5698,7 @@ def create_app() -> FastAPI:
         assigned, anchored, schedulable, and Trinoor identities; fixed-lane
         rows (anchored blocks, Trinoor work zones) must also carry the exact
         server timing, and a ``backdrop`` flag is honored only on server-emitted
-        Trinoor zone rows.  The client ``_excluded`` flag and client-only config
+        Trinoor zone rows and overlap_allowed anchored rows.  The client ``_excluded`` flag and client-only config
         are never authorization. Native timed protection is recomputed from
         the dated server digest index immediately before the manifest boundary.
 
@@ -6039,7 +6039,8 @@ def create_app() -> FastAPI:
         assigned_names = {
             str(row.get("name") or "").strip() for row in authorized_rows
         }
-        anchored_names = set(shadow._anchored_specs(config))
+        anchored_specs = shadow._anchored_specs(config)
+        anchored_names = set(anchored_specs)
         sched_names = {
             str(value).strip()
             for item in sched_items if isinstance(item, dict)
@@ -6086,6 +6087,14 @@ def create_app() -> FastAPI:
             for row in server_zone_rows if isinstance(row, dict)
         }
         zone_names.discard("")
+        # Sequence population injects overlap_allowed anchored blocks as
+        # ``backdrop: true`` rows (see sequence.populate_remaining_anchors).
+        # The client echoes that flag verbatim, so honor it on those anchored
+        # names too; exact timing still binds through the anchored branch.
+        backdrop_names = zone_names | {
+            name for name, spec in anchored_specs.items()
+            if spec.get("overlap_allowed")
+        }
         allowed = assigned_names | anchored_names | sched_names | zone_names
         unknown_sequence = [
             str(row.get("id") or "<empty>")
@@ -6101,7 +6110,7 @@ def create_app() -> FastAPI:
             row_id = str(row.get("id") or "").strip()
             submitted_start = _hhmm2(row.get("start"))
             submitted_end = _hhmm2(row.get("end"))
-            if bool(row.get("backdrop")) and row_id not in zone_names:
+            if bool(row.get("backdrop")) and row_id not in backdrop_names:
                 fixed_timing.append(f"{row_id!r}: client backdrop on non-zone row")
                 continue
             if row_id in zone_names:
@@ -6118,7 +6127,7 @@ def create_app() -> FastAPI:
                         f"does not match server zone projection")
                 continue
             if row_id in anchored_names:
-                spec = shadow._anchored_specs(config)[row_id]
+                spec = anchored_specs[row_id]
                 server_start = _hhmm2(spec.get("time")) or _hhmm2(spec.get("Start")) or _hhmm2(spec.get("start"))
                 if server_start is not None and submitted_start != server_start:
                     fixed_timing.append(
