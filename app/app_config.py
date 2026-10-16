@@ -36,6 +36,9 @@ translation to the markdown-shaped section dict the rest of the app consumes
       "colors": [...],
       "micro_adventure_pool": [...],
       "micro_adventure_rotation": {"exclude_window_days": 14, ...},
+      "micro_adventure_capacities": {"enabled": false, "structure": "",
+                                     "idea_property": "", "category_property": "",
+                                     "effort_property": "", "refresh_cadence_hours": 168},
       "habits": {"fallback_minutes_per_habit": 4, "round_to_minutes": 15},
       "todoist": {"read_query": {"assigned": ..., "quick": ...}},
       "sources": {"mode": "live" | "artifact",
@@ -117,6 +120,29 @@ SOURCES_KNOWN_KEYS = frozenset({
 #: validation failure, no ``sources_config_warnings`` entry. A trimmed match
 #: counts, so a whitespace-padded legacy key is tolerated the same way.
 SOURCES_LEGACY_IGNORED_KEYS = frozenset({"vault_enabled"})
+
+#: Optional ``micro_adventure_capacities`` block — a DISABLED-by-default
+#: extension point for eventually pulling micro-adventure ideas from
+#: Capacities. It is folded into the ``Micro-Adventures`` section as
+#: ``Capacities`` beside ``Pool``/``Rotation`` so ``micro_adventure`` reads one
+#: shape. Nothing consumes it on a request path; the live pull is unbuilt and
+#: ``micro_adventure.capacities_pool`` reports the status only.
+MICRO_ADVENTURE_CAPACITIES_KEY = "micro_adventure_capacities"
+MICRO_ADVENTURE_CAPACITIES_DEFAULTS: dict[str, Any] = {
+    "enabled": False,
+    "structure": "",
+    "idea_property": "",
+    "category_property": "",
+    "effort_property": "",
+    "refresh_cadence_hours": 168,
+}
+#: Keys the ``micro_adventure_capacities`` block recognizes. Anything else is
+#: reported by :func:`micro_adventure_capacities_config_warnings`.
+MICRO_ADVENTURE_CAPACITIES_KNOWN_KEYS = frozenset(MICRO_ADVENTURE_CAPACITIES_DEFAULTS)
+#: The string-valued keys; anything non-string degrades to "".
+MICRO_ADVENTURE_CAPACITIES_STRING_KEYS = (
+    "structure", "idea_property", "category_property", "effort_property",
+)
 
 #: Keys the nested ``sources.artifact`` section recognizes.
 SOURCES_ARTIFACT_KNOWN_KEYS = frozenset({"max_age_minutes"})
@@ -421,6 +447,11 @@ def sections_from_document(document: dict[str, Any]) -> dict[str, Any]:
         micro["Rotation"] = _expand_dot_notation(
             {f"rotation.{key}": value for key, value in rotation.items()}
         )
+    capacities = document.get(MICRO_ADVENTURE_CAPACITIES_KEY)
+    if isinstance(capacities, dict):
+        # A partial (or empty) block folds with its defaults filled, so
+        # ``micro_adventure.capacities_pool`` always reads one complete shape.
+        micro["Capacities"] = _normalize_micro_adventure_capacities(capacities)
     if micro:
         out["Micro-Adventures"] = micro
 
@@ -504,6 +535,92 @@ def _unrecognized_key_warnings(
             "section's other keys."
         )
     return out
+
+
+# ---------------------------------------------------------------------------
+# micro_adventure_capacities — folding + operator report
+# ---------------------------------------------------------------------------
+
+def micro_adventure_capacities_config_warnings(
+    path: str | Path | None = None,
+) -> list[str]:
+    """Report unrecognized keys and wrong-typed values in the optional
+    ``micro_adventure_capacities`` block of config.json.
+
+    The block is a disabled-by-default extension point, so a malformed value
+    never blocks startup: :func:`_normalize_micro_adventure_capacities`
+    degrades it to the default and this report makes the degradation loud.
+    Returns ``[]`` for an unusable document, an absent block, or a clean
+    block. Never raises."""
+    if path is not None:
+        documents = [read_document_file(path)]
+    else:
+        documents = [
+            read_document_file(repo_config_path()),
+            read_document_file(config_path()),
+        ]
+    warnings: list[str] = []
+    for document in documents:
+        if document is not None:
+            warnings += _micro_adventure_capacities_warnings(document)
+    return list(dict.fromkeys(warnings))
+
+
+def _normalize_micro_adventure_capacities(raw: dict[str, Any]) -> dict[str, Any]:
+    """Resolve the ``micro_adventure_capacities`` block to its documented
+    shape, filling defaults. Every wrong type keeps the default; the
+    operator-visible report is
+    :func:`micro_adventure_capacities_config_warnings`. Never raises."""
+    out = dict(MICRO_ADVENTURE_CAPACITIES_DEFAULTS)
+    trimmed = _trimmed_keys(raw)
+    if type(trimmed.get("enabled")) is bool:
+        out["enabled"] = trimmed["enabled"]
+    for key in MICRO_ADVENTURE_CAPACITIES_STRING_KEYS:
+        value = trimmed.get(key)
+        if isinstance(value, str):
+            out[key] = value
+    cadence = trimmed.get("refresh_cadence_hours")
+    if type(cadence) is int and cadence > 0:
+        out["refresh_cadence_hours"] = cadence
+    return out
+
+
+def _micro_adventure_capacities_warnings(document: dict[str, Any]) -> list[str]:
+    raw = document.get(MICRO_ADVENTURE_CAPACITIES_KEY)
+    if raw is None:
+        return []
+    if not isinstance(raw, dict):
+        return [
+            f"config.json {MICRO_ADVENTURE_CAPACITIES_KEY} is {raw!r}, which is "
+            "not an object; the block is ignored and Capacities micro-adventure "
+            "ideas stay off."
+        ]
+    warnings = _unrecognized_key_warnings(
+        raw, MICRO_ADVENTURE_CAPACITIES_KEY, MICRO_ADVENTURE_CAPACITIES_KNOWN_KEYS
+    )
+    trimmed = _trimmed_keys(raw)
+    if "enabled" in trimmed and type(trimmed["enabled"]) is not bool:
+        warnings.append(
+            f"config.json {MICRO_ADVENTURE_CAPACITIES_KEY}.enabled is "
+            f"{trimmed['enabled']!r}, which is not true or false; using false "
+            "(Capacities micro-adventure ideas stay off)."
+        )
+    for key in MICRO_ADVENTURE_CAPACITIES_STRING_KEYS:
+        if key in trimmed and not isinstance(trimmed[key], str):
+            warnings.append(
+                f"config.json {MICRO_ADVENTURE_CAPACITIES_KEY}.{key} is "
+                f'{trimmed[key]!r}, which is not a string; using "".'
+            )
+    cadence = trimmed.get("refresh_cadence_hours")
+    if "refresh_cadence_hours" in trimmed and not (
+        type(cadence) is int and cadence > 0
+    ):
+        warnings.append(
+            f"config.json {MICRO_ADVENTURE_CAPACITIES_KEY}.refresh_cadence_hours "
+            f"is {cadence!r}, which is not a positive integer; using "
+            f"{MICRO_ADVENTURE_CAPACITIES_DEFAULTS['refresh_cadence_hours']}."
+        )
+    return warnings
 
 
 def _flatten(nested: dict[str, Any], prefix: str = "") -> dict[str, Any]:

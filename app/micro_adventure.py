@@ -18,6 +18,9 @@ Contract surfaces:
     (`FALLBACK_POOL`), which stays in code.
   * History — the log ``<app home>/state/micro-adventure-log.md`` (app-owned),
     YAML frontmatter, newest-first. Missing/unparseable → empty history.
+  * Capacities — a DISABLED-by-default extension point (`capacities_pool`)
+    reading the folded ``Capacities`` block; a documented stub that performs
+    no I/O and is never reached from a request path.
 """
 from __future__ import annotations
 
@@ -75,6 +78,76 @@ FALLBACK_POOL: list[PoolIdea] = [
     PoolIdea("ma13", "Take a short barefoot walk in the grass", "nature", "low", True),
     PoolIdea("ma14", "Do something unprompted and kind", "courage", "low", True),
 ]
+
+
+# ------------------------------------------------- Capacities extension point
+#: The three states :func:`capacities_pool` reports. This is an EXTENSION POINT
+#: only: nothing consumes it on a request path.
+CAPACITIES_STATUS_DISABLED = "disabled"
+CAPACITIES_STATUS_NOT_CONFIGURED = "not-configured"
+CAPACITIES_STATUS_NOT_IMPLEMENTED = "not-implemented"
+
+
+@dataclass(frozen=True)
+class CapacitiesPoolResult:
+    """Typed result of :func:`capacities_pool`.
+
+    ``ideas`` is always empty in this build — the live pull is deliberately
+    not implemented — but the field exists so a later implementation can
+    return ``PoolIdea`` rows without changing the call shape."""
+
+    ideas: list[PoolIdea]
+    status: str
+    message: str
+
+
+def capacities_pool(section: Any) -> CapacitiesPoolResult:
+    """STUB extension point for pulling micro-adventure ideas from Capacities.
+
+    Reads only the ``Micro-Adventures`` -> ``Capacities`` block (the folded
+    ``micro_adventure_capacities`` config key) and performs NO I/O. It is NOT
+    called by ``_micro_adventure_state``, ``select_today``, or any other
+    request path; the live pull it stands in for would be refreshed by an
+    operator-run/skill step against the Capacities read cursor, never on the
+    request path.
+
+    Status is one of three:
+
+      * ``disabled`` — ``enabled`` is anything other than the boolean ``True``
+        (absent block, ``false``, or a wrong type that degraded); no ideas.
+      * ``not-configured`` — enabled, but ``structure`` or ``idea_property``
+        is missing/blank; no ideas.
+      * ``not-implemented`` — enabled and fully configured; the live pull is
+        deliberately unbuilt, so no ideas.
+
+    A future implementation would normalize each pulled object to the pool row
+    shape ``{ID, Idea, Category, Effort, Active}`` with STABLE ids derived from
+    the Capacities object id (``cap-<object id>``) so streak/history keyed by
+    id survive, merge them AFTER the config pool, and refresh them only via
+    the operator-run/skill step described above. This stub never raises."""
+    caps = section.get("Capacities") if isinstance(section, dict) else None
+    caps = caps if isinstance(caps, dict) else {}
+    if caps.get("enabled") is not True:
+        return CapacitiesPoolResult(
+            [], CAPACITIES_STATUS_DISABLED,
+            "Capacities micro-adventure ideas are off.",
+        )
+    structure = caps.get("structure")
+    idea_property = caps.get("idea_property")
+    if not (
+        isinstance(structure, str) and structure.strip()
+        and isinstance(idea_property, str) and idea_property.strip()
+    ):
+        return CapacitiesPoolResult(
+            [], CAPACITIES_STATUS_NOT_CONFIGURED,
+            "Capacities micro-adventure ideas need both 'structure' and "
+            "'idea_property'.",
+        )
+    return CapacitiesPoolResult(
+        [], CAPACITIES_STATUS_NOT_IMPLEMENTED,
+        "Live Capacities micro-adventure ideas are not implemented; the config "
+        "pool in config/tdtb.json is the only source today.",
+    )
 
 
 # ---------------------------------------------------------------- parse helpers

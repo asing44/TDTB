@@ -521,5 +521,13 @@
   "micro_adventure_rotation": {
     "exclude_window_days": 14,
     "graduate_offer": true
+  },
+  "micro_adventure_capacities": {
+    "enabled": false,
+    "structure": "",
+    "idea_property": "",
+    "category_property": "",
+    "effort_property": "",
+    "refresh_cadence_hours": 168
   }
 }

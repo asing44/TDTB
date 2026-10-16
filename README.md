@@ -77,6 +77,29 @@ switch.
 **Tests:** `app/tests/test_bootstrap_seat.py` — fixture-based, fakes uv/npm,
 uses a temporary HOME/repo, never touches real infrastructure.
 
+## Micro-adventure sources
+
+The Live micro-adventure pool (the "Live micro-adventure" options on Set up
+day) is config-backed. Edit the list in `config/tdtb.json` under
+`micro_adventure_pool` (plus `micro_adventure_rotation` for the exclude
+window); the machine-local `~/.config/tdtb/config.json` layers on top. If both
+are missing, the in-code `FALLBACK_POOL` in `app/micro_adventure.py` is the
+last resort.
+
+The optional `micro_adventure_capacities` key is a **disabled** extension
+point for someday pulling ideas from Capacities. It defaults to
+`{"enabled": false, "structure": "", "idea_property": "",
+"category_property": "", "effort_property": "",
+"refresh_cadence_hours": 168}`. `app/micro_adventure.py:capacities_pool`
+reports `disabled` / `not-configured` / `not-implemented` and performs no I/O.
+
+**Not built:** there is no UI editor and no live Capacities pull. A later pull
+would normalize objects to the pool row shape `{ID, Idea, Category, Effort,
+Active}` with **stable ids** derived from the Capacities object id
+(`cap-<object id>`) so streak/history keyed by id survive, would merge after
+the config pool, and would refresh only via an operator-run/skill step against
+the read cursor — never on a request path.
+
 ## Judgment model selector
 
 The judgment model is chosen by one plain, non-secret file at the repo root:
