@@ -59,12 +59,14 @@ function messageOf(error: unknown): string {
 }
 
 /** A brand-new row: every role unconfigured except the two fields that are
-    non-nullable in the record. Nothing is inferred from a title or copied
-    from a similarly named field — the operator declares every role. */
+    non-nullable in the record. The title property is prefilled with the
+    conventional "title" id (still editable); nothing else is inferred from a
+    title or copied from a similarly named field — the operator declares
+    every other role. */
 function emptyStructure(): CapacitiesSourceStructure {
   return {
     structureId: "",
-    titleProperty: "",
+    titleProperty: "title",
     statusProperty: null,
     openStatusValues: [],
     dateProperty: null,
@@ -186,6 +188,7 @@ function PropertyField({
   ariaLabel,
   value,
   placeholder,
+  hint,
   choices,
   onChange,
 }: {
@@ -193,6 +196,7 @@ function PropertyField({
   ariaLabel: string;
   value: string | null;
   placeholder: string;
+  hint?: string;
   choices?: FieldChoice[];
   onChange: (value: string | null) => void;
 }) {
@@ -212,6 +216,7 @@ function PropertyField({
           onChange(text === "" ? null : text);
         }}
       />
+      {hint !== undefined && <small>{hint}</small>}
       {offered !== null && (
         <datalist id={listId}>
           {offered.map((choice) => (
@@ -321,6 +326,15 @@ function StructureRow({
       label: option.title,
     }));
   };
+  // Collapsed unless the row already carries legacy assignment data, so an
+  // existing mapping is never hidden. The state is seeded from the row and
+  // then follows the operator's toggles; populated data forces it open.
+  const hasAssignment =
+    row.assignmentProperty !== null || row.assignmentValues.length > 0;
+  const [assignmentOpen, setAssignmentOpen] = useState(hasAssignment);
+  useEffect(() => {
+    if (hasAssignment) setAssignmentOpen(true);
+  }, [hasAssignment]);
   return (
     <article class="capacities-source-row">
       <div class="capacities-source-row__head">
@@ -350,7 +364,8 @@ function StructureRow({
           label="Title property"
           ariaLabel={`Title property for ${rowRef}`}
           value={row.titleProperty}
-          placeholder="property id"
+          placeholder="Defaults to title"
+          hint="Defaults to title"
           choices={propertyChoices}
           onChange={(next) =>
             onEdit((current) => ({ ...current, titleProperty: next ?? "" }))
@@ -418,6 +433,16 @@ function StructureRow({
             onEdit((current) => ({ ...current, durationProperty: next }))
           }
         />
+        <details
+          class="capacities-source-field--wide"
+          open={assignmentOpen}
+          onToggle={(e) => setAssignmentOpen(e.currentTarget.open)}
+        >
+          <summary>Legacy assignment (optional)</summary>
+          <small>
+            Superseded by Assigned On under Connections → Capacities structures; kept so existing mappings keep working.
+          </small>
+          <div class="capacities-source-row__fields">
         <PropertyField
           label="Assignment property"
           ariaLabel={`Assignment property for ${rowRef}`}
@@ -452,6 +477,8 @@ function StructureRow({
             }))
           }
         />
+          </div>
+        </details>
         <PropertyField
           label="Completion property"
           ariaLabel={`Completion property for ${rowRef}`}

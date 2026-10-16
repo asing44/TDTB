@@ -637,6 +637,12 @@ function unconfiguredRow(structureId: string): CapacitiesSourceStructure {
   };
 }
 
+/** What "Add to mapping" / "Add structure" now produces: the unconfigured
+    shape with the title property defaulted to "title". */
+function newRow(structureId: string): CapacitiesSourceStructure {
+  return { ...unconfiguredRow(structureId), titleProperty: "title" };
+}
+
 /** Two rows whose structures the fixture catalog really holds: RootTask
     names the operator's real assignment property, and custom-project names
     its status property and no assignment property at all. RootTask carries
@@ -769,7 +775,7 @@ describe("CapacitiesSourceEditor discovery", () => {
     expect(
       (rendered.getByLabelText("Title property for custom-project") as HTMLInputElement)
         .value,
-    ).toBe("");
+    ).toBe("title");
     expect(
       (rendered.getByLabelText("Status property for custom-project") as HTMLInputElement)
         .value,
@@ -783,7 +789,7 @@ describe("CapacitiesSourceEditor discovery", () => {
     // The strongest proof: the outgoing save body is the raw empty shape
     // with only the structure id set.
     save.mockResolvedValue({
-      source: savedRecord(1, [unconfiguredRow("custom-project")]),
+      source: savedRecord(1, [newRow("custom-project")]),
       persisted: true,
     });
     fireEvent.click(rendered.getByRole("button", { name: "Save mapping" }));
@@ -791,7 +797,7 @@ describe("CapacitiesSourceEditor discovery", () => {
     expect(save.mock.calls[0][0]).toEqual({
       expectedRevision: 0,
       spaceId: "space-1",
-      structures: [unconfiguredRow("custom-project")],
+      structures: [newRow("custom-project")],
     });
   });
 
@@ -1310,5 +1316,105 @@ describe("CapacitiesSourceEditor field choices", () => {
       spaceId: choicesFixture.spaceId,
       structures: choicesFixture.structures,
     });
+  });
+});
+
+describe("CapacitiesSourceEditor title default and legacy assignment", () => {
+  const input = (el: HTMLElement) => el as HTMLInputElement;
+
+  it("prefills a new row's Title property with 'title' and keeps it editable", async () => {
+    const { rendered } = await openEditor({ source: null, persisted: false });
+    await waitFor(() =>
+      expect(rendered.getByRole("button", { name: "Add structure" })).toBeTruthy(),
+    );
+    fireEvent.click(rendered.getByRole("button", { name: "Add structure" }));
+    const title = input(rendered.getByLabelText("Title property for structure 1"));
+    expect(title.value).toBe("title");
+    expect(rendered.getAllByText("Defaults to title").length).toBe(1);
+    fireEvent.input(title, { target: { value: "name" } });
+    expect(
+      input(rendered.getByLabelText("Title property for structure 1")).value,
+    ).toBe("name");
+  });
+
+  it("keeps a saved row's stored title property", async () => {
+    const { rendered } = await openEditor({ source: recordFixture, persisted: true });
+    await waitFor(() =>
+      expect(rendered.getByLabelText("Title property for Task")).toBeTruthy(),
+    );
+    expect(input(rendered.getByLabelText("Title property for Task")).value).toBe(
+      "name",
+    );
+  });
+
+  it("collapses legacy assignment when empty and opens it when populated", async () => {
+    const { rendered } = await openEditor({ source: recordFixture, persisted: true });
+    await waitFor(() =>
+      expect(rendered.getByLabelText("Assignment property for Task")).toBeTruthy(),
+    );
+    const detailsOf = (label: string) =>
+      rendered.getByLabelText(label).closest("details") as HTMLDetailsElement;
+    const empty = detailsOf("Assignment property for Task");
+    expect(empty).toBeTruthy();
+    expect(empty.open).toBe(false);
+    expect(
+      within(empty).getByText("Legacy assignment (optional)"),
+    ).toBeTruthy();
+    expect(
+      within(empty).getByText(
+        "Superseded by Assigned On under Connections → Capacities structures; kept so existing mappings keep working.",
+      ),
+    ).toBeTruthy();
+    expect(detailsOf("Assignment values for Task")).toBe(empty);
+    const populated = detailsOf("Assignment property for Project");
+    expect(populated.open).toBe(true);
+    expect(detailsOf("Assignment values for Project")).toBe(populated);
+    // Live fields stay outside the disclosure.
+    expect(rendered.getByLabelText("Completion property for Task").closest("details")).toBeNull();
+    expect(rendered.getByLabelText("Deadline property for Task").closest("details")).toBeNull();
+  });
+
+  it("opens the disclosure when only assignment values are present", async () => {
+    const only: CapacitiesSource = {
+      ...recordFixture,
+      structures: [
+        { ...recordFixture.structures[1], assignmentValues: ["Team A"] },
+      ],
+    };
+    const { rendered } = await openEditor({ source: only, persisted: true });
+    await waitFor(() =>
+      expect(rendered.getByLabelText("Assignment values for Task")).toBeTruthy(),
+    );
+    expect(
+      (rendered.getByLabelText("Assignment values for Task").closest("details") as HTMLDetailsElement).open,
+    ).toBe(true);
+  });
+
+  it("saves a new row with the same payload keys plus titleProperty 'title'", async () => {
+    const { h, rendered } = await openEditor({ source: null, persisted: false });
+    await waitFor(() =>
+      expect(rendered.getByRole("button", { name: "Add structure" })).toBeTruthy(),
+    );
+    fireEvent.input(rendered.getByLabelText("Capacities space id"), {
+      target: { value: "space-9" },
+    });
+    fireEvent.click(rendered.getByRole("button", { name: "Add structure" }));
+    fireEvent.input(rendered.getByLabelText("Structure ID for structure 1"), {
+      target: { value: "Project" },
+    });
+    const save = vi.spyOn(h.controller, "saveCapacitiesSource").mockResolvedValue({
+      source: savedRecord(1, [newRow("Project")]),
+      persisted: true,
+    });
+    fireEvent.click(rendered.getByRole("button", { name: "Save mapping" }));
+    await waitFor(() => expect(save).toHaveBeenCalledTimes(1));
+    expect(save.mock.calls[0][0]).toEqual({
+      expectedRevision: 0,
+      spaceId: "space-9",
+      structures: [newRow("Project")],
+    });
+    expect(Object.keys(save.mock.calls[0][0].structures[0]).sort()).toEqual(
+      Object.keys(unconfiguredRow("Project")).sort(),
+    );
   });
 });
