@@ -196,6 +196,18 @@ export function isNetworkError(error: unknown): boolean {
 export const SEQUENCE_NETWORK_ERROR_MESSAGE =
   "Lost the connection to TDTB while sequencing. The call may still have been billed — check the day budget before retrying.";
 
+/** True when a request is a DETERMINISTIC protocol refusal: the server
+    answered with a 4xx status (422 plan refused, 409 conflict, 400 bad
+    input), so resending the identical payload cannot succeed — the payload
+    has to change first. Deliberately narrow: only the typed ApiError carries
+    a status. A transport rejection and a 5xx (or an unreadable 200 body via
+    ApiProtocolError) stay retryable, and a bare Error is never a refusal.
+    2026-10-16: a 422 "commit refused: forged fixed-lane timing/backdrop" was
+    answered by a Retry that resent the same sequence forever. */
+export function isDeterministicRefusal(error: unknown): boolean {
+  return error instanceof ApiError && error.status >= 400 && error.status < 500;
+}
+
 /** Extract the stale-mapping revisions from a real 409 source-save conflict.
     Returns null for anything else — another status, another 409 code such as
     the route's storage error, or a body without both revisions — so callers

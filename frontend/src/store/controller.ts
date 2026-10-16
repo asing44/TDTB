@@ -15,6 +15,7 @@ import {
   apiFailurePathOf,
   capacitiesSettingsConflictOf,
   exclusionSettingsConflictOf,
+  isDeterministicRefusal,
   isNetworkError,
   SEQUENCE_NETWORK_ERROR_MESSAGE,
 } from "../adapters/api";
@@ -31,7 +32,7 @@ import {
 import type { WallInterval } from "../model/overflow";
 import { isValidHHMM, toMinutes } from "../model/time";
 import { droppedItems } from "../model/placement";
-import type { AppState, Action } from "./store";
+import type { AppState, Action, ShadowErrorKind } from "./store";
 import {
   canLiveCommit,
   canAutoSequence,
@@ -206,6 +207,16 @@ function sanitizeMinting(
     daySetup,
     calendarWalls(effectiveAnchoredBlocks(s)),
   );
+}
+
+/** Recovery class of a preview failure. A typed 4xx refusal can never succeed
+    on a resend of the identical sequence, so the drawer offers a rebuild; a
+    transport failure is worth retrying; anything else (5xx, unreadable body,
+    a bare client Error) is unknown and keeps Retry — fail safe. */
+function shadowFailureKind(e: unknown): ShadowErrorKind {
+  if (isDeterministicRefusal(e)) return "deterministic";
+  if (isNetworkError(e)) return "transport";
+  return "unknown";
 }
 
 export class Controller {
@@ -1283,7 +1294,11 @@ export class Controller {
       );
       this.dispatch({ type: "SHADOW_OK", shadow });
     } catch (e) {
-      this.dispatch({ type: "SHADOW_FAIL", error: String(e instanceof Error ? e.message : e) });
+      this.dispatch({
+        type: "SHADOW_FAIL",
+        error: String(e instanceof Error ? e.message : e),
+        kind: shadowFailureKind(e),
+      });
     }
   }
 

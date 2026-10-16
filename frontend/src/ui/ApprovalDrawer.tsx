@@ -6,7 +6,7 @@
 import { useState } from "preact/hooks";
 import { useApp, useAppState } from "./context";
 import { useDialog } from "./useDialog";
-import { canLiveCommit, canShadow, shadowBlockers } from "../store/store";
+import { canAutoSequence, canLiveCommit, canShadow, shadowBlockers, type AppState } from "../store/store";
 import { display12h } from "../model/time";
 import type { PromptExportOutcome, ShadowEntry } from "../model/types";
 
@@ -113,6 +113,19 @@ function PromptExports({ exports }: { exports: PromptExportOutcome[] }) {
   );
 }
 
+/** Why the drawer's Resequence is unavailable, in the dock's own words.
+    `canAutoSequence` is the SAME selector the main Sequence/Resequence entry
+    point gates on, so a spent ledger, an unconfirmed day frame, an unhealthy
+    source read, or an in-flight billed call all disable the button here for
+    the same reason. */
+function resequenceTitle(s: AppState): string {
+  if (s.seqPhase === "sequencing") return "One billed judgment call already in flight";
+  if ((s.ledger?.remaining ?? 0) <= 0) return "Billed budget spent — manual layout stays available";
+  if (s.inputs?.sourceHealth !== "ok") return "Sources must be healthy before a billed sequence";
+  if (canAutoSequence(s)) return "One billed judgment call — rebuilds the sequence the refusal rejected";
+  return "Requires confirmed setup and billed budget";
+}
+
 export function ApprovalDrawer() {
   const s = useAppState();
   const { controller, store } = useApp();
@@ -192,7 +205,28 @@ export function ApprovalDrawer() {
         {/* FEEDBACK-08: the Results entry is reachable from review before a
             preview exists — say what to do instead of rendering an empty
             panel. */}
-        {!shadow && !committed && s.shadowError && (
+        {/* A failed preview is either recoverable or not. A DETERMINISTIC 4xx
+            protocol refusal (422 "commit refused: …") refuses the same
+            sequence again, so an inert Retry would loop forever — offer the
+            billed rebuild the dock's Sequence entry point uses instead. Every
+            other failure (transport, unknown) keeps Retry. */}
+        {!shadow && !committed && s.shadowError && s.shadowErrorKind === "deterministic" && (
+          <div class="alerts__item alerts__item--error drawer-empty" role="alert">
+            <span aria-hidden="true">⛔</span>
+            <span>{s.shadowError}</span>
+            <button
+              class="btn drawer-empty__build"
+              onClick={() => void controller.autoSequence()}
+              disabled={!canAutoSequence(s)}
+              title={resequenceTitle(s)}
+            >
+              Resequence
+              <span class="btn__sub">1 billed · {s.ledger?.remaining ?? 0} left</span>
+            </button>
+          </div>
+        )}
+
+        {!shadow && !committed && s.shadowError && s.shadowErrorKind !== "deterministic" && (
           <div class="alerts__item alerts__item--error drawer-empty" role="alert">
             <span aria-hidden="true">⛔</span>
             <span>{s.shadowError}</span>

@@ -126,6 +126,12 @@ function normalizeSettingsUi(
   };
 }
 export type ShadowPhase = "none" | "loading" | "current" | "stale";
+/** How a failed preview is recoverable. A deterministic 4xx protocol refusal
+    (422 plan refused, 409 conflict) refuses the SAME payload again, so the
+    drawer must offer a rebuild instead of an inert retry; a transport failure
+    is worth resending. `unknown` is the fail-safe default — the drawer keeps
+    Retry whenever the error was not a typed 4xx. */
+export type ShadowErrorKind = "deterministic" | "transport" | "unknown";
 export type CommitPhase = "idle" | "committing" | "done" | "partial" | "failed";
 export type RefreshPhase = "idle" | "loading";
 
@@ -194,6 +200,9 @@ export interface AppState {
       preview, a new sequence, drift invalidation, or a same-date restore —
       never persisted (preview must rerun after any reload). */
   shadowError: string | null;
+  /** Recovery class of the LAST shadowError (never read while shadowError is
+      null): decides Retry vs a billed Resequence in the approval drawer. */
+  shadowErrorKind: ShadowErrorKind | null;
   liveArmed: boolean; // second-click reveal (locked decision 9)
   commitPhase: CommitPhase;
   commitReport: CommitReport | null;
@@ -289,6 +298,7 @@ export const initialState: AppState = {
   shadow: null,
   shadowPhase: "none",
   shadowError: null,
+  shadowErrorKind: null,
   liveArmed: false,
   commitPhase: "idle",
   commitReport: null,
@@ -360,7 +370,9 @@ export type Action =
   | { type: "VALIDATED"; validation: Validation }
   | { type: "SHADOW_START" }
   | { type: "SHADOW_OK"; shadow: ShadowDiff }
-  | { type: "SHADOW_FAIL"; error: string }
+  // `kind` is the typed recovery class of the failure (see ShadowErrorKind).
+  // Omitted/unknown keeps the retryable path.
+  | { type: "SHADOW_FAIL"; error: string; kind?: ShadowErrorKind }
   | { type: "FINGERPRINT_MISMATCH" }
   | {
       type: "FINGERPRINT_ADOPTED";
@@ -424,10 +436,15 @@ export type Action =
 /** Any staged-plan edit after a current shadow makes it stale + disarms live. */
 function staleShadow(
   s: AppState,
-): Pick<AppState, "shadowPhase" | "liveArmed" | "shadowError"> {
+): Pick<AppState, "shadowPhase" | "liveArmed" | "shadowError" | "shadowErrorKind"> {
   return s.shadowPhase === "current" || s.shadowPhase === "loading"
-    ? { shadowPhase: "stale", liveArmed: false, shadowError: null }
-    : { shadowPhase: s.shadowPhase, liveArmed: s.liveArmed, shadowError: s.shadowError };
+    ? { shadowPhase: "stale", liveArmed: false, shadowError: null, shadowErrorKind: null }
+    : {
+        shadowPhase: s.shadowPhase,
+        liveArmed: s.liveArmed,
+        shadowError: s.shadowError,
+        shadowErrorKind: s.shadowErrorKind,
+      };
 }
 
 /** Sequence exists and this edit touches plan content → dirty (revalidate). */
@@ -659,6 +676,7 @@ export function reducer(s: AppState, a: Action): AppState {
         shadow: null,
         shadowPhase: "none",
         shadowError: null,
+        shadowErrorKind: null,
         liveArmed: false,
       };
     }
@@ -748,13 +766,33 @@ export function reducer(s: AppState, a: Action): AppState {
         driftNotice: a.validation.ok ? null : s.driftNotice,
       };
     case "SHADOW_START":
-      return { ...s, shadowPhase: "loading", liveArmed: false, shadowError: null };
+      return {
+        ...s,
+        shadowPhase: "loading",
+        liveArmed: false,
+        shadowError: null,
+        shadowErrorKind: null,
+      };
     case "SHADOW_OK":
-      return { ...s, shadow: a.shadow, shadowPhase: "current", shadowError: null };
+      return {
+        ...s,
+        shadow: a.shadow,
+        shadowPhase: "current",
+        shadowError: null,
+        shadowErrorKind: null,
+      };
     case "SHADOW_FAIL":
       // A failed preview is not a silent no-op: keep the message visible until
       // the next attempt, success, new plan, or drift invalidation clears it.
-      return { ...s, shadowPhase: "none", liveArmed: false, shadowError: a.error };
+      // The kind is stored so the drawer can offer a rebuild (4xx refusal)
+      // instead of an inert resend; an untyped failure defaults to Retry.
+      return {
+        ...s,
+        shadowPhase: "none",
+        liveArmed: false,
+        shadowError: a.error,
+        shadowErrorKind: a.kind ?? "unknown",
+      };
     case "FINGERPRINT_MISMATCH":
       // External drift: staged sequence + shadow are no longer trustworthy
       // (locked decision 17). Requires resequence or manual revalidation.
@@ -773,6 +811,7 @@ export function reducer(s: AppState, a: Action): AppState {
         shadow: null,
         shadowPhase: "none",
         shadowError: null,
+        shadowErrorKind: null,
         liveArmed: false,
         acceptedDefects: null,
         driftNotice:
@@ -919,6 +958,7 @@ export function reducer(s: AppState, a: Action): AppState {
         shadow: null,
         shadowPhase: "none",
         shadowError: null,
+        shadowErrorKind: null,
         liveArmed: false,
       };
     case "SOURCE_REFRESH_START":
@@ -1007,6 +1047,7 @@ export function reducer(s: AppState, a: Action): AppState {
           shadow: null,
           shadowPhase: "none",
           shadowError: null,
+          shadowErrorKind: null,
           liveArmed: false,
           acceptedDefects: null,
           driftNotice:
