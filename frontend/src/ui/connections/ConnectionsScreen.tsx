@@ -30,6 +30,7 @@ import {
   capacitiesAssignedOnWarnings,
   capacitiesAssignmentWarnings,
   isCanonicalCapacitiesIdentity,
+  missingGenerationWarnings,
 } from "../../adapters/wire";
 import {
   clearConnectionsCache,
@@ -410,6 +411,17 @@ export function ConnectionsScreen() {
 
   const assignmentWarnings = capacitiesAssignmentWarnings(s.inputs?.sourceWarnings ?? []);
   const assignedOnWarnings = capacitiesAssignedOnWarnings(s.inputs?.sourceWarnings ?? []);
+  /* Generation-freshness notices are advisory for the global read, so they
+     never degrade sourceHealth or the Todoist/Calendar dots. They are still a
+     real gap — those mapped types are absent from the served plan — so the
+     Capacities row carries the count as its own per-source note. */
+  const missingGenerationCount = missingGenerationWarnings(
+    s.inputs?.sourceWarnings ?? [],
+  ).length;
+  const missingGenerationNote =
+    missingGenerationCount > 0
+      ? `${missingGenerationCount} mapped type(s) not yet in the published generation; Refresh`
+      : null;
 
   const selectedTagKeys = new Set((tagDraft?.tags ?? []).map(tagKey));
   const catalogTags = tagSettings?.catalog.tags ?? [];
@@ -495,8 +507,12 @@ export function ConnectionsScreen() {
     if (!hasMapping(structureId)) return "#e0a020";
     return capDraft?.activeStructures.includes(structureId) ? "#1f9d6b" : "#cfccc4";
   };
-  /** Sources keep their own health: Todoist/Calendar from the global source
-      read, Capacities amber while any structure still waits on a mapping. */
+  /** Sources keep their own health. Todoist/Calendar read the global source
+      health, which already excludes Capacities advisories (a not-yet-mapped
+      type or a skipped object), so a Capacities-only advisory never colors
+      them; a genuine non-advisory warning still does. Capacities is its own
+      source: amber while the intake is not ok or any structure still waits on
+      a mapping. */
   const sourceDot = (source: string): string => {
     if (source === "capacities") {
       const state = s.inputs?.capacitiesIntake?.state;
@@ -1020,6 +1036,9 @@ export function ConnectionsScreen() {
               {navItem("source:todoist", "Todoist", sourceDot("todoist"))}
               {navItem("source:calendar", "Calendar", sourceDot("calendar"))}
               {navItem("source:capacities", "Capacities", sourceDot("capacities"))}
+              {missingGenerationNote && (
+                <span class="connections-navitem__note">{missingGenerationNote}</span>
+              )}
             </div>
             <div class="connections__group">
               <span class="connections__group-label">Capacities structures</span>

@@ -1512,6 +1512,24 @@ export function countAdvisorySkipped(warnings: readonly string[]): number {
   return warnings.filter((warning) => advisorySkippedObject.test(warning)).length;
 }
 
+/** A configured Capacities structure the published generation never checked.
+    The server words it exactly ``Capacities structure <id> is not in the
+    published generation; needs Refresh.`` The structure's rows are absent from
+    the served plan, so the Sources surface shows a per-source note (see
+    ``missingGenerationWarnings``), but nothing failed to read — the type is
+    simply not mapped into the generation yet — so this must not degrade global
+    source health. Deliberately distinct from the ``Capacities structure <id>
+    unchanged since <day>; Refresh to check it again.`` staleness warning,
+    which stays non-advisory because it means the served rows may be stale. */
+const advisoryMissingGeneration =
+  /^\s*Capacities structure \S+ is not in the published generation; needs Refresh\.\s*$/;
+
+/** The missing-generation notices the warnings carry, surfaced as the
+    Capacities source's own note so the absent structures are not silent. */
+export function missingGenerationWarnings(warnings: readonly string[]): string[] {
+  return warnings.filter((warning) => advisoryMissingGeneration.test(warning));
+}
+
 const capacitiesPartialPrefix = "Capacities partial";
 const capacitiesPartialCounts = /^Capacities partial — (\d+) evaluated · (\d+) deferred\b/;
 
@@ -1987,7 +2005,9 @@ export function capacitiesSelectionsToWire(draft: CapacitiesSelectionsDraft): Wi
 export function sourceHealthOf(warnings: string[]): SourceHealth {
   return warnings.some(
     (warning) =>
-      !advisoryReminderOmission.test(warning) && !advisorySkippedObject.test(warning),
+      !advisoryReminderOmission.test(warning) &&
+      !advisorySkippedObject.test(warning) &&
+      !advisoryMissingGeneration.test(warning),
   )
     ? "degraded"
     : "ok";

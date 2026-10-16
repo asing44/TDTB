@@ -12,6 +12,7 @@ import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, waitFor, within } from "@testing-library/preact";
 import { App } from "./App";
 import { makeHarness } from "./test-harness";
+import { sourceHealthOf } from "../adapters/wire";
 import { __resetConnectionsDraftCache } from "./connections/commands";
 import type {
   AssignedItem,
@@ -344,6 +345,36 @@ describe("Connections screen (U13)", () => {
     expect(rendered.getByText("Capacities structure")).toBeTruthy();
     expect(rendered.getByRole("heading", { name: "Task" })).toBeTruthy();
     expect(rendered.getByRole("button", { name: /Discover from Capacities/ })).toBeTruthy();
+  });
+
+  it("keeps Todoist and Calendar green and notes a Capacities-only generation advisory", async () => {
+    const warning =
+      "Capacities structure '05e6b2c1' is not in the published generation; needs Refresh.";
+    const { h, rendered } = openConnections();
+    const inputs = h.store.getState().inputs!;
+    h.store.dispatch({
+      type: "INPUTS_LOADED",
+      inputs: {
+        ...inputs,
+        sourceWarnings: [warning],
+        sourceHealth: sourceHealthOf([warning]),
+      },
+      ledger: h.store.getState().ledger!,
+    });
+    await ready(rendered);
+
+    const dotOf = (name: string) =>
+      (rendered.getByRole("button", { name }) as HTMLElement).querySelector(
+        ".connections-navitem__dot",
+      ) as HTMLElement;
+    expect(dotOf("Todoist").style.background).toBe("rgb(31, 157, 107)");
+    expect(dotOf("Calendar").style.background).toBe("rgb(31, 157, 107)");
+    expect(dotOf("Capacities").style.background).toBe("rgb(224, 160, 32)");
+    expect(
+      rendered.getByText(
+        "1 mapped type(s) not yet in the published generation; Refresh",
+      ),
+    ).toBeTruthy();
   });
 
   it("explains what native rules are from the Admit when heading", async () => {

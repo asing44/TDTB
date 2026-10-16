@@ -21,6 +21,7 @@ import {
   durationSourceOf,
   isCanonicalCapacitiesStructureId,
   itemIdentity,
+  missingGenerationWarnings,
   projectAssigned,
   projectCapacitiesCatalog,
   projectCapacitiesSettings,
@@ -410,6 +411,43 @@ describe("skipped Capacities objects (advisory)", () => {
 
   it("does not match a near-miss skipped string", () => {
     expect(sourceHealthOf(["skipped Capacities object — oops"])).toBe("degraded");
+  });
+});
+
+describe("generation-freshness warnings (advisory)", () => {
+  const missingGeneration =
+    "Capacities structure '05e6b2c1' is not in the published generation; needs Refresh.";
+  const typeStaleness =
+    "Capacities structure '05e6b2c1' unchanged since 2026-10-14; Refresh to check it again.";
+
+  it("treats a missing-generation notice as advisory, not degraded", () => {
+    expect(sourceHealthOf([missingGeneration])).toBe("ok");
+    expect(missingGenerationWarnings([missingGeneration])).toEqual([missingGeneration]);
+  });
+
+  it("collects every notice so the per-source note can count them", () => {
+    const other =
+      "Capacities structure 'RootTask' is not in the published generation; needs Refresh.";
+    expect(missingGenerationWarnings([missingGeneration, other])).toEqual([
+      missingGeneration,
+      other,
+    ]);
+  });
+
+  it("still degrades when a real read failure accompanies the advisory", () => {
+    expect(sourceHealthOf([missingGeneration, "Todoist read failed (timeout)"])).toBe(
+      "degraded",
+    );
+  });
+
+  it("keeps the type-staleness warning on the blocking gate", () => {
+    expect(sourceHealthOf([typeStaleness])).toBe("degraded");
+    expect(missingGenerationWarnings([typeStaleness])).toEqual([]);
+  });
+
+  it("does not broaden to any other Capacities warning", () => {
+    expect(sourceHealthOf(["Capacities structure 'x' needs Refresh"])).toBe("degraded");
+    expect(sourceHealthOf(["Capacities read failed; needs Refresh."])).toBe("degraded");
   });
 });
 

@@ -1331,7 +1331,11 @@ export function dockState(s: AppState): DockState {
 /** True when the fixed-source read is degraded or failed — the loaded
     snapshot is not a usable planning surface. Sequencing, shadow preview,
     and live commit must all refuse before any billed or write endpoint call.
-    Mirrored in the ActionDock health alert and ApprovalDrawer source blockers. */
+    Fail-closed for every non-advisory warning: the wire projection decides
+    advisory vs not, so a missing published generation is advisory while a
+    real read failure and the ``unchanged since`` staleness warning (stale
+    rows, not a not-yet-mapped type) stay blocking. Mirrored in the ActionDock
+    health alert and ApprovalDrawer source blockers. */
 export function sourceHealthBlocked(s: AppState): boolean {
   return s.inputs?.sourceHealth !== "ok";
 }

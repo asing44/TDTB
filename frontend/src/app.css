@@ -9337,6 +9337,15 @@ body {
   border-radius: 50%;
 }
 
+/* Per-source advisory under the Capacities row (generation-freshness). Amber
+   reinforces the row's dot; the words are the primary signal. */
+.connections-navitem__note {
+  padding: 0 10px 2px;
+  font-size: 11px;
+  line-height: 1.35;
+  color: var(--state-warning);
+}
+
 .connections__detail {
   display: flex;
   flex-direction: column;
