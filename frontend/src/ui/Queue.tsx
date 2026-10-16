@@ -61,7 +61,7 @@ import { DIRECT_VERBS, MORE_VERBS, type StagingVerbSpec } from "../model/staging
 import { sourceContext } from "../model/sourceContext";
 import { isCanonicalCapacitiesIdentity } from "../adapters/wire";
 import { dueLabel, normalizeUrgency } from "../model/urgency";
-import type { AssignedItem } from "../model/types";
+import type { AssignedItem, TodayOverride } from "../model/types";
 import { AlreadyPlaced } from "./AlreadyPlaced";
 import { CapacityCard } from "./CapacityCard";
 import { Tooltip } from "./Tooltip";
@@ -164,6 +164,68 @@ function hasAdjustableNativeTime(item: AssignedItem): boolean {
   );
 }
 
+/** A native Todoist wall time (HH:MM). The shadow pins these rows to their
+    own clock, so the all-day path cannot carry them (they stay NOOP). */
+function hasNativeTodoistTime(item: AssignedItem): boolean {
+  return (
+    item.source === "todoist" &&
+    typeof item.scheduledStart === "string" &&
+    /^(?:[01]\d|2[0-3]):[0-5]\d$/.test(item.scheduledStart)
+  );
+}
+
+/** Issue #17: the More menu's all-day entry, in both directions. "Keep
+    all-day" routes the row through the existing blocks == 0 path
+    (`setOverride(id, included, 0)`), which the shadow renders as a date-only
+    `schedule-all-day` due with no timed block. Only the rows that path can
+    carry are enabled: a native-timed or recurring Todoist row keeps its own
+    clock/pattern (NOOP), a Capacities row carries no Todoist due, and a
+    Calendar row is calendar-only. Once this action set the all-day state, the
+    same slot offers the reverse — clearing the session override restores the
+    source's timed estimate. */
+type AllDayEntry = {
+  verb: "keep" | "restore";
+  label: string;
+  detail: string;
+  disabled: boolean;
+  reason: string | null;
+};
+
+function allDayEntry(
+  item: AssignedItem,
+  override: TodayOverride | undefined,
+): AllDayEntry {
+  const included = override?.included ?? true;
+  const blocks = override?.blocks ?? item.blocks;
+  const restorable =
+    blocks === 0 && override?.blocks === 0 && included && item.blocks > 0;
+  if (restorable) {
+    return {
+      verb: "restore",
+      label: "Use a time block",
+      detail: `Restores ${item.durationLabel}`,
+      disabled: false,
+      reason: null,
+    };
+  }
+  let reason: string | null = null;
+  if (!included) reason = "Excluded today — include the row first";
+  else if (blocks === 0) reason = "Already all-day";
+  else if (item.source === "capacities")
+    reason = "Capacities rows carry no Todoist due";
+  else if (item.source === "calendar")
+    reason = "Calendar rows are calendar-only";
+  else if (item.isRecurring) reason = "Recurring tasks keep their own pattern";
+  else if (hasNativeTodoistTime(item)) reason = "Has a fixed Todoist time";
+  return {
+    verb: "keep",
+    label: "Keep all-day",
+    detail: reason ?? "All day — commits a date-only due",
+    disabled: reason != null,
+    reason,
+  };
+}
+
 /** Stable id for aria-controls/aria-labelledby pairs — item ids are human
     names with spaces and punctuation, and ids must not contain them. */
 function rowId(item: AssignedItem, suffix: string): string {
@@ -249,12 +311,14 @@ function MoreMenu({
   state,
   allowTimeAdjustment,
   optIn,
+  override,
 }: {
   item: AssignedItem;
   busy: boolean;
   state: QueueState;
   allowTimeAdjustment: boolean;
   optIn: boolean;
+  override: TodayOverride | undefined;
 }) {
   const { controller, store } = useApp();
   const [open, setOpen] = useState(false);
@@ -266,6 +330,9 @@ function MoreMenu({
   const menuId = rowId(item, "more");
   const excludeArmed = confirming === ALWAYS_EXCLUDE_CONFIRM;
   const excludeTarget = alwaysExcludeTarget(item);
+  // Issue #17: the row's all-day entry (enabled/disabled state + reason).
+  const allDay = allDayEntry(item, override);
+  const allDayIncluded = override?.included ?? true;
 
   const close = (refocus: boolean) => {
     setOpen(false);
@@ -473,6 +540,31 @@ function MoreMenu({
               <span class="row-more__item-detail">Today’s plan only</span>
             </button>
           )}
+          {/* Issue #17: per-row all-day action. One slot, both directions:
+              "Keep all-day" routes the row through the existing blocks == 0
+              path (the shadow's date-only schedule-all-day due, no timed
+              block); once that path set the state, "Use a time block" clears
+              the override and restores the source estimate. Rows the all-day
+              path cannot carry stay disabled with the reason in the title and
+              the detail line. */}
+          <button
+            role="menuitem"
+            class="alloc-verb row-more__item"
+            aria-label={`${allDay.label} for ${item.name}`}
+            disabled={allDay.disabled}
+            title={allDay.reason ?? undefined}
+            onClick={() => {
+              close(false);
+              controller.setOverride(
+                item.id,
+                allDayIncluded,
+                allDay.verb === "restore" ? null : 0,
+              );
+            }}
+          >
+            <span>{allDay.label}</span>
+            <span class="row-more__item-detail">{allDay.detail}</span>
+          </button>
           {MORE_VERBS.filter((spec) => !spec.destructive).map((spec) => renderMenuVerb(spec))}
           {/* Planning 2a: persistent exclusion rides the More menu for rows
               the source policy can key on (todoist id + title; canonical
@@ -923,6 +1015,7 @@ function Row({
           busy={s.runtimeBusy}
           state={state}
           optIn={s.timeAdjustmentOptIns[item.id] === true}
+          override={s.overrides[item.id]}
           allowTimeAdjustment={
             !item.isRecurring &&
             (!hasAdjustableNativeTime(item) || s.timeAdjustmentOptIns[item.id] === true)

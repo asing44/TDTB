@@ -265,6 +265,24 @@ describe("token + POST bodies", () => {
     expect(body.pinned_rows).toEqual([]);
   });
 
+  it("carries a session all-day override (blocks 0) into the sequence assigned body", async () => {
+    // Issue #17: the Keep all-day row action sets a today-only blocks == 0
+    // override; the wire body must carry that 0 unchanged so the shadow emits
+    // the existing schedule-all-day due.
+    route("/sequence", sequenceOk);
+    const a = new ApiAdapter();
+    await a.loadPlanInputs();
+    await a.autoSequence({
+      ...CTX,
+      included: [
+        { id: "Make", blocks: 0 },
+        { id: "Sample Project", blocks: 1 },
+      ],
+    });
+    const body = postBody("/sequence");
+    expect(body.assigned.find((r: any) => r.name === "Make").blocks).toBe(0);
+  });
+
   it("carries the per-item time permission through sequence, validation, shadow, and live bodies", async () => {
     route("/sequence", sequenceOk);
     route("/validate-sequence", validateOk);

@@ -95,6 +95,9 @@ describe("More menu: one item style and a fixed group order", () => {
     expect(labels(menu)).toEqual([
       "Allow scheduler to move existing time for Press",
       "Unschedule Press",
+      // Issue #17: the all-day slot renders on every row; a native-timed
+      // Todoist row keeps its own clock, so here it is disabled.
+      "Keep all-day for Press",
       "Remove from planning and update source: Press",
       "Always exclude: Press",
       "Delete permanently: Press",
@@ -113,6 +116,8 @@ describe("More menu: one item style and a fixed group order", () => {
     expectOneItemClass(menu);
     expect(labels(menu)).toEqual([
       "Adjust time for Press",
+      // Issue #17: an eligible date-only Todoist row offers the all-day slot.
+      "Keep all-day for Press",
       "Remove from planning and update source: Press",
       "Always exclude: Press",
       "Delete permanently: Press",
