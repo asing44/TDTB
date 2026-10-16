@@ -10839,3 +10839,203 @@ button.strip-cal {
   color: var(--t-muted);
   cursor: default;
 }
+
+/* -- Habits drawer (Set up day → Review habits) ------------------------------
+   Right slide-over on desktop, full-width bottom sheet at <=640px. Rows dim
+   in place when a habit is off; nothing here reorders them. */
+.habits-drawer {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 21;
+  display: flex;
+  flex-direction: column;
+  width: min(420px, 100vw);
+  background: var(--t-surface-2);
+  border-left: 1px solid var(--t-border);
+  overflow: hidden;
+}
+.habits-drawer:focus { outline: none; }
+.habits-drawer__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  flex: none;
+  padding: 16px 16px 10px 20px;
+}
+.habits-drawer__head h2 { margin: 0; font-size: 20px; font-weight: 600; letter-spacing: -0.02em; }
+.habits-drawer__head h2::after {
+  content: "";
+  display: block;
+  width: 36px;
+  height: 3px;
+  margin-top: 8px;
+  border-radius: 2px;
+  background: var(--t-accent);
+}
+.habits-drawer__sub { margin: 8px 0 0; color: var(--t-muted); font-size: 12px; }
+.habits-drawer__close { min-width: 44px; min-height: 44px; padding: 0; }
+.habits-drawer__scroll { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 0 16px 16px; }
+.habits-drawer__group-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 8px; }
+.habits-drawer__group-head h3 {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+.habits-drawer__group-head h3 span {
+  margin-left: 4px;
+  padding: 0 7px;
+  border: 0.5px solid var(--t-border);
+  border-radius: 999px;
+  background: var(--t-surface);
+  font-weight: 500;
+  letter-spacing: 0;
+}
+.habits-drawer__list {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 4px 12px;
+  background: var(--t-surface);
+  border: 1px solid var(--t-border);
+  border-radius: 12px;
+}
+.habits-drawer__row { border-top: 1px solid var(--t-border); }
+.habits-drawer__row:first-child { border-top: 0; }
+.habits-drawer__main { display: flex; align-items: center; gap: 10px; min-height: 56px; padding: 6px 0; }
+.habits-drawer__name { flex: 1 1 auto; min-width: 0; }
+.habits-drawer__label { display: block; font-weight: 500; overflow-wrap: anywhere; }
+.habits-drawer__meta { display: block; font-size: 11px; color: var(--t-muted); }
+.habits-drawer__meta b { font-weight: 500; color: var(--t-accent-text); }
+.habits-drawer__chip {
+  display: inline-block;
+  padding: 1px 7px;
+  border: 0.5px solid var(--t-border);
+  border-radius: 999px;
+  background: var(--t-surface);
+  color: var(--t-muted);
+  font-size: 11px;
+  font-weight: 500;
+}
+.habits-drawer__chip--bad { color: var(--state-danger); border-color: var(--state-danger); }
+.habits-drawer__stepper {
+  display: flex;
+  align-items: center;
+  flex: none;
+  border: 1px solid var(--t-border);
+  border-radius: var(--radius);
+  background: var(--t-surface);
+}
+.habits-drawer__step,
+.habits-drawer__value {
+  height: 40px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.habits-drawer__step { width: 40px; font-size: 18px; border-radius: var(--radius); }
+.habits-drawer__value {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  min-width: 52px;
+  padding: 0 4px;
+  border-inline: 1px solid var(--t-border);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+.habits-drawer__value small { font-size: 10px; color: var(--t-muted); font-weight: 400; }
+.habits-drawer__value[aria-expanded="true"] { background: var(--t-accent-subtle); }
+.habits-drawer__step:hover:not(:disabled),
+.habits-drawer__value:hover:not(:disabled) { background: var(--t-surface-2); }
+.habits-drawer__step:disabled,
+.habits-drawer__value:disabled { opacity: 0.4; cursor: default; }
+.habits-drawer__row--off .habits-drawer__label { opacity: 0.72; }
+.habits-drawer__row--off .habits-drawer__stepper { background: var(--t-surface-2); }
+.habits-drawer__row--off .habits-drawer__chip { color: var(--t-text); border-color: var(--t-muted); font-weight: 600; }
+.habits-drawer__editor {
+  display: grid;
+  gap: 8px;
+  margin: 0 0 10px;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--t-accent) 45%, var(--t-border));
+  border-radius: var(--radius);
+  background: var(--t-accent-subtle);
+}
+.habits-drawer__editor label {
+  display: grid;
+  gap: 4px;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--t-accent-text);
+}
+.habits-drawer__editor input {
+  width: 96px;
+  height: 36px;
+  padding: 0 10px;
+  border: 1px solid var(--t-border);
+  border-radius: var(--radius);
+  background: var(--t-surface);
+  color: var(--t-text);
+  font-size: 14px;
+}
+.habits-drawer__presets { display: flex; flex-wrap: wrap; gap: 6px; }
+.habits-drawer__presets button {
+  min-width: 44px;
+  height: 32px;
+  border: 1px solid var(--t-border);
+  border-radius: 999px;
+  background: var(--t-surface);
+  color: var(--t-text);
+  cursor: pointer;
+}
+.habits-drawer__presets button[aria-pressed="true"] {
+  border-color: var(--t-accent);
+  background: var(--t-accent);
+  color: #fff;
+}
+.habits-drawer__editor-actions { display: flex; flex-wrap: wrap; gap: 8px; justify-content: space-between; }
+.habits-drawer__summary { margin: 0; padding: 10px 2px 0; color: var(--t-muted); font-size: 12px; }
+.habits-drawer__summary b { font-weight: 500; color: var(--t-text); }
+.habits-drawer__foot {
+  display: flex;
+  flex: none;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 12px;
+  padding: 10px 16px;
+  border-top: 1px solid var(--t-border);
+  background: var(--t-surface);
+}
+.habits-drawer__status {
+  display: flex;
+  flex: 1 1 110px;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+  min-height: 28px;
+  font-size: 12px;
+}
+.habits-drawer__status .field-error { flex: 1 1 100%; }
+.habits-drawer__foot .btn .habits-drawer__chip { margin-left: 6px; }
+@media (max-width: 640px) {
+  .habits-drawer {
+    top: auto;
+    left: 0;
+    width: 100vw;
+    height: 88vh;
+    height: 88dvh;
+    border-left: 0;
+    border-top: 1px solid var(--t-border);
+    border-radius: 14px 14px 0 0;
+  }
+}
