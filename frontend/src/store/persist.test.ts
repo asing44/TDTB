@@ -161,6 +161,38 @@ describe("attachSessionPersistence", () => {
     expect(store.getState().timeAdjustmentOptIns).toEqual({ A: true });
   });
 
+  it("round-trips the per-row Mint overlap grant within the same date and drops it on rollover", () => {
+    const store = createStore();
+    store.dispatch({ type: "INPUTS_LOADED", inputs: inputs("2026-07-18"), ledger: LEDGER });
+    attachSessionPersistence(store, fakeController(), storage);
+    store.dispatch({ type: "MINT_OVERLAP_SET", id: "A", allow: true });
+    const saved = JSON.parse(storage.getItem(KEY)!);
+    expect(saved.mintOverlapOptIns).toEqual({ A: true });
+
+    // Same-date restore rehydrates the grant.
+    const restored = createStore();
+    restored.dispatch({ type: "INPUTS_LOADED", inputs: inputs("2026-07-18"), ledger: LEDGER });
+    attachSessionPersistence(restored, fakeController(), storage);
+    expect(restored.getState().mintOverlapOptIns).toEqual({ A: true });
+
+    // A stale-date blob drops it (today-only, like every other blob field).
+    storage.setItem(KEY, JSON.stringify({
+      version: 2,
+      validDate: "2026-07-17",
+      overrides: {},
+      timeAdjustmentOptIns: {},
+      mintOverlapOptIns: { A: true },
+      placements: {},
+      sequence: null,
+      fingerprint: null,
+      anchoredSourceFingerprint: null,
+    }));
+    const rolled = createStore();
+    rolled.dispatch({ type: "INPUTS_LOADED", inputs: inputs("2026-07-18"), ledger: LEDGER });
+    attachSessionPersistence(rolled, fakeController(), storage);
+    expect(rolled.getState().mintOverlapOptIns).toEqual({});
+  });
+
   it("date rollover: stale blob is dropped, nothing restores", () => {
     storage.setItem(KEY, JSON.stringify({
       version: 2,

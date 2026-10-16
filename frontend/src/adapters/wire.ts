@@ -2540,6 +2540,7 @@ export function shapeAssignedWire(
   rawAssigned: Wire[],
   included: Array<{ id: string; blocks: number }>,
   timeAdjustmentOptIns: Record<string, boolean> = {},
+  mintOverlapOptIns: Record<string, boolean> = {},
 ): Wire[] {
   const byId = new Map(included.map((i) => [i.id, i.blocks]));
   return rawAssigned
@@ -2552,6 +2553,11 @@ export function shapeAssignedWire(
       // in. Always emit the key so every endpoint sees the same explicit
       // false-by-default contract, regardless of stale source payloads.
       allow_time_adjustment: timeAdjustmentOptIns[String(row.name)] === true,
+      // #18: the per-row Mint overlap grant is an operator decision that must
+      // reach the server explicitly. Always emit the key (explicit false by
+      // default) so the server admits it only on a server-matched row and
+      // keeps Mint a hard wall for every row without it.
+      may_overlap_mint: mintOverlapOptIns[String(row.name)] === true,
     }));
 }
 

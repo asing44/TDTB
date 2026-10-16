@@ -20,6 +20,7 @@ interface SessionBlob {
   validDate: string;
   overrides: Record<string, TodayOverride>;
   timeAdjustmentOptIns?: Record<string, boolean>;
+  mintOverlapOptIns?: Record<string, boolean>;
   placements: Record<string, string>;
   sequence: SequenceRow[] | null;
   fingerprint: string | null;
@@ -68,6 +69,7 @@ export function attachSessionPersistence(
     const hasContent =
       Object.keys(blob.overrides ?? {}).length > 0 ||
       Object.keys(blob.timeAdjustmentOptIns ?? {}).length > 0 ||
+      Object.keys(blob.mintOverlapOptIns ?? {}).length > 0 ||
       Object.keys(blob.placements ?? {}).length > 0 ||
       (blob.sequence?.length ?? 0) > 0 ||
       (blob.pinnedRows?.length ?? 0) > 0 ||
@@ -77,6 +79,7 @@ export function attachSessionPersistence(
         type: "SESSION_RESTORED",
         overrides: blob.overrides ?? {},
         timeAdjustmentOptIns: blob.timeAdjustmentOptIns ?? {},
+        mintOverlapOptIns: blob.mintOverlapOptIns ?? {},
         placements: blob.placements ?? {},
         sequence: blob.sequence ?? null,
         fingerprint: blob.fingerprint ?? null,
@@ -109,6 +112,7 @@ export function attachSessionPersistence(
       validDate: st.validDate,
       overrides: st.overrides,
       timeAdjustmentOptIns: st.timeAdjustmentOptIns,
+      mintOverlapOptIns: st.mintOverlapOptIns,
       placements: st.placements,
       sequence: st.sequence,
       fingerprint: st.fingerprint,

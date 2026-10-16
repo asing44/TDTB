@@ -48,6 +48,8 @@ export interface SequenceContext {
   included: Array<{ id: string; blocks: number }>;
   /** Explicit per-item permission for moving an existing Todoist time. */
   timeAdjustmentOptIns?: Record<string, boolean>;
+  /** #18: explicit per-row operator grant to overlap a selected Mint session. */
+  mintOverlapOptIns?: Record<string, boolean>;
   planningConfigFingerprint?: string;
   overlapGrants?: OverlapGrant[];
   pinnedRows?: SequenceRow[];

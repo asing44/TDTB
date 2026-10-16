@@ -675,6 +675,46 @@ describe("native Todoist time adjustment opt-in", () => {
   });
 });
 
+describe("#18 per-row Mint overlap opt-in", () => {
+  it("sets and clears the grant for an assigned row", () => {
+    let s = loaded();
+    s = reducer(s, { type: "MINT_OVERLAP_SET", id: "Press", allow: true });
+    expect(s.mintOverlapOptIns).toEqual({ Press: true });
+    s = reducer(s, { type: "MINT_OVERLAP_SET", id: "Press", allow: false });
+    expect(s.mintOverlapOptIns).toEqual({});
+  });
+
+  it("dirties a staged plan and stales its shadow when the grant changes", () => {
+    let s = shadowed();
+    s = reducer(s, { type: "MINT_OVERLAP_SET", id: "Press", allow: true });
+    expect(s.mintOverlapOptIns).toEqual({ Press: true });
+    expect(s.seqPhase).toBe("dirty");
+    expect(s.shadowPhase).toBe("stale");
+    expect(s.liveArmed).toBe(false);
+  });
+
+  it("ignores a grant for a row that is not assigned", () => {
+    const s = loaded();
+    expect(reducer(s, { type: "MINT_OVERLAP_SET", id: "Ghost", allow: true })).toBe(s);
+  });
+
+  it("prunes grants for rows no longer in the assigned set on refresh", () => {
+    let s = loaded();
+    s = reducer(s, { type: "MINT_OVERLAP_SET", id: "Press", allow: true });
+    const refreshed = structuredClone(s.inputs!);
+    refreshed.assigned = refreshed.assigned.filter((item) => item.id !== "Press");
+    s = reducer(s, {
+      type: "SOURCE_REFRESH_OK",
+      inputs: refreshed,
+      ledger,
+      fingerprint: "fp",
+      anchoredSourceFingerprint: refreshed.anchoredSourceFingerprint,
+      at: new Date().toISOString(),
+    });
+    expect(s.mintOverlapOptIns).toEqual({});
+  });
+});
+
 describe("T28 calendar dismissal (effectiveAnchoredBlocks)", () => {
   /* FEEDBACK-28 retry (2026-08-17): a skip is honored only when it is
      EXPLICIT current-run intent (CalendarImpact → saveAnchoredOverride,

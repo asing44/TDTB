@@ -166,6 +166,10 @@ export interface AppState {
   overrides: Record<string, TodayOverride>;
   /** Sparse opt-in map: absent/false protects a native Todoist time. */
   timeAdjustmentOptIns: Record<string, boolean>;
+  /** #18: sparse per-row operator grant to overlap a selected Mint session.
+      Absent/false keeps Mint a hard wall for that row; the exact grant softens
+      only that row's Mint overlap to the named `mint_overlap_granted` warning. */
+  mintOverlapOptIns: Record<string, boolean>;
   placements: Record<string, string>; // id -> start HH:MM (sequence/exact editor)
   sequence: SequenceRow[] | null;
   seqPhase: SeqPhase;
@@ -287,6 +291,7 @@ export const initialState: AppState = {
   promptSave: { phase: "idle", error: null, warnings: [] },
   overrides: {},
   timeAdjustmentOptIns: {},
+  mintOverlapOptIns: {},
   placements: {},
   sequence: null,
   seqPhase: "none",
@@ -338,6 +343,7 @@ export type Action =
   | { type: "PROMPT_SAVE_ERROR"; error: string }
   | { type: "OVERRIDE_SET"; id: string; override: TodayOverride }
   | { type: "TIME_ADJUSTMENT_SET"; id: string; allow: boolean }
+  | { type: "MINT_OVERLAP_SET"; id: string; allow: boolean }
   // FEEDBACK-28 (retry): explicit current-run calendar skip intent recorded
   // by saveAnchoredOverride. Persisted skip state alone never suppresses a
   // current wall; this marker is the user's re-expressed choice this run.
@@ -415,6 +421,7 @@ export type Action =
       type: "SESSION_RESTORED";
       overrides: Record<string, TodayOverride>;
       timeAdjustmentOptIns?: Record<string, boolean>;
+      mintOverlapOptIns?: Record<string, boolean>;
       placements: Record<string, string>;
       sequence: SequenceRow[] | null;
       fingerprint: string | null;
@@ -486,6 +493,7 @@ export function reducer(s: AppState, a: Action): AppState {
         };
       }
       const timeAdjustmentOptIns = pruneTimeAdjustmentOptIns(s.timeAdjustmentOptIns, a.inputs);
+      const mintOverlapOptIns = pruneMintOverlapOptIns(s.mintOverlapOptIns, a.inputs);
       return {
         ...s,
         loaded: true,
@@ -502,6 +510,7 @@ export function reducer(s: AppState, a: Action): AppState {
         // non-empty pin set (manual pins, restored session) must not suppress
         // a still-protected source time.
         timeAdjustmentOptIns,
+        mintOverlapOptIns,
         pendingPinnedRows: mergeNativeTimedPins(
           s.pendingPinnedRows,
           a.inputs,
@@ -644,6 +653,24 @@ export function reducer(s: AppState, a: Action): AppState {
         pinnedRows: a.allow
           ? removeNativeAutoPin(s.pinnedRows, item)
           : mergeNativeTimedPins(s.pinnedRows, s.inputs!, timeAdjustmentOptIns, includedIds),
+        acceptedDefects: null,
+        ...dirtySeq(s),
+        ...staleShadow(s),
+      };
+    }
+    case "MINT_OVERLAP_SET": {
+      // #18: the operator grant is per assigned row and cannot change where
+      // the client stages the row — it only changes what the SERVER admits on
+      // the next validation/preview. It still dirties the staged plan so the
+      // flag is re-validated before shadow/commit can be reached again.
+      const item = s.inputs?.assigned.find((i) => i.id === a.id);
+      if (!item) return s;
+      const mintOverlapOptIns = { ...s.mintOverlapOptIns };
+      if (a.allow) mintOverlapOptIns[a.id] = true;
+      else delete mintOverlapOptIns[a.id];
+      return {
+        ...s,
+        mintOverlapOptIns,
         acceptedDefects: null,
         ...dirtySeq(s),
         ...staleShadow(s),
@@ -940,6 +967,9 @@ export function reducer(s: AppState, a: Action): AppState {
       const restoredOptIns = s.inputs
         ? pruneTimeAdjustmentOptIns(a.timeAdjustmentOptIns ?? {}, s.inputs)
         : (a.timeAdjustmentOptIns ?? {});
+      const restoredMintOptIns = s.inputs
+        ? pruneMintOverlapOptIns(a.mintOverlapOptIns ?? {}, s.inputs)
+        : (a.mintOverlapOptIns ?? {});
       const restoredPins = s.inputs
         ? mergeNativeTimedPins(
             a.pinnedRows ?? [],
@@ -961,6 +991,7 @@ export function reducer(s: AppState, a: Action): AppState {
         acceptedDefects: null,
         overrides: a.overrides,
         timeAdjustmentOptIns: restoredOptIns,
+        mintOverlapOptIns: restoredMintOptIns,
         placements: a.placements,
         sequence: a.sequence,
         fingerprint: a.fingerprint,
@@ -1033,11 +1064,13 @@ export function reducer(s: AppState, a: Action): AppState {
       const summary = { ...r.summary, invalidated: drift };
       const assignedTouched = summaryHasChanges(r.summary) || r.sequenceTouched;
       const timeAdjustmentOptIns = pruneTimeAdjustmentOptIns(s.timeAdjustmentOptIns, a.inputs);
+      const mintOverlapOptIns = pruneMintOverlapOptIns(s.mintOverlapOptIns, a.inputs);
       const base: AppState = {
         ...s,
         inputs: a.inputs,
         ledger: a.ledger,
         timeAdjustmentOptIns,
+        mintOverlapOptIns,
         daySetup: s.daySetup.confirmed
           ? { ...s.daySetup, anchored: r.anchoredOverrides }
           : a.inputs.daySetup,
@@ -1222,6 +1255,19 @@ function pruneTimeAdjustmentOptIns(
   );
   return Object.fromEntries(
     Object.entries(optIns).filter(([id, value]) => timedIds.has(id) && value === true),
+  );
+}
+
+/** #18: the Mint overlap grant applies to any assigned row (not just native
+    timed ones). Prune to ids still present in the freshly loaded assigned set;
+    a grant naming a row that is gone from the queue is meaningless. */
+function pruneMintOverlapOptIns(
+  optIns: Record<string, boolean>,
+  inputs: PlanInputs,
+): Record<string, boolean> {
+  const assignedIds = new Set(inputs.assigned.map((item) => item.id));
+  return Object.fromEntries(
+    Object.entries(optIns).filter(([id, value]) => assignedIds.has(id) && value === true),
   );
 }
 

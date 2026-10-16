@@ -1222,6 +1222,23 @@ describe("model → wire body builders", () => {
     // The source payload cannot smuggle an opt-in through for another item.
     expect(shapeAssignedWire(raw, [{ id: "Native", blocks: 2 }])[0].allow_time_adjustment).toBe(false);
   });
+
+  it("emits an explicit per-item Mint overlap grant (explicit false by default)", () => {
+    const raw = [
+      { name: "Backpack", blocks: 2, may_overlap_mint: true },
+      { name: "Other", blocks: 1 },
+    ];
+    const shaped = shapeAssignedWire(
+      raw,
+      [{ id: "Backpack", blocks: 2 }, { id: "Other", blocks: 1 }],
+      {},
+      { Backpack: true },
+    );
+    expect(shaped.map((row) => row.may_overlap_mint)).toEqual([true, false]);
+    // Every row carries the key; the source payload cannot smuggle a grant in.
+    expect(shaped.every((row) => "may_overlap_mint" in row)).toBe(true);
+    expect(shapeAssignedWire(raw, [{ id: "Backpack", blocks: 2 }])[0].may_overlap_mint).toBe(false);
+  });
 });
 
 describe("projectDaySetup edge shapes", () => {

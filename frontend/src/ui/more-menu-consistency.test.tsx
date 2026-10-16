@@ -98,6 +98,8 @@ describe("More menu: one item style and a fixed group order", () => {
       // Issue #17: the all-day slot renders on every row; a native-timed
       // Todoist row keeps its own clock, so here it is disabled.
       "Keep all-day for Press",
+      // #18: the per-row Mint overlap grant renders on every row.
+      "May overlap Mint for Press",
       "Remove from planning and update source: Press",
       "Always exclude: Press",
       "Delete permanently: Press",
@@ -118,6 +120,8 @@ describe("More menu: one item style and a fixed group order", () => {
       "Adjust time for Press",
       // Issue #17: an eligible date-only Todoist row offers the all-day slot.
       "Keep all-day for Press",
+      // #18: the per-row Mint overlap grant renders on every row.
+      "May overlap Mint for Press",
       "Remove from planning and update source: Press",
       "Always exclude: Press",
       "Delete permanently: Press",

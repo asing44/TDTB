@@ -227,6 +227,40 @@ function allDayEntry(
   };
 }
 
+/** #18: the per-row Mint overlap grant entry for the More menu. Mirrors
+    allDayEntry — one slot, both directions, disabled with a spelled-out reason
+    for rows the grant cannot apply to. A Mint session row IS the wall, so it
+    can never be granted an overlap of itself. */
+type MintOverlapEntry = {
+  label: string;
+  detail: string;
+  disabled: boolean;
+  reason: string | null;
+};
+
+function mintOverlapEntry(
+  item: AssignedItem,
+  override: TodayOverride | undefined,
+  on: boolean,
+): MintOverlapEntry {
+  const included = override?.included ?? true;
+  const blocks = override?.blocks ?? item.blocks;
+  let reason: string | null = null;
+  if (/^Mint /i.test(item.name)) reason = "A Mint session is the wall itself";
+  else if (!included) reason = "Excluded today — include the row first";
+  else if (blocks === 0) reason = "All-day rows have no time to overlap";
+  return {
+    label: on ? "Stop overlapping Mint" : "May overlap Mint",
+    detail:
+      reason ??
+      (on
+        ? "Overlapping Mint allowed — always flagged"
+        : "Allows this row to share time with a Mint session; always flagged"),
+    disabled: reason != null,
+    reason,
+  };
+}
+
 /** Stable id for aria-controls/aria-labelledby pairs — item ids are human
     names with spaces and punctuation, and ids must not contain them. */
 function rowId(item: AssignedItem, suffix: string): string {
@@ -312,6 +346,7 @@ function MoreMenu({
   state,
   allowTimeAdjustment,
   optIn,
+  mintOptIn,
   override,
 }: {
   item: AssignedItem;
@@ -319,6 +354,7 @@ function MoreMenu({
   state: QueueState;
   allowTimeAdjustment: boolean;
   optIn: boolean;
+  mintOptIn: boolean;
   override: TodayOverride | undefined;
 }) {
   const { controller, store } = useApp();
@@ -334,6 +370,8 @@ function MoreMenu({
   // Issue #17: the row's all-day entry (enabled/disabled state + reason).
   const allDay = allDayEntry(item, override);
   const allDayIncluded = override?.included ?? true;
+  // #18: the row's Mint overlap grant entry (enabled/disabled state + reason).
+  const mintOverlap = mintOverlapEntry(item, override, mintOptIn);
 
   const close = (refocus: boolean) => {
     setOpen(false);
@@ -565,6 +603,29 @@ function MoreMenu({
           >
             <span>{allDay.label}</span>
             <span class="row-more__item-detail">{allDay.detail}</span>
+          </button>
+          {/* #18: per-row Mint overlap grant, adjacent to the all-day slot in
+              the row-shaping group. Off by default (Mint is a hard wall); when
+              on, the row is explicitly allowed to share time with a selected
+              Mint session and the server always flags the overlap. */}
+          <button
+            role="menuitemcheckbox"
+            aria-checked={mintOptIn}
+            class="alloc-verb row-more__item"
+            aria-label={`May overlap Mint for ${item.name}`}
+            disabled={mintOverlap.disabled}
+            title={mintOverlap.reason ?? undefined}
+            onClick={() => {
+              controller.setMintOverlapOptIn(item.id, !mintOptIn);
+            }}
+          >
+            <span class="row-more__item-title">
+              <span class="row-more__item-check" aria-hidden="true">
+                {mintOptIn ? "✓" : ""}
+              </span>
+              {mintOverlap.label}
+            </span>
+            <span class="row-more__item-detail">{mintOverlap.detail}</span>
           </button>
           {MORE_VERBS.filter((spec) => !spec.destructive).map((spec) => renderMenuVerb(spec))}
           {/* Planning 2a: persistent exclusion rides the More menu for rows
@@ -1043,6 +1104,7 @@ function Row({
           busy={s.runtimeBusy}
           state={state}
           optIn={s.timeAdjustmentOptIns[item.id] === true}
+          mintOptIn={s.mintOverlapOptIns[item.id] === true}
           override={s.overrides[item.id]}
           allowTimeAdjustment={
             !item.isRecurring &&

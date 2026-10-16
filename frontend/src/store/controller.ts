@@ -270,6 +270,7 @@ export class Controller {
     return {
       included,
       timeAdjustmentOptIns: s.timeAdjustmentOptIns,
+      mintOverlapOptIns: s.mintOverlapOptIns,
       planningConfigFingerprint:
         s.planningConfigFingerprint ?? s.inputs?.planningConfigFingerprint ?? "",
       overlapGrants: s.overlapGrants,
@@ -907,6 +908,17 @@ export class Controller {
     const item = this.getState().inputs?.assigned.find((i) => i.id === id);
     if (!item || item.source !== "todoist" || !item.scheduledStart) return;
     this.dispatch({ type: "TIME_ADJUSTMENT_SET", id, allow });
+    void this.revalidate();
+  }
+
+  /** #18: grant (or revoke) one assigned row's permission to overlap a Mint
+      session. The grant only changes the wire flag the server admits onto a
+      server-matched row; the next validation/preview must re-earn trust after
+      the permission changes. */
+  setMintOverlapOptIn(id: string, allow: boolean): void {
+    const item = this.getState().inputs?.assigned.find((i) => i.id === id);
+    if (!item) return;
+    this.dispatch({ type: "MINT_OVERLAP_SET", id, allow });
     void this.revalidate();
   }
 
