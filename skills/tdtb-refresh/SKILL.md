@@ -177,7 +177,7 @@ nothing:
   "collections": ["Continuals"],
   "tags": [],
   "properties": {
-    "assigned":         {"type": "boolean", "boolean": {"value": true}},
+    "assignedOn":       {"type": "date",    "date":    {"dateResolution": "day", "start": "2026-10-16", "end": null}},
     "status":           {"type": "label",   "label":   [{"id": "...", "name": "Active", "color": "blue"}]},
     "continualCadence": {"type": "number",  "number":  {"value": 4}}
   }
@@ -194,7 +194,7 @@ Each field is load-bearing:
 - **`properties` keyed by `frontmatterKey`** — the API keys properties by
   property *UUID*, so an un-re-keyed record cannot be matched by name. Re-key
   each entry to the `frontmatterKey` `capacities_getObjectTypeShape` reports for
-  that `propertyId` (`assigned`, `status`, `continualCadence`, …). Leave the
+  that `propertyId` (`assignedOn`, `status`, `continualCadence`, …). Leave the
   typed payload exactly as the API returned it; the producer flattens it.
 - **`collections` / `tags` as names** — supply the operator's vocabulary
   (`["Continuals"]`), resolved at fetch time.
@@ -365,7 +365,10 @@ duration in minutes, when the structure defines one):
   "structure": "Project",
   "when": {
     "all": [
-      { "prop": "assigned", "op": "truthy" },
+      { "any": [
+          { "prop": "assignedOn", "op": "before", "values": ["$today"] },
+          { "prop": "assignedOn", "op": "eq", "values": ["$today"] }
+      ] },
       { "prop": "status", "op": "in", "values": ["Active"] }
     ]
   },
@@ -379,7 +382,10 @@ combine them with `{"all": [...]}` / `{"any": [...]}` to form a `when`:
 
 ```json
 [
-  {"prop": "assigned", "op": "truthy"},
+  {"any": [
+    {"prop": "assignedOn", "op": "before", "values": ["$today"]},
+    {"prop": "assignedOn", "op": "eq", "values": ["$today"]}
+  ]},
   {"prop": "status", "op": "in", "values": ["Active"]},
   {"prop": "priority", "op": "in", "values": ["P1"]},
   {"prop": "timeFrame", "op": "before", "values": ["$today"]},
@@ -388,10 +394,11 @@ combine them with `{"all": [...]}` / `{"any": [...]}` to form a `when`:
 ]
 ```
 
-`assigned truthy` and `status in ["Active"]` are the two concrete examples
-above; neither matches unless the fetched object carries `structureTitle` and
-`frontmatterKey`-keyed properties. `status` is a label property, so it must use
-`in` (see the list gotcha above).
+The `assignedOn` on-or-before-`$today` date check and `status in ["Active"]`
+are the two concrete examples above; neither matches unless the fetched object
+carries `structureTitle` and `frontmatterKey`-keyed properties. `status` is a
+label property, so it must use `in` (see the list gotcha above). `before` is
+strict, so "on or before today" needs the `any` of `before` and `eq`.
 
 The starter's `capacities-inbox-assigned` rule is inert against this space: no
 collection named `Inbox` exists, and the `Project` structure defines no
@@ -409,7 +416,7 @@ report an inert rule and let the operator edit it.
   matches while `{"prop": "status", "op": "in", "values": ["Active"]}`
   does. `eq` is only for scalar properties (text/number/boolean/date).
 - `prop` is a dotted path into the record; for Capacities it is the property's
-  `frontmatterKey` (`assigned`, `status`, `continualCadence`, `timeFrame`,
+  `frontmatterKey` (`assignedOn`, `status`, `continualCadence`, `timeFrame`,
   `phase`). The typed property payloads are flattened deterministically by the
   producer (text/number/boolean to their value, a date to its start, a
   label/entity to its list of names), so a rule says

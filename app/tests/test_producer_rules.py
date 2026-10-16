@@ -944,3 +944,72 @@ def test_starter_drop_habits_is_the_first_rule():
     rules = json.loads(STARTER_RULES.read_text(encoding="utf-8"))
     assert rules["rules"][0]["id"] == "todoist-drop-habits"
     assert rules["rules"][0]["admit"] is False
+
+
+# ---------------------------------------------------------------------------
+# Starter Capacities assignedOn rule
+# ---------------------------------------------------------------------------
+
+#: The Project shape's real assigned-date property, keyed by its
+#: ``frontmatterKey``. The live typed payload is the API's date payload.
+def _assigned_on_payload(start: str) -> dict:
+    return {
+        "type": "date",
+        "date": {"dateResolution": "day", "start": start, "end": None},
+    }
+
+
+def _project_object(object_id: str, *, assigned_on: str | None) -> dict:
+    properties: dict = {}
+    if assigned_on is not None:
+        properties["assignedOn"] = _assigned_on_payload(assigned_on)
+    return _cap_object(
+        object_id=object_id,
+        title=f"Project {object_id}",
+        structure_id="Project",
+        collections=(),
+        properties=properties,
+    )
+
+
+@pytest.mark.parametrize("assigned_on,expected", [
+    ("2026-10-08", True),    # today
+    ("2026-10-07", True),    # yesterday
+    ("2026-10-09", False),   # tomorrow
+    (None, False),           # missing
+])
+def test_starter_capacities_assigned_uses_assignedOn(assigned_on, expected):
+    rules = json.loads(STARTER_RULES.read_text(encoding="utf-8"))
+    result = _evaluate(
+        rules, _cap_source(_project_object("p1", assigned_on=assigned_on)),
+        logical_day="2026-10-08",
+    )
+    stat = next(s for s in result.per_rule if s.id == "capacities-assigned")
+    if expected:
+        assert len(result.rows) == 1
+        assert result.rows[0]["assigned"] is True
+        assert (stat.matched, stat.admitted) == (1, 1)
+    else:
+        assert result.rows == []
+        assert (stat.matched, stat.admitted) == (0, 0)
+
+
+def _when_props(node) -> set:
+    """Every ``prop`` named anywhere in a recursive predicate."""
+    if not isinstance(node, dict):
+        return set()
+    found = {node["prop"]} if "prop" in node else set()
+    for key in ("all", "any", "not"):
+        child = node.get(key)
+        if isinstance(child, list):
+            for item in child:
+                found |= _when_props(item)
+        elif isinstance(child, dict):
+            found |= _when_props(child)
+    return found
+
+
+def test_starter_rules_never_reference_the_assigned_property():
+    rules = json.loads(STARTER_RULES.read_text(encoding="utf-8"))
+    for rule in rules["rules"]:
+        assert "assigned" not in _when_props(rule.get("when"))

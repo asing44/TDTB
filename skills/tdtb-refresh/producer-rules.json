@@ -19,6 +19,19 @@
       "admit": false
     },
     {
+      "id": "capacities-assigned",
+      "source": "capacities",
+      "structure": "Project",
+      "when": {
+        "any": [
+          {"prop": "assignedOn", "op": "before", "values": ["$today"]},
+          {"prop": "assignedOn", "op": "eq", "values": ["$today"]}
+        ]
+      },
+      "assigned": true,
+      "pool": false
+    },
+    {
       "id": "todoist-assigned-today-or-overdue",
       "source": "todoist",
       "when": {
