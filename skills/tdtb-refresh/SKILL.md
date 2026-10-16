@@ -74,6 +74,12 @@ file decides pooling and assignment — you only supply the candidate tasks.
 the operator's habit project (`🔁 Habits`, or the operator's equivalent
 filter). Fetch them (the same `todoist_find-tasks` call scoped to that
 project), and call `todoist_find-completed-tasks` for **today's** logical day.
+Then call `todoist_find-sections` for that project id and keep its returned
+order: it is the order the operator sees in Todoist, and the producer replays
+it (step 4). Carry each habit task's `sectionId` and `childOrder` through when
+the `todoist_find-tasks` response has them; if it does not, fetch each
+section's tasks in section order with `todoist_find-tasks sectionId=…`, which
+preserves in-section order, and record the order you fetched them in.
 **Its default window is a WEEK** (`since` → `until`), so pass an explicit day
 range when you can. The producer also scopes every completion by its own
 `completedAt` **local date**, because the fetch alone cannot express "done
@@ -222,7 +228,9 @@ The producer computes the artifact's top-level `habits` block from it:
 (optional `fallback_minutes_per_habit`, default 4, where a duration is unset)
 rounded UP to the `round_to_minutes` grain (default 15). Include
 `fallback_minutes_per_habit` / `round_to_minutes` in the entry if the operator
-configured non-default values; otherwise the defaults apply.
+configured non-default values; otherwise the defaults apply. The producer
+sorts the habits by section then in-section order; omit `sections`,
+`sectionId`, and `childOrder` and the order stays exactly as fetched.
 
 ```json
 {
@@ -239,9 +247,13 @@ configured non-default values; otherwise the defaults apply.
     "status": "ok",
     "read_at": "<ISO-8601 with offset>",
     "warnings": [],
+    "sections": [
+      { "id": "<section id>", "name": "<section name>", "order": 0 }
+    ],
     "tasks": [
       { "id": "<habit task id>", "content": "<habit name>",
-        "duration": "5m" }
+        "duration": "5m", "sectionId": "<section id>",
+        "childOrder": 0 }
     ],
     "completed": [
       { "task_id": "<habit task id completed today>" }

@@ -899,6 +899,96 @@ def _habit_completed_tokens(
     return ids, names
 
 
+def _habit_section_rank_map(entry: dict[str, Any]) -> dict[str, tuple[int, float]]:
+    """Rank map for the habit project's Todoist sections, or ``{}``.
+
+    The habits source entry MAY carry ``sections``: the ordered
+    ``todoist_find-sections`` list for the habit project, each entry an object
+    with ``id`` and optional ``name``/``order``. A section's rank is its
+    explicit numeric ``order`` when present, else its position in the list. A
+    missing, non-list, or id-less list yields ``{}``, so the caller leaves the
+    fetched order untouched."""
+    sections = entry.get("sections")
+    if not isinstance(sections, list):
+        return {}
+    ranks: dict[str, tuple[int, float]] = {}
+    for position, section in enumerate(sections):
+        if not isinstance(section, dict):
+            continue
+        section_id = section.get("id")
+        if section_id is None or not str(section_id).strip():
+            continue
+        order = section.get("order")
+        if isinstance(order, bool) or not isinstance(order, (int, float)):
+            order = position
+        ranks[str(section_id).strip()] = (1, order)
+    return ranks
+
+
+def _habit_task_section_id(task: dict[str, Any]) -> str | None:
+    """The task's Todoist section id, tolerating camelCase/snake_case."""
+    for key in ("sectionId", "section_id"):
+        value = task.get(key)
+        if value is not None and str(value).strip():
+            return str(value).strip()
+    return None
+
+
+def _habit_child_order(task: dict[str, Any]) -> int | float | None:
+    """The task's position within its section, tolerating str/int shapes."""
+    for key in ("childOrder", "child_order", "order"):
+        value = task.get(key)
+        if isinstance(value, bool):
+            continue
+        if isinstance(value, (int, float)):
+            return value
+        if isinstance(value, str) and value.strip():
+            try:
+                return int(value.strip())
+            except ValueError:
+                try:
+                    return float(value.strip())
+                except ValueError:
+                    continue
+    return None
+
+
+def _sort_habit_tasks(tasks: list[Any], entry: dict[str, Any]) -> list[Any]:
+    """Order raw habit tasks by Todoist section, then in-section position.
+
+    A STABLE, total sort over ALL tasks before any done/due filtering, so a
+    filtered row never disturbs the relative order of the rest. The key is
+    ``(section_rank, child_order, input_position, content, id)``: section-less
+    tasks first, then the listed sections in their given order, then any
+    section id the list does not name; a missing child order falls back to the
+    task's input position. With no section or order data the key degenerates to
+    the input position, so the fetched order is preserved exactly."""
+    ranks = _habit_section_rank_map(entry)
+    keyed: list[tuple[tuple[Any, ...], int]] = []
+    for position, task in enumerate(tasks):
+        if isinstance(task, dict):
+            section_id = _habit_task_section_id(task)
+            if not ranks or section_id is None:
+                section_key: tuple[int, float] = (0, 0)
+            elif section_id in ranks:
+                section_key = ranks[section_id]
+            else:
+                section_key = (2, 0)
+            child = _habit_child_order(task)
+            child_key: int | float = child if child is not None else position
+            name = task.get("content") or task.get("name") or task.get("title")
+            name_key = name.casefold() if isinstance(name, str) else ""
+            task_id = task.get("id")
+            id_key = str(task_id) if task_id is not None else ""
+            key = (section_key[0], section_key[1], child_key, position,
+                   name_key, id_key)
+        else:
+            key = (0, 0, position, position, "", "")
+        keyed.append((key, position))
+    keyed.sort(key=lambda item: item[0])
+    return [tasks[position] for _, position in keyed]
+
+
 def compute_habit_summary(
     entry: Any, logical_day: str | None = None
 ) -> dict[str, Any]:
@@ -937,6 +1027,7 @@ def compute_habit_summary(
     if type(grain) is not int or grain <= 0:
         grain = DEFAULT_HABIT_GRAIN_MINUTES
 
+    tasks = _sort_habit_tasks(tasks, entry)
     done_ids, done_names = _habit_completed_tokens(entry, logical_day)
     scope_day = _as_date(logical_day)
     total = done = 0
