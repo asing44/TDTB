@@ -249,6 +249,7 @@ export function DaySetupPanel({
   // T19: free Live overrides — each control persists immediately via
   // /day-setup {micro_adventure}; never billed, never a history write.
   const micro = s.inputs.microAdventure;
+  const poolWarnings = micro.poolWarnings ?? [];
   const shuffleLive = async () => {
     const pool = micro.pool;
     if (pool.length < 2) return;
@@ -1264,9 +1265,20 @@ export function DaySetupPanel({
             {micro.pool.map((p) => (
               <option key={p.id} value={p.id}>
                 {p.idea}
+                {p.id.startsWith("cap-") ? " · Capacities" : ""}
               </option>
             ))}
           </select>
+          {poolWarnings.length > 0 && (
+            <p
+              class="field__hint live-micro__pool-note"
+              role="note"
+              title={poolWarnings.join("\n")}
+              aria-label={poolWarnings.join(" ")}
+            >
+              {poolWarnings[0]}
+            </p>
+          )}
         </div>
         <div class="field">
           <label for="live-custom">Custom idea</label>

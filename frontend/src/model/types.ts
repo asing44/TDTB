@@ -893,6 +893,10 @@ export interface MicroAdventure {
   pool: MicroIdea[];
   streak: number;
   pendingConfirm: { date: string; id: string; idea: string } | null;
+  /** Where the rotation pool came from; absent (older payloads) = config. */
+  poolSource?: "config" | "config+capacities";
+  /** Why a preferred pool source was not used; absent/empty when none. */
+  poolWarnings?: string[];
 }
 
 /** T6: one forgot-strip row. Deliberately the billed AuditReport's shape, so

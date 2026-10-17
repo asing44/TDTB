@@ -2058,6 +2058,13 @@ export function projectMicroAdventure(raw: Wire | null | undefined): MicroAdvent
             idea: String(pending.idea ?? ""),
           }
         : null,
+    poolSource: raw?.pool_source === "config+capacities" ? "config+capacities" : "config",
+    poolWarnings: Array.isArray(raw?.pool_warnings)
+      ? (raw!.pool_warnings as unknown[])
+          .filter((w): w is string => typeof w === "string")
+          .map((w) => w.trim())
+          .filter(Boolean)
+      : [],
   };
 }
 

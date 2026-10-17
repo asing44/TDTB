@@ -42,6 +42,69 @@ describe("projectMicroAdventure", () => {
   });
 });
 
+describe("projectMicroAdventure pool provenance", () => {
+  it("defaults to config source and no warnings when fields are absent", () => {
+    for (const raw of [undefined, {}, { pick: { id: "ma01", idea: "x" } }]) {
+      const m = projectMicroAdventure(raw as never);
+      expect(m.poolSource).toBe("config");
+      expect(m.poolWarnings).toEqual([]);
+    }
+  });
+
+  it("projects pool_source and pool_warnings strictly", () => {
+    const m = projectMicroAdventure({
+      pool_source: "config+capacities",
+      pool_warnings: ["Capacities ideas were not used.", "", 7, "  second  "],
+    } as never);
+    expect(m.poolSource).toBe("config+capacities");
+    expect(m.poolWarnings).toEqual(["Capacities ideas were not used.", "second"]);
+    const bad = projectMicroAdventure({ pool_source: "elsewhere", pool_warnings: "nope" } as never);
+    expect(bad.poolSource).toBe("config");
+    expect(bad.poolWarnings).toEqual([]);
+  });
+});
+
+describe("SetupDrawer pool warning note", () => {
+  it("shows one note with the first warning and the full list in title/aria", () => {
+    const h = makeHarness("ready", (sc) => {
+      sc.inputs.microAdventure = {
+        ...sc.inputs.microAdventure,
+        poolSource: "config",
+        poolWarnings: ["First warning.", "Second warning."],
+      };
+    });
+    h.store.dispatch({ type: "UI", patch: { setupOpen: true } });
+    const r = h.ui(<SetupDrawer />);
+    const notes = r.container.querySelectorAll<HTMLElement>(".live-micro__pool-note");
+    expect(notes).toHaveLength(1);
+    expect(notes[0].textContent).toBe("First warning.");
+    expect(notes[0].getAttribute("title")).toBe("First warning.\nSecond warning.");
+    expect(notes[0].getAttribute("aria-label")).toBe("First warning. Second warning.");
+  });
+
+  it("renders nothing extra without warnings", () => {
+    const h = makeHarness("ready");
+    h.store.dispatch({ type: "UI", patch: { setupOpen: true } });
+    const r = h.ui(<SetupDrawer />);
+    expect(r.container.querySelector(".live-micro__pool-note")).toBeNull();
+  });
+
+  it("marks cap- options as Capacities", () => {
+    const h = makeHarness("ready", (sc) => {
+      const m = sc.inputs.microAdventure;
+      sc.inputs.microAdventure = {
+        ...m,
+        pool: [...m.pool, { id: "cap-1", idea: "Try pottery", category: "craft" }],
+      };
+    });
+    h.store.dispatch({ type: "UI", patch: { setupOpen: true } });
+    const r = h.ui(<SetupDrawer />);
+    const opts = Array.from(r.container.querySelectorAll("#live-pick option")).map((o) => o.textContent);
+    expect(opts).toContain("Try pottery · Capacities");
+    expect(opts).toContain("Watch sunset");
+  });
+});
+
 describe("liveDisplayName", () => {
   it("joins the pick onto Live blocks only", () => {
     const micro = { pick: { idea: "Watch sunset" } };
