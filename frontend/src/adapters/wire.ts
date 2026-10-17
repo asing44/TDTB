@@ -95,6 +95,9 @@ import type {
   AnchoredStartSaveResult,
   DurationMemoryResetResult,
   DurationMemorySaveResult,
+  RuntimeBatchResult,
+  RuntimeBatchStatus,
+  RuntimeBatchUndoReport,
 } from "./adapter";
 
 // Wire payloads are untyped JSON — this alias marks the boundary.
@@ -2077,19 +2080,36 @@ export function projectForgotList(rows: unknown): ForgotItem[] {
 
 export const FORGOT_LIST_CAP = 5;
 
+/** The optional Drop snapshot's source, narrowed to the model's closed set.
+    Null when absent or unrecognized (a legacy entry), never a guess. */
+function droppedSourceOf(raw: unknown): import("../model/types").Source | null {
+  const s = String(raw ?? "");
+  return s === "todoist" || s === "capacities" || s === "calendar" ? s : null;
+}
+
 /** IMP-07: rows the server excluded from today via Drop from plan. Shape is
-    runstate's {identity, name, dropped_at}; the identity is canonical source
-    identity (todoist:<id> / Capacities identity). A row with no name or identity is
-    dropped — there would be nothing to render or re-identify. */
+    runstate's {identity, name, dropped_at, source?, kind?, minutes?}; the
+    identity is canonical source identity (todoist:<id> / Capacities identity).
+    A row with no name or identity is dropped — there would be nothing to
+    render or re-identify. */
 export function projectDroppedToday(rows: unknown): import("../model/types").DroppedItem[] {
   if (!Array.isArray(rows)) return [];
   return rows
     .filter((r): r is Wire => !!r && typeof r === "object")
-    .map((r) => ({
-      identity: String(r.identity ?? ""),
-      name: String(r.name ?? ""),
-      droppedAt: r.dropped_at ? String(r.dropped_at) : null,
-    }))
+    .map((r) => {
+      const item: import("../model/types").DroppedItem = {
+        identity: String(r.identity ?? ""),
+        name: String(r.name ?? ""),
+        droppedAt: r.dropped_at ? String(r.dropped_at) : null,
+      };
+      // IMP-05 snapshot: optional on the wire, so only present keys project.
+      const source = droppedSourceOf(r.source);
+      if (source) item.source = source;
+      if (typeof r.kind === "string" && r.kind !== "") item.kind = r.kind;
+      const minutes = Number(r.minutes);
+      if (Number.isFinite(minutes) && minutes > 0) item.minutes = minutes;
+      return item;
+    })
     .filter((r) => r.name !== "" && r.identity !== "");
 }
 
@@ -2373,6 +2393,64 @@ export function projectRuntimeAction(wire: Wire): import("../model/types").Runti
     status: (wire.status ?? "pending") as import("../model/types").RuntimeAction["status"],
     error: wire.error == null ? null : String(wire.error),
     duplicate: wire.duplicate === true,
+  };
+}
+
+/** Coerce a batch result status onto the closed server vocabulary. An unknown
+    status is treated as a failure (never a silent success). */
+function batchStatusOf(raw: unknown): RuntimeBatchStatus {
+  const s = String(raw ?? "");
+  return s === "applied" || s === "failed" || s === "duplicate" || s === "refused"
+    ? s
+    : "failed";
+}
+
+/** POST /runtime-batches result -> typed batch result. One result per
+    submitted item, in submission order; `target` is the echoed target string
+    (not a resolved object), so a re-render can key the row it came from. */
+export function projectRuntimeBatchResults(wire: Wire): RuntimeBatchResult {
+  const rows = Array.isArray(wire?.results) ? wire.results : [];
+  return {
+    batchId: String(wire?.batch_id ?? ""),
+    results: rows
+      .filter((r): r is Wire => !!r && typeof r === "object")
+      .map((r) => ({
+        index: Number(r.index ?? 0),
+        verb: String(r.verb ?? ""),
+        target: String(r.target ?? ""),
+        status: batchStatusOf(r.status),
+        error: r.error == null ? null : String(r.error),
+      })),
+  };
+}
+
+/** POST /runtime-batches/{id}/undo -> typed undo report. The three lists
+    share one `{item, verb, target}` reference; reverted adds the journal
+    action id, the two blocked lists add the reason text. */
+export function projectRuntimeBatchUndo(wire: Wire): RuntimeBatchUndoReport {
+  const refs = (rows: unknown): Wire[] =>
+    (Array.isArray(rows) ? rows : []).filter(
+      (r): r is Wire => !!r && typeof r === "object",
+    );
+  const base = (r: Wire) => ({
+    item: Number(r.item ?? 0),
+    verb: String(r.verb ?? ""),
+    target: String(r.target ?? ""),
+  });
+  return {
+    batchId: String(wire?.batch_id ?? ""),
+    reverted: refs(wire?.reverted).map((r) => ({
+      ...base(r),
+      actionId: String(r.action_id ?? ""),
+    })),
+    conflicts: refs(wire?.conflicts).map((r) => ({
+      ...base(r),
+      reason: String(r.reason ?? ""),
+    })),
+    nonReversible: refs(wire?.non_reversible).map((r) => ({
+      ...base(r),
+      reason: String(r.reason ?? ""),
+    })),
   };
 }
 

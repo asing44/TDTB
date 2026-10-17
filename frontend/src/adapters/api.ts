@@ -19,6 +19,9 @@ import type {
   AnchoredStartSaveResult,
   DurationMemoryResetResult,
   DurationMemorySaveResult,
+  RuntimeBatchItemInput,
+  RuntimeBatchResult,
+  RuntimeBatchUndoReport,
   SequenceContext,
   SequenceResult,
   SourceRefreshResult,
@@ -83,6 +86,8 @@ import {
   projectLedger,
   projectPlanInputs,
   projectRuntimeAction,
+  projectRuntimeBatchResults,
+  projectRuntimeBatchUndo,
   projectSequenceResult,
   projectShadow,
   projectValidation,
@@ -675,6 +680,32 @@ export class ApiAdapter implements Adapter {
   async undoRuntimeAction(actionId: string): Promise<RuntimeAction> {
     return projectRuntimeAction(
       await this.post(`/runtime-actions/${encodeURIComponent(actionId)}/undo`, {}),
+    );
+  }
+
+  async applyRuntimeBatch(items: RuntimeBatchItemInput[]): Promise<RuntimeBatchResult> {
+    return projectRuntimeBatchResults(
+      await this.post("/runtime-batches", {
+        // The backend requires args (defaults to {}); send it explicitly so a
+        // minimal caller tuple stays a valid body.
+        items: items.map((item) => ({
+          verb: item.verb,
+          target: item.target,
+          args: item.args ?? {},
+        })),
+      }),
+    );
+  }
+
+  async retryRuntimeBatch(batchId: string): Promise<RuntimeBatchResult> {
+    return projectRuntimeBatchResults(
+      await this.post(`/runtime-batches/${encodeURIComponent(batchId)}/retry`, {}),
+    );
+  }
+
+  async undoRuntimeBatch(batchId: string): Promise<RuntimeBatchUndoReport> {
+    return projectRuntimeBatchUndo(
+      await this.post(`/runtime-batches/${encodeURIComponent(batchId)}/undo`, {}),
     );
   }
 }

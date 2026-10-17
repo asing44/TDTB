@@ -907,6 +907,12 @@ export interface DroppedItem {
   identity: string;
   name: string;
   droppedAt: string | null;
+  /** Optional Drop snapshot: the source chip, a render kind (a Capacities
+      structure id, an explicit kind, or "recurring"), and the row's duration
+      in minutes. Absent on a legacy entry that stored none of them. */
+  source?: Source;
+  kind?: string;
+  minutes?: number;
 }
 
 export interface PlanInputs {

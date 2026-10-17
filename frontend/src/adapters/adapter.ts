@@ -92,6 +92,61 @@ export interface AnchoredStartSaveResult {
   previousStart: string | null;
 }
 
+/** One item of a POST /runtime-batches body: the same verb/target/args tuple
+    /runtime-actions accepts, so a batch never invents a second vocabulary. */
+export interface RuntimeBatchItemInput {
+  verb: string;
+  target: string;
+  args?: Record<string, unknown>;
+}
+
+/** Per-item outcome status from a runtime batch. `refused` is a pre-write
+    refusal (the verb is not legal for the target), `failed` is a write that
+    threw, `duplicate` is an idempotent replay of an earlier action. */
+export type RuntimeBatchStatus = "applied" | "failed" | "duplicate" | "refused";
+
+/** One item's result inside a batch. `target` is the submitted target string,
+    echoed by the server. */
+export interface RuntimeBatchItemResult {
+  index: number;
+  verb: string;
+  target: string;
+  status: RuntimeBatchStatus;
+  error: string | null;
+}
+
+/** POST /runtime-batches and /{id}/retry response: the batch id plus one
+    result per submitted item, in submission order. */
+export interface RuntimeBatchResult {
+  batchId: string;
+  results: RuntimeBatchItemResult[];
+}
+
+/** One item the batch undo reverted, with the journal action it reversed. */
+export interface RuntimeBatchUndoReverted {
+  item: number;
+  verb: string;
+  target: string;
+  actionId: string;
+}
+
+/** One item the batch undo could NOT revert, with the server's reason text. */
+export interface RuntimeBatchUndoBlocked {
+  item: number;
+  verb: string;
+  target: string;
+  reason: string;
+}
+
+/** POST /runtime-batches/{id}/undo response: what reverted, what a later edit
+    made conflicting, and what has no safe reverse. */
+export interface RuntimeBatchUndoReport {
+  batchId: string;
+  reverted: RuntimeBatchUndoReverted[];
+  conflicts: RuntimeBatchUndoBlocked[];
+  nonReversible: RuntimeBatchUndoBlocked[];
+}
+
 export interface Adapter {
   /** GET /plan-inputs, projected assigned-only (digest.suggested dropped). */
   loadPlanInputs(): Promise<PlanInputs>;
@@ -210,4 +265,15 @@ export interface Adapter {
   /** POST /runtime-actions/{id}/undo (T20) — one-step reverse from exact
       before-images. */
   undoRuntimeAction(actionId: string): Promise<import("../model/types").RuntimeAction>;
+  /** POST /runtime-batches — apply items as one journaled batch. A per-item
+      failure or refusal is REPORTED, never thrown; 409 (Day Setup not
+      confirmed) and 422 (bad input) surface as ApiError through the shared
+      error handling. */
+  applyRuntimeBatch(items: RuntimeBatchItemInput[]): Promise<RuntimeBatchResult>;
+  /** POST /runtime-batches/{id}/retry — re-run only the batch's unsettled
+      items; already-applied/duplicate items are reported as-is. */
+  retryRuntimeBatch(batchId: string): Promise<RuntimeBatchResult>;
+  /** POST /runtime-batches/{id}/undo — reverse the applied items; a later
+      edit and a non-reversible step are reported, never thrown. */
+  undoRuntimeBatch(batchId: string): Promise<RuntimeBatchUndoReport>;
 }

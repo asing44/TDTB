@@ -9,6 +9,12 @@ import type {
   AnchoredStartSaveResult,
   DurationMemoryResetResult,
   DurationMemorySaveResult,
+  RuntimeBatchItemInput,
+  RuntimeBatchItemResult,
+  RuntimeBatchResult,
+  RuntimeBatchUndoBlocked,
+  RuntimeBatchUndoReport,
+  RuntimeBatchUndoReverted,
   SequenceContext,
   SequenceResult,
   SourceRefreshResult,
@@ -1180,5 +1186,121 @@ export class FixtureAdapter implements Adapter {
     if (!action) throw new Error(`unknown action ${actionId}`);
     action.status = "undone";
     return { ...action };
+  }
+
+  // -- runtime batches (B5 contract) ----------------------------------------
+  /** Dev-only, deterministic switches for the batch surface: force one item
+      to fail on apply/retry, and force one applied item's undo to conflict. */
+  private batchFailIndex: number | null = null;
+  private batchUndoConflictIndex: number | null = null;
+  private batchSeq = 0;
+  private batchJournal = new Map<string, RuntimeBatchItemResult[]>();
+  private batchActions = new Map<string, Map<number, string>>();
+  private batchUndone = new Map<string, Set<number>>();
+  private batchAttempts = new Map<string, number>();
+
+  /** Force the item at `index` to fail on the next apply/retry; null clears. */
+  simulateBatchFailure(index: number | null): void {
+    this.batchFailIndex = index;
+  }
+
+  /** Force the applied item at `index` to report an undo conflict; null
+      clears. */
+  simulateBatchUndoConflict(index: number | null): void {
+    this.batchUndoConflictIndex = index;
+  }
+
+  /** Items actually executed (apply + retry) for a batch. Lets a test prove
+      retry re-runs only the unsettled items. */
+  batchExecutionCount(batchId: string): number {
+    return this.batchAttempts.get(batchId) ?? 0;
+  }
+
+  private runBatchItem(
+    index: number, item: RuntimeBatchItemInput,
+  ): RuntimeBatchItemResult {
+    const failed = this.batchFailIndex === index;
+    return {
+      index,
+      verb: item.verb,
+      target: item.target,
+      status: failed ? "failed" : "applied",
+      error: failed ? `fixture: forced failure on item ${index}` : null,
+    };
+  }
+
+  async applyRuntimeBatch(
+    items: RuntimeBatchItemInput[],
+  ): Promise<RuntimeBatchResult> {
+    await wait(LATENCY_MS);
+    this.batchSeq += 1;
+    const batchId = `rb-fixture-${this.batchSeq}`;
+    const results = items.map((item, index) => this.runBatchItem(index, item));
+    this.batchJournal.set(batchId, results);
+    this.batchActions.set(
+      batchId,
+      new Map(
+        results
+          .filter((r) => r.status === "applied")
+          .map((r) => [r.index, `ra-fixture-batch-${batchId}-${r.index}`]),
+      ),
+    );
+    this.batchAttempts.set(batchId, results.length);
+    return { batchId, results: results.map((r) => ({ ...r })) };
+  }
+
+  /** Re-run only the unsettled items; applied/duplicate items are reported
+      as-is and are not executed again. */
+  async retryRuntimeBatch(batchId: string): Promise<RuntimeBatchResult> {
+    await wait(LATENCY_MS);
+    const stored = this.batchJournal.get(batchId);
+    if (!stored) throw new Error(`unknown batch ${batchId}`);
+    let executions = this.batchAttempts.get(batchId) ?? 0;
+    const results = stored.map((r) => {
+      if (r.status === "applied" || r.status === "duplicate") return { ...r };
+      executions += 1;
+      return this.runBatchItem(r.index, r);
+    });
+    this.batchAttempts.set(batchId, executions);
+    this.batchJournal.set(batchId, results);
+    const actions = this.batchActions.get(batchId) ?? new Map<number, string>();
+    for (const r of results) {
+      if (r.status === "applied" && !actions.has(r.index)) {
+        actions.set(r.index, `ra-fixture-batch-${batchId}-${r.index}`);
+      }
+    }
+    this.batchActions.set(batchId, actions);
+    return { batchId, results: results.map((r) => ({ ...r })) };
+  }
+
+  /** Reverse the applied items in reverse order, reporting a forced/later
+      conflict per item; a second undo reports the reverted items as conflicts. */
+  async undoRuntimeBatch(batchId: string): Promise<RuntimeBatchUndoReport> {
+    await wait(LATENCY_MS);
+    const stored = this.batchJournal.get(batchId);
+    if (!stored) throw new Error(`unknown batch ${batchId}`);
+    const actions = this.batchActions.get(batchId) ?? new Map<number, string>();
+    const undone = this.batchUndone.get(batchId) ?? new Set<number>();
+    const reverted: RuntimeBatchUndoReverted[] = [];
+    const conflicts: RuntimeBatchUndoBlocked[] = [];
+    for (const r of [...stored].reverse()) {
+      if (r.status !== "applied") continue;
+      const base = { item: r.index, verb: r.verb, target: r.target };
+      if (undone.has(r.index)) {
+        conflicts.push({ ...base, reason: "already undone" });
+        continue;
+      }
+      if (this.batchUndoConflictIndex === r.index) {
+        conflicts.push({
+          ...base,
+          reason: `fixture: forced undo conflict on item ${r.index}`,
+        });
+        continue;
+      }
+      reverted.push({ ...base, actionId: actions.get(r.index) ?? "" });
+      undone.add(r.index);
+    }
+    this.batchUndone.set(batchId, undone);
+    return { batchId, reverted, conflicts, nonReversible: [] };
   }
 }
