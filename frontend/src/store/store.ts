@@ -27,6 +27,7 @@ import type {
   QueueState,
   SequenceRow,
   ShadowDiff,
+  Source,
   TodayOverride,
   Validation,
 } from "../model/types";
@@ -269,6 +270,13 @@ export interface AppState {
     /** T12e trim assist: ids excluded by the last Accept trim, held so Undo
         can re-include exactly that set. Today-only UI state, never persisted. */
     trimUndo: string[] | null;
+    /** Task-actions F3: the one expanded row, or null when every row is
+        collapsed. A single id (not a set) is what makes "expanding another
+        collapses the first" true by construction. */
+    expandedId: string | null;
+    /** Task-actions F3: checkbox selection, independent of expansion. Row ids
+        in the order they were selected; empty means nothing is selected. */
+    selection: string[];
   };
 }
 
@@ -325,7 +333,7 @@ export const initialState: AppState = {
   refresh: { phase: "idle", error: null, lastRefreshed: null, summary: null, coverage: null },
   ledger: null,
   theme: "system",
-  ui: { screen: "setup", settingsPanel: null, settingsSection: null, setupOpen: false, capacitiesSettingsOpen: false, tagExclusionSettingsOpen: false, approvalOpen: false, editorItem: null, editorIntent: null, editorAnchor: null, editorAnchorIntent: null, capacityDetail: false, trimUndo: null },
+  ui: { screen: "setup", settingsPanel: null, settingsSection: null, setupOpen: false, capacitiesSettingsOpen: false, tagExclusionSettingsOpen: false, approvalOpen: false, editorItem: null, editorIntent: null, editorAnchor: null, editorAnchorIntent: null, capacityDetail: false, trimUndo: null, expandedId: null, selection: [] },
 };
 
 export type Action =
@@ -354,6 +362,11 @@ export type Action =
   | { type: "MICRO_SET"; pick: MicroIdea | null; source: "auto" | "override" }
   // The Set up day banner answered the unconfirmed prior Live block.
   | { type: "LOOSE_END_RESOLVED" }
+  // Task-actions F3 row UI state. Expansion is a single id; selection is an
+  // independent list, so selecting a row never opens it and vice versa.
+  | { type: "ROW_EXPANDED"; id: string | null }
+  | { type: "ROW_SELECTED"; id: string; selected: boolean }
+  | { type: "ROWS_SELECTED"; ids: string[] }
   | { type: "CAPACITY_UPDATED"; capacity: Capacity }
   | { type: "SEQUENCE_START" }
   | {
@@ -502,6 +515,7 @@ export function reducer(s: AppState, a: Action): AppState {
         inputs: a.inputs,
         capacity: s.capacity ?? a.inputs.capacity,
         daySetup: s.daySetup.confirmed ? s.daySetup : a.inputs.daySetup,
+        ui: pruneRowUi(s.ui, a.inputs),
         // FEEDBACK-28 (retry): a fresh inputs load is a fresh run — persisted
         // skip state is authoritative until the user re-expresses it, so any
         // current-run intent from a previous session is cleared.
@@ -675,6 +689,31 @@ export function reducer(s: AppState, a: Action): AppState {
         ...dirtySeq(s),
         ...staleShadow(s),
       };
+    }
+    case "ROW_EXPANDED":
+      // One row at a time: opening another row replaces the id, so there is
+      // never a second panel to reconcile.
+      return { ...s, ui: { ...s.ui, expandedId: a.id } };
+    case "ROW_SELECTED": {
+      const selected = s.ui.selection;
+      if (a.selected === selected.includes(a.id)) return s;
+      return {
+        ...s,
+        ui: {
+          ...s.ui,
+          selection: a.selected
+            ? [...selected, a.id]
+            : selected.filter((id) => id !== a.id),
+        },
+      };
+    }
+    case "ROWS_SELECTED": {
+      // Deduped and order-preserving; an empty list is the clear.
+      const selection = [...new Set(a.ids.filter((id) => id !== ""))];
+      const unchanged =
+        selection.length === s.ui.selection.length &&
+        selection.every((id, i) => id === s.ui.selection[i]);
+      return unchanged ? s : { ...s, ui: { ...s.ui, selection } };
     }
     case "CAPACITY_UPDATED":
       return { ...s, capacity: a.capacity };
@@ -1071,6 +1110,7 @@ export function reducer(s: AppState, a: Action): AppState {
         ledger: a.ledger,
         timeAdjustmentOptIns,
         mintOverlapOptIns,
+        ui: pruneRowUi(s.ui, a.inputs),
         daySetup: s.daySetup.confirmed
           ? { ...s.daySetup, anchored: r.anchoredOverrides }
           : a.inputs.daySetup,
@@ -1300,6 +1340,21 @@ export function queueState(s: AppState, id: string): QueueState {
   return "needs-placement";
 }
 
+/** Task-actions F3: row UI state (expansion + selection) names rows, so a
+    fresh inputs read or refresh must drop the names it no longer carries. A
+    row skipped, completed, or gone from the source cannot stay expanded or
+    selected — otherwise the batch bar keeps counting a row nobody can see. */
+function pruneRowUi(ui: AppState["ui"], inputs: PlanInputs): AppState["ui"] {
+  const present = new Set(inputs.assigned.map((i) => i.id));
+  const selection = ui.selection.filter((id) => present.has(id));
+  const expandedId =
+    ui.expandedId !== null && present.has(ui.expandedId) ? ui.expandedId : null;
+  if (selection.length === ui.selection.length && expandedId === ui.expandedId) {
+    return ui;
+  }
+  return { ...ui, selection, expandedId };
+}
+
 /** Included, capacity-consuming items (queue + capacity preview "selected"). */
 export function includedItems(s: AppState) {
   return (s.inputs?.assigned ?? []).filter((i) => {
@@ -1312,6 +1367,48 @@ export function effectiveBlocks(s: AppState, id: string): number {
   const item = s.inputs?.assigned.find((i) => i.id === id);
   if (!item) return 0;
   return s.overrides[id]?.blocks ?? item.blocks;
+}
+
+// -- task-actions F3: row UI state + the Skipped today projection -----------
+
+/** The one expanded row id, or null when every row is collapsed. */
+export function expandedRowId(s: AppState): string | null {
+  return s.ui.expandedId;
+}
+
+export function isRowSelected(s: AppState, id: string): boolean {
+  return s.ui.selection.includes(id);
+}
+
+/** Selected row ids in selection order — the batch surface's own input. */
+export function selectedRowIds(s: AppState): string[] {
+  return s.ui.selection;
+}
+
+/** One row of the "Skipped today" section: a durable `dropped[]` entry. The
+    Drop snapshot fields are null on a legacy entry that stored none of them,
+    so the section renders the name and Restore today without inventing a
+    source chip or a duration it never had. */
+export interface SkippedTodayRow {
+  identity: string;
+  name: string;
+  droppedAt: string | null;
+  source: Source | null;
+  kind: string | null;
+  minutes: number | null;
+}
+
+/** Rows dropped from today's plan (Skip today), in server order. `identity`
+    is the runtime verb target, so Restore today needs no name matching. */
+export function skippedTodayRows(s: AppState): SkippedTodayRow[] {
+  return (s.inputs?.droppedToday ?? []).map((d) => ({
+    identity: d.identity,
+    name: d.name,
+    droppedAt: d.droppedAt,
+    source: d.source ?? null,
+    kind: d.kind ?? null,
+    minutes: d.minutes ?? null,
+  }));
 }
 
 /** The one saved Set up/Plan day frame: SETUP_SAVED stores daySetup.anchor/eod
@@ -1540,6 +1637,24 @@ export function canLiveCommit(s: AppState): boolean {
     manifest is what the server resolves targets against), one at a time. */
 export function canRuntimeAct(s: AppState): boolean {
   return s.commitReport !== null && !s.runtimeBusy;
+}
+
+/** Task-actions F3: the row verbs the action surface gates. */
+export type TaskActionVerb = "skip" | "restore" | "hide" | "complete";
+
+/** Written reason shown when a row verb is disabled. The server refuses every
+    runtime write with a 409 until Day Setup is confirmed; the row surface
+    disables the verb and says why instead of letting the call fail. */
+export const DAY_SETUP_GATE_REASON = "Confirm Day Setup first";
+
+/** Null when the verb may run, else the reason it is disabled. Both the UI
+    (disabled state + reason text) and the controller (refuse before any
+    network call) read this one answer, so they cannot disagree. */
+export function taskActionDisabledReason(
+  s: AppState,
+  _verb: TaskActionVerb,
+): string | null {
+  return s.daySetup.confirmed ? null : DAY_SETUP_GATE_REASON;
 }
 
 /** Global alert roll-up (locked decision 6): exact issues, one summary.

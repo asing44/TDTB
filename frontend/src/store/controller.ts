@@ -42,6 +42,7 @@ import {
   includedItems,
   mergeNativeTimedPins,
   sourceHealthBlocked,
+  taskActionDisabledReason,
 } from "./store";
 import type {
   AnchoredOverride,
@@ -643,6 +644,138 @@ export class Controller {
     const item = this.getState().inputs?.assigned.find((i) => i.id === id);
     if (!item) return null;
     return item.identity ?? itemIdentity(item);
+  }
+
+  /** Task-actions F3: the row identity a runtime verb targets. A skipped row
+      is no longer in `assigned` — it lives in `droppedToday` — so restore
+      resolves through the drop entry by identity or by name. */
+  private droppedOf(id: string) {
+    return (this.getState().inputs?.droppedToday ?? []).find(
+      (d) => d.identity === id || d.name === id,
+    );
+  }
+
+  // -- task-actions F3: row UI state ---------------------------------------
+
+  /** Expand one row, collapsing whatever was open (single-expand by
+      construction); null collapses everything. */
+  expandRow(id: string | null): void {
+    this.dispatch({ type: "ROW_EXPANDED", id });
+  }
+
+  /** Select/deselect one row. Selection is independent of expansion. */
+  selectRow(id: string, selected: boolean): void {
+    this.dispatch({ type: "ROW_SELECTED", id, selected });
+  }
+
+  /** Select every row in today's queue. */
+  selectAllRows(): void {
+    const ids = (this.getState().inputs?.assigned ?? []).map((i) => i.id);
+    this.dispatch({ type: "ROWS_SELECTED", ids });
+  }
+
+  clearSelection(): void {
+    this.dispatch({ type: "ROWS_SELECTED", ids: [] });
+  }
+
+  /** Task-actions F3: Skip today — the durable `drop_from_plan` verb, which
+      writes the dated runstate `dropped[]` entry the plan-inputs read honors.
+      Deliberately no local `included=false` override: the skip is durable and
+      date-scoped, and the source refresh is what moves the row into the
+      Skipped today list. */
+  async skipToday(id: string): Promise<void> {
+    const blocked = taskActionDisabledReason(this.getState(), "skip");
+    if (blocked) {
+      this.dispatch({ type: "RUNTIME_FAIL", error: blocked });
+      return;
+    }
+    const identity = this.identityOf(id);
+    if (!identity) {
+      this.dispatch({
+        type: "RUNTIME_FAIL",
+        error: "This item has no stable identity to skip.",
+      });
+      return;
+    }
+    await this.applyRowVerb("drop_from_plan", identity);
+  }
+
+  /** Task-actions F3: Restore today — the `restore_today` verb reverses the
+      dated drop. On success a stale today-only exclusion is cleared, because
+      a restored row hidden by a leftover `included=false` override would read
+      as still skipped. */
+  async restoreToday(id: string): Promise<void> {
+    const blocked = taskActionDisabledReason(this.getState(), "restore");
+    if (blocked) {
+      this.dispatch({ type: "RUNTIME_FAIL", error: blocked });
+      return;
+    }
+    const dropped = this.droppedOf(id);
+    const identity = dropped?.identity ?? this.identityOf(id);
+    if (!identity) {
+      this.dispatch({
+        type: "RUNTIME_FAIL",
+        error: "This item has no stable identity to restore.",
+      });
+      return;
+    }
+    if (!(await this.applyRowVerb("restore_today", identity))) return;
+    const key = dropped?.name ?? id;
+    const override = this.getState().overrides[key];
+    if (override && !override.included) {
+      this.setOverride(key, true, override.blocks ?? null);
+    }
+  }
+
+  /** Task-actions F3: Hide always — the journaled `hide_always` verb, which
+      writes the durable exclusion AND journals it. The settings-screen writers
+      (alwaysExcludeTodoist / alwaysExcludeCapacitiesObject) stay for the
+      Connections and tag panels; a row action never edits those policies
+      directly, so it stays undoable. */
+  async hideAlways(id: string): Promise<void> {
+    const blocked = taskActionDisabledReason(this.getState(), "hide");
+    if (blocked) {
+      this.dispatch({ type: "RUNTIME_FAIL", error: blocked });
+      return;
+    }
+    const identity = this.droppedOf(id)?.identity ?? this.identityOf(id);
+    if (!identity) {
+      this.dispatch({
+        type: "RUNTIME_FAIL",
+        error: "This item has no stable identity to hide.",
+      });
+      return;
+    }
+    await this.applyRowVerb("hide_always", identity);
+  }
+
+  /** One journaled row verb against a row identity, then a source refresh so
+      the queue and the Skipped today list read what the server now holds.
+      Failure handling mirrors stagingAction: a thrown adapter error and a
+      200 carrying a non-`applied` status are both failures, and a failure
+      never refreshes. Returns whether the verb applied. */
+  private async applyRowVerb(verb: string, identity: string): Promise<boolean> {
+    this.dispatch({ type: "RUNTIME_START" });
+    try {
+      const action = await this.adapter.runtimeAction(verb, identity);
+      this.dispatch({ type: "RUNTIME_OK", action });
+    } catch (e) {
+      this.dispatch({
+        type: "RUNTIME_FAIL",
+        error: String(e instanceof Error ? e.message : e),
+      });
+      return false;
+    }
+    const last = this.getState().lastRuntimeAction;
+    if (last && last.status !== "applied") {
+      this.dispatch({
+        type: "RUNTIME_FAIL",
+        error: last.error ?? `${verb} did not apply (${last.status})`,
+      });
+      return false;
+    }
+    await this.refreshSources();
+    return true;
   }
 
   private durationMemoryFail(id: string, error: string): void {
