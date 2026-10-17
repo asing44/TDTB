@@ -1851,6 +1851,11 @@ export type TaskActionVerb = "skip" | "restore" | "hide" | "complete";
     disables the verb and says why instead of letting the call fail. */
 export const DAY_SETUP_GATE_REASON = "Confirm Day Setup first";
 
+/** One source-changing batch owns the single batch slot while its wire call is
+    in flight (F7). A row verb started then would race a second `BATCH_SET`
+    over the first, so every verb refuses until it settles. */
+export const BATCH_APPLYING_REASON = "A batch is applying";
+
 /** Null when the verb may run, else the reason it is disabled. Both the UI
     (disabled state + reason text) and the controller (refuse before any
     network call) read this one answer, so they cannot disagree. */
@@ -1858,7 +1863,9 @@ export function taskActionDisabledReason(
   s: AppState,
   _verb: TaskActionVerb,
 ): string | null {
-  return s.daySetup.confirmed ? null : DAY_SETUP_GATE_REASON;
+  if (!s.daySetup.confirmed) return DAY_SETUP_GATE_REASON;
+  if (s.batch.phase === "applying") return BATCH_APPLYING_REASON;
+  return null;
 }
 
 /** Global alert roll-up (locked decision 6): exact issues, one summary.

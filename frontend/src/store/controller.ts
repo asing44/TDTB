@@ -1023,6 +1023,9 @@ export class Controller {
   async runRowBatch(id: string, action: BatchAction): Promise<void> {
     if (isPlanningBatchAction(action)) return;
     const s = this.getState();
+    // The gate answer also covers the applying batch (F1): a row verb started
+    // mid-apply would replace the in-flight batch slot with a second one, so
+    // it refuses here, before any BATCH_SET or wire call.
     const gate = taskActionDisabledReason(s, "complete");
     if (gate !== null) {
       this.dispatch({ type: "RUNTIME_FAIL", error: gate });

@@ -305,6 +305,9 @@ describe("collapsed row: C and E act on the row that received the key", () => {
       expect(batched).toEqual([{ verb: "done", target: "todoist:6fx00xMIRROR" }]),
     );
     expect(calls).toEqual([]);
+    // F1: a row verb is refused while the batch that C started is applying, so
+    // the E press below waits for the single batch slot to settle first.
+    await waitFor(() => expect(h.store.getState().batch.phase).toBe("done"));
 
     fireEvent.keyDown(rowFor(container, "Press"), { key: "e" });
     await waitFor(() =>
