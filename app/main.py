@@ -72,6 +72,7 @@ import commit  # noqa: E402
 import calendar_bridge  # noqa: E402
 import calendar_drift  # noqa: E402
 import runtime_actions  # noqa: E402
+import runtime_batches  # noqa: E402
 import external_sources  # noqa: E402
 import micro_adventure  # noqa: E402
 import orchestrate  # noqa: E402
@@ -1626,6 +1627,24 @@ class RuntimeActionRequest(BaseModel):
     verb: str
     target: str
     args: dict[str, Any] = Field(default_factory=dict)
+
+
+class RuntimeBatchItem(BaseModel):
+    """One item of a /runtime-batches body (B5): the same ``verb``/``target``/
+    ``args`` tuple /runtime-actions accepts, so a batch queues registered verbs
+    without inventing a second vocabulary."""
+
+    verb: str
+    target: str
+    args: dict[str, Any] = Field(default_factory=dict)
+
+
+class RuntimeBatchRequest(BaseModel):
+    """/runtime-batches body (B5): an ordered list of runtime actions applied
+    as one journaled batch. ``items`` is required — a missing list is bad input
+    (422), never a silent empty batch."""
+
+    items: list[RuntimeBatchItem]
 
 
 class DaySetupRequest(BaseModel):
@@ -6440,6 +6459,66 @@ def create_app() -> FastAPI:
     def get_runtime_actions() -> Any:
         today = gather.effective_date(datetime.now())
         return runtime_actions.load_journal(today)
+
+    # -- runtime batches (B5) ------------------------------------------------
+
+    @app.post("/runtime-batches", dependencies=[Depends(require_token)])
+    def post_runtime_batch(body: RuntimeBatchRequest) -> Any:
+        today = gather.effective_date(datetime.now())
+        # FEEDBACK-24: batch items run the same write verbs as /runtime-actions
+        # — same closed Day Setup gate.
+        _require_day_setup(today, "applying runtime batches")
+        todoist_c, store, capacities_c, owns = _runtime_clients()
+        try:
+            return runtime_batches.apply_batch(
+                today, [item.model_dump() for item in body.items],
+                todoist=todoist_c, store=store, capacities=capacities_c,
+            )
+        except runtime_actions.RuntimeActionError as exc:
+            _raise_runtime_error(exc)
+        finally:
+            if owns:
+                todoist_c.close()
+            if capacities_c is not None and hasattr(capacities_c, "close"):
+                capacities_c.close()
+
+    @app.post("/runtime-batches/{batch_id}/retry",
+              dependencies=[Depends(require_token)])
+    def post_runtime_batch_retry(batch_id: str) -> Any:
+        today = gather.effective_date(datetime.now())
+        _require_day_setup(today, "retrying runtime batches")
+        todoist_c, store, capacities_c, owns = _runtime_clients()
+        try:
+            return runtime_batches.retry_batch(
+                today, batch_id,
+                todoist=todoist_c, store=store, capacities=capacities_c,
+            )
+        except runtime_actions.RuntimeActionError as exc:
+            _raise_runtime_error(exc)
+        finally:
+            if owns:
+                todoist_c.close()
+            if capacities_c is not None and hasattr(capacities_c, "close"):
+                capacities_c.close()
+
+    @app.post("/runtime-batches/{batch_id}/undo",
+              dependencies=[Depends(require_token)])
+    def post_runtime_batch_undo(batch_id: str) -> Any:
+        today = gather.effective_date(datetime.now())
+        _require_day_setup(today, "undoing runtime batches")
+        todoist_c, store, capacities_c, owns = _runtime_clients()
+        try:
+            return runtime_batches.undo_batch(
+                today, batch_id,
+                todoist=todoist_c, store=store, capacities=capacities_c,
+            )
+        except runtime_actions.RuntimeActionError as exc:
+            _raise_runtime_error(exc)
+        finally:
+            if owns:
+                todoist_c.close()
+            if capacities_c is not None and hasattr(capacities_c, "close"):
+                capacities_c.close()
 
     # -- static UI (T10: thin, unstyled config + digest views) ----------------
     if _STATIC_DIR.is_dir():
