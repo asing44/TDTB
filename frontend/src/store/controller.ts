@@ -10,6 +10,10 @@
      canLiveCommit at call time — the second-click gate (locked decision 9). */
 
 import type { Adapter, SequenceContext, SequenceResult } from "../adapters/adapter";
+import type {
+  RuntimeBatchItemInput,
+  RuntimeBatchResult,
+} from "../adapters/adapter";
 import {
   ApiError,
   apiFailurePathOf,
@@ -31,18 +35,38 @@ import {
 } from "../model/mint";
 import type { WallInterval } from "../model/overflow";
 import { isValidHHMM, toMinutes } from "../model/time";
+import {
+  batchEligibility,
+  unassignVerb,
+  type BatchAction,
+  type BatchRow,
+} from "../model/batchEligibility";
+import {
+  toOverrides,
+  type RowDraft,
+  type RowFacts,
+} from "../model/rowDraft";
 import { droppedItems } from "../model/placement";
 import type { AppState, Action, ShadowErrorKind } from "./store";
 import {
+  batchRowsOf,
   canLiveCommit,
   canAutoSequence,
   defectsResolved,
+  draftIsStaged,
+  draftSeedOf,
   effectiveAnchoredBlocks,
   effectiveBlocks,
+  emptyBatch,
   includedItems,
   mergeNativeTimedPins,
+  rowFactsOf,
   sourceHealthBlocked,
+  stagedDraft,
   taskActionDisabledReason,
+  type BatchItemOutcome,
+  type BatchReviewState,
+  type BatchState,
 } from "./store";
 import type {
   AnchoredOverride,
@@ -66,6 +90,7 @@ import type {
   SequenceRow,
   TagExclusionSettings,
   TagExclusionSettingsDraft,
+  TodayOverride,
   TodoistExclusionEntry,
 } from "../model/types";
 
@@ -102,6 +127,91 @@ function byStartThenId(a: SequenceRow, b: SequenceRow): number {
     negative, and off-grid values are rejected exactly as typed. */
 export function isValidDurationMinutes(minutes: number): boolean {
   return Number.isInteger(minutes) && minutes >= 0 && minutes % 5 === 0;
+}
+
+// -- task-actions F3b: batch contract ---------------------------------------
+
+/** Planning-only actions reshape the session and never reach the server. */
+export type PlanningBatchAction =
+  | "duration"
+  | "allDay"
+  | "timeBlock"
+  | "automaticPlacement"
+  | "mintAllow"
+  | "mintDisallow";
+
+export function isPlanningBatchAction(
+  action: BatchAction,
+): action is PlanningBatchAction {
+  return (
+    action === "duration" ||
+    action === "allDay" ||
+    action === "timeBlock" ||
+    action === "automaticPlacement" ||
+    action === "mintAllow" ||
+    action === "mintDisallow"
+  );
+}
+
+/** The runtime verb one source-changing batch action resolves to per row.
+    Unassign splits by row kind: a recurring task advances its due date (Skip
+    occurrence) instead of clearing assignment. These are the server's own
+    verb names (app/runtime_actions.py), never a second vocabulary. */
+function batchVerb(action: BatchAction, row: BatchRow): string {
+  switch (action) {
+    case "complete":
+      return "done";
+    case "skipToday":
+      return "drop_from_plan";
+    case "hideAlways":
+      return "hide_always";
+    case "unassign":
+      return unassignVerb(row);
+    default:
+      throw new Error(`${action} is a planning-only action, not a runtime verb`);
+  }
+}
+
+/** Written effect line for the review panel. Exact enough to apply blind. */
+const BATCH_EFFECT_LABELS: Record<BatchAction, string> = {
+  complete: "Complete",
+  skipToday: "Skip today for",
+  unassign: "Unassign",
+  hideAlways: "Hide always",
+  duration: "Set the duration of",
+  automaticPlacement: "Reset automatic placement for",
+  allDay: "Make all-day",
+  timeBlock: "Make a time block of",
+  mintAllow: "Allow Mint overlap for",
+  mintDisallow: "Disallow Mint overlap for",
+};
+
+function batchEffects(
+  action: BatchAction,
+  count: number,
+  args: { blocks?: number },
+): string {
+  const noun = count === 1 ? "row" : "rows";
+  const base = `${BATCH_EFFECT_LABELS[action]} ${count} ${noun}`;
+  return action === "duration" && typeof args.blocks === "number"
+    ? `${base} (${Math.round(args.blocks * 30)} min)`
+    : base;
+}
+
+/** Server per-item results -> store outcomes. `id` restores the row key the
+    item was built from; the server only echoes the target string. */
+function batchOutcomes(
+  result: RuntimeBatchResult,
+  itemIds: string[],
+): BatchItemOutcome[] {
+  return result.results.map((item) => ({
+    index: item.index,
+    id: itemIds[item.index] ?? item.target,
+    verb: item.verb,
+    target: item.target,
+    status: item.status,
+    error: item.error,
+  }));
 }
 
 /** T28 + FEEDBACK-09: a calendar row's day-setup entry is plan participation
@@ -778,6 +888,348 @@ export class Controller {
     return true;
   }
 
+  // -- task-actions F3b: staged row drafts ---------------------------------
+
+  /** Open (or re-seed) one row's shaping draft from the committed session. */
+  openDraft(id: string): void {
+    const draft = draftSeedOf(this.getState(), id);
+    if (!draft) return;
+    this.dispatch({ type: "DRAFT_SET", id, draft });
+  }
+
+  /** Mutate the open draft through the pure rowDraft transforms. The updater
+      receives the live row facts, so `setMode`/`setPin`/`clearPin` keep their
+      own invariants (protected native time, all-day rows) instead of having
+      the controller re-derive them. */
+  updateDraft(
+    id: string,
+    update: (draft: RowDraft, row: RowFacts) => RowDraft,
+  ): void {
+    const s = this.getState();
+    const row = rowFactsOf(s, id);
+    if (!row) return;
+    const draft = s.drafts[id] ?? draftSeedOf(s, id);
+    if (!draft) return;
+    const next = update(draft, row);
+    if (next !== draft) this.dispatch({ type: "DRAFT_SET", id, draft: next });
+  }
+
+  /** Whether the row has unsaved shaping (`diff(draft, session)` non-empty). */
+  isDraftStaged(id: string): boolean {
+    return draftIsStaged(this.getState(), id);
+  }
+
+  /** Save the staged draft: apply its exact controller operations, then drop
+      the draft. An all-day save persists the duration it captured on the
+      override, so returning to a time block restores it (never the old pin)
+      even after a reload. */
+  saveDraft(id: string): void {
+    const staged = stagedDraft(this.getState(), id);
+    if (!staged) return;
+    if (!staged.diff.staged) {
+      this.discardDraft(id);
+      return;
+    }
+    const draft = staged.draft;
+    const captured =
+      draft.mode === "allday" && draft.blocks > 0 ? draft.blocks : null;
+    for (const operation of toOverrides(draft)) {
+      switch (operation.type) {
+        case "setOverride":
+          this.setOverride(operation.id, operation.included, operation.blocks, {
+            blocksBeforeAllDay: captured,
+          });
+          break;
+        case "placeRow":
+          this.placeRow(operation.id, operation.start);
+          break;
+        case "resetPlacement":
+          this.resetPlacement(operation.id);
+          break;
+        case "setTimeAdjustmentOptIn":
+          this.setTimeAdjustmentOptIn(operation.id, operation.allow);
+          break;
+        case "setMintOverlapOptIn":
+          this.setMintOverlapOptIn(operation.id, operation.allow);
+          break;
+      }
+    }
+    this.discardDraft(id);
+  }
+
+  /** Throw the staged shaping away: the row keeps its committed session. */
+  discardDraft(id: string): void {
+    this.dispatch({ type: "DRAFT_CLEARED", id });
+  }
+
+  /** One-time persist migration: browser-only same-date `included=false`
+      overrides (the old Exclude today) become durable Skip today. Runs only
+      with a confirmed Day Setup, and keeps only the conversions the server
+      actually applied (`drop_from_plan`); anything else stays in the session
+      blob so the next load retries. Returns the converted override keys. */
+  async migrateLegacyExclusions(ids: string[]): Promise<string[]> {
+    if (ids.length === 0) return [];
+    if (taskActionDisabledReason(this.getState(), "skip") !== null) return [];
+    const converted: string[] = [];
+    for (const id of ids) {
+      const identity = this.identityOf(id) ?? this.droppedOf(id)?.identity ?? null;
+      if (!identity) continue;
+      try {
+        const action = await this.adapter.runtimeAction("drop_from_plan", identity);
+        if (action.status === "applied" || action.duplicate) {
+          converted.push(id);
+        }
+      } catch {
+        // Leave it in the blob; the next load retries this row.
+      }
+    }
+    if (converted.length > 0) await this.refreshSources();
+    return converted;
+  }
+
+  // -- task-actions F3b: batch surface -------------------------------------
+
+  /** Build the review for an action over the current selection. A
+      source-changing action stops at `review` — nothing is sent until
+      applyBatch. A planning-only action applies staged shaping to the session
+      immediately, because that is free (no server call) and revertible by
+      another edit. */
+  reviewBatch(action: BatchAction, args: { blocks?: number } = {}): void {
+    const s = this.getState();
+    const rows = batchRowsOf(s);
+    if (rows.length === 0) return;
+    const eligibility = batchEligibility(action, rows, {
+      daySetupConfirmed: s.daySetup.confirmed,
+    });
+    const review: BatchReviewState = {
+      eligible: eligibility.eligible,
+      excluded: eligibility.excluded,
+      label: eligibility.label,
+      counts: eligibility.counts,
+      effects: batchEffects(action, eligibility.counts.eligible, args),
+    };
+    if (isPlanningBatchAction(action)) {
+      this.applyPlanningBatch(action, eligibility.eligible, args);
+      this.dispatch({
+        type: "BATCH_SET",
+        batch: { ...emptyBatch, action, phase: "done", review },
+      });
+      return;
+    }
+    this.dispatch({
+      type: "BATCH_SET",
+      batch: { ...emptyBatch, action, phase: "review", review },
+    });
+  }
+
+  /** Apply the reviewed source-changing batch. One POST for the whole
+      selection; per-item failures are kept (never thrown away) so retry can
+      run exactly those, and sources refresh after so applied rows leave the
+      queue. */
+  async applyBatch(): Promise<void> {
+    const batch = this.getState().batch;
+    if (!batch.action || batch.phase !== "review" || !batch.review) return;
+    if (isPlanningBatchAction(batch.action)) return;
+    await this.runBatch(batch.action, batch.review.eligible, batch.review);
+  }
+
+  /** One Complete / Unassign / Skip occurrence / Hide always from a row runs
+      as a batch of one: same verbs, same per-item results, same undo surface.
+      Skip today deliberately stays the F3a immediate `drop_from_plan`. */
+  async runRowBatch(id: string, action: BatchAction): Promise<void> {
+    if (isPlanningBatchAction(action)) return;
+    const s = this.getState();
+    const gate = taskActionDisabledReason(s, "complete");
+    if (gate !== null) {
+      this.dispatch({ type: "RUNTIME_FAIL", error: gate });
+      return;
+    }
+    const row = batchRowsOf(s, [id])[0];
+    if (!row) return;
+    const eligibility = batchEligibility(action, [row], {
+      daySetupConfirmed: s.daySetup.confirmed,
+    });
+    const review: BatchReviewState = {
+      eligible: eligibility.eligible,
+      excluded: eligibility.excluded,
+      label: eligibility.label,
+      counts: eligibility.counts,
+      effects: batchEffects(action, eligibility.counts.eligible, {}),
+    };
+    if (eligibility.eligible.length === 0) {
+      this.dispatch({
+        type: "RUNTIME_FAIL",
+        error: eligibility.excluded[0]?.reason ?? "Nothing to apply.",
+      });
+      this.dispatch({
+        type: "BATCH_SET",
+        batch: { ...emptyBatch, action, phase: "review", review },
+      });
+      return;
+    }
+    await this.runBatch(action, eligibility.eligible, review);
+  }
+
+  /** Retry only the failures, keeping every earlier success. */
+  async retryFailed(): Promise<void> {
+    const batch = this.getState().batch;
+    if (!batch.id || batch.phase !== "done") return;
+    this.dispatch({ type: "BATCH_SET", batch: { ...batch, phase: "applying" } });
+    try {
+      const result = await this.adapter.retryRuntimeBatch(batch.id);
+      const byIndex = new Map(batch.results.map((r) => [r.index, r]));
+      for (const outcome of batchOutcomes(result, batch.results.map((r) => r.id))) {
+        byIndex.set(outcome.index, outcome);
+      }
+      this.dispatch({
+        type: "BATCH_SET",
+        batch: {
+          ...batch,
+          phase: "done",
+          results: [...byIndex.values()].sort((a, b) => a.index - b.index),
+        },
+      });
+    } catch (e) {
+      this.dispatch({
+        type: "RUNTIME_FAIL",
+        error: String(e instanceof Error ? e.message : e),
+      });
+      this.dispatch({ type: "BATCH_SET", batch });
+      return;
+    }
+    await this.refreshSources();
+  }
+
+  /** Reverse the applied items. Conflicts (a later edit) and non-reversible
+      steps are REPORTED into the batch, never thrown or silently retried. */
+  async undoBatch(): Promise<void> {
+    const batch = this.getState().batch;
+    if (!batch.id) return;
+    try {
+      const report = await this.adapter.undoRuntimeBatch(batch.id);
+      this.dispatch({
+        type: "BATCH_SET",
+        batch: {
+          ...batch,
+          undoReport: {
+            reverted: report.reverted.map((r) => r.target),
+            conflicts: report.conflicts.map((c) => ({
+              target: c.target,
+              reason: c.reason,
+            })),
+            nonReversible: report.nonReversible.map((c) => ({
+              target: c.target,
+              reason: c.reason,
+            })),
+          },
+        },
+      });
+    } catch (e) {
+      this.dispatch({
+        type: "RUNTIME_FAIL",
+        error: String(e instanceof Error ? e.message : e),
+      });
+      return;
+    }
+    await this.refreshSources();
+  }
+
+  /** Dismiss the review (and any results) without sending anything. */
+  cancelReview(): void {
+    this.dispatch({ type: "BATCH_SET", batch: emptyBatch });
+  }
+
+  /** Planning-only actions write session shaping only: no adapter call, no
+      review phase, no server result to undo. */
+  private applyPlanningBatch(
+    action: PlanningBatchAction,
+    ids: string[],
+    args: { blocks?: number },
+  ): void {
+    const s = this.getState();
+    for (const id of ids) {
+      switch (action) {
+        case "duration": {
+          const blocks = args.blocks;
+          this.setOverride(
+            id,
+            true,
+            typeof blocks === "number" && blocks > 0 ? blocks : null,
+          );
+          break;
+        }
+        case "allDay": {
+          const captured = effectiveBlocks(s, id);
+          this.setOverride(id, true, 0, {
+            blocksBeforeAllDay: captured > 0 ? captured : null,
+          });
+          break;
+        }
+        case "timeBlock": {
+          const captured = s.overrides[id]?.blocksBeforeAllDay;
+          this.setOverride(
+            id,
+            true,
+            typeof captured === "number" && captured > 0 ? captured : 1,
+          );
+          break;
+        }
+        case "automaticPlacement":
+          this.resetPlacement(id);
+          break;
+        case "mintAllow":
+          this.setMintOverlapOptIn(id, true);
+          break;
+        case "mintDisallow":
+          this.setMintOverlapOptIn(id, false);
+          break;
+      }
+    }
+  }
+
+  /** Build the items, send them as one batch, keep every per-item result, then
+      refresh sources. A thrown adapter error keeps the review open for a
+      retry of the whole selection. */
+  private async runBatch(
+    action: BatchAction,
+    ids: string[],
+    review: BatchReviewState | null,
+  ): Promise<void> {
+    const rows = new Map(batchRowsOf(this.getState(), ids).map((row) => [row.id, row]));
+    const items: RuntimeBatchItemInput[] = [];
+    const itemIds: string[] = [];
+    for (const id of ids) {
+      const row = rows.get(id);
+      const identity = this.identityOf(id);
+      if (!row || !identity) continue;
+      items.push({ verb: batchVerb(action, row), target: identity, args: {} });
+      itemIds.push(id);
+    }
+    if (items.length === 0) return;
+    const applying: BatchState = { ...emptyBatch, action, review, phase: "applying" };
+    this.dispatch({ type: "BATCH_SET", batch: applying });
+    try {
+      const result = await this.adapter.applyRuntimeBatch(items);
+      this.dispatch({
+        type: "BATCH_SET",
+        batch: {
+          ...applying,
+          id: result.batchId,
+          phase: "done",
+          results: batchOutcomes(result, itemIds),
+        },
+      });
+    } catch (e) {
+      this.dispatch({
+        type: "RUNTIME_FAIL",
+        error: String(e instanceof Error ? e.message : e),
+      });
+      this.dispatch({ type: "BATCH_SET", batch: { ...applying, phase: "review" } });
+      return;
+    }
+    await this.refreshSources();
+  }
+
   private durationMemoryFail(id: string, error: string): void {
     this.dispatch({ type: "DURATION_MEMORY_FAIL", id, error });
   }
@@ -1015,9 +1467,16 @@ export class Controller {
     id: string,
     included: boolean,
     blocks: number | null,
-    opts?: { defer?: boolean },
+    opts?: { defer?: boolean; blocksBeforeAllDay?: number | null },
   ): void {
-    this.dispatch({ type: "OVERRIDE_SET", id, override: { included, blocks } });
+    const override: TodayOverride = { included, blocks };
+    // Only a save that switched a row to all-day carries the captured
+    // duration; every other edit writes the plain shape (and clears a stale
+    // capture by omitting it).
+    if (opts?.blocksBeforeAllDay != null) {
+      override.blocksBeforeAllDay = opts.blocksBeforeAllDay;
+    }
+    this.dispatch({ type: "OVERRIDE_SET", id, override });
     if (!opts?.defer) {
       this.flushOverrideEffects();
       return;

@@ -530,6 +530,11 @@ export interface RuntimeAction {
 export interface TodayOverride {
   included: boolean;
   blocks: number | null; // null = no duration override (use resolved blocks)
+  /** Task-actions F3b: the duration captured when the row was switched to
+      all-day, so switching back to a time block restores it (never the old
+      pin) even after a reload. Absent on every override written before that
+      slice, and on rows that went all-day without a duration to keep. */
+  blocksBeforeAllDay?: number | null;
 }
 
 export interface SequenceRow {

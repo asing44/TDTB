@@ -44,6 +44,41 @@ function read(storage: Storage): SessionBlob | null {
   }
 }
 
+/** One-time migration of the retired browser-only "Exclude today" shape.
+
+    Before task-actions, excluding a row for today was a same-date
+    `included=false` override: invisible to the server, and therefore lost on
+    a date rollover instead of skipping the row durably. Those overrides are
+    now converted to real Skip today (`drop_from_plan`) the first time a
+    same-date blob is restored, and dropped from the blob once the server
+    confirmed the drop.
+
+    Nothing is guessed: the controller only converts with a confirmed Day
+    Setup and only reports the rows the verb actually applied. A row that
+    could not convert stays in the blob and is retried on the next load. A
+    prior-date blob never reaches here (it is discarded wholesale). */
+async function migrateLegacyExclusions(
+  store: Store,
+  controller: Controller,
+  ids: string[],
+): Promise<void> {
+  if (ids.length === 0) return;
+  const migrate = (
+    controller as unknown as {
+      migrateLegacyExclusions?: (keys: string[]) => Promise<string[]>;
+    }
+  ).migrateLegacyExclusions;
+  if (typeof migrate !== "function") return;
+  try {
+    const converted = await migrate.call(controller, ids);
+    if (converted.length > 0) {
+      store.dispatch({ type: "OVERRIDES_DROPPED", ids: converted });
+    }
+  } catch {
+    // Leave the blob untouched; the next load retries the conversion.
+  }
+}
+
 /** Restore today-only state after the initial load, then keep persisting on
     every state change. Call once, right after controller.load() resolves. */
 export function attachSessionPersistence(
@@ -94,6 +129,11 @@ export function attachSessionPersistence(
       // include/exclude/duration set.
       void controller.revalidate();
       void controller.refreshCapacity();
+      // Retired browser-only Exclude today -> durable Skip today, once.
+      const legacyExclusions = Object.entries(blob.overrides ?? {})
+        .filter(([, override]) => override && override.included === false)
+        .map(([id]) => id);
+      void migrateLegacyExclusions(store, controller, legacyExclusions);
     }
   } else if (blob && s.validDate && blob.validDate !== s.validDate) {
     // Stale date: today-only state from a prior day dies (locked decision 16).

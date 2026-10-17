@@ -43,6 +43,19 @@ import { anchoredBlocks, anchoredDefaultOff } from "../model/anchored";
 import { dayFrame, type DayFrame } from "../model/dayFrame";
 import { remainingLabel } from "../model/allocator";
 import { capacitiesCoverageOf, durationSourceOf } from "../adapters/wire";
+import {
+  createDraft,
+  diff as rowDraftDiff,
+  type DraftDiff,
+  type RowDraft,
+  type RowFacts,
+  type RowSession,
+} from "../model/rowDraft";
+import type {
+  BatchAction,
+  BatchExclusion,
+  BatchRow,
+} from "../model/batchEligibility";
 
 export type SeqPhase = "none" | "sequencing" | "valid" | "dirty" | "failed";
 
@@ -150,6 +163,61 @@ export interface RefreshState {
   coverage: CapacitiesCoverage | null;
 }
 export type Theme = "system" | "light" | "dark";
+
+// -- task-actions F3b: batch surface state -----------------------------------
+
+export type BatchPhase = "idle" | "review" | "applying" | "done";
+
+/** One row's outcome inside a batch. `index` is the server's item index in the
+    submitted list, so a retry (which reports original indices) can replace
+    exactly the failures it re-ran. `id` keeps the row key the UI rendered. */
+export interface BatchItemOutcome {
+  index: number;
+  id: string;
+  verb: string;
+  target: string;
+  status: string;
+  error: string | null;
+}
+
+/** The inline review shown before Apply: who the action may touch, who it may
+    not and why, and one written line for the effect. Planning-only actions
+    also carry it (they already applied), so the surface can still report the
+    exclusions it honored. */
+export interface BatchReviewState {
+  eligible: string[];
+  excluded: BatchExclusion[];
+  label: string;
+  counts: { eligible: number; excluded: number; total: number };
+  effects: string;
+}
+
+/** What the server's undo reported: reversed targets, later-edit conflicts,
+    and steps with no safe reverse. */
+export interface BatchUndoState {
+  reverted: string[];
+  conflicts: { target: string; reason: string }[];
+  nonReversible: { target: string; reason: string }[];
+}
+
+export interface BatchState {
+  /** Server batch id; null until a server batch applied. */
+  id: string | null;
+  action: BatchAction | null;
+  phase: BatchPhase;
+  review: BatchReviewState | null;
+  results: BatchItemOutcome[];
+  undoReport: BatchUndoState | null;
+}
+
+export const emptyBatch: BatchState = {
+  id: null,
+  action: null,
+  phase: "idle",
+  review: null,
+  results: [],
+  undoReport: null,
+};
 
 export interface AppState {
   loaded: boolean;
@@ -278,6 +346,11 @@ export interface AppState {
         in the order they were selected; empty means nothing is selected. */
     selection: string[];
   };
+  /** Task-actions F3b: staged row-shaping drafts, keyed by row id. Session
+      only by design — a reload discards unsaved shaping. */
+  drafts: Record<string, RowDraft>;
+  /** Task-actions F3b: the one batch surface (review → applying → results). */
+  batch: BatchState;
 }
 
 export const emptyDaySetup: DaySetup = {
@@ -334,6 +407,8 @@ export const initialState: AppState = {
   ledger: null,
   theme: "system",
   ui: { screen: "setup", settingsPanel: null, settingsSection: null, setupOpen: false, capacitiesSettingsOpen: false, tagExclusionSettingsOpen: false, approvalOpen: false, editorItem: null, editorIntent: null, editorAnchor: null, editorAnchorIntent: null, capacityDetail: false, trimUndo: null, expandedId: null, selection: [] },
+  drafts: {},
+  batch: emptyBatch,
 };
 
 export type Action =
@@ -367,6 +442,15 @@ export type Action =
   | { type: "ROW_EXPANDED"; id: string | null }
   | { type: "ROW_SELECTED"; id: string; selected: boolean }
   | { type: "ROWS_SELECTED"; ids: string[] }
+  // Task-actions F3b: staged row drafts and the one batch surface. The
+  // controller builds a whole BatchState per transition (review/apply/retry/
+  // undo), so the reducer never re-derives eligibility or server outcomes.
+  | { type: "DRAFT_SET"; id: string; draft: RowDraft }
+  | { type: "DRAFT_CLEARED"; id: string }
+  // A legacy same-date `included=false` override converted (once) to durable
+  // Skip today; the row's browser-only exclusion is gone for good.
+  | { type: "OVERRIDES_DROPPED"; ids: string[] }
+  | { type: "BATCH_SET"; batch: BatchState }
   | { type: "CAPACITY_UPDATED"; capacity: Capacity }
   | { type: "SEQUENCE_START" }
   | {
@@ -715,6 +799,30 @@ export function reducer(s: AppState, a: Action): AppState {
         selection.every((id, i) => id === s.ui.selection[i]);
       return unchanged ? s : { ...s, ui: { ...s.ui, selection } };
     }
+    case "DRAFT_SET":
+      return { ...s, drafts: { ...s.drafts, [a.id]: a.draft } };
+    case "DRAFT_CLEARED": {
+      if (!(a.id in s.drafts)) return s;
+      const rest = { ...s.drafts };
+      delete rest[a.id];
+      return { ...s, drafts: rest };
+    }
+    case "OVERRIDES_DROPPED": {
+      if (a.ids.length === 0) return s;
+      const overrides = { ...s.overrides };
+      let changed = false;
+      for (const id of a.ids) {
+        if (id in overrides) {
+          delete overrides[id];
+          changed = true;
+        }
+      }
+      return changed
+        ? { ...s, overrides, acceptedDefects: null, ...dirtySeq(s), ...staleShadow(s) }
+        : s;
+    }
+    case "BATCH_SET":
+      return { ...s, batch: a.batch };
     case "CAPACITY_UPDATED":
       return { ...s, capacity: a.capacity };
     case "SEQUENCE_START":
@@ -1367,6 +1475,102 @@ export function effectiveBlocks(s: AppState, id: string): number {
   const item = s.inputs?.assigned.find((i) => i.id === id);
   if (!item) return 0;
   return s.overrides[id]?.blocks ?? item.blocks;
+}
+
+// -- task-actions F3b: row facts, drafts, and the batch selection -----------
+
+/** The upstream facts one assigned row exposes to its draft and to the batch
+    bar. Null when the row is gone from today's queue (a skipped or completed
+    row has no draft and no batch eligibility). */
+export function rowFactsOf(s: AppState, id: string): RowFacts | null {
+  const item = s.inputs?.assigned.find((i) => i.id === id);
+  if (!item) return null;
+  const mintSessions = s.inputs?.daySemantics.mintSessions ?? [];
+  return {
+    id: item.id,
+    source: item.source,
+    blocks: item.blocks,
+    isRecurring: item.isRecurring === true,
+    nativeStart: item.source === "todoist" ? (item.scheduledStart ?? null) : null,
+    isMintSession: mintSessions.some(
+      (session) => session.id === item.id || session.name === item.name,
+    ),
+  };
+}
+
+/** Today's committed shaping for one row: the baseline a draft is diffed
+    against and the source of the batch bar's pin/all-day facts. */
+export function rowSessionOf(s: AppState, id: string): RowSession | null {
+  const row = rowFactsOf(s, id);
+  if (!row) return null;
+  return {
+    row,
+    override: s.overrides[id] ?? null,
+    pin: s.placements[id] ?? null,
+    allowSourceTime: s.timeAdjustmentOptIns[id] === true,
+    mintOverlap: s.mintOverlapOptIns[id] === true,
+  };
+}
+
+/** Seed one row's draft from the committed session. A row saved all-day
+    restores the duration captured on its override, so switching back to a
+    time block brings back the real duration (never the old pin) even after a
+    reload; the mode stays all-day until the operator switches it. */
+export function draftSeedOf(s: AppState, id: string): RowDraft | null {
+  const session = rowSessionOf(s, id);
+  if (!session) return null;
+  const draft = createDraft(session.row, session);
+  const captured = session.override?.blocksBeforeAllDay;
+  if (draft.mode === "allday" && typeof captured === "number" && captured > 0) {
+    return { ...draft, blocks: captured };
+  }
+  return draft;
+}
+
+/** The open draft for a row plus its diff against the committed session.
+    `diff.staged` is the definition of "staged" the Save/Discard affordance
+    and the tests share. */
+export function stagedDraft(
+  s: AppState,
+  id: string,
+): { draft: RowDraft; diff: DraftDiff } | null {
+  const draft = s.drafts[id];
+  const session = rowSessionOf(s, id);
+  if (!draft || !session) return null;
+  return { draft, diff: rowDraftDiff(draft, session) };
+}
+
+/** Whether the row has unsaved shaping. */
+export function draftIsStaged(s: AppState, id: string): boolean {
+  return stagedDraft(s, id)?.diff.staged === true;
+}
+
+/** The rows the batch bar sees for a selection (default: the current one), in
+    selection order. A row that left the queue is dropped rather than counted
+    as eligible. */
+export function batchRowsOf(
+  s: AppState,
+  ids: string[] = s.ui.selection,
+): BatchRow[] {
+  const rows: BatchRow[] = [];
+  for (const id of ids) {
+    const item = s.inputs?.assigned.find((i) => i.id === id);
+    const facts = rowFactsOf(s, id);
+    if (!item || !facts) continue;
+    rows.push({
+      id,
+      name: item.name,
+      source: facts.source,
+      // Only assigned rows are batchable, so a selected row is always planned.
+      state: "planned",
+      blocks: effectiveBlocks(s, id),
+      isRecurring: facts.isRecurring,
+      nativeStart: facts.nativeStart,
+      isMintSession: facts.isMintSession,
+      pin: s.placements[id] ?? null,
+    });
+  }
+  return rows;
 }
 
 // -- task-actions F3: row UI state + the Skipped today projection -----------
