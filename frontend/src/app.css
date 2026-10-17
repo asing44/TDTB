@@ -7013,6 +7013,11 @@ body {
 }
 
 .queue {
+  /* .cockpit__main is a column flex container, where auto inline margins
+     switch off the default stretch and size the item to its content; the
+     Plan column then grew and shrank as rows expanded or staged. An explicit
+     width:100% keeps it a fixed share of the main area, capped by the token. */
+  width: 100%;
   max-width: var(--plan-max-width);
   margin-inline: auto;
 }
@@ -7056,7 +7061,7 @@ body {
    to give the 520px track room. 1101-1279px keeps the compact hover track. */
 @media (min-width: 1440px) {
   .cockpit {
-    --plan-max-width: 1360px;
+    --plan-max-width: 1680px;
   }
 
   .qrow {
@@ -7130,7 +7135,7 @@ body {
    the Assigned button stays inline in the name line there. */
 @media (min-width: 1500px) {
   .cockpit {
-    --plan-max-width: 1440px;
+    --plan-max-width: 1680px;
   }
 
   .qrow {
@@ -8346,7 +8351,7 @@ body {
 
   /* The wider 6-track grid needs a roomier plan column than 1360px. */
   .cockpit {
-    --plan-max-width: 1440px;
+    --plan-max-width: 1680px;
   }
 }
 
