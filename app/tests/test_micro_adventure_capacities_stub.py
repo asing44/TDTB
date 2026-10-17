@@ -4,8 +4,8 @@ The optional ``micro_adventure_capacities`` block is a DISABLED-by-default
 extension point for eventually pulling micro-adventure ideas from Capacities.
 This suite pins the zero-behavior-change contract: config folds and validates
 with defaults on any bad type, the stub reports a typed status and performs no
-I/O, and nothing in the request path (``_micro_adventure_state``,
-``select_today``, ``app/main.py``) references it.
+I/O, and the request path (``_micro_adventure_state``) is the ONLY caller of
+``capacities_pool`` — the disabled default keeps today's pool and pick.
 """
 from __future__ import annotations
 
@@ -252,10 +252,26 @@ class TestExistingBehaviorUnchanged:
         }}
         state_base, _ = main_mod._micro_adventure_state(base, TODAY, None)
         state_caps, _ = main_mod._micro_adventure_state(with_caps, TODAY, None)
-        assert state_base == state_caps
-        assert set(state_base) == {"auto_pick", "live_pool", "streak", "pending_confirm"}
+        # The pool/rotation/selection contract is untouched by the Capacities
+        # block; S3 only adds the pool provenance fields.
+        legacy = ("auto_pick", "live_pool", "streak", "pending_confirm")
+        assert {k: state_base[k] for k in legacy} == {
+            k: state_caps[k] for k in legacy
+        }
+        assert set(state_base) == {*legacy, "pool_source", "pool_warnings"}
+        assert state_base["pool_source"] == "config"
+        assert state_base["pool_warnings"] == []
+        # Enabled but unconfigured (no collection/tag) keeps the static pool and
+        # reports ONE fixed warning instead of extending it.
+        assert state_caps["pool_source"] == "config"
+        assert len(state_caps["pool_warnings"]) == 1
 
-    def test_stub_is_not_referenced_from_main(self):
+    def test_capacities_pool_is_referenced_only_inside_the_state_builder(self):
         text = MAIN_PY.read_text(encoding="utf-8")
-        assert "capacities_pool" not in text
-        assert "CAPACITIES_STATUS_" not in text
+        start = text.index("def _micro_adventure_state(")
+        end = text.index("def _ensure_micro_adventure(")
+        assert "capacities_pool" in text[start:end]
+        assert "CAPACITIES_STATUS_" in text[start:end]
+        outside = text[:start] + text[end:]
+        assert "capacities_pool" not in outside
+        assert "CAPACITIES_STATUS_" not in outside

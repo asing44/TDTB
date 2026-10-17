@@ -2538,6 +2538,32 @@ def _micro_adventure_state(
         section = sections.get("Micro-Adventures") if isinstance(sections, dict) else None
         pool = micro_adventure.parse_pool(section)
         window = micro_adventure.exclude_window_days(section)
+        # S3: the published Capacities ideas block extends the config pool. The
+        # artifact is read ONLY when the extension is enabled AND configured, so
+        # the default (disabled) path does no extra I/O and keeps today's pool.
+        # Any non-ok status keeps the static pool plus one fixed warning; the
+        # selection contract (failure => no pick, never an exception) is intact.
+        caps = micro_adventure.capacities_pool(section, None, datetime.now())
+        if caps.status == micro_adventure.CAPACITIES_STATUS_UNAVAILABLE:
+            ideas_block, _ideas_warnings = artifact_source.load_micro_ideas()
+            if ideas_block is not None:
+                caps = micro_adventure.capacities_pool(
+                    section, ideas_block, datetime.now()
+                )
+        if caps.status == micro_adventure.CAPACITIES_STATUS_OK:
+            pool = micro_adventure.merge_pool(pool, caps)
+            pool_source = "config+capacities"
+            pool_warnings = list(caps.warnings)
+        else:
+            pool_source = "config"
+            pool_warnings = (
+                []
+                if caps.status == micro_adventure.CAPACITIES_STATUS_DISABLED
+                else [
+                    "Capacities micro-adventure ideas were not used; the config "
+                    "micro-adventure pool is in effect."
+                ]
+            )
         history = micro_adventure.read_history(micro_adventure.history_path())
         resolution = micro_adventure.resolve_prior(
             history,
@@ -2564,11 +2590,14 @@ def _micro_adventure_state(
                 if resolution.pending_confirm
                 else None
             ),
+            "pool_source": pool_source,
+            "pool_warnings": pool_warnings,
         }
         return state, resolution.done_update
     except Exception:  # noqa: BLE001 — LD25: any failure degrades to a plain Live block
         return {"auto_pick": None, "live_pool": [], "streak": 0,
-                "pending_confirm": None}, None
+                "pending_confirm": None, "pool_source": "config",
+                "pool_warnings": []}, None
 
 
 def _ensure_micro_adventure(
@@ -4626,6 +4655,8 @@ def create_app() -> FastAPI:
             "live_pool": ma_state["live_pool"],
             "streak": ma_state["streak"],
             "pending_confirm": ma_state["pending_confirm"],
+            "pool_source": ma_state["pool_source"],
+            "pool_warnings": ma_state["pool_warnings"],
         }
 
         # -- Day Setup + time/capacity (ui-parity T4) ------------------------
