@@ -11,6 +11,7 @@
 import { useState } from "preact/hooks";
 
 import type { MicroAdventure } from "../../model/types";
+import { MicroPoolNote, poolOptionLabel } from "../microPool";
 import {
   CustomPromptAdd,
   CustomPromptList,
@@ -91,7 +92,7 @@ export function PromptsCard(props: PromptsCardProps) {
                 )}
                 {micro.pool.map((idea) => (
                   <option key={idea.id} value={idea.id}>
-                    {idea.idea}
+                    {poolOptionLabel(idea.id, idea.idea)}
                   </option>
                 ))}
               </select>
@@ -99,6 +100,7 @@ export function PromptsCard(props: PromptsCardProps) {
                 Shuffle
               </button>
             </div>
+            <MicroPoolNote warnings={micro.poolWarnings ?? []} />
             <p class="live-micro__meta" aria-live="polite">
               {micro.pick?.category ? (
                 <span>{categoryLabel(micro.pick.category)} · </span>

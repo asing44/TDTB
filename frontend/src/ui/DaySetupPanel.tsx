@@ -50,6 +50,7 @@ import { HabitsCard } from "./day-setup/HabitsCard";
 import { LooseEndBanner } from "./day-setup/LooseEndBanner";
 import { AllBlocksModal, type AllBlocksRow, type AllBlocksStatus } from "./day-setup/AllBlocksModal";
 import { onSetupContinue, onSetupUndo } from "./day-setup/commands";
+import { MicroPoolNote, poolOptionLabel } from "./microPool";
 
 export function DaySetupPanel({
   active,
@@ -1264,21 +1265,11 @@ export function DaySetupPanel({
             )}
             {micro.pool.map((p) => (
               <option key={p.id} value={p.id}>
-                {p.idea}
-                {p.id.startsWith("cap-") ? " · Capacities" : ""}
+                {poolOptionLabel(p.id, p.idea)}
               </option>
             ))}
           </select>
-          {poolWarnings.length > 0 && (
-            <p
-              class="field__hint live-micro__pool-note"
-              role="note"
-              title={poolWarnings.join("\n")}
-              aria-label={poolWarnings.join(" ")}
-            >
-              {poolWarnings[0]}
-            </p>
-          )}
+          <MicroPoolNote warnings={poolWarnings} />
         </div>
         <div class="field">
           <label for="live-custom">Custom idea</label>
