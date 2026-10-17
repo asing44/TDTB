@@ -2,7 +2,7 @@
 
 Single-item verbs over today's plan: complete, done, skip_today,
 remove_from_today, duration_edit, move_resize, delete_permanent, delete,
-defer, assign, drop_from_plan, unassign. Every action runs through
+defer, assign, drop_from_plan, restore_today, unassign. Every action runs through
 a dated, ID-addressed journal with exact before-images, per-step applied
 markers, reverse compensation on mid-apply failure, and one-step undo.
 
@@ -14,6 +14,9 @@ IMP-05 final source-action semantics (frozen reliability plan, action table):
 - ``drop_from_plan`` — a date-scoped runstate-only exclusion. It touches no
   Todoist/calendar, removes the row from current planning only, is
   idempotent per date, and is undoable (eligible again).
+- ``restore_today`` — the identity-addressed reverse of a Drop: it removes
+  one identity from today's skipped list (``runstate.undrop``), is journaled
+  like every other verb, and is undoable (the saved entry is re-added).
 - ``unassign`` — a non-recurring Todoist task has its date cleared; a
   recurring task's due occurrence advances WITHOUT completing it, preserving the recurrence string/type and proving unchanged
   completion counters by read-back. Never closes, never touches deferrals.
@@ -86,6 +89,7 @@ VERBS = (
     "defer",
     "assign",
     "drop_from_plan",
+    "restore_today",
     "unassign",
 )
 
@@ -103,7 +107,7 @@ STAGING_VERBS = (
     "complete", "done",
     "delete_permanent", "delete",
     "defer", "assign",
-    "drop_from_plan", "unassign",
+    "drop_from_plan", "restore_today", "unassign",
 )
 
 # `external_sources` gives every Todoist row this synthetic path. It is an
@@ -225,6 +229,9 @@ def _resolve_from_digest_index(
             continue
         if row.get("todoist_id") and "todoist_id" not in out:
             out["todoist_id"] = str(row["todoist_id"])
+            for key in ("duration_minutes", "is_recurring"):
+                if row.get(key) is not None and key not in out:
+                    out[key] = row[key]
         elif path.startswith(TODOIST_PATH_PREFIX) and "todoist_id" not in out:
             # A pseudo-path with no explicit id still identifies the task.
             out["todoist_id"] = path[len(TODOIST_PATH_PREFIX):]
@@ -252,6 +259,13 @@ def resolve_target(valid_date: date, name: str) -> dict[str, Any]:
             f"{name!r}: not in today's plan manifest or digest")
     out: dict[str, Any] = {"name": name, "phase": "committed"}
     for row in rows:
+        if "minutes" not in out:
+            try:
+                _m = int(row.get("duration_min"))
+            except (TypeError, ValueError):
+                _m = 0
+            if _m > 0:
+                out["minutes"] = _m
         system = row.get("system")
         if system == "todoist" and "todoist_id" not in out:
             out["todoist_id"] = str(row.get("id_or_path"))
@@ -292,6 +306,28 @@ def drop_identity_of(target_or_row: dict[str, Any]) -> str:
     return str(target_or_row.get("name") or target_or_row.get("id") or "")
 
 
+def resolve_dropped_target(valid_date: date, identity: str) -> dict[str, Any]:
+    """Resolve a Restore-today target from today's dropped list by identity.
+
+    Dropped rows are deliberately absent from the digest index (it is built
+    from the FILTERED digest), so Restore today resolves from
+    ``runstate.read_dropped`` instead. An unknown identity is a clean refusal:
+    nothing is written and no journal entry is created.
+    """
+    key = str(identity or "").strip()
+    if not key:
+        raise RuntimeActionError("restore_today requires a dropped identity")
+    for entry in runstate.read_dropped(valid_date):
+        if str(entry.get("identity") or "") == key:
+            return {
+                "phase": "dropped",
+                "identity": key,
+                "name": entry.get("name") or "",
+                "entry": entry,
+            }
+    raise RuntimeActionError(f"{key!r}: not in today's skipped list")
+
+
 # ---------------------------------------------------------------------------
 # Step planning
 # ---------------------------------------------------------------------------
@@ -312,18 +348,80 @@ def _event_snapshot(store: Any, event_id: str) -> dict | None:
     return {k: _iso(v) for k, v in ev.items()}
 
 
+def _drop_source_of(target: dict) -> str:
+    """Canonical source name (``todoist``/``capacities``/``calendar``) for a
+    Drop snapshot, from the resolved target or its pseudo-path. "" when the
+    row has no recognizable source."""
+    source = str(target.get("source") or "").strip().casefold()
+    if source in ("todoist", "capacities", "calendar"):
+        return source
+    path = str(target.get("path") or "")
+    if target.get("todoist_id") or path.startswith(TODOIST_PATH_PREFIX):
+        return "todoist"
+    if target.get("capacities_id") or path.startswith(CAPACITIES_PATH_PREFIX):
+        return "capacities"
+    if target.get("event_id") or path.startswith(CALENDAR_PATH_PREFIX):
+        return "calendar"
+    return ""
+
+
+def _drop_minutes(target: dict) -> int | None:
+    """Best-effort duration (minutes) for a Drop snapshot; None when unknown."""
+    for key in ("minutes", "duration_min", "duration_minutes",
+                "event_duration_min"):
+        value = target.get(key)
+        if (isinstance(value, (int, float)) and not isinstance(value, bool)
+                and value > 0):
+            return int(value)
+    blocks = target.get("blocks")
+    if (isinstance(blocks, (int, float)) and not isinstance(blocks, bool)
+            and blocks > 0):
+        return int(blocks) * 30
+    return None
+
+
+def _drop_snapshot(target: dict) -> dict[str, Any]:
+    """Optional chip/duration fields stored on the dropped entry.
+
+    ``source`` names the source chip, ``kind`` is a render hint (a Capacities
+    structure id, an explicit ``kind``, or a recurring marker), and ``minutes``
+    is the duration. Every field is optional: a legacy entry without them is
+    still a valid Drop, and one is still valid with none of them.
+    """
+    snapshot: dict[str, Any] = {}
+    source = _drop_source_of(target)
+    if source:
+        snapshot["source"] = source
+    kind = ""
+    if target.get("capacities_structure_id"):
+        kind = str(target["capacities_structure_id"])
+    elif target.get("kind"):
+        kind = str(target["kind"])
+    elif target.get("is_recurring"):
+        kind = "recurring"
+    if kind:
+        snapshot["kind"] = kind
+    minutes = _drop_minutes(target)
+    if minutes is not None:
+        snapshot["minutes"] = minutes
+    return snapshot
+
+
 def _runstate_drop_step(target: dict, valid_date: date) -> dict:
     """One runstate-only Drop step keyed by the row's canonical identity.
 
     Carries ``identity``/``path``/``source`` so a calendar or Capacities row
-    keys on its source identity rather than its name (Unit 2 decision b).
+    keys on its source identity rather than its name (Unit 2 decision b), and
+    the optional ``{source, kind, minutes}`` snapshot the Skipped list renders.
     """
+    item = {k: target.get(k) for k in
+            ("name", "todoist_id", "id", "identity", "path", "source")}
+    item.update(_drop_snapshot(target))
     return {
         "kind": "runstate.drop",
         "surface": "runstate",
         "system": "runstate",
-        "item": {k: target.get(k) for k in
-                 ("name", "todoist_id", "id", "identity", "path", "source")},
+        "item": item,
         "date": str(valid_date),
     }
 
@@ -360,6 +458,20 @@ def plan_steps(verb: str, target: dict, args: dict, valid_date: date) -> list[di
         # calendar) so the same name across surfaces dedupes; the dated runstate
         # note scopes it to today, making the item eligible again tomorrow.
         steps.append(_runstate_drop_step(target, valid_date))
+    elif verb == "restore_today":
+        # B1: the reverse of a durable Skip today. One runstate-only step
+        # addressed by identity — dropped rows are not in the digest index.
+        identity = str(target.get("identity") or "").strip()
+        if not identity:
+            raise RuntimeActionError(
+                "restore_today requires a dropped identity")
+        steps.append({
+            "kind": "runstate.undrop",
+            "surface": "runstate",
+            "system": "runstate",
+            "identity": identity,
+            "date": str(valid_date),
+        })
     elif verb == "unassign":
         # Unit 2 decision b: a calendar row has no source write path, so
         # unassign is a runstate-only Drop keyed by the calendar identity. The
@@ -573,12 +685,37 @@ def _apply_step(step: dict, valid_date: date,
         def _append_drop(state: dict[str, Any]) -> None:
             dropped = [d for d in (state.get("dropped") or [])
                        if d.get("identity") != identity]
-            dropped.append({"identity": identity,
-                            "name": item.get("name") or "",
-                            "dropped_at": _now_iso()})
+            entry = {"identity": identity,
+                     "name": item.get("name") or "",
+                     "dropped_at": _now_iso()}
+            for key in ("source", "kind", "minutes"):
+                if item.get(key) is not None:
+                    entry[key] = item[key]
+            dropped.append(entry)
             state["dropped"] = dropped
 
         _locked_runstate_rmw(valid_date, _append_drop)
+    elif kind == "runstate.undrop":
+        # Restore today: remove exactly the identity the caller addressed.
+        identity = str(step.get("identity") or "").strip()
+        dropped = runstate.read_dropped(valid_date)
+        entry = next(
+            (d for d in dropped if str(d.get("identity") or "") == identity),
+            None,
+        )
+        if entry is None:
+            raise RuntimeActionError(
+                f"{identity!r}: not in today's skipped list")
+        step["identity"] = identity
+        step["before"] = {"entry": entry, "dropped": dropped}
+
+        def _remove_drop(state: dict[str, Any]) -> None:
+            state["dropped"] = [
+                d for d in (state.get("dropped") or [])
+                if d.get("identity") != identity
+            ]
+
+        _locked_runstate_rmw(valid_date, _remove_drop)
     elif kind == "deferrals.record":
         item = step["item"]
         key = deferrals.key_for_item(item)
@@ -668,8 +805,29 @@ def _reverse_step(step: dict, valid_date: date,
             todoist.reschedule_task(step["task_id"], due["string"])
         # no due at all — the clear was reversed by not writing anything
     elif kind == "runstate.drop":
-        _locked_runstate_rmw(valid_date, lambda state: state.update(
-            {"dropped": (before.get("dropped") or [])}))
+        # B1 fix: remove ONLY this drop's own identity. Restoring the whole
+        # before-image would clobber a later Skip today made after this one.
+        identity = step.get("identity")
+
+        def _remove_own_drop(state: dict[str, Any]) -> None:
+            state["dropped"] = [
+                d for d in (state.get("dropped") or [])
+                if d.get("identity") != identity
+            ]
+
+        _locked_runstate_rmw(valid_date, _remove_own_drop)
+    elif kind == "runstate.undrop":
+        # Reverse of Restore today: re-add the saved dropped entry verbatim.
+        entry = before.get("entry") or {}
+        identity = step.get("identity") or entry.get("identity")
+
+        def _re_add_drop(state: dict[str, Any]) -> None:
+            dropped = [d for d in (state.get("dropped") or [])
+                       if d.get("identity") != identity]
+            dropped.append(entry)
+            state["dropped"] = dropped
+
+        _locked_runstate_rmw(valid_date, _re_add_drop)
     elif kind == "deferrals.record":
         deferrals.set_entry(step["key"], before.get("entry"))
     else:  # pragma: no cover
@@ -876,9 +1034,6 @@ def apply_action(
     args = args or {}
     if verb not in VERBS:
         raise RuntimeActionError(f"unknown verb {verb!r}")
-    target = resolve_target(valid_date, target_name)
-    steps = plan_steps(verb, target, args, valid_date)
-    _check_surfaces(steps, todoist, store, capacities)
 
     with runstate.day_lock(valid_date):
         journal = load_journal(valid_date)
@@ -889,6 +1044,17 @@ def apply_action(
                 dup = dict(existing)
                 dup["duplicate"] = True
                 return dup
+
+        # Resolution runs inside the lock and AFTER the duplicate check, so a
+        # repeated restore_today (whose dropped entry is already gone) still
+        # reads as a duplicate of its applied action rather than a refusal.
+        # Dropped rows are absent from the digest index, so restore_today
+        # resolves from the dropped list by identity instead of the manifest.
+        target = (resolve_dropped_target(valid_date, target_name)
+                  if verb == "restore_today"
+                  else resolve_target(valid_date, target_name))
+        steps = plan_steps(verb, target, args, valid_date)
+        _check_surfaces(steps, todoist, store, capacities)
 
         action: dict[str, Any] = {
             "id": _new_action_id(valid_date, journal),
