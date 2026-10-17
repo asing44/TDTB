@@ -1,22 +1,23 @@
 /* more-menu-consistency.test.tsx — Planning 2a (2026-10-14): the Plan row's
-   More (⋯) menu renders every entry as ONE boxed row (same class, border,
-   radius, padding, title/detail type) in a fixed group order — Adjust time,
-   Allow move, Unschedule, Remove from planning, Always exclude, then Delete
-   last behind a hairline divider — and the armed confirm of a destructive
-   item never changes that geometry.
+   More (⋯) menu rendered every entry as ONE boxed row in a fixed group order.
 
-   Fixture adapters only: no live adapter, no billed call, no source write. */
+   RETIRED 2026-10-16 (task-actions F7): the per-row More menu is gone. Its
+   source verbs are the expanded row's Source menu (SourceMenu.tsx) and its
+   planning verbs are the expanded row's line-1 controls, so the four DOM
+   ordering/style tests that pinned More's item order, checkbox indicator,
+   divider and armed boxes were retired with the component. Item order and
+   composition of the surviving menu are pinned in source-menu.test.tsx, and
+   the mounted behaviour in task-actions-integration.test.tsx. See the
+   retired-test ledger, design/task-actions/retired-tests.md.
 
-import { afterEach, describe, expect, it } from "vitest";
-import { cleanup, fireEvent } from "@testing-library/preact";
+   What stays, deliberately: the CSS contract for `.row-more__*`. Those rules
+   remain in app.css (operator decision: do not rewrite the stylesheet for a
+   component removal), so their contract is still asserted here and cannot rot
+   silently. This file is a CSS-contract guard only; it mounts nothing. */
+
+import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-
-afterEach(cleanup);
-
-import { Queue } from "./Queue";
-import { makeHarness } from "./test-harness";
-import type { Scenario } from "../fixtures/scenarios";
 
 const APP_CSS = readFileSync(resolve(process.cwd(), "src/app.css"), "utf8");
 
@@ -28,149 +29,6 @@ function lastRuleBody(selector: string): string {
   if (hits.length === 0) throw new Error(`selector not found in app.css: ${selector}`);
   return hits[hits.length - 1];
 }
-
-function pressOf(sc: Scenario) {
-  const press = sc.inputs.assigned.find((i) => i.name === "Press");
-  if (!press) throw new Error("scenario is missing the Press row");
-  return press;
-}
-
-/** Todoist + native start: the row that carries the Allow move checkbox and
-    the today-only time verbs. */
-function withTimedPress(sc: Scenario): void {
-  const press = pressOf(sc);
-  press.scheduledStart = "19:00";
-  press.isRecurring = false;
-}
-
-function rowFor(container: Element, name: string): HTMLElement {
-  const rows = Array.from(container.querySelectorAll<HTMLElement>(".qrow"));
-  const row = rows.find(
-    (r) => r.querySelector(".qrow__name")?.textContent === name,
-  );
-  if (!row) throw new Error(`no row named ${name}`);
-  return row;
-}
-
-function menuItems(menu: Element): HTMLElement[] {
-  return Array.from(
-    menu.querySelectorAll<HTMLElement>(
-      '[role="menuitem"], [role="menuitemcheckbox"]',
-    ),
-  );
-}
-
-function openMore(container: Element, name: string): HTMLElement {
-  const row = rowFor(container, name);
-  const trigger = row.querySelector<HTMLButtonElement>(
-    'button[aria-haspopup="menu"]',
-  );
-  if (!trigger) throw new Error("no More trigger on the row");
-  fireEvent.click(trigger);
-  const menu = row.querySelector<HTMLElement>('[role="menu"]');
-  if (!menu) throw new Error("More menu is not open");
-  return menu;
-}
-
-function labels(menu: Element): (string | null)[] {
-  return menuItems(menu).map((b) => b.getAttribute("aria-label"));
-}
-
-function expectOneItemClass(menu: Element): void {
-  const items = menuItems(menu);
-  expect(items.length).toBeGreaterThan(0);
-  for (const item of items) {
-    expect(item.tagName).toBe("BUTTON");
-    expect(item.classList.contains("row-more__item")).toBe(true);
-    expect(item.classList.contains("alloc-verb")).toBe(true);
-  }
-}
-
-describe("More menu: one item style and a fixed group order", () => {
-  it("orders the native-timed row's items and boxes the checkbox indicator", () => {
-    const h = makeHarness("ready", withTimedPress);
-    const { container } = h.ui(<Queue />);
-    const menu = openMore(container, "Press");
-    expectOneItemClass(menu);
-    expect(labels(menu)).toEqual([
-      "Allow scheduler to move existing time for Press",
-      "Unschedule Press",
-      // Issue #17: the all-day slot renders on every row; a native-timed
-      // Todoist row keeps its own clock, so here it is disabled.
-      "Keep all-day for Press",
-      // #18: the per-row Mint overlap grant renders on every row.
-      "May overlap Mint for Press",
-      "Remove from planning and update source: Press",
-      "Always exclude: Press",
-      "Delete permanently: Press",
-    ]);
-    // The checkbox indicator stays inside the boxed item.
-    const checkbox = menuItems(menu)[0];
-    expect(checkbox.getAttribute("role")).toBe("menuitemcheckbox");
-    expect(checkbox.querySelector(".row-more__item-title")).not.toBeNull();
-    expect(checkbox.querySelector(".row-more__item-check")).not.toBeNull();
-  });
-
-  it("puts Adjust time first on a row without a fixed start", () => {
-    const h = makeHarness("ready");
-    const { container } = h.ui(<Queue />);
-    const menu = openMore(container, "Press");
-    expectOneItemClass(menu);
-    expect(labels(menu)).toEqual([
-      "Adjust time for Press",
-      // Issue #17: an eligible date-only Todoist row offers the all-day slot.
-      "Keep all-day for Press",
-      // #18: the per-row Mint overlap grant renders on every row.
-      "May overlap Mint for Press",
-      "Remove from planning and update source: Press",
-      "Always exclude: Press",
-      "Delete permanently: Press",
-    ]);
-  });
-
-  it("separates Delete from the rest with a hairline divider", () => {
-    const h = makeHarness("ready", withTimedPress);
-    const { container } = h.ui(<Queue />);
-    const menu = openMore(container, "Press");
-    const divider = menu.querySelector<HTMLElement>(".row-more__divider");
-    expect(divider).not.toBeNull();
-    expect(divider!.getAttribute("role")).toBe("separator");
-    expect(divider!.nextElementSibling?.getAttribute("aria-label")).toBe(
-      "Delete permanently: Press",
-    );
-    expect(divider!.previousElementSibling?.getAttribute("aria-label")).toBe(
-      "Always exclude: Press",
-    );
-  });
-
-  it("arms Delete and Always exclude in the same box, changing colour only", () => {
-    const h = makeHarness("ready", withTimedPress);
-    const { container } = h.ui(<Queue />);
-    const menu = openMore(container, "Press");
-    fireEvent.click(
-      menu.querySelector<HTMLElement>('[aria-label="Delete permanently: Press"]')!,
-    );
-    const armedDelete = menu.querySelector<HTMLElement>(
-      '[aria-label="Confirm delete permanently: Press"]',
-    );
-    expect(armedDelete).not.toBeNull();
-    expect(armedDelete!.classList.contains("row-more__item")).toBe(true);
-    expect(armedDelete!.classList.contains("alloc-verb--armed")).toBe(true);
-    // Armed Delete is not disabled: the danger colour, never the dim disabled
-    // treatment, marks the confirm state.
-    expect(armedDelete!.hasAttribute("disabled")).toBe(false);
-
-    fireEvent.click(
-      menu.querySelector<HTMLElement>('[aria-label="Always exclude: Press"]')!,
-    );
-    const armedExclude = menu.querySelector<HTMLElement>(
-      '[aria-label="Confirm always exclude: Press"]',
-    );
-    expect(armedExclude).not.toBeNull();
-    expect(armedExclude!.classList.contains("row-more__item")).toBe(true);
-    expect(armedExclude!.classList.contains("alloc-verb--armed")).toBe(true);
-  });
-});
 
 describe("More menu: CSS contract for the boxed row", () => {
   const item = lastRuleBody(".row-more__menu .row-more__item");

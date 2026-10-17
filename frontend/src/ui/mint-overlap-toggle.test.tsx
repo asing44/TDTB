@@ -1,11 +1,20 @@
 /* mint-overlap-toggle.test.tsx — GitHub issue asing44/TDTB#18, brief B3.
-   Part 1 is the missing UI test for the per-row "May overlap Mint" grant
-   toggle that landed in B2: it renders as a menuitemcheckbox in the row's More
-   menu, flips the controller grant, and is disabled with a spelled-out reason
-   on rows the grant cannot apply to. Part 2 covers the visible note: a row
-   granted the operator overlap shows the same .qrow__overlap note #16 uses,
-   naming the Mint session by its raw row id (a Mint row is not an assigned
-   item, so the assigned-name fallback resolves to the id).
+   Part 1 is the per-row "May overlap Mint" grant toggle: it renders on the
+   expanded row's line 1 (RowExpanded), stages on the row draft, and commits
+   only through Save. It is disabled with a spelled-out reason on rows the
+   grant cannot apply to. Part 2 covers the visible note: a row granted the
+   operator overlap shows the same .qrow__overlap note #16 uses, naming the
+   Mint session by its raw row id (a Mint row is not an assigned item, so the
+   assigned-name fallback resolves to the id).
+
+   RE-HOMED 2026-10-16 (task-actions F7): the toggle used to be a
+   menuitemcheckbox inside the retired per-row More menu, which applied it
+   immediately. It is now an inline checkbox whose change is staged and whose
+   commit is Save, so the assertions below track the staging/commit split. Two
+   retired variants are recorded in design/task-actions/retired-tests.md: the
+   excluded-row variant (the expanded panel has no exclusion gate) and the
+   "row named Mint …" variant (row-expanded.test.tsx pins the same Mint-session
+   reason through daySemantics.mintSessions).
 
    Fixture adapters only: no live adapter, no billed call, no source write.
    The billed-path test spies the adapter's /sequence and /commit methods and
@@ -19,32 +28,40 @@ afterEach(cleanup);
 
 import { Queue } from "./Queue";
 import { makeHarness, type Harness } from "./test-harness";
+import { EXCLUSION_REASONS } from "../model/batchEligibility";
 import { projectSequenceResult, type Wire } from "../adapters/wire";
 
 function rowFor(container: Element, name: string): HTMLElement {
-  const rows = Array.from(container.querySelectorAll<HTMLElement>(".qrow"));
-  const row = rows.find(
+  const row = Array.from(container.querySelectorAll<HTMLElement>(".qrow")).find(
     (r) => r.querySelector(".qrow__name")?.textContent === name,
   );
   if (!row) throw new Error(`no row named ${name}`);
   return row;
 }
 
-function openMore(container: Element, name: string): HTMLElement {
-  const row = rowFor(container, name);
-  const trigger = row.querySelector<HTMLButtonElement>(
-    'button[aria-haspopup="menu"]',
-  );
-  if (!trigger) throw new Error("no More trigger on the row");
-  fireEvent.click(trigger);
-  const menu = row.querySelector<HTMLElement>('[role="menu"]');
-  if (!menu) throw new Error("More menu is not open");
-  return menu;
+/** Expand a row and return its refreshed element. */
+function expand(container: Element, name: string): HTMLElement {
+  fireEvent.click(rowFor(container, name).querySelector('button[aria-label="Expand"]')!);
+  return rowFor(container, name);
 }
 
-function itemByLabel(menu: Element, label: string): HTMLButtonElement | null {
-  return menu.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`);
+/** The "May overlap Mint" checkbox on the expanded row's line 1. */
+const mint = (row: Element) =>
+  Array.from(row.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')).find(
+    (i) => i.closest("label")?.textContent?.includes("May overlap Mint"),
+  )!;
+
+/** The written reason the checkbox points at with aria-describedby. */
+function mintReason(row: Element): string | null {
+  const id = mint(row).getAttribute("aria-describedby");
+  if (!id) return null;
+  return row.querySelector(`#${id}`)?.textContent ?? null;
 }
+
+const btn = (row: Element, text: string) =>
+  Array.from(row.querySelectorAll<HTMLButtonElement>("button")).find(
+    (b) => b.textContent?.trim() === text,
+  ) ?? null;
 
 /** Stage a sequence from a raw /sequence wire payload — the same projection
     the adapters use — with a current planning-config fingerprint. */
@@ -67,101 +84,71 @@ function stageFromWire(
   });
 }
 
-describe("#18 May overlap Mint toggle in the More menu", () => {
-  it("(a) renders off by default and toggles on through the controller", () => {
+describe("#18 May overlap Mint toggle on the expanded row", () => {
+  it("(a) renders off by default and commits on Save only", () => {
     const h = makeHarness("ready");
     const spy = vi.spyOn(h.controller, "setMintOverlapOptIn");
     const { container } = h.ui(<Queue />);
 
-    const menu = openMore(container, "Press");
-    const item = itemByLabel(menu, "May overlap Mint for Press");
-    expect(item).not.toBeNull();
-    expect(item!.getAttribute("role")).toBe("menuitemcheckbox");
-    expect(item!.getAttribute("aria-checked")).toBe("false");
-    expect(item!.textContent).toContain("May overlap Mint");
+    let row = expand(container, "Press");
+    const box = mint(row);
+    expect(box.checked).toBe(false);
+    expect(box.disabled).toBe(false);
+    expect(mintReason(row)).toBeNull();
+    expect(row.textContent).toContain("May overlap Mint");
 
-    fireEvent.click(item!);
+    fireEvent.click(box);
+    // Staging is local: no grant reaches the controller before Save.
+    expect(spy).not.toHaveBeenCalled();
+    expect(h.store.getState().drafts["Press"].mintOverlap).toBe(true);
+
+    row = rowFor(container, "Press");
+    fireEvent.click(btn(row, "Save")!);
 
     expect(spy).toHaveBeenCalledTimes(1);
     expect(spy).toHaveBeenCalledWith("Press", true);
-    const after = itemByLabel(menu, "May overlap Mint for Press");
-    expect(after!.getAttribute("aria-checked")).toBe("true");
-    expect(after!.textContent).toContain("Stop overlapping Mint");
+    expect(h.store.getState().mintOverlapOptIns["Press"]).toBe(true);
+    expect(mint(rowFor(container, "Press")).checked).toBe(true);
   });
 
-  it("(b) is disabled with the reason for an all-day row", () => {
+  it("(b) is disabled with the written reason for an all-day row", () => {
     const h = makeHarness("ready");
     const { container } = h.ui(<Queue />);
-    const item = itemByLabel(
-      openMore(container, "Charge GoPro"),
-      "May overlap Mint for Charge GoPro",
-    );
-    expect(item).not.toBeNull();
-    expect(item!.disabled).toBe(true);
-    expect(item!.getAttribute("title")).toBe("All-day rows have no time to overlap");
-    expect(item!.textContent).toContain("All-day rows have no time to overlap");
+    const row = expand(container, "Charge GoPro");
+    expect(mint(row).disabled).toBe(true);
+    expect(mintReason(row)).toBe(EXCLUSION_REASONS.mintAllDay);
   });
 
-  it("(b) is disabled with the reason for an excluded row", () => {
+  it("(b) is disabled with the written reason for an all-day draft", () => {
     const h = makeHarness("ready");
-    h.store.dispatch({
-      type: "OVERRIDE_SET",
-      id: "Press",
-      override: { included: false, blocks: null },
-    });
     const { container } = h.ui(<Queue />);
-    // An excluded row lives in the collapsed "Out today" lane; expand it first.
-    fireEvent.click(container.querySelector(".band--drop") as HTMLButtonElement);
-    const item = itemByLabel(
-      openMore(container, "Press"),
-      "May overlap Mint for Press",
+    let row = expand(container, "Press");
+    expect(mint(row).disabled).toBe(false);
+    fireEvent.click(
+      row.querySelector<HTMLInputElement>('input[type="radio"][value="allday"]')!,
     );
-    expect(item).not.toBeNull();
-    expect(item!.disabled).toBe(true);
-    expect(item!.getAttribute("title")).toBe("Excluded today — include the row first");
+    row = rowFor(container, "Press");
+    expect(mint(row).disabled).toBe(true);
+    expect(mintReason(row)).toBe(EXCLUSION_REASONS.mintAllDay);
   });
 
-  it("(b) is disabled with the reason for a row named Mint …", () => {
-    const h = makeHarness("ready", (sc) => {
-      sc.inputs.assigned.push({
-        id: "Mint Afternoon",
-        name: "Mint Afternoon",
-        path: null,
-        source: "todoist",
-        types: ["task"],
-        urgency: null,
-        deadline: null,
-        priorityScore: 10,
-        blocks: 2,
-        durationLabel: "1hr",
-        todoistId: "6fx00xMINT",
-      });
-    });
-    const { container } = h.ui(<Queue />);
-    const item = itemByLabel(
-      openMore(container, "Mint Afternoon"),
-      "May overlap Mint for Mint Afternoon",
-    );
-    expect(item).not.toBeNull();
-    expect(item!.disabled).toBe(true);
-    expect(item!.getAttribute("title")).toBe("A Mint session is the wall itself");
-  });
-
-  it("(c) toggling fires no billed or write adapter call", async () => {
+  it("(c) staging and saving fire no billed or write adapter call", async () => {
     const h = makeHarness("ready");
     const sequence = vi.spyOn(h.adapter, "autoSequence");
     const live = vi.spyOn(h.adapter, "liveCommit");
     const shadow = vi.spyOn(h.adapter, "shadowCommit");
+    const batch = vi.spyOn(h.adapter, "applyRuntimeBatch");
     const { container } = h.ui(<Queue />);
 
-    fireEvent.click(
-      itemByLabel(openMore(container, "Press"), "May overlap Mint for Press")!,
-    );
+    const row = expand(container, "Press");
+    fireEvent.click(mint(row));
+    fireEvent.click(btn(rowFor(container, "Press"), "Save")!);
     await new Promise((resolve) => setTimeout(resolve, 150));
 
     expect(sequence).not.toHaveBeenCalled();
     expect(live).not.toHaveBeenCalled();
     expect(shadow).not.toHaveBeenCalled();
+    expect(batch).not.toHaveBeenCalled();
   });
 });
 

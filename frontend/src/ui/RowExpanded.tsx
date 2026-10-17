@@ -4,15 +4,15 @@
    Line 1 shapes the row (all staged on the row's draft, nothing committed):
    Time block / All-day, duration, Start (Auto + Set time, or the pinned time
    + Clear), and "May overlap Mint" with a short inline reason only when it is
-   disabled. Line 2 holds Save and Discard, rendered only while the draft
-   differs from the committed session.
+   disabled. Line 2 holds Save and Discard on the left, rendered only while the draft
+   differs from the committed session, and the Source menu on the right.
 
    Every transform goes through the pure rowDraft model (setMode, setPin,
    clearPin, canApplyPin) via controller.updateDraft; the store owns the draft
    lifecycle. Opening the panel opens a draft when none is kept; collapsing
    keeps the draft (the store only drops it on Save/Discard), so a staged row
-   still reads "Staged" while collapsed. The Source menu (F4c) and the batch
-   bar (F6) are not part of this panel. */
+   still reads "Staged" while collapsed. The Source menu (F4c) sits right on line 2;
+   the batch bar (F6) is not part of this panel. */
 
 import { useEffect, useRef, useState } from "preact/hooks";
 import { useApp } from "./context";
@@ -32,6 +32,7 @@ import {
 import { EXCLUSION_REASONS } from "../model/batchEligibility";
 import { blocksLabel, display12h } from "../model/time";
 import type { AssignedItem } from "../model/types";
+import { SourceMenu } from "./SourceMenu";
 import { TimeEditor } from "./TimeEditor";
 import { rowId } from "./TaskRow";
 
@@ -228,33 +229,36 @@ export function RowExpanded({ item, s }: { item: AssignedItem; s: AppState }) {
           }}
         />
       )}
-      {staged && (
-        <div class="trow__l2">
-          <button
-            type="button"
-            class="trow__btn trow__btn--primary"
-            disabled={busy}
-            onClick={() => {
-              refocusStart.current = true;
-              controller.saveDraft(id);
-            }}
-          >
-            Save
-          </button>
-          <button
-            type="button"
-            class="trow__btn"
-            disabled={busy}
-            onClick={() => {
-              refocusStart.current = true;
-              setEditing(false);
-              controller.discardDraft(id);
-            }}
-          >
-            Discard
-          </button>
-        </div>
-      )}
+      <div class="trow__l2">
+        {staged && (
+          <>
+            <button
+              type="button"
+              class="trow__btn trow__btn--primary"
+              disabled={busy}
+              onClick={() => {
+                refocusStart.current = true;
+                controller.saveDraft(id);
+              }}
+            >
+              Save
+            </button>
+            <button
+              type="button"
+              class="trow__btn"
+              disabled={busy}
+              onClick={() => {
+                refocusStart.current = true;
+                setEditing(false);
+                controller.discardDraft(id);
+              }}
+            >
+              Discard
+            </button>
+          </>
+        )}
+        <SourceMenu item={item} s={s} />
+      </div>
     </div>
   );
 }

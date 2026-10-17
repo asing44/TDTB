@@ -56,7 +56,8 @@ function panelOf(container: Element): HTMLElement | null {
 }
 
 /** Wrap the fixture adapter's runtimeAction so the wire mapping is observable
-    (the same spy shape row-actions-live.test.tsx uses). */
+    (the same spy shape row-actions-live.test.tsx uses). The row verbs ride the
+    journaled batch wire (F7: `runRowBatch`), so those are spied separately. */
 function spyVerbs(h: Harness): Array<{ verb: string; target: string }> {
   const calls: Array<{ verb: string; target: string }> = [];
   const original = h.adapter.runtimeAction.bind(h.adapter);
@@ -289,18 +290,25 @@ describe("collapsed row: C and E act on the row that received the key", () => {
   it("C completes the focused row and E skips it", async () => {
     const h = makeHarness("ready");
     const calls = spyVerbs(h);
+    const batched: Array<{ verb: string; target: string }> = [];
+    const applyBatch = h.adapter.applyRuntimeBatch.bind(h.adapter);
+    h.adapter.applyRuntimeBatch = async (items) => {
+      for (const item of items) batched.push({ verb: item.verb, target: item.target });
+      return applyBatch(items);
+    };
     const { container } = h.ui(<Queue />);
 
     const magic = rowFor(container, "Magic Mirror");
     fireEvent.keyDown(magic, { key: "c" });
+    // Complete is a journaled batch of one against the stable source identity.
     await waitFor(() =>
-      expect(calls).toEqual([{ verb: "done", target: "Magic Mirror" }]),
+      expect(batched).toEqual([{ verb: "done", target: "todoist:6fx00xMIRROR" }]),
     );
+    expect(calls).toEqual([]);
 
     fireEvent.keyDown(rowFor(container, "Press"), { key: "e" });
     await waitFor(() =>
       expect(calls).toEqual([
-        { verb: "done", target: "Magic Mirror" },
         { verb: "drop_from_plan", target: PRESS_IDENTITY },
       ]),
     );

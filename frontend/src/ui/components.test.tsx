@@ -364,26 +364,33 @@ describe("Queue", () => {
 });
 
 describe("T13 retained exact-placement paths", () => {
-  it("queue rows are never draggable and Place-at still stages through the exact editor", () => {
+  it("queue rows are never draggable and an exact start still stages through the expanded row", () => {
+    // F7: the More menu's Adjust time item left; the exact start is the
+    // expanded row's Start control (Set time → Apply → Save). The placement
+    // result is unchanged.
     const { ui, store } = makeHarness("ready");
-    const { container, getByLabelText, getByText, getAllByRole } = ui(
+    const { container, getByLabelText, getByText } = ui(
       <>
         <Queue />
         <EditorHost />
       </>,
     );
     expect(container.querySelector('[draggable="true"]')).toBeNull();
-    // FEEDBACK-10 (A13): time adjustment moved into the More menu — the row stays
-    // clean, the exact-placement path is unchanged.
-    fireEvent.click(getAllByRole("button", { name: /^More actions for Magic Mirror$/ })[0]);
-    fireEvent.click(getByLabelText("Adjust time for Magic Mirror"));
-    expect(store.getState().ui.editorIntent).toBe("place");
-    const start = getByLabelText("Start") as HTMLInputElement;
+    const row = () =>
+      Array.from(container.querySelectorAll<HTMLElement>(".qrow")).find(
+        (r) => r.querySelector(".qrow__name")?.textContent === "Magic Mirror",
+      )!;
+    fireEvent.click(row().querySelector('button[aria-label="Expand"]')!);
+    fireEvent.click(getByText("Set time"));
+    const start = row().querySelector<HTMLInputElement>('input[type="time"]')!;
     fireEvent.input(start, { target: { value: "10:15" } });
     fireEvent.click(getByText("Apply"));
+    expect(store.getState().placements["Magic Mirror"]).toBeUndefined();
+    fireEvent.click(getByText("Save"));
     const placed = store.getState().sequence?.find((r) => r.id === "Magic Mirror");
     expect(placed?.start).toBe("10:15");
     expect(store.getState().placements["Magic Mirror"]).toBe("10:15");
+    expect(getByLabelText("Select Magic Mirror")).toBeTruthy();
   });
 
   it("✎ duration shaping is no longer offered on the collapsed row (F4b)", () => {
@@ -1143,30 +1150,31 @@ describe("T25 recurring duration shaping", () => {
   });
 
   it("shows a protected-by-default time-movement opt-in per timed row", () => {
+    // F7: the More menu's "Allow move" item is the permission checkbox in the
+    // expanded row's time editor; it stays off until granted and Save commits it.
     const h = makeHarness("ready");
     withRecurring(h);
-    const { getByLabelText } = h.ui(<Queue />);
-    // Planning 2a cleanup (2026-10-14): the opt-in left the row's meta line
-    // for the More menu, as a menuitemcheckbox with the same aria-label.
-    fireEvent.click(getByLabelText("More actions for LOOTS"));
-    const optIn = getByLabelText(
-      "Allow scheduler to move existing time for LOOTS",
-    );
-    expect(optIn.getAttribute("role")).toBe("menuitemcheckbox");
-    expect(optIn.getAttribute("aria-checked")).toBe("false");
-    expect(optIn.textContent).toContain("Allow move");
-    expect(optIn.getAttribute("aria-label")).toContain("existing time");
-    fireEvent.click(optIn);
+    const { container, getByText } = h.ui(<Queue />);
+    const loots = () =>
+      Array.from(container.querySelectorAll<HTMLElement>(".qrow")).find(
+        (r) => r.querySelector(".qrow__name")?.textContent === "LOOTS",
+      )!;
+    fireEvent.click(loots().querySelector('button[aria-label="Expand"]')!);
+    expect(loots().textContent).toContain("Source 12:30 PM");
+    fireEvent.click(getByText("Set time"));
+    const allow = loots().querySelector<HTMLInputElement>(
+      '.trow__editor input[type="checkbox"]',
+    )!;
+    expect(allow.checked).toBe(false);
+    expect(allow.closest("label")?.textContent).toContain("Allow changing source time");
+    fireEvent.click(allow);
+    fireEvent.click(getByText("Apply"));
+    expect(h.store.getState().timeAdjustmentOptIns).toEqual({});
+    fireEvent.click(getByText("Save"));
     expect(h.store.getState().timeAdjustmentOptIns).toEqual({ LOOTS: true });
-    // The check flips in place; the menu stays open so it is visible.
-    expect(
-      getByLabelText("Allow scheduler to move existing time for LOOTS").getAttribute(
-        "aria-checked",
-      ),
-    ).toBe("true");
   });
 
-  it("shows time adjustment only for Todoist rows with a native start", () => {
+  it("shows the source time only for Todoist rows with a native start", () => {
     const h = makeHarness("ready");
     const inputs = structuredClone(h.store.getState().inputs!);
     const base = inputs.assigned.find((item) => item.source === "todoist")!;
@@ -1204,15 +1212,25 @@ describe("T25 recurring duration shaping", () => {
       inputs,
       ledger: { today: inputs.validDate, spent: 0, cap: 7, remaining: 7 },
     });
-    const { getByLabelText, queryByLabelText } = h.ui(<Queue />);
-    // Planning 2a (2026-10-14): each row's permission is a More-menu item now,
-    // so presence is checked with the row's own menu open.
-    fireEvent.click(getByLabelText("More actions for Timed Todoist"));
-    expect(getByLabelText("Allow scheduler to move existing time for Timed Todoist")).toBeTruthy();
-    fireEvent.click(getByLabelText("More actions for Untimed Todoist"));
-    expect(queryByLabelText("Allow scheduler to move existing time for Untimed Todoist")).toBeNull();
-    fireEvent.click(getByLabelText("More actions for All-day Todoist"));
-    expect(queryByLabelText("Allow scheduler to move existing time for All-day Todoist")).toBeNull();
+    const { container } = h.ui(<Queue />);
+    const expand = (name: string) => {
+      const row = Array.from(container.querySelectorAll<HTMLElement>(".qrow")).find(
+        (r) => r.querySelector(".qrow__name")?.textContent === name,
+      )!;
+      fireEvent.click(row.querySelector('button[aria-label="Expand"]')!);
+      return Array.from(container.querySelectorAll<HTMLElement>(".qrow")).find(
+        (r) => r.querySelector(".qrow__name")?.textContent === name,
+      )!;
+    };
+    expect(expand("Timed Todoist").querySelector(".trow__start")?.textContent).toContain(
+      "Source 2 PM",
+    );
+    const untimed = expand("Untimed Todoist").querySelector(".trow__start")?.textContent;
+    expect(untimed).toContain("Auto");
+    expect(untimed).not.toContain("Source");
+    expect(expand("All-day Todoist").querySelector(".trow__start")?.textContent).toContain(
+      "none (all-day)",
+    );
   });
 
   it("block editor accepts a 5-minute exact value and snaps stray input (LD22 amendment)", () => {

@@ -163,7 +163,7 @@ describe("rendered rows carry the clearer labels", () => {
     expect(container.querySelector(".qrow__dur-src")).toBeNull();
   });
 
-  it("carries the fixed-row permission in the More menu, not on the row", () => {
+  it("carries the fixed-row permission in the time editor, not on the row", () => {
     const h = makeHarness("ready");
     const inputs = structuredClone(h.store.getState().inputs!);
     const base = inputs.assigned.find((i) => i.source === "todoist")!;
@@ -182,28 +182,24 @@ describe("rendered rows carry the clearer labels", () => {
       inputs,
       ledger: { ...h.scenario.ledger },
     });
-    const { container, getByLabelText } = h.ui(<Queue />);
-    const row = rowNamed(container, "M1.5");
-    // Planning 2a cleanup (2026-10-14): no inline checkbox or label is left
-    // anywhere on the row — the permission is a menu item now.
-    expect(row.querySelector(".qrow__time-adjustment")).toBeNull();
-    expect(row.querySelector(".qrow__time-adjustment-note")).toBeNull();
-    expect(row.textContent).not.toContain("Allow move");
-    // Reachable from ⋯ with the same handler and the same full aria name.
-    fireEvent.click(getByLabelText("More actions for M1.5"));
-    const control = getByLabelText(
-      "Allow scheduler to move existing time for M1.5",
-    );
-    expect(control.getAttribute("role")).toBe("menuitemcheckbox");
-    expect(control.textContent?.trim()).toContain("Allow move");
-    expect(control.getAttribute("aria-checked")).toBe("false");
+    const { container, getByText } = h.ui(<Queue />);
+    const row = () => rowNamed(container, "M1.5");
+    // No inline checkbox or label is left on the collapsed row, and F7 removed
+    // the More menu that used to carry the permission.
+    expect(row().querySelector(".qrow__time-adjustment")).toBeNull();
+    expect(row().querySelector(".qrow__time-adjustment-note")).toBeNull();
+    expect(row().textContent).not.toContain("Allow move");
+    expect(container.querySelector('button[aria-haspopup="menu"]')).toBeNull();
+    // The permission is the expanded row's time-editor checkbox; Save commits it.
+    fireEvent.click(row().querySelector('button[aria-label="Expand"]')!);
+    fireEvent.click(getByText("Set time"));
+    const control = row().querySelector<HTMLInputElement>(
+      '.trow__editor input[type="checkbox"]',
+    )!;
+    expect(control.checked).toBe(false);
     fireEvent.click(control);
+    fireEvent.click(getByText("Apply"));
+    fireEvent.click(getByText("Save"));
     expect(h.store.getState().timeAdjustmentOptIns["M1.5"]).toBe(true);
-    // Toggling keeps the menu open and flips the checkmark in place.
-    expect(
-      getByLabelText("Allow scheduler to move existing time for M1.5").getAttribute(
-        "aria-checked",
-      ),
-    ).toBe("true");
   });
 });

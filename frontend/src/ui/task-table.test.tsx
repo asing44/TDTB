@@ -58,11 +58,14 @@ function spyHarness() {
     daySetup: { ...sc.inputs.daySetup, confirmed: true },
   });
   const adapter = new FixtureAdapter("ready");
+  // F7: the row verbs ride the journaled batch wire, so the observable call is
+  // the batch item (verb + stable source identity), not the single runtime
+  // action.
   const calls: Array<{ verb: string; target: string }> = [];
-  const original = adapter.runtimeAction.bind(adapter);
-  adapter.runtimeAction = async (verb, target, args) => {
-    calls.push({ verb, target });
-    return original(verb, target, args);
+  const original = adapter.applyRuntimeBatch.bind(adapter);
+  adapter.applyRuntimeBatch = async (items) => {
+    for (const item of items) calls.push({ verb: item.verb, target: item.target });
+    return original(items);
   };
   const controller = new Controller(adapter, store.dispatch, store.getState);
   const ui = (children: ComponentChildren) =>
@@ -242,13 +245,13 @@ describe("U11 keyboard shortcuts act on the focused row", () => {
     expect(document.activeElement).toBe(rows[1]);
   });
 
-  it("C dispatches Mark complete through the same controller call as before", async () => {
+  it("C dispatches Mark complete through the row's batch verb", async () => {
     const h = spyHarness();
     const { container } = h.ui(<Queue />);
     const row = rowNamed(container, "Press");
     fireEvent.keyDown(row, { key: "c" });
     await waitFor(() => expect(h.calls.length).toBeGreaterThan(0));
-    expect(h.calls[0]).toEqual({ verb: "done", target: "Press" });
+    expect(h.calls[0]).toEqual({ verb: "done", target: "todoist:6fx00xPRESS" });
   });
 });
 

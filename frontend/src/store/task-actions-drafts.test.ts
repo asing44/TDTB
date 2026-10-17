@@ -19,7 +19,7 @@ import { createStore } from "./createStore";
 import { Controller } from "./controller";
 import { attachSessionPersistence } from "./persist";
 import { clearPin, setMode, setPin } from "../model/rowDraft";
-import { draftIsStaged, rowFactsOf, stagedDraft } from "./store";
+import { draftIsStaged, rowFactsOf, rowSessionOf, stagedDraft } from "./store";
 import type { Adapter } from "../adapters/adapter";
 import type { Capacity, PlanInputs } from "../model/types";
 
@@ -162,6 +162,29 @@ describe("task-actions row drafts", () => {
 
     expect(store.getState().overrides["Deep Work"]).toEqual({ included: true, blocks: 3 });
     expect(store.getState().placements["Deep Work"]).toBe("11:00");
+    expect(store.getState().drafts["Deep Work"]).toBeUndefined();
+  });
+
+  /* The pin lives in `placements[id]` (`rowSessionOf`), so clearing a staged
+     pin on Save has to release the placement, not just drop the pending pin:
+     a plain ROW_PIN_RESET left `placements[id]` intact and the row re-read as
+     still Pinned. */
+  it("clearing an existing pin and saving releases the placement", () => {
+    const { store, controller } = harness();
+    controller.openDraft("Deep Work");
+    controller.updateDraft("Deep Work", (draft) => setPin(draft, rowOf(store, "Deep Work"), "11:00"));
+    controller.saveDraft("Deep Work");
+    expect(store.getState().placements["Deep Work"]).toBe("11:00");
+
+    controller.openDraft("Deep Work");
+    controller.updateDraft("Deep Work", (draft) => clearPin(draft));
+    controller.saveDraft("Deep Work");
+
+    expect(Object.hasOwn(store.getState().placements, "Deep Work")).toBe(false);
+    expect(rowSessionOf(store.getState(), "Deep Work")?.pin).toBeNull();
+    expect(
+      store.getState().pendingPinnedRows.some((r) => r.id === "Deep Work"),
+    ).toBe(false);
     expect(store.getState().drafts["Deep Work"]).toBeUndefined();
   });
 

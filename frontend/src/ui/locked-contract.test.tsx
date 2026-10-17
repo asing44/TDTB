@@ -33,8 +33,8 @@ describe("locked contract: Today's work language (item 1)", () => {
   });
 });
 
-describe("locked contract: explicit direct actions plus More (item 3)", () => {
-  it("rows complete directly; source removal and Delete live behind More", () => {
+describe("locked contract: explicit direct actions plus the Source menu (item 3)", () => {
+  it("rows complete directly; source removal and Delete live in the expanded Source menu", () => {
     /* F4a (2026-10-16): the row's direct verbs are the labelled controls
        Complete, Skip today and Expand. The old icon faces (Mark complete in
        source, Leave as-is) and their hover-only words are gone; source
@@ -60,10 +60,16 @@ describe("locked contract: explicit direct actions plus More (item 3)", () => {
       r.queryAllByRole("button", { name: /^Remove from planning/ }),
     ).toHaveLength(0);
     expect(r.queryAllByRole("button", { name: /^Delete/ })).toHaveLength(0);
-    // …and every row still opens one More menu that owns them.
-    expect(
-      r.getAllByRole("button", { name: /^More actions for / }).length,
-    ).toBeGreaterThan(0);
+    // …there is no per-row More menu (F7); the expanded row's Source menu
+    // owns them.
+    expect(r.queryAllByRole("button", { name: /^More actions for / })).toHaveLength(0);
+    const row = r.container.querySelector<HTMLElement>(".qrow")!;
+    fireEvent.click(row.querySelector('button[aria-label="Expand"]')!);
+    fireEvent.click(row.querySelector(".source-menu__trigger")!);
+    const items = Array.from(row.querySelectorAll('[role="menuitem"]')).map(
+      (b) => b.getAttribute("aria-label"),
+    );
+    expect(items).toContain("Delete source…");
   });
 });
 

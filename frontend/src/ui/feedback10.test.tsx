@@ -43,21 +43,6 @@ function cssBlock(selector: string): string {
   return m[1];
 }
 
-function menuTriggers(container: Element, name: string): HTMLElement {
-  const triggers = Array.from(
-    container.querySelectorAll('button[aria-haspopup="menu"]'),
-  ) as HTMLElement[];
-  const trigger = triggers.find((b) =>
-    b.getAttribute("aria-label")?.includes(name),
-  );
-  if (!trigger) throw new Error(`no More trigger for ${name}`);
-  return trigger;
-}
-
-function menuItems(container: Element): HTMLElement[] {
-  return Array.from(container.querySelectorAll('[role="menuitem"]')) as HTMLElement[];
-}
-
 describe("FEEDBACK-10 critical-band wording (A15)", () => {
   it("band notes are concise and non-alarmist while preserving urgency", () => {
     const byKey = new Map(BANDS.map((b) => [b.key, b]));
@@ -234,77 +219,99 @@ describe("over-allotment is reported, never converted into a proposed drop (supe
   });
 });
 
-describe("FEEDBACK-10 More menu carries secondary actions (A13)", () => {
-  function openMore(h: Harness, name: string) {
+describe("FEEDBACK-10 secondary actions left the row (A13, rewritten for F7)", () => {
+  /* F7 retired the per-row More menu. Its items live on the expanded row:
+     Adjust time / Unschedule are the Start control (Set time / Clear), and the
+     source verbs are the Source menu. */
+  function expandRow(h: Harness, name: string) {
     const { container } = h.ui(<Queue />);
-    const trigger = menuTriggers(container, name);
-    fireEvent.click(trigger);
-    return { container, trigger };
+    const row = () =>
+      Array.from(container.querySelectorAll<HTMLElement>(".qrow")).find(
+        (r) => r.querySelector(".qrow__name")?.textContent === name,
+      )!;
+    fireEvent.click(row().querySelector('button[aria-label="Expand"]')!);
+    return { container, row };
   }
 
-  it("the row no longer renders the placement verb directly", () => {
+  it("the row no longer renders the placement verb or a More menu", () => {
     const h = makeHarness("ready");
     const { container } = h.ui(<Queue />);
     const buttons = Array.from(container.querySelectorAll("button")) as HTMLElement[];
-    const direct = buttons.some(
-      (b) => b.getAttribute("aria-label") === "Adjust time for Magic Mirror",
-    );
-    expect(direct).toBe(false);
-  });
-
-  it("Adjust time lives in the More menu and opens the exact editor", () => {
-    const h = makeHarness("ready");
-    const { container } = openMore(h, "Magic Mirror");
-    const item = menuItems(container).find(
-      (b) => b.getAttribute("aria-label") === "Adjust time for Magic Mirror",
-    );
-    expect(item).toBeTruthy();
-    fireEvent.click(item as Element);
-    expect(h.store.getState().ui.editorItem).toBe("Magic Mirror");
-    expect(h.store.getState().ui.editorIntent).toBe("place");
-  });
-
-  it("Unschedule lives in the More menu for scheduled rows and releases placement", () => {
-    const h = makeHarness("sequenced");
-    const { container } = openMore(h, "Magic Mirror");
-    const item = menuItems(container).find(
-      (b) => b.getAttribute("aria-label") === "Unschedule Magic Mirror",
-    );
-    expect(item).toBeTruthy();
-    fireEvent.click(item as Element);
     expect(
-      h.store
-        .getState()
-        .sequence?.some((r) => r.id === "Magic Mirror" && r.kind === "work"),
+      buttons.some((b) => b.getAttribute("aria-label") === "Adjust time for Magic Mirror"),
     ).toBe(false);
+    expect(container.querySelector('button[aria-haspopup="menu"]')).toBeNull();
+    expect(container.querySelector(".row-more")).toBeNull();
   });
 
-  it("source removal and Delete stay in the More menu (frozen verb model)", () => {
+  it("an exact start is the expanded row's Set time and does not open the block editor", () => {
     const h = makeHarness("ready");
-    const { container } = openMore(h, "Magic Mirror");
-    const labels = menuItems(container).map((b) => b.getAttribute("aria-label"));
-    expect(labels.some((l) => l?.startsWith("Remove from planning and update source"))).toBe(true);
-    expect(labels.some((l) => l?.startsWith("Delete permanently"))).toBe(true);
-    const remove = menuItems(container).find((b) => b.textContent?.includes("Remove from planning"));
-    expect(remove?.getAttribute("data-source-mutation")).toBe("true");
-    expect(remove?.textContent).toContain("updates the Todoist or Capacities source");
+    const { row } = expandRow(h, "Magic Mirror");
+    const setTime = Array.from(row().querySelectorAll<HTMLButtonElement>("button")).find(
+      (b) => b.textContent?.trim() === "Set time",
+    )!;
+    fireEvent.click(setTime);
+    expect(row().querySelector(".trow__editor")).not.toBeNull();
+    expect(h.store.getState().ui.editorItem).toBeNull();
+  });
+
+  /* Regression guard for the F7 defect fixed in `store/controller.ts`:
+     Clear stages `pin: null`, and `rowDraft.toOverrides` projects that onto
+     `resetPlacement`. ROW_PIN_RESET alone only drops the pending pin and never
+     touches `placements`, and `placements[id]` IS the pin (`rowSessionOf`), so
+     Save after Clear used to leave the row "Pinned 11:00". Save now routes a
+     cleared existing pin through `controller.releasePlacement` (ROW_PIN_RESET +
+     ROW_UNPLACED, which deletes `placements[id]`). */
+  it("Clear unschedules a placed row (Save releases the placement)", () => {
+    const h = makeHarness("sequenced");
+    const { row } = expandRow(h, "Magic Mirror");
+    const btn = (t: string) =>
+      Array.from(row().querySelectorAll<HTMLButtonElement>("button")).find(
+        (b) => b.textContent?.trim() === t,
+      )!;
+    fireEvent.click(btn("Set time"));
+    fireEvent.input(row().querySelector('input[type="time"]')!, { target: { value: "11:00" } });
+    fireEvent.click(btn("Apply"));
+    fireEvent.click(btn("Save"));
+    expect(h.store.getState().placements["Magic Mirror"]).toBe("11:00");
+    fireEvent.click(btn("Clear"));
+    fireEvent.click(btn("Save"));
+    expect(h.store.getState().placements["Magic Mirror"]).toBeUndefined();
+  });
+
+  it("source removal and Delete are Source-menu items, not row controls", () => {
+    const h = makeHarness("ready");
+    const { row } = expandRow(h, "Magic Mirror");
+    fireEvent.click(row().querySelector(".source-menu__trigger")!);
+    const labels = Array.from(
+      row().querySelectorAll<HTMLElement>('[role="menuitem"]'),
+    ).map((b) => b.getAttribute("aria-label"));
+    expect(
+      labels.some((l) => l?.startsWith("Unassign in source") || l?.startsWith("Skip occurrence")),
+    ).toBe(true);
+    expect(labels).toContain("Hide always");
+    expect(labels).toContain("Delete source…");
   });
 });
 
-describe("FEEDBACK-10 More menu keyboard access (A14)", () => {
+describe("FEEDBACK-10 Source menu keyboard access (A14, rewritten for F7)", () => {
   it("Arrow keys move focus between menu items; Escape closes and refocuses the trigger", () => {
     const h = makeHarness("ready");
     const { container } = h.ui(<Queue />);
-    const trigger = menuTriggers(container, "Magic Mirror");
+    const row = Array.from(container.querySelectorAll<HTMLElement>(".qrow")).find(
+      (r) => r.querySelector(".qrow__name")?.textContent === "Magic Mirror",
+    )!;
+    fireEvent.click(row.querySelector('button[aria-label="Expand"]')!);
+    const trigger = row.querySelector<HTMLElement>(".source-menu__trigger")!;
     fireEvent.click(trigger);
-    const items = menuItems(container);
-    expect(items.length).toBeGreaterThan(0);
-    items[0].focus();
+    const items = Array.from(row.querySelectorAll<HTMLElement>('[role="menuitem"]'));
+    expect(items.length).toBeGreaterThan(1);
+    expect(document.activeElement).toBe(items[0]);
     fireEvent.keyDown(items[0], { key: "ArrowDown" });
     expect(document.activeElement).toBe(items[1]);
     fireEvent.keyDown(items[1], { key: "ArrowUp" });
     expect(document.activeElement).toBe(items[0]);
-    fireEvent.keyDown(document, { key: "Escape" });
+    fireEvent.keyDown(items[0], { key: "Escape" });
     expect(trigger.getAttribute("aria-expanded")).toBe("false");
     expect(document.activeElement).toBe(trigger);
   });
@@ -324,22 +331,6 @@ describe("FEEDBACK-10 More-menu items keep their own height (A14)", () => {
     const item = cssBlock("qrow__actions .row-more__menu .alloc-verb");
     expect(item).toMatch(/height:\s*auto/);
     expect(item).toMatch(/min-height:\s*44px/);
-  });
-});
-
-describe("FEEDBACK-10 icon actions expose hover/focus tooltips (A12)", () => {
-
-  it("the More tooltip is suppressed while its menu is open", () => {
-    const h = makeHarness("ready");
-    const { container } = h.ui(<Queue />);
-    const trigger = menuTriggers(container, "Magic Mirror");
-    fireEvent.mouseEnter(trigger);
-    expect(container.querySelector('[role="tooltip"]')?.textContent).toContain("More");
-    fireEvent.click(trigger);
-    expect(trigger.getAttribute("aria-expanded")).toBe("true");
-    expect(container.querySelector('[role="tooltip"]')).toBeNull();
-    fireEvent.click(trigger);
-    expect(container.querySelector('[role="tooltip"]')?.textContent).toContain("More");
   });
 });
 
@@ -446,13 +437,9 @@ describe("FEEDBACK-12 queue scheduled rows render 12-hour", () => {
 });
 
 describe("row action buttons describe themselves on hover", () => {
-  it.each([
-    ['button[aria-label^="More actions for"]', "Remove from planning"],
-  ])("%s", (selector, text) => {
+  it("the row carries no hover-only More control any more", () => {
     const { container } = makeHarness("ready").ui(<Queue />);
-    const btn = container.querySelector(selector) as HTMLElement;
-    fireEvent.mouseEnter(btn);
-    expect(container.querySelector('[role="tooltip"]')?.textContent).toContain(text);
+    expect(container.querySelector('button[aria-label^="More actions for"]')).toBeNull();
   });
 
   it("the collapsed row's own buttons carry their words in plain text", () => {

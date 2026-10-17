@@ -267,17 +267,27 @@ describe("reduced motion", () => {
 
 describe("allocator table a11y (T7)", () => {
 
-  it("every staging verb button names its target item", () => {
+  it("every source-write control names its target item", () => {
+    // F7: the per-row More menu (button.alloc-verb) is gone. The source verbs
+    // live in the expanded row's Source menu, whose popover and Delete confirm
+    // are named for the row, so "Delete source…" alone is never ambiguous.
     const h = makeHarness("ready");
     const { container } = h.ui(<Queue />);
-    const verbs = Array.from(
-      container.querySelectorAll("button.alloc-verb"),
-    ) as HTMLElement[];
-    expect(verbs.length).toBeGreaterThan(0);
-    for (const verb of verbs) {
-      // "Delete" alone is ambiguous in a dense table of near-identical rows.
-      expect(accessibleName(verb).length).toBeGreaterThan("Delete".length);
+    expect(container.querySelectorAll("button.alloc-verb")).toHaveLength(0);
+    const checks = Array.from(
+      container.querySelectorAll<HTMLElement>(".trow__check"),
+    );
+    expect(checks.length).toBeGreaterThan(0);
+    for (const check of checks) {
+      expect(accessibleName(check)).toMatch(/^Select .+/);
     }
+    const press = Array.from(container.querySelectorAll<HTMLElement>(".qrow")).find(
+      (r) => r.querySelector(".qrow__name")?.textContent === "Press",
+    )!;
+    fireEvent.click(press.querySelector('button[aria-label="Expand"]')!);
+    fireEvent.click(press.querySelector(".source-menu__trigger")!);
+    const menu = press.querySelector<HTMLElement>('[role="menu"]')!;
+    expect(accessibleName(menu)).toContain("Press");
   });
 
   it("the live budget delta is announced, not silently repainted (T12e: rail readout)", () => {

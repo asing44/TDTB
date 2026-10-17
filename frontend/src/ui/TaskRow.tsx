@@ -5,7 +5,6 @@
    Expand/Collapse. Selection never depends on expansion; one row is expanded
    at a time (store ui.expandedId). The expanded region mounts RowExpanded (F4b). */
 
-import type { ComponentChildren } from "preact";
 import { useApp } from "./context";
 import { RowExpanded } from "./RowExpanded";
 import {
@@ -96,15 +95,12 @@ export function TaskRow({
   s,
   hierarchy,
   structureTitles,
-  more,
   onKeyDown,
 }: {
   item: AssignedItem;
   s: AppState;
   hierarchy?: HierarchyRow;
   structureTitles?: Record<string, string>;
-  /** Transitional: the per-row More menu stays until the Source menu lands. */
-  more?: ComponentChildren;
   onKeyDown?: (e: KeyboardEvent) => void;
 }) {
   const { controller } = useApp();
@@ -241,7 +237,7 @@ export function TaskRow({
           disabled={completeOff}
           title={completeWhy ?? undefined}
           aria-describedby={completeWhy ? completeWhyId : undefined}
-          onClick={() => void controller.stagingAction("done", item.id)}
+          onClick={() => void controller.runRowBatch(item.id, "complete")}
         >
           Complete
         </button>
@@ -276,7 +272,6 @@ export function TaskRow({
         >
           {expanded ? "Collapse" : "Expand"}
         </button>
-        {more}
       </div>
       {expanded && (
         <div

@@ -944,7 +944,16 @@ export class Controller {
           this.placeRow(operation.id, operation.start);
           break;
         case "resetPlacement":
-          this.resetPlacement(operation.id);
+          /* A null draft pin means "back to automatic start". `placements[id]`
+             IS the pin (`rowSessionOf`), and ROW_PIN_RESET alone never touches
+             it, so an existing pin has to be released instead or the row
+             still saves as Pinned. When nothing is pinned the reset is
+             already the whole story. */
+          if (this.getState().placements[operation.id]) {
+            this.releasePlacement(operation.id);
+          } else {
+            this.resetPlacement(operation.id);
+          }
           break;
         case "setTimeAdjustmentOptIn":
           this.setTimeAdjustmentOptIn(operation.id, operation.allow);
