@@ -13,7 +13,6 @@ import { cleanup, fireEvent } from "@testing-library/preact";
 afterEach(cleanup);
 
 import { CapacityCard } from "./CapacityCard";
-import { Queue } from "./Queue";
 import { makeHarness } from "./test-harness";
 import { localSelected } from "../store/allocatorView";
 import { formatBlockAmount } from "../model/time";
@@ -68,25 +67,6 @@ describe("U9 capacity headline card", () => {
     expect(container.querySelector(".cap-card__bar")).toBeNull();
     expect(queryByText(/Over by/i)).toBeNull();
     expect(queryByText(/\b0 blk\b/)).toBeNull();
-  });
-
-  it("dragging a task slider moves the tasks segment and headline together", () => {
-    const h = makeHarness("ready");
-    // Queue mounts the card itself now, so the slider drag and the headline
-    // come from the same render (no second card instance).
-    const { getByLabelText, getByText, container } = h.ui(<Queue />);
-    const before = localSelected(h.store.getState());
-    const tasksBefore = container.querySelector(".cap-card__seg--selected") as HTMLElement;
-    const widthBefore = tasksBefore.style.width;
-    fireEvent.input(getByLabelText("Magic Mirror duration in 15-minute steps"), {
-      target: { value: "6" },
-    });
-    const after = localSelected(h.store.getState());
-    expect(after).toBe(before + 3);
-    const tasksAfter = container.querySelector(".cap-card__seg--selected") as HTMLElement;
-    expect(tasksAfter.style.width).not.toBe(widthBefore);
-    const remaining = 31 - (after + 3 + 8 + 1);
-    expect(getByText(`${formatBlockAmount(remaining)} left`)).toBeTruthy();
   });
 
   it("legend names every segment and Details exposes every old-ledger number", () => {

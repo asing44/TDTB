@@ -14,7 +14,7 @@
    store, not pixels. */
 
 import { afterEach, describe, expect, it } from "vitest";
-import { cleanup, fireEvent } from "@testing-library/preact";
+import { cleanup } from "@testing-library/preact";
 
 afterEach(cleanup);
 
@@ -22,7 +22,6 @@ import { Queue } from "./Queue";
 import { BlockEditor } from "./BlockEditor";
 import { makeHarness } from "./test-harness";
 import { projectAssigned } from "../adapters/wire";
-import { effectiveBlocks } from "../store/store";
 import { HALF_BLOCK, MAX_BLOCKS, stepDownBlocks, stepUpBlocks } from "../model/allocator";
 
 const ID = "Moccamaster cleanout";
@@ -68,9 +67,11 @@ describe("exact minutes below the block grid", () => {
   });
 
   it("the readout shows 10min, not the rounded 30min", () => {
+    // F4a: the slider's .alloc-track__value left with the slider; the
+    // collapsed row's mono duration readout carries the same exact value.
     const h = stagedWithLiveRow();
     const { container } = h.ui(<Queue />);
-    const readout = rowOf(container).querySelector(".alloc-track__value")?.textContent ?? "";
+    const readout = rowOf(container).querySelector(".trow__dur")?.textContent ?? "";
     expect(readout).toMatch(/^10min/);
     expect(readout).not.toContain("30min");
   });
@@ -81,34 +82,6 @@ describe("exact minutes below the block grid", () => {
     const { container } = h.ui(<BlockEditor />);
     const input = container.querySelector("#editor-minutes") as HTMLInputElement | null;
     expect(input?.value).toBe("10");
-  });
-
-  it("← on a 10-minute row steps to 5 minutes, never to All day", () => {
-    const h = stagedWithLiveRow();
-    h.controller.setOverride(ID, true, TEN);
-    const { container } = h.ui(<Queue />);
-    // Planning 2a (2026-10-14): the − stepper is gone; the row's ← key walks
-    // the same stepDownBlocks grid it used.
-    fireEvent.keyDown(rowOf(container), { key: "ArrowLeft" });
-    const s = h.store.getState();
-    expect(effectiveBlocks(s, ID)).toBeCloseTo(FIVE, 6);
-    expect(effectiveBlocks(s, ID)).toBeGreaterThan(0);
-  });
-
-  it("← on a 15-minute row still walks to All day (the designed bottom notch)", () => {
-    const h = stagedWithLiveRow();
-    h.controller.setOverride(ID, true, HALF_BLOCK);
-    const { container } = h.ui(<Queue />);
-    fireEvent.keyDown(rowOf(container), { key: "ArrowLeft" });
-    expect(effectiveBlocks(h.store.getState(), ID)).toBe(0);
-    // The readout names the state the stepper's "all day" label used to
-    // (the * marks today's session override).
-    expect(
-      rowOf(container).querySelector<HTMLElement>(".alloc-track__value")!.textContent,
-    ).toBe("All day*");
-    expect(
-      rowOf(container).querySelector<HTMLInputElement>(".alloc-track__input")!.disabled,
-    ).toBe(true);
   });
 });
 

@@ -35,87 +35,22 @@
 
 import { useEffect, useRef, useState } from "preact/hooks";
 import { useApp, useAppState } from "./context";
-import {
-  effectiveBlocks,
-  queueState,
-  type AppState,
-} from "../store/store";
+import { effectiveBlocks, queueState, type AppState } from "../store/store";
 import type { QueueState } from "../model/types";
-import {
-  budgetTotal,
-  type HierarchyRow,
-} from "../model/allocatorView";
+import type { HierarchyRow } from "../model/allocatorView";
 import { taskTableSections } from "../store/allocatorView";
-import { blocksLabel, display12h, formatBlockAmount } from "../model/time";
-import {
-  HALF_BLOCK,
-  MAX_BLOCKS,
-  MIN_BLOCKS,
-  clampDisplayBlocks,
-  clampHalfBlocks,
-  stepDownBlocks,
-  stepUpBlocks,
-} from "../model/allocator";
-import { trackFor, trackGradient } from "../model/bands";
-import { DIRECT_VERBS, MORE_VERBS, type StagingVerbSpec } from "../model/staging";
-import { sourceContext } from "../model/sourceContext";
-import { mintOverlapNotes, overlapNotes } from "../model/findings";
+import { formatBlockAmount } from "../model/time";
+import { MORE_VERBS, type StagingVerbSpec } from "../model/staging";
 import { isCanonicalCapacitiesIdentity } from "../adapters/wire";
-import { dueLabel, normalizeUrgency } from "../model/urgency";
 import type { AssignedItem, TodayOverride } from "../model/types";
 import { AlreadyPlaced } from "./AlreadyPlaced";
 import { CapacityCard } from "./CapacityCard";
 import { Tooltip } from "./Tooltip";
 import { RowIcon } from "./RowIcon";
+import { SkippedToday } from "./SkippedToday";
+import { TaskRow, rowId } from "./TaskRow";
 
-/** U11 labeling pass → Planning 2a: the row's provenance as the mockup's small
-    source swatch plus its human source name ("Todoist", "Capacities"). An
-    unrecognized source reads as a neutral OTHER. The colour tints live in
-    app.css; the key selects the swatch hue. */
-export function sourceChip(item: AssignedItem): { key: string; label: string } {
-  const source = String(item.source);
-  if (source === "todoist") return { key: "todoist", label: "Todoist" };
-  if (source === "capacities") return { key: "capacities", label: "Capacities" };
-  if (source === "calendar") return { key: "calendar", label: "Calendar" };
-  return { key: "other", label: "Other" };
-}
-
-/** The row's KIND as a human label. Capacities rows resolve their structure id
-    through the app's machine-local structure-titles cache; a structure the
-    cache has not titled reads "Capacities item" rather than a raw UUID.
-    Todoist rows carry no kind chip — the TODOIST source chip already says it. */
-export function kindLabel(
-  item: AssignedItem,
-  titles: Record<string, string> | null | undefined,
-): string | null {
-  if (item.source === "todoist") return null;
-  if (item.source === "capacities") {
-    const id = (
-      item.capacitiesStructureId ??
-      item.types.find((t) => t && t !== "todoist") ??
-      ""
-    ).trim();
-    const title = id ? (titles?.[id] ?? "").trim() : "";
-    return title.length > 0 ? title : "Capacities item";
-  }
-  return null;
-}
-
-/** Duration provenance, spoken. It is the title/aria-label on the visible
-    chip; the chip's own wording comes from durLabelText. */
-function srcTagLabel(tag: "memory" | "remembered" | "source"): string {
-  if (tag === "memory") return "Duration: memory (today's session override)";
-  if (tag === "remembered") return "Duration: remembered (durable memory)";
-  return "Duration: source (source-resolved)";
-}
-
-/** Visible chip wording — plain, not the internal tag. Source-resolved rows
-    are the default and render no chip at all. */
-function durLabelText(tag: "memory" | "remembered" | "source"): string | null {
-  if (tag === "memory") return "today only";
-  if (tag === "remembered") return "saved";
-  return null;
-}
+export { sourceChip, kindLabel } from "./TaskRow";
 
 /** More-menu armed-confirm sentinel for "Always exclude". It has no staging
     verb id: the commit runs through the controller's persistent-exclusion
@@ -259,79 +194,6 @@ function mintOverlapEntry(
     disabled: reason != null,
     reason,
   };
-}
-
-/** Stable id for aria-controls/aria-labelledby pairs — item ids are human
-    names with spaces and punctuation, and ids must not contain them. */
-function rowId(item: AssignedItem, suffix: string): string {
-  return `${suffix}-${item.id.replace(/[^A-Za-z0-9_-]+/g, "-")}`;
-}
-
-/** Drop timestamps arrive as ISO ("2026-08-13T08:00:00Z"); render as a
-    compact 12-hour time like every other wall-clock readout (user
-    preference; FEEDBACK-09/11 24h presentation superseded). */
-function droppedTimeLabel(iso: string | null): string {
-  if (!iso) return "—";
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "—";
-  const hhmm = `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
-  return display12h(hhmm);
-}
-
-/** Hover/focus descriptions for the row buttons, so each one explains itself. */
-const VERB_HINT: Record<string, string> = {
-  done: "Completes it in the source (Todoist or Capacities). Shortcut C.",
-  drop_from_plan:
-    "Hands it back for today and records that on the server, so a reload or another device keeps it. Undo from Out today. Source unchanged.",
-};
-
-/** IMP-07: one direct verb as a row button. Planning 2a composes the row's
-    action cluster from individual verbs (Complete, Exclude today, Exact
-    duration, Leave as-is, More) instead of two labelled groups, so each verb
-    owns its button. Directness, the frozen verb mapping, and every aria name
-    are unchanged. */
-function VerbButton({
-  spec,
-  item,
-  busy,
-  armed,
-  onArm,
-}: {
-  spec: StagingVerbSpec;
-  item: AssignedItem;
-  busy: boolean;
-  armed: boolean;
-  onArm: (verb: string | null) => void;
-}) {
-  const { controller } = useApp();
-  return (
-    <Tooltip
-      label={spec.label}
-      detail={VERB_HINT[spec.verb]}
-      anchorClass={`qrow__tip qrow__tip--${spec.verb}`}
-    >
-      <button
-        class={`alloc-verb alloc-verb--${spec.verb}${armed ? " alloc-verb--armed" : ""}`}
-        disabled={busy}
-        aria-label={
-          armed
-            ? `Confirm ${spec.aria.toLowerCase()}: ${item.name}`
-            : `${spec.aria}: ${item.name}`
-        }
-        onClick={() => {
-          if (spec.destructive && !armed) {
-            onArm(spec.verb);
-            return;
-          }
-          onArm(null);
-          void controller.stagingAction(spec.verb, item.id);
-        }}
-        onBlur={() => armed && onArm(null)}
-      >
-        {armed ? "Sure?" : <RowIcon name={spec.verb === "done" ? "check" : "undo"} />}
-      </button>
-    </Tooltip>
-  );
 }
 
 /** IMP-07: per-row More disclosure exposing the frozen staging verbs
@@ -685,50 +547,37 @@ function MoreMenu({
   );
 }
 
-/** U11: urgency tier → the mockup's priority chip (p1 highest). */
-const PRIORITY_LABEL: Record<string, string> = {
-  crit: "p1",
-  high: "p2",
-  med: "p3",
-  low: "p4",
-};
-
-/** U11 hint row: the shortcuts that actually work on the focused row. */
 function ShortcutHint() {
   return (
     <div class="queue__hint" role="note" aria-label="Task table keyboard shortcuts">
       <span class="queue__hint-keys">
-        Row shortcuts · <kbd>C</kbd> complete · <kbd>E</kbd> exclude ·{" "}
-        <kbd>D</kbd> exact duration · <kbd>←→</kbd> ±15min · <kbd>↑↓</kbd> move
+        Row shortcuts · <kbd>C</kbd> complete · <kbd>E</kbd> skip today ·{" "}
+        <kbd>↑↓</kbd> move
       </span>
       <span class="queue__hint-note">
-        Exclude hides it in this browser; Leave as-is records it on the server.
-        Both are today only, can be undone, and leave the source untouched.
-        Complete updates the source.
+        Skip today records it on the server for today only; restore it from
+        Skipped today. The source is untouched. Complete updates the source.
       </span>
     </div>
   );
 }
 
-/** Keys-card navigation (3a spec), re-keyed for U11: ↑/↓ move between rows,
-    ←/→ shape the focused row's duration by ±15min, E toggles today-only
-    exclusion, D opens the exact-duration editor, C marks complete. Skips when
-    the event originates in a control that owns the key (the range input
-    already handles arrows; buttons own Enter). */
+/** Keys-card navigation: ↑/↓ move between rows, E skips the focused row for
+    today, C marks it complete. Skips when the event originates in a control
+    that owns the key (buttons own Enter). The old ←/→ duration trim and D
+    exact-duration keys left with the slider and the Exact duration button;
+    duration shaping returns with the expanded row panel. */
 function rowKeydown(
   e: KeyboardEvent,
   item: AssignedItem,
-  s: AppState,
   controller: {
-    setOverride: (id: string, inc: boolean, b: number | null) => void;
+    skipToday: (id: string) => Promise<unknown>;
     stagingAction: (v: string, id: string) => Promise<unknown>;
   },
-  store: { dispatch: (a: { type: "UI"; patch: { editorItem: string; editorIntent: "duration" } }) => void },
 ) {
   const target = e.target as HTMLElement;
   const inControl = target.tagName === "INPUT" || target.tagName === "BUTTON";
   const row = (target.closest(".qrow") ?? target) as HTMLElement;
-  const included = s.overrides[item.id]?.included ?? true;
   const key = e.key.length === 1 ? e.key.toLowerCase() : e.key;
 
   if ((key === "ArrowDown" || key === "ArrowUp") && !inControl) {
@@ -739,17 +588,8 @@ function rowKeydown(
     const next = rows[key === "ArrowDown" ? i + 1 : i - 1];
     if (next) next.focus();
     e.preventDefault();
-  } else if ((key === "ArrowLeft" || key === "ArrowRight") && !inControl) {
-    if (!included) return;
-    const current = effectiveBlocks(s, item.id);
-    const next = key === "ArrowRight" ? stepUpBlocks(current) : stepDownBlocks(current);
-    controller.setOverride(item.id, included, next);
-    e.preventDefault();
   } else if (key === "e" && !inControl) {
-    controller.setOverride(item.id, !included, s.overrides[item.id]?.blocks ?? null);
-    e.preventDefault();
-  } else if (key === "d" && !inControl) {
-    store.dispatch({ type: "UI", patch: { editorItem: item.id, editorIntent: "duration" } });
+    void controller.skipToday(item.id);
     e.preventDefault();
   } else if (key === "c" && !inControl) {
     void controller.stagingAction("done", item.id);
@@ -760,349 +600,27 @@ function rowKeydown(
 function Row({
   item,
   s,
-  cumBefore,
   hierarchy,
   structureTitles,
 }: {
   item: AssignedItem;
   s: AppState;
-  cumBefore: number;
   hierarchy?: HierarchyRow;
   structureTitles?: Record<string, string>;
 }) {
-  const { controller, store } = useApp();
+  const { controller } = useApp();
   const state = queueState(s, item.id);
-  const chip = sourceChip(item);
-  const kind = kindLabel(item, structureTitles);
-  const urgency = normalizeUrgency(item);
-  const due = dueLabel(item.deadline, s.inputs?.validDate ?? "");
-  // Display clamp only: a stored override above the slider's range (e.g. 12
-  // blocks saved before MAX_BLOCKS dropped to 10) must not show a readout the
-  // thumb cannot reach. The override in state is left untouched.
-  const blocks = clampDisplayBlocks(effectiveBlocks(s, item.id));
-  const included = s.overrides[item.id]?.included ?? true;
-  const overridden = s.overrides[item.id]?.blocks != null;
-  // Duration-memory MVP: three distinct provenance states — "memory" (a
-  // same-day session override holds the value), "remembered" (a durable
-  // server-side memory entry), "source" (deterministic source resolution).
-  const srcTag: "memory" | "remembered" | "source" = overridden
-    ? "memory"
-    : item.durationSource === "remembered"
-      ? "remembered"
-      : "source";
-  const durLabel = durLabelText(srcTag);
-  // Planning 2a cleanup (2026-10-14): the "saved" chip no longer paints
-  // inside the readout. Its words stay for assistive tech (the sr-only
-  // `.qrow__dur-label` live region in the column); a sighted user gets a tiny
-  // green ✓ for ~1.5s, absolutely positioned so the readout cannot reflow.
-  const [savedTick, setSavedTick] = useState(false);
-  useEffect(() => {
-    if (srcTag !== "remembered") {
-      setSavedTick(false);
-      return;
-    }
-    setSavedTick(true);
-    const t = window.setTimeout(() => setSavedTick(false), 1500);
-    return () => window.clearTimeout(t);
-  }, [srcTag]);
-
-  const scheduledRow = s.sequence?.find((r) => r.id === item.id && r.kind === "work");
-  // 04-overlap-note (2026-10-16): explicit overlap grants, scoped by
-  // model/findings' exact-grant discipline (both rows on the plan, intervals
-  // byte-equal, current planning-config fingerprint, real time overlap), so a
-  // row that merely abuts or collides in time — or an anchor — never gets a
-  // note. #18 (2026-10-16) adds a SECOND source: an operator "May overlap
-  // Mint" grant on this row renders the same note for a real Mint-session
-  // overlap. The partner's display name resolves from the assigned list,
-  // falling back to the raw row id — a Mint row is not an assigned item, so it
-  // reads as its own name.
-  const grantFingerprint =
-    s.planningConfigFingerprint ?? s.inputs?.planningConfigFingerprint ?? null;
-  const assignedNames = new Map((s.inputs?.assigned ?? []).map((a) => [a.id, a.name]));
-  const rowOverlaps = [
-    ...overlapNotes(s.sequence, s.overlapGrants, grantFingerprint),
-    ...mintOverlapNotes(s.sequence, s.mintOverlapOptIns),
-  ].filter((n) => n.rowId === item.id);
-  const track = trackFor(cumBefore, blocks, budgetTotal(s), MAX_BLOCKS);
-  // Row meta detail: everything the mockup folds off the visible line (the
-  // estimate, provenance context, scheduled time, fixed/recurring note). It
-  // rides the meta line's title and an sr-only span, never the paint.
-  const metaDetail = [
-    srcTag === "source" ? `est ${blocksLabel(blocks)}` : "",
-    sourceContext(item),
-    scheduledRow ? display12h(scheduledRow.start) : "",
-    item.isRecurring && item.scheduledStart
-      ? `fixed · recurring · ${display12h(item.scheduledStart)}`
-      : "",
-  ]
-    .filter(Boolean)
-    .join(" · ");
-  // Planning 2a action row: Complete, Exclude today, Exact duration, Leave
-  // as-is, More — one flat icon cluster in that order. The armed state for a
-  // destructive verb stays on the row.
-  const [confirming, setConfirming] = useState<string | null>(null);
-  const doneSpec = DIRECT_VERBS.find((spec) => spec.verb === "done")!;
-  const leaveSpec = DIRECT_VERBS.find((spec) => spec.verb === "drop_from_plan")!;
-
   return (
-    <div
-      class={`qrow ${state === "excluded" ? "qrow--excluded" : ""} ${state === "background" ? "qrow--background" : ""} ${hierarchy?.depth ? "qrow--nested" : ""} ${hierarchy?.groupKey ? "qrow--grouped" : ""}`}
-      data-hierarchy-depth={hierarchy?.depth ?? 0}
-      data-group-key={hierarchy?.groupKey ?? undefined}
-      tabIndex={0}
-      onKeyDown={(e) => rowKeydown(e as unknown as KeyboardEvent, item, s, controller, store)}
-    >
-      {/* Planning 2a status control: a toggle button reading Assigned /
-          Unassigned in its own leading column. It flips the SAME today-only
-          inclusion the eye control flips — the checkbox and its pill label are
-          gone, the action and the keyboard shortcut (E) are unchanged. */}
-      <button
-        type="button"
-        class={`qrow__assign ${included ? "qrow__assign--on" : "qrow__assign--off"}`}
-        aria-pressed={included}
-        aria-label={`${included ? "Unassign" : "Assign"} ${item.name} for today`}
-        title={
-          included
-            ? "Assigned today — activate to exclude it from today's plan"
-            : "Unassigned today — activate to put it back in today's plan"
-        }
-        onClick={(e) => {
-          e.stopPropagation();
-          controller.setOverride(item.id, !included, s.overrides[item.id]?.blocks ?? null);
-        }}
-      >
-        <span class="qrow__assign-text">{included ? "Assigned" : "Unassigned"}</span>
-      </button>
-      <div class="qrow__body">
-        <span class="qrow__nameline">
-          {hierarchy?.depth ? (
-            <span class="qrow__branch" aria-hidden="true">↳</span>
-          ) : null}
-          {hierarchy?.groupLabel ? (
-            <span class="qrow__group" title={hierarchy.groupLabel}>
-              {hierarchy.groupStart ? hierarchy.groupLabel : "same group"}
-            </span>
-          ) : null}
-          <span class="qrow__name" title={item.path ?? item.name}>
-            {item.name}
-          </span>
-        </span>
-        {hierarchy?.depth && hierarchy.parentName ? (
-          <span class="qrow__relationship">child of {hierarchy.parentName}</span>
-        ) : null}
-        {/* 2026-10-06 cockpit feedback item 2: no would-drop flag rides this
-            line any more. Over-allotment is reported as the day's actual
-            selected/budget/overage (queue header, rail, dock); a row leaves
-            the plan only when the operator excludes, completes, or deletes
-            it. */}
-        <span class="qrow__source" title={metaDetail || (item.path ?? undefined)}>
-          {/* Planning 2a meta line: an 8px source swatch, the source name,
-              then the row's human KIND, then plain meta. The raw uppercase
-              type badge is gone — a Capacities structure id resolves through
-              the structure-titles cache to its title, and an untitled one
-              reads "Capacities item", never a UUID. */}
-          <span class={`qrow__swatch qrow__swatch--${chip.key}`} aria-hidden="true" />
-          <span class={`qrow__src qrow__src--${chip.key}`}>{chip.label}</span>
-          {kind && (
-            <span
-              class={`qrow__type qrow__type--${item.source === "capacities" ? "structure" : kind}`}
-            >
-              {kind}
-            </span>
-          )}
-          {/* Planning 2a cleanup (2026-10-14): the visible meta line is just
-              swatch · source · due. The estimate, provenance context, and
-              scheduled/fixed time stay in the DOM as sr-only text (and in
-              this line's title), so the row reads clean while assistive tech
-              and the tests keep reading the same facts. */}
-          <span class="qrow__meta sr-only">
-            {metaDetail}
-          </span>
-          {/* Planning 2a: the due date folds onto the meta line (source
-              swatch + source name + due date); there is no separate due
-              column. A "due tomorrow" reads in the warning colour. */}
-          {due && (
-            <span
-              class={due.tone ? `due due--${due.tone}` : "due"}
-              title={item.deadline ?? undefined}
-            >
-              {due.text}
-            </span>
-          )}
-          {/* A zero-duration row stays exactly where it is and says what it
-              became. Previously it jumped to a trailing All-day section the
-              moment the slider hit bottom. Planning 2a: the marker is sr-only
-              (the duration column already reads "All day") and the same
-              sentence rides the row's title for hover. */}
-          {state === "background" && (
-            <span class="qrow__allday sr-only" title="All day — included, unscheduled, uses no capacity">
-              all day
-            </span>
-          )}
-        </span>
-        {rowOverlaps.map((n) => {
-          const partner = assignedNames.get(n.partnerId) ?? n.partnerId;
-          const text = `Shares time with ${partner}: ${n.reason}`;
-          return (
-            <span
-              key={n.partnerId}
-              class="qrow__overlap"
-              role="note"
-              data-partner={n.partnerId}
-              title={text}
-            >
-              {text}
-            </span>
-          );
-        })}
-      </div>
-      <div class="qrow__priority">
-        {urgency?.tier && (
-          <span
-            class={`qrow__prio qrow__prio--${urgency.tier}`}
-            title="Priority"
-          >
-            {PRIORITY_LABEL[urgency.tier]}
-          </span>
-        )}
-      </div>
-      <div class="qrow__time">
-        {included ? (
-          <>
-            <div class="qrow__time-readout">
-              <span
-                class={`alloc-track__value ${track.pastBudget ? "alloc-track__value--over" : ""}`}
-                aria-live="polite"
-              >
-                {blocksLabel(blocks)}
-                {overridden ? "*" : ""}
-              </span>
-              {durLabel != null && (
-                <span
-                  class={`qrow__dur-label qrow__dur-label--${srcTag}`}
-                  data-src={srcTag}
-                  title={srcTagLabel(srcTag)}
-                  aria-label={srcTagLabel(srcTag)}
-                  role="status"
-                  aria-live="polite"
-                >
-                  {durLabel}
-                </span>
-              )}
-              {savedTick && (
-                <span class="qrow__saved-tick" aria-hidden="true">
-                  ✓
-                </span>
-              )}
-            </div>
-            <div class="qrow__time-line">
-                  <span class="alloc-track" style={{ "--trackbg": trackGradient(track) }}>
-                    <input
-                      type="range"
-                      class="alloc-track__input"
-                      /* Half-block notches, all the way down to All day: 30min →
-                         15min → All day. The row no longer relocates when it hits
-                         zero (see bandedRows), so the bottom of the track is a
-                         place you can safely drag to. Planning 2a: the ±
-                         steppers are gone — the track itself is the pointer
-                         control, the row's ←/→ keys trim by 15 min, and Exact
-                         duration (clock, D) covers precise entry. */
-                      min={MIN_BLOCKS}
-                      max={MAX_BLOCKS}
-                      step={HALF_BLOCK}
-                      value={blocks}
-                      /* An all-day row (0 blocks) has nothing to trim: the
-                         label reads "All day" and the track is inert, as in
-                         the mockup. Exact duration still gives it time. */
-                      disabled={state === "background"}
-                      title={
-                        state === "background"
-                          ? "All day — no capacity; use Exact duration to give it time"
-                          : undefined
-                      }
-                      aria-label={`${item.name} duration in 15-minute steps`}
-                      /* FEEDBACK-10 (A08): the spoken value names WHERE the duration
-                         came from — a session memory override, durable memory, or
-                         the source. */
-                      aria-valuetext={`${blocksLabel(blocks)} (${srcTag})`}
-                      onInput={(e) =>
-                        controller.setOverride(
-                          item.id,
-                          included,
-                          clampHalfBlocks(Number((e.target as HTMLInputElement).value)),
-                          { defer: true },
-                        )
-                      }
-                    />
-                    {track.markPct != null && (
-                      <span class="alloc-track__mark" style={{ left: `${track.markPct}%` }} />
-                    )}
-                  </span>
-            </div>
-          </>
-        ) : (
-          <span class="qrow__excluded-note">excluded today</span>
-        )}
-      </div>
-      <div class="qrow__actions">
-        {/* Planning 2a: five 34px icon buttons — Complete (filled green
-            check), Exclude today, Exact duration, Leave as-is, More. The old
-            two labelled groups and the divider are gone; every aria name,
-            tooltip, and frozen verb mapping is unchanged. */}
-        <VerbButton
-          spec={doneSpec}
-          item={item}
-          busy={s.runtimeBusy}
-          armed={confirming === doneSpec.verb}
-          onArm={setConfirming}
-        />
-        <Tooltip
-          label={included ? "Exclude today" : "Include today"}
-          detail={
-            included
-              ? "Hides it from today's plan in this browser only. Source unchanged. Shortcut E."
-              : "Puts it back in today's plan. Source unchanged. Shortcut E."
-          }
-          anchorClass="qrow__tip qrow__tip--plan"
-        >
-          <button
-            class="planbtn"
-            aria-label={`${included ? "Exclude" : "Include"} ${item.name} today`}
-            onClick={() => controller.setOverride(item.id, !included, s.overrides[item.id]?.blocks ?? null)}
-          >
-            <RowIcon name={included ? "eye-off" : "eye"} />
-          </button>
-        </Tooltip>
-        {/* T7: fine shaping on EVERY included row — the slider's 30-minute
-            notches can't express 15/5-minute shaping. T12e: this editor is
-            duration-only now; placement is its own More-menu action. */}
-        {included && (
-          <Tooltip
-            label="Exact duration"
-            detail="Sets the minutes precisely for today; source unchanged. Shortcut D."
-            anchorClass="qrow__tip qrow__tip--plan"
-          >
-            <button
-              class="planbtn"
-              aria-label={`Exact duration for ${item.name}`}
-              onClick={() =>
-                store.dispatch({
-                  type: "UI",
-                  patch: { editorItem: item.id, editorIntent: "duration" },
-                })
-              }
-            >
-              <RowIcon name="clock" />
-            </button>
-          </Tooltip>
-        )}
-        <VerbButton
-          spec={leaveSpec}
-          item={item}
-          busy={s.runtimeBusy}
-          armed={confirming === leaveSpec.verb}
-          onArm={setConfirming}
-        />
+    <TaskRow
+      item={item}
+      s={s}
+      hierarchy={hierarchy}
+      structureTitles={structureTitles}
+      onKeyDown={(e) => rowKeydown(e, item, controller)}
+      /* Transitional: More stays on the row (Adjust time, Allow move,
+         Unschedule, all-day, Mint overlap, Always exclude, Delete) until the
+         expanded panel and Source menu take those over. */
+      more={
         <MoreMenu
           item={item}
           busy={s.runtimeBusy}
@@ -1115,8 +633,8 @@ function Row({
             (!hasAdjustableNativeTime(item) || s.timeAdjustmentOptIns[item.id] === true)
           }
         />
-      </div>
-    </div>
+      }
+    />
   );
 }
 
@@ -1167,8 +685,7 @@ export function Queue() {
   const s = useAppState();
   const { controller } = useApp();
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({
-    // Planning 2a: the trailing "Out today" lane starts collapsed, so the
-    // plan reads as one scan of what is in today.
+    // The trailing lane for legacy browser-only exclusions starts collapsed.
     out: true,
   });
   // Capacities rows carry a raw structure id; the machine-local
@@ -1231,20 +748,6 @@ export function Queue() {
   // KTD12: section membership is a view projection over the band/state model.
   const sections = taskTableSections(s);
 
-  // One cumulative-spend walk in the table's own display order (Critical →
-  // Fixed → When there's room), so the budget line lands on exactly one row's
-  // track in the order the operator is reading.
-  const cumBefore = new Map<string, number>();
-  let cum = 0;
-  for (const sec of sections) {
-    if (sec.key === "out") continue;
-    for (const entry of sec.rows) {
-      if (!(s.overrides[entry.item.id]?.included ?? true)) continue;
-      cumBefore.set(entry.item.id, cum);
-      cum += effectiveBlocks(s, entry.item.id);
-    }
-  }
-
   const hierarchyById = new Map(
     sections.flatMap((sec) => sec.rows).map((entry) => [entry.item.id, entry]),
   );
@@ -1253,7 +756,6 @@ export function Queue() {
       key={i.id}
       item={i}
       s={s}
-      cumBefore={cumBefore.get(i.id) ?? cum}
       hierarchy={hierarchyById.get(i.id)}
       structureTitles={structureTitles}
     />
@@ -1271,9 +773,10 @@ export function Queue() {
       <div class="plan-grid">
         <div class="plan-grid__groups">
           {sections.map((sec) => {
-            const count = sec.rows.length + sec.dropped.length;
-            // Planning 2a: "Out today" is only rendered when something is
-            // actually out, and it is placed last.
+            // Durable skips render in the Skipped today section below. The
+            // "out" lane now only carries legacy browser-only exclusions
+            // that have not yet converted to a Skip today.
+            const count = sec.rows.length;
             if (sec.key === "out" && count === 0) return null;
             const open = isOpen(sec.key);
             const regionId = `tasktable-${sec.key}`;
@@ -1287,8 +790,12 @@ export function Queue() {
                 data-section={sec.key}
               >
                 <LaneHeader
-                  label={sec.label}
-                  sub={sec.sub}
+                  label={sec.key === "out" ? "Excluded in this browser" : sec.label}
+                  sub={
+                    sec.key === "out"
+                      ? "Legacy exclusion — converts to Skip today once Day Setup is confirmed"
+                      : sec.sub
+                  }
                   count={count}
                   open={open}
                   onToggle={() => toggle(sec.key)}
@@ -1304,24 +811,6 @@ export function Queue() {
                       </span>
                     </div>
                     {sec.rows.map((e) => row(e.item))}
-                    {sec.dropped.map((d) => (
-                      <div key={d.identity} class="qrow qrow--dropped">
-                        <span class="qrow__assign qrow__assign--none" aria-hidden="true" />
-                        <div class="qrow__body">
-                          <span class="qrow__nameline">
-                            <span class="qrow__name">{d.name}</span>
-                          </span>
-                          <span class="qrow__source">
-                            dropped{d.droppedAt ? ` · ${droppedTimeLabel(d.droppedAt)}` : ""}
-                          </span>
-                        </div>
-                        <div class="qrow__time">
-                          <span class="qrow__excluded-note">out today</span>
-                        </div>
-                        <div class="qrow__priority" />
-                        <div class="qrow__actions" />
-                      </div>
-                    ))}
                     {count === 0 && <div class="queue__empty">nothing here</div>}
                   </div>
                 )}
@@ -1333,6 +822,7 @@ export function Queue() {
           <CapacityCard />
         </div>
       </div>
+      <SkippedToday />
       <ShortcutHint />
     </section>
   );

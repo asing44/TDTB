@@ -93,24 +93,6 @@ describe("FEEDBACK-10 collapsed state is unmistakable (A11)", () => {
     expect(btn.getAttribute("aria-label")).toMatch(/expanded/);
     expect(btn.getAttribute("aria-label")).not.toMatch(/hidden/);
   });
-
-  it("the Dropped today header announces collapsed state the same way", () => {
-    const h = makeHarness("sequenced", (sc) => {
-      sc.inputs.droppedToday = [
-        { identity: "p1", name: "Press", droppedAt: "2026-08-13T08:00:00Z" },
-      ];
-    });
-    const { container } = h.ui(<Queue />);
-    const btn = container.querySelector(".band--drop")?.closest("button") as HTMLButtonElement;
-    // Planning 2a: Out today starts collapsed, so its state words lead with it.
-    expect(btn.getAttribute("aria-expanded")).toBe("false");
-    expect(btn.getAttribute("aria-label")).toMatch(/collapsed/);
-    expect(btn.getAttribute("aria-label")).toMatch(/1 row hidden/);
-    expect(btn.textContent).toMatch(/collapsed/i);
-    fireEvent.click(btn);
-    expect(btn.getAttribute("aria-expanded")).toBe("true");
-    expect(btn.getAttribute("aria-label")).toMatch(/expanded/);
-  });
 });
 
 describe("FEEDBACK-10 over-capacity hierarchy (A10)", () => {
@@ -346,50 +328,6 @@ describe("FEEDBACK-10 More-menu items keep their own height (A14)", () => {
 });
 
 describe("FEEDBACK-10 icon actions expose hover/focus tooltips (A12)", () => {
-  it("hover shows the tooltip, mouse leave hides it", () => {
-    const h = makeHarness("ready");
-    const { container } = h.ui(<Queue />);
-    const btn = container.querySelector(
-      'button[aria-label="Exclude Press today"]',
-    ) as HTMLElement;
-    expect(container.querySelector('[role="tooltip"]')).toBeNull();
-    fireEvent.mouseEnter(btn);
-    expect(container.querySelector('[role="tooltip"]')?.textContent).toContain(
-      "Exclude today",
-    );
-    // The bubble also says what the button does.
-    expect(container.querySelector('[role="tooltip"]')?.textContent).toContain(
-      "Source unchanged",
-    );
-    fireEvent.mouseLeave(btn);
-    expect(container.querySelector('[role="tooltip"]')).toBeNull();
-  });
-
-  it("keyboard focus shows the tooltip — no title-only dependence", () => {
-    const h = makeHarness("ready");
-    const { container } = h.ui(<Queue />);
-    const btn = container.querySelector(
-      'button[aria-label="Exclude Press today"]',
-    ) as HTMLElement;
-    fireEvent.focus(btn);
-    expect(container.querySelector('[role="tooltip"]')?.textContent).toContain(
-      "Exclude today",
-    );
-    fireEvent.blur(btn);
-    expect(container.querySelector('[role="tooltip"]')).toBeNull();
-  });
-
-  it("the exact-duration icon exposes its label on focus too", () => {
-    const h = makeHarness("ready");
-    const { container } = h.ui(<Queue />);
-    const btn = container.querySelector(
-      'button[aria-label="Exact duration for Magic Mirror"]',
-    ) as HTMLElement;
-    fireEvent.focus(btn);
-    expect(container.querySelector('[role="tooltip"]')?.textContent).toContain(
-      "Exact duration",
-    );
-  });
 
   it("the More tooltip is suppressed while its menu is open", () => {
     const h = makeHarness("ready");
@@ -402,42 +340,6 @@ describe("FEEDBACK-10 icon actions expose hover/focus tooltips (A12)", () => {
     expect(container.querySelector('[role="tooltip"]')).toBeNull();
     fireEvent.click(trigger);
     expect(container.querySelector('[role="tooltip"]')?.textContent).toContain("More");
-  });
-});
-
-describe("FEEDBACK-10 remembered duration is visible (A08)", () => {
-  it("a default row carries no visible duration label", () => {
-    const h = makeHarness("ready");
-    const { container } = h.ui(<Queue />);
-    const slider = container.querySelector(
-      'input[aria-label="Note Processing duration in 15-minute steps"]',
-    ) as HTMLInputElement;
-    expect(slider.getAttribute("aria-valuetext")).toMatch(/\(source\)$/);
-    expect(
-      slider.closest(".qrow")!.querySelector(".qrow__dur-label"),
-    ).toBeNull();
-    expect(slider.closest(".qrow")!.querySelector(".qrow__dur-src")).toBeNull();
-  });
-
-  it("an overridden row is labelled 'today only'", () => {
-    const h = makeHarness("ready");
-    const { container } = h.ui(<Queue />);
-    const slider = container.querySelector(
-      'input[aria-label="Note Processing duration in 15-minute steps"]',
-    ) as HTMLInputElement;
-    fireEvent.input(slider, { target: { value: "2" } });
-    const refreshed = container.querySelector(
-      'input[aria-label="Note Processing duration in 15-minute steps"]',
-    ) as HTMLInputElement;
-    expect(refreshed.getAttribute("aria-valuetext")).toMatch(/\(memory\)$/);
-    const label = refreshed
-      .closest(".qrow")!
-      .querySelector(".qrow__dur-label") as HTMLElement;
-    expect(label.textContent).toBe("today only");
-    expect(label.getAttribute("data-src")).toBe("memory");
-    expect(label.className).toContain("qrow__dur-label--memory");
-    expect(label.getAttribute("aria-label")).toMatch(/memory/);
-    expect(refreshed.closest(".qrow")!.querySelector(".qrow__dur-src")).toBeNull();
   });
 });
 
@@ -541,32 +443,34 @@ describe("FEEDBACK-12 queue scheduled rows render 12-hour", () => {
     const loots = rows.find((el) => el.textContent?.includes("LOOTS"));
     expect(loots?.textContent).toMatch(/· fixed · recurring · 12:30 PM/);
   });
-
-  it("a dropped row's label reads as a 12-hour time", () => {
-    const h = makeHarness("sequenced", (sc) => {
-      sc.inputs.droppedToday = [
-        { identity: "p1", name: "Press", droppedAt: "2026-08-13T08:00:00Z" },
-      ];
-    });
-    const { container } = h.ui(<Queue />);
-    // U11: the dropped ledger row renders inside the "Out today" lane as
-    // .qrow--dropped, with its 12-hour drop time on the source line. Planning
-    // 2a collapsed that lane by default, so expand it first.
-    fireEvent.click(container.querySelector(".band--drop") as HTMLButtonElement);
-    const dropped = container.querySelector(".qrow--dropped");
-    expect(dropped?.textContent).toMatch(/dropped · \d{1,2}(:\d{2})? (AM|PM)/);
-  });
 });
 
 describe("row action buttons describe themselves on hover", () => {
   it.each([
-    ['button[aria-label^="Mark complete in source"]', "Completes it in the source"],
-    ['button[aria-label^="Leave as-is today"]', "records that on the server"],
     ['button[aria-label^="More actions for"]', "Remove from planning"],
   ])("%s", (selector, text) => {
     const { container } = makeHarness("ready").ui(<Queue />);
     const btn = container.querySelector(selector) as HTMLElement;
     fireEvent.mouseEnter(btn);
     expect(container.querySelector('[role="tooltip"]')?.textContent).toContain(text);
+  });
+
+  it("the collapsed row's own buttons carry their words in plain text", () => {
+    // F4a: Mark complete and Leave as-is were icon faces whose words lived in
+    // a hover bubble. The collapsed row's Complete / Skip today controls are
+    // labelled buttons, so the words never depend on a hover, and the room
+    // self-describes its scope without a tooltip.
+    const { container } = makeHarness("ready").ui(<Queue />);
+    const press = Array.from(container.querySelectorAll<HTMLElement>(".qrow")).find(
+      (r) => r.querySelector(".qrow__name")?.textContent === "Press",
+    );
+    const complete = press?.querySelector(".trow__btn--primary") as HTMLElement;
+    expect(complete.textContent).toContain("Complete");
+    expect(complete.getAttribute("title")).toBeNull();
+    const skip = Array.from(press!.querySelectorAll(".trow__btn")).find((b) =>
+      (b.textContent ?? "").startsWith("Skip today"),
+    ) as HTMLElement;
+    expect(skip).toBeTruthy();
+    expect(skip.textContent).toContain("Skip today");
   });
 });

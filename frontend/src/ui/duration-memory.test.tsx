@@ -10,7 +10,6 @@ import { createStore } from "../store/createStore";
 import { Controller } from "../store/controller";
 import { FixtureAdapter } from "../adapters/fixture";
 import { makeScenario } from "../fixtures/scenarios";
-import { Queue } from "./Queue";
 import { BlockEditor } from "./BlockEditor";
 
 afterEach(cleanup);
@@ -34,49 +33,6 @@ function openEditor(h: ReturnType<typeof memoryHarness>) {
     patch: { editorItem: PRESS, editorIntent: "duration" },
   });
 }
-
-describe("duration-memory MVP: the label distinguishes remembered and source", () => {
-  it("a durable-remembered row renders 'saved', not 'source'", () => {
-    const sc = makeScenario("ready");
-    sc.inputs.assigned = sc.inputs.assigned.map((r) =>
-      r.id === PRESS ? { ...r, durationSource: "remembered" } : r,
-    );
-    const store = createStore();
-    store.dispatch({ type: "INPUTS_LOADED", inputs: sc.inputs, ledger: { ...sc.ledger } });
-    const adapter = new FixtureAdapter("ready");
-    const controller = new Controller(adapter, store.dispatch, store.getState);
-    const { container } = render(
-      <Ctx.Provider value={{ store, controller }}>
-        <Queue />
-      </Ctx.Provider>,
-    );
-    const slider = container.querySelector(
-      'input[aria-label="Press duration in 15-minute steps"]',
-    ) as HTMLInputElement;
-    expect(slider.getAttribute("aria-valuetext")).toMatch(/\(remembered\)$/);
-    const label = slider
-      .closest(".qrow")!
-      .querySelector(".qrow__dur-label") as HTMLElement;
-    expect(label.textContent).toBe("saved");
-    expect(label.getAttribute("data-src")).toBe("remembered");
-    expect(label.className).toContain("qrow__dur-label--remembered");
-    expect(label.getAttribute("aria-label")).toMatch(/remembered/);
-    // The dot element is gone; the chip spells the durable state out.
-    expect(slider.closest(".qrow")!.querySelector(".qrow__dur-src")).toBeNull();
-  });
-
-  it("a plain source-resolved row renders no visible label", () => {
-    const h = memoryHarness();
-    const { container } = h.ui(<Queue />);
-    const slider = container.querySelector(
-      'input[aria-label="Press duration in 15-minute steps"]',
-    ) as HTMLInputElement;
-    expect(slider.getAttribute("aria-valuetext")).toMatch(/\(source\)$/);
-    expect(
-      slider.closest(".qrow")!.querySelector(".qrow__dur-label"),
-    ).toBeNull();
-  });
-});
 
 describe("duration-memory MVP: explicit save in the exact editor", () => {
   it("an off-grid typed value is blocked with an alert and NO adapter call", async () => {

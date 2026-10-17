@@ -11100,3 +11100,149 @@ button.strip-cal {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* Task-actions F4a — collapsed task row and Skipped today section, from the
+   approved prototype (design/task-actions r2). Additive: `.qrow.trow` outranks
+   the older five-column `.qrow` frames at every width. Colours come from the
+   product tokens; the two derived inks follow the prototype ("owner to
+   confirm"). */
+.queue__band .qrow.trow,
+.qrow.trow {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  grid-template-rows: auto;
+  grid-template-areas: none;
+  gap: 4px 10px;
+  align-items: center;
+  padding: 8px 10px;
+}
+.qrow.trow--skipped {
+  grid-template-columns: minmax(0, 1fr) auto auto;
+}
+.qrow.trow > * {
+  grid-column: auto;
+  grid-row: auto;
+}
+.trow__check {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--t-accent-strong, #0f6e56);
+}
+.trow__dur {
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 12px;
+  white-space: nowrap;
+}
+.trow__state {
+  color: var(--t-muted);
+  font-size: 12px;
+}
+.trow__state--staged {
+  padding: 1px 6px;
+  border: 1px solid color-mix(in srgb, var(--c-minting, #f59e0b) 55%, transparent);
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--c-minting, #f59e0b) 18%, var(--t-surface, #fdfcf9));
+  color: var(--t-text);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.trow__acts {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.trow__btn {
+  min-height: 32px;
+  padding: 5px 10px;
+  border: 1px solid var(--t-border, #d9d7cd);
+  border-radius: var(--radius-sm, 5px);
+  background: var(--t-surface, #fdfcf9);
+  color: var(--t-text);
+  font: inherit;
+  cursor: pointer;
+}
+.trow__btn:hover:not(:disabled) {
+  border-color: var(--t-muted);
+}
+.trow__btn:disabled {
+  cursor: not-allowed;
+  background: var(--t-surface-2, #f1efe8);
+  color: var(--t-muted);
+}
+.trow__btn:focus-visible,
+.trow__check:focus-visible {
+  outline: 2px solid var(--c-selected, #3b82f6);
+  outline-offset: 2px;
+}
+.trow__btn--primary {
+  background: var(--t-accent-strong, #0f6e56);
+  border-color: var(--t-accent-strong, #0f6e56);
+  color: var(--t-on-accent, #fff);
+  font-weight: 600;
+}
+.trow__btn--primary:hover:not(:disabled) {
+  background: var(--t-accent, #1d9e75);
+  border-color: var(--t-accent, #1d9e75);
+}
+.trow__btn--primary:disabled {
+  background: var(--t-surface-2, #f1efe8);
+  border-color: var(--t-border, #d9d7cd);
+  color: var(--t-muted);
+}
+.trow--open {
+  border-color: var(--t-muted);
+}
+.trow__exp {
+  grid-column: 1 / -1 !important;
+  min-height: 0;
+  padding: 8px 12px 10px 26px;
+  border-top: 1px solid var(--t-border, #d9d7cd);
+}
+.trow__exp:empty {
+  display: none;
+}
+.skipped-today {
+  margin-top: 14px;
+}
+.skipped-today__head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin: 0 0 6px;
+  padding-left: 8px;
+  border-left: 3px solid var(--c-selected, #3b82f6);
+}
+.skipped-today__head h2 {
+  margin: 0;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.skipped-today__head span {
+  color: var(--t-muted);
+}
+.skipped-today__list {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+@media (max-width: 640px) {
+  .qrow.trow {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+  }
+  .qrow.trow--skipped {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+  .qrow.trow > .trow__acts {
+    grid-column: 1 / -1 !important;
+    flex-wrap: wrap;
+  }
+  .trow__btn {
+    min-height: 38px;
+  }
+}

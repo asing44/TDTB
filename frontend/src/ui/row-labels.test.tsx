@@ -163,36 +163,6 @@ describe("rendered rows carry the clearer labels", () => {
     expect(container.querySelector(".qrow__dur-src")).toBeNull();
   });
 
-  it("labels non-default rows in plain words beside the value", () => {
-    const h = makeHarness("ready");
-    const inputs = structuredClone(h.store.getState().inputs!);
-    inputs.assigned = inputs.assigned.map((r) =>
-      r.id === "Review AWS module 4" ? { ...r, durationSource: "remembered" } : r,
-    );
-    h.store.dispatch({
-      type: "INPUTS_LOADED",
-      inputs,
-      ledger: { ...h.scenario.ledger },
-    });
-    h.store.dispatch({
-      type: "OVERRIDE_SET",
-      id: "Note Processing",
-      override: { included: true, blocks: 4 },
-    });
-    const { container } = h.ui(<Queue />);
-    const saved = rowNamed(container, "Review AWS module 4").querySelector(
-      ".qrow__dur-label",
-    ) as HTMLElement;
-    expect(saved.textContent).toBe("saved");
-    expect(saved.getAttribute("data-src")).toBe("remembered");
-    expect(saved.getAttribute("aria-label")).toMatch(/Duration:/);
-    const todayOnly = rowNamed(container, "Note Processing").querySelector(
-      ".qrow__dur-label",
-    ) as HTMLElement;
-    expect(todayOnly.textContent).toBe("today only");
-    expect(todayOnly.getAttribute("data-src")).toBe("memory");
-  });
-
   it("carries the fixed-row permission in the More menu, not on the row", () => {
     const h = makeHarness("ready");
     const inputs = structuredClone(h.store.getState().inputs!);

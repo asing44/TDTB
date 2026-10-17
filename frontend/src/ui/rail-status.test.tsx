@@ -15,7 +15,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { cleanup, fireEvent } from "@testing-library/preact";
+import { act, cleanup, fireEvent } from "@testing-library/preact";
 
 afterEach(cleanup);
 
@@ -92,39 +92,35 @@ describe("S4 pinned task-room status", () => {
     expect(status.textContent).not.toMatch(/free calendar|calendar gap|free window/i);
   });
 
-  it("updates immediately when a duration slider moves", () => {
+  it("updates immediately when a row leaves today's selection", () => {
+    /* F4a (2026-10-16): the row's inclusion toggle left the collapsed row —
+       Skip today is the durable verb and it lands in Skipped today (see
+       row-controls.test.tsx). The rail still re-derives its pinned status
+       from the store the moment a row stops counting toward today, so the
+       legacy local exclusion override remains the deterministic probe for
+       that reactivity, without the retired duration slider. */
     const h = makeHarness("ready");
-    const { container, getByLabelText } = h.ui(
+    const { container } = h.ui(
       <>
         <Rail />
         <Queue />
       </>,
     );
     const before = localSelected(h.store.getState());
-    fireEvent.input(getByLabelText("Magic Mirror duration in 15-minute steps"), {
-      target: { value: "6" },
+    // Selection is not budget: checking a row changes nothing in the rail.
+    fireEvent.click(
+      container.querySelector<HTMLButtonElement>(".trow__check")!,
+    );
+    expect(localSelected(h.store.getState())).toBe(before);
+    act(() => {
+      h.store.dispatch({
+        type: "OVERRIDE_SET",
+        id: "Magic Mirror",
+        override: { included: false, blocks: null },
+      });
     });
     const s = h.store.getState();
-    expect(localSelected(s)).toBe(before + 3);
-    const status = railStatus(container);
-    expect(status.textContent).toContain(
-      `${formatBlockAmount(localSelected(s))} selected / ${formatBlockAmount(budgetTotal(s))} task room`,
-    );
-    expect(status.textContent).toContain(
-      `${formatBlockAmount(localSelected(s) - budgetTotal(s))} over — reduce durations or exclude`,
-    );
-  });
-
-  it("updates immediately when inclusion is toggled", () => {
-    const h = makeHarness("ready");
-    const { container, getByRole } = h.ui(
-      <>
-        <Rail />
-        <Queue />
-      </>,
-    );
-    fireEvent.click(getByRole("button", { name: "Exclude Magic Mirror today" }));
-    const s = h.store.getState();
+    expect(localSelected(s)).toBeLessThan(before);
     const status = railStatus(container);
     expect(status.textContent).toContain(
       `${formatBlockAmount(localSelected(s))} selected / ${formatBlockAmount(budgetTotal(s))} task room`,

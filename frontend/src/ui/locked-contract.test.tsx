@@ -34,20 +34,36 @@ describe("locked contract: Today's work language (item 1)", () => {
 });
 
 describe("locked contract: explicit direct actions plus More (item 3)", () => {
-  it("rows show direct Mark complete and Leave as-is; source removal and Delete live behind More", () => {
+  it("rows complete directly; source removal and Delete live behind More", () => {
+    /* F4a (2026-10-16): the row's direct verbs are the labelled controls
+       Complete, Skip today and Expand. The old icon faces (Mark complete in
+       source, Leave as-is) and their hover-only words are gone; source
+       removal (Remove from planning) and the destructive Delete remain
+       reachable only through the row's More menu. */
     const h = makeHarness("ready");
     const r = h.ui(<Queue />);
     // A persistent action column is prohibited.
     expect(r.queryByText("Actions")).toBeNull();
-    // Direct completion with the final intent vocabulary — every
-    // row renders one, so the query is a set (getByRole would throw on
-    // the multi-row surface).
-    expect(r.getAllByRole("button", { name: /^Mark complete in source:/ }).length).toBeGreaterThan(0);
-    expect(r.getAllByRole("button", { name: /^Leave as-is today without changing source:/ }).length).toBeGreaterThan(0);
-    // Old deferral verb is gone; Leave as-is replaces it without an upstream write.
+    // Direct completion on every row, named in plain words.
+    expect(
+      r.getAllByRole("button", { name: "Complete" }).length,
+    ).toBeGreaterThan(0);
+    expect(
+      r.getAllByRole("button", { name: "Skip today" }).length,
+    ).toBeGreaterThan(0);
+    // Old deferral verb is gone; Leave as-is was its replacement and left
+    // with F4a's labelled controls.
     expect(r.queryByRole("button", { name: /^Defer/ })).toBeNull();
-    // Unassign and Delete are reachable only through a More menu.
-    expect(r.getAllByRole("button", { name: /^More/ }).length).toBeGreaterThan(0);
+    expect(r.queryByRole("button", { name: /^Leave as-is/ })).toBeNull();
+    // Nothing destructive is a direct control…
+    expect(
+      r.queryAllByRole("button", { name: /^Remove from planning/ }),
+    ).toHaveLength(0);
+    expect(r.queryAllByRole("button", { name: /^Delete/ })).toHaveLength(0);
+    // …and every row still opens one More menu that owns them.
+    expect(
+      r.getAllByRole("button", { name: /^More actions for / }).length,
+    ).toBeGreaterThan(0);
   });
 });
 

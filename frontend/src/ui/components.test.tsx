@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, fireEvent, act } from "@testing-library/preact";
+import { cleanup, render, fireEvent, act, type RenderResult } from "@testing-library/preact";
 
 // globals:false → testing-library can't self-register its cleanup hook.
 afterEach(() => {
@@ -20,7 +20,6 @@ import { ExecutionView } from "./ExecutionView";
 import { createStore, type Store } from "../store/createStore";
 import { Controller } from "../store/controller";
 import { effectiveAnchoredBlocks } from "../store/store";
-import { MAX_BLOCKS } from "../model/allocator";
 import { FixtureAdapter } from "../adapters/fixture";
 import { makeScenario, fixedInputsOf, type ScenarioName } from "../fixtures/scenarios";
 import { fingerprintFixedInputs } from "../model/fingerprint";
@@ -32,7 +31,7 @@ import type { ComponentChildren } from "preact";
 function makeHarness(scenario: ScenarioName): {
   store: Store;
   controller: Controller;
-  ui: (children: ComponentChildren) => ReturnType<typeof render>;
+  ui: (children: ComponentChildren) => RenderResult & { container: HTMLElement };
 } {
   const sc = makeScenario(scenario);
   const store = createStore();
@@ -66,7 +65,10 @@ function makeHarness(scenario: ScenarioName): {
   }
   const controller = new Controller(new FixtureAdapter(scenario), store.dispatch, store.getState);
   const ui = (children: ComponentChildren) =>
-    render(<Ctx.Provider value={{ store, controller }}>{children}</Ctx.Provider>);
+    // The library types the container as Element; render mounts a real div.
+    render(
+      <Ctx.Provider value={{ store, controller }}>{children}</Ctx.Provider>,
+    ) as RenderResult & { container: HTMLElement };
   return { store, controller, ui };
 }
 
@@ -276,11 +278,15 @@ describe("Queue", () => {
     // Planning 2a: the trailing Out today lane is collapsed by default and
     // omitted entirely when nothing is out.
     expect(container.querySelector(".band--drop")).toBeNull();
-    // All-day rows band with the rest now — there is no trailing "All day"
-    // heading to count, so the badge on the row carries the state.
+    // F4a: all-day rows band with the rest and state the state in the
+    // duration column ("All day"); the old sr-only marker is gone.
     expect(getByText("All day")).toBeTruthy();
-    expect(container.querySelector(".qrow__allday")).toBeTruthy();
-    expect(getByText("Charge GoPro")).toBeTruthy();
+    const charge = Array.from(container.querySelectorAll(".qrow")).find(
+      (r) => r.querySelector(".qrow__name")?.textContent === "Charge GoPro",
+    );
+    expect(charge?.querySelector(".trow__dur")?.textContent).toBe("All day");
+    expect(container.querySelector(".qrow__allday")).toBeNull();
+    expect(getAllByText("Charge GoPro").length).toBeGreaterThan(0);
   });
 
   it("keeps assignment controls upstream while retaining explicit row completion", () => {
@@ -289,11 +295,14 @@ describe("Queue", () => {
     expect(queryByText(/Suggested/i)).toBeNull();
     expect(queryByText(/Add item/i)).toBeNull();
     expect(queryByText(/Deassign/i)).toBeNull();
-    // 2026-10-13 icon pass: the verb face is an icon; the completion control is
-    // asserted through its unchanged accessible name, not visible text.
-    expect(
-      container.querySelector('button[aria-label^="Mark complete in source:"]'),
-    ).toBeTruthy();
+    // F4a: completion is the row's one labelled primary button; the button
+    // carries an explicit name rather than leaning on concatenated children.
+    const complete = Array.from(
+      container.querySelectorAll<HTMLElement>(".trow__btn--primary"),
+    );
+    expect(complete.length).toBeGreaterThan(0);
+    expect(complete[0].getAttribute("aria-label")).toBe("Complete");
+    expect(complete[0].textContent).toBe("Complete");
   });
 
   it("shows parent-child and related-tag context without duplicate rows", () => {
@@ -312,78 +321,45 @@ describe("Queue", () => {
     expect(container.querySelector('[data-hierarchy-depth="1"]')).toBeTruthy();
   });
 
-  it("exclude control moves an item to Excluded today", () => {
+  it("exclude control moves an item out of today", () => {
+    // F4a: browser-only Exclude today left the row for Skip today (durable,
+    // server-recorded). The legacy store path stays intact for rows excluded
+    // before the migration.
     const { ui, store } = makeHarness("ready");
-    const { getByLabelText } = ui(<Queue />);
-    fireEvent.click(getByLabelText("Exclude Press today"));
+    const { container } = ui(<Queue />);
+    // F4a: Skip today is a labelled button on every row.
+    const skips = Array.from(
+      container.querySelectorAll<HTMLElement>(".trow__btn"),
+    ).filter((b) => (b.textContent ?? "").startsWith("Skip today"));
+    expect(skips.length).toBeGreaterThan(0);
+    store.dispatch({
+      type: "OVERRIDE_SET",
+      id: "Press",
+      override: { included: false, blocks: null },
+    });
     expect(store.getState().overrides["Press"]).toEqual({ included: false, blocks: null });
   });
 
-  it("T7 duration slider sets a today-only override, marked with *", () => {
-    const { ui, store } = makeHarness("ready");
-    const { getAllByLabelText, getByText } = ui(<Queue />);
-    const slider = getAllByLabelText(/duration in 15-minute steps$/)[0];
-    fireEvent.input(slider, { target: { value: "4" } });
-    const s = store.getState();
-    const overridden = Object.entries(s.overrides).find(([, o]) => o.blocks != null);
-    expect(overridden).toBeTruthy();
-    expect(getByText(/\*/)).toBeTruthy();
-  });
-
-  /* The T7 slider reaches all day, as it always did. What changed (2026-07-27,
+  /* The T7 slider reached all day, as it always did. What changed (2026-07-27,
      Adam) is the grid and the destination: 30min → 15min → All day, and the row
      STAYS in its urgency band wearing an all-day badge. It used to relocate to
      a trailing All-day section the instant the slider bottomed out, which is
-     what "bumping somewhere out of screen" meant. */
-  it("T7 slider steps 30min → 15min → All day without moving the row", () => {
-    const { ui, store } = makeHarness("ready");
-    const { getByLabelText, container } = ui(<Queue />);
-    const slider = getByLabelText("Note Processing duration in 15-minute steps");
-    const bandOfRow = () =>
-      container
-        .querySelector(".qrow:has(.qrow__name)") &&
-      [...container.querySelectorAll(".queue__band")].findIndex((b) =>
-        [...b.querySelectorAll(".qrow__name")].some((n) => n.textContent === "Note Processing"),
-      );
-    const startBand = bandOfRow();
-    fireEvent.input(slider, { target: { value: "0.5" } });
-    expect(store.getState().overrides["Note Processing"].blocks).toBe(0.5);
-    fireEvent.input(slider, { target: { value: "0" } });
-    expect(store.getState().overrides["Note Processing"].blocks).toBe(0);
-    // Still in the same band, and now saying so.
-    expect(bandOfRow()).toBe(startBand);
-    expect(container.querySelector(".qrow__allday")).toBeTruthy();
-  });
+     what "bumping somewhere out of screen" meant. F4a removed the slider from
+     the collapsed row; these cases move to the expanded panel (F4b). */
 
-  it("T7 the slider walks a row down to all day in 15-minute steps", () => {
-    const { ui, store } = makeHarness("ready");
-    const { getByLabelText, getByText } = ui(<Queue />);
-    const blocks = () => store.getState().overrides["Note Processing"]?.blocks;
-    // 1 block (30min) → 15min → all day. The row's −/+ steppers were removed
-    // (2026-10-12); the slider is the drag-free route to all day now, and it
-    // shares the same half-block grid the row's arrow keys walk.
-    const slider = getByLabelText("Note Processing duration in 15-minute steps");
-    fireEvent.input(slider, { target: { value: "0.5" } });
-    expect(blocks()).toBe(0.5);
-    fireEvent.input(slider, { target: { value: "0" } });
-    expect(blocks()).toBe(0);
-    expect(getByText("All day*")).toBeTruthy();
-  });
-
-  it("T7 slider clamps an out-of-range value to the block grid", () => {
-    const { ui, store } = makeHarness("ready");
-    const { getByLabelText } = ui(<Queue />);
-    const slider = getByLabelText("Note Processing duration in 15-minute steps");
-    fireEvent.input(slider, { target: { value: "999" } });
-    expect(store.getState().overrides["Note Processing"].blocks).toBe(MAX_BLOCKS);
-  });
-
-  it("T7 sub-block shaping stays reachable on every row via the exact editor", () => {
-    // The slider's 30-minute notches can't express 15 minutes; the exact
-    // editor is now offered on every included row, not just recurring ones.
+  it("T7 sub-block shaping stays reachable through the row's own controls", () => {
+    // F4a: the collapsed row offers Complete, Skip today and Expand only. The
+    // 15-minute notches and the exact-minutes entry point come back with the
+    // expanded row panel (F4b), so the collapsed row must not pretend to own
+    // them — and must not silently lose completion either.
     const { ui } = makeHarness("ready");
-    const { getByLabelText } = ui(<Queue />);
-    expect(getByLabelText("Exact duration for Note Processing")).toBeTruthy();
+    const { container } = ui(<Queue />);
+    expect(container.querySelector('[aria-label="Exact duration for Note Processing"]')).toBeNull();
+    const noteRow = Array.from(
+      container.querySelectorAll<HTMLElement>(".qrow"),
+    ).find((r) => r.querySelector(".qrow__name")?.textContent === "Note Processing");
+    const complete = noteRow?.querySelector<HTMLElement>(".trow__btn--primary");
+    expect(complete?.getAttribute("aria-label")).toBe("Complete");
   });
 });
 
@@ -410,19 +386,18 @@ describe("T13 retained exact-placement paths", () => {
     expect(store.getState().placements["Magic Mirror"]).toBe("10:15");
   });
 
-  it("✎ opens the exact editor duration-only — placing never re-asks duration (T12e brief problem 7)", () => {
-    const { ui, store } = makeHarness("ready");
-    const { getByLabelText } = ui(
+  it("✎ duration shaping is no longer offered on the collapsed row (F4b)", () => {
+    // F4a: the Exact duration control left the row with the slider; the
+    // duration-only editor contract returns in the expanded panel. The placed
+    // path above is untouched.
+    const { ui } = makeHarness("ready");
+    const { queryByLabelText } = ui(
       <>
         <Queue />
         <EditorHost />
       </>,
     );
-    fireEvent.click(getByLabelText("Exact duration for Magic Mirror"));
-    expect(store.getState().ui.editorItem).toBe("Magic Mirror");
-    expect(store.getState().ui.editorIntent).toBe("duration");
-    // duration intent: no Start field at all
-    expect(document.querySelector("#editor-start")).toBeNull();
+    expect(queryByLabelText("Exact duration for Magic Mirror")).toBeNull();
   });
 });
 
@@ -1148,27 +1123,23 @@ describe("T25 recurring duration shaping", () => {
     });
   }
 
-  it("recurring rows expose the duration slider and exact-duration editor", () => {
-    const h = makeHarness("ready");
-    withRecurring(h);
-    const { getByLabelText } = h.ui(<Queue />);
-    const slider = getByLabelText("LOOTS duration in 15-minute steps");
-    expect(getByLabelText("Exact duration for LOOTS")).toBeTruthy();
-    fireEvent.input(slider, { target: { value: "1" } });
-    expect(h.store.getState().overrides["LOOTS"].blocks).toBe(1);
-  });
-
-  it("recurring rows expose Exclude — placement-immune must not mean undroppable", () => {
+  it("recurring rows expose Skip today — placement-immune must not mean undroppable", () => {
     /* T12 qualification (2026-07-26): recurring rows rendered no exclude verb
        at all, so LOOTS and M2.5 could only be dropped from the day by marking
        them done (a lie), deferring (moves them), or deleting permanently
        (destructive). There was no "not today". Being pinned to a native time
-       is a placement constraint, not a reason to be undroppable. */
+       is a placement constraint, not a reason to be undroppable. F4a moved the
+       verb from the browser-only Exclude control to the durable Skip today. */
     const h = makeHarness("ready");
     withRecurring(h);
-    const { getByLabelText } = h.ui(<Queue />);
-    fireEvent.click(getByLabelText("Exclude LOOTS today"));
-    expect(h.store.getState().overrides["LOOTS"].included).toBe(false);
+    const { container } = h.ui(<Queue />);
+    const loots = Array.from(
+      container.querySelectorAll<HTMLElement>(".qrow"),
+    ).find((r) => r.querySelector(".qrow__name")?.textContent === "LOOTS");
+    const skip = Array.from(
+      loots?.querySelectorAll<HTMLElement>(".trow__btn") ?? [],
+    ).find((b) => (b.textContent ?? "").startsWith("Skip today"));
+    expect(skip).toBeTruthy();
   });
 
   it("shows a protected-by-default time-movement opt-in per timed row", () => {

@@ -93,7 +93,7 @@ describe("U11 headings: Assigned this morning replaces Today's work", () => {
 });
 
 describe("U11 hint row lists exactly the shortcuts that work", () => {
-  it("renders the row-shortcuts hint with the today-only scope note", () => {
+  it("renders the row-shortcuts hint with the skip-today scope note", () => {
     const h = makeHarness("ready");
     const r = h.ui(<Queue />);
     const hint = r.container.querySelector(".queue__hint");
@@ -102,13 +102,17 @@ describe("U11 hint row lists exactly the shortcuts that work", () => {
     expect(text).toContain("Row shortcuts");
     expect(text).not.toContain("Hover a row");
     expect(text).toContain("C complete");
-    expect(text).toContain("E exclude");
-    expect(text).toContain("D exact duration");
-    expect(text).toContain("±15min");
+    // F4a: Exclude today (browser-only) became Skip today (durable, on the
+    // server). E keeps its meaning as "not today", the storage moved.
+    expect(text).toContain("E skip today");
     expect(text).toContain("move");
-    expect(text).toContain("hides it in this browser");
-    expect(text).toContain("records it on the server");
-    // The retired keys are not advertised.
+    expect(text).toContain("records it on the server for today only");
+    expect(text).toContain("restore it from Skipped today");
+    expect(text).toContain("source is untouched");
+    // The retired controls' keys are not advertised.
+    expect(text).not.toContain("D exact duration");
+    expect(text).not.toContain("±15min");
+    expect(text).not.toContain("hides it in this browser");
     expect(text).not.toMatch(/\bx\b/);
   });
 });
@@ -144,15 +148,31 @@ describe("U11 grouping maps the band/state model (KTD12)", () => {
     expect(lane.querySelectorAll(".qrow").length).toBeGreaterThan(0);
   });
 
-  it("groups excluded and dropped rows under a collapsible Out today", () => {
+  it("groups legacy browser exclusions under a collapsible lane", () => {
+    // F4a: durable skips left this lane for the Skipped today section, so the
+    // trailing lane now carries only browser-only exclusions from before the
+    // migration and says so in its own words.
+    const h = makeHarness("ready");
+    h.store.dispatch({
+      type: "OVERRIDE_SET",
+      id: "Press",
+      override: { included: false, blocks: null },
+    });
+    const { container } = h.ui(<Queue />);
+    const lane = laneFor(container, "Excluded in this browser");
+    expect(lane.querySelector(".band--drop")).toBeTruthy();
+  });
+
+  it("keeps a durable skip out of the lanes — it belongs to Skipped today", () => {
     const h = makeHarness("ready", (sc) => {
       sc.inputs.droppedToday = [
         { identity: "p1", name: "Press", droppedAt: "2026-08-13T08:00:00Z" },
       ];
     });
     const { container } = h.ui(<Queue />);
-    const lane = laneFor(container, "Out today");
-    expect(lane.querySelector(".band--drop")).toBeTruthy();
+    expect(container.querySelector(".band--drop")).toBeNull();
+    const skipped = container.querySelector("#skipped-today") as HTMLElement;
+    expect(skipped.textContent).toContain("Press");
   });
 });
 
@@ -161,61 +181,55 @@ describe("U11 row actions stay visible without a hover", () => {
     const h = makeHarness("ready");
     const { container } = h.ui(<Queue />);
     const row = rowNamed(container, "Press");
-    expect(row.querySelector(".qrow__actions")).toBeTruthy();
+    expect(row.querySelector(".trow__acts")).toBeTruthy();
+    // F4a: three labelled controls in order, plus the transitional More menu.
+    const labels = Array.from(row.querySelectorAll(".trow__acts button")).map(
+      (b) => (b.textContent ?? "").trim(),
+    );
+    expect(labels[0]).toMatch(/^Complete/);
+    expect(labels[1]).toMatch(/^Skip today/);
+    expect(labels[2]).toMatch(/^Expand/);
     // The cluster is always visible: no rule hides it at rest, and the
     // hover/focus reveal layer is gone (removed 2026-10-12).
-    expect(APP_CSS).not.toMatch(/\.qrow__actions\s*\{[^}]*opacity:\s*0/);
-    expect(APP_CSS).not.toMatch(/\.qrow:hover\s+\.qrow__actions/);
-    expect(APP_CSS).not.toMatch(/\.qrow:focus-within\s+\.qrow__actions/);
-    expect(APP_CSS).not.toMatch(/\.qrow--focused\s+\.qrow__actions/);
-    // Each layout band shows the cluster without a hover.
-    expect(APP_CSS).toMatch(
-      /@media\s*\(max-width:\s*1100px\)\s*\{\s*\.qrow__actions\s*\{[^}]*opacity:\s*1/,
-    );
-    expect(APP_CSS).toMatch(
-      /@media\s*\(min-width:\s*1440px\)[\s\S]*?\.qrow__actions\s*\{[^}]*opacity:\s*1/,
-    );
+    expect(APP_CSS).not.toMatch(/\.trow__acts\s*\{[^}]*opacity:\s*0/);
+    expect(APP_CSS).not.toMatch(/\.qrow:hover\s+\.trow__acts/);
+    expect(APP_CSS).not.toMatch(/\.qrow:focus-within\s+\.trow__acts/);
+    expect(APP_CSS).not.toMatch(/\.qrow--focused\s+\.trow__acts/);
   });
 
-  it("reveals actions when the row receives keyboard focus", () => {
+  it("keeps every row control reachable from the focused row", () => {
     const h = makeHarness("ready");
     const { container } = h.ui(<Queue />);
     const row = rowNamed(container, "Press");
     act(() => row.focus());
     expect(document.activeElement).toBe(row);
-    expect(row.querySelector('button[aria-label="Exclude Press today"]')).toBeTruthy();
+    // No control depends on a hover to exist: every one is a real button in
+    // the focused row, and the row's checkbox is the selection control.
+    const buttons = Array.from(row.querySelectorAll(".trow__acts button"));
+    expect(buttons.length).toBeGreaterThanOrEqual(3);
+    for (const btn of buttons) expect(btn.tagName).toBe("BUTTON");
+    expect(row.querySelector(".trow__check")).toBeTruthy();
+  });
+
+  it("wraps the cluster onto its own line at phone width instead of clipping", () => {
+    expect(APP_CSS).toMatch(
+      /@media\s*\(max-width:\s*640px\)[\s\S]*?\.trow__acts\s*\{[^}]*grid-column:\s*1\s*\/\s*-1[^}]*flex-wrap:\s*wrap/,
+    );
   });
 });
 
 describe("U11 keyboard shortcuts act on the focused row", () => {
-  it("E toggles today-only exclusion", () => {
-    const h = makeHarness("ready");
-    const { container } = h.ui(<Queue />);
-    const store = h.store;
-    const row = rowNamed(container, "Press");
-    fireEvent.keyDown(row, { key: "e" });
-    expect(store.getState().overrides["Press"]).toEqual({ included: false, blocks: null });
-  });
-
-  it("D opens the exact-duration editor for the focused row", () => {
-    const h = makeHarness("ready");
-    const { container } = h.ui(<Queue />);
-    const store = h.store;
-    const row = rowNamed(container, "Press");
-    fireEvent.keyDown(row, { key: "d" });
-    expect(store.getState().ui.editorItem).toBe("Press");
-    expect(store.getState().ui.editorIntent).toBe("duration");
-  });
-
-  it("←/→ shape the focused row's duration by ±15min", () => {
+  it("no longer advertises a duration-trim key from the collapsed row", () => {
+    // F4a: ←/→ duration trimming and D exact duration left with the slider and
+    // the Exact duration button. They come back with the expanded row panel.
     const h = makeHarness("ready");
     const { container } = h.ui(<Queue />);
     const store = h.store;
     const row = rowNamed(container, "Press");
     fireEvent.keyDown(row, { key: "ArrowRight" });
-    expect(store.getState().overrides["Press"]?.blocks).toBe(3.5);
-    fireEvent.keyDown(row, { key: "ArrowLeft" });
-    expect(store.getState().overrides["Press"]?.blocks).toBe(3);
+    fireEvent.keyDown(row, { key: "d" });
+    expect(store.getState().overrides["Press"]).toBeUndefined();
+    expect(store.getState().ui.editorItem).toBeNull();
   });
 
   it("↑/↓ move focus between rows", () => {
@@ -238,17 +252,22 @@ describe("U11 keyboard shortcuts act on the focused row", () => {
   });
 });
 
-describe("U11 Out today collapses and restores rows", () => {
-  it("announces its expanded/collapsed state in words", () => {
-    // Planning 2a: Out today starts collapsed and is only rendered when there
-    // is something out, so give it a dropped row to announce.
-    const h = makeHarness("ready", (sc) => {
-      sc.inputs.droppedToday = [
-        { identity: "p1", name: "Press", droppedAt: "2026-08-13T08:00:00Z" },
-      ];
+describe("U11 the legacy exclusion lane collapses and restores rows", () => {
+  function excludedHarness() {
+    const h = makeHarness("ready");
+    h.store.dispatch({
+      type: "OVERRIDE_SET",
+      id: "Press",
+      override: { included: false, blocks: null },
     });
+    return h;
+  }
+
+  it("announces its expanded/collapsed state in words", () => {
+    // The lane starts collapsed and is only rendered when something is out.
+    const h = excludedHarness();
     const { container } = h.ui(<Queue />);
-    const lane = laneFor(container, "Out today");
+    const lane = laneFor(container, "Excluded in this browser");
     const btn = lane.querySelector(".band--drop") as HTMLButtonElement;
     expect(btn.getAttribute("aria-expanded")).toBe("false");
     expect(btn.getAttribute("aria-label")).toMatch(/collapsed/);
@@ -259,26 +278,21 @@ describe("U11 Out today collapses and restores rows", () => {
     expect(btn.textContent).toMatch(/expanded/i);
   });
 
-  it("Include today returns an excluded row to its group", () => {
-    const h = makeHarness("ready");
+  it("puts a re-included row back in its group", () => {
+    const h = excludedHarness();
     const { container } = h.ui(<Queue />);
     const store = h.store;
-    fireEvent.click(
-      container.querySelector('button[aria-label="Exclude Press today"]')!,
-    );
-    expect(store.getState().overrides["Press"]).toEqual({ included: false, blocks: null });
-    // Out today is collapsed by default (Planning 2a); expand it to reach the
-    // reversible control, then include the row back into its band.
-    fireEvent.click(
-      laneFor(container, "Out today").querySelector(".band--drop") as HTMLButtonElement,
-    );
-    const include = container.querySelector(
-      'button[aria-label="Include Press today"]',
-    ) as HTMLButtonElement;
-    expect(include).toBeTruthy();
-    fireEvent.click(include);
-    expect(store.getState().overrides["Press"]).toEqual({ included: true, blocks: null });
+    // F4a: the collapsed row carries no inclusion toggle; re-including is the
+    // store's own path until the expanded panel owns it (F4b).
+    act(() => {
+      store.dispatch({
+        type: "OVERRIDE_SET",
+        id: "Press",
+        override: { included: true, blocks: null },
+      });
+    });
     expect(laneFor(container, "When there's room").textContent).toContain("Press");
+    expect(container.querySelector(".band--drop")).toBeNull();
   });
 });
 

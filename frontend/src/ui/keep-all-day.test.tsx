@@ -158,10 +158,12 @@ describe("Keep all-day: the all-day state change", () => {
     });
     expect(effectiveBlocks(h.store.getState(), "Press")).toBe(0);
 
+    // F4a: the collapsed row has no slider to disable; its duration readout
+    // and short state say all-day instead, and the row keeps its room tint.
     const row = rowFor(container, "Press");
     expect(row.classList.contains("qrow--background")).toBe(true);
-    const slider = row.querySelector<HTMLInputElement>(".alloc-track__input");
-    expect(slider?.disabled).toBe(true);
+    expect(row.querySelector(".trow__dur")?.textContent).toBe("All day");
+    expect(row.querySelector(".trow__state")?.textContent).toBe("All-day");
   });
 
   it("carries blocks 0 into the sequence payload (existing all-day wire)", async () => {

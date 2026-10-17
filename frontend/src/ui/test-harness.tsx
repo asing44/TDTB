@@ -1,7 +1,7 @@
 /* test-harness — shared scenario-staging helper for UI test files (same
    staging sequence components.test.tsx uses inline). Test-only module. */
 
-import { render } from "@testing-library/preact";
+import { render, type RenderResult } from "@testing-library/preact";
 import { Ctx } from "./context";
 import { createStore, type Store } from "../store/createStore";
 import { Controller } from "../store/controller";
@@ -15,12 +15,18 @@ import {
 import { fingerprintFixedInputs } from "../model/fingerprint";
 import type { ComponentChildren } from "preact";
 
+/** `render` mounts into a real div, so tests may treat the container as an
+    HTMLElement. Spelling the query result that way keeps
+    `querySelectorAll<HTMLElement>(...)` typed instead of falling back to
+    `ReturnType<typeof render>`, which widens to `any`. */
+export type HarnessRender = RenderResult & { container: HTMLElement };
+
 export interface Harness {
   store: Store;
   controller: Controller;
   adapter: FixtureAdapter;
   scenario: Scenario;
-  ui: (children: ComponentChildren) => ReturnType<typeof render>;
+  ui: (children: ComponentChildren) => HarnessRender;
 }
 
 /** Stage a scenario; `mutate` edits the scenario before any dispatch (e.g.
@@ -63,6 +69,9 @@ export function makeHarness(
   const adapter = new FixtureAdapter(name);
   const controller = new Controller(adapter, store.dispatch, store.getState);
   const ui = (children: ComponentChildren) =>
-    render(<Ctx.Provider value={{ store, controller }}>{children}</Ctx.Provider>);
+    // The library types the container as Element; render mounts a real div.
+    render(
+      <Ctx.Provider value={{ store, controller }}>{children}</Ctx.Provider>,
+    ) as HarnessRender;
   return { store, controller, adapter, scenario: sc, ui };
 }

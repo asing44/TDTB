@@ -266,25 +266,6 @@ describe("reduced motion", () => {
 // -- allocator table (T7) ----------------------------------------------------
 
 describe("allocator table a11y (T7)", () => {
-  it("every duration slider is a native range with a name and a spoken value", () => {
-    const h = makeHarness("ready");
-    const { container } = h.ui(<Queue />);
-    const sliders = Array.from(
-      container.querySelectorAll('input[type="range"]'),
-    ) as HTMLInputElement[];
-    expect(sliders.length).toBeGreaterThan(0);
-    for (const slider of sliders) {
-      // Native range => arrow/Home/End keyboard operation for free.
-      expect(accessibleName(slider)).not.toBe("");
-      // A raw block count read aloud ("3") is meaningless; aria-valuetext
-      // makes the screen reader say "1hr 30min" instead.
-      expect(slider.getAttribute("aria-valuetext")).toBeTruthy();
-      // Half-block notches (2026-07-27): the track runs 30min → 15min → All
-      // day, matching the ± steppers rather than fighting them.
-      expect(slider.getAttribute("step")).toBe("0.5");
-      expect(slider.getAttribute("min")).toBe("0");
-    }
-  });
 
   it("every staging verb button names its target item", () => {
     const h = makeHarness("ready");
