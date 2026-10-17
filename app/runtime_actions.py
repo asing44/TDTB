@@ -2,8 +2,9 @@
 
 Single-item verbs over today's plan: complete, done, skip_today,
 remove_from_today, duration_edit, move_resize, delete_permanent, delete,
-defer, assign, drop_from_plan, restore_today, unassign. Every action runs through
-a dated, ID-addressed journal with exact before-images, per-step applied
+defer, assign, drop_from_plan, restore_today, unassign, hide_always. Every
+action runs through a dated, ID-addressed journal with exact before-images,
+per-step applied
 markers, reverse compensation on mid-apply failure, and one-step undo.
 
 IMP-05 final source-action semantics (frozen reliability plan, action table):
@@ -29,7 +30,8 @@ precondition: it records a deferral in the rolling ``deferrals`` store and
 best-effort un-schedules whatever derived records exist, so it is legal from
 the staging queue as well as from the committed plan.
 
-Only Todoist, Calendar, Capacities and state-dir steps exist. A target that
+Todoist, Calendar, Capacities, state-dir and settings-store (exclusion)
+steps exist. A target that
 resolves to no such source (e.g. a stale manifest row from a retired source)
 takes the ordinary "no ... source" refusal in ``plan_steps``; a journal entry
 from before the retirement that names a step kind this module no longer knows
@@ -74,7 +76,9 @@ from typing import Any
 
 import app_config
 import calendar_bridge
+import capacities_settings
 import deferrals
+import exclusion_settings
 import runstate
 
 VERBS = (
@@ -91,6 +95,7 @@ VERBS = (
     "drop_from_plan",
     "restore_today",
     "unassign",
+    "hide_always",
 )
 
 # T2: the verbs legal against a staging-phase (pre-commit) target. The rest
@@ -107,7 +112,7 @@ STAGING_VERBS = (
     "complete", "done",
     "delete_permanent", "delete",
     "defer", "assign",
-    "drop_from_plan", "restore_today", "unassign",
+    "drop_from_plan", "restore_today", "unassign", "hide_always",
 )
 
 # `external_sources` gives every Todoist row this synthetic path. It is an
@@ -472,6 +477,45 @@ def plan_steps(verb: str, target: dict, args: dict, valid_date: date) -> list[di
             "identity": identity,
             "date": str(valid_date),
         })
+    elif verb == "hide_always":
+        # B2: the journaled replacement for the controller-side
+        # alwaysExclude path. A Todoist row appends a persistent Todoist
+        # exclusion; a Capacities row adds its canonical stable identity to
+        # the Capacities exclusion set. Pure-local settings-store steps (no
+        # provider client), so the verb is legal before and after commit; the
+        # row then leaves plan-inputs through the EXISTING exclusion filters.
+        todoist_id = target.get("todoist_id")
+        source = str(target.get("source") or "").strip().casefold()
+        if todoist_id:
+            name = str(target.get("name") or "").strip()
+            if not name:
+                raise RuntimeActionError(
+                    f"{target.get('name')!r}: hide_always requires a "
+                    "Todoist task title")
+            steps.append({
+                "kind": "exclusions.add",
+                "surface": "settings",
+                "system": "settings",
+                "dimension": "todoist",
+                "identity": f"todoist:{todoist_id}",
+                "entry": {"id": str(todoist_id), "name": name},
+            })
+        elif source == "capacities" or target.get("capacities_id"):
+            identity = str(target.get("identity") or "").strip()
+            if not identity:
+                raise RuntimeActionError(
+                    f"{target.get('name')!r}: hide_always requires a "
+                    "Capacities identity")
+            steps.append({
+                "kind": "exclusions.add",
+                "surface": "settings",
+                "system": "settings",
+                "dimension": "capacities",
+                "identity": identity,
+            })
+        else:
+            raise RuntimeActionError(
+                f"{target.get('name')!r}: no hideable source in today's plan")
     elif verb == "unassign":
         # Unit 2 decision b: a calendar row has no source write path, so
         # unassign is a runstate-only Drop keyed by the calendar identity. The
@@ -568,6 +612,160 @@ def plan_steps(verb: str, target: dict, args: dict, valid_date: date) -> list[di
 # ---------------------------------------------------------------------------
 # Step execution — apply / reverse (compensation and undo share reverse ops)
 # ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# Hide always — persistent settings-store writes (revision-guarded)
+# ---------------------------------------------------------------------------
+#
+# Both settings stores share one RMW discipline: read the current policy,
+# write with that revision, and raise a typed conflict when another writer
+# won. Hide always retries such a conflict ONCE against the freshly read
+# revision (the single retry the controller-side alwaysExclude path had) and
+# then fails cleanly — a stale write is refused by the store BEFORE it touches
+# the durable bytes, so a clean failure leaves them intact.
+
+
+def _conflict_retried_once(attempt: int, exc: Exception, what: str) -> None:
+    """Raise the clean failure once the single conflict retry is spent."""
+    if attempt >= 1:
+        raise RuntimeActionError(
+            f"{what} changed concurrently; retried once and still "
+            f"conflicted — nothing was written") from exc
+
+
+def _todoist_exclusion_present(current: Any, entry: Any) -> bool:
+    """Whether the policy already excludes this task by id OR normalized
+    title (the same any-match rule :mod:`todoist_exclusions` evaluates)."""
+    normalized = exclusion_settings.normalize_todoist_name(entry.name)
+    return any(
+        row.id == entry.id
+        or exclusion_settings.normalize_todoist_name(row.name) == normalized
+        for row in current.todoist
+    )
+
+
+def _add_todoist_exclusion(step: dict) -> None:
+    data = step["entry"]
+    entry = exclusion_settings.TodoistExclusion(
+        id=data["id"], name=data["name"], added_at=data["added_at"])
+    for attempt in (0, 1):
+        current = exclusion_settings.read_settings().settings
+        if _todoist_exclusion_present(current, entry):
+            # Already excluded: no write, and reverse must leave it alone.
+            step["already_present"] = True
+            return
+        step["before"] = {
+            "revision": current.revision,
+            "todoist": [row.as_dict() for row in current.todoist],
+        }
+        try:
+            saved = exclusion_settings.save_settings(
+                expected_revision=current.revision,
+                exclusions=current.tags,
+                todoist=list(current.todoist) + [entry],
+            )
+        except exclusion_settings.ExclusionSettingsConflictError as exc:
+            _conflict_retried_once(attempt, exc, "Todoist exclusion settings")
+            continue
+        step["after"] = {"revision": saved.revision}
+        return
+
+
+def _remove_todoist_exclusion(step: dict) -> None:
+    if step.get("already_present"):
+        return
+    entry_id = step["entry"]["id"]
+    for attempt in (0, 1):
+        current = exclusion_settings.read_settings().settings
+        remaining = [row for row in current.todoist if row.id != entry_id]
+        if len(remaining) == len(current.todoist):
+            return  # already gone — nothing to remove
+        try:
+            exclusion_settings.save_settings(
+                expected_revision=current.revision,
+                exclusions=current.tags,
+                todoist=remaining,
+            )
+        except exclusion_settings.ExclusionSettingsConflictError as exc:
+            _conflict_retried_once(attempt, exc, "Todoist exclusion settings")
+            continue
+        return
+
+
+def _add_capacities_exclusion(step: dict) -> None:
+    identity = step["identity"]
+    for attempt in (0, 1):
+        current = capacities_settings.read_settings().settings
+        if identity in current.excluded:
+            step["already_present"] = True
+            return
+        step["before"] = {
+            "revision": current.revision,
+            "excluded": sorted(current.excluded),
+        }
+        try:
+            saved = capacities_settings.save_settings(
+                expected_revision=current.revision,
+                native_task_auto=current.native_task_auto,
+                excluded=current.excluded | {identity},
+                active_structures=current.active_structures,
+                native_task_structures=current.native_task_structures,
+                active_statuses=current.active_statuses,
+                assigned_structures=dict(current.assigned_structures),
+                assigned_on_structures=dict(current.assigned_on_structures),
+            )
+        except capacities_settings.SettingsConflictError as exc:
+            _conflict_retried_once(attempt, exc, "Capacities settings")
+            continue
+        step["after"] = {"revision": saved.revision}
+        return
+
+
+def _remove_capacities_exclusion(step: dict) -> None:
+    if step.get("already_present"):
+        return
+    identity = step["identity"]
+    for attempt in (0, 1):
+        current = capacities_settings.read_settings().settings
+        if identity not in current.excluded:
+            return  # already gone — nothing to remove
+        try:
+            capacities_settings.save_settings(
+                expected_revision=current.revision,
+                native_task_auto=current.native_task_auto,
+                excluded=current.excluded - {identity},
+                active_structures=current.active_structures,
+                native_task_structures=current.native_task_structures,
+                active_statuses=current.active_statuses,
+                assigned_structures=dict(current.assigned_structures),
+                assigned_on_structures=dict(current.assigned_on_structures),
+            )
+        except capacities_settings.SettingsConflictError as exc:
+            _conflict_retried_once(attempt, exc, "Capacities settings")
+            continue
+        return
+
+
+def _apply_exclusions_add(step: dict) -> None:
+    dimension = step.get("dimension")
+    if dimension == "todoist":
+        step["entry"].setdefault("added_at", _now_iso())
+        _add_todoist_exclusion(step)
+    elif dimension == "capacities":
+        _add_capacities_exclusion(step)
+    else:  # pragma: no cover — plan_steps only emits the dimensions above
+        raise RuntimeActionError(f"unknown exclusion dimension {dimension!r}")
+
+
+def _reverse_exclusions_add(step: dict) -> None:
+    dimension = step.get("dimension")
+    if dimension == "todoist":
+        _remove_todoist_exclusion(step)
+    elif dimension == "capacities":
+        _remove_capacities_exclusion(step)
+    else:  # pragma: no cover
+        raise RuntimeActionError(f"unknown exclusion dimension {dimension!r}")
+
 
 def _apply_step(step: dict, valid_date: date,
                 todoist: Any, store: Any, capacities: Any) -> None:
@@ -722,6 +920,11 @@ def _apply_step(step: dict, valid_date: date,
         step["key"] = key
         step["before"] = {"entry": deferrals.load_deferrals().get(key)}
         step["entry"] = deferrals.record_deferral(item, valid_date)
+    elif kind == "exclusions.add":
+        # B2: persistent exclusion add in the app-owned settings stores.
+        # Pure-local (no provider client); the store's own revision guard is
+        # retried once here so a transient concurrent write is absorbed.
+        _apply_exclusions_add(step)
     else:  # pragma: no cover — plan_steps only emits the kinds above
         raise RuntimeActionError(f"unknown step kind {kind!r}")
     step["applied"] = True
@@ -830,6 +1033,10 @@ def _reverse_step(step: dict, valid_date: date,
         _locked_runstate_rmw(valid_date, _re_add_drop)
     elif kind == "deferrals.record":
         deferrals.set_entry(step["key"], before.get("entry"))
+    elif kind == "exclusions.add":
+        # Reverse removes ONLY the entry this action added; a pre-existing
+        # exclusion (``already_present``) is never touched.
+        _reverse_exclusions_add(step)
     else:  # pragma: no cover
         raise RuntimeActionError(f"unknown step kind {kind!r}")
 
