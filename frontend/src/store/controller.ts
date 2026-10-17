@@ -962,31 +962,6 @@ export class Controller {
     this.dispatch({ type: "DRAFT_CLEARED", id });
   }
 
-  /** One-time persist migration: browser-only same-date `included=false`
-      overrides (the old Exclude today) become durable Skip today. Runs only
-      with a confirmed Day Setup, and keeps only the conversions the server
-      actually applied (`drop_from_plan`); anything else stays in the session
-      blob so the next load retries. Returns the converted override keys. */
-  async migrateLegacyExclusions(ids: string[]): Promise<string[]> {
-    if (ids.length === 0) return [];
-    if (taskActionDisabledReason(this.getState(), "skip") !== null) return [];
-    const converted: string[] = [];
-    for (const id of ids) {
-      const identity = this.identityOf(id) ?? this.droppedOf(id)?.identity ?? null;
-      if (!identity) continue;
-      try {
-        const action = await this.adapter.runtimeAction("drop_from_plan", identity);
-        if (action.status === "applied" || action.duplicate) {
-          converted.push(id);
-        }
-      } catch {
-        // Leave it in the blob; the next load retries this row.
-      }
-    }
-    if (converted.length > 0) await this.refreshSources();
-    return converted;
-  }
-
   // -- task-actions F3b: batch surface -------------------------------------
 
   /** Build the review for an action over the current selection. A
