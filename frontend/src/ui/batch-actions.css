@@ -1,0 +1,243 @@
+/* batch-actions.css — task-actions F6: BatchBar and BatchPanel only.
+   Existing tokens (tokens.css) only; light-and-dark follow the token set, no
+   new palette or fonts. Additive .batch-* rules; nothing here restyles other
+   components. Compact: the bar is sticky only where there is room, and the
+   action groups scroll sideways on narrow screens instead of stacking into a
+   tall block. */
+
+.batch-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.batch-bar {
+  background: var(--t-surface);
+  border: 1px solid var(--t-border);
+  border-radius: var(--radius);
+  padding: 6px 10px;
+  margin-bottom: 8px;
+}
+
+@media (min-width: 720px) {
+  .batch-bar {
+    position: sticky;
+    top: 0;
+    z-index: 20;
+  }
+}
+
+.batch-bar__top {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.batch-bar__all {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.batch-bar__count {
+  font-weight: 500;
+}
+
+.batch-bar__groups {
+  display: flex;
+  gap: 4px 14px;
+  margin-top: 6px;
+  align-items: center;
+  overflow-x: auto;
+}
+
+@media (min-width: 720px) {
+  .batch-bar__groups {
+    flex-wrap: wrap;
+    overflow-x: visible;
+  }
+}
+
+.batch-bar__group {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  flex: 0 0 auto;
+}
+
+.batch-bar__glabel {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--t-muted);
+  margin-right: 2px;
+}
+
+.batch-bar button,
+.batch-bar__select,
+.batch-panel button {
+  min-height: 28px;
+  padding: 3px 8px;
+  font-size: 12px;
+  color: var(--t-text);
+  background: var(--t-surface);
+  border: 1px solid var(--t-border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.batch-bar__select {
+  background: var(--t-surface);
+}
+
+.batch-bar button[aria-pressed="true"] {
+  background: var(--t-accent-subtle);
+  border-color: var(--t-accent);
+  color: var(--t-accent-text);
+}
+
+.batch-bar button:disabled,
+.batch-bar__select:disabled,
+.batch-panel button:disabled {
+  background: var(--t-surface-2);
+  color: var(--t-muted);
+  cursor: default;
+}
+
+.batch-bar__note {
+  margin: 4px 0 0;
+  font-size: 11px;
+  color: var(--t-muted);
+}
+
+.batch-panel {
+  border: 1px solid var(--t-border);
+  border-radius: var(--radius);
+  background: var(--t-surface);
+  padding: 8px 12px;
+  margin-bottom: 8px;
+}
+
+.batch-panel--source {
+  border-color: var(--state-warning);
+  background: color-mix(in srgb, var(--state-warning) 10%, var(--t-surface));
+}
+
+.batch-panel__h {
+  font-size: 13px;
+  font-weight: 500;
+  margin: 0 0 4px;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.batch-panel__h:focus {
+  outline: none;
+}
+
+.batch-panel__h:focus-visible {
+  outline: 2px solid var(--t-accent);
+  outline-offset: 2px;
+}
+
+.batch-panel__eligible {
+  margin: 0;
+  font-weight: 500;
+}
+
+.batch-panel__sub {
+  margin: 6px 0 2px;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.batch-panel__list {
+  list-style: none;
+  margin: 2px 0;
+  padding: 0;
+}
+
+.batch-panel__list li {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: baseline;
+  padding: 3px 0;
+  border-top: 1px solid var(--t-border);
+}
+
+.batch-panel__list li:first-child {
+  border-top: 0;
+}
+
+.batch-panel__why,
+.batch-panel__reason {
+  color: var(--t-muted);
+}
+
+.batch-panel__why {
+  margin: 4px 0 0;
+  font-size: 12px;
+}
+
+.batch-panel__fail {
+  color: var(--state-danger);
+}
+
+.batch-panel__acts {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 8px;
+}
+
+.batch-panel__primary:not(:disabled) {
+  background: var(--t-accent);
+  border-color: var(--t-accent-strong);
+  color: var(--t-on-accent);
+}
+
+.batch-chip {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 3px;
+  border: 0.5px solid var(--t-border);
+  background: var(--t-surface-2);
+  color: var(--t-text);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.batch-chip--ok {
+  background: var(--t-accent-subtle);
+  border-color: var(--t-accent);
+  color: var(--t-accent-strong);
+}
+
+.batch-chip--warn {
+  background: color-mix(in srgb, var(--state-warning) 18%, var(--t-surface));
+  border-color: var(--state-warning);
+}
+
+.batch-chip--bad {
+  background: color-mix(in srgb, var(--state-danger) 14%, var(--t-surface));
+  border-color: var(--state-danger);
+}
+
+.batch-chip--info {
+  background: color-mix(in srgb, var(--state-remembered) 12%, var(--t-surface));
+  border-color: var(--state-remembered);
+}
