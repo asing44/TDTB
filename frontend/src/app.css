@@ -5384,9 +5384,13 @@ body {
 }
 
 /* Hint row: the working shortcuts as small mono key chips on the left, the
-   today-only scope note right-aligned on the same line. It wraps to two
-   lines below 900px. */
+   today-only scope note on its own line beneath them. The hint is a sibling
+   of .plan-grid, so on the two-column layout it is held to the task-list
+   column (full width minus the 380px capacity track and 28px gap of
+   .plan-grid) and a 12px gap keeps it off the last row. Stacked layouts
+   (<=1100px) and the phone width use the full list width. */
 .queue__hint {
+  margin-top: 12px;
   display: flex;
   align-items: baseline;
   justify-content: space-between;
@@ -5419,10 +5423,17 @@ body {
   line-height: 1.5;
 }
 
+@media (min-width: 1101px) {
+  .queue__hint {
+    max-width: calc(100% - 380px - 28px);
+  }
+}
+
 .queue__hint-note {
-  margin-left: auto;
+  flex-basis: 100%;
+  margin-left: 0;
   max-width: 100%;
-  text-align: right;
+  text-align: left;
   font-size: 11px;
   line-height: 1.45;
   color: var(--t-muted);
