@@ -1231,12 +1231,17 @@ def apply_action(
     store: Any = None,
     capacities: Any = None,
     now: datetime | None = None,
+    batch_id: str | None = None,
 ) -> dict[str, Any]:
     """Apply one runtime verb to one plan item; returns the journal entry.
 
     Journal-write-ahead: the entry (with planned steps) is persisted BEFORE
     the first write, updated after apply/compensation, so a crash mid-action
     always leaves an inspectable record.
+
+    ``batch_id`` (B3) is an optional tag: when supplied, the journal entry
+    carries it so a batch apply can address the actions it created. Unbatched
+    actions keep their existing shape (no ``batch_id`` key).
     """
     args = args or {}
     if verb not in VERBS:
@@ -1277,6 +1282,8 @@ def apply_action(
             "undone_at": None,
             "error": None,
         }
+        if batch_id is not None:
+            action["batch_id"] = batch_id
         journal["actions"].append(action)
         _write_journal(valid_date, journal)
 
