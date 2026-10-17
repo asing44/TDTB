@@ -78,6 +78,7 @@ import app_config
 import artifact_source
 import capacities_cache_io
 import external_sources
+import micro_adventure
 
 # ---------------------------------------------------------------------------
 # Contract constants
@@ -91,13 +92,21 @@ SOURCE_CAPACITIES = "capacities"
 #: Agent-fetched habit data (tasks + today's completions). Not a row source:
 #: the producer folds it into the artifact's top-level ``habits`` block.
 SOURCE_HABITS = "habits"
+#: Agent-fetched Capacities micro-adventure candidates (``{status, read_at,
+#: warnings, objects: [...]}``). Not a row source either: the producer applies
+#: the collection/tag/effort SELECTION RULE here and folds the survivors into
+#: the artifact's optional top-level ``micro_adventure_ideas`` block.
+SOURCE_MICRO_IDEAS = "micro_adventure_ideas"
 
 #: A3 evaluates Todoist and Capacities rules.
 EVALUATED_SOURCES = frozenset({SOURCE_TODOIST, SOURCE_CAPACITIES})
 
 #: Sources that are consumed for something other than rows. They contribute no
 #: rows, so they are not reported as an unimplemented row source.
-NON_ROW_SOURCES = frozenset({SOURCE_HABITS})
+NON_ROW_SOURCES = frozenset({SOURCE_HABITS, SOURCE_MICRO_IDEAS})
+
+#: Statuses the agreed ``micro_adventure_ideas`` block accepts.
+MICRO_IDEAS_STATUSES = frozenset({"ok", "partial", "failed"})
 
 #: Fallbacks for the habit estimate when the source JSON omits the knobs.
 #: These mirror the app's historical ``habits.*`` defaults.
@@ -679,6 +688,242 @@ def _structure_in_scope(rule: dict[str, Any], record: dict[str, Any]) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# Capacities micro-adventure ideas (S2b: the producer half)
+# ---------------------------------------------------------------------------
+#
+# The agent fetches; this code selects. The selection rule is the whole
+# contract and it lives here so it is deterministic and testable:
+#
+#   include an object when it carries the configured TAG (any effort)
+#   OR when it is in the configured COLLECTION and its flattened ``effort``
+#   property is empty/absent or an allowed value (case-insensitive).
+#
+# The idea text is the object title, the published id is ``cap-<object id>``
+# (stable, so history/streak keyed by id survives), and bounds/dedupe/warnings
+# ride ``micro_adventure.normalize_capacities_ideas`` rather than a second
+# implementation.
+
+def micro_ideas_settings(section: Any = None) -> dict[str, Any]:
+    """The selection settings for the Capacities micro-adventure ideas pool.
+
+    Reads the same folded config the app reads — ``Micro-Adventures`` ->
+    ``Capacities`` — through ``app_config`` (honouring ``TDTB_HOME``) when
+    ``section`` is omitted, so no second config file exists. ``section`` may be
+    either the whole folded sections dict or the ``Micro-Adventures`` section.
+    Every wrong-typed value falls back to ``app_config``'s documented default;
+    never raises.
+
+    Returns ``{enabled, collection, tag, effort_property, effort_allowed}``."""
+    defaults = app_config.MICRO_ADVENTURE_CAPACITIES_DEFAULTS
+    if section is None:
+        try:
+            sections = app_config.load_sections()
+        except Exception:  # noqa: BLE001 - settings must never break a run
+            sections = {}
+        section = (
+            sections.get("Micro-Adventures") if isinstance(sections, dict) else None
+        )
+    elif isinstance(section, dict) and isinstance(section.get("Micro-Adventures"), dict):
+        section = section["Micro-Adventures"]
+    caps = section.get("Capacities") if isinstance(section, dict) else None
+    if not isinstance(caps, dict):
+        caps = {}
+
+    def text(key: str) -> str:
+        value = caps.get(key)
+        if isinstance(value, str):
+            return value.strip()
+        return str(defaults[key])
+
+    allowed = caps.get("effort_allowed")
+    if isinstance(allowed, list):
+        effort_allowed = [value.strip() for value in allowed if isinstance(value, str)]
+    else:
+        effort_allowed = list(defaults["effort_allowed"])
+    return {
+        "enabled": caps.get("enabled") is True,
+        "collection": text("collection"),
+        "tag": text("tag"),
+        "effort_property": text("effort_property"),
+        "effort_allowed": effort_allowed,
+    }
+
+
+def _micro_member_tokens(value: Any) -> set[str]:
+    """Normalized membership names from a tag/collection list (``#`` dropped)."""
+    flattened = _flatten_members(value)
+    if not isinstance(flattened, list):
+        flattened = [flattened]
+    tokens: set[str] = set()
+    for token in flattened:
+        if isinstance(token, str) and token.strip():
+            tokens.add(_normalized(token.strip().lstrip("#")))
+    return tokens
+
+
+def _micro_effort_name(record: dict[str, Any], effort_property: str) -> str:
+    """The flattened ``effort`` label name for one object (``""`` when absent)."""
+    if not effort_property:
+        return ""
+    properties = record.get("properties")
+    if not isinstance(properties, dict):
+        return ""
+    payload = properties.get(effort_property)
+    if payload is None:
+        return ""
+    flattened = _flatten_property(payload)
+    if isinstance(flattened, list):
+        for token in flattened:
+            if isinstance(token, str) and token.strip():
+                return token.strip()
+        return ""
+    return flattened.strip() if isinstance(flattened, str) else ""
+
+
+def _select_micro_idea_objects(
+    objects: list[Any], settings: dict[str, Any]
+) -> tuple[list[dict[str, Any]], list[str]]:
+    """Apply the tag/collection+effort selection rule to fetched objects.
+
+    Returns ``(items, warnings)`` where each item is ``{"id", "idea"}`` in
+    fetch order. A non-object, an object without a usable id, and an object
+    without a title are dropped with a warning (the id/title bounds themselves
+    belong to :func:`micro_adventure.normalize_capacities_ideas`)."""
+    tag = _normalized(str(settings.get("tag") or "").strip().lstrip("#"))
+    collection = _normalized(str(settings.get("collection") or "").strip().lstrip("#"))
+    effort_property = str(settings.get("effort_property") or "")
+    allowed = {
+        _normalized(str(value))
+        for value in (settings.get("effort_allowed") or [])
+        if isinstance(value, str) and value.strip()
+    }
+
+    items: list[dict[str, Any]] = []
+    warnings: list[str] = []
+    for index, record in enumerate(objects):
+        if not isinstance(record, dict):
+            warnings.append(
+                f"micro_adventure_ideas object {index} is not an object; dropped."
+            )
+            continue
+        raw_id = record.get("id")
+        if isinstance(raw_id, bool) or not isinstance(raw_id, (str, int)):
+            warnings.append(
+                f"micro_adventure_ideas object {index} has no usable id; dropped."
+            )
+            continue
+        object_id = str(raw_id).strip()
+        if not object_id:
+            warnings.append(
+                f"micro_adventure_ideas object {index} has a blank id; dropped."
+            )
+            continue
+
+        tagged = bool(tag) and tag in _micro_member_tokens(record.get("tags"))
+        if not tagged:
+            if not collection:
+                continue
+            if collection not in _micro_member_tokens(record.get("collections")):
+                continue
+            effort = _micro_effort_name(record, effort_property)
+            if effort and _normalized(effort) not in allowed:
+                continue
+
+        title = record.get("title")
+        items.append({"id": object_id, "idea": title if isinstance(title, str) else ""})
+    return items, warnings
+
+
+def build_micro_adventure_ideas(
+    entry: Any,
+    settings: dict[str, Any] | None = None,
+    *,
+    generated_at: str = "",
+) -> dict[str, Any] | None:
+    """Build the optional ``micro_adventure_ideas`` artifact block.
+
+    Returns ``None`` — meaning "emit no block at all" — when Capacities ideas
+    are disabled or neither a collection nor a tag is configured (the app's own
+    ``disabled``/``not-configured`` statuses, so the config pool is used).
+
+    Otherwise the block is ``{status, read_at, warnings, items}``: ``status`` is
+    ``ok|partial|failed`` (an unknown value degrades to ``ok`` with a warning),
+    ``read_at`` falls back to the run's ``generated_at``, and ``warnings``
+    carries the source's own warnings plus one line per drop, per the 0-object
+    trap (a renamed collection/tag) and per an empty selection. Deterministic
+    and total: never raises."""
+    resolved = settings if isinstance(settings, dict) else micro_ideas_settings()
+    if resolved.get("enabled") is not True:
+        return None
+    if not resolved.get("collection") and not resolved.get("tag"):
+        return None
+
+    if not isinstance(entry, dict):
+        return {
+            "status": "failed",
+            "read_at": generated_at,
+            "warnings": [
+                "micro_adventure_ideas source entry is not an object; "
+                "the Capacities pool is unavailable this run."
+            ],
+            "items": [],
+        }
+
+    warnings: list[str] = []
+    raw_status = entry.get("status")
+    status = raw_status.strip().lower() if isinstance(raw_status, str) else ""
+    if status not in MICRO_IDEAS_STATUSES:
+        if status:
+            warnings.append(
+                f"micro_adventure_ideas source status {raw_status!r} is not "
+                "ok/partial/failed; coerced to 'ok'."
+            )
+        status = "ok"
+
+    raw_read_at = entry.get("read_at")
+    read_at = (
+        raw_read_at.strip()
+        if isinstance(raw_read_at, str) and raw_read_at.strip()
+        else generated_at
+    )
+    for warning in entry.get("warnings") or []:
+        if isinstance(warning, str) and warning.strip():
+            warnings.append(warning)
+
+    objects = entry.get("objects")
+    if not isinstance(objects, list):
+        objects = []
+        warnings.append(
+            "micro_adventure_ideas source entry carries no 'objects' list."
+        )
+    if not objects:
+        warnings.append(
+            "micro_adventure_ideas source entry lists 0 objects; check the "
+            "configured collection/tag names (a rename silently empties the pool)."
+        )
+
+    selected, drop_warnings = _select_micro_idea_objects(objects, resolved)
+    warnings.extend(drop_warnings)
+    if objects and not selected:
+        effort_allowed = list(resolved.get("effort_allowed") or [])
+        warnings.append(
+            "micro_adventure_ideas selection yielded 0 items from "
+            f"{len(objects)} object(s); check collection "
+            f"{resolved.get('collection')!r}, tag {resolved.get('tag')!r} and "
+            f"effort_allowed {effort_allowed!r}."
+        )
+
+    normalized = micro_adventure.normalize_capacities_ideas({"items": selected})
+    warnings.extend(normalized.warnings)
+    return {
+        "status": status,
+        "read_at": read_at,
+        "warnings": warnings,
+        "items": [{"id": idea.id, "idea": idea.idea} for idea in normalized.ideas],
+    }
+
+
+# ---------------------------------------------------------------------------
 # Building the artifact document
 # ---------------------------------------------------------------------------
 
@@ -692,6 +937,7 @@ def build_artifact(
     producer_version: str = "0.1.0",
     run_id: str = "run",
     max_recent_drops: int = MAX_RECENT_DROPS,
+    micro_ideas_settings: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Assemble the complete ``tdtb.planning-artifact`` v1 document.
 
@@ -705,6 +951,14 @@ def build_artifact(
     habits = compute_habit_summary(
         source_json.get(SOURCE_HABITS), logical_day=logical_day
     )
+    micro_ideas = None
+    if SOURCE_MICRO_IDEAS in source_json:
+        # Absent source entry => no block at all (the app falls back silently);
+        # a present entry always yields a block, even a degraded one.
+        micro_ideas = build_micro_adventure_ideas(
+            source_json.get(SOURCE_MICRO_IDEAS), micro_ideas_settings,
+            generated_at=generated_at,
+        )
 
     admission = {
         "rule_set_hash": rule_set_hash(rules_document),
@@ -747,6 +1001,10 @@ def build_artifact(
         "admission": admission,
         "habits": habits,
     }
+    if micro_ideas is not None:
+        # Absent source entry (or disabled/unconfigured settings) => no block,
+        # so the app falls back to the config pool with no warning.
+        document["micro_adventure_ideas"] = micro_ideas
     document["content_hash"] = artifact_source.compute_content_hash(sources, rows)
     return document
 

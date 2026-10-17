@@ -34,6 +34,28 @@ A2)::
 top-level ``habits`` block (``total/done/outstanding/est_minutes``), the only
 source of habit time now that the note-based habit read is retired.
 
+``micro_adventure_ideas`` is not a row source either: the producer applies the
+collection/tag/effort selection rule to its ``objects`` and folds the survivors
+into the artifact's optional top-level ``micro_adventure_ideas`` block
+(``{status, read_at, warnings, items}``). Absent entry => no block. The
+selection settings come from the app config (``Micro-Adventures`` ->
+``Capacities``) unless ``--micro-ideas-settings`` names the JSON printed by
+``tools/micro_ideas_spec.py``.::
+
+    {
+      "micro_adventure_ideas": {
+        "status": "ok",
+        "read_at": "2026-10-08T09:00:00-07:00",
+        "warnings": [],
+        "objects": [
+          {"id": "<object id>", "title": "Kayaking",
+           "collections": ["Personal Adventures"], "tags": ["_TDTB-live"],
+           "properties": {"effort": {"type": "label",
+                                    "label": [{"name": "Small"}]}}}
+        ]
+      }
+    }
+
 Usage::
 
     python tools/produce_rows.py --rules ~/.config/tdtb/producer-rules.json \\
@@ -107,6 +129,15 @@ def _print_summary(document: dict, wrote: Path | None) -> None:
             f"{habits.get('est_minutes', 0)} min outstanding",
             file=sys.stderr,
         )
+    micro_ideas = document.get("micro_adventure_ideas")
+    if isinstance(micro_ideas, dict):
+        print(
+            f"  micro ideas: {len(micro_ideas.get('items') or [])} item(s), "
+            f"status {micro_ideas.get('status')}",
+            file=sys.stderr,
+        )
+        for warning in micro_ideas.get("warnings") or []:
+            print(f"    warning: {warning}", file=sys.stderr)
     if wrote is not None:
         print(f"  wrote {wrote}", file=sys.stderr)
 
@@ -142,6 +173,13 @@ def main(argv: list[str] | None = None) -> int:
         help="Destination artifact path (default: <app home>/state/planning-artifact.json)",
     )
     parser.add_argument("--run-id", default=None, help="Producer run id")
+    parser.add_argument(
+        "--micro-ideas-settings", default=None,
+        help=(
+            "Capacities micro-adventure selection spec JSON (tools/"
+            "micro_ideas_spec.py output); default: the app config section"
+        ),
+    )
     parser.add_argument("--producer-name", default="tdtb-refresh")
     parser.add_argument("--producer-version", default="0.1.0")
     args = parser.parse_args(argv)
@@ -171,6 +209,32 @@ def main(argv: list[str] | None = None) -> int:
     generated_at = args.generated_at or _now_iso()
     run_id = args.run_id or f"tdtb-refresh-{logical_day}"
 
+    micro_ideas_settings = None
+    if args.micro_ideas_settings:
+        try:
+            micro_ideas_settings = json.loads(
+                _read_input(args.micro_ideas_settings)
+            )
+        except OSError as exc:
+            print(
+                f"produce_rows: cannot read micro-ideas settings: {exc}",
+                file=sys.stderr,
+            )
+            return 2
+        except ValueError as exc:
+            print(
+                "produce_rows: micro-ideas settings are not valid JSON: "
+                f"{exc}",
+                file=sys.stderr,
+            )
+            return 2
+        if not isinstance(micro_ideas_settings, dict):
+            print(
+                "produce_rows: micro-ideas settings must be a JSON object",
+                file=sys.stderr,
+            )
+            return 2
+
     try:
         document = producer_rules.build_artifact(
             source_json,
@@ -180,6 +244,7 @@ def main(argv: list[str] | None = None) -> int:
             producer_name=args.producer_name,
             producer_version=args.producer_version,
             run_id=run_id,
+            micro_ideas_settings=micro_ideas_settings,
         )
     except producer_rules.RulesError as exc:
         print("produce_rows: rule evaluation failed", file=sys.stderr)
