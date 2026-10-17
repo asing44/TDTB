@@ -284,7 +284,10 @@ def capacities_pool(
     Pure: reads only the ``Micro-Adventures`` -> ``Capacities`` settings and the
     published artifact-style ``block`` (``{status, read_at, items, warnings}``).
     NO I/O, no clock: pass ``now`` to evaluate freshness, omit it to skip the
-    staleness check. It is NOT wired into ``select_today``/``main.py`` yet.
+    staleness check. ``app/main.py`` calls it while building the Live block
+    (``pool_source`` / ``pool_warnings``) and reads the artifact's published
+    block only when the extension is enabled and configured, so the default
+    (disabled) path does no extra I/O.
 
     Status is one of:
 
@@ -299,7 +302,8 @@ def capacities_pool(
     Never raises. The effort/collection/tag membership FILTER belongs to the
     producer; this function only carries the settings and the published block.
     Rows keep STABLE ids (``cap-<object id>``) so history/streak keyed by id
-    survive, and nothing calls this from a request path yet (that is slice S3).
+    survive. It is called only from that gather path, never from a live
+    request path and never per row — it performs no I/O of its own.
     """
     caps = _capacities_settings(section)
     if caps.get("enabled") is not True:

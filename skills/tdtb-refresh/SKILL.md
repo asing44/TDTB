@@ -204,6 +204,46 @@ Each field is load-bearing:
   build the row's `capacities:{space}:{structure}:{object}` identity and the
   provider fields.
 
+### 3b. Micro-adventure ideas (optional).
+
+The Live micro-adventure pool can extend itself from Capacities. **Ask the
+config first — never guess a collection, tag, or effort value:**
+
+```bash
+TDTB_REPO=/Users/walle-mini/Repos/Projects/TDTB
+PY=/Users/walle-mini/Repos/Projects/TDTB/app/.venv/bin/python
+"$PY" "$TDTB_REPO/tools/micro_ideas_spec.py" > /tmp/tdtb-micro-ideas-spec.json
+```
+
+- **exit `6`** — Capacities ideas are disabled. **SKIP this step entirely** and
+  emit no `micro_adventure_ideas` source entry.
+- **exit `7`** — enabled, but neither a `collection` nor a `tag` is configured.
+  **SKIP** the same way.
+- **exit `2`** — the config could not be read. Skip, and report the message.
+
+Otherwise the spec names `collection`, `tag`, `effort_property`, and
+`effort_allowed`. Then:
+
+1. **Two free listings, unioned by object id.**
+   `capacities_listObjectsByCollection(collection)` and
+   `capacities_listObjectsByTag(tag)`. No content reads yet.
+2. **Resolve membership to NAMES.** Put each object's collection and tag names
+   on it (`collections` / `tags`) — the API returns IDs and the producer
+   matches names only. An unresolvable name goes in `warnings`.
+3. **Read `effort` only where it can matter.** An object carrying the **tag**
+   is admitted on membership alone, so it needs **no** content read. Objects
+   in the **collection but not tagged** need their `effort_property` label,
+   which IS a content read: price it through the cursor exactly as in step 3
+   (`read_cursor.py plan` → read only the `need_read` ids → `record`, 24 reads
+   / 60 s). Key the label under the `frontmatterKey` the shape reports
+   (`effort`) and leave the typed payload as the API returned it.
+4. **Emit the source entry** (step 4) beside `todoist`/`habits`/`capacities`.
+   Do not filter, rank, or de-duplicate by hand: the producer applies the
+   collection/tag/effort rule and the bounds.
+
+An object with **no** `effort` label still qualifies through the collection; a
+tagged object qualifies whatever its effort says.
+
 ### 4. Assemble the source JSON exactly in the CLI's shape, then produce.
 
 Todoist counts live under `tasks`; Capacities objects under `objects`. A
@@ -220,6 +260,13 @@ resolves each task's `projectName` from its `projectId` against it, so a rule
 can match a readable project name instead of a UUID. Omitting `projects` is
 safe — the producer simply adds no `projectName` — but every `projectName` rule
 then matches nothing.
+
+The `micro_adventure_ideas` entry is separate from the Capacities rows and is
+NOT a row source either. The producer applies the selection rule to its
+`objects` and folds the survivors into the artifact's optional top-level
+`micro_adventure_ideas` block (`{status, read_at, warnings, items}`). Omit the
+entry when step 3b was skipped — an absent entry means "no block", and the app
+keeps the config pool.
 
 The `habits` entry is separate from `todoist.tasks` and is NOT a row source.
 The producer computes the artifact's top-level `habits` block from it:
@@ -276,6 +323,22 @@ sorts the habits by section then in-section order; omit `sections`,
         "properties": { "<frontmatterKey>": "<typed payload>" }
       }
     ]
+  },
+  "micro_adventure_ideas": {
+    "status": "ok",
+    "read_at": "<ISO-8601 with offset>",
+    "warnings": [],
+    "objects": [
+      {
+        "id": "<object id>",
+        "title": "Kayaking",
+        "collections": ["Personal Adventures"],
+        "tags": ["_TDTB-live"],
+        "properties": {
+          "effort": { "type": "label", "label": [{ "name": "Small" }] }
+        }
+      }
+    ]
   }
 }
 ```
@@ -287,8 +350,14 @@ TDTB_REPO=/Users/walle-mini/Repos/Projects/TDTB
 PY=/Users/walle-mini/Repos/Projects/TDTB/app/.venv/bin/python
 "$PY" "$TDTB_REPO/tools/produce_rows.py" \
   --rules ~/.config/tdtb/producer-rules.json \
+  --micro-ideas-settings /tmp/tdtb-micro-ideas-spec.json \
   --write < /tmp/tdtb-source.json > /tmp/tdtb-artifact.json
 ```
+
+Pass `--micro-ideas-settings` with the spec step 3b wrote, so the producer
+selects with exactly the same settings the fetch used; omit the flag when step
+3b was skipped (the producer then reads the config itself) — pointing it at a
+file that does not exist is a `2`.
 
 **Do not pass `--logical-day`.** The CLI defaults it to the app's own
 `effective_date`, and TDTB's logical day is **not** the wall-clock date:
@@ -321,6 +390,13 @@ most recent drops with the rule that dropped them (`admission.recent_drops` —
 `rule: null` means no rule matched). Name the artifact path and its
 `logical_day`. If any `sources.<name>.status` is `partial` or `failed`, surface
 its `warnings` and `deferred` count verbatim.
+
+If step 3b ran, also report the Capacities ideas: how many objects the listings
+returned, how many survived selection into the artifact's
+`micro_adventure_ideas.items`, and every warning on that block. A 0-object
+warning usually means a **renamed collection or tag** — the configured name no
+longer exists, so the pool silently empties; report it rather than editing the
+config yourself.
 
 ## Cursor limitation — read this before trusting the cache
 

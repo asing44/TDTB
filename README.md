@@ -86,19 +86,48 @@ window); the machine-local `~/.config/tdtb/config.json` layers on top. If both
 are missing, the in-code `FALLBACK_POOL` in `app/micro_adventure.py` is the
 last resort.
 
-The optional `micro_adventure_capacities` key is a **disabled** extension
-point for someday pulling ideas from Capacities. It defaults to
-`{"enabled": false, "structure": "", "idea_property": "",
-"category_property": "", "effort_property": "",
-"refresh_cadence_hours": 168}`. `app/micro_adventure.py:capacities_pool`
-reports `disabled` / `not-configured` / `not-implemented` and performs no I/O.
+The optional `micro_adventure_capacities` key adds Capacities ideas on top of
+that list. Defaults: `{"enabled": false, "collection": "Personal Adventures",
+"tag": "_TDTB-live", "effort_property": "effort", "effort_allowed":
+["small"], "refresh_cadence_hours": 168, "structure": "",
+"idea_property": "", "category_property": ""}`. `enabled` must be the boolean
+`true`; anything else is off, no artifact block is read, and the config pool is
+used alone.
 
-**Not built:** there is no UI editor and no live Capacities pull. A later pull
-would normalize objects to the pool row shape `{ID, Idea, Category, Effort,
-Active}` with **stable ids** derived from the Capacities object id
-(`cap-<object id>`) so streak/history keyed by id survive, would merge after
-the config pool, and would refresh only via an operator-run/skill step against
-the read cursor — never on a request path.
+**Artifact-fed, never live.** The app never calls Capacities on a request path.
+Step 3b of `skills/tdtb-refresh` lists the configured collection and tag over
+MCP, cursor-reads the `effort` label only for collection members that are not
+tagged, and emits a `micro_adventure_ideas` source entry;
+`tools/produce_rows.py` applies the selection rule and publishes the artifact's
+`micro_adventure_ideas` block, which the app reads through
+`artifact_source.load_micro_ideas()`.
+
+**Selection rule (producer side).** An object carrying the configured `tag` is
+admitted on membership alone; an object only in the `collection` is admitted
+when its `effort_property` label is empty or its value is in
+`effort_allowed`. `app/micro_adventure.py:capacities_pool` then reports
+`disabled` / `not-configured` / `ok` / `stale` / `unavailable`.
+
+**Merge.** `app/micro_adventure.py:merge_pool` appends Capacities rows after the
+config pool, de-duplicated by id and idea text, capped at **half** the live-pool
+cap (`capacities_live_limit`). Ids are stable — `cap-<object id>` — so
+streak/history keyed by id survive a refresh.
+
+**Fallbacks.** A missing block, a block whose status is `partial` or `failed`,
+and a `read_at` older than `refresh_cadence_hours` all contribute no rows: the
+config pool is used alone and the Live block reports
+`pool_source: "config"` with one `pool_warnings` line. A run that skips step 3b
+keeps the previously published block. The cursor is coverage, not change
+detection, so an edited idea needs its cache entry deleted before it is seen
+again.
+
+**To enable.** Set `micro_adventure_capacities.enabled` to `true` in
+`config/tdtb.json` (or `~/.config/tdtb/config.json`), confirm `collection` and
+`tag` match real Capacities names, check the spec with
+`tools/micro_ideas_spec.py`, then run the `tdtb-refresh` skill.
+
+**Not built:** there is no UI editor, and Capacities rows carry no Category or
+Effort on the row — only id and idea survive selection.
 
 ## Judgment model selector
 
