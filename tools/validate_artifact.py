@@ -13,6 +13,14 @@ Usage::
 
 Exit codes: 0 valid, 1 malformed (the first violations are printed), 2 the
 document could not be read or parsed as JSON.
+
+The optional top-level ``micro_adventure_ideas`` block is accepted when
+present and well shaped, and is not required: an artifact without it stays
+valid unchanged. A structurally broken block (not an object, non-string
+``status``/``read_at``, non-array ``items``/``warnings``) is reported as a
+violation by ``artifact_source.validate_artifact``, so this wrapper rejects it
+with exit 1 like any other contract violation; junk ITEMS inside the block are
+not violations (the app drops them with a warning at load time).
 """
 from __future__ import annotations
 

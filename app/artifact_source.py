@@ -91,6 +91,22 @@ HABIT_ITEMS_MAX = 200
 HABIT_MINUTES_MAX = 480
 HABIT_TEXT_MAX = 200
 
+#: The optional top-level Capacities micro-adventure ideas block. The producer
+#: fetches these over MCP (the app never reads Capacities live for this); the
+#: app only consumes the published block. An artifact WITHOUT the block stays
+#: valid and the caller maps the absent result to ``unavailable``.
+MICRO_IDEAS_KEY = "micro_adventure_ideas"
+MICRO_IDEA_STATUSES = frozenset({"ok", "partial", "failed"})
+MICRO_IDEAS_ITEMS_KEY = "items"
+MICRO_IDEAS_WARNINGS_KEY = "warnings"
+MICRO_IDEAS_READ_AT_KEY = "read_at"
+#: Bounded block contract: at most this many items, idea text no longer than
+#: this, ids stable as ``cap-<object id>``. Bad items are dropped with a
+#: warning; unknown item keys are ignored.
+MICRO_IDEAS_MAX = 200
+MICRO_IDEA_TEXT_MAX = 200
+MICRO_IDEA_ID_PREFIX = "cap-"
+
 ARTIFACT_FILENAME = "planning-artifact.json"
 PREV_ARTIFACT_FILENAME = "planning-artifact.prev.json"
 OVERLAY_FILENAME = "planning-overlay.json"
@@ -269,6 +285,7 @@ def validate_artifact(document: Any) -> list[str]:
     _validate_sources(document["sources"], add)
     _validate_rows(document["rows"], add)
     _validate_admission(document["admission"], add)
+    _validate_micro_ideas(document.get(MICRO_IDEAS_KEY), add)
 
     return violations
 
@@ -358,6 +375,28 @@ def _validate_rows(value: Any, add) -> None:
             )
         if "assigned" in row and not isinstance(row["assigned"], bool):
             add(f"rows[{index}].assigned must be a boolean")
+
+
+def _validate_micro_ideas(value: Any, add) -> None:
+    """The optional ideas block is validated on SHAPE only, and only when the
+    key is present: an artifact with no block stays valid.
+
+    Only block-level type errors are violations (the block is not an object,
+    ``status``/``read_at`` are not strings, ``items``/``warnings`` are not
+    arrays). A junk ITEM is not a violation — ``micro_ideas_block_of`` drops
+    it with a warning, so a single bad row cannot invalidate the artifact
+    (and with it every planning row the app would otherwise use)."""
+    if value is None:
+        return
+    if not isinstance(value, dict):
+        add(f"{MICRO_IDEAS_KEY} must be an object")
+        return
+    for key in (MICRO_IDEAS_READ_AT_KEY, "status"):
+        if key in value and not isinstance(value[key], str):
+            add(f"{MICRO_IDEAS_KEY}.{key} must be a string")
+    for key in (MICRO_IDEAS_ITEMS_KEY, MICRO_IDEAS_WARNINGS_KEY):
+        if key in value and not isinstance(value[key], list):
+            add(f"{MICRO_IDEAS_KEY}.{key} must be an array")
 
 
 def _validate_admission(value: Any, add) -> None:
@@ -531,6 +570,182 @@ def load_habits(*, path: str | Path | None = None) -> tuple[dict[str, Any], list
             f"Planning artifact at {target} is malformed — no habit data."
         ]
     return habit_block_of(document)
+
+
+# ---------------------------------------------------------------------------
+# Capacities micro-adventure ideas (the optional synthesized pool block)
+# ---------------------------------------------------------------------------
+
+def micro_ideas_block_of(document: Any) -> tuple[dict[str, Any] | None, list[str]]:
+    """Extract the artifact's optional ``micro_adventure_ideas`` block.
+
+    Returns ``(block, warnings)``. ``block`` is ``None`` — the "absent"
+    result the caller maps to ``unavailable`` — when the artifact carries no
+    block, or when the block is unusable (not an object, ``items`` not an
+    array, or a ``status`` outside ``ok|partial|failed``). The block is a
+    PUBLISHED snapshot, so ``logical_day`` is not consulted: a fresh day with
+    no refresh keeps yesterday's ideas rather than emptying the pool.
+
+    Validation is field by field and never raises: a bad item is dropped with
+    a warning, unknown item keys are ignored, the count is bounded to
+    ``MICRO_IDEAS_MAX`` and each idea is clipped to ``MICRO_IDEA_TEXT_MAX``.
+    """
+    if not isinstance(document, dict):
+        return None, [
+            "Planning artifact document is not an object — no Capacities "
+            "micro-adventure ideas."
+        ]
+    raw = document.get(MICRO_IDEAS_KEY)
+    if raw is None:
+        return None, []
+    if not isinstance(raw, dict):
+        return None, [
+            f"Planning artifact {MICRO_IDEAS_KEY} block is not an object — "
+            "no Capacities micro-adventure ideas."
+        ]
+
+    raw_status = raw.get("status")
+    status = raw_status.strip().lower() if isinstance(raw_status, str) else ""
+    if status not in MICRO_IDEA_STATUSES:
+        return None, [
+            f"Planning artifact {MICRO_IDEAS_KEY}.status {raw_status!r} is not "
+            f"one of {sorted(MICRO_IDEA_STATUSES)} — no Capacities "
+            "micro-adventure ideas."
+        ]
+
+    raw_items = raw.get(MICRO_IDEAS_ITEMS_KEY)
+    if not isinstance(raw_items, list):
+        return None, [
+            f"Planning artifact {MICRO_IDEAS_KEY}.items is not an array — no "
+            "Capacities micro-adventure ideas."
+        ]
+
+    warnings: list[str] = []
+    block_warnings = raw.get(MICRO_IDEAS_WARNINGS_KEY)
+    if isinstance(block_warnings, list):
+        warnings.extend(
+            entry.strip() for entry in block_warnings
+            if isinstance(entry, str) and entry.strip()
+        )
+
+    read_at = raw.get(MICRO_IDEAS_READ_AT_KEY)
+    block: dict[str, Any] = {"status": status}
+    if isinstance(read_at, str) and read_at.strip():
+        block[MICRO_IDEAS_READ_AT_KEY] = read_at
+        if not _is_offset_timestamp(read_at):
+            warnings.append(
+                f"Planning artifact {MICRO_IDEAS_KEY}.read_at {read_at!r} is "
+                "not an ISO-8601 timestamp with an offset — freshness unknown."
+            )
+    else:
+        warnings.append(
+            f"Planning artifact {MICRO_IDEAS_KEY} has no read_at — freshness "
+            "unknown."
+        )
+
+    items: list[dict[str, Any]] = []
+    seen_ids: set[str] = set()
+    for index, entry in enumerate(raw_items):
+        if len(items) >= MICRO_IDEAS_MAX:
+            warnings.append(
+                f"Planning artifact {MICRO_IDEAS_KEY} exceeds the "
+                f"{MICRO_IDEAS_MAX}-item cap; item {index} and later dropped."
+            )
+            break
+        if not isinstance(entry, dict):
+            warnings.append(
+                f"Planning artifact {MICRO_IDEAS_KEY} item {index} is not an "
+                "object; dropped."
+            )
+            continue
+        pool_id = _micro_idea_id_of(entry)
+        if pool_id is None:
+            warnings.append(
+                f"Planning artifact {MICRO_IDEAS_KEY} item {index} has no "
+                "usable id; dropped."
+            )
+            continue
+        if pool_id in seen_ids:
+            warnings.append(
+                f"Planning artifact {MICRO_IDEAS_KEY} item {pool_id} repeats "
+                "an id; dropped."
+            )
+            continue
+        idea = _micro_idea_text_of(entry)
+        if idea is None:
+            warnings.append(
+                f"Planning artifact {MICRO_IDEAS_KEY} item {pool_id} has no "
+                "usable idea text; dropped."
+            )
+            continue
+        if len(idea) > MICRO_IDEA_TEXT_MAX:
+            idea = idea[:MICRO_IDEA_TEXT_MAX].rstrip()
+            warnings.append(
+                f"Planning artifact {MICRO_IDEAS_KEY} item {pool_id} idea "
+                f"truncated to {MICRO_IDEA_TEXT_MAX} characters."
+            )
+        seen_ids.add(pool_id)
+        items.append({"id": pool_id, "idea": idea})
+
+    block[MICRO_IDEAS_WARNINGS_KEY] = warnings
+    block[MICRO_IDEAS_ITEMS_KEY] = items
+    return block, warnings
+
+
+def _micro_idea_id_of(entry: dict[str, Any]) -> str | None:
+    """Stable ``cap-<object id>`` pool id, or ``None`` when unusable."""
+    raw_id = entry.get("id")
+    if not isinstance(raw_id, str):
+        return None
+    object_id = raw_id.strip()
+    if object_id.startswith(MICRO_IDEA_ID_PREFIX):
+        object_id = object_id[len(MICRO_IDEA_ID_PREFIX):].strip()
+    if not object_id:
+        return None
+    return f"{MICRO_IDEA_ID_PREFIX}{object_id}"
+
+
+def _micro_idea_text_of(entry: dict[str, Any]) -> str | None:
+    """Trimmed idea text, or ``None`` when missing/blank/not a string."""
+    raw_text = entry.get("idea")
+    if not isinstance(raw_text, str):
+        return None
+    text = raw_text.strip()
+    return text or None
+
+
+def _is_offset_timestamp(value: str) -> bool:
+    """True when ``value`` parses as an ISO-8601 timestamp WITH an offset."""
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        return False
+    return parsed.tzinfo is not None
+
+
+def load_micro_ideas(
+    *, path: str | Path | None = None
+) -> tuple[dict[str, Any] | None, list[str]]:
+    """Read ONLY the artifact's Capacities micro-adventure ideas block.
+
+    Live source mode consumes the artifact here too: the ideas are an MCP
+    fetch the producer performs, so BOTH ``sources.mode`` values read the same
+    published block. ``logical_day`` is ignored (a published snapshot does not
+    go stale at midnight). Never raises; a missing artifact or missing block
+    returns ``(None, [])``, the "absent" result the caller maps to
+    ``unavailable``. The produced block is NOT read from the overlay.
+    """
+    target = Path(path) if path is not None else artifact_path()
+    try:
+        document = _read_json(target)
+    except FileNotFoundError:
+        return None, []
+    except (OSError, ValueError) as exc:
+        return None, [
+            f"Planning artifact at {target} is unreadable ({exc}) — no "
+            "Capacities micro-adventure ideas."
+        ]
+    return micro_ideas_block_of(document)
 
 
 def load_artifact(
