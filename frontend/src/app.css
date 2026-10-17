@@ -11246,3 +11246,120 @@ button.strip-cal {
     min-height: 38px;
   }
 }
+
+/* task-actions F4b: the two-line expanded row panel and the inline time
+   editor (approved prototype r2). Additive; tokens only. The 28px controls
+   grow to 34px on narrow screens, matching the prototype. */
+.trow__panel {
+  display: grid;
+  gap: 8px;
+}
+.trow__l1,
+.trow__ctl {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  align-items: center;
+}
+.trow__l2 {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.trow__panel .trow__btn,
+.trow__panel .trow__select {
+  min-height: 28px;
+  padding: 2px 9px;
+}
+.trow__select,
+.trow__editor input[type="time"] {
+  border: 1px solid var(--t-border);
+  border-radius: var(--radius-sm);
+  background: var(--t-surface);
+  color: var(--t-text);
+  font: inherit;
+}
+.trow__select,
+.trow__start,
+.trow__editor input[type="time"] {
+  font-family: var(--font-mono);
+}
+.trow__editor input[type="time"] {
+  min-height: 30px;
+  padding: 4px 6px;
+  max-width: 100%;
+}
+.trow__select:disabled {
+  background: var(--t-surface-2);
+  color: var(--t-muted);
+  cursor: not-allowed;
+}
+.trow__select:focus-visible,
+.trow__editor input:focus-visible,
+.trow__seg input:focus-visible,
+.trow__ov input:focus-visible {
+  outline: 2px solid var(--c-selected);
+  outline-offset: 2px;
+}
+.trow__seg {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.trow__seg label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 28px;
+  padding: 2px 9px;
+  border: 1px solid var(--t-border);
+  border-radius: var(--radius-sm);
+  background: var(--t-surface);
+  cursor: pointer;
+}
+.trow__seg label:has(input:checked) {
+  background: var(--t-accent-subtle);
+  border-color: var(--t-accent);
+  color: var(--t-accent-strong);
+  font-weight: 600;
+}
+.trow__seg label:has(input:disabled) {
+  background: var(--t-surface-2);
+  color: var(--t-muted);
+  cursor: not-allowed;
+}
+.trow__start,
+.trow__ov {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+}
+.trow__muted,
+.trow__why {
+  color: var(--t-muted);
+}
+.trow__why {
+  display: block;
+  margin: 2px 0 0;
+  font-size: 11px;
+}
+.trow__editor {
+  display: grid;
+  gap: 6px;
+  padding: 8px 10px;
+  border: 1px solid var(--t-border);
+  border-radius: var(--radius-sm);
+  background: var(--t-surface-2);
+}
+.trow__perm {
+  display: flex;
+  gap: 6px;
+  align-items: flex-start;
+}
+@media (max-width: 640px) {
+  .trow__panel .trow__btn,
+  .trow__panel .trow__select,
+  .trow__seg label {
+    min-height: 34px;
+  }
+}

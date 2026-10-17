@@ -3,11 +3,11 @@
    checkbox, the name with its source/type chips and a short state, the
    duration in mono, and three labelled buttons: Complete, Skip today, and
    Expand/Collapse. Selection never depends on expansion; one row is expanded
-   at a time (store ui.expandedId). The expanded panel itself is the next
-   slice: an expanded row renders only the labelled region it will fill. */
+   at a time (store ui.expandedId). The expanded region mounts RowExpanded (F4b). */
 
 import type { ComponentChildren } from "preact";
 import { useApp } from "./context";
+import { RowExpanded } from "./RowExpanded";
 import {
   draftIsStaged,
   effectiveBlocks,
@@ -285,7 +285,9 @@ export function TaskRow({
           role="group"
           aria-labelledby={nameId}
           data-slot="row-controls"
-        />
+        >
+          <RowExpanded item={item} s={s} />
+        </div>
       )}
     </div>
   );
