@@ -11363,3 +11363,72 @@ button.strip-cal {
     min-height: 34px;
   }
 }
+
+/* F4c1: compact Source menu; product tokens only, no theme or palette. */
+.source-menu { position: relative; margin-left: auto; }
+.source-menu__trigger,
+.source-menu__delete {
+  min-height: 30px;
+  padding: 5px 10px;
+  border: 1px solid var(--t-border);
+  border-radius: var(--radius-sm);
+  background: var(--t-surface);
+  color: var(--t-text);
+  font: inherit;
+  cursor: pointer;
+}
+.source-menu__popover {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 4px);
+  z-index: 25;
+  width: min(260px, calc(100vw - 48px));
+  display: grid;
+  padding: 4px;
+  border: 1px solid var(--t-muted);
+  border-radius: var(--radius);
+  background: var(--t-surface);
+  color: var(--t-text);
+  text-align: left;
+}
+.source-menu__item {
+  display: grid;
+  gap: 1px;
+  width: 100%;
+  min-height: 34px;
+  padding: 5px 10px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--t-text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.source-menu__item:hover:not(:disabled),
+.source-menu__item:focus-visible { background: var(--t-surface-2); }
+.source-menu__item--danger,
+.source-menu__delete { color: color-mix(in srgb, var(--c-overflow) 70%, var(--t-text)); }
+.source-menu__detail { display: block; margin: 0; font-size: 11px; color: var(--t-muted); font-weight: 400; }
+.source-menu__separator { width: 100%; border: 0; border-top: 1px solid var(--t-border); margin: 4px 0; }
+.source-menu__note { margin: 2px 10px; font-size: 11px; color: var(--t-muted); }
+.source-menu__reason { margin: 4px 10px; font-size: 11px; color: var(--t-text); }
+.source-menu__confirm {
+  display: grid;
+  gap: 6px;
+  margin-top: 6px;
+  padding: 8px 10px;
+  border: 1px solid var(--state-danger);
+  border-radius: var(--radius-sm);
+  background: var(--t-surface);
+  color: var(--t-text);
+  overflow-wrap: anywhere;
+}
+.source-menu__confirm-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.source-menu__item:disabled,
+.source-menu__delete:disabled { color: var(--t-muted); cursor: not-allowed; background: var(--t-surface-2); }
+@media (max-width: 640px) {
+  .source-menu__trigger,
+  .source-menu__delete,
+  .source-menu__item { min-height: 34px; }
+}
