@@ -72,7 +72,9 @@ describe("batchEligibility source actions", () => {
     expect(batchEligibility("unassign", [recurring, ordinary], CONFIRMED).eligible).toEqual(
       ["rec", "one"],
     );
-    expect(unassignVerb(recurring)).toBe("skip_occurrence");
+    // The wire verb is always `unassign`; the server owns the recurring
+    // advance, and "Skip occurrence" stays only as the UI label.
+    expect(unassignVerb(recurring)).toBe("unassign");
     expect(unassignVerb(ordinary)).toBe("unassign");
   });
 });

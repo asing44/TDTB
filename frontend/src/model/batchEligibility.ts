@@ -10,7 +10,8 @@
    revision 2) and the production-plan decisions of 2026-10-16:
    - Capacities rows cannot use the Todoist all-day due path.
    - Capacities rows cannot be Unassigned in source (omitted, with reason).
-   - Recurring rows get Skip occurrence instead of Unassign.
+   - Recurring rows get Skip occurrence instead of Unassign — a UI label only;
+     the wire verb is `unassign` and the backend advances recurrence.
    - Protected native-timed rows cannot go all-day or automatic in a batch.
    - The Mint toggle is disabled for all-day, skipped, and Mint-session rows.
    - Skip today requires a confirmed Day Setup.
@@ -157,12 +158,15 @@ function reasonFor(
   }
 }
 
-/** The verb an Unassign batch resolves to per row: a recurring row advances
-    its due date (Skip occurrence) instead of clearing assignment. */
+/** The wire verb an Unassign batch resolves to. Always `unassign`: the
+    server's VERBS accepts only that verb, and the backend itself advances a
+    recurring task's due date instead of clearing it. "Skip occurrence" is a
+    UI label for this outcome and never crosses the wire, so row kind is not
+    part of the decision — the parameter stays for caller compatibility. */
 export function unassignVerb(
-  row: Pick<BatchRow, "isRecurring">,
-): "unassign" | "skip_occurrence" {
-  return row.isRecurring ? "skip_occurrence" : "unassign";
+  _row: Pick<BatchRow, "isRecurring">,
+): "unassign" {
+  return "unassign";
 }
 
 /** Eligibility for one action over the selected rows. */

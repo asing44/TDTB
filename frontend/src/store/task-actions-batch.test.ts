@@ -185,16 +185,27 @@ describe("task-actions source-changing batch", () => {
     ]);
   });
 
-  it("resolves a recurring Unassign to skip_occurrence", async () => {
+  it("sends the unassign wire verb for a recurring row", async () => {
+    // "Skip occurrence" is a UI label for this action, not a wire verb: the
+    // server's VERBS accepts only `unassign` and advances recurrence itself.
     const { adapter, controller } = await harness({ recurring: true });
     const batch = vi.spyOn(adapter, "applyRuntimeBatch");
-    select(controller, ["Press"]);
 
-    controller.reviewBatch("unassign");
-    await controller.applyBatch();
+    await controller.runRowBatch("Press", "unassign");
 
     expect(batch.mock.calls[0][0]).toEqual([
-      { verb: "skip_occurrence", target: "todoist:6fx00xPRESS", args: {} },
+      { verb: "unassign", target: "todoist:6fx00xPRESS", args: {} },
+    ]);
+  });
+
+  it("sends the unassign wire verb for a non-recurring row", async () => {
+    const { adapter, controller } = await harness();
+    const batch = vi.spyOn(adapter, "applyRuntimeBatch");
+
+    await controller.runRowBatch("Press", "unassign");
+
+    expect(batch.mock.calls[0][0]).toEqual([
+      { verb: "unassign", target: "todoist:6fx00xPRESS", args: {} },
     ]);
   });
 
