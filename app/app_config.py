@@ -38,7 +38,11 @@ translation to the markdown-shaped section dict the rest of the app consumes
       "micro_adventure_rotation": {"exclude_window_days": 14, ...},
       "micro_adventure_capacities": {"enabled": false, "structure": "",
                                      "idea_property": "", "category_property": "",
-                                     "effort_property": "", "refresh_cadence_hours": 168},
+                                     "effort_property": "effort",
+                                     "refresh_cadence_hours": 168,
+                                     "collection": "Personal Adventures",
+                                     "tag": "_TDTB-live",
+                                     "effort_allowed": ["small"], "merge": "append"},
       "habits": {"fallback_minutes_per_habit": 4, "round_to_minutes": 15},
       "todoist": {"read_query": {"assigned": ..., "quick": ...}},
       "sources": {"mode": "live" | "artifact",
@@ -122,26 +126,34 @@ SOURCES_KNOWN_KEYS = frozenset({
 SOURCES_LEGACY_IGNORED_KEYS = frozenset({"vault_enabled"})
 
 #: Optional ``micro_adventure_capacities`` block — a DISABLED-by-default
-#: extension point for eventually pulling micro-adventure ideas from
-#: Capacities. It is folded into the ``Micro-Adventures`` section as
-#: ``Capacities`` beside ``Pool``/``Rotation`` so ``micro_adventure`` reads one
-#: shape. Nothing consumes it on a request path; the live pull is unbuilt and
-#: ``micro_adventure.capacities_pool`` reports the status only.
+#: source of micro-adventure ideas from Capacities. It is folded into the
+#: ``Micro-Adventures`` section as ``Capacities`` beside ``Pool``/``Rotation``
+#: so ``micro_adventure`` reads one shape. The section only carries settings;
+#: the producer applies the collection/tag/effort filter and publishes an
+#: artifact-style ideas block, and ``micro_adventure`` merges it purely.
 MICRO_ADVENTURE_CAPACITIES_KEY = "micro_adventure_capacities"
 MICRO_ADVENTURE_CAPACITIES_DEFAULTS: dict[str, Any] = {
     "enabled": False,
     "structure": "",
     "idea_property": "",
     "category_property": "",
-    "effort_property": "",
+    "effort_property": "effort",
     "refresh_cadence_hours": 168,
+    "collection": "Personal Adventures",
+    "tag": "_TDTB-live",
+    "effort_allowed": ["small"],
+    "merge": "append",
 }
+#: The only accepted ``merge`` mode: Capacities ideas append after the config
+#: pool. Anything else degrades to this value and is reported.
+MICRO_ADVENTURE_CAPACITIES_MERGE_MODES = frozenset({"append"})
 #: Keys the ``micro_adventure_capacities`` block recognizes. Anything else is
 #: reported by :func:`micro_adventure_capacities_config_warnings`.
 MICRO_ADVENTURE_CAPACITIES_KNOWN_KEYS = frozenset(MICRO_ADVENTURE_CAPACITIES_DEFAULTS)
 #: The string-valued keys; anything non-string degrades to "".
 MICRO_ADVENTURE_CAPACITIES_STRING_KEYS = (
     "structure", "idea_property", "category_property", "effort_property",
+    "collection", "tag",
 )
 
 #: Keys the nested ``sources.artifact`` section recognizes.
@@ -572,6 +584,7 @@ def _normalize_micro_adventure_capacities(raw: dict[str, Any]) -> dict[str, Any]
     operator-visible report is
     :func:`micro_adventure_capacities_config_warnings`. Never raises."""
     out = dict(MICRO_ADVENTURE_CAPACITIES_DEFAULTS)
+    out["effort_allowed"] = list(MICRO_ADVENTURE_CAPACITIES_DEFAULTS["effort_allowed"])
     trimmed = _trimmed_keys(raw)
     if type(trimmed.get("enabled")) is bool:
         out["enabled"] = trimmed["enabled"]
@@ -582,6 +595,12 @@ def _normalize_micro_adventure_capacities(raw: dict[str, Any]) -> dict[str, Any]
     cadence = trimmed.get("refresh_cadence_hours")
     if type(cadence) is int and cadence > 0:
         out["refresh_cadence_hours"] = cadence
+    effort_allowed = trimmed.get("effort_allowed")
+    if isinstance(effort_allowed, list):
+        out["effort_allowed"] = [v.strip() for v in effort_allowed if isinstance(v, str)]
+    merge = trimmed.get("merge")
+    if isinstance(merge, str) and merge.strip() in MICRO_ADVENTURE_CAPACITIES_MERGE_MODES:
+        out["merge"] = merge.strip()
     return out
 
 
@@ -619,6 +638,25 @@ def _micro_adventure_capacities_warnings(document: dict[str, Any]) -> list[str]:
             f"config.json {MICRO_ADVENTURE_CAPACITIES_KEY}.refresh_cadence_hours "
             f"is {cadence!r}, which is not a positive integer; using "
             f"{MICRO_ADVENTURE_CAPACITIES_DEFAULTS['refresh_cadence_hours']}."
+        )
+    effort_allowed = trimmed.get("effort_allowed")
+    if "effort_allowed" in trimmed and not (
+        isinstance(effort_allowed, list)
+        and all(isinstance(v, str) for v in effort_allowed)
+    ):
+        warnings.append(
+            f"config.json {MICRO_ADVENTURE_CAPACITIES_KEY}.effort_allowed is "
+            f"{effort_allowed!r}, which is not a list of strings; using "
+            f"{MICRO_ADVENTURE_CAPACITIES_DEFAULTS['effort_allowed']!r}."
+        )
+    merge = trimmed.get("merge")
+    if "merge" in trimmed and not (
+        isinstance(merge, str)
+        and merge.strip() in MICRO_ADVENTURE_CAPACITIES_MERGE_MODES
+    ):
+        warnings.append(
+            f"config.json {MICRO_ADVENTURE_CAPACITIES_KEY}.merge is {merge!r}, "
+            'which is not "append"; using "append".'
         )
     return warnings
 

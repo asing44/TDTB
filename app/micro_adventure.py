@@ -18,14 +18,15 @@ Contract surfaces:
     (`FALLBACK_POOL`), which stays in code.
   * History — the log ``<app home>/state/micro-adventure-log.md`` (app-owned),
     YAML frontmatter, newest-first. Missing/unparseable → empty history.
-  * Capacities — a DISABLED-by-default extension point (`capacities_pool`)
-    reading the folded ``Capacities`` block; a documented stub that performs
-    no I/O and is never reached from a request path.
+  * Capacities — a DISABLED-by-default, PURE extension point
+    (``normalize_capacities_ideas`` / ``capacities_pool`` / ``merge_pool``)
+    over the folded ``Capacities`` settings plus a published artifact-style
+    ideas block. No I/O, no clock, and never reached from a request path yet.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
@@ -80,74 +81,372 @@ FALLBACK_POOL: list[PoolIdea] = [
 ]
 
 
-# ------------------------------------------------- Capacities extension point
-#: The three states :func:`capacities_pool` reports. This is an EXTENSION POINT
-#: only: nothing consumes it on a request path.
+# ------------------------------------------------- Capacities ideas pool core
+#: Statuses :func:`capacities_pool` reports. Pure: no I/O, no clock, no MCP.
 CAPACITIES_STATUS_DISABLED = "disabled"
 CAPACITIES_STATUS_NOT_CONFIGURED = "not-configured"
-CAPACITIES_STATUS_NOT_IMPLEMENTED = "not-implemented"
+CAPACITIES_STATUS_OK = "ok"
+CAPACITIES_STATUS_STALE = "stale"
+CAPACITIES_STATUS_UNAVAILABLE = "unavailable"
+
+#: Stable id prefix for Capacities-derived rows (history/streak key by id).
+CAPACITIES_ID_PREFIX = "cap-"
+#: Bounds applied by :func:`normalize_capacities_ideas`.
+CAPACITIES_MAX_IDEAS = 200
+CAPACITIES_MAX_IDEA_CHARS = 200
+#: Freshness default when the section omits ``refresh_cadence_hours``.
+DEFAULT_REFRESH_CADENCE_HOURS = 168
+#: The live pool size ``select_today`` exposes (``Selection.live_pool[:8]``).
+DEFAULT_LIVE_POOL_CAP = 8
+
+
+@dataclass(frozen=True)
+class NormalizedIdeas:
+    """Bounds-checked pool rows from one artifact-style ideas block.
+
+    ``warnings`` carries one human-readable line per dropped item (or per
+    truncation), so the caller can surface why the pool shrank."""
+
+    ideas: tuple[PoolIdea, ...] = ()
+    warnings: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
 class CapacitiesPoolResult:
     """Typed result of :func:`capacities_pool`.
 
-    ``ideas`` is always empty in this build — the live pull is deliberately
-    not implemented — but the field exists so a later implementation can
-    return ``PoolIdea`` rows without changing the call shape."""
+    ``ideas`` is only non-empty for ``ok`` and ``stale`` blocks; a stale block
+    keeps its rows for diagnostics but callers fall back to the config pool
+    (see :func:`merge_pool`)."""
 
     ideas: list[PoolIdea]
     status: str
     message: str
+    warnings: tuple[str, ...] = ()
 
 
-def capacities_pool(section: Any) -> CapacitiesPoolResult:
-    """STUB extension point for pulling micro-adventure ideas from Capacities.
+def _normalized_text_key(text: str) -> str:
+    """Case-folded, whitespace-collapsed form used for text de-duplication."""
+    return " ".join(text.split()).casefold()
 
-    Reads only the ``Micro-Adventures`` -> ``Capacities`` block (the folded
-    ``micro_adventure_capacities`` config key) and performs NO I/O. It is NOT
-    called by ``_micro_adventure_state``, ``select_today``, or any other
-    request path; the live pull it stands in for would be refreshed by an
-    operator-run/skill step against the Capacities read cursor, never on the
-    request path.
 
-    Status is one of three:
+def _coerce_timestamp(value: Any) -> datetime | None:
+    """datetime / date / ISO-8601 str → aware UTC datetime; else None.
+    Naive values are read as UTC. Never raises."""
+    try:
+        if isinstance(value, datetime):
+            dt = value
+        elif isinstance(value, date):
+            dt = datetime(value.year, value.month, value.day)
+        elif isinstance(value, str):
+            raw = value.strip()
+            if not raw:
+                return None
+            if raw.endswith(("Z", "z")):
+                raw = raw[:-1] + "+00:00"
+            try:
+                dt = datetime.fromisoformat(raw)
+            except ValueError:
+                dt = datetime.strptime(raw, "%Y-%m-%d")
+        else:
+            return None
+    except (TypeError, ValueError):
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
 
-      * ``disabled`` — ``enabled`` is anything other than the boolean ``True``
-        (absent block, ``false``, or a wrong type that degraded); no ideas.
-      * ``not-configured`` — enabled, but ``structure`` or ``idea_property``
-        is missing/blank; no ideas.
-      * ``not-implemented`` — enabled and fully configured; the live pull is
-        deliberately unbuilt, so no ideas.
 
-    A future implementation would normalize each pulled object to the pool row
-    shape ``{ID, Idea, Category, Effort, Active}`` with STABLE ids derived from
-    the Capacities object id (``cap-<object id>``) so streak/history keyed by
-    id survive, merge them AFTER the config pool, and refresh them only via
-    the operator-run/skill step described above. This stub never raises."""
+def _positive_int(value: Any, default: int) -> int:
+    """A real positive int (bool rejected) or ``default``."""
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        return default
+    return value
+
+
+def normalize_capacities_ideas(block: Any) -> NormalizedIdeas:
+    """Normalize an artifact-style ideas block into pool rows.
+
+    Input shape (any other shape degrades to no ideas, never raises)::
+
+        {"status": "ok", "read_at": "...", "items": [{"id", "idea", ...}]}
+
+    Each accepted item becomes ``PoolIdea("cap-<object id>", idea, category,
+    effort, active)`` with the idea text trimmed. Items are dropped (each with
+    a warning) when they are not objects, lack a usable ``id``, have a blank
+    idea, repeat an id, or repeat a normalized idea text. Text is truncated to
+    ``CAPACITIES_MAX_IDEA_CHARS`` and at most ``CAPACITIES_MAX_IDEAS`` rows are
+    kept (one warning per dropped row)."""
+    items = block.get("items") if isinstance(block, dict) else block
+    if not isinstance(items, list):
+        return NormalizedIdeas()
+
+    ideas: list[PoolIdea] = []
+    warnings: list[str] = []
+    seen_ids: set[str] = set()
+    seen_text: set[str] = set()
+
+    for index, item in enumerate(items):
+        if not isinstance(item, dict):
+            warnings.append(
+                f"micro_adventure_ideas item {index} is not an object; dropped."
+            )
+            continue
+
+        raw_id = item.get("id")
+        if isinstance(raw_id, bool) or not isinstance(raw_id, (str, int)):
+            warnings.append(
+                f"micro_adventure_ideas item {index} has no usable id; dropped."
+            )
+            continue
+        object_id = str(raw_id).strip()
+        if object_id.startswith(CAPACITIES_ID_PREFIX):
+            object_id = object_id[len(CAPACITIES_ID_PREFIX):]
+        if not object_id:
+            warnings.append(
+                f"micro_adventure_ideas item {index} has a blank id; dropped."
+            )
+            continue
+        pool_id = f"{CAPACITIES_ID_PREFIX}{object_id}"
+        if pool_id in seen_ids:
+            warnings.append(
+                f"micro_adventure_ideas item {pool_id} repeats an id; dropped."
+            )
+            continue
+
+        raw_text = item.get("idea")
+        if not isinstance(raw_text, str):
+            warnings.append(
+                f"micro_adventure_ideas item {pool_id} has no idea text; dropped."
+            )
+            continue
+        text = raw_text.strip()
+        if not text:
+            warnings.append(
+                f"micro_adventure_ideas item {pool_id} has a blank idea; dropped."
+            )
+            continue
+        if len(text) > CAPACITIES_MAX_IDEA_CHARS:
+            text = text[:CAPACITIES_MAX_IDEA_CHARS].rstrip()
+            warnings.append(
+                f"micro_adventure_ideas item {pool_id} idea truncated to "
+                f"{CAPACITIES_MAX_IDEA_CHARS} characters."
+            )
+
+        text_key = _normalized_text_key(text)
+        if text_key in seen_text:
+            warnings.append(
+                f"micro_adventure_ideas item {pool_id} repeats an existing idea; "
+                "dropped."
+            )
+            continue
+
+        category = item.get("category")
+        category = category.strip() if isinstance(category, str) else ""
+        effort = item.get("effort")
+        effort = effort.strip() if isinstance(effort, str) else ""
+
+        seen_ids.add(pool_id)
+        seen_text.add(text_key)
+        ideas.append(
+            PoolIdea(pool_id, text, category, effort, _parse_active(item.get("active")))
+        )
+
+    if len(ideas) > CAPACITIES_MAX_IDEAS:
+        overflow = ideas[CAPACITIES_MAX_IDEAS:]
+        ideas = ideas[:CAPACITIES_MAX_IDEAS]
+        for row in overflow:
+            warnings.append(
+                f"micro_adventure_ideas item {row.id} exceeds the "
+                f"{CAPACITIES_MAX_IDEAS}-idea cap; dropped."
+            )
+
+    return NormalizedIdeas(tuple(ideas), tuple(warnings))
+
+
+def _capacities_settings(section: Any) -> dict[str, Any]:
+    """The folded ``Micro-Adventures`` -> ``Capacities`` mapping (or ``{}``)."""
     caps = section.get("Capacities") if isinstance(section, dict) else None
-    caps = caps if isinstance(caps, dict) else {}
+    return caps if isinstance(caps, dict) else {}
+
+
+def _string_setting(caps: dict[str, Any], key: str) -> str:
+    """Trimmed string setting; any other type reads as ``""``."""
+    value = caps.get(key)
+    return value.strip() if isinstance(value, str) else ""
+
+
+def capacities_pool(
+    section: Any, block: Any = None, now: Any = None
+) -> CapacitiesPoolResult:
+    """Resolve the Capacities-side pool from the folded config + artifact block.
+
+    Pure: reads only the ``Micro-Adventures`` -> ``Capacities`` settings and the
+    published artifact-style ``block`` (``{status, read_at, items, warnings}``).
+    NO I/O, no clock: pass ``now`` to evaluate freshness, omit it to skip the
+    staleness check. It is NOT wired into ``select_today``/``main.py`` yet.
+
+    Status is one of:
+
+      * ``disabled`` — ``enabled`` is not the boolean ``True``; no ideas.
+      * ``not-configured`` — enabled, but ``collection`` and ``tag`` are both
+        blank; no ideas (the producer applies the membership filter).
+      * ``unavailable`` — no block, or a malformed/failed block; no ideas.
+      * ``stale`` — ``read_at`` older than ``refresh_cadence_hours`` (default
+        168); ideas are still returned for diagnostics but callers fall back.
+      * ``ok`` — otherwise.
+
+    Never raises. The effort/collection/tag membership FILTER belongs to the
+    producer; this function only carries the settings and the published block.
+    Rows keep STABLE ids (``cap-<object id>``) so history/streak keyed by id
+    survive, and nothing calls this from a request path yet (that is slice S3).
+    """
+    caps = _capacities_settings(section)
     if caps.get("enabled") is not True:
         return CapacitiesPoolResult(
             [], CAPACITIES_STATUS_DISABLED,
             "Capacities micro-adventure ideas are off.",
         )
-    structure = caps.get("structure")
-    idea_property = caps.get("idea_property")
-    if not (
-        isinstance(structure, str) and structure.strip()
-        and isinstance(idea_property, str) and idea_property.strip()
-    ):
+
+    collection = _string_setting(caps, "collection")
+    tag = _string_setting(caps, "tag")
+    if not collection and not tag:
         return CapacitiesPoolResult(
             [], CAPACITIES_STATUS_NOT_CONFIGURED,
-            "Capacities micro-adventure ideas need both 'structure' and "
-            "'idea_property'.",
+            "Capacities micro-adventure ideas need a 'collection' or a 'tag'.",
         )
-    return CapacitiesPoolResult(
-        [], CAPACITIES_STATUS_NOT_IMPLEMENTED,
-        "Live Capacities micro-adventure ideas are not implemented; the config "
-        "pool in config/tdtb.json is the only source today.",
+
+    if not isinstance(block, dict):
+        return CapacitiesPoolResult(
+            [], CAPACITIES_STATUS_UNAVAILABLE,
+            "No micro_adventure_ideas block was published; using the config pool.",
+        )
+
+    block_status = block.get("status")
+    if isinstance(block_status, str) and block_status.strip():
+        if block_status.strip().lower() != CAPACITIES_STATUS_OK:
+            return CapacitiesPoolResult(
+                [], CAPACITIES_STATUS_UNAVAILABLE,
+                f"micro_adventure_ideas block status is {block_status!r}; "
+                "using the config pool.",
+            )
+    if not isinstance(block.get("items"), list):
+        return CapacitiesPoolResult(
+            [], CAPACITIES_STATUS_UNAVAILABLE,
+            "micro_adventure_ideas block has no usable 'items' list; "
+            "using the config pool.",
+        )
+
+    normalized = normalize_capacities_ideas(block)
+    warnings = list(normalized.warnings)
+
+    cadence = _positive_int(
+        caps.get("refresh_cadence_hours"), DEFAULT_REFRESH_CADENCE_HOURS
     )
+    read_at = _coerce_timestamp(block.get("read_at"))
+    now_dt = _coerce_timestamp(now)
+    raw_read_at = block.get("read_at")
+    if now_dt is not None and raw_read_at not in (None, ""):
+        if read_at is None:
+            warnings.append(
+                f"micro_adventure_ideas read_at {raw_read_at!r} is not a "
+                "timestamp; freshness unknown, treated as current."
+            )
+        elif now_dt - read_at > timedelta(hours=cadence):
+            return CapacitiesPoolResult(
+                list(normalized.ideas), CAPACITIES_STATUS_STALE,
+                f"micro_adventure_ideas is older than {cadence} hours; "
+                "using the config pool.",
+                tuple(warnings),
+            )
+
+    return CapacitiesPoolResult(
+        list(normalized.ideas), CAPACITIES_STATUS_OK,
+        f"{len(normalized.ideas)} Capacities micro-adventure idea(s).",
+        tuple(warnings),
+    )
+
+
+def capacities_live_limit(live_cap: Any = DEFAULT_LIVE_POOL_CAP) -> int:
+    """How many Capacities ideas may enter the live pool: at most half
+    (floor) of ``live_cap``. Unusable input reads as the default cap."""
+    if isinstance(live_cap, bool):
+        return 0
+    try:
+        n = int(live_cap)
+    except (TypeError, ValueError):
+        n = DEFAULT_LIVE_POOL_CAP
+    return n // 2 if n > 0 else 0
+
+
+def _coerce_pool_rows(rows: Any) -> list[PoolIdea]:
+    """Coerce a pool input to ``PoolIdea`` rows.
+
+    A :class:`CapacitiesPoolResult` contributes rows only when it is ``ok``;
+    a stale/unavailable/disabled result contributes nothing so the config pool
+    is used alone. Any non-row entry is skipped. Never raises."""
+    if isinstance(rows, CapacitiesPoolResult):
+        rows = rows.ideas if rows.status == CAPACITIES_STATUS_OK else []
+    if rows is None or isinstance(rows, (str, bytes, dict)):
+        return []
+    try:
+        candidates = list(rows)
+    except TypeError:
+        return []
+    return [row for row in candidates if isinstance(row, PoolIdea)]
+
+
+def limit_capacities_ideas(
+    ideas: Any, live_cap: Any = DEFAULT_LIVE_POOL_CAP
+) -> list[PoolIdea]:
+    """The Capacities rows eligible for the live pool (first ``live_cap // 2``)."""
+    return _coerce_pool_rows(ideas)[: capacities_live_limit(live_cap)]
+
+
+def merge_pool(
+    config_pool: Any,
+    capacities_ideas: Any = (),
+    live_cap: Any = DEFAULT_LIVE_POOL_CAP,
+) -> list[PoolIdea]:
+    """Append Capacities ideas after the config pool, deduped and capped.
+
+    Config rows come first and keep pool order. Capacities rows follow, deduped
+    by id and by normalized idea text against everything already kept, and at
+    most :func:`capacities_live_limit` of them enter the pool (half of the live
+    pool). Empty, stale, failed, or garbage Capacities input yields EXACTLY the
+    config pool, so ``FALLBACK_POOL`` behavior is unchanged. Never raises."""
+    merged: list[PoolIdea] = []
+    seen_ids: set[str] = set()
+    seen_text: set[str] = set()
+
+    for row in _coerce_pool_rows(config_pool):
+        if row.id in seen_ids:
+            continue
+        text_key = _normalized_text_key(row.idea)
+        if text_key and text_key in seen_text:
+            continue
+        seen_ids.add(row.id)
+        if text_key:
+            seen_text.add(text_key)
+        merged.append(row)
+
+    limit = capacities_live_limit(live_cap)
+    added = 0
+    for row in _coerce_pool_rows(capacities_ideas):
+        if added >= limit:
+            break
+        if row.id in seen_ids:
+            continue
+        text_key = _normalized_text_key(row.idea)
+        if text_key and text_key in seen_text:
+            continue
+        seen_ids.add(row.id)
+        if text_key:
+            seen_text.add(text_key)
+        merged.append(row)
+        added += 1
+
+    return merged
 
 
 # ---------------------------------------------------------------- parse helpers

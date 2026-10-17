@@ -527,7 +527,11 @@
     "structure": "",
     "idea_property": "",
     "category_property": "",
-    "effort_property": "",
-    "refresh_cadence_hours": 168
+    "effort_property": "effort",
+    "refresh_cadence_hours": 168,
+    "collection": "Personal Adventures",
+    "tag": "_TDTB-live",
+    "effort_allowed": ["small"],
+    "merge": "append"
   }
 }

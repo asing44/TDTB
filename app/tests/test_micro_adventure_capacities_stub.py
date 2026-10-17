@@ -25,8 +25,12 @@ CAPACITIES_DEFAULTS = {
     "structure": "",
     "idea_property": "",
     "category_property": "",
-    "effort_property": "",
+    "effort_property": "effort",
     "refresh_cadence_hours": 168,
+    "collection": "Personal Adventures",
+    "tag": "_TDTB-live",
+    "effort_allowed": ["small"],
+    "merge": "append",
 }
 
 MAIN_PY = Path(app_config.__file__).resolve().parent / "main.py"
@@ -62,8 +66,12 @@ class TestCapacitiesConfigFolding:
             "structure": "Adventure",
             "idea_property": "Idea",
             "category_property": "",
-            "effort_property": "",
+            "effort_property": "effort",
             "refresh_cadence_hours": 168,
+            "collection": "Personal Adventures",
+            "tag": "_TDTB-live",
+            "effort_allowed": ["small"],
+            "merge": "append",
         }
         # Pool and Rotation are untouched by the new key.
         assert micro["Pool"] == [{"ID": "ma01", "Idea": "Walk", "Active": True}]
@@ -149,24 +157,41 @@ class TestCapacitiesPoolStub:
             assert result.status == ma.CAPACITIES_STATUS_DISABLED
             assert result.ideas == []
 
-    def test_not_configured_without_structure_or_idea_property(self):
-        cases = [
-            {"enabled": True, "structure": "", "idea_property": ""},
-            {"enabled": True, "structure": "Adventure"},
-            {"enabled": True, "idea_property": "Idea"},
-            {"enabled": True, "structure": "   ", "idea_property": "Idea"},
-        ]
-        for caps in cases:
+    def test_not_configured_without_collection_or_tag(self):
+        for caps in (
+            {"enabled": True, "collection": "", "tag": ""},
+            {"enabled": True, "collection": "   ", "tag": "  "},
+        ):
             result = ma.capacities_pool({"Capacities": caps})
             assert result.status == ma.CAPACITIES_STATUS_NOT_CONFIGURED
             assert result.ideas == []
 
-    def test_not_implemented_when_fully_configured(self):
-        result = ma.capacities_pool({
-            "Capacities": {"enabled": True, "structure": "Adventure", "idea_property": "Idea"},
-        })
-        assert result.status == ma.CAPACITIES_STATUS_NOT_IMPLEMENTED
-        assert result.ideas == []
+    def test_collection_or_tag_alone_is_configured_but_unavailable_without_block(self):
+        for caps in (
+            {"enabled": True, "collection": "Personal Adventures"},
+            {"enabled": True, "tag": "_TDTB-live"},
+        ):
+            result = ma.capacities_pool({"Capacities": caps})
+            assert result.status == ma.CAPACITIES_STATUS_UNAVAILABLE
+            assert result.ideas == []
+
+    def test_ok_when_fully_configured_with_a_published_block(self):
+        result = ma.capacities_pool(
+            {
+                "Capacities": {
+                    "enabled": True,
+                    "structure": "Adventure",
+                    "idea_property": "Idea",
+                    "collection": "Personal Adventures",
+                    "tag": "_TDTB-live",
+                },
+            },
+            {"status": "ok", "read_at": "2026-07-15T06:00:00Z",
+             "items": [{"id": "obj-1", "idea": "Kayaking"}]},
+            TODAY,
+        )
+        assert result.status == ma.CAPACITIES_STATUS_OK
+        assert [p.id for p in result.ideas] == ["cap-obj-1"]
         assert isinstance(result.message, str) and result.message
 
     def test_result_type_is_stable(self):
@@ -175,7 +200,9 @@ class TestCapacitiesPoolStub:
         assert result.status in {
             ma.CAPACITIES_STATUS_DISABLED,
             ma.CAPACITIES_STATUS_NOT_CONFIGURED,
-            ma.CAPACITIES_STATUS_NOT_IMPLEMENTED,
+            ma.CAPACITIES_STATUS_OK,
+            ma.CAPACITIES_STATUS_STALE,
+            ma.CAPACITIES_STATUS_UNAVAILABLE,
         }
 
     def test_docstring_records_stable_id_and_off_request_path_rule(self):
