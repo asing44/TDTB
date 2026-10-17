@@ -1218,6 +1218,109 @@ def _check_surfaces(
 
 
 # ---------------------------------------------------------------------------
+# Batch-undo conflict checks
+# ---------------------------------------------------------------------------
+#
+# A batch undo reverses whole items only when each applied step's POST-apply
+# state still holds, so a later edit to any one of them is reported as a
+# conflict and left alone rather than clobbered. Each of these kinds therefore
+# has a safe, non-mutating pre-reverse check. A kind absent from the set is
+# reported ``non_reversible`` by the caller: there is no safe way to prove a
+# later edit did not touch it, and a blind reverse is exactly what batch undo
+# must never do.
+
+CONFLICT_CHECKED_KINDS = frozenset({
+    "todoist.close",
+    "todoist.unassign",
+    "runstate.drop",
+    "runstate.undrop",
+    "exclusions.add",
+    "capacities.complete",
+})
+
+
+class StepNotReversible(RuntimeActionError):
+    """The step kind has no safe pre-reverse conflict check."""
+
+
+def _drop_has_identity(valid_date: date, identity: Any) -> bool:
+    key = str(identity or "")
+    return any(str(d.get("identity") or "") == key
+               for d in runstate.read_dropped(valid_date))
+
+
+def _exclusion_add_conflict(step: dict) -> str | None:
+    dimension = step.get("dimension")
+    if dimension == "todoist":
+        if step.get("already_present"):
+            return None
+        entry_id = (step.get("entry") or {}).get("id")
+        current = exclusion_settings.read_settings().settings
+        if not any(row.id == entry_id for row in current.todoist):
+            return "exclusion entry no longer present"
+        return None
+    if dimension == "capacities":
+        if step.get("already_present"):
+            return None
+        current = capacities_settings.read_settings().settings
+        if step.get("identity") not in current.excluded:
+            return "exclusion entry no longer present"
+        return None
+    return f"unknown exclusion dimension {dimension!r}"
+
+
+def step_conflict(
+    step: dict,
+    valid_date: date,
+    *,
+    todoist: Any = None,
+    store: Any = None,
+    capacities: Any = None,
+) -> str | None:
+    """The post-apply state check a batch undo runs BEFORE reversing ``step``.
+
+    Returns ``None`` when the step's applied state still holds and reversing
+    it is safe, or a human-readable reason string when a later edit changed
+    that state (so reversing would clobber the edit). Raises
+    :class:`StepNotReversible` for a kind with no safe check.
+
+    ``capacities.complete`` returns ``None`` here: its independent guard is
+    the fingerprint check inside ``restore_completion``, which refuses a
+    changed source itself during the reverse.
+    """
+    kind = step.get("kind")
+    if kind not in CONFLICT_CHECKED_KINDS:
+        raise StepNotReversible(
+            f"no safe conflict check for step kind {kind!r}")
+    if kind == "todoist.close":
+        if todoist is None:
+            return "todoist surface unavailable"
+        task = todoist.get_task(step["task_id"])
+        if not (task.get("is_completed") or task.get("completed_at")):
+            return "task is no longer closed"
+        return None
+    if kind == "todoist.unassign":
+        if todoist is None:
+            return "todoist surface unavailable"
+        task = todoist.get_task(step["task_id"])
+        after_due = ((step.get("after") or {}).get("task") or {}).get("due")
+        if task.get("due") != after_due:
+            return "task due changed after unassign"
+        return None
+    if kind == "capacities.complete":
+        return None
+    if kind == "runstate.drop":
+        if not _drop_has_identity(valid_date, step.get("identity")):
+            return "drop identity no longer present"
+        return None
+    if kind == "runstate.undrop":
+        if _drop_has_identity(valid_date, step.get("identity")):
+            return "drop identity already restored"
+        return None
+    return _exclusion_add_conflict(step)
+
+
+# ---------------------------------------------------------------------------
 # Public engine
 # ---------------------------------------------------------------------------
 

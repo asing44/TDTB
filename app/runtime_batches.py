@@ -222,3 +222,153 @@ def retry_batch(
         _save_batch(valid_date, batch)
         results.append(_result(index, verb, target, status, error))
     return {"batch_id": batch_id, "results": results}
+
+
+# ---------------------------------------------------------------------------
+# undo_batch — reverse the applied items, per-step conflict-checked
+# ---------------------------------------------------------------------------
+
+
+def _item_ref(index: Any, verb: Any, target: Any, **extra: Any) -> dict:
+    ref = {"item": index, "verb": verb, "target": target}
+    ref.update(extra)
+    return ref
+
+
+def _reverse_item(
+    steps: list[dict],
+    valid_date: date,
+    todoist: Any,
+    store: Any,
+    capacities: Any,
+) -> str | None:
+    """Reverse one item's applied steps in reverse; return a failure reason.
+
+    The caller has already established that every step is safe to reverse.
+    """
+    for step in reversed(steps):
+        try:
+            ra._reverse_step(step, valid_date, todoist, store, capacities)
+        except Exception as exc:  # noqa: BLE001 — reported per item
+            step["undo_error"] = str(exc)
+            return str(exc)
+    return None
+
+
+def undo_batch(
+    valid_date: date,
+    batch_id: str,
+    *,
+    todoist: Any = None,
+    store: Any = None,
+    capacities: Any = None,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """Reverse a batch's applied items in reverse order, per-step checked.
+
+    Each applied item is reversed only when every one of its applied steps
+    still shows its post-apply state (``runtime_actions.step_conflict``). A
+    later edit to any step reports the whole item in ``conflicts`` and leaves
+    it alone; a step kind with no safe check reports the item in
+    ``non_reversible``; an item that never applied (failed/refused) is
+    skipped. Already-undone items report as conflicts on a second call, so
+    ``undo_batch`` is idempotent and never re-reverses.
+
+    Returns ``{"batch_id", "reverted": [{item, verb, target, action_id}],
+    "conflicts": [{item, verb, target, reason}], "non_reversible": [{item,
+    verb, target, reason}]}`` and journals ``undo_report`` on the batch entry;
+    ``undone_at`` is set once at least one item reverted or the batch is fully
+    accounted for. An unknown batch is a clean ``RuntimeActionError``.
+    """
+    with runstate.day_lock(valid_date):
+        journal = ra.load_journal(valid_date)
+        batch = _find_batch(journal, batch_id)
+        if batch is None:
+            raise ra.RuntimeActionError(f"unknown batch {batch_id!r}")
+
+        actions = {a.get("id"): a for a in journal.get("actions") or []}
+        reverted: list[dict] = []
+        conflicts: list[dict] = []
+        non_reversible: list[dict] = []
+        seen: set = set()
+        applied_total = 0
+
+        for item in reversed(list(batch.get("items") or [])):
+            index = item.get("index")
+            verb = item.get("verb")
+            target = item.get("target")
+            action_id = item.get("action_id")
+            action = actions.get(action_id) if action_id else None
+            if action is None:
+                continue  # never applied (refused) or owned by another batch
+            status = action.get("status")
+            if status == "undone":
+                conflicts.append(_item_ref(
+                    index, verb, target, reason="already undone"))
+                continue
+            if status == "undo_failed":
+                conflicts.append(_item_ref(
+                    index, verb, target, reason="prior undo failed"))
+                continue
+            if status != STATUS_APPLIED or action_id in seen:
+                continue  # failed/compensated/partial, or a duplicate action
+            seen.add(action_id)
+
+            steps = [s for s in action.get("steps") or [] if s.get("applied")]
+            if not steps:
+                continue
+            applied_total += 1
+
+            try:
+                ra._check_surfaces(steps, todoist, store, capacities)
+            except ra.RuntimeActionError as exc:
+                conflicts.append(_item_ref(
+                    index, verb, target, reason=str(exc)))
+                continue
+
+            verdict: str | None = None
+            reason: str | None = None
+            for step in reversed(steps):
+                try:
+                    found = ra.step_conflict(
+                        step, valid_date,
+                        todoist=todoist, store=store, capacities=capacities)
+                except ra.StepNotReversible as exc:
+                    verdict, reason = "non_reversible", str(exc)
+                    break
+                if found:
+                    verdict, reason = "conflict", found
+                    break
+            if verdict == "non_reversible":
+                non_reversible.append(_item_ref(
+                    index, verb, target, reason=reason))
+                continue
+            if verdict == "conflict":
+                conflicts.append(_item_ref(
+                    index, verb, target, reason=reason))
+                continue
+
+            failure = _reverse_item(
+                steps, valid_date, todoist, store, capacities)
+            if failure is not None:
+                conflicts.append(_item_ref(
+                    index, verb, target, reason=f"reverse failed: {failure}"))
+                continue
+
+            action["status"] = "undone"
+            action["undone_at"] = ra._now_iso(now)
+            reverted.append(_item_ref(
+                index, verb, target, action_id=action_id))
+
+        report = {
+            "batch_id": batch_id,
+            "reverted": reverted,
+            "conflicts": conflicts,
+            "non_reversible": non_reversible,
+        }
+        accounted = len(reverted) + len(conflicts) + len(non_reversible)
+        if reverted or applied_total == 0 or accounted >= applied_total:
+            batch["undone_at"] = ra._now_iso(now)
+        batch["undo_report"] = report
+        ra._write_journal(valid_date, journal)
+        return report
