@@ -871,7 +871,9 @@ def _apply_step(step: dict, valid_date: date,
                 "defer the recurring task in Todoist instead")
     elif kind == "runstate.drop":
         # IMP-05 Drop from plan: date-scoped runstate exclusion. Identity is
-        # stable so a repeat is a no-op; the dated note scopes it to today.
+        # stable so a repeat of the SAME generation is a no-op; the dated note
+        # scopes it to today. Every transition mints a fresh ownership witness
+        # so a later cycle is distinguishable from this one.
         # The caller (apply_action / undo_action) already holds
         # ``runstate.day_lock``, so the RMW must NOT go through
         # ``runstate.update_runstate`` (non-reentrant lock -> deadlock).
@@ -879,8 +881,12 @@ def _apply_step(step: dict, valid_date: date,
         identity = drop_identity_of(item)
         step["identity"] = identity
         step["before"] = {"dropped": runstate.read_dropped(valid_date)}
+        owner = secrets.token_hex(8)
+        observed: dict[str, Any] = {}
 
         def _append_drop(state: dict[str, Any]) -> None:
+            cycles = dict(_drop_cycles_of(state))
+            prior = _cycle_witness(cycles.get(identity) or {})
             dropped = [d for d in (state.get("dropped") or [])
                        if d.get("identity") != identity]
             entry = {"identity": identity,
@@ -891,8 +897,15 @@ def _apply_step(step: dict, valid_date: date,
                     entry[key] = item[key]
             dropped.append(entry)
             state["dropped"] = dropped
+            cycle = {"owner": owner, "counter": prior["counter"] + 1}
+            cycles[identity] = cycle
+            state[DROP_CYCLES_KEY] = cycles
+            observed["prior"] = prior
+            observed["after"] = dict(cycle)
 
         _locked_runstate_rmw(valid_date, _append_drop)
+        step["before"]["cycle"] = observed["prior"]
+        step["after"] = observed["after"]
     elif kind == "runstate.undrop":
         # Restore today: remove exactly the identity the caller addressed.
         identity = str(step.get("identity") or "").strip()
@@ -906,14 +919,24 @@ def _apply_step(step: dict, valid_date: date,
                 f"{identity!r}: not in today's skipped list")
         step["identity"] = identity
         step["before"] = {"entry": entry, "dropped": dropped}
+        observed_undrop: dict[str, Any] = {}
 
         def _remove_drop(state: dict[str, Any]) -> None:
+            cycles = dict(_drop_cycles_of(state))
+            prior = _cycle_witness(cycles.get(identity) or {})
             state["dropped"] = [
                 d for d in (state.get("dropped") or [])
                 if d.get("identity") != identity
             ]
+            cycle = {"owner": "", "counter": prior["counter"] + 1}
+            cycles[identity] = cycle
+            state[DROP_CYCLES_KEY] = cycles
+            observed_undrop["prior"] = prior
+            observed_undrop["after"] = dict(cycle)
 
         _locked_runstate_rmw(valid_date, _remove_drop)
+        step["before"]["cycle"] = observed_undrop["prior"]
+        step["after"] = observed_undrop["after"]
     elif kind == "deferrals.record":
         item = step["item"]
         key = deferrals.key_for_item(item)
@@ -1008,27 +1031,87 @@ def _reverse_step(step: dict, valid_date: date,
             todoist.reschedule_task(step["task_id"], due["string"])
         # no due at all — the clear was reversed by not writing anything
     elif kind == "runstate.drop":
-        # B1 fix: remove ONLY this drop's own identity. Restoring the whole
-        # before-image would clobber a later Skip today made after this one.
-        identity = step.get("identity")
+        # B1 fix: remove ONLY this drop's own identity, and only while this
+        # step's own generation still owns it. Restoring the whole before-image
+        # would clobber a later Skip today; a bare identity check would clobber
+        # a later Skip today of the SAME identity.
+        identity = str(step.get("identity") or "")
+        recorded = _recorded_witness(step)
+        prior_cycle = step.get("before", {}).get("cycle")
 
         def _remove_own_drop(state: dict[str, Any]) -> None:
+            cycles = dict(_drop_cycles_of(state))
+            live = _cycle_witness(cycles.get(identity) or {})
+            present = any(d.get("identity") == identity
+                          for d in (state.get("dropped") or []))
+            if not present:
+                return  # nothing live to reverse — leave the state alone
+            if recorded is None:
+                if live["counter"] > 1:
+                    raise RuntimeActionError(
+                        f"{identity!r}: drop ownership is not recorded for "
+                        "this step and a later skip/restore cycle ran — "
+                        "refusing to reverse")
+            elif live != recorded:
+                raise RuntimeActionError(
+                    f"{identity!r}: a later skip/restore cycle owns this "
+                    "identity — refusing to reverse an older drop")
             state["dropped"] = [
                 d for d in (state.get("dropped") or [])
                 if d.get("identity") != identity
             ]
+            if isinstance(prior_cycle, dict) and "counter" in prior_cycle:
+                cycles[identity] = _cycle_witness(prior_cycle)
+            else:
+                cycles[identity] = {"owner": "",
+                                    "counter": live["counter"] + 1}
+            state[DROP_CYCLES_KEY] = cycles
 
         _locked_runstate_rmw(valid_date, _remove_own_drop)
     elif kind == "runstate.undrop":
-        # Reverse of Restore today: re-add the saved dropped entry verbatim.
+        # Reverse of Restore today: re-add the saved dropped entry verbatim,
+        # but ONLY while this restore's own post-image (identity absent, same
+        # witness) still holds. A later skip/restore cycle must never be
+        # clobbered by resurrecting a stale entry.
         entry = before.get("entry") or {}
-        identity = step.get("identity") or entry.get("identity")
+        identity = str(step.get("identity") or entry.get("identity") or "")
+        recorded = _recorded_witness(step)
+        prior_cycle = before.get("cycle")
 
         def _re_add_drop(state: dict[str, Any]) -> None:
+            cycles = dict(_drop_cycles_of(state))
+            live = _cycle_witness(cycles.get(identity) or {})
+            present = any(d.get("identity") == identity
+                          for d in (state.get("dropped") or []))
+            if present:
+                raise RuntimeActionError(
+                    f"{identity!r}: identity is dropped again — a later "
+                    "skip owns it; refusing to reverse the restore")
+            if recorded is None:
+                if live["counter"]:
+                    raise RuntimeActionError(
+                        f"{identity!r}: restore ownership is not recorded "
+                        "for this step and a later skip/restore cycle ran — "
+                        "refusing to reverse")
+                restored = {"owner": secrets.token_hex(8),
+                            "counter": live["counter"] + 1}
+            elif live != recorded:
+                raise RuntimeActionError(
+                    f"{identity!r}: a later skip/restore cycle superseded "
+                    "this restore — refusing to reverse")
+            else:
+                restored = _cycle_witness(
+                    prior_cycle if isinstance(prior_cycle, dict) else {})
+                if not restored["owner"]:
+                    restored["owner"] = secrets.token_hex(8)
+                if not restored["counter"]:
+                    restored["counter"] = live["counter"] + 1
             dropped = [d for d in (state.get("dropped") or [])
                        if d.get("identity") != identity]
             dropped.append(entry)
             state["dropped"] = dropped
+            cycles[identity] = restored
+            state[DROP_CYCLES_KEY] = cycles
 
         _locked_runstate_rmw(valid_date, _re_add_drop)
     elif kind == "deferrals.record":
@@ -1249,6 +1332,86 @@ def _drop_has_identity(valid_date: date, identity: Any) -> bool:
                for d in runstate.read_dropped(valid_date))
 
 
+# ---------------------------------------------------------------------------
+# Drop/Restore cycle ownership (generation witness)
+# ---------------------------------------------------------------------------
+#
+# Skip today and Restore today are two TRANSITIONS of one identity's in-day
+# membership, so identity presence alone cannot say which cycle a journal step
+# belongs to: after ``drop -> restore -> drop`` the identity is present again, and
+# a presence-only check would authorize an undo of the FIRST drop to delete the
+# SECOND drop's entry. Each runstate transition therefore mints a witness —
+# a monotonic per-identity ``counter`` plus the ``owner`` token of the cycle
+# currently holding the entry ("" when the identity is restored) — persisted in
+# the run-state note under ``drop_cycles``. ``runtime_actions`` owns that key end
+# to end; ``runstate`` has no default for it, so a note (or a journal step)
+# without one reads as legacy and its reverse fails closed.
+DROP_CYCLES_KEY = "drop_cycles"
+
+
+def _drop_cycles_of(state: dict[str, Any]) -> dict[str, Any]:
+    raw = state.get(DROP_CYCLES_KEY)
+    return raw if isinstance(raw, dict) else {}
+
+
+def _live_drop_cycle(valid_date: date, identity: Any) -> dict[str, Any]:
+    """The persisted witness for ``identity`` (``{}`` when none is recorded)."""
+    cycle = _drop_cycles_of(runstate.read_runstate(valid_date) or {}).get(
+        str(identity or ""))
+    return cycle if isinstance(cycle, dict) else {}
+
+
+def _cycle_witness(cycle: dict[str, Any]) -> dict[str, Any]:
+    """Normalised ``{owner, counter}`` witness from a persisted/mapped cycle."""
+    return {"owner": str(cycle.get("owner") or ""),
+            "counter": int(cycle.get("counter") or 0)}
+
+
+def _recorded_witness(step: dict) -> dict[str, Any] | None:
+    """The witness an applied step wrote (``None`` for a legacy step)."""
+    after = step.get("after")
+    if not isinstance(after, dict) or "counter" not in after:
+        return None
+    return _cycle_witness(after)
+
+
+def _drop_step_conflict(step: dict, valid_date: date) -> str | None:
+    """Is this drop step's own generation still the live one?"""
+    identity = str(step.get("identity") or "")
+    if not _drop_has_identity(valid_date, identity):
+        return "drop identity no longer present"
+    recorded = _recorded_witness(step)
+    live = _cycle_witness(_live_drop_cycle(valid_date, identity))
+    if recorded is None:
+        # Legacy step with no witness. Only an identity whose FIRST transition
+        # is still live is provably this step's own effect; any higher counter
+        # means a later cycle ran, so ownership cannot be proved.
+        if live["counter"] <= 1:
+            return None
+        return ("drop ownership is not recorded for this step and a later "
+                "skip/restore cycle ran — refusing to reverse")
+    if live != recorded:
+        return "a later skip/restore cycle owns this identity"
+    return None
+
+
+def _undrop_step_conflict(step: dict, valid_date: date) -> str | None:
+    """Is this Restore step's own post-image (identity absent) still live?"""
+    identity = str(step.get("identity") or "")
+    if _drop_has_identity(valid_date, identity):
+        return "drop identity is present again (a later skip owns it)"
+    recorded = _recorded_witness(step)
+    if recorded is None:
+        # Legacy step: an absent identity is the pre-fix contract (still safe
+        # to report clear); the reverse itself still refuses when a cycle was
+        # recorded after it (see ``_reverse_step``).
+        return None
+    live = _cycle_witness(_live_drop_cycle(valid_date, identity))
+    if live != recorded:
+        return "a later skip/restore cycle superseded this restore"
+    return None
+
+
 def _exclusion_add_conflict(step: dict) -> str | None:
     dimension = step.get("dimension")
     if dimension == "todoist":
@@ -1310,19 +1473,37 @@ def step_conflict(
     if kind == "capacities.complete":
         return None
     if kind == "runstate.drop":
-        if not _drop_has_identity(valid_date, step.get("identity")):
-            return "drop identity no longer present"
-        return None
+        return _drop_step_conflict(step, valid_date)
     if kind == "runstate.undrop":
-        if _drop_has_identity(valid_date, step.get("identity")):
-            return "drop identity already restored"
-        return None
+        return _undrop_step_conflict(step, valid_date)
     return _exclusion_add_conflict(step)
 
 
 # ---------------------------------------------------------------------------
 # Public engine
 # ---------------------------------------------------------------------------
+
+# Verbs whose repeated request is a new cycle rather than a retry: they
+# toggle one date-scoped membership, so the constant idempotency key alone
+# cannot tell a retry from a re-skip after a restore.
+CYCLE_VERBS = frozenset({"drop_from_plan", "restore_today"})
+
+
+def _cycle_effect_holds(action: dict, valid_date: date) -> bool:
+    """True when the run-state still shows this action's own effect.
+
+    Used by the Drop/Restore duplicate check: the earlier action answers a
+    repeat request only while its generation (or its restored state) is still
+    live. Any other action keeps the plain idempotency-key contract.
+    """
+    for step in action.get("steps") or []:
+        kind = step.get("kind")
+        if kind == "runstate.drop":
+            return _drop_step_conflict(step, valid_date) is None
+        if kind == "runstate.undrop":
+            return _undrop_step_conflict(step, valid_date) is None
+    return False
+
 
 def apply_action(
     valid_date: date,
@@ -1353,12 +1534,26 @@ def apply_action(
     with runstate.day_lock(valid_date):
         journal = load_journal(valid_date)
         key = idempotency_key(valid_date, verb, target_name, args)
-        for existing in journal["actions"]:
-            if (existing.get("idempotency_key") == key
-                    and existing.get("status") in ("applied", "partial")):
-                dup = dict(existing)
-                dup["duplicate"] = True
-                return dup
+        if verb in CYCLE_VERBS:
+            # Drop/Restore are repeated legitimately: the SAME request is a
+            # duplicate only while its own effect still holds. The newest
+            # matching action decides — a stale historic one is never
+            # resurrected as the answer to a new cycle.
+            for existing in reversed(journal["actions"]):
+                if (existing.get("idempotency_key") == key
+                        and existing.get("status") in ("applied", "partial")):
+                    if _cycle_effect_holds(existing, valid_date):
+                        dup = dict(existing)
+                        dup["duplicate"] = True
+                        return dup
+                    break
+        else:
+            for existing in journal["actions"]:
+                if (existing.get("idempotency_key") == key
+                        and existing.get("status") in ("applied", "partial")):
+                    dup = dict(existing)
+                    dup["duplicate"] = True
+                    return dup
 
         # Resolution runs inside the lock and AFTER the duplicate check, so a
         # repeated restore_today (whose dropped entry is already gone) still
