@@ -242,6 +242,80 @@ describe("results, retry, and undo", () => {
     expect(container.textContent).not.toContain("Retry failed");
   });
 
+  describe("refused and failed results", () => {
+    const REASON = "⛔ 'todoist:abc': not in today's plan manifest or digest";
+
+    function stubStatuses(h: Harness, statuses: string[]) {
+      vi.spyOn(h.adapter, "applyRuntimeBatch").mockImplementation(async (items) => ({
+        batchId: "rb-stub",
+        results: items.map((item, index) => ({
+          index,
+          verb: item.verb,
+          target: item.target,
+          status: statuses[index] as "applied",
+          error: statuses[index] === "applied" ? null : REASON,
+        })),
+      }));
+    }
+
+    const chip = (c: HTMLElement) =>
+      c.querySelector("[data-testid=batch-results] .batch-panel__h .batch-chip")!;
+
+    it("all refused reads as a failure, shows the full reason, offers no Retry or Undo", async () => {
+      const h = makeHarness("ready");
+      stubStatuses(h, ["refused"]);
+      const { container } = await applied(h, ["Press"]);
+
+      expect(chip(container).className).toContain("batch-chip--bad");
+      expect(chip(container).textContent).toBe("1 refused");
+      expect(container.querySelector("[data-testid=batch-results]")!.textContent).not.toContain("done");
+      expect(container.querySelector("[data-testid=batch-live]")!.textContent).toBe(
+        "Complete: 1 refused.",
+      );
+      const li = container.querySelector("[data-testid=batch-results] li")!;
+      expect(li.getAttribute("data-status")).toBe("refused");
+      expect(li.querySelector(".batch-chip--bad")?.textContent).toBe("Refused");
+      expect(li.querySelector(".batch-panel__fail")?.textContent).toBe(REASON);
+      expect(container.textContent).not.toContain("Retry failed");
+      expect(container.textContent).not.toContain("Undo whole batch");
+    });
+
+    it("mixed done and refused is failure-styled, counts both, keeps Undo, no Retry", async () => {
+      const h = makeHarness("ready");
+      stubStatuses(h, ["applied", "refused"]);
+      const { container } = await applied(h);
+
+      expect(chip(container).className).toContain("batch-chip--bad");
+      expect(chip(container).textContent).toBe("1 done · 1 refused");
+      expect(
+        container.querySelectorAll(".batch-panel__fail")[0]?.textContent,
+      ).toBe(REASON);
+      expect(container.textContent).not.toContain("Retry failed");
+      expect(() => button(container, "Undo whole batch")).not.toThrow();
+    });
+
+    it("all failed keeps failure styling and Retry failed", async () => {
+      const h = makeHarness("ready");
+      stubStatuses(h, ["failed", "failed"]);
+      const { container } = await applied(h);
+
+      expect(chip(container).className).toContain("batch-chip--bad");
+      expect(chip(container).textContent).toBe("2 failed");
+      expect(() => button(container, "Retry failed (2)")).not.toThrow();
+      expect(container.textContent).not.toContain("Undo whole batch");
+    });
+
+    it("all done stays ok-styled with Undo and no Retry", async () => {
+      const h = makeHarness("ready");
+      const { container } = await applied(h);
+
+      expect(chip(container).className).toContain("batch-chip--ok");
+      expect(chip(container).textContent).toBe("2 done");
+      expect(container.textContent).not.toContain("Retry failed");
+      expect(() => button(container, "Undo whole batch")).not.toThrow();
+    });
+  });
+
   it("reports an undo conflict by name and does not claim a clean reversal", async () => {
     const h = makeHarness("ready");
     const { container } = await applied(h);

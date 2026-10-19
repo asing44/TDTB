@@ -232,13 +232,16 @@ function useRowNames(state: AppState): (id: string) => RowInfo {
 
 function statusKind(status: string): "ok" | "bad" | "other" {
   if (status === "applied") return "ok";
-  if (status === "failed") return "bad";
-  return "other";
+  // duplicate = already settled server-side; everything else (failed,
+  // refused, or an unknown status) is a non-success and reads as a failure.
+  if (status === "duplicate") return "other";
+  return "bad";
 }
 
 function statusWord(status: string): string {
   if (status === "applied") return "Done";
   if (status === "failed") return "Failed";
+  if (status === "refused") return "Refused";
   return status;
 }
 
@@ -265,6 +268,25 @@ export function BatchPanel() {
   const results = batch.results;
   const applied = results.filter((r) => r.status === "applied").length;
   const failed = results.filter((r) => r.status === "failed").length;
+  const refused = results.filter((r) => r.status === "refused").length;
+  const problems = results.filter(
+    (r) => r.status !== "applied" && r.status !== "duplicate",
+  ).length;
+  // Names only the kinds present; never "done" when nothing succeeded.
+  const problemWord =
+    problems === 0
+      ? ""
+      : refused === problems
+        ? `${problems} refused`
+        : failed === problems
+          ? `${problems} failed`
+          : `${problems} failed or refused`;
+  const summary =
+    problems === 0
+      ? `${applied} done`
+      : applied > 0
+        ? `${applied} done · ${problemWord}`
+        : problemWord;
   const planning = action !== null && isPlanningBatchAction(action);
 
   let live = "";
@@ -277,7 +299,7 @@ export function BatchPanel() {
     } else if (report) {
       live = `Undo: ${report.reverted.length} reverted, ${report.conflicts.length} conflicts, ${report.nonReversible.length} not reversible.`;
     } else {
-      live = `${label}: ${applied} done${failed ? `, ${failed} failed` : ""}.`;
+      live = `${label}: ${summary.replace(" · ", ", ")}.`;
     }
   }
 
@@ -312,8 +334,8 @@ export function BatchPanel() {
         <li data-status={r.status}>
           <span class={`batch-chip batch-chip--${kind}`}>{statusWord(r.status)}</span>
           <strong>{nameOf(r.id).name}</strong>
-          {r.status === "failed" ? (
-            <span class="batch-panel__fail">{r.error ?? "Failed"}</span>
+          {kind === "bad" ? (
+            <span class="batch-panel__fail">{r.error ?? statusWord(r.status)}</span>
           ) : null}
         </li>
       );
@@ -324,8 +346,8 @@ export function BatchPanel() {
         <section class="batch-panel" aria-label="Batch result" data-testid="batch-results">
           <h2 class="batch-panel__h" tabindex={-1} ref={headingRef}>
             Result · {label}
-            <span class={`batch-chip batch-chip--${failed ? "bad" : "ok"}`}>
-              {applied} done{failed ? ` · ${failed} failed` : ""}
+            <span class={`batch-chip batch-chip--${problems ? "bad" : "ok"}`}>
+              {summary}
             </span>
             {report ? <span class="batch-chip batch-chip--info">Undo reported</span> : null}
           </h2>
