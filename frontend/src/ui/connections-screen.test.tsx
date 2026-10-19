@@ -12,13 +12,30 @@ import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, waitFor, within } from "@testing-library/preact";
 import { App } from "./App";
 import { makeHarness } from "./test-harness";
-import { sourceHealthOf } from "../adapters/wire";
+import { sourceHealthBySource, sourceHealthOf } from "../adapters/wire";
 import { __resetConnectionsDraftCache } from "./connections/commands";
 import type {
   AssignedItem,
+  CapacitiesIntake,
   CapacitiesSettings,
   TagExclusionSettings,
 } from "../model/types";
+
+/* The two dot colours from ConnectionsScreen: healthy and amber. */
+const GREEN = "rgb(31, 157, 107)";
+const AMBER = "rgb(224, 160, 32)";
+
+/* A fully read Capacities intake, so the Capacities dot's own amber state can
+   only come from a warning rather than from the intake state. */
+const HEALTHY_INTAKE: CapacitiesIntake = {
+  mode: "direct",
+  state: "ok",
+  generation: 1,
+  installedAt: 1_760_000_000,
+  typeCheckTimes: {},
+  coverage: { members: 20, evaluated: 20, malformed: 0, unreadable: 0 },
+  unassignedCandidates: [],
+};
 
 afterEach(() => {
   cleanup();
@@ -347,10 +364,12 @@ describe("Connections screen (U13)", () => {
     expect(rendered.getByRole("button", { name: /Discover from Capacities/ })).toBeTruthy();
   });
 
-  it("blocks a missing-generation notice and still notes it (OQ-P3 reversal)", async () => {
+  it("reads each source's own health, so a Capacities-only warning leaves the Todoist and Calendar dots green (AE4)", async () => {
     const warning =
       "Capacities structure '05e6b2c1' is not in the published generation; needs Refresh.";
-    const { h, rendered } = openConnections();
+    // Every available structure is mapped, so the Capacities dot's amber comes
+    // only from the warning attributed to it.
+    const { h, rendered } = openConnections([], capSettings({ availableStructures: ["RootTask"] }));
     const inputs = h.store.getState().inputs!;
     h.store.dispatch({
       type: "INPUTS_LOADED",
@@ -358,6 +377,7 @@ describe("Connections screen (U13)", () => {
         ...inputs,
         sourceWarnings: [warning],
         sourceHealth: sourceHealthOf([warning]),
+        capacitiesIntake: { ...HEALTHY_INTAKE },
       },
       ledger: h.store.getState().ledger!,
     });
@@ -368,16 +388,89 @@ describe("Connections screen (U13)", () => {
         ".connections-navitem__dot",
       ) as HTMLElement;
     // A structure missing from the published generation was never read, so it
-    // blocks commit (OQ-P3). These dots are still driven by the single global
-    // health value; per-source dots are U6.
-    expect(dotOf("Todoist").style.background).toBe("rgb(224, 160, 32)");
-    expect(dotOf("Calendar").style.background).toBe("rgb(224, 160, 32)");
-    expect(dotOf("Capacities").style.background).toBe("rgb(224, 160, 32)");
+    // still blocks commit (OQ-P3) — but it is a Capacities warning, so it no
+    // longer colours the Todoist or Calendar dot (R8, AE4).
+    expect(dotOf("Todoist").style.background).toBe(GREEN);
+    expect(dotOf("Calendar").style.background).toBe(GREEN);
+    expect(dotOf("Capacities").style.background).toBe(AMBER);
     expect(
       rendered.getByText(
         "1 mapped type(s) not yet in the published generation; Refresh",
       ),
     ).toBeTruthy();
+
+    // The status text under the source card reads that source's own health.
+    const helperText = (unit: string) =>
+      rendered.getByText(new RegExp(`${unit} in the current read`)).textContent ?? "";
+    fireEvent.click(rendered.getByRole("button", { name: "Todoist" }));
+    expect(helperText("tasks")).toContain("Healthy.");
+    expect(helperText("tasks")).not.toContain("Degraded");
+    fireEvent.click(rendered.getByRole("button", { name: "Calendar" }));
+    expect(helperText("events")).toContain("Healthy.");
+  });
+
+  it("turns only the Todoist dot amber for a Todoist read failure (R8)", async () => {
+    const warning = "Todoist read failed (timeout)";
+    const { h, rendered } = openConnections([], capSettings({ availableStructures: ["RootTask"] }));
+    const inputs = h.store.getState().inputs!;
+    h.store.dispatch({
+      type: "INPUTS_LOADED",
+      inputs: {
+        ...inputs,
+        sourceWarnings: [warning],
+        sourceHealth: sourceHealthOf([warning]),
+        capacitiesIntake: { ...HEALTHY_INTAKE },
+      },
+      ledger: h.store.getState().ledger!,
+    });
+    await ready(rendered);
+
+    const dotOf = (name: string) =>
+      (rendered.getByRole("button", { name }) as HTMLElement).querySelector(
+        ".connections-navitem__dot",
+      ) as HTMLElement;
+    expect(dotOf("Todoist").style.background).toBe(AMBER);
+    expect(dotOf("Calendar").style.background).toBe(GREEN);
+    expect(dotOf("Capacities").style.background).toBe(GREEN);
+
+    const helperText = (unit: string) =>
+      rendered.getByText(new RegExp(`${unit} in the current read`)).textContent ?? "";
+    fireEvent.click(rendered.getByRole("button", { name: "Todoist" }));
+    expect(helperText("tasks")).toContain("Degraded — the last read reported a problem.");
+    fireEvent.click(rendered.getByRole("button", { name: "Calendar" }));
+    expect(helperText("events")).toContain("Healthy.");
+  });
+
+  it("treats a calendar diagnostic as advisory and keeps the Calendar dot on the classifier's verdict (R8)", async () => {
+    const warning = "Calendar read returned 2 unfixed events";
+    // The operator made calendar diagnostics advisory (OQ-P1), and
+    // ``sourceHealthBySource`` attributes only blocking warnings, so the
+    // classifier currently reports the calendar source as ok. Pinned here so a
+    // future attribution change is a deliberate test change, not a silent one.
+    expect(sourceHealthOf([warning])).toBe("ok");
+    expect(sourceHealthBySource([warning]).calendar).toBe("ok");
+
+    const { h, rendered } = openConnections([], capSettings({ availableStructures: ["RootTask"] }));
+    const inputs = h.store.getState().inputs!;
+    h.store.dispatch({
+      type: "INPUTS_LOADED",
+      inputs: {
+        ...inputs,
+        sourceWarnings: [warning],
+        sourceHealth: sourceHealthOf([warning]),
+        capacitiesIntake: { ...HEALTHY_INTAKE },
+      },
+      ledger: h.store.getState().ledger!,
+    });
+    await ready(rendered);
+
+    const dotOf = (name: string) =>
+      (rendered.getByRole("button", { name }) as HTMLElement).querySelector(
+        ".connections-navitem__dot",
+      ) as HTMLElement;
+    expect(dotOf("Calendar").style.background).toBe(GREEN);
+    expect(dotOf("Todoist").style.background).toBe(GREEN);
+    expect(dotOf("Capacities").style.background).toBe(GREEN);
   });
 
   it("explains what native rules are from the Admit when heading", async () => {
