@@ -414,11 +414,10 @@ export class ApiAdapter implements Adapter {
       can neither pass as an "unchanged" fingerprint nor replace the last
       good view. Both projections come from the SAME wire payload. */
   async refreshSources(): Promise<SourceRefreshResult> {
+    // Calendar warnings are advisory since 2026-10-19 (OQ-P1, reversing
+    // decision-17): the calendar source shows its own note in Connections, and
+    // the fresh read stays authoritative instead of failing the whole refresh.
     const wire = await this.request("/plan-inputs");
-    const calWarnings = calendarWarnings((wire.source_warnings ?? []).map(String));
-    if (calWarnings.length > 0) {
-      throw new Error(`source refresh degraded — ${calWarnings[0]}`);
-    }
     // A fresh read is also the latest raw payload for subsequent POST bodies.
     this.raw = wire;
     return {

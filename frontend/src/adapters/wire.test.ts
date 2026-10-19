@@ -5,7 +5,9 @@
 
 import { describe, expect, it } from "vitest";
 import {
+  advisoryNotes,
   blocksLabel,
+  blockingWarnings,
   calendarWarnings,
   capacitiesAssignmentWarnings,
   capacitiesCoverageOf,
@@ -25,6 +27,7 @@ import {
   projectAssigned,
   projectCapacitiesCatalog,
   projectCapacitiesSettings,
+  projectCapacitiesRefreshStatus,
   projectCapacitiesSource,
   projectCommitReport,
   projectDaySetup,
@@ -35,6 +38,7 @@ import {
   projectPlanInputs,
   projectSequenceResult,
   projectShadow,
+  sourceHealthBySource,
   sourceHealthOf,
   projectValidation,
   rowToWire,
@@ -377,10 +381,11 @@ describe("degraded sources (plan-inputs-degraded.json)", () => {
     expect(sourceHealthOf([warning])).toBe("ok");
   });
 
-  it("keeps other calendar diagnostics on the fixed-input gate", () => {
+  it("surfaces other calendar diagnostics as an advisory note, not a block", () => {
     const warning = "Calendar: 1 duplicate event representation(s) merged by canonical identity";
     expect(calendarWarnings([warning])).toEqual([warning]);
-    expect(sourceHealthOf([warning])).toBe("degraded");
+    expect(sourceHealthOf([warning])).toBe("ok");
+    expect(blockingWarnings([warning])).toEqual([]);
   });
 });
 
@@ -414,14 +419,15 @@ describe("skipped Capacities objects (advisory)", () => {
   });
 });
 
-describe("generation-freshness warnings (advisory)", () => {
+describe("generation-freshness warnings (KTD6 reclassification)", () => {
   const missingGeneration =
     "Capacities structure '05e6b2c1' is not in the published generation; needs Refresh.";
   const typeStaleness =
     "Capacities structure '05e6b2c1' unchanged since 2026-10-14; Refresh to check it again.";
 
-  it("treats a missing-generation notice as advisory, not degraded", () => {
-    expect(sourceHealthOf([missingGeneration])).toBe("ok");
+  it("blocks on a missing-generation notice — the mapped structure was never read", () => {
+    expect(sourceHealthOf([missingGeneration])).toBe("degraded");
+    expect(blockingWarnings([missingGeneration])).toEqual([missingGeneration]);
     expect(missingGenerationWarnings([missingGeneration])).toEqual([missingGeneration]);
   });
 
@@ -434,20 +440,196 @@ describe("generation-freshness warnings (advisory)", () => {
     ]);
   });
 
-  it("still degrades when a real read failure accompanies the advisory", () => {
+  it("still degrades when a real read failure accompanies the notice", () => {
     expect(sourceHealthOf([missingGeneration, "Todoist read failed (timeout)"])).toBe(
       "degraded",
     );
   });
 
-  it("keeps the type-staleness warning on the blocking gate", () => {
-    expect(sourceHealthOf([typeStaleness])).toBe("degraded");
+  it("treats the type-staleness notice as advisory — AE2 commit stays open", () => {
+    expect(sourceHealthOf([typeStaleness])).toBe("ok");
+    expect(blockingWarnings([typeStaleness])).toEqual([]);
+    expect(advisoryNotes([typeStaleness])).toEqual([
+      { text: typeStaleness, fix: "refresh" },
+    ]);
     expect(missingGenerationWarnings([typeStaleness])).toEqual([]);
   });
 
   it("does not broaden to any other Capacities warning", () => {
     expect(sourceHealthOf(["Capacities structure 'x' needs Refresh"])).toBe("degraded");
     expect(sourceHealthOf(["Capacities read failed; needs Refresh."])).toBe("degraded");
+  });
+});
+
+describe("Assigned On declaration diagnostics (advisory, OQ-P4)", () => {
+  const unknownProperty =
+    "ignored Capacities Assigned On declaration for structure 'Task': " +
+    "unknown property 'assigned';";
+  const notADate =
+    "ignored Capacities Assigned On declaration for structure 'Task': " +
+    "property 'when' is not a date";
+  const shadows =
+    "settings Assigned On declaration for structure 'Task' shadows the source " +
+    "record mapping 'RecordAssigned'; using 'Assigned'";
+
+  it("keeps an unknown Assigned On property advisory with a Connections fix", () => {
+    expect(sourceHealthOf([unknownProperty])).toBe("ok");
+    expect(advisoryNotes([unknownProperty])).toEqual([
+      { text: unknownProperty, fix: "connections" },
+    ]);
+  });
+
+  it("keeps a non-date Assigned On property advisory", () => {
+    expect(sourceHealthOf([notADate])).toBe("ok");
+    expect(advisoryNotes([notADate])[0]?.fix).toBe("connections");
+  });
+
+  it("keeps a shadowing settings declaration advisory", () => {
+    expect(sourceHealthOf([shadows])).toBe("ok");
+    expect(advisoryNotes([shadows])[0]?.fix).toBe("connections");
+  });
+
+  it("keeps unparsable Assigned On values blocking (rows may be misassigned)", () => {
+    const warning = "Capacities Assigned On values could not be parsed for structure 'Task'";
+    expect(sourceHealthOf([warning])).toBe("degraded");
+    expect(advisoryNotes([warning])).toEqual([]);
+  });
+});
+
+describe("blocking classes (KTD6, fail closed)", () => {
+  it("blocks on the KTD5 incomplete-refresh warning", () => {
+    const warning =
+      "Capacities refresh did not complete (failed); showing the previous complete " +
+      "result. Refresh sources to retry.";
+    expect(sourceHealthOf([warning])).toBe("degraded");
+    expect(blockingWarnings([warning])).toEqual([warning]);
+  });
+
+  it("blocks on any unrecognised warning", () => {
+    const warning = "Todoist read failed (timeout)";
+    expect(sourceHealthOf([warning])).toBe("degraded");
+    expect(sourceHealthOf(["Something nobody has seen before"])).toBe("degraded");
+    expect(advisoryNotes([warning])).toEqual([]);
+  });
+
+  it("keeps Capacities partial coverage and refresh-required blocking", () => {
+    expect(sourceHealthOf(["Capacities partial — 20 evaluated · 51 deferred"])).toBe(
+      "degraded",
+    );
+    expect(sourceHealthOf(["Capacities refresh required; press Refresh."])).toBe(
+      "degraded",
+    );
+  });
+});
+
+describe("sourceHealthBySource (R8, KTD7, AE4)", () => {
+  it("attributes a blocking Capacities warning to Capacities alone", () => {
+    expect(sourceHealthBySource(["Capacities partial — 2 evaluated · 2 deferred"])).toEqual({
+      todoist: "ok",
+      calendar: "ok",
+      capacities: "degraded",
+    });
+  });
+
+  it("attributes a Todoist read failure to Todoist alone", () => {
+    expect(sourceHealthBySource(["Todoist read failed (timeout)"])).toEqual({
+      todoist: "degraded",
+      calendar: "ok",
+      capacities: "ok",
+    });
+  });
+
+  it("colours no dot for config, prompt, habit or artifact warnings", () => {
+    const warnings = [
+      "config: anchor is after end of day",
+      "Prompt 'brief' is empty",
+      "habit 'Read' has no duration",
+      "artifact snapshot is stale",
+    ];
+    expect(sourceHealthBySource(warnings)).toEqual({
+      todoist: "ok",
+      calendar: "ok",
+      capacities: "ok",
+    });
+    // They still block commit through the global gate.
+    expect(sourceHealthOf(warnings)).toBe("degraded");
+  });
+
+  it("attributes a calendar warning to Calendar even though it is advisory", () => {
+    expect(
+      sourceHealthBySource([
+        "Calendar access denied — busy blocks missing",
+        "Capacities partial — 2 evaluated · 2 deferred",
+      ]),
+    ).toEqual({ todoist: "ok", calendar: "ok", capacities: "degraded" });
+  });
+});
+
+describe("advisoryNotes (R6, KTD8)", () => {
+  const skipped =
+    "skipped Capacities object bb95d80d-573c-4aff-8faa-9dccdd2617a1 — not plannable: No title";
+
+  it("maps a skipped object to the Sources details hint", () => {
+    expect(advisoryNotes([skipped])).toEqual([{ text: skipped, fix: "details" }]);
+  });
+
+  it("drops the intentional reminder-marker omission — there is no fix action", () => {
+    const warning = "Calendar omission: 2.0M: zero or negative duration (reminder-style marker)";
+    expect(advisoryNotes([warning])).toEqual([]);
+    expect(sourceHealthOf([warning])).toBe("ok");
+  });
+
+  it("omits every blocking warning", () => {
+    expect(advisoryNotes(["Todoist read failed (timeout)"])).toEqual([]);
+  });
+});
+
+describe("projectCapacitiesRefreshStatus additive KTD4 keys", () => {
+  it("projects progress.to_read and progress.waiting when present", () => {
+    const status = projectCapacitiesRefreshStatus({
+      configured: true,
+      phase: "reading",
+      progress: {
+        listed: 227,
+        read: 176,
+        to_read: 51,
+        waiting: {
+          reason: "rateLimited",
+          endpoint: "/objects/list",
+          retry_after: 60,
+          resume_at: 1792500000.5,
+        },
+        types: { Task: 12 },
+      },
+    });
+    expect(status.progress.toRead).toBe(51);
+    expect(status.progress.waiting).toEqual({
+      reason: "rateLimited",
+      endpoint: "/objects/list",
+      retryAfter: 60,
+      resumeAt: 1792500000.5,
+    });
+    expect(status.progress.listed).toBe(227);
+    expect(status.progress.types).toEqual({ Task: 12 });
+  });
+
+  it("projects null for both when an older payload omits them", () => {
+    const status = projectCapacitiesRefreshStatus({
+      configured: true,
+      progress: { listed: 12, read: 12, types: {} },
+    });
+    expect(status.progress.toRead).toBeNull();
+    expect(status.progress.waiting).toBeNull();
+    expect(status.progress.listed).toBe(12);
+  });
+
+  it("does not invent a wait from a malformed waiting block", () => {
+    const status = projectCapacitiesRefreshStatus({
+      configured: true,
+      progress: { listed: 1, read: 0, to_read: null, waiting: { retry_after: 30 } },
+    });
+    expect(status.progress.toRead).toBeNull();
+    expect(status.progress.waiting).toBeNull();
   });
 });
 

@@ -12,6 +12,8 @@
    still never crosses, and projectPlanInputs still drops digest.suggested. */
 
 import type {
+  AdvisoryNote,
+  AdvisoryNoteFix,
   AnchoredBlock,
   AnchoredKind,
   AssignedItem,
@@ -34,6 +36,7 @@ import type {
   CapacitiesRefreshProgress,
   CapacitiesRefreshSnapshot,
   CapacitiesRefreshStatus,
+  CapacitiesRefreshWaiting,
   CapacitiesRuleCapabilities,
   CapacitiesRuleNode,
   CapacitiesRuleSaveResponse,
@@ -67,6 +70,8 @@ import type {
   ForgotItem,
   Ledger,
   PlanInputs,
+  SourceHealth,
+  SourceHealthBySource,
   SequenceRow,
   TagCatalog,
   TagCatalogTag,
@@ -78,7 +83,6 @@ import type {
   ShadowDiff,
   ShadowClassification,
   ShadowEntry,
-  SourceHealth,
   Validation,
   ValidationDiagnostic,
   DayPreset,
@@ -1520,22 +1524,109 @@ export function countAdvisorySkipped(warnings: readonly string[]): number {
   return warnings.filter((warning) => advisorySkippedObject.test(warning)).length;
 }
 
+/** A Capacities type whose listing check trails the newest one. The server
+    words it exactly ``Capacities structure <id> unchanged since <day>;
+    Refresh to check it again.`` The served rows are the last complete ones and
+    one Refresh clears the notice, so it is a visible note with a Refresh fix
+    action, never a commit blocker (R6/AE2, KTD6). */
+const advisoryTypeStaleness =
+  /^\s*Capacities structure \S+ unchanged since .+; Refresh to check it again\.\s*$/;
+
+/** Mistyped Assigned On declarations the adapter ignores and works around:
+    an unknown property, a property that is not a date, or a settings
+    declaration that shadows the record mapping. Assignment still runs from
+    the fallback property, so these are Connections notes, not blockers
+    (KTD6, OQ-P4). */
+const advisoryAssignedOnDeclaration = [
+  /^ignored Capacities Assigned On declaration\b.*\bunknown property\b/i,
+  /^ignored Capacities Assigned On declaration\b.*\bis not a date\b/i,
+  /^settings Assigned On declaration\b.*\bshadows\b/i,
+];
+
 /** A configured Capacities structure the published generation never checked.
     The server words it exactly ``Capacities structure <id> is not in the
-    published generation; needs Refresh.`` The structure's rows are absent from
-    the served plan, so the Sources surface shows a per-source note (see
-    ``missingGenerationWarnings``), but nothing failed to read — the type is
-    simply not mapped into the generation yet — so this must not degrade global
-    source health. Deliberately distinct from the ``Capacities structure <id>
-    unchanged since <day>; Refresh to check it again.`` staleness warning,
-    which stays non-advisory because it means the served rows may be stale. */
-const advisoryMissingGeneration =
+    published generation; needs Refresh.`` That structure's rows are absent
+    from the served plan, so the mapped structure has never been read: it BLOCKS
+    commit until one refresh installs it (R5, OQ-P3 — a deliberate reversal of
+    the earlier advisory handling). Distinct from the ``unchanged since``
+    staleness notice above, which means the last read succeeded. */
+const missingGenerationNotice =
   /^\s*Capacities structure \S+ is not in the published generation; needs Refresh\.\s*$/;
 
 /** The missing-generation notices the warnings carry, surfaced as the
     Capacities source's own note so the absent structures are not silent. */
 export function missingGenerationWarnings(warnings: readonly string[]): string[] {
-  return warnings.filter((warning) => advisoryMissingGeneration.test(warning));
+  return warnings.filter((warning) => missingGenerationNotice.test(warning));
+}
+
+/** A calendar diagnostic other than the known reminder-marker omission. The
+    operator made these advisory on 2026-10-19 (OQ-P1, reversing decision-17):
+    the calendar dot carries its own note, and a calendar hiccup no longer
+    blocks commit or fails an otherwise complete source refresh. */
+function isCalendarWarning(warning: string): boolean {
+  return /calendar/i.test(warning) && !advisoryReminderOmission.test(warning);
+}
+
+/** Every warning that does NOT block commit or sequence. The list is explicit
+    and closed: an unrecognised warning stays blocking, so a future server
+    diagnostic fails closed rather than passing silently (KTD6). */
+function isAdvisoryWarning(warning: string): boolean {
+  return (
+    advisoryReminderOmission.test(warning) ||
+    advisorySkippedObject.test(warning) ||
+    advisoryTypeStaleness.test(warning) ||
+    advisoryAssignedOnDeclaration.some((pattern) => pattern.test(warning)) ||
+    isCalendarWarning(warning)
+  );
+}
+
+/** The warnings that block commit and sequence, verbatim and in server order.
+    The drawer's source blocker names the first one (KTD8). */
+export function blockingWarnings(warnings: readonly string[]): string[] {
+  return warnings.filter((warning) => !isAdvisoryWarning(warning));
+}
+
+/** Non-blocking warnings paired with the one action that clears them (R6,
+    KTD8). The reminder-marker omission is an intentional calendar skip with no
+    operator action, so it stays in ``sourceWarnings`` but is not a note. */
+export function advisoryNotes(warnings: readonly string[]): AdvisoryNote[] {
+  const notes: AdvisoryNote[] = [];
+  for (const warning of warnings) {
+    if (!isAdvisoryWarning(warning)) continue;
+    if (advisoryReminderOmission.test(warning)) continue;
+    notes.push({ text: warning, fix: advisoryFixOf(warning) });
+  }
+  return notes;
+}
+
+function advisoryFixOf(warning: string): AdvisoryNoteFix {
+  if (advisoryTypeStaleness.test(warning)) return "refresh";
+  if (advisoryAssignedOnDeclaration.some((pattern) => pattern.test(warning))) {
+    return "connections";
+  }
+  if (isCalendarWarning(warning)) return "connections";
+  return "details";
+}
+
+/** Per-source health for the Connections dots (R8, KTD7). Each blocking warning
+    is attributed by prefix — ``Todoist…``, any calendar diagnostic, or
+    ``Capacities…``. Config, prompt, habit and artifact warnings match no
+    source, so they colour no dot while still blocking commit through
+    ``sourceHealthOf``. */
+export function sourceHealthBySource(
+  warnings: readonly string[],
+): SourceHealthBySource {
+  const out: SourceHealthBySource = {
+    todoist: "ok",
+    calendar: "ok",
+    capacities: "ok",
+  };
+  for (const warning of blockingWarnings(warnings)) {
+    if (isCalendarWarning(warning)) out.calendar = "degraded";
+    else if (/^Todoist/i.test(warning)) out.todoist = "degraded";
+    else if (/^Capacities/.test(warning)) out.capacities = "degraded";
+  }
+  return out;
 }
 
 const capacitiesPartialPrefix = "Capacities partial";
@@ -1875,6 +1966,19 @@ export function capacitiesRuleSaveToWire(args: {
 
 // -- Capacities refresh status (GET /capacities/refresh/status) -------------
 
+function projectCapacitiesRefreshWaiting(raw: unknown): CapacitiesRefreshWaiting | null {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const block = raw as Wire;
+  const reason = typeof block.reason === "string" ? block.reason : "";
+  if (reason === "") return null;
+  return {
+    reason,
+    endpoint: typeof block.endpoint === "string" ? block.endpoint : null,
+    retryAfter: finiteNumberOrNull(block.retry_after),
+    resumeAt: finiteNumberOrNull(block.resume_at),
+  };
+}
+
 function projectCapacitiesRefreshProgress(raw: unknown): CapacitiesRefreshProgress {
   const block = (raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {}) as Wire;
   const types: Record<string, number> = {};
@@ -1887,6 +1991,10 @@ function projectCapacitiesRefreshProgress(raw: unknown): CapacitiesRefreshProgre
   return {
     listed: nonNegativeIntegerOrNull(block.listed) ?? 0,
     read: nonNegativeIntegerOrNull(block.read) ?? 0,
+    // Additive keys (KTD4). Absent in older job documents, so both project as
+    // null rather than as an invented target or a phantom wait.
+    toRead: nonNegativeIntegerOrNull(block.to_read),
+    waiting: projectCapacitiesRefreshWaiting(block.waiting),
     types,
   };
 }
@@ -2011,24 +2119,16 @@ export function capacitiesSelectionsToWire(draft: CapacitiesSelectionsDraft): Wi
 }
 
 export function sourceHealthOf(warnings: string[]): SourceHealth {
-  return warnings.some(
-    (warning) =>
-      !advisoryReminderOmission.test(warning) &&
-      !advisorySkippedObject.test(warning) &&
-      !advisoryMissingGeneration.test(warning),
-  )
-    ? "degraded"
-    : "ok";
+  return warnings.some((warning) => !isAdvisoryWarning(warning)) ? "degraded" : "ok";
 }
 
-/** Calendar is a FIXED input: the known zero-duration reminder marker is an
-    intentional non-busy omission, not a failed read. Keep that diagnostic in
-    sourceWarnings, but do not invalidate the fresh fixed-input snapshot; all
-    other calendar warnings retain the locked decision-17 gate. */
+/** Calendar is a FIXED input. The known zero-duration reminder marker is an
+    intentional non-busy omission, so it never counts. Every other calendar
+    diagnostic is reported here for the calendar source's own note, but since
+    2026-10-19 (OQ-P1) those warnings are advisory: ``sourceHealthOf`` no longer
+    degrades on them and ``refreshSources`` no longer throws. */
 export function calendarWarnings(warnings: string[]): string[] {
-  return warnings.filter(
-    (warning) => /calendar/i.test(warning) && !advisoryReminderOmission.test(warning),
-  );
+  return warnings.filter((warning) => isCalendarWarning(warning));
 }
 
 /** T19: micro_adventure projection — tolerant of the field's absence (older

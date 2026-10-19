@@ -347,7 +347,7 @@ describe("Connections screen (U13)", () => {
     expect(rendered.getByRole("button", { name: /Discover from Capacities/ })).toBeTruthy();
   });
 
-  it("keeps Todoist and Calendar green and notes a Capacities-only generation advisory", async () => {
+  it("blocks a missing-generation notice and still notes it (OQ-P3 reversal)", async () => {
     const warning =
       "Capacities structure '05e6b2c1' is not in the published generation; needs Refresh.";
     const { h, rendered } = openConnections();
@@ -367,8 +367,11 @@ describe("Connections screen (U13)", () => {
       (rendered.getByRole("button", { name }) as HTMLElement).querySelector(
         ".connections-navitem__dot",
       ) as HTMLElement;
-    expect(dotOf("Todoist").style.background).toBe("rgb(31, 157, 107)");
-    expect(dotOf("Calendar").style.background).toBe("rgb(31, 157, 107)");
+    // A structure missing from the published generation was never read, so it
+    // blocks commit (OQ-P3). These dots are still driven by the single global
+    // health value; per-source dots are U6.
+    expect(dotOf("Todoist").style.background).toBe("rgb(224, 160, 32)");
+    expect(dotOf("Calendar").style.background).toBe("rgb(224, 160, 32)");
     expect(dotOf("Capacities").style.background).toBe("rgb(224, 160, 32)");
     expect(
       rendered.getByText(
