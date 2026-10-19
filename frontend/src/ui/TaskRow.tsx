@@ -1,8 +1,8 @@
 /* TaskRow — task-actions F4a: the collapsed task row from the approved
    prototype (design/task-actions r2). One row = an independent selection
    checkbox, the name with its source/type chips and a short state, the
-   duration in mono, and three labelled buttons: Complete, Skip today, and
-   Expand/Collapse. Selection never depends on expansion; one row is expanded
+   duration in mono, the Assigned switch, and three labelled buttons: Complete,
+   Skip today (Todoist rows only), and Expand/Collapse. Selection never depends on expansion; one row is expanded
    at a time (store ui.expandedId). The expanded region mounts RowExpanded (F4b). */
 
 import { useApp } from "./context";
@@ -95,6 +95,54 @@ function shortState(s: AppState, item: AssignedItem): string {
   return "Automatic start";
 }
 
+/** KTD4/KTD5: the per-row Assigned/Unassigned switch, the only assignment
+    control. A native checkbox with role="switch", so Space toggles it and the
+    state is exposed as aria-checked. It is gated like every other row action:
+    before Day Setup is confirmed it is disabled and the store's reason is
+    announced through aria-describedby. The label owns a 44px hit area while the
+    track stays 20px high, so a row does not grow. */
+export function AssignSwitch({
+  id,
+  name,
+  assigned,
+  s,
+}: {
+  id: string;
+  name: string;
+  assigned: boolean;
+  s: AppState;
+}) {
+  const { controller } = useApp();
+  const why = taskActionDisabledReason(s, "complete");
+  const whyId = `why-assign-${id.replace(/[^A-Za-z0-9_-]+/g, "-")}`;
+  const off = s.runtimeBusy || why !== null;
+  const caption = assigned ? "Assigned" : "Unassigned";
+  return (
+    <label
+      class={`trow__assign${off ? " trow__assign--off" : ""}`}
+      title={why ?? (assigned ? "Unassign for today" : "Re-assign to today")}
+    >
+      <input
+        type="checkbox"
+        role="switch"
+        class="trow__switch"
+        aria-checked={assigned}
+        aria-label={`Assigned: ${name}`}
+        aria-describedby={why ? whyId : undefined}
+        checked={assigned}
+        disabled={off}
+        onChange={() => void controller.setAssigned(id, !assigned)}
+      />
+      <span class="trow__assign-text">{caption}</span>
+      {why && (
+        <span class="sr-only" id={whyId}>
+          {why}
+        </span>
+      )}
+    </label>
+  );
+}
+
 export function TaskRow({
   item,
   s,
@@ -134,6 +182,9 @@ export function TaskRow({
   const capacitiesWhyId = rowId(item, "why-capacities-complete");
   const completeOff = s.runtimeBusy || completeWhy !== null;
   const skipOff = s.runtimeBusy || skipWhy !== null;
+  // KTD4: on a Capacities or calendar row Skip today is the same `dropped[]`
+  // state the switch writes, so the switch replaces it there.
+  const skipHidden = item.source === "capacities" || item.source === "calendar";
 
   const scheduledRow = s.sequence?.find((r) => r.id === item.id && r.kind === "work");
   // 04-overlap-note: explicit overlap grants and the operator "May overlap
@@ -241,6 +292,7 @@ export function TaskRow({
         {blocksLabel(blocks)}
       </span>
       <div class="trow__acts">
+        <AssignSwitch id={item.id} name={item.name} assigned={true} s={s} />
         <button
           type="button"
           class="trow__btn trow__btn--primary"
@@ -268,18 +320,20 @@ export function TaskRow({
             {CAPACITIES_COMPLETE_NOTE}
           </span>
         )}
-        <button
-          type="button"
-          class="trow__btn"
-          aria-label="Skip today"
-          disabled={skipOff}
-          title={skipWhy ?? undefined}
-          aria-describedby={skipWhy ? skipWhyId : undefined}
-          onClick={() => void controller.skipToday(item.id)}
-        >
-          Skip today
-        </button>
-        {skipWhy && (
+        {!skipHidden && (
+          <button
+            type="button"
+            class="trow__btn"
+            aria-label="Skip today"
+            disabled={skipOff}
+            title={skipWhy ?? undefined}
+            aria-describedby={skipWhy ? skipWhyId : undefined}
+            onClick={() => void controller.skipToday(item.id)}
+          >
+            Skip today
+          </button>
+        )}
+        {!skipHidden && skipWhy && (
           <span class="sr-only" id={skipWhyId}>
             {skipWhy}
           </span>

@@ -114,19 +114,21 @@ describe("Complete on a Capacities row skips it for today", () => {
     );
   });
 
-  it("does the same through the C keyboard shortcut", async () => {
+  it("sets the row Unassigned through the C keyboard shortcut (KTD4)", async () => {
     const h = makeHarness("ready");
-    const sent = spyBatches(h);
+    const actions = spyActions(h);
     const { container } = h.ui(<Queue />);
 
     fireEvent.keyDown(rowFor(container, NOTE), { key: "c" });
 
+    // C routes through setAssigned(false), the same date-scoped drop the
+    // Assigned switch writes, not the Complete batch.
     await waitFor(() =>
-      expect(sent).toEqual([{ verb: "drop_from_plan", target: NOTE_IDENTITY }]),
+      expect(actions).toEqual([{ verb: "drop_from_plan", target: NOTE_IDENTITY }]),
     );
   });
 
-  it("leaves today's plan for Skipped today, and Restore today brings it back", async () => {
+  it("leaves today's plan for the Unassigned section, and Re-assign brings it back", async () => {
     const h = makeHarness("ready");
     const sent = spyBatches(h);
     const actions = spyActions(h);
@@ -153,20 +155,23 @@ describe("Complete on a Capacities row skips it for today", () => {
     });
 
     await waitFor(() =>
-      expect(container.querySelector("#skipped-today")).not.toBeNull(),
+      expect(container.querySelector("#unassigned-today")).not.toBeNull(),
     );
-    const section = container.querySelector<HTMLElement>("#skipped-today")!;
-    expect(section.textContent).toContain("Skipped today");
-    expect(section.textContent).toContain("1 skipped");
+    const section = container.querySelector<HTMLElement>("#unassigned-today")!;
+    expect(section.textContent).toContain("Unassigned");
+    expect(section.textContent).toContain("1 unassigned");
+    expect(section.textContent).toContain("Capacities");
+    // KTD4: Skipped today carries Todoist drops only.
+    expect(container.querySelector("#skipped-today")).toBeNull();
     expect(section.textContent).toContain(NOTE);
     const names = Array.from(
       container.querySelectorAll<HTMLElement>(".qrow:not(.trow--skipped) .qrow__name"),
     ).map((n) => n.textContent);
     expect(names).not.toContain(NOTE);
 
-    const restore = section.querySelector<HTMLButtonElement>("button")!;
-    expect(restore.textContent).toContain("Restore today");
-    fireEvent.click(restore);
+    const reassign = section.querySelector<HTMLInputElement>('[role="switch"]')!;
+    expect(reassign.getAttribute("aria-checked")).toBe("false");
+    fireEvent.click(reassign);
     await waitFor(() =>
       expect(actions).toEqual([
         { verb: "restore_today", target: NOTE_IDENTITY },

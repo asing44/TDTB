@@ -44,6 +44,7 @@ import { AlreadyPlaced } from "./AlreadyPlaced";
 import { CapacityCard } from "./CapacityCard";
 import { BatchBar, BatchPanel } from "./BatchActions";
 import { SkippedToday } from "./SkippedToday";
+import { UnassignedToday } from "./UnassignedToday";
 import { TaskRow } from "./TaskRow";
 
 export { sourceChip, kindLabel } from "./TaskRow";
@@ -57,16 +58,17 @@ function ShortcutHint() {
       </span>
       <span class="queue__hint-note">
         Skip today records it on the server for today only; restore it from
-        Skipped today. The source is untouched. Complete updates the source,
-        except Capacities items, which are skipped for today.
+        Skipped today. The source is untouched. Complete updates the source.
+        Capacities items have no Skip today: C or E sets them Unassigned for
+        today, and the Assigned switch brings them back from Unassigned.
       </span>
     </div>
   );
 }
 
 /** Keys-card navigation: ↑/↓ move between rows, E skips the focused row for
-    today, C completes it — which for a Capacities row is Skip today, because
-    that source has no completable write. Skips when the event originates in a
+    today, C completes it. A Capacities or calendar row has no completable
+    write and no Skip today (KTD4), so C and E set it Unassigned instead. Skips when the event originates in a
     control that owns the key (buttons own Enter). The old ←/→ duration trim
     and D exact-duration keys left with the slider and the Exact duration
     button; duration shaping returns with the expanded row panel. */
@@ -75,6 +77,7 @@ function rowKeydown(
   item: AssignedItem,
   controller: {
     skipToday: (id: string) => Promise<unknown>;
+    setAssigned: (id: string, assigned: boolean) => Promise<unknown>;
     runRowBatch: (id: string, action: "complete") => Promise<unknown>;
   },
 ) {
@@ -82,6 +85,7 @@ function rowKeydown(
   const inControl = target.tagName === "INPUT" || target.tagName === "BUTTON";
   const row = (target.closest(".qrow") ?? target) as HTMLElement;
   const key = e.key.length === 1 ? e.key.toLowerCase() : e.key;
+  const heldBySwitch = item.source === "capacities" || item.source === "calendar";
 
   if ((key === "ArrowDown" || key === "ArrowUp") && !inControl) {
     const rows = Array.from(
@@ -92,10 +96,12 @@ function rowKeydown(
     if (next) next.focus();
     e.preventDefault();
   } else if (key === "e" && !inControl) {
-    void controller.skipToday(item.id);
+    if (heldBySwitch) void controller.setAssigned(item.id, false);
+    else void controller.skipToday(item.id);
     e.preventDefault();
   } else if (key === "c" && !inControl) {
-    void controller.runRowBatch(item.id, "complete");
+    if (heldBySwitch) void controller.setAssigned(item.id, false);
+    else void controller.runRowBatch(item.id, "complete");
     e.preventDefault();
   }
 }
@@ -309,6 +315,7 @@ export function Queue() {
           <CapacityCard />
         </div>
       </div>
+      <UnassignedToday />
       <SkippedToday />
       <ShortcutHint />
     </section>
