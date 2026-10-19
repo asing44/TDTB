@@ -69,6 +69,17 @@ describe("the Assigned switch on a row", () => {
     expect(calls).toEqual([["Press", false]]);
   });
 
+  it("shows no visible caption on an assigned row; the name rides aria-label and title", () => {
+    const h = makeHarness("ready");
+    const { container } = h.ui(<Queue />);
+    const press = rowFor(container, "Press");
+    expect(press.querySelector(".trow__assign-text")).toBeNull();
+    expect(press.textContent).not.toMatch(/Assigned/);
+    expect(press.querySelector(".trow__assign")?.getAttribute("title")).toBe(
+      "Unassign for today",
+    );
+  });
+
   it("has no Skip today on a Capacities row but keeps it on a Todoist row", () => {
     const h = makeHarness("ready");
     const { container } = h.ui(<Queue />);
@@ -119,6 +130,9 @@ describe("the Unassigned section", () => {
     expect(section.querySelector(".qrow__src--capacities")?.textContent).toBe(
       "Capacities",
     );
+    // Same column as the task list, and the short caption lives here only.
+    expect(section.closest(".plan-grid__groups")).not.toBeNull();
+    expect(section.querySelector(".trow__assign-text")?.textContent).toBe("Unassigned");
     const sw = switchIn(section);
     expect(sw.getAttribute("aria-checked")).toBe("false");
     fireEvent.click(sw);

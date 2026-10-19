@@ -100,7 +100,9 @@ function shortState(s: AppState, item: AssignedItem): string {
     state is exposed as aria-checked. It is gated like every other row action:
     before Day Setup is confirmed it is disabled and the store's reason is
     announced through aria-describedby. The label owns a 44px hit area while the
-    track stays 18px high, so a row does not grow. */
+    track stays 18px high, so a row does not grow. An assigned row shows only
+    the track (the state is visible; the name rides aria-label and the title);
+    the Unassigned section adds the short "Unassigned" caption. */
 export function AssignSwitch({
   id,
   name,
@@ -116,10 +118,9 @@ export function AssignSwitch({
   const why = taskActionDisabledReason(s, "complete");
   const whyId = `why-assign-${id.replace(/[^A-Za-z0-9_-]+/g, "-")}`;
   const off = s.runtimeBusy || why !== null;
-  const caption = assigned ? "Assigned" : "Unassigned";
   return (
     <label
-      class={`trow__assign${off ? " trow__assign--off" : ""}`}
+      class={`trow__assign${off ? " trow__assign--off" : ""}${assigned ? "" : " trow__assign--captioned"}`}
       title={why ?? (assigned ? "Unassign for today" : "Re-assign to today")}
     >
       <input
@@ -133,7 +134,7 @@ export function AssignSwitch({
         disabled={off}
         onChange={() => void controller.setAssigned(id, !assigned)}
       />
-      <span class="trow__assign-text">{caption}</span>
+      {!assigned && <span class="trow__assign-text">Unassigned</span>}
       {why && (
         <span class="sr-only" id={whyId}>
           {why}
@@ -320,6 +321,7 @@ export function TaskRow({
             {CAPACITIES_COMPLETE_NOTE}
           </span>
         )}
+        {skipHidden && <span class="trow__slot" aria-hidden="true" />}
         {!skipHidden && (
           <button
             type="button"

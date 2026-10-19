@@ -22,6 +22,7 @@ function UnassignedRow({ row }: { row: AssignmentRow }) {
   const key = SOURCE_LABEL[source] ? source : "other";
   return (
     <li class="qrow trow trow--skipped trow--unassigned" data-identity={row.identity}>
+      <span class="trow__check-slot" aria-hidden="true" />
       <div class="qrow__body">
         <span class="qrow__nameline">
           <span class="qrow__name">{row.name}</span>
