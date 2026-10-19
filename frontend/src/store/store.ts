@@ -42,7 +42,7 @@ import { calendarEditOverlaps } from "../model/calendarEdit";
 import { anchoredBlocks, anchoredDefaultOff } from "../model/anchored";
 import { dayFrame, type DayFrame } from "../model/dayFrame";
 import { remainingLabel } from "../model/allocator";
-import { capacitiesCoverageOf, durationSourceOf } from "../adapters/wire";
+import { capacitiesCoverageOf, durationSourceOf, itemIdentity } from "../adapters/wire";
 import {
   createDraft,
   diff as rowDraftDiff,
@@ -1603,16 +1603,101 @@ export interface SkippedTodayRow {
 }
 
 /** Rows dropped from today's plan (Skip today), in server order. `identity`
-    is the runtime verb target, so Restore today needs no name matching. */
+    is the runtime verb target, so Restore today needs no name matching.
+
+    KTD4: Skip today is a Todoist-only control, so this list carries Todoist
+    drops only. A Capacities or calendar drop is the SAME state the assignment
+    toggle writes (`runstate.dropped[]`), and two sections for one state would
+    read as two different things — those rows belong to `assignmentRows`
+    `unassigned` instead. An entry with no snapshot source is a legacy drop
+    with no recorded chips: it stays here rather than being guessed into the
+    other section. */
 export function skippedTodayRows(s: AppState): SkippedTodayRow[] {
-  return (s.inputs?.droppedToday ?? []).map((d) => ({
-    identity: d.identity,
-    name: d.name,
-    droppedAt: d.droppedAt,
-    source: d.source ?? null,
-    kind: d.kind ?? null,
-    minutes: d.minutes ?? null,
+  return (s.inputs?.droppedToday ?? [])
+    .filter((d) => d.source !== "capacities" && d.source !== "calendar")
+    .map((d) => ({
+      identity: d.identity,
+      name: d.name,
+      droppedAt: d.droppedAt,
+      source: d.source ?? null,
+      kind: d.kind ?? null,
+      minutes: d.minutes ?? null,
+    }));
+}
+
+/** One row of the R1 assignment review. `id` is the controller handle: the
+    plan row id for an assigned row (what the bands render), the runtime
+    identity for a held-back row (what `setAssigned` and the verbs target). */
+export interface AssignmentRow {
+  id: string;
+  identity: string;
+  name: string;
+  source: Source;
+  kind: string | null;
+  minutes: number | null;
+  /** KTD2: the applied journal unassign a re-assign reverses. Null for a
+      Capacities/calendar row, which is held back by `dropped[]` instead. */
+  actionId: string | null;
+  recurring: boolean;
+  assigned: boolean;
+}
+
+export interface AssignmentRows {
+  assigned: AssignmentRow[];
+  unassigned: AssignmentRow[];
+}
+
+/** R1/KTD2/KTD3: the two sides of the assignment review, from items ALREADY
+    sourced for today — this selector pulls nothing in.
+
+    - assigned: today's `assigned` rows, in band order.
+    - unassigned: the journal-derived `unassignedToday` Todoist rows first
+      (server order), then the Capacities and calendar rows held back through
+      the date-scoped `dropped[]` drop.
+
+    The two lists partition today's sourced items exactly once: a dropped
+    Capacities/calendar row appears here and never in `skippedTodayRows`; a
+    legacy drop with no snapshot source stays in `skippedTodayRows` only. */
+export function assignmentRows(s: AppState): AssignmentRows {
+  const inputs = s.inputs;
+  const assigned: AssignmentRow[] = (inputs?.assigned ?? []).map((item) => ({
+    id: item.id,
+    identity: item.identity ?? itemIdentity(item) ?? item.id,
+    name: item.name,
+    source: item.source,
+    kind: null,
+    minutes: item.blocks > 0 ? Math.round(item.blocks * 30) : null,
+    actionId: null,
+    recurring: item.isRecurring === true,
+    assigned: true,
   }));
+  const heldBackTodoist: AssignmentRow[] = (inputs?.unassignedToday ?? []).map(
+    (row) => ({
+      id: row.identity,
+      identity: row.identity,
+      name: row.name,
+      source: "todoist" as const,
+      kind: null,
+      minutes: row.minutes ?? null,
+      actionId: row.actionId,
+      recurring: row.recurring,
+      assigned: false,
+    }),
+  );
+  const heldBackDropped: AssignmentRow[] = (inputs?.droppedToday ?? [])
+    .filter((d) => d.source === "capacities" || d.source === "calendar")
+    .map((d) => ({
+      id: d.identity,
+      identity: d.identity,
+      name: d.name,
+      source: d.source as Source,
+      kind: d.kind ?? null,
+      minutes: d.minutes ?? null,
+      actionId: null,
+      recurring: d.kind === "recurring",
+      assigned: false,
+    }));
+  return { assigned, unassigned: [...heldBackTodoist, ...heldBackDropped] };
 }
 
 /** The one saved Set up/Plan day frame: SETUP_SAVED stores daySetup.anchor/eod

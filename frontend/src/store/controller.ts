@@ -857,6 +857,103 @@ export class Controller {
     }
   }
 
+  /** U3/KTD1/KTD4: the assignment toggle's one entry point. `id` is whatever
+the call site holds — a plan row id in the bands, a runtime identity in the
+Unassigned section — and each case maps to an already-existing verb:
+
+  - Todoist → Unassigned: the journaled `unassign` (`runRowBatch` of one), the
+    same call the batch bar makes, so a recurring task advances instead of
+    clearing (D1) and Undo restores the before-image.
+  - Todoist → Assigned: `adapter.reassign`, which reverses that row's own
+    applied unassign and restores the exact prior due date (KTD1). Never the
+    `assign` verb: it writes "today", no-ops on recurring tasks, and leaves
+    the unassign applied.
+  - Capacities or calendar → Unassigned: `drop_from_plan`, the date-scoped
+    runstate drop. No Capacities write of any kind (KTD3/AE2).
+  - Capacities or calendar → Assigned: `restore_today`.
+
+  Every case refreshes sources, because the refreshed read — not local state
+  — is what moves the row between the two sections. Gating is the existing
+  `taskActionDisabledReason`, so before Day Setup is confirmed no case can
+  reach the server's 409. */
+  async setAssigned(id: string, assigned: boolean): Promise<void> {
+    const blocked = taskActionDisabledReason(this.getState(), "complete");
+    if (blocked) {
+      this.dispatch({ type: "RUNTIME_FAIL", error: blocked });
+      return;
+    }
+    const s = this.getState();
+    const item = s.inputs?.assigned.find((i) => i.id === id);
+    const heldBack = (s.inputs?.unassignedToday ?? []).find(
+      (r) => r.identity === id || r.name === id,
+    );
+    const dropped = this.droppedOf(id);
+    const source = item?.source ?? heldBack?.source ?? dropped?.source ?? null;
+    if (source === null) {
+      this.dispatch({
+        type: "RUNTIME_FAIL",
+        error: "This item has no source to assign.",
+      });
+      return;
+    }
+    // Already held back: nothing to write, and a second unassign would be the
+    // journal's duplicate no-op rather than a real action.
+    if (!assigned && !item && (heldBack || dropped)) return;
+    if (source === "todoist") {
+      if (!assigned) {
+        await this.runRowBatch(item?.id ?? id, "unassign");
+        return;
+      }
+      const identity =
+        this.identityOf(item?.id ?? id) ??
+        heldBack?.identity ??
+        dropped?.identity ??
+        null;
+      if (!identity) {
+        this.dispatch({
+          type: "RUNTIME_FAIL",
+          error: "This item has no stable identity to assign.",
+        });
+        return;
+      }
+      await this.applyReassign(identity);
+      return;
+    }
+    // Capacities and calendar rows: the existing date-scoped drop, never a
+    // source write. Restore clears a stale legacy `included=false` override
+    // exactly as Restore today does.
+    if (assigned) await this.restoreToday(item?.id ?? dropped?.identity ?? id);
+    else await this.skipToday(item?.id ?? id);
+  }
+
+  /** KTD1: reverse one row's own journaled unassign. Same envelope handling
+      as applyRowVerb — a thrown error and a 200 carrying a non-`applied`
+      status (an "task due changed after unassign" conflict included) are both
+      failures, and a failure never refreshes. */
+  private async applyReassign(identity: string): Promise<boolean> {
+    this.dispatch({ type: "RUNTIME_START" });
+    try {
+      const action = await this.adapter.reassign(identity);
+      this.dispatch({ type: "RUNTIME_OK", action });
+    } catch (e) {
+      this.dispatch({
+        type: "RUNTIME_FAIL",
+        error: String(e instanceof Error ? e.message : e),
+      });
+      return false;
+    }
+    const last = this.getState().lastRuntimeAction;
+    if (last && last.status !== "applied") {
+      this.dispatch({
+        type: "RUNTIME_FAIL",
+        error: last.error ?? `reassign did not apply (${last.status})`,
+      });
+      return false;
+    }
+    await this.refreshSources();
+    return true;
+  }
+
   /** Task-actions F3: Hide always — the journaled `hide_always` verb, which
       writes the durable exclusion AND journals it. The settings-screen writers
       (alwaysExcludeTodoist / alwaysExcludeCapacitiesObject) stay for the

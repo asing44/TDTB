@@ -24,13 +24,14 @@ import { Controller } from "./controller";
 import { FixtureAdapter } from "../adapters/fixture";
 import {
   DAY_SETUP_GATE_REASON,
+  assignmentRows,
   expandedRowId,
   isRowSelected,
   selectedRowIds,
   skippedTodayRows,
   taskActionDisabledReason,
 } from "./store";
-import type { DroppedItem } from "../model/types";
+import type { DroppedItem, UnassignedTodayRow } from "../model/types";
 import type { ScenarioName } from "../fixtures/scenarios";
 
 /** Loaded scenario ("ready" = Setup confirmed). `confirm: false` loads
@@ -50,24 +51,43 @@ async function harness(opts: { confirm?: boolean; scenario?: ScenarioName } = {}
   return { store, adapter, controller };
 }
 
-/** Replace the next source reads' `droppedToday` and mirror the server's own
-    projection: a dropped identity leaves `assigned`. Everything else in the
-    refresh result (fixed inputs, ledger) stays the fixture's. */
-function stubDrops(adapter: FixtureAdapter, drops: () => DroppedItem[]) {
+/** Replace the next source reads' `droppedToday` / `unassignedToday` and mirror
+    the server's own projection: a dropped identity leaves `assigned`.
+    Everything else in the refresh result (fixed inputs, ledger) stays the
+    fixture's. `refreshed()` counts the reads, so a test can prove a refresh
+    actually happened without spying twice on the same method. */
+function stubSources(
+  adapter: FixtureAdapter,
+  state: () => { drops?: DroppedItem[]; unassigned?: UnassignedTodayRow[] },
+) {
   const real = adapter.refreshSources.bind(adapter);
-  return vi.spyOn(adapter, "refreshSources").mockImplementation(async () => {
+  let count = 0;
+  vi.spyOn(adapter, "refreshSources").mockImplementation(async () => {
+    count += 1;
     const result = await real();
-    const entries = drops();
-    const droppedNames = new Set(entries.map((d) => d.name));
+    const { drops = [], unassigned = [] } = state();
+    // Mirror the server: a dropped identity and an unassigned Todoist row both
+    // leave `assigned` (they are no longer sourced as today's assigned work).
+    const leftNames = new Set([
+      ...drops.map((d) => d.name),
+      ...unassigned.map((r) => r.name),
+    ]);
     return {
       ...result,
       inputs: {
         ...result.inputs,
-        assigned: result.inputs.assigned.filter((i) => !droppedNames.has(i.id)),
-        droppedToday: entries.map((d) => ({ ...d })),
+        assigned: result.inputs.assigned.filter((i) => !leftNames.has(i.id)),
+        droppedToday: drops.map((d) => ({ ...d })),
+        unassignedToday: unassigned.map((r) => ({ ...r })),
       },
     };
   });
+  return { refreshed: () => count };
+}
+
+/** The single-drop case the earlier Skip today tests need. */
+function stubDrops(adapter: FixtureAdapter, drops: () => DroppedItem[]) {
+  return stubSources(adapter, () => ({ drops: drops() }));
 }
 
 describe("task-actions row UI state", () => {
@@ -242,7 +262,7 @@ describe("task-actions Day Setup gate", () => {
 });
 
 describe("task-actions Skipped today rows", () => {
-  it("projects droppedToday with the snapshot fields, null on a legacy entry", async () => {
+  it("projects droppedToday Todoist drops with the snapshot fields, null on a legacy entry", async () => {
     const { store } = await harness();
     const inputs = store.getState().inputs!;
     store.dispatch({
@@ -251,6 +271,17 @@ describe("task-actions Skipped today rows", () => {
         ...inputs,
         droppedToday: [
           { identity: "todoist:legacy", name: "Legacy drop", droppedAt: null },
+          {
+            identity: "todoist:6fx00xSKIP",
+            name: "Skipped drop",
+            droppedAt: "2026-07-18T08:00:00Z",
+            source: "todoist",
+            kind: "recurring",
+            minutes: 30,
+          },
+          // KTD4 (deliberate change): a Capacities drop is the SAME state the
+          // assignment toggle writes, so it is listed as Unassigned and never
+          // as Skipped today.
           {
             identity: "capacities:fixture-space:custom-project:snap",
             name: "Snapped drop",
@@ -274,13 +305,209 @@ describe("task-actions Skipped today rows", () => {
         minutes: null,
       },
       {
+        identity: "todoist:6fx00xSKIP",
+        name: "Skipped drop",
+        droppedAt: "2026-07-18T08:00:00Z",
+        source: "todoist",
+        kind: "recurring",
+        minutes: 30,
+      },
+    ]);
+    // The Capacities drop is not lost: it is Unassigned, with its snapshot.
+    expect(assignmentRows(store.getState()).unassigned).toEqual([
+      {
+        id: "capacities:fixture-space:custom-project:snap",
         identity: "capacities:fixture-space:custom-project:snap",
         name: "Snapped drop",
-        droppedAt: "2026-07-18T08:00:00Z",
+        source: "capacities",
+        kind: "custom-project",
+        minutes: 30,
+        actionId: null,
+        recurring: false,
+        assigned: false,
+      },
+    ]);
+  });
+});
+
+describe("task-actions assignment toggle (U3)", () => {
+  it("AE1: Unassign holds a Todoist row back by journal, and Assigned reverses it", async () => {
+    const { store, adapter, controller } = await harness();
+    const verb = vi.spyOn(adapter, "runtimeAction");
+    const batch = vi.spyOn(adapter, "applyRuntimeBatch");
+    // The fixture journals row verbs, not batch items, so the re-assign mirror
+    // is stubbed here: this test owns the controller contract, not the fixture.
+    const reassign = vi
+      .spyOn(adapter, "reassign")
+      .mockImplementation(async (identity: string) => ({
+        id: "ra-10",
+        verb: "reassign",
+        targetName: identity,
+        status: "applied" as const,
+        error: null,
+        duplicate: false,
+      }));
+    let unassigned: UnassignedTodayRow[] = [];
+    const source = stubSources(adapter, () => ({ unassigned }));
+
+    // The row starts Assigned, on the assigned side of the review.
+    expect(assignmentRows(store.getState()).assigned.map((r) => r.id)).toContain("Press");
+    expect(assignmentRows(store.getState()).unassigned).toEqual([]);
+
+    unassigned = [
+      {
+        identity: "todoist:6fx00xPRESS",
+        name: "Press",
+        actionId: "ra-9",
+        source: "todoist",
+        recurring: true,
+        minutes: 75,
+      },
+    ];
+    await controller.setAssigned("Press", false);
+
+    // Unassigned goes through the existing journaled unassign (one-item
+    // batch), so a recurring task advances instead of clearing (D1).
+    expect(batch).toHaveBeenCalledWith([
+      { verb: "unassign", target: "todoist:6fx00xPRESS", args: {} },
+    ]);
+    expect(reassign).not.toHaveBeenCalled();
+    const afterUnassign = store.getState();
+    expect(store.getState().runtimeError).toBeNull();
+    expect(assignmentRows(afterUnassign).assigned.map((r) => r.id)).not.toContain("Press");
+    expect(assignmentRows(afterUnassign).unassigned).toEqual([
+      {
+        id: "todoist:6fx00xPRESS",
+        identity: "todoist:6fx00xPRESS",
+        name: "Press",
+        source: "todoist",
+        kind: null,
+        minutes: 75,
+        actionId: "ra-9",
+        recurring: true,
+        assigned: false,
+      },
+    ]);
+    // A journaled unassign is not a Skip today drop.
+    expect(skippedTodayRows(afterUnassign)).toEqual([]);
+
+    // Assigned reverses that row's own journaled unassign, then refreshes.
+    const before = source.refreshed();
+    unassigned = [];
+    await controller.setAssigned("todoist:6fx00xPRESS", true);
+
+    expect(reassign).toHaveBeenCalledTimes(1);
+    expect(reassign).toHaveBeenCalledWith("todoist:6fx00xPRESS");
+    expect(source.refreshed()).toBe(before + 1);
+    expect(verb).not.toHaveBeenCalled();
+    expect(store.getState().runtimeError).toBeNull();
+    expect(assignmentRows(store.getState()).unassigned).toEqual([]);
+    expect(assignmentRows(store.getState()).assigned.map((r) => r.id)).toContain("Press");
+  });
+
+  it("AE2: Unassign on a Capacities row drops from the plan and writes nothing upstream", async () => {
+    const { store, adapter, controller } = await harness();
+    const verb = vi.spyOn(adapter, "runtimeAction");
+    const reassign = vi.spyOn(adapter, "reassign");
+    const batch = vi.spyOn(adapter, "applyRuntimeBatch");
+    // Every Capacities writer the app owns, so "no Capacities call" is total.
+    const writers = [
+      vi.spyOn(adapter, "saveCapacitiesSettings"),
+      vi.spyOn(adapter, "saveCapacitiesSource"),
+      vi.spyOn(adapter, "saveCapacitiesRule"),
+      vi.spyOn(adapter, "saveCapacitiesSelections"),
+      vi.spyOn(adapter, "startCapacitiesRefresh"),
+      vi.spyOn(adapter, "discoverCapacitiesSource"),
+    ];
+    let drops: DroppedItem[] = [];
+    stubSources(adapter, () => ({ drops }));
+    const identity = "capacities:fixture-space:custom-project:note-processing";
+
+    drops = [
+      {
+        identity,
+        name: "Note Processing",
+        droppedAt: "2026-07-18T10:00:00Z",
         source: "capacities",
         kind: "custom-project",
         minutes: 30,
       },
+    ];
+    await controller.setAssigned("Note Processing", false);
+
+    expect(verb).toHaveBeenCalledTimes(1);
+    expect(verb).toHaveBeenCalledWith("drop_from_plan", identity);
+    expect(reassign).not.toHaveBeenCalled();
+    expect(batch).not.toHaveBeenCalled();
+    for (const writer of writers) expect(writer).not.toHaveBeenCalled();
+
+    const after = store.getState();
+    expect(store.getState().runtimeError).toBeNull();
+    expect(assignmentRows(after).assigned.map((r) => r.id)).not.toContain("Note Processing");
+    expect(assignmentRows(after).unassigned.map((r) => r.identity)).toEqual([identity]);
+    expect(skippedTodayRows(after)).toEqual([]);
+
+    // Assigned puts it back through the existing restore verb.
+    drops = [];
+    await controller.setAssigned(identity, true);
+    expect(verb).toHaveBeenLastCalledWith("restore_today", identity);
+    expect(reassign).not.toHaveBeenCalled();
+    for (const writer of writers) expect(writer).not.toHaveBeenCalled();
+    expect(store.getState().runtimeError).toBeNull();
+  });
+
+  it("blocks every assignment case before Day Setup is confirmed", async () => {
+    const { store, adapter, controller } = await harness({ confirm: false });
+    const verb = vi.spyOn(adapter, "runtimeAction");
+    const reassign = vi.spyOn(adapter, "reassign");
+    const batch = vi.spyOn(adapter, "applyRuntimeBatch");
+    const refresh = vi.spyOn(adapter, "refreshSources");
+
+    expect(taskActionDisabledReason(store.getState(), "complete")).toBe(
+      DAY_SETUP_GATE_REASON,
+    );
+    await controller.setAssigned("Press", false);
+    await controller.setAssigned("Press", true);
+    await controller.setAssigned("Note Processing", false);
+
+    expect(verb).not.toHaveBeenCalled();
+    expect(reassign).not.toHaveBeenCalled();
+    expect(batch).not.toHaveBeenCalled();
+    expect(refresh).not.toHaveBeenCalled();
+    expect(store.getState().runtimeError).toBe(DAY_SETUP_GATE_REASON);
+  });
+
+  it("surfaces a refused re-assign and never refreshes on a conflict", async () => {
+    const { store, adapter, controller } = await harness();
+    const source = stubSources(adapter, () => ({
+      unassigned: [
+        {
+          identity: "todoist:6fx00xPRESS",
+          name: "Press",
+          actionId: "ra-9",
+          source: "todoist",
+          recurring: false,
+        },
+      ],
+    }));
+    // Reload against the stub so the row starts Unassigned.
+    await controller.refreshSources();
+    expect(assignmentRows(store.getState()).unassigned.map((r) => r.identity)).toEqual([
+      "todoist:6fx00xPRESS",
     ]);
+    adapter.reassign = async () => ({
+      id: "ra-10",
+      verb: "reassign",
+      targetName: "todoist:6fx00xPRESS",
+      status: "failed" as const,
+      error: "task due changed after unassign",
+      duplicate: false,
+    });
+    const before = source.refreshed();
+
+    await controller.setAssigned("todoist:6fx00xPRESS", true);
+
+    expect(source.refreshed()).toBe(before);
+    expect(store.getState().runtimeError).toMatch(/task due changed after unassign/);
   });
 });

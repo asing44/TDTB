@@ -1194,6 +1194,30 @@ export class FixtureAdapter implements Adapter {
     return { ...action };
   }
 
+  /** KTD1 fixture mirror: reverse the newest APPLIED `unassign` for this
+      identity, exactly as the server's journal-derived re-assign does. No
+      applied unassign means nothing to reverse, which is an error here too. */
+  async reassign(identity: string): Promise<import("../model/types").RuntimeAction> {
+    await wait(LATENCY_MS);
+    const prior = [...this.runtimeJournal]
+      .reverse()
+      .find((a) => a.verb === "unassign" && a.targetName === identity && a.status === "applied");
+    if (!prior) {
+      throw new Error(`no applied unassign to reverse for ${identity}`);
+    }
+    prior.status = "undone";
+    const action: import("../model/types").RuntimeAction = {
+      id: `ra-fixture-${this.runtimeJournal.length + 1}`,
+      verb: "reassign",
+      targetName: identity,
+      status: "applied",
+      error: null,
+      duplicate: false,
+    };
+    this.runtimeJournal.push(action);
+    return { ...action };
+  }
+
   // -- runtime batches (B5 contract) ----------------------------------------
   /** Dev-only, deterministic switches for the batch surface: force one item
       to fail on apply/retry, and force one applied item's undo to conflict. */

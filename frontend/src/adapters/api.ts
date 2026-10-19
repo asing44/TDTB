@@ -682,6 +682,16 @@ export class ApiAdapter implements Adapter {
     );
   }
 
+  /** KTD1: POST /runtime-actions/reassign {identity} — same journaled envelope
+      as every other runtime-action post, so `projectRuntimeAction` reads it
+      unchanged. A day-setup or conflict refusal arrives as ApiError through
+      the shared error handling, exactly like `runtimeAction`. */
+  async reassign(identity: string): Promise<RuntimeAction> {
+    return projectRuntimeAction(
+      await this.post("/runtime-actions/reassign", { identity }),
+    );
+  }
+
   async applyRuntimeBatch(items: RuntimeBatchItemInput[]): Promise<RuntimeBatchResult> {
     return projectRuntimeBatchResults(
       await this.post("/runtime-batches", {
