@@ -1,9 +1,8 @@
 /* Header — U7 page frame (KTD11). The retired left rail and floating tab pill
    are replaced by one persistent header: the date and workday-frame line, a
    three-step stepper bound to the existing `ui.screen` state, a source-health
-   pill with a Refresh action (Retry while degraded) wired to the existing
-   refresh lifecycle, and a Connections link that opens the existing
-   connections screen.
+   pill with ONE action, "Refresh sources", in both pill states, and a
+   Connections link that opens the existing connections screen.
 
    The stepper preserves ScreenNav's keyboard behavior (roving tabindex,
    Arrow/Home/End, visible focus, ARIA roles). Step 3 (Commit) maps onto the
@@ -15,7 +14,8 @@ import { useApp, useAppState } from "./context";
 import { display12h } from "../model/time";
 import { formatRelativeShort } from "../model/relative";
 import { countAdvisorySkipped } from "../adapters/wire";
-import { useCapacitiesRefreshJob } from "./useCapacitiesRefreshJob";
+import { ApiError } from "../adapters/api";
+import { refreshProgressText, useCapacitiesRefreshJob } from "./useCapacitiesRefreshJob";
 
 const DAY = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -46,13 +46,22 @@ const stepId = (step: StepId) => `step-tab-${step}`;
 export function Header() {
   const s = useAppState();
   const { controller, store } = useApp();
-  // The healthy-state Refresh is a real Capacities refresh job: the pill
-  // reports the job (and the snapshot reload that follows it) as refreshing
-  // instead of briefly flashing through the in-flight read. Called before the
-  // `s.inputs` guard so the hook order stays stable across renders.
-  const job = useCapacitiesRefreshJob(s.inputs !== null, () => {
-    void controller.refreshSources();
-  });
+  // One action in both pill states (R1, KTD1, KTD2): the pill's press starts
+  // the Capacities refresh job, whose terminal phase re-reads the snapshot
+  // (and with it Todoist). Called before the `s.inputs` guard so the hook
+  // order stays stable across renders.
+  const job = useCapacitiesRefreshJob(
+    s.inputs !== null,
+    () => {
+      void controller.refreshSources();
+    },
+    // A source that cannot be prepared for a job refuses the start with 503.
+    // The snapshot read still re-reads Todoist live, so it is the whole
+    // refresh and runs directly instead of leaving the press dead.
+    (error) => {
+      if (error instanceof ApiError && error.status === 503) void controller.refreshSources();
+    },
+  );
   if (!s.inputs) return null;
 
   const screen = s.ui.screen;
@@ -113,8 +122,22 @@ export function Header() {
   // second start (which the server would answer with a single-flight 409).
   const refreshBusy = refreshing || job.busy === "starting";
   const pillState = refreshing ? "refreshing" : health === "ok" ? "healthy" : "degraded";
+  // One press, one meaning: the label never names a second mode. A run this
+  // surface is watching reports its wait countdown and read progress; an old
+  // rescan-mode job document still reads as a plain refresh.
   const refreshingLabel =
-    job.running && job.status?.mode === "rescan" ? "Rescanning sources…" : "Refreshing sources…";
+    (job.status?.progress.waiting ? refreshProgressText(job.status, job.nowMs) : null) ??
+    "Refreshing sources…";
+  // Unconfigured Capacities has nothing to refresh: the local status read says
+  // so up front, so the snapshot read is the whole action (no doomed POST).
+  const startSourcesRefresh = () => {
+    if (refreshBusy) return;
+    if (job.status?.configured === false) {
+      void controller.refreshSources();
+      return;
+    }
+    void job.start("refresh");
+  };
   const pillBase = refreshing
     ? refreshingLabel
     : health === "ok"
@@ -203,20 +226,18 @@ export function Header() {
           <span class="health-pill__text">{pillText}</span>
         </span>
         {pillState !== "refreshing" && (
-          // One shared class for the pill action (healthy Refresh / degraded
-          // Retry): the <=1100px compaction styles it by class and must keep
-          // seeing it regardless of label. Healthy Refresh starts the real
-          // Capacities refresh job; degraded Retry keeps the existing
-          // snapshot-only retry path.
+          // One shared class for the pill action: the <=1100px compaction styles
+          // it by class and must keep seeing it regardless of label. The label
+          // is the same in the healthy and degraded states — one control, no
+          // separate Retry path — and a Capacities job that cannot run falls
+          // back to the snapshot read inside the handler.
           <button
             class="header-pill btn health-pill__retry"
-            onClick={() =>
-              void (pillState === "healthy" ? job.start("refresh") : controller.refreshSources())
-            }
+            onClick={startSourcesRefresh}
             disabled={refreshBusy}
-            aria-label={pillState === "healthy" ? "Refresh sources" : "Retry source refresh"}
+            aria-label="Refresh sources"
           >
-            {pillState === "healthy" ? "Refresh" : "Retry"}
+            Refresh sources
           </button>
         )}
         <button

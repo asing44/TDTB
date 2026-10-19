@@ -1,5 +1,5 @@
 /* useCapacitiesRefreshJob — the Capacities refresh-job lifecycle backing the
-   cockpit header's healthy-state Refresh action.
+   cockpit header's "Refresh sources" action (and the Connections panel).
 
    Contract:
    - One explicit action, "Refresh sources": a single token-guarded
@@ -103,6 +103,10 @@ export interface CapacitiesRefreshJob {
 export function useCapacitiesRefreshJob(
   active: boolean,
   onTerminal?: (status: CapacitiesRefreshStatus) => void,
+  /* A start failure other than the 409 single-flight conflict, reported so a
+     surface can fall back to its own action. The refused run is still a
+     failure for this hook: ``actionError`` is set as before. */
+  onStartError?: (error: unknown) => void,
 ): CapacitiesRefreshJob {
   const { controller } = useApp();
   const [status, setStatus] = useState<CapacitiesRefreshStatus | null>(null);
@@ -125,6 +129,8 @@ export function useCapacitiesRefreshJob(
   const [tracking, setTracking] = useState(false);
   const onTerminalRef = useRef(onTerminal);
   onTerminalRef.current = onTerminal;
+  const onStartErrorRef = useRef(onStartError);
+  onStartErrorRef.current = onStartError;
 
   const load = async () => {
     const epoch = ++readEpoch.current;
@@ -220,6 +226,7 @@ export function useCapacitiesRefreshJob(
         }
         return;
       }
+      onStartErrorRef.current?.(e);
       setActionError(messageOf(e));
     } finally {
       if (mounted.current) setBusy(null);

@@ -1,7 +1,7 @@
 /* U7 page frame — the stepper header replaces the retired ScreenNav tab pill
    and the left rail's source-health chip. These tests cover the step
-   activation, keyboard navigation, the source-health pill with a
-   Refresh/Retry action, and the Connections link. */
+   activation, keyboard navigation, the one "Refresh sources" pill action,
+   and the Connections link. */
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, waitFor } from "@testing-library/preact";
@@ -10,7 +10,7 @@ import { Header } from "./Header";
 import { ApiError } from "../adapters/api";
 import { fingerprintFixedInputs } from "../model/fingerprint";
 import { fixedInputsOf } from "../fixtures/scenarios";
-import type { CapacitiesRefreshStatus } from "../model/types";
+import type { CapacitiesRefreshStatus, CapacitiesRefreshWaiting } from "../model/types";
 
 /** A complete job status for the header refresh flow (fixtures only). */
 function refreshStatus(
@@ -178,18 +178,23 @@ describe("U7 stepper header", () => {
     expect(h.store.getState().ui.approvalOpen).toBe(true);
   });
 
-  it("shows the degraded pill with a Retry wired to the refresh lifecycle", () => {
+  it("offers the same Refresh sources action while degraded and starts the job", () => {
+    // U5 (R1, KTD1, KTD2): one action in both pill states. The degraded Retry
+    // path is gone, so a press always means the same thing.
     const h = makeHarness("ready", (sc) => {
       sc.inputs.sourceHealth = "degraded";
     });
     const r = h.ui(<Header />);
     expect(r.getByText(/Sources degraded/)).toBeTruthy();
-    const spy = vi.spyOn(h.controller, "refreshSources").mockResolvedValue();
-    const retry = r.getByRole("button", { name: "Retry source refresh" });
-    expect(retry.textContent).toBe("Retry");
-    expect((retry as HTMLButtonElement).disabled).toBe(false);
-    fireEvent.click(retry);
-    expect(spy).toHaveBeenCalledTimes(1);
+    const start = vi.spyOn(h.controller, "startCapacitiesRefresh").mockResolvedValue(runningStatus());
+    const fallback = vi.spyOn(h.controller, "refreshSources").mockResolvedValue();
+    const refresh = r.getByRole("button", { name: "Refresh sources" });
+    expect(refresh.textContent).toBe("Refresh sources");
+    expect((refresh as HTMLButtonElement).disabled).toBe(false);
+    fireEvent.click(refresh);
+    expect(start).toHaveBeenCalledWith("refresh", "all");
+    expect(fallback).not.toHaveBeenCalled();
+    expect(r.queryByRole("button", { name: "Retry source refresh" })).toBeNull();
   });
 
   it("starts the Capacities refresh job when healthy, then reloads the snapshot on completion", async () => {
@@ -198,7 +203,7 @@ describe("U7 stepper header", () => {
     expect(r.getByText(/Sources healthy/)).toBeTruthy();
     expect(r.queryByRole("button", { name: "Retry source refresh" })).toBeNull();
     const refresh = r.getByRole("button", { name: "Refresh sources" });
-    expect(refresh.textContent).toBe("Refresh");
+    expect(refresh.textContent).toBe("Refresh sources");
     expect((refresh as HTMLButtonElement).disabled).toBe(false);
 
     const start = vi.spyOn(h.controller, "startCapacitiesRefresh").mockResolvedValue(runningStatus());
@@ -283,14 +288,95 @@ describe("U7 stepper header", () => {
     expect(reload).toHaveBeenCalledTimes(1);
   });
 
-  it("labels a panel-started rescan as rescanning sources", async () => {
+  it("falls back to the snapshot read when no Capacities source is configured", async () => {
+    const unconfigured: CapacitiesRefreshStatus = {
+      ...refreshStatus({ phase: null, outcome: null }),
+      configured: false,
+      mode: null,
+      scope: null,
+    };
+    const h = makeHarness("ready");
+    const load = vi
+      .spyOn(h.controller, "loadCapacitiesRefreshStatus")
+      .mockResolvedValue(unconfigured);
+    const start = vi.spyOn(h.controller, "startCapacitiesRefresh");
+    const fallback = vi.spyOn(h.controller, "refreshSources").mockResolvedValue();
+    const r = h.ui(<Header />);
+    await waitFor(() => expect(load).toHaveBeenCalled());
+    await act(async () => {});
+
+    fireEvent.click(r.getByRole("button", { name: "Refresh sources" }));
+    expect(fallback).toHaveBeenCalledTimes(1);
+    expect(start).not.toHaveBeenCalled();
+  });
+
+  it("falls back to the snapshot read when the job start is refused with 503", async () => {
+    const h = makeHarness("ready");
+    const r = h.ui(<Header />);
+    vi.spyOn(h.controller, "startCapacitiesRefresh").mockRejectedValue(
+      new ApiError(
+        503,
+        { code: "capacities_refresh_unavailable", message: "" },
+        "The Capacities source could not be prepared for a refresh; the previous complete result is preserved.",
+      ),
+    );
+    const fallback = vi.spyOn(h.controller, "refreshSources").mockResolvedValue();
+
+    fireEvent.click(r.getByRole("button", { name: "Refresh sources" }));
+    await waitFor(() => expect(fallback).toHaveBeenCalledTimes(1));
+    expect(fallback).toHaveBeenCalledTimes(1);
+  });
+
+  it("labels a panel-started rescan as a plain refresh", async () => {
     const h = makeHarness("ready");
     const r = h.ui(<Header />);
     await act(async () => {
       await h.controller.startCapacitiesRefresh("rescan", "all");
     });
-    await waitFor(() => expect(r.getByText("Rescanning sources…")).toBeTruthy(), { timeout: 5000 });
-    expect(r.queryByText(/Refreshing sources/)).toBeNull();
+    await waitFor(() => expect(r.getByText("Refreshing sources…")).toBeTruthy(), { timeout: 5000 });
+    expect(r.queryByText(/Rescanning sources/)).toBeNull();
+  });
+
+  it("shows the rate-limit countdown and read progress in the pill", async () => {
+    vi.useFakeTimers({ now: new Date("2026-10-19T12:00:00Z") });
+    try {
+      const waiting: CapacitiesRefreshWaiting = {
+        reason: "rateLimited",
+        endpoint: "/objects",
+        retryAfter: 40,
+        resumeAt: Math.round(Date.now() / 1000) + 40,
+      };
+      const running = runningStatus();
+      const progress = { listed: 227, read: 176, toRead: 227, waiting, types: {} };
+      const waitingStatus: CapacitiesRefreshStatus = {
+        ...running,
+        progress,
+        job: { ...running.job!, progress },
+      };
+      const h = makeHarness("ready");
+      const load = vi
+        .spyOn(h.controller, "loadCapacitiesRefreshStatus")
+        .mockResolvedValue(waitingStatus);
+      const reload = vi.spyOn(h.controller, "refreshSources").mockResolvedValue();
+      const r = h.ui(<Header />);
+      await vi.advanceTimersByTimeAsync(20);
+
+      expect(r.getByRole("status").textContent).toContain(
+        "Capacities busy, resuming in 40s · 176/227",
+      );
+      expect(r.queryByRole("button", { name: "Refresh sources" })).toBeNull();
+
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(r.getByRole("status").textContent).toContain("Capacities busy, resuming in 39s");
+
+      // The terminal phase re-reads the snapshot exactly once.
+      load.mockResolvedValue(completeStatus());
+      await vi.advanceTimersByTimeAsync(1300);
+      await vi.advanceTimersByTimeAsync(1300);
+      expect(reload).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("appends the refresh age and a discovery tooltip to the pill", () => {
