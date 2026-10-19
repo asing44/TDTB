@@ -921,8 +921,9 @@ describe("source-health gate (selectors)", () => {
     s.inputs!.sourceHealth = sourceHealthOf([warning]);
     expect(sourceHealthBlocked(s)).toBe(false);
     expect(canLiveCommit(s)).toBe(true);
-    // The calendar dot still carries its own note.
-    expect(sourceHealthBySource(s.inputs!.sourceWarnings).calendar).toBe("ok");
+    // The calendar dot still carries its own note (source attribution is
+    // independent of the commit gate).
+    expect(sourceHealthBySource(s.inputs!.sourceWarnings).calendar).toBe("degraded");
   });
 
   it("the KTD5 incomplete-refresh warning blocks live commit", () => {

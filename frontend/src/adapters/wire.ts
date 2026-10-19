@@ -1608,22 +1608,25 @@ function advisoryFixOf(warning: string): AdvisoryNoteFix {
   return "details";
 }
 
-/** Per-source health for the Connections dots (R8, KTD7). Each blocking warning
-    is attributed by prefix — ``Todoist…``, any calendar diagnostic, or
-    ``Capacities…``. Config, prompt, habit and artifact warnings match no
-    source, so they colour no dot while still blocking commit through
+/** Per-source health for the Connections dots (R8, KTD7). Todoist and
+    Capacities are attributed from their blocking warnings by prefix
+    (``Todoist…``, ``Capacities…``). Calendar diagnostics are advisory for
+    commit (OQ-P1), so the advisory filter keeps them out of
+    ``blockingWarnings``; they are attributed straight from
+    ``calendarWarnings`` so the Calendar dot and its card still show a real read
+    problem without gating commit. Config, prompt, habit and artifact warnings
+    match no source, so they colour no dot while still blocking commit through
     ``sourceHealthOf``. */
 export function sourceHealthBySource(
   warnings: readonly string[],
 ): SourceHealthBySource {
   const out: SourceHealthBySource = {
     todoist: "ok",
-    calendar: "ok",
+    calendar: calendarWarnings(warnings).length > 0 ? "degraded" : "ok",
     capacities: "ok",
   };
   for (const warning of blockingWarnings(warnings)) {
-    if (isCalendarWarning(warning)) out.calendar = "degraded";
-    else if (/^Todoist/i.test(warning)) out.todoist = "degraded";
+    if (/^Todoist/i.test(warning)) out.todoist = "degraded";
     else if (/^Capacities/.test(warning)) out.capacities = "degraded";
   }
   return out;
@@ -2126,8 +2129,9 @@ export function sourceHealthOf(warnings: string[]): SourceHealth {
     intentional non-busy omission, so it never counts. Every other calendar
     diagnostic is reported here for the calendar source's own note, but since
     2026-10-19 (OQ-P1) those warnings are advisory: ``sourceHealthOf`` no longer
-    degrades on them and ``refreshSources`` no longer throws. */
-export function calendarWarnings(warnings: string[]): string[] {
+    degrades on them and ``refreshSources`` no longer throws. The Calendar dot
+    and source card still read them through ``sourceHealthBySource``. */
+export function calendarWarnings(warnings: readonly string[]): string[] {
   return warnings.filter((warning) => isCalendarWarning(warning));
 }
 

@@ -441,14 +441,13 @@ describe("Connections screen (U13)", () => {
     expect(helperText("events")).toContain("Healthy.");
   });
 
-  it("treats a calendar diagnostic as advisory and keeps the Calendar dot on the classifier's verdict (R8)", async () => {
+  it("turns only the Calendar dot amber for a calendar diagnostic while commit stays unblocked (R8, OQ-P1)", async () => {
     const warning = "Calendar read returned 2 unfixed events";
-    // The operator made calendar diagnostics advisory (OQ-P1), and
-    // ``sourceHealthBySource`` attributes only blocking warnings, so the
-    // classifier currently reports the calendar source as ok. Pinned here so a
-    // future attribution change is a deliberate test change, not a silent one.
+    // Calendar diagnostics stay advisory for commit (OQ-P1), so the global gate
+    // is untouched; ``sourceHealthBySource`` now attributes them to Calendar so
+    // the dot and the source card cannot hide a real read problem.
     expect(sourceHealthOf([warning])).toBe("ok");
-    expect(sourceHealthBySource([warning]).calendar).toBe("ok");
+    expect(sourceHealthBySource([warning]).calendar).toBe("degraded");
 
     const { h, rendered } = openConnections([], capSettings({ availableStructures: ["RootTask"] }));
     const inputs = h.store.getState().inputs!;
@@ -468,9 +467,16 @@ describe("Connections screen (U13)", () => {
       (rendered.getByRole("button", { name }) as HTMLElement).querySelector(
         ".connections-navitem__dot",
       ) as HTMLElement;
-    expect(dotOf("Calendar").style.background).toBe(GREEN);
+    expect(dotOf("Calendar").style.background).toBe(AMBER);
     expect(dotOf("Todoist").style.background).toBe(GREEN);
     expect(dotOf("Capacities").style.background).toBe(GREEN);
+
+    const helperText = (unit: string) =>
+      rendered.getByText(new RegExp(`${unit} in the current read`)).textContent ?? "";
+    fireEvent.click(rendered.getByRole("button", { name: "Calendar" }));
+    expect(helperText("events")).toContain("Degraded — the last read reported a problem.");
+    fireEvent.click(rendered.getByRole("button", { name: "Todoist" }));
+    expect(helperText("tasks")).toContain("Healthy.");
   });
 
   it("explains what native rules are from the Admit when heading", async () => {

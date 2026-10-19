@@ -555,13 +555,27 @@ describe("sourceHealthBySource (R8, KTD7, AE4)", () => {
     expect(sourceHealthOf(warnings)).toBe("degraded");
   });
 
-  it("attributes a calendar warning to Calendar even though it is advisory", () => {
+  it("attributes a calendar warning to Calendar without blocking commit", () => {
+    const calendar = "Calendar access denied — busy blocks missing";
+    // Deliberate reversal of the earlier pin: the advisory filter keeps the
+    // warning off the commit gate, but the Calendar dot and its source card
+    // still show the real read problem.
     expect(
       sourceHealthBySource([
-        "Calendar access denied — busy blocks missing",
+        calendar,
         "Capacities partial — 2 evaluated · 2 deferred",
       ]),
-    ).toEqual({ todoist: "ok", calendar: "ok", capacities: "degraded" });
+    ).toEqual({ todoist: "ok", calendar: "degraded", capacities: "degraded" });
+    expect(sourceHealthOf([calendar])).toBe("ok");
+    expect(blockingWarnings([calendar])).toEqual([]);
+  });
+
+  it("keeps the Calendar dot green for the known reminder omission", () => {
+    expect(
+      sourceHealthBySource([
+        "Calendar omission: 2.0M: zero or negative duration (reminder-style marker)",
+      ]),
+    ).toEqual({ todoist: "ok", calendar: "ok", capacities: "ok" });
   });
 });
 
