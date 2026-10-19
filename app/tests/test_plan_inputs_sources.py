@@ -20,7 +20,9 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 import main as main_mod  # noqa: E402
 import app_config  # noqa: E402
 import artifact_source as art  # noqa: E402
-import capacities_builder as cap_builder  # noqa: E402
+import capacities_builder as cap_builder
+import capacities_intake as cap_intake
+import capacities_refresh  # noqa: E402
 import capacities_refresh_state as crs  # noqa: E402
 import capacities_selections as sel  # noqa: E402
 import capacities_settings as cs  # noqa: E402
@@ -1478,3 +1480,223 @@ def test_direct_assigned_on_only_structure_needs_no_active_enable(vault):
     rest = _names(body, "assigned") + _names(body, "suggested")
     assert "obj-future" not in rest
     assert "obj-empty" not in rest
+
+
+# ---------------------------------------------------------------------------
+# U2 (KTD5): the last Refresh's unfinished outcome becomes one bounded source
+# warning, so a failed/interrupted/stale last run blocks commit through the
+# existing gate until a later run publishes. No provider call, no coordinator.
+# ---------------------------------------------------------------------------
+
+REFRESH_WARNING_PREFIX = "Capacities refresh did not complete ("
+
+
+def _job_doc_path(space_id: str = DIRECT_SPACE) -> Path:
+    return (
+        cap_builder.refresh_state_root()
+        / capacities_refresh.JOB_DIRNAME
+        / f"{capacities_refresh._digest(space_id)}.json"
+    )
+
+
+def _write_job_document(job: dict, *, space_id: str = DIRECT_SPACE) -> Path:
+    path = _job_doc_path(space_id)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "version": capacities_refresh.JOB_SCHEMA_VERSION,
+                "namespace": capacities_refresh._digest(space_id),
+                "job": job,
+            }
+        ),
+        encoding="utf-8",
+    )
+    return path
+
+
+def _direct_live_client() -> tuple[TestClient, _CallRecorder]:
+    """Live sources mode + direct intake, with the live Capacities seam armed."""
+    _set_sources(mode="live", capacities_intake="direct")
+    _save_direct_source()
+    _publish_direct([_direct_object("obj-a", DIRECT_ROOT)])
+    builder = _CallRecorder()
+    client = _direct_client(build_clients=lambda _c: (None, None),
+                            build_capacities=builder)
+    return client, builder
+
+
+@pytest.mark.parametrize(
+    "job,expected",
+    [
+        ({"phase": "failed", "outcome": "noCapacities"}, "noCapacities"),
+        ({"phase": "failed", "outcome": "rateLimited"}, "rateLimited"),
+        ({"phase": "interrupted", "outcome": "interrupted"}, "interrupted"),
+        ({"phase": "failed", "outcome": "staleConfiguration"},
+         "staleConfiguration"),
+        # A non-terminal document with no live thread is a run whose process
+        # died; reconcile() would rewrite it as interrupted.
+        ({"phase": "read", "outcome": None}, "interrupted"),
+    ],
+)
+def test_refresh_outcome_warnings_names_each_unfinished_outcome(job, expected):
+    warnings = cap_intake.refresh_outcome_warnings(job, running=False)
+
+    assert warnings == [
+        "Capacities refresh did not complete ("
+        f"{expected}); showing the previous complete result. "
+        "Refresh sources to retry."
+    ]
+    assert warnings[0].startswith(REFRESH_WARNING_PREFIX)
+
+
+@pytest.mark.parametrize(
+    "job",
+    [
+        {"phase": "complete", "outcome": "published"},
+        {"phase": "cancelled", "outcome": "cancelled"},
+    ],
+)
+def test_refresh_outcome_warnings_ignores_completed_and_cancelled(job):
+    assert cap_intake.refresh_outcome_warnings(job, running=False) == []
+
+
+def test_refresh_outcome_warnings_is_silent_without_a_document():
+    assert cap_intake.refresh_outcome_warnings(None, running=False) == []
+
+
+@pytest.mark.parametrize("outcome", ["noCapacities", "interrupted", "staleConfiguration"])
+def test_refresh_outcome_warnings_is_silent_while_a_job_runs(outcome):
+    job = {"phase": "failed", "outcome": outcome}
+
+    assert cap_intake.refresh_outcome_warnings(job, running=True) == []
+
+
+def test_read_last_job_reads_the_coordinator_document():
+    job = {"phase": "failed", "outcome": "noCapacities"}
+    _write_job_document(job)
+
+    assert capacities_refresh.read_last_job(
+        cap_builder.refresh_state_root(), DIRECT_SPACE
+    ) == job
+
+
+def test_read_last_job_is_none_for_a_missing_or_corrupt_document():
+    root = cap_builder.refresh_state_root()
+    assert capacities_refresh.read_last_job(root, DIRECT_SPACE) is None
+
+    path = _write_job_document({"phase": "failed", "outcome": "noCapacities"})
+    path.write_text("{not json", encoding="utf-8")
+    assert capacities_refresh.read_last_job(root, DIRECT_SPACE) is None
+
+    path.write_text(json.dumps({"version": 999, "job": {"phase": "failed"}}),
+                    encoding="utf-8")
+    assert capacities_refresh.read_last_job(root, DIRECT_SPACE) is None
+
+
+def test_plan_inputs_blocks_commit_after_a_failed_refresh(vault):
+    client, builder = _direct_live_client()
+    _write_job_document({"phase": "failed", "outcome": "noCapacities"})
+
+    response = client.get("/plan-inputs")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert (
+        "Capacities refresh did not complete (noCapacities); showing the "
+        "previous complete result. Refresh sources to retry."
+    ) in body["source_warnings"]
+    # Joined into the intake block's warnings, so its state degrades visibly
+    # while the prior complete generation is still served.
+    assert body["capacities_intake"]["state"] == "degraded"
+    assert "obj-a" in _names(body, "assigned")
+    # Local reads only: the live Capacities seam was never built.
+    assert builder.calls == 0
+    assert client.app.state.refresh_coordinator is main_mod._REFRESH_COORDINATOR_UNSET
+
+
+@pytest.mark.parametrize(
+    "phase,outcome", [("interrupted", "interrupted"),
+                      ("failed", "staleConfiguration")],
+)
+def test_plan_inputs_blocks_commit_after_an_unfinished_refresh(vault, phase, outcome):
+    client, builder = _direct_live_client()
+    _write_job_document({"phase": phase, "outcome": outcome})
+
+    body = client.get("/plan-inputs").json()
+
+    assert any(
+        warning.startswith(REFRESH_WARNING_PREFIX) for warning in body["source_warnings"]
+    )
+    assert body["capacities_intake"]["state"] == "degraded"
+    assert builder.calls == 0
+
+
+@pytest.mark.parametrize(
+    "phase,outcome", [("complete", "published"), ("cancelled", "cancelled")],
+)
+def test_plan_inputs_stays_unblocked_after_a_published_or_cancelled_refresh(
+    vault, phase, outcome
+):
+    client, builder = _direct_live_client()
+    _write_job_document({"phase": phase, "outcome": outcome})
+
+    body = client.get("/plan-inputs").json()
+
+    assert not any(
+        warning.startswith(REFRESH_WARNING_PREFIX) for warning in body["source_warnings"]
+    )
+    assert body["capacities_intake"]["state"] == "ok"
+    assert builder.calls == 0
+
+
+class _RunningCoordinator:
+    """A coordinator double that reports a live job thread."""
+
+    def is_running(self) -> bool:
+        return True
+
+
+def test_plan_inputs_stays_unblocked_while_a_refresh_runs(vault):
+    client, builder = _direct_live_client()
+    _write_job_document({"phase": "read", "outcome": None})
+    client.app.state.refresh_coordinator = _RunningCoordinator()
+
+    body = client.get("/plan-inputs").json()
+
+    assert not any(
+        warning.startswith(REFRESH_WARNING_PREFIX) for warning in body["source_warnings"]
+    )
+    assert builder.calls == 0
+
+
+def test_plan_inputs_treats_a_non_terminal_job_with_no_coordinator_as_interrupted(
+    vault,
+):
+    client, builder = _direct_live_client()
+    _write_job_document({"phase": "read", "outcome": None})
+
+    body = client.get("/plan-inputs").json()
+
+    assert (
+        "Capacities refresh did not complete (interrupted); showing the "
+        "previous complete result. Refresh sources to retry."
+    ) in body["source_warnings"]
+    assert builder.calls == 0
+
+
+@pytest.mark.parametrize("damage", ["missing", "corrupt"])
+def test_plan_inputs_tolerates_a_missing_or_corrupt_job_document(vault, damage):
+    client, builder = _direct_live_client()
+    if damage == "corrupt":
+        _write_job_document({"phase": "failed", "outcome": "noCapacities"})
+        _job_doc_path().write_text("{not json", encoding="utf-8")
+
+    response = client.get("/plan-inputs")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert not any(
+        warning.startswith(REFRESH_WARNING_PREFIX) for warning in body["source_warnings"]
+    )
+    assert builder.calls == 0

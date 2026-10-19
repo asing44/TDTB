@@ -34,6 +34,7 @@ if _GATHER_DIR not in sys.path:
 import tdtb_gather as gather  # noqa: E402  (path-shimmed import, see inventory.py)
 
 import capacities_builder  # noqa: E402
+import capacities_refresh  # noqa: E402
 import capacities_rules  # noqa: E402
 import exclusion_settings  # noqa: E402
 import tag_exclusions  # noqa: E402
@@ -62,6 +63,24 @@ CONTRACT_MISMATCH = (
 POLICY_UNREADABLE = (
     "Capacities rules or tag exclusions are unreadable; no Capacities rows are shown."
 )
+
+#: The one bounded last-run outcome warning (KTD5). The ``Capacities refresh did
+#: not complete (`` prefix is what the frontend wire classifier treats as
+#: blocking, so this string is a wire contract: change it only with U3.
+REFRESH_DID_NOT_COMPLETE = (
+    "Capacities refresh did not complete ({outcome}); showing the previous "
+    "complete result. Refresh sources to retry."
+)
+
+#: Outcomes that mean "the previous complete result is what you are seeing"
+#: even though the run ended cleanly rather than failing. ``cancelled`` is
+#: deliberately absent: a cancelled run leaves the last complete result valid
+#: and adds no warning (OQ-P2).
+_INCOMPLETE_OUTCOMES = frozenset({"interrupted", "staleConfiguration"})
+
+#: The outcome token is our own bounded vocabulary; the cap only keeps a
+#: hand-edited job document from lengthening the warning.
+_OUTCOME_MAX_CHARS = 40
 
 #: A full Refresh checks types one after another, so their ``type_check_times``
 #: differ by a fraction of a second even though every type was just checked.
@@ -202,6 +221,48 @@ def _refused(
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[str], DirectCoverage]:
     """No rows, only the explicit reason. Never a partial serve."""
     return [], [], warnings, coverage if coverage is not None else DirectCoverage()
+
+
+def refresh_outcome_warnings(
+    job: dict[str, Any] | None, running: bool
+) -> list[str]:
+    """The last Refresh's unfinished outcome as one bounded warning (KTD5).
+
+    ``job`` is the persisted job document (see
+    :func:`capacities_refresh.read_last_job`) and ``running`` is whether a job
+    thread is live. A live run adds nothing: its prior complete generation is
+    still what the reader is being served, and the outcome is not final yet
+    (R4). A ``failed`` run (any outcome, e.g. ``noCapacities``), an
+    ``interrupted`` run, and a ``staleConfiguration`` run each add exactly one
+    warning, so commit reuses the existing source gate (R5). A ``cancelled`` or
+    ``published`` run adds none (OQ-P2), and a non-terminal document with no
+    live coordinator is reported as ``interrupted``, mirroring
+    ``RefreshCoordinator.reconcile()``.
+
+    Pure and local: no provider call, no coordinator construction, and an
+    absent or corrupt document is silence rather than an error.
+    """
+    if running or not isinstance(job, dict):
+        return []
+    outcome = _incomplete_outcome(job)
+    if outcome is None:
+        return []
+    return [REFRESH_DID_NOT_COMPLETE.format(outcome=outcome)]
+
+
+def _incomplete_outcome(job: dict[str, Any]) -> str | None:
+    """The bounded outcome token for an unfinished last run, or ``None``."""
+    phase = _job_text(job.get("phase"))
+    outcome = _job_text(job.get("outcome"))
+    if phase not in capacities_refresh.TERMINAL_PHASES:
+        return "interrupted"
+    if phase == "failed" or outcome in _INCOMPLETE_OUTCOMES:
+        return (outcome or phase)[:_OUTCOME_MAX_CHARS]
+    return None
+
+
+def _job_text(value: Any) -> str:
+    return value.strip() if isinstance(value, str) else ""
 
 
 def _type_warnings(read: capacities_builder.DirectIntakeRead) -> list[str]:

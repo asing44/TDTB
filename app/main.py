@@ -793,6 +793,29 @@ def _ignore_list_selection_warnings(
     return [f"Capacities selections {named} were promoted, then {_IGNORE_NOTICE_MARKER}"]
 
 
+def _refresh_is_running(app_state: Any) -> bool:
+    """Whether a Capacities Refresh job thread is live, without building one.
+
+    Reads the cached coordinator off ``app.state`` directly. Deliberately not
+    ``_refresh_coordinator()``: that seam can refuse with a 503 for an
+    unconfigured or broken source, and a plan-inputs read must stay local.
+    """
+    coordinator = getattr(app_state, "refresh_coordinator", None)
+    if coordinator is None or coordinator is _REFRESH_COORDINATOR_UNSET:
+        return False
+    is_running = getattr(coordinator, "is_running", None)
+    return bool(is_running()) if callable(is_running) else False
+
+
+def _last_refresh_job(read: Any) -> dict[str, Any] | None:
+    """The persisted last Refresh job document for the read generation."""
+    if read is None:
+        return None
+    return capacities_refresh.read_last_job(
+        capacities_builder.refresh_state_root(), read.space_id
+    )
+
+
 def _capacities_intake_block(
     digest: dict[str, Any],
     coverage: capacities_intake.DirectCoverage,
@@ -4483,6 +4506,15 @@ def create_app() -> FastAPI:
                 direct_warnings,
                 direct_coverage,
             ) = capacities_intake.load_direct_rows(read=intake_read)
+            # R5/KTD5: the last Refresh's unfinished outcome becomes one bounded
+            # warning, joined into direct_warnings so the intake block's state
+            # turns degraded/unavailable truthfully. A live run adds nothing.
+            direct_warnings = [
+                *direct_warnings,
+                *capacities_intake.refresh_outcome_warnings(
+                    _last_refresh_job(intake_read), _refresh_is_running(app.state)
+                ),
+            ]
             w_capacities = [*w_capacities, *direct_warnings]
         try:
             if source_mode != app_config.SOURCES_MODE_ARTIFACT:

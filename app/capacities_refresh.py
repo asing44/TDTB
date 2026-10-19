@@ -510,6 +510,47 @@ def _digest(*parts: str) -> str:
     return hashlib.sha256("\x1f".join(parts).encode("utf-8")).hexdigest()
 
 
+def _job_path_for(root: str | Path, namespace: str) -> Path:
+    """The durable job document path for one namespace under ``root``."""
+    return Path(root) / JOB_DIRNAME / f"{namespace}.json"
+
+
+def _load_job_document(path: Path) -> dict[str, Any] | None:
+    """The validated job mapping in one document, or ``None``.
+
+    A missing, unreadable, unparsable, or wrong-schema document is ``None``
+    rather than an error: the document is a progress record, not authority.
+    """
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (FileNotFoundError, OSError, UnicodeDecodeError):
+        return None
+    try:
+        document = json.loads(text)
+    except ValueError:
+        return None
+    if not isinstance(document, dict) or document.get("version") != JOB_SCHEMA_VERSION:
+        return None
+    job = document.get("job")
+    if not isinstance(job, dict):
+        return None
+    return job
+
+
+def read_last_job(root: str | Path, space_id: str) -> dict[str, Any] | None:
+    """The last persisted job document for ``space_id``, or ``None``.
+
+    A public pure local read: no provider call, and no coordinator is built, so
+    a caller that must not construct one (``/plan-inputs``) can still tell how
+    the last Refresh ended. The path uses the coordinator's default namespace
+    (``_digest(space_id)``), which is what the builder constructs, and the
+    document is validated exactly as :meth:`RefreshCoordinator._load_job`.
+    """
+    if not isinstance(space_id, str) or not space_id.strip():
+        return None
+    return _load_job_document(_job_path_for(root, _digest(space_id.strip())))
+
+
 def _text(value: Any) -> str:
     return str(value).strip() if value is not None else ""
 
@@ -652,7 +693,7 @@ class RefreshCoordinator:
     # -- paths / persistence -------------------------------------------
 
     def _job_path(self) -> Path:
-        return self._job_dir / f"{self._namespace}.json"
+        return _job_path_for(self.root, self._namespace)
 
     def _persist_job(self) -> None:
         if self._job is None:
@@ -667,20 +708,7 @@ class RefreshCoordinator:
         )
 
     def _load_job(self) -> dict[str, Any] | None:
-        try:
-            text = self._job_path().read_text(encoding="utf-8")
-        except (FileNotFoundError, OSError, UnicodeDecodeError):
-            return None
-        try:
-            document = json.loads(text)
-        except ValueError:
-            return None
-        if not isinstance(document, dict) or document.get("version") != JOB_SCHEMA_VERSION:
-            return None
-        job = document.get("job")
-        if not isinstance(job, dict):
-            return None
-        return job
+        return _load_job_document(self._job_path())
 
     # -- liveness / reconciliation -------------------------------------
 

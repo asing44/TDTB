@@ -1294,6 +1294,16 @@ def refresh_state_dir() -> Path:
     return app_config.state_dir() / REFRESH_STATE_DIRNAME
 
 
+def refresh_state_root(config: CapacitiesBuilderConfig | None = None) -> Path:
+    """The direct-refresh root the coordinator and store resolve to.
+
+    Public wrapper for read-only callers (the ``/plan-inputs`` job-document
+    read) so the job path is derived from the same root the coordinator built
+    its job directory under, without constructing one.
+    """
+    return _refresh_state_root(config if config is not None else CapacitiesBuilderConfig())
+
+
 def build_refresh_state(
     space_id: str,
     config: CapacitiesBuilderConfig | None = None,
