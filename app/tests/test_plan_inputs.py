@@ -22,6 +22,7 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, str(Path(__file__).parent.parent))
 import main as main_mod  # noqa: E402
 import runstate as runstate_mod  # noqa: E402
+import runtime_actions as ra  # noqa: E402
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "gather"))
 import tdtb_gather as gather  # noqa: E402
@@ -30,6 +31,7 @@ from tests.config_markdown import (  # noqa: E402
     read_config_note,
     write_config_note,
 )
+from tests.test_runtime_actions import FakeTodoist, fresh_clients  # noqa: E402
 
 CONFIG_REL_PATH = "00 - META/Skill-Configs/tdtb-bridger.md"
 
@@ -423,3 +425,153 @@ class TestDropFromPlanRefresh:
         }
         assert identity not in index_identities
         assert all(i.get("name") != "Press" for i in index)
+
+
+# ---------------------------------------------------------------------------
+# KTD2 / AE2 — unassigned_today on /plan-inputs, and a dropped Capacities row
+# ---------------------------------------------------------------------------
+
+class _ReadableTodoist(FakeTodoist):
+    """FakeTodoist plus the Todoist 'today' read /plan-inputs makes.
+
+    Like the real filter, a task with no due date stops coming back, so an
+    unassign (which clears the date) leaves ``assigned`` on its own.
+    """
+
+    def get_filter_tasks(self, query, limit=None):
+        import external_sources as ext
+
+        if query != ext.ASSIGNED_QUERY_FALLBACK:
+            return []
+        return [
+            {**task, "priority": 4, "labels": []}
+            for task in self.tasks.values()
+            if task.get("due")
+        ]
+
+    def close(self):
+        pass
+
+
+class _CallsCapacities:
+    """Read-only Capacities adapter double that counts provider reads."""
+
+    def __init__(self, items):
+        from types import SimpleNamespace
+
+        self._namespace = SimpleNamespace
+        self.items = list(items)
+        self.calls = 0
+        self.closed = False
+
+    def items_for_day(self, logical_day):
+        self.calls += 1
+        return self._namespace(items=list(self.items), warnings=[])
+
+    def close(self):
+        self.closed = True
+
+
+def _read_todoist_client(todoist) -> TestClient:
+    app = main_mod.create_app()
+    app.state.build_read_clients = lambda cfg: (todoist, None)
+    return TestClient(app)
+
+
+class TestUnassignedTodayField:
+    """KTD2: /plan-inputs lists today's journal-applied Todoist unassigns."""
+
+    def test_default_is_empty(self, client):
+        assert client.get("/plan-inputs").json()["unassigned_today"] == []
+
+    def test_applied_unassign_is_listed(self, live_sources_mode):
+        today = gather.effective_date(datetime.now())
+        todoist = _ReadableTodoist(fresh_clients()[0].tasks)
+        client = _read_todoist_client(todoist)
+
+        first = client.get("/plan-inputs").json()
+        assert [r["name"] for r in first["digest"]["assigned"]] == ["Press"]
+
+        action = ra.apply_action(today, "unassign", "Press", {}, todoist=todoist)
+        assert action["status"] == "applied"
+
+        body = client.get("/plan-inputs").json()
+        # The journal row is the only record left: the task is no longer due.
+        assert [r["name"] for r in body["digest"]["assigned"]] == []
+        rows = body["unassigned_today"]
+        assert len(rows) == 1
+        row = rows[0]
+        assert row["identity"] == "todoist:task-1"
+        assert row["name"] == "Press"
+        assert row["action_id"] == action["id"]
+        assert row["source"] == "todoist"
+        assert row["recurring"] is False
+
+
+class TestDroppedCapacitiesRow:
+    """AE2 / R4: a Capacities row dropped from the plan is absent from the
+    plan's assigned rows, from the persisted identity index, and from the
+    commit's server-assigned set, so nothing is mirrored to PHEP and no
+    Capacities write is attempted."""
+
+    ROW = {
+        "id": "object-1", "name": "Ship project",
+        "path": "capacities://space-1/object-1",
+        "identity": "capacities:space-1:project:object-1",
+        "source": "capacities", "types": ["project"],
+        "urgency": None, "deadline": None, "priority_score": 0,
+        "assigned": True, "blocks": 1, "duration": 30,
+        "duration_minutes": 30, "capacities_id": "object-1",
+        "capacities_space_id": "space-1",
+        "capacities_structure_id": "project", "capacities_tags": None,
+    }
+
+    def test_drop_leaves_plan_index_and_commit(self, live_sources_mode,
+                                               monkeypatch):
+        import shadow
+
+        today = gather.effective_date(datetime.now())
+        adapter = _CallsCapacities([dict(self.ROW)])
+        app = main_mod.create_app()
+        app.state.build_read_clients = lambda cfg: (None, None)
+        app.state.build_capacities_adapter = lambda cfg: adapter
+        client = TestClient(app)
+        headers = {"X-TDTB-Token": app.state.token}
+
+        first = client.get("/plan-inputs").json()
+        assert [r["name"] for r in first["digest"]["assigned"]] == ["Ship project"]
+
+        # /drop: Unassigned for a Capacities row is the date-scoped drop.
+        action = ra.apply_action(today, "drop_from_plan", "Ship project")
+        assert action["status"] == "applied"
+        calls_after_plan = adapter.calls
+
+        # The commit boundary re-reads the drop list against the still-stale
+        # index: the only submitted row loses its server-assigned identity, so
+        # the commit refuses before any Todoist/calendar/Capacities write.
+        monkeypatch.setattr(shadow, "gather_live_state", lambda config: {
+            "todoist_tasks": [], "calendar_events": [],
+        })
+        refused = client.post("/commit?mode=shadow", headers=headers, json={
+            "digest": {"assigned": [{
+                "name": "Ship project",
+                "path": "capacities://space-1/object-1",
+                "identity": self.ROW["identity"],
+            }]},
+            "sequence": {"sequence": [
+                {"id": "Ship project", "start": "09:00", "end": "10:00"},
+            ]},
+            "config": {},
+        })
+        assert refused.status_code == 422
+        assert "dropped today" in refused.json()["detail"]
+        assert "entries" not in refused.json()
+        assert adapter.calls == calls_after_plan
+
+        # A same-day refresh rewrites the plan and index without the row.
+        body = client.get("/plan-inputs").json()
+        assert "Ship project" not in [r["name"] for r in body["digest"]["assigned"]]
+        assert any(d.get("identity") == self.ROW["identity"]
+                   for d in body["dropped_today"])
+        index = runstate_mod.read_digest_index(today)
+        assert self.ROW["identity"] not in {i.get("identity") for i in index}

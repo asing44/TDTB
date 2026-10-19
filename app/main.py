@@ -1670,6 +1670,14 @@ class RuntimeBatchRequest(BaseModel):
     items: list[RuntimeBatchItem]
 
 
+class RuntimeActionReassignRequest(BaseModel):
+    """KTD1 /runtime-actions/reassign body: re-assign one row by its stable
+    source identity (``todoist:<task id>``). The name is never enough — the
+    reverse acts on the journaled before-image of that exact task."""
+
+    identity: str
+
+
 class DaySetupRequest(BaseModel):
     """/day-setup body: the Phase-1 confirm payload. Session/day-scoped —
     persists to the dated run-state note, NEVER to the config files (locked
@@ -4740,6 +4748,10 @@ def create_app() -> FastAPI:
         dropped_rows = runstate.read_dropped(today)
         dropped_ids = {str(d.get("identity"))
                        for d in dropped_rows if d.get("identity")}
+        # KTD2: Todoist rows unassigned earlier today are still part of the
+        # list the operator reviews, so they are read back from today's
+        # journal rather than a second state store. Absent journal -> [].
+        unassigned_rows = runtime_actions.unassigned_today(today)
         if dropped_ids:
             digest["assigned"] = [r for r in digest["assigned"]
                                   if runtime_actions.drop_identity_of(r)
@@ -4791,6 +4803,7 @@ def create_app() -> FastAPI:
             "planning_config_fingerprint": planning_config_fingerprint,
             "micro_adventure": micro_payload,
             "dropped_today": dropped_rows,
+            "unassigned_today": unassigned_rows,
             "calendar_decisions": calendar_decisions,
             "artifact": artifact_block,
             "source_warnings": (
@@ -6508,6 +6521,32 @@ def create_app() -> FastAPI:
         try:
             return runtime_actions.undo_action(
                 today, action_id,
+                todoist=todoist_c, store=store, capacities=capacities_c,
+            )
+        except runtime_actions.RuntimeActionError as exc:
+            _raise_runtime_error(exc)
+        finally:
+            if owns:
+                todoist_c.close()
+            if capacities_c is not None and hasattr(capacities_c, "close"):
+                capacities_c.close()
+
+    @app.post("/runtime-actions/reassign",
+              dependencies=[Depends(require_token)])
+    def post_runtime_action_reassign(body: RuntimeActionReassignRequest) -> Any:
+        """KTD1: re-assign a Todoist row by reversing its own unassign.
+
+        Same Day Setup gate and error mapping as the single-action undo it
+        wraps: 409 before Day Setup is confirmed, 422 for a refusal (including
+        a due date edited in Todoist after the unassign, which must never be
+        clobbered), 503 when the surface is unavailable.
+        """
+        today = gather.effective_date(datetime.now())
+        _require_day_setup(today, "reassigning today's rows")
+        todoist_c, store, capacities_c, owns = _runtime_clients()
+        try:
+            return runtime_actions.reassign(
+                today, body.identity,
                 todoist=todoist_c, store=store, capacities=capacities_c,
             )
         except runtime_actions.RuntimeActionError as exc:

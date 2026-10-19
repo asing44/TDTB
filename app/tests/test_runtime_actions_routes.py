@@ -12,6 +12,7 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, str(Path(__file__).parent.parent))
 import main as main_mod  # noqa: E402
 import runstate  # noqa: E402
+import runtime_actions as ra  # noqa: E402
 import tdtb_gather as gather  # noqa: E402
 
 sys.path.insert(0, str(Path(__file__).parent))
@@ -141,3 +142,88 @@ class TestRuntimeActionRoutes:
                              json={"verb": "complete", "target": "Press"}).json()
         assert second["id"] == first["id"]
         assert second["duplicate"] is True
+
+
+class TestReassignRoute:
+    """KTD1: POST /runtime-actions/reassign reverses the row's own unassign,
+    behind the same Day Setup gate and 409/422/503 mapping as undo."""
+
+    def _unassign(self, client: TestClient) -> dict:
+        applied = client.post("/runtime-actions", headers=_auth(client),
+                              json={"verb": "unassign", "target": "Press"})
+        assert applied.status_code == 200
+        assert applied.json()["status"] == "applied"
+        return applied.json()
+
+    def test_reassign_restores_the_before_image(self, harness):
+        client, todoist, _ = harness
+        self._unassign(client)
+        assert todoist.tasks["task-1"]["due"] is None
+
+        r = client.post("/runtime-actions/reassign", headers=_auth(client),
+                        json={"identity": "todoist:task-1"})
+        assert r.status_code == 200
+        assert r.json()["status"] == "undone"
+        due = todoist.tasks["task-1"]["due"]
+        assert due["datetime"] == "2026-07-25T16:00:00"
+
+    def test_reassign_is_gated_on_day_setup(self, vault):
+        app = main_mod.create_app()
+        todoist, store = fresh_clients()
+        app.state.build_commit_clients = lambda config: (todoist, store)
+        client = TestClient(app)
+        client.app_token = app.state.token
+        # Undo the fixture's confirm so only the gate is under test.
+        today = gather.effective_date(datetime.now())
+        runstate.write_runstate(
+            today, runstate.build_runstate({"plan_manifest": manifest_rows()}))
+
+        r = client.post("/runtime-actions/reassign", headers=_auth(client),
+                        json={"identity": "todoist:task-1"})
+        assert r.status_code == 409
+        assert "Day Setup not confirmed" in r.json()["detail"]
+        assert todoist.calls == []
+
+    def test_token_required(self, harness):
+        client, _, _ = harness
+        r = client.post("/runtime-actions/reassign",
+                        json={"identity": "todoist:task-1"})
+        assert r.status_code in (401, 403)
+
+    def test_conflict_is_refused_and_writes_nothing(self, harness):
+        client, todoist, _ = harness
+        self._unassign(client)
+        todoist.tasks["task-1"]["due"] = {"date": "2026-08-01"}
+        mark = len(todoist.calls)
+
+        r = client.post("/runtime-actions/reassign", headers=_auth(client),
+                        json={"identity": "todoist:task-1"})
+        assert r.status_code == 422
+        assert "task due changed after unassign" in r.json()["detail"]
+        assert [c for c in todoist.calls[mark:]
+                if c[0] in ("clear_task_date", "reschedule_task",
+                            "reschedule_task_date", "reschedule_task_datetime",
+                            "close_task", "update_task")] == []
+        assert todoist.tasks["task-1"]["due"] == {"date": "2026-08-01"}
+
+    def test_unknown_identity_is_422(self, harness):
+        client, todoist, _ = harness
+        r = client.post("/runtime-actions/reassign", headers=_auth(client),
+                        json={"identity": "todoist:nope"})
+        assert r.status_code == 422
+        assert "no unassigned Todoist row" in r.json()["detail"]
+        assert todoist.calls == []
+
+    def test_unavailable_todoist_surface_is_503(self, vault):
+        today = gather.effective_date(datetime.now())
+        todoist, store = fresh_clients()
+        ra.apply_action(today, "unassign", "Press", {},
+                        todoist=todoist, store=store)
+        app = main_mod.create_app()
+        app.state.build_commit_clients = lambda config: (None, None)
+        client = TestClient(app)
+        client.app_token = app.state.token
+        r = client.post("/runtime-actions/reassign", headers=_auth(client),
+                        json={"identity": "todoist:task-1"})
+        assert r.status_code == 503
+        assert "surface unavailable: todoist" in r.json()["detail"]
