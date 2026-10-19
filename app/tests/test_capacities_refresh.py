@@ -65,6 +65,8 @@ def _coordinator(
     exclusion_policy=None,
     wall_clock=None,
     content_ttl=None,
+    rate_limit_budget_seconds=None,
+    max_backoff=None,
 ):
     clock = clock or Clock()
     sleeper = sleeper if sleeper is not None else Sleeper(clock)
@@ -81,6 +83,10 @@ def _coordinator(
         overrides["wall_clock"] = wall_clock
     if content_ttl is not None:
         overrides["content_ttl"] = content_ttl
+    if rate_limit_budget_seconds is not None:
+        overrides["rate_limit_budget_seconds"] = rate_limit_budget_seconds
+    if max_backoff is not None:
+        overrides["max_backoff"] = max_backoff
     return (
         rr.RefreshCoordinator(
             root=tmp_path / "state",
@@ -1304,3 +1310,176 @@ def test_install_failure_records_stage_without_message(tmp_path):
     assert all(
         "secret install text" not in warning for warning in status["warnings"]
     )
+
+
+# ---------------------------------------------------------------------------
+# U1 (KTD3/KTD4) — budgeted rate-limit waits with a visible resume target
+# ---------------------------------------------------------------------------
+
+def test_default_budget_waits_out_five_rate_limits_then_publishes(tmp_path):
+    clock = Clock()
+    sleeper = Sleeper(clock)
+    provider = _paged_provider(objects={PRIMARY: ["a"], "T2": []})
+    attempts = {"n": 0}
+
+    def flaky(object_id):
+        if object_id == "a" and attempts["n"] < 5:
+            attempts["n"] += 1
+            raise ca.CapacitiesRateLimited("slow down", retry_after=40.0)
+
+    provider.on_get = flaky
+    coordinator, store, _, _ = _coordinator(
+        tmp_path,
+        provider,
+        clock=clock,
+        sleeper=sleeper,
+        max_retries=None,
+        wall_clock=lambda: 1000.0,
+    )
+    seen = []
+    sleeper.on_sleep = lambda seconds: seen.append(coordinator.status()["progress"])
+
+    coordinator.start()
+    status = coordinator.wait(timeout=5)
+
+    assert status["phase"] == "complete", status
+    assert status["outcome"] == "published"
+    # Five waits of exactly the announced retry-after, then a sixth read.
+    assert sleeper.calls.count(40.0) == 5
+    assert provider.get_calls.count("a") == 6
+    assert store.load_snapshot("all") is not None
+    # The wait was visible while it was happening, with a wall-clock resume.
+    assert len(seen) == 5
+    for progress in seen:
+        assert progress["waiting"] == {
+            "reason": "rateLimited",
+            "endpoint": rr.ENDPOINT_CONTENT,
+            "retry_after": 40.0,
+            "resume_at": 1040.0,
+        }
+    assert status["progress"]["waiting"] is None
+
+
+def test_rate_limit_budget_exhaustion_fails_truthfully_and_keeps_reads(tmp_path):
+    clock = Clock()
+    sleeper = Sleeper(clock)
+    provider = _paged_provider(objects={PRIMARY: ["a", "b"], "T2": []})
+    provider.fail_gets = {"b": ca.CapacitiesRateLimited("busy", retry_after=60.0)}
+    coordinator, store, _, _ = _coordinator(
+        tmp_path,
+        provider,
+        clock=clock,
+        sleeper=sleeper,
+        max_retries=None,
+        rate_limit_budget_seconds=100.0,
+    )
+
+    coordinator.start()
+    status = coordinator.wait(timeout=5)
+
+    assert status["phase"] == "failed"
+    assert status["outcome"] == "noCapacities"
+    assert rr.FAILURE_WARNING in status["warnings"]
+    assert "Cause: CapacitiesRateLimited (retry after 60s)" in status["warnings"]
+    assert "Where: read" in status["warnings"]
+    # One 60s wait fits the 100s budget; the second does not and fails.
+    assert sleeper.calls == [60.0]
+    # The successful read from before the exhausted wait is still cached.
+    assert store.get("a", PRIMARY) is not None
+    assert store.load_snapshot("all") is None
+    assert status["progress"]["waiting"] is None
+
+
+def test_retry_after_sixty_seconds_is_honored_not_clamped_to_thirty(tmp_path):
+    clock = Clock()
+    sleeper = Sleeper(clock)
+    provider = _paged_provider(objects={PRIMARY: ["a"], "T2": []})
+    attempts = {"n": 0}
+
+    def flaky(object_id):
+        if object_id == "a" and attempts["n"] == 0:
+            attempts["n"] += 1
+            raise ca.CapacitiesRateLimited("slow down", retry_after=60.0)
+
+    provider.on_get = flaky
+    coordinator, _, _, _ = _coordinator(
+        tmp_path, provider, clock=clock, sleeper=sleeper, max_retries=None
+    )
+
+    coordinator.start()
+    status = coordinator.wait(timeout=5)
+
+    assert status["phase"] == "complete"
+    assert sleeper.calls == [60.0]
+
+
+def test_progress_to_read_counts_uncached_stale_and_rescan(tmp_path):
+    clock = Clock()
+    sleeper = Sleeper(clock)
+    wall = {"now": 1000.0}
+    provider = _paged_provider(objects={PRIMARY: ["a", "b"], "T2": ["c"]})
+    coordinator, store, _, _ = _coordinator(
+        tmp_path,
+        provider,
+        clock=clock,
+        sleeper=sleeper,
+        wall_clock=lambda: wall["now"],
+    )
+    # "a" and "c" are warm at the fake wall clock; "b" is uncached.
+    for object_id, type_key in (("a", PRIMARY), ("c", "T2")):
+        store.put(
+            object_id,
+            type_key,
+            _content(object_id, type_key),
+            content_read_at=wall["now"],
+        )
+
+    coordinator.start()
+    first = coordinator.wait(timeout=5)
+    assert first["progress"]["to_read"] == 1
+
+    # A back-to-back refresh inside the TTL needs no provider read.
+    coordinator.start()
+    warm = coordinator.wait(timeout=5)
+    assert warm["progress"]["to_read"] == 0
+    assert warm["progress"]["read"] == 0
+
+    # Past the TTL every listed object is stale again.
+    wall["now"] += rr.DEFAULT_CONTENT_TTL_SECONDS + 1
+    coordinator.start()
+    stale = coordinator.wait(timeout=5)
+    assert stale["progress"]["to_read"] == 3
+
+    # A Rescan ignores the TTL and targets every listed object.
+    wall["now"] += 1
+    coordinator.start(mode="rescan")
+    rescanned = coordinator.wait(timeout=5)
+    assert rescanned["progress"]["to_read"] == 3
+    assert rescanned["progress"]["read"] == 3
+
+
+def test_cancel_during_long_rate_limit_wait_keeps_prior_generation(tmp_path):
+    clock = Clock()
+    sleeper = Sleeper(clock)
+    provider = _paged_provider(objects={PRIMARY: ["a"], "T2": []})
+    coordinator, store, _, _ = _coordinator(
+        tmp_path, provider, clock=clock, sleeper=sleeper, max_retries=None
+    )
+
+    coordinator.start()
+    first = coordinator.wait(timeout=5)
+    assert first["phase"] == "complete"
+    prior = store.load_snapshot("all")
+    assert prior is not None and prior.generation == 1
+
+    provider.get_error = ca.CapacitiesRateLimited("busy", retry_after=120.0)
+    sleeper.on_sleep = lambda seconds: coordinator.cancel()
+
+    coordinator.start(mode="rescan")
+    status = coordinator.wait(timeout=5)
+
+    assert status["phase"] == "cancelled"
+    assert status["outcome"] == "cancelled"
+    snapshot = store.load_snapshot("all")
+    assert snapshot is not None and snapshot.generation == 1
+    assert status["progress"]["waiting"] is None

@@ -16,9 +16,11 @@ Contract (KTD1–KTD3):
   Status queries make no provider call and never spawn work.
 * **Endpoint-aware pacing.** GET/content reads default to the documented 30
   requests per 60 seconds; listings carry their own policy and per-page cost.
-  ``Retry-After``/rate-limit-reset headers are honored when present and a
-  conservative clock pacing is used when they are absent. Retries are bounded,
-  errors stay truthful, and cancellation interrupts backoff.
+  ``Retry-After``/rate-limit-reset headers are honored when present (up to
+  ``max_backoff``) and a conservative clock pacing is used when they are
+  absent. A rate-limited run waits and resumes by itself within a per-run wait
+  budget; an explicit ``max_retries`` keeps the older count bound. Errors stay
+  truthful and cancellation interrupts every backoff.
 * **Read-through refresh TTL.** An explicit Refresh reuses cached object
   content younger than :data:`DEFAULT_CONTENT_TTL_SECONDS` (10 minutes) with
   zero provider reads, so a back-to-back Refresh stays cheap, and re-reads
@@ -66,6 +68,9 @@ logger = logging.getLogger("tdtb.capacities_refresh")
 ENDPOINT_STRUCTURES = "structures"
 ENDPOINT_LISTING = "listing"
 ENDPOINT_CONTENT = "content"
+
+#: The fixed ``progress.waiting.reason`` value for a rate-limit wait.
+RATE_LIMIT_WAIT_REASON = "rateLimited"
 
 JOB_DIRNAME = "jobs"
 JOB_LOCK_FILENAME = ".refresh-job.lock"
@@ -276,17 +281,30 @@ class ProviderPacer:
         clock: Callable[[], float] = time.monotonic,
         sleeper: Callable[[float, threading.Event | None], None] | None = None,
         cancel_event: threading.Event | None = None,
-        max_retries: int = 3,
+        max_retries: int | None = 3,
         base_backoff: float = 1.0,
         max_backoff: float = 30.0,
+        rate_limit_budget_seconds: float | None = None,
+        on_wait: Callable[[str, float, str | None], None] | None = None,
     ) -> None:
         self.policies = dict(policies or DEFAULT_POLICIES)
         self._clock = clock
         self._sleeper = sleeper or _default_sleeper
         self._cancel_event = cancel_event
-        self.max_retries = max(0, int(max_retries))
+        #: ``None`` means unbounded retries, stopped only by the wait budget.
+        self.max_retries = None if max_retries is None else max(0, int(max_retries))
         self.base_backoff = max(0.0, float(base_backoff))
         self.max_backoff = max(0.0, float(max_backoff))
+        #: The per-run ceiling on cumulative rate-limit sleep; only consulted
+        #: when ``max_retries`` is ``None``.
+        self.rate_limit_budget_seconds = (
+            None
+            if rate_limit_budget_seconds is None
+            else max(0.0, float(rate_limit_budget_seconds))
+        )
+        self.on_wait = on_wait
+        #: Cumulative 429 / reset-header cooldown seconds slept in this run.
+        self.rate_limit_slept = 0.0
         self._times: dict[str, deque[float]] = {}
         self._cooldown_until: dict[str, float] = {}
         self._retry_after: dict[str, float] = {}
@@ -315,6 +333,29 @@ class ProviderPacer:
         self._sleeper(float(seconds), self._cancel_event)
         self._check_cancel()
 
+    def begin_run(self) -> None:
+        """Reset the per-run rate-limit wait accounting."""
+        self.rate_limit_slept = 0.0
+
+    def _notify_wait(self, endpoint: str, seconds: float, reason: str | None) -> None:
+        """Report one rate-limit wait to the hook, then its end (``None``).
+
+        Ordinary window pacing never reaches this hook; only a 429 retry or a
+        rate-limit-reset cooldown does, so a caller can surface the wait
+        without reporting routine throttling as a rate limit.
+        """
+        if self.on_wait is None:
+            return
+        self.on_wait(endpoint, float(seconds), reason)
+
+    def _wait_after_rate_limit(self, endpoint: str, seconds: float) -> None:
+        """Sleep out one rate-limit delay, interruptible by cancellation."""
+        self._notify_wait(endpoint, seconds, RATE_LIMIT_WAIT_REASON)
+        try:
+            self.sleep(seconds)
+        finally:
+            self._notify_wait(endpoint, 0.0, None)
+
     # -- request admission ---------------------------------------------
 
     def before_request(self, endpoint: str) -> None:
@@ -339,7 +380,7 @@ class ProviderPacer:
                 now = self._clock()
         cooldown = self._cooldown_until.get(endpoint, 0.0)
         if cooldown > now:
-            self.sleep(cooldown - now)
+            self._wait_after_rate_limit(endpoint, cooldown - now)
             now = self._clock()
         times.append(now)
 
@@ -397,9 +438,20 @@ class ProviderPacer:
                 raise
             except capacities_adapter.CapacitiesRateLimited as exc:
                 self.note_rate_limited(endpoint, getattr(exc, "retry_after", None))
-                if attempt >= self.max_retries:
+                if self.max_retries is not None and attempt >= self.max_retries:
                     raise
-                self.sleep(self.retry_delay(endpoint, attempt))
+                delay = self.retry_delay(endpoint, attempt)
+                budget = self.rate_limit_budget_seconds
+                if (
+                    self.max_retries is None
+                    and budget is not None
+                    and self.rate_limit_slept + delay > budget
+                ):
+                    # The run cannot wait this one out within its budget, so
+                    # it fails truthfully instead of sleeping past it.
+                    raise
+                self._wait_after_rate_limit(endpoint, delay)
+                self.rate_limit_slept += delay
                 attempt += 1
                 continue
             self.note_success(endpoint)
@@ -510,7 +562,9 @@ class RefreshCoordinator:
         logical_day: date | None = None,
         clock: Callable[[], float] = time.monotonic,
         sleeper: Callable[[float, threading.Event | None], None] | None = None,
-        max_retries: int = 3,
+        max_retries: int | None = None,
+        rate_limit_budget_seconds: float = 900.0,
+        max_backoff: float = 120.0,
         policies: Mapping[str, EndpointPolicy] | None = None,
         namespace: str | None = None,
         config_guard: Callable[[], Any] | None = None,
@@ -559,6 +613,9 @@ class RefreshCoordinator:
             sleeper=sleeper,
             cancel_event=self.cancel_event,
             max_retries=max_retries,
+            max_backoff=max_backoff,
+            rate_limit_budget_seconds=rate_limit_budget_seconds,
+            on_wait=self._note_rate_limit_wait,
         )
         self.provider = PacedProvider(provider, self.pacer)
         self.adapter = capacities_adapter.CapacitiesAdapter(
@@ -728,7 +785,13 @@ class RefreshCoordinator:
                 "started_at": now,
                 "updated_at": now,
                 "finished_at": None,
-                "progress": {"listed": 0, "read": 0, "types": {}},
+                "progress": {
+                    "listed": 0,
+                    "read": 0,
+                    "to_read": 0,
+                    "waiting": None,
+                    "types": {},
+                },
                 "warnings": [],
             }
             self._persist_job()
@@ -781,6 +844,7 @@ class RefreshCoordinator:
     # -- run ------------------------------------------------------------
 
     def _run(self) -> None:
+        self.pacer.begin_run()
         try:
             self._acquire()
         except RefreshCancelled:
@@ -894,6 +958,42 @@ class RefreshCoordinator:
         self._job = {**job, "progress": progress, "updated_at": self._wall_clock()}
         self._persist_job()
 
+    def _progress_field(self, key: str, value: Any) -> None:
+        """Set one additive ``progress`` field and persist the job once."""
+        job = self._job
+        if job is None:
+            return
+        progress = dict(job.get("progress") or {})
+        progress[key] = value
+        self._job = {**job, "progress": progress, "updated_at": self._wall_clock()}
+        self._persist_job()
+
+    def _note_rate_limit_wait(
+        self, endpoint: str, seconds: float, reason: str | None
+    ) -> None:
+        """Persist (or clear) ``progress.waiting`` around one rate-limit wait.
+
+        The pacer calls this for a 429 retry or a reset-header cooldown only,
+        so ``waiting`` never appears for ordinary window pacing. ``resume_at``
+        is a wall-clock epoch so the panel can count down without the job's
+        monotonic clock.
+        """
+        job = self._job
+        if job is None:
+            return
+        progress = dict(job.get("progress") or {})
+        if reason is not None and seconds > 0:
+            progress["waiting"] = {
+                "reason": reason,
+                "endpoint": endpoint,
+                "retry_after": float(seconds),
+                "resume_at": self._wall_clock() + float(seconds),
+            }
+        else:
+            progress["waiting"] = None
+        self._job = {**job, "progress": progress, "updated_at": self._wall_clock()}
+        self._persist_job()
+
     # -- acquisition ----------------------------------------------------
 
     def _acquire(self) -> None:
@@ -969,6 +1069,16 @@ class RefreshCoordinator:
         # sorted configured order and each listing in its own order, so a
         # Refresh always re-reads stale objects in the same stable sequence.
         self._stage = "read"
+        rescan = mode == "rescan"
+        # The read target behind "176/227": the same predicate hydration uses,
+        # so the count cannot drift from the reads the run actually performs.
+        to_read = sum(
+            1
+            for type_key in listing_types
+            for row in rows_by_type[type_key]
+            if self._needs_read(_text(row.get("id")), type_key, rescan=rescan)
+        )
+        self._progress_field("to_read", int(to_read))
         merged: list[dict[str, Any]] = []
         unreadable = False
         for type_key in listing_types:
@@ -978,11 +1088,15 @@ class RefreshCoordinator:
                 object_id = _text(row.get("id"))
                 try:
                     content, fresh = self._read_or_reuse(
-                        object_id, type_key, rescan=(mode == "rescan")
+                        object_id, type_key, rescan=rescan
                     )
                 except RefreshCancelled:
                     raise
                 except refresh_state.RefreshStateStorageError:
+                    raise
+                except capacities_adapter.CapacitiesRateLimited:
+                    # A rate limit that outlived the per-run wait budget fails
+                    # the run truthfully (Cause/Where), not one object.
                     raise
                 except Exception:  # noqa: BLE001 — one unreadable object
                     unreadable = True
@@ -1045,6 +1159,21 @@ class RefreshCoordinator:
             )
         self._finish("complete", "published", warnings)
 
+    def _needs_read(self, object_id: str, type_key: str, *, rescan: bool = False) -> bool:
+        """Whether one listed object must be read from the provider.
+
+        ``True`` when a Rescan forces a full re-read, when the object is
+        uncached, or when its cached content is at least the refresh TTL old.
+        This single predicate backs both ``progress.to_read`` and
+        :meth:`_read_or_reuse`, so the visible read target matches the reads.
+        """
+        if rescan:
+            return True
+        cached = self.store.get(object_id, type_key)
+        if cached is None:
+            return True
+        return self._wall_clock() - cached.content_read_at >= self._content_ttl
+
     def _read_or_reuse(self, object_id: str, type_key: str, *, rescan: bool):
         """Return ``(content, fresh)`` for one required object.
 
@@ -1054,13 +1183,9 @@ class RefreshCoordinator:
         the paced provider, renewing ``content_read_at`` with the coordinator's
         wall clock (the same clock :func:`_coverage` compares against).
         """
-        if not rescan:
+        if not self._needs_read(object_id, type_key, rescan=rescan):
             cached = self.store.get(object_id, type_key)
-            if (
-                cached is not None
-                and self._wall_clock() - cached.content_read_at < self._content_ttl
-            ):
-                return cached.content, False
+            return cached.content, False
         content = self.provider.get_object(object_id)
         if not isinstance(content, dict) or not isinstance(content.get("properties"), dict):
             raise RefreshIncomplete(
