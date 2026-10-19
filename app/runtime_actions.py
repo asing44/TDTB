@@ -1700,3 +1700,142 @@ def undo_action(
                 f"undo of {action_id!r} failed on one or more steps — "
                 "journal holds per-step errors")
         return action
+
+
+# ---------------------------------------------------------------------------
+# KTD1/KTD2: journal-derived Unassigned rows and Re-assign
+# ---------------------------------------------------------------------------
+#
+# TDTB keeps the rows it unassigned for today in the journal rather than in a
+# second state store. The journal is already dated, so the list expires at
+# rollover by construction, and it records every path that unassigns — the
+# Source menu, a batch-of-one and a multi-row batch share the same verb.
+
+
+def _applied_unassign_step(action: dict[str, Any]) -> dict[str, Any] | None:
+    """The ``todoist.unassign`` step an applied unassign action really ran.
+
+    A Todoist-less unassign (a calendar drop) has no such step, and a failed,
+    compensated or undone action keeps its step but is not a live exclusion,
+    so neither is listed.
+    """
+    if action.get("verb") != "unassign":
+        return None
+    if action.get("status") != "applied":
+        return None
+    for step in action.get("steps") or []:
+        if not isinstance(step, dict):
+            continue
+        if step.get("kind") == "todoist.unassign" and step.get("applied"):
+            return step
+    return None
+
+
+def _unassigned_row(action: dict[str, Any],
+                    step: dict[str, Any]) -> dict[str, Any] | None:
+    """The KTD2 wire row for one applied Todoist unassign."""
+    task_id = str(step.get("task_id") or "").strip()
+    if not task_id:
+        return None
+    before_task = ((step.get("before") or {}).get("task") or {})
+    due = before_task.get("due") or {}
+    target = action.get("target") or {}
+    row: dict[str, Any] = {
+        "identity": f"todoist:{task_id}",
+        "name": str(target.get("name") or before_task.get("content") or ""),
+        "action_id": str(action.get("id") or ""),
+        "source": "todoist",
+        "recurring": bool(due.get("is_recurring")),
+    }
+    minutes = target.get("minutes")
+    if minutes is None:
+        duration = before_task.get("duration")
+        if (isinstance(duration, int)
+                and str(before_task.get("duration_unit") or "minute")
+                == "minute"):
+            minutes = duration
+    try:
+        if minutes is not None and int(minutes) > 0:
+            row["minutes"] = int(minutes)
+    except (TypeError, ValueError):
+        pass
+    return row
+
+
+def unassigned_today(valid_date: date) -> list[dict[str, Any]]:
+    """KTD2: today's Unassigned Todoist rows, derived from the journal.
+
+    One row per identity, newest applied unassign wins. Undone entries drop
+    out, so a Re-assign empties the row here without any extra bookkeeping.
+    """
+    rows: dict[str, dict[str, Any]] = {}
+    for action in load_journal(valid_date).get("actions") or []:
+        if not isinstance(action, dict):
+            continue
+        step = _applied_unassign_step(action)
+        if step is None:
+            continue
+        row = _unassigned_row(action, step)
+        if row is None:
+            continue
+        rows.pop(row["identity"], None)
+        rows[row["identity"]] = row
+    return list(rows.values())
+
+
+def _newest_unassign_for_identity(
+    valid_date: date, identity: str,
+) -> tuple[dict[str, Any], dict[str, Any]] | None:
+    """The newest applied Todoist unassign of ``identity`` in today's journal."""
+    journal = load_journal(valid_date)
+    for action in reversed(journal.get("actions") or []):
+        if not isinstance(action, dict):
+            continue
+        step = _applied_unassign_step(action)
+        if step is None:
+            continue
+        if f"todoist:{step.get('task_id')}" != identity:
+            continue
+        return action, step
+    return None
+
+
+def reassign(
+    valid_date: date,
+    identity: str,
+    *,
+    todoist: Any = None,
+    store: Any = None,
+    capacities: Any = None,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """KTD1: re-assign a Todoist row by reversing its own journaled unassign.
+
+    The ``assign`` verb is deliberately NOT used: it no-ops on a recurring
+    task, it flattens a datetime due to "today", and it leaves the earlier
+    unassign ``applied``, which would make the next unassign a silent
+    duplicate. Undo restores the exact before-image instead, and an ``undone``
+    action lets the next unassign run as a real second write.
+
+    A due date edited in Todoist after the unassign is refused here with the
+    batch-undo conflict reason, before anything is written.
+    """
+    key = str(identity or "").strip()
+    if not key:
+        raise RuntimeActionError("reassign requires a Todoist identity")
+    found = _newest_unassign_for_identity(valid_date, key)
+    if found is None:
+        raise RuntimeActionError(
+            f"{key!r}: no unassigned Todoist row in today's journal")
+    action, step = found
+    if todoist is None:
+        raise RuntimeActionError("surface unavailable: todoist")
+    conflict = step_conflict(step, valid_date, todoist=todoist, store=store,
+                             capacities=capacities)
+    if conflict:
+        raise RuntimeActionError(conflict)
+    # undo_action takes the day lock itself — never call it while holding it.
+    return undo_action(
+        valid_date, str(action["id"]),
+        todoist=todoist, store=store, capacities=capacities, now=now,
+    )

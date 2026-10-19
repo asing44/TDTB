@@ -626,3 +626,158 @@ class TestFailures:
     def test_undo_unknown_id_rejected(self, vault: Path):
         with pytest.raises(ra.RuntimeActionError, match="unknown action"):
             ra.undo_action(TODAY, "ra-nope", todoist=None, store=None)
+
+
+# ---------------------------------------------------------------------------
+# KTD1/KTD2 — journal-derived Unassigned rows and Re-assign
+# ---------------------------------------------------------------------------
+
+WRITE_CALLS = ("clear_task_date", "reschedule_task", "reschedule_task_date",
+               "reschedule_task_datetime", "close_task", "update_task")
+
+
+def _writes(todoist: FakeTodoist, since: int = 0) -> list[tuple]:
+    return [c for c in todoist.calls[since:] if c[0] in WRITE_CALLS]
+
+
+class TestUnassignedToday:
+    def test_applied_unassign_is_listed_with_its_action_id(self, vault: Path):
+        todoist, store = fresh_clients()
+        action = ra.apply_action(TODAY, "unassign", "Press", {},
+                                 todoist=todoist, store=store)
+        assert action["status"] == "applied"
+        rows = ra.unassigned_today(TODAY)
+        assert rows == [{
+            "identity": "todoist:task-1",
+            "name": "Press",
+            "action_id": action["id"],
+            "source": "todoist",
+            "recurring": False,
+            "minutes": 30,
+        }]
+
+    def test_empty_before_any_unassign(self, vault: Path):
+        assert ra.unassigned_today(TODAY) == []
+
+    def test_reassign_restores_a_datetime_due(self, vault: Path):
+        todoist, store = fresh_clients()
+        ra.apply_action(TODAY, "unassign", "Press", {},
+                        todoist=todoist, store=store)
+        assert ra.unassigned_today(TODAY)
+
+        undone = ra.reassign(TODAY, "todoist:task-1",
+                             todoist=todoist, store=store)
+        assert undone["status"] == "undone"
+        due = todoist.tasks["task-1"]["due"]
+        assert due["datetime"] == "2026-07-25T16:00:00"
+        assert due.get("date") is None
+        assert ra.unassigned_today(TODAY) == []
+
+    def test_reassign_restores_a_date_only_due(self, vault: Path):
+        todoist = FakeTodoist({
+            "task-1": {"id": "task-1", "content": "Press", "project_id": "p1",
+                       "is_completed": False, "due": {"date": "2026-07-20"}},
+        })
+        ra.apply_action(TODAY, "unassign", "Press", {},
+                        todoist=todoist, store=None)
+        assert todoist.tasks["task-1"]["due"] is None
+
+        ra.reassign(TODAY, "todoist:task-1", todoist=todoist, store=None)
+        due = todoist.tasks["task-1"]["due"]
+        assert due["date"] == "2026-07-20"
+        assert due.get("datetime") is None
+        assert ra.unassigned_today(TODAY) == []
+
+    def test_reassign_restores_a_recurring_occurrence(self, vault: Path):
+        todoist = recurring_todoist({
+            "date": "2026-10-13", "is_recurring": True, "string": "every 2 days",
+        })
+        ra.apply_action(TODAY, "unassign", "Press", {},
+                        todoist=todoist, store=None)
+        assert todoist.tasks["task-1"]["due"]["date"] == "2026-10-15"
+        rows = ra.unassigned_today(TODAY)
+        assert rows and rows[0]["recurring"] is True
+
+        ra.reassign(TODAY, "todoist:task-1", todoist=todoist, store=None)
+        due = todoist.tasks["task-1"]["due"]
+        assert due["date"] == "2026-10-13"
+        assert due["string"] == "every 2 days"
+        assert due["is_recurring"] is True
+        assert todoist.tasks["task-1"]["is_completed"] is False
+        assert ra.unassigned_today(TODAY) == []
+
+    def test_unassign_reassign_unassign_is_a_real_second_write(self, vault: Path):
+        todoist, store = fresh_clients()
+        first = ra.apply_action(TODAY, "unassign", "Press", {},
+                                todoist=todoist, store=store)
+        ra.reassign(TODAY, "todoist:task-1", todoist=todoist, store=store)
+        second = ra.apply_action(TODAY, "unassign", "Press", {},
+                                 todoist=todoist, store=store)
+        assert second["id"] != first["id"]
+        assert second.get("duplicate") is None
+        assert second["status"] == "applied"
+        assert [c[0] for c in todoist.calls].count("clear_task_date") == 2
+        rows = ra.unassigned_today(TODAY)
+        assert [r["action_id"] for r in rows] == [second["id"]]
+
+    def test_reassign_refuses_when_the_due_changed_after_unassign(self, vault: Path):
+        todoist, store = fresh_clients()
+        ra.apply_action(TODAY, "unassign", "Press", {},
+                        todoist=todoist, store=store)
+        # A later edit in Todoist — the reverse would clobber it.
+        todoist.tasks["task-1"]["due"] = {"date": "2026-08-01"}
+        mark = len(todoist.calls)
+
+        with pytest.raises(ra.RuntimeActionError,
+                           match="task due changed after unassign"):
+            ra.reassign(TODAY, "todoist:task-1", todoist=todoist, store=store)
+        assert _writes(todoist, mark) == []
+        assert ra.unassigned_today(TODAY)  # still unassigned
+
+    def test_reassign_with_no_applied_unassign_is_a_clean_refusal(self, vault: Path):
+        todoist, store = fresh_clients()
+        mark = len(todoist.calls)
+        with pytest.raises(ra.RuntimeActionError, match="no unassigned Todoist row"):
+            ra.reassign(TODAY, "todoist:task-1", todoist=todoist, store=store)
+        assert todoist.calls == [] or len(todoist.calls) == mark
+        assert ra.load_journal(TODAY)["actions"] == []
+
+    def test_reassign_requires_an_identity(self, vault: Path):
+        with pytest.raises(ra.RuntimeActionError, match="requires a Todoist identity"):
+            ra.reassign(TODAY, "  ", todoist=FakeTodoist())
+
+    def test_undone_unassign_is_not_listed(self, vault: Path):
+        todoist, store = fresh_clients()
+        action = ra.apply_action(TODAY, "unassign", "Press", {},
+                                 todoist=todoist, store=store)
+        ra.undo_action(TODAY, action["id"], todoist=todoist, store=store)
+        assert ra.unassigned_today(TODAY) == []
+
+    def test_compensated_unassign_is_not_listed(self, vault: Path):
+        todoist = recurring_todoist({
+            "date": "not-a-date", "is_recurring": True, "string": "every 2 days",
+        })
+        action = ra.apply_action(TODAY, "unassign", "Press", {},
+                                 todoist=todoist, store=None)
+        assert action["status"] in ("compensated", "failed")
+        assert ra.unassigned_today(TODAY) == []
+
+    def test_failed_unassign_is_not_listed(self, vault: Path):
+        # No live task at all: the apply raises before any before-image, so the
+        # journal entry is failed and never a live exclusion.
+        todoist = FakeTodoist({})
+        action = ra.apply_action(TODAY, "unassign", "Press", {},
+                                 todoist=todoist, store=None)
+        assert action["status"] == "failed"
+        assert ra.unassigned_today(TODAY) == []
+
+    def test_newest_applied_unassign_wins_per_identity(self, vault: Path):
+        todoist, store = fresh_clients()
+        first = ra.apply_action(TODAY, "unassign", "Press", {},
+                                todoist=todoist, store=store)
+        ra.reassign(TODAY, "todoist:task-1", todoist=todoist, store=store)
+        second = ra.apply_action(TODAY, "unassign", "Press", {},
+                                 todoist=todoist, store=store)
+        rows = ra.unassigned_today(TODAY)
+        assert len(rows) == 1
+        assert rows[0]["action_id"] == second["id"] != first["id"]
