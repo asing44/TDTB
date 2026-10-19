@@ -1,7 +1,9 @@
 /* F4c1: independently testable source actions; deliberately not mounted yet.
-   Unassign and Hide share the journaled batch-of-one results/undo surface.
-   Delete remains individual-only through stagingAction, with inline consent.
-   This component never infers source success or edits exclusion policies. */
+   Assignment changes belong to the per-row assign toggle (KTD4), so this menu
+   is exactly Hide always (a journaled batch-of-one with the shared results and
+   undo surface) and Delete (individual-only through stagingAction, with inline
+   consent). This component never infers source success or edits exclusion
+   policies. */
 import { useEffect, useId, useRef, useState } from "preact/hooks";
 import { useApp } from "./context";
 import { itemIdentity, isCanonicalCapacitiesIdentity } from "../adapters/wire";
@@ -103,11 +105,10 @@ export function SourceMenu({ item, s }: { item: AssignedItem; s: AppState }) {
     }
   }
 
-  async function apply(action: "unassign" | "hideAlways" | "delete") {
+  async function apply(action: "hideAlways" | "delete") {
     const live = store.getState();
     const current = live.inputs?.assigned.find((row) => row.id === item.id);
     if (locked.current || !current || disabledReason(live, current)) return;
-    if (action === "unassign" && current.source !== "todoist") return;
     if (action === "delete" && !confirming) return;
     locked.current = true;
     setPending(true);
@@ -121,7 +122,7 @@ export function SourceMenu({ item, s }: { item: AssignedItem; s: AppState }) {
     }
   }
 
-  function menuItem(label: string, detail: string, action: "unassign" | "hideAlways" | "delete") {
+  function menuItem(label: string, detail: string, action: "hideAlways" | "delete") {
     return <button type="button" role="menuitem" tabIndex={-1}
       class={`source-menu__item${action === "delete" ? " source-menu__item--danger" : ""}`}
       aria-label={label} aria-disabled={reason ? "true" : undefined}
@@ -144,12 +145,6 @@ export function SourceMenu({ item, s }: { item: AssignedItem; s: AppState }) {
         else { edge.current = "first"; setOpen(true); }
       }}>Source ▾</button>
     {open && <div id={`${base}-popover`} class="source-menu__popover" role="menu" aria-label={`Source actions for ${item.name}`}>
-      {item.source !== "capacities" && menuItem(
-        item.isRecurring ? "Skip occurrence" : "Unassign in source",
-        item.isRecurring ? "Advances the Todoist due date; not completed" : `Removes assignment in ${source}`,
-        "unassign",
-      )}
-      {item.source === "capacities" && <p class="source-menu__note">Capacities rows cannot be unassigned in source</p>}
       {menuItem("Hide always", "Hidden from planning every day", "hideAlways")}
       <hr class="source-menu__separator" role="separator" />
       {menuItem("Delete source…", `Permanently deletes in ${source}`, "delete")}

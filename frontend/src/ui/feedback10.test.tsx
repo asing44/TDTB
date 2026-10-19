@@ -288,7 +288,7 @@ describe("FEEDBACK-10 secondary actions left the row (A13, rewritten for F7)", (
     ).map((b) => b.getAttribute("aria-label"));
     expect(
       labels.some((l) => l?.startsWith("Unassign in source") || l?.startsWith("Skip occurrence")),
-    ).toBe(true);
+    ).toBe(false);
     expect(labels).toContain("Hide always");
     expect(labels).toContain("Delete source…");
   });

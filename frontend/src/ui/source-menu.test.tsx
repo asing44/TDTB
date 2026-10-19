@@ -42,39 +42,36 @@ function setup(opts: { source?: "todoist" | "capacities" | "calendar"; recurring
 }
 
 describe("SourceMenu (unmounted component slice)", () => {
-  it("has exactly the compact source actions, with no Complete", () => {
+  it("has exactly Hide always and Delete, with no Complete, unassign or skip item", () => {
     const h = setup();
     expect(h.trigger.getAttribute("aria-haspopup")).toBe("menu");
     expect(h.trigger.getAttribute("aria-expanded")).toBe("false");
     h.open();
     expect(h.trigger.getAttribute("aria-expanded")).toBe("true");
     expect(h.getAllByRole("menuitem").map((b) => b.getAttribute("aria-label"))).toEqual([
-      "Unassign in source", "Hide always", "Delete source…",
+      "Hide always", "Delete source…",
     ]);
+    expect(h.queryByRole("menuitem", { name: "Unassign in source" })).toBeNull();
+    expect(h.queryByRole("menuitem", { name: "Skip occurrence" })).toBeNull();
     expect(h.queryByText("Complete")).toBeNull();
+    expect(h.container.textContent).not.toMatch(/unassign/i);
   });
 
-  it.each([false, true])("unassign recurring=%s sends backend unassign to the stable identity immediately", async (recurring) => {
-    const h = setup({ recurring });
-    h.open();
-    fireEvent.click(h.getByRole("menuitem", { name: recurring ? "Skip occurrence" : "Unassign in source" }));
-    await waitFor(() => expect(h.batch).toHaveBeenCalledWith([
-      { verb: "unassign", target: "todoist:6fx00xPRESS", args: {} },
-    ]));
-    expect(h.rowBatch).toHaveBeenCalledWith("Press", "unassign");
-    expect(h.staging).not.toHaveBeenCalled();
-    expect(h.queryByRole("menu")).toBeNull();
-    expect(h.queryByText("Delete from Todoist")).toBeNull();
-  });
+  it.each(["todoist", "capacities", "calendar"] as const)(
+    "offers the same two items for %s and never the Capacities note",
+    (source) => {
+      const h = setup({ source, recurring: true });
+      h.open();
+      expect(h.getAllByRole("menuitem").map((b) => b.getAttribute("aria-label"))).toEqual([
+        "Hide always", "Delete source…",
+      ]);
+      expect(h.container.textContent).not.toMatch(/cannot be unassigned/i);
+    },
+  );
 
   it.each(["todoist", "capacities"] as const)("Hide always is journaled for %s, never a policy save", async (source) => {
     const h = setup({ source });
     h.open();
-    if (source === "capacities") {
-      expect(h.queryByRole("menuitem", { name: "Unassign in source" })).toBeNull();
-      expect(h.queryByRole("menuitem", { name: "Skip occurrence" })).toBeNull();
-      expect(h.getByText("Capacities rows cannot be unassigned in source")).toBeTruthy();
-    }
     fireEvent.click(h.getByRole("menuitem", { name: "Hide always" }));
     await waitFor(() => expect(h.batch).toHaveBeenCalledWith([
       { verb: "hide_always", target: source === "todoist" ? "todoist:6fx00xPRESS" : "capacities:fixture-space:custom-project:press", args: {} },
@@ -134,16 +131,17 @@ describe("SourceMenu (unmounted component slice)", () => {
     const h = setup();
     fireEvent.keyDown(h.trigger, { key: "ArrowUp" });
     const items = h.getAllByRole("menuitem");
-    expect(document.activeElement).toBe(items[2]);
-    fireEvent.keyDown(items[2], { key: "ArrowDown" });
+    expect(items).toHaveLength(2);
+    expect(document.activeElement).toBe(items[1]);
+    fireEvent.keyDown(items[1], { key: "ArrowDown" });
     expect(document.activeElement).toBe(items[0]);
     fireEvent.keyDown(items[0], { key: "End" });
-    expect(document.activeElement).toBe(items[2]);
-    fireEvent.keyDown(items[2], { key: "Home" });
+    expect(document.activeElement).toBe(items[1]);
+    fireEvent.keyDown(items[1], { key: "Home" });
     expect(document.activeElement).toBe(items[0]);
     fireEvent.keyDown(items[0], { key: "ArrowUp" });
-    expect(document.activeElement).toBe(items[2]);
-    fireEvent.keyDown(items[2], { key: "Escape" });
+    expect(document.activeElement).toBe(items[1]);
+    fireEvent.keyDown(items[1], { key: "Escape" });
     expect(h.queryByRole("menu")).toBeNull();
     expect(document.activeElement).toBe(h.trigger);
     h.open();
