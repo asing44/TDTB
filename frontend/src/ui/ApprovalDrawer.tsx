@@ -8,6 +8,7 @@ import { useApp, useAppState } from "./context";
 import { useDialog } from "./useDialog";
 import { CalendarDrift } from "./CalendarDrift";
 import { canAutoSequence, canLiveCommit, canShadow, shadowBlockers, type AppState } from "../store/store";
+import { advisoryNotes, blockingWarnings } from "../adapters/wire";
 import { display12h } from "../model/time";
 import type { PromptExportOutcome, ShadowEntry } from "../model/types";
 
@@ -148,10 +149,23 @@ export function ApprovalDrawer() {
   const expanded = expandOverride ?? autoExpand;
   // Source-health blockers — mirrored in canAutoSequence/canShadow/canLiveCommit
   // selectors so state can't outrun the UI. A degraded/failed source read is
-  // not a usable planning snapshot; refresh before approving writes.
-  const sourceBlockers = s.inputs?.sourceHealth === "ok"
-    ? []
-    : [`Sources ${s.inputs?.sourceHealth ?? "unknown"} — refresh before approving writes`];
+  // not a usable planning snapshot; refresh before approving writes. The gate
+  // is still the health flag, but the text now quotes the first BLOCKING
+  // warning verbatim, so a blocked commit names the failing read instead of
+  // saying "Sources degraded" (R5, KTD8, AE3).
+  const sourceWarnings = s.inputs?.sourceWarnings ?? [];
+  const sourceBlockers =
+    s.inputs?.sourceHealth === "ok"
+      ? []
+      : [
+          blockingWarnings(sourceWarnings)[0] ??
+            `Sources ${s.inputs?.sourceHealth ?? "unknown"} — refresh before approving writes`,
+        ];
+  // Everything advisory stays visible at the moment of approval, each note
+  // carrying the one action that clears it (R6, KTD8): Refresh sources, Open
+  // Connections, or the existing Sources details hint. The reminder-marker
+  // omission is an intentional skip, so it produces no note.
+  const sourceNotes = advisoryNotes(sourceWarnings);
   const blockers = [
     ...(s.validation?.hardErrors ?? []),
     ...shadowBlockers(s),
@@ -314,6 +328,49 @@ export function ApprovalDrawer() {
                     <li key={i} class="alerts__item alerts__item--error">
                       <span aria-hidden="true">⛔</span>
                       <span>{b}</span>
+                    </li>
+                  ))}
+                </ul>
+              </>
+            )}
+            {sourceNotes.length > 0 && (
+              <>
+                <h3>Source notes</h3>
+                <ul class="alerts__list" aria-label="Source notes">
+                  {sourceNotes.map((note, i) => (
+                    <li key={i} class="alerts__item alerts__item--warning">
+                      <span aria-hidden="true">⚠</span>
+                      <span>
+                        {note.text}
+                        {note.fix === "refresh" && (
+                          <button
+                            class="btn alerts__fix"
+                            onClick={() => void controller.refreshSources()}
+                          >
+                            Refresh sources
+                          </button>
+                        )}
+                        {note.fix === "connections" && (
+                          <button
+                            class="btn alerts__fix"
+                            onClick={() =>
+                              store.dispatch({
+                                type: "UI",
+                                patch: {
+                                  screen: "connections",
+                                  settingsPanel: null,
+                                  approvalOpen: false,
+                                },
+                              })
+                            }
+                          >
+                            Open Connections
+                          </button>
+                        )}
+                        {note.fix === "details" && (
+                          <span class="alerts__fix-hint"> See Capacity › Details › Sources.</span>
+                        )}
+                      </span>
                     </li>
                   ))}
                 </ul>

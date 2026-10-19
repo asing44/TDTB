@@ -2239,6 +2239,14 @@
   border-left-color: var(--c-minting);
   background: color-mix(in srgb, var(--c-minting) 7%, var(--t-surface));
 }
+/* R6/KTD8: a note's fix action rides in the same row as its warning text, so a
+   list of advisory notes stays scannable instead of turning into rows of
+   full-width buttons. */
+.alerts__item .alerts__fix {
+  margin-left: 8px;
+  padding: 1px 8px;
+  font-size: 11px;
+}
 
 /* -- calendar drift (issue asing44/TDTB#19) -------------------------------- */
 /* Read-only, informational: a quiet match/unavailable line, or an amber list
