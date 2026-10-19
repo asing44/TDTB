@@ -92,10 +92,10 @@ const REFRESH_WIRE = {
     started_at: 1000,
     updated_at: 1001,
     finished_at: null,
-    progress: { listed: 12, read: 5, types: { Project: 3 } },
+    progress: { listed: 12, read: 5, toRead: null, waiting: null, types: { Project: 3 } },
     warnings: ["Capacities partial — 5 evaluated · 7 deferred"],
   },
-  progress: { listed: 12, read: 5, types: { Project: 3 } },
+  progress: { listed: 12, read: 5, toRead: null, waiting: null, types: { Project: 3 } },
   warnings: ["Capacities partial — 5 evaluated · 7 deferred"],
   coverage: {
     Project: { listing_checked_at: 999, members: 3, freshly_read: 2 },
@@ -194,7 +194,13 @@ describe("capacities refresh status projection", () => {
     expect(status.mode).toBe("refresh");
     expect(status.scope).toBe("all");
     expect(status.job?.jobId).toBe("abc123");
-    expect(status.job?.progress).toEqual({ listed: 12, read: 5, types: { Project: 3 } });
+    expect(status.job?.progress).toEqual({
+      listed: 12,
+      read: 5,
+      toRead: null,
+      waiting: null,
+      types: { Project: 3 },
+    });
     expect(status.progress.read).toBe(5);
     expect(status.coverage.Project).toEqual({
       listingCheckedAt: 999,
@@ -233,7 +239,13 @@ describe("capacities refresh status projection", () => {
     expect(status.job).toBeNull();
     expect(status.mode).toBeNull();
     expect(status.snapshot.present).toBe(false);
-    expect(status.progress).toEqual({ listed: 0, read: 0, types: {} });
+    expect(status.progress).toEqual({
+      listed: 0,
+      read: 0,
+      toRead: null,
+      waiting: null,
+      types: {},
+    });
   });
 
   it("builds the start body for the two distinct modes", () => {

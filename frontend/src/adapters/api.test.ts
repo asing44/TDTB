@@ -618,11 +618,16 @@ describe("explicit source refresh (locked decision 20)", () => {
     expect(calls.every((c) => (c.init?.method ?? "GET") === "GET")).toBe(true);
   });
 
-  it("throws on a degraded calendar read — last good view stays authoritative", async () => {
+  it("no longer throws on a calendar-only degrade (OQ-P1) — the read stands", async () => {
     route("/plan-inputs", planInputsDegraded);
-    await expect(new ApiAdapter().refreshSources()).rejects.toThrow(
-      /source refresh degraded/,
+    const r = await new ApiAdapter().refreshSources();
+    expect(r.inputs.sourceWarnings).toContain(
+      "Calendar access denied \u2014 busy blocks missing (grant via EventStore().request_access() once)",
     );
+    expect(calls.map((c) => c.path.split("?")[0])).toEqual([
+      "/plan-inputs",
+      "/billed-ledger",
+    ]);
   });
 
   it("keeps a successful refresh when a reminder-style marker is omitted", async () => {

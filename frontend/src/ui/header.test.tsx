@@ -23,7 +23,7 @@ function refreshStatus(
     mode: "refresh",
     scope: "all",
     job: null,
-    progress: { listed: 0, read: 0, types: {} },
+    progress: { listed: 0, read: 0, toRead: null, waiting: null, types: {} },
     warnings: [],
     coverage: {},
     snapshot: {
@@ -53,7 +53,7 @@ function runningStatus(): CapacitiesRefreshStatus {
       startedAt: 1,
       updatedAt: 1,
       finishedAt: null,
-      progress: { listed: 0, read: 0, types: {} },
+      progress: { listed: 0, read: 0, toRead: null, waiting: null, types: {} },
       warnings: [],
     },
   };
@@ -74,7 +74,7 @@ function completeStatus(): CapacitiesRefreshStatus {
       startedAt: 1,
       updatedAt: 2,
       finishedAt: 2,
-      progress: { listed: 1, read: 1, types: {} },
+      progress: { listed: 1, read: 1, toRead: null, waiting: null, types: {} },
       warnings: [],
     },
   };

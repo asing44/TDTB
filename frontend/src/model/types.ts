@@ -640,6 +640,23 @@ export interface DueVerificationDetail {
 
 export type SourceHealth = "ok" | "degraded" | "failed";
 
+/** Per-source health derived from attributed blocking warnings (R8). Config,
+    prompt, habit and artifact warnings match no source and colour no dot. */
+export interface SourceHealthBySource {
+  todoist: SourceHealth;
+  calendar: SourceHealth;
+  capacities: SourceHealth;
+}
+
+/** The single fix action an advisory note offers (R6, KTD8). */
+export type AdvisoryNoteFix = "refresh" | "connections" | "details";
+
+/** One non-blocking source warning plus the action that clears it. */
+export interface AdvisoryNote {
+  text: string;
+  fix: AdvisoryNoteFix;
+}
+
 /** Why a Capacities read stopped short of full coverage: the local
     content-read budget or the provider's request window. */
 export type CapacitiesLimit = "content-read budget" | "provider rate limit" | "unknown";
@@ -807,10 +824,26 @@ export interface CapacitiesRefreshJob {
   warnings: string[];
 }
 
-/** Bounded progress counters for the running job. */
+/** One active rate-limit pause in the running job. ``retryAfter`` is the
+    provider hint in seconds; ``resumeAt`` is a wall-clock epoch the server
+    computed, so the countdown does not depend on local clock skew. */
+export interface CapacitiesRefreshWaiting {
+  reason: string;
+  endpoint: string | null;
+  retryAfter: number | null;
+  resumeAt: number | null;
+}
+
+/** Bounded progress counters for the running job. ``toRead`` is the count of
+    listed objects this run still means to read (uncached, past the TTL, or
+    every object under rescan); it is null when the server did not report it
+    (older job documents), so the panel can fall back to ``listed`` alone. */
 export interface CapacitiesRefreshProgress {
   listed: number;
   read: number;
+  toRead: number | null;
+  /** The active rate-limit pause, or null when the run is not waiting. */
+  waiting: CapacitiesRefreshWaiting | null;
   /** Per-type read counters, in server order. */
   types: Record<string, number>;
 }

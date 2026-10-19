@@ -956,6 +956,10 @@ export class FixtureAdapter implements Adapter {
             progress: {
               listed: this.refreshMemberCount,
               read: this.refreshMemberCount,
+              // The fixture run never waits and reads everything it listed, so
+              // the additive KTD4 keys echo a completed target and no pause.
+              toRead: 0,
+              waiting: null,
               types: {} as Record<string, number>,
             },
             warnings: [...this.refreshWarnings],
@@ -967,7 +971,9 @@ export class FixtureAdapter implements Adapter {
       mode: this.refreshMode,
       scope: this.refreshPhase === null ? null : this.refreshScope,
       job,
-      progress: job ? { ...job.progress, types: { ...job.progress.types } } : { listed: 0, read: 0, types: {} },
+      progress: job
+        ? { ...job.progress, types: { ...job.progress.types } }
+        : { listed: 0, read: 0, toRead: null, waiting: null, types: {} },
       warnings: [...this.refreshWarnings],
       coverage: {},
       snapshot: {

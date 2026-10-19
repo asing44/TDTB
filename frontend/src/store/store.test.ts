@@ -14,7 +14,7 @@ import {
   type AppState,
 } from "./store";
 import { makeScenario, fixedInputsOf } from "../fixtures/scenarios";
-import { sourceHealthOf } from "../adapters/wire";
+import { sourceHealthBySource, sourceHealthOf } from "../adapters/wire";
 import { fingerprintFixedInputs } from "../model/fingerprint";
 import { calendarWalls } from "../model/overflow";
 import type { Ledger, SequenceRow } from "../model/types";
@@ -879,16 +879,16 @@ describe("source-health gate (selectors)", () => {
     expect(canLiveCommit(s)).toBe(false);
   });
 
-  it("a generation-only warning keeps health ok and live commit unlocked", () => {
+  it("a generation-only warning now BLOCKS health and live commit (OQ-P3 reversal)", () => {
     let s = shadowed();
     s = reducer(s, { type: "ARM_LIVE" });
     const warning =
       "Capacities structure '05e6b2c1' is not in the published generation; needs Refresh.";
     s.inputs!.sourceWarnings = [warning];
     s.inputs!.sourceHealth = sourceHealthOf([warning]);
-    expect(s.inputs!.sourceHealth).toBe("ok");
-    expect(sourceHealthBlocked(s)).toBe(false);
-    expect(canLiveCommit(s)).toBe(true);
+    expect(s.inputs!.sourceHealth).toBe("degraded");
+    expect(sourceHealthBlocked(s)).toBe(true);
+    expect(canLiveCommit(s)).toBe(false);
   });
 
   it("a real read-failure warning still blocks live commit", () => {
@@ -901,11 +901,36 @@ describe("source-health gate (selectors)", () => {
     expect(canLiveCommit(s)).toBe(false);
   });
 
-  it("the type-staleness warning still blocks live commit", () => {
+  it("the type-staleness warning is now advisory and leaves live commit unlocked (AE2)", () => {
     let s = shadowed();
     s = reducer(s, { type: "ARM_LIVE" });
     const warning =
       "Capacities structure '05e6b2c1' unchanged since 2026-10-14; Refresh to check it again.";
+    s.inputs!.sourceWarnings = [warning];
+    s.inputs!.sourceHealth = sourceHealthOf([warning]);
+    expect(s.inputs!.sourceHealth).toBe("ok");
+    expect(sourceHealthBlocked(s)).toBe(false);
+    expect(canLiveCommit(s)).toBe(true);
+  });
+
+  it("a failed calendar read no longer blocks after OQ-P1", () => {
+    let s = shadowed();
+    s = reducer(s, { type: "ARM_LIVE" });
+    const warning = "Calendar access denied — busy blocks missing";
+    s.inputs!.sourceWarnings = [warning];
+    s.inputs!.sourceHealth = sourceHealthOf([warning]);
+    expect(sourceHealthBlocked(s)).toBe(false);
+    expect(canLiveCommit(s)).toBe(true);
+    // The calendar dot still carries its own note.
+    expect(sourceHealthBySource(s.inputs!.sourceWarnings).calendar).toBe("ok");
+  });
+
+  it("the KTD5 incomplete-refresh warning blocks live commit", () => {
+    let s = shadowed();
+    s = reducer(s, { type: "ARM_LIVE" });
+    const warning =
+      "Capacities refresh did not complete (failed); showing the previous complete " +
+      "result. Refresh sources to retry.";
     s.inputs!.sourceWarnings = [warning];
     s.inputs!.sourceHealth = sourceHealthOf([warning]);
     expect(sourceHealthBlocked(s)).toBe(true);
