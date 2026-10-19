@@ -240,24 +240,34 @@ describe("F7 integration: one source verb reports as a batch of one", () => {
     );
   });
 
-  it("Unassign from the Source menu is a journaled unassign item with the same result surface", async () => {
+  it("the Source menu offers no unassign item and no Capacities note (KTD4)", async () => {
     const h = makeHarness("ready");
     const batched = spyBatches(h);
     const { container } = h.ui(<Queue />);
 
     const row = expand(container, "Press");
-    fireEvent.click(menuItem(openSource(row), "Unassign in source"));
+    const menu = openSource(row);
+    expect(
+      Array.from(menu.querySelectorAll<HTMLElement>('[role="menuitem"]')).map((b) =>
+        b.getAttribute("aria-label"),
+      ),
+    ).toEqual(["Hide always", "Delete source…"]);
+    expect(menu.querySelector('[aria-label="Unassign in source"]')).toBeNull();
+    expect(menu.querySelector('[aria-label="Skip occurrence"]')).toBeNull();
+    expect(menu.textContent).not.toMatch(/unassign/i);
 
+    // Hide always still rides the journaled batch-of-one surface.
+    fireEvent.click(menuItem(menu, "Hide always"));
     await waitFor(() =>
-      expect(batched).toEqual([{ verb: "unassign", target: PRESS_IDENTITY }]),
+      expect(batched).toEqual([{ verb: "hide_always", target: PRESS_IDENTITY }]),
     );
     const results = await batchResults(container);
-    expect(results.textContent).toContain("Unassign in source");
+    expect(results.textContent).toContain("Hide always");
     expect(results.textContent).toContain("Press");
     expect(buttonWithText(results, "Undo whole batch")).not.toBeNull();
   });
 
-  it("a Capacities row offers Hide always and refuses Unassign in place", async () => {
+  it("a Capacities row offers Hide always and no unassign item or note", async () => {
     const h = makeHarness("ready");
     const batched = spyBatches(h);
     const capPolicy = vi.spyOn(h.controller, "alwaysExcludeCapacitiesObject");
@@ -266,7 +276,7 @@ describe("F7 integration: one source verb reports as a batch of one", () => {
     const row = expand(container, "Note Processing");
     const menu = openSource(row);
     expect(menu.querySelector('[aria-label="Unassign in source"]')).toBeNull();
-    expect(menu.textContent).toContain("Capacities rows cannot be unassigned in source");
+    expect(menu.textContent).not.toMatch(/unassign/i);
     fireEvent.click(menuItem(menu, "Hide always"));
 
     await waitFor(() =>

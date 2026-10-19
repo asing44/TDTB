@@ -4,9 +4,10 @@
    F7 removed the transitional per-row More (⋯) menu. The collapsed row now
    offers exactly three labelled controls — Complete, Skip today, Expand — and
    every secondary verb moved to where the approved prototype puts it: the
-   source verbs (Unassign / Skip occurrence, Hide always, Delete) on the
-   expanded row's Source menu, and the planning verbs on the expanded row's
-   line-1 controls (covered by row-expanded.test.tsx).
+   source verbs (Hide always, Delete) on the expanded row's Source menu, and
+   the planning verbs on the expanded row's line-1 controls (covered by
+   row-expanded.test.tsx). Assignment changes belong to the assign toggle, so
+   the Source menu no longer offers Unassign / Skip occurrence (KTD4).
 
    What stays pinned here, because it is behavior that must hold NOW:
    - the row cluster is exactly Complete, Skip today, Expand, in that order;
@@ -15,8 +16,7 @@
    - the verbs keep their frozen wire mapping: `done` / `unassign` /
      `hide_always` ride the journaled batch wire against the stable identity,
      Skip today stays the immediate `drop_from_plan`, and Delete stays
-     individual-only behind a confirm;
-   - a busy runtime disables the source-writing controls;
+     individual-only behind a confirm;   - a busy runtime disables the source-writing controls;
    - the surviving controls keep an explicit focus ring, a hit-area floor, and
      phone-width wrapping.
 
@@ -188,11 +188,12 @@ describe("collapsed row: dispatch mapping is unchanged", () => {
       Array.from(menu.querySelectorAll<HTMLElement>('[role="menuitem"]')).map((b) =>
         b.getAttribute("aria-label"),
       ),
-    ).toEqual(["Unassign in source", "Hide always", "Delete source…"]);
-    fireEvent.click(buttonNamed(menu, "Unassign in source"));
+    ).toEqual(["Hide always", "Delete source…"]);
+    expect(menu.querySelector('[aria-label="Unassign in source"]')).toBeNull();
+    fireEvent.click(buttonNamed(menu, "Hide always"));
     await waitFor(() =>
       expect(h.batched).toEqual([
-        { verb: "unassign", target: "todoist:6fx00xPRESS" },
+        { verb: "hide_always", target: "todoist:6fx00xPRESS" },
       ]),
     );
     expect(h.calls).toEqual([]);
