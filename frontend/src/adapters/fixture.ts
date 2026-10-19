@@ -1196,7 +1196,11 @@ export class FixtureAdapter implements Adapter {
 
   /** KTD1 fixture mirror: reverse the newest APPLIED `unassign` for this
       identity, exactly as the server's journal-derived re-assign does. No
-      applied unassign means nothing to reverse, which is an error here too. */
+      applied unassign means nothing to reverse, which is an error here too.
+      The wire shape is the ORIGINAL unassign action with status `undone` — the
+      server implements re-assign as an undo of that row's own unassign — never
+      a fabricated `reassign`/`applied` action, which the controller would
+      (correctly) read as a failure. */
   async reassign(identity: string): Promise<import("../model/types").RuntimeAction> {
     await wait(LATENCY_MS);
     const prior = [...this.runtimeJournal]
@@ -1206,16 +1210,7 @@ export class FixtureAdapter implements Adapter {
       throw new Error(`no applied unassign to reverse for ${identity}`);
     }
     prior.status = "undone";
-    const action: import("../model/types").RuntimeAction = {
-      id: `ra-fixture-${this.runtimeJournal.length + 1}`,
-      verb: "reassign",
-      targetName: identity,
-      status: "applied",
-      error: null,
-      duplicate: false,
-    };
-    this.runtimeJournal.push(action);
-    return { ...action };
+    return { ...prior };
   }
 
   // -- runtime batches (B5 contract) ----------------------------------------

@@ -1288,3 +1288,42 @@ describe("typed transport vs protocol errors (2026-10-15)", () => {
     expect(calls.some((c) => c.path.includes("/sequence"))).toBe(false);
   });
 });
+
+describe("KTD1 re-assign route (POST /runtime-actions/reassign)", () => {
+  it("posts {identity} and projects the ORIGINAL unassign back as `undone`", async () => {
+    /* The server implements re-assign as an undo of the row's own journaled
+       unassign, so the response is that unassign action with status `undone`
+       (app/runtime_actions.py reassign() -> undo_action; the backend route
+       test pins status == "undone"). It never returns verb `reassign` with
+       status `applied`. */
+    route("/runtime-actions/reassign", {
+      id: "ra-9",
+      date: "2026-07-25",
+      verb: "unassign",
+      target: { name: "Press", identity: "todoist:task-1" },
+      args: {},
+      idempotency_key: "unassign:todoist:task-1",
+      status: "undone",
+      steps: [{ surface: "todoist", applied: true, before_image: { due: null } }],
+      created_at: "2026-07-25T15:00:00Z",
+      finished_at: "2026-07-25T15:00:01Z",
+      undone_at: "2026-07-25T15:05:00Z",
+      error: null,
+    });
+    const a = new ApiAdapter();
+    const action = await a.reassign("todoist:task-1");
+
+    const call = calls.find((c) => c.path === "/runtime-actions/reassign")!;
+    expect(call.init!.method).toBe("POST");
+    expect((call.init!.headers as any)["X-TDTB-Token"]).toBe("tok-123");
+    expect(postBody("/runtime-actions/reassign")).toEqual({ identity: "todoist:task-1" });
+    expect(action).toEqual({
+      id: "ra-9",
+      verb: "unassign",
+      targetName: "Press",
+      status: "undone",
+      error: null,
+      duplicate: false,
+    });
+  });
+});

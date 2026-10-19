@@ -337,13 +337,15 @@ describe("task-actions assignment toggle (U3)", () => {
     const batch = vi.spyOn(adapter, "applyRuntimeBatch");
     // The fixture journals row verbs, not batch items, so the re-assign mirror
     // is stubbed here: this test owns the controller contract, not the fixture.
+    // The stub returns the real wire shape: the server implements re-assign as
+    // an undo of the row's own unassign, so the action comes back `undone`.
     const reassign = vi
       .spyOn(adapter, "reassign")
       .mockImplementation(async (identity: string) => ({
-        id: "ra-10",
-        verb: "reassign",
+        id: "ra-9",
+        verb: "unassign",
         targetName: identity,
-        status: "applied" as const,
+        status: "undone" as const,
         error: null,
         duplicate: false,
       }));
@@ -497,7 +499,7 @@ describe("task-actions assignment toggle (U3)", () => {
     ]);
     adapter.reassign = async () => ({
       id: "ra-10",
-      verb: "reassign",
+      verb: "unassign",
       targetName: "todoist:6fx00xPRESS",
       status: "failed" as const,
       error: "task due changed after unassign",
@@ -509,5 +511,37 @@ describe("task-actions assignment toggle (U3)", () => {
 
     expect(source.refreshed()).toBe(before);
     expect(store.getState().runtimeError).toMatch(/task due changed after unassign/);
+  });
+
+  it("treats a non-`undone` re-assign status as a failure and never refreshes", async () => {
+    const { store, adapter, controller } = await harness();
+    const source = stubSources(adapter, () => ({
+      unassigned: [
+        {
+          identity: "todoist:6fx00xPRESS",
+          name: "Press",
+          actionId: "ra-9",
+          source: "todoist",
+          recurring: false,
+        },
+      ],
+    }));
+    await controller.refreshSources();
+    // `applied` is what the pre-KTD1 stub wrongly expected; the server never
+    // returns it for a re-assign, so reading it as success hides real refusals.
+    adapter.reassign = async () => ({
+      id: "ra-10",
+      verb: "unassign",
+      targetName: "todoist:6fx00xPRESS",
+      status: "applied" as const,
+      error: null,
+      duplicate: false,
+    });
+    const before = source.refreshed();
+
+    await controller.setAssigned("todoist:6fx00xPRESS", true);
+
+    expect(source.refreshed()).toBe(before);
+    expect(store.getState().runtimeError).toMatch(/reassign did not apply \(applied\)/);
   });
 });

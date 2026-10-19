@@ -926,14 +926,17 @@ Unassigned section — and each case maps to an already-existing verb:
     else await this.skipToday(item?.id ?? id);
   }
 
-  /** KTD1: reverse one row's own journaled unassign. Same envelope handling
-      as applyRowVerb — a thrown error and a 200 carrying a non-`applied`
-      status (an "task due changed after unassign" conflict included) are both
-      failures, and a failure never refreshes. */
+  /** KTD1: reverse one row's own journaled unassign. The server implements
+      re-assign AS an undo of that row's unassign, so success is the undo
+      envelope: a 200 whose action carries status `undone`, exactly as the
+      undo route returns. Anything else — a thrown error, an "task due changed
+      after unassign" conflict, any other status — is a failure, and a failure
+      never refreshes. */
   private async applyReassign(identity: string): Promise<boolean> {
     this.dispatch({ type: "RUNTIME_START" });
+    let action: import("../model/types").RuntimeAction;
     try {
-      const action = await this.adapter.reassign(identity);
+      action = await this.adapter.reassign(identity);
       this.dispatch({ type: "RUNTIME_OK", action });
     } catch (e) {
       this.dispatch({
@@ -942,11 +945,10 @@ Unassigned section — and each case maps to an already-existing verb:
       });
       return false;
     }
-    const last = this.getState().lastRuntimeAction;
-    if (last && last.status !== "applied") {
+    if (action.status !== "undone") {
       this.dispatch({
         type: "RUNTIME_FAIL",
-        error: last.error ?? `reassign did not apply (${last.status})`,
+        error: action.error ?? `reassign did not apply (${action.status})`,
       });
       return false;
     }

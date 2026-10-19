@@ -16,7 +16,8 @@
    - the verbs keep their frozen wire mapping: `done` / `unassign` /
      `hide_always` ride the journaled batch wire against the stable identity,
      Skip today stays the immediate `drop_from_plan`, and Delete stays
-     individual-only behind a confirm;   - a busy runtime disables the source-writing controls;
+     individual-only behind a confirm;
+   - a busy runtime disables the source-writing controls;
    - the surviving controls keep an explicit focus ring, a hit-area floor, and
      phone-width wrapping.
 

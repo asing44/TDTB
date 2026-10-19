@@ -100,7 +100,7 @@ function shortState(s: AppState, item: AssignedItem): string {
     state is exposed as aria-checked. It is gated like every other row action:
     before Day Setup is confirmed it is disabled and the store's reason is
     announced through aria-describedby. The label owns a 44px hit area while the
-    track stays 20px high, so a row does not grow. */
+    track stays 18px high, so a row does not grow. */
 export function AssignSwitch({
   id,
   name,
