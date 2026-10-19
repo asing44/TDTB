@@ -128,7 +128,12 @@ describe("collapsed row: the controls and their names", () => {
       const labels = Array.from(
         row.querySelectorAll<HTMLElement>(".trow__acts > button"),
       ).map((b) => b.getAttribute("aria-label"));
-      expect(labels.slice(0, 3)).toEqual(["Complete", "Skip today", "Expand"]);
+      // KTD4: Skip today is Todoist-only; the Assigned switch replaces it on
+      // a Capacities or calendar row.
+      const heldBySwitch = row.querySelector(".qrow__src--capacities, .qrow__src--calendar");
+      expect(labels.slice(0, 3)).toEqual(
+        heldBySwitch ? ["Complete", "Expand"] : ["Complete", "Skip today", "Expand"],
+      );
     }
   });
 });
