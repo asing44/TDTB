@@ -1,23 +1,30 @@
-/* CapacitiesRefreshPanel — explicit Refresh / Rescan controls for the
-   Connections surface.
+/* CapacitiesRefreshPanel — the one explicit "Refresh sources" control for
+   the Connections surface.
 
    Contract this surface keeps:
-   - Refresh and Rescan are two DISTINCT explicit actions: each is one
-     token-guarded POST /capacities/refresh/start with its own mode. Nothing
-     here runs on mount except a tokenless status read.
-   - Status is truthful: an unconfigured source disables both actions and says
-     so; a running job shows its phase/progress/warnings; a terminal job shows
-     its outcome; a snapshot summary distinguishes "no complete generation yet"
-     from a real installed generation. Partial/stale warnings are rendered
-     verbatim, never smoothed into success.
+   - Refresh sources is ONE explicit action: a token-guarded
+     POST /capacities/refresh/start with mode "refresh" and scope "all". A
+     full-scope run already re-lists every mapped structure, so there is no
+     separate Rescan control and no hint claiming one re-lists more than the
+     other. Nothing here runs on mount except a tokenless status read.
+   - Status is truthful: an unconfigured source disables the action and says
+     so; a running job shows its phase, live progress ("Reading 176/227", or
+     "Capacities busy, resuming in 40s · 176/227" while a rate-limit wait
+     counts down) and warnings; a terminal job shows when it finished, what
+     it did, and what it read or reused; a snapshot summary distinguishes "no
+     complete generation yet" from a real installed generation. Partial/stale
+     warnings are rendered verbatim, never smoothed into success.
    - Polling runs ONLY while a job is active and the panel is mounted/active;
      the interval is cleared on unmount, on deactivation, and as soon as the
-     job reaches a terminal phase. Cancel is offered only while a job runs.
+     job reaches a terminal phase. The countdown tick exists only while a
+     wait is visible and is cleared the same way. Cancel is offered while a
+     job runs, including while it waits.
    - A 409 from start (single-flight) is surfaced as "a job is already
      running", never retried automatically. */
 
 import { useEffect, useRef, useState } from "preact/hooks";
 import { useApp } from "./context";
+import { refreshProgressText, useCapacitiesRefreshTick } from "./useCapacitiesRefreshJob";
 import type { CapacitiesRefreshMode, CapacitiesRefreshStatus } from "../model/types";
 
 const TERMINAL_PHASES = new Set(["complete", "failed", "cancelled", "interrupted"]);
@@ -48,6 +55,16 @@ function outcomeText(status: CapacitiesRefreshStatus): string {
   if (outcome === "staleConfiguration") return "The Capacities configuration changed mid-job; nothing was published.";
   if (outcome === "noCapacities") return "No Capacities rows were produced; nothing was published.";
   return outcome;
+}
+
+/** R7: what the last terminal run did and when. ``reused`` is derived as
+    listed minus read, because the job document does not carry a reuse
+    counter; it never goes negative. */
+function runSummaryText(status: CapacitiesRefreshStatus): string | null {
+  const finishedAt = status.job?.finishedAt ?? null;
+  if (finishedAt === null) return null;
+  const reused = Math.max(0, status.progress.listed - status.progress.read);
+  return `Finished ${formatTimestamp(finishedAt)}: ${outcomeText(status)}; ${status.progress.read} read, ${reused} reused`;
 }
 
 export function CapacitiesRefreshPanel({ active }: { active: boolean }) {
@@ -86,6 +103,8 @@ export function CapacitiesRefreshPanel({ active }: { active: boolean }) {
   }, [active, controller]);
 
   const running = isRunning(status);
+  const waiting = status?.progress.waiting ?? null;
+  const nowMs = useCapacitiesRefreshTick(active && running && waiting !== null);
   useEffect(() => {
     if (!active || !running) return;
     const id = setInterval(() => {
@@ -95,6 +114,11 @@ export function CapacitiesRefreshPanel({ active }: { active: boolean }) {
   }, [active, running, controller]);
 
   if (!active) return null;
+
+  const progressText = running ? refreshProgressText(status, nowMs) : null;
+  const summaryText = running || !status ? null : runSummaryText(status);
+  // A wait is a running state; spell it out so Cancel stays offered there.
+  const cancellable = running || waiting !== null;
 
   const start = async (mode: CapacitiesRefreshMode) => {
     setBusy("starting");
@@ -145,8 +169,8 @@ export function CapacitiesRefreshPanel({ active }: { active: boolean }) {
       </div>
       <div class="setup-section__body">
         <p class="capacities-settings__hint">
-          Refresh re-reads the Capacities source; Rescan additionally re-lists structures.
-          Both are explicit, paced, and never run on their own.
+          Refresh sources re-reads the Capacities source: one explicit, paced run that
+          also re-lists every mapped structure. It never runs on its own.
         </p>
 
         {phase === "loading" && (
@@ -176,14 +200,7 @@ export function CapacitiesRefreshPanel({ active }: { active: boolean }) {
               >
                 {busy === "starting" ? "Starting…" : "Refresh sources"}
               </button>
-              <button
-                class="btn"
-                disabled={busy !== null || running}
-                onClick={() => void start("rescan")}
-              >
-                Rescan structures
-              </button>
-              {running && (
+              {cancellable && (
                 <button class="btn" disabled={busy !== null} onClick={() => void cancel()}>
                   {busy === "cancelling" ? "Cancelling…" : "Cancel refresh"}
                 </button>
@@ -195,6 +212,13 @@ export function CapacitiesRefreshPanel({ active }: { active: boolean }) {
                 <span>{actionError}</span>
               </div>
             )}
+
+            {progressText && (
+              <p class="capacities-settings__state" role="status">
+                {progressText}
+              </p>
+            )}
+            {summaryText && <p class="capacities-settings__hint">{summaryText}</p>}
 
             <dl class="capacities-status__grid">
               <div class="capacities-status__cell">

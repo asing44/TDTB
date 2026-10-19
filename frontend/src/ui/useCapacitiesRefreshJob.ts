@@ -2,9 +2,11 @@
    cockpit header's healthy-state Refresh action.
 
    Contract:
-   - Refresh and Rescan are two DISTINCT explicit actions: each is one
-     token-guarded POST /capacities/refresh/start with its own mode. The only
-     read on mount is the tokenless status read.
+   - One explicit action, "Refresh sources": a single token-guarded
+     POST /capacities/refresh/start with mode "refresh" and scope "all". The
+     server keeps its "rescan" mode for old job documents and for non-UI
+     callers; this surface does not offer it. The only read on mount is the
+     tokenless status read.
    - The hook watches ONE shared job whoever started it: the controller's
      start signal attaches the bounded poll when the Connections panel starts
      a run, and the mount status read covers a run already in flight.
@@ -31,10 +33,52 @@ export const CAPACITIES_REFRESH_TERMINAL_PHASES = new Set([
   "interrupted",
 ]);
 export const CAPACITIES_REFRESH_POLL_MS = 1200;
+/** One-second repaint cadence, so a rate-limit countdown moves without
+    re-reading the status document. */
+export const CAPACITIES_REFRESH_TICK_MS = 1000;
 
 export function capacitiesRefreshJobRunning(status: CapacitiesRefreshStatus | null): boolean {
   if (!status || !status.job || status.phase === null) return false;
   return !CAPACITIES_REFRESH_TERMINAL_PHASES.has(status.phase);
+}
+
+/** The one-line progress sentence for a live run (R3, R4).
+
+    Pure: the caller supplies the wall clock, so the countdown is
+    deterministic under fake timers. Returns null when no run is live, which
+    is what lets a caller fall back to its own idle/terminal rendering.
+
+    - waiting: "Capacities busy, resuming in 40s · 176/227", counted down
+      from the server's absolute ``resumeAt`` (never below 0).
+    - reading: "Reading 176/227", or "Reading 176 read" when the server did
+      not report a read target (older job documents). */
+export function refreshProgressText(
+  status: CapacitiesRefreshStatus | null,
+  nowMs: number,
+): string | null {
+  if (!capacitiesRefreshJobRunning(status) || !status) return null;
+  const { read, toRead, waiting } = status.progress;
+  const counted = toRead === null ? `${read} read` : `${read}/${toRead}`;
+  if (waiting && waiting.resumeAt !== null) {
+    const remainingSeconds = Math.max(0, Math.ceil(waiting.resumeAt - nowMs / 1000));
+    return `Capacities busy, resuming in ${remainingSeconds}s · ${counted}`;
+  }
+  if (waiting) return `Capacities busy · ${counted}`;
+  return `Reading ${counted}`;
+}
+
+/** A once-per-second clock for a visible countdown. The interval exists only
+    while ``active``, and is cleared on unmount or when the wait ends. */
+export function useCapacitiesRefreshTick(active: boolean): number {
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  useEffect(() => {
+    if (!active) return;
+    // Repaint immediately so a just-started wait shows its first second.
+    setNowMs(Date.now());
+    const id = setInterval(() => setNowMs(Date.now()), CAPACITIES_REFRESH_TICK_MS);
+    return () => clearInterval(id);
+  }, [active]);
+  return nowMs;
 }
 
 function messageOf(error: unknown): string {
@@ -47,6 +91,9 @@ export interface CapacitiesRefreshJob {
   error: string | null;
   actionError: string | null;
   running: boolean;
+  /** Wall clock that advances once a second while a rate-limit wait is
+      visible, so callers can render ``refreshProgressText``. */
+  nowMs: number;
   busy: "starting" | "cancelling" | null;
   start: (mode: CapacitiesRefreshMode) => Promise<void>;
   cancel: () => Promise<void>;
@@ -107,6 +154,8 @@ export function useCapacitiesRefreshJob(
   }, [active, controller]);
 
   const running = capacitiesRefreshJobRunning(status);
+  const waiting = status?.progress.waiting ?? null;
+  const nowMs = useCapacitiesRefreshTick(active && running && waiting !== null);
   useEffect(() => {
     if (!active || !running) return;
     const id = setInterval(() => {
@@ -115,7 +164,7 @@ export function useCapacitiesRefreshJob(
     return () => clearInterval(id);
   }, [active, running, controller]);
 
-  // A Refresh/Rescan started by ANY surface goes through the same controller
+  // A refresh started by ANY surface goes through the same controller
   // entry, so its start signal attaches this hook's bounded poll to a run the
   // header did not start (for example the Connections panel). The read is
   // epoch-guarded like every other status read.
@@ -194,5 +243,5 @@ export function useCapacitiesRefreshJob(
     }
   };
 
-  return { status, phase, error, actionError, running, busy, start, cancel, reload: load };
+  return { status, phase, error, actionError, running, nowMs, busy, start, cancel, reload: load };
 }
