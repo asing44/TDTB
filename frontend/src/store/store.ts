@@ -29,6 +29,7 @@ import type {
   ShadowDiff,
   Source,
   TodayOverride,
+  AnchoredOverride,
   Validation,
 } from "../model/types";
 import {
@@ -255,6 +256,10 @@ export interface AppState {
   fingerprint: string | null; // captured when sequence landed
   anchoredSourceFingerprint: string | null; // raw anchored config at sequence time
   planningConfigFingerprint: string | null; // config snapshot for staged plan
+  /** Day Setup anchored overrides (on / skip_today / time) at staging time.
+      The server anchors the exact start from the merged Day Setup spec, so a
+      preview staged before an override edit is doomed. Null = no baseline. */
+  anchoredSetupFingerprint: string | null;
   overlapGrants: OverlapGrant[];
   /** Exact pins persisted by the last successful /sequence snapshot. */
   pinnedRows: SequenceRow[];
@@ -383,6 +388,7 @@ export const initialState: AppState = {
   fingerprint: null,
   anchoredSourceFingerprint: null,
   planningConfigFingerprint: null,
+  anchoredSetupFingerprint: null,
   overlapGrants: [],
   pinnedRows: [],
   pendingPinnedRows: [],
@@ -620,16 +626,26 @@ export function reducer(s: AppState, a: Action): AppState {
     }
     case "LOAD_FAILED":
       return { ...s, loaded: true, loadError: a.error };
-    case "SETUP_SAVED":
-      return {
+    case "SETUP_SAVED": {
+      // Optional day semantics use field-presence rules. Omitted preserves
+      // the dated override; explicit null resets it to config.
+      const saved: AppState = {
         ...s,
-        // Optional day semantics use field-presence rules. Omitted preserves
-        // the dated override; explicit null resets it to config.
         daySetup: { ...s.daySetup, ...a.daySetup, confirmed: true },
-        acceptedDefects: null,
-        ...dirtySeq(s),
-        ...staleShadow(s),
       };
+      // An anchored override edited AFTER a sequence was staged moves the
+      // server's anchored projection out from under the staged rows: say so
+      // now, and keep the plan resequencing-bound (VALIDATED will not re-open
+      // it).
+      const anchoredDrift = anchoredSetupDrift(saved);
+      return {
+        ...saved,
+        acceptedDefects: null,
+        ...(anchoredDrift === null ? {} : { driftNotice: anchoredDrift }),
+        ...dirtySeq(saved),
+        ...staleShadow(saved),
+      };
+    }
     case "PROMPT_DRAFTS_SAVED":
       // Prompt-only save: update drafts but NEVER touch the confirmation flag.
       return {
@@ -845,6 +861,7 @@ export function reducer(s: AppState, a: Action): AppState {
         fingerprint: a.fingerprint,
         anchoredSourceFingerprint: a.anchoredSourceFingerprint,
         planningConfigFingerprint: a.planningConfigFingerprint ?? s.inputs?.planningConfigFingerprint ?? null,
+        anchoredSetupFingerprint: anchoredSetupFingerprint(s.daySetup.anchored),
         overlapGrants: a.overlapGrants ?? [],
         pinnedRows: mergeNativeTimedPins(
           a.pinnedRows ?? s.pinnedRows,
@@ -942,15 +959,21 @@ export function reducer(s: AppState, a: Action): AppState {
         ...dirtySeq(s),
         ...staleShadow(s),
       };
-    case "VALIDATED":
+    case "VALIDATED": {
+      // A clean deterministic revalidation is the manual recovery path from
+      // external drift — unless the STAGED ROWS themselves disagree with the
+      // current Day Setup anchored overrides: revalidation proves the layout
+      // is well formed, not that its anchor timing matches the server's
+      // projection. That plan has to resequence.
+      const anchoredDrift = anchoredSetupDrift(s);
+      const ok = a.validation.ok && anchoredDrift === null;
       return {
         ...s,
         validation: a.validation,
-        seqPhase: a.validation.ok ? "valid" : "dirty",
-        // A clean deterministic revalidation is the manual recovery path from
-        // external drift — the notice has served its purpose.
-        driftNotice: a.validation.ok ? null : s.driftNotice,
+        seqPhase: ok ? "valid" : "dirty",
+        driftNotice: ok ? null : (anchoredDrift ?? s.driftNotice),
       };
+    }
     case "SHADOW_START":
       return {
         ...s,
@@ -959,7 +982,21 @@ export function reducer(s: AppState, a: Action): AppState {
         shadowError: null,
         shadowErrorKind: null,
       };
-    case "SHADOW_OK":
+    case "SHADOW_OK": {
+      const anchoredDrift = anchoredSetupDrift(s);
+      if (anchoredDrift !== null) {
+        // The preview the server just built cannot be committed: its anchored
+        // projection already moved. Drop it back to the resequence path.
+        return {
+          ...s,
+          shadow: a.shadow,
+          shadowPhase: "stale",
+          liveArmed: false,
+          shadowError: null,
+          shadowErrorKind: null,
+          driftNotice: anchoredDrift,
+        };
+      }
       return {
         ...s,
         shadow: a.shadow,
@@ -967,6 +1004,7 @@ export function reducer(s: AppState, a: Action): AppState {
         shadowError: null,
         shadowErrorKind: null,
       };
+    }
     case "SHADOW_FAIL":
       // A failed preview is not a silent no-op: keep the message visible until
       // the next attempt, success, new plan, or drift invalidation clears it.
@@ -1791,6 +1829,79 @@ export function effectiveAnchoredBlocks(s: AppState) {
   });
 }
 
+/** The staged-plan baseline for Day Setup anchored overrides.
+
+    ``on``, ``skip_today`` and ``time`` are exactly the fields the server
+    merges onto the anchored spec (``shadow.apply_day_setup``) before it
+    anchors the exact committed start, so any of them changing after a
+    sequence was staged dates that preview. ``blocks``/``start`` are local
+    accounting and calendar-edit projections and are deliberately absent. */
+export function anchoredSetupFingerprint(
+  anchored: Record<string, AnchoredOverride>,
+): string {
+  return Object.keys(anchored)
+    .sort()
+    .map((id) => {
+      const o = anchored[id];
+      return [id, o.on === true ? "1" : "0", o.skipToday === true ? "1" : "0", o.time ?? ""].join("|");
+    })
+    .join("\n");
+}
+
+/** Staged rows for an anchor Day Setup now keeps off today's plan. */
+function offAnchorsInPlan(s: AppState): string[] {
+  if (!s.sequence) return [];
+  const staged = new Set(s.sequence.map((r) => r.id));
+  const names = new Map((s.inputs?.anchored ?? []).map((b) => [b.id, b.name]));
+  return Object.entries(s.daySetup.anchored)
+    .filter(([id, o]) => staged.has(id) && (o.on === false || o.skipToday === true))
+    .map(([id]) => names.get(id) ?? id);
+}
+
+/** Staged non-calendar rows whose start no longer matches the explicit
+    Day Setup start override (calendar timing is imported truth). */
+function movedAnchorsInPlan(s: AppState): string[] {
+  if (!s.sequence) return [];
+  const staged = new Map(s.sequence.map((r) => [r.id, r.start]));
+  const out: string[] = [];
+  for (const block of s.inputs?.anchored ?? []) {
+    if (block.kind === "calendar") continue;
+    const override = s.daySetup.anchored[block.id];
+    if (!override || override.time == null) continue;
+    const start = staged.get(block.id);
+    if (start != null && start !== override.time) out.push(block.name);
+  }
+  return out;
+}
+
+/** Why the staged plan can no longer be previewed or committed (null =
+    clean). Two independent witnesses, because a plan can outlive its staged
+    baseline: the overrides recorded at staging time (in-session edits) and
+    the staged rows themselves versus today's explicit overrides (a restored
+    session whose sequence predates the edit). */
+export function anchoredSetupDrift(s: AppState): string | null {
+  if (s.sequence === null) return null;
+  const details: string[] = [];
+  const off = offAnchorsInPlan(s);
+  if (off.length > 0) {
+    details.push(`${off.map((n) => `'${n}'`).join(", ")} not on today's plan`);
+  }
+  const moved = movedAnchorsInPlan(s);
+  if (moved.length > 0) {
+    details.push(`${moved.map((n) => `'${n}'`).join(", ")} moved in Day Setup`);
+  }
+  if (details.length > 0) {
+    return `Day Setup changed since this plan was staged — ${details.join("; ")}. Resequence before committing.`;
+  }
+  if (
+    s.anchoredSetupFingerprint !== null &&
+    s.anchoredSetupFingerprint !== anchoredSetupFingerprint(s.daySetup.anchored)
+  ) {
+    return "Day Setup changed since this plan was staged — its anchors no longer match the staged rows. Resequence before committing.";
+  }
+  return null;
+}
+
 export type DockState =
   | "setup" // day setup not yet confirmed
   | "sequence" // ready to auto-sequence (or manual)
@@ -1874,6 +1985,7 @@ export function canShadow(s: AppState): boolean {
     s.validation?.ok === true &&
     s.commitPhase === "idle" &&
     s.shadowPhase !== "loading" &&
+    anchoredSetupDrift(s) === null &&
     defectsResolved(s) &&
     !sourceHealthBlocked(s)
   );
@@ -1916,6 +2028,7 @@ export function canLiveCommit(s: AppState): boolean {
     s.validation?.ok === true &&
     s.seqPhase === "valid" &&
     s.commitPhase === "idle" &&
+    anchoredSetupDrift(s) === null &&
     shadowBlockers(s).length === 0 &&
     defectsResolved(s) &&
     !sourceHealthBlocked(s)

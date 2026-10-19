@@ -114,6 +114,54 @@ describe("stale shadow on edit", () => {
   });
 });
 
+describe("Day Setup anchored drift after staging", () => {
+  const okValidation = { ok: true, hardErrors: [], warnings: [] };
+
+  it("an anchored override edit leaves the staged plan stale and resequencing-bound", () => {
+    let s = shadowed();
+    s = reducer(s, {
+      type: "SETUP_SAVED",
+      daySetup: {
+        ...s.daySetup,
+        anchored: { Live: { on: false, skipToday: true, time: "17:00" } },
+      },
+    });
+    expect(s.seqPhase).toBe("dirty");
+    expect(s.driftNotice).toMatch(/Day Setup changed/);
+    // The deterministic revalidation the client runs after a refresh must not
+    // re-open a preview the server would refuse for forged anchor timing.
+    s = reducer(s, { type: "VALIDATED", validation: okValidation });
+    expect(s.seqPhase).toBe("dirty");
+    expect(canShadow(s)).toBe(false);
+    expect(canLiveCommit(s)).toBe(false);
+  });
+
+  it("a restored plan whose staged anchor disagrees with today's Day Setup stays dirty", () => {
+    const sc = makeScenario("ready");
+    let s = loaded();
+    s = reducer(s, {
+      type: "SETUP_SAVED",
+      daySetup: {
+        ...sc.inputs.daySetup,
+        confirmed: true,
+        anchored: { Live: { on: true, skipToday: false, time: "17:00" } },
+      },
+    });
+    s = reducer(s, {
+      type: "SESSION_RESTORED",
+      overrides: {},
+      placements: {},
+      sequence: [{ id: "Live", start: "12:00", end: "12:30", zone: null, kind: "zone" }],
+      fingerprint: null,
+      anchoredSourceFingerprint: null,
+    });
+    s = reducer(s, { type: "VALIDATED", validation: okValidation });
+    expect(s.seqPhase).toBe("dirty");
+    expect(canShadow(s)).toBe(false);
+    expect(alerts(s).some((x) => /Day Setup changed/.test(x.text))).toBe(true);
+  });
+});
+
 describe("today-only overrides", () => {
   it("excluding an item drops its staged work row and dirties the plan", () => {
     let s = sequenced();
