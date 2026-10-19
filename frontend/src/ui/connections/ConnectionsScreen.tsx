@@ -31,6 +31,7 @@ import {
   capacitiesAssignmentWarnings,
   isCanonicalCapacitiesIdentity,
   missingGenerationWarnings,
+  sourceHealthBySource,
 } from "../../adapters/wire";
 import {
   clearConnectionsCache,
@@ -409,6 +410,11 @@ export function ConnectionsScreen() {
     });
   }, [s.inputs]);
 
+  /* R8/KTD7: each source dot reads its OWN attributed health, so a
+     Capacities-only warning never colours the Todoist or Calendar dot. The
+     global ``sourceHealth`` still drives the pill and the drawer, where it
+     means "commit blocked". */
+  const sourceHealth = sourceHealthBySource(s.inputs?.sourceWarnings ?? []);
   const assignmentWarnings = capacitiesAssignmentWarnings(s.inputs?.sourceWarnings ?? []);
   const assignedOnWarnings = capacitiesAssignedOnWarnings(s.inputs?.sourceWarnings ?? []);
   /* Generation-freshness notices are advisory for the global read, so they
@@ -507,19 +513,21 @@ export function ConnectionsScreen() {
     if (!hasMapping(structureId)) return "#e0a020";
     return capDraft?.activeStructures.includes(structureId) ? "#1f9d6b" : "#cfccc4";
   };
-  /** Sources keep their own health. Todoist/Calendar read the global source
-      health, which already excludes Capacities advisories (a not-yet-mapped
-      type or a skipped object), so a Capacities-only advisory never colors
-      them; a genuine non-advisory warning still does. Capacities is its own
-      source: amber while the intake is not ok or any structure still waits on
-      a mapping. */
+  /** Sources keep their own health. Todoist and Calendar read only the
+      warnings attributed to them (``sourceHealthBySource``), so a
+      Capacities-only warning never colours them (R8, AE4). Capacities is its
+      own source: amber while the intake is not ok, any structure still waits
+      on a mapping, or a Capacities warning blocks commit. */
   const sourceDot = (source: string): string => {
     if (source === "capacities") {
       const state = s.inputs?.capacitiesIntake?.state;
       const anyUnmapped = structures.some((id) => !hasMapping(id));
-      return state !== "ok" || anyUnmapped ? "#e0a020" : "#1f9d6b";
+      return state !== "ok" || anyUnmapped || sourceHealth.capacities !== "ok"
+        ? "#e0a020"
+        : "#1f9d6b";
     }
-    return s.inputs?.sourceHealth === "ok" ? "#1f9d6b" : "#e0a020";
+    const health = source === "calendar" ? sourceHealth.calendar : sourceHealth.todoist;
+    return health === "ok" ? "#1f9d6b" : "#e0a020";
   };
 
   const defaultNav =
@@ -811,6 +819,7 @@ export function ConnectionsScreen() {
     }
     const isTodoist = source === "todoist";
     const label = isTodoist ? "Todoist" : "Calendar";
+    const ownHealth = isTodoist ? sourceHealth.todoist : sourceHealth.calendar;
     const count = isTodoist
       ? s.inputs?.sourceCounts.todoist ?? 0
       : s.inputs?.sourceCounts.calendar ?? 0;
@@ -821,7 +830,7 @@ export function ConnectionsScreen() {
           <h2 class="connections-detail__title">{label}</h2>
           <p class="connections-detail__helper">
             {count} {isTodoist ? "tasks" : "events"} in the current read.
-            {s.inputs?.sourceHealth === "ok"
+            {ownHealth === "ok"
               ? " Healthy."
               : " Degraded — the last read reported a problem."}
           </p>
