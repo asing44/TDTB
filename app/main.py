@@ -6160,6 +6160,30 @@ def create_app() -> FastAPI:
             except (ValueError, AttributeError):
                 return None
 
+        def _day_setup_anchor_drift(spec: dict[str, Any], name: str) -> str | None:
+            """Name the Day Setup override that moved this anchored block.
+
+            ``apply_day_setup`` copies ``on`` / ``skip_today`` / ``time`` onto
+            the anchored spec, so a spec carrying one of those keys is a
+            per-day override, not the config Start. The anchored projection
+            stays authoritative and the commit still refuses; this only makes
+            the refusal say WHY (a stale preview), instead of reporting the
+            operator's staged row as forged timing."""
+            if not any(key in spec for key in ("on", "skip_today", "time")):
+                return None
+            now: list[str] = []
+            if spec.get("on") is False:
+                now.append("off today")
+            elif spec.get("skip_today") is True:
+                now.append("skipped today")
+            moved = _hhmm2(spec.get("time"))
+            if moved is not None:
+                now.append(f"moved to {moved}")
+            if not now:
+                now.append("re-timed")
+            return (f"{name!r}: Day Setup changed after this preview "
+                    f"(now {', '.join(now)})")
+
         # Legacy configs predate day-preset projections. Their configured
         # Trinoor slots remain server-owned fixed rows even when the
         # schedulable builder suppresses weekday-only backdrop emission; use
@@ -6251,6 +6275,7 @@ def create_app() -> FastAPI:
         # rows — a valid ID must not authorize forged timing or backdrop.
         # Assigned/schedulable rows are movable: only well-formedness applies.
         fixed_timing: list[str] = []
+        day_setup_drift: list[str] = []
         for row in valid_rows:
             row_id = str(row.get("id") or "").strip()
             submitted_start = _hhmm2(row.get("start"))
@@ -6274,10 +6299,14 @@ def create_app() -> FastAPI:
             if row_id in anchored_names:
                 spec = anchored_specs[row_id]
                 server_start = _hhmm2(spec.get("time")) or _hhmm2(spec.get("Start")) or _hhmm2(spec.get("start"))
+                drift_note = _day_setup_anchor_drift(spec, row_id)
                 if server_start is not None and submitted_start != server_start:
-                    fixed_timing.append(
-                        f"{row_id!r}: start {submitted_start} does not match "
-                        f"server anchored projection {server_start}")
+                    if drift_note is not None:
+                        day_setup_drift.append(drift_note)
+                    else:
+                        fixed_timing.append(
+                            f"{row_id!r}: start {submitted_start} does not match "
+                            f"server anchored projection {server_start}")
                     continue
                 server_end = (_hhmm2(spec.get("End")) or _hhmm2(spec.get("end")))
                 if server_end is None:
@@ -6286,13 +6315,16 @@ def create_app() -> FastAPI:
                         total = (int(server_start[:2]) * 60 + int(server_start[3:])) + mins
                         server_end = f"{total // 60:02d}:{total % 60:02d}"
                 if server_end is not None and submitted_end != server_end:
-                    fixed_timing.append(
-                        f"{row_id!r}: end {submitted_end} does not match "
-                        f"server anchored projection {server_end}")
+                    if drift_note is not None:
+                        day_setup_drift.append(drift_note)
+                    else:
+                        fixed_timing.append(
+                            f"{row_id!r}: end {submitted_end} does not match "
+                            f"server anchored projection {server_end}")
 
         if (unknown_assigned or injected_anchored or malformed_sequence
-                or unknown_sequence or fixed_timing or native_pin_errors
-                or malformed_blocks or capacities_refusals):
+                or unknown_sequence or fixed_timing or day_setup_drift
+                or native_pin_errors or malformed_blocks or capacities_refusals):
             parts: list[str] = []
             if unknown_assigned:
                 parts.append("stale/dropped assigned items: "
@@ -6312,6 +6344,11 @@ def create_app() -> FastAPI:
             if fixed_timing:
                 parts.append("forged fixed-lane timing/backdrop: "
                              + ", ".join(fixed_timing))
+            if day_setup_drift:
+                # A stale preview, not forged client data: keep the same 422
+                # fail-closed refusal and name the Day Setup change so the
+                # operator knows to resequence before committing.
+                parts.append("; ".join(day_setup_drift))
             if native_pin_errors:
                 parts.append("native timed protection: "
                              + "; ".join(native_pin_errors))

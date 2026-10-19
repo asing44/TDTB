@@ -538,6 +538,71 @@ class TestCommitEligibility:
         after = {p: p.read_bytes() for p in vault.rglob("*") if p.is_file()}
         assert before == after
 
+    def _write_live_anchor_config(self, vault, start: str = "12:00 PM") -> None:
+        """Config anchors Live at a fixed Start; the day's override moves it."""
+        config_path = vault / "00 - META" / "Skill-Configs" / "tdtb-bridger.md"
+        write_config_note(config_path,
+            "## Defaults\n"
+            "| Key | Value |\n|---|---|\n| eod | 11:59 PM |\n\n"
+            "## Anchored Lifestyle Blocks\n"
+            "| Block | Type | Start | End | Duration | Days | overlap_allowed |\n"
+            "|---|---|---|---|---|---|---|\n"
+            f"| Live | window | {start} | 8:00 PM | 30m | daily | yes |\n",
+            encoding="utf-8",
+        )
+
+    def _confirm_live_override(self, client, time: str = "17:00") -> None:
+        r = client.post("/day-setup", headers=_auth(client), json={
+            "anchor": "09:00",
+            "anchored": [{"id": "Live", "on": False,
+                          "skip_today": True, "time": time}],
+        })
+        assert r.status_code == 200
+
+    def test_day_setup_anchored_override_drift_is_named_in_422(
+            self, client, vault):
+        """A staged row still timed from the config Start is refused, and the
+        refusal names the Day Setup change that made the preview stale instead
+        of only reporting forged fixed-lane timing."""
+        self._write_live_anchor_config(vault)
+        self._confirm_live_override(client)
+        seq = {"sequence": [
+            {"id": "Garage Buildout", "start": "09:00", "end": "10:00", "zone": "any"},
+            {"id": "Live", "start": "12:00", "end": "12:30", "zone": "any"},
+        ]}
+        before = {p: p.read_bytes() for p in vault.rglob("*") if p.is_file()}
+        r = client.post(
+            "/commit?mode=shadow", headers=_auth(client),
+            json={"digest": DIGEST, "sequence": seq, "config": {}},
+        )
+        assert r.status_code == 422
+        detail = r.json()["detail"]
+        assert "'Live': Day Setup changed after this preview" in detail
+        assert "off today" in detail
+        assert "17:00" in detail
+        assert "Nothing was written" in detail
+        after = {p: p.read_bytes() for p in vault.rglob("*") if p.is_file()}
+        assert before == after
+
+    def test_skipped_anchor_absent_from_rows_is_not_refused(
+            self, client, vault, monkeypatch):
+        """A same-day skip/dismissal is fine while the anchor is absent from
+        the committed rows — only a still-staged row for it is refused."""
+        def fake_gather(config):
+            return {
+                "todoist_tasks": [], "calendar_events": [],
+                "vault_frontmatter": {}, "daily_note_text": None,
+            }
+
+        monkeypatch.setattr(shadow, "gather_live_state", fake_gather)
+        self._write_live_anchor_config(vault)
+        self._confirm_live_override(client)
+        r = client.post(
+            "/commit?mode=shadow", headers=_auth(client),
+            json={"digest": DIGEST, "sequence": SEQUENCE, "config": {}},
+        )
+        assert r.status_code == 200
+
     def test_client_only_anchored_row_is_422(self, client, vault):
         """An anchored block present only in the client config is never
         authorization for a Step E sequence row."""
