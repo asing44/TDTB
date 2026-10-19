@@ -31,6 +31,7 @@ import {
 } from "../model/rowDraft";
 import { EXCLUSION_REASONS } from "../model/batchEligibility";
 import { blocksLabel, display12h } from "../model/time";
+import { minutesToBlocks, parseDuration } from "../model/parseDuration";
 import type { AssignedItem } from "../model/types";
 import { SourceMenu } from "./SourceMenu";
 import { TimeEditor } from "./TimeEditor";
@@ -46,6 +47,8 @@ export function RowExpanded({ item, s }: { item: AssignedItem; s: AppState }) {
   const base = rowId(item, "x");
   const startBtnId = `start-btn-${base}`;
   const [editing, setEditing] = useState(false);
+  const [customText, setCustomText] = useState("");
+  const [customError, setCustomError] = useState<string | null>(null);
   const refocusStart = useRef(false);
 
   // Opening the panel opens a draft unless the store kept one.
@@ -85,6 +88,25 @@ export function RowExpanded({ item, s }: { item: AssignedItem; s: AppState }) {
   const options = DURATION_BLOCKS.includes(draft.blocks) || draft.blocks <= 0
     ? DURATION_BLOCKS
     : [...DURATION_BLOCKS, draft.blocks].sort((a, b) => a - b);
+
+  // Typed duration: valid text stages exact minutes (blocks = minutes / 30);
+  // invalid text keeps the draft and surfaces an inline error. Empty text is
+  // a no-op so tabbing through the field never stages or errors.
+  const applyCustom = () => {
+    if (customText.trim() === "") {
+      setCustomError(null);
+      return;
+    }
+    const parsed = parseDuration(customText);
+    if (!parsed.ok) {
+      setCustomError(parsed.error);
+      return;
+    }
+    const blocks = minutesToBlocks(parsed.minutes);
+    controller.updateDraft(id, (d) => ({ ...d, blocks }));
+    setCustomText("");
+    setCustomError(null);
+  };
 
   const closeEditor = () => {
     refocusStart.current = true;
@@ -189,6 +211,40 @@ export function RowExpanded({ item, s }: { item: AssignedItem; s: AppState }) {
             </option>
           ))}
         </select>
+        <input
+          class="trow__select"
+          type="text"
+          inputMode="text"
+          size={9}
+          placeholder="e.g. 10m"
+          aria-label="Custom duration"
+          aria-invalid={customError ? "true" : undefined}
+          aria-describedby={customError ? `why-dur-${base}` : undefined}
+          title={allDay ? "All-day rows have no duration" : undefined}
+          disabled={busy || allDay}
+          value={customText}
+          onInput={(e) => {
+            setCustomText((e.target as HTMLInputElement).value);
+            setCustomError(null);
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              applyCustom();
+            } else if (e.key === "Escape") {
+              setCustomText("");
+              setCustomError(null);
+            }
+          }}
+          onBlur={() => {
+            if (customText.trim() !== "" && parseDuration(customText).ok) applyCustom();
+          }}
+        />
+        {customError && (
+          <span class="trow__why" id={`why-dur-${base}`} role="alert">
+            {customError}
+          </span>
+        )}
         <span class="trow__start" role="group" aria-label="Start">
           <span class="trow__muted">Start</span>
           {startControl()}
