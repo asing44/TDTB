@@ -187,6 +187,43 @@ def _now_iso(now: datetime | None = None) -> str:
 # Target resolution (from today's committed plan_manifest)
 # ---------------------------------------------------------------------------
 
+def _row_stable_identity(row: dict[str, Any]) -> str:
+    """The stable identity of ONE server-derived manifest or index row.
+
+    Row verbs from the UI address their row by this identity rather than by
+    its (rename-prone) plan name, so resolution has to recognise the string it
+    sent. The identity is derived HERE, from the server's own row: a client
+    that names an id the app never derived still resolves to nothing.
+
+    Todoist rows key on ``todoist:<task id>``; a row that already carries a
+    canonical ``identity`` (Capacities, calendar) uses it verbatim. The name is
+    never used — the caller's name lookup covers that axis already.
+    """
+    tid = str(row.get("todoist_id") or "").strip()
+    if tid:
+        return f"todoist:{tid}"
+    system = str(row.get("system") or row.get("source") or "").strip().casefold()
+    identity = str(row.get("identity") or "").strip()
+    if identity:
+        return identity
+    path = str(row.get("path") or row.get("id_or_path") or "").strip()
+    if not path:
+        return ""
+    if system == "todoist":
+        return f"todoist:{path}"
+    if system in ("capacities", "calendar"):
+        return path if path.startswith(f"{system}:") else f"{system}:{path}"
+    return path
+
+
+def _matches_row(row: dict[str, Any], target: str) -> bool:
+    """A derived row answers to its plan NAME or to its stable identity."""
+    if row.get("name") == target:
+        return True
+    identity = _row_stable_identity(row)
+    return bool(identity) and identity == target
+
+
 def _resolve_from_digest_index(
     valid_date: date, name: str,
 ) -> dict[str, Any] | None:
@@ -202,10 +239,11 @@ def _resolve_from_digest_index(
     error.
     """
     rows = [r for r in runstate.read_digest_index(valid_date)
-            if r.get("name") == name]
+            if isinstance(r, dict) and _matches_row(r, name)]
     if not rows:
         return None
-    out: dict[str, Any] = {"name": name, "phase": "staging"}
+    out: dict[str, Any] = {
+        "name": str(rows[0].get("name") or name), "phase": "staging"}
     for row in rows:
         path = str(row.get("path") or "")
         source = str(row.get("source") or "").strip().casefold()
@@ -252,17 +290,25 @@ def resolve_target(valid_date: date, name: str) -> dict[str, Any]:
     what makes complete/delete/defer usable from the staging queue before any
     commit exists. The resolved dict carries ``phase`` so the verb planner can
     refuse verbs that only make sense against placed artifacts.
+
+    ``name`` is either the row's plan name OR its stable identity
+    (``todoist:<task id>`` / a Capacities or calendar identity): the UI's row
+    verbs address a row by identity so a rename cannot retarget them. Both
+    forms resolve against the SAME server-derived rows, so the client still
+    never addresses an artifact the app did not derive itself.
     """
     state = runstate.read_runstate(valid_date) or {}
-    rows = [r for r in state.get("plan_manifest") or []
-            if isinstance(r, dict) and r.get("name") == name]
+    manifest = [r for r in state.get("plan_manifest") or []
+                if isinstance(r, dict)]
+    rows = [r for r in manifest if _matches_row(r, name)]
     if not rows:
         staged = _resolve_from_digest_index(valid_date, name)
         if staged is not None:
             return staged
         raise RuntimeActionError(
             f"{name!r}: not in today's plan manifest or digest")
-    out: dict[str, Any] = {"name": name, "phase": "committed"}
+    out: dict[str, Any] = {
+        "name": str(rows[0].get("name") or name), "phase": "committed"}
     for row in rows:
         if "minutes" not in out:
             try:
