@@ -131,6 +131,11 @@ describe("collapsed row: the controls and their names", () => {
       // KTD4: Skip today is Todoist-only; the Assigned switch replaces it on
       // a Capacities or calendar row.
       const heldBySwitch = row.querySelector(".qrow__src--capacities, .qrow__src--calendar");
+      // The empty Skip today slot stays reserved so Complete and Expand keep
+      // their column on every row.
+      expect(row.querySelectorAll(".trow__acts > .trow__slot")).toHaveLength(
+        heldBySwitch ? 1 : 0,
+      );
       expect(labels.slice(0, 3)).toEqual(
         heldBySwitch ? ["Complete", "Expand"] : ["Complete", "Skip today", "Expand"],
       );

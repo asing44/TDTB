@@ -11159,7 +11159,10 @@ button.strip-cal {
 .queue__band .qrow.trow,
 .qrow.trow {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  /* Stable slots: select | name+meta (flexible, takes the slack) | duration
+     | actions. The actions cell is a fixed grid (switch, Complete, Skip
+     today, Expand), so every row aligns whatever its source. */
+  grid-template-columns: 16px minmax(0, 1fr) 66px 278px;
   grid-template-rows: auto;
   grid-template-areas: none;
   gap: 4px 10px;
@@ -11168,6 +11171,12 @@ button.strip-cal {
 }
 .qrow.trow--skipped {
   grid-template-columns: minmax(0, 1fr) auto auto;
+}
+.qrow.trow--unassigned {
+  grid-template-columns: 16px minmax(0, 1fr) 66px 278px;
+}
+.trow__check-slot {
+  width: 16px;
 }
 .qrow.trow > * {
   grid-column: auto;
@@ -11183,10 +11192,24 @@ button.strip-cal {
   font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
   font-size: 12px;
   white-space: nowrap;
+  text-align: right;
 }
 .trow__state {
   color: var(--t-muted);
   font-size: 12px;
+}
+/* Meta line: separators stay (gap), only the trailing state truncates. */
+.qrow.trow .qrow__source {
+  gap: 8px;
+}
+.qrow.trow .qrow__source > * {
+  flex: none;
+}
+.qrow.trow .qrow__source > .trow__state {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .trow__state--staged {
   padding: 1px 6px;
@@ -11200,9 +11223,10 @@ button.strip-cal {
   text-transform: uppercase;
 }
 .trow__acts {
-  display: flex;
+  display: grid;
+  grid-template-columns: 44px 74px 78px 70px;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
 }
 .trow__btn {
   min-height: 32px;
@@ -11213,6 +11237,11 @@ button.strip-cal {
   color: var(--t-text);
   font: inherit;
   cursor: pointer;
+}
+.trow__acts > .trow__btn {
+  width: 100%;
+  padding-inline: 4px;
+  white-space: nowrap;
 }
 .trow__btn:hover:not(:disabled) {
   border-color: var(--t-muted);
@@ -11310,21 +11339,20 @@ button.strip-cal {
   outline-offset: 2px;
 }
 .trow__assign-text {
-  min-width: 5.5em;
+  white-space: nowrap;
+}
+/* Unassigned section: the caption sits beside the track, which stays in the
+   same first slot as on an assigned row. */
+.trow__assign--captioned {
+  grid-column: 1 / -1;
+  justify-self: start;
+}
+.plan-grid__groups > .unassigned-today {
+  margin-top: 0;
 }
 @media (max-width: 640px) {
   .trow__assign {
     margin: -3px 0;
-  }
-  /* The track and its aria-label carry the state; the caption would push
-     Expand onto a second line. */
-  .trow__assign-text {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    overflow: hidden;
-    clip: rect(0 0 0 0);
-    white-space: nowrap;
   }
 }
 .skipped-today {
@@ -11355,14 +11383,19 @@ button.strip-cal {
   list-style: none;
 }
 @media (max-width: 640px) {
+  .queue__band .qrow.trow,
   .qrow.trow {
-    grid-template-columns: auto minmax(0, 1fr) auto;
+    grid-template-columns: 16px minmax(0, 1fr) auto;
   }
   .qrow.trow--skipped {
     grid-template-columns: minmax(0, 1fr) auto;
   }
+  .qrow.trow--unassigned {
+    grid-template-columns: 16px minmax(0, 1fr) auto;
+  }
   .qrow.trow > .trow__acts {
     grid-column: 1 / -1 !important;
+    grid-template-columns: 44px repeat(3, minmax(0, 1fr));
     flex-wrap: wrap;
   }
   .trow__btn {

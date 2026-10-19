@@ -310,12 +310,12 @@ export function Queue() {
               </div>
             );
           })}
+          <UnassignedToday />
         </div>
         <div class="plan-grid__capacity">
           <CapacityCard />
         </div>
       </div>
-      <UnassignedToday />
       <SkippedToday />
       <ShortcutHint />
     </section>
