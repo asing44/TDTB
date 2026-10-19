@@ -2224,6 +2224,42 @@ export function projectDroppedToday(rows: unknown): import("../model/types").Dro
     .filter((r) => r.name !== "" && r.identity !== "");
 }
 
+/** KTD2: the journal-derived Todoist rows unassigned today. Shape is
+    {identity, name, action_id, source:"todoist", recurring, minutes?}. A row
+    missing an identity, a name or its journal action cannot be re-identified
+    or re-assigned, and a non-todoist source is not this list's business, so
+    those rows are dropped rather than repaired. An absent or malformed list
+    projects as [] — the field is always present, never fabricated. */
+export function projectUnassignedToday(
+  rows: unknown,
+): import("../model/types").UnassignedTodayRow[] {
+  if (!Array.isArray(rows)) return [];
+  const out: import("../model/types").UnassignedTodayRow[] = [];
+  for (const r of rows as Wire[]) {
+    if (!r || typeof r !== "object") continue;
+    // KTD2 is a Todoist list: another source riding the field is not a
+    // re-assignable journal action, so it never enters the section.
+    if (r.source != null && String(r.source) !== "todoist") continue;
+    // Wire is snake_case here; `actionId` is accepted too so a contract
+    // rename cannot silently blank the list while every test still passes.
+    const actionId = String(r.action_id ?? r.actionId ?? "");
+    const identity = String(r.identity ?? "");
+    const name = String(r.name ?? "");
+    if (identity === "" || name === "" || actionId === "") continue;
+    const item: import("../model/types").UnassignedTodayRow = {
+      identity,
+      name,
+      actionId,
+      source: "todoist",
+      recurring: r.recurring === true,
+    };
+    const minutes = Number(r.minutes);
+    if (Number.isFinite(minutes) && minutes > 0) item.minutes = minutes;
+    out.push(item);
+  }
+  return out;
+}
+
 export function projectPlanInputs(wire: Wire): PlanInputs {
   const warnings = (wire.source_warnings ?? []).map(String);
   const habits = wire.habits ?? {};
@@ -2243,6 +2279,9 @@ export function projectPlanInputs(wire: Wire): PlanInputs {
   return {
     validDate: String(wire.digest?.valid_date ?? ""),
     assigned: (wire.digest?.assigned ?? []).map(projectAssigned),
+    // KTD2: defaulted to [] when the backend omits the field, so a caller
+    // never has to tell "no unassigned rows" from "older payload".
+    unassignedToday: projectUnassignedToday(wire.unassigned_today),
     unassignedCandidates: projectForgotList(wire.digest?.unassigned_candidates),
     staleAssigned: projectForgotList(wire.digest?.stale_assigned),
     droppedToday: projectDroppedToday(wire.dropped_today),

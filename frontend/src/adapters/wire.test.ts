@@ -38,6 +38,7 @@ import {
   projectPlanInputs,
   projectSequenceResult,
   projectShadow,
+  projectUnassignedToday,
   sourceHealthBySource,
   sourceHealthOf,
   projectValidation,
@@ -2772,5 +2773,94 @@ describe("Capacities discovery catalog (wire → model)", () => {
         ],
       }),
     ).toThrow(/writable/);
+  });
+});
+
+describe("wire: unassigned_today (KTD2)", () => {
+  it("projects the journal-derived Todoist rows, action_id included", () => {
+    expect(
+      projectUnassignedToday([
+        {
+          identity: "todoist:6fx00xPRESS",
+          name: "Press",
+          action_id: "ra-9",
+          source: "todoist",
+          recurring: true,
+          minutes: 75,
+        },
+      ]),
+    ).toEqual([
+      {
+        identity: "todoist:6fx00xPRESS",
+        name: "Press",
+        actionId: "ra-9",
+        source: "todoist",
+        recurring: true,
+        minutes: 75,
+      },
+    ]);
+  });
+
+  it("drops malformed rows instead of repairing them", () => {
+    const projected = projectUnassignedToday([
+      { identity: "", name: "No identity", action_id: "ra-1", source: "todoist" },
+      { identity: "todoist:2", name: "", action_id: "ra-2", source: "todoist" },
+      { identity: "todoist:3", name: "No action", source: "todoist" },
+      // Another source is not a journaled Todoist unassign.
+      { identity: "capacities:1", name: "Note", action_id: "ra-3", source: "capacities" },
+      null,
+      "nope",
+      // The one intact row survives around them.
+      {
+        identity: "todoist:4",
+        name: "Real",
+        action_id: "ra-4",
+        source: "todoist",
+        recurring: false,
+      },
+    ]);
+    expect(projected).toEqual([
+      {
+        identity: "todoist:4",
+        name: "Real",
+        actionId: "ra-4",
+        source: "todoist",
+        recurring: false,
+      },
+    ]);
+  });
+
+  it("projects an absent or non-list field as []", () => {
+    expect(projectUnassignedToday(undefined)).toEqual([]);
+    expect(projectUnassignedToday(null)).toEqual([]);
+    expect(projectUnassignedToday({ identity: "todoist:1" })).toEqual([]);
+  });
+
+  it("carries the field on the projected inputs, [] when the wire omits it", () => {
+    expect(projectPlanInputs(planInputs as any).unassignedToday).toEqual([]);
+    expect(
+      projectPlanInputs({
+        ...(planInputs as any),
+        unassigned_today: [
+          {
+            identity: "todoist:6fx00xPRESS",
+            name: "Press",
+            action_id: "ra-9",
+            source: "todoist",
+            recurring: false,
+            minutes: 30,
+          },
+        ],
+      }).unassignedToday,
+    ).toEqual([
+      {
+        identity: "todoist:6fx00xPRESS",
+        name: "Press",
+        actionId: "ra-9",
+        source: "todoist",
+        recurring: false,
+        minutes: 30,
+      },
+    ]);
   });
 });

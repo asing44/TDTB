@@ -265,6 +265,13 @@ export interface Adapter {
   /** POST /runtime-actions/{id}/undo (T20) — one-step reverse from exact
       before-images. */
   undoRuntimeAction(actionId: string): Promise<import("../model/types").RuntimeAction>;
+  /** KTD1: POST /runtime-actions/reassign {identity} — re-assign a Todoist row
+      by reversing its own applied `unassign` in today's journal, restoring the
+      exact prior due date. Deliberately NOT the `assign` verb: that one
+      reschedules to "today", no-ops on recurring tasks, and leaves the
+      unassign applied. Same journaled envelope as every other runtime action,
+      so a conflict, a duplicate and a failure all surface the same way. */
+  reassign(identity: string): Promise<import("../model/types").RuntimeAction>;
   /** POST /runtime-batches — apply items as one journaled batch. A per-item
       failure or refusal is REPORTED, never thrown; 409 (Day Setup not
       confirmed) and 422 (bad input) surface as ApiError through the shared

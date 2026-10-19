@@ -957,9 +957,29 @@ export interface DroppedItem {
   minutes?: number;
 }
 
+/** KTD2: one Todoist row held back from today by an applied `unassign` in
+    today's runtime journal. Derived server-side from the journal (newest per
+    identity), so the row stays listed after it leaves `/plan-inputs`
+    `assigned`. `actionId` names the journal action a re-assign reverses.
+    Capacities and calendar rows never appear here: they use the date-scoped
+    `droppedToday` drop instead (KTD3). */
+export interface UnassignedTodayRow {
+  identity: string;
+  name: string;
+  actionId: string;
+  source: "todoist";
+  recurring: boolean;
+  /** Row duration in minutes, when the backend carried one. */
+  minutes?: number;
+}
+
 export interface PlanInputs {
   validDate: string;
   assigned: AssignedItem[];
+  /** KTD2: Todoist rows unassigned today (journal-derived, and the row that
+      `reassign` reverses). Always projected, so consumers read `[]` rather
+      than an absent key; optional only so older fixtures stay valid. */
+  unassignedToday?: UnassignedTodayRow[];
   /** T6 forgot-strip: pool rows carrying a "you may have forgotten this"
       signal (overdue, due today, deferred, 4-crit). Capped at 5 server-side. */
   unassignedCandidates: ForgotItem[];
