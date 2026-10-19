@@ -598,10 +598,16 @@ describe("fixed-input gate (locked decision 17)", () => {
     expect(f.calendar.map((c) => c.name)).toEqual(["Team Standup"]);
   });
 
-  it("THROWS on a calendar degrade — never an unchanged fingerprint", async () => {
+  it("no longer throws on a calendar-only degrade (OQ-P1) — the read stands", async () => {
     route("/plan-inputs", planInputsDegraded);
     const a = new ApiAdapter();
-    await expect(a.readFixedInputs()).rejects.toThrow(/fixed-input read degraded/);
+    const f = await a.readFixedInputs();
+    // Deliberate expectation change in U7: decision-17 is reversed, so a
+    // calendar diagnostic is advisory data, not a fixed-input failure — the
+    // same treatment refreshSources already got in U3.
+    expect(f.calendar.map((c) => c.name)).toEqual([]);
+    // The fresh read still replaces the cached raw payload the POST bodies use.
+    expect((await a.readFixedInputs()).anchored.length).toBeGreaterThan(0);
   });
 });
 

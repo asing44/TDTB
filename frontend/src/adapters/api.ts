@@ -8,9 +8,10 @@
    Safety invariants owned here:
    - No billed endpoint is ever called implicitly; autoSequence is the one
      billed POST and only the controller's explicit user action reaches it.
-   - readFixedInputs re-GETs /plan-inputs and THROWS on a calendar-source
-     degrade — a failed fixed-input read blocks preview/commit, it is never
-     an "unchanged" fingerprint (locked decision 17).
+   - readFixedInputs re-GETs /plan-inputs and, since 2026-10-19 (OQ-P1,
+     reversing decision-17), keeps a calendar-only degradation as data: the
+     calendar source shows its own advisory note and the fresh read stays
+     authoritative, exactly as refreshSources does. Todoist is unchanged.
    - liveCommit hits /commit?mode=live verbatim; 409 (single-flight), 422,
      and 429 surface as typed ApiError, never silently retried. */
 
@@ -57,7 +58,6 @@ import type {
   Validation,
 } from "../model/types";
 import {
-  calendarWarnings,
   daySetupToWire,
   capacitiesSettingsToWire,
   projectDaySetupSaveResult,
@@ -622,12 +622,12 @@ export class ApiAdapter implements Adapter {
   }
 
   async readFixedInputs(): Promise<FixedInputs> {
+    // Calendar warnings are advisory since 2026-10-19 (OQ-P1, reversing
+    // decision-17): the calendar dot and note in Connections carry them, so a
+    // calendar hiccup no longer fails the fixed-input read (mirrors
+    // refreshSources). The fresh read stays the latest raw payload for the
+    // subsequent POST bodies.
     const wire = await this.request("/plan-inputs");
-    const calWarnings = calendarWarnings((wire.source_warnings ?? []).map(String));
-    if (calWarnings.length > 0) {
-      throw new Error(`fixed-input read degraded — ${calWarnings[0]}`);
-    }
-    // A fresh read is also the latest raw payload for subsequent POST bodies.
     this.raw = wire;
     return projectFixedInputs(wire);
   }
