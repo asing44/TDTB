@@ -21,6 +21,7 @@ import { useEffect, useRef } from "preact/hooks";
 import { useApp, useAppState } from "./context";
 import { batchRowsOf, type AppState, type BatchItemOutcome } from "../store/store";
 import type { BatchAction, BatchRow } from "../model/batchEligibility";
+import { effectiveRowAction } from "../model/batchEligibility";
 import { isPlanningBatchAction } from "../store/controller";
 import "./batch-actions.css";
 
@@ -85,14 +86,17 @@ function actionLabel(action: BatchAction, recurring: boolean): string {
   }
 }
 
-/** What one row gets from a source-changing action, named for the review. */
+/** What one row gets from a source-changing action, named for the review. A
+    Capacities row's Complete is Skip today, and the line says so. */
 function rowEffect(action: BatchAction, row: BatchRow): string {
   const source = SOURCE_NAME[row.source] ?? row.source;
-  switch (action) {
+  switch (effectiveRowAction(action, row)) {
     case "complete":
       return `Mark done in ${source}`;
     case "skipToday":
-      return "Skip today; saved now, restorable from Skipped today";
+      return action === "complete"
+        ? "Skip today (Capacities is not updated); restorable from Skipped today"
+        : "Skip today; saved now, restorable from Skipped today";
     case "unassign":
       return row.isRecurring
         ? `Skip occurrence in ${source}`

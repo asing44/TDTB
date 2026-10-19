@@ -57,17 +57,19 @@ function ShortcutHint() {
       </span>
       <span class="queue__hint-note">
         Skip today records it on the server for today only; restore it from
-        Skipped today. The source is untouched. Complete updates the source.
+        Skipped today. The source is untouched. Complete updates the source,
+        except Capacities items, which are skipped for today.
       </span>
     </div>
   );
 }
 
 /** Keys-card navigation: ↑/↓ move between rows, E skips the focused row for
-    today, C marks it complete. Skips when the event originates in a control
-    that owns the key (buttons own Enter). The old ←/→ duration trim and D
-    exact-duration keys left with the slider and the Exact duration button;
-    duration shaping returns with the expanded row panel. */
+    today, C completes it — which for a Capacities row is Skip today, because
+    that source has no completable write. Skips when the event originates in a
+    control that owns the key (buttons own Enter). The old ←/→ duration trim
+    and D exact-duration keys left with the slider and the Exact duration
+    button; duration shaping returns with the expanded row panel. */
 function rowKeydown(
   e: KeyboardEvent,
   item: AssignedItem,

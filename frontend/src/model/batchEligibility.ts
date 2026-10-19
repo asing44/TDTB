@@ -123,6 +123,9 @@ function reasonFor(
 ): string | null {
   const allDay = row.blocks <= 0;
   switch (action) {
+    // Complete stays open to every row: a Capacities row's Complete is Skip
+    // today (effectiveRowAction), and the Day Setup gate that guards both is
+    // the controller's one written reason, not a second eligibility rule.
     case "complete":
     case "hideAlways":
       return null;
@@ -156,6 +159,34 @@ function reasonFor(
       if (row.state !== "planned") return EXCLUSION_REASONS.mintSkipped;
       return null;
   }
+}
+
+/** A Capacities object has no completable source, so the server's `done` verb
+    refuses it outright. Complete over a Capacities row therefore means Skip
+    today: the same durable `drop_from_plan` path, with no Capacities write and
+    no Todoist/Calendar write. Every other source keeps `complete`. */
+export function effectiveRowAction(
+  action: BatchAction,
+  row: Pick<BatchRow, "source">,
+): BatchAction {
+  return action === "complete" && row.source === "capacities"
+    ? "skipToday"
+    : action;
+}
+
+/** How many of the named rows resolve to Skip today under this action — the
+    Capacities rows inside a Complete — so the review can say it. */
+export function skipInsteadCount(
+  action: BatchAction,
+  rows: readonly BatchRow[],
+  ids: readonly string[],
+): number {
+  if (action !== "complete") return 0;
+  const named = new Set(ids);
+  return rows.filter(
+    (row) =>
+      named.has(row.id) && effectiveRowAction(action, row) === "skipToday",
+  ).length;
 }
 
 /** The wire verb an Unassign batch resolves to. Always `unassign`: the
