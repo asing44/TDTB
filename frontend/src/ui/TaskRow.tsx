@@ -22,6 +22,11 @@ import { mintOverlapNotes, overlapNotes } from "../model/findings";
 import { dueLabel, normalizeUrgency } from "../model/urgency";
 import type { AssignedItem } from "../model/types";
 
+/** What Complete does on a Capacities row, in the words the control carries.
+    Capacities write-back is out of scope, so the row is skipped for today. */
+export const CAPACITIES_COMPLETE_NOTE =
+  "Done for today — skips this Capacities item for today; Capacities is not updated";
+
 /** U11 labeling pass → Planning 2a: the row's provenance as the mockup's small
     source swatch plus its human source name ("Todoist", "Capacities"). An
     unrecognized source reads as a neutral OTHER. The colour tints live in
@@ -121,6 +126,12 @@ export function TaskRow({
   const skipWhy = taskActionDisabledReason(s, "skip");
   const completeWhyId = rowId(item, "why-complete");
   const skipWhyId = rowId(item, "why-skip");
+  // A Capacities object has no completable source, so its Complete is Skip
+  // today. The visible label stays Complete; the title and the description
+  // element say what actually happens, so keyboard and screen-reader users are
+  // told as well as the pointer.
+  const capacitiesComplete = item.source === "capacities";
+  const capacitiesWhyId = rowId(item, "why-capacities-complete");
   const completeOff = s.runtimeBusy || completeWhy !== null;
   const skipOff = s.runtimeBusy || skipWhy !== null;
 
@@ -235,8 +246,14 @@ export function TaskRow({
           class="trow__btn trow__btn--primary"
           aria-label="Complete"
           disabled={completeOff}
-          title={completeWhy ?? undefined}
-          aria-describedby={completeWhy ? completeWhyId : undefined}
+          title={
+            completeWhy ?? (capacitiesComplete ? CAPACITIES_COMPLETE_NOTE : undefined)
+          }
+          aria-describedby={
+            [completeWhy ? completeWhyId : null, capacitiesComplete ? capacitiesWhyId : null]
+              .filter(Boolean)
+              .join(" ") || undefined
+          }
           onClick={() => void controller.runRowBatch(item.id, "complete")}
         >
           Complete
@@ -244,6 +261,11 @@ export function TaskRow({
         {completeWhy && (
           <span class="sr-only" id={completeWhyId}>
             {completeWhy}
+          </span>
+        )}
+        {capacitiesComplete && (
+          <span class="sr-only" id={capacitiesWhyId}>
+            {CAPACITIES_COMPLETE_NOTE}
           </span>
         )}
         <button

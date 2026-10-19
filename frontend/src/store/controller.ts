@@ -37,6 +37,8 @@ import type { WallInterval } from "../model/overflow";
 import { isValidHHMM, toMinutes } from "../model/time";
 import {
   batchEligibility,
+  effectiveRowAction,
+  skipInsteadCount,
   unassignVerb,
   type BatchAction,
   type BatchRow,
@@ -158,7 +160,11 @@ export function isPlanningBatchAction(
     occurrence) instead of clearing assignment. These are the server's own
     verb names (app/runtime_actions.py), never a second vocabulary. */
 function batchVerb(action: BatchAction, row: BatchRow): string {
-  switch (action) {
+  // A Capacities row's Complete resolves to Skip today before the wire: the
+  // server's `done` refuses a row with no completable source, and Capacities
+  // write-back stays out of scope. Same durable `drop_from_plan` verb Skip
+  // today uses, so Restore today and the batch undo surface already apply.
+  switch (effectiveRowAction(action, row)) {
     case "complete":
       return "done";
     case "skipToday":
@@ -189,8 +195,22 @@ const BATCH_EFFECT_LABELS: Record<BatchAction, string> = {
 function batchEffects(
   action: BatchAction,
   count: number,
-  args: { blocks?: number },
+  args: { blocks?: number; capacitiesSkips?: number },
 ): string {
+  // A mixed Complete says both halves: the rows that are done in source and
+  // the Capacities rows that are only skipped for today.
+  const skips = action === "complete" ? (args.capacitiesSkips ?? 0) : 0;
+  if (skips > 0) {
+    const completes = count - skips;
+    const parts: string[] = [];
+    if (completes > 0) {
+      parts.push(`Complete ${completes} ${completes === 1 ? "row" : "rows"}`);
+    }
+    parts.push(
+      `Skip today for ${skips} Capacities ${skips === 1 ? "row" : "rows"} (Capacities is not updated)`,
+    );
+    return parts.join("; ");
+  }
   const noun = count === 1 ? "row" : "rows";
   const base = `${BATCH_EFFECT_LABELS[action]} ${count} ${noun}`;
   return action === "duration" && typeof args.blocks === "number"
@@ -990,7 +1010,10 @@ export class Controller {
       excluded: eligibility.excluded,
       label: eligibility.label,
       counts: eligibility.counts,
-      effects: batchEffects(action, eligibility.counts.eligible, args),
+      effects: batchEffects(action, eligibility.counts.eligible, {
+        ...args,
+        capacitiesSkips: skipInsteadCount(action, rows, eligibility.eligible),
+      }),
     };
     if (isPlanningBatchAction(action)) {
       this.applyPlanningBatch(action, eligibility.eligible, args);
@@ -1041,7 +1064,9 @@ export class Controller {
       excluded: eligibility.excluded,
       label: eligibility.label,
       counts: eligibility.counts,
-      effects: batchEffects(action, eligibility.counts.eligible, {}),
+      effects: batchEffects(action, eligibility.counts.eligible, {
+        capacitiesSkips: skipInsteadCount(action, [row], eligibility.eligible),
+      }),
     };
     if (eligibility.eligible.length === 0) {
       this.dispatch({
