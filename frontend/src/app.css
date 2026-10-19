@@ -9870,6 +9870,32 @@ body {
   }
 }
 
+/* Sticky capacity pocket: on the two-column layout the card holds its place at
+   the top of the right track while the long task list scrolls, so expanding,
+   skipping, or assigning a row updates the headline in view instead of above
+   the fold. The wide Plan layout scrolls inside .cockpit__main (the desktop
+   shell block gives it min-height: 0 + overflow-y: auto, and .queue /
+   .cockpit__main clip only the x axis), so that column is the sticky
+   scrollport. The app header is NOT inside it, so the top offset is 0 — the
+   card pins at the scrollport top with no dead band (the lane header's
+   --app-header-h token is 0 for the same reason). The max-height subtracts
+   the real 64px app-header band and the shared --footer-clearance footer
+   reserve, keeping the card inside the scrollport and clear of the sticky
+   footer while it scrolls inside itself when the Details disclosure makes it
+   tall. Stacked layouts (<=1100px, where the card moves above the list) stay
+   non-sticky. */
+@media screen and (min-width: 1101px) {
+  .plan-grid__capacity {
+    position: sticky;
+    top: 0;
+    align-self: start;
+    max-height: calc(
+      100dvh - 64px - var(--footer-clearance, 112px)
+    );
+    overflow-y: auto;
+  }
+}
+
 /* Group header: a 3px left rule in the band colour, uppercase name, muted
    description. The disclosure stays a real button for keyboard + AT, but
    reads like the mockup's static rule (no tick, rule, count, or chevron). */
