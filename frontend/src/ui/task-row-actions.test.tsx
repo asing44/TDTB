@@ -109,8 +109,11 @@ describe("collapsed row: the controls and their names", () => {
       press.querySelectorAll<HTMLElement>(".trow__acts > button"),
     ).map((b) => b.getAttribute("aria-label"));
     expect(labels).toEqual(["Complete", UNASSIGN_TRIGGER_LABEL, "Expand"]);
-    // The words are visible faces, not hover-only text.
-    expect(buttonIn(press, "Complete").textContent).toBe("Complete");
+    // Complete is a compact icon button: check-mark face, name + tooltip.
+    const complete = buttonIn(press, "Complete");
+    expect(complete.textContent).toBe("");
+    expect(complete.querySelector("svg")).toBeTruthy();
+    expect(complete.getAttribute("title")).toBe("Complete");
     // The source verb is a compact icon button: no visible text, the full
     // label is its accessible name and tooltip.
     const unassign = buttonIn(press, UNASSIGN_TRIGGER_LABEL);
@@ -119,7 +122,9 @@ describe("collapsed row: the controls and their names", () => {
     expect(unassign.getAttribute("title")).toBe(UNASSIGN_TRIGGER_LABEL);
 
     const expand = buttonIn(press, "Expand");
-    expect(expand.textContent).toBe("Expand");
+    expect(expand.textContent).toBe("");
+    expect(expand.querySelector("svg")).toBeTruthy();
+    expect(expand.getAttribute("title")).toBe("Expand");
     expect(expand.getAttribute("aria-expanded")).toBe("false");
     // The disclosure names the panel it will fill; collapsed, it is absent.
     expect(expand.getAttribute("aria-controls")).toBe("exp-Press");
@@ -165,7 +170,8 @@ describe("collapsed row: one row expands at a time", () => {
     expect(press.getAttribute("class")).toContain("trow--open");
     const collapse = buttonIn(press, "Collapse");
     expect(collapse.getAttribute("aria-expanded")).toBe("true");
-    expect(collapse.textContent).toBe("Collapse");
+    expect(collapse.textContent).toBe("");
+    expect(collapse.getAttribute("title")).toBe("Collapse");
     const panel = panelOf(press)!;
     expect(panel.id).toBe("exp-Press");
     expect(panel.getAttribute("role")).toBe("group");

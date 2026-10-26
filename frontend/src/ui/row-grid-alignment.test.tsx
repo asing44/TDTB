@@ -30,7 +30,7 @@ describe("Plan task rows use fixed slots around a flexible name column", () => {
   const cols = /grid-template-columns:\s*([^;]+);/.exec(row)?.[1] ?? "";
 
   it("gives the name+meta column the slack and fixes every other slot", () => {
-    expect(cols).toMatch(/^16px\s+minmax\(0,\s*1fr\)\s+66px\s+278px$/);
+    expect(cols).toMatch(/^16px\s+minmax\(0,\s*1fr\)\s+66px\s+152px$/);
   });
 
   it("makes the actions a fixed grid sized to the row's last slot", () => {

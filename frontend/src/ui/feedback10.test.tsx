@@ -443,7 +443,7 @@ describe("row action buttons describe themselves on hover", () => {
     expect(container.querySelector('button[aria-label^="More actions for"]')).toBeNull();
   });
 
-  it("the collapsed row's own buttons carry their words in plain text", () => {
+  it("the collapsed row's own buttons are icon buttons named by aria-label and title", () => {
     // F4a/U4: Mark complete and Leave as-is were icon faces whose words lived
     // in a hover bubble. The collapsed row's Complete / Unassign in Todoist…
     // controls are labelled buttons, so the words never depend on a hover, and
@@ -453,8 +453,11 @@ describe("row action buttons describe themselves on hover", () => {
       (r) => r.querySelector(".qrow__name")?.textContent === "Press",
     );
     const complete = press?.querySelector(".trow__btn--primary") as HTMLElement;
-    expect(complete.textContent).toContain("Complete");
-    expect(complete.getAttribute("title")).toBeNull();
+    // Icon face: the name and tooltip carry the word.
+    expect(complete.textContent).toBe("");
+    expect(complete.querySelector("svg")).toBeTruthy();
+    expect(complete.getAttribute("aria-label")).toBe("Complete");
+    expect(complete.getAttribute("title")).toBe("Complete");
     const skip = Array.from(press!.querySelectorAll(".trow__btn")).find((b) =>
       b.getAttribute("aria-label") === UNASSIGN_TRIGGER_LABEL,
     ) as HTMLElement;

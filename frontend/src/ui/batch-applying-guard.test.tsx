@@ -139,7 +139,7 @@ describe("row verbs while a batch applies", () => {
     const other = rowFor(container, "Magic Mirror");
     await waitFor(() => expect(buttonIn(other, "Complete").disabled).toBe(false));
     expect(buttonIn(other, UNASSIGN_TRIGGER_LABEL).disabled).toBe(false);
-    expect(buttonIn(other, "Complete").getAttribute("title") ?? "").toBe("");
+    expect(buttonIn(other, "Complete").getAttribute("title")).toBe("Complete");
 
     fireEvent.keyDown(other, { key: "c" });
     await waitFor(() => expect(released).toEqual([["done"], ["done"]]));

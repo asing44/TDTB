@@ -9,6 +9,7 @@
 import { useApp } from "./context";
 import { SourceUnassign } from "./ConfirmUnassign";
 import { RowExpanded } from "./RowExpanded";
+import { CheckIcon, ChevronIcon } from "./RowIcons";
 import {
   draftIsStaged,
   effectiveBlocks,
@@ -311,11 +312,11 @@ export function TaskRow({
         <AssignSwitch id={item.id} name={item.name} assigned={true} s={s} />
         <button
           type="button"
-          class="trow__btn trow__btn--primary"
+          class="trow__btn trow__btn--primary trow__btn--icon"
           aria-label="Complete"
           disabled={completeOff}
           title={
-            completeWhy ?? (capacitiesComplete ? CAPACITIES_COMPLETE_NOTE : undefined)
+            completeWhy ?? (capacitiesComplete ? CAPACITIES_COMPLETE_NOTE : "Complete")
           }
           aria-describedby={
             [completeWhy ? completeWhyId : null, capacitiesComplete ? capacitiesWhyId : null]
@@ -324,7 +325,7 @@ export function TaskRow({
           }
           onClick={() => void controller.runRowBatch(item.id, "complete")}
         >
-          Complete
+          <CheckIcon />
         </button>
         {completeWhy && (
           <span class="sr-only" id={completeWhyId}>
@@ -340,13 +341,14 @@ export function TaskRow({
         {!unassignHidden && <SourceUnassign item={item} s={s} />}
         <button
           type="button"
-          class="trow__btn"
+          class="trow__btn trow__btn--icon"
           aria-label={expanded ? "Collapse" : "Expand"}
+          title={expanded ? "Collapse" : "Expand"}
           aria-expanded={expanded}
           aria-controls={expId}
           onClick={() => controller.expandRow(expanded ? null : item.id)}
         >
-          {expanded ? "Collapse" : "Expand"}
+          <ChevronIcon up={expanded} />
         </button>
       </div>
       {expanded && (

@@ -11162,7 +11162,7 @@ button.strip-cal {
   /* Stable slots: select | name+meta (flexible, takes the slack) | duration
      | actions. The actions cell is a fixed grid (switch, Complete, Skip
      today, Expand), so every row aligns whatever its source. */
-  grid-template-columns: 16px minmax(0, 1fr) 66px 278px;
+  grid-template-columns: 16px minmax(0, 1fr) 66px 152px;
   grid-template-rows: auto;
   grid-template-areas: none;
   gap: 4px 10px;
@@ -11173,7 +11173,7 @@ button.strip-cal {
   grid-template-columns: minmax(0, 1fr) auto auto;
 }
 .qrow.trow--unassigned {
-  grid-template-columns: 16px minmax(0, 1fr) 66px 278px;
+  grid-template-columns: 16px minmax(0, 1fr) 66px 152px;
 }
 .trow__check-slot {
   width: 16px;
@@ -11224,7 +11224,7 @@ button.strip-cal {
 }
 .trow__acts {
   display: grid;
-  grid-template-columns: 44px 74px 78px 70px;
+  grid-template-columns: 44px 32px 32px 32px;
   align-items: center;
   gap: 4px;
 }
@@ -11242,6 +11242,19 @@ button.strip-cal {
   width: 100%;
   padding-inline: 4px;
   white-space: nowrap;
+}
+.trow__acts > .trow__btn.trow__btn--icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  min-width: 32px;
+  padding: 0;
+  justify-self: center;
+}
+.trow__icon {
+  display: block;
+  flex: none;
 }
 .trow__btn:hover:not(:disabled) {
   border-color: var(--t-muted);

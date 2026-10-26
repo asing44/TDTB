@@ -309,7 +309,8 @@ describe("Queue", () => {
     );
     expect(complete.length).toBeGreaterThan(0);
     expect(complete[0].getAttribute("aria-label")).toBe("Complete");
-    expect(complete[0].textContent).toBe("Complete");
+    expect(complete[0].textContent).toBe("");
+    expect(complete[0].getAttribute("title")).toBeTruthy();
   });
 
   it("shows parent-child and related-tag context without duplicate rows", () => {

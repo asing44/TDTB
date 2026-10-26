@@ -244,13 +244,15 @@ describe("Complete on a Capacities row skips it for today", () => {
 });
 
 describe("the Capacities Complete control names its real effect", () => {
-  it("keeps the visible label and explains the skip in title and description", () => {
+  it("keeps the accessible name and explains the skip in title and description", () => {
     const h = makeHarness("ready");
     const { container } = h.ui(<Queue />);
     const note = rowFor(container, NOTE);
 
     const complete = buttonIn(note, "Complete");
-    expect(complete.textContent).toBe("Complete");
+    // Icon face: no visible text, the name and tooltip carry the words.
+    expect(complete.textContent).toBe("");
+    expect(complete.querySelector("svg")).toBeTruthy();
     expect(complete.getAttribute("aria-label")).toBe("Complete");
     expect(complete.getAttribute("title")).toBe(CAPACITIES_NOTE);
     const describedBy = complete.getAttribute("aria-describedby");
@@ -262,7 +264,7 @@ describe("the Capacities Complete control names its real effect", () => {
     // A Todoist row is untouched: no skip wording anywhere on it.
     const pressComplete = buttonIn(rowFor(container, PRESS), "Complete");
     expect(pressComplete.getAttribute("aria-label")).toBe("Complete");
-    expect(pressComplete.getAttribute("title") ?? "").toBe("");
+    expect(pressComplete.getAttribute("title")).toBe("Complete");
     expect(pressComplete.getAttribute("aria-describedby")).toBeNull();
   });
 
