@@ -149,7 +149,7 @@ describe("Keep all-day: eligibility of the expanded row's all-day radio", () => 
     // The reverse (a time block) stays available, so the row is not a dead end.
     expect(radio(row, "time").disabled).toBe(false);
     expect(allDayReason(row)).toBeNull();
-    expect(row.querySelector(".trow__dur")?.textContent).toBe("All day");
+    expect(row.querySelector(".trow__dur .dslider__label")?.textContent).toBe("All day");
     expect(row.querySelector(".trow__state")?.textContent).toBe("All-day");
   });
 });
@@ -182,7 +182,7 @@ describe("Keep all-day: Save commits the all-day state", () => {
 
     row = rowFor(container, "Press");
     expect(row.classList.contains("qrow--background")).toBe(true);
-    expect(row.querySelector(".trow__dur")?.textContent).toBe("All day");
+    expect(row.querySelector(".trow__dur .dslider__label")?.textContent).toBe("All day");
     expect(row.querySelector(".trow__state")?.textContent).toBe("All-day");
     // Saving clears the draft, so the row is no longer staged.
     expect(btn(row, "Save")).toBeNull();

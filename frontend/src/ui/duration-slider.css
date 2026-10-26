@@ -1,13 +1,68 @@
-/* duration-slider.css — the expanded row's duration range control.
-   Existing tokens (tokens.css) only. */
+/* duration-slider.css — the row's inline duration control, in the collapsed
+   row's duration cell (readout above, [−] range [+] below). Existing tokens
+   (tokens.css) only.
+
+   The cell is a size container whose width the row grid sets (app.css
+   --trow-dur-w), so the control degrades by the room it actually has:
+   full -> steppers hidden (< 112px) -> track hidden, readout + tooltip only
+   (< 64px). The readout is a line above the track, so a changing label never
+   re-lays-out the thumb. */
+.trow__dur--slider {
+  container: dur / inline-size;
+  min-width: 0;
+}
 .dslider {
-  display: inline-flex;
+  display: grid;
+  gap: 2px;
+  width: 100%;
+  min-width: 0;
+}
+.dslider__label {
+  display: block;
+  min-width: 6ch;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.2;
+  text-align: right;
+  white-space: nowrap;
+  color: var(--t-text);
+}
+.dslider__ctl {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr) 20px;
   align-items: center;
-  gap: 8px;
+  gap: 2px;
+  min-width: 0;
+}
+.dslider__step {
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 1px solid var(--t-border);
+  border-radius: var(--radius-sm, 5px);
+  background: var(--t-surface);
+  color: var(--t-text);
+  font: inherit;
+  line-height: 1;
+  cursor: pointer;
+}
+.dslider__step:hover:not(:disabled) {
+  border-color: var(--t-muted);
+}
+.dslider__step:disabled {
+  cursor: not-allowed;
+  background: var(--t-surface-2);
+  color: var(--t-muted);
+}
+.dslider__step:focus-visible {
+  outline: 2px solid var(--c-selected);
+  outline-offset: 2px;
 }
 .dslider__range {
-  width: 150px;
-  min-height: 28px;
+  width: 100%;
+  min-width: 0;
+  min-height: 20px;
+  margin: 0;
   accent-color: var(--c-selected);
 }
 .dslider__range:disabled {
@@ -18,14 +73,17 @@
   outline: 2px solid var(--c-selected);
   outline-offset: 2px;
 }
-.dslider__label {
-  min-width: 6ch;
-  font-family: var(--font-mono);
-  color: var(--t-text);
+/* Container tiers (the cell's own width). */
+@container dur (max-width: 111px) {
+  .dslider__step {
+    display: none;
+  }
+  .dslider__ctl {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
-@media (max-width: 640px) {
-  .dslider__range {
-    width: 120px;
-    min-height: 34px;
+@container dur (max-width: 63px) {
+  .dslider__ctl {
+    display: none;
   }
 }

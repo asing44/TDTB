@@ -71,7 +71,7 @@ describe("exact minutes below the block grid", () => {
     // collapsed row's mono duration readout carries the same exact value.
     const h = stagedWithLiveRow();
     const { container } = h.ui(<Queue />);
-    const readout = rowOf(container).querySelector(".trow__dur")?.textContent ?? "";
+    const readout = rowOf(container).querySelector(".trow__dur .dslider__label")?.textContent ?? "";
     expect(readout).toMatch(/^10min/);
     expect(readout).not.toContain("30min");
   });

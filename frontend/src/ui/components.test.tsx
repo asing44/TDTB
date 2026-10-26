@@ -291,7 +291,7 @@ describe("Queue", () => {
     const charge = Array.from(container.querySelectorAll(".qrow")).find(
       (r) => r.querySelector(".qrow__name")?.textContent === "Charge GoPro",
     );
-    expect(charge?.querySelector(".trow__dur")?.textContent).toBe("All day");
+    expect(charge?.querySelector(".trow__dur .dslider__label")?.textContent).toBe("All day");
     expect(container.querySelector(".qrow__allday")).toBeNull();
     expect(getAllByText("Charge GoPro").length).toBeGreaterThan(0);
   });

@@ -9,6 +9,7 @@
 import { useApp } from "./context";
 import { SourceUnassign } from "./ConfirmUnassign";
 import { RowExpanded } from "./RowExpanded";
+import { DurationSlider } from "./DurationSlider";
 import { CheckIcon, ChevronIcon } from "./RowIcons";
 import {
   draftIsStaged,
@@ -184,6 +185,12 @@ export function TaskRow({
   const blocks = effectiveBlocks(s, item.id);
   const selected = isRowSelected(s, item.id);
   const expanded = s.ui.expandedId === item.id;
+  // The duration cell stages on the row draft (the expanded panel's own
+  // path), so it shows the draft's live value and, for an all-day row, the
+  // inert "All day" readout. Opening the draft is implicit in updateDraft.
+  const draft = s.drafts[item.id];
+  const allDay = draft ? draft.mode === "allday" : blocks === 0;
+  const durBlocks = allDay ? 0 : (draft?.blocks ?? blocks);
   const staged = draftIsStaged(s, item.id);
   const nameId = rowId(item, "name");
   const expId = rowId(item, "exp");
@@ -229,7 +236,7 @@ export function TaskRow({
 
   return (
     <div
-      class={`qrow trow ${state === "excluded" ? "qrow--excluded" : ""} ${state === "background" ? "qrow--background" : ""} ${hierarchy?.depth ? "qrow--nested" : ""} ${hierarchy?.groupKey ? "qrow--grouped" : ""}${expanded ? " trow--open" : ""}${due?.tone === "overdue" ? " trow--overdue" : ""}`}
+      class={`qrow trow trow--dslider ${state === "excluded" ? "qrow--excluded" : ""} ${state === "background" ? "qrow--background" : ""} ${hierarchy?.depth ? "qrow--nested" : ""} ${hierarchy?.groupKey ? "qrow--grouped" : ""}${expanded ? " trow--open" : ""}${due?.tone === "overdue" ? " trow--overdue" : ""}`}
       data-hierarchy-depth={hierarchy?.depth ?? 0}
       data-group-key={hierarchy?.groupKey ?? undefined}
       tabIndex={0}
@@ -305,8 +312,17 @@ export function TaskRow({
           );
         })}
       </div>
-      <span class="trow__dur" title={blocks === 0 ? "All day — no capacity" : undefined}>
-        {blocksLabel(blocks)}
+      <span class="trow__dur trow__dur--slider">
+        <DurationSlider
+          idBase={rowId(item, "d")}
+          name={item.name}
+          blocks={durBlocks}
+          disabled={s.runtimeBusy || allDay}
+          title={allDay ? "All day — no capacity" : undefined}
+          onChange={(next) =>
+            controller.updateDraft(item.id, (d) => ({ ...d, blocks: next }))
+          }
+        />
       </span>
       <div class="trow__acts">
         <AssignSwitch id={item.id} name={item.name} assigned={true} s={s} />

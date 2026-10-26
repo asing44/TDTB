@@ -11194,6 +11194,28 @@ button.strip-cal {
   white-space: nowrap;
   text-align: right;
 }
+/* Plan rows (TaskRow): the duration cell is the inline slider. Its width is a
+   flexible clamp set per breakpoint class through --trow-dur-w, so there is no
+   oversized blank box; the actions column stays a fixed 152px so the switch,
+   Complete, Unassign and chevron never clip or wrap. The cell itself degrades
+   by its own width (duration-slider.css container tiers). Other `.trow`
+   consumers (Skipped today, the Not in plan drawer) keep their 66px slot. */
+.qrow.trow--dslider {
+  --trow-dur-w: clamp(112px, 14vw, 168px);
+}
+.queue__band .qrow.trow--dslider,
+.qrow.trow--dslider {
+  grid-template-columns: 16px minmax(0, 1fr) var(--trow-dur-w) 152px;
+}
+.qrow.trow--dslider > .trow__dur--slider {
+  width: var(--trow-dur-w);
+  justify-self: end;
+  text-align: initial;
+}
+.qrow.trow--dslider > .trow__acts {
+  min-width: 152px;
+  flex-wrap: nowrap;
+}
 .trow__state {
   color: var(--t-muted);
   font-size: 12px;
@@ -11475,6 +11497,32 @@ button.strip-cal {
   }
   .trow__btn {
     min-height: 38px;
+  }
+}
+
+/* Plan-row duration cell, narrowing (range syntax, so the older max-width layers keep
+   their own last-block lookups): <=1100 the steppers drop out (cell under
+   112px), <=900 the track shrinks, <=760 only the readout stays (its title
+   carries the duration). At <=640 the actions wrap to their own line, so the
+   cell gets its full control back. */
+@media (width <= 1100px) {
+  .qrow.trow--dslider {
+    --trow-dur-w: clamp(88px, 11vw, 104px);
+  }
+}
+@media (width <= 900px) {
+  .qrow.trow--dslider {
+    --trow-dur-w: clamp(72px, 9vw, 84px);
+  }
+}
+@media (width <= 760px) {
+  .qrow.trow--dslider {
+    --trow-dur-w: 56px;
+  }
+}
+@media (width <= 640px) {
+  .qrow.trow--dslider {
+    --trow-dur-w: 120px;
   }
 }
 
