@@ -96,7 +96,10 @@ describe("the row's source unassign: one click opens the confirm, nothing else",
     const { container } = h.ui(<Queue />);
 
     const trigger = triggerIn(rowFor(container, "Press"));
-    expect(trigger.textContent).toBe(UNASSIGN_TRIGGER_LABEL);
+    // Icon button: accessible name and tooltip carry the full label.
+    expect(trigger.textContent).toBe("");
+    expect(trigger.querySelector("svg.unassign__icon")).toBeTruthy();
+    expect(trigger.getAttribute("title")).toBe(UNASSIGN_TRIGGER_LABEL);
     expect(trigger.getAttribute("aria-expanded")).toBe("false");
     expect(panelIn(rowFor(container, "Press"))).toBeNull();
 
@@ -181,9 +184,9 @@ describe("the row's source unassign: the second click is the only write", () => 
     const { container } = h.ui(<Queue />);
 
     const loots = rowFor(container, "LOOTS");
-    expect(triggerIn(loots, SKIP_OCCURRENCE_TRIGGER_LABEL).textContent).toBe(
-      SKIP_OCCURRENCE_TRIGGER_LABEL,
-    );
+    expect(
+      triggerIn(loots, SKIP_OCCURRENCE_TRIGGER_LABEL).getAttribute("title"),
+    ).toBe(SKIP_OCCURRENCE_TRIGGER_LABEL);
     fireEvent.click(triggerIn(loots, SKIP_OCCURRENCE_TRIGGER_LABEL));
     const panel = panelIn(rowFor(container, "LOOTS"))!;
     expect(panel.textContent).toContain(

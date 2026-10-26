@@ -1,20 +1,30 @@
 /* U4 — row source-unassign (ConfirmUnassign.tsx).
 
    The trigger keeps the old Skip today slot in the row's actions grid, so the
-   grid template and every row's alignment are untouched. Two short lines fit
-   the 78px slot, and the wording is the point: the label names the source.
+   grid template and every row's alignment are untouched. The label
+   names the source through the accessible name and tooltip.
 
    The confirm panel is an inline grid item of `.trow__acts` spanning all four
    slots. It grows the row by one band only while open — no popover, no
    stacking context, nothing that can be clipped by the queue's overflow. */
 
-/* Outranks `.trow__acts > .trow__btn { white-space: nowrap }` in app.css
-   whichever file the bundler emits first, so the label wraps instead of
-   clipping mid-word. */
+/* Compact icon button, ~32px square like the row's other compact controls.
+   Outranks `.trow__acts > .trow__btn { width: 100%; white-space: nowrap }` in
+   app.css whichever file the bundler emits first; it sits centred in the
+   78px slot so the grid template and every row's alignment are untouched. */
 .trow__acts > .trow__btn.unassign__trigger {
-  font-size: 11px;
-  line-height: 1.15;
-  white-space: normal;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  min-width: 32px;
+  padding: 0;
+  justify-self: center;
+}
+
+.unassign__icon {
+  display: block;
+  flex: none;
 }
 
 .unassign__panel {

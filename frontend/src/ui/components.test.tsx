@@ -338,7 +338,7 @@ describe("Queue", () => {
     // F4a/U4: the row's source verb is a labelled button on every Todoist row.
     const skips = Array.from(
       container.querySelectorAll<HTMLElement>(".trow__btn"),
-    ).filter((b) => (b.textContent ?? "").startsWith(UNASSIGN_TRIGGER_LABEL));
+    ).filter((b) => b.getAttribute("aria-label") === UNASSIGN_TRIGGER_LABEL);
     expect(skips.length).toBeGreaterThan(0);
     store.dispatch({
       type: "OVERRIDE_SET",
@@ -1155,7 +1155,7 @@ describe("T25 recurring duration shaping", () => {
     ).find((r) => r.querySelector(".qrow__name")?.textContent === "LOOTS");
     const skip = Array.from(
       loots?.querySelectorAll<HTMLElement>(".trow__btn") ?? [],
-    ).find((b) => (b.textContent ?? "").startsWith(SKIP_OCCURRENCE_TRIGGER_LABEL));
+    ).find((b) => b.getAttribute("aria-label") === SKIP_OCCURRENCE_TRIGGER_LABEL);
     expect(skip).toBeTruthy();
   });
 

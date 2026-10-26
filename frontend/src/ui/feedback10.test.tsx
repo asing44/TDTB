@@ -456,11 +456,13 @@ describe("row action buttons describe themselves on hover", () => {
     expect(complete.textContent).toContain("Complete");
     expect(complete.getAttribute("title")).toBeNull();
     const skip = Array.from(press!.querySelectorAll(".trow__btn")).find((b) =>
-      (b.textContent ?? "").startsWith(UNASSIGN_TRIGGER_LABEL),
+      b.getAttribute("aria-label") === UNASSIGN_TRIGGER_LABEL,
     ) as HTMLElement;
     expect(skip).toBeTruthy();
-    // U4: the label names the source the write reaches, in plain text.
-    expect(skip.textContent).toContain(UNASSIGN_TRIGGER_LABEL);
+    // U4: the label names the source the write reaches. The face is an icon,
+    // so the name lives in aria-label and the tooltip.
+    expect(skip.textContent).toBe("");
+    expect(skip.querySelector("svg")).toBeTruthy();
     expect(skip.getAttribute("title")).toBe(UNASSIGN_TRIGGER_LABEL);
   });
 });

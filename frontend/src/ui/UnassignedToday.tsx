@@ -49,8 +49,9 @@ import {
   type SkippedTodayRow,
 } from "../store/store";
 import { ADD_TO_PLAN_LABEL, AssignSwitch } from "./TaskRow";
-import { SkippedRow } from "./SkippedToday";
+import { DurationCell, SkippedRow } from "./SkippedToday";
 import "./drawer-groups.css";
+import "./drawer-rows.css";
 
 const SOURCE_LABEL: Record<string, string> = {
   todoist: "Todoist",
@@ -96,7 +97,6 @@ function LocalRow({ row, facts }: { row: AssignmentRow; facts: DrawerFacts }) {
   const due = dueLabel(facts.deadline, s.inputs?.validDate ?? "");
   return (
     <li class="qrow trow trow--skipped trow--unassigned" data-identity={row.identity}>
-      <span class="trow__check-slot" aria-hidden="true" />
       <div class="qrow__body">
         <span class="qrow__nameline">
           <span class="qrow__name">{row.name}</span>
@@ -112,7 +112,7 @@ function LocalRow({ row, facts }: { row: AssignmentRow; facts: DrawerFacts }) {
           )}
         </span>
       </div>
-      {row.minutes != null && <span class="trow__dur">{row.minutes} min</span>}
+      <DurationCell minutes={row.minutes} />
       <div class="trow__acts">
         <AssignSwitch
           id={row.id}
@@ -146,7 +146,7 @@ function RemovedFromTodoistRow({ row }: { row: AssignmentRow }) {
           <span class="trow__state">Unassigned in Todoist</span>
         </span>
       </div>
-      {row.minutes != null && <span class="trow__dur">{row.minutes} min</span>}
+      <DurationCell minutes={row.minutes} />
       <div class="trow__acts">
         <button
           type="button"

@@ -12,6 +12,9 @@
       own "Yes, unassign in Todoist" button calls the controller. The existing
       batch-of-one path is used unchanged (`runRowBatch(id, "unassign")`).
 
+   The trigger itself is an icon button (aria-label and title carry the full
+   label above), so the wording never costs the actions row horizontal space.
+
    Escape, Cancel, a click outside, or focus leaving the control all close the
    panel with zero calls. Capacities and calendar rows never mount this
    component: their slot stays reserved (an empty `.trow__slot`) because a
@@ -42,6 +45,41 @@ export const UNASSIGN_EFFECT =
   "Clears this task's due date in Todoist, so Todoist no longer holds it for today. The task itself stays in Todoist.";
 export const SKIP_OCCURRENCE_EFFECT =
   "Advances this task's due occurrence in Todoist without completing it, so Todoist no longer holds it for today. The recurrence stays.";
+
+/** The trigger is a compact icon button so the actions cluster keeps its
+    horizontal space; the full label lives in `aria-label` and `title`. A
+    calendar with a cross for unassign, a skip-forward glyph for a recurring
+    row's occurrence. Decorative only: the button's name is the label. */
+function TriggerIcon({ recurring }: { recurring: boolean }) {
+  return (
+    <svg
+      class="unassign__icon"
+      viewBox="0 0 16 16"
+      width="16"
+      height="16"
+      fill="none"
+      stroke="currentColor"
+      stroke-width="1.5"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+      aria-hidden="true"
+      focusable="false"
+    >
+      {recurring ? (
+        <>
+          <path d="M3 3.5v9l6-4.5z" />
+          <path d="M12.5 3.5v9" />
+        </>
+      ) : (
+        <>
+          <rect x="2.5" y="3.5" width="11" height="10" rx="1.5" />
+          <path d="M2.5 6.5h11M5.5 2v3M10.5 2v3" />
+          <path d="M6.3 8.8l3.4 3.4M9.7 8.8l-3.4 3.4" />
+        </>
+      )}
+    </svg>
+  );
+}
 
 /** Item ids are human names; DOM ids may not be. */
 function safeId(id: string): string {
@@ -141,7 +179,7 @@ export function SourceUnassign({ item, s }: { item: AssignedItem; s: AppState })
         }}
         onKeyDown={onKeyDown}
       >
-        {triggerLabel}
+        <TriggerIcon recurring={recurring} />
       </button>
       {why && (
         <span class="sr-only" id={whyId}>

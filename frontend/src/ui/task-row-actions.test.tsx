@@ -111,9 +111,12 @@ describe("collapsed row: the controls and their names", () => {
     expect(labels).toEqual(["Complete", UNASSIGN_TRIGGER_LABEL, "Expand"]);
     // The words are visible faces, not hover-only text.
     expect(buttonIn(press, "Complete").textContent).toBe("Complete");
-    expect(buttonIn(press, UNASSIGN_TRIGGER_LABEL).textContent).toBe(
-      UNASSIGN_TRIGGER_LABEL,
-    );
+    // The source verb is a compact icon button: no visible text, the full
+    // label is its accessible name and tooltip.
+    const unassign = buttonIn(press, UNASSIGN_TRIGGER_LABEL);
+    expect(unassign.textContent).toBe("");
+    expect(unassign.querySelector("svg")).toBeTruthy();
+    expect(unassign.getAttribute("title")).toBe(UNASSIGN_TRIGGER_LABEL);
 
     const expand = buttonIn(press, "Expand");
     expect(expand.textContent).toBe("Expand");

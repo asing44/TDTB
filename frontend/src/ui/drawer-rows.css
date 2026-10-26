@@ -1,0 +1,35 @@
+/* drawer-rows.css — one fixed three-column grid for every row in the
+   "Not in plan" drawer and the standalone Skipped today list:
+
+     title / meta (flexible) | duration (fixed, reserved when empty) | action (fixed, right-aligned)
+
+   A row with no duration still renders an empty duration cell, so its Add to
+   plan switch (or Restore button) lines up with rows that show "90 min".
+   Applies to all four drawer groups (Todoist, Capacities, Removed from
+   Todoist, Skipped today). Tokens only; widths match the 66px duration slot
+   the task rows use. */
+
+.skipped-today__list > .qrow.trow--skipped,
+.skipped-today__list > .qrow.trow--unassigned {
+  grid-template-columns: minmax(0, 1fr) 66px 150px;
+}
+
+.skipped-today__list > .qrow.trow--skipped > .trow__dur {
+  min-width: 0;
+}
+
+.skipped-today__list > .qrow.trow--skipped > .trow__acts {
+  display: flex;
+  justify-content: flex-end;
+  min-width: 0;
+}
+
+@media (max-width: 640px) {
+  .skipped-today__list > .qrow.trow--skipped,
+  .skipped-today__list > .qrow.trow--unassigned {
+    grid-template-columns: minmax(0, 1fr) 56px auto;
+  }
+  .skipped-today__list > .qrow.trow--skipped > .trow__acts {
+    grid-column: auto !important;
+  }
+}

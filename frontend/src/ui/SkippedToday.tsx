@@ -9,6 +9,7 @@
    today, wherever a date-scoped drop is listed. */
 
 import { useApp, useAppState } from "./context";
+import "./drawer-rows.css";
 import {
   skippedTodayRows,
   taskActionDisabledReason,
@@ -23,6 +24,16 @@ const SOURCE_LABEL: Record<string, string> = {
 
 function rowKey(identity: string): string {
   return identity.replace(/[^A-Za-z0-9_-]+/g, "-");
+}
+
+/** The duration column is reserved even when a row has no duration, so every
+    row's switch / button lands in the same place (see drawer-rows.css). */
+export function DurationCell({ minutes }: { minutes: number | null | undefined }) {
+  return minutes != null ? (
+    <span class="trow__dur">{minutes} min</span>
+  ) : (
+    <span class="trow__dur trow__dur--empty" aria-hidden="true" />
+  );
 }
 
 export function SkippedRow({ row, busy }: { row: SkippedTodayRow; busy: boolean }) {
@@ -52,7 +63,7 @@ export function SkippedRow({ row, busy }: { row: SkippedTodayRow; busy: boolean 
           <span class="trow__state">Skipped today</span>
         </span>
       </div>
-      {row.minutes != null && <span class="trow__dur">{row.minutes} min</span>}
+      <DurationCell minutes={row.minutes} />
       <div class="trow__acts">
         <button
           type="button"
