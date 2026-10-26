@@ -161,6 +161,14 @@ describe("U6: a tier collapses and expands", () => {
     const toggle = head(container, "no-date");
     expect(toggle.getAttribute("aria-expanded")).toBe("true");
     expect(toggle.getAttribute("aria-label")).toContain("expanded");
+    expect(toggle.getAttribute("title")).toBe("Collapse");
+    expect(toggle.querySelector("svg.unassigned-tier__chevron")).not.toBeNull();
+    // The state is the chevron, not a status-pill word.
+    expect(toggle.querySelector(".unassigned-tier__state")).toBeNull();
+    // The section is already titled "Not in plan"; local rows do not repeat it.
+    expect(nameIn(localGroup(container), UNDATED_ROW)?.closest("li")?.textContent).not.toContain(
+      "Not in plan",
+    );
     expect(nameIn(localGroup(container), UNDATED_ROW)).not.toBeNull();
 
     fireEvent.click(toggle);
@@ -169,6 +177,8 @@ describe("U6: a tier collapses and expands", () => {
     );
     const closed = head(container, "no-date");
     expect(closed.getAttribute("aria-label")).toContain("collapsed");
+    expect(closed.getAttribute("title")).toBe("Expand");
+    expect(closed.querySelector(".unassigned-tier__chevron--closed")).not.toBeNull();
     expect(closed.getAttribute("aria-label")).toContain("1 row hidden");
     // The head keeps the tier and its count; only the rows leave the page.
     expect(closed.textContent).toContain("No date");

@@ -104,7 +104,6 @@ function LocalRow({ row, facts }: { row: AssignmentRow; facts: DrawerFacts }) {
         </span>
         <span class="qrow__source">
           <SourceChip source={String(row.source)} />
-          <span class="trow__state">Not in plan</span>
           {due && (
             <span class={`unassigned-due unassigned-due--${due.tone ?? "none"}`}>
               {due.text}
@@ -183,8 +182,8 @@ function DroppedRow({ row, busy }: { row: AssignmentRow; busy: boolean }) {
 }
 
 /** One tier disclosure, following the lane-header pattern: a full-width
-    button, the tier name, a rule, the count, the state in words, and a
-    chevron. Tiers with rows open by default; an empty tier is never rendered. */
+    button, the tier name, a rule, the count, and a chevron
+    (down = open, right = collapsed). Tiers with rows open by default; an empty tier is never rendered. */
 function TierHead({
   tier,
   open,
@@ -205,7 +204,7 @@ function TierHead({
       aria-expanded={open}
       aria-controls={controlsId}
       aria-label={`${tier.label}, ${open ? "expanded" : "collapsed"}, ${rows}${open ? "" : " hidden"}, activate to ${open ? "collapse" : "expand"}`}
-      title={tier.note}
+      title={open ? "Collapse" : "Expand"}
       onClick={onToggle}
     >
       <span class="unassigned-tier__tick" aria-hidden="true" />
@@ -215,12 +214,23 @@ function TierHead({
         {rows}
         {open ? "" : " hidden"}
       </span>
-      <span class={`unassigned-tier__state${open ? "" : " unassigned-tier__state--closed"}`}>
-        {open ? "expanded" : "collapsed"}
-      </span>
-      <span class="unassigned-tier__chevron" aria-hidden="true">
-        {open ? "▾" : "▸"}
-      </span>
+      <svg
+        class={`unassigned-tier__chevron${open ? "" : " unassigned-tier__chevron--closed"}`}
+        viewBox="0 0 12 12"
+        width="12"
+        height="12"
+        aria-hidden="true"
+        focusable="false"
+      >
+        <path
+          d={open ? "M2.5 4.25 6 7.75l3.5-3.5" : "M4.25 2.5 7.75 6l-3.5 3.5"}
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.6"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        />
+      </svg>
     </button>
   );
 }
