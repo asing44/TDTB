@@ -1,12 +1,13 @@
 /* assign-toggle.test.tsx — U4/U3b: the per-row plan-membership switch, the
-   "Not in plan" drawer, Skip today going away on Capacities rows (KTD4), and
-   the E key taking a row out of today's plan with zero source writes.
-   Fixture adapter only; no source write. */
+   "Not in plan" drawer, the source unassign staying Todoist-only on Capacities
+   rows (KTD4), and the E key taking a row out of today's plan with zero source
+   writes. Fixture adapter only; no source write. */
 
 import { afterEach, describe, expect, it } from "vitest";
 import { act, cleanup, fireEvent, waitFor } from "@testing-library/preact";
 
 import { Queue } from "./Queue";
+import { UNASSIGN_TRIGGER_LABEL } from "./ConfirmUnassign";
 import { makeHarness, type Harness } from "./test-harness";
 import { fingerprintFixedInputs } from "../model/fingerprint";
 import { fixedInputsOf } from "../fixtures/scenarios";
@@ -98,13 +99,16 @@ describe("the plan-membership switch on a row", () => {
     );
   });
 
-  it("has no Skip today on a Capacities row but keeps it on a Todoist row", () => {
+  it("has no source unassign on a Capacities row but keeps it on a Todoist row", () => {
     const h = makeHarness("ready");
     const { container } = h.ui(<Queue />);
-    const skip = (row: HTMLElement) => row.querySelector('button[aria-label="Skip today"]');
-    expect(skip(rowFor(container, NOTE))).toBeNull();
+    // U4: the Todoist row's source verb is the double-confirmed unassign; a
+    // Capacities row has none at all and the switch owns its drop instead.
+    const unassign = (row: HTMLElement) =>
+      row.querySelector(`button[aria-label="${UNASSIGN_TRIGGER_LABEL}"]`);
+    expect(unassign(rowFor(container, NOTE))).toBeNull();
     expect(switchIn(rowFor(container, NOTE))).not.toBeNull();
-    expect(skip(rowFor(container, "Press"))).not.toBeNull();
+    expect(unassign(rowFor(container, "Press"))).not.toBeNull();
   });
 
   it("is disabled with the Day Setup reason announced before confirmation", () => {

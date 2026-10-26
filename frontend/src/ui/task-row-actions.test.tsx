@@ -1,12 +1,14 @@
 /* task-row-actions.test.tsx — task-actions F4a: the collapsed row's own
-   contract, and the Skip today → Skipped today → Restore today round trip.
+   contract, and the Unassign in Todoist → Skipped today → Restore today
+   round trip.
 
    Covered here (and only here):
    - the collapsed row's controls and their accessible names;
    - one expanded row at a time, with aria-expanded following it;
    - selection independent of expansion;
-   - Skip today through the fixture adapter, the Skipped today section, and
-     Restore today resolved from the drop entry's own identity;
+   - U4's double-confirmed source unassign through the fixture adapter, the
+     Skipped today section, and Restore today resolved from the drop entry's
+     own identity;
    - the Day Setup gate as written reason text, not just a disabled button;
    - the C and E shortcuts acting on the row that received the key: C still
      completes in the source, E is local plan membership with no source write.
@@ -18,13 +20,14 @@
    fixture control turns a `drop_from_plan` into a `dropped[]` entry. So the
    round trip publishes the read the controller would receive (the same
    `SOURCE_REFRESH_OK` shape header/failure-states tests stage), while every
-   verb itself still travels through FixtureAdapter.runtimeAction. */
+   verb itself still travels through FixtureAdapter.applyRuntimeBatch. */
 
 import { afterEach, describe, expect, it } from "vitest";
 import { act, cleanup, fireEvent, waitFor } from "@testing-library/preact";
 
 import { Queue } from "./Queue";
 import { makeHarness, type Harness } from "./test-harness";
+import { UNASSIGN_CONFIRM_LABEL, UNASSIGN_TRIGGER_LABEL } from "./ConfirmUnassign";
 import { DAY_SETUP_GATE_REASON } from "../store/store";
 import { fingerprintFixedInputs } from "../model/fingerprint";
 import { fixedInputsOf } from "../fixtures/scenarios";
@@ -105,10 +108,12 @@ describe("collapsed row: the controls and their names", () => {
     const labels = Array.from(
       press.querySelectorAll<HTMLElement>(".trow__acts > button"),
     ).map((b) => b.getAttribute("aria-label"));
-    expect(labels).toEqual(["Complete", "Skip today", "Expand"]);
+    expect(labels).toEqual(["Complete", UNASSIGN_TRIGGER_LABEL, "Expand"]);
     // The words are visible faces, not hover-only text.
     expect(buttonIn(press, "Complete").textContent).toBe("Complete");
-    expect(buttonIn(press, "Skip today").textContent).toBe("Skip today");
+    expect(buttonIn(press, UNASSIGN_TRIGGER_LABEL).textContent).toBe(
+      UNASSIGN_TRIGGER_LABEL,
+    );
 
     const expand = buttonIn(press, "Expand");
     expect(expand.textContent).toBe("Expand");
@@ -129,16 +134,18 @@ describe("collapsed row: the controls and their names", () => {
       const labels = Array.from(
         row.querySelectorAll<HTMLElement>(".trow__acts > button"),
       ).map((b) => b.getAttribute("aria-label"));
-      // KTD4: Skip today is Todoist-only; the Assigned switch replaces it on
-      // a Capacities or calendar row.
+      // KTD4/U4: the source unassign is Todoist-only; the Assigned switch
+      // replaces it on a Capacities or calendar row.
       const heldBySwitch = row.querySelector(".qrow__src--capacities, .qrow__src--calendar");
-      // The empty Skip today slot stays reserved so Complete and Expand keep
+      // The empty unassign slot stays reserved so Complete and Expand keep
       // their column on every row.
       expect(row.querySelectorAll(".trow__acts > .trow__slot")).toHaveLength(
         heldBySwitch ? 1 : 0,
       );
       expect(labels.slice(0, 3)).toEqual(
-        heldBySwitch ? ["Complete", "Expand"] : ["Complete", "Skip today", "Expand"],
+        heldBySwitch
+          ? ["Complete", "Expand"]
+          : ["Complete", UNASSIGN_TRIGGER_LABEL, "Expand"],
       );
     }
   });
@@ -205,14 +212,14 @@ describe("collapsed row: selection is independent of expansion", () => {
 });
 
 describe("collapsed row: the Day Setup gate says why", () => {
-  it("disables Complete and Skip today with the reason as text", () => {
+  it("disables Complete and the source unassign with the reason as text", () => {
     const h = makeHarness("fresh");
     expect(h.store.getState().daySetup.confirmed).toBe(false);
     const { container } = h.ui(<Queue />);
     const press = rowFor(container, "Press");
 
     const complete = buttonIn(press, "Complete");
-    const skip = buttonIn(press, "Skip today");
+    const skip = buttonIn(press, UNASSIGN_TRIGGER_LABEL);
     expect(complete.disabled).toBe(true);
     expect(skip.disabled).toBe(true);
     // The reason is not only a title (invisible to keyboard/touch): it is a
@@ -220,11 +227,11 @@ describe("collapsed row: the Day Setup gate says why", () => {
     expect(complete.title).toBe(DAY_SETUP_GATE_REASON);
     expect(skip.title).toBe(DAY_SETUP_GATE_REASON);
     expect(complete.getAttribute("aria-describedby")).toBe("why-complete-Press");
-    expect(skip.getAttribute("aria-describedby")).toBe("why-skip-Press");
+    expect(skip.getAttribute("aria-describedby")).toBe("why-unassign-Press");
     expect(
       press.querySelector("#why-complete-Press")?.textContent,
     ).toBe(DAY_SETUP_GATE_REASON);
-    expect(press.querySelector("#why-skip-Press")?.textContent).toBe(
+    expect(press.querySelector("#why-unassign-Press")?.textContent).toBe(
       DAY_SETUP_GATE_REASON,
     );
     expect(press.textContent).toContain(DAY_SETUP_GATE_REASON);
@@ -237,22 +244,41 @@ describe("collapsed row: the Day Setup gate says why", () => {
   });
 });
 
-describe("collapsed row: Skip today and Restore today", () => {
-  it("skips through the adapter, shows Skipped today, then restores", async () => {
+describe("collapsed row: Unassign in Todoist and the Skipped today section", () => {
+  it("unassigns through the adapter after the confirm, then restores from Skipped today", async () => {
     const h = makeHarness("ready");
     const calls = spyVerbs(h);
+    const batched: Array<{ verb: string; target: string }> = [];
+    const applyBatch = h.adapter.applyRuntimeBatch.bind(h.adapter);
+    h.adapter.applyRuntimeBatch = async (items) => {
+      for (const item of items) batched.push({ verb: item.verb, target: item.target });
+      return applyBatch(items);
+    };
     const { container } = h.ui(<Queue />);
 
-    fireEvent.click(buttonIn(rowFor(container, "Press"), "Skip today"));
+    // U4: click 1 opens the confirm and writes nothing; click 2 unassigns.
+    fireEvent.click(buttonIn(rowFor(container, "Press"), UNASSIGN_TRIGGER_LABEL));
+    expect(batched).toEqual([]);
+    const panel = rowFor(container, "Press").querySelector<HTMLElement>(
+      ".unassign__panel",
+    )!;
+    fireEvent.click(
+      Array.from(panel.querySelectorAll<HTMLButtonElement>("button")).find(
+        (b) => b.textContent?.trim() === UNASSIGN_CONFIRM_LABEL,
+      )!,
+    );
     await waitFor(() =>
-      expect(calls).toEqual([
-        { verb: "drop_from_plan", target: PRESS_IDENTITY },
+      expect(batched).toEqual([
+        { verb: "unassign", target: PRESS_IDENTITY },
       ]),
     );
-    // A skip is durable and date-scoped: it is never a browser-only exclusion.
+    // A source unassign is a real source write: never a browser-only exclusion.
     expect(h.store.getState().overrides["Press"]).toBeUndefined();
+    // The batch of one settles before the next row verb, so the single batch
+    // slot is free for the Restore below.
+    await waitFor(() => expect(h.store.getState().batch.phase).toBe("done"));
 
-    // The server's post-skip read: Press leaves `assigned` for `dropped[]`.
+    // The server's post-drop read: Press leaves `assigned` for `dropped[]`.
     stageServerRead(h, (inputs) => {
       inputs.assigned = inputs.assigned.filter((i) => i.id !== "Press");
       inputs.droppedToday = [
@@ -287,7 +313,6 @@ describe("collapsed row: Skip today and Restore today", () => {
     fireEvent.click(restore);
     await waitFor(() =>
       expect(calls).toEqual([
-        { verb: "drop_from_plan", target: PRESS_IDENTITY },
         { verb: "restore_today", target: PRESS_IDENTITY },
       ]),
     );

@@ -2,10 +2,12 @@
    prototype (design/task-actions r2). One row = an independent selection
    checkbox, the name with its source/type chips and a short state, the
    duration in mono, the plan-membership switch, and three labelled buttons: Complete,
-   Skip today (Todoist rows only), and Expand/Collapse. Selection never depends on expansion; one row is expanded
+   Unassign in Todoist (Todoist rows only, double-confirmed source write), and
+   Expand/Collapse. Selection never depends on expansion; one row is expanded
    at a time (store ui.expandedId). The expanded region mounts RowExpanded (F4b). */
 
 import { useApp } from "./context";
+import { SourceUnassign } from "./ConfirmUnassign";
 import { RowExpanded } from "./RowExpanded";
 import {
   draftIsStaged,
@@ -187,9 +189,7 @@ export function TaskRow({
 
   // Disabled reasons: the store's one answer, shown as title + linked text.
   const completeWhy = taskActionDisabledReason(s, "complete");
-  const skipWhy = taskActionDisabledReason(s, "skip");
   const completeWhyId = rowId(item, "why-complete");
-  const skipWhyId = rowId(item, "why-skip");
   // A Capacities object has no completable source, so its Complete is Skip
   // today. The visible label stays Complete; the title and the description
   // element say what actually happens, so keyboard and screen-reader users are
@@ -197,10 +197,10 @@ export function TaskRow({
   const capacitiesComplete = item.source === "capacities";
   const capacitiesWhyId = rowId(item, "why-capacities-complete");
   const completeOff = s.runtimeBusy || completeWhy !== null;
-  const skipOff = s.runtimeBusy || skipWhy !== null;
-  // KTD4: on a Capacities or calendar row Skip today is the same `dropped[]`
-  // state the switch writes, so the switch replaces it there.
-  const skipHidden = item.source === "capacities" || item.source === "calendar";
+  // KTD4/U4: a source unassign is Todoist-only. On a Capacities or calendar
+  // row the assign switch already owns the date-scoped drop, and a Capacities
+  // write is out of scope, so the slot stays reserved and empty there.
+  const unassignHidden = item.source === "capacities" || item.source === "calendar";
 
   const scheduledRow = s.sequence?.find((r) => r.id === item.id && r.kind === "work");
   // 04-overlap-note: explicit overlap grants and the operator "May overlap
@@ -336,25 +336,8 @@ export function TaskRow({
             {CAPACITIES_COMPLETE_NOTE}
           </span>
         )}
-        {skipHidden && <span class="trow__slot" aria-hidden="true" />}
-        {!skipHidden && (
-          <button
-            type="button"
-            class="trow__btn"
-            aria-label="Skip today"
-            disabled={skipOff}
-            title={skipWhy ?? undefined}
-            aria-describedby={skipWhy ? skipWhyId : undefined}
-            onClick={() => void controller.skipToday(item.id)}
-          >
-            Skip today
-          </button>
-        )}
-        {!skipHidden && skipWhy && (
-          <span class="sr-only" id={skipWhyId}>
-            {skipWhy}
-          </span>
-        )}
+        {unassignHidden && <span class="trow__slot" aria-hidden="true" />}
+        {!unassignHidden && <SourceUnassign item={item} s={s} />}
         <button
           type="button"
           class="trow__btn"

@@ -1,0 +1,96 @@
+/* U4 — row source-unassign (ConfirmUnassign.tsx).
+
+   The trigger keeps the old Skip today slot in the row's actions grid, so the
+   grid template and every row's alignment are untouched. Two short lines fit
+   the 78px slot, and the wording is the point: the label names the source.
+
+   The confirm panel is an inline grid item of `.trow__acts` spanning all four
+   slots. It grows the row by one band only while open — no popover, no
+   stacking context, nothing that can be clipped by the queue's overflow. */
+
+/* Outranks `.trow__acts > .trow__btn { white-space: nowrap }` in app.css
+   whichever file the bundler emits first, so the label wraps instead of
+   clipping mid-word. */
+.trow__acts > .trow__btn.unassign__trigger {
+  font-size: 11px;
+  line-height: 1.15;
+  white-space: normal;
+}
+
+.unassign__panel {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: 4px;
+  margin-top: 2px;
+  padding: 7px 9px;
+  border: 1px solid color-mix(in srgb, var(--c-overflow, #b3452f) 45%, var(--t-border));
+  border-radius: var(--radius-sm, 5px);
+  background: color-mix(in srgb, var(--c-overflow, #b3452f) 5%, var(--t-surface));
+  color: var(--t-text);
+  overflow-wrap: anywhere;
+}
+
+.unassign__panel:focus-visible {
+  outline: 2px solid var(--c-selected, #3b82f6);
+  outline-offset: 2px;
+}
+
+.unassign__q {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.unassign__what,
+.unassign__note {
+  margin: 0;
+  font-size: 11px;
+  color: var(--t-muted);
+}
+
+.unassign__acts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 2px;
+}
+
+.unassign__yes,
+.unassign__cancel {
+  min-height: 30px;
+  padding: 5px 10px;
+  border: 1px solid var(--t-border);
+  border-radius: var(--radius-sm, 5px);
+  background: var(--t-surface);
+  color: var(--t-text);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.unassign__yes {
+  border-color: color-mix(in srgb, var(--c-overflow, #b3452f) 70%, var(--t-border));
+  font-weight: 600;
+}
+
+.unassign__yes:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--c-overflow, #b3452f) 12%, var(--t-surface));
+}
+
+.unassign__cancel:hover:not(:disabled) {
+  border-color: var(--t-muted);
+}
+
+.unassign__yes:disabled,
+.unassign__cancel:disabled {
+  cursor: not-allowed;
+  background: var(--t-surface-2);
+  color: var(--t-muted);
+}
+
+@media (max-width: 640px) {
+  .unassign__yes,
+  .unassign__cancel {
+    min-height: 34px;
+  }
+}

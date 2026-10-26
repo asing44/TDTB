@@ -3,12 +3,12 @@
    call is in flight, so no second row verb may start behind it.
 
    Covered here (and only here):
-   - while `applyRuntimeBatch` is pending, the row's Complete and Skip today
-     buttons are disabled and carry the written reason, and TaskRow,
+   - while `applyRuntimeBatch` is pending, the row's Complete and Unassign in
+     Todoist… buttons are disabled and carry the written reason, and TaskRow,
      SkippedToday, SourceMenu and the controller all read that same reason;
-   - a Complete click, a Skip today click, the C and E shortcuts, and direct
-     `runRowBatch` / `skipToday` calls make ZERO additional adapter calls and
-     cannot replace the applying batch with a second BATCH_SET;
+   - a Complete click, an Unassign in Todoist… click, the C and E shortcuts, and
+     direct `runRowBatch` / `skipToday` calls make ZERO additional adapter
+     calls and cannot replace the applying batch with a second BATCH_SET;
    - once the pending call resolves, the verbs work again.
 
    Fixture adapter only: one deferred fixture call, no live adapter, no billed
@@ -18,6 +18,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { cleanup, fireEvent, waitFor } from "@testing-library/preact";
 
 import { Queue } from "./Queue";
+import { UNASSIGN_TRIGGER_LABEL } from "./ConfirmUnassign";
 import { makeHarness, type Harness } from "./test-harness";
 import {
   BATCH_APPLYING_REASON,
@@ -99,9 +100,12 @@ describe("row verbs while a batch applies", () => {
     const { container } = h.ui(<Queue />);
     const press = rowFor(container, "Press");
     const complete = buttonIn(press, "Complete");
-    const skip = buttonIn(press, "Skip today");
+    // U4: the row's source verb is the unassign trigger; its confirm panel is
+    // unreachable while the batch applies.
+    const skip = buttonIn(press, UNASSIGN_TRIGGER_LABEL);
     expect(complete.disabled).toBe(true);
     expect(skip.disabled).toBe(true);
+    expect(press.querySelector(".unassign__panel")).toBeNull();
     expect(complete.getAttribute("title")).toBe(BATCH_APPLYING_REASON);
     expect(skip.getAttribute("title")).toBe(BATCH_APPLYING_REASON);
     expect(press.textContent).toContain(BATCH_APPLYING_REASON);
@@ -134,7 +138,7 @@ describe("row verbs while a batch applies", () => {
     }
     const other = rowFor(container, "Magic Mirror");
     await waitFor(() => expect(buttonIn(other, "Complete").disabled).toBe(false));
-    expect(buttonIn(other, "Skip today").disabled).toBe(false);
+    expect(buttonIn(other, UNASSIGN_TRIGGER_LABEL).disabled).toBe(false);
     expect(buttonIn(other, "Complete").getAttribute("title") ?? "").toBe("");
 
     fireEvent.keyDown(other, { key: "c" });

@@ -8,7 +8,8 @@
    - selection stays local and only then does the batch bar appear;
    - a single Source-menu verb (Hide always / Unassign) reports through the
      same batch result panel as a multi-row batch, with Undo;
-   - Skip today lands in the Skipped today section and restores from there.
+   - the row's confirmed source unassign lands the row in the Skipped today
+     section, which restores it from there.
 
    Retirement note: the per-row "Always exclude" menu (always-exclude.test.tsx)
    is gone. Its assertions that must still hold NOW are re-created here against
@@ -26,6 +27,7 @@ import { act, cleanup, fireEvent, waitFor } from "@testing-library/preact";
 afterEach(cleanup);
 
 import { Queue } from "./Queue";
+import { UNASSIGN_CONFIRM_LABEL, UNASSIGN_TRIGGER_LABEL } from "./ConfirmUnassign";
 import { makeHarness, type Harness } from "./test-harness";
 import { fingerprintFixedInputs } from "../model/fingerprint";
 import { fixedInputsOf } from "../fixtures/scenarios";
@@ -93,7 +95,7 @@ function spyBatches(h: Harness): Array<{ verb: string; target: string }> {
   return batched;
 }
 
-/** Spy the immediate single verbs (Skip today, Delete). */
+/** Spy the immediate single verbs (Delete, and the Skipped today Restore). */
 function spyVerbs(h: Harness): Array<{ verb: string; target: string }> {
   const calls: Array<{ verb: string; target: string }> = [];
   const original = h.adapter.runtimeAction.bind(h.adapter);
@@ -136,7 +138,7 @@ describe("F7 integration: the row and its expanded panel", () => {
       Array.from(press.querySelectorAll<HTMLElement>(".trow__acts > button")).map((b) =>
         b.getAttribute("aria-label"),
       ),
-    ).toEqual(["Complete", "Skip today", "Expand"]);
+    ).toEqual(["Complete", UNASSIGN_TRIGGER_LABEL, "Expand"]);
     expect(container.querySelector('button[aria-haspopup="menu"]')).toBeNull();
     expect(container.querySelector(".row-more")).toBeNull();
     expect(container.querySelector('button[aria-label^="Adjust time for"]')).toBeNull();
@@ -291,24 +293,35 @@ describe("F7 integration: one source verb reports as a batch of one", () => {
   });
 });
 
-describe("F7 integration: Skip today and the Skipped today section", () => {
-  it("skips through the adapter, then restores from the Skipped today section", async () => {
+describe("F7 integration: the confirmed source unassign and the Skipped today section", () => {
+  it("unassigns through the adapter after the confirm, then restores from the Skipped today section", async () => {
     const h = makeHarness("ready");
     const calls = spyVerbs(h);
+    const batched = spyBatches(h);
     const { container } = h.ui(<Queue />);
 
+    // U4: click 1 opens the confirm and writes nothing; click 2 unassigns.
+    const trigger = rowFor(container, "Press").querySelector<HTMLButtonElement>(
+      `button[aria-label="${UNASSIGN_TRIGGER_LABEL}"]`,
+    )!;
+    fireEvent.click(trigger);
+    expect(batched).toEqual([]);
+    expect(calls).toEqual([]);
     fireEvent.click(
-      rowFor(container, "Press").querySelector<HTMLButtonElement>(
-        'button[aria-label="Skip today"]',
-      )!,
+      buttonWithText(rowFor(container, "Press"), UNASSIGN_CONFIRM_LABEL),
     );
     await waitFor(() =>
-      expect(calls).toEqual([{ verb: "drop_from_plan", target: PRESS_IDENTITY }]),
+      expect(batched).toEqual([{ verb: "unassign", target: PRESS_IDENTITY }]),
     );
-    // A skip is durable and date-scoped: never a browser-only exclusion.
+    // A source unassign is durable and date-scoped: never a browser-only
+    // exclusion, and never an immediate single verb.
     expect(h.store.getState().overrides["Press"]).toBeUndefined();
+    expect(calls).toEqual([]);
+    // The batch of one settles before the next row verb, so the single batch
+    // slot is free for the Restore below.
+    await waitFor(() => expect(h.store.getState().batch.phase).toBe("done"));
 
-    // The server's post-skip read moves the row into dropped[].
+    // The server's post-unassign read moves the row into dropped[].
     stageServerRead(h, (inputs) => {
       inputs.assigned = inputs.assigned.filter((i) => i.id !== "Press");
       inputs.droppedToday = [
@@ -333,7 +346,6 @@ describe("F7 integration: Skip today and the Skipped today section", () => {
     fireEvent.click(skipped.querySelector<HTMLButtonElement>(".trow__acts button")!);
     await waitFor(() =>
       expect(calls).toEqual([
-        { verb: "drop_from_plan", target: PRESS_IDENTITY },
         { verb: "restore_today", target: PRESS_IDENTITY },
       ]),
     );

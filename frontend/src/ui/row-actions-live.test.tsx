@@ -2,21 +2,22 @@
    still describe the shipped product (rewritten 2026-10-16 for F7).
 
    F7 removed the transitional per-row More (⋯) menu. The collapsed row now
-   offers exactly three labelled controls — Complete, Skip today, Expand — and
-   every secondary verb moved to where the approved prototype puts it: the
-   source verbs (Hide always, Delete) on the expanded row's Source menu, and
-   the planning verbs on the expanded row's line-1 controls (covered by
-   row-expanded.test.tsx). Assignment changes belong to the assign toggle, so
+   offers exactly three labelled controls — Complete, Unassign in Todoist…,
+   Expand — and every secondary verb moved to where the approved prototype
+   puts it: the source verbs (Hide always, Delete) on the expanded row's Source
+   menu, and the planning verbs on the expanded row's line-1 controls (covered
+   by row-expanded.test.tsx). Assignment changes belong to the assign toggle, so
    the Source menu no longer offers Unassign / Skip occurrence (KTD4).
 
    What stays pinned here, because it is behavior that must hold NOW:
-   - the row cluster is exactly Complete, Skip today, Expand, in that order;
+   - the row cluster is exactly Complete, Unassign in Todoist…, Expand, in that
+     order;
    - source removal and Delete are reachable only through the Source menu, not
      from the row cluster or the keyboard shortcuts;
    - the verbs keep their frozen wire mapping: `done` / `unassign` /
      `hide_always` ride the journaled batch wire against the stable identity,
-     Skip today stays the immediate `drop_from_plan`, and Delete stays
-     individual-only behind a confirm;
+     and Delete stays individual-only behind a confirm. The row's unassign is
+     U4: one click opens a confirm, and only its own labelled button writes;
    - a busy runtime disables the source-writing controls;
    - the surviving controls keep an explicit focus ring, a hit-area floor, and
      phone-width wrapping.
@@ -36,6 +37,7 @@ import { Controller } from "../store/controller";
 import { FixtureAdapter } from "../adapters/fixture";
 import { makeScenario, restorePlannedDay } from "../fixtures/scenarios";
 import { makeHarness } from "./test-harness";
+import { UNASSIGN_CONFIRM_LABEL, UNASSIGN_TRIGGER_LABEL } from "./ConfirmUnassign";
 
 afterEach(cleanup);
 
@@ -91,8 +93,7 @@ function openSource(row: HTMLElement): HTMLElement {
 
 /** Same fixture harness as test-harness, but with spies around the fake
     adapter's two write routes so the wire mapping is observable: per-row
-    verbs ride `applyRuntimeBatch`, Skip today and Delete ride
-    `runtimeAction`. */
+    verbs ride `applyRuntimeBatch`, Delete rides `runtimeAction`. */
 function spyHarness() {
   const sc = makeScenario("ready");
   const store = createStore();
@@ -126,14 +127,14 @@ function spyHarness() {
 }
 
 describe("collapsed row: direct verbs", () => {
-  it("offers exactly Complete, Skip today and Expand — never source removal or Delete", () => {
+  it("offers exactly Complete, Unassign in Todoist… and Expand — never source removal or Delete", () => {
     const h = makeHarness("ready");
     const { container } = h.ui(<Queue />);
     const press = rowFor(container, "Press");
     const direct = Array.from(
       press.querySelectorAll<HTMLElement>(".trow__acts > button"),
     ).map((b) => b.getAttribute("aria-label"));
-    expect(direct).toEqual(["Complete", "Skip today", "Expand"]);
+    expect(direct).toEqual(["Complete", UNASSIGN_TRIGGER_LABEL, "Expand"]);
     // Source removal and Delete are not direct controls, and the transitional
     // More menu that used to hold them is gone.
     expect(press.querySelector('button[aria-label*="Remove from planning"]')).toBeNull();
@@ -146,14 +147,14 @@ describe("collapsed row: direct verbs", () => {
     expect(expanded.querySelector(".source-menu__trigger")).not.toBeNull();
   });
 
-  it("keeps DOM/focus order: Complete, Skip today, Expand", () => {
+  it("keeps DOM/focus order: Complete, Unassign in Todoist…, Expand", () => {
     const h = makeHarness("ready");
     const { container } = h.ui(<Queue />);
     const press = rowFor(container, "Press");
     const labels = Array.from(
       press.querySelectorAll<HTMLElement>(".trow__acts button"),
     ).map((b) => b.getAttribute("aria-label"));
-    expect(labels).toEqual(["Complete", "Skip today", "Expand"]);
+    expect(labels).toEqual(["Complete", UNASSIGN_TRIGGER_LABEL, "Expand"]);
   });
 });
 
@@ -168,16 +169,20 @@ describe("collapsed row: dispatch mapping is unchanged", () => {
     expect(h.calls).toEqual([]);
   });
 
-  it("Skip today fires drop_from_plan against the row identity", async () => {
+  it("Unassign in Todoist fires one unassign against the row identity, after the confirm", async () => {
     const h = spyHarness();
     const { container } = h.ui(<Queue />);
-    fireEvent.click(buttonNamed(rowFor(container, "Press"), "Skip today"));
+    // U4: the first click is only the confirm.
+    fireEvent.click(buttonNamed(rowFor(container, "Press"), UNASSIGN_TRIGGER_LABEL));
+    expect(h.batched).toEqual([]);
+    expect(h.calls).toEqual([]);
+    fireEvent.click(buttonWithText(rowFor(container, "Press"), UNASSIGN_CONFIRM_LABEL));
     await waitFor(() =>
-      expect(h.calls).toEqual([
-        { verb: "drop_from_plan", target: "todoist:6fx00xPRESS" },
+      expect(h.batched).toEqual([
+        { verb: "unassign", target: "todoist:6fx00xPRESS" },
       ]),
     );
-    expect(h.batched).toEqual([]);
+    expect(h.calls).toEqual([]);
   });
 
   it("Source-menu verbs keep their frozen wire mapping", async () => {
@@ -229,7 +234,7 @@ describe("collapsed row: busy runtime", () => {
     });
 
     expect(buttonNamed(press, "Complete").disabled).toBe(true);
-    expect(buttonNamed(press, "Skip today").disabled).toBe(true);
+    expect(buttonNamed(press, UNASSIGN_TRIGGER_LABEL).disabled).toBe(true);
     // The Source menu's verbs are disabled with the written reason.
     const row = expand(container, "Press");
     const menu = openSource(row);

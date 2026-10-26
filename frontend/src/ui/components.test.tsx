@@ -11,6 +11,7 @@ import { BlockEditor } from "./BlockEditor";
 import { ActionDock } from "./ActionDock";
 import { ApprovalDrawer } from "./ApprovalDrawer";
 import { Queue } from "./Queue";
+import { SKIP_OCCURRENCE_TRIGGER_LABEL, UNASSIGN_TRIGGER_LABEL } from "./ConfirmUnassign";
 import { SetupDrawer } from "./SetupDrawer";
 import { AnchoredEditor } from "./AnchoredEditor";
 import { Rail } from "./Rail";
@@ -328,15 +329,16 @@ describe("Queue", () => {
   });
 
   it("exclude control moves an item out of today", () => {
-    // F4a: browser-only Exclude today left the row for Skip today (durable,
-    // server-recorded). The legacy store path stays intact for rows excluded
-    // before the migration.
+    // F4a: browser-only Exclude today left the row for a durable,
+    // server-recorded source drop — now U4's confirmed "Unassign in
+    // Todoist…". The legacy store path stays intact for rows excluded before
+    // the migration.
     const { ui, store } = makeHarness("ready");
     const { container } = ui(<Queue />);
-    // F4a: Skip today is a labelled button on every row.
+    // F4a/U4: the row's source verb is a labelled button on every Todoist row.
     const skips = Array.from(
       container.querySelectorAll<HTMLElement>(".trow__btn"),
-    ).filter((b) => (b.textContent ?? "").startsWith("Skip today"));
+    ).filter((b) => (b.textContent ?? "").startsWith(UNASSIGN_TRIGGER_LABEL));
     expect(skips.length).toBeGreaterThan(0);
     store.dispatch({
       type: "OVERRIDE_SET",
@@ -1136,13 +1138,15 @@ describe("T25 recurring duration shaping", () => {
     });
   }
 
-  it("recurring rows expose Skip today — placement-immune must not mean undroppable", () => {
+  it("recurring rows expose the source skip-of-occurrence — placement-immune must not mean undroppable", () => {
     /* T12 qualification (2026-07-26): recurring rows rendered no exclude verb
        at all, so LOOTS and M2.5 could only be dropped from the day by marking
        them done (a lie), deferring (moves them), or deleting permanently
        (destructive). There was no "not today". Being pinned to a native time
        is a placement constraint, not a reason to be undroppable. F4a moved the
-       verb from the browser-only Exclude control to the durable Skip today. */
+       verb from the browser-only Exclude control to a durable source write; U4
+       renamed it after what it does upstream and put it behind a confirm, so a
+       recurring row reads "Skip occurrence in Todoist…". */
     const h = makeHarness("ready");
     withRecurring(h);
     const { container } = h.ui(<Queue />);
@@ -1151,7 +1155,7 @@ describe("T25 recurring duration shaping", () => {
     ).find((r) => r.querySelector(".qrow__name")?.textContent === "LOOTS");
     const skip = Array.from(
       loots?.querySelectorAll<HTMLElement>(".trow__btn") ?? [],
-    ).find((b) => (b.textContent ?? "").startsWith("Skip today"));
+    ).find((b) => (b.textContent ?? "").startsWith(SKIP_OCCURRENCE_TRIGGER_LABEL));
     expect(skip).toBeTruthy();
   });
 

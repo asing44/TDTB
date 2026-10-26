@@ -9,6 +9,7 @@ import { cleanup, fireEvent } from "@testing-library/preact";
 import { App } from "./App";
 import { AllocationPie } from "./AllocationPie";
 import { Queue } from "./Queue";
+import { UNASSIGN_TRIGGER_LABEL } from "./ConfirmUnassign";
 import { makeHarness as stageHarness, type Harness } from "./test-harness";
 
 /** These tests exercise the Plan work surface. The app now boots on Set up
@@ -36,10 +37,12 @@ describe("locked contract: Today's work language (item 1)", () => {
 describe("locked contract: explicit direct actions plus the Source menu (item 3)", () => {
   it("rows complete directly; source removal and Delete live in the expanded Source menu", () => {
     /* F4a (2026-10-16): the row's direct verbs are the labelled controls
-       Complete, Skip today and Expand. The old icon faces (Mark complete in
-       source, Leave as-is) and their hover-only words are gone; source
-       removal (Remove from planning) and the destructive Delete remain
-       reachable only through the row's More menu. */
+       Complete, Unassign in Todoist… and Expand. The old icon faces (Mark
+       complete in source, Leave as-is) and their hover-only words are gone;
+       U4 renamed the source verb after what it does upstream and put it behind
+       its own confirm. Source removal (Remove from planning) and the
+       destructive Delete remain reachable only through the row's Source
+       menu. */
     const h = makeHarness("ready");
     const r = h.ui(<Queue />);
     // A persistent action column is prohibited.
@@ -49,7 +52,7 @@ describe("locked contract: explicit direct actions plus the Source menu (item 3)
       r.getAllByRole("button", { name: "Complete" }).length,
     ).toBeGreaterThan(0);
     expect(
-      r.getAllByRole("button", { name: "Skip today" }).length,
+      r.getAllByRole("button", { name: UNASSIGN_TRIGGER_LABEL }).length,
     ).toBeGreaterThan(0);
     // Old deferral verb is gone; Leave as-is was its replacement and left
     // with F4a's labelled controls.

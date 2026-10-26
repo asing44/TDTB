@@ -26,6 +26,7 @@ import { cleanup, fireEvent } from "@testing-library/preact";
 afterEach(cleanup);
 
 import { Queue } from "./Queue";
+import { UNASSIGN_TRIGGER_LABEL } from "./ConfirmUnassign";
 import { AllocationPie } from "./AllocationPie";
 import { ActionDock } from "./ActionDock";
 import { makeHarness, type Harness } from "./test-harness";
@@ -443,10 +444,10 @@ describe("row action buttons describe themselves on hover", () => {
   });
 
   it("the collapsed row's own buttons carry their words in plain text", () => {
-    // F4a: Mark complete and Leave as-is were icon faces whose words lived in
-    // a hover bubble. The collapsed row's Complete / Skip today controls are
-    // labelled buttons, so the words never depend on a hover, and the room
-    // self-describes its scope without a tooltip.
+    // F4a/U4: Mark complete and Leave as-is were icon faces whose words lived
+    // in a hover bubble. The collapsed row's Complete / Unassign in Todoist…
+    // controls are labelled buttons, so the words never depend on a hover, and
+    // the room self-describes its scope without a tooltip.
     const { container } = makeHarness("ready").ui(<Queue />);
     const press = Array.from(container.querySelectorAll<HTMLElement>(".qrow")).find(
       (r) => r.querySelector(".qrow__name")?.textContent === "Press",
@@ -455,9 +456,11 @@ describe("row action buttons describe themselves on hover", () => {
     expect(complete.textContent).toContain("Complete");
     expect(complete.getAttribute("title")).toBeNull();
     const skip = Array.from(press!.querySelectorAll(".trow__btn")).find((b) =>
-      (b.textContent ?? "").startsWith("Skip today"),
+      (b.textContent ?? "").startsWith(UNASSIGN_TRIGGER_LABEL),
     ) as HTMLElement;
     expect(skip).toBeTruthy();
-    expect(skip.textContent).toContain("Skip today");
+    // U4: the label names the source the write reaches, in plain text.
+    expect(skip.textContent).toContain(UNASSIGN_TRIGGER_LABEL);
+    expect(skip.getAttribute("title")).toBe(UNASSIGN_TRIGGER_LABEL);
   });
 });

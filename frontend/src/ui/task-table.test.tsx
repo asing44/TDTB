@@ -16,6 +16,7 @@ import { resolve } from "node:path";
 import type { ComponentChildren } from "preact";
 
 import { Queue } from "./Queue";
+import { UNASSIGN_TRIGGER_LABEL } from "./ConfirmUnassign";
 import { Ctx } from "./context";
 import { createStore } from "../store/createStore";
 import { Controller } from "../store/controller";
@@ -188,12 +189,13 @@ describe("U11 row actions stay visible without a hover", () => {
     const { container } = h.ui(<Queue />);
     const row = rowNamed(container, "Press");
     expect(row.querySelector(".trow__acts")).toBeTruthy();
-    // F4a: three labelled controls in order, plus the transitional More menu.
+    // F4a/U4: three labelled controls in order — the row's source verb names
+    // Todoist because that is where it writes.
     const labels = Array.from(row.querySelectorAll(".trow__acts button")).map(
       (b) => (b.textContent ?? "").trim(),
     );
     expect(labels[0]).toMatch(/^Complete/);
-    expect(labels[1]).toMatch(/^Skip today/);
+    expect(labels[1]).toMatch(new RegExp(`^${UNASSIGN_TRIGGER_LABEL}`));
     expect(labels[2]).toMatch(/^Expand/);
     // The cluster is always visible: no rule hides it at rest, and the
     // hover/focus reveal layer is gone (removed 2026-10-12).
