@@ -71,7 +71,7 @@ describe("U12 Set up day composition", () => {
     expect(r.getByRole("heading", { name: "Your day" })).toBeTruthy();
     expect(r.getByRole("heading", { name: "Morning prompts" })).toBeTruthy();
     expect(r.queryByRole("heading", { name: "Anchors" })).toBeNull();    expect(
-      r.getByText("Click an anchor to edit it. Drag to move it or pick Mint sessions."),
+      r.getByText("Click an anchor to edit it. Drag to move it, drag its right edge to resize it, or pick Mint sessions."),
     ).toBeTruthy();
     expect(r.getByTestId("day-strip")).toBeTruthy();
     expect(r.getByRole("button", { name: /Continue to tasks/ })).toBeTruthy();

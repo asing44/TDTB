@@ -40,6 +40,7 @@ import {
   resizeTargetMinutes,
 } from "./anchorDrag";
 import { compactClock, compactHour, compactRange } from "./compactTime";
+import "../strip-resize.css";
 
 /** Pointer travel (px) before a press on an anchor becomes a drag. */
 const DRAG_THRESHOLD_PX = 4;
@@ -103,6 +104,10 @@ export interface StripAnchor {
   /** Counted, config-sourced anchors only: calendar rows and anything not
       counted today stay put. Absent means not movable. */
   movable?: boolean;
+  /** Counted duration is adjustable: a trailing-edge handle drags (and the
+      arrow keys step) the length in whole blocks, reported through
+      `onResizeEvent` as minutes. Needs the strip to carry `onResizeEvent`. */
+  resizable?: boolean;
 }
 
 export interface StripCalendarEvent {
@@ -126,6 +131,16 @@ export interface StripCalendarEvent {
       arrow keys step) the length, reported through `onResizeEvent`. Needs the
       strip to carry `onResizeEvent`; a skipped event never shows a handle. */
   resizable?: boolean;
+}
+
+/** What a trailing-edge handle resizes: an anchor's counted length or a
+    calendar event's duration, in minutes from `start`. */
+interface ResizeSubject {
+  id: string;
+  name: string;
+  lane: "anchor" | "calendar";
+  start: string;
+  durationMin: number;
 }
 
 /** What a pointer drag or arrow key moves: a config anchor or an editable
@@ -161,7 +176,8 @@ export interface DayStripProps {
       strip stays a read-only picture of what is already on the day. */
   readOnly?: boolean;
   /** Called once per completed duration resize (pointer drop or arrow key)
-      with the new length in minutes, a multiple of `resizeStepMin`. */
+      with the new length in minutes, a multiple of `resizeStepMin`. The id is
+      an anchor's or a calendar event's; the lane that owns it saves it. */
   onResizeEvent?: (id: string, durationMin: number) => void;
   /** Resize grid and floor in minutes. Defaults to 15. */
   resizeStepMin?: number;
@@ -207,6 +223,8 @@ export function DayStrip(props: DayStripProps) {
   } | null>(null);
   const [resizePreview, setResizePreview] = useState<{
     id: string;
+    lane: "anchor" | "calendar";
+    startMin: number;
     from: number;
     durationMin: number;
   } | null>(null);
@@ -406,11 +424,25 @@ export function DayStrip(props: DayStripProps) {
     props.onMoveAnchor?.(subject.id, toHHMM(to));
   };
 
-  const resizeBounds = (event: StripCalendarEvent) => ({
-    startMin: toMinutes(event.start),
+  const resizeBounds = (subject: ResizeSubject) => ({
+    startMin: toMinutes(subject.start),
     dayEnd: endMin,
     stepMin: resizeStep,
     maxMin: props.resizeMaxMin,
+  });
+  const calendarResizeSubject = (event: StripCalendarEvent): ResizeSubject => ({
+    id: event.id,
+    name: event.name,
+    lane: "calendar",
+    start: event.start,
+    durationMin: Math.max(15, event.durationMin),
+  });
+  const anchorResizeSubject = (anchor: StripAnchor): ResizeSubject => ({
+    id: anchor.id,
+    name: anchor.name,
+    lane: "anchor",
+    start: anchor.start,
+    durationMin: lengthOf(anchor),
   });
   const durationText = (minutes: number) =>
     minutes % 60 === 0
@@ -429,25 +461,24 @@ export function DayStrip(props: DayStripProps) {
       }
     }
   };
-  const commitResize = (event: StripCalendarEvent, minutes: number) => {
-    setAnnouncement(`${event.name} resized to ${durationText(minutes)}`);
-    props.onResizeEvent?.(event.id, minutes);
+  const commitResize = (subject: ResizeSubject, minutes: number) => {
+    setAnnouncement(`${subject.name} resized to ${durationText(minutes)}`);
+    props.onResizeEvent?.(subject.id, minutes);
   };
-  const onResizePointerDown = (e: PointerEvent, event: StripCalendarEvent) => {
+  const onResizePointerDown = (e: PointerEvent, subject: ResizeSubject) => {
     if (e.button !== 0) return;
     // The handle owns this gesture; the block's own click/drag never starts.
     e.stopPropagation();
     const el = e.currentTarget as HTMLElement;
     const lane = el.closest(".day-strip__lane");
-    const origDuration = Math.max(15, event.durationMin);
     resizeDrag.current = {
-      id: event.id,
+      id: subject.id,
       pointerId: e.pointerId,
       x0: e.clientX,
       laneWidth: lane ? lane.getBoundingClientRect().width : 0,
-      startMin: toMinutes(event.start),
-      origDuration,
-      target: origDuration,
+      startMin: toMinutes(subject.start),
+      origDuration: subject.durationMin,
+      target: subject.durationMin,
       moved: false,
     };
     try {
@@ -456,29 +487,35 @@ export function DayStrip(props: DayStripProps) {
       /* synthetic or already-released pointer */
     }
   };
-  const onResizePointerMove = (e: PointerEvent, event: StripCalendarEvent) => {
+  const onResizePointerMove = (e: PointerEvent, subject: ResizeSubject) => {
     const state = resizeDrag.current;
     if (!state || e.pointerId !== state.pointerId) return;
     const dx = e.clientX - state.x0;
     if (!state.moved && Math.abs(dx) < DRAG_THRESHOLD_PX) return;
     state.moved = true;
     state.target = resizeTargetMinutes({
-      ...resizeBounds(event),
+      ...resizeBounds(subject),
       durationMin: state.origDuration,
       deltaPx: dx,
       laneWidthPx: state.laneWidth,
       dayStart: startMin,
     });
-    setResizePreview({ id: state.id, from: state.origDuration, durationMin: state.target });
+    setResizePreview({
+      id: state.id,
+      lane: subject.lane,
+      startMin: state.startMin,
+      from: state.origDuration,
+      durationMin: state.target,
+    });
   };
-  const onResizePointerUp = (e: PointerEvent, event: StripCalendarEvent) => {
+  const onResizePointerUp = (e: PointerEvent, subject: ResizeSubject) => {
     const state = resizeDrag.current;
     if (!state || e.pointerId !== state.pointerId) return;
     const { moved, target, origDuration } = state;
     endResize(e.currentTarget as HTMLElement, e.pointerId);
-    if (moved && target !== origDuration) commitResize(event, target);
+    if (moved && target !== origDuration) commitResize(subject, target);
   };
-  const onResizeKeyDown = (e: KeyboardEvent, event: StripCalendarEvent) => {
+  const onResizeKeyDown = (e: KeyboardEvent, subject: ResizeSubject) => {
     if (e.key === "Escape" && resizeDrag.current) {
       // Abandon the gesture; the drop that follows must not commit it.
       resizeDrag.current = null;
@@ -488,10 +525,51 @@ export function DayStrip(props: DayStripProps) {
     if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
     e.preventDefault();
     e.stopPropagation();
-    const from = Math.max(15, event.durationMin);
-    const to = keyboardResizeMinutes(from, e.key === "ArrowRight" ? 1 : -1, e.shiftKey, resizeBounds(event));
+    const from = subject.durationMin;
+    const to = keyboardResizeMinutes(from, e.key === "ArrowRight" ? 1 : -1, e.shiftKey, resizeBounds(subject));
     if (to === from) return;
-    commitResize(event, to);
+    commitResize(subject, to);
+  };
+  /** The trailing-edge slider. On a read-only block it is a child of the block
+      (`edge` absent); on a button block it is a SIBLING (a slider cannot live
+      inside a button) laid over the block's last pixels at `edge`. */
+  const renderResizeHandle = (
+    subject: ResizeSubject,
+    edge?: { rightPct: number; top: number; height: number },
+  ) => {
+    const bounds = resizeBounds(subject);
+    const live = resizePreview?.id === subject.id ? resizePreview.durationMin : subject.durationMin;
+    const max = clampDuration(Number.MAX_SAFE_INTEGER, bounds);
+    return (
+      <span
+        class={`strip-cal__resize${edge ? ` strip-cal__resize--edge strip-cal__resize--${subject.lane}` : ""}${
+          resizePreview?.id === subject.id ? " strip-cal__resize--active" : ""
+        }`}
+        data-resize-id={subject.id}
+        style={
+          edge
+            ? { left: `calc(${edge.rightPct}% - 6px)`, top: `${edge.top}px`, height: `${edge.height}px` }
+            : undefined
+        }
+        role="slider"
+        tabIndex={0}
+        aria-orientation="horizontal"
+        aria-label={`Resize ${subject.name} duration`}
+        aria-valuemin={resizeStep}
+        aria-valuemax={max}
+        aria-valuenow={Math.min(live, max)}
+        aria-valuetext={durationText(live)}
+        title="Drag to resize, or use the arrow keys"
+        onPointerDown={(e) => onResizePointerDown(e as unknown as PointerEvent, subject)}
+        onPointerMove={(e) => onResizePointerMove(e as unknown as PointerEvent, subject)}
+        onPointerUp={(e) => onResizePointerUp(e as unknown as PointerEvent, subject)}
+        onPointerCancel={(e) =>
+          endResize(e.currentTarget as HTMLElement, (e as unknown as PointerEvent).pointerId)
+        }
+        onKeyDown={(e) => onResizeKeyDown(e as unknown as KeyboardEvent, subject)}
+        onClick={(e) => e.stopPropagation()}
+      />
+    );
   };
 
   // Hour ticks: every whole hour inside the frame (8a … 11p for 7:30a–11:45p).
@@ -776,7 +854,7 @@ export function DayStrip(props: DayStripProps) {
               const dragging = preview?.id === event.id && preview.lane === "calendar";
               const lengthMin = Math.max(15, event.durationMin);
               const drawMin = dragging && preview ? preview.min : min;
-              const resizing = resizePreview?.id === event.id;
+              const resizing = resizePreview?.id === event.id && resizePreview.lane === "calendar";
               const drawLength = resizing && resizePreview ? resizePreview.durationMin : lengthMin;
               const drawEnd = Math.min(drawMin + drawLength, endMin);
               const drawLeft = Math.max(drawMin, startMin);
@@ -801,7 +879,7 @@ export function DayStrip(props: DayStripProps) {
               }${editable ? " strip-cal--editable" : ""}${
                 movable ? " strip-cal--movable" : ""
               }${dragging ? " strip-cal--dragging" : ""}${
-                resizable ? " strip-cal--resizable" : ""
+                resizable ? (editable ? " strip-cal--edge-resizable" : " strip-cal--resizable") : ""
               }${resizing ? " strip-cal--resizing" : ""}`;
               const style = {
                 left: `${leftPct}%`,
@@ -867,35 +945,18 @@ export function DayStrip(props: DayStripProps) {
                       data-anchor-id={resizable ? event.id : undefined}
                     >
                       {inside}
-                      {resizable && (
-                        <span
-                          class="strip-cal__resize"
-                          role="slider"
-                          tabIndex={0}
-                          aria-orientation="horizontal"
-                          aria-label={`Resize ${event.name} duration`}
-                          aria-valuemin={resizeStep}
-                          aria-valuemax={clampDuration(Number.MAX_SAFE_INTEGER, resizeBounds(event))}
-                          aria-valuenow={drawLength}
-                          aria-valuetext={durationText(drawLength)}
-                          title="Drag to resize, or use the arrow keys"
-                          onPointerDown={(e) =>
-                            onResizePointerDown(e as unknown as PointerEvent, event)
-                          }
-                          onPointerMove={(e) =>
-                            onResizePointerMove(e as unknown as PointerEvent, event)
-                          }
-                          onPointerUp={(e) => onResizePointerUp(e as unknown as PointerEvent, event)}
-                          onPointerCancel={(e) =>
-                            endResize(e.currentTarget as HTMLElement, (e as unknown as PointerEvent).pointerId)
-                          }
-                          onKeyDown={(e) => onResizeKeyDown(e as unknown as KeyboardEvent, event)}
-                          onClick={(e) => e.stopPropagation()}
-                        />
-                      )}
+                      {resizable && renderResizeHandle(calendarResizeSubject(event))}
                     </span>
                   )}
-                  {(fit === "right" || fit === "left") && !dragging && (
+                  {editable &&
+                    resizable &&
+                    !dragging &&
+                    renderResizeHandle(calendarResizeSubject(event), {
+                      rightPct: leftPct + widthPct,
+                      top: 5 + row * 30,
+                      height: 30,
+                    })}
+                  {(fit === "right" || fit === "left") && !dragging && !resizing && (
                     <span
                       class={`strip-cal__label strip-cal__label--${fit}${
                         event.counted ? "" : " strip-cal__label--not-counted"
@@ -913,7 +974,7 @@ export function DayStrip(props: DayStripProps) {
                 </Fragment>
               );
             })}
-            {resizePreview && (
+            {resizePreview && resizePreview.lane === "calendar" && (
               <span class="day-strip__drag-label" style={{ left: "50%" }}>
                 {durationText(resizePreview.from)} → {durationText(resizePreview.durationMin)}
               </span>
@@ -1046,12 +1107,25 @@ export function DayStrip(props: DayStripProps) {
           ))}
           {placedAnchors.map(({ anchor, min, length, row }) => {
             const dragging = preview?.id === anchor.id && preview.lane === "anchor";
+            const resizing = resizePreview?.id === anchor.id && resizePreview.lane === "anchor";
             const drawMin = dragging ? preview.min : min;
-            const max = Math.min(drawMin + length, endMin);
+            const drawLength = resizing && resizePreview ? resizePreview.durationMin : length;
+            const max = Math.min(drawMin + drawLength, endMin);
             const left = Math.max(drawMin, startMin);
             const geom = anchorGeometry.get(anchor.id);
-            const leftPct = dragging || !geom ? rawPct(left) : geom.leftPct;
-            const widthPct = dragging || !geom ? ((max - left) / span) * 100 : geom.widthPct;
+            const trueGeometry = dragging || resizing || !geom;
+            const leftPct = trueGeometry ? rawPct(left) : geom.leftPct;
+            const widthPct = trueGeometry ? ((max - left) / span) * 100 : geom.widthPct;
+            // The handle sits on the true trailing edge, so a block the frame
+            // clips (its end is off the ruler) has none; its popover edits it.
+            const resizable =
+              !props.readOnly &&
+              props.onResizeEvent !== undefined &&
+              anchor.resizable === true &&
+              anchor.counted &&
+              anchor.blocks >= 1 &&
+              min >= startMin &&
+              min + length <= endMin;
             const visiblePx = (widthPct / 100) * laneW;
             const movable = isMovable(anchor);
             const reason = anchor.reason ?? "";
@@ -1064,7 +1138,9 @@ export function DayStrip(props: DayStripProps) {
               reason === "skipped" ? " strip-anchor--skipped" : ""
             }${movable ? " strip-anchor--movable" : ""}${
               dragging ? " strip-anchor--dragging" : ""
-            }${selected ? " strip-anchor--selected" : ""}${props.readOnly ? " strip-anchor--readonly" : ""}`;
+            }${selected ? " strip-anchor--selected" : ""}${
+              resizable ? " strip-anchor--resizable" : ""
+            }${resizing ? " strip-anchor--resizing" : ""}${props.readOnly ? " strip-anchor--readonly" : ""}`;
             const anchorStyle = {
               left: `${leftPct}%`,
               width: `${widthPct}%`,
@@ -1107,36 +1183,50 @@ export function DayStrip(props: DayStripProps) {
               );
             }
             return (
-              <button
-                type="button"
-                class={anchorClass}
-                style={anchorStyle}
-                data-anchor-id={anchor.id}
-                data-band={row}
-                title={anchorTitle}
-                aria-label={anchorLabel}
-                onPointerDown={(e) =>
-                  onAnchorPointerDown(e as unknown as PointerEvent, anchorSubject(anchor), movable)
-                }
-                onPointerMove={(e) => onAnchorPointerMove(e as unknown as PointerEvent)}
-                onPointerUp={(e) => onAnchorPointerUp(e as unknown as PointerEvent)}
-                onPointerCancel={(e) => onAnchorPointerCancel(e as unknown as PointerEvent)}
-                onKeyDown={(e) =>
-                  onAnchorKeyDown(e as unknown as KeyboardEvent, anchorSubject(anchor), movable)
-                }
-                onClick={() => onAnchorClick(anchor.id)}
-                key={anchor.id}
-              >
-                {nameLabel}
-                {showMeta(anchor, visiblePx) && (
-                  <span class="strip-anchor__meta">{metaText(anchor)}</span>
-                )}
-              </button>
+              <Fragment key={anchor.id}>
+                <button
+                  type="button"
+                  class={anchorClass}
+                  style={anchorStyle}
+                  data-anchor-id={anchor.id}
+                  data-band={row}
+                  title={anchorTitle}
+                  aria-label={anchorLabel}
+                  onPointerDown={(e) =>
+                    onAnchorPointerDown(e as unknown as PointerEvent, anchorSubject(anchor), movable)
+                  }
+                  onPointerMove={(e) => onAnchorPointerMove(e as unknown as PointerEvent)}
+                  onPointerUp={(e) => onAnchorPointerUp(e as unknown as PointerEvent)}
+                  onPointerCancel={(e) => onAnchorPointerCancel(e as unknown as PointerEvent)}
+                  onKeyDown={(e) =>
+                    onAnchorKeyDown(e as unknown as KeyboardEvent, anchorSubject(anchor), movable)
+                  }
+                  onClick={() => onAnchorClick(anchor.id)}
+                >
+                  {nameLabel}
+                  {showMeta(anchor, visiblePx) && (
+                    <span class="strip-anchor__meta">{metaText(anchor)}</span>
+                  )}
+                </button>
+                {resizable &&
+                  !dragging &&
+                  renderResizeHandle(anchorResizeSubject(anchor), {
+                    rightPct: leftPct + widthPct,
+                    top: ANCHOR_ROW_TOP + row * ANCHOR_ROW_PITCH,
+                    height: 38,
+                  })}
+              </Fragment>
             );
           })}
           {placedAnchors.map(({ anchor }) => {
             const label = anchorLabels.get(anchor.id);
-            if (!label || (preview?.id === anchor.id && preview.lane === "anchor")) return null;
+            if (
+              !label ||
+              (preview?.id === anchor.id && preview.lane === "anchor") ||
+              (resizePreview?.id === anchor.id && resizePreview.lane === "anchor")
+            ) {
+              return null;
+            }
             const style =
               label.fit === "left"
                 ? { right: `${((laneW - label.x1) / laneW) * 100}%` }
@@ -1176,6 +1266,19 @@ export function DayStrip(props: DayStripProps) {
               }}
             >
               {display12h(toHHMM(preview.from))} → {display12h(toHHMM(preview.min))}
+            </span>
+          )}
+          {resizePreview && resizePreview.lane === "anchor" && (
+            <span
+              class="day-strip__drag-label"
+              style={{
+                left: `${Math.max(
+                  10,
+                  Math.min(90, pct(resizePreview.startMin + resizePreview.durationMin / 2)),
+                )}%`,
+              }}
+            >
+              {durationText(resizePreview.from)} → {durationText(resizePreview.durationMin)}
             </span>
           )}
           <span class="sr-only" role="status" data-testid="anchor-move-status">

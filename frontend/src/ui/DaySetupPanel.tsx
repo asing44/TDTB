@@ -52,6 +52,12 @@ import { AllBlocksModal, type AllBlocksRow, type AllBlocksStatus } from "./day-s
 import { onSetupContinue, onSetupUndo } from "./day-setup/commands";
 import { MicroPoolNote, poolOptionLabel } from "./microPool";
 
+/** The strip resizes on the 30-minute block grid every duration save counts
+    in (popover Duration, anchored stepper), 1 to 12 blocks unless a longer
+    length is already in force. */
+const STRIP_RESIZE_BLOCK_MIN = 30;
+const STRIP_RESIZE_MAX_BLOCKS = 12;
+
 export function DaySetupPanel({
   active,
   variant = "drawer",
@@ -388,6 +394,21 @@ export function DaySetupPanel({
     } else moveAnchor(id, start);
   };
 
+  /** Strip trailing-edge resize: today's counted length in whole 30-minute
+      blocks, through the same save the popover Duration field and the
+      Anchored blocks stepper use. A calendar row is a local edit only. */
+  const resizeBlock = (id: string, durationMin: number) => {
+    const blocks = Math.max(1, Math.round(durationMin / STRIP_RESIZE_BLOCK_MIN));
+    if (isCalendarRow(id)) {
+      persistCalendarEdit(id, () => controller.saveCalendarEdit(id, { blocks }));
+      return;
+    }
+    const next: AnchoredOverride = { ...overrideOf(id), blocks };
+    setDraft((d) => ({ ...d, anchored: { ...d.anchored, [id]: next } }));
+    patchTimeUi(id, { saved: false, error: null });
+    persistAnchoredOverride(id, next);
+  };
+
   /** All blocks footer: clear every config anchor's today-only override back
       to its config default in one pass, through the same per-id call. */
   const resetAllAnchorsToConfig = () => {
@@ -652,6 +673,8 @@ export function DaySetupPanel({
         blocks,
         // Calendar rows never reach editableAnchors; counted config anchors move.
         movable: counted,
+        // Counted anchors take a trailing-edge length handle (whole blocks).
+        resizable: counted,
         timeState,
       };
     });
@@ -678,7 +701,15 @@ export function DaySetupPanel({
       capacityClass: a.capacityClass,
       editable: true,
       edited: s.daySetup.anchored[a.id]?.start != null,
+      resizable: true,
     }));
+    // The strip may resize up to 12 blocks (or a longer length already in force).
+    const resizeMaxMin =
+      Math.max(
+        STRIP_RESIZE_MAX_BLOCKS,
+        ...stripAnchors.map((a) => a.blocks),
+        ...stripCalendar.map((c) => Math.ceil(c.durationMin / STRIP_RESIZE_BLOCK_MIN)),
+      ) * STRIP_RESIZE_BLOCK_MIN;
     // All blocks: every anchor and calendar row, regardless of the frame.
     // Status is the operator's story: an untouched anchor that already elapsed
     // (off by default), skipped, outside the frame, or running past midnight;
@@ -806,7 +837,7 @@ export function DaySetupPanel({
                 <div class="your-day__title">
                   <h3 id="setup-sec-frame">Your day</h3>
                   <p class="setup-section__hint">
-                    Click an anchor to edit it. Drag to move it or pick Mint sessions.
+                    Click an anchor to edit it. Drag to move it, drag its right edge to resize it, or pick Mint sessions.
                   </p>
                   <button
                     type="button"
@@ -891,6 +922,9 @@ export function DaySetupPanel({
                 selectedAnchorId={selectedAnchor}
                 onSelectAnchor={(id) => setSelectedAnchor(id)}
                 onMoveAnchor={(id, start) => moveBlock(id, start)}
+                onResizeEvent={resizeBlock}
+                resizeStepMin={STRIP_RESIZE_BLOCK_MIN}
+                resizeMaxMin={resizeMaxMin}
                 onShowAllBlocks={() => setAllBlocksOpen(true)}
               />
 

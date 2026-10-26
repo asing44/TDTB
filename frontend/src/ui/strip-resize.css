@@ -1,5 +1,6 @@
-/* Trailing-edge duration handle on a calendar block in the Already placed
-   strip. Tokens come from tokens.css / app.css; nothing here is hardcoded. */
+/* Trailing-edge duration handle on the day strip: calendar blocks (Already
+   placed and Day setup) and Day setup anchor blocks. Tokens come from
+   tokens.css / app.css; nothing here is hardcoded. */
 .strip-cal--resizable {
   overflow: visible;
 }
@@ -19,17 +20,21 @@
   -webkit-user-select: none;
   border-radius: 4px;
 }
+/* Two-line grip, visible at rest so the edge reads as draggable. */
 .strip-cal__resize::before {
   content: "";
-  width: 3px;
+  box-sizing: border-box;
+  width: 6px;
   height: 14px;
-  border-radius: 2px;
-  background: var(--t-muted);
-  opacity: 0.55;
+  border-left: 2px solid var(--t-muted);
+  border-right: 2px solid var(--t-muted);
+  opacity: 0.6;
 }
 .strip-cal__resize:hover::before,
+.strip-cal__resize--active::before,
+button:hover + .strip-cal__resize::before,
 .strip-cal--resizing .strip-cal__resize::before {
-  background: var(--t-accent);
+  border-color: var(--t-accent);
   opacity: 1;
 }
 .strip-cal__resize:focus-visible {
@@ -43,4 +48,33 @@
 }
 .already-placed .day-strip .strip-cal__resize {
   cursor: ew-resize;
+}
+
+/* Button blocks (Day setup anchors, editable calendar events) cannot hold a
+   slider, so it is a sibling laid over the block's last pixels: 12px wide,
+   centred on the trailing edge, above the block so it never starts a move. */
+.strip-cal__resize--edge {
+  right: auto;
+  bottom: auto;
+  width: 12px;
+  z-index: 5;
+}
+.strip-cal__resize--edge:hover,
+.strip-cal__resize--active {
+  background: color-mix(in srgb, var(--t-accent) 14%, transparent);
+}
+/* Keep the ellipsis (Foods…, Nig…) clear of the handle. */
+.strip-anchor.strip-anchor--resizable,
+.strip-cal.strip-cal--edge-resizable {
+  padding-right: 14px;
+}
+.strip-anchor--resizing {
+  z-index: 3;
+  outline: 2px solid var(--t-accent);
+  outline-offset: 1px;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .strip-cal__resize::before {
+    transition: opacity 120ms;
+  }
 }
