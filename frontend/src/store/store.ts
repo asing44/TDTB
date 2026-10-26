@@ -254,6 +254,13 @@ export interface AppState {
   planMembership: Record<string, boolean>;
   /** Resolution of an absent `planMembership` key (see `MembershipDefault`). */
   membershipDefault: MembershipDefault;
+  /** U5: the stable identities today's queue carried at the day's FIRST load
+      (`null` before any load). A row that first appears later is a mid-day
+      source arrival, and only such a row — one that arrived after the day
+      opened and then defaulted OUT — earns the drawer's "new" badge. Recording
+      it at load is the only way to tell an arrival apart from a row that was
+      already waiting when the day opened. */
+  dayStartIdentities: string[] | null;
   /** Sparse opt-in map: absent/false protects a native Todoist time. */
   timeAdjustmentOptIns: Record<string, boolean>;
   /** #18: sparse per-row operator grant to overlap a selected Mint session.
@@ -398,6 +405,7 @@ export const initialState: AppState = {
   overrides: {},
   planMembership: {},
   membershipDefault: "rule",
+  dayStartIdentities: null,
   timeAdjustmentOptIns: {},
   mintOverlapOptIns: {},
   placements: {},
@@ -564,6 +572,9 @@ export type Action =
           live state carries (fresh defaults on a cold load). */
       planMembership?: Record<string, boolean>;
       membershipDefault?: MembershipDefault;
+      /** U5: the day's first-load identity baseline. Omitted keeps the one
+          this page recorded before the restore ran. */
+      dayStartIdentities?: string[];
     }
   | { type: "SOURCE_REFRESH_START" }
   | {
@@ -622,6 +633,8 @@ export function reducer(s: AppState, a: Action): AppState {
           inputs: a.inputs,
           capacity: a.inputs.capacity,
           daySetup: a.inputs.daySetup,
+          // U5: a new day starts a new first-load baseline.
+          dayStartIdentities: a.inputs.assigned.map(membershipKeyOf),
           pendingPinnedRows: nativeTimedPins(a.inputs, {}, allAssignedIds(a.inputs)),
           ledger: a.ledger,
         };
@@ -634,6 +647,10 @@ export function reducer(s: AppState, a: Action): AppState {
         loadError: null,
         validDate: a.inputs.validDate,
         inputs: a.inputs,
+        // U5: the FIRST load of the day fixes the baseline. A later refresh
+        // brings new rows but must never move it, or every row would look old.
+        dayStartIdentities:
+          s.dayStartIdentities ?? a.inputs.assigned.map(membershipKeyOf),
         capacity: s.capacity ?? a.inputs.capacity,
         daySetup: s.daySetup.confirmed ? s.daySetup : a.inputs.daySetup,
         ui: pruneRowUi(s.ui, a.inputs),
@@ -1288,6 +1305,7 @@ export function reducer(s: AppState, a: Action): AppState {
         pendingPinnedRows: restoredPendingPins,
         planMembership: restoredMembership,
         membershipDefault: restoredMembershipDefault,
+        dayStartIdentities: a.dayStartIdentities ?? s.dayStartIdentities,
         seqPhase: a.sequence && a.sequence.some((r) => r.kind === "work") ? "dirty" : s.seqPhase,
         validation: null,
         shadow: null,
@@ -1867,6 +1885,40 @@ export interface AssignmentRow {
   actionId: string | null;
   recurring: boolean;
   assigned: boolean;
+  /** U5: where the row's "not in plan" state lives, which is what decides the
+      drawer's group and its one restore affordance.
+
+      - `local`: browser-only plan membership. Nothing upstream holds the row,
+        so the Add to plan switch is the whole story.
+      - `journal-unassign`: a Todoist row really unassigned at the source. Only
+        reassigning that journal entry (Restore in Todoist) brings it back.
+      - `dropped`: a date-scoped `drop_from_plan` entry. Restore today reverses
+        it. */
+  origin: "local" | "journal-unassign" | "dropped";
+  /** U5: a row that first appeared AFTER the day's first load and defaulted
+      OUT. The drawer badges it so a mid-day arrival is not mistaken for
+      something the operator set aside. */
+  isNewArrival: boolean;
+}
+
+/** U5: did this identity first appear after the day's first load? False before
+    the first load has been recorded, and false for a row that was already
+    waiting when the day opened — the baseline is the only evidence there is. */
+function arrivedAfterFirstLoad(s: AppState, identity: string): boolean {
+  const start = s.dayStartIdentities;
+  if (start === null) return false;
+  return !start.includes(identity);
+}
+
+/** U5: a local not-in-plan row is "new" only when it ARRIVED after the first
+    load and then defaulted out. A row with an explicit membership entry was
+    decided, not defaulted. On a day whose default is OUT, an explicit OUT
+    agrees with the default and the sparse map drops it (U1), so such a row
+    keeps the badge — it did arrive today; the badge reports arrival, not
+    intent. */
+function isNewArrival(s: AppState, identity: string): boolean {
+  if (s.planMembership[identity] !== undefined) return false;
+  return arrivedAfterFirstLoad(s, identity);
 }
 
 export interface AssignmentRows {
@@ -1888,7 +1940,11 @@ export interface AssignmentRows {
     taken out of the plan locally is Unassigned and is absent from the bands, a
     dropped Capacities/calendar row appears here and never in
     `skippedTodayRows`, and a legacy drop with no snapshot source stays in
-    `skippedTodayRows` only. */
+    `skippedTodayRows` only.
+
+    U5: `origin` says WHERE each unassigned row's state lives (local plan
+    membership, a journal unassign, or a date-scoped drop), so the drawer can
+    group them and give each group its own one-click restore. */
 export function assignmentRows(s: AppState): AssignmentRows {
   const inputs = s.inputs;
   const assigned: AssignmentRow[] = (inputs?.assigned ?? [])
@@ -1903,6 +1959,8 @@ export function assignmentRows(s: AppState): AssignmentRows {
       actionId: null,
       recurring: item.isRecurring === true,
       assigned: true,
+      origin: "local" as const,
+      isNewArrival: false,
     }));
   const localOut: AssignmentRow[] = (inputs?.assigned ?? [])
     .filter((item) => !isPlanMember(s, item))
@@ -1916,6 +1974,8 @@ export function assignmentRows(s: AppState): AssignmentRows {
       actionId: null,
       recurring: item.isRecurring === true,
       assigned: false,
+      origin: "local" as const,
+      isNewArrival: isNewArrival(s, membershipKeyOf(item)),
     }));
   const heldBackTodoist: AssignmentRow[] = (inputs?.unassignedToday ?? []).map(
     (row) => ({
@@ -1928,6 +1988,8 @@ export function assignmentRows(s: AppState): AssignmentRows {
       actionId: row.actionId,
       recurring: row.recurring,
       assigned: false,
+      origin: "journal-unassign" as const,
+      isNewArrival: false,
     }),
   );
   const heldBackDropped: AssignmentRow[] = (inputs?.droppedToday ?? [])
@@ -1942,6 +2004,8 @@ export function assignmentRows(s: AppState): AssignmentRows {
       actionId: null,
       recurring: d.kind === "recurring",
       assigned: false,
+      origin: "dropped" as const,
+      isNewArrival: false,
     }));
   return { assigned, unassigned: [...localOut, ...heldBackTodoist, ...heldBackDropped] };
 }

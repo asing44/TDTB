@@ -11413,6 +11413,37 @@ button.strip-cal {
   padding: 0;
   list-style: none;
 }
+/* U5: the drawer's server-held groups. Each head names where the row's state
+   lives, so a row never wears an affordance that writes somewhere else. */
+.unassigned-today__group {
+  margin-top: 10px;
+}
+.unassigned-today__group-head {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin: 0 0 4px;
+  padding-left: 8px;
+  border-left: 3px solid var(--t-border, #d9d7cd);
+  color: var(--t-muted);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+/* U5: a row that first appeared after the day's first load and defaulted out. */
+.unassigned-today__new {
+  margin-left: 6px;
+  padding: 0 5px;
+  border: 1px solid var(--t-accent-strong, #0f6e56);
+  border-radius: 3px;
+  color: var(--t-accent-strong, #0f6e56);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  vertical-align: 1px;
+}
 @media (max-width: 640px) {
   .queue__band .qrow.trow,
   .qrow.trow {

@@ -314,6 +314,8 @@ describe("task-actions Skipped today rows", () => {
       },
     ]);
     // The Capacities drop is not lost: it is Unassigned, with its snapshot.
+    // U5 tags it `dropped`, so the drawer gives it Restore today, not the
+    // local Add to plan switch.
     expect(assignmentRows(store.getState()).unassigned).toEqual([
       {
         id: "capacities:fixture-space:custom-project:snap",
@@ -325,6 +327,8 @@ describe("task-actions Skipped today rows", () => {
         actionId: null,
         recurring: false,
         assigned: false,
+        origin: "dropped",
+        isNewArrival: false,
       },
     ]);
   });

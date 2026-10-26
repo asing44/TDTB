@@ -2,7 +2,11 @@
    approved prototype. It replaces the Out today lane for durable skips: each
    row is a dated `dropped[]` entry (store skippedTodayRows) with its name,
    source chip, minutes and a Restore today button. A legacy entry that
-   stored no snapshot shows only its name — no invented chip or duration. */
+   stored no snapshot shows only its name — no invented chip or duration.
+
+   U5: `SkippedRow` is exported because the "Not in plan" drawer reuses it for
+   its own "Skipped today" group. One component means one look for Restore
+   today, wherever a date-scoped drop is listed. */
 
 import { useApp, useAppState } from "./context";
 import {
@@ -21,7 +25,7 @@ function rowKey(identity: string): string {
   return identity.replace(/[^A-Za-z0-9_-]+/g, "-");
 }
 
-function SkippedRow({ row, busy }: { row: SkippedTodayRow; busy: boolean }) {
+export function SkippedRow({ row, busy }: { row: SkippedTodayRow; busy: boolean }) {
   const { controller } = useApp();
   const s = useAppState();
   const why = taskActionDisabledReason(s, "restore");

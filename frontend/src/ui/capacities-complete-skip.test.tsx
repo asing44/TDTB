@@ -136,7 +136,7 @@ describe("Complete on a Capacities row skips it for today", () => {
     );
   });
 
-  it("leaves today's plan for the Not in plan drawer, and Add to plan brings it back", async () => {
+  it("leaves today's plan for the Not in plan drawer, and Restore today brings it back", async () => {
     const h = makeHarness("ready");
     const sent = spyBatches(h);
     const actions = spyActions(h);
@@ -177,9 +177,16 @@ describe("Complete on a Capacities row skips it for today", () => {
     ).map((n) => n.textContent);
     expect(names).not.toContain(NOTE);
 
-    const reassign = section.querySelector<HTMLInputElement>('[role="switch"]')!;
-    expect(reassign.getAttribute("aria-checked")).toBe("false");
-    fireEvent.click(reassign);
+    // U5: a date-scoped drop is not local plan membership, so the drawer files
+    // the row under "Skipped today" and gives it the shared Restore today
+    // button. The Add to plan switch would claim a browser-only edit.
+    expect(section.querySelector('[data-group="skipped-today"]')).not.toBeNull();
+    expect(section.querySelector('[role="switch"]')).toBeNull();
+    const restore = Array.from(
+      section.querySelectorAll<HTMLButtonElement>("button.trow__btn--restore"),
+    ).find((b) => b.textContent?.includes("Restore today"))!;
+    expect(restore.disabled).toBe(false);
+    fireEvent.click(restore);
     await waitFor(() =>
       expect(actions).toEqual([
         { verb: "restore_today", target: NOTE_IDENTITY },

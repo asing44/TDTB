@@ -36,6 +36,11 @@ interface SessionBlob {
   planMembership?: Record<string, boolean>;
   /** U2: the membership default in force when the blob was written. */
   membershipDefault?: MembershipDefault;
+  /** U5: the day's first-load identity baseline. Optional so a pre-U5 blob
+      still reads; absent means the loading page's own baseline stands, which
+      is what a fresh day wants. Persisted so a mid-page reload does not relabel
+      every mid-day arrival as "old". */
+  dayStartIdentities?: string[];
 }
 
 /** U2 migration: a same-date blob written before plan membership existed can
@@ -127,6 +132,7 @@ export function attachSessionPersistence(
           blob.planMembership ??
           seededMembership(blob, s.inputs, blob.overrides ?? {}),
         membershipDefault: blob.membershipDefault,
+        dayStartIdentities: blob.dayStartIdentities,
       });
       // Deterministic + free: restored plans re-earn "valid" via the server
       // validator; capacity re-renders the server's numbers for the restored
@@ -168,6 +174,7 @@ export function attachSessionPersistence(
       pendingPinnedRows: st.pendingPinnedRows,
       planMembership: st.planMembership,
       membershipDefault: st.membershipDefault,
+      dayStartIdentities: st.dayStartIdentities ?? undefined,
     };
     try {
       storage.setItem(KEY, JSON.stringify(out));

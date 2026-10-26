@@ -125,9 +125,12 @@ describe("the plan-membership switch on a row", () => {
 });
 
 describe("the Not in plan drawer", () => {
-  it("lists a held-back Capacities row with its source chip and an Add to plan switch", async () => {
+  it("lists a held-back Capacities row with its source chip and a Restore today control", async () => {
     const h = makeHarness("ready");
-    const calls = spyAssign(h);
+    const restored: string[] = [];
+    h.controller.restoreToday = async (id: string) => {
+      restored.push(id);
+    };
     const { container } = h.ui(<Queue />);
     expect(container.querySelector("#unassigned-today")).toBeNull();
 
@@ -156,14 +159,24 @@ describe("the Not in plan drawer", () => {
     expect(section.querySelector(".qrow__src--capacities")?.textContent).toBe(
       "Capacities",
     );
-    // Same column as the task list, and the short caption lives here only.
+    // Same column as the task list.
     expect(section.closest(".plan-grid__groups")).not.toBeNull();
-    expect(section.querySelector(".trow__assign-text")?.textContent).toBe("Add to plan");
-    const sw = switchIn(section);
-    expect(sw.getAttribute("aria-checked")).toBe("false");
-    expect(sw.getAttribute("aria-label")).toBe("Add to plan: " + NOTE);
-    fireEvent.click(sw);
-    expect(calls).toEqual([[NOTE_IDENTITY, true]]);
+    // U5: a `dropped[]` row is not local plan membership, so it lands in the
+    // drawer's "Skipped today" group with the shared Restore today button.
+    // The Add to plan switch belongs to local rows only.
+    expect(
+      section.querySelector('[data-group="skipped-today"] .qrow__name')
+        ?.textContent,
+    ).toBe(NOTE);
+    expect(section.querySelector(".trow__assign-text")).toBeNull();
+    expect(section.querySelector('[role="switch"]')).toBeNull();
+    const restore = section.querySelector<HTMLButtonElement>(
+      "button.trow__btn--restore",
+    )!;
+    expect(restore.textContent).toContain("Restore today");
+    expect(restore.disabled).toBe(false);
+    fireEvent.click(restore);
+    expect(restored).toEqual([NOTE_IDENTITY]);
   });
 
   it("renders nothing when every sourced row is in today's plan", () => {
