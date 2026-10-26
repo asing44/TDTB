@@ -34,12 +34,12 @@ const btn = (row: Element, text: string) =>
   ) ?? null;
 
 describe("duration slider on the expanded row", () => {
-  it("is a 5-240 minute range in 5-minute steps", () => {
+  it("is a 0-240 minute range in quarter-hour steps, All-day at 0", () => {
     const h = makeHarness("ready");
     const { container } = h.ui(<Queue />);
     const s = slider(expand(container, "Press"));
     expect(s.type).toBe("range");
-    expect([s.min, s.max, s.step]).toEqual(["5", "240", "5"]);
+    expect([s.min, s.max, s.step]).toEqual(["0", "240", "15"]);
   });
 
   it("stages the same blocks as the select and the custom field", () => {
@@ -100,13 +100,24 @@ describe("duration slider on the expanded row", () => {
     expect(s.getAttribute("aria-label")).toBe("Duration slider");
   });
 
-  it("is disabled for an all-day row", () => {
+  it("keeps the All-day notch live and in step with the scheduling radio", () => {
     const h = makeHarness("ready");
     const { container } = h.ui(<Queue />);
     let row = expand(container, "Press");
     fireEvent.click(row.querySelector<HTMLInputElement>('input[value="allday"]')!);
     row = rowFor(container, "Press");
-    expect(slider(row).disabled).toBe(true);
-    expect(preset(row).disabled).toBe(true);
+    expect(slider(row).value).toBe("0");
+    expect(slider(row).getAttribute("aria-valuetext")).toBe("All day");
+    expect(slider(row).disabled).toBe(false);
+
+    // The track leaves all-day the same way the Time block radio does.
+    fireEvent.input(slider(row), { target: { value: "60" } });
+    row = rowFor(container, "Press");
+    expect(h.store.getState().drafts["Press"].mode).toBe("time");
+    expect(h.store.getState().drafts["Press"].blocks).toBe(2);
+    expect(row.querySelector<HTMLInputElement>('input[value="time"]')!.checked).toBe(
+      true,
+    );
+    expect(preset(row).disabled).toBe(false);
   });
 });

@@ -16,9 +16,12 @@ import {
   effectiveBlocks,
   isRowSelected,
   queueState,
+  rowFactsOf,
   taskActionDisabledReason,
   type AppState,
 } from "../store/store";
+import { isProtectedNative, setMode } from "../model/rowDraft";
+import { EXCLUSION_REASONS } from "../model/batchEligibility";
 import type { HierarchyRow } from "../model/allocatorView";
 import { blocksLabel, display12h } from "../model/time";
 import { sourceContext } from "../model/sourceContext";
@@ -192,6 +195,17 @@ export function TaskRow({
   const allDay = draft ? draft.mode === "allday" : blocks === 0;
   const durBlocks = allDay ? 0 : (draft?.blocks ?? blocks);
   const staged = draftIsStaged(s, item.id);
+  // The duration track's leftmost notch stages the all-day draft state, so it
+  // is locked exactly where the expanded row's All-day radio is: a Capacities
+  // row cannot use the Todoist all-day path, and a protected source time may
+  // not go all-day from here. The written reason is the control's tooltip.
+  const rowFacts = rowFactsOf(s, item.id);
+  const allDayLock =
+    item.source === "capacities"
+      ? EXCLUSION_REASONS.allDayCapacities
+      : rowFacts && isProtectedNative(rowFacts)
+        ? EXCLUSION_REASONS.protectedAllDay
+        : null;
   const nameId = rowId(item, "name");
   const expId = rowId(item, "exp");
 
@@ -317,10 +331,14 @@ export function TaskRow({
           idBase={rowId(item, "d")}
           name={item.name}
           blocks={durBlocks}
-          disabled={s.runtimeBusy || allDay}
-          title={allDay ? "All day — no capacity" : undefined}
+          disabled={s.runtimeBusy || allDayLock !== null}
+          title={allDayLock ?? undefined}
           onChange={(next) =>
-            controller.updateDraft(item.id, (d) => ({ ...d, blocks: next }))
+            controller.updateDraft(item.id, (d) =>
+              // 0 is the All-day notch: the same setMode the radio fires. Off
+              // it, a timed duration wins over the captured one.
+              next === 0 ? setMode(d, "allday") : { ...setMode(d, "time"), blocks: next },
+            )
           }
         />
       </span>
