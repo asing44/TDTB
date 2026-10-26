@@ -35,7 +35,7 @@
 
 import { useEffect, useState } from "preact/hooks";
 import { useApp, useAppState } from "./context";
-import { effectiveBlocks, type AppState } from "../store/store";
+import { effectiveBlocks, isIncluded, type AppState } from "../store/store";
 import type { HierarchyRow } from "../model/allocatorView";
 import { taskTableSections } from "../store/allocatorView";
 import { formatBlockAmount } from "../model/time";
@@ -274,7 +274,7 @@ export function Queue() {
             const open = isOpen(sec.key);
             const regionId = `tasktable-${sec.key}`;
             const blocks = sec.rows
-              .filter((e) => s.overrides[e.item.id]?.included ?? true)
+              .filter((e) => isIncluded(s, e.item.id))
               .reduce((sum, e) => sum + effectiveBlocks(s, e.item.id), 0);
             return (
               <div

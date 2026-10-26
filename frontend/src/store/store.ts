@@ -14,6 +14,7 @@
 
 import type {
   RuntimeAction,
+  AssignedItem,
   CalendarDrift,
   Capacity,
   CapacitiesCoverage,
@@ -220,6 +221,11 @@ export const emptyBatch: BatchState = {
   undoReport: null,
 };
 
+/** What an ABSENT `planMembership` entry means for one row. U1 always
+    resolves "in", so an empty membership map is a no-op against today's
+    behavior; "out" is the seam a later default-out day setup uses. */
+export type MembershipDefault = "in" | "out";
+
 export interface AppState {
   loaded: boolean;
   loadError: string | null;
@@ -234,6 +240,15 @@ export interface AppState {
     warnings: string[];
   };
   overrides: Record<string, TodayOverride>;
+  /** LOCAL plan membership, keyed by STABLE SOURCE IDENTITY (never the
+      name-keyed row id, which a rename re-derives). Absent = the day's
+      `membershipDefault`. Taking a row out of today's plan is a browser-only
+      edit: it never calls an adapter, so no source read or write is involved.
+      Deliberately separate from `overrides[id].included`: a false override is
+      the post-Complete settle marker persist.ts round-trips, not a plan edit. */
+  planMembership: Record<string, boolean>;
+  /** Resolution of an absent `planMembership` key. */
+  membershipDefault: MembershipDefault;
   /** Sparse opt-in map: absent/false protects a native Todoist time. */
   timeAdjustmentOptIns: Record<string, boolean>;
   /** #18: sparse per-row operator grant to overlap a selected Mint session.
@@ -376,6 +391,8 @@ export const initialState: AppState = {
   daySetup: emptyDaySetup,
   promptSave: { phase: "idle", error: null, warnings: [] },
   overrides: {},
+  planMembership: {},
+  membershipDefault: "in",
   timeAdjustmentOptIns: {},
   mintOverlapOptIns: {},
   placements: {},
@@ -431,6 +448,11 @@ export type Action =
   | { type: "PROMPT_SAVE_START" }
   | { type: "PROMPT_SAVE_ERROR"; error: string }
   | { type: "OVERRIDE_SET"; id: string; override: TodayOverride }
+  // LOCAL plan membership (U1): take a row out of, or back into, today's plan
+  // without any source/server call. Keyed by stable identity, so the decision
+  // survives a row-id change; the reducer prunes exactly what OVERRIDE_SET's
+  // exclusion path prunes (staged row, pin, placement) and nothing upstream.
+  | { type: "PLAN_MEMBERSHIP_SET"; identity: string; in: boolean }
   | { type: "TIME_ADJUSTMENT_SET"; id: string; allow: boolean }
   | { type: "MINT_OVERLAP_SET"; id: string; allow: boolean }
   // FEEDBACK-28 (retry): explicit current-run calendar skip intent recorded
@@ -619,7 +641,7 @@ export function reducer(s: AppState, a: Action): AppState {
           s.pendingPinnedRows,
           a.inputs,
           timeAdjustmentOptIns,
-          includedIdsForInputs(a.inputs, s.overrides),
+          includedIdsForInputs(s, a.inputs),
         ),
         ledger: a.ledger,
       };
@@ -746,13 +768,58 @@ export function reducer(s: AppState, a: Action): AppState {
         ...staleShadow(s),
       };
     }
+    case "PLAN_MEMBERSHIP_SET": {
+      // LOCAL plan membership (U1). The map stays sparse: an entry is stored
+      // only when it disagrees with the day's default, exactly like
+      // timeAdjustmentOptIns stores only its opt-ins. A write that lands on the
+      // stored value already in force is a true no-op — it must not dirty a
+      // valid plan merely because the surface re-asserted it.
+      const previous = s.planMembership[a.identity];
+      const next = a.in === (s.membershipDefault === "in") ? undefined : a.in;
+      if (previous === next) return s;
+      const planMembership = { ...s.planMembership };
+      if (next === undefined) delete planMembership[a.identity];
+      else planMembership[a.identity] = next;
+      if (a.in) {
+        // Re-inclusion re-queues the row; it restores no staged row or pin.
+        return {
+          ...s,
+          planMembership,
+          acceptedDefects: null,
+          ...dirtySeq(s),
+          ...staleShadow(s),
+        };
+      }
+      // Same pruning as OVERRIDE_SET's exclusion path, resolved through the
+      // row ids that carry this identity: the staged work row, its placement,
+      // and its pin all leave with the row. Zone rows are backdrop, not work.
+      const ids = new Set(
+        (s.inputs?.assigned ?? [])
+          .filter((item) => membershipKeyOf(item) === a.identity)
+          .map((item) => item.id),
+      );
+      const removed = (id: string) => ids.has(id);
+      const placements = { ...s.placements };
+      for (const id of ids) delete placements[id];
+      return {
+        ...s,
+        planMembership,
+        sequence: s.sequence?.filter((row) => row.kind === "zone" || !removed(row.id)) ?? null,
+        placements,
+        pinnedRows: s.pinnedRows.filter((row) => !removed(row.id)),
+        pendingPinnedRows: s.pendingPinnedRows.filter((row) => !removed(row.id)),
+        acceptedDefects: null,
+        ...dirtySeq(s),
+        ...staleShadow(s),
+      };
+    }
     case "TIME_ADJUSTMENT_SET": {
       const item = s.inputs?.assigned.find((i) => i.id === a.id);
       if (!item || !isNativeTimedTodoist(item)) return s;
       const timeAdjustmentOptIns = { ...s.timeAdjustmentOptIns };
       if (a.allow) timeAdjustmentOptIns[a.id] = true;
       else delete timeAdjustmentOptIns[a.id];
-      const includedIds = includedIdsForInputs(s.inputs!, s.overrides);
+      const includedIds = includedIdsForInputs(s);
       return {
         ...s,
         timeAdjustmentOptIns,
@@ -850,7 +917,7 @@ export function reducer(s: AppState, a: Action): AppState {
         acceptedDefects: null, // resequence kills any acceptance (LD 24)
       };
     case "SEQUENCE_OK": {
-      const includedIds = includedIdsForInputs(s.inputs!, s.overrides);
+      const includedIds = includedIdsForInputs(s);
       return {
         ...s,
         sequence: a.sequence,
@@ -1160,7 +1227,7 @@ export function reducer(s: AppState, a: Action): AppState {
             a.pinnedRows ?? [],
             s.inputs,
             restoredOptIns,
-            includedIdsForInputs(s.inputs, a.overrides),
+            includedIdsForInputs(s, s.inputs, a.overrides),
           )
         : (a.pinnedRows ?? []);
       const restoredPendingPins = s.inputs
@@ -1168,7 +1235,7 @@ export function reducer(s: AppState, a: Action): AppState {
             a.pendingPinnedRows ?? a.pinnedRows ?? [],
             s.inputs,
             restoredOptIns,
-            includedIdsForInputs(s.inputs, a.overrides),
+            includedIdsForInputs(s, s.inputs, a.overrides),
           )
         : (a.pendingPinnedRows ?? a.pinnedRows ?? []);
       return {
@@ -1267,7 +1334,7 @@ export function reducer(s: AppState, a: Action): AppState {
           s.pendingPinnedRows,
           a.inputs,
           timeAdjustmentOptIns,
-          includedIdsForInputs(a.inputs, r.overrides),
+          includedIdsForInputs(s, a.inputs, r.overrides),
         ),
         refresh: { phase: "idle", error: null, lastRefreshed: a.at, summary, coverage },
       };
@@ -1326,12 +1393,16 @@ function allAssignedIds(inputs: PlanInputs): ReadonlySet<string> {
 }
 
 function includedIdsForInputs(
-  inputs: PlanInputs,
-  overrides: Record<string, TodayOverride>,
+  s: AppState,
+  inputs: PlanInputs | null = s.inputs,
+  overrides: Record<string, TodayOverride> = s.overrides,
 ): ReadonlySet<string> {
+  if (!inputs) return new Set();
   return new Set(
     inputs.assigned
-      .filter((item) => overrides[item.id]?.included !== false)
+      .filter((item) =>
+        rowIsIncluded(item, overrides[item.id], s.planMembership, s.membershipDefault),
+      )
       .map((item) => item.id),
   );
 }
@@ -1467,13 +1538,51 @@ function upsertPinnedRow(
   return [...pinnedRows.filter((candidate) => candidate.id !== id), row];
 }
 
+// -- plan inclusion: the one seam every reader shares ------------------------
+
+/** Stable plan-membership key for one row: the canonical source identity,
+    never the name-keyed row id. Same resolution `assignmentRows` uses, with
+    an empty string treated as absent so two legacy rows cannot collide. */
+export function membershipKeyOf(item: AssignedItem): string {
+  if (typeof item.identity === "string" && item.identity.length > 0) return item.identity;
+  return itemIdentity(item) ?? item.id;
+}
+
+/** The inclusion rule for one row. Two independent gates: the session override
+    must not exclude it, AND its local plan membership must not be "out".
+    `overrides`/`membership` are passed in so a reducer restoring or refreshing
+    can judge a candidate set that is not yet committed to state. */
+function rowIsIncluded(
+  item: AssignedItem,
+  override: TodayOverride | undefined,
+  membership: Record<string, boolean>,
+  membershipDefault: MembershipDefault,
+): boolean {
+  if (override && override.included === false) return false;
+  const explicit = membership[membershipKeyOf(item)];
+  return explicit === undefined ? membershipDefault === "in" : explicit;
+}
+
+/** Row form of the inclusion seam, for callers already holding the item. */
+export function isItemIncluded(s: AppState, item: AssignedItem): boolean {
+  return rowIsIncluded(item, s.overrides[item.id], s.planMembership, s.membershipDefault);
+}
+
+/** The inclusion seam by row id. A row the queue no longer carries has no
+    stable identity to consult, so it keeps the legacy override-only answer. */
+export function isIncluded(s: AppState, id: string): boolean {
+  const item = s.inputs?.assigned.find((i) => i.id === id);
+  if (!item) return s.overrides[id]?.included !== false;
+  return isItemIncluded(s, item);
+}
+
 // -- selectors ---------------------------------------------------------------
 
 export function queueState(s: AppState, id: string): QueueState {
   const item = s.inputs?.assigned.find((i) => i.id === id);
   if (!item) return "needs-placement";
   const override = s.overrides[id];
-  if (override && !override.included) return "excluded";
+  if (!isItemIncluded(s, item)) return "excluded";
   const blocks = override?.blocks ?? item.blocks;
   if (blocks === 0) return "background";
   // Native Todoist times are protected by default. Opting in removes that
@@ -1503,10 +1612,7 @@ function pruneRowUi(ui: AppState["ui"], inputs: PlanInputs): AppState["ui"] {
 
 /** Included, capacity-consuming items (queue + capacity preview "selected"). */
 export function includedItems(s: AppState) {
-  return (s.inputs?.assigned ?? []).filter((i) => {
-    const o = s.overrides[i.id];
-    return o ? o.included : true;
-  });
+  return (s.inputs?.assigned ?? []).filter((i) => isItemIncluded(s, i));
 }
 
 export function effectiveBlocks(s: AppState, id: string): number {

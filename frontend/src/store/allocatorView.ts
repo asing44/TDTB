@@ -17,6 +17,7 @@ import type { AssignedItem } from "../model/types";
 import {
   effectiveBlocks,
   includedItems,
+  isIncluded,
   queueState,
   type AppState,
 } from "./store";
@@ -63,7 +64,7 @@ export function includedDisplayOrder(
 ): Array<{ id: string; item: AssignedItem; blocks: number }> {
   const g = bandedRows(s);
   return [...g.crit, ...g.high, ...g.else, ...g.scheduled]
-    .filter((i) => s.overrides[i.id]?.included ?? true)
+    .filter((i) => isIncluded(s, i.id))
     .map((item) => ({ id: item.id, item, blocks: effectiveBlocks(s, item.id) }));
 }
 
@@ -146,6 +147,6 @@ export function bandSpend(s: AppState, band: BandKey): number {
   const g = bandedRows(s);
   const rows = band === "else" ? g.else : g[band];
   return rows
-    .filter((i) => s.overrides[i.id]?.included ?? true)
+    .filter((i) => isIncluded(s, i.id))
     .reduce((sum, i) => sum + effectiveBlocks(s, i.id), 0);
 }
