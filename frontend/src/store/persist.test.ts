@@ -395,6 +395,24 @@ describe("plan membership persistence (U2)", () => {
     expect(store.getState().planMembership).toEqual({ "todoist:A": true, "todoist:B": true });
   });
 
+  it("migrates on a timeline placement alone", () => {
+    storage.setItem(KEY, JSON.stringify({
+      version: 2,
+      validDate: "2026-07-18",
+      overrides: {},
+      placements: { A: "10:00" },
+      sequence: null,
+      fingerprint: null,
+      anchoredSourceFingerprint: null,
+      pinnedRows: [],
+    }));
+    const store = createStore();
+    store.dispatch({ type: "INPUTS_LOADED", inputs: membershipInputs("2026-07-18", ["A", "B"]), ledger: LEDGER });
+    attachSessionPersistence(store, fakeController(), storage);
+
+    expect(store.getState().planMembership).toEqual({ "todoist:A": true, "todoist:B": true });
+  });
+
   it("leaves an empty pre-U2 day on today's plain defaults", () => {
     storage.setItem(KEY, JSON.stringify({
       version: 2,

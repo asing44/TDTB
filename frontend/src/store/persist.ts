@@ -57,7 +57,9 @@ function seededMembership(
   const midDay =
     (blob.sequence?.length ?? 0) > 0 ||
     (blob.pinnedRows?.length ?? 0) > 0 ||
-    Object.keys(overrides).length > 0;
+    Object.keys(overrides).length > 0 ||
+    Object.keys(blob.placements ?? {}).length > 0 ||
+    (blob.overlapGrants?.length ?? 0) > 0;
   if (!midDay || !inputs) return {};
   const seeded: Record<string, boolean> = {};
   for (const item of inputs.assigned) {
