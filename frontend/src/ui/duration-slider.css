@@ -1,0 +1,31 @@
+/* duration-slider.css — the expanded row's duration range control.
+   Existing tokens (tokens.css) only. */
+.dslider {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.dslider__range {
+  width: 150px;
+  min-height: 28px;
+  accent-color: var(--c-selected);
+}
+.dslider__range:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+.dslider__range:focus-visible {
+  outline: 2px solid var(--c-selected);
+  outline-offset: 2px;
+}
+.dslider__label {
+  min-width: 6ch;
+  font-family: var(--font-mono);
+  color: var(--t-text);
+}
+@media (max-width: 640px) {
+  .dslider__range {
+    width: 120px;
+    min-height: 34px;
+  }
+}

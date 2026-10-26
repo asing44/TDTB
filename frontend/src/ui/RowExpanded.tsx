@@ -34,6 +34,7 @@ import { blocksLabel, display12h } from "../model/time";
 import { minutesToBlocks, parseDuration } from "../model/parseDuration";
 import type { AssignedItem } from "../model/types";
 import { SourceMenu } from "./SourceMenu";
+import { DurationSlider } from "./DurationSlider";
 import { TimeEditor } from "./TimeEditor";
 import { rowId } from "./TaskRow";
 
@@ -211,6 +212,13 @@ export function RowExpanded({ item, s }: { item: AssignedItem; s: AppState }) {
             </option>
           ))}
         </select>
+        <DurationSlider
+          idBase={base}
+          blocks={draft.blocks}
+          disabled={busy || allDay}
+          title={allDay ? "All-day rows have no duration" : undefined}
+          onChange={(blocks) => controller.updateDraft(id, (d) => ({ ...d, blocks }))}
+        />
         <input
           class="trow__select"
           type="text"
