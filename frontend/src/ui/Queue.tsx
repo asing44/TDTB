@@ -317,7 +317,7 @@ export function Queue() {
               </div>
             );
           })}
-          <UnassignedToday />
+          <UnassignedToday structureTitles={structureTitles} />
         </div>
         <div class="plan-grid__capacity">
           <CapacityCard />

@@ -1,0 +1,173 @@
+/* drawer-groups.css — U6: the Not in plan drawer's LOCAL rows, grouped by
+   commitment (tier) and then by source / object type.
+
+   The tier head follows the lane-header pattern the plan's own band headers
+   use: one full-width disclosure button, the tier name, a rule, the row
+   count, the state in words, and a chevron. Nothing here re-skins an existing
+   row — the groups are plain lists of the same `.qrow` the drawer already
+   renders, so a local row keeps its Add to plan switch and its grid slot. */
+
+.unassigned-tiers {
+  display: grid;
+  gap: 8px;
+}
+
+.unassigned-tier {
+  display: block;
+}
+
+/* Tier disclosure. The tick carries the tier's own colour, so the ladder reads
+   in one scan even with every tier collapsed. */
+.unassigned-tier__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  margin: 0;
+  padding: 5px 0;
+  border: 0;
+  border-bottom: 0.5px solid color-mix(in srgb, var(--t-border, #d9d7cd) 70%, transparent);
+  border-radius: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.unassigned-tier__head:focus-visible {
+  outline: 2px solid var(--t-accent, #3b82f6);
+  outline-offset: -2px;
+}
+
+.unassigned-tier__head:hover .unassigned-tier__label {
+  color: var(--t-accent-text, #0f6e56);
+}
+
+.unassigned-tier__tick {
+  flex: none;
+  width: 3px;
+  height: 12px;
+  border-radius: 2px;
+  background: var(--tier-color, var(--t-border, #d9d7cd));
+}
+
+.unassigned-tier__label {
+  flex: none;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--t-text, #1f2430);
+}
+
+.unassigned-tier__rule {
+  flex: 1 1 auto;
+  height: 1px;
+  min-width: 8px;
+  background: color-mix(in srgb, var(--t-border, #d9d7cd) 65%, transparent);
+}
+
+.unassigned-tier__count {
+  flex: none;
+  font-size: 10px;
+  color: var(--t-muted, #6b7280);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.unassigned-tier__state {
+  flex: none;
+  padding: 1px 6px;
+  border: 0.5px solid var(--t-border, #d9d7cd);
+  border-radius: 999px;
+  background: var(--t-surface-2, #f4f2ed);
+  color: var(--t-muted, #6b7280);
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.unassigned-tier__state--closed {
+  background: color-mix(in srgb, var(--tier-color, #9ca3af) 14%, transparent);
+  border-color: color-mix(in srgb, var(--tier-color, #9ca3af) 55%, transparent);
+  color: var(--t-text, #1f2430);
+}
+
+.unassigned-tier__chevron {
+  flex: none;
+  font-size: 10px;
+  color: var(--t-muted, #6b7280);
+}
+
+.unassigned-tier__body {
+  display: grid;
+  gap: 6px;
+  padding-top: 4px;
+}
+
+/* Tier colours: overdue is the same overflow red the plan's own overdue rows
+   use, so a late row reads the same in both places. */
+.unassigned-tier--overdue {
+  --tier-color: var(--c-overflow, #b42318);
+}
+.unassigned-tier--due-today {
+  --tier-color: var(--c-selected, #3b82f6);
+}
+.unassigned-tier--fixed-time {
+  --tier-color: var(--t-accent-strong, #0f6e56);
+}
+.unassigned-tier--due-7d {
+  --tier-color: #9ca3af;
+}
+.unassigned-tier--priority {
+  --tier-color: #9ca3af;
+}
+.unassigned-tier--no-date {
+  --tier-color: var(--t-border, #d9d7cd);
+}
+
+/* Source / object-type sub-group inside a tier: a demoted label with its own
+   count, never a second disclosure — the tier is the only thing that folds. */
+.unassigned-source__head {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin: 0 0 2px;
+  padding-left: 8px;
+  border-left: 2px solid color-mix(in srgb, var(--t-border, #d9d7cd) 80%, transparent);
+  color: var(--t-muted, #6b7280);
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.unassigned-source__count {
+  color: var(--t-muted, #6b7280);
+  font-variant-numeric: tabular-nums;
+}
+
+/* The row's own due text, so a tier that groups by date does not hide the
+   date it grouped on (a far-future row carries its own ISO label). */
+.unassigned-due {
+  margin-left: 6px;
+  font-size: 10px;
+  color: var(--t-muted, #6b7280);
+  white-space: nowrap;
+}
+
+.unassigned-due--overdue {
+  color: var(--c-overflow, #b42318);
+  font-weight: 600;
+}
+
+.unassigned-due--today {
+  color: var(--c-selected, #3b82f6);
+  font-weight: 600;
+}
+
+.unassigned-due--soon {
+  color: var(--t-text, #1f2430);
+}
