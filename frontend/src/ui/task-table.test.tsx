@@ -97,7 +97,7 @@ describe("U11 headings: Assigned this morning replaces Today's work", () => {
 });
 
 describe("U11 hint row lists exactly the shortcuts that work", () => {
-  it("renders the row-shortcuts hint with the skip-today scope note", () => {
+  it("renders the row-shortcuts hint with the local plan-scope note", () => {
     const h = makeHarness("ready");
     const r = h.ui(<Queue />);
     const hint = r.container.querySelector(".queue__hint");
@@ -106,13 +106,15 @@ describe("U11 hint row lists exactly the shortcuts that work", () => {
     expect(text).toContain("Row shortcuts");
     expect(text).not.toContain("Hover a row");
     expect(text).toContain("C complete");
-    // F4a: Exclude today (browser-only) became Skip today (durable, on the
-    // server). E keeps its meaning as "not today", the storage moved.
-    expect(text).toContain("E skip today");
+    // U3b: E is local plan membership for every source kind. The hint says so
+    // instead of advertising the retired durable Skip today.
+    expect(text).toContain("E remove from plan");
     expect(text).toContain("move");
-    expect(text).toContain("records it on the server for today only");
-    expect(text).toContain("restore it from Skipped today");
-    expect(text).toContain("source is untouched");
+    expect(text).toContain("in this browser only");
+    expect(text).toContain("no source is written");
+    expect(text).toContain("Not in plan puts it back");
+    expect(text).not.toContain("E skip today");
+    expect(text).not.toContain("records it on the server");
     // The retired controls' keys are not advertised.
     expect(text).not.toContain("D exact duration");
     expect(text).not.toContain("±15min");

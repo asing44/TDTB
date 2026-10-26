@@ -1,7 +1,7 @@
 /* TaskRow — task-actions F4a: the collapsed task row from the approved
    prototype (design/task-actions r2). One row = an independent selection
    checkbox, the name with its source/type chips and a short state, the
-   duration in mono, the Assigned switch, and three labelled buttons: Complete,
+   duration in mono, the plan-membership switch, and three labelled buttons: Complete,
    Skip today (Todoist rows only), and Expand/Collapse. Selection never depends on expansion; one row is expanded
    at a time (store ui.expandedId). The expanded region mounts RowExpanded (F4b). */
 
@@ -95,46 +95,61 @@ function shortState(s: AppState, item: AssignedItem): string {
   return "Automatic start";
 }
 
-/** KTD4/KTD5: the per-row Assigned/Unassigned switch, the only assignment
+/** U3b: the switch is LOCAL plan membership (U1/U2/U3a), so its words say so
+    instead of implying an upstream assignment edit. Nothing behind this control
+    writes to Todoist or Capacities. */
+export const PLAN_IN_LABEL = "In today's plan";
+export const PLAN_OUT_LABEL = "Not in plan (local — doesn't change Todoist)";
+export const ADD_TO_PLAN_LABEL = "Add to plan";
+
+/** KTD4/KTD5 + U3b: the per-row plan-membership switch, the only assignment
     control. A native checkbox with role="switch", so Space toggles it and the
     state is exposed as aria-checked. It is gated like every other row action:
     before Day Setup is confirmed it is disabled and the store's reason is
     announced through aria-describedby. The label owns a 44px hit area while the
-    track stays 18px high, so a row does not grow. An assigned row shows only
-    the track (the state is visible; the name rides aria-label and the title);
-    the Unassigned section adds the short "Unassigned" caption. */
+    track stays 18px high, so a row does not grow. An in-plan row shows only the
+    track (the state is visible; the name rides aria-label and the title); the
+    Not in plan drawer passes its own `offLabel`/`caption` so the same control
+    reads as the per-row "Add to plan" affordance there. */
 export function AssignSwitch({
   id,
   name,
   assigned,
   s,
+  offLabel = PLAN_OUT_LABEL,
+  caption = "Not in plan",
 }: {
   id: string;
   name: string;
   assigned: boolean;
   s: AppState;
+  /** Words for the off state; the drawer asks to ADD the row back. */
+  offLabel?: string;
+  /** Short caption beside the track in the off state. */
+  caption?: string;
 }) {
   const { controller } = useApp();
   const why = taskActionDisabledReason(s, "complete");
   const whyId = `why-assign-${id.replace(/[^A-Za-z0-9_-]+/g, "-")}`;
   const off = s.runtimeBusy || why !== null;
+  const label = assigned ? PLAN_IN_LABEL : offLabel;
   return (
     <label
       class={`trow__assign${off ? " trow__assign--off" : ""}${assigned ? "" : " trow__assign--captioned"}`}
-      title={why ?? (assigned ? "Unassign for today" : "Re-assign to today")}
+      title={why ?? label}
     >
       <input
         type="checkbox"
         role="switch"
         class="trow__switch"
         aria-checked={assigned}
-        aria-label={`Assigned: ${name}`}
+        aria-label={`${label}: ${name}`}
         aria-describedby={why ? whyId : undefined}
         checked={assigned}
         disabled={off}
         onChange={() => void controller.setAssigned(id, !assigned)}
       />
-      {!assigned && <span class="trow__assign-text">Unassigned</span>}
+      {!assigned && <span class="trow__assign-text">{caption}</span>}
       {why && (
         <span class="sr-only" id={whyId}>
           {why}

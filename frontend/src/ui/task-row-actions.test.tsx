@@ -8,7 +8,8 @@
    - Skip today through the fixture adapter, the Skipped today section, and
      Restore today resolved from the drop entry's own identity;
    - the Day Setup gate as written reason text, not just a disabled button;
-   - the C and E shortcuts acting on the row that received the key.
+   - the C and E shortcuts acting on the row that received the key: C still
+     completes in the source, E is local plan membership with no source write.
 
    Fixture adapters only: no live adapter, no billed call, no source write.
 
@@ -298,7 +299,7 @@ describe("collapsed row: Skip today and Restore today", () => {
 });
 
 describe("collapsed row: C and E act on the row that received the key", () => {
-  it("C completes the focused row and E skips it", async () => {
+  it("C completes the focused row and E takes it out of today's plan locally", async () => {
     const h = makeHarness("ready");
     const calls = spyVerbs(h);
     const batched: Array<{ verb: string; target: string }> = [];
@@ -320,11 +321,21 @@ describe("collapsed row: C and E act on the row that received the key", () => {
     // the E press below waits for the single batch slot to settle first.
     await waitFor(() => expect(h.store.getState().batch.phase).toBe("done"));
 
+    // U3b: E is LOCAL plan membership for every source kind. The row leaves
+    // today's plan in this browser and waits in Not in plan; nothing upstream
+    // is written, so the verb spies stay empty.
     fireEvent.keyDown(rowFor(container, "Press"), { key: "e" });
     await waitFor(() =>
-      expect(calls).toEqual([
-        { verb: "drop_from_plan", target: PRESS_IDENTITY },
-      ]),
+      expect(h.store.getState().planMembership).toEqual({
+        [PRESS_IDENTITY]: false,
+      }),
+    );
+    expect(calls).toEqual([]);
+    expect(batched).toEqual([{ verb: "done", target: "todoist:6fx00xMIRROR" }]);
+    await waitFor(() =>
+      expect(container.querySelector("#unassigned-today")?.textContent).toContain(
+        "Press",
+      ),
     );
   });
 

@@ -53,30 +53,33 @@ function ShortcutHint() {
   return (
     <div class="queue__hint" role="note" aria-label="Task table keyboard shortcuts">
       <span class="queue__hint-keys">
-        Row shortcuts · <kbd>C</kbd> complete · <kbd>E</kbd> skip today ·{" "}
+        Row shortcuts · <kbd>C</kbd> complete · <kbd>E</kbd> remove from plan ·{" "}
         <kbd>↑↓</kbd> move
       </span>
       <span class="queue__hint-note">
-        Skip today records it on the server for today only; restore it from
-        Skipped today. The source is untouched. Complete updates the source.
-        Capacities items have no Skip today: C or E sets them Unassigned for
-        today, and the Assigned switch brings them back from Unassigned.
+        E takes the row out of today's plan in this browser only — no source is
+        written, and Not in plan puts it back. C completes the row in its
+        source; a Capacities or calendar row has nothing to complete, so C takes
+        it out of the plan instead.
       </span>
     </div>
   );
 }
 
-/** Keys-card navigation: ↑/↓ move between rows, E skips the focused row for
-    today, C completes it. A Capacities or calendar row has no completable
-    write and no Skip today (KTD4), so C and E set it Unassigned instead. Skips when the event originates in a
-    control that owns the key (buttons own Enter). The old ←/→ duration trim
-    and D exact-duration keys left with the slider and the Exact duration
-    button; duration shaping returns with the expanded row panel. */
+/** Keys-card navigation: ↑/↓ move between rows, C completes, E takes the row
+    out of today's plan. E is LOCAL plan membership for every source kind
+    (U3b): it dispatches PLAN_MEMBERSHIP_SET through `setAssigned` and nothing
+    else, so no single key can write to Todoist or Capacities. C still completes
+    a Todoist row in its source; a Capacities or calendar row has no completable
+    write and no Skip today (KTD4), so C takes it out of the plan instead. Skips
+    when the event originates in a control that owns the key (buttons own
+    Enter). The old ←/→ duration trim and D exact-duration keys left with the
+    slider and the Exact duration button; duration shaping returns with the
+    expanded row panel. */
 function rowKeydown(
   e: KeyboardEvent,
   item: AssignedItem,
   controller: {
-    skipToday: (id: string) => Promise<unknown>;
     setAssigned: (id: string, assigned: boolean) => Promise<unknown>;
     runRowBatch: (id: string, action: "complete") => Promise<unknown>;
   },
@@ -96,8 +99,10 @@ function rowKeydown(
     if (next) next.focus();
     e.preventDefault();
   } else if (key === "e" && !inControl) {
-    if (heldBySwitch) void controller.setAssigned(item.id, false);
-    else void controller.skipToday(item.id);
+    // LOCAL ONLY (U3b): every source answers E the same way — the row leaves
+    // today's plan in this browser and waits in Not in plan. No adapter call
+    // exists on this path, so E can never write to a source.
+    void controller.setAssigned(item.id, false);
     e.preventDefault();
   } else if (key === "c" && !inControl) {
     if (heldBySwitch) void controller.setAssigned(item.id, false);
@@ -224,7 +229,9 @@ export function Queue() {
             <div class="queue__quiet" role="status">
               <p>
                 No assigned items today. Assignment happens upstream — Todoist
-                Today and Capacities. A quiet day is a valid day.
+                Today and Capacities — while what joins today's plan is decided
+                here, so nothing on this screen writes to a source. A quiet day
+                is a valid day.
               </p>
             </div>
           </div>

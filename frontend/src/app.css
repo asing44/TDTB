@@ -11360,11 +11360,17 @@ button.strip-cal {
 }
 .skipped-today__head {
   display: flex;
+  flex-wrap: wrap;
   align-items: baseline;
   gap: 8px;
   margin: 0 0 6px;
   padding-left: 8px;
   border-left: 3px solid var(--c-selected, #3b82f6);
+}
+/* U3b: the drawer states that its rows are a local plan view, so the note takes
+   its own line under the heading instead of squeezing the count. */
+.unassigned-today__note {
+  flex-basis: 100%;
 }
 .skipped-today__head h2 {
   margin: 0;

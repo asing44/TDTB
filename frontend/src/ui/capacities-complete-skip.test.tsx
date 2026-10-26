@@ -114,7 +114,7 @@ describe("Complete on a Capacities row skips it for today", () => {
     );
   });
 
-  it("sets the row Unassigned through the C keyboard shortcut (KTD4)", async () => {
+  it("takes the row out of today's plan through the C keyboard shortcut (KTD4)", async () => {
     const h = makeHarness("ready");
     const actions = spyActions(h);
     const sent = spyBatches(h);
@@ -130,13 +130,13 @@ describe("Complete on a Capacities row skips it for today", () => {
     );
     expect(actions).toEqual([]);
     expect(sent).toEqual([]);
-    // The row waits in the Unassigned section, out of every band.
+    // The row waits in the Not in plan drawer, out of every band.
     await waitFor(() =>
       expect(container.querySelector("#unassigned-today")?.textContent).toContain(NOTE),
     );
   });
 
-  it("leaves today's plan for the Unassigned section, and Re-assign brings it back", async () => {
+  it("leaves today's plan for the Not in plan drawer, and Add to plan brings it back", async () => {
     const h = makeHarness("ready");
     const sent = spyBatches(h);
     const actions = spyActions(h);
@@ -166,8 +166,8 @@ describe("Complete on a Capacities row skips it for today", () => {
       expect(container.querySelector("#unassigned-today")).not.toBeNull(),
     );
     const section = container.querySelector<HTMLElement>("#unassigned-today")!;
-    expect(section.textContent).toContain("Unassigned");
-    expect(section.textContent).toContain("1 unassigned");
+    expect(section.textContent).toContain("Not in plan");
+    expect(section.textContent).toContain("1 not in plan");
     expect(section.textContent).toContain("Capacities");
     // KTD4: Skipped today carries Todoist drops only.
     expect(container.querySelector("#skipped-today")).toBeNull();

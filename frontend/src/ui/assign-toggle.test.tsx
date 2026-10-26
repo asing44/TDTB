@@ -1,5 +1,6 @@
-/* assign-toggle.test.tsx — U4: the per-row Assigned/Unassigned switch, the
-   Unassigned section, and Skip today going away on Capacities rows (KTD4).
+/* assign-toggle.test.tsx — U4/U3b: the per-row plan-membership switch, the
+   "Not in plan" drawer, Skip today going away on Capacities rows (KTD4), and
+   the E key taking a row out of today's plan with zero source writes.
    Fixture adapter only; no source write. */
 
 import { afterEach, describe, expect, it } from "vitest";
@@ -38,6 +39,23 @@ function spyAssign(h: Harness): Array<[string, boolean]> {
   return calls;
 }
 
+/** Every write shape a row could reach: the journaled batch wire and the
+    single-row verb wire. U3b's keyboard path must produce neither. */
+function spySources(h: Harness): string[] {
+  const calls: string[] = [];
+  const batch = h.adapter.applyRuntimeBatch.bind(h.adapter);
+  h.adapter.applyRuntimeBatch = async (items) => {
+    for (const item of items) calls.push(`batch:${item.verb}`);
+    return batch(items);
+  };
+  const action = h.adapter.runtimeAction.bind(h.adapter);
+  h.adapter.runtimeAction = async (verb, target, args) => {
+    calls.push(`verb:${verb}`);
+    return action(verb, target, args);
+  };
+  return calls;
+}
+
 function stageServerRead(h: Harness, mutate: (inputs: PlanInputs) => void): void {
   const inputs = structuredClone(h.store.getState().inputs!);
   mutate(inputs);
@@ -54,8 +72,8 @@ function stageServerRead(h: Harness, mutate: (inputs: PlanInputs) => void): void
   });
 }
 
-describe("the Assigned switch on a row", () => {
-  it("is a switch, on for an assigned row, and calls setAssigned(id, false)", () => {
+describe("the plan-membership switch on a row", () => {
+  it("is a switch, in-plan for a band row, and calls setAssigned(id, false)", () => {
     const h = makeHarness("ready");
     const calls = spyAssign(h);
     const { container } = h.ui(<Queue />);
@@ -63,20 +81,20 @@ describe("the Assigned switch on a row", () => {
     const sw = switchIn(press);
     expect(sw.getAttribute("role")).toBe("switch");
     expect(sw.getAttribute("aria-checked")).toBe("true");
-    expect(sw.getAttribute("aria-label")).toBe("Assigned: Press");
+    expect(sw.getAttribute("aria-label")).toBe("In today's plan: Press");
     expect(sw.disabled).toBe(false);
     fireEvent.click(sw);
     expect(calls).toEqual([["Press", false]]);
   });
 
-  it("shows no visible caption on an assigned row; the name rides aria-label and title", () => {
+  it("shows no visible caption on an in-plan row; the state rides aria-label and title", () => {
     const h = makeHarness("ready");
     const { container } = h.ui(<Queue />);
     const press = rowFor(container, "Press");
     expect(press.querySelector(".trow__assign-text")).toBeNull();
-    expect(press.textContent).not.toMatch(/Assigned/);
+    expect(press.textContent).not.toMatch(/In today's plan/);
     expect(press.querySelector(".trow__assign")?.getAttribute("title")).toBe(
-      "Unassign for today",
+      "In today's plan",
     );
   });
 
@@ -102,8 +120,8 @@ describe("the Assigned switch on a row", () => {
   });
 });
 
-describe("the Unassigned section", () => {
-  it("lists a held-back Capacities row with its source chip and a switch to re-assign", async () => {
+describe("the Not in plan drawer", () => {
+  it("lists a held-back Capacities row with its source chip and an Add to plan switch", async () => {
     const h = makeHarness("ready");
     const calls = spyAssign(h);
     const { container } = h.ui(<Queue />);
@@ -127,15 +145,100 @@ describe("the Unassigned section", () => {
     );
     const section = container.querySelector<HTMLElement>("#unassigned-today")!;
     expect(section.textContent).toContain(NOTE);
+    expect(section.textContent).toContain("Not in plan");
+    expect(section.textContent).toContain("1 not in plan");
+    // The copy never implies that anything upstream changes.
+    expect(section.textContent).toContain("changes nothing in Todoist");
     expect(section.querySelector(".qrow__src--capacities")?.textContent).toBe(
       "Capacities",
     );
     // Same column as the task list, and the short caption lives here only.
     expect(section.closest(".plan-grid__groups")).not.toBeNull();
-    expect(section.querySelector(".trow__assign-text")?.textContent).toBe("Unassigned");
+    expect(section.querySelector(".trow__assign-text")?.textContent).toBe("Add to plan");
     const sw = switchIn(section);
     expect(sw.getAttribute("aria-checked")).toBe("false");
+    expect(sw.getAttribute("aria-label")).toBe("Add to plan: " + NOTE);
     fireEvent.click(sw);
     expect(calls).toEqual([[NOTE_IDENTITY, true]]);
+  });
+
+  it("renders nothing when every sourced row is in today's plan", () => {
+    const h = makeHarness("ready");
+    const { container } = h.ui(<Queue />);
+    expect(container.querySelector("#unassigned-today")).toBeNull();
+  });
+});
+
+describe("E takes a row out of today's plan locally", () => {
+  it("moves a Todoist row into Not in plan with zero source writes", async () => {
+    const h = makeHarness("ready");
+    const writes = spySources(h);
+    const { container } = h.ui(<Queue />);
+
+    fireEvent.keyDown(rowFor(container, "Press"), { key: "e" });
+
+    // Local plan membership only: no batch, no runtime verb, no adapter call.
+    await waitFor(() =>
+      expect(h.store.getState().planMembership).toEqual({
+        "todoist:6fx00xPRESS": false,
+      }),
+    );
+    expect(writes).toEqual([]);
+
+    const section = container.querySelector<HTMLElement>("#unassigned-today")!;
+    expect(section).not.toBeNull();
+    expect(section.textContent).toContain("Press");
+    const sw = switchIn(section);
+    expect(sw.getAttribute("aria-checked")).toBe("false");
+    expect(sw.getAttribute("aria-label")).toBe("Add to plan: Press");
+    // The row left the bands; only the drawer carries it now.
+    expect(
+      Array.from(
+        container.querySelectorAll<HTMLElement>(
+          ".qrow:not(.trow--unassigned) .qrow__name",
+        ),
+      ).map((n) => n.textContent),
+    ).not.toContain("Press");
+
+    // Putting it back is local too, and the drawer empties itself. The map
+    // stays sparse (U1): an entry that agrees with the day's default is
+    // dropped rather than stored, so re-adding leaves it empty again.
+    fireEvent.click(sw);
+    await waitFor(() =>
+      expect(h.store.getState().planMembership).toEqual({}),
+    );
+    await waitFor(() =>
+      expect(container.querySelector("#unassigned-today")).toBeNull(),
+    );
+    expect(rowFor(container, "Press")).not.toBeNull();
+    expect(writes).toEqual([]);
+  });
+
+  it("answers E the same way on a Capacities row", async () => {
+    const h = makeHarness("ready");
+    const writes = spySources(h);
+    const { container } = h.ui(<Queue />);
+
+    fireEvent.keyDown(rowFor(container, NOTE), { key: "e" });
+
+    await waitFor(() =>
+      expect(h.store.getState().planMembership).toEqual({
+        [NOTE_IDENTITY]: false,
+      }),
+    );
+    expect(writes).toEqual([]);
+    expect(container.querySelector("#unassigned-today")?.textContent).toContain(
+      NOTE,
+    );
+  });
+
+  it("keeps C writing to the source for a Todoist row", async () => {
+    const h = makeHarness("ready");
+    const writes = spySources(h);
+    const { container } = h.ui(<Queue />);
+
+    fireEvent.keyDown(rowFor(container, "Press"), { key: "c" });
+
+    await waitFor(() => expect(writes).toEqual(["batch:done"]));
   });
 });
