@@ -13,7 +13,7 @@ import {
   sourceHealthBlocked,
   type AppState,
 } from "./store";
-import { makeScenario, fixedInputsOf } from "../fixtures/scenarios";
+import { makeScenario, fixedInputsOf, plannedDayRestore } from "../fixtures/scenarios";
 import { sourceHealthBySource, sourceHealthOf } from "../adapters/wire";
 import { fingerprintFixedInputs } from "../model/fingerprint";
 import { calendarWalls } from "../model/overflow";
@@ -23,11 +23,15 @@ const ledger: Ledger = { today: "2026-07-18", spent: 0, cap: 4, remaining: 4 };
 
 function loaded(scenario = "ready" as const): AppState {
   const sc = makeScenario(scenario);
-  return reducer(initialState, {
-    type: "INPUTS_LOADED",
-    inputs: sc.inputs,
-    ledger: { ...sc.ledger },
-  });
+  // Fixture days are days already under way: the rows were curated in (U3a).
+  return reducer(
+    reducer(initialState, {
+      type: "INPUTS_LOADED",
+      inputs: sc.inputs,
+      ledger: { ...sc.ledger },
+    }),
+    plannedDayRestore,
+  );
 }
 
 function sequenced(): AppState {
@@ -584,10 +588,13 @@ describe("T27 recurring placement immunity", () => {
     const s0 = loaded();
     const inputs = structuredClone(s0.inputs!);
     inputs.assigned.push(structuredClone(recurringItem));
+    // The manual pin sits on a row today's plan holds, so it is unrelated to
+    // U3a's rule: a pin on a row OUT of the plan is dropped by design (a row
+    // outside the plan has no place in it), which is not what this asserts.
     const manualPin: SequenceRow = {
       id: "Magic Mirror", start: "09:00", end: "10:00", zone: null, kind: "work",
     };
-    const withPin = { ...initialState, pendingPinnedRows: [manualPin] };
+    const withPin: AppState = { ...s0, pendingPinnedRows: [manualPin] };
     const s = reducer(withPin, {
       type: "INPUTS_LOADED",
       inputs,

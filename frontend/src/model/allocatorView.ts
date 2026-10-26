@@ -10,7 +10,7 @@ import { bandOf } from "./bands";
 import { importanceKey } from "./allocator";
 import { isDurationTag } from "./durationTags";
 import type { AssignedItem, QueueState } from "./types";
-import { queueState, type AppState } from "../store/store";
+import { queueState, isPlanMember, type AppState } from "../store/store";
 
 // Keep allocation arithmetic, inclusion, cumulative spend, and trim behavior
 // on the existing store-owned seam. P6 adds relationship metadata only; it
@@ -317,6 +317,9 @@ function hierarchyBuckets(s: AppState): HierarchyBandedRows {
     crit: [], high: [], else: [], scheduled: [], excluded: [],
   };
   for (const item of context) {
+    // U3a: rows outside today's plan are absent from every lane; they render
+    // in the Unassigned section instead of being dumped into "Out today".
+    if (!isPlanMember(s, item)) continue;
     const state: QueueState = queueState(s, item.id);
     if (state === "needs-placement" || state === "background") buckets[bandOf(item)].push(item);
     else buckets[state].push(item);

@@ -17,6 +17,8 @@ import type {
   SequenceRow,
   ShadowDiff,
 } from "../model/types";
+import type { Action } from "../store/store";
+import type { Store } from "../store/createStore";
 
 export type ScenarioName =
   | "fresh"
@@ -390,3 +392,46 @@ export const SCENARIO_NAMES: ScenarioName[] = [
   "over",
   "sparse",
 ];
+
+/** Declare a staged fixture day as a day already under way: every row the
+    sources returned is in today's plan.
+
+    U3a made a COLD load unassigned-first (`membershipDefault: "rule"`), where
+    only overdue, due-today, and fixed-time rows join by themselves. A scenario
+    fixture depicts the middle of a day whose plan the operator already built,
+    so it restores the legacy all-in default (`"in"`) — the same value an
+    earlier session blob carries, which the membership seam still honors. The
+    rule default is exercised directly in the store-level membership tests. */
+export function restorePlannedDay(store: { dispatch: (a: Action) => void }): void {
+  store.dispatch(plannedDayRestore);
+}
+
+/** Wrap a fixture store so its FIRST `INPUTS_LOADED` is followed by the
+    planned-day restore. Controller-driven tests call `controller.load()`
+    themselves, so wrapping keeps their staging untouched while still declaring
+    the fixture day one already under way. */
+export function plannedDayStore(store: Store): Store {
+  const raw = store.dispatch;
+  let first = true;
+  store.dispatch = (a: Action) => {
+    raw(a);
+    if (first && a.type === "INPUTS_LOADED") {
+      first = false;
+      raw(plannedDayRestore);
+    }
+  };
+  return store;
+}
+
+/** The action behind `restorePlannedDay`, for reducer-level tests that build
+    state without a store. */
+export const plannedDayRestore: Action = {
+  type: "SESSION_RESTORED",
+  overrides: {},
+  placements: {},
+  sequence: null,
+  fingerprint: null,
+  anchoredSourceFingerprint: null,
+  planMembership: {},
+  membershipDefault: "in",
+};

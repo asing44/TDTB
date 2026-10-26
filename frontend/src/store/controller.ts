@@ -61,6 +61,7 @@ import {
   effectiveBlocks,
   emptyBatch,
   includedItems,
+  membershipKeyOf,
   mergeNativeTimedPins,
   rowFactsOf,
   sourceHealthBlocked,
@@ -857,38 +858,51 @@ export class Controller {
     }
   }
 
-  /** U3/KTD1/KTD4: the assignment toggle's one entry point. `id` is whatever
-the call site holds — a plan row id in the bands, a runtime identity in the
-Unassigned section — and each case maps to an already-existing verb:
+  /** U3a: the assignment toggle's one entry point. `id` is whatever the call
+site holds — a plan row id in the bands, a runtime identity in the
+Unassigned section.
 
-  - Todoist → Unassigned: the journaled `unassign` (`runRowBatch` of one), the
-    same call the batch bar makes, so a recurring task advances instead of
-    clearing (D1) and Undo restores the before-image.
+  A row the loaded queue still carries is a LOCAL plan-membership edit: the
+toggle dispatches PLAN_MEMBERSHIP_SET and nothing else. No batch, no runtime
+verb, no reassign, no source refresh — taking work out of (or back into)
+today's plan is a browser-only decision, and the row moves between the bands
+and the Unassigned section by local state alone.
+
+  A row the queue no longer carries is already held back upstream, so the
+reversible path stays the journaled one it always was:
+
   - Todoist → Assigned: `adapter.reassign`, which reverses that row's own
     applied unassign and restores the exact prior due date (KTD1). Never the
     `assign` verb: it writes "today", no-ops on recurring tasks, and leaves
     the unassign applied.
-  - Capacities or calendar → Unassigned: `drop_from_plan`, the date-scoped
-    runstate drop. No Capacities write of any kind (KTD3/AE2).
   - Capacities or calendar → Assigned: `restore_today`.
 
-  Every case refreshes sources, because the refreshed read — not local state
-  — is what moves the row between the two sections. Gating is the existing
-  `taskActionDisabledReason`, so before Day Setup is confirmed no case can
-  reach the server's 409. */
+  Those paths refresh sources, because the refreshed read — not local state —
+is what restores the row. Gating is the existing `taskActionDisabledReason`,
+so before Day Setup is confirmed no upstream case can reach the server's 409. */
   async setAssigned(id: string, assigned: boolean): Promise<void> {
+    const s = this.getState();
+    const item = s.inputs?.assigned.find((i) => i.id === id);
+    if (item) {
+      // LOCAL-ONLY (U3a): the row is still in the loaded queue, so its plan
+      // membership is entirely ours to decide. Nothing upstream is written.
+      this.dispatch({
+        type: "PLAN_MEMBERSHIP_SET",
+        identity: membershipKeyOf(item),
+        in: assigned,
+      });
+      return;
+    }
     const blocked = taskActionDisabledReason(this.getState(), "complete");
     if (blocked) {
       this.dispatch({ type: "RUNTIME_FAIL", error: blocked });
       return;
     }
-    const s = this.getState();
-    const item = s.inputs?.assigned.find((i) => i.id === id);
     const heldBack = (s.inputs?.unassignedToday ?? []).find(
       (r) => r.identity === id || r.name === id,
     );
     const dropped = this.droppedOf(id);
-    const source = item?.source ?? heldBack?.source ?? dropped?.source ?? null;
+    const source = heldBack?.source ?? dropped?.source ?? null;
     if (source === null) {
       this.dispatch({
         type: "RUNTIME_FAIL",
@@ -898,17 +912,13 @@ Unassigned section — and each case maps to an already-existing verb:
     }
     // Already held back: nothing to write, and a second unassign would be the
     // journal's duplicate no-op rather than a real action.
-    if (!assigned && !item && (heldBack || dropped)) return;
+    if (!assigned && (heldBack || dropped)) return;
     if (source === "todoist") {
       if (!assigned) {
-        await this.runRowBatch(item?.id ?? id, "unassign");
+        await this.runRowBatch(id, "unassign");
         return;
       }
-      const identity =
-        this.identityOf(item?.id ?? id) ??
-        heldBack?.identity ??
-        dropped?.identity ??
-        null;
+      const identity = heldBack?.identity ?? dropped?.identity ?? null;
       if (!identity) {
         this.dispatch({
           type: "RUNTIME_FAIL",
@@ -922,8 +932,8 @@ Unassigned section — and each case maps to an already-existing verb:
     // Capacities and calendar rows: the existing date-scoped drop, never a
     // source write. Restore clears a stale legacy `included=false` override
     // exactly as Restore today does.
-    if (assigned) await this.restoreToday(item?.id ?? dropped?.identity ?? id);
-    else await this.skipToday(item?.id ?? id);
+    if (assigned) await this.restoreToday(dropped?.identity ?? id);
+    else await this.skipToday(id);
   }
 
   /** KTD1: reverse one row's own journaled unassign. The server implements

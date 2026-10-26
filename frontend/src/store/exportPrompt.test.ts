@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { buildDayPrompt } from "./exportPrompt";
 import { createStore } from "./createStore";
-import { makeScenario } from "../fixtures/scenarios";
+import { makeScenario, restorePlannedDay } from "../fixtures/scenarios";
 import type { AssignedItem } from "../model/types";
 
 function stateFor(
@@ -11,6 +11,7 @@ function stateFor(
   const sc = makeScenario(name);
   const store = createStore();
   store.dispatch({ type: "INPUTS_LOADED", inputs: sc.inputs, ledger: { ...sc.ledger } });
+  restorePlannedDay(store);
   stage?.(store);
   return store.getState();
 }

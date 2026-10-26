@@ -31,7 +31,12 @@ import { createStore } from "../store/createStore";
 import { Controller } from "../store/controller";
 import { FixtureAdapter } from "../adapters/fixture";
 import type { SequenceContext } from "../adapters/adapter";
-import { makeScenario, type Scenario, type ScenarioName } from "../fixtures/scenarios";
+import {
+  makeScenario,
+  restorePlannedDay,
+  type Scenario,
+  type ScenarioName,
+} from "../fixtures/scenarios";
 import { makeHarness } from "./test-harness";
 import { EXCLUSION_REASONS } from "../model/batchEligibility";
 import { effectiveBlocks, type Action } from "../store/store";
@@ -85,6 +90,11 @@ function recordingHarness(
     inputs: sc.inputs,
     ledger: { ...sc.ledger },
   });
+  // Ignore the restore in the recorded-actions view: this harness counts a
+  // verb's own dispatches, and the fixture day's membership is staging.
+  actions.length = 0;
+  restorePlannedDay(store);
+  actions.length = 0;
   if (sc.staged.daySetupConfirmed) {
     store.dispatch({
       type: "SETUP_SAVED",

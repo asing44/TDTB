@@ -48,6 +48,7 @@ import { FixtureAdapter } from "./adapters/fixture";
 import { projectCommitReport } from "./adapters/wire";
 import { mintWalls, planOverflow } from "./model/overflow";
 import { makeHarness } from "./ui/test-harness";
+import { plannedDayStore } from "./fixtures/scenarios";
 import { useAppState } from "./ui/context";
 import { ActionDock } from "./ui/ActionDock";
 import { ApprovalDrawer } from "./ui/ApprovalDrawer";
@@ -80,7 +81,7 @@ function item(name: string, blocks: number): AssignedItem {
 const blocksOf = (i: AssignedItem) => i.blocks;
 
 function harness() {
-  const store = createStore();
+  const store = plannedDayStore(createStore());
   const adapter = new FixtureAdapter("ready");
   const controller = new Controller(adapter, store.dispatch, store.getState);
   return { store, adapter, controller };

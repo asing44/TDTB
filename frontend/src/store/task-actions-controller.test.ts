@@ -32,13 +32,13 @@ import {
   taskActionDisabledReason,
 } from "./store";
 import type { DroppedItem, UnassignedTodayRow } from "../model/types";
-import type { ScenarioName } from "../fixtures/scenarios";
+import { plannedDayStore, type ScenarioName } from "../fixtures/scenarios";
 
 /** Loaded scenario ("ready" = Setup confirmed). `confirm: false` loads
     "fresh", whose Day Setup is unconfirmed — the gate the row verbs honor. */
 async function harness(opts: { confirm?: boolean; scenario?: ScenarioName } = {}) {
   const confirm = opts.confirm !== false;
-  const store = createStore();
+  const store = plannedDayStore(createStore());
   const adapter = new FixtureAdapter(opts.scenario ?? (confirm ? "ready" : "fresh"));
   const controller = new Controller(adapter, store.dispatch, store.getState);
   await controller.load();
@@ -330,88 +330,95 @@ describe("task-actions Skipped today rows", () => {
   });
 });
 
-describe("task-actions assignment toggle (U3)", () => {
-  it("AE1: Unassign holds a Todoist row back by journal, and Assigned reverses it", async () => {
+describe("task-actions assignment toggle (U3a)", () => {
+  it("AE1: toggling a row the queue still carries is a local edit, in both directions", async () => {
     const { store, adapter, controller } = await harness();
     const verb = vi.spyOn(adapter, "runtimeAction");
     const batch = vi.spyOn(adapter, "applyRuntimeBatch");
-    // The fixture journals row verbs, not batch items, so the re-assign mirror
-    // is stubbed here: this test owns the controller contract, not the fixture.
-    // The stub returns the real wire shape: the server implements re-assign as
-    // an undo of the row's own unassign, so the action comes back `undone`.
-    const reassign = vi
-      .spyOn(adapter, "reassign")
-      .mockImplementation(async (identity: string) => ({
-        id: "ra-9",
-        verb: "unassign",
-        targetName: identity,
-        status: "undone" as const,
-        error: null,
-        duplicate: false,
-      }));
-    let unassigned: UnassignedTodayRow[] = [];
-    const source = stubSources(adapter, () => ({ unassigned }));
+    const reassign = vi.spyOn(adapter, "reassign");
+    const refresh = vi.spyOn(adapter, "refreshSources");
 
     // The row starts Assigned, on the assigned side of the review.
     expect(assignmentRows(store.getState()).assigned.map((r) => r.id)).toContain("Press");
     expect(assignmentRows(store.getState()).unassigned).toEqual([]);
+    expect(store.getState().planMembership).toEqual({});
 
-    unassigned = [
-      {
-        identity: "todoist:6fx00xPRESS",
-        name: "Press",
-        actionId: "ra-9",
-        source: "todoist",
-        recurring: true,
-        minutes: 75,
-      },
-    ];
     await controller.setAssigned("Press", false);
 
-    // Unassigned goes through the existing journaled unassign (one-item
-    // batch), so a recurring task advances instead of clearing (D1).
-    expect(batch).toHaveBeenCalledWith([
-      { verb: "unassign", target: "todoist:6fx00xPRESS", args: {} },
-    ]);
+    // U3a: plan membership is browser-only. No journaled unassign, no batch,
+    // no reassign, no source refresh — the row moves by local state alone.
+    expect(verb).not.toHaveBeenCalled();
+    expect(batch).not.toHaveBeenCalled();
     expect(reassign).not.toHaveBeenCalled();
-    const afterUnassign = store.getState();
+    expect(refresh).not.toHaveBeenCalled();
     expect(store.getState().runtimeError).toBeNull();
+
+    const afterUnassign = store.getState();
+    expect(afterUnassign.planMembership).toEqual({ "todoist:6fx00xPRESS": false });
     expect(assignmentRows(afterUnassign).assigned.map((r) => r.id)).not.toContain("Press");
     expect(assignmentRows(afterUnassign).unassigned).toEqual([
-      {
-        id: "todoist:6fx00xPRESS",
+      expect.objectContaining({
+        id: "Press",
         identity: "todoist:6fx00xPRESS",
         name: "Press",
         source: "todoist",
-        kind: null,
-        minutes: 75,
-        actionId: "ra-9",
-        recurring: true,
         assigned: false,
-      },
+      }),
     ]);
-    // A journaled unassign is not a Skip today drop.
+    // A local plan edit is not a Skip today drop.
     expect(skippedTodayRows(afterUnassign)).toEqual([]);
+    // The source payload is untouched: nothing was written upstream.
+    expect(afterUnassign.inputs!.assigned.map((i) => i.id)).toContain("Press");
 
-    // Assigned reverses that row's own journaled unassign, then refreshes.
-    const before = source.refreshed();
-    unassigned = [];
-    await controller.setAssigned("todoist:6fx00xPRESS", true);
+    // Assigned is the same local edit in reverse: the row returns to its band
+    // and the sparse map goes back to empty.
+    await controller.setAssigned("Press", true);
 
-    expect(reassign).toHaveBeenCalledTimes(1);
-    expect(reassign).toHaveBeenCalledWith("todoist:6fx00xPRESS");
-    expect(source.refreshed()).toBe(before + 1);
     expect(verb).not.toHaveBeenCalled();
+    expect(batch).not.toHaveBeenCalled();
+    expect(reassign).not.toHaveBeenCalled();
+    expect(refresh).not.toHaveBeenCalled();
     expect(store.getState().runtimeError).toBeNull();
+    expect(store.getState().planMembership).toEqual({});
     expect(assignmentRows(store.getState()).unassigned).toEqual([]);
     expect(assignmentRows(store.getState()).assigned.map((r) => r.id)).toContain("Press");
   });
 
-  it("AE2: Unassign on a Capacities row drops from the plan and writes nothing upstream", async () => {
+  it("AE1b: ten plan toggles write nothing upstream", async () => {
+    const { store, adapter, controller } = await harness();
+    const verb = vi.spyOn(adapter, "runtimeAction");
+    const batch = vi.spyOn(adapter, "applyRuntimeBatch");
+    const reassign = vi.spyOn(adapter, "reassign");
+    const refresh = vi.spyOn(adapter, "refreshSources");
+    const inPlan = () => assignmentRows(store.getState()).assigned.map((r) => r.id);
+    const before = inPlan();
+
+    // Five out/in pairs across a Todoist row and a Capacities row.
+    for (let i = 0; i < 2; i += 1) {
+      await controller.setAssigned("Press", false);
+      await controller.setAssigned("Press", true);
+    }
+    for (let i = 0; i < 3; i += 1) {
+      await controller.setAssigned("Note Processing", false);
+      await controller.setAssigned("Note Processing", true);
+    }
+
+    expect(verb).not.toHaveBeenCalled();
+    expect(batch).not.toHaveBeenCalled();
+    expect(reassign).not.toHaveBeenCalled();
+    expect(refresh).not.toHaveBeenCalled();
+    // Ten toggles, no drift: each pair returns the day to where it started.
+    expect(store.getState().planMembership).toEqual({});
+    expect(inPlan()).toEqual(before);
+    expect(assignmentRows(store.getState()).unassigned).toEqual([]);
+  });
+
+  it("AE2: Unassign on a Capacities row is local, and no Capacities writer is reached", async () => {
     const { store, adapter, controller } = await harness();
     const verb = vi.spyOn(adapter, "runtimeAction");
     const reassign = vi.spyOn(adapter, "reassign");
     const batch = vi.spyOn(adapter, "applyRuntimeBatch");
+    const refresh = vi.spyOn(adapter, "refreshSources");
     // Every Capacities writer the app owns, so "no Capacities call" is total.
     const writers = [
       vi.spyOn(adapter, "saveCapacitiesSettings"),
@@ -421,44 +428,39 @@ describe("task-actions assignment toggle (U3)", () => {
       vi.spyOn(adapter, "startCapacitiesRefresh"),
       vi.spyOn(adapter, "discoverCapacitiesSource"),
     ];
-    let drops: DroppedItem[] = [];
-    stubSources(adapter, () => ({ drops }));
     const identity = "capacities:fixture-space:custom-project:note-processing";
 
-    drops = [
-      {
-        identity,
-        name: "Note Processing",
-        droppedAt: "2026-07-18T10:00:00Z",
-        source: "capacities",
-        kind: "custom-project",
-        minutes: 30,
-      },
-    ];
     await controller.setAssigned("Note Processing", false);
 
-    expect(verb).toHaveBeenCalledTimes(1);
-    expect(verb).toHaveBeenCalledWith("drop_from_plan", identity);
+    expect(verb).not.toHaveBeenCalled();
     expect(reassign).not.toHaveBeenCalled();
     expect(batch).not.toHaveBeenCalled();
+    expect(refresh).not.toHaveBeenCalled();
     for (const writer of writers) expect(writer).not.toHaveBeenCalled();
 
     const after = store.getState();
     expect(store.getState().runtimeError).toBeNull();
+    expect(after.planMembership).toEqual({ [identity]: false });
     expect(assignmentRows(after).assigned.map((r) => r.id)).not.toContain("Note Processing");
     expect(assignmentRows(after).unassigned.map((r) => r.identity)).toEqual([identity]);
+    // A local edit is not a dated drop, and it opens no Skipped today entry.
     expect(skippedTodayRows(after)).toEqual([]);
+    expect(after.inputs!.droppedToday).toEqual([]);
 
-    // Assigned puts it back through the existing restore verb.
-    drops = [];
-    await controller.setAssigned(identity, true);
-    expect(verb).toHaveBeenLastCalledWith("restore_today", identity);
+    // Assigned is the same local edit in reverse (the Unassigned row's switch
+    // posts the plan row id it renders, exactly as the bands do).
+    await controller.setAssigned("Note Processing", true);
+    expect(verb).not.toHaveBeenCalled();
     expect(reassign).not.toHaveBeenCalled();
     for (const writer of writers) expect(writer).not.toHaveBeenCalled();
+    expect(store.getState().planMembership).toEqual({});
+    expect(assignmentRows(store.getState()).assigned.map((r) => r.id)).toContain(
+      "Note Processing",
+    );
     expect(store.getState().runtimeError).toBeNull();
   });
 
-  it("blocks every assignment case before Day Setup is confirmed", async () => {
+  it("blocks every upstream assignment case before Day Setup is confirmed", async () => {
     const { store, adapter, controller } = await harness({ confirm: false });
     const verb = vi.spyOn(adapter, "runtimeAction");
     const reassign = vi.spyOn(adapter, "reassign");
@@ -468,9 +470,21 @@ describe("task-actions assignment toggle (U3)", () => {
     expect(taskActionDisabledReason(store.getState(), "complete")).toBe(
       DAY_SETUP_GATE_REASON,
     );
+
+    // A LOCAL plan edit on a row the queue carries needs no gate: it cannot
+    // reach the server's 409, so it is never refused.
     await controller.setAssigned("Press", false);
+    expect(store.getState().runtimeError).toBeNull();
     await controller.setAssigned("Press", true);
-    await controller.setAssigned("Note Processing", false);
+
+    // Upstream cases stay gated: these identities are no longer in the queue,
+    // so their only path would be a server write.
+    await controller.setAssigned("todoist:6fx00xPRESS", false);
+    await controller.setAssigned("todoist:6fx00xPRESS", true);
+    await controller.setAssigned(
+      "capacities:fixture-space:custom-project:note-processing",
+      false,
+    );
 
     expect(verb).not.toHaveBeenCalled();
     expect(reassign).not.toHaveBeenCalled();

@@ -24,7 +24,7 @@ import { Controller } from "./store/controller";
 import { FixtureAdapter } from "./adapters/fixture";
 import { defectsResolved, effectiveAnchoredBlocks } from "./store/store";
 import { calendarWalls, planOverflow } from "./model/overflow";
-import { fixedInputsOf } from "./fixtures/scenarios";
+import { fixedInputsOf, plannedDayStore } from "./fixtures/scenarios";
 import {
   FEEDBACK_ANCHORED,
   FEEDBACK_ASSIGNED,
@@ -40,7 +40,7 @@ function toMin(hhmm: string): number {
 }
 
 function harness() {
-  const store = createStore();
+  const store = plannedDayStore(createStore());
   const adapter = new FixtureAdapter("ready");
   const controller = new Controller(adapter, store.dispatch, store.getState);
   return { store, adapter, controller };

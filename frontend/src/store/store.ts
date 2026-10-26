@@ -44,6 +44,7 @@ import { calendarEditOverlaps } from "../model/calendarEdit";
 import { anchoredBlocks, anchoredDefaultOff } from "../model/anchored";
 import { dayFrame, type DayFrame } from "../model/dayFrame";
 import { remainingLabel } from "../model/allocator";
+import { dueLabel } from "../model/urgency";
 import { capacitiesCoverageOf, durationSourceOf, itemIdentity } from "../adapters/wire";
 import {
   createDraft,
@@ -221,10 +222,14 @@ export const emptyBatch: BatchState = {
   undoReport: null,
 };
 
-/** What an ABSENT `planMembership` entry means for one row. U1 always
-    resolves "in", so an empty membership map is a no-op against today's
-    behavior; "out" is the seam a later default-out day setup uses. */
-export type MembershipDefault = "in" | "out";
+/** What an ABSENT `planMembership` entry means for one row.
+
+    "rule" (U3a) is the day's actual default: a sourced row joins today's plan
+    only when it is already overdue, due today, or carries a fixed time —
+    everything else waits in Unassigned. "in"/"out" stay readable so a blob
+    written by the earlier landings (or a deliberately all-in day) still loads
+    with the meaning it was saved under. */
+export type MembershipDefault = "rule" | "in" | "out";
 
 export interface AppState {
   loaded: boolean;
@@ -247,7 +252,7 @@ export interface AppState {
       Deliberately separate from `overrides[id].included`: a false override is
       the post-Complete settle marker persist.ts round-trips, not a plan edit. */
   planMembership: Record<string, boolean>;
-  /** Resolution of an absent `planMembership` key. */
+  /** Resolution of an absent `planMembership` key (see `MembershipDefault`). */
   membershipDefault: MembershipDefault;
   /** Sparse opt-in map: absent/false protects a native Todoist time. */
   timeAdjustmentOptIns: Record<string, boolean>;
@@ -392,7 +397,7 @@ export const initialState: AppState = {
   promptSave: { phase: "idle", error: null, warnings: [] },
   overrides: {},
   planMembership: {},
-  membershipDefault: "in",
+  membershipDefault: "rule",
   timeAdjustmentOptIns: {},
   mintOverlapOptIns: {},
   placements: {},
@@ -773,13 +778,22 @@ export function reducer(s: AppState, a: Action): AppState {
       };
     }
     case "PLAN_MEMBERSHIP_SET": {
-      // LOCAL plan membership (U1). The map stays sparse: an entry is stored
-      // only when it disagrees with the day's default, exactly like
-      // timeAdjustmentOptIns stores only its opt-ins. A write that lands on the
-      // stored value already in force is a true no-op — it must not dirty a
-      // valid plan merely because the surface re-asserted it.
+      // LOCAL plan membership (U1/U3a). The map stays sparse: an entry is
+      // stored only when it disagrees with what the day would decide on its
+      // own for THIS row — the membership rule for an absent entry, or the
+      // legacy whole-day "in"/"out" default. A write that lands on the answer
+      // already in force is a true no-op; it must not dirty a valid plan
+      // merely because the surface re-asserted it.
+      const target = s.inputs?.assigned.find(
+        (item) => membershipKeyOf(item) === a.identity,
+      );
+      const defaultIn = defaultMembershipIn(
+        target,
+        s.membershipDefault,
+        s.inputs?.validDate ?? "",
+      );
       const previous = s.planMembership[a.identity];
-      const next = a.in === (s.membershipDefault === "in") ? undefined : a.in;
+      const next = a.in === defaultIn ? undefined : a.in;
       if (previous === next) return s;
       const planMembership = { ...s.planMembership };
       if (next === undefined) delete planMembership[a.identity];
@@ -1422,9 +1436,10 @@ function includedIdsForInputs(
   membershipDefault: MembershipDefault = s.membershipDefault,
 ): ReadonlySet<string> {
   if (!inputs) return new Set();
+  const validDate = inputs.validDate;
   return new Set(
     inputs.assigned
-      .filter((item) => rowIsIncluded(item, overrides[item.id], membership, membershipDefault))
+      .filter((item) => rowIsIncluded(item, overrides[item.id], membership, membershipDefault, validDate))
       .map((item) => item.id),
   );
 }
@@ -1570,6 +1585,44 @@ export function membershipKeyOf(item: AssignedItem): string {
   return itemIdentity(item) ?? item.id;
 }
 
+/** U3a: the day's default membership RULE, shared by the reducer, the selectors
+    and the lane projections so one answer decides what today's plan holds. A
+    row with no explicit membership entry joins the plan when it is already
+    late, due today, or carries a fixed time (a calendar event, or a source
+    wall-clock time the planner must protect); everything else waits in
+    Unassigned until the operator puts it in. Reuses the surfaces' own urgency
+    helpers rather than re-deriving a second notion of "due" or "fixed". */
+export function ruleIncludes(item: AssignedItem, validDate: string): boolean {
+  const tone = dueLabel(item.deadline, validDate)?.tone ?? null;
+  if (tone === "overdue" || tone === "today") return true;
+  if (item.source === "calendar") return true;
+  if (isNativeTimedTodoist(item)) return true;
+  if (item.isRecurring === true && typeof item.scheduledStart === "string") return true;
+  return false;
+}
+
+/** Resolution of an absent membership entry for one row. `item` is undefined
+    only for an identity the queue no longer carries; the rule cannot judge a
+    row it cannot see, so it answers "out" there. */
+function defaultMembershipIn(
+  item: AssignedItem | undefined,
+  membershipDefault: MembershipDefault,
+  validDate: string,
+): boolean {
+  if (membershipDefault === "in") return true;
+  if (membershipDefault === "out") return false;
+  return item ? ruleIncludes(item, validDate) : false;
+}
+
+/** The plan-membership gate alone, ignoring the session override: is this a row
+    today's plan holds at all? The lanes read this, which is why a row that is
+    out waits in Unassigned instead of being dumped into the "out" lane. */
+export function isPlanMember(s: AppState, item: AssignedItem): boolean {
+  const explicit = s.planMembership[membershipKeyOf(item)];
+  if (explicit !== undefined) return explicit;
+  return defaultMembershipIn(item, s.membershipDefault, s.inputs?.validDate ?? "");
+}
+
 /** The inclusion rule for one row. Two independent gates: the session override
     must not exclude it, AND its local plan membership must not be "out".
     `overrides`/`membership` are passed in so a reducer restoring or refreshing
@@ -1579,15 +1632,23 @@ function rowIsIncluded(
   override: TodayOverride | undefined,
   membership: Record<string, boolean>,
   membershipDefault: MembershipDefault,
+  validDate: string,
 ): boolean {
   if (override && override.included === false) return false;
   const explicit = membership[membershipKeyOf(item)];
-  return explicit === undefined ? membershipDefault === "in" : explicit;
+  if (explicit !== undefined) return explicit;
+  return defaultMembershipIn(item, membershipDefault, validDate);
 }
 
 /** Row form of the inclusion seam, for callers already holding the item. */
 export function isItemIncluded(s: AppState, item: AssignedItem): boolean {
-  return rowIsIncluded(item, s.overrides[item.id], s.planMembership, s.membershipDefault);
+  return rowIsIncluded(
+    item,
+    s.overrides[item.id],
+    s.planMembership,
+    s.membershipDefault,
+    s.inputs?.validDate ?? "",
+  );
 }
 
 /** The inclusion seam by row id. A row the queue no longer carries has no
@@ -1813,30 +1874,49 @@ export interface AssignmentRows {
   unassigned: AssignmentRow[];
 }
 
-/** R1/KTD2/KTD3: the two sides of the assignment review, from items ALREADY
-    sourced for today — this selector pulls nothing in.
+/** R1/KTD2/KTD3 + U3a: the two sides of the assignment review, from items
+    ALREADY sourced for today — this selector pulls nothing in.
 
-    - assigned: today's `assigned` rows, in band order.
-    - unassigned: the journal-derived `unassignedToday` Todoist rows first
-      (server order), then the Capacities and calendar rows held back through
-      the date-scoped `dropped[]` drop.
+    - assigned: today's `assigned` rows that ARE in the plan, in band order.
+    - unassigned: the local not-in-plan rows first (a row taken out of today's
+      plan in this browser, which never touches a source), then the
+      journal-derived `unassignedToday` Todoist rows (server order), then the
+      Capacities and calendar rows held back through the date-scoped
+      `dropped[]` drop.
 
-    The two lists partition today's sourced items exactly once: a dropped
-    Capacities/calendar row appears here and never in `skippedTodayRows`; a
-    legacy drop with no snapshot source stays in `skippedTodayRows` only. */
+    Together the two lists partition today's sourced items exactly once: a row
+    taken out of the plan locally is Unassigned and is absent from the bands, a
+    dropped Capacities/calendar row appears here and never in
+    `skippedTodayRows`, and a legacy drop with no snapshot source stays in
+    `skippedTodayRows` only. */
 export function assignmentRows(s: AppState): AssignmentRows {
   const inputs = s.inputs;
-  const assigned: AssignmentRow[] = (inputs?.assigned ?? []).map((item) => ({
-    id: item.id,
-    identity: item.identity ?? itemIdentity(item) ?? item.id,
-    name: item.name,
-    source: item.source,
-    kind: null,
-    minutes: item.blocks > 0 ? Math.round(item.blocks * 30) : null,
-    actionId: null,
-    recurring: item.isRecurring === true,
-    assigned: true,
-  }));
+  const assigned: AssignmentRow[] = (inputs?.assigned ?? [])
+    .filter((item) => isPlanMember(s, item))
+    .map((item) => ({
+      id: item.id,
+      identity: item.identity ?? itemIdentity(item) ?? item.id,
+      name: item.name,
+      source: item.source,
+      kind: null,
+      minutes: item.blocks > 0 ? Math.round(item.blocks * 30) : null,
+      actionId: null,
+      recurring: item.isRecurring === true,
+      assigned: true,
+    }));
+  const localOut: AssignmentRow[] = (inputs?.assigned ?? [])
+    .filter((item) => !isPlanMember(s, item))
+    .map((item) => ({
+      id: item.id,
+      identity: membershipKeyOf(item),
+      name: item.name,
+      source: item.source,
+      kind: null,
+      minutes: item.blocks > 0 ? Math.round(item.blocks * 30) : null,
+      actionId: null,
+      recurring: item.isRecurring === true,
+      assigned: false,
+    }));
   const heldBackTodoist: AssignmentRow[] = (inputs?.unassignedToday ?? []).map(
     (row) => ({
       id: row.identity,
@@ -1863,7 +1943,7 @@ export function assignmentRows(s: AppState): AssignmentRows {
       recurring: d.kind === "recurring",
       assigned: false,
     }));
-  return { assigned, unassigned: [...heldBackTodoist, ...heldBackDropped] };
+  return { assigned, unassigned: [...localOut, ...heldBackTodoist, ...heldBackDropped] };
 }
 
 /** The one saved Set up/Plan day frame: SETUP_SAVED stores daySetup.anchor/eod

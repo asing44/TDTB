@@ -117,14 +117,22 @@ describe("Complete on a Capacities row skips it for today", () => {
   it("sets the row Unassigned through the C keyboard shortcut (KTD4)", async () => {
     const h = makeHarness("ready");
     const actions = spyActions(h);
+    const sent = spyBatches(h);
     const { container } = h.ui(<Queue />);
 
     fireEvent.keyDown(rowFor(container, NOTE), { key: "c" });
 
-    // C routes through setAssigned(false), the same date-scoped drop the
-    // Assigned switch writes, not the Complete batch.
+    // C routes through setAssigned(false). U3a made that a LOCAL plan-membership
+    // edit for a row the queue still carries, so nothing upstream is written:
+    // no date-scoped drop, no batch, and Capacities is never touched.
     await waitFor(() =>
-      expect(actions).toEqual([{ verb: "drop_from_plan", target: NOTE_IDENTITY }]),
+      expect(h.store.getState().planMembership).toEqual({ [NOTE_IDENTITY]: false }),
+    );
+    expect(actions).toEqual([]);
+    expect(sent).toEqual([]);
+    // The row waits in the Unassigned section, out of every band.
+    await waitFor(() =>
+      expect(container.querySelector("#unassigned-today")?.textContent).toContain(NOTE),
     );
   });
 

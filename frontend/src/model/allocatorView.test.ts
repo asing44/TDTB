@@ -6,7 +6,7 @@
 
 import { describe, expect, it } from "vitest";
 import { projectSequenceResult } from "../adapters/wire";
-import { makeScenario } from "../fixtures/scenarios";
+import { makeScenario, restorePlannedDay } from "../fixtures/scenarios";
 import {
   bandSpend,
   bandedRows,
@@ -49,6 +49,7 @@ function stateFor(assigned: AssignedItem[]): AppState {
     inputs: { ...scenario.inputs, validDate: TODAY, assigned },
     ledger: { ...scenario.ledger, today: TODAY },
   });
+  restorePlannedDay(store);
   return store.getState();
 }
 

@@ -18,6 +18,7 @@ import {
   effectiveBlocks,
   includedItems,
   isIncluded,
+  isPlanMember,
   queueState,
   type AppState,
 } from "./store";
@@ -50,6 +51,10 @@ export function bandedRows(s: AppState): BandedRows {
   if (!s.inputs) return out;
   const today = s.inputs.validDate;
   for (const item of orderByImportance(s.inputs.assigned, today)) {
+    // U3a: a row outside today's plan is not displayed at all — it waits in
+    // the Unassigned section (`assignmentRows`), never in a lane. The
+    // "excluded" lane keeps only the rows an override hides for today.
+    if (!isPlanMember(s, item)) continue;
     const state = queueState(s, item.id);
     if (state === "needs-placement" || state === "background") out[bandOf(item)].push(item);
     else out[state].push(item);

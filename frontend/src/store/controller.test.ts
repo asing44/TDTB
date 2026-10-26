@@ -5,7 +5,7 @@ import { FixtureAdapter } from "../adapters/fixture";
 import { alerts, canLiveCommit, defectsResolved, dockState, effectiveAnchoredBlocks, sourceHealthBlocked } from "./store";
 import { calendarWalls, mintWalls } from "../model/overflow";
 import { ApiError, ApiTransportError } from "../adapters/api";
-import type { ScenarioName } from "../fixtures/scenarios";
+import { plannedDayStore, type ScenarioName } from "../fixtures/scenarios";
 import type { ShadowDiff, Source } from "../model/types";
 
 function toMin(hhmm: string): number {
@@ -14,7 +14,7 @@ function toMin(hhmm: string): number {
 }
 
 function harness(scenario: ScenarioName) {
-  const store = createStore();
+  const store = plannedDayStore(createStore());
   const adapter = new FixtureAdapter(scenario);
   const controller = new Controller(adapter, store.dispatch, store.getState);
   return { store, adapter, controller };

@@ -21,7 +21,12 @@ import { createStore, type Store } from "../store/createStore";
 import { Controller } from "../store/controller";
 import { effectiveAnchoredBlocks } from "../store/store";
 import { FixtureAdapter } from "../adapters/fixture";
-import { makeScenario, fixedInputsOf, type ScenarioName } from "../fixtures/scenarios";
+import {
+  makeScenario,
+  fixedInputsOf,
+  restorePlannedDay,
+  type ScenarioName,
+} from "../fixtures/scenarios";
 import { fingerprintFixedInputs } from "../model/fingerprint";
 import { fixtureValidate } from "../adapters/fixture";
 import { CalendarImpact } from "./CalendarImpact";
@@ -36,6 +41,7 @@ function makeHarness(scenario: ScenarioName): {
   const sc = makeScenario(scenario);
   const store = createStore();
   store.dispatch({ type: "INPUTS_LOADED", inputs: sc.inputs, ledger: { ...sc.ledger } });
+  restorePlannedDay(store);
   if (sc.staged.daySetupConfirmed) {
     store.dispatch({
       type: "SETUP_SAVED",

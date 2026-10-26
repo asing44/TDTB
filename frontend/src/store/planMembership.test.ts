@@ -1,24 +1,37 @@
-/* planMembership.test.ts — U1: LOCAL plan membership.
+/* planMembership.test.ts — U1/U3a: LOCAL plan membership.
 
    Taking a row out of today's plan is a browser-only edit. These tests pin the
    three things that make that safe: the row leaves every inclusion reader at
    once (queue, capacity, staged row, pin, placement), the membership key is the
-   STABLE SOURCE IDENTITY rather than the name-keyed row id, and the default
-   ("in") is a complete no-op so U1 changes nothing a user can see. */
+   STABLE SOURCE IDENTITY rather than the name-keyed row id, and an ABSENT entry
+   is resolved by the day itself — the U3a rule (overdue, due today, fixed time)
+   on a cold load, or the legacy whole-day "in"/"out" a saved blob carries.
+
+   Two shapes of day appear below, because both are real:
+
+   - `coldDay()` is U3a's cold load: nothing curated yet, so the rule alone
+     decides each row and everything unruled waits in Unassigned.
+   - `loaded()` is a day already under way (what every fixture depicts): the
+     plan was built, so the legacy whole-day "in" default holds and a per-row
+     edit is the only thing that can take a row out. */
 
 import { describe, expect, it } from "vitest";
 import {
+  assignmentRows,
   includedItems,
   initialState,
   isIncluded,
+  isPlanMember,
   membershipKeyOf,
   queueState,
   reducer,
+  ruleIncludes,
   type AppState,
 } from "./store";
-import { makeScenario, fixedInputsOf } from "../fixtures/scenarios";
+import { taskTableSections } from "./allocatorView";
+import { makeScenario, fixedInputsOf, plannedDayRestore } from "../fixtures/scenarios";
 import { fingerprintFixedInputs } from "../model/fingerprint";
-import type { SequenceRow } from "../model/types";
+import type { AssignedItem, SequenceRow } from "../model/types";
 
 /** The fixture's Critical-band Todoist row: its plan row id is its name, its
     stable identity is derived from the source id. */
@@ -28,13 +41,17 @@ const ROW_IDENTITY = "todoist:6fx00xMIRROR";
 const OTHER = "Press";
 const OTHER_IDENTITY = "todoist:6fx00xPRESS";
 
-function loaded(): AppState {
+function coldDay(): AppState {
   const sc = makeScenario("ready");
   return reducer(initialState, {
     type: "INPUTS_LOADED",
     inputs: sc.inputs,
     ledger: { ...sc.ledger },
   });
+}
+
+function loaded(): AppState {
+  return reducer(coldDay(), plannedDayRestore);
 }
 
 /** A valid staged plan carrying a work row, its exact pin, its pending pin,
@@ -65,6 +82,40 @@ function planned(): AppState {
 
 function setMembership(s: AppState, identity: string, inPlan: boolean): AppState {
   return reducer(s, { type: "PLAN_MEMBERSHIP_SET", identity, in: inPlan });
+}
+
+/** One row of each kind the U3a rule decides on, built from the fixture day so
+    the date math is the fixture's own. `todoistId: null` keeps every identity
+    distinct (an identity-less row keys by its id). */
+function ruleRows(validDate: string): AssignedItem[] {
+  const template = makeScenario("ready").inputs.assigned[0];
+  const row = (id: string, over: Partial<AssignedItem> = {}): AssignedItem => ({
+    ...template,
+    id,
+    name: id,
+    todoistId: null,
+    identity: null,
+    deadline: null,
+    urgency: null,
+    ...over,
+  });
+  return [
+    row("Overdue row", { deadline: "2026-07-16" }),
+    row("Due today row", { deadline: validDate }),
+    row("Calendar row", { source: "calendar", deadline: null }),
+    row("Undated row", { deadline: null }),
+    row("P1 undated row", { urgency: "4", deadline: null }),
+  ];
+}
+
+/** A COLD U3a day carrying one row per rule case. */
+function ruleDay(): AppState {
+  const sc = makeScenario("ready");
+  return reducer(initialState, {
+    type: "INPUTS_LOADED",
+    inputs: { ...sc.inputs, assigned: ruleRows(sc.inputs.validDate) },
+    ledger: { ...sc.ledger },
+  });
 }
 
 describe("PLAN_MEMBERSHIP_SET — taking a row out of today's plan", () => {
@@ -156,8 +207,8 @@ describe("PLAN_MEMBERSHIP_SET — taking a row out of today's plan", () => {
   });
 });
 
-describe("PLAN_MEMBERSHIP_SET — the default stays a no-op", () => {
-  it("leaves every row included at the default \"in\"", () => {
+describe("PLAN_MEMBERSHIP_SET — the legacy whole-day \"in\" default is a no-op", () => {
+  it("leaves every row included at the legacy \"in\" default", () => {
     const s = loaded();
     expect(s.membershipDefault).toBe("in");
     expect(s.planMembership).toEqual({});
@@ -235,5 +286,102 @@ describe("isIncluded — the shared inclusion seam", () => {
       override: { included: false, blocks: null },
     });
     expect(isIncluded(excluded, "not a row")).toBe(false);
+  });
+});
+
+/* U3a: on a COLD day an absent membership entry is not "in" — the rule decides
+   each row. Overdue, due-today and fixed-time rows join; everything else waits
+   in Unassigned until the operator says otherwise (priority alone is not a
+   reason to join: an undated p1 waits like any other undated row). */
+describe("the U3a rule decides a row with no membership entry", () => {
+  it("joins overdue, due-today, and fixed-time rows and leaves the rest out", () => {
+    const s = ruleDay();
+    const validDate = s.inputs!.validDate;
+    const [overdue, dueToday, calendar, undated, p1Undated] = s.inputs!.assigned;
+
+    expect(s.membershipDefault).toBe("rule");
+    expect(s.planMembership).toEqual({});
+    expect(includedItems(s).map((i) => i.id)).toEqual([
+      "Overdue row",
+      "Due today row",
+      "Calendar row",
+    ]);
+    expect(ruleIncludes(overdue, validDate)).toBe(true);
+    expect(ruleIncludes(dueToday, validDate)).toBe(true);
+    expect(ruleIncludes(calendar, validDate)).toBe(true);
+    expect(ruleIncludes(undated, validDate)).toBe(false);
+    expect(ruleIncludes(p1Undated, validDate)).toBe(false);
+    // Out of the plan, and not an error: each waits in Unassigned.
+    expect(isIncluded(s, "Undated row")).toBe(false);
+    expect(isPlanMember(s, p1Undated)).toBe(false);
+  });
+
+  it("stores an entry only when the toggle disagrees with the rule", () => {
+    const s = ruleDay();
+    const [overdue, , , undated] = s.inputs!.assigned;
+
+    // Re-asserting the rule's own answer is a no-op in both directions: a
+    // sparse map must not dirty the day because a surface echoed the default.
+    expect(setMembership(s, membershipKeyOf(overdue), true)).toBe(s);
+    expect(setMembership(s, membershipKeyOf(undated), false)).toBe(s);
+
+    const added = setMembership(s, membershipKeyOf(undated), true);
+    expect(added.planMembership).toEqual({ [membershipKeyOf(undated)]: true });
+    expect(isIncluded(added, undated.id)).toBe(true);
+
+    const removed = setMembership(s, membershipKeyOf(overdue), false);
+    expect(removed.planMembership).toEqual({ [membershipKeyOf(overdue)]: false });
+    expect(isIncluded(removed, overdue.id)).toBe(false);
+  });
+
+  it("a legacy whole-day \"in\"/\"out\" default overrides the rule", () => {
+    const s = ruleDay();
+    expect(includedItems({ ...s, membershipDefault: "in" })).toHaveLength(5);
+    expect(includedItems({ ...s, membershipDefault: "out" })).toHaveLength(0);
+  });
+});
+
+/* U3a's other half: a row the day does not hold is not in a band. It renders in
+   the Unassigned section instead of being dumped into "Out today" (that lane
+   keeps only the rows an override hides for today). */
+describe("a row outside today's plan leaves every lane", () => {
+  const laneIds = (s: AppState): string[] =>
+    taskTableSections(s).flatMap((section) => section.rows.map((r) => r.item.id));
+
+  it("hides a row taken out of the plan and surfaces it in assignmentRows.unassigned", () => {
+    const s = planned();
+    expect(laneIds(s)).toContain(ROW);
+
+    const out = setMembership(s, ROW_IDENTITY, false);
+
+    expect(laneIds(out)).not.toContain(ROW);
+    // Everything else keeps its place, including the "Out today" lane's own
+    // membership: a plan edit is not an override.
+    expect(laneIds(out)).toContain(OTHER);
+    expect(taskTableSections(out).find((section) => section.key === "out")!.rows).toEqual([]);
+
+    const rows = assignmentRows(out);
+    expect(rows.assigned.map((r) => r.id)).not.toContain(ROW);
+    const held = rows.unassigned.filter((r) => r.identity === ROW_IDENTITY);
+    expect(held).toHaveLength(1);
+    expect(held[0]).toMatchObject({
+      id: ROW,
+      identity: ROW_IDENTITY,
+      name: ROW,
+      source: "todoist",
+      assigned: false,
+    });
+    // Local only: the source still carries the row and nothing was dropped.
+    expect(out.inputs!.assigned.map((i) => i.id)).toContain(ROW);
+    expect(out.inputs!.droppedToday).toEqual([]);
+  });
+
+  it("hides the unruled rows of a cold day from the lanes", () => {
+    const s = ruleDay();
+    expect(laneIds(s)).toEqual(["Overdue row", "Due today row", "Calendar row"]);
+    expect(assignmentRows(s).unassigned.map((r) => r.identity)).toEqual([
+      "Undated row",
+      "P1 undated row",
+    ]);
   });
 });

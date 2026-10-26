@@ -9,6 +9,7 @@ import { FixtureAdapter, fixtureValidate } from "../adapters/fixture";
 import {
   makeScenario,
   fixedInputsOf,
+  restorePlannedDay,
   type Scenario,
   type ScenarioName,
 } from "../fixtures/scenarios";
@@ -39,6 +40,7 @@ export function makeHarness(
   mutate?.(sc);
   const store = createStore();
   store.dispatch({ type: "INPUTS_LOADED", inputs: sc.inputs, ledger: { ...sc.ledger } });
+  restorePlannedDay(store);
   if (sc.staged.daySetupConfirmed) {
     store.dispatch({
       type: "SETUP_SAVED",

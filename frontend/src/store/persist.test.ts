@@ -52,14 +52,23 @@ function inputs(validDate: string): PlanInputs {
 const LEDGER = { today: "2026-07-18", spent: 0, cap: 4, remaining: 4 };
 
 /** One assigned row carrying a STABLE identity, so membership keys read as
-    source identities rather than falling back to the name-keyed row id. */
-function row(id: string): AssignedItem {
-  return { ...inputs("2026-07-18").assigned[0], id, name: id, identity: `todoist:${id}` };
+    source identities rather than falling back to the name-keyed row id. Its
+    deadline is the day being planned, so the U3a rule holds it in the plan by
+    itself and an explicit "out" is a real edit rather than the answer the day
+    already had. */
+function row(id: string, deadline: string): AssignedItem {
+  return {
+    ...inputs(deadline).assigned[0],
+    id,
+    name: id,
+    identity: `todoist:${id}`,
+    deadline,
+  };
 }
 
-/** Plan inputs whose assigned set is exactly `ids`. */
+/** Plan inputs whose assigned set is exactly `ids`, each due on `validDate`. */
 function membershipInputs(validDate: string, ids: string[] = ["A"]): PlanInputs {
-  return { ...inputs(validDate), assigned: ids.map(row) };
+  return { ...inputs(validDate), assigned: ids.map((id) => row(id, validDate)) };
 }
 
 function fakeController() {
@@ -261,10 +270,11 @@ describe("attachSessionPersistence", () => {
   });
 });
 
-/* U2: LOCAL plan membership is browser-only state, so it lives in this blob —
-   today-only, same-date, and never a server write. These tests pin the reload
-   round-trip, the date rollover, and the pre-U2 migration that must not empty
-   an in-progress day. */
+/* U2/U3a: LOCAL plan membership is browser-only state, so it lives in this
+   blob — today-only, same-date, and never a server write. These tests pin the
+   reload round-trip, the date rollover, the pre-U2 migration that must not
+   empty an in-progress day, and the legacy whole-day defaults ("in"/"out") a
+   blob written by an earlier landing still loads with. */
 describe("plan membership persistence (U2)", () => {
   let storage: Storage;
 
@@ -281,7 +291,8 @@ describe("plan membership persistence (U2)", () => {
     const saved = JSON.parse(storage.getItem(KEY)!);
     expect(saved.version).toBe(2);
     expect(saved.planMembership).toEqual({ "todoist:A": false });
-    expect(saved.membershipDefault).toBe("in");
+    // Today's default is the U3a rule; the entry is what carries the edit.
+    expect(saved.membershipDefault).toBe("rule");
     // Membership alone is content: no override, plan, or pin was written.
     expect(saved.overrides).toEqual({});
     expect(saved.sequence).toBeNull();
@@ -292,7 +303,7 @@ describe("plan membership persistence (U2)", () => {
 
     const s = reloaded.getState();
     expect(s.planMembership).toEqual({ "todoist:A": false });
-    expect(s.membershipDefault).toBe("in");
+    expect(s.membershipDefault).toBe("rule");
     expect(isIncluded(s, "A")).toBe(false);
     // The settle marker stays independent of a plan edit.
     expect(s.overrides).toEqual({});
@@ -334,7 +345,7 @@ describe("plan membership persistence (U2)", () => {
 
     const s = nextDay.getState();
     expect(s.planMembership).toEqual({});
-    expect(s.membershipDefault).toBe("in");
+    expect(s.membershipDefault).toBe("rule");
     expect(isIncluded(s, "A")).toBe(true);
   });
 
@@ -357,7 +368,9 @@ describe("plan membership persistence (U2)", () => {
     attachSessionPersistence(store, fakeController(), storage);
 
     const s = store.getState();
-    expect(s.membershipDefault).toBe("in");
+    // The day keeps today's rule default, but the SEEDED entries decide every
+    // row that was not excluded, so the in-progress plan is intact.
+    expect(s.membershipDefault).toBe("rule");
     expect(s.planMembership).toEqual({ "todoist:A": true });
     expect(isIncluded(s, "A")).toBe(true);
     // B is excluded by its own settle marker, so it is not seeded "in".
@@ -382,7 +395,7 @@ describe("plan membership persistence (U2)", () => {
     expect(store.getState().planMembership).toEqual({ "todoist:A": true, "todoist:B": true });
   });
 
-  it("leaves an empty pre-U2 day on plain defaults", () => {
+  it("leaves an empty pre-U2 day on today's plain defaults", () => {
     storage.setItem(KEY, JSON.stringify({
       version: 2,
       validDate: "2026-07-18",
@@ -400,9 +413,44 @@ describe("plan membership persistence (U2)", () => {
 
     const s = store.getState();
     expect(s.planMembership).toEqual({});
-    expect(s.membershipDefault).toBe("in");
+    expect(s.membershipDefault).toBe("rule");
+    // Nothing is seeded: the row is in because the rule puts a due-today row in.
     expect(isIncluded(s, "A")).toBe(true);
     expect((ctl.revalidate as any).mock.calls.length).toBe(0);
+  });
+
+  it("loads a legacy whole-day \"in\" blob as all-in, and \"out\" as all-out", () => {
+    // A blob written by an earlier landing carries an explicit whole-day
+    // default. It must load with the meaning it was SAVED under, not with
+    // today's rule. A pinned row makes the blob content, so it restores.
+    const legacyBlob = (membershipDefault: "in" | "out") => JSON.stringify({
+      version: 2,
+      validDate: "2026-07-18",
+      overrides: {},
+      placements: {},
+      sequence: null,
+      fingerprint: null,
+      anchoredSourceFingerprint: null,
+      pinnedRows: [{ id: "A", start: "10:00", end: "11:00", zone: null, kind: "work" }],
+      planMembership: {},
+      membershipDefault,
+    });
+
+    storage.setItem(KEY, legacyBlob("in"));
+    const legacyIn = createStore();
+    legacyIn.dispatch({ type: "INPUTS_LOADED", inputs: membershipInputs("2026-07-18"), ledger: LEDGER });
+    attachSessionPersistence(legacyIn, fakeController(), storage);
+    expect(legacyIn.getState().membershipDefault).toBe("in");
+    expect(isIncluded(legacyIn.getState(), "A")).toBe(true);
+    expect(legacyIn.getState().planMembership).toEqual({});
+
+    storage.setItem(KEY, legacyBlob("out"));
+    const legacyOut = createStore();
+    legacyOut.dispatch({ type: "INPUTS_LOADED", inputs: membershipInputs("2026-07-18"), ledger: LEDGER });
+    attachSessionPersistence(legacyOut, fakeController(), storage);
+    expect(legacyOut.getState().membershipDefault).toBe("out");
+    expect(isIncluded(legacyOut.getState(), "A")).toBe(false);
+    expect(legacyOut.getState().planMembership).toEqual({});
   });
 
   it("does not re-seed a blob that already carries an empty membership map", () => {

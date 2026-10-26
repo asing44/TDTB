@@ -20,7 +20,7 @@ import { Ctx } from "./context";
 import { createStore } from "../store/createStore";
 import { Controller } from "../store/controller";
 import { FixtureAdapter } from "../adapters/fixture";
-import { makeScenario } from "../fixtures/scenarios";
+import { makeScenario, restorePlannedDay } from "../fixtures/scenarios";
 import { makeHarness } from "./test-harness";
 
 const APP_CSS = readFileSync(resolve(process.cwd(), "src/app.css"), "utf8");
@@ -53,6 +53,7 @@ function spyHarness() {
     inputs: sc.inputs,
     ledger: { ...sc.ledger },
   });
+  restorePlannedDay(store);
   store.dispatch({
     type: "SETUP_SAVED",
     daySetup: { ...sc.inputs.daySetup, confirmed: true },
