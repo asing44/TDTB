@@ -213,7 +213,7 @@ export function TaskRow({
 
   return (
     <div
-      class={`qrow trow ${state === "excluded" ? "qrow--excluded" : ""} ${state === "background" ? "qrow--background" : ""} ${hierarchy?.depth ? "qrow--nested" : ""} ${hierarchy?.groupKey ? "qrow--grouped" : ""}${expanded ? " trow--open" : ""}`}
+      class={`qrow trow ${state === "excluded" ? "qrow--excluded" : ""} ${state === "background" ? "qrow--background" : ""} ${hierarchy?.depth ? "qrow--nested" : ""} ${hierarchy?.groupKey ? "qrow--grouped" : ""}${expanded ? " trow--open" : ""}${due?.tone === "overdue" ? " trow--overdue" : ""}`}
       data-hierarchy-depth={hierarchy?.depth ?? 0}
       data-group-key={hierarchy?.groupKey ?? undefined}
       tabIndex={0}

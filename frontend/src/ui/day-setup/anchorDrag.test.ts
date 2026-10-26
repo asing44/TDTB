@@ -2,8 +2,11 @@ import { describe, expect, it } from "vitest";
 import {
   ANCHOR_SNAP_MIN,
   clampAnchorStart,
+  clampDuration,
   dragTargetMinutes,
+  keyboardResizeMinutes,
   keyboardTargetMinutes,
+  resizeTargetMinutes,
   snapMinutes,
 } from "./anchorDrag";
 
@@ -71,5 +74,37 @@ describe("keyboardTargetMinutes", () => {
   it("clamps at the ruler edges", () => {
     expect(keyboardTargetMinutes(480, -1, false, opts)).toBe(480);
     expect(keyboardTargetMinutes(1410, 1, true, opts)).toBe(1410);
+  });
+});
+
+describe("duration resize helpers", () => {
+  const base = { startMin: 600, dayStart: 450, dayEnd: 1425, laneWidthPx: 975 }; // 1px/min
+
+  it("snaps a drag to the 15-minute grid and floors at one step", () => {
+    expect(resizeTargetMinutes({ ...base, durationMin: 30, deltaPx: 22 })).toBe(45);
+    expect(resizeTargetMinutes({ ...base, durationMin: 30, deltaPx: 37 })).toBe(60);
+    expect(resizeTargetMinutes({ ...base, durationMin: 60, deltaPx: -500 })).toBe(15);
+  });
+
+  it("honours a coarser step, a ceiling, and the ruler end", () => {
+    const blocks = { ...base, stepMin: 30, maxMin: 360 };
+    expect(resizeTargetMinutes({ ...blocks, durationMin: 30, deltaPx: 20 })).toBe(60);
+    expect(resizeTargetMinutes({ ...blocks, durationMin: 30, deltaPx: -400 })).toBe(30);
+    expect(resizeTargetMinutes({ ...blocks, durationMin: 30, deltaPx: 900 })).toBe(360);
+    expect(clampDuration(999, { startMin: 1380, dayEnd: 1425 })).toBe(45);
+  });
+
+  it("returns the current length when the lane has no width", () => {
+    expect(resizeTargetMinutes({ ...base, laneWidthPx: 0, durationMin: 50, deltaPx: 80 })).toBe(50);
+  });
+
+  it("steps by one grid line, an hour with Shift, and lands off-grid lengths on the grid", () => {
+    const b = { startMin: 600, dayEnd: 1425 };
+    expect(keyboardResizeMinutes(30, 1, false, b)).toBe(45);
+    expect(keyboardResizeMinutes(30, -1, false, b)).toBe(15);
+    expect(keyboardResizeMinutes(15, -1, false, b)).toBe(15);
+    expect(keyboardResizeMinutes(30, 1, true, b)).toBe(90);
+    expect(keyboardResizeMinutes(50, 1, false, { ...b, stepMin: 30 })).toBe(60);
+    expect(keyboardResizeMinutes(50, -1, false, { ...b, stepMin: 30 })).toBe(30);
   });
 });

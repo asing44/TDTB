@@ -13,7 +13,8 @@
    the Set up screen uses (effectiveAnchoredBlocks, calendarWalls, the mint
    session helpers), so the two screens can never disagree about the day. */
 
-import { useAppState } from "./context";
+import { useApp, useAppState } from "./context";
+import "./strip-resize.css";
 import { DayStrip, type StripAnchor, type StripCalendarEvent, type StripSession } from "./day-setup/DayStrip";
 import { effectiveAnchoredBlocks, selectDayFrame } from "../store/store";
 import { displayAnchored } from "../model/calendarEvents";
@@ -21,8 +22,14 @@ import { anchorFrameStart, anchoredBlocks, anchoredOverrideOf } from "../model/a
 import { explicitMintCapMinutes, initialMintSessionIds } from "../model/mint";
 import { calendarWalls } from "../model/overflow";
 
+/** Counted duration is whole 30-minute blocks (1–12), exactly the grid the
+    Calendar impact stepper saves on: a resize can only land on that grid. */
+export const RESIZE_BLOCK_MIN = 30;
+export const RESIZE_MAX_BLOCKS = 12;
+
 export function AlreadyPlaced() {
   const s = useAppState();
+  const controller = useApp().controller;
   if (!s.inputs) return null;
 
   const { start: frameStart, end: frameEnd } = selectDayFrame(s)!;
@@ -102,7 +109,33 @@ export function AlreadyPlaced() {
       durationMin: row.durationMin,
       counted: row.on && !row.skipToday,
       capacityClass: row.capacityClass,
+      resizable: !s.runtimeBusy,
     }));
+
+  // Same single path as the Calendar impact stepper: a today-only counted
+  // duration through saveAnchoredOverride. Nothing is written to the calendar.
+  const resizeEvent = (id: string, durationMin: number) => {
+    const blocks = Math.min(
+      RESIZE_MAX_BLOCKS,
+      Math.max(1, Math.round(durationMin / RESIZE_BLOCK_MIN)),
+    );
+    const saved = s.daySetup.anchored[id];
+    void controller.saveAnchoredOverride(id, {
+      on: true,
+      skipToday: false,
+      time: null,
+      // A local start edit survives the duration edit.
+      ...(saved?.start != null
+        ? {
+            start: saved.start,
+            ...(saved.calendarStartAtEdit != null
+              ? { calendarStartAtEdit: saved.calendarStartAtEdit }
+              : {}),
+          }
+        : {}),
+      blocks,
+    });
+  };
 
   return (
     <section class="already-placed" aria-label="Already placed">
@@ -122,6 +155,9 @@ export function AlreadyPlaced() {
         anchors={anchors}
         calendar={calendar}
         onSelectAnchor={() => {}}
+        onResizeEvent={resizeEvent}
+        resizeStepMin={RESIZE_BLOCK_MIN}
+        resizeMaxMin={RESIZE_MAX_BLOCKS * RESIZE_BLOCK_MIN}
       />
     </section>
   );

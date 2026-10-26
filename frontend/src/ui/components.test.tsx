@@ -1302,6 +1302,7 @@ describe("T26 queue legibility", () => {
     expect(overdue.length).toBeGreaterThanOrEqual(1);
     for (const el of overdue) {
       expect((el as HTMLElement).textContent).toMatch(/^overdue \d+d$/);
+      expect((el as HTMLElement).closest(".qrow")?.classList.contains("trow--overdue")).toBe(true);
     }
   });
 });

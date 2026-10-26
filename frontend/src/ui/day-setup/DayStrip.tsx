@@ -32,7 +32,13 @@ import { Fragment } from "preact";
 import { useEffect, useRef, useState } from "preact/hooks";
 import { display12h, display12hExact, toHHMM, toMinutes } from "../../model/time";
 import type { CalendarCapacityClass } from "../../model/types";
-import { dragTargetMinutes, keyboardTargetMinutes } from "./anchorDrag";
+import {
+  clampDuration,
+  dragTargetMinutes,
+  keyboardResizeMinutes,
+  keyboardTargetMinutes,
+  resizeTargetMinutes,
+} from "./anchorDrag";
 import { compactClock, compactHour, compactRange } from "./compactTime";
 
 /** Pointer travel (px) before a press on an anchor becomes a drag. */
@@ -116,6 +122,10 @@ export interface StripCalendarEvent {
   editable?: boolean;
   /** A local start edit is in force; drawn at the edited start. */
   edited?: boolean;
+  /** Counted duration is adjustable: a trailing-edge handle drags (and the
+      arrow keys step) the length, reported through `onResizeEvent`. Needs the
+      strip to carry `onResizeEvent`; a skipped event never shows a handle. */
+  resizable?: boolean;
 }
 
 /** What a pointer drag or arrow key moves: a config anchor or an editable
@@ -150,6 +160,13 @@ export interface DayStripProps {
       all — no slot buttons, no anchor buttons, no drag, no selection. The
       strip stays a read-only picture of what is already on the day. */
   readOnly?: boolean;
+  /** Called once per completed duration resize (pointer drop or arrow key)
+      with the new length in minutes, a multiple of `resizeStepMin`. */
+  onResizeEvent?: (id: string, durationMin: number) => void;
+  /** Resize grid and floor in minutes. Defaults to 15. */
+  resizeStepMin?: number;
+  /** Longest resizable length in minutes. Defaults to the frame end. */
+  resizeMaxMin?: number;
   /** Opens the All blocks modal from the "N hidden today" note. */
   onShowAllBlocks?: () => void;
 }
@@ -177,6 +194,23 @@ export function DayStrip(props: DayStripProps) {
     lane: "anchor" | "calendar";
   } | null>(null);
   const suppressAnchorClick = useRef(false);
+  // Duration resize: same ref-then-preview split as the move gesture.
+  const resizeDrag = useRef<{
+    id: string;
+    pointerId: number;
+    x0: number;
+    laneWidth: number;
+    startMin: number;
+    origDuration: number;
+    target: number;
+    moved: boolean;
+  } | null>(null);
+  const [resizePreview, setResizePreview] = useState<{
+    id: string;
+    from: number;
+    durationMin: number;
+  } | null>(null);
+  const resizeStep = props.resizeStepMin ?? 15;
   const [preview, setPreview] = useState<{
     id: string;
     lane: "anchor" | "calendar";
@@ -370,6 +404,94 @@ export function DayStrip(props: DayStripProps) {
     if (to === from) return;
     setAnnouncement(`${subject.name} moved to ${display12h(toHHMM(to))}`);
     props.onMoveAnchor?.(subject.id, toHHMM(to));
+  };
+
+  const resizeBounds = (event: StripCalendarEvent) => ({
+    startMin: toMinutes(event.start),
+    dayEnd: endMin,
+    stepMin: resizeStep,
+    maxMin: props.resizeMaxMin,
+  });
+  const durationText = (minutes: number) =>
+    minutes % 60 === 0
+      ? `${minutes / 60} ${minutes === 60 ? "hour" : "hours"}`
+      : minutes > 60
+        ? `${Math.floor(minutes / 60)} h ${minutes % 60} min`
+        : `${minutes} min`;
+  const endResize = (target: HTMLElement | null, pointerId: number | undefined) => {
+    resizeDrag.current = null;
+    setResizePreview(null);
+    if (target && pointerId !== undefined) {
+      try {
+        target.releasePointerCapture?.(pointerId);
+      } catch {
+        /* capture already gone */
+      }
+    }
+  };
+  const commitResize = (event: StripCalendarEvent, minutes: number) => {
+    setAnnouncement(`${event.name} resized to ${durationText(minutes)}`);
+    props.onResizeEvent?.(event.id, minutes);
+  };
+  const onResizePointerDown = (e: PointerEvent, event: StripCalendarEvent) => {
+    if (e.button !== 0) return;
+    // The handle owns this gesture; the block's own click/drag never starts.
+    e.stopPropagation();
+    const el = e.currentTarget as HTMLElement;
+    const lane = el.closest(".day-strip__lane");
+    const origDuration = Math.max(15, event.durationMin);
+    resizeDrag.current = {
+      id: event.id,
+      pointerId: e.pointerId,
+      x0: e.clientX,
+      laneWidth: lane ? lane.getBoundingClientRect().width : 0,
+      startMin: toMinutes(event.start),
+      origDuration,
+      target: origDuration,
+      moved: false,
+    };
+    try {
+      el.setPointerCapture?.(e.pointerId);
+    } catch {
+      /* synthetic or already-released pointer */
+    }
+  };
+  const onResizePointerMove = (e: PointerEvent, event: StripCalendarEvent) => {
+    const state = resizeDrag.current;
+    if (!state || e.pointerId !== state.pointerId) return;
+    const dx = e.clientX - state.x0;
+    if (!state.moved && Math.abs(dx) < DRAG_THRESHOLD_PX) return;
+    state.moved = true;
+    state.target = resizeTargetMinutes({
+      ...resizeBounds(event),
+      durationMin: state.origDuration,
+      deltaPx: dx,
+      laneWidthPx: state.laneWidth,
+      dayStart: startMin,
+    });
+    setResizePreview({ id: state.id, from: state.origDuration, durationMin: state.target });
+  };
+  const onResizePointerUp = (e: PointerEvent, event: StripCalendarEvent) => {
+    const state = resizeDrag.current;
+    if (!state || e.pointerId !== state.pointerId) return;
+    const { moved, target, origDuration } = state;
+    endResize(e.currentTarget as HTMLElement, e.pointerId);
+    if (moved && target !== origDuration) commitResize(event, target);
+  };
+  const onResizeKeyDown = (e: KeyboardEvent, event: StripCalendarEvent) => {
+    if (e.key === "Escape" && resizeDrag.current) {
+      // Abandon the gesture; the drop that follows must not commit it.
+      resizeDrag.current = null;
+      setResizePreview(null);
+      return;
+    }
+    if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+    e.preventDefault();
+    e.stopPropagation();
+    const from = Math.max(15, event.durationMin);
+    const to = keyboardResizeMinutes(from, e.key === "ArrowRight" ? 1 : -1, e.shiftKey, resizeBounds(event));
+    if (to === from) return;
+    commitResize(event, to);
   };
 
   // Hour ticks: every whole hour inside the frame (8a … 11p for 7:30a–11:45p).
@@ -654,12 +776,23 @@ export function DayStrip(props: DayStripProps) {
               const dragging = preview?.id === event.id && preview.lane === "calendar";
               const lengthMin = Math.max(15, event.durationMin);
               const drawMin = dragging && preview ? preview.min : min;
-              const drawEnd = Math.min(drawMin + lengthMin, endMin);
+              const resizing = resizePreview?.id === event.id;
+              const drawLength = resizing && resizePreview ? resizePreview.durationMin : lengthMin;
+              const drawEnd = Math.min(drawMin + drawLength, endMin);
               const drawLeft = Math.max(drawMin, startMin);
               const leftPct = dragging ? rawPct(drawLeft) : rawPct(min);
-              const widthPct = dragging
-                ? ((drawEnd - drawLeft) / span) * 100
-                : ((max - min) / span) * 100;
+              const widthPct =
+                dragging || resizing
+                  ? ((drawEnd - drawLeft) / span) * 100
+                  : ((max - min) / span) * 100;
+              // The handle sits on the true trailing edge, so a block the
+              // frame clips (its end is off the ruler) has none.
+              const resizable =
+                props.onResizeEvent !== undefined &&
+                event.resizable === true &&
+                event.counted &&
+                min === toMinutes(event.start) &&
+                max === toMinutes(event.start) + lengthMin;
               const selected = props.selectedAnchorId === event.id;
               const className = `strip-cal${event.counted ? "" : " strip-cal--skipped"}${
                 event.capacityClass === "work" ? " strip-cal--work" : ""
@@ -667,7 +800,9 @@ export function DayStrip(props: DayStripProps) {
                 selected ? " strip-cal--selected" : ""
               }${editable ? " strip-cal--editable" : ""}${
                 movable ? " strip-cal--movable" : ""
-              }${dragging ? " strip-cal--dragging" : ""}`;
+              }${dragging ? " strip-cal--dragging" : ""}${
+                resizable ? " strip-cal--resizable" : ""
+              }${resizing ? " strip-cal--resizing" : ""}`;
               const style = {
                 left: `${leftPct}%`,
                 width: `${widthPct}%`,
@@ -725,10 +860,39 @@ export function DayStrip(props: DayStripProps) {
                       class={className}
                       style={style}
                       title={title}
-                      role="img"
+                      // A handle child needs a container that exposes children;
+                      // role="img" would hide the slider from assistive tech.
+                      role={resizable ? "group" : "img"}
                       aria-label={clock}
+                      data-anchor-id={resizable ? event.id : undefined}
                     >
                       {inside}
+                      {resizable && (
+                        <span
+                          class="strip-cal__resize"
+                          role="slider"
+                          tabIndex={0}
+                          aria-orientation="horizontal"
+                          aria-label={`Resize ${event.name} duration`}
+                          aria-valuemin={resizeStep}
+                          aria-valuemax={clampDuration(Number.MAX_SAFE_INTEGER, resizeBounds(event))}
+                          aria-valuenow={drawLength}
+                          aria-valuetext={durationText(drawLength)}
+                          title="Drag to resize, or use the arrow keys"
+                          onPointerDown={(e) =>
+                            onResizePointerDown(e as unknown as PointerEvent, event)
+                          }
+                          onPointerMove={(e) =>
+                            onResizePointerMove(e as unknown as PointerEvent, event)
+                          }
+                          onPointerUp={(e) => onResizePointerUp(e as unknown as PointerEvent, event)}
+                          onPointerCancel={(e) =>
+                            endResize(e.currentTarget as HTMLElement, (e as unknown as PointerEvent).pointerId)
+                          }
+                          onKeyDown={(e) => onResizeKeyDown(e as unknown as KeyboardEvent, event)}
+                          onClick={(e) => e.stopPropagation()}
+                        />
+                      )}
                     </span>
                   )}
                   {(fit === "right" || fit === "left") && !dragging && (
@@ -749,6 +913,11 @@ export function DayStrip(props: DayStripProps) {
                 </Fragment>
               );
             })}
+            {resizePreview && (
+              <span class="day-strip__drag-label" style={{ left: "50%" }}>
+                {durationText(resizePreview.from)} → {durationText(resizePreview.durationMin)}
+              </span>
+            )}
             {preview && preview.lane === "calendar" && (
               <span
                 class="day-strip__drag-label"

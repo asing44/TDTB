@@ -282,6 +282,7 @@ describe("collapsed row: Skip today and Restore today", () => {
     // Restore resolves through the drop entry's own identity, not the name.
     const restore = skipped.querySelector<HTMLButtonElement>("button")!;
     expect(restore.textContent).toContain("Restore today");
+    expect(restore.classList.contains("trow__btn--restore")).toBe(true);
     fireEvent.click(restore);
     await waitFor(() =>
       expect(calls).toEqual([

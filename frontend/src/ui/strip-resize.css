@@ -1,0 +1,46 @@
+/* Trailing-edge duration handle on a calendar block in the Already placed
+   strip. Tokens come from tokens.css / app.css; nothing here is hardcoded. */
+.strip-cal--resizable {
+  overflow: visible;
+}
+.strip-cal__resize {
+  position: absolute;
+  top: 0;
+  right: -5px;
+  bottom: 0;
+  width: 10px;
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: ew-resize;
+  touch-action: pan-y;
+  user-select: none;
+  -webkit-user-select: none;
+  border-radius: 4px;
+}
+.strip-cal__resize::before {
+  content: "";
+  width: 3px;
+  height: 14px;
+  border-radius: 2px;
+  background: var(--t-muted);
+  opacity: 0.55;
+}
+.strip-cal__resize:hover::before,
+.strip-cal--resizing .strip-cal__resize::before {
+  background: var(--t-accent);
+  opacity: 1;
+}
+.strip-cal__resize:focus-visible {
+  outline: 2px solid var(--t-accent);
+  outline-offset: 1px;
+}
+.strip-cal--resizing {
+  z-index: 3;
+  outline: 2px solid var(--t-accent);
+  outline-offset: 1px;
+}
+.already-placed .day-strip .strip-cal__resize {
+  cursor: ew-resize;
+}

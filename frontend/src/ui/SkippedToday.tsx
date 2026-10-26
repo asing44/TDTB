@@ -52,7 +52,7 @@ function SkippedRow({ row, busy }: { row: SkippedTodayRow; busy: boolean }) {
       <div class="trow__acts">
         <button
           type="button"
-          class="trow__btn"
+          class="trow__btn trow__btn--restore"
           disabled={busy || why !== null}
           title={why ?? undefined}
           aria-describedby={why ? whyId : undefined}

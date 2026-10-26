@@ -11375,6 +11375,31 @@ button.strip-cal {
 .skipped-today__head span {
   color: var(--t-muted);
 }
+/* Restore today: the action grid is sized for four row buttons, so a lone
+   button was squeezed into the 44px check column. Let it size to its label
+   and give it the same outlined-accent treatment as the other row actions. */
+.qrow.trow--skipped .trow__acts {
+  display: flex;
+  justify-content: flex-end;
+}
+.trow__btn--restore,
+.trow__acts > .trow__btn--restore {
+  width: auto;
+  padding-inline: 12px;
+  white-space: nowrap;
+  font-weight: 600;
+  color: var(--t-accent-strong, #0f6e56);
+  border-color: var(--t-accent-strong, #0f6e56);
+  background: var(--t-surface, #fdfcf9);
+}
+.trow__btn--restore:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--t-accent-strong, #0f6e56) 10%, var(--t-surface, #fdfcf9));
+  border-color: var(--t-accent-strong, #0f6e56);
+}
+.trow__btn--restore:disabled {
+  color: var(--t-muted);
+  border-color: var(--t-border, #d9d7cd);
+}
 .skipped-today__list {
   display: grid;
   gap: 6px;
@@ -11587,4 +11612,31 @@ button.strip-cal {
   .source-menu__trigger,
   .source-menu__delete,
   .source-menu__item { min-height: 34px; }
+}
+
+/* Overdue plan rows: a red left rule and tint on the row plus a filled badge
+   make "late" readable before the name is. Display only; no sort effect. */
+.qrow.trow.trow--overdue {
+  border-left: 4px solid var(--c-overflow);
+  background: color-mix(in srgb, var(--c-overflow) 6%, var(--t-surface, #fdfcf9));
+}
+.qrow__source .due--overdue,
+.qrow__due .due--overdue,
+.due--overdue {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: color-mix(in srgb, var(--c-overflow) 70%, #000);
+  background: color-mix(in srgb, var(--c-overflow) 16%, var(--t-surface, #fdfcf9));
+  border: 1px solid color-mix(in srgb, var(--c-overflow) 55%, transparent);
+}
+.due--overdue::before {
+  content: "!";
+  font-weight: 800;
 }
