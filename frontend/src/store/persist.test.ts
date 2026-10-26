@@ -5,8 +5,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createStore } from "./createStore";
 import { attachSessionPersistence } from "./persist";
+import { isIncluded } from "./store";
 import type { Controller } from "./controller";
-import type { PlanInputs } from "../model/types";
+import type { AssignedItem, PlanInputs } from "../model/types";
 
 const KEY = "tdtb-session-v2";
 
@@ -49,6 +50,17 @@ function inputs(validDate: string): PlanInputs {
 }
 
 const LEDGER = { today: "2026-07-18", spent: 0, cap: 4, remaining: 4 };
+
+/** One assigned row carrying a STABLE identity, so membership keys read as
+    source identities rather than falling back to the name-keyed row id. */
+function row(id: string): AssignedItem {
+  return { ...inputs("2026-07-18").assigned[0], id, name: id, identity: `todoist:${id}` };
+}
+
+/** Plan inputs whose assigned set is exactly `ids`. */
+function membershipInputs(validDate: string, ids: string[] = ["A"]): PlanInputs {
+  return { ...inputs(validDate), assigned: ids.map(row) };
+}
 
 function fakeController() {
   return {
@@ -246,5 +258,171 @@ describe("attachSessionPersistence", () => {
     expect(blob.overrides.A).toBeUndefined();
     expect(store.getState().inputs!.assigned[0].blocks).toBe(3); // 90/30
     expect(store.getState().inputs!.assigned[0].durationSource).toBe("remembered");
+  });
+});
+
+/* U2: LOCAL plan membership is browser-only state, so it lives in this blob —
+   today-only, same-date, and never a server write. These tests pin the reload
+   round-trip, the date rollover, and the pre-U2 migration that must not empty
+   an in-progress day. */
+describe("plan membership persistence (U2)", () => {
+  let storage: Storage;
+
+  beforeEach(() => {
+    storage = memStorage();
+  });
+
+  it("round-trips a row taken out of today's plan across a same-date reload", () => {
+    const store = createStore();
+    store.dispatch({ type: "INPUTS_LOADED", inputs: membershipInputs("2026-07-18"), ledger: LEDGER });
+    attachSessionPersistence(store, fakeController(), storage);
+    store.dispatch({ type: "PLAN_MEMBERSHIP_SET", identity: "todoist:A", in: false });
+
+    const saved = JSON.parse(storage.getItem(KEY)!);
+    expect(saved.version).toBe(2);
+    expect(saved.planMembership).toEqual({ "todoist:A": false });
+    expect(saved.membershipDefault).toBe("in");
+    // Membership alone is content: no override, plan, or pin was written.
+    expect(saved.overrides).toEqual({});
+    expect(saved.sequence).toBeNull();
+
+    const reloaded = createStore();
+    reloaded.dispatch({ type: "INPUTS_LOADED", inputs: membershipInputs("2026-07-18"), ledger: LEDGER });
+    attachSessionPersistence(reloaded, fakeController(), storage);
+
+    const s = reloaded.getState();
+    expect(s.planMembership).toEqual({ "todoist:A": false });
+    expect(s.membershipDefault).toBe("in");
+    expect(isIncluded(s, "A")).toBe(false);
+    // The settle marker stays independent of a plan edit.
+    expect(s.overrides).toEqual({});
+  });
+
+  it("a restored out row never re-seeds a staged pin", () => {
+    storage.setItem(KEY, JSON.stringify({
+      version: 2,
+      validDate: "2026-07-18",
+      overrides: {},
+      placements: {},
+      sequence: null,
+      fingerprint: null,
+      anchoredSourceFingerprint: null,
+      pinnedRows: [{ id: "A", start: "10:00", end: "11:00", zone: null, kind: "work" }],
+      pendingPinnedRows: [{ id: "A", start: "10:00", end: "11:00", zone: null, kind: "work" }],
+      planMembership: { "todoist:A": false },
+    }));
+    const store = createStore();
+    store.dispatch({ type: "INPUTS_LOADED", inputs: membershipInputs("2026-07-18"), ledger: LEDGER });
+    attachSessionPersistence(store, fakeController(), storage);
+
+    const s = store.getState();
+    expect(s.planMembership).toEqual({ "todoist:A": false });
+    expect(s.pinnedRows).toEqual([]);
+    expect(s.pendingPinnedRows).toEqual([]);
+  });
+
+  it("a new date clears plan membership", () => {
+    const store = createStore();
+    store.dispatch({ type: "INPUTS_LOADED", inputs: membershipInputs("2026-07-17"), ledger: LEDGER });
+    attachSessionPersistence(store, fakeController(), storage);
+    store.dispatch({ type: "PLAN_MEMBERSHIP_SET", identity: "todoist:A", in: false });
+    expect(JSON.parse(storage.getItem(KEY)!).planMembership).toEqual({ "todoist:A": false });
+
+    const nextDay = createStore();
+    nextDay.dispatch({ type: "INPUTS_LOADED", inputs: membershipInputs("2026-07-18"), ledger: LEDGER });
+    attachSessionPersistence(nextDay, fakeController(), storage);
+
+    const s = nextDay.getState();
+    expect(s.planMembership).toEqual({});
+    expect(s.membershipDefault).toBe("in");
+    expect(isIncluded(s, "A")).toBe(true);
+  });
+
+  it("migrates an in-progress pre-U2 day by seeding 'in' for included rows", () => {
+    // A pre-U2 blob: mid-day state, no membership field, no membership
+    // default. It must read as "the rows the user still has in", never as an
+    // empty plan once the default changes.
+    storage.setItem(KEY, JSON.stringify({
+      version: 2,
+      validDate: "2026-07-18",
+      overrides: { B: { included: false, blocks: null } },
+      placements: {},
+      sequence: [{ id: "A", start: "10:00", end: "11:00", zone: null, kind: "work" }],
+      fingerprint: "abc123",
+      anchoredSourceFingerprint: "raw-v1",
+      pinnedRows: [],
+    }));
+    const store = createStore();
+    store.dispatch({ type: "INPUTS_LOADED", inputs: membershipInputs("2026-07-18", ["A", "B"]), ledger: LEDGER });
+    attachSessionPersistence(store, fakeController(), storage);
+
+    const s = store.getState();
+    expect(s.membershipDefault).toBe("in");
+    expect(s.planMembership).toEqual({ "todoist:A": true });
+    expect(isIncluded(s, "A")).toBe(true);
+    // B is excluded by its own settle marker, so it is not seeded "in".
+    expect(isIncluded(s, "B")).toBe(false);
+  });
+
+  it("migrates on overrides or pins alone, not just a staged plan", () => {
+    storage.setItem(KEY, JSON.stringify({
+      version: 2,
+      validDate: "2026-07-18",
+      overrides: {},
+      placements: {},
+      sequence: null,
+      fingerprint: null,
+      anchoredSourceFingerprint: null,
+      pinnedRows: [{ id: "A", start: "10:00", end: "11:00", zone: null, kind: "work" }],
+    }));
+    const store = createStore();
+    store.dispatch({ type: "INPUTS_LOADED", inputs: membershipInputs("2026-07-18", ["A", "B"]), ledger: LEDGER });
+    attachSessionPersistence(store, fakeController(), storage);
+
+    expect(store.getState().planMembership).toEqual({ "todoist:A": true, "todoist:B": true });
+  });
+
+  it("leaves an empty pre-U2 day on plain defaults", () => {
+    storage.setItem(KEY, JSON.stringify({
+      version: 2,
+      validDate: "2026-07-18",
+      overrides: {},
+      placements: {},
+      sequence: null,
+      fingerprint: null,
+      anchoredSourceFingerprint: null,
+      pinnedRows: [],
+    }));
+    const store = createStore();
+    store.dispatch({ type: "INPUTS_LOADED", inputs: membershipInputs("2026-07-18"), ledger: LEDGER });
+    const ctl = fakeController();
+    attachSessionPersistence(store, ctl, storage);
+
+    const s = store.getState();
+    expect(s.planMembership).toEqual({});
+    expect(s.membershipDefault).toBe("in");
+    expect(isIncluded(s, "A")).toBe(true);
+    expect((ctl.revalidate as any).mock.calls.length).toBe(0);
+  });
+
+  it("does not re-seed a blob that already carries an empty membership map", () => {
+    // Presence of the field means "written after U2: nothing is out".
+    storage.setItem(KEY, JSON.stringify({
+      version: 2,
+      validDate: "2026-07-18",
+      overrides: {},
+      placements: {},
+      sequence: [{ id: "A", start: "10:00", end: "11:00", zone: null, kind: "work" }],
+      fingerprint: "abc123",
+      anchoredSourceFingerprint: "raw-v1",
+      pinnedRows: [],
+      planMembership: {},
+      membershipDefault: "in",
+    }));
+    const store = createStore();
+    store.dispatch({ type: "INPUTS_LOADED", inputs: membershipInputs("2026-07-18", ["A", "B"]), ledger: LEDGER });
+    attachSessionPersistence(store, fakeController(), storage);
+
+    expect(store.getState().planMembership).toEqual({});
   });
 });

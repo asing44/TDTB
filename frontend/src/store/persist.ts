@@ -10,7 +10,8 @@
 
 import type { Store } from "./createStore";
 import type { Controller } from "./controller";
-import type { SequenceRow, TodayOverride } from "../model/types";
+import type { PlanInputs, SequenceRow, TodayOverride } from "../model/types";
+import { membershipKeyOf, type MembershipDefault } from "./store";
 
 const KEY = "tdtb-session-v2";
 const V1_KEY = "tdtb-session-v1";
@@ -29,6 +30,37 @@ interface SessionBlob {
   overlapGrants: import("../model/types").OverlapGrant[];
   pinnedRows: SequenceRow[];
   pendingPinnedRows?: SequenceRow[];
+  /** U2: LOCAL plan membership, keyed by stable source identity — the shape
+      `store.planMembership` uses. Optional so a pre-U2 blob still reads;
+      absent means "migrate" (below), never "every row is out". */
+  planMembership?: Record<string, boolean>;
+  /** U2: the membership default in force when the blob was written. */
+  membershipDefault?: MembershipDefault;
+}
+
+/** U2 migration: a same-date blob written before plan membership existed can
+    only be a mid-day blob if it carries staged state (a plan, pins, or
+    overrides). Such a day is in progress, so seed `in` for every currently
+    included assigned row — a later default change must not empty a plan the
+    user already built. An empty pre-U2 blob is a day nobody started: no seeds,
+    plain defaults. */
+function seededMembership(
+  blob: SessionBlob,
+  inputs: PlanInputs | null,
+  overrides: Record<string, TodayOverride>,
+): Record<string, boolean> {
+  const midDay =
+    (blob.sequence?.length ?? 0) > 0 ||
+    (blob.pinnedRows?.length ?? 0) > 0 ||
+    Object.keys(overrides).length > 0;
+  if (!midDay || !inputs) return {};
+  const seeded: Record<string, boolean> = {};
+  for (const item of inputs.assigned) {
+    // A false override already excludes the row on its own gate.
+    if (overrides[item.id]?.included === false) continue;
+    seeded[membershipKeyOf(item)] = true;
+  }
+  return seeded;
 }
 
 function read(storage: Storage): SessionBlob | null {
@@ -73,7 +105,10 @@ export function attachSessionPersistence(
       Object.keys(blob.placements ?? {}).length > 0 ||
       (blob.sequence?.length ?? 0) > 0 ||
       (blob.pinnedRows?.length ?? 0) > 0 ||
-      (blob.overlapGrants?.length ?? 0) > 0;
+      (blob.overlapGrants?.length ?? 0) > 0 ||
+      // A membership-only blob is still content: taking the last row out of
+      // today's plan must survive the reload it would otherwise vanish in.
+      Object.keys(blob.planMembership ?? {}).length > 0;
     if (hasContent) {
       store.dispatch({
         type: "SESSION_RESTORED",
@@ -88,6 +123,10 @@ export function attachSessionPersistence(
         overlapGrants: blob.overlapGrants ?? [],
         pinnedRows: blob.pinnedRows ?? [],
         pendingPinnedRows: blob.pendingPinnedRows ?? blob.pinnedRows ?? [],
+        planMembership:
+          blob.planMembership ??
+          seededMembership(blob, s.inputs, blob.overrides ?? {}),
+        membershipDefault: blob.membershipDefault,
       });
       // Deterministic + free: restored plans re-earn "valid" via the server
       // validator; capacity re-renders the server's numbers for the restored
@@ -127,6 +166,8 @@ export function attachSessionPersistence(
       overlapGrants: st.overlapGrants,
       pinnedRows: st.pinnedRows,
       pendingPinnedRows: st.pendingPinnedRows,
+      planMembership: st.planMembership,
+      membershipDefault: st.membershipDefault,
     };
     try {
       storage.setItem(KEY, JSON.stringify(out));

@@ -555,6 +555,10 @@ export type Action =
       overlapGrants?: OverlapGrant[];
       pinnedRows?: SequenceRow[];
       pendingPinnedRows?: SequenceRow[];
+      /** U2: same-date LOCAL plan membership. Omitted keeps whatever the
+          live state carries (fresh defaults on a cold load). */
+      planMembership?: Record<string, boolean>;
+      membershipDefault?: MembershipDefault;
     }
   | { type: "SOURCE_REFRESH_START" }
   | {
@@ -1222,12 +1226,22 @@ export function reducer(s: AppState, a: Action): AppState {
       const restoredMintOptIns = s.inputs
         ? pruneMintOverlapOptIns(a.mintOverlapOptIns ?? {}, s.inputs)
         : (a.mintOverlapOptIns ?? {});
+      // U2: membership restores BEFORE the pins are merged — a row restored as
+      // "out" must not re-seed a native timed pin or a staged pin.
+      const restoredMembership = a.planMembership ?? s.planMembership;
+      const restoredMembershipDefault = a.membershipDefault ?? s.membershipDefault;
       const restoredPins = s.inputs
         ? mergeNativeTimedPins(
             a.pinnedRows ?? [],
             s.inputs,
             restoredOptIns,
-            includedIdsForInputs(s, s.inputs, a.overrides),
+            includedIdsForInputs(
+              s,
+              s.inputs,
+              a.overrides,
+              restoredMembership,
+              restoredMembershipDefault,
+            ),
           )
         : (a.pinnedRows ?? []);
       const restoredPendingPins = s.inputs
@@ -1235,7 +1249,13 @@ export function reducer(s: AppState, a: Action): AppState {
             a.pendingPinnedRows ?? a.pinnedRows ?? [],
             s.inputs,
             restoredOptIns,
-            includedIdsForInputs(s, s.inputs, a.overrides),
+            includedIdsForInputs(
+              s,
+              s.inputs,
+              a.overrides,
+              restoredMembership,
+              restoredMembershipDefault,
+            ),
           )
         : (a.pendingPinnedRows ?? a.pinnedRows ?? []);
       return {
@@ -1252,6 +1272,8 @@ export function reducer(s: AppState, a: Action): AppState {
         overlapGrants: a.overlapGrants ?? [],
         pinnedRows: restoredPins,
         pendingPinnedRows: restoredPendingPins,
+        planMembership: restoredMembership,
+        membershipDefault: restoredMembershipDefault,
         seqPhase: a.sequence && a.sequence.some((r) => r.kind === "work") ? "dirty" : s.seqPhase,
         validation: null,
         shadow: null,
@@ -1396,13 +1418,13 @@ function includedIdsForInputs(
   s: AppState,
   inputs: PlanInputs | null = s.inputs,
   overrides: Record<string, TodayOverride> = s.overrides,
+  membership: Record<string, boolean> = s.planMembership,
+  membershipDefault: MembershipDefault = s.membershipDefault,
 ): ReadonlySet<string> {
   if (!inputs) return new Set();
   return new Set(
     inputs.assigned
-      .filter((item) =>
-        rowIsIncluded(item, overrides[item.id], s.planMembership, s.membershipDefault),
-      )
+      .filter((item) => rowIsIncluded(item, overrides[item.id], membership, membershipDefault))
       .map((item) => item.id),
   );
 }
