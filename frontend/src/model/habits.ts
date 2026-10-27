@@ -1,9 +1,11 @@
 /* habits.ts — today-only habit overrides on the Set up day screen.
 
-   The artifact may list each outstanding habit (`items`); an operator can
-   leave one out of today's capacity (Count today) or change its minutes. With
-   no items only the aggregate exists, so a single "Habits (total)" row stands
-   in for them — the backend ignores a total override once items exist. The
+   Habits are an ACTIVE list: the artifact lists every habit in the Todoist
+   Habits project and completion is tracked elsewhere (Grit), so nothing here
+   reads or derives a done/outstanding count. An operator switches a habit off
+   today (leaving it out of today's capacity) or changes its minutes. With no
+   items only the aggregate exists, so a single "Habits (total)" row stands in
+   for them — the backend ignores a total override once items exist. The
    capacity math itself is server-side; this module holds the pure view and
    edit rules. Overrides never reach Todoist or the calendar. */
 
@@ -37,7 +39,9 @@ export interface HabitRow {
 export interface HabitsView {
   mode: "items" | "total" | "hidden";
   rows: HabitRow[];
-  outstanding: number;
+  /** How many habits the active list holds: the rows, or the artifact's
+      aggregate total when it carries no per-habit items. */
+  habitCount: number;
   /** Minutes capacity uses: counted rows only. */
   countedMinutes: number;
   summary: string;
@@ -68,24 +72,28 @@ export function habitsView(
   const ov = overrides ?? { items: {}, total: null };
   let mode: HabitsView["mode"] = "hidden";
   let rows: HabitRow[] = [];
+  let habitCount = 0;
   if (info && info.items.length > 0) {
     mode = "items";
+    habitCount = info.items.length;
     rows = info.items.map((item) => {
       const key = item.id || item.name;
       return rowOf(key, item.name, item.minutes, ov.items[key] ?? ov.items[item.name]);
     });
-  } else if (info && (info.outstanding > 0 || info.estMinutes > 0)) {
+  } else if (info && info.estMinutes > 0) {
     mode = "total";
+    habitCount = info.total > 0 ? info.total : 1;
     rows = [rowOf(HABIT_TOTAL_KEY, "Habits (total)", info.estMinutes, ov.total)];
   }
   const countedMinutes = rows.reduce((sum, r) => sum + (r.on ? r.minutes : 0), 0);
-  const outstanding = info?.outstanding ?? 0;
   return {
     mode,
     rows,
-    outstanding,
+    habitCount,
     countedMinutes,
-    summary: `${outstanding} outstanding · ${formatDurationMinutes(countedMinutes)} counted`,
+    summary:
+      `${habitCount} ${habitCount === 1 ? "habit" : "habits"} · ` +
+      `${formatDurationMinutes(countedMinutes)} counted`,
   };
 }
 

@@ -1,9 +1,10 @@
 /* HabitsDrawer — the Set up day "Review habits" slide-over (bottom sheet on
    narrow screens). A view over the same today-only overrides the Habits card
    edits: rows come from habitsView, every edit is a withHabitEntry patch, and
-   saving is the card's save function. Switching a habit off dims its row in
-   place; the rows never move. Focus, Tab wrap, Escape, and focus return come
-   from useDialog. */
+   saving is the card's save function. Habits are an active list switched on or
+   off for today; completion is tracked in Grit and never shown here. Switching
+   a habit off dims its row in place; the rows never move. Focus, Tab wrap,
+   Escape, and focus return come from useDialog. */
 
 import { useEffect, useState } from "preact/hooks";
 import { minutesToBlocks } from "../../model/time";
@@ -34,8 +35,6 @@ export function blocksText(minutes: number): string {
 export interface HabitsDrawerProps {
   view: HabitsView;
   overrides?: HabitOverrides;
-  /** Done-today aggregate from the artifact, when it carries one. */
-  done: number;
   dateLabel: string;
   status: HabitsSaveStatus;
   error: string;
@@ -132,7 +131,7 @@ function HabitRowView({
 }
 
 export function HabitsDrawer({
-  view, overrides, done, dateLabel, status, error, onSave, onRetry, onClose,
+  view, overrides, dateLabel, status, error, onSave, onRetry, onClose,
 }: HabitsDrawerProps) {
   const dialog = useDialog(onClose);
   // Safety net: if focus ever falls out of the dialog (to <body>), the dialog's
@@ -189,9 +188,11 @@ export function HabitsDrawer({
         <div class="habits-drawer__scroll">
           <section aria-labelledby="habits-drawer-today">
             <div class="habits-drawer__group-head">
-              <h3 id="habits-drawer-today">Today <span>{view.rows.length}</span></h3>
+              <h3 id="habits-drawer-today">Today <span>{view.habitCount}</span></h3>
               <button type="button" class="btn" disabled={view.rows.length === 0} aria-disabled={ariaOff(busy)} onClick={bulk}>
-                {allOff ? "Turn all back on" : `Turn off all ${view.rows.length} habits`}
+                {allOff
+                  ? `Turn on all ${view.rows.length} ${view.rows.length === 1 ? "habit" : "habits"}`
+                  : `Turn off all ${view.rows.length} habits`}
               </button>
             </div>
             <ul class="habits-drawer__list">
@@ -205,11 +206,6 @@ export function HabitsDrawer({
           {off.length > 0 && (
             <p class="habits-drawer__summary">
               <b>Off today:</b> {off.map((r) => r.label).join(", ")} — {off.length} {off.length === 1 ? "habit" : "habits"}, {offMinutes} min not counted
-            </p>
-          )}
-          {done > 0 && (
-            <p class="habits-drawer__summary">
-              <b>Done today:</b> {done} {done === 1 ? "habit" : "habits"}
             </p>
           )}
           {fieldError && <span class="field-error" role="alert">{fieldError}</span>}

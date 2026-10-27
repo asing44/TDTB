@@ -1368,10 +1368,11 @@ function projectHabitsInfo(raw: unknown): HabitsInfo | undefined {
     items.push({ id: String(row.id ?? ""), name, minutes: Math.max(0, Math.trunc(row.minutes)) });
   }
   const n = (v: unknown) => (Number.isFinite(v) ? Number(v) : 0);
+  // `done`/`outstanding` are legacy completion fields: habits are an active
+  // list and completion lives in Grit, so they are never projected (and
+  // never read) even when an older artifact still carries them.
   return {
     total: n(value.total),
-    done: n(value.done),
-    outstanding: n(value.outstanding),
     estMinutes: n(value.est_minutes),
     items,
   };
@@ -2262,11 +2263,17 @@ export function projectUnassignedToday(
 
 export function projectPlanInputs(wire: Wire): PlanInputs {
   const warnings = (wire.source_warnings ?? []).map(String);
-  const habits = wire.habits ?? {};
   const habitsInfo = projectHabitsInfo(wire.habits);
+  // The active list, not a completion score: the count is the listed habits
+  // (every habit in the project), never a done/outstanding difference.
+  const habitCount = habitsInfo
+    ? habitsInfo.items.length > 0
+      ? habitsInfo.items.length
+      : habitsInfo.total
+    : 0;
   const habitsNote =
-    habits.total > 0
-      ? `${habits.outstanding} of ${habits.total} habits outstanding · ~${habits.est_minutes}min`
+    habitCount > 0
+      ? `${habitCount} ${habitCount === 1 ? "habit" : "habits"} · ~${habitsInfo?.estMinutes ?? 0}min`
       : null;
   const capacitiesIntake = projectCapacitiesIntake(
     wire.capacities_intake ?? wire.digest?.capacities_intake,
