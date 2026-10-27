@@ -270,7 +270,7 @@ describe("allocator table a11y (T7)", () => {
   it("every source-write control names its target item", () => {
     // F7: the per-row More menu (button.alloc-verb) is gone. The source verbs
     // live in the expanded row's Source menu, whose popover and Delete confirm
-    // are named for the row, so "Delete source…" alone is never ambiguous.
+    // are named for the row, so "Delete in Todoist…" alone is never ambiguous.
     const h = makeHarness("ready");
     const { container } = h.ui(<Queue />);
     expect(container.querySelectorAll("button.alloc-verb")).toHaveLength(0);

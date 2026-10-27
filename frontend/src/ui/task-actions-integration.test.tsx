@@ -165,18 +165,18 @@ describe("F7 integration: the row and its expanded panel", () => {
     const { container } = h.ui(<Queue />);
     let row = expand(container, "Press");
     let line2 = row.querySelector<HTMLElement>(".trow__l2")!;
-    expect(Array.from(line2.querySelectorAll("button")).map((b) => b.textContent?.trim()))
-      .toEqual(["Source ▾"]);
+    expect(Array.from(line2.querySelectorAll("button")).map((b) => b.getAttribute("aria-label") ?? b.textContent?.trim()))
+      .toEqual(["Source actions"]);
 
     fireEvent.change(row.querySelector('select[aria-label="Duration"]')!, {
       target: { value: "4" },
     });
     row = rowFor(container, "Press");
     line2 = row.querySelector<HTMLElement>(".trow__l2")!;
-    expect(Array.from(line2.children).map((el) => el.textContent?.trim())).toEqual([
+    expect(Array.from(line2.querySelectorAll("button")).map((el) => el.getAttribute("aria-label") ?? el.textContent?.trim())).toEqual([
       "Save",
       "Discard",
-      "Source ▾",
+      "Source actions",
     ]);
     // Staged shaping is visible on the collapsed row too.
     expect(row.querySelector(".trow__state")?.textContent).toBe("Staged");
@@ -253,7 +253,7 @@ describe("F7 integration: one source verb reports as a batch of one", () => {
       Array.from(menu.querySelectorAll<HTMLElement>('[role="menuitem"]')).map((b) =>
         b.getAttribute("aria-label"),
       ),
-    ).toEqual(["Hide always", "Delete source…"]);
+    ).toEqual(["Hide always", "Delete in Todoist…"]);
     expect(menu.querySelector('[aria-label="Unassign in source"]')).toBeNull();
     expect(menu.querySelector('[aria-label="Skip occurrence"]')).toBeNull();
     expect(menu.textContent).not.toMatch(/unassign/i);

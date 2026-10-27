@@ -72,7 +72,7 @@ describe("locked contract: explicit direct actions plus the Source menu (item 3)
     const items = Array.from(row.querySelectorAll('[role="menuitem"]')).map(
       (b) => b.getAttribute("aria-label"),
     );
-    expect(items).toContain("Delete source…");
+    expect(items).toContain("Delete in Todoist…");
   });
 });
 

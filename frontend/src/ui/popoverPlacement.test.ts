@@ -70,3 +70,26 @@ describe("computePopoverPlacement", () => {
     expect(p.left + 296).toBeLessThanOrEqual(320 - POPOVER_EDGE);
   });
 });
+
+describe("computePopoverPlacement align end (kebab menus)", () => {
+  it("right-aligns the panel to the trigger and prefers downward", () => {
+    const p = computePopoverPlacement(trigger(100, 860, 32, 32), viewport(900, 700), { width: 300, height: 120 }, "down", "end");
+    expect(p.placement).toBe("down");
+    expect(p.left).toBe(860 + 32 - 300);
+    expect(p.top).toBe(132 + POPOVER_GAP);
+  });
+
+  it("clamps inside the viewport when the trigger hugs either edge", () => {
+    const right = computePopoverPlacement(trigger(100, 880, 32, 32), viewport(900, 700), { width: 300, height: 120 }, "down", "end");
+    expect(right.left + 300).toBeLessThanOrEqual(900 - POPOVER_EDGE);
+    const left = computePopoverPlacement(trigger(100, 0, 32, 32), viewport(900, 700), { width: 300, height: 120 }, "down", "end");
+    expect(left.left).toBe(POPOVER_EDGE);
+  });
+
+  it("flips upward near the bottom and never leaves the viewport", () => {
+    const p = computePopoverPlacement(trigger(660, 860, 32, 32), viewport(900, 700), { width: 300, height: 120 }, "down", "end");
+    expect(p.placement).toBe("up");
+    expect(p.top).toBeGreaterThanOrEqual(POPOVER_EDGE);
+    expect(p.top + p.maxHeight).toBeLessThanOrEqual(700 - POPOVER_EDGE);
+  });
+});
