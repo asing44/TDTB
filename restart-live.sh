@@ -29,6 +29,29 @@ skip_build=0
 
 launchd_started=0
 
+# `launchctl bootstrap` intermittently returns "Bootstrap failed: 5:
+# Input/output error" when it lands immediately after a bootout, while launchd
+# is still releasing the job (2026-10-27: the job stayed unloaded and the seat
+# was left down). One short retry absorbs that transient; a real failure still
+# exits non-zero, with both attempts' output surfaced.
+bootstrap_job() {
+  local attempt out
+
+  for attempt in 1 2; do
+    if out="$(launchctl bootstrap "gui/$UID" "$PLIST" 2>&1)"; then
+      return 0
+    fi
+    out="${out//$'\n'/ }"
+    if (( attempt == 1 )); then
+      print -u2 -- "  launchd     bootstrap failed (${out}); retrying once"
+      sleep 1
+    else
+      print -u2 -- "  launchd     bootstrap failed after retry (${out})"
+    fi
+  done
+  return 1
+}
+
 refresh_plist() {
   local temp
 
@@ -111,7 +134,7 @@ if ! launchctl print "gui/$UID/$LABEL" >/dev/null 2>&1; then
     print -u2 -- "              confirm the owning seat, then bootstrap the staged plist"
     exit 1
   fi
-  if ! launchctl bootstrap "gui/$UID" "$PLIST"; then
+  if ! bootstrap_job; then
     print -u2 -- "  restart     FAILED — could not bootstrap $PLIST"
     exit 1
   fi
@@ -127,7 +150,7 @@ if (( ! launchd_started )); then
     print -u2 -- "  restart     FAILED — could not unload the current $LABEL job"
     exit 1
   fi
-  if ! launchctl bootstrap "gui/$UID" "$PLIST"; then
+  if ! bootstrap_job; then
     print -u2 -- "  restart     FAILED — could not reload $LABEL from $PLIST"
     exit 1
   fi
