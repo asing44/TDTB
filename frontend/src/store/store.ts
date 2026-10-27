@@ -44,7 +44,6 @@ import { calendarEditOverlaps } from "../model/calendarEdit";
 import { anchoredBlocks, anchoredDefaultOff } from "../model/anchored";
 import { dayFrame, type DayFrame } from "../model/dayFrame";
 import { remainingLabel } from "../model/allocator";
-import { dueLabel } from "../model/urgency";
 import { capacitiesCoverageOf, durationSourceOf, itemIdentity } from "../adapters/wire";
 import {
   createDraft,
@@ -224,11 +223,13 @@ export const emptyBatch: BatchState = {
 
 /** What an ABSENT `planMembership` entry means for one row.
 
-    "rule" (U3a) is the day's actual default: a sourced row joins today's plan
-    only when it is already overdue, due today, or carries a fixed time —
-    everything else waits in Unassigned. "in"/"out" stay readable so a blob
-    written by the earlier landings (or a deliberately all-in day) still loads
-    with the meaning it was saved under. */
+    "rule" is the day's actual default: selecting what belongs to today is the
+    operator's job, so NOTHING a source sent is pre-selected — a Todoist or
+    Capacities row starts in Unassigned, whether it is overdue, due today, or
+    carries a native time. The single exception is a CALENDAR event: a fixed
+    commitment this screen cannot choose for him, which starts in the plan.
+    "in"/"out" stay readable so a blob written by the earlier landings (or a
+    deliberately all-in day) still loads with the meaning it was saved under. */
 export type MembershipDefault = "rule" | "in" | "out";
 
 export interface AppState {
@@ -804,11 +805,7 @@ export function reducer(s: AppState, a: Action): AppState {
       const target = s.inputs?.assigned.find(
         (item) => membershipKeyOf(item) === a.identity,
       );
-      const defaultIn = defaultMembershipIn(
-        target,
-        s.membershipDefault,
-        s.inputs?.validDate ?? "",
-      );
+      const defaultIn = defaultMembershipIn(target, s.membershipDefault);
       const previous = s.planMembership[a.identity];
       const next = a.in === defaultIn ? undefined : a.in;
       if (previous === next) return s;
@@ -1454,10 +1451,9 @@ function includedIdsForInputs(
   membershipDefault: MembershipDefault = s.membershipDefault,
 ): ReadonlySet<string> {
   if (!inputs) return new Set();
-  const validDate = inputs.validDate;
   return new Set(
     inputs.assigned
-      .filter((item) => rowIsIncluded(item, overrides[item.id], membership, membershipDefault, validDate))
+      .filter((item) => rowIsIncluded(item, overrides[item.id], membership, membershipDefault))
       .map((item) => item.id),
   );
 }
@@ -1603,20 +1599,21 @@ export function membershipKeyOf(item: AssignedItem): string {
   return itemIdentity(item) ?? item.id;
 }
 
-/** U3a: the day's default membership RULE, shared by the reducer, the selectors
-    and the lane projections so one answer decides what today's plan holds. A
-    row with no explicit membership entry joins the plan when it is already
-    late, due today, or carries a fixed time (a calendar event, or a source
-    wall-clock time the planner must protect); everything else waits in
-    Unassigned until the operator puts it in. Reuses the surfaces' own urgency
-    helpers rather than re-deriving a second notion of "due" or "fixed". */
-export function ruleIncludes(item: AssignedItem, validDate: string): boolean {
-  const tone = dueLabel(item.deadline, validDate)?.tone ?? null;
-  if (tone === "overdue" || tone === "today") return true;
-  if (item.source === "calendar") return true;
-  if (isNativeTimedTodoist(item)) return true;
-  if (item.isRecurring === true && typeof item.scheduledStart === "string") return true;
-  return false;
+/** The day's default membership RULE, shared by the reducer, the selectors and
+    the lane projections so one answer decides what today's plan holds.
+
+    U3a first let the sources decide (overdue, due today, a native time joined
+    by themselves). Adam rejected that: "items still are already showing as
+    pre-selected from Todoist instead of allowing me to select what is assigned
+    on today". Assigning today is his choice, so a cold day starts with an
+    EMPTY plan and every Todoist and Capacities row — overdue, due today, timed,
+    recurring, undated alike — waits in Not in plan until he adds it.
+
+    The one row that still starts in the plan is a CALENDAR event: a fixed
+    commitment of the day, not an assignable choice, so withholding it would
+    understate the time today already owes. */
+export function ruleIncludes(item: AssignedItem): boolean {
+  return item.source === "calendar";
 }
 
 /** Resolution of an absent membership entry for one row. `item` is undefined
@@ -1625,11 +1622,10 @@ export function ruleIncludes(item: AssignedItem, validDate: string): boolean {
 function defaultMembershipIn(
   item: AssignedItem | undefined,
   membershipDefault: MembershipDefault,
-  validDate: string,
 ): boolean {
   if (membershipDefault === "in") return true;
   if (membershipDefault === "out") return false;
-  return item ? ruleIncludes(item, validDate) : false;
+  return item ? ruleIncludes(item) : false;
 }
 
 /** The plan-membership gate alone, ignoring the session override: is this a row
@@ -1638,7 +1634,7 @@ function defaultMembershipIn(
 export function isPlanMember(s: AppState, item: AssignedItem): boolean {
   const explicit = s.planMembership[membershipKeyOf(item)];
   if (explicit !== undefined) return explicit;
-  return defaultMembershipIn(item, s.membershipDefault, s.inputs?.validDate ?? "");
+  return defaultMembershipIn(item, s.membershipDefault);
 }
 
 /** The inclusion rule for one row. Two independent gates: the session override
@@ -1650,12 +1646,11 @@ function rowIsIncluded(
   override: TodayOverride | undefined,
   membership: Record<string, boolean>,
   membershipDefault: MembershipDefault,
-  validDate: string,
 ): boolean {
   if (override && override.included === false) return false;
   const explicit = membership[membershipKeyOf(item)];
   if (explicit !== undefined) return explicit;
-  return defaultMembershipIn(item, membershipDefault, validDate);
+  return defaultMembershipIn(item, membershipDefault);
 }
 
 /** Row form of the inclusion seam, for callers already holding the item. */
@@ -1665,7 +1660,6 @@ export function isItemIncluded(s: AppState, item: AssignedItem): boolean {
     s.overrides[item.id],
     s.planMembership,
     s.membershipDefault,
-    s.inputs?.validDate ?? "",
   );
 }
 

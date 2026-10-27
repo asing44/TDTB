@@ -4,13 +4,14 @@
    three things that make that safe: the row leaves every inclusion reader at
    once (queue, capacity, staged row, pin, placement), the membership key is the
    STABLE SOURCE IDENTITY rather than the name-keyed row id, and an ABSENT entry
-   is resolved by the day itself — the U3a rule (overdue, due today, fixed time)
-   on a cold load, or the legacy whole-day "in"/"out" a saved blob carries.
+   is resolved by the day itself — the day's rule (only fixed calendar
+   commitments, nothing a source sent) on a cold load, or the legacy whole-day
+   "in"/"out" a saved blob carries.
 
    Two shapes of day appear below, because both are real:
 
-   - `coldDay()` is U3a's cold load: nothing curated yet, so the rule alone
-     decides each row and everything unruled waits in Unassigned.
+   - `coldDay()` is the cold load: nothing curated yet, so the rule alone decides
+     each row and every sourced work row waits in Unassigned.
    - `loaded()` is a day already under way (what every fixture depicts): the
      plan was built, so the legacy whole-day "in" default holds and a per-row
      edit is the only thing that can take a row out. */
@@ -84,7 +85,7 @@ function setMembership(s: AppState, identity: string, inPlan: boolean): AppState
   return reducer(s, { type: "PLAN_MEMBERSHIP_SET", identity, in: inPlan });
 }
 
-/** One row of each kind the U3a rule decides on, built from the fixture day so
+/** One row of each kind the day's rule decides on, built from the fixture day so
     the date math is the fixture's own. `todoistId: null` keeps every identity
     distinct (an identity-less row keys by its id). */
 function ruleRows(validDate: string): AssignedItem[] {
@@ -102,7 +103,18 @@ function ruleRows(validDate: string): AssignedItem[] {
   return [
     row("Overdue row", { deadline: "2026-07-16" }),
     row("Due today row", { deadline: validDate }),
+    row("Timed row", { deadline: null, scheduledStart: "09:30" }),
+    row("Recurring timed row", {
+      deadline: null,
+      isRecurring: true,
+      scheduledStart: "07:00",
+    }),
     row("Calendar row", { source: "calendar", deadline: null }),
+    row("Capacities row", {
+      source: "capacities",
+      deadline: validDate,
+      identity: "capacities:cap-row",
+    }),
     row("Undated row", { deadline: null }),
     row("P1 undated row", { urgency: "4", deadline: null }),
   ];
@@ -289,54 +301,69 @@ describe("isIncluded — the shared inclusion seam", () => {
   });
 });
 
-/* U3a: on a COLD day an absent membership entry is not "in" — the rule decides
-   each row. Overdue, due-today and fixed-time rows join; everything else waits
-   in Unassigned until the operator says otherwise (priority alone is not a
-   reason to join: an undated p1 waits like any other undated row). */
-describe("the U3a rule decides a row with no membership entry", () => {
-  it("joins overdue, due-today, and fixed-time rows and leaves the rest out", () => {
+/* U3a (revised 2026-10-27): on a COLD day an absent membership entry does not
+   mean "in". Adam's words: "items still are already showing as pre-selected
+   from Todoist instead of allowing me to select what is assigned on today".
+   Assigning today is his choice, so a sourced work row waits in Unassigned
+   until he adds it — overdue, due today, natively timed, recurring with a
+   scheduled start, and every Capacities row alike. Priority is not a reason to
+   join either. The ONE row that still starts in the plan is a fixed CALENDAR
+   commitment: it is not an assignable choice, so withholding it would
+   understate the day's committed time. */
+describe("the day's rule leaves sourced work out and keeps calendar commitments in", () => {
+  it("keeps only the calendar row in the plan on a cold day", () => {
     const s = ruleDay();
-    const validDate = s.inputs!.validDate;
-    const [overdue, dueToday, calendar, undated, p1Undated] = s.inputs!.assigned;
+    const [overdue, dueToday, timed, recurringTimed, calendar, capacities, undated, p1Undated] =
+      s.inputs!.assigned;
 
     expect(s.membershipDefault).toBe("rule");
     expect(s.planMembership).toEqual({});
-    expect(includedItems(s).map((i) => i.id)).toEqual([
-      "Overdue row",
-      "Due today row",
-      "Calendar row",
-    ]);
-    expect(ruleIncludes(overdue, validDate)).toBe(true);
-    expect(ruleIncludes(dueToday, validDate)).toBe(true);
-    expect(ruleIncludes(calendar, validDate)).toBe(true);
-    expect(ruleIncludes(undated, validDate)).toBe(false);
-    expect(ruleIncludes(p1Undated, validDate)).toBe(false);
+    expect(includedItems(s).map((i) => i.id)).toEqual(["Calendar row"]);
+
+    // Nothing a source sent is pre-selected: not even a due-today row.
+    for (const sourced of [
+      overdue,
+      dueToday,
+      timed,
+      recurringTimed,
+      capacities,
+      undated,
+      p1Undated,
+    ]) {
+      expect(ruleIncludes(sourced)).toBe(false);
+      expect(isPlanMember(s, sourced)).toBe(false);
+    }
+    expect(ruleIncludes(calendar)).toBe(true);
+    expect(isPlanMember(s, calendar)).toBe(true);
+
     // Out of the plan, and not an error: each waits in Unassigned.
+    expect(isIncluded(s, "Due today row")).toBe(false);
     expect(isIncluded(s, "Undated row")).toBe(false);
-    expect(isPlanMember(s, p1Undated)).toBe(false);
   });
 
-  it("stores an entry only when the toggle disagrees with the rule", () => {
+  it("stores an entry whenever the toggle disagrees with the rule", () => {
     const s = ruleDay();
-    const [overdue, , , undated] = s.inputs!.assigned;
+    const [overdue, , , , calendar] = s.inputs!.assigned;
 
-    // Re-asserting the rule's own answer is a no-op in both directions: a
-    // sparse map must not dirty the day because a surface echoed the default.
-    expect(setMembership(s, membershipKeyOf(overdue), true)).toBe(s);
-    expect(setMembership(s, membershipKeyOf(undated), false)).toBe(s);
+    // Echoing the rule's own answer is a no-op in both directions: the sparse
+    // map must not dirty the day because a surface re-asserted the default.
+    expect(setMembership(s, membershipKeyOf(overdue), false)).toBe(s);
+    expect(setMembership(s, membershipKeyOf(calendar), true)).toBe(s);
 
-    const added = setMembership(s, membershipKeyOf(undated), true);
-    expect(added.planMembership).toEqual({ [membershipKeyOf(undated)]: true });
-    expect(isIncluded(added, undated.id)).toBe(true);
+    // Adding a sourced row is the day's normal direction now.
+    const added = setMembership(s, membershipKeyOf(overdue), true);
+    expect(added.planMembership).toEqual({ [membershipKeyOf(overdue)]: true });
+    expect(isIncluded(added, overdue.id)).toBe(true);
 
-    const removed = setMembership(s, membershipKeyOf(overdue), false);
-    expect(removed.planMembership).toEqual({ [membershipKeyOf(overdue)]: false });
-    expect(isIncluded(removed, overdue.id)).toBe(false);
+    // And the one pre-selected row can still be taken out.
+    const removed = setMembership(s, membershipKeyOf(calendar), false);
+    expect(removed.planMembership).toEqual({ [membershipKeyOf(calendar)]: false });
+    expect(isIncluded(removed, calendar.id)).toBe(false);
   });
 
   it("a legacy whole-day \"in\"/\"out\" default overrides the rule", () => {
     const s = ruleDay();
-    expect(includedItems({ ...s, membershipDefault: "in" })).toHaveLength(5);
+    expect(includedItems({ ...s, membershipDefault: "in" })).toHaveLength(8);
     expect(includedItems({ ...s, membershipDefault: "out" })).toHaveLength(0);
   });
 });
@@ -376,10 +403,18 @@ describe("a row outside today's plan leaves every lane", () => {
     expect(out.inputs!.droppedToday).toEqual([]);
   });
 
-  it("hides the unruled rows of a cold day from the lanes", () => {
+  it("hides every unruled row of a cold day from the lanes", () => {
     const s = ruleDay();
-    expect(laneIds(s)).toEqual(["Overdue row", "Due today row", "Calendar row"]);
-    expect(assignmentRows(s).unassigned.map((r) => r.identity)).toEqual([
+    // The fixed calendar commitment is the whole plan; every sourced work row
+    // waits in the drawer for him to add it.
+    expect(laneIds(s)).toEqual(["Calendar row"]);
+    expect(assignmentRows(s).assigned.map((r) => r.name)).toEqual(["Calendar row"]);
+    expect(assignmentRows(s).unassigned.map((r) => r.name)).toEqual([
+      "Overdue row",
+      "Due today row",
+      "Timed row",
+      "Recurring timed row",
+      "Capacities row",
       "Undated row",
       "P1 undated row",
     ]);

@@ -35,7 +35,12 @@
 
 import { useEffect, useState } from "preact/hooks";
 import { useApp, useAppState } from "./context";
-import { effectiveBlocks, isIncluded, type AppState } from "../store/store";
+import {
+  assignmentRows,
+  effectiveBlocks,
+  isIncluded,
+  type AppState,
+} from "../store/store";
 import type { HierarchyRow } from "../model/allocatorView";
 import { taskTableSections } from "../store/allocatorView";
 import { formatBlockAmount } from "../model/time";
@@ -245,6 +250,11 @@ export function Queue() {
 
   // KTD12: section membership is a view projection over the band/state model.
   const sections = taskTableSections(s);
+  // Selecting today is the operator's job, so a cold day starts with an EMPTY
+  // plan: nothing a source sent is pre-selected (only fixed calendar
+  // commitments are). The page's first job is therefore the way in — one line,
+  // with the drawer below holding every sourced row one click away.
+  const inPlanCount = assignmentRows(s).assigned.length;
 
   const hierarchyById = new Map(
     sections.flatMap((sec) => sec.rows).map((entry) => [entry.item.id, entry]),
@@ -272,7 +282,12 @@ export function Queue() {
       <BatchPanel />
       <div class="plan-grid">
         <div class="plan-grid__groups">
-          {sections.map((sec) => {
+          {inPlanCount === 0 && (
+            <div class="queue__quiet" role="status" data-plan-empty>
+              <p>Nothing in today's plan yet — add items from Not in plan below.</p>
+            </div>
+          )}
+          {inPlanCount > 0 && sections.map((sec) => {
             // Durable skips render in the Skipped today section below. The
             // "out" lane now only carries legacy browser-only exclusions
             // that have not yet converted to a Skip today.
