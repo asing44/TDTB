@@ -22,6 +22,11 @@ host cockpit plan and rejects historical plans as execution fronts.
 TDTB remains the review → sequence → commit bridge. Assignment stays upstream:
 the cockpit consumes assigned work, fixed Calendar commitments, and the
 current source contracts; it is not a second assignment or pool browser.
+Within that boundary, "In plan / Not in plan" is local plan membership over
+upstream-assigned items: a browser-local, today-only choice that never writes to
+Todoist or Capacities. Toggling it, or the `E` key, makes no source or server
+call. The only row action that writes to a source is the double-confirmed
+"Unassign in Todoist…".
 
 ## Source ownership
 
