@@ -195,8 +195,8 @@ export function TaskRow({
   const allDay = draft ? draft.mode === "allday" : blocks === 0;
   const durBlocks = allDay ? 0 : (draft?.blocks ?? blocks);
   const staged = draftIsStaged(s, item.id);
-  // The duration track's leftmost notch stages the all-day draft state, so it
-  // is locked exactly where the expanded row's All-day radio is: a Capacities
+  // The duration track's leftmost notch stages the all-day draft state, so only
+  // that notch is closed (the rest of the track still resizes) exactly where the expanded row's All-day radio is: a Capacities
   // row cannot use the Todoist all-day path, and a protected source time may
   // not go all-day from here. The written reason is the control's tooltip.
   const rowFacts = rowFactsOf(s, item.id);
@@ -331,7 +331,8 @@ export function TaskRow({
           idBase={rowId(item, "d")}
           name={item.name}
           blocks={durBlocks}
-          disabled={s.runtimeBusy || allDayLock !== null}
+          disabled={s.runtimeBusy}
+          allDayLocked={allDayLock !== null}
           title={allDayLock ?? undefined}
           onChange={(next) =>
             controller.updateDraft(item.id, (d) =>

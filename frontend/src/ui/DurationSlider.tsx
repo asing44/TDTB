@@ -46,6 +46,7 @@ export function stepMinutes(minutes: number, direction: 1 | -1): number {
 export function DurationSlider({
   blocks,
   disabled,
+  allDayLocked = false,
   title,
   idBase,
   name,
@@ -55,6 +56,9 @@ export function DurationSlider({
   blocks: number;
   /** Locked: the runtime is busy, or the row's all-day path is closed. */
   disabled: boolean;
+  /** The All-day notch is closed (Capacities / protected source time): the
+      track starts at the first timed notch and − stops there. */
+  allDayLocked?: boolean;
   title?: string;
   idBase: string;
   /** The row's name, carried by the stepper labels. */
@@ -62,7 +66,8 @@ export function DurationSlider({
   onChange: (blocks: number) => void;
 }) {
   const minutes = Math.round(blocks * 30);
-  const shown = snapMinutes(minutes);
+  const floor = allDayLocked ? STEPPER_MINUTES : SLIDER_MIN_MINUTES;
+  const shown = Math.max(floor, snapMinutes(minutes));
   const label = blocksLabel(blocks);
   const listId = `dur-ticks-${idBase}`;
   const ticks: number[] = [];
@@ -79,7 +84,7 @@ export function DurationSlider({
           type="button"
           class="dslider__step"
           aria-label={`15 minutes less${forName}`}
-          disabled={disabled || shown <= SLIDER_MIN_MINUTES}
+          disabled={disabled || shown <= floor}
           onClick={() => step(-1)}
         >
           −
@@ -89,7 +94,7 @@ export function DurationSlider({
           type="range"
           aria-label="Duration slider"
           aria-valuetext={label}
-          min={SLIDER_MIN_MINUTES}
+          min={floor}
           max={SLIDER_MAX_MINUTES}
           step={SLIDER_STEP_MINUTES}
           list={listId}

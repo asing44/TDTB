@@ -239,23 +239,42 @@ describe("collapsed row duration cell", () => {
     expect(range(row).value).toBe("15");
   });
 
-  it("stays locked for a Capacities row, with the radio's reason as tooltip", () => {
+  it("keeps a Capacities row resizable but closes its All-day notch, reason as tooltip", () => {
     const h = makeHarness("ready");
     const { container } = h.ui(<Queue />);
-    const row = rowFor(container, "Note Processing");
-    expect(range(row).disabled).toBe(true);
-    expect(less(row).disabled).toBe(true);
-    expect(more(row).disabled).toBe(true);
+    let row = rowFor(container, "Note Processing");
+    // Only the All-day notch is closed: the track starts at the first timed one.
+    expect(range(row).disabled).toBe(false);
+    expect(range(row).min).toBe("15");
+    expect(more(row).disabled).toBe(false);
     expect(cellTitle(row)).toBe(EXCLUSION_REASONS.allDayCapacities);
+
+    fireEvent.input(range(row), { target: { value: "60" } });
+    const d = h.store.getState().drafts["Note Processing"];
+    expect(d.mode).toBe("time");
+    expect(d.blocks).toBe(2);
+
+    fireEvent.input(range(row), { target: { value: "15" } });
+    row = rowFor(container, "Note Processing");
+    expect(label(row)).toBe("15min");
+    // − stops at the first timed notch instead of stepping onto All-day.
+    expect(less(row).disabled).toBe(true);
+    expect(h.store.getState().drafts["Note Processing"].mode).toBe("time");
   });
 
-  it("stays locked for a protected source time, with the radio's reason", () => {
+  it("keeps a protected source time resizable but closes All-day, with the radio's reason", () => {
     const h = makeHarness("ready", withNativeTime);
     const { container } = h.ui(<Queue />);
     const row = rowFor(container, "Press");
-    expect(range(row).disabled).toBe(true);
-    expect(less(row).disabled).toBe(true);
+    expect(range(row).disabled).toBe(false);
+    expect(range(row).min).toBe("15");
     expect(cellTitle(row)).toBe(EXCLUSION_REASONS.protectedAllDay);
+  });
+
+  it("leaves the All-day notch open on an unlocked row", () => {
+    const h = makeHarness("ready");
+    const { container } = h.ui(<Queue />);
+    expect(range(rowFor(container, "Press")).min).toBe("0");
   });
 
   it("is disabled while the runtime is busy", () => {
