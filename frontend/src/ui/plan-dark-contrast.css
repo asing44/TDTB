@@ -1,0 +1,242 @@
+/* Plan / Commit / Connections / anchor popover: theme-aware surfaces and ink.
+   The Planning 2a layers at the end of app.css hardcode light hex fills (#fff,
+   #efede8, ...) and dark-ink greys (#6b6862, #1d1c1a, ...) while parts of the
+   same cards use --t-text (near-white in dark), which left white-on-white
+   titles, legends and durations. Every value below is light-dark(<the exact
+   original light value>, <token>), so light theme resolves to what app.css
+   already paints and only dark theme changes. Loaded after app.css (imported
+   from App.tsx). Status colours (due today, overdue, success) keep a dark-theme
+   variant with AA contrast on --t-surface-2. */
+
+:root {
+  --pdc-card: light-dark(#fff, var(--t-surface-2));
+  --pdc-card-quiet: light-dark(#fff, var(--t-surface));
+  --pdc-line: light-dark(#e3e0d8, var(--t-border));
+  --pdc-line-2: light-dark(#dedbd3, var(--t-border));
+  --pdc-line-3: light-dark(#d6d3cb, var(--t-border));
+  --pdc-hair: light-dark(#f1efea, var(--t-border));
+  --pdc-ink: light-dark(#1d1c1a, var(--t-text));
+  --pdc-ink-2: light-dark(#4a4843, var(--t-text));
+  --pdc-muted: light-dark(#6b6862, var(--t-muted));
+  --pdc-faint: light-dark(#9a968e, var(--t-muted));
+  --pdc-fill: light-dark(#efede8, color-mix(in srgb, var(--t-text) 12%, var(--t-surface-2)));
+  --pdc-fill-hover: light-dark(#f4f3ef, color-mix(in srgb, var(--t-text) 7%, var(--t-surface)));
+  --pdc-track: light-dark(#ebe9e3, color-mix(in srgb, var(--t-text) 16%, var(--t-surface-2)));
+  --pdc-good: light-dark(#1f8a5e, var(--t-accent-strong));
+  --pdc-warn: light-dark(#c27a00, #f0b34a);
+  --pdc-warn-ink: light-dark(#8a5a00, #f0b34a);
+}
+
+/* Already placed card (the lanes inside keep day-strip-contrast.css). */
+.already-placed {
+  border-color: var(--pdc-line);
+  background: var(--pdc-card-quiet);
+}
+.already-placed__note,
+.band.band--lane .band__note {
+  color: var(--pdc-muted);
+}
+
+/* Task row card. */
+.qrow {
+  border-color: var(--pdc-line);
+  background: var(--pdc-card);
+}
+.queue__band .qrow {
+  --qrow-bg: var(--pdc-card);
+  background: var(--pdc-card);
+}
+.queue__band .qrow:hover {
+  background: var(--pdc-card);
+}
+.qrow__assign,
+.qrow__assign--off {
+  border-color: var(--pdc-line-3);
+  background: var(--pdc-card);
+}
+.qrow__assign--on {
+  background: #1f9d6b;
+  border-color: #1f9d6b;
+}
+.qrow__assign--none {
+  border: 0;
+  background: none;
+}
+.qrow__source,
+.qrow__src,
+.qrow__src--todoist,
+.qrow__src--capacities,
+.qrow__src--calendar,
+.qrow__src--other,
+.qrow__meta,
+.qrow__source .due,
+.qrow__priority,
+.qrow__prio {
+  color: var(--pdc-muted);
+}
+.qrow__source .due--soon,
+.qrow__source .due--today {
+  color: var(--pdc-warn);
+}
+.qrow__saved-tick {
+  color: var(--pdc-good);
+}
+.qrow__time .alloc-track__input::-webkit-slider-runnable-track {
+  background-color: var(--pdc-track);
+}
+.qrow__time .alloc-track__input::-moz-range-track {
+  background-color: var(--pdc-track);
+}
+.qrow__actions .planbtn:not(.row-more__item),
+.qrow__actions .alloc-verb:not(.row-more__item),
+.qrow__actions .row-more__trigger {
+  border-color: var(--pdc-line-2);
+  background: var(--pdc-card);
+  color: var(--pdc-ink-2);
+}
+.qrow__actions .alloc-verb--done:not(.row-more__item) {
+  background: #1f9d6b;
+  border-color: #1f9d6b;
+  color: #fff;
+}
+.qrow__actions .alloc-verb:hover,
+.qrow__actions .planbtn:hover {
+  border-color: var(--t-muted);
+}
+.qrow__actions .alloc-verb--done:not(.row-more__item):hover {
+  background: #1a8a5d;
+  border-color: #1a8a5d;
+}
+
+/* Capacity card. */
+.cap-card {
+  border-color: var(--pdc-line);
+  background: var(--pdc-card);
+}
+.cap-card__of {
+  color: var(--pdc-muted);
+}
+.cap-card__bar {
+  background: var(--pdc-fill);
+}
+
+/* Anchor popover (opened from Already placed / Day setup). */
+.anchor-popover {
+  border-color: var(--pdc-line-3);
+  background: var(--pdc-card);
+}
+.anchor-popover__count,
+.anchor-popover__field > label,
+.anchor-popover__field > span:first-child {
+  color: var(--pdc-muted);
+}
+.anchor-popover__time,
+.anchor-popover__window {
+  border-color: var(--pdc-line-2);
+  background: var(--pdc-card-quiet);
+  color: var(--t-text);
+}
+.anchor-popover__save-default,
+.anchor-popover__saved,
+.anchor-popover__link {
+  color: var(--pdc-good);
+}
+.anchor-popover__hint {
+  color: var(--pdc-warn-ink);
+}
+.anchor-popover__link--muted {
+  color: var(--pdc-ink-2);
+}
+.anchor-popover__switch {
+  background: light-dark(#dedbd3, color-mix(in srgb, var(--t-text) 28%, var(--t-surface-2)));
+}
+.anchor-popover__switch[aria-checked="true"] {
+  background: #1f9d6b;
+}
+.anchor-popover__footer {
+  border-top-color: var(--pdc-hair);
+}
+
+/* Connections screen. */
+.connections__nav {
+  border-right-color: var(--pdc-line);
+}
+.connections__back,
+.connections__group-empty,
+.connections-detail__remove,
+.connections-mapping__inactive {
+  color: var(--pdc-faint);
+}
+.connections__group-label,
+.connections-detail__kicker,
+.connections-detail__helper,
+.connections-previewstrip,
+.connections-previewitems__summary,
+.connections-previewitems__reason,
+.connections-previewitems__empty,
+.connections-admit__label,
+.connections-chip__x,
+.connections-chip-input,
+.connections-mapping__name,
+.connections-mapping__help,
+.connections-hidden__empty,
+.connections-hidden__date,
+.connections-hidden__note {
+  color: var(--pdc-muted);
+}
+.connections__back:hover,
+.connections-detail__remove:hover,
+.connections-navitem,
+.connections-detail__title,
+.connections-previewstrip__count,
+.connections-previewitems__title,
+.connections-chip,
+.connections-hidden__name,
+.connections-hidden__show {
+  color: var(--pdc-ink);
+}
+.connections-navitem:hover {
+  background: var(--pdc-fill-hover);
+}
+.connections-navitem--active {
+  background: var(--pdc-fill);
+}
+.connections-previewstrip,
+.connections-previewitems,
+.connections-admit {
+  border-color: var(--pdc-line);
+  background: var(--pdc-card-quiet);
+}
+.connections-previewitems__row,
+.connections-admit__row {
+  border-color: var(--pdc-hair);
+}
+.connections-check__days {
+  border-color: var(--pdc-line-2);
+}
+.connections-switch {
+  background: light-dark(#d6d3cb, color-mix(in srgb, var(--t-text) 28%, var(--t-surface-2)));
+}
+.connections-switch[aria-checked="true"] {
+  background: #1f9d6b;
+}
+.connections-chip {
+  background: var(--pdc-fill);
+}
+.connections-mapping__input {
+  border-color: var(--pdc-line-2);
+  background: var(--pdc-card-quiet);
+  color: var(--t-text);
+}
+.connections-mapping__input:disabled {
+  background: var(--t-surface-2);
+  color: var(--pdc-faint);
+}
+.connections-hidden__row,
+.connections-hidden__show {
+  border-color: var(--pdc-line-2);
+  background: var(--pdc-card-quiet);
+}
+.connections-stale {
+  background: light-dark(#fef3c7, color-mix(in srgb, var(--c-minting) 18%, var(--t-surface)));
+}
