@@ -383,6 +383,12 @@ class ValidationResult:
     warnings: list[dict[str, str]] = field(default_factory=list)
     conflicts: list[dict[str, Any]] = field(default_factory=list)
     diagnostics: list[dict[str, Any]] = field(default_factory=list)
+    # The layout this verdict describes when a deterministic repair changed it
+    # (see ``placement_rules.repair_deterministic``). Empty means "the client
+    # layout was validated as submitted", which keeps the historical response
+    # shape and payload size for every unchanged layout.
+    sequence: list[dict[str, Any]] = field(default_factory=list)
+    overlap_grants: list[dict[str, Any]] = field(default_factory=list)
 
     def as_dict(self) -> dict[str, Any]:
         result = {
@@ -394,6 +400,12 @@ class ValidationResult:
             result["conflicts"] = self.conflicts
         if self.diagnostics:
             result["diagnostics"] = self.diagnostics
+        if self.sequence:
+            # Additive: the client adopts the rows/grants that were actually
+            # validated, so /commit writes the repaired layout rather than the
+            # pre-repair one.
+            result["sequence"] = self.sequence
+            result["overlap_grants"] = self.overlap_grants
         return result
 
 

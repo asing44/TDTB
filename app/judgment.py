@@ -1660,6 +1660,27 @@ def _validate_sequence_proposal(
     )
     duration_overrides = placement_rules.effective_duration_overrides(constraints)
 
+    # Deterministic placement blockers (a metadata-derived calendar companion's
+    # interval and its exact overlap grant) are repaired before any row check,
+    # mirroring planning.run_proposal, so a mismatch the rules can settle never
+    # spends a billed retry. Anchored blocks are protected: a companion that
+    # conflicts with a source block keeps its actionable blocker instead.
+    protected_ids = {
+        str(block.get("Block") or "")
+        for block in anchored_blocks or []
+        if isinstance(block, dict)
+    }
+    protected_ids.discard("")
+    repaired = placement_rules.repair_deterministic(
+        d,
+        constraints,
+        planning_config_fingerprint=(config or {}).get("planning_config_fingerprint"),
+        protected_ids=protected_ids,
+    )
+    if repaired.changed:
+        d["sequence"] = repaired.sequence
+        d["overlap_grants"] = repaired.overlap_grants
+
     # G16 overflow tail (2026-10-15): a row parked at/after the effective EOD
     # cannot express a midnight crossing in same-day HH:MM, so the model emits
     # start == end. That is an over-capacity degrade handled deterministically

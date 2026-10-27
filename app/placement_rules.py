@@ -6,7 +6,9 @@ so prompt guidance and post-response validation use the same rules.
 """
 from __future__ import annotations
 
+import copy
 import re
+from dataclasses import dataclass, field
 from typing import Any
 
 from duration_tags import is_duration_tag
@@ -15,6 +17,12 @@ from duration_tags import is_duration_tag
 _ACTIVITY_STOPWORDS = frozenset({
     "a", "an", "and", "at", "for", "in", "of", "on", "the", "to", "with",
 })
+
+_AUTO_ALIGN_RULE = "calendar_companion_aligned"
+_AUTO_GRANT_RULE = "overlap_grant_synthesized"
+# The reason recorded on a grant the rules derived themselves. It states the
+# provenance plainly: this consent came from item metadata, not from a user.
+_DETERMINISTIC_GRANT_REASON = "deterministic metadata-derived activity match"
 
 # FEEDBACK-27: household person tokens. A shared person name alone is not
 # activity semantics — "Cook dinner with Meegy" must not inherit the span of
@@ -336,6 +344,32 @@ def _canonical_grant_interval(value: Any) -> dict[str, str] | None:
     return {"start": start, "end": end}
 
 
+def _span_interval(interval: tuple[int, int]) -> dict[str, str]:
+    """Format a minutes span as the canonical grant interval shape."""
+    return {
+        "start": f"{interval[0] // 60:02d}:{interval[0] % 60:02d}",
+        "end": f"{interval[1] // 60:02d}:{interval[1] % 60:02d}",
+    }
+
+
+def _span_text(interval: tuple[int, int]) -> str:
+    formatted = _span_interval(interval)
+    return f"{formatted['start']}\u2013{formatted['end']}"
+
+
+def _row_span(row: dict[str, Any]) -> tuple[int, int] | None:
+    """The row's minutes span, or None when it is not a usable interval.
+
+    ``_interval`` raises on malformed times because the validator already owns
+    rejecting them; deterministic repair must stay total and simply decline.
+    """
+    start = time_to_minutes(row.get("start"))
+    end = time_to_minutes(row.get("end"))
+    if start is None or end is None or end <= start:
+        return None
+    return start, end
+
+
 def _grant_matches(
     grants: list[dict[str, Any]],
     left_id: str,
@@ -344,11 +378,7 @@ def _grant_matches(
     right_interval: tuple[int, int],
     fingerprint: str | None = None,
 ) -> bool:
-    def fmt(interval: tuple[int, int]) -> dict[str, str]:
-        return {
-            "start": f"{interval[0] // 60:02d}:{interval[0] % 60:02d}",
-            "end": f"{interval[1] // 60:02d}:{interval[1] % 60:02d}",
-        }
+    fmt = _span_interval
 
     for grant in grants:
         if not isinstance(grant, dict):
@@ -372,6 +402,301 @@ def _grant_matches(
         ):
             return True
     return False
+
+
+@dataclass
+class DeterministicRepair:
+    """The outcome of :func:`repair_deterministic`.
+
+    ``sequence`` and ``overlap_grants`` are always safe to use as the layout
+    that was validated; ``notes`` are ``{id, rule, detail}`` records in the
+    same shape as the existing model-ID repairs, so they ride the validation
+    warnings the UI already renders.
+    """
+
+    sequence: list[dict[str, Any]] = field(default_factory=list)
+    overlap_grants: list[dict[str, Any]] = field(default_factory=list)
+    notes: list[dict[str, Any]] = field(default_factory=list)
+
+    @property
+    def changed(self) -> bool:
+        return bool(self.notes)
+
+
+def repair_deterministic(
+    proposal: dict[str, Any],
+    constraints: list[dict[str, Any]],
+    *,
+    planning_config_fingerprint: str | None = None,
+    protected_ids: set[str] | None = None,
+) -> DeterministicRepair:
+    """Repair the deterministic, metadata-derived placement blockers.
+
+    These relationships are already consented by the rule that derived them:
+    the model only copies server numbers, and a grant for a metadata-derived
+    pair records a decision nobody made at the keyboard. So both are repaired
+    here instead of being reported as hard blockers:
+
+    * a ``calendar_companion`` row is snapped to its matched event's exact
+      interval, and
+    * a missing exact overlap grant is synthesized at the intervals that are
+      current *after* the snaps above.
+
+    Pure and total: the input proposal is never mutated, malformed input is
+    declined rather than raised on, and an input needing no repair comes back
+    equal with no notes. Running it twice is a no-op the second time.
+
+    Deliberately NOT repaired, and still hard blockers exactly as before:
+    structural rules (invalid time, non-positive interval, duplicate or extra
+    rows, chronological order), same-start and containment violations for
+    parent/child, systems, and related groups, mint selection/window rules,
+    the morning-workout ban, and snapshot/pin staleness. A grant is only ever
+    synthesized for a pair that genuinely overlaps: a grant documents an
+    intentional overlap, so a non-overlapping pair stays with its same-start
+    blocker instead of being handed a meaningless consent record.
+
+    ``protected_ids`` names rows whose placement is not a rule's to move —
+    server pins, anchored source blocks, and injected window rows. Their
+    blockers stay (now actionable, see :func:`validate_constraints`); nothing
+    is snapped and no grant is synthesized on their behalf, because a
+    synthesized grant must never vouch for a row that was not repaired.
+    """
+    source = proposal if isinstance(proposal, dict) else {}
+    raw_rows = source.get("sequence")
+    rows: list[dict[str, Any]] = (
+        copy.deepcopy(raw_rows) if isinstance(raw_rows, list) else []
+    )
+    raw_grants = source.get("overlap_grants")
+    grants: list[dict[str, Any]] = (
+        copy.deepcopy(raw_grants) if isinstance(raw_grants, list) else []
+    )
+    notes: list[dict[str, Any]] = []
+    fingerprint = (
+        "" if planning_config_fingerprint is None
+        else str(planning_config_fingerprint)
+    )
+    protected = {str(value) for value in (protected_ids or ())}
+    if not rows or not constraints:
+        return DeterministicRepair(rows, grants, notes)
+
+    rows_by_id: dict[str, dict[str, Any]] = {}
+    position_by_id: dict[str, int] = {}
+    for position, row in enumerate(rows):
+        if not isinstance(row, dict) or row.get("id") is None:
+            continue
+        key = str(row["id"])
+        if key in rows_by_id:
+            continue
+        rows_by_id[key] = row
+        position_by_id[key] = position
+
+    def neighbour_starts(position: int) -> tuple[int | None, int | None]:
+        """The nearest valid starts before and after ``position``."""
+        previous: int | None = None
+        following: int | None = None
+        for other in range(position - 1, -1, -1):
+            candidate = rows[other]
+            if not isinstance(candidate, dict):
+                continue
+            value = time_to_minutes(candidate.get("start"))
+            if value is not None:
+                previous = value
+                break
+        for other in range(position + 1, len(rows)):
+            candidate = rows[other]
+            if not isinstance(candidate, dict):
+                continue
+            value = time_to_minutes(candidate.get("start"))
+            if value is not None:
+                following = value
+                break
+        return previous, following
+
+    # -- calendar companion: snap to the matched event's exact interval -----
+    aligned_pairs: set[tuple[str, str]] = set()
+    for constraint in constraints:
+        if not isinstance(constraint, dict):
+            continue
+        if constraint.get("kind") != "calendar_companion":
+            continue
+        item_id = str(constraint.get("item_id") or "")
+        event_id = str(constraint.get("event_id") or "")
+        row = rows_by_id.get(item_id)
+        if row is None or item_id in protected:
+            continue
+        required = constraint.get("event_interval")
+        if not isinstance(required, dict):
+            continue
+        required_start = canonical_time(required.get("start"))
+        required_end = canonical_time(required.get("end"))
+        if required_start is None or required_end is None:
+            continue
+        current = (canonical_time(row.get("start")),
+                   canonical_time(row.get("end")))
+        if current[0] is None or current[1] is None:
+            # Invalid times are a structural blocker, never a repair target.
+            continue
+        if current == (required_start, required_end):
+            continue
+        new_start = time_to_minutes(required_start)
+        previous, following = neighbour_starts(position_by_id[item_id])
+        # Chronology is a separate hard invariant: an earlier start that would
+        # reorder the sequence is left as an actionable blocker instead of
+        # trading one blocker for another.
+        if new_start is not None and previous is not None and new_start < previous:
+            continue
+        if new_start is not None and following is not None and new_start > following:
+            continue
+        row["start"] = required_start
+        row["end"] = required_end
+        aligned_pairs.add(tuple(sorted((item_id, event_id))))
+        notes.append({
+            "id": item_id,
+            "rule": _AUTO_ALIGN_RULE,
+            "detail": (
+                f'Auto-aligned "{item_id}" to "{event_id}" '
+                f'{required_start}\u2013{required_end}'
+            ),
+        })
+
+    # -- missing exact grants: synthesize at the current intervals ----------
+    pairs: list[tuple[str, str]] = []
+    seen_pairs: set[tuple[str, str]] = set()
+    # A calendar companion's consent is against the matched *event*, which is
+    # usually an anchored block rather than a sequence row, so its interval
+    # comes from the constraint instead of a row lookup. Only the movable row
+    # of such a pair has to be unprotected: the event is a source fact.
+    event_spans: dict[tuple[str, str], tuple[int, int]] = {}
+    pair_blocked: set[tuple[str, str]] = set()
+
+    def add_pair(left: Any, right: Any,
+                 event_span: tuple[int, int] | None = None,
+                 subjects: tuple[str, ...] | None = None) -> None:
+        left_id, right_id = str(left or ""), str(right or "")
+        if not left_id or not right_id or left_id == right_id:
+            return
+        key = tuple(sorted((left_id, right_id)))
+        if any(subject in protected for subject in (subjects or key)):
+            pair_blocked.add(key)
+        if key in seen_pairs:
+            return
+        seen_pairs.add(key)
+        pairs.append((left_id, right_id))
+        if event_span is not None:
+            event_spans[key] = event_span
+
+    for constraint in constraints:
+        if not isinstance(constraint, dict):
+            continue
+        kind = constraint.get("kind")
+        if kind == "parent_child":
+            add_pair(constraint.get("child_id"), constraint.get("parent_id"))
+        elif kind in ("systems_group", "related_group"):
+            item_ids = sorted({
+                str(value) for value in (constraint.get("item_ids") or [])
+            })
+            for index, left in enumerate(item_ids):
+                for right in item_ids[index + 1:]:
+                    add_pair(left, right)
+        elif kind == "calendar_companion":
+            required = constraint.get("event_interval")
+            span: tuple[int, int] | None = None
+            if isinstance(required, dict):
+                start = time_to_minutes(required.get("start"))
+                end = time_to_minutes(required.get("end"))
+                if start is not None and end is not None and end > start:
+                    span = (start, end)
+            item_id = str(constraint.get("item_id") or "")
+            add_pair(item_id, constraint.get("event_id"), span,
+                     subjects=(item_id,))
+
+    def realign_grant(pair_key: tuple[str, str], left_id: str,
+                      left_span: tuple[int, int], right_id: str,
+                      right_span: tuple[int, int]) -> None:
+        """Follow an aligned row with the grant that already consented to it.
+
+        The row moved, so a grant written at the pre-snap interval is
+        interval-stale. Re-anchoring it (instead of appending a second one)
+        keeps exactly one consent record per pair across repeated
+        revalidations. A grant whose fingerprint does not match is the model's
+        own stale consent and is never rewritten.
+        """
+        for grant in grants:
+            if not isinstance(grant, dict):
+                continue
+            if tuple(sorted((
+                str(grant.get("primary_id")), str(grant.get("companion_id")),
+            ))) != pair_key:
+                continue
+            if (
+                planning_config_fingerprint is not None
+                and grant.get("planning_config_fingerprint")
+                    != planning_config_fingerprint
+            ):
+                continue
+            intervals = (
+                (_span_interval(left_span), _span_interval(right_span))
+                if grant.get("primary_id") == left_id
+                else (_span_interval(right_span), _span_interval(left_span))
+            )
+            current = (
+                _canonical_grant_interval(grant.get("primary_interval")),
+                _canonical_grant_interval(grant.get("companion_interval")),
+            )
+            if current == intervals:
+                continue
+            grant["primary_interval"], grant["companion_interval"] = intervals
+            notes.append({
+                "id": left_id,
+                "rule": "overlap_grant_realigned",
+                "detail": (
+                    f'Re-anchored the overlap grant for "{left_id}" and '
+                    f'"{right_id}" to {_span_text(left_span)}'
+                ),
+            })
+
+    for left_id, right_id in pairs:
+        if tuple(sorted((left_id, right_id))) in pair_blocked:
+            continue
+        left, right = rows_by_id.get(left_id), rows_by_id.get(right_id)
+        if left is None:
+            continue
+        left_span = _row_span(left)
+        if left_span is None:
+            continue
+        right_span = event_spans.get(tuple(sorted((left_id, right_id))))
+        if right_span is None and right is not None:
+            right_span = _row_span(right)
+        if right_span is None:
+            continue
+        pair_key = tuple(sorted((left_id, right_id)))
+        if pair_key in aligned_pairs:
+            realign_grant(pair_key, left_id, left_span, right_id, right_span)
+        if max(left_span[0], right_span[0]) >= min(left_span[1], right_span[1]):
+            continue
+        if _grant_matches(
+            grants, left_id, left_span, right_id, right_span,
+            planning_config_fingerprint,
+        ):
+            continue
+        grants.append({
+            "primary_id": left_id,
+            "companion_id": right_id,
+            "primary_interval": _span_interval(left_span),
+            "companion_interval": _span_interval(right_span),
+            "reason": _DETERMINISTIC_GRANT_REASON,
+            "planning_config_fingerprint": fingerprint,
+        })
+        notes.append({
+            "id": left_id,
+            "rule": _AUTO_GRANT_RULE,
+            "detail": (
+                f'Recorded the exact overlap for "{left_id}" and '
+                f'"{right_id}" {_span_text(left_span)}'
+            ),
+        })
+
+    return DeterministicRepair(rows, grants, notes)
 
 
 def validate_constraints(
@@ -511,6 +836,8 @@ def validate_constraints(
                 errors.append(
                     f"calendar companion: {constraint['item_id']!r} must match "
                     f"{constraint['event_id']!r} at {required['start']}-{required['end']}"
+                    f" \u2014 move it to start {required['start']} and end "
+                    f"{required['end']} (or unpin it)"
                 )
             row_span = _interval(row)
             event_span = (_minutes(required["start"]), _minutes(required["end"]))
@@ -522,5 +849,7 @@ def validate_constraints(
                 errors.append(
                     f"calendar companion: missing exact overlap_grant for "
                     f"{constraint['item_id']!r} and {constraint['event_id']!r}"
+                    f" \u2014 set it to exactly {required['start']}-{required['end']}"
+                    f" and record an overlap grant (or unpin it)"
                 )
     return errors

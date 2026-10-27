@@ -621,3 +621,184 @@ def test_default_mint_fill_disappears_past_last_session_fails_closed():
     assert all(block.get("name") != "Minting" for block in past_last.blocks)
     assert past_result.ok is False
     assert any("Minting" in error for error in past_result.hard_errors)
+
+
+# ---------------------------------------------------------------------------
+# Deterministic repair in the planning boundary (2026-10-27).
+#
+# A metadata-derived calendar companion and its exact overlap grant are server
+# numbers, not model judgment, so both paths repair them instead of rejecting:
+# the proposal path before validation, the revalidation path before validation
+# and after the snapshot comparison (the repair is never a user mutation).
+# ---------------------------------------------------------------------------
+
+_DINNER_ASSIGNED = [{"id": "Foods Dinner", "name": "Foods Dinner", "blocks": 3}]
+_DINNER_CALENDAR = [{
+    "Block": "Dinner", "source": "calendar", "Start": "18:00", "End": "19:30",
+    "capacity_class": "fixed",
+}]
+
+
+def _dinner_inputs(**overrides):
+    value = _inputs(
+        assigned=copy.deepcopy(_DINNER_ASSIGNED),
+        anchored_blocks=copy.deepcopy(_DINNER_CALENDAR),
+        day_setup={"schedulable": {"qt": {"on": False},
+                                  "minting": {"on": False}}},
+    )
+    value.update(overrides)
+    return value
+
+
+def test_run_proposal_auto_aligns_calendar_companion_and_records_the_repair():
+    prepared = planning.prepare_sequence(_dinner_inputs(), mode="proposal")
+    outcome = planning.run_proposal(prepared, _adapter([
+        {"id": "Foods Dinner", "start": "18:00", "end": "19:00", "zone": "any"},
+    ]))
+
+    assert outcome.result is not None, outcome.validation.hard_errors
+    [row] = [r for r in outcome.result["sequence"] if r["id"] == "Foods Dinner"]
+    assert (row["start"], row["end"]) == ("18:00", "19:30")
+    [grant] = outcome.result["overlap_grants"]
+    assert (grant["primary_id"], grant["companion_id"]) == ("Foods Dinner", "Dinner")
+    assert any(
+        warning.get("rule") == "calendar_companion_aligned"
+        and 'Auto-aligned "Foods Dinner" to "Dinner" 18:00\u201319:30'
+            == warning.get("detail")
+        for warning in outcome.validation.warnings
+    )
+    assert any(
+        warning.get("rule") == "calendar_companion_aligned"
+        for warning in outcome.result["warnings"]
+    )
+    assert outcome.validation.ok is True
+
+
+def test_run_proposal_keeps_a_pinned_calendar_companion_blocker_actionable():
+    pin = {"id": "Foods Dinner", "start": "18:00", "end": "19:00", "zone": "any"}
+    prepared = planning.prepare_sequence(
+        _dinner_inputs(pinned_rows=[dict(pin)]), mode="proposal"
+    )
+    outcome = planning.run_proposal(prepared, _adapter([
+        {"id": "Foods Dinner", "start": "18:00", "end": "19:00", "zone": "any"},
+    ]))
+
+    assert outcome.result is None
+    assert any(
+        "must match" in error and "unpin" in error
+        for error in outcome.validation.hard_errors
+    )
+    assert not any(
+        note.get("rule") == "calendar_companion_aligned"
+        for note in outcome.validation.warnings
+    )
+
+
+def test_revalidation_auto_aligns_calendar_companion_and_returns_the_rows():
+    prepared = planning.prepare_sequence(_dinner_inputs(
+        sequence=[{"id": "Foods Dinner", "start": "18:00", "end": "19:00",
+                   "zone": "any"}],
+    ), mode="revalidation")
+    result = planning.validate_revalidation(prepared)
+
+    assert result.ok is True, result.hard_errors
+    assert result.sequence == [{"id": "Foods Dinner", "start": "18:00",
+                                "end": "19:30", "zone": "any"}]
+    assert len(result.overlap_grants) == 1
+    payload = result.as_dict()
+    assert payload["sequence"] == result.sequence
+    assert payload["overlap_grants"] == result.overlap_grants
+    assert any(
+        note.get("rule") == "calendar_companion_aligned"
+        for note in result.warnings
+    )
+
+
+def test_revalidation_leaves_an_unaltered_layout_without_a_sequence_payload():
+    prepared = _revalidation()
+    result = planning.validate_revalidation(prepared)
+
+    assert result.ok is True
+    assert result.sequence == []
+    assert result.overlap_grants == []
+    assert set(result.as_dict()) == {"ok", "hard_errors", "warnings"}
+
+
+def test_revalidation_keeps_a_pinned_companion_blocker_and_the_pinned_interval():
+    pin = {"id": "Foods Dinner", "start": "18:00", "end": "19:00", "zone": "any"}
+    prepared = planning.prepare_sequence(_dinner_inputs(
+        pinned_rows=[copy.deepcopy(pin)],
+        snapshot={"pinned_rows": [copy.deepcopy(pin)], "overlap_grants": [],
+                  "planning_config_fingerprint": "fp"},
+        sequence=[copy.deepcopy(pin)],
+    ), mode="revalidation")
+    result = planning.validate_revalidation(prepared)
+
+    assert result.ok is False
+    assert result.sequence == []
+    assert any(
+        "must match" in error and "unpin" in error for error in result.hard_errors
+    )
+
+
+def test_revalidation_does_not_resurrect_a_stale_grant():
+    stale = {
+        "primary_id": "Foods Dinner", "companion_id": "Dinner",
+        "primary_interval": {"start": "18:00", "end": "19:00"},
+        "companion_interval": {"start": "18:00", "end": "19:30"},
+        "reason": "stale consent", "planning_config_fingerprint": "old-fp",
+    }
+    prepared = planning.prepare_sequence(_dinner_inputs(
+        overlap_grants=[stale],
+        snapshot={"pinned_rows": [], "overlap_grants": [stale],
+                  "planning_config_fingerprint": "fp"},
+        sequence=[{"id": "Foods Dinner", "start": "18:00", "end": "19:00",
+                   "zone": "any"}],
+    ), mode="revalidation")
+    result = planning.validate_revalidation(prepared)
+
+    assert result.ok is True, result.hard_errors
+    fingerprints = [grant["planning_config_fingerprint"]
+                    for grant in result.overlap_grants]
+    assert fingerprints == ["old-fp", "fp"]
+
+
+def test_repaired_proposal_is_exactly_the_committed_body_sequence():
+    """The rows/grants that validated are the ones /commit receives.
+
+    /commit takes its rows from the client body (``body.sequence.sequence``)
+    and its grants from ``body.overlap_grants``; both are the proposal result
+    verbatim, so the repaired layout is what gets written. Revalidating that
+    body must also stay clean, proving the commit-side chain agrees with the
+    repaired proposal it was handed.
+    """
+    prepared = planning.prepare_sequence(_dinner_inputs(), mode="proposal")
+    outcome = planning.run_proposal(prepared, _adapter([
+        {"id": "Foods Dinner", "start": "18:00", "end": "19:00", "zone": "any"},
+    ]))
+    assert outcome.result is not None
+
+    commit_body = {
+        "sequence": {"sequence": copy.deepcopy(outcome.result["sequence"])},
+        "overlap_grants": copy.deepcopy(outcome.result["overlap_grants"]),
+        "pinned_rows": copy.deepcopy(outcome.result.get("pinned_rows") or []),
+        "planning_config_fingerprint": outcome.snapshot["planning_config_fingerprint"],
+    }
+
+    committed_rows = [
+        row for row in commit_body["sequence"]["sequence"]
+        if row["id"] == "Foods Dinner"
+    ]
+    assert [(row["start"], row["end"]) for row in committed_rows] == [
+        ("18:00", "19:30"),
+    ]
+    assert len(commit_body["overlap_grants"]) == 1
+
+    revalidated = planning.prepare_sequence(_dinner_inputs(
+        sequence=commit_body["sequence"]["sequence"],
+        overlap_grants=commit_body["overlap_grants"],
+        snapshot=outcome.snapshot,
+    ), mode="revalidation")
+    result = planning.validate_revalidation(revalidated)
+    assert result.ok is True, result.hard_errors
+    assert result.sequence == []

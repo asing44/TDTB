@@ -882,3 +882,59 @@ class TestSequenceWallClock:
         message = str(ei.value)
         assert "charged" in message
         assert "TDTB_SEQUENCE_TIMEOUT_S" in message
+
+
+# ---------------------------------------------------------------------------
+# Deterministic repair before the billed retry (2026-10-27).
+#
+# A metadata-derived calendar companion's interval and its exact overlap grant
+# are server numbers the model only copies. A mismatch is repaired in place so
+# it never spends a BILLED schema retry; a pinned row still raises, because
+# moving a row the user pinned is never a silent repair.
+# ---------------------------------------------------------------------------
+
+DINNER_CALENDAR = {
+    "Block": "Dinner", "source": "calendar", "Start": "18:00", "End": "19:30",
+}
+
+
+def test_calendar_companion_mismatch_is_auto_aligned_without_a_retry():
+    proposal = {
+        "sequence": [{"id": "Foods Dinner", "start": "18:00", "end": "19:00",
+                      "zone": "any"}],
+    }
+    j._validate_sequence_proposal(
+        proposal,
+        config={"planning_config_fingerprint": "fp"},
+        assigned=[{"name": "Foods Dinner", "blocks": 2}],
+        anchored_blocks=[dict(DINNER_CALENDAR)],
+    )
+
+    [row] = proposal["sequence"]
+    assert (row["start"], row["end"]) == ("18:00", "19:30")
+    [grant] = proposal["overlap_grants"]
+    assert (grant["primary_id"], grant["companion_id"]) == (
+        "Foods Dinner", "Dinner",
+    )
+    assert grant["planning_config_fingerprint"] == "fp"
+
+
+def test_pinned_calendar_companion_mismatch_still_raises_with_a_fix_hint():
+    pinned_wall = {
+        "Block": "Foods Dinner", "Type": "hard", "pinned": True,
+        "Start": "18:00", "End": "19:00",
+    }
+    proposal = {
+        "sequence": [{"id": "Foods Dinner", "start": "18:00", "end": "19:00",
+                      "zone": "any"}],
+    }
+    with pytest.raises(ValueError) as exc:
+        j._validate_sequence_proposal(
+            proposal,
+            config={"planning_config_fingerprint": "fp"},
+            assigned=[{"name": "Other", "blocks": 1}],
+            anchored_blocks=[pinned_wall, dict(DINNER_CALENDAR)],
+        )
+    assert "must match" in str(exc.value)
+    assert "unpin" in str(exc.value)
+    assert proposal["sequence"][0]["end"] == "19:00"

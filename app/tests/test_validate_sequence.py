@@ -436,3 +436,68 @@ class TestValidateSequenceRoute:
         body = r.json()
         assert body["hard_errors"] == []
         assert body["ok"] is True
+
+
+class TestValidateSequenceDeterministicRepair:
+    """2026-10-27: a metadata-derived calendar companion is repaired, not
+    reported. The route returns the repaired layout additively so the client
+    can adopt exactly the rows/grants that were validated (and therefore
+    commit them)."""
+
+    DINNER_ASSIGNED = [{"id": "Foods Dinner", "name": "Foods Dinner",
+                        "zone": "any"}]
+    DINNER_CALENDAR = [{"Block": "Dinner", "source": "calendar",
+                        "Start": "18:00", "End": "19:30",
+                        "capacity_class": "fixed"}]
+    DINNER_ROW = {"id": "Foods Dinner", "start": "18:00", "end": "19:00",
+                  "zone": "any"}
+
+    def _post(self, client, **overrides):
+        payload = {
+            "sequence": [dict(self.DINNER_ROW)],
+            "assigned": [dict(self.DINNER_ASSIGNED[0])],
+            "anchored_blocks": [dict(self.DINNER_CALENDAR[0])],
+            "config": {},
+        }
+        payload.update(overrides)
+        return client.post("/validate-sequence", headers=_auth(client),
+                           json=payload)
+
+    def test_calendar_companion_is_auto_aligned_and_reported(self, client):
+        _pin_frame()
+        body = self._post(client).json()
+
+        assert body["ok"] is True, body["hard_errors"]
+        assert body["sequence"] == [
+            {"id": "Foods Dinner", "start": "18:00", "end": "19:30",
+             "zone": "any"},
+        ]
+        [grant] = body["overlap_grants"]
+        assert (grant["primary_id"], grant["companion_id"]) == (
+            "Foods Dinner", "Dinner",
+        )
+        assert any(
+            "Auto-aligned \"Foods Dinner\" to \"Dinner\" 18:00\u201319:30"
+            in str(warning.get("detail") or warning)
+            for warning in body["warnings"]
+        )
+
+    def test_pinned_calendar_companion_keeps_an_actionable_blocker(self, client):
+        _pin_frame()
+        today = gather.effective_date(datetime.now())
+        # The stored snapshot carries the same pin the request submits; without
+        # it the request is a stale-snapshot edit and never reaches the pinned
+        # blocker this test is about.
+        rs.update_runstate(today, {
+            "pinned_rows": [dict(self.DINNER_ROW)],
+            "overlap_grants": [],
+            "planning_config_fingerprint": "",
+        })
+        body = self._post(client, pinned_rows=[dict(self.DINNER_ROW)]).json()
+
+        assert body["ok"] is False
+        assert "sequence" not in body
+        assert any(
+            "must match" in error and "unpin" in error
+            for error in body["hard_errors"]
+        )

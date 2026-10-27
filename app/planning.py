@@ -379,6 +379,60 @@ def _pinned_walls(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     ]
 
 
+def _semantic_constraints(prepared: PreparedSequence) -> list[dict[str, Any]]:
+    """The semantic constraints exactly as ``sequence.validate_sequence``
+    derives them internally, so a deterministic repair repairs against the
+    same evidence the validator judges."""
+    return placement_rules.derive_constraints(
+        prepared.assigned,
+        prepared.anchored_blocks + _pinned_walls(prepared.effective_pins),
+    )
+
+
+def _protected_row_ids(prepared: PreparedSequence) -> set[str]:
+    """Rows whose placement is not a deterministic rule's to move.
+
+    Server pins, anchored source blocks, selected Mint windows, and injected
+    zone rows are authority, not model or client placement, so repair leaves
+    them (and their blockers) alone.
+    """
+    ids = {_id(pin) for pin in prepared.effective_pins}
+    ids |= {str(block.get("Block") or "") for block in prepared.anchored_blocks}
+    ids |= {_id(row) for row in prepared.fixed_schedulable_rows}
+    ids |= {_id(row) for row in prepared.zone_rows}
+    ids.discard("")
+    return ids
+
+
+def _repair_deterministic_blockers(
+    proposal: dict[str, Any],
+    prepared: PreparedSequence,
+    notes: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Return ``proposal`` with deterministic placement blockers repaired.
+
+    Metadata-derived companions and their exact grants are consent the rule
+    itself already holds, so they are repaired instead of reported. The
+    repaired layout is what the caller validates *and* returns, so the rows and
+    grants that passed validation are exactly the ones the commit path uses.
+    """
+    repair = placement_rules.repair_deterministic(
+        proposal,
+        _semantic_constraints(prepared),
+        planning_config_fingerprint=prepared.planning_config_fingerprint,
+        protected_ids=_protected_row_ids(prepared),
+    )
+    if not repair.changed:
+        return proposal
+    if notes is not None:
+        notes.extend(repair.notes)
+    return {
+        **proposal,
+        "sequence": repair.sequence,
+        "overlap_grants": repair.overlap_grants,
+    }
+
+
 def _proposal_config(prepared: PreparedSequence) -> dict[str, Any]:
     return {
         **prepared.config,
@@ -434,6 +488,10 @@ def run_proposal(
         list(proposal.get("sequence") or []),
         prepared.effective_pins + prepared.fixed_schedulable_rows,
     )
+    # Deterministic placement blockers (a metadata-derived companion interval
+    # and its exact grant) are repaired before validation, so a rule the
+    # model only had to copy can never come back as a hard blocker.
+    proposal = _repair_deterministic_blockers(proposal, prepared, repair_notes)
     validation = sequence.validate_sequence(
         proposal,
         prepared.assigned,
@@ -538,9 +596,20 @@ def validate_revalidation(prepared: PreparedSequence) -> sequence.ValidationResu
             conflicts=copy.deepcopy(prepared.preflight_conflicts),
         )
 
-    return sequence.validate_sequence(
+    # Deterministic repair runs after every snapshot/immutability comparison
+    # above, so the client's grant set is still the only user mutation surface
+    # compared against the snapshot. A synthesized grant is derived server-side
+    # state, never a client change, and must not make today's plan look stale.
+    repaired = placement_rules.repair_deterministic(
         {"sequence": copy.deepcopy(prepared.sequence),
          "overlap_grants": copy.deepcopy(prepared.overlap_grants)},
+        _semantic_constraints(prepared),
+        planning_config_fingerprint=prepared.planning_config_fingerprint,
+        protected_ids=_protected_row_ids(prepared),
+    )
+    result = sequence.validate_sequence(
+        {"sequence": repaired.sequence,
+         "overlap_grants": repaired.overlap_grants},
         prepared.assigned,
         prepared.anchored_blocks + _pinned_walls(prepared.effective_pins),
         prepared.config,
@@ -549,3 +618,12 @@ def validate_revalidation(prepared: PreparedSequence) -> sequence.ValidationResu
         optional_items=prepared.blocks,
         planning_config_fingerprint=prepared.planning_config_fingerprint,
     )
+    if repaired.changed:
+        # The repaired rows/grants are the layout this validation describes, so
+        # return them with it: the client must adopt exactly what was validated
+        # (and therefore what /commit will write). Additive fields; a layout
+        # that needed no repair keeps the historical response shape.
+        result.warnings = list(repaired.notes) + list(result.warnings)
+        result.sequence = repaired.sequence
+        result.overlap_grants = repaired.overlap_grants
+    return result
