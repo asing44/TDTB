@@ -284,11 +284,16 @@ describe("queue states", () => {
       isRecurring: true,
       scheduledStart: "12:00",
     });
-    const s = reducer(initialState, {
-      type: "INPUTS_LOADED",
-      inputs,
-      ledger: { today: inputs.validDate, spent: 0, cap: 5, remaining: 5 },
-    });
+    // A fixture day already under way (plannedDayRestore): native-time
+    // protection only applies to a row that is IN today's plan at all.
+    const s = reducer(
+      reducer(initialState, {
+        type: "INPUTS_LOADED",
+        inputs,
+        ledger: { today: inputs.validDate, spent: 0, cap: 5, remaining: 5 },
+      }),
+      plannedDayRestore,
+    );
 
     expect(queueState(s, "M2.5")).toBe("scheduled");
     expect(s.pendingPinnedRows).toEqual([
@@ -612,11 +617,14 @@ describe("T27 recurring placement immunity", () => {
     const s0 = loaded();
     const inputs = structuredClone(s0.inputs!);
     inputs.assigned.push(structuredClone(recurringItem));
-    let s = reducer(initialState, {
-      type: "INPUTS_LOADED",
-      inputs,
-      ledger: { today: inputs.validDate, spent: 0, cap: 5, remaining: 5 },
-    });
+    let s = reducer(
+      reducer(initialState, {
+        type: "INPUTS_LOADED",
+        inputs,
+        ledger: { today: inputs.validDate, spent: 0, cap: 5, remaining: 5 },
+      }),
+      plannedDayRestore,
+    );
     // even with the pin set forcibly cleared (fingerprint-drift path), the
     // recurring row must not fall back to needs-placement
     s = { ...s, pendingPinnedRows: [], sequence: null };
@@ -663,11 +671,14 @@ describe("native Todoist time adjustment opt-in", () => {
     const s0 = loaded();
     const inputs = structuredClone(s0.inputs!);
     inputs.assigned.push(timedItem, { ...timedItem, id: "Recurring timed", name: "Recurring timed", isRecurring: true });
-    const s = reducer(initialState, {
-      type: "INPUTS_LOADED",
-      inputs,
-      ledger: { today: inputs.validDate, spent: 0, cap: 5, remaining: 5 },
-    });
+    const s = reducer(
+      reducer(initialState, {
+        type: "INPUTS_LOADED",
+        inputs,
+        ledger: { today: inputs.validDate, spent: 0, cap: 5, remaining: 5 },
+      }),
+      plannedDayRestore,
+    );
     expect(s.timeAdjustmentOptIns).toEqual({});
     expect(s.pendingPinnedRows.map((row) => row.id)).toEqual(
       expect.arrayContaining(["Timed task", "Recurring timed"]),
@@ -683,11 +694,14 @@ describe("native Todoist time adjustment opt-in", () => {
       { ...timedItem, id: "Late native", name: "Late native", scheduledStart: "23:45" },
       { ...timedItem, id: "Midnight native", name: "Midnight native", scheduledStart: "23:59" },
     );
-    const s = reducer(initialState, {
-      type: "INPUTS_LOADED",
-      inputs,
-      ledger: { today: inputs.validDate, spent: 0, cap: 5, remaining: 5 },
-    });
+    const s = reducer(
+      reducer(initialState, {
+        type: "INPUTS_LOADED",
+        inputs,
+        ledger: { today: inputs.validDate, spent: 0, cap: 5, remaining: 5 },
+      }),
+      plannedDayRestore,
+    );
 
     expect(s.pendingPinnedRows.find((row) => row.id === "Late native")).toEqual(
       expect.objectContaining({ start: "23:45", end: "23:59" }),

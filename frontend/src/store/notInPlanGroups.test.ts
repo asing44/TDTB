@@ -249,9 +249,11 @@ describe("U5: the baseline across a same-date reload", () => {
       ledger: LEDGER,
     });
     // Content, so the blob is worth restoring at all — written by the
-    // subscription, which only starts once persistence is attached.
+    // subscription, which only starts once persistence is attached. The edit
+    // ADDS the row: under the day's rule a sourced due-today row starts out, so
+    // adding it is a real membership entry (an "out" would echo the default).
     const detach = attachSessionPersistence(day, fakeController(), storage);
-    day.dispatch({ type: "PLAN_MEMBERSHIP_SET", identity: "todoist:xC", in: false });
+    day.dispatch({ type: "PLAN_MEMBERSHIP_SET", identity: "todoist:xC", in: true });
     detach();
 
     // The reload already sees a row that arrived later in the day.

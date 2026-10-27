@@ -11,6 +11,7 @@ import { cleanup, fireEvent, waitFor } from "@testing-library/preact";
 
 import { Queue } from "./Queue";
 import { makeHarness, type Harness } from "./test-harness";
+import { assignmentRows } from "../store/store";
 
 afterEach(cleanup);
 
@@ -69,6 +70,15 @@ function nameIn(root: Element, name: string): HTMLElement | null {
       (el) => el.textContent === name,
     ) ?? null
   );
+}
+
+/** A tier's one-click settle button. */
+function addAll(container: Element, key: string): HTMLButtonElement {
+  const btn = localGroup(container).querySelector<HTMLButtonElement>(
+    `[data-tier-add-all="${key}"]`,
+  );
+  if (!btn) throw new Error(`no Add all for tier ${key}`);
+  return btn;
 }
 
 function rowInPlan(container: Element, name: string): HTMLElement {
@@ -149,6 +159,83 @@ describe("U6: local rows group by commitment first", () => {
     // The switch stays on the row the group is about; it never moves to the head.
     expect(groups[0].querySelector('[role="switch"]')).not.toBeNull();
     expect(head(container, "no-date").querySelector('[role="switch"]')).toBeNull();
+  });
+});
+
+/* U3a (revised 2026-10-27): selecting today is Adam's job, so a cold day drops
+   every sourced row in here and the drawer becomes the day's front door. Each
+   tier therefore carries one "Add all" that settles that tier in a single
+   click — the same local membership write the per-row switch makes, never an
+   adapter call. */
+describe("U3a: a tier can be added to the plan in one click", () => {
+  it("offers an Add all per tier, named with the tier and its row count", async () => {
+    const h = makeHarness("ready");
+    const { container } = h.ui(<Queue />);
+    await removeFromPlan(h, container, [TODAY_ROW, WEEK_ROW, UNDATED_ROW, NOTE]);
+
+    expect(addAll(container, "due-today").getAttribute("aria-label")).toBe(
+      "Add all 1 Due today to plan",
+    );
+    expect(addAll(container, "due-7d").getAttribute("aria-label")).toBe(
+      "Add all 1 Due in 7 days to plan",
+    );
+    expect(addAll(container, "no-date").getAttribute("aria-label")).toBe(
+      "Add all 2 No date to plan",
+    );
+    // A tooltip states the scope: today's plan, this browser only.
+    expect(addAll(container, "no-date").getAttribute("title")).toBe(
+      "Add all 2 rows to today's plan — this browser only",
+    );
+    // It is a button beside the disclosure, never a second matrix of switches.
+    expect(addAll(container, "no-date").querySelector('[role="switch"]')).toBeNull();
+    expect(addAll(container, "no-date").textContent).toContain("Add all");
+  });
+
+  it("adds exactly that tier's rows and makes zero source calls", async () => {
+    const h = makeHarness("ready");
+    const calls: string[] = [];
+    const realRuntimeAction = h.adapter.runtimeAction.bind(h.adapter);
+    h.adapter.runtimeAction = async (verb, target, args) => {
+      calls.push(`runtime:${verb}:${target}`);
+      return realRuntimeAction(verb, target, args);
+    };
+    const realReassign = h.adapter.reassign.bind(h.adapter);
+    h.adapter.reassign = async (identity: string) => {
+      calls.push(`reassign:${identity}`);
+      return realReassign(identity);
+    };
+    const { container } = h.ui(<Queue />);
+    await removeFromPlan(h, container, [TODAY_ROW, WEEK_ROW, UNDATED_ROW, NOTE]);
+
+    fireEvent.click(addAll(container, "no-date"));
+
+    await waitFor(() => expect(nameIn(drawer(container), NOTE)).toBeNull());
+    const rows = assignmentRows(h.store.getState());
+    // The tier's own rows are in the plan …
+    expect(rows.assigned.map((r) => r.name)).toEqual(
+      expect.arrayContaining([UNDATED_ROW, NOTE]),
+    );
+    // … and the tiers he did not touch stay exactly where they were.
+    expect(rows.unassigned.map((r) => r.name)).toHaveLength(2);
+    expect(rows.unassigned.map((r) => r.name)).toEqual(
+      expect.arrayContaining([TODAY_ROW, WEEK_ROW]),
+    );
+    expect(tierKeys(container)).toEqual(["due-today", "due-7d"]);
+    // LOCAL only: the source was never asked, and nothing was written to it.
+    expect(calls).toEqual([]);
+  });
+
+  it("empties the drawer once every tier has been added", async () => {
+    const h = makeHarness("ready");
+    const { container } = h.ui(<Queue />);
+    await removeFromPlan(h, container, [TODAY_ROW, UNDATED_ROW]);
+
+    for (const key of tierKeys(container)) {
+      fireEvent.click(addAll(container, key));
+    }
+
+    await waitFor(() => expect(container.querySelector("#unassigned-today")).toBeNull());
+    expect(h.store.getState().planMembership).toEqual({});
   });
 });
 

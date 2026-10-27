@@ -29,8 +29,16 @@
    The two server-held groups keep their flat layout — they follow the plan's
    own sections, not the local membership map.
 
-   The empty state is the whole point of the section: when every sourced row is
-   in today's plan, there is nothing to render. */
+   U3a (revised): selecting what belongs to today is Adam's job, so a cold day
+   starts with EVERY sourced row in here — nothing is pre-selected from Todoist
+   or Capacities. The drawer is therefore the day's front door, not a repair
+   surface, and it earns a per-tier "Add all": one click settles a whole
+   commitment tier through the same local membership write the row switch
+   uses (no adapter call, nothing written upstream). Tiers start open, so the
+   ladder is one scan away from an empty plan.
+
+   The empty state is still the whole point of the section: when every sourced
+   row is in today's plan, there is nothing to render. */
 
 import { useState } from "preact/hooks";
 import { useApp, useAppState } from "./context";
@@ -183,61 +191,88 @@ function DroppedRow({ row, busy }: { row: AssignmentRow; busy: boolean }) {
 
 /** One tier disclosure, following the lane-header pattern: a full-width
     button, the tier name, a rule, the count, and a chevron
-    (down = open, right = collapsed). Tiers with rows open by default; an empty tier is never rendered. */
+    (down = open, right = collapsed). Tiers with rows open by default; an empty tier is never rendered.
+
+    The tier's "Add all" sits beside the disclosure, never inside it: the
+    disclosure is already one button, and nesting a second one would make the
+    same click mean two things to a screen reader. */
 function TierHead({
   tier,
   open,
   onToggle,
+  onAddAll,
   controlsId,
 }: {
   tier: DrawerTierGroup;
   open: boolean;
   onToggle: () => void;
+  onAddAll: () => void;
   controlsId: string;
 }) {
   const rows = `${tier.count} row${tier.count === 1 ? "" : "s"}`;
   return (
-    <button
-      type="button"
-      class="unassigned-tier__head"
-      data-tier-head={tier.key}
-      aria-expanded={open}
-      aria-controls={controlsId}
-      aria-label={`${tier.label}, ${open ? "expanded" : "collapsed"}, ${rows}${open ? "" : " hidden"}, activate to ${open ? "collapse" : "expand"}`}
-      title={open ? "Collapse" : "Expand"}
-      onClick={onToggle}
-    >
-      <span class="unassigned-tier__tick" aria-hidden="true" />
-      <span class="unassigned-tier__label">{tier.label}</span>
-      <span class="unassigned-tier__rule" />
-      <span class="unassigned-tier__count">
-        {rows}
-        {open ? "" : " hidden"}
-      </span>
-      <svg
-        class={`unassigned-tier__chevron${open ? "" : " unassigned-tier__chevron--closed"}`}
-        viewBox="0 0 12 12"
-        width="12"
-        height="12"
-        aria-hidden="true"
-        focusable="false"
+    <div class="unassigned-tier__headrow">
+      <button
+        type="button"
+        class="unassigned-tier__head"
+        data-tier-head={tier.key}
+        aria-expanded={open}
+        aria-controls={controlsId}
+        aria-label={`${tier.label}, ${open ? "expanded" : "collapsed"}, ${rows}${open ? "" : " hidden"}, activate to ${open ? "collapse" : "expand"}`}
+        title={open ? "Collapse" : "Expand"}
+        onClick={onToggle}
       >
-        <path
-          d={open ? "M2.5 4.25 6 7.75l3.5-3.5" : "M4.25 2.5 7.75 6l-3.5 3.5"}
-          fill="none"
-          stroke="currentColor"
-          stroke-width="1.6"
-          stroke-linecap="round"
-          stroke-linejoin="round"
-        />
-      </svg>
-    </button>
+        <span class="unassigned-tier__tick" aria-hidden="true" />
+        <span class="unassigned-tier__label">{tier.label}</span>
+        <span class="unassigned-tier__rule" />
+        <span class="unassigned-tier__count">
+          {rows}
+          {open ? "" : " hidden"}
+        </span>
+        <svg
+          class={`unassigned-tier__chevron${open ? "" : " unassigned-tier__chevron--closed"}`}
+          viewBox="0 0 12 12"
+          width="12"
+          height="12"
+          aria-hidden="true"
+          focusable="false"
+        >
+          <path
+            d={open ? "M2.5 4.25 6 7.75l3.5-3.5" : "M4.25 2.5 7.75 6l-3.5 3.5"}
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.6"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          />
+        </svg>
+      </button>
+      <button
+        type="button"
+        class="unassigned-tier__add"
+        data-tier-add-all={tier.key}
+        aria-label={`Add all ${tier.count} ${tier.label} to plan`}
+        title={`Add all ${rows} to today's plan — this browser only`}
+        onClick={onAddAll}
+      >
+        <span class="unassigned-tier__add-icon" aria-hidden="true">
+          +
+        </span>
+        <span>Add all</span>
+      </button>
+    </div>
   );
 }
 
 /** Group 1's body: the commitment ladder, then source / object type inside
     each tier. Collapse state is per tier and defaults to open, so the drawer
-    opens on today's hardest commitments. */
+    opens on today's hardest commitments.
+
+    "Add all" is the tier's one-click settle: it loops this tier's own rows
+    through `controller.setAssigned`, which for a row still in `inputs.assigned`
+    resolves to a bare PLAN_MEMBERSHIP_SET dispatch. Local only — zero adapter
+    calls, zero source writes — which is exactly the guarantee the per-row
+    switch already carries. */
 function LocalGroups({
   rows,
   s,
@@ -247,6 +282,7 @@ function LocalGroups({
   s: AppState;
   structureTitles?: Record<string, string>;
 }) {
+  const { controller } = useApp();
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
   const itemsById = new Map((s.inputs?.assigned ?? []).map((item) => [item.id, item]));
   const factsOf = (row: AssignmentRow): DrawerFacts => {
@@ -269,6 +305,11 @@ function LocalGroups({
     };
   };
   const tiers = drawerTierGroups(rows, factsOf, s.inputs?.validDate ?? "");
+  const addTier = (tier: DrawerTierGroup) => {
+    for (const source of tier.sources) {
+      for (const row of source.rows) void controller.setAssigned(row.id, true);
+    }
+  };
   return (
     <div class="unassigned-today__group unassigned-tiers" data-group="local">
       {tiers.map((tier) => {
@@ -284,6 +325,7 @@ function LocalGroups({
               tier={tier}
               open={open}
               controlsId={regionId}
+              onAddAll={() => addTier(tier)}
               onToggle={() =>
                 setCollapsed((c) => ({ ...c, [tier.key]: !(c[tier.key] ?? false) }))
               }

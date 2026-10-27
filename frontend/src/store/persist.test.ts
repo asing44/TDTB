@@ -52,16 +52,18 @@ function inputs(validDate: string): PlanInputs {
 const LEDGER = { today: "2026-07-18", spent: 0, cap: 4, remaining: 4 };
 
 /** One assigned row carrying a STABLE identity, so membership keys read as
-    source identities rather than falling back to the name-keyed row id. Its
-    deadline is the day being planned, so the U3a rule holds it in the plan by
-    itself and an explicit "out" is a real edit rather than the answer the day
-    already had. */
+    source identities rather than falling back to the name-keyed row id. It is a
+    CALENDAR commitment because that is the one shape the day's rule still keeps
+    in the plan on its own (nothing a source sends is pre-selected, and a
+    sourced work row would make an explicit "out" the answer the day already
+    had); an explicit "out" here is therefore always a real edit. */
 function row(id: string, deadline: string): AssignedItem {
   return {
     ...inputs(deadline).assigned[0],
     id,
     name: id,
-    identity: `todoist:${id}`,
+    source: "calendar",
+    identity: `calendar:${id}`,
     deadline,
   };
 }
@@ -286,11 +288,11 @@ describe("plan membership persistence (U2)", () => {
     const store = createStore();
     store.dispatch({ type: "INPUTS_LOADED", inputs: membershipInputs("2026-07-18"), ledger: LEDGER });
     attachSessionPersistence(store, fakeController(), storage);
-    store.dispatch({ type: "PLAN_MEMBERSHIP_SET", identity: "todoist:A", in: false });
+    store.dispatch({ type: "PLAN_MEMBERSHIP_SET", identity: "calendar:A", in: false });
 
     const saved = JSON.parse(storage.getItem(KEY)!);
     expect(saved.version).toBe(2);
-    expect(saved.planMembership).toEqual({ "todoist:A": false });
+    expect(saved.planMembership).toEqual({ "calendar:A": false });
     // Today's default is the U3a rule; the entry is what carries the edit.
     expect(saved.membershipDefault).toBe("rule");
     // Membership alone is content: no override, plan, or pin was written.
@@ -302,7 +304,7 @@ describe("plan membership persistence (U2)", () => {
     attachSessionPersistence(reloaded, fakeController(), storage);
 
     const s = reloaded.getState();
-    expect(s.planMembership).toEqual({ "todoist:A": false });
+    expect(s.planMembership).toEqual({ "calendar:A": false });
     expect(s.membershipDefault).toBe("rule");
     expect(isIncluded(s, "A")).toBe(false);
     // The settle marker stays independent of a plan edit.
@@ -320,14 +322,14 @@ describe("plan membership persistence (U2)", () => {
       anchoredSourceFingerprint: null,
       pinnedRows: [{ id: "A", start: "10:00", end: "11:00", zone: null, kind: "work" }],
       pendingPinnedRows: [{ id: "A", start: "10:00", end: "11:00", zone: null, kind: "work" }],
-      planMembership: { "todoist:A": false },
+      planMembership: { "calendar:A": false },
     }));
     const store = createStore();
     store.dispatch({ type: "INPUTS_LOADED", inputs: membershipInputs("2026-07-18"), ledger: LEDGER });
     attachSessionPersistence(store, fakeController(), storage);
 
     const s = store.getState();
-    expect(s.planMembership).toEqual({ "todoist:A": false });
+    expect(s.planMembership).toEqual({ "calendar:A": false });
     expect(s.pinnedRows).toEqual([]);
     expect(s.pendingPinnedRows).toEqual([]);
   });
@@ -336,8 +338,8 @@ describe("plan membership persistence (U2)", () => {
     const store = createStore();
     store.dispatch({ type: "INPUTS_LOADED", inputs: membershipInputs("2026-07-17"), ledger: LEDGER });
     attachSessionPersistence(store, fakeController(), storage);
-    store.dispatch({ type: "PLAN_MEMBERSHIP_SET", identity: "todoist:A", in: false });
-    expect(JSON.parse(storage.getItem(KEY)!).planMembership).toEqual({ "todoist:A": false });
+    store.dispatch({ type: "PLAN_MEMBERSHIP_SET", identity: "calendar:A", in: false });
+    expect(JSON.parse(storage.getItem(KEY)!).planMembership).toEqual({ "calendar:A": false });
 
     const nextDay = createStore();
     nextDay.dispatch({ type: "INPUTS_LOADED", inputs: membershipInputs("2026-07-18"), ledger: LEDGER });
@@ -371,7 +373,7 @@ describe("plan membership persistence (U2)", () => {
     // The day keeps today's rule default, but the SEEDED entries decide every
     // row that was not excluded, so the in-progress plan is intact.
     expect(s.membershipDefault).toBe("rule");
-    expect(s.planMembership).toEqual({ "todoist:A": true });
+    expect(s.planMembership).toEqual({ "calendar:A": true });
     expect(isIncluded(s, "A")).toBe(true);
     // B is excluded by its own settle marker, so it is not seeded "in".
     expect(isIncluded(s, "B")).toBe(false);
@@ -392,7 +394,7 @@ describe("plan membership persistence (U2)", () => {
     store.dispatch({ type: "INPUTS_LOADED", inputs: membershipInputs("2026-07-18", ["A", "B"]), ledger: LEDGER });
     attachSessionPersistence(store, fakeController(), storage);
 
-    expect(store.getState().planMembership).toEqual({ "todoist:A": true, "todoist:B": true });
+    expect(store.getState().planMembership).toEqual({ "calendar:A": true, "calendar:B": true });
   });
 
   it("migrates on a timeline placement alone", () => {
@@ -410,7 +412,7 @@ describe("plan membership persistence (U2)", () => {
     store.dispatch({ type: "INPUTS_LOADED", inputs: membershipInputs("2026-07-18", ["A", "B"]), ledger: LEDGER });
     attachSessionPersistence(store, fakeController(), storage);
 
-    expect(store.getState().planMembership).toEqual({ "todoist:A": true, "todoist:B": true });
+    expect(store.getState().planMembership).toEqual({ "calendar:A": true, "calendar:B": true });
   });
 
   it("leaves an empty pre-U2 day on today's plain defaults", () => {
@@ -432,7 +434,9 @@ describe("plan membership persistence (U2)", () => {
     const s = store.getState();
     expect(s.planMembership).toEqual({});
     expect(s.membershipDefault).toBe("rule");
-    // Nothing is seeded: the row is in because the rule puts a due-today row in.
+    // Nothing is seeded, so the day's rule decides: a fixed calendar
+    // commitment starts in the plan by itself, while a sourced work row would
+    // wait in Not in plan for him to add it.
     expect(isIncluded(s, "A")).toBe(true);
     expect((ctl.revalidate as any).mock.calls.length).toBe(0);
   });
