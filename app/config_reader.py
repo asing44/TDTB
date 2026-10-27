@@ -75,6 +75,8 @@ FALLBACK_DEFAULTS: dict[str, Any] = {
     "caps.mixed": 3,
     "habits.fallback_minutes_per_habit": 4,
     "habits.round_to_minutes": 15,
+    # Unused: habit completion is never read (the Todoist habit list is the
+    # active set), so nothing consumes this key.
     "habits.completion_field": "entries",
     # G18a (time-blocking research, 2026-07-14): planning-fallacy correction
     # applied at label→blocks translation in /sequence. 1.0 = off; raise to

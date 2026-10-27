@@ -89,8 +89,10 @@ PRODUCER_RULES_FILENAME = "producer-rules.json"
 
 SOURCE_TODOIST = "todoist"
 SOURCE_CAPACITIES = "capacities"
-#: Agent-fetched habit data (tasks + today's completions). Not a row source:
+#: Agent-fetched habit data (the Habits project's tasks). Not a row source:
 #: the producer folds it into the artifact's top-level ``habits`` block.
+#: Completion is NOT read (Grit owns habit tracking), so any ``completed``
+#: rows a legacy fetch still carries are ignored.
 SOURCE_HABITS = "habits"
 #: Agent-fetched Capacities micro-adventure candidates (``{status, read_at,
 #: warnings, objects: [...]}``). Not a row source either: the producer applies
@@ -1100,63 +1102,6 @@ def _habit_due_date(task: Any) -> date | None:
     return None
 
 
-def _completion_local_date(item: dict[str, Any]) -> str | None:
-    """The local calendar date a completion happened, when Todoist sent one.
-
-    ``todoist_find-completed-tasks`` defaults to a WEEK-long window, so the
-    fetch alone cannot scope "done today" — the producer has to. A completion
-    carries ``completedAt`` as a UTC instant while the artifact's ``logical_day``
-    is a local date, so the instant is converted to local time first."""
-    raw = item.get("completedAt") or item.get("completed_at")
-    if not isinstance(raw, str) or not raw.strip():
-        return None
-    try:
-        parsed = datetime.fromisoformat(raw.strip().replace("Z", "+00:00"))
-    except ValueError:
-        return None
-    if parsed.tzinfo is not None:
-        parsed = parsed.astimezone()
-    return parsed.date().isoformat()
-
-
-def _habit_completed_tokens(
-    entry: dict[str, Any], logical_day: str | None = None
-) -> tuple[set[str], set[str]]:
-    """Collect the identifiers of today's completions.
-
-    A completion may be an id-bearing object (``task_id``/``taskId``/``id``)
-    or a bare id/name string; Todoist may report a recurring habit's completed
-    occurrence by content rather than the parent task id, so both ids and
-    names are matched.
-
-    A completion dated to another day is SKIPPED. The fetch window is a week by
-    default, so without this a habit finished on Tuesday would read as done on
-    Friday. An undated completion is still counted, because the skill is
-    instructed to fetch the logical day's completions."""
-    ids: set[str] = set()
-    names: set[str] = set()
-    completed = entry.get("completed")
-    if not isinstance(completed, list):
-        return ids, names
-    for item in completed:
-        if isinstance(item, str):
-            ids.add(item.strip())
-            continue
-        if not isinstance(item, dict):
-            continue
-        day = _completion_local_date(item)
-        if day is not None and logical_day is not None and day != logical_day:
-            continue
-        for key in ("task_id", "taskId", "id"):
-            value = item.get(key)
-            if value is not None:
-                ids.add(str(value).strip())
-        content = item.get("content") or item.get("name")
-        if isinstance(content, str) and content.strip():
-            names.add(content.strip())
-    return ids, names
-
-
 def _habit_section_rank_map(entry: dict[str, Any]) -> dict[str, tuple[int, float]]:
     """Rank map for the habit project's Todoist sections, or ``{}``.
 
@@ -1214,8 +1159,8 @@ def _habit_child_order(task: dict[str, Any]) -> int | float | None:
 def _sort_habit_tasks(tasks: list[Any], entry: dict[str, Any]) -> list[Any]:
     """Order raw habit tasks by Todoist section, then in-section position.
 
-    A STABLE, total sort over ALL tasks before any done/due filtering, so a
-    filtered row never disturbs the relative order of the rest. The key is
+    A STABLE, total sort over ALL tasks before any due-date filtering, so a
+    scoped-out row never disturbs the relative order of the rest. The key is
     ``(section_rank, child_order, input_position, content, id)``: section-less
     tasks first, then the listed sections in their given order, then any
     section id the list does not name; a missing child order falls back to the
@@ -1252,26 +1197,29 @@ def compute_habit_summary(
 ) -> dict[str, Any]:
     """Compute the ``{total, done, outstanding, est_minutes}`` habit block.
 
-    Deterministic and total: a missing/malformed entry yields the zeroed block
-    rather than raising. ``done`` counts tasks a completion references **on the
-    logical day** (see :func:`_habit_completed_tokens` — the fetch window is a
-    week by default, so the day is scoped here, not by the fetch).
-    ``est_minutes`` sums only the OUTSTANDING tasks' durations (fallback
+    Habits are a manual toggle list, not a completion read: Adam tracks habit
+    completion in Grit, so the Todoist Habits project IS the active set and the
+    app's per-day overrides turn individual habits off. This block therefore
+    never reads completion data. ``total`` counts every admitted habit,
+    ``done`` is always ``0``, ``outstanding`` equals ``total``, and
+    ``est_minutes`` sums the durations of ALL admitted habits (fallback
     ``fallback_minutes_per_habit`` where unset), rounded UP to the
     ``round_to_minutes`` grain — the same semantics the retired note read used.
     The additive ``items`` list carries one ``{id, content, minutes}`` entry per
-    OUTSTANDING habit (raw per-habit minutes, not grain-rounded); it is emitted
-    only when at least one habit is outstanding, so an all-done block stays the
-    four-field ``HABITS_EMPTY`` shape.
+    habit (raw per-habit minutes, not grain-rounded), so the block is the
+    four-field ``HABITS_EMPTY`` shape only when no habit is admitted.
+
+    Legacy completion data is ignored: a ``completed`` list on the entry (and
+    any ``done``/completion rows an older artifact carries) never changes the
+    result, and it never raises.
 
     A raw habit task is admitted only when it has no due date or its CIVIL due
     date is on or before ``logical_day`` (see :func:`_habit_due_date`). A task
     due strictly after the logical day is not part of that day's plan and is
-    excluded from ``total``, from done-matching, and from the minutes sum. The
-    comparison uses the caller's logical day, never the wall clock, and does
-    not remap a due date through the 02:00 cutoff again. When ``logical_day`` is
-    absent or unparseable the scope is off and every task counts, exactly as
-    before."""
+    excluded from ``total`` and from the minutes sum. The comparison uses the
+    caller's logical day, never the wall clock, and does not remap a due date
+    through the 02:00 cutoff again. When ``logical_day`` is absent or
+    unparseable the scope is off and every task counts, exactly as before."""
     empty = dict(artifact_source.HABITS_EMPTY)
     if not isinstance(entry, dict):
         return empty
@@ -1286,9 +1234,8 @@ def compute_habit_summary(
         grain = DEFAULT_HABIT_GRAIN_MINUTES
 
     tasks = _sort_habit_tasks(tasks, entry)
-    done_ids, done_names = _habit_completed_tokens(entry, logical_day)
     scope_day = _as_date(logical_day)
-    total = done = 0
+    total = 0
     outstanding_minutes = 0
     items: list[dict[str, Any]] = []
     for task in tasks:
@@ -1302,13 +1249,6 @@ def compute_habit_summary(
         total += 1
         task_id = task.get("id")
         name = task.get("content") or task.get("name") or task.get("title")
-        is_done = (
-            (task_id is not None and str(task_id).strip() in done_ids)
-            or (isinstance(name, str) and name.strip() in done_names)
-        )
-        if is_done:
-            done += 1
-            continue
         minutes = _habit_duration_minutes(task) or fallback
         outstanding_minutes += minutes
         item: dict[str, Any] = {}
@@ -1318,12 +1258,11 @@ def compute_habit_summary(
             item["content"] = name.strip()
         item["minutes"] = minutes
         items.append(item)
-    outstanding = total - done
     est = math.ceil(outstanding_minutes / grain) * grain if outstanding_minutes else 0
     result: dict[str, Any] = {
         "total": total,
-        "done": done,
-        "outstanding": outstanding,
+        "done": 0,
+        "outstanding": total,
         "est_minutes": est,
     }
     if items:

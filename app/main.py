@@ -2754,8 +2754,6 @@ def _habits_segment(
     round-trip in the dated note). The base note text is unchanged; a
     ``· N skipped`` / ``· M adjusted`` suffix is appended only when an override
     is actually in play."""
-    done = habits.get("done", 0)
-    outstanding = habits.get("outstanding", 0)
     items = habits.get(artifact_source.HABITS_ITEMS_KEY)
     ov = override if isinstance(override, dict) else {}
     ov_items = ov.get("items") if isinstance(ov.get("items"), dict) else {}
@@ -2785,7 +2783,13 @@ def _habits_segment(
             elif _override_minutes(ov_total) is not None:
                 total_minutes = _override_minutes(ov_total)
                 adjusted += 1
-    note = f"habits: {done} done · {outstanding} left"
+    # Completion is never read (the habit list IS the active set), so the block
+    # always reports done=0; name the active count instead of a done/left split.
+    total = habits.get("total")
+    if type(total) is not int:
+        # Legacy block without a usable total: fall back to its done+outstanding.
+        total = (habits.get("done") or 0) + (habits.get("outstanding") or 0)
+    note = f"habits: {total} active"
     flags = []
     if skipped:
         flags.append(f"{skipped} skipped")

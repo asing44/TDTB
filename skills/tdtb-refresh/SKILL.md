@@ -64,8 +64,8 @@ objects:
 - `todoist_find-tasks-by-date` — tasks due the logical day (and any date the
   operator names).
 - `todoist_find-completed-tasks` — completion state, so already-done ids are
-  excluded before you assemble the source JSON, and so today's completed
-  habits can be counted (below).
+  excluded before you assemble the source JSON. Habits never use it: habit
+  completion is not read at all (below).
 
 Merge the open results, dedupe by task id, and drop completed ids. The rules
 file decides pooling and assignment — you only supply the candidate tasks.
@@ -73,26 +73,23 @@ file decides pooling and assignment — you only supply the candidate tasks.
 **Habits are time, not rows — fetch them separately.** The habit tasks live in
 the operator's habit project (`🔁 Habits`, or the operator's equivalent
 filter). Fetch them (the same `todoist_find-tasks` call scoped to that
-project), and call `todoist_find-completed-tasks` for **today's** logical day.
-Then call `todoist_find-sections` for that project id and keep its returned
-order: it is the order the operator sees in Todoist, and the producer replays
-it (step 4). Carry each habit task's `sectionId` and `childOrder` through when
-the `todoist_find-tasks` response has them; if it does not, fetch each
-section's tasks in section order with `todoist_find-tasks sectionId=…`, which
-preserves in-section order, and record the order you fetched them in.
-**Its default window is a WEEK** (`since` → `until`), so pass an explicit day
-range when you can. The producer also scopes every completion by its own
-`completedAt` **local date**, because the fetch alone cannot express "done
-today" — a habit finished earlier in the week must not read as done. An
-undated completion is still counted, so a narrow fetch is still the right
-thing to ask for.
+project). **Do not fetch habit completions**: completion is tracked in another
+app, so the Todoist habit list is only the set of habits the operator keeps
+active — every admitted habit counts as active for the day and `done` is
+always 0. Then call `todoist_find-sections` for that project id and keep its
+returned order: it is the order the operator sees in Todoist, and the
+producer replays it (step 4). Carry each habit task's `sectionId` and
+`childOrder` through when the `todoist_find-tasks` response has them; if it
+does not, fetch each section's tasks in section order with
+`todoist_find-tasks sectionId=…`, which preserves in-section order, and
+record the order you fetched them in.
 Do not fold habit tasks into the `tasks` list used for rows — the
 `todoist-drop-habits` rule already excludes them there. Instead emit a
 separate top-level `habits` source entry (step 4): the producer turns it into
 the artifact's top-level `habits` block, which is the ONLY source of habit
 time now that the note-based habit read is retired. A habit task's `duration` (`"5m"`,
-`"25m"`, or a REST `{"amount": N, "unit": "minute"|"day"}`) is its minutes;
-today's completions are matched to it by `task_id`/`id` or by `content`.
+`"25m"`, or a REST `{"amount": N, "unit": "minute"|"day"}`) is its minutes.
+Never send a `completed` list: nothing reads it.
 Omit the entry only if the fetch failed — the app then zeroes habit time and
 reports it loudly.
 
@@ -270,8 +267,9 @@ keeps the config pool.
 
 The `habits` entry is separate from `todoist.tasks` and is NOT a row source.
 The producer computes the artifact's top-level `habits` block from it:
-`total` = habit tasks, `done` = tasks a completion references today,
-`outstanding` = `total - done`, `est_minutes` = the outstanding durations
+`total` = every habit task admitted for the day (a task due after the logical
+day is not admitted), `done` = always `0` because completion is never read,
+`outstanding` = `total`, `est_minutes` = the sum of ALL admitted durations
 (optional `fallback_minutes_per_habit`, default 4, where a duration is unset)
 rounded UP to the `round_to_minutes` grain (default 15). Include
 `fallback_minutes_per_habit` / `round_to_minutes` in the entry if the operator
@@ -301,9 +299,6 @@ sorts the habits by section then in-section order; omit `sections`,
       { "id": "<habit task id>", "content": "<habit name>",
         "duration": "5m", "sectionId": "<section id>",
         "childOrder": 0 }
-    ],
-    "completed": [
-      { "task_id": "<habit task id completed today>" }
     ]
   },
   "capacities": {

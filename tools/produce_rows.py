@@ -25,14 +25,15 @@ A2)::
       "habits": {
         "status": "ok",
         "read_at": "2026-10-08T09:00:00-07:00",
-        "tasks": [ { "id": ..., "content": ..., "duration": "5m" } ],
-        "completed": [ { "task_id": ... } ]
+        "tasks": [ { "id": ..., "content": ..., "duration": "5m" } ]
       }
     }
 
 ``habits`` is not a row source: the producer folds it into the artifact's
 top-level ``habits`` block (``total/done/outstanding/est_minutes``), the only
-source of habit time now that the note-based habit read is retired.
+source of habit time now that the note-based habit read is retired. Completion
+is never read (``done`` is always 0), so no ``completed`` list is fetched; a
+legacy ``completed`` list on the entry is accepted and ignored.
 
 ``micro_adventure_ideas`` is not a row source either: the producer applies the
 collection/tag/effort selection rule to its ``objects`` and folds the survivors

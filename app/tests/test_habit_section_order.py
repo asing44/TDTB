@@ -182,11 +182,11 @@ class TestHabitSectionOrderDegradation:
 
 
 # ---------------------------------------------------------------------------
-# Filtering — ordering is over ALL tasks, filtered rows do not disturb it
+# Filtering — ordering is over ALL tasks; only future rows are dropped
 # ---------------------------------------------------------------------------
 
 class TestHabitSectionOrderWithFiltering:
-    def test_done_and_future_rows_are_removed_without_reordering(self):
+    def test_future_rows_are_removed_and_completed_rows_stay_in_order(self):
         entry = _habit_entry(
             [
                 {"id": "future", "content": "Future", "sectionId": "s1",
@@ -201,4 +201,6 @@ class TestHabitSectionOrderWithFiltering:
             completed=[{"task_id": "done"}],
             sections=[{"id": "s1", "name": "One"}, {"id": "s2", "name": "Two"}],
         )
-        assert _ids(entry, logical_day=LOGICAL_DAY) == ["a", "b"]
+        # Completion is not read: the completed row is still a habit, so it
+        # keeps its section order and only the future row is gone.
+        assert _ids(entry, logical_day=LOGICAL_DAY) == ["done", "a", "b"]
