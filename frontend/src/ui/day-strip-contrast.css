@@ -1,0 +1,137 @@
+/* Day setup "Your day" card: theme-aware surfaces so the strip, its labels and
+   the frame fields stay readable in dark theme. The base rules in app.css
+   hardcode light hex fills while the text uses --t-text (near-white in dark);
+   these overrides swap those fills for tokens. Loaded after app.css. */
+
+/* Frame fields (Preset / Start / End / Buffer): enabled and disabled. */
+.setup-section--your-day .frame-fields .field label {
+  color: var(--t-muted);
+}
+.setup-section--your-day .frame-fields .field select,
+.setup-section--your-day .frame-fields .field input {
+  background-color: var(--t-surface-2);
+  border-color: var(--t-border);
+  color: var(--t-text);
+  -webkit-text-fill-color: var(--t-text);
+}
+.setup-section--your-day .frame-fields .field select:disabled,
+.setup-section--your-day .frame-fields .field input:disabled {
+  color: var(--t-muted);
+  -webkit-text-fill-color: var(--t-muted);
+  opacity: 1;
+  cursor: not-allowed;
+}
+.setup-section--your-day .frame-fields .field input[type="time"]::-webkit-calendar-picker-indicator {
+  filter: light-dark(none, invert(1));
+}
+.setup-section--your-day .frame-fields .field select {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%23999690' stroke-width='1.5'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  padding-right: 28px;
+}
+
+/* Ruler, lane captions and lanes. */
+.day-strip__lane-label,
+.day-strip__ticks,
+.day-setup-screen .day-strip__empty {
+  color: var(--t-muted);
+}
+.day-strip__lane,
+.day-strip__lane--mint {
+  background: var(--t-surface-2);
+}
+.day-strip__lane--mint-off {
+  background: repeating-linear-gradient(
+    135deg,
+    var(--t-surface-2) 0 6px,
+    color-mix(in srgb, var(--t-text) 8%, var(--t-surface-2)) 6px 12px
+  );
+}
+
+/* Anchor blocks: a neutral tint of the text colour, so name and meta line keep
+   contrast against it in both themes. */
+.strip-anchor {
+  border-color: color-mix(in srgb, var(--t-text) 38%, var(--t-surface-2));
+  background: color-mix(in srgb, var(--t-text) 16%, var(--t-surface-2));
+  color: var(--t-text);
+}
+.strip-anchor__meta {
+  color: var(--t-text);
+}
+.strip-anchor--not-counted {
+  background: color-mix(in srgb, var(--t-text) 7%, var(--t-surface-2));
+  color: var(--t-muted);
+}
+.strip-anchor--selected {
+  background: color-mix(in srgb, var(--t-text) 7%, var(--t-surface-2));
+  border-color: var(--t-text);
+}
+.strip-cal--selected {
+  border-color: var(--t-text);
+}
+
+/* Calendar blocks: pastel fills carry a fixed dark ink (the fills do not change
+   with the theme); only the outside labels, which sit on the lane, follow it. */
+.strip-cal {
+  color: #1d1c1a;
+}
+.strip-cal__label--inside {
+  color: #1d1c1a;
+}
+.strip-cal__label--left,
+.strip-cal__label--right {
+  color: var(--t-text);
+  /* Never spill past the lane: the label ellipsizes in the room it was given. */
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.strip-cal__label--not-counted,
+.strip-anchor__label--not-counted {
+  color: var(--t-muted);
+}
+.strip-anchor__label {
+  color: var(--t-text);
+}
+
+/* Cancelled calendar events: hatched, dimmed, struck through. */
+.strip-cal--cancelled,
+.strip-cal--work.strip-cal--cancelled {
+  border-style: dashed;
+  border-color: color-mix(in srgb, var(--t-muted) 70%, transparent);
+  background: repeating-linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--t-muted) 16%, var(--t-surface-2)) 0 4px,
+    var(--t-surface-2) 4px 8px
+  );
+  opacity: 0.85;
+}
+.strip-cal--cancelled .strip-cal__label--inside,
+.strip-cal__label--cancelled {
+  color: var(--t-muted);
+  text-decoration: line-through;
+}
+
+/* Resize grip: visible at rest, one consistent 14px x 16px hit target on the
+   trailing edge. */
+.strip-cal__resize::before {
+  width: 8px;
+  height: 16px;
+  border-left-color: var(--t-text);
+  border-right-color: var(--t-text);
+  opacity: 0.7;
+}
+.strip-cal__resize--edge {
+  width: 14px;
+  background: color-mix(in srgb, var(--t-text) 12%, transparent);
+  border-radius: 4px;
+}
+.strip-cal__resize--edge:hover,
+.strip-cal__resize--active {
+  background: color-mix(in srgb, var(--t-accent) 28%, transparent);
+}
+/* Block text stops short of the grip. */
+.strip-anchor.strip-anchor--resizable,
+.strip-cal.strip-cal--edge-resizable {
+  padding-right: 16px;
+}

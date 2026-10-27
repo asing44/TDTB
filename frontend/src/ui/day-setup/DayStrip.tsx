@@ -41,6 +41,7 @@ import {
 } from "./anchorDrag";
 import { compactClock, compactHour, compactRange } from "./compactTime";
 import "../strip-resize.css";
+import "../day-strip-contrast.css";
 
 /** Pointer travel (px) before a press on an anchor becomes a drag. */
 const DRAG_THRESHOLD_PX = 4;
@@ -57,12 +58,16 @@ const MIN_VISIBLE_W = 28;
 const CAL_CHAR_PX = 6.6;
 const CAL_PAD_PX = 16;
 const CAL_MIN_INSIDE_PX = 44;
-const CAL_LABEL_GAP_PX = 8;
+const CAL_LABEL_GAP_PX = 12;
+
+/** Presentation only: Google Calendar titles a cancelled event "Canceled: …".
+    The data model carries no cancelled flag, so the strip dims on the prefix. */
+const isCancelledTitle = (name: string): boolean => /^cancell?ed:/i.test(name.trim());
 /** Outside anchor labels: estimated glyph width (12px type, shared with the
     in-block name fit test), gap to the block, breathing room between
     neighbours, and the height of a stacked label row. */
 const ANCHOR_LABEL_CHAR_PX = 6.6;
-const ANCHOR_LABEL_GAP_PX = 8;
+const ANCHOR_LABEL_GAP_PX = 12;
 const ANCHOR_LABEL_PAD_PX = 4;
 const ANCHOR_LABEL_ROW_H = 16;
 /** Visible gap between a clipped block's right edge and the next block. */
@@ -872,7 +877,10 @@ export function DayStrip(props: DayStripProps) {
                 min === toMinutes(event.start) &&
                 max === toMinutes(event.start) + lengthMin;
               const selected = props.selectedAnchorId === event.id;
+              const cancelled = isCancelledTitle(event.name);
               const className = `strip-cal${event.counted ? "" : " strip-cal--skipped"}${
+                cancelled ? " strip-cal--cancelled" : ""
+              }${
                 event.capacityClass === "work" ? " strip-cal--work" : ""
               }${event.edited ? " strip-cal--edited" : ""}${
                 selected ? " strip-cal--selected" : ""
@@ -893,7 +901,7 @@ export function DayStrip(props: DayStripProps) {
                   <span
                     class={`strip-cal__label strip-cal__label--inside${
                       event.counted ? "" : " strip-cal__label--not-counted"
-                    }`}
+                    }${cancelled ? " strip-cal__label--cancelled" : ""}`}
                     data-fit={fit}
                   >
                     {text}
@@ -960,12 +968,20 @@ export function DayStrip(props: DayStripProps) {
                     <span
                       class={`strip-cal__label strip-cal__label--${fit}${
                         event.counted ? "" : " strip-cal__label--not-counted"
-                      }`}
+                      }${cancelled ? " strip-cal__label--cancelled" : ""}`}
                       data-fit={fit}
                       style={
                         fit === "right"
-                          ? { left: `calc(${rawPct(max)}% + ${CAL_LABEL_GAP_PX}px)`, top: `${5 + row * 30}px` }
-                          : { right: `calc(${100 - rawPct(min)}% + ${CAL_LABEL_GAP_PX}px)`, top: `${5 + row * 30}px` }
+                          ? {
+                              left: `calc(${rawPct(max)}% + ${CAL_LABEL_GAP_PX}px)`,
+                              maxWidth: `calc(${100 - rawPct(max)}% - ${CAL_LABEL_GAP_PX}px)`,
+                              top: `${5 + row * 30}px`,
+                            }
+                          : {
+                              right: `calc(${100 - rawPct(min)}% + ${CAL_LABEL_GAP_PX}px)`,
+                              maxWidth: `calc(${rawPct(min)}% - ${CAL_LABEL_GAP_PX}px)`,
+                              top: `${5 + row * 30}px`,
+                            }
                       }
                     >
                       {text}
