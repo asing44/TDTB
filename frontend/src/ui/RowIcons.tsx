@@ -39,3 +39,13 @@ export function ChevronIcon({ up }: { up: boolean }) {
     </Glyph>
   );
 }
+
+/** Undo/rotate-left, for discarding a staged change. */
+export function UndoIcon() {
+  return (
+    <Glyph>
+      <path d="M3 7.5h6.2a3.3 3.3 0 1 1 0 6.6H6.4" />
+      <path d="M5.6 4.3L3 7.5l2.6 3.2" />
+    </Glyph>
+  );
+}

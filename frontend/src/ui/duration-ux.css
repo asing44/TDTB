@@ -61,11 +61,17 @@
 .dux-badge--remembered {
   border-color: var(--state-remembered);
 }
-/* From source: dashed edge, quiet text — nothing was changed. */
+/* From source: dashed edge — nothing was changed. The word stays at full text
+   contrast (the muted token dropped below 4.5:1 on the dark surface) and the
+   dashed edge plus the small dot carry the "quiet" reading instead. */
 .dux-badge--source {
   border-style: dashed;
   background: var(--t-surface);
-  color: var(--t-muted);
+  color: var(--t-text);
+}
+.dux-badge--today,
+.dux-badge--remembered {
+  color: var(--t-text);
 }
 .dux-badge--today .dux-dot,
 .dux-badge--remembered .dux-dot,
@@ -109,6 +115,7 @@
   margin: -3px 0;
 }
 .dux-icon {
+  flex: none;
   display: inline-grid;
   place-items: center;
   width: 22px;
@@ -177,7 +184,8 @@
   outline-offset: 2px;
 }
 .trow__panel .dux-exact {
-  width: 7ch;
+  width: 96px;
+  flex: 0 0 auto;
   min-height: 28px;
   font-size: 12px;
 }
@@ -204,4 +212,11 @@
   .dux-chip {
     min-height: 34px;
   }
+}
+
+/* The typed exact-minutes field keeps a usable width: the chips row can wrap
+   around it, but it must never squeeze to an unusable sliver. */
+.dux-exact {
+  flex: 0 0 auto;
+  min-width: 84px;
 }

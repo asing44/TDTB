@@ -16,6 +16,7 @@ import { useApp } from "./context";
 import { draftIsStaged, type AppState } from "../store/store";
 import type { Controller } from "../store/controller";
 import type { AssignedItem } from "../model/types";
+import { CheckIcon, UndoIcon } from "./RowIcons";
 import "./duration-ux.css";
 
 export type DurationSaveState = "unsaved" | "today" | "remembered" | "source";
@@ -114,7 +115,7 @@ export function DurationSaveActions({ s, item }: { s: AppState; item: AssignedIt
         disabled={busy}
         onClick={() => saveDurationDraft(controller, item.id)}
       >
-        <span aria-hidden="true">✓</span>
+        <CheckIcon />
       </button>
       <button
         type="button"
@@ -124,7 +125,7 @@ export function DurationSaveActions({ s, item }: { s: AppState; item: AssignedIt
         disabled={busy}
         onClick={() => controller.discardDraft(item.id)}
       >
-        <span aria-hidden="true">↺</span>
+        <UndoIcon />
       </button>
     </span>
   );

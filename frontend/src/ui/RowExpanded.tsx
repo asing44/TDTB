@@ -208,7 +208,6 @@ export function RowExpanded({ item, s }: { item: AssignedItem; s: AppState }) {
           class="trow__select dux-exact"
           type="text"
           inputMode="text"
-          size={6}
           placeholder="e.g. 10m"
           aria-label="Custom duration"
           aria-invalid={customError ? "true" : undefined}
