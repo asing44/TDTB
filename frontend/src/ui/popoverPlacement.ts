@@ -2,7 +2,9 @@
    popover. The rail clips with overflow:hidden, so the panel is position:fixed
    and this module decides where it goes: prefer opening upward when the panel
    fits above the trigger, otherwise downward, always clamped inside the
-   viewport with an 8px margin and a max-height that scrolls the overflow. */
+   viewport with an 8px margin and a max-height that scrolls the overflow.
+   `align: "end"` right-aligns the panel to the trigger (kebab menus at a row's
+   right edge); the default left-aligns it. */
 
 export interface PopoverRect {
   top: number;
@@ -39,6 +41,7 @@ export function computePopoverPlacement(
   viewport: ViewportSize,
   panel: { width: number; height: number },
   prefer: "up" | "down" = "up",
+  align: "start" | "end" = "start",
 ): PopoverPlacement {
   const above = Math.max(0, trigger.top - POPOVER_EDGE - POPOVER_GAP);
   const below = Math.max(
@@ -73,7 +76,7 @@ export function computePopoverPlacement(
     viewport.height - POPOVER_EDGE - maxHeight,
   );
   const left = clamp(
-    trigger.left,
+    align === "end" ? trigger.right - panel.width : trigger.left,
     POPOVER_EDGE,
     viewport.width - POPOVER_EDGE - panel.width,
   );

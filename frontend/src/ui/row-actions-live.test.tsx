@@ -42,6 +42,7 @@ import { UNASSIGN_CONFIRM_LABEL, UNASSIGN_TRIGGER_LABEL } from "./ConfirmUnassig
 afterEach(cleanup);
 
 const APP_CSS = readFileSync(resolve(process.cwd(), "src/app.css"), "utf8");
+const SOURCE_MENU_CSS = readFileSync(resolve(process.cwd(), "src/ui/source-menu.css"), "utf8");
 
 function cssBlock(selector: string): string {
   const m = APP_CSS.match(new RegExp(`\\.${selector}\\s*\\{([^}]*)\\}`));
@@ -195,7 +196,7 @@ describe("collapsed row: dispatch mapping is unchanged", () => {
       Array.from(menu.querySelectorAll<HTMLElement>('[role="menuitem"]')).map((b) =>
         b.getAttribute("aria-label"),
       ),
-    ).toEqual(["Hide always", "Delete source…"]);
+    ).toEqual(["Hide always", "Delete in Todoist…"]);
     expect(menu.querySelector('[aria-label="Unassign in source"]')).toBeNull();
     fireEvent.click(buttonNamed(menu, "Hide always"));
     await waitFor(() =>
@@ -212,11 +213,11 @@ describe("collapsed row: dispatch mapping is unchanged", () => {
 
     const row = expand(container, "Press");
     const menu = openSource(row);
-    fireEvent.click(buttonNamed(menu, "Delete source…"));
+    fireEvent.click(buttonNamed(menu, "Delete in Todoist…"));
     // Delete arms to a confirm before it fires — permanent means permanent.
     expect(h.calls).toEqual([]);
     expect(h.batched).toEqual([]);
-    fireEvent.click(buttonWithText(rowFor(container, "Press"), "Delete from Todoist"));
+    fireEvent.click(buttonWithText(rowFor(container, "Press"), "Yes, delete permanently"));
     await waitFor(() =>
       expect(h.calls).toEqual([{ verb: "delete", target: "Press" }]),
     );
@@ -259,7 +260,7 @@ describe("row controls: reachability and focus targets", () => {
     // surviving text-sized controls still declare a real hit area rather than
     // collapsing to their glyph height.
     expect(cssBlock("trow__btn")).toMatch(/min-height:\s*\d+px/);
-    expect(cssBlock("source-menu__item")).toMatch(/min-height:\s*\d+px/);
+    expect(SOURCE_MENU_CSS).toMatch(/\.source-menu \.source-menu__item\s*\{[^}]*min-height:\s*(4\d|[5-9]\d)px/);
   });
 
   it("keeps an explicit focus ring on the labelled controls", () => {

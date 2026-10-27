@@ -73,3 +73,33 @@ describe("More menu: CSS contract for the boxed row", () => {
     expect(armed).toMatch(/padding:\s*8px 10px/);
   });
 });
+
+/* Source menu CSS contract (source-menu.css): the 32px kebab trigger, 40px+
+   item rows, a divider before the destructive item, and token-only colours so
+   both themes follow. */
+const SOURCE_CSS = readFileSync(resolve(process.cwd(), "src/ui/source-menu.css"), "utf8");
+
+describe("Source menu: CSS contract", () => {
+  const rule = (selector: string) => {
+    const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const m = SOURCE_CSS.match(new RegExp(`(?:^|\\n)${escaped}\\s*\\{([^}]*)\\}`));
+    if (!m) throw new Error(`selector not found: ${selector}`);
+    return m[1];
+  };
+
+  it("sizes the trigger to 32px like the row's icon buttons", () => {
+    const t = rule(".source-menu .source-menu__trigger");
+    expect(t).toMatch(/width:\s*32px/);
+    expect(t).toMatch(/height:\s*32px/);
+  });
+
+  it("keeps item rows at least 40px tall and the popover fixed-position", () => {
+    expect(rule(".source-menu .source-menu__item")).toMatch(/min-height:\s*(4\d|[5-9]\d)px/);
+    expect(rule(".source-menu .source-menu__popover")).toMatch(/position:\s*fixed/);
+  });
+
+  it("uses theme tokens, never hex colours outside var() fallbacks", () => {
+    const stripped = SOURCE_CSS.replace(/var\([^)]*\)/g, "").replace(/rgba\(0, 0, 0, [\d.]+\)/g, "");
+    expect(stripped).not.toMatch(/#[0-9a-f]{3,8}\b/i);
+  });
+});

@@ -36,7 +36,7 @@ function setup(opts: { source?: "todoist" | "capacities" | "calendar"; recurring
     return <SourceMenu item={item} s={s} />;
   }
   const ui = h.ui(<View />);
-  const trigger = ui.getByRole("button", { name: "Source ▾" });
+  const trigger = ui.getByRole("button", { name: "Source actions" });
   const open = () => fireEvent.click(trigger);
   return { ...h, ...ui, trigger, open, batch, verb, rowBatch, staging, policy, capPolicy };
 }
@@ -49,7 +49,7 @@ describe("SourceMenu (unmounted component slice)", () => {
     h.open();
     expect(h.trigger.getAttribute("aria-expanded")).toBe("true");
     expect(h.getAllByRole("menuitem").map((b) => b.getAttribute("aria-label"))).toEqual([
-      "Hide always", "Delete source…",
+      "Hide always", "Delete in Todoist…",
     ]);
     expect(h.queryByRole("menuitem", { name: "Unassign in source" })).toBeNull();
     expect(h.queryByRole("menuitem", { name: "Skip occurrence" })).toBeNull();
@@ -63,7 +63,7 @@ describe("SourceMenu (unmounted component slice)", () => {
       const h = setup({ source, recurring: true });
       h.open();
       expect(h.getAllByRole("menuitem").map((b) => b.getAttribute("aria-label"))).toEqual([
-        "Hide always", "Delete source…",
+        "Hide always", `Delete in ${source[0].toUpperCase()}${source.slice(1)}…`,
       ]);
       expect(h.container.textContent).not.toMatch(/cannot be unassigned/i);
     },
@@ -85,7 +85,7 @@ describe("SourceMenu (unmounted component slice)", () => {
   it("Delete requires explicit individual confirmation; cancel is inert and restores focus", () => {
     const h = setup();
     h.open();
-    fireEvent.click(h.getByRole("menuitem", { name: "Delete source…" }));
+    fireEvent.click(h.getByRole("menuitem", { name: "Delete in Todoist…" }));
     expect(h.getByRole("group", { name: "Delete “Press” from Todoist?" })).toBeTruthy();
     expect(h.staging).not.toHaveBeenCalled();
     const cancel = h.getByRole("button", { name: "Cancel" });
@@ -101,8 +101,8 @@ describe("SourceMenu (unmounted component slice)", () => {
     const h = setup();
     h.verb.mockRejectedValueOnce(new Error("fixture deletion refused"));
     h.open();
-    fireEvent.click(h.getByRole("menuitem", { name: "Delete source…" }));
-    fireEvent.click(h.getByRole("button", { name: "Delete from Todoist" }));
+    fireEvent.click(h.getByRole("menuitem", { name: "Delete in Todoist…" }));
+    fireEvent.click(h.getByRole("button", { name: "Yes, delete permanently" }));
     await waitFor(() => expect(h.store.getState().runtimeError).toBe("fixture deletion refused"));
     expect(h.staging).toHaveBeenCalledWith("delete", "Press");
     expect(h.verb).toHaveBeenCalledWith("delete", "Press", {});
@@ -152,7 +152,7 @@ describe("SourceMenu (unmounted component slice)", () => {
   it("Escape closes Delete confirmation before it can reach ancestor shortcuts", () => {
     const h = setup();
     h.open();
-    fireEvent.click(h.getByRole("menuitem", { name: "Delete source…" }));
+    fireEvent.click(h.getByRole("menuitem", { name: "Delete in Todoist…" }));
     const ancestor = vi.fn();
     document.addEventListener("keydown", ancestor);
     try {
@@ -162,5 +162,115 @@ describe("SourceMenu (unmounted component slice)", () => {
       expect(ancestor).not.toHaveBeenCalled();
       expect(h.staging).not.toHaveBeenCalled();
     } finally { document.removeEventListener("keydown", ancestor); }
+  });
+});
+
+describe("SourceMenu presentation and interaction", () => {
+  it("trigger is a labelled 32px icon button with menu semantics and a tooltip", () => {
+    const h = setup();
+    expect(h.trigger.getAttribute("aria-label")).toBe("Source actions");
+    expect(h.trigger.getAttribute("title")).toBe("Source actions");
+    expect(h.trigger.textContent).toBe("");
+    expect(h.trigger.querySelector("svg")).not.toBeNull();
+    expect(h.trigger.getAttribute("aria-haspopup")).toBe("menu");
+    expect(h.trigger.getAttribute("aria-expanded")).toBe("false");
+    expect(h.trigger.hasAttribute("aria-controls")).toBe(true);
+    h.open();
+    expect(h.trigger.getAttribute("aria-expanded")).toBe("true");
+    const popover = h.container.querySelector(`#${h.trigger.getAttribute("aria-controls")}`);
+    expect(popover?.querySelector('[role="menu"]')).not.toBeNull();
+    // The old "Immediate actions" footer is gone as redundant.
+    expect(h.container.textContent).not.toMatch(/Immediate actions/);
+  });
+
+  it("gives each item a leading icon and a one-line description, with the destructive item after a divider", () => {
+    const h = setup();
+    h.open();
+    const [hide, del] = h.getAllByRole("menuitem");
+    for (const item of [hide, del]) {
+      expect(item.querySelector("svg")).not.toBeNull();
+      expect(item.querySelector(".source-menu__detail")?.textContent).toBeTruthy();
+    }
+    expect(del.classList.contains("source-menu__item--danger")).toBe(true);
+    expect(hide.nextElementSibling?.getAttribute("role")).toBe("separator");
+    expect(hide.nextElementSibling?.nextElementSibling).toBe(del);
+  });
+
+  it("names the Delete item for its source", () => {
+    const h = setup({ source: "capacities" });
+    h.open();
+    expect(h.getByRole("menuitem", { name: "Delete in Capacities…" })).toBeTruthy();
+  });
+
+  it("opens on Enter/Space click-equivalents and ArrowDown, focusing the first item", () => {
+    const h = setup();
+    fireEvent.keyDown(h.trigger, { key: "ArrowDown" });
+    expect(h.trigger.getAttribute("aria-expanded")).toBe("true");
+    expect(document.activeElement).toBe(h.getAllByRole("menuitem")[0]);
+  });
+
+  it("Tab closes the menu without refocusing the trigger", () => {
+    const h = setup();
+    h.open();
+    fireEvent.keyDown(h.getAllByRole("menuitem")[0], { key: "Tab" });
+    expect(h.queryByRole("menu")).toBeNull();
+    expect(h.trigger.getAttribute("aria-expanded")).toBe("false");
+  });
+
+  it("clicking the trigger again closes the menu and keeps focus on it", () => {
+    const h = setup();
+    h.open();
+    h.trigger.focus();
+    fireEvent.click(h.trigger);
+    expect(h.queryByRole("menu")).toBeNull();
+    expect(document.activeElement).toBe(h.trigger);
+  });
+
+  it("outside click closes the menu and the confirm without acting", () => {
+    const h = setup();
+    h.open();
+    fireEvent.click(document.body);
+    expect(h.queryByRole("menu")).toBeNull();
+    h.open();
+    fireEvent.click(h.getByRole("menuitem", { name: "Delete in Todoist…" }));
+    expect(h.getByRole("group")).toBeTruthy();
+    fireEvent.mouseDown(document.body);
+    expect(h.queryByRole("group")).toBeNull();
+    expect(h.staging).not.toHaveBeenCalled();
+    expect(h.verb).not.toHaveBeenCalled();
+  });
+
+  it("the delete confirm renders inside the popover, replacing the items, with zero calls until the final confirm", async () => {
+    const h = setup();
+    h.open();
+    fireEvent.click(h.getByRole("menuitem", { name: "Delete in Todoist…" }));
+    const popover = h.container.querySelector(".source-menu__popover")!;
+    expect(popover.contains(h.getByRole("group"))).toBe(true);
+    expect(h.queryByRole("menu")).toBeNull();
+    expect(h.getByRole("button", { name: "Cancel" })).toBeTruthy();
+    expect(h.staging).not.toHaveBeenCalled();
+    expect(h.verb).not.toHaveBeenCalled();
+    expect(h.batch).not.toHaveBeenCalled();
+    // Tab swaps between the two confirm buttons instead of leaving the panel.
+    const cancel = h.getByRole("button", { name: "Cancel" });
+    const yes = h.getByRole("button", { name: "Yes, delete permanently" });
+    expect(document.activeElement).toBe(cancel);
+    fireEvent.keyDown(cancel, { key: "Tab" });
+    expect(document.activeElement).toBe(yes);
+    fireEvent.keyDown(yes, { key: "Tab" });
+    expect(document.activeElement).toBe(cancel);
+    expect(h.verb).not.toHaveBeenCalled();
+    fireEvent.click(yes);
+    await waitFor(() => expect(h.verb).toHaveBeenCalledWith("delete", "Press", {}));
+    expect(h.staging).toHaveBeenCalledTimes(1);
+  });
+
+  it("returns focus to the trigger after Hide always runs", async () => {
+    const h = setup();
+    h.open();
+    fireEvent.click(h.getByRole("menuitem", { name: "Hide always" }));
+    await waitFor(() => expect(h.batch).toHaveBeenCalled());
+    expect(h.queryByRole("menu")).toBeNull();
+    expect(document.activeElement).toBe(h.trigger);
   });
 });
