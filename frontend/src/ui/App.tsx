@@ -18,6 +18,7 @@ import { AnchoredEditor } from "./AnchoredEditor";
 import { ExecutionView } from "./ExecutionView";
 import { DaySetupPanel } from "./DaySetupPanel";
 import { ConnectionsScreen } from "./connections/ConnectionsScreen";
+import "./plan-dark-contrast.css";
 
 const THEME_KEY = "tdtb-cockpit-theme";
 
