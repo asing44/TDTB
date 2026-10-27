@@ -10,8 +10,10 @@ function todayLabel(): string {
 }
 
 /** Today-only planning controls. No upstream completion or assignment writes.
-    With per-habit items the card is a one-line summary that opens the drawer;
-    with only the aggregate it keeps the single total row inline. */
+    Habits are an active list: the card counts the habits and the minutes
+    counted today, and opens the drawer. With per-habit items the card is a
+    one-line summary; with only the aggregate it keeps the single total row
+    inline. */
 export function HabitsCard({ info, overrides, onSave, dateLabel }: {
   info?: HabitsInfo;
   overrides?: HabitOverrides;
@@ -32,14 +34,13 @@ export function HabitsCard({ info, overrides, onSave, dateLabel }: {
   }
   if (view.mode === 'items') {
     const off = view.rows.filter(r => !r.on).length;
-    const counting = view.rows.length - off;
     return <section class="setup-section habits-card" aria-labelledby="setup-sec-habits">
       <div class="setup-section__head">
         <h3 id="setup-sec-habits">Habits</h3>
-        <span>{`${counting} counting · ${view.countedMinutes} min counted · ${blocksText(view.countedMinutes)}${off ? ` · ${off} off` : ''}`}</span>
+        <span>{`${view.habitCount} ${view.habitCount === 1 ? 'habit' : 'habits'} · ${view.countedMinutes} min counted · ${blocksText(view.countedMinutes)}${off ? ` · ${off} off` : ''}`}</span>
         <button type="button" class="btn" aria-haspopup="dialog" onClick={() => setOpen(true)}>Review habits</button>
       </div>
-      {open && <HabitsDrawer view={view} overrides={overrides} done={info?.done ?? 0}
+      {open && <HabitsDrawer view={view} overrides={overrides}
         dateLabel={dateLabel ?? todayLabel()} status={status} error={error}
         onSave={v => void save(v)} onRetry={() => failed.current && void save(failed.current)}
         onClose={() => setOpen(false)} />}

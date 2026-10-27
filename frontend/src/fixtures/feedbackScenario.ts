@@ -94,7 +94,7 @@ export function feedbackInputs(): PlanInputs {
     droppedToday: [],
     anchored: FEEDBACK_ANCHORED.map((a) => ({ ...a })),
     anchoredSourceFingerprint: "feedback-anchored-v1",
-    habitsNote: "1 habit outstanding · ~30min",
+    habitsNote: "1 habit · ~30min",
     time: { ...FEEDBACK_TIME },
     capacity: feedbackCapacity(),
     daySetup: {

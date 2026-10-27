@@ -6,13 +6,13 @@ import { HabitsDrawer } from './HabitsDrawer';
 import { habitsView } from '../../model/habits';
 import type { HabitOverrides } from '../../model/types';
 afterEach(cleanup);
-const info = { total: 5, done: 2, outstanding: 3, estMinutes: 60, items: [
+const info = { total: 3, estMinutes: 60, items: [
   {id:'a',name:'Reading',minutes:30},{id:'b',name:'Walk',minutes:20},{id:'c',name:'Stretch',minutes:10}] };
 const EMPTY: HabitOverrides = {items:{},total:null};
 /** Stateful host so saved overrides flow back into the card like the store does. */
-function Host({ onSave, initial = EMPTY, done = info }: { onSave: (v: HabitOverrides) => Promise<void>; initial?: HabitOverrides; done?: typeof info }) {
+function Host({ onSave, initial = EMPTY, variant = info }: { onSave: (v: HabitOverrides) => Promise<void>; initial?: HabitOverrides; variant?: typeof info }) {
   const [ov, setOv] = useState(initial);
-  return <HabitsCard info={done} overrides={ov} onSave={async v => { await onSave(v); setOv(v); }} />;
+  return <HabitsCard info={variant} overrides={ov} onSave={async v => { await onSave(v); setOv(v); }} />;
 }
 const setup = (onSave = vi.fn().mockResolvedValue(undefined), extra: Partial<Parameters<typeof Host>[0]> = {}) => {
   const r = render(<Host onSave={onSave} {...extra} />);
@@ -27,9 +27,21 @@ it('rows reflect items and header copy has no capacity text', () => {
   const { r } = setup();
   expect(sw(r,'Reading').getAttribute('aria-checked')).toBe('true');
   expect(r.getByText(/Today only · .* · 60 min counted · 2 blocks/)).toBeTruthy();
-  expect(r.getByText('Done today:')).toBeTruthy();
+  expect(r.getByRole('heading', {name:/^Today/}).textContent).toBe('Today 3');
+  expect(r.queryByText(/outstanding/i)).toBeNull();
+  expect(r.queryByText(/Done today/)).toBeNull();
   expect(r.queryByText(/Day capacity|\bFree\b|over capacity/i)).toBeNull();
   expect(r.queryByText('Details')).toBeNull();
+});
+it('keeps a legacy completed habit switchable instead of reporting it done', () => {
+  // The artifact may still carry the retired done/outstanding accounting.
+  const legacy = { total: 3, done: 2, outstanding: 1, estMinutes: 60, items: info.items };
+  const { r } = setup(undefined, { variant: legacy });
+  expect(r.getAllByRole('switch').length).toBe(3);
+  expect(sw(r,'Reading').getAttribute('aria-checked')).toBe('true');
+  expect(r.getByRole('heading', {name:/^Today/}).textContent).toBe('Today 3');
+  expect(r.queryByText(/outstanding/i)).toBeNull();
+  expect(r.queryByText(/Done today/)).toBeNull();
 });
 it('off dims the row in place with chip, disabled stepper and summary', async () => {
   const { r } = setup();
@@ -49,11 +61,19 @@ it('bulk off writes on:false per habit and back on restores', async () => {
   fireEvent.click(r.getByRole('button', {name:'Turn off all 3 habits'}));
   expect(onSave).toHaveBeenLastCalledWith({items:{a:{on:false},b:{on:false},c:{on:false}},total:null});
   await saved(r);
-  fireEvent.click(await r.findByRole('button', {name:'Turn all back on'}));
+  fireEvent.click(await r.findByRole('button', {name:'Turn on all 3 habits'}));
   expect(onSave).toHaveBeenLastCalledWith({items:{},total:null});
 });
+it('offers the mirrored turn-on control only when every habit is off', async () => {
+  const { r } = setup(undefined, { initial: {items:{a:{on:false},b:{on:false},c:{on:false}},total:null} });
+  expect(r.queryByRole('button', {name:/Turn off all/})).toBeNull();
+  const on = r.getByRole('button', {name:'Turn on all 3 habits'});
+  fireEvent.click(on);
+  await waitFor(() => expect(r.getByRole('button', {name:'Turn off all 3 habits'})).toBeTruthy());
+  expect(r.queryByRole('button', {name:/Turn on all/})).toBeNull();
+});
 it('stepper changes by 5 and clamps at 0 and 480', async () => {
-  const { r, onSave } = setup(undefined, { done: {...info, items:[{id:'c',name:'Stretch',minutes:3},{id:'a',name:'Reading',minutes:478}]} });
+  const { r, onSave } = setup(undefined, { variant: {...info, items:[{id:'c',name:'Stretch',minutes:3},{id:'a',name:'Reading',minutes:478}]} });
   fireEvent.click(r.getByLabelText('Increase Reading minutes by 5'));
   expect(onSave).toHaveBeenLastCalledWith({items:{a:{minutes:480}},total:null});
   await saved(r);
@@ -110,7 +130,7 @@ it('failure shows error and Retry re-saves the same value', async () => {
   await waitFor(() => expect(r.getByText('✓ Saved for today')).toBeTruthy());
 });
 const HabitsDrawerHarness = ({ onClose }: { onClose: () => void }) =>
-  <HabitsDrawer view={habitsView(info, EMPTY)} overrides={EMPTY} done={0} dateLabel="Fri"
+  <HabitsDrawer view={habitsView(info, EMPTY)} overrides={EMPTY} dateLabel="Fri"
     status="idle" error="" onSave={() => {}} onRetry={() => {}} onClose={onClose} />;
 /** Save that never resolves, so the drawer stays in its "saving" state. */
 const pending = () => vi.fn().mockReturnValue(new Promise<void>(() => {}));
@@ -148,7 +168,7 @@ it('stepper tap keeps focus on the stepper while saving and Esc still closes', (
   expect(document.activeElement).toBe(opener);
 });
 it('a stepper tapped into its limit stays focusable (aria-disabled, not native)', async () => {
-  const { r } = setup(undefined, { done: {...info, items:[{id:'a',name:'Reading',minutes:478}]} });
+  const { r } = setup(undefined, { variant: {...info, items:[{id:'a',name:'Reading',minutes:478}]} });
   const inc = r.getByLabelText('Increase Reading minutes by 5') as HTMLButtonElement;
   inc.focus(); fireEvent.click(inc);
   await saved(r);

@@ -384,7 +384,9 @@ export interface AnchoredOverride {
   calendarStartAtEdit?: string | null;
 }
 
-/** One outstanding habit the artifact supplied (wire `habits.items`). */
+/** One habit on the active list the artifact supplied (wire
+    `habits.items`). Every habit in the Todoist Habits project is listed; an
+    operator switches it on or off for today. */
 export interface HabitItem {
   id: string;
   name: string;
@@ -395,8 +397,14 @@ export interface HabitItem {
     artifact only carries the aggregate. */
 export interface HabitsInfo {
   total: number;
-  done: number;
-  outstanding: number;
+  /** Legacy wire field from when habits were read for completion. The adapter
+      no longer projects it and nothing here derives from it: completion is
+      tracked in Grit. Optional only so older payloads and fixtures stay
+      valid. */
+  done?: number;
+  /** Legacy companion of `done`; equals `total` on newer artifacts. Never
+      read. */
+  outstanding?: number;
   estMinutes: number;
   items: HabitItem[];
 }
@@ -991,7 +999,7 @@ export interface PlanInputs {
   /** Raw config specs before Day Setup overrides (locked decision 21). */
   anchoredSourceFingerprint: string;
   habitsNote: string | null;
-  /** Outstanding-habit detail behind `habitsNote`; absent on older payloads. */
+  /** Active-habit detail behind `habitsNote`; absent on older payloads. */
   habits?: HabitsInfo;
   time: TimeFrame;
   capacity: Capacity;

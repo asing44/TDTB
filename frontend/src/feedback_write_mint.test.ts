@@ -130,7 +130,7 @@ export function mint300Inputs(): PlanInputs {
     droppedToday: [],
     anchored: [],
     anchoredSourceFingerprint: "mint300-anchored-v1",
-    habitsNote: "no habits outstanding",
+    habitsNote: "no active habits",
     time: {
       now: "07:55",
       anchor: "08:00",
