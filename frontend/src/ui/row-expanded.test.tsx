@@ -32,8 +32,22 @@ function expand(container: Element, name: string): HTMLElement {
 
 const radio = (row: Element, value: string) =>
   row.querySelector<HTMLInputElement>(`input[type="radio"][value="${value}"]`)!;
-const duration = (row: Element) =>
-  row.querySelector<HTMLSelectElement>('select[aria-label="Duration"]')!;
+/** The one-tap duration chips that replaced the preset select. `value` is the
+    checked duration expressed in 30-minute blocks the way the select's value
+    was; `allDay` reports the All-day chip, which is now the honest answer to
+    "this row has no duration". */
+const duration = (row: Element) => {
+  const group = row.querySelector<HTMLElement>('[role="radiogroup"][aria-label="Duration"]')!;
+  const checked = group.querySelector<HTMLElement>('[role="radio"][aria-checked="true"]')!;
+  const minutes = checked.getAttribute("data-minutes");
+  return {
+    allDay: checked.getAttribute("data-chip") === "allday",
+    value: minutes === null ? "0" : String(Number(minutes) / 30),
+  };
+};
+/** One click on a quick chip, the way a user stages a duration. */
+const pick = (row: Element, minutes: number) =>
+  fireEvent.click(row.querySelector(`[role="radio"][data-minutes="${minutes}"]`)!);
 const mint = (row: Element) =>
   Array.from(row.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')).find(
     (i) => i.closest("label")?.textContent?.includes("May overlap Mint"),
@@ -62,7 +76,7 @@ describe("expanded row panel", () => {
     row = rowFor(container, "Press");
     fireEvent.click(radio(row, "allday"));
     row = rowFor(container, "Press");
-    expect(duration(row).disabled).toBe(true);
+    expect(duration(row).allDay).toBe(true);
     expect(h.store.getState().drafts["Press"].pin).toBeNull();
     fireEvent.click(radio(row, "time"));
     row = rowFor(container, "Press");
@@ -79,7 +93,7 @@ describe("expanded row panel", () => {
     let row = expand(container, "Press");
     expect(btn(row, "Save")).toBeNull();
     expect(btn(row, "Discard")).toBeNull();
-    fireEvent.change(duration(row), { target: { value: "4" } });
+    pick(row, 120);
     row = rowFor(container, "Press");
     expect(btn(row, "Save")).not.toBeNull();
     expect(btn(row, "Discard")).not.toBeNull();
@@ -92,7 +106,7 @@ describe("expanded row panel", () => {
   it("Save commits the staged duration", () => {
     const { h, container } = setup();
     let row = expand(container, "Press");
-    fireEvent.change(duration(row), { target: { value: "4" } });
+    pick(row, 120);
     row = rowFor(container, "Press");
     fireEvent.click(btn(row, "Save")!);
     expect(h.store.getState().overrides["Press"]?.blocks).toBe(4);
@@ -128,7 +142,7 @@ describe("expanded row panel", () => {
   it("keeps the staged draft when the row is collapsed (store rule)", () => {
     const { h, container } = setup();
     const row = expand(container, "Press");
-    fireEvent.change(duration(row), { target: { value: "4" } });
+    pick(row, 120);
     fireEvent.click(rowFor(container, "Press").querySelector('button[aria-label="Collapse"]')!);
     expect(h.store.getState().drafts["Press"].blocks).toBe(4);
     expect(rowFor(container, "Press").textContent).toContain("Staged");

@@ -10,6 +10,7 @@ import { useApp } from "./context";
 import { SourceUnassign } from "./ConfirmUnassign";
 import { RowExpanded } from "./RowExpanded";
 import { DurationSlider } from "./DurationSlider";
+import { DurationSaveActions, DurationStatus } from "./DurationStatus";
 import { CheckIcon, ChevronIcon } from "./RowIcons";
 import {
   draftIsStaged,
@@ -332,6 +333,7 @@ export function TaskRow({
           <span class={`trow__state${staged ? " trow__state--staged" : ""}`}>
             {shortState(s, item)}
           </span>
+          <DurationSaveActions s={s} item={item} />
         </span>
         {rowOverlaps.map((n) => {
           const partner = assignedNames.get(n.partnerId) ?? n.partnerId;
@@ -357,6 +359,7 @@ export function TaskRow({
           disabled={s.runtimeBusy}
           allDayLocked={allDayLock !== null}
           title={allDayLock ?? undefined}
+          status={<DurationStatus s={s} item={item} />}
           onChange={(next) =>
             controller.updateDraft(item.id, (d) =>
               // 0 is the All-day notch: the same setMode the radio fires. Off

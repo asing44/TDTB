@@ -153,7 +153,7 @@ describe("F7 integration: the row and its expanded panel", () => {
     // Line 1 shapes the row; nothing is committed there.
     expect(line1.textContent).toContain("Time block");
     expect(line1.textContent).toContain("All-day");
-    expect(line1.querySelector('select[aria-label="Duration"]')).not.toBeNull();
+    expect(line1.querySelector('[role="radiogroup"][aria-label="Duration"]')).not.toBeNull();
     expect(line1.textContent).toContain("May overlap Mint");
     // Line 2: Save/Discard (only while staged) on the left, Source right.
     expect(line2.querySelector(".source-menu__trigger")).not.toBeNull();
@@ -168,9 +168,9 @@ describe("F7 integration: the row and its expanded panel", () => {
     expect(Array.from(line2.querySelectorAll("button")).map((b) => b.getAttribute("aria-label") ?? b.textContent?.trim()))
       .toEqual(["Source actions"]);
 
-    fireEvent.change(row.querySelector('select[aria-label="Duration"]')!, {
-      target: { value: "4" },
-    });
+    fireEvent.click(
+      row.querySelector('[role="radiogroup"][aria-label="Duration"] [data-minutes="120"]')!,
+    );
     row = rowFor(container, "Press");
     line2 = row.querySelector<HTMLElement>(".trow__l2")!;
     expect(Array.from(line2.querySelectorAll("button")).map((el) => el.getAttribute("aria-label") ?? el.textContent?.trim())).toEqual([

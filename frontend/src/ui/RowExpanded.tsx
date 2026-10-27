@@ -2,7 +2,8 @@
    approved prototype (design/task-actions r2).
 
    Line 1 shapes the row (all staged on the row's draft, nothing committed):
-   Time block / All-day, duration, Start (Auto + Set time, or the pinned time
+   Time block / All-day, duration (one-tap chips, exact-minutes field, save-state
+   chip, Remember for next time), Start (Auto + Set time, or the pinned time
    + Clear), and "May overlap Mint" with a short inline reason only when it is
    disabled. Line 2 holds Save and Discard on the left, rendered only while the draft
    differs from the committed session, and the Source menu on the right.
@@ -30,16 +31,15 @@ import {
   setPin,
 } from "../model/rowDraft";
 import { EXCLUSION_REASONS } from "../model/batchEligibility";
-import { blocksLabel, display12h } from "../model/time";
+import { display12h } from "../model/time";
 import { minutesToBlocks, parseDuration } from "../model/parseDuration";
 import type { AssignedItem } from "../model/types";
 import { SourceMenu } from "./SourceMenu";
 import { TimeEditor } from "./TimeEditor";
+import { DurationChips } from "./DurationChips";
+import { DurationRemember } from "./DurationRemember";
+import { DurationStatus, saveDurationDraft } from "./DurationStatus";
 import { rowId } from "./TaskRow";
-
-/** Duration choices in 30-minute blocks; the draft's current value is added
-    when it is not one of them (an exact-minute estimate stays selectable). */
-const DURATION_BLOCKS = [1, 2, 3, 4, 6, 8];
 
 export function RowExpanded({ item, s }: { item: AssignedItem; s: AppState }) {
   const { controller } = useApp();
@@ -84,10 +84,6 @@ export function RowExpanded({ item, s }: { item: AssignedItem; s: AppState }) {
     : row.isMintSession
       ? EXCLUSION_REASONS.mintSession
       : null;
-
-  const options = DURATION_BLOCKS.includes(draft.blocks) || draft.blocks <= 0
-    ? DURATION_BLOCKS
-    : [...DURATION_BLOCKS, draft.blocks].sort((a, b) => a - b);
 
   // Typed duration: valid text stages exact minutes (blocks = minutes / 30);
   // invalid text keeps the draft and surfaces an inline error. Empty text is
@@ -193,29 +189,26 @@ export function RowExpanded({ item, s }: { item: AssignedItem; s: AppState }) {
             {allDayWhy}
           </span>
         )}
-        <select
-          class="trow__select"
-          aria-label="Duration"
-          title={allDay ? "All-day rows have no duration" : undefined}
-          disabled={busy || allDay}
-          value={String(draft.blocks)}
-          onChange={(e) => {
-            const blocks = Number((e.target as HTMLSelectElement).value);
-            controller.updateDraft(id, (d) => ({ ...d, blocks }));
-          }}
-        >
-          {allDay && draft.blocks <= 0 && <option value="0">All day</option>}
-          {options.map((b) => (
-            <option key={b} value={String(b)}>
-              {blocksLabel(b)}
-            </option>
-          ))}
-        </select>
+        <DurationChips
+          idBase={base}
+          blocks={draft.blocks}
+          allDay={allDay}
+          disabled={busy}
+          allDayWhy={allDayWhy}
+          allDayWhyId={`why-allday-${base}`}
+          onPickMinutes={(m) =>
+            controller.updateDraft(id, (d) => ({
+              ...setMode(d, "time"),
+              blocks: minutesToBlocks(m),
+            }))
+          }
+          onPickAllDay={() => controller.updateDraft(id, (d) => setMode(d, "allday"))}
+        />
         <input
-          class="trow__select"
+          class="trow__select dux-exact"
           type="text"
           inputMode="text"
-          size={9}
+          size={6}
           placeholder="e.g. 10m"
           aria-label="Custom duration"
           aria-invalid={customError ? "true" : undefined}
@@ -245,6 +238,8 @@ export function RowExpanded({ item, s }: { item: AssignedItem; s: AppState }) {
             {customError}
           </span>
         )}
+        <DurationStatus s={s} item={item} />
+        <DurationRemember item={item} s={s} blocks={draft.blocks} allDay={allDay} idBase={base} />
         <span class="trow__start" role="group" aria-label="Start">
           <span class="trow__muted">Start</span>
           {startControl()}
@@ -294,7 +289,7 @@ export function RowExpanded({ item, s }: { item: AssignedItem; s: AppState }) {
               disabled={busy}
               onClick={() => {
                 refocusStart.current = true;
-                controller.saveDraft(id);
+                saveDurationDraft(controller, id);
               }}
             >
               Save

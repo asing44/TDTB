@@ -2,7 +2,7 @@
    inline slider again (readout above [−] range [+]), restored from the earlier
    plan-row design (d30a059 readout above the slider, 6c0807e steppers,
    f5e506a/1f8a488 one-line sizing). It stages on the row draft exactly like
-   the expanded select; nothing commits until Save.
+   the expanded chips; nothing commits until Save.
 
    FEEDBACK-2026-10-26 (Adam): the track is a quarter-hour grid whose leftmost
    notch is All-day, as in the earlier design — "slider should be 15min
@@ -52,8 +52,12 @@ const less = (row: Element) =>
   row.querySelector<HTMLButtonElement>('button[aria-label^="15 minutes less"]')!;
 const more = (row: Element) =>
   row.querySelector<HTMLButtonElement>('button[aria-label^="15 minutes more"]')!;
-const preset = (row: Element) =>
-  row.querySelector<HTMLSelectElement>('select[aria-label="Duration"]')!;
+/** The quick duration chips in the expanded row (the preset select's
+    replacement): one click stages a duration. */
+const chip = (row: Element, minutes: number) =>
+  row.querySelector<HTMLButtonElement>(
+    `[role="radiogroup"][aria-label="Duration"] [role="radio"][data-minutes="${minutes}"]`,
+  )!;
 const cellTitle = (row: Element) =>
   cell(row).querySelector(".dslider")?.getAttribute("title");
 
@@ -64,7 +68,10 @@ describe("collapsed row duration cell", () => {
     const row = rowFor(container, "Press");
     const dslider = cell(row).querySelector(".dslider")!;
     const kids = Array.from(dslider.children).map((k) => k.className.split(" ")[0]);
-    expect(kids.slice(0, 2)).toEqual(["dslider__label", "dslider__ctl"]);
+    // The readout line now carries the save-state chip beside the label, so
+    // the two structural children are the top line and the control strip.
+    expect(kids.slice(0, 2)).toEqual(["dslider__top", "dslider__ctl"]);
+    expect(dslider.querySelector(".dslider__top .dslider__label")).not.toBeNull();
     const ctl = dslider.querySelector(".dslider__ctl")!;
     expect(Array.from(ctl.children).map((k) => k.tagName)).toEqual([
       "BUTTON",
@@ -108,7 +115,7 @@ describe("collapsed row duration cell", () => {
     expect(more(row).disabled).toBe(false);
   });
 
-  it("slider stages the same blocks as the expanded select, live readout", () => {
+  it("slider stages the same blocks as the expanded chips, live readout", () => {
     const h = makeHarness("ready");
     const { container } = h.ui(<Queue />);
     fireEvent.input(range(rowFor(container, "Press")), { target: { value: "120" } });
@@ -119,7 +126,7 @@ describe("collapsed row duration cell", () => {
     fireEvent.click(
       rowFor(container, "Press").querySelector('button[aria-label="Expand"]')!,
     );
-    fireEvent.change(preset(rowFor(container, "Press")), { target: { value: "4" } });
+    fireEvent.click(chip(rowFor(container, "Press"), 120));
     expect(h.store.getState().drafts["Press"].blocks).toBe(viaSlider);
     expect(viaSlider).toBe(4);
   });
@@ -296,7 +303,7 @@ describe("collapsed row duration cell", () => {
     const row = rowFor(container, "Press");
     expect(row.querySelectorAll('input[aria-label="Duration slider"]')).toHaveLength(1);
     expect(cell(row).contains(range(row))).toBe(true);
-    expect(preset(row)).not.toBeNull();
+    expect(chip(row, 90)).not.toBeNull();
   });
 });
 

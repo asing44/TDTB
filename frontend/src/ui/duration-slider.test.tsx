@@ -1,5 +1,6 @@
 /* duration-slider.test.tsx — the expanded row's duration range slider stages
-   through the same draft path as the select and typed custom duration. */
+   through the same draft path as the quick chips and the typed custom
+   duration. */
 
 import { afterEach, describe, expect, it } from "vitest";
 import { cleanup, fireEvent } from "@testing-library/preact";
@@ -24,8 +25,13 @@ function expand(container: Element, name: string): HTMLElement {
 
 const slider = (row: Element) =>
   row.querySelector<HTMLInputElement>('input[aria-label="Duration slider"]')!;
-const preset = (row: Element) =>
-  row.querySelector<HTMLSelectElement>('select[aria-label="Duration"]')!;
+/** The quick duration chips that replaced the preset select: `checked` is the
+    chip that currently matches the draft, `pick` stages one in a click. */
+const chips = (row: Element) =>
+  row.querySelector<HTMLElement>('[role="radiogroup"][aria-label="Duration"]')!;
+const chip = (row: Element, minutes: number) =>
+  chips(row).querySelector<HTMLButtonElement>(`[role="radio"][data-minutes="${minutes}"]`)!;
+const pickChip = (row: Element, minutes: number) => fireEvent.click(chip(row, minutes));
 const custom = (row: Element) =>
   row.querySelector<HTMLInputElement>('input[aria-label="Custom duration"]')!;
 const btn = (row: Element, text: string) =>
@@ -42,7 +48,7 @@ describe("duration slider on the expanded row", () => {
     expect([s.min, s.max, s.step]).toEqual(["0", "240", "15"]);
   });
 
-  it("stages the same blocks as the select and the custom field", () => {
+  it("stages the same blocks as the quick chips and the custom field", () => {
     const h = makeHarness("ready");
     const { container } = h.ui(<Queue />);
     let row = expand(container, "Press");
@@ -50,7 +56,7 @@ describe("duration slider on the expanded row", () => {
     const viaSlider = h.store.getState().drafts["Press"].blocks;
 
     row = rowFor(container, "Press");
-    fireEvent.change(preset(row), { target: { value: "3" } });
+    pickChip(row, 90);
     expect(viaSlider).toBe(h.store.getState().drafts["Press"].blocks);
 
     row = rowFor(container, "Press");
@@ -60,7 +66,7 @@ describe("duration slider on the expanded row", () => {
     expect(viaSlider).toBe(3);
   });
 
-  it("stages exact minutes, updates the live label and the select", () => {
+  it("stages exact minutes, updates the live label and the chips", () => {
     const h = makeHarness("ready");
     const { container } = h.ui(<Queue />);
     let row = expand(container, "Press");
@@ -70,7 +76,9 @@ describe("duration slider on the expanded row", () => {
     expect(row.querySelector(".dslider__label")?.textContent).toBe("45min");
     expect(slider(row).getAttribute("aria-valuetext")).toBe("45min");
     expect(slider(row).value).toBe("45");
-    expect(preset(row).selectedOptions[0].textContent).toBe("45min");
+    // 45 minutes is a quick chip, so the group shows it checked rather than
+    // inventing a Custom chip.
+    expect(chips(row).querySelector('[aria-checked="true"]')?.textContent).toBe("45m");
     expect(btn(row, "Save")).not.toBeNull();
   });
 
@@ -118,6 +126,6 @@ describe("duration slider on the expanded row", () => {
     expect(row.querySelector<HTMLInputElement>('input[value="time"]')!.checked).toBe(
       true,
     );
-    expect(preset(row).disabled).toBe(false);
+    expect(chip(row, 60).disabled).toBe(false);
   });
 });
