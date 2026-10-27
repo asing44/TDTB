@@ -8,6 +8,9 @@
    from App.tsx). Status colours (due today, overdue, success) keep a dark-theme
    variant with AA contrast on --t-surface-2. */
 
+/* Priority pills + tag chips; keeps per-tier colours (see row-chips.css). */
+@import "./row-chips.css";
+
 :root {
   --pdc-card: light-dark(#fff, var(--t-surface-2));
   --pdc-card-quiet: light-dark(#fff, var(--t-surface));
@@ -70,8 +73,7 @@
 .qrow__src--other,
 .qrow__meta,
 .qrow__source .due,
-.qrow__priority,
-.qrow__prio {
+.qrow__priority {
   color: var(--pdc-muted);
 }
 .qrow__source .due--soon,

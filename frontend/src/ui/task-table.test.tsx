@@ -469,3 +469,65 @@ describe("priority labels on a row", () => {
     expect(row.querySelector(".badge")).toBeNull();
   });
 });
+
+describe("row tag chips and priority pills", () => {
+  const NAME = "Review AWS module 4";
+  const render = (patch: (it: { labels?: string[]; tags?: string[]; urgency?: string | null }) => void) => {
+    const h = makeHarness("ready", (sc) => {
+      const it = sc.inputs.assigned.find((a) => a.id === NAME);
+      if (it) patch(it);
+    });
+    return rowNamed(h.ui(<Queue />).container, NAME);
+  };
+
+  it("renders labels and tags as visible chips with a Tags aria-label", () => {
+    const row = render((it) => {
+      it.labels = ["🍅 Half-hour", "🚀 10min"];
+      it.tags = ["Deep work"];
+    });
+    const list = row.querySelector(".qrow__tags");
+    expect(list?.getAttribute("aria-label")).toBe("Tags: 🍅 Half-hour, 🚀 10min, Deep work");
+    expect(Array.from(row.querySelectorAll(".qrow__tag")).map((n) => n.textContent)).toEqual([
+      "🍅 Half-hour", "🚀 10min", "Deep work",
+    ]);
+    expect(row.querySelector(".qrow__tag--more")).toBeNull();
+  });
+
+  it("folds tags past three into a +N chip whose title lists the rest", () => {
+    const row = render((it) => {
+      it.labels = ["a", "b", "c", "d", "e"];
+      it.tags = [];
+    });
+    expect(row.querySelectorAll(".qrow__tag:not(.qrow__tag--more)")).toHaveLength(3);
+    const more = row.querySelector(".qrow__tag--more");
+    expect(more?.textContent).toBe("+2");
+    expect(more?.getAttribute("title")).toBe("d, e");
+  });
+
+  it("renders no tag list for a row without labels or tags", () => {
+    const row = render((it) => {
+      it.labels = [];
+      it.tags = [];
+    });
+    expect(row.querySelector(".qrow__tags")).toBeNull();
+  });
+
+  it("titles the priority pill with its level", () => {
+    const row = render((it) => {
+      it.urgency = "4";
+    });
+    const prio = row.querySelector(".qrow__prio--crit");
+    expect(prio?.textContent).toBe("p1");
+    expect(prio?.getAttribute("title")).toBe("Priority 1 (urgent)");
+  });
+
+  it("keeps per-tier pill colours: no flat override in the dark contrast sheet", () => {
+    const chips = readFileSync(resolve(process.cwd(), "src/ui/row-chips.css"), "utf8");
+    const dark = readFileSync(resolve(process.cwd(), "src/ui/plan-dark-contrast.css"), "utf8");
+    for (const tier of ["crit", "high", "med", "low"]) {
+      expect(chips).toMatch(new RegExp(`\\.qrow__prio--${tier}\\s*\\{`));
+    }
+    expect(dark).not.toMatch(/\.qrow__prio\s*[,{]/);
+    expect(dark).toMatch(/@import "\.\/row-chips\.css"/);
+  });
+});

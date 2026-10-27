@@ -24,7 +24,7 @@ import { isProtectedNative, setMode } from "../model/rowDraft";
 import { EXCLUSION_REASONS } from "../model/batchEligibility";
 import type { HierarchyRow } from "../model/allocatorView";
 import { blocksLabel, display12h } from "../model/time";
-import { sourceContext } from "../model/sourceContext";
+import { rowTags, sourceContext } from "../model/sourceContext";
 import { mintOverlapNotes, overlapNotes } from "../model/findings";
 import { dueLabel, normalizeUrgency } from "../model/urgency";
 import type { AssignedItem } from "../model/types";
@@ -79,6 +79,13 @@ const PRIORITY_LABEL: Record<string, string> = {
   high: "p2",
   med: "p3",
   low: "p4",
+};
+
+const PRIORITY_TITLE: Record<string, string> = {
+  crit: "Priority 1 (urgent)",
+  high: "Priority 2 (high)",
+  med: "Priority 3 (medium)",
+  low: "Priority 4 (low)",
 };
 
 const NATIVE_TIME = /^(?:[01]\d|2[0-3]):[0-5]\d$/;
@@ -184,6 +191,7 @@ export function TaskRow({
   const chip = sourceChip(item);
   const kind = kindLabel(item, structureTitles);
   const urgency = normalizeUrgency(item);
+  const tags = rowTags(item);
   const due = dueLabel(item.deadline, s.inputs?.validDate ?? "");
   const blocks = effectiveBlocks(s, item.id);
   const selected = isRowSelected(s, item.id);
@@ -302,9 +310,24 @@ export function TaskRow({
             </span>
           )}
           {urgency?.tier && (
-            <span class={`qrow__prio qrow__prio--${urgency.tier}`} title="Priority">
+            <span class={`qrow__prio qrow__prio--${urgency.tier}`} title={PRIORITY_TITLE[urgency.tier]}>
               {PRIORITY_LABEL[urgency.tier]}
             </span>
+          )}
+          {tags.visible.length > 0 && (
+            <ul
+              class="qrow__tags"
+              aria-label={`Tags: ${[...tags.visible, ...tags.rest].join(", ")}`}
+            >
+              {tags.visible.map((t) => (
+                <li key={t} class="qrow__tag">{t}</li>
+              ))}
+              {tags.rest.length > 0 && (
+                <li class="qrow__tag qrow__tag--more" title={tags.rest.join(", ")}>
+                  +{tags.rest.length}
+                </li>
+              )}
+            </ul>
           )}
           <span class={`trow__state${staged ? " trow__state--staged" : ""}`}>
             {shortState(s, item)}
