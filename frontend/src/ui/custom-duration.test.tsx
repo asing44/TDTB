@@ -1,5 +1,5 @@
 /* custom-duration.test.tsx — the expanded row's Duration can be typed.
-   The preset select stays; a "Custom duration" text input stages any
+   The quick chips cover the common values; a "Custom duration" text input stages any
    parseable duration (exact minutes, blocks = minutes / 30) on the same row
    draft, and Save/Discard remain the only commit path. Fixture adapters only. */
 
@@ -26,8 +26,13 @@ function expand(container: Element, name: string): HTMLElement {
 
 const custom = (row: Element) =>
   row.querySelector<HTMLInputElement>('input[aria-label="Custom duration"]')!;
-const preset = (row: Element) =>
-  row.querySelector<HTMLSelectElement>('select[aria-label="Duration"]')!;
+/** The quick duration chips that replaced the preset select. */
+const checkedChip = (row: Element) =>
+  row.querySelector<HTMLElement>('[role="radiogroup"][aria-label="Duration"] [aria-checked="true"]')!;
+const chip = (row: Element, minutes: number) =>
+  row.querySelector<HTMLButtonElement>(
+    `[role="radiogroup"][aria-label="Duration"] [role="radio"][data-minutes="${minutes}"]`,
+  )!;
 const btn = (row: Element, text: string) =>
   Array.from(row.querySelectorAll<HTMLButtonElement>("button")).find(
     (b) => b.textContent?.trim() === text,
@@ -47,8 +52,9 @@ describe("typed custom duration on the expanded row", () => {
 
     expect(h.store.getState().drafts["Press"].blocks).toBeCloseTo(10 / 30, 10);
     row = rowFor(container, "Press");
-    const selected = preset(row).selectedOptions[0];
-    expect(selected.textContent).toBe("10min");
+    // 10 minutes is off the quick grid, so the group gains one Custom chip
+    // that reports exactly what the typed field staged.
+    expect(checkedChip(row).textContent).toBe("Custom: 10m");
     expect(btn(row, "Save")).not.toBeNull();
   });
 
@@ -109,12 +115,13 @@ describe("typed custom duration on the expanded row", () => {
     expect(custom(row).getAttribute("aria-invalid")).not.toBe("true");
   });
 
-  it("the preset select still stages a duration", () => {
+  it("a quick chip stages a duration in one click", () => {
     const h = makeHarness("ready");
     const { container } = h.ui(<Queue />);
     const row = expand(container, "Press");
-    fireEvent.change(preset(row), { target: { value: "4" } });
+    fireEvent.click(chip(row, 120));
     expect(h.store.getState().drafts["Press"].blocks).toBe(4);
+    expect(checkedChip(rowFor(container, "Press")).getAttribute("aria-checked")).toBe("true");
   });
 
   it("is disabled for an all-day draft", () => {

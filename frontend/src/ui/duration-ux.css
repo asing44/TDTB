@@ -1,0 +1,207 @@
+/* duration-ux.css — one-tap duration chips, the save-state chip, the header
+   Save/Discard icons, and Remember for next time. Existing tokens
+   (tokens.css) only; both themes follow data-theme on <html> through them.
+
+   Contrast (text on its own background, computed from the token values):
+     light  Unsaved    --t-accent-strong #0f6e56 on --t-accent-subtle #e1f5ee
+            Today      --t-text #2a2a27 on --t-surface-2 #f1efe8
+            Source     --t-muted #5f5e5a on --t-surface #fdfcf9
+     dark   Unsaved    #5fd4ae on #10362b
+            Today      #e8e6e0 on #232320
+            Source     #a3a19a on #191917 */
+
+/* Readout line in the collapsed header: save-state chip beside the label. */
+.dslider__top {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+  min-width: 0;
+}
+.dslider__top .dslider__label {
+  flex: none;
+}
+
+.dux-status {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+}
+.dux-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 16px;
+  padding: 0 5px;
+  border: 1px solid var(--t-border);
+  border-radius: 8px;
+  background: var(--t-surface-2);
+  color: var(--t-text);
+  font-family: var(--font-sans);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: default;
+}
+.dux-dot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+/* Unsaved: accent colour + a filled dot. */
+.dux-badge--unsaved {
+  border-color: var(--t-accent);
+  background: var(--t-accent-subtle);
+  color: var(--t-accent-strong);
+}
+/* Remembered: a blue edge marks "durable"; the word still carries it. */
+.dux-badge--remembered {
+  border-color: var(--state-remembered);
+}
+/* From source: dashed edge, quiet text — nothing was changed. */
+.dux-badge--source {
+  border-style: dashed;
+  background: var(--t-surface);
+  color: var(--t-muted);
+}
+.dux-badge--today .dux-dot,
+.dux-badge--remembered .dux-dot,
+.dux-badge--source .dux-dot {
+  width: 5px;
+  height: 5px;
+  opacity: 0.55;
+}
+.dux-saved {
+  position: static;
+  margin: 0;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 16px;
+  white-space: nowrap;
+  color: var(--t-accent-strong);
+}
+/* Narrow duration cell: the chip collapses to its dot (word stays for
+   assistive tech and in the title tooltip). */
+@container dur (max-width: 139px) {
+  .dux-badge {
+    width: 16px;
+    padding: 0;
+    justify-content: center;
+  }
+  .dux-badge__text {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+  }
+}
+
+/* ✓ Save / ↺ Discard in the collapsed header. */
+.dux-acts {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin: -3px 0;
+}
+.dux-icon {
+  display: inline-grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid var(--t-border);
+  border-radius: var(--radius-sm);
+  background: var(--t-surface);
+  color: var(--t-text);
+  font: inherit;
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+}
+.dux-icon:hover:not(:disabled) {
+  border-color: var(--t-muted);
+}
+.dux-icon--save {
+  border-color: var(--t-accent-strong);
+  background: var(--t-accent-strong);
+  color: var(--t-on-accent);
+}
+.dux-icon:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+.dux-icon:focus-visible {
+  outline: 2px solid var(--c-selected);
+  outline-offset: 2px;
+}
+
+/* One-tap duration chips (expanded row). */
+.dux-chips {
+  display: inline-flex;
+  flex-wrap: nowrap;
+  gap: 4px;
+}
+.dux-chip {
+  min-height: 28px;
+  padding: 2px 8px;
+  border: 1px solid var(--t-border);
+  border-radius: var(--radius-sm);
+  background: var(--t-surface);
+  color: var(--t-text);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.dux-chip:hover:not(:disabled):not(.dux-chip--on) {
+  border-color: var(--t-muted);
+}
+.dux-chip--on {
+  border-color: var(--t-accent);
+  background: var(--t-accent-subtle);
+  color: var(--t-accent-strong);
+  font-weight: 600;
+}
+.dux-chip:disabled {
+  background: var(--t-surface-2);
+  color: var(--t-muted);
+  cursor: not-allowed;
+}
+.dux-chip:focus-visible {
+  outline: 2px solid var(--c-selected);
+  outline-offset: 2px;
+}
+.trow__panel .dux-exact {
+  width: 7ch;
+  min-height: 28px;
+  font-size: 12px;
+}
+
+/* Remember for next time. */
+.dux-mem {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 28px;
+}
+.dux-mem--off {
+  color: var(--t-muted);
+  cursor: not-allowed;
+}
+.dux-mem input:focus-visible {
+  outline: 2px solid var(--c-selected);
+  outline-offset: 2px;
+}
+@media (max-width: 640px) {
+  .dux-chips {
+    flex-wrap: wrap;
+  }
+  .dux-chip {
+    min-height: 34px;
+  }
+}

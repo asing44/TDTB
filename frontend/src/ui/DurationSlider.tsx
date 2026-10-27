@@ -12,6 +12,7 @@
    the earlier plan-row design's bottom-of-track meaning: the thumb sits at 0
    for an all-day row and moving right picks 15, 30, 45 … up to the max. */
 
+import type { ComponentChildren } from "preact";
 import { minutesToBlocks } from "../model/parseDuration";
 import { blocksLabel } from "../model/time";
 import "./duration-slider.css";
@@ -51,6 +52,7 @@ export function DurationSlider({
   idBase,
   name,
   onChange,
+  status,
 }: {
   /** The row's duration in 30-minute blocks; 0 = All-day. */
   blocks: number;
@@ -64,6 +66,8 @@ export function DurationSlider({
   /** The row's name, carried by the stepper labels. */
   name?: string;
   onChange: (blocks: number) => void;
+  /** Save-state chip, set beside the readout on the same line. */
+  status?: ComponentChildren;
 }) {
   const minutes = Math.round(blocks * 30);
   const floor = allDayLocked ? STEPPER_MINUTES : SLIDER_MIN_MINUTES;
@@ -76,9 +80,12 @@ export function DurationSlider({
   const step = (direction: 1 | -1) => onChange(minutesToBlocks(stepMinutes(shown, direction)));
   return (
     <span class="dslider" title={title ?? `Duration ${label}`}>
-      <output class="dslider__label" aria-live="off">
-        {label}
-      </output>
+      <span class="dslider__top">
+        {status}
+        <output class="dslider__label" aria-live="off">
+          {label}
+        </output>
+      </span>
       <span class="dslider__ctl">
         <button
           type="button"
