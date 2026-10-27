@@ -550,10 +550,10 @@ class TestCapacitySegment:
         _write_artifact({"total": 2, "done": 2, "outstanding": 0, "est_minutes": 0})
         assert _body(monkeypatch)["capacity"]["habits"] == 0
 
-    def test_legend_reports_the_done_left_split(self, vault, monkeypatch):
+    def test_legend_reports_the_active_habit_count(self, vault, monkeypatch):
         _write_artifact({"total": 2, "done": 1, "outstanding": 1, "est_minutes": 30})
         legend = _body(monkeypatch)["capacity"]["legend"]
-        assert "habits: 1 done · 1 left" in legend
+        assert "habits: 2 active" in legend
 
     def test_no_artifact_zeroes_habits_and_warns_loudly(self, vault, monkeypatch):
         body = _body(monkeypatch)

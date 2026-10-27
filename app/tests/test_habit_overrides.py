@@ -447,7 +447,7 @@ class TestCapacityFromItems:
             "a": {"on": False}, "b": {"minutes": 45},
         }}}, headers=_auth(client))
         legend = _body(client)["capacity"]["legend"]
-        assert "habits: 1 done · 2 left" in legend
+        assert "habits: 3 active" in legend
         assert "1 skipped" in legend
         assert "1 adjusted" in legend
 
@@ -480,6 +480,6 @@ class TestCapacityTotalOverrideFallback:
         _install_config()
         _write_artifact({**self.AGG, "done": 1, "outstanding": 2})
         legend = _body(client)["capacity"]["legend"]
-        assert "habits: 1 done · 2 left" in legend
+        assert "habits: 3 active" in legend
         assert "skipped" not in legend
         assert "adjusted" not in legend
