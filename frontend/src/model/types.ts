@@ -579,6 +579,14 @@ export interface Validation {
   warnings: string[];
   /** Additive structured context; absent in legacy validation payloads. */
   diagnostics?: ValidationDiagnostic[];
+  /** Rows the server deterministically repaired while validating (snapped
+      calendar companions, synthesized overlap grants). Present only when the
+      repair changed the layout. The staged rows must adopt these, because
+      /commit writes the staged sequence verbatim and validates nothing.
+      Overlap grants are NOT adopted: the server re-derives them on every
+      validation, and submitting synthesized grants would fail the commit
+      snapshot comparison. */
+  repairedRows?: SequenceRow[];
 }
 
 export type ShadowClassification =

@@ -2488,6 +2488,12 @@ export function projectValidation(wire: Wire): Validation {
     hardErrors: (wire.hard_errors ?? []).map(String),
     warnings: (wire.warnings ?? []).map(warningText),
   };
+  // Deterministic repairs ride the validation response only when they changed
+  // the layout; legacy servers never send the key and the projection stays as
+  // it was.
+  if (Array.isArray(wire.sequence) && wire.sequence.length > 0) {
+    projected.repairedRows = wire.sequence.map(projectSequenceRow);
+  }
   if (Object.prototype.hasOwnProperty.call(wire, "diagnostics")) {
     const rawDiagnostics = wire.diagnostics;
     const diagnosticValues = Array.isArray(rawDiagnostics)

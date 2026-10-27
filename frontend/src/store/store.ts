@@ -599,6 +599,27 @@ export type Action =
     };
 
 /** Any staged-plan edit after a current shadow makes it stale + disarms live. */
+/** Adopt a deterministic server repair reported by /validate-sequence: move
+    only the rows the server named, matched by id, and only their timing.
+    Names, durations, pins and the raw wire blob stay untouched — /commit
+    reads start/end straight off the row, so this keeps the committed plan
+    identical to the one the server validated. */
+function applyRepairedRows(
+  rows: SequenceRow[] | null,
+  repaired: readonly SequenceRow[],
+): SequenceRow[] | null {
+  if (!rows || rows.length === 0 || repaired.length === 0) return rows;
+  const byId = new Map(repaired.map((r) => [r.id, r]));
+  let changed = false;
+  const next = rows.map((row) => {
+    const fix = byId.get(row.id);
+    if (!fix || (fix.start === row.start && fix.end === row.end)) return row;
+    changed = true;
+    return { ...row, start: fix.start, end: fix.end };
+  });
+  return changed ? next : rows;
+}
+
 function staleShadow(
   s: AppState,
 ): Pick<AppState, "shadowPhase" | "liveArmed" | "shadowError" | "shadowErrorKind"> {
@@ -1068,6 +1089,7 @@ export function reducer(s: AppState, a: Action): AppState {
       const ok = a.validation.ok && anchoredDrift === null;
       return {
         ...s,
+        sequence: applyRepairedRows(s.sequence, a.validation.repairedRows ?? []),
         validation: a.validation,
         seqPhase: ok ? "valid" : "dirty",
         driftNotice: ok ? null : (anchoredDrift ?? s.driftNotice),

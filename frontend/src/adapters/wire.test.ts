@@ -1125,6 +1125,26 @@ describe("sequence + validation projections", () => {
     expect(fail.hardErrors.length).toBeGreaterThan(0);
   });
 
+  it("projects deterministic repair rows additively", () => {
+    // /validate-sequence reports the rows it repaired only when the repair
+    // changed the layout; the staged plan must adopt them or /commit writes
+    // the pre-repair rows.
+    const v = projectValidation({
+      ok: true,
+      hard_errors: [],
+      warnings: [],
+      sequence: [{ id: "Foods Dinner", start: "18:00", end: "19:30", zone: "evening" }],
+    });
+    expect(v.repairedRows?.map((r) => [r.id, r.start, r.end, r.zone])).toEqual([
+      ["Foods Dinner", "18:00", "19:30", "evening"],
+    ]);
+    // Legacy servers and un-repaired validations carry no key at all.
+    expect(projectValidation(validateOk).repairedRows).toBeUndefined();
+    expect(
+      projectValidation({ ok: true, hard_errors: [], warnings: [], sequence: [] }).repairedRows,
+    ).toBeUndefined();
+  });
+
   it("projects dict soft warnings to their verbatim detail strings (validate-warn.json)", () => {
     // The server validator emits warnings as {id, rule|kind, detail} dicts;
     // the cockpit renders (and accepts, LD 24) the human detail — never

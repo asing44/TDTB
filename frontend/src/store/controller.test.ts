@@ -686,6 +686,53 @@ describe("out-of-order response guard", () => {
   });
 });
 
+describe("deterministic repair adoption (blockers)", () => {
+  it("moves only the rows the server repaired, and only their timing", async () => {
+    const { store, adapter, controller } = harness("ready");
+    await controller.load();
+    await controller.saveDaySetup({ ...store.getState().daySetup, confirmed: true });
+    await controller.autoSequence();
+    const before = store.getState().sequence!;
+    expect(before.length).toBeGreaterThan(1);
+    const target = before.find((r) => r.kind === "work")!;
+    const other = before.find((r) => r.kind === "work" && r.id !== target.id)!;
+    const real = adapter.validateSequence.bind(adapter);
+    vi.spyOn(adapter, "validateSequence").mockImplementation(async (rows, ctx) => ({
+      ...(await real(rows, ctx)),
+      repairedRows: [
+        // A snapped calendar companion: the server reports its new timing.
+        { ...target, start: "18:00", end: "19:30" },
+        // A row that already matched is reported but must not move.
+        { ...other },
+      ],
+    }));
+    await controller.revalidate();
+    const after = store.getState().sequence!;
+    const moved = after.find((r) => r.id === target.id)!;
+    expect([moved.start, moved.end]).toEqual(["18:00", "19:30"]);
+    // /commit reads start/end off the row, so the raw wire blob and the row's
+    // identity must survive the repair untouched.
+    expect(moved.wire).toEqual(target.wire);
+    expect(moved.kind).toBe(target.kind);
+    // Unchanged rows keep their exact object identity.
+    expect(after.find((r) => r.id === other.id)).toBe(other);
+    expect(store.getState().seqPhase).toBe("valid");
+  });
+
+  it("leaves the plan untouched when the server reports no repair", async () => {
+    const { store, controller } = harness("ready");
+    await controller.load();
+    await controller.saveDaySetup({ ...store.getState().daySetup, confirmed: true });
+    await controller.autoSequence();
+    const before = store.getState().sequence;
+    store.dispatch({
+      type: "VALIDATED",
+      validation: { ok: true, hardErrors: [], warnings: [] },
+    });
+    expect(store.getState().sequence).toBe(before);
+  });
+});
+
 describe("preview / revalidation error visibility (2026-10-13)", () => {
   /** Fully staged, acceptable-defect-accepted plan — the state a Build
       preview / Revalidate click actually starts from. */
