@@ -1,11 +1,12 @@
 """test_habit_overrides.py — Set up day per-habit rows + per-day overrides.
 
 The planning artifact's optional ``habits.items`` list carries one entry per
-OUTSTANDING habit (``{id, content, minutes}``). The dated Day Setup note
-carries an additive ``habits`` override block (per-item ``{on, minutes}`` plus
-an aggregate ``total`` override). Capacity computes the habits segment from
-the items when present, honouring the overrides; when no items exist it falls
-back to the aggregate ``est_minutes`` (still honouring the ``total`` override).
+habit (``{id, content, minutes}``) — completion is not read, so no habit is
+filtered out as done. The dated Day Setup note carries an additive ``habits``
+override block (per-item ``{on, minutes}`` plus an aggregate ``total``
+override). Capacity computes the habits segment from the items when present,
+honouring the overrides; when no items exist it falls back to the aggregate
+``est_minutes`` (still honouring the ``total`` override).
 
 Contract pinned here: additive schema, old payloads/notes unchanged, invalid
 overrides rejected 422, dated isolation, full-replace semantics, and that a
@@ -114,6 +115,8 @@ def _body(client: TestClient) -> dict:
 
 
 def _habit_entry(tasks, completed=(), **knobs) -> dict:
+    """A habits source entry. ``completed`` keeps the legacy fetch shape
+    reachable so tests can prove that completion data is IGNORED."""
     entry = {
         "status": "ok",
         "read_at": _now(),
@@ -142,33 +145,36 @@ class TestProducerItems:
             {"id": "c", "content": "C", "minutes": 4},
         ]
 
-    def test_completed_items_are_excluded_by_id(self):
+    def test_completed_items_are_still_emitted_by_id(self):
         entry = _habit_entry(
             [{"id": "a", "content": "A", "duration": "25m"},
              {"id": "b", "content": "B", "duration": "25m"}],
             completed=[{"task_id": "a"}],
         )
         assert pr.compute_habit_summary(entry)["items"] == [
+            {"id": "a", "content": "A", "minutes": 25},
             {"id": "b", "content": "B", "minutes": 25},
         ]
 
-    def test_completed_items_are_excluded_by_name(self):
+    def test_completed_items_are_still_emitted_by_name(self):
         entry = _habit_entry(
             [{"id": "a", "content": "A", "duration": "25m"},
              {"id": "b", "content": "B", "duration": "25m"}],
             completed=[{"content": "A"}],
         )
-        assert [i["id"] for i in pr.compute_habit_summary(entry)["items"]] == ["b"]
+        assert [i["id"] for i in pr.compute_habit_summary(entry)["items"]] == [
+            "a", "b",
+        ]
 
-    def test_all_done_omits_items_and_keeps_the_aggregate(self):
+    def test_every_habit_completed_still_yields_items_and_minutes(self):
         entry = _habit_entry(
             [{"id": "a", "content": "A", "duration": "30m"}],
             completed=[{"id": "a"}],
         )
-        result = pr.compute_habit_summary(entry)
-        assert result == {"total": 1, "done": 1, "outstanding": 0,
-                          "est_minutes": 0}
-        assert "items" not in result
+        assert pr.compute_habit_summary(entry) == {
+            "total": 1, "done": 0, "outstanding": 1, "est_minutes": 30,
+            "items": [{"id": "a", "content": "A", "minutes": 30}],
+        }
 
     def test_missing_entry_has_no_items(self):
         assert pr.compute_habit_summary(None) == art.HABITS_EMPTY

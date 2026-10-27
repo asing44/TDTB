@@ -3,8 +3,14 @@
 Obsidian is retired: the habit done/total split and the outstanding-minutes
 estimate ride the planning artifact's top-level ``habits`` block, computed by
 the producer (``producer_rules.compute_habit_summary``). This file pins the
-producer arithmetic (grain rounding, per-habit fallback, completed-today) and
-the end-to-end capacity effect through /plan-inputs.
+producer arithmetic (grain rounding, per-habit fallback) and the end-to-end
+capacity effect through /plan-inputs.
+
+Habit completion is NOT read: Adam tracks habits in Grit, so the Todoist
+Habits list is the active set and toggling happens in the app's per-day
+overrides. Every habit is therefore outstanding, every habit's minutes are
+reserved, and any completion data that reaches the producer (a legacy fetch,
+an old artifact) is ignored rather than honoured.
 """
 from __future__ import annotations
 
@@ -102,6 +108,8 @@ def _body(monkeypatch: pytest.MonkeyPatch) -> dict:
 
 
 def _habit_entry(tasks, completed=(), **knobs) -> dict:
+    """A habits source entry. ``completed`` keeps the legacy fetch shape
+    reachable so tests can prove that completion data is IGNORED."""
     entry = {
         "status": "ok",
         "read_at": _now(),
@@ -162,66 +170,81 @@ class TestComputeHabitSummary:
         entry["round_to_minutes"] = 30
         assert pr.compute_habit_summary(entry)["est_minutes"] == 30  # 30 -> 30
 
-    def test_completed_today_is_done_and_excluded_from_minutes(self):
+    def test_five_habits_with_two_completions_are_all_outstanding(self):
+        """The contract example: completions never subtract. Five habits, two
+        referenced by today's completion tokens, still total five and reserve
+        all five habits' minutes."""
         entry = _habit_entry(
             [{"id": "a", "content": "A", "duration": "25m"},
-             {"id": "b", "content": "B", "duration": "25m"}],
-            completed=[{"task_id": "a"}],
+             {"id": "b", "content": "B", "duration": "25m"},
+             {"id": "c", "content": "C", "duration": "10m"},
+             {"id": "d", "content": "D", "duration": "10m"},
+             {"id": "e", "content": "E", "duration": "10m"}],
+            completed=[{"task_id": "a"}, {"content": "B"}],
         )
-        result = pr.compute_habit_summary(entry)
+        # 25 + 25 + 10 + 10 + 10 = 80 min -> 90 at the 15-min grain.
+        result = pr.compute_habit_summary(entry, logical_day="2026-10-08")
         assert {k: result[k] for k in (
             "total", "done", "outstanding", "est_minutes",
-        )} == {"total": 2, "done": 1, "outstanding": 1, "est_minutes": 30}
-        assert result["items"] == [{"id": "b", "content": "B", "minutes": 25}]
+        )} == {"total": 5, "done": 0, "outstanding": 5, "est_minutes": 90}
+        assert [item["id"] for item in result["items"]] == [
+            "a", "b", "c", "d", "e",
+        ]
 
-    def test_a_completion_from_another_day_is_not_done_today(self):
-        """``find-completed-tasks`` defaults to a WEEK-long window, so the fetch
-        cannot scope "done today" — the producer must. A habit finished earlier
-        in the week must not read as done."""
-        entry = _habit_entry(
-            [{"id": "a", "content": "A", "duration": "25m"},
-             {"id": "b", "content": "B", "duration": "25m"}],
-            completed=[{"task_id": "a",
-                        "completedAt": _local_stamp("2026-10-06")}],
+    @pytest.mark.parametrize("completed", [
+        pytest.param([{"task_id": "a"}], id="id-today-undated"),
+        pytest.param([{"id": "a"}], id="bare-object-id"),
+        pytest.param(["a"], id="bare-string-id"),
+        pytest.param([{"content": "A"}], id="content-name"),
+        pytest.param([{"task_id": "a",
+                       "completedAt": _local_stamp("2026-10-08")}],
+                     id="id-completed-on-the-logical-day"),
+        pytest.param([{"task_id": "a",
+                       "completedAt": _local_stamp("2026-10-06")}],
+                     id="id-completed-earlier-in-the-week"),
+        pytest.param([{"task_id": "a", "completedAt": "not-a-timestamp"}],
+                     id="malformed-completed-at"),
+        pytest.param([{"task_id": "a"}, {"content": "B"}, "b"],
+                     id="redundant-matches"),
+    ])
+    def test_completion_data_never_changes_the_block(self, completed):
+        """Every legacy completion shape is ignored, so the block equals the
+        completion-free baseline exactly."""
+        tasks = [{"id": "a", "content": "A", "duration": "25m"},
+                 {"id": "b", "content": "B", "duration": "25m"}]
+        baseline = pr.compute_habit_summary(
+            _habit_entry(tasks), logical_day="2026-10-08"
         )
-        # 25 + 25 = 50 min -> 60 at the 15-min grain; nothing counts as done.
-        result = pr.compute_habit_summary(entry, logical_day="2026-10-08")
+        result = pr.compute_habit_summary(
+            _habit_entry(tasks, completed=completed), logical_day="2026-10-08"
+        )
+        assert result == baseline
+        # 25 + 25 = 50 min -> 60 at the 15-min grain; nothing is subtracted.
         assert {k: result[k] for k in (
             "total", "done", "outstanding", "est_minutes",
         )} == {"total": 2, "done": 0, "outstanding": 2, "est_minutes": 60}
-        assert result["items"] == [
-            {"id": "a", "content": "A", "minutes": 25},
-            {"id": "b", "content": "B", "minutes": 25},
-        ]
 
-    def test_a_completion_on_the_logical_day_is_done(self):
+    def test_a_completion_shaped_like_a_working_record_is_ignored(self):
+        """A completion carried in the older, richer shapes still never counts."""
         entry = _habit_entry(
-            [{"id": "a", "content": "A", "duration": "25m"},
-             {"id": "b", "content": "B", "duration": "25m"}],
-            completed=[{"task_id": "a",
-                        "completedAt": _local_stamp("2026-10-08")}],
+            [{"id": "a", "content": "A", "duration": "30m"}],
+            completed=[{"task_id": "a", "taskId": "a", "id": "c1",
+                        "content": "A", "name": "A", "completed_at":
+                        _local_stamp("2026-10-08")}],
         )
-        result = pr.compute_habit_summary(entry, logical_day="2026-10-08")
-        assert {k: result[k] for k in (
-            "total", "done", "outstanding", "est_minutes",
-        )} == {"total": 2, "done": 1, "outstanding": 1, "est_minutes": 30}
-        assert result["items"] == [{"id": "b", "content": "B", "minutes": 25}]
+        assert pr.compute_habit_summary(entry, logical_day="2026-10-08") == {
+            "total": 1, "done": 0, "outstanding": 1, "est_minutes": 30,
+            "items": [{"id": "a", "content": "A", "minutes": 30}],
+        }
 
-    def test_an_undated_completion_still_counts(self):
-        """The fetch window is the only guard for an undated completion."""
-        entry = _habit_entry(
-            [{"id": "a", "content": "A", "duration": "25m"}],
-            completed=[{"task_id": "a"}],
-        )
-        assert pr.compute_habit_summary(entry, logical_day="2026-10-08")["done"] == 1
-
-    def test_all_done_reserves_nothing(self):
+    def test_every_habit_completed_still_reserves_every_minute(self):
         entry = _habit_entry(
             [{"id": "a", "content": "A", "duration": "30m"}],
             completed=[{"id": "a"}],
         )
         assert pr.compute_habit_summary(entry) == {
-            "total": 1, "done": 1, "outstanding": 0, "est_minutes": 0,
+            "total": 1, "done": 0, "outstanding": 1, "est_minutes": 30,
+            "items": [{"id": "a", "content": "A", "minutes": 30}],
         }
 
     def test_missing_entry_is_the_zeroed_block(self):
@@ -324,7 +347,7 @@ class TestHabitDueDateScope:
         assert pr.compute_habit_summary(entry)["total"] == 2
         assert pr.compute_habit_summary(entry, logical_day="garbage")["total"] == 2
 
-    def test_future_completion_does_not_leak_into_done(self):
+    def test_a_completion_on_a_future_habit_changes_nothing(self):
         entry = _habit_entry(
             [{"id": "today", "content": "Habit today", "duration": "10m",
               "dueDate": LOGICAL_DAY},
@@ -338,7 +361,7 @@ class TestHabitDueDateScope:
             "items": [{"id": "today", "content": "Habit today", "minutes": 10}],
         }
 
-    def test_eligible_completed_today_is_done_without_minutes(self):
+    def test_eligible_completed_today_still_reserves_minutes(self):
         entry = _habit_entry(
             [{"id": "a", "content": "Habit A", "duration": "25m",
               "dueDate": LOGICAL_DAY},
@@ -349,8 +372,11 @@ class TestHabitDueDateScope:
         result = pr.compute_habit_summary(entry, logical_day=LOGICAL_DAY)
         assert {k: result[k] for k in (
             "total", "done", "outstanding", "est_minutes",
-        )} == {"total": 2, "done": 1, "outstanding": 1, "est_minutes": 30}
-        assert result["items"] == [{"id": "b", "content": "Habit B", "minutes": 25}]
+        )} == {"total": 2, "done": 0, "outstanding": 2, "est_minutes": 60}
+        assert result["items"] == [
+            {"id": "a", "content": "Habit A", "minutes": 25},
+            {"id": "b", "content": "Habit B", "minutes": 25},
+        ]
 
     def test_caller_logical_day_governs_not_the_wall_clock(self):
         # At 01:00 the 02:00 cutoff still puts the caller on the previous civil
@@ -430,6 +456,77 @@ class TestArtifactHabits:
         block, warnings = art.load_habits(path=tmp_path / "nope.json")
         assert block == art.HABITS_EMPTY
         assert warnings
+
+    def test_legacy_block_with_completion_data_stays_valid(self, tmp_path):
+        """An artifact written before completion was dropped may still carry a
+        ``done`` value, a completion list, and done-filtered ``items``. That is
+        not a new contract violation and nothing of it is re-read: the block
+        loads exactly as written, with no added warnings."""
+        legacy = {
+            "total": 5, "done": 2, "outstanding": 3, "est_minutes": 45,
+            "completed": [
+                {"task_id": "a", "content": "A",
+                 "completedAt": "2026-07-26T10:00:00Z"},
+                {"task_id": "b"},
+            ],
+            "items": [{"id": "c", "content": "C", "minutes": 15}],
+        }
+        target = _write_artifact(
+            legacy, logical_day=art._today_effective_date(datetime.now()),
+            path=tmp_path / "a.json",
+        )
+        document = json.loads(Path(target).read_text(encoding="utf-8"))
+        assert art.validate_artifact(document) == []
+        result = art.load_artifact(
+            datetime.now().astimezone(), path=target,
+            overlay=tmp_path / "no-overlay.json",
+        )
+        assert result.status == art.STATUS_FRESH
+        assert result.habits == {
+            "total": 5, "done": 2, "outstanding": 3, "est_minutes": 45,
+            "items": [{"id": "c", "content": "C", "minutes": 15}],
+        }
+        assert result.habit_warnings == []
+
+    def test_legacy_completion_rows_in_the_habits_source_stay_valid(self, tmp_path):
+        """The habits SOURCE entry could carry ``tasks`` plus fetched
+        ``completed`` rows. Those extra keys stay contract-legal and are never
+        read back as habit state."""
+        read_at = _now()
+        sources = {
+            "habits": {
+                "status": "ok", "read_at": read_at, "rows": 0,
+                "dropped": 0, "deferred": 0, "warnings": [],
+                "tasks": [{"id": "a", "content": "A", "duration": "25m"}],
+                "completed": [{"task_id": "a"}],
+            }
+        }
+        document = {
+            "schema": art.ARTIFACT_SCHEMA,
+            "version": art.ARTIFACT_VERSION,
+            "generated_at": read_at,
+            "logical_day": art._today_effective_date(datetime.now()),
+            "producer": {"name": "test", "version": "0.1.0", "run_id": "r1"},
+            "content_hash": art.compute_content_hash(sources, []),
+            "sources": sources,
+            "rows": [],
+            "admission": {"rule_set_hash": "rs", "admitted": [], "dropped": []},
+            "habits": {"total": 1, "done": 1, "outstanding": 0,
+                       "est_minutes": 0},
+        }
+        target = _write_document(document, path=tmp_path / "b.json")
+        assert art.validate_artifact(
+            json.loads(Path(target).read_text(encoding="utf-8"))
+        ) == []
+        result = art.load_artifact(
+            datetime.now().astimezone(), path=target,
+            overlay=tmp_path / "no-overlay.json",
+        )
+        assert result.status == art.STATUS_FRESH
+        assert result.habits == {
+            "total": 1, "done": 1, "outstanding": 0, "est_minutes": 0,
+        }
+        assert result.habit_warnings == []
 
 
 # ---------------------------------------------------------------------------

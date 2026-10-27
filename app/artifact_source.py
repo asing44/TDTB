@@ -71,17 +71,20 @@ import app_config
 ARTIFACT_SCHEMA = "tdtb.planning-artifact"
 ARTIFACT_VERSION = 1
 
-#: The optional top-level habit summary. Habits are agent-fetched data (the
-#: REST Todoist client exposes no completed-tasks read), so the producer
-#: computes them and the app reads them from here. The block shape is the
-#: contract the UI and the capacity math already consume; it is NOT part of
-#: the row contract and an artifact without it stays valid.
+#: The optional top-level habit summary. The Habits Todoist project is a
+#: manually toggled list (completion is tracked in Grit, not here), so the
+#: producer derives ``total``/``est_minutes`` from the fetched tasks alone and
+#: the app reads the block from here. Completion data is never required: a
+#: legacy artifact carrying ``done`` values or completion rows stays valid and
+#: those values are simply not re-derived. The block shape is the contract the
+#: UI and the capacity math already consume; it is NOT part of the row contract
+#: and an artifact without it stays valid.
 HABITS_KEY = "habits"
 HABITS_FIELDS = ("total", "done", "outstanding", "est_minutes")
 HABITS_EMPTY: dict[str, int] = {field: 0 for field in HABITS_FIELDS}
-#: Additive per-habit detail: one entry per OUTSTANDING habit, produced
-#: alongside the aggregate block. An artifact WITHOUT ``items`` stays valid
-#: and the app keeps today's aggregate-only behaviour.
+#: Additive per-habit detail: one entry per habit, produced alongside the
+#: aggregate block (nothing is filtered out as done). An artifact WITHOUT
+#: ``items`` stays valid and the app keeps today's aggregate-only behaviour.
 HABITS_ITEMS_KEY = "items"
 HABITS_ITEM_FIELDS = ("id", "content", "minutes")
 #: Bounded item contract: at most this many entries, ``0..480`` minutes, and
@@ -456,6 +459,11 @@ def habit_block_of(document: Any) -> tuple[dict[str, Any], list[str]]:
     summary. An artifact without the block (an older artifact) is valid and
     loads normally. The additive ``items`` list rides through when present and
     well formed; invalid entries are dropped with a warning, never a raise.
+
+    Completion is not read here, so a LEGACY block that still carries a
+    ``done`` value, a completion list, or done-filtered ``items`` stays valid
+    and loads exactly as written: those values are neither honoured nor
+    re-derived, and no warning is added for them.
     """
     missing = "Planning artifact has no habits block — habit capacity treated as zero."
     if not isinstance(document, dict):
