@@ -219,7 +219,7 @@ export function SourceMenu({ item, s }: { item: AssignedItem; s: AppState }) {
       }}><KebabIcon /></button>
     {shown && <div id={`${base}-popover`} class="source-menu__popover" ref={popover}>
       {open && <div class="source-menu__menu" role="menu" aria-label={`Source actions for ${item.name}`}>
-        {menuItem("Hide always", "Hidden from planning every day, applied now", "hideAlways")}
+        {menuItem("Hide always", "Hidden from planning every day", "hideAlways")}
         <hr class="source-menu__separator" role="separator" />
         {menuItem(`Delete in ${source}…`, `Permanently deletes it in ${source}`, "delete")}
         {reason && <p class="source-menu__reason" id={`${base}-reason`}>{reason}</p>}

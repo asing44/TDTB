@@ -179,7 +179,7 @@ describe("SourceMenu presentation and interaction", () => {
     expect(h.trigger.getAttribute("aria-expanded")).toBe("true");
     const popover = h.container.querySelector(`#${h.trigger.getAttribute("aria-controls")}`);
     expect(popover?.querySelector('[role="menu"]')).not.toBeNull();
-    // The footer is gone: the Hide detail carries "applied now".
+    // The old "Immediate actions" footer is gone as redundant.
     expect(h.container.textContent).not.toMatch(/Immediate actions/);
   });
 
