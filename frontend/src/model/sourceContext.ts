@@ -10,3 +10,17 @@ import type { AssignedItem } from "./types";
 export function sourceContext(item: AssignedItem): string {
   return (item.labels ?? []).join(" · ");
 }
+
+/** Max tag chips shown on a row's meta line before the rest fold into "+N". */
+export const MAX_VISIBLE_TAGS = 3;
+
+/** The row's visible tag chips: Todoist labels then Capacities tags, trimmed,
+    de-duplicated (emoji kept verbatim). `rest` feeds the "+N" chip's title. */
+export function rowTags(item: AssignedItem): { visible: string[]; rest: string[] } {
+  const all: string[] = [];
+  for (const raw of [...(item.labels ?? []), ...(item.tags ?? [])]) {
+    const t = typeof raw === "string" ? raw.trim() : "";
+    if (t && !all.includes(t)) all.push(t);
+  }
+  return { visible: all.slice(0, MAX_VISIBLE_TAGS), rest: all.slice(MAX_VISIBLE_TAGS) };
+}

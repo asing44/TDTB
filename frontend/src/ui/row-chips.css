@@ -1,0 +1,78 @@
+/* Row meta chips: priority pills and tag chips. Pulled in by
+   plan-dark-contrast.css so it loads after app.css's flat .qrow__prio block
+   (~:10117). Selectors carry the .qrow__source parent so they win by
+   specificity, not order. Every colour is light-dark(); the label contrast
+   ratios (>= 4.5:1) are computed from these exact values:
+   p1 white on c-overflow@80% over black (#bf3636)  5.53
+   p2 #1d1c1a on --c-minting (#f59e0b)              7.93
+   p3 #1d1c1a on c-event@70% over surface           11.76 light / 5.77 dark
+   p4 --t-muted on surface-2                        5.64 light / 6.09 dark
+   tag --t-text on 8-10% text tint                  12.07 light / 9.58 dark */
+
+.qrow__source .qrow__prio {
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  min-width: 26px;
+  min-height: 20px;
+  padding: 0 7px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: 0.02em;
+}
+.qrow__source .qrow__prio--crit {
+  background: color-mix(in srgb, var(--c-overflow) 80%, #000);
+  border-color: color-mix(in srgb, var(--c-overflow) 80%, #000);
+  color: #fff;
+}
+.qrow__source .qrow__prio--high {
+  background: var(--c-minting);
+  border-color: var(--c-minting);
+  color: #1d1c1a;
+}
+.qrow__source .qrow__prio--med {
+  background: color-mix(in srgb, var(--c-event) 70%, var(--t-surface));
+  border-color: color-mix(in srgb, var(--c-event) 70%, var(--t-surface));
+  color: #1d1c1a;
+}
+.qrow__source .qrow__prio--low {
+  background: transparent;
+  border-color: color-mix(in srgb, var(--t-muted) 70%, transparent);
+  color: var(--t-muted);
+  font-weight: 600;
+}
+
+.qrow__source .qrow__tags {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 1 auto;
+  gap: 4px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  white-space: nowrap;
+}
+.qrow__tag {
+  max-width: 14ch;
+  padding: 1px 7px;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--t-text) 16%, transparent);
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--t-text) 8%, var(--t-surface-2));
+  color: var(--t-text);
+  font-size: 11px;
+  line-height: 1.4;
+  text-overflow: ellipsis;
+}
+.qrow__tag--more {
+  max-width: none;
+  color: var(--t-muted);
+  cursor: help;
+}
