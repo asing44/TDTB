@@ -98,6 +98,19 @@ describe("duration resize helpers", () => {
     expect(resizeTargetMinutes({ ...base, laneWidthPx: 0, durationMin: 50, deltaPx: 80 })).toBe(50);
   });
 
+  it("never floors a shrink above the subject's own length", () => {
+    const blocks = { startMin: 600, dayEnd: 1425, stepMin: 30 };
+    // A 15-minute event on the strips' 30-minute block grid: shrinking must
+    // stay at 15 instead of snapping up a step and lengthening the event.
+    expect(keyboardResizeMinutes(15, -1, false, blocks)).toBe(15);
+    expect(resizeTargetMinutes({ ...base, stepMin: 30, durationMin: 15, deltaPx: -20 })).toBe(15);
+    // The floor is the smaller of one step and the current length.
+    expect(clampDuration(0, { ...blocks, currentMin: 15 })).toBe(15);
+    expect(clampDuration(0, { ...blocks, currentMin: 5 })).toBe(5);
+    // Growing is unchanged: one 30-minute step up from 15 is 30.
+    expect(keyboardResizeMinutes(15, 1, false, blocks)).toBe(30);
+  });
+
   it("steps by one grid line, an hour with Shift, and lands off-grid lengths on the grid", () => {
     const b = { startMin: 600, dayEnd: 1425 };
     expect(keyboardResizeMinutes(30, 1, false, b)).toBe(45);

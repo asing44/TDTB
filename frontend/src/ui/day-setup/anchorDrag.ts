@@ -50,33 +50,42 @@ export function keyboardTargetMinutes(
 
 /** Duration resize of a calendar event's trailing edge. The start stays put;
     the length snaps to `stepMin` (15 by default, 30 where the commit path only
-    counts whole blocks), never drops below one step, and never runs past the
-    ruler end or `maxMin`. */
+    counts whole blocks), never runs past the ruler end or `maxMin`, and never
+    drops below one step — except that the floor is the smaller of one step and
+    the subject's current length, so shrinking a sub-step event cannot lengthen
+    it. */
 interface ResizeBounds {
   startMin: number;
   dayEnd: number;
   stepMin?: number;
   maxMin?: number;
+  /** The subject's CURRENT length in minutes: the shrink floor never exceeds
+      it, so a 15-minute event on a 30-minute grid stays at 15. */
+  currentMin?: number;
 }
 
 export function clampDuration(minutes: number, bounds: ResizeBounds): number {
   const step = bounds.stepMin ?? ANCHOR_SNAP_MIN;
+  const floor = Math.min(step, bounds.currentMin ?? step);
   const room = Math.floor((bounds.dayEnd - bounds.startMin) / step) * step;
   const max = Math.max(step, Math.min(room, bounds.maxMin ?? Number.POSITIVE_INFINITY));
-  return Math.min(max, Math.max(step, minutes));
+  return Math.min(max, Math.max(floor, minutes));
 }
 
 export function resizeTargetMinutes(
   args: ResizeBounds & { durationMin: number; deltaPx: number; laneWidthPx: number; dayStart: number },
 ): number {
+  const bounds = { ...args, currentMin: args.durationMin };
   const span = args.dayEnd - args.dayStart;
-  if (!(args.laneWidthPx > 0) || span <= 0) return clampDuration(args.durationMin, args);
+  if (!(args.laneWidthPx > 0) || span <= 0) return clampDuration(args.durationMin, bounds);
   const raw = args.durationMin + (args.deltaPx / args.laneWidthPx) * span;
-  return clampDuration(snapMinutes(raw, args.stepMin), args);
+  return clampDuration(snapMinutes(raw, args.stepMin), bounds);
 }
 
 /** Arrow-key resize: one step, or an hour with Shift. A length off the grid
-    first lands on the adjacent grid line. */
+    first lands on the adjacent grid line. The floor is one step but never above
+    the current length, so a 15-minute event on a 30-minute grid stays put when
+    asked to shrink instead of growing to 30. */
 export function keyboardResizeMinutes(
   durationMin: number,
   direction: 1 | -1,
@@ -89,5 +98,5 @@ export function keyboardResizeMinutes(
     : direction > 0
       ? (Math.floor(durationMin / step) + 1) * step
       : (Math.ceil(durationMin / step) - 1) * step;
-  return clampDuration(raw, bounds);
+  return clampDuration(raw, { ...bounds, currentMin: durationMin });
 }

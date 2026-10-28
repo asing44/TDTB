@@ -22,8 +22,9 @@ import { anchorFrameStart, anchoredBlocks, anchoredOverrideOf } from "../model/a
 import { explicitMintCapMinutes, initialMintSessionIds } from "../model/mint";
 import { calendarWalls } from "../model/overflow";
 
-/** Counted duration is whole 30-minute blocks (1–12), exactly the grid the
-    Calendar impact stepper saves on: a resize can only land on that grid. */
+/** Counted duration is whole 30-minute blocks (1–12, or longer when a calendar
+    row already in force is longer), exactly the grid the Calendar impact
+    stepper saves on: a resize can only land on that grid. */
 export const RESIZE_BLOCK_MIN = 30;
 export const RESIZE_MAX_BLOCKS = 12;
 
@@ -114,9 +115,17 @@ export function AlreadyPlaced() {
 
   // Same single path as the Calendar impact stepper: a today-only counted
   // duration through saveAnchoredOverride. Nothing is written to the calendar.
+  // The ceiling follows the Set up day strip: 12 blocks, or the longest
+  // rendered calendar row when that is longer, so a 6h+ event is never snapped
+  // down to the default ceiling on its first resize.
+  const resizeMaxBlocks = Math.max(
+    RESIZE_MAX_BLOCKS,
+    ...calendar.map((event) => Math.ceil(event.durationMin / RESIZE_BLOCK_MIN)),
+  );
+  const resizeMaxMin = resizeMaxBlocks * RESIZE_BLOCK_MIN;
   const resizeEvent = (id: string, durationMin: number) => {
     const blocks = Math.min(
-      RESIZE_MAX_BLOCKS,
+      resizeMaxBlocks,
       Math.max(1, Math.round(durationMin / RESIZE_BLOCK_MIN)),
     );
     const saved = s.daySetup.anchored[id];
@@ -157,7 +166,7 @@ export function AlreadyPlaced() {
         onSelectAnchor={() => {}}
         onResizeEvent={resizeEvent}
         resizeStepMin={RESIZE_BLOCK_MIN}
-        resizeMaxMin={RESIZE_MAX_BLOCKS * RESIZE_BLOCK_MIN}
+        resizeMaxMin={resizeMaxMin}
       />
     </section>
   );

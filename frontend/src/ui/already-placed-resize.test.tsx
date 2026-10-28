@@ -18,7 +18,7 @@ beforeEach(() => {
   });
 });
 
-function harness() {
+function harness(longEvent = false) {
   const h = makeHarness("ready");
   const inputs = structuredClone(h.store.getState().inputs!);
   inputs.anchored = [
@@ -35,6 +35,15 @@ function harness() {
       capacityClass: "fixed",
     },
   ];
+  if (longEvent) {
+    // 8 hours — well past the 12-block (360 min) default ceiling.
+    inputs.anchored.push({
+      id: "Workshop", name: "Workshop", kind: "calendar",
+      start: "08:00", end: "16:00", durationMin: 480, overlapAllowed: false,
+      on: true, skipToday: false, calendarId: "work", calendarTitle: "Trinoor",
+      capacityClass: "work",
+    });
+  }
   h.store.dispatch({ type: "INPUTS_LOADED", inputs, ledger: h.store.getState().ledger! });
   return h;
 }
@@ -77,6 +86,29 @@ describe("Already placed resize", () => {
     fireEvent.pointerUp(el, { ...pointer, clientX: 100 });
     // Already at one block: shrinking cannot change anything.
     expect(save).not.toHaveBeenCalled();
+  });
+
+  it("keeps a long event's own length instead of truncating it to 12 blocks", () => {
+    const h = harness(true);
+    const save = vi.spyOn(h.controller, "saveAnchoredOverride").mockResolvedValue();
+    const r = h.ui(<AlreadyPlaced />);
+    // 8 hours counts 16 blocks; one 30-minute step down is 15 blocks, not 12.
+    fireEvent.keyDown(handle(r.container, "Workshop"), { key: "ArrowLeft" });
+    expect(save).toHaveBeenCalledWith(
+      "Workshop",
+      expect.objectContaining({ on: true, skipToday: false, time: null, blocks: 15 }),
+    );
+  });
+
+  it("leaves an ordinary short event's counted blocks unchanged", () => {
+    const h = harness(true);
+    const save = vi.spyOn(h.controller, "saveAnchoredOverride").mockResolvedValue();
+    const r = h.ui(<AlreadyPlaced />);
+    fireEvent.keyDown(handle(r.container, "Dentist"), { key: "ArrowRight" });
+    expect(save).toHaveBeenCalledWith(
+      "Dentist",
+      expect.objectContaining({ time: null, blocks: 2 }),
+    );
   });
 
   it("keeps a local start edit when the duration changes", () => {
