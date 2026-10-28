@@ -1,4 +1,9 @@
-/* row-expanded.test.tsx — task-actions F4b: the two-line expanded row panel.
+/* row-expanded.test.tsx — the expanded row panel after the row redesign.
+   Every control in the panel is LOCAL day state applied the moment it changes
+   through controller.applyRowEdit: there is no Save/Discard footer, no staged
+   chip and no duration chip strip. The panel carries the exact-minutes field,
+   the All-day toggle, Remember, the Start control and the Source menu; the
+   permanent May-overlap-Mint toggle lives on the collapsed row.
    Fixture adapters only: no live adapter, no billed call, no source write. */
 
 import { afterEach, describe, expect, it } from "vitest";
@@ -7,6 +12,7 @@ import { cleanup, fireEvent } from "@testing-library/preact";
 import { Queue } from "./Queue";
 import { makeHarness, type Harness } from "./test-harness";
 import { EXCLUSION_REASONS } from "../model/batchEligibility";
+import { effectiveBlocks } from "../store/store";
 
 afterEach(cleanup);
 
@@ -30,87 +36,76 @@ function expand(container: Element, name: string): HTMLElement {
   return rowFor(container, name);
 }
 
-const radio = (row: Element, value: string) =>
-  row.querySelector<HTMLInputElement>(`input[type="radio"][value="${value}"]`)!;
-/** The one-tap duration chips that replaced the preset select. `value` is the
-    checked duration expressed in 30-minute blocks the way the select's value
-    was; `allDay` reports the All-day chip, which is now the honest answer to
-    "this row has no duration". */
-const duration = (row: Element) => {
-  const group = row.querySelector<HTMLElement>('[role="radiogroup"][aria-label="Duration"]')!;
-  const checked = group.querySelector<HTMLElement>('[role="radio"][aria-checked="true"]')!;
-  const minutes = checked.getAttribute("data-minutes");
-  return {
-    allDay: checked.getAttribute("data-chip") === "allday",
-    value: minutes === null ? "0" : String(Number(minutes) / 30),
-  };
-};
-/** One click on a quick chip, the way a user stages a duration. */
-const pick = (row: Element, minutes: number) =>
-  fireEvent.click(row.querySelector(`[role="radio"][data-minutes="${minutes}"]`)!);
-const mint = (row: Element) =>
-  Array.from(row.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')).find(
-    (i) => i.closest("label")?.textContent?.includes("May overlap Mint"),
+/** The panel's exact-minutes field: the only typed duration control. */
+const exact = (row: Element) =>
+  row.querySelector<HTMLInputElement>('input[aria-label="Exact minutes"]')!;
+/** The All-day mode toggle (a pressed button, not a radio). */
+const allDayToggle = (row: Element) =>
+  Array.from(row.querySelectorAll<HTMLButtonElement>(".trow__tog")).find(
+    (b) => b.textContent?.trim() === "All-day",
   )!;
+const remember = (row: Element) =>
+  row.querySelector<HTMLButtonElement>(".dux-mem")!;
+/** The permanent May-overlap-Mint toggle, on the COLLAPSED row. */
+const mint = (row: Element) =>
+  row.querySelector<HTMLButtonElement>('button[aria-label^="May overlap Mint"]')!;
 const btn = (row: Element, text: string) =>
   Array.from(row.querySelectorAll<HTMLButtonElement>("button")).find(
     (b) => b.textContent?.trim() === text,
   ) ?? null;
 
 describe("expanded row panel", () => {
-  it("opens a draft and renders line 1 controls", () => {
-    const { h, container } = setup();
+  it("renders line 1 controls without a Save/Discard step", () => {
+    const { container } = setup();
     const row = expand(container, "Press");
-    expect(h.store.getState().drafts["Press"]).toBeDefined();
-    expect(radio(row, "time").checked).toBe(true);
-    expect(duration(row).value).toBe("3");
+    expect(exact(row)).not.toBeNull();
+    expect(exact(row).value).toBe("");
+    expect(exact(row).placeholder).toBe("Exact, e.g. 25m");
+    expect(allDayToggle(row).getAttribute("aria-pressed")).toBe("false");
+    expect(remember(row).getAttribute("aria-pressed")).toBe("false");
     expect(row.textContent).toContain("Auto");
     expect(btn(row, "Set time")).not.toBeNull();
-    expect(mint(row).disabled).toBe(false);
+    // The two shipped Save/Discard controls are gone for good.
+    expect(btn(row, "Save")).toBeNull();
+    expect(btn(row, "Discard")).toBeNull();
+  });
+
+  it("applies a typed exact duration and offers no staged state", () => {
+    const { h, container } = setup();
+    const row = expand(container, "Press");
+    fireEvent.input(exact(row), { target: { value: "2h" } });
+    // Enter flushes the debounce immediately.
+    fireEvent.keyDown(exact(rowFor(container, "Press")), { key: "Enter" });
+    expect(effectiveBlocks(h.store.getState(), "Press")).toBe(4);
+    expect(h.store.getState().overrides["Press"]?.blocks).toBe(4);
+    // The duration chip says where the value came from; nothing is staged.
+    expect(rowFor(container, "Press").querySelector(".dux-badge")?.textContent).toContain(
+      "Today",
+    );
+    expect(rowFor(container, "Press").textContent).not.toContain("Unsaved");
+    expect(rowFor(container, "Press").querySelector(".trow__state--staged")).toBeNull();
   });
 
   it("all-day round trip restores the duration and clears the pin", () => {
     const { h, container } = setup();
     let row = expand(container, "Press");
-    h.controller.updateDraft("Press", (d) => ({ ...d, pin: "10:00" }));
+    h.controller.applyRowEdit("Press", (d) => ({ ...d, pin: "10:00" }));
     row = rowFor(container, "Press");
-    fireEvent.click(radio(row, "allday"));
+    expect(h.store.getState().placements["Press"]).toBe("10:00");
+
+    fireEvent.click(allDayToggle(row));
     row = rowFor(container, "Press");
-    expect(duration(row).allDay).toBe(true);
-    expect(h.store.getState().drafts["Press"].pin).toBeNull();
-    fireEvent.click(radio(row, "time"));
+    expect(allDayToggle(row).getAttribute("aria-pressed")).toBe("true");
+    expect(effectiveBlocks(h.store.getState(), "Press")).toBe(0);
+    expect(h.store.getState().placements["Press"] ?? null).toBeNull();
+
+    fireEvent.click(allDayToggle(row));
     row = rowFor(container, "Press");
-    const d = h.store.getState().drafts["Press"];
-    expect(d.mode).toBe("time");
-    expect(d.blocks).toBe(3);
-    expect(d.pin).toBeNull();
-    expect(duration(row).value).toBe("3");
+    expect(allDayToggle(row).getAttribute("aria-pressed")).toBe("false");
+    // The All-day round trip restores the captured duration, never the pin.
+    expect(effectiveBlocks(h.store.getState(), "Press")).toBe(3);
+    expect(h.store.getState().placements["Press"] ?? null).toBeNull();
     expect(row.textContent).toContain("Auto");
-  });
-
-  it("shows Save and Discard only while the draft is staged", () => {
-    const { container } = setup();
-    let row = expand(container, "Press");
-    expect(btn(row, "Save")).toBeNull();
-    expect(btn(row, "Discard")).toBeNull();
-    pick(row, 120);
-    row = rowFor(container, "Press");
-    expect(btn(row, "Save")).not.toBeNull();
-    expect(btn(row, "Discard")).not.toBeNull();
-    fireEvent.click(btn(row, "Discard")!);
-    row = rowFor(container, "Press");
-    expect(btn(row, "Save")).toBeNull();
-    expect(duration(row).value).toBe("3");
-  });
-
-  it("Save commits the staged duration", () => {
-    const { h, container } = setup();
-    let row = expand(container, "Press");
-    pick(row, 120);
-    row = rowFor(container, "Press");
-    fireEvent.click(btn(row, "Save")!);
-    expect(h.store.getState().overrides["Press"]?.blocks).toBe(4);
-    expect(btn(rowFor(container, "Press"), "Save")).toBeNull();
   });
 
   it("gives the Mint toggle a reason only when disabled", () => {
@@ -119,33 +114,62 @@ describe("expanded row panel", () => {
         { id: "Entryway Design", name: "Entryway Design", slot: "m", start: "09:00", end: "09:30" },
       ];
     });
-    let row = expand(container, "Press");
+    let row = rowFor(container, "Press");
     expect(mint(row).disabled).toBe(false);
-    expect(row.querySelector('[id^="why-ov-"]')).toBeNull();
-    fireEvent.click(radio(row, "allday"));
+    expect(mint(row).getAttribute("title")).not.toContain(EXCLUSION_REASONS.mintAllDay);
+
+    const expanded = expand(container, "Press");
+    fireEvent.click(allDayToggle(expanded));
     row = rowFor(container, "Press");
     expect(mint(row).disabled).toBe(true);
-    expect(row.textContent).toContain(EXCLUSION_REASONS.mintAllDay);
-    const session = expand(container, "Entryway Design");
+    expect(mint(row).getAttribute("title")).toBe(EXCLUSION_REASONS.mintAllDay);
+
+    // A Mint session cannot itself overlap Mint.
+    const session = rowFor(container, "Entryway Design");
     expect(mint(session).disabled).toBe(true);
-    expect(session.textContent).toContain(EXCLUSION_REASONS.mintSession);
+    expect(mint(session).getAttribute("title")).toBe(EXCLUSION_REASONS.mintSession);
   });
 
-  it("disables all-day for a Capacities row with the batch reason", () => {
-    const { container } = setup();
-    const row = expand(container, "Note Processing");
-    expect(radio(row, "allday").disabled).toBe(true);
-    expect(radio(row, "time").disabled).toBe(false);
-    expect(row.textContent).toContain(EXCLUSION_REASONS.allDayCapacities);
-  });
-
-  it("keeps the staged draft when the row is collapsed (store rule)", () => {
+  it("allows All-day on a Capacities row, as a local today-only state", () => {
     const { h, container } = setup();
+    const row = expand(container, "Note Processing");
+    const toggle = allDayToggle(row);
+    expect(toggle.disabled).toBe(false);
+    expect(toggle.getAttribute("aria-pressed")).toBe("false");
+    expect(toggle.getAttribute("title")).toContain("Local to today's plan");
+
+    fireEvent.click(toggle);
+    expect(effectiveBlocks(h.store.getState(), "Note Processing")).toBe(0);
+    expect(
+      allDayToggle(rowFor(container, "Note Processing")).getAttribute("aria-pressed"),
+    ).toBe("true");
+  });
+
+  it("locks All-day only for a protected Todoist native time", () => {
+    const { container } = setup((sc) => {
+      const press = sc.inputs.assigned.find((i) => i.id === "Press")!;
+      press.scheduledStart = "19:00";
+    });
     const row = expand(container, "Press");
-    pick(row, 120);
-    fireEvent.click(rowFor(container, "Press").querySelector('button[aria-label="Collapse"]')!);
-    expect(h.store.getState().drafts["Press"].blocks).toBe(4);
-    expect(rowFor(container, "Press").textContent).toContain("Staged");
+    expect(allDayToggle(row).disabled).toBe(true);
+    expect(allDayToggle(row).getAttribute("title")).toBe(
+      EXCLUSION_REASONS.protectedAllDay,
+    );
+    expect(row.textContent).toContain(EXCLUSION_REASONS.protectedAllDay);
+  });
+
+  it("keeps the applied duration when the row is collapsed", () => {
+    const { h, container } = setup();
+    let row = expand(container, "Press");
+    fireEvent.input(exact(row), { target: { value: "2h" } });
+    fireEvent.keyDown(exact(rowFor(container, "Press")), { key: "Enter" });
+    expect(effectiveBlocks(h.store.getState(), "Press")).toBe(4);
+    fireEvent.click(
+      rowFor(container, "Press").querySelector('button[aria-label="Collapse"]')!,
+    );
+    row = rowFor(container, "Press");
+    expect(effectiveBlocks(h.store.getState(), "Press")).toBe(4);
+    expect(row.querySelector(".dux-badge")?.textContent).toContain("Today");
   });
 });
 

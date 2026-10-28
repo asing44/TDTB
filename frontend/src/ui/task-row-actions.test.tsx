@@ -94,7 +94,7 @@ function stageServerRead(
 }
 
 describe("collapsed row: the controls and their names", () => {
-  it("renders a labelled selection checkbox and the three row verbs", () => {
+  it("renders a labelled selection checkbox, the Mint toggle and the three row verbs", () => {
     const h = makeHarness("ready");
     const { container } = h.ui(<Queue />);
     const press = rowFor(container, "Press");
@@ -108,7 +108,17 @@ describe("collapsed row: the controls and their names", () => {
     const labels = Array.from(
       press.querySelectorAll<HTMLElement>(".trow__acts > button"),
     ).map((b) => b.getAttribute("aria-label"));
-    expect(labels).toEqual(["Complete", UNASSIGN_TRIGGER_LABEL, "Expand"]);
+    expect(labels).toEqual([
+      "May overlap Mint: Press",
+      "Complete",
+      UNASSIGN_TRIGGER_LABEL,
+      "Expand",
+    ]);
+    // The lead control is the permanent May-overlap-Mint toggle: a pressed
+    // state exposed to assistive tech, applied the moment it is clicked.
+    const mint = buttonIn(press, "May overlap Mint: Press");
+    expect(mint.getAttribute("aria-pressed")).toBe("false");
+    expect(mint.textContent?.trim()).toBe("Mint");
     // Complete is a compact icon button: check-mark face, name + tooltip.
     const complete = buttonIn(press, "Complete");
     expect(complete.textContent).toBe("");
@@ -131,7 +141,7 @@ describe("collapsed row: the controls and their names", () => {
     expect(panelOf(press)).toBeNull();
   });
 
-  it("gives every row the same three verbs in the same order", () => {
+  it("gives every row the same four controls in the same order", () => {
     const h = makeHarness("ready");
     const { container } = h.ui(<Queue />);
     const rows = Array.from(
@@ -150,10 +160,15 @@ describe("collapsed row: the controls and their names", () => {
       expect(row.querySelectorAll(".trow__acts > .trow__slot")).toHaveLength(
         heldBySwitch ? 1 : 0,
       );
-      expect(labels.slice(0, 3)).toEqual(
+      expect(labels.slice(0, 4)).toEqual(
         heldBySwitch
-          ? ["Complete", "Expand"]
-          : ["Complete", UNASSIGN_TRIGGER_LABEL, "Expand"],
+          ? [expect.stringMatching(/^May overlap Mint/), "Complete", "Expand"]
+          : [
+              expect.stringMatching(/^May overlap Mint/),
+              "Complete",
+              UNASSIGN_TRIGGER_LABEL,
+              "Expand",
+            ],
       );
     }
   });

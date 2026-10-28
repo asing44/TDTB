@@ -189,14 +189,16 @@ describe("U11 row actions stay visible without a hover", () => {
     const { container } = h.ui(<Queue />);
     const row = rowNamed(container, "Press");
     expect(row.querySelector(".trow__acts")).toBeTruthy();
-    // F4a/U4: three labelled controls in order — the row's source verb names
-    // Todoist because that is where it writes.
+    // F4a/U4 + row redesign: the permanent May-overlap-Mint toggle leads the
+    // cluster, then the row's verbs — the source verb names Todoist because
+    // that is where it writes.
     const labels = Array.from(row.querySelectorAll(".trow__acts button")).map(
       (b) => (b.getAttribute("aria-label") ?? b.textContent ?? "").trim(),
     );
-    expect(labels[0]).toMatch(/^Complete/);
-    expect(labels[1]).toBe(UNASSIGN_TRIGGER_LABEL);
-    expect(labels[2]).toMatch(/^Expand/);
+    expect(labels[0]).toMatch(/^May overlap Mint/);
+    expect(labels[1]).toMatch(/^Complete/);
+    expect(labels[2]).toBe(UNASSIGN_TRIGGER_LABEL);
+    expect(labels[3]).toMatch(/^Expand/);
     // The cluster is always visible: no rule hides it at rest, and the
     // hover/focus reveal layer is gone (removed 2026-10-12).
     expect(APP_CSS).not.toMatch(/\.trow__acts\s*\{[^}]*opacity:\s*0/);

@@ -30,18 +30,30 @@ describe("Plan task rows use fixed slots around a flexible name column", () => {
   const cols = /grid-template-columns:\s*([^;]+);/.exec(row)?.[1] ?? "";
 
   it("gives the name+meta column the slack and fixes every other slot", () => {
-    expect(cols).toMatch(/^16px\s+minmax\(0,\s*1fr\)\s+66px\s+152px$/);
+    // 236px fits the roomier action cluster: the Mint toggle, the assign
+    // switch, and the three icon verbs.
+    expect(cols).toMatch(/^16px\s+minmax\(0,\s*1fr\)\s+66px\s+236px$/);
   });
 
-  it("makes the actions a fixed grid sized to the row's last slot", () => {
+  it("makes the actions a fixed grid that fits inside the row's last slot", () => {
     const acts = topLevelBlocks("\\.trow__acts").join("\n");
     expect(acts).toMatch(/display:\s*grid/);
     const slots = /grid-template-columns:\s*([^;]+);/.exec(acts)?.[1] ?? "";
     const widths = px(slots);
-    expect(widths).toHaveLength(4);
+    // Slot order: May overlap Mint | assign switch | Complete | source slot
+    // (Unassign, or the reserved empty slot) | Expand.
+    expect(widths).toEqual([52, 44, 36, 36, 36]);
     const gap = parseInt(/gap:\s*(\d+)px/.exec(acts)?.[1] ?? "0", 10);
     const total = widths.reduce((a, b) => a + b, 0) + gap * (widths.length - 1);
-    expect(`${total}px`).toBe(cols.trim().split(/\s+/).pop());
+    const actionsCol = parseInt(cols.trim().split(/\s+/).pop() ?? "0", 10);
+    expect(total).toBeLessThanOrEqual(actionsCol);
+  });
+
+  it("reserves the row's actions column for the cluster at every width", () => {
+    const sliderRow = topLevelBlocks("\\.qrow\\.trow--dslider").join("\n");
+    expect(sliderRow).toMatch(/236px/);
+    const acts = topLevelBlocks("\\.qrow\\.trow--dslider > \\.trow__acts").join("\n");
+    expect(acts).toMatch(/min-width:\s*236px/);
   });
 
   it("stretches the buttons to their slot so Skip today absent still aligns", () => {

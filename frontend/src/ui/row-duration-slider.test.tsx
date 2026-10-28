@@ -1,12 +1,14 @@
 /* row-duration-slider.test.tsx — the collapsed plan row's duration cell is the
-   inline slider again (readout above [−] range [+]), restored from the earlier
-   plan-row design (d30a059 readout above the slider, 6c0807e steppers,
-   f5e506a/1f8a488 one-line sizing). It stages on the row draft exactly like
-   the expanded chips; nothing commits until Save.
+   inline slider (readout above [−] range [+]) and it APPLIES AT ONCE: every
+   move goes through controller.applyRowEdit, so the committed session changes
+   immediately and the row keeps a single-step Undo. There is no staging step
+   and no Save.
 
    FEEDBACK-2026-10-26 (Adam): the track is a quarter-hour grid whose leftmost
-   notch is All-day, as in the earlier design — "slider should be 15min
-   increments, leftmost selection is all-day like previous". */
+   notch is All-day — "slider should be 15min increments, leftmost selection is
+   all-day like previous". Row redesign: the All-day notch is open for every row
+   except a protected Todoist native time, and a Capacities row's All-day is a
+   local today-only state with no write-back. */
 
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -18,12 +20,11 @@ afterEach(cleanup);
 import { Queue } from "./Queue";
 import { makeHarness } from "./test-harness";
 import { effectiveBlocks } from "../store/store";
-import { draftBlocks } from "../model/rowDraft";
 import { EXCLUSION_REASONS } from "../model/batchEligibility";
 import type { Scenario } from "../fixtures/scenarios";
 
 /** Any fixture row as a protected Todoist native time (the state where the
-    expanded row's All-day radio is disabled). */
+    All-day notch is closed). */
 function withNativeTime(sc: Scenario): void {
   const press = sc.inputs.assigned.find((i) => i.name === "Press");
   if (!press) throw new Error("scenario is missing the Press row");
@@ -52,14 +53,13 @@ const less = (row: Element) =>
   row.querySelector<HTMLButtonElement>('button[aria-label^="15 minutes less"]')!;
 const more = (row: Element) =>
   row.querySelector<HTMLButtonElement>('button[aria-label^="15 minutes more"]')!;
-/** The quick duration chips in the expanded row (the preset select's
-    replacement): one click stages a duration. */
-const chip = (row: Element, minutes: number) =>
-  row.querySelector<HTMLButtonElement>(
-    `[role="radiogroup"][aria-label="Duration"] [role="radio"][data-minutes="${minutes}"]`,
-  )!;
+/** The expanded panel's exact-minutes field: the slider's typed sibling. */
+const exact = (row: Element) =>
+  row.querySelector<HTMLInputElement>('input[aria-label="Exact minutes"]')!;
 const cellTitle = (row: Element) =>
   cell(row).querySelector(".dslider")?.getAttribute("title");
+/** The duration's provenance chip: "Today" once a local edit has landed. */
+const badge = (row: Element) => row.querySelector(".dux-badge")?.textContent;
 
 describe("collapsed row duration cell", () => {
   it("renders readout above a [−] range [+] strip in the duration cell", () => {
@@ -68,8 +68,8 @@ describe("collapsed row duration cell", () => {
     const row = rowFor(container, "Press");
     const dslider = cell(row).querySelector(".dslider")!;
     const kids = Array.from(dslider.children).map((k) => k.className.split(" ")[0]);
-    // The readout line now carries the save-state chip beside the label, so
-    // the two structural children are the top line and the control strip.
+    // The readout line carries the provenance chip beside the label, so the
+    // two structural children are the top line and the control strip.
     expect(kids.slice(0, 2)).toEqual(["dslider__top", "dslider__ctl"]);
     expect(dslider.querySelector(".dslider__top .dslider__label")).not.toBeNull();
     const ctl = dslider.querySelector(".dslider__ctl")!;
@@ -83,16 +83,18 @@ describe("collapsed row duration cell", () => {
     expect([range(row).min, range(row).max, range(row).step]).toEqual(["0", "240", "15"]);
   });
 
-  it("stepper + stages +15 minutes and − stages −15, without committing", () => {
+  it("stepper + applies +15 minutes and − applies −15, at once", () => {
     const h = makeHarness("ready");
     const { container } = h.ui(<Queue />);
     fireEvent.click(more(rowFor(container, "Press")));
-    expect(h.store.getState().drafts["Press"].blocks).toBe(3.5);
-    expect(h.store.getState().overrides["Press"]).toBeUndefined();
+    // Applied, not staged: the committed session already carries the value.
+    expect(effectiveBlocks(h.store.getState(), "Press")).toBe(3.5);
+    expect(h.store.getState().overrides["Press"]?.blocks).toBe(3.5);
     expect(label(rowFor(container, "Press"))).toBe("1hr 45min");
+    expect(badge(rowFor(container, "Press"))).toContain("Today");
     fireEvent.click(less(rowFor(container, "Press")));
     fireEvent.click(less(rowFor(container, "Press")));
-    expect(h.store.getState().drafts["Press"].blocks).toBe(2.5);
+    expect(effectiveBlocks(h.store.getState(), "Press")).toBe(2.5);
     expect(label(rowFor(container, "Press"))).toBe("1hr 15min");
   });
 
@@ -107,48 +109,46 @@ describe("collapsed row duration cell", () => {
     row = rowFor(container, "Press");
     expect(less(row).disabled).toBe(false);
     fireEvent.click(less(row));
-    expect(h.store.getState().drafts["Press"].mode).toBe("allday");
-    expect(draftBlocks(h.store.getState().drafts["Press"])).toBe(0);
+    expect(effectiveBlocks(h.store.getState(), "Press")).toBe(0);
     row = rowFor(container, "Press");
     expect(label(row)).toBe("All day");
+    expect(range(row).value).toBe("0");
     expect(less(row).disabled).toBe(true);
     expect(more(row).disabled).toBe(false);
   });
 
-  it("slider stages the same blocks as the expanded chips, live readout", () => {
+  it("applies the same blocks as the expanded exact-minutes field, live readout", () => {
     const h = makeHarness("ready");
     const { container } = h.ui(<Queue />);
     fireEvent.input(range(rowFor(container, "Press")), { target: { value: "120" } });
-    const viaSlider = h.store.getState().drafts["Press"].blocks;
+    const viaSlider = effectiveBlocks(h.store.getState(), "Press");
     expect(label(rowFor(container, "Press"))).toBe("2hr");
-    expect(rowFor(container, "Press").querySelector(".trow__state--staged")).not.toBeNull();
+    expect(badge(rowFor(container, "Press"))).toContain("Today");
 
+    // The expanded field writes through the same immediate path, so typing 2h
+    // lands on the identical value.
     fireEvent.click(
       rowFor(container, "Press").querySelector('button[aria-label="Expand"]')!,
     );
-    fireEvent.click(chip(rowFor(container, "Press"), 120));
-    expect(h.store.getState().drafts["Press"].blocks).toBe(viaSlider);
+    const field = exact(rowFor(container, "Press"));
+    fireEvent.input(field, { target: { value: "2h" } });
+    fireEvent.keyDown(field, { key: "Enter" });
+    expect(effectiveBlocks(h.store.getState(), "Press")).toBe(viaSlider);
     expect(viaSlider).toBe(4);
   });
 
-  it("source-owned duration stays today-only: Save writes only the session override", () => {
+  it("source-owned duration stays today-only: the edit writes only the session override", () => {
     const h = makeHarness("ready");
     const { container } = h.ui(<Queue />);
     fireEvent.input(range(rowFor(container, "Press")), { target: { value: "60" } });
     const item = h.store.getState().inputs!.assigned.find((i) => i.id === "Press")!;
-    expect(item.blocks).toBe(3);
-    fireEvent.click(
-      rowFor(container, "Press").querySelector('button[aria-label="Expand"]')!,
-    );
-    const save = Array.from(
-      rowFor(container, "Press").querySelectorAll<HTMLButtonElement>("button"),
-    ).find((b) => b.textContent?.trim() === "Save")!;
-    fireEvent.click(save);
+    // The today-override landed at once; the source estimate is untouched.
     expect(h.store.getState().overrides["Press"]?.blocks).toBe(2);
     expect(effectiveBlocks(h.store.getState(), "Press")).toBe(2);
-    expect(
-      h.store.getState().inputs!.assigned.find((i) => i.id === "Press")!.blocks,
-    ).toBe(3);
+    expect(item.blocks).toBe(3);
+    expect(h.store.getState().inputs!.assigned.find((i) => i.id === "Press")!.blocks).toBe(
+      3,
+    );
   });
 
   it("parks an all-day row's thumb on the leftmost notch, and lets it leave", () => {
@@ -164,112 +164,86 @@ describe("collapsed row duration cell", () => {
 
     fireEvent.input(range(row), { target: { value: "30" } });
     row = rowFor(container, "Charge GoPro");
-    const draft = h.store.getState().drafts["Charge GoPro"];
-    expect(draft.mode).toBe("time");
-    expect(draft.blocks).toBe(1);
+    expect(effectiveBlocks(h.store.getState(), "Charge GoPro")).toBe(1);
     expect(label(row)).toBe("30min");
-    expect(row.querySelector(".trow__state--staged")).not.toBeNull();
+    expect(range(row).value).toBe("30");
+    expect(badge(row)).toContain("Today");
   });
 
-  it("stages the same all-day draft state at notch 0 as the All-day radio", () => {
+  it("applies the same all-day state at notch 0 as the All-day toggle", () => {
     const viaSlider = makeHarness("ready");
     const sliderUi = viaSlider.ui(<Queue />);
-    fireEvent.click(
-      rowFor(sliderUi.container, "Press").querySelector('button[aria-label="Expand"]')!,
-    );
     fireEvent.input(range(rowFor(sliderUi.container, "Press")), {
       target: { value: "0" },
     });
-    const sliderDraft = viaSlider.store.getState().drafts["Press"];
+    const sliderOverride = viaSlider.store.getState().overrides["Press"];
     expect(label(rowFor(sliderUi.container, "Press"))).toBe("All day");
-    expect(sliderDraft).toEqual({
-      id: "Press",
-      mode: "allday",
-      blocks: 3,
-      blocksBeforeAllDay: 3,
-      pin: null,
-      allowSourceTime: false,
-      mintOverlap: false,
-    });
+    expect(sliderOverride?.blocks).toBe(0);
+    // The captured duration survives the all-day toggle so it can come back.
+    expect(sliderOverride?.blocksBeforeAllDay).toBe(3);
 
-    const viaRadio = makeHarness("ready");
-    const radioUi = viaRadio.ui(<Queue />);
+    const viaToggle = makeHarness("ready");
+    const toggleUi = viaToggle.ui(<Queue />);
+    const expanded = rowFor(toggleUi.container, "Press");
+    fireEvent.click(expanded.querySelector('button[aria-label="Expand"]')!);
     fireEvent.click(
-      rowFor(radioUi.container, "Press").querySelector('button[aria-label="Expand"]')!,
-    );
-    fireEvent.click(
-      rowFor(radioUi.container, "Press").querySelector<HTMLInputElement>(
-        'input[type="radio"][value="allday"]',
+      rowFor(toggleUi.container, "Press").querySelector<HTMLButtonElement>(
+        ".trow__tog",
       )!,
     );
-    expect(viaRadio.store.getState().drafts["Press"]).toEqual(sliderDraft);
-    expect(label(rowFor(radioUi.container, "Press"))).toBe("All day");
-    expect(range(rowFor(radioUi.container, "Press")).value).toBe("0");
+    expect(viaToggle.store.getState().overrides["Press"]).toEqual(sliderOverride);
+    expect(label(rowFor(toggleUi.container, "Press"))).toBe("All day");
+    expect(range(rowFor(toggleUi.container, "Press")).value).toBe("0");
   });
 
-  it("leaving notch 0 stages a timed duration, not the captured one", () => {
+  it("leaving notch 0 applies a timed duration, not the captured one", () => {
     const h = makeHarness("ready");
     const { container } = h.ui(<Queue />);
     fireEvent.input(range(rowFor(container, "Press")), { target: { value: "0" } });
-    expect(h.store.getState().drafts["Press"].blocksBeforeAllDay).toBe(3);
+    expect(h.store.getState().overrides["Press"]?.blocksBeforeAllDay).toBe(3);
 
     fireEvent.input(range(rowFor(container, "Press")), { target: { value: "45" } });
-    const draft = h.store.getState().drafts["Press"];
-    expect(draft.mode).toBe("time");
-    expect(draft.blocks).toBe(1.5);
+    expect(effectiveBlocks(h.store.getState(), "Press")).toBe(1.5);
     expect(label(rowFor(container, "Press"))).toBe("45min");
   });
 
-  it("stages 15 minutes as its exact 0.5 blocks, never rounded to 30", () => {
+  it("applies 15 minutes as its exact 0.5 blocks, never rounded to 30", () => {
     const h = makeHarness("ready");
     const { container } = h.ui(<Queue />);
     fireEvent.click(
       rowFor(container, "Press").querySelector('button[aria-label="Expand"]')!,
     );
     fireEvent.input(range(rowFor(container, "Press")), { target: { value: "15" } });
-    const blocks = h.store.getState().drafts["Press"].blocks;
+    const blocks = h.store.getState().overrides["Press"]?.blocks;
     expect(blocks).toBe(0.5);
-    expect(blocks * 30).toBe(15);
+    expect(blocks! * 30).toBe(15);
     let row = rowFor(container, "Press");
     expect(label(row)).toBe("15min");
     expect(range(row).getAttribute("aria-valuetext")).toBe("15min");
-
-    fireEvent.click(
-      Array.from(row.querySelectorAll<HTMLButtonElement>("button")).find(
-        (b) => b.textContent?.trim() === "Save",
-      )!,
-    );
-    expect(h.store.getState().overrides["Press"]?.blocks).toBe(0.5);
     expect(effectiveBlocks(h.store.getState(), "Press") * 30).toBe(15);
     row = rowFor(container, "Press");
     expect(label(row)).toBe("15min");
     expect(range(row).value).toBe("15");
   });
 
-  it("keeps a Capacities row resizable but closes its All-day notch, reason as tooltip", () => {
+  it("allows All-day on a Capacities row as a local today-only state", () => {
     const h = makeHarness("ready");
     const { container } = h.ui(<Queue />);
     let row = rowFor(container, "Note Processing");
-    // Only the All-day notch is closed: the track starts at the first timed one.
+    // A Capacities row keeps the whole track: All-day is local, blocks === 0,
+    // and nothing is written back to Capacities.
     expect(range(row).disabled).toBe(false);
-    expect(range(row).min).toBe("15");
-    expect(more(row).disabled).toBe(false);
-    expect(cellTitle(row)).toBe(EXCLUSION_REASONS.allDayCapacities);
+    expect(range(row).min).toBe("0");
+    expect(cellTitle(row)).toContain("Duration");
 
-    fireEvent.input(range(row), { target: { value: "60" } });
-    const d = h.store.getState().drafts["Note Processing"];
-    expect(d.mode).toBe("time");
-    expect(d.blocks).toBe(2);
-
-    fireEvent.input(range(row), { target: { value: "15" } });
+    fireEvent.input(range(row), { target: { value: "0" } });
+    expect(effectiveBlocks(h.store.getState(), "Note Processing")).toBe(0);
     row = rowFor(container, "Note Processing");
-    expect(label(row)).toBe("15min");
-    // − stops at the first timed notch instead of stepping onto All-day.
+    expect(label(row)).toBe("All day");
     expect(less(row).disabled).toBe(true);
-    expect(h.store.getState().drafts["Note Processing"].mode).toBe("time");
   });
 
-  it("keeps a protected source time resizable but closes All-day, with the radio's reason", () => {
+  it("keeps a protected source time resizable but closes All-day, reason as tooltip", () => {
     const h = makeHarness("ready", withNativeTime);
     const { container } = h.ui(<Queue />);
     const row = rowFor(container, "Press");
@@ -303,7 +277,9 @@ describe("collapsed row duration cell", () => {
     const row = rowFor(container, "Press");
     expect(row.querySelectorAll('input[aria-label="Duration slider"]')).toHaveLength(1);
     expect(cell(row).contains(range(row))).toBe(true);
-    expect(chip(row, 90)).not.toBeNull();
+    // The panel adds the typed field, never a second duration control.
+    expect(exact(row)).not.toBeNull();
+    expect(row.querySelectorAll('input[aria-label="Exact minutes"]')).toHaveLength(1);
   });
 });
 
@@ -331,7 +307,7 @@ describe("adaptive layout classes", () => {
       /\.qrow\.trow--dslider\s*\{\s*--trow-dur-w:\s*clamp\(112px,\s*14vw,\s*168px\)/,
     );
     expect(appCss).toMatch(
-      /\.qrow\.trow--dslider\s*\{[^}]*grid-template-columns:\s*16px minmax\(0,\s*1fr\) var\(--trow-dur-w\) 152px/,
+      /\.qrow\.trow--dslider\s*\{[^}]*grid-template-columns:\s*18px minmax\(0,\s*1fr\) var\(--trow-dur-w\) 236px/,
     );
   });
 
@@ -345,9 +321,11 @@ describe("adaptive layout classes", () => {
   });
 
   it("the actions column never shrinks or wraps at any width", () => {
-    expect(appCss).toMatch(/\.trow__acts\s*\{[^}]*grid-template-columns:\s*44px 32px 32px 32px/);
     expect(appCss).toMatch(
-      /\.qrow\.trow--dslider > \.trow__acts\s*\{[^}]*min-width:\s*152px/,
+      /\.trow__acts\s*\{[^}]*grid-template-columns:\s*52px 44px 36px 36px 36px/,
+    );
+    expect(appCss).toMatch(
+      /\.qrow\.trow--dslider > \.trow__acts\s*\{[^}]*min-width:\s*236px/,
     );
   });
 
