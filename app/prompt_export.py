@@ -21,6 +21,11 @@ Todoist task, and only when an explicit live Commit dispatch calls it:
 * Authorization is read from server state — the current logical-day draft
   store. Browser captures/opt-ins in a request body are never authorization,
   and the legacy per-prompt opt-in store is not consulted at all.
+* **Disabled prompts**: today's logical-day disabled store
+  (``prompt_state.load_prompt_disabled``) may turn a built-in prompt OFF for
+  the day. A disabled prompt is NOT exported at all — it produces no plan
+  entry, no provider call, and no receipt, so re-enabling it later the same day
+  still exports. The store is never consulted for a custom prompt.
 * An empty/absent/non-string draft produces no task.
 * The due is the CIVIL calendar date (``datetime.now().date()``), not the
   logical-day date, so a pre-02:00 commit never back-dates the task.
@@ -159,12 +164,15 @@ def plan_prompt_exports(
     civil_date: str,
     drafts: dict[str, str] | Any,
     description_skips: Mapping[str, bool] | Any = None,
+    disabled: Mapping[str, bool] | Any = None,
 ) -> list[PromptExportPlan]:
-    """Every non-empty draft for ``day`` exports; no opt-in is consulted.
+    """Every non-empty, enabled draft for ``day`` exports; no opt-in is
+    consulted.
 
     Built-in keys plan in canonical order, then browser-defined custom keys
     (``custom-<id>``) in sorted order. A draft that is absent/blank/non-string,
-    or a key that is neither built-in nor custom, contributes nothing.
+    a key that is neither built-in nor custom, and a built-in key that
+    ``disabled`` marks produce nothing at all.
 
     A built-in key plans its fixed label as ``title`` and its text as
     ``description``, unless ``description_skips`` marks that key — then the
@@ -173,6 +181,8 @@ def plan_prompt_exports(
     and it never carries a description."""
     plans: list[PromptExportPlan] = []
     for key in _planned_keys(drafts):
+        if _is_disabled(disabled, key):
+            continue
         text = drafts.get(key)
         if not isinstance(text, str) or not text.strip():
             continue
@@ -205,6 +215,18 @@ def _description_is_skipped(description_skips: Any, key: str) -> bool:
     return description_skips.get(key) is True
 
 
+def _is_disabled(disabled: Any, key: str) -> bool:
+    """True only for an explicit boolean ``True`` built-in flag.
+
+    Absent/other values mean ENABLED, and a custom prompt can never be
+    disabled — the product toggle exists for the fixed-label prompts only."""
+    if key not in BUILTIN_PROMPT_TITLES:
+        return False
+    if not isinstance(disabled, Mapping):
+        return False
+    return disabled.get(key) is True
+
+
 def _planned_keys(drafts: Any) -> list[str]:
     """The recognized draft keys to consider, in deterministic order."""
     if not isinstance(drafts, Mapping):
@@ -221,12 +243,13 @@ def preview_prompt_exports(
     day: str,
     civil_date: str,
     drafts: dict[str, str] | Any,
+    disabled: Mapping[str, bool] | Any = None,
 ) -> list[dict[str, Any]]:
     """Content-free read-only preview for the shadow manifest.
 
     Never writes a receipt and never performs a provider call."""
     return [p.as_preview() for p in plan_prompt_exports(
-        day=day, civil_date=civil_date, drafts=drafts,
+        day=day, civil_date=civil_date, drafts=drafts, disabled=disabled,
     )]
 
 
@@ -249,6 +272,18 @@ def _server_description_skips(day: str) -> dict[str, bool]:
     offending bytes. The legacy undated opt-in store is never consulted here."""
     try:
         return dict(prompt_state.load_description_skips(day).skips)
+    except prompt_state.PromptStateError:
+        return {}
+
+
+def _server_prompt_disabled(day: str) -> dict[str, bool]:
+    """Today's day-scoped disabled-prompt flags (fail closed to all-enabled).
+
+    Enabled is the product default, so an unreadable/malformed store must never
+    silently suppress a prompt: the read failure degrades to today's default
+    behavior and preserves the offending bytes."""
+    try:
+        return dict(prompt_state.load_prompt_disabled(day).disabled)
     except prompt_state.PromptStateError:
         return {}
 
@@ -353,21 +388,25 @@ def run_prompt_exports(
     todoist: TodoistExportLike | None,
     drafts: dict[str, str] | None = None,
     description_skips: dict[str, bool] | None = None,
+    disabled: dict[str, bool] | None = None,
 ) -> list[PromptExportOutcome]:
     """Run the Commit-only export lane for the current logical day.
 
-    Reads the server drafts and the day-scoped description-skip flags unless
-    explicitly supplied. Every non-empty draft exports (including
-    ``intention`` and custom prompts) — a skip flag changes only the task
-    shape, never whether it exports. A missing client blocks any planned export
-    (nothing is created) without raising."""
+    Reads the server drafts, the day-scoped description-skip flags, and the
+    day-scoped disabled-prompt flags unless explicitly supplied. Every
+    non-empty, enabled draft exports (including ``intention`` and custom
+    prompts) — a skip flag changes only the task shape, while a disabled flag
+    removes the prompt from the plan entirely. A missing client blocks any
+    planned export (nothing is created) without raising."""
     if drafts is None:
         drafts = _server_drafts(day)
     if description_skips is None:
         description_skips = _server_description_skips(day)
+    if disabled is None:
+        disabled = _server_prompt_disabled(day)
     plans = plan_prompt_exports(
         day=day, civil_date=civil_date, drafts=drafts,
-        description_skips=description_skips,
+        description_skips=description_skips, disabled=disabled,
     )
     if todoist is None:
         return [
@@ -400,6 +439,7 @@ def run_prompt_exports_for_report(
     todoist: TodoistExportLike | None,
     drafts: dict[str, str] | None = None,
     description_skips: dict[str, bool] | None = None,
+    disabled: dict[str, bool] | None = None,
 ) -> list[PromptExportOutcome]:
     """Fail-closed gate: export ONLY after the main commit landed ok.
 
@@ -412,7 +452,7 @@ def run_prompt_exports_for_report(
         return skipped_main_failure_outcomes(day=day)
     return run_prompt_exports(
         day=day, civil_date=civil_date, todoist=todoist, drafts=drafts,
-        description_skips=description_skips,
+        description_skips=description_skips, disabled=disabled,
     )
 
 
