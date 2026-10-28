@@ -790,6 +790,162 @@ def test_explicitly_closed_native_status_stays_closed():
     assert result.items == []
 
 
+def _mixed_status_object(object_id, structure_id, status_property="status"):
+    """A multi-value status label carrying a readable ``Done`` member."""
+    return _object(
+        object_id,
+        structure_id,
+        {
+            "title": _prop("title", "title", {"value": object_id}),
+            status_property: _prop(
+                "label",
+                "label",
+                [
+                    {"id": "done", "name": "Done"},
+                    {"id": "in-progress", "name": "In Progress"},
+                ],
+            ),
+        },
+    )
+
+
+def test_native_mixed_status_payload_is_not_reopened_by_active_status():
+    # ``[Done, In Progress]`` carries readable completed evidence in its own
+    # token set. The Active-status relief may not open the row just because its
+    # preferred display token is ``In Progress``.
+    provider = _native_provider(
+        [_mixed_status_object("mixed", "RootTask")]
+    )
+
+    result = _adapter(
+        provider,
+        mappings=(
+            _native_mapping(
+                open_status_values=frozenset(
+                    {"todo", "started", "active", "on hold"}
+                ),
+                completion_property="status",
+                completion_value="done",
+            ),
+        ),
+        assignment_settings=_project_status_settings(),
+    ).items_for_day(TODAY)
+
+    assert result.items == []
+
+
+def test_native_mixed_status_payload_without_completion_mapping_stays_closed():
+    # An unmapped completion value leaves no configured closed token, so the
+    # built-in completed vocabulary has to carry the same exclusion.
+    provider = _native_provider(
+        [_mixed_status_object("mixed", "RootTask")]
+    )
+
+    result = _adapter(
+        provider,
+        mappings=(
+            _native_mapping(
+                open_status_values=frozenset(
+                    {"todo", "started", "active", "on hold"}
+                ),
+            ),
+        ),
+        assignment_settings=_project_status_settings(),
+    ).items_for_day(TODAY)
+
+    assert result.items == []
+
+
+def test_native_status_label_id_name_skew_does_not_reopen_a_done_object():
+    # One label whose id is ``done`` but whose name is ``In Progress``: the
+    # readable id is completed evidence even though the display token looks
+    # active.
+    provider = _native_provider(
+        [
+            _object(
+                "skewed",
+                "RootTask",
+                {
+                    "title": _prop("title", "title", {"value": "skewed"}),
+                    "status": _prop(
+                        "label", "label", [{"id": "done", "name": "In Progress"}]
+                    ),
+                },
+            )
+        ]
+    )
+
+    result = _adapter(
+        provider,
+        mappings=(
+            _native_mapping(
+                open_status_values=frozenset(
+                    {"todo", "started", "active", "on hold"}
+                ),
+                completion_property="status",
+                completion_value="done",
+            ),
+        ),
+        assignment_settings=_project_status_settings(),
+    ).items_for_day(TODAY)
+
+    assert result.items == []
+
+
+def test_native_plain_active_status_outside_vocabulary_is_still_admitted():
+    # Regression guard for the original relief: a single readable ``In
+    # Progress`` status carries no completed evidence and stays admitted.
+    provider = _native_provider(
+        [_status_object("system-improvements", "RootTask", "In Progress")]
+    )
+
+    result = _adapter(
+        provider,
+        mappings=(
+            _native_mapping(
+                open_status_values=frozenset(
+                    {"todo", "started", "active", "on hold"}
+                ),
+                completion_property="status",
+                completion_value="done",
+            ),
+        ),
+        assignment_settings=_project_status_settings(),
+    ).items_for_day(TODAY)
+
+    assert [row["capacities_id"] for row in result.items] == ["system-improvements"]
+    assert result.items[0]["capacities_assignment"]["mode"] == "auto"
+
+
+def test_project_lowercase_active_status_outside_vocabulary_is_still_admitted():
+    # The completed-vocabulary guard must not swallow the user's own lowercase
+    # ``active`` Active status on a project-type structure.
+    provider = _custom_provider(
+        [_status_object("garage-buildout", "custom-project", "active", status_property="state")]
+    )
+
+    result = _adapter(
+        provider,
+        mappings=(
+            _native_mapping(deadline_property=None),
+            _native_mapping(
+                structure_id="custom-project",
+                open_status_property="state",
+                open_status_values=frozenset({"idle", "on hold"}),
+                date_property=None,
+                deadline_property=None,
+                duration_property=None,
+                completion_property="state",
+                completion_value="done",
+            ),
+        ),
+        assignment_settings=_project_status_settings(),
+    ).items_for_day(TODAY)
+
+    assert [row["capacities_id"] for row in result.items] == ["garage-buildout"]
+    assert result.items[0]["capacities_assignment"]["mode"] == "auto"
+
+
 def test_native_absent_status_with_due_match_is_unknown_not_closed():
     # A native task with no status value carries no closed evidence: a missing
     # property, a present-but-empty label payload (the live ``Replan`` shape),

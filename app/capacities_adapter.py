@@ -630,6 +630,33 @@ def _classify_completion(
     return "closed"
 
 
+#: Conservative completed vocabulary for the open-status safety guard. A
+#: structure's live label set can lag the stored mapping, so the settings
+#: Active-status relief must never open a row whose status payload also carries
+#: one of these readable completion tokens. The mapping's own
+#: ``completion_value`` is added when it is configured.
+_COMPLETED_STATUS_TOKENS = frozenset(
+    {
+        "done",
+        "completed",
+        "complete",
+        "dropped",
+        "cancelled",
+        "canceled",
+        "closed",
+        "archived",
+    }
+)
+
+
+def _completed_status_tokens(mapping: StructureMapping) -> frozenset[str]:
+    """Normalized tokens that mean completed for one structure's status."""
+    tokens = set(_COMPLETED_STATUS_TOKENS)
+    if mapping.completion_value:
+        tokens.add(_normalized(mapping.completion_value))
+    return frozenset(tokens)
+
+
 #: Stable reason codes for the review-warning surface (U3b-3). One code is
 #: emitted per UNKNOWN tri-state on an active-rule row; ``unavailable`` (no
 #: mapped property) and a manual unassigned candidate are decided states and
@@ -1633,8 +1660,13 @@ class CapacitiesAdapter:
         # task/project structure a readable status named by ``active_statuses``
         # therefore counts as open: the gate stays a safety filter for
         # completed/dropped evidence rather than a vocabulary membership test.
-        # The mapping's declared completed value still wins, and a non-native
-        # structure keeps failing closed.
+        # That relief reads the FULL status token set, not just the preferred
+        # display token: a mixed ``[Done, In Progress]`` payload, or one label
+        # whose id is ``done`` and name is ``In Progress``, still carries
+        # readable completed evidence and must stay closed. The completed
+        # vocabulary is the mapping's declared value plus a conservative
+        # built-in list, so an unmapped completion value cannot make it vacuous.
+        # A non-native structure keeps failing closed.
         active_status_values = {
             _normalized(value)
             for value in self.config.assignment_settings.active_statuses
@@ -1692,7 +1724,9 @@ class CapacitiesAdapter:
                         native_status_structure
                         and status is not None
                         and status in active_status_values
-                        and status != _normalized(mapping.completion_value)
+                        and not status_tokens.intersection(
+                            _completed_status_tokens(mapping)
+                        )
                     )
         elif active_rule is not None:
             status_state = "unavailable"
