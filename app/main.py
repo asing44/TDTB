@@ -2618,6 +2618,59 @@ def _save_prompt_disabled(
         ) from exc
 
 
+def _prompt_payload_error(code: str, validate: Any, payload: Any) -> None:
+    """Run one prompt-payload validator, mapping a rejection to 422."""
+    try:
+        validate(payload)
+    except prompt_state.PromptValidationError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail={"code": code, "message": str(exc)},
+        ) from exc
+
+
+def _validate_prompt_payload(body: DaySetupRequest) -> None:
+    """Reject an invalid prompt payload BEFORE any prompt-store write.
+
+    Each store validates its own input, but one request writes several prompt
+    stores in sequence. Without this pre-flight a payload whose drafts are
+    valid but whose ``prompt_disabled`` map is not would leave today's drafts
+    (or description-skip flags) already persisted when the later store raised
+    422. Every prompt-only field is interrogated here with the SAME rules its
+    save applies, so a rejected request writes nothing at all. Messages stay
+    content-free: ``prompt_state`` never echoes a prompt string."""
+    if body.captures is not None:
+        _prompt_payload_error(
+            "prompt_drafts_invalid",
+            prompt_state.validate_drafts_patch, body.captures,
+        )
+    if body.description_skips is not None:
+        _prompt_payload_error(
+            "prompt_description_skips_invalid",
+            prompt_state.validate_description_skips_patch,
+            body.description_skips,
+        )
+    if body.prompt_disabled is not None:
+        _prompt_payload_error(
+            "prompt_disabled_invalid",
+            prompt_state.validate_prompt_disabled_patch, body.prompt_disabled,
+        )
+    if body.optins is not None:
+        _prompt_payload_error(
+            "prompt_optins_invalid", prompt_state.validate_optins, body.optins,
+        )
+        if body.optins_revision is None:
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "code": "prompt_optins_invalid",
+                    "message": (
+                        "optins_revision is required when optins is set"
+                    ),
+                },
+            )
+
+
 def _save_prompt_drafts(today: date, captures: dict[str, Any] | None) -> None:
     """Persist a captures patch into today's local draft store.
 
@@ -5617,7 +5670,9 @@ def create_app() -> FastAPI:
         )
         existing_setup, prompt_warnings = _read_day_setup(today)
         # Local prompt stores are the only prompt target; the legacy runstate
-        # keys stay INERT and are never written here.
+        # keys stay INERT and are never written here. Every prompt-only field
+        # is validated first so a rejected request writes no store at all.
+        _validate_prompt_payload(body)
         _save_prompt_drafts(today, body.captures)
         _save_prompt_description_skips(today, body.description_skips)
         _save_prompt_disabled(today, body.prompt_disabled)
@@ -6160,6 +6215,10 @@ def create_app() -> FastAPI:
             civil_date=prompt_export.civil_date_for(datetime.now()).isoformat(),
             drafts=preview_drafts,
             disabled=preview_disabled or {},
+            # D1: an unreadable gate store makes the real run withhold every
+            # built-in prompt, so the preview withholds them too rather than
+            # promising an export that will not happen.
+            prompt_flags_unreadable=preview_disabled is None,
         )
         return result
 

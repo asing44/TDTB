@@ -26,6 +26,15 @@ Todoist task, and only when an explicit live Commit dispatch calls it:
   the day. A disabled prompt is NOT exported at all — it produces no plan
   entry, no provider call, and no receipt, so re-enabling it later the same day
   still exports. The store is never consulted for a custom prompt.
+* **Unreadable gate store fails CLOSED**: suppression is reversible, an
+  external Todoist create is not. When today's disabled store cannot be read,
+  every BUILT-IN prompt is treated as not exportable for that run (no plan
+  entry, no provider call, no receipt) and the lane reports ONE bounded,
+  content-free warning on the same outcome channel as its other lane-level
+  statuses. Custom prompts are unaffected (they have no server-side toggle),
+  the offending bytes are preserved, and a repaired store exports normally on
+  the next run. The read-only preview applies the same decision, so the UI
+  never promises an export the run will not make.
 * An empty/absent/non-string draft produces no task.
 * The due is the CIVIL calendar date (``datetime.now().date()``), not the
   logical-day date, so a pre-02:00 commit never back-dates the task.
@@ -84,6 +93,10 @@ OUTCOME_SKIPPED_MAIN_FAILURE = "skipped_main_failure"
 #: never a prompt key and never reaches the receipt store.
 SKIPPED_MAIN_FAILURE_KEY = "__main_failure__"
 
+#: Report-level marker key for a lane blocked by an unreadable prompt-flags
+#: store. It is never a prompt key and never reaches the receipt store.
+PROMPT_FLAGS_UNREADABLE_KEY = "__prompt_flags_unreadable__"
+
 _REASON_ALREADY_EXPORTED = "already exported for this logical day"
 _REASON_PRIOR_UNCONFIRMED = "a prior attempt is unconfirmed — review before retrying"
 _REASON_RECEIPT_STORE = "export receipt store is unavailable — nothing was created"
@@ -91,6 +104,10 @@ _REASON_PROVIDER_ERROR = "provider rejected the export — review before retryin
 _REASON_NO_TASK_ID = "provider returned no task id — review before retrying"
 _REASON_RECEIPT_WRITE = "provider task created but the receipt could not be confirmed"
 _REASON_MAIN_FAILURE = "main commit did not land — exports skipped"
+_REASON_PROMPT_FLAGS_UNREADABLE = (
+    "prompt export toggles could not be read — the prompt-flags file for this "
+    "day needs attention, so no built-in prompt was exported"
+)
 
 
 class TodoistExportLike(Protocol):
@@ -165,6 +182,7 @@ def plan_prompt_exports(
     drafts: dict[str, str] | Any,
     description_skips: Mapping[str, bool] | Any = None,
     disabled: Mapping[str, bool] | Any = None,
+    prompt_flags_unreadable: bool = False,
 ) -> list[PromptExportPlan]:
     """Every non-empty, enabled draft for ``day`` exports; no opt-in is
     consulted.
@@ -174,6 +192,11 @@ def plan_prompt_exports(
     a key that is neither built-in nor custom, and a built-in key that
     ``disabled`` marks produce nothing at all.
 
+    ``prompt_flags_unreadable`` is the fail-closed switch for an unreadable
+    gate store: the lane cannot prove a built-in prompt was left enabled and
+    an external create is irreversible, so every built-in key is withheld
+    while custom keys still plan (they have no server-side toggle).
+
     A built-in key plans its fixed label as ``title`` and its text as
     ``description``, unless ``description_skips`` marks that key — then the
     title stays and the description is ``None`` so the provider writes a task
@@ -181,6 +204,8 @@ def plan_prompt_exports(
     and it never carries a description."""
     plans: list[PromptExportPlan] = []
     for key in _planned_keys(drafts):
+        if prompt_flags_unreadable and key in BUILTIN_PROMPT_TITLES:
+            continue
         if _is_disabled(disabled, key):
             continue
         text = drafts.get(key)
@@ -244,12 +269,17 @@ def preview_prompt_exports(
     civil_date: str,
     drafts: dict[str, str] | Any,
     disabled: Mapping[str, bool] | Any = None,
+    prompt_flags_unreadable: bool = False,
 ) -> list[dict[str, Any]]:
     """Content-free read-only preview for the shadow manifest.
 
-    Never writes a receipt and never performs a provider call."""
+    Never writes a receipt and never performs a provider call. It applies the
+    same fail-closed decision as the export run: an unreadable gate store
+    withholds every built-in prompt from the preview too, so the UI never
+    promises an export the run will not make."""
     return [p.as_preview() for p in plan_prompt_exports(
         day=day, civil_date=civil_date, drafts=drafts, disabled=disabled,
+        prompt_flags_unreadable=prompt_flags_unreadable,
     )]
 
 
@@ -276,16 +306,18 @@ def _server_description_skips(day: str) -> dict[str, bool]:
         return {}
 
 
-def _server_prompt_disabled(day: str) -> dict[str, bool]:
-    """Today's day-scoped disabled-prompt flags (fail closed to all-enabled).
+def _server_prompt_disabled(day: str) -> tuple[dict[str, bool], bool]:
+    """Today's day-scoped disabled-prompt flags, plus a read-failure signal.
 
-    Enabled is the product default, so an unreadable/malformed store must never
-    silently suppress a prompt: the read failure degrades to today's default
-    behavior and preserves the offending bytes."""
+    Enabled is the product default, but suppression is reversible while an
+    external Todoist create is not. An unreadable/malformed store therefore
+    FAILS CLOSED: the flags are reported as unreadable so every BUILT-IN
+    prompt is withheld for this run instead of exporting one the user may have
+    turned off, and the offending bytes are preserved."""
     try:
-        return dict(prompt_state.load_prompt_disabled(day).disabled)
+        return dict(prompt_state.load_prompt_disabled(day).disabled), False
     except prompt_state.PromptStateError:
-        return {}
+        return {}, True
 
 
 # ---------------------------------------------------------------------------
@@ -396,27 +428,49 @@ def run_prompt_exports(
     day-scoped disabled-prompt flags unless explicitly supplied. Every
     non-empty, enabled draft exports (including ``intention`` and custom
     prompts) — a skip flag changes only the task shape, while a disabled flag
-    removes the prompt from the plan entirely. A missing client blocks any
-    planned export (nothing is created) without raising."""
+    removes the prompt from the plan entirely. An unreadable disabled store
+    withholds every built-in prompt and adds one content-free blocked warning.
+    A missing client blocks any planned export (nothing is created) without
+    raising."""
     if drafts is None:
         drafts = _server_drafts(day)
     if description_skips is None:
         description_skips = _server_description_skips(day)
+    flags_unreadable = False
     if disabled is None:
-        disabled = _server_prompt_disabled(day)
+        disabled, flags_unreadable = _server_prompt_disabled(day)
     plans = plan_prompt_exports(
         day=day, civil_date=civil_date, drafts=drafts,
         description_skips=description_skips, disabled=disabled,
+        prompt_flags_unreadable=flags_unreadable,
     )
     if todoist is None:
-        return [
+        outcomes = [
             PromptExportOutcome(
                 day=p.day, prompt_key=p.prompt_key, action=p.action,
                 status=OUTCOME_BLOCKED, reason="todoist client unavailable",
             )
             for p in plans
         ]
-    return [_run_one(plan, todoist) for plan in plans]
+    else:
+        outcomes = [_run_one(plan, todoist) for plan in plans]
+    if flags_unreadable:
+        outcomes = [*prompt_flags_unreadable_outcomes(day=day), *outcomes]
+    return outcomes
+
+
+def prompt_flags_unreadable_outcomes(*, day: str) -> list[PromptExportOutcome]:
+    """The single content-free warning for a fail-closed gate store.
+
+    Rides the same outcome channel as the lane's other lane-level statuses
+    (``prompt_exports``/``prompt_exports_ok``), so the Commit result shows a
+    ``blocked`` entry instead of silently reporting success for a withheld
+    export. The marker key is never a prompt key, never reaches the receipt
+    store, and the reason carries no prompt text."""
+    return [PromptExportOutcome(
+        day=day, prompt_key=PROMPT_FLAGS_UNREADABLE_KEY, action=EXPORT_ACTION,
+        status=OUTCOME_BLOCKED, reason=_REASON_PROMPT_FLAGS_UNREADABLE,
+    )]
 
 
 def skipped_main_failure_outcomes(*, day: str) -> list[PromptExportOutcome]:

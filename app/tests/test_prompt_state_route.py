@@ -478,6 +478,72 @@ def test_prompt_disabled_unknown_prompt_key_is_422_content_free(client):
         _today().isoformat()).exists()
 
 
+# ---------------------------------------------------------------------------
+# D3: a rejected prompt payload must write NO prompt store
+# ---------------------------------------------------------------------------
+
+def test_unknown_prompt_disabled_key_writes_no_store(client):
+    # D3: validation must run BEFORE any prompt-store write, so an invalid
+    # gate map cannot leave today's drafts or skip flags already persisted.
+    r = client.post("/day-setup", json={
+        "captures": {"intention": "synthetic intent"},
+        "description_skips": {"megan_nicety": True},
+        "prompt_disabled": {"custom-m1abcde-xy9": True},
+    }, headers=_auth(client))
+    assert r.status_code == 422
+    assert r.json()["detail"]["code"] == "prompt_disabled_invalid"
+    day = _today().isoformat()
+    assert not prompt_state.drafts_path(day).exists()
+    assert not prompt_state.description_skips_path(day).exists()
+    assert not prompt_state.prompt_disabled_path(day).exists()
+
+
+def test_unknown_description_skips_key_writes_no_store(client):
+    r = client.post("/day-setup", json={
+        "captures": {"intention": "synthetic intent"},
+        "description_skips": {"custom-m1abcde-xy9": True},
+    }, headers=_auth(client))
+    assert r.status_code == 422
+    assert r.json()["detail"]["code"] == "prompt_description_skips_invalid"
+    day = _today().isoformat()
+    assert not prompt_state.drafts_path(day).exists()
+    assert not prompt_state.description_skips_path(day).exists()
+
+
+def test_invalid_drafts_leave_existing_stores_byte_identical(client):
+    day = _today().isoformat()
+    prompt_state.save_drafts(day=day, patch={"intention": "synthetic kept"})
+    prompt_state.save_description_skips(day=day, patch={"megan_nicety": True})
+    drafts_raw = prompt_state.drafts_path(day).read_text(encoding="utf-8")
+    skips_raw = prompt_state.description_skips_path(day).read_text(
+        encoding="utf-8")
+
+    r = client.post("/day-setup", json={
+        "captures": {"intention": ["not", "a", "string"]},
+        "description_skips": {"stoic_intention": True},
+        "prompt_disabled": {"intention": True},
+    }, headers=_auth(client))
+
+    assert r.status_code == 422
+    assert r.json()["detail"]["code"] == "prompt_drafts_invalid"
+    assert prompt_state.drafts_path(day).read_text(
+        encoding="utf-8") == drafts_raw
+    assert prompt_state.description_skips_path(day).read_text(
+        encoding="utf-8") == skips_raw
+    assert not prompt_state.prompt_disabled_path(day).exists()
+
+
+def test_optins_without_revision_writes_no_drafts(client):
+    r = client.post("/day-setup", json={
+        "captures": {"intention": "synthetic intent"},
+        "optins": {"intention": True},
+    }, headers=_auth(client))
+    assert r.status_code == 422
+    assert r.json()["detail"]["code"] == "prompt_optins_invalid"
+    assert not prompt_state.drafts_path(_today().isoformat()).exists()
+    assert not prompt_state.optins_path().exists()
+
+
 def test_prompt_disabled_corrupt_store_is_409_and_preserved(client):
     target = prompt_state.prompt_disabled_path(_today().isoformat())
     target.parent.mkdir(parents=True, exist_ok=True)
