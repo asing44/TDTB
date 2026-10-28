@@ -88,6 +88,7 @@ import type {
   CapacitiesSourceRead,
   DaySetup,
   DescriptionSkips,
+  PromptDisabled,
   FixedInputs,
   MicroIdea,
   MicroPoolItem,
@@ -759,6 +760,29 @@ export class Controller {
       this.dispatch({
         type: "PROMPT_SKIPS_SAVED",
         descriptionSkips: result.descriptionSkips ?? { forMeegy: false, stoic: false },
+        warnings: result.promptWarnings,
+      });
+    } catch (e) {
+      this.dispatch({
+        type: "PROMPT_SAVE_ERROR",
+        error: String(e instanceof Error ? e.message : e),
+      });
+    }
+  }
+
+  /** Persist which built-in prompts are left out of the Todoist commit. The map
+      is a full replace (an omitted key means that prompt is included again) and
+      the save is prompt-only: it never changes the prompt text, never confirms
+      the day, and never touches the skip-description flags. The server omits
+      the map when nothing is disabled, so an absent echo is stored as
+      all-included rather than fabricated or left stale. */
+  async savePromptDisabled(disabled: PromptDisabled): Promise<void> {
+    this.dispatch({ type: "PROMPT_SAVE_START" });
+    try {
+      const result = await this.adapter.savePromptDisabled(disabled);
+      this.dispatch({
+        type: "PROMPT_DISABLED_SAVED",
+        promptDisabled: result.promptDisabled ?? { forMeegy: false, stoic: false },
         warnings: result.promptWarnings,
       });
     } catch (e) {

@@ -442,6 +442,18 @@ export interface DescriptionSkips {
   stoic: boolean; // stoic_intention on the wire
 }
 
+/** Which built-in prompts are left OUT of the Todoist commit for the day. TRUE
+    means disabled: the prompt is not exported at all, and its text is kept so
+    re-enabling it restores the draft. The wire carries the same map under
+    `prompt_disabled` with the captures key names (`megan_nicety`,
+    `stoic_intention`); the Reminder `intention` key has no toggle, so it never
+    reaches this model. An absent value already means "everything included" —
+    never fabricate a map because one is absent. */
+export interface PromptDisabled {
+  forMeegy: boolean; // megan_nicety on the wire
+  stoic: boolean; // stoic_intention on the wire
+}
+
 export interface DaySetup {
   anchor: string | null; // HH:MM override
   eod: string | null;
@@ -453,6 +465,9 @@ export interface DaySetup {
   /** Today-only skip-description flags. Absent = the echo carried no map.
       The Reminder wire key has no checkbox, so it never reaches the model. */
   descriptionSkips?: DescriptionSkips;
+  /** Today-only include-in-commit flags. Absent = the echo carried no map,
+      which means every prompt stays included. */
+  promptDisabled?: PromptDisabled;
   confirmed: boolean;
   /** Absent = preserve dated override; null = reset to config. */
   dayPreset?: string | null;
@@ -481,6 +496,9 @@ export interface DaySetupSaveResult {
   /** Absent when the echo carried no map (nothing skipped, or an unreadable
       store): the caller must read that as "no skips". */
   descriptionSkips?: DescriptionSkips;
+  /** Absent when the echo carried no map (nothing disabled, or an unreadable
+      store): the caller must read that as "everything included". */
+  promptDisabled?: PromptDisabled;
 }
 
 export interface MintSession {

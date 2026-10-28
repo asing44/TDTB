@@ -65,6 +65,7 @@ import type {
   HabitsInfo,
   DaySetupSaveResult,
   DescriptionSkips,
+  PromptDisabled,
   PromptExportOutcome,
   DurationSourceLabel,
   FixedInputs,
@@ -1461,6 +1462,9 @@ export function projectDaySetup(wire: Wire, confirmed: boolean): DaySetup {
   if (Object.prototype.hasOwnProperty.call(wire, "description_skips")) {
     result.descriptionSkips = projectDescriptionSkips(wire.description_skips);
   }
+  if (Object.prototype.hasOwnProperty.call(wire, "prompt_disabled")) {
+    result.promptDisabled = projectPromptDisabled(wire.prompt_disabled);
+  }
   if (Object.prototype.hasOwnProperty.call(wire, "work_allotment_minutes")) {
     result.workAllotmentMinutes = wire.work_allotment_minutes == null
       ? null
@@ -2727,6 +2731,11 @@ export function projectDaySetupSaveResult(wire: Wire): DaySetupSaveResult {
   if (Object.prototype.hasOwnProperty.call(wire, "description_skips")) {
     result.descriptionSkips = projectDescriptionSkips(wire.description_skips);
   }
+  // Same shape as the skip map: the server omits `prompt_disabled` when no
+  // prompt is disabled, so an absent key stays absent rather than fabricated.
+  if (Object.prototype.hasOwnProperty.call(wire, "prompt_disabled")) {
+    result.promptDisabled = projectPromptDisabled(wire.prompt_disabled);
+  }
   return result;
 }
 
@@ -2753,6 +2762,33 @@ export function descriptionSkipsToWire(skips: DescriptionSkips): Wire {
     description_skips: {
       megan_nicety: skips.forMeegy === true,
       stoic_intention: skips.stoic === true,
+    },
+  };
+}
+
+/** `day_setup.prompt_disabled` / the save echo's map → the include-in-commit
+    flags. TRUE on the wire means the prompt is DISABLED. Wire keys are the
+    captures key names; the Reminder `intention` key has no toggle, so an
+    unknown or malformed entry stays included instead of throwing. */
+export function projectPromptDisabled(raw: unknown): PromptDisabled {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    return { forMeegy: false, stoic: false };
+  }
+  const wire = raw as Wire;
+  return {
+    forMeegy: wire.megan_nicety === true,
+    stoic: wire.stoic_intention === true,
+  };
+}
+
+/** Full-replace payload: both toggleable keys ride every save, so re-enabling a
+    prompt is explicit and an omitted key can never resurrect a prior choice.
+    `intention` is left out — the Reminder prompt has no toggle. */
+export function promptDisabledToWire(disabled: PromptDisabled): Wire {
+  return {
+    prompt_disabled: {
+      megan_nicety: disabled.forMeegy === true,
+      stoic_intention: disabled.stoic === true,
     },
   };
 }

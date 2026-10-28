@@ -22,6 +22,7 @@ import type {
   DaySetup,
   DaySetupSaveResult,
   DescriptionSkips,
+  PromptDisabled,
   FixedInputs,
   Ledger,
   PlanInputs,
@@ -175,6 +176,12 @@ export interface Adapter {
       replace (an omitted built-in key means that flag is now off), and it never
       changes WHETHER a prompt exports — only whether a description is written. */
   savePromptSkips(skips: DescriptionSkips): Promise<DaySetupSaveResult>;
+  /** POST /day-setup {prompt_disabled} — PATCH which built-in prompts are left
+      OUT of the Todoist commit. Prompt-only (never confirms the day), a full
+      replace (an omitted built-in key means that prompt is included again), and
+      unrelated to `description_skips`: a disabled prompt writes no description
+      because it writes no task. */
+  savePromptDisabled(disabled: PromptDisabled): Promise<DaySetupSaveResult>;
   /** POST /day-setup {micro_adventure} — T19 free Live override (shuffle /
       pick / custom); null clears the dated override back to the auto-pick.
       Never billed, never a history write. */

@@ -6,8 +6,10 @@
 import { describe, expect, it } from "vitest";
 import {
   projectCommitReport,
+  projectDaySetup,
   projectDaySetupSaveResult,
   projectPlanInputs,
+  promptDisabledToWire,
   promptDraftsToWire,
 } from "./wire";
 import { FixtureAdapter } from "./fixture";
@@ -158,6 +160,72 @@ describe("U5 prompt wire projection", () => {
     expect((await adapter.savePromptSkips({ forMeegy: false, stoic: true })).descriptionSkips)
       .toEqual({ forMeegy: false, stoic: true });
     expect(await adapter.savePromptSkips({ forMeegy: false, stoic: false })).toEqual({
+      ok: true,
+      daySetupConfirmed: false,
+      promptWarnings: [],
+    });
+  });
+});
+
+describe("prompt include-in-commit flags", () => {
+  it("projects prompt_disabled onto the two toggleable prompts", () => {
+    const d = projectDaySetup(
+      { prompt_disabled: { intention: true, megan_nicety: true, stoic_intention: false } },
+      false,
+    );
+    // For Meegy is disabled, Stoic is not; the Reminder key has no switch and
+    // never reaches the model.
+    expect(d.promptDisabled).toEqual({ forMeegy: true, stoic: false });
+  });
+
+  it("an absent map means all enabled, never a fabricated one", () => {
+    expect(projectDaySetup({}, false).promptDisabled).toBeUndefined();
+    expect(
+      projectDaySetupSaveResult({ ok: true, prompt_warnings: [] }),
+    ).not.toHaveProperty("promptDisabled");
+  });
+
+  it("malformed data degrades to all enabled instead of throwing", () => {
+    expect(projectDaySetup({ prompt_disabled: "nope" }, false).promptDisabled).toEqual({
+      forMeegy: false,
+      stoic: false,
+    });
+    expect(
+      projectDaySetup(
+        { prompt_disabled: { megan_nicety: "yes", stoic_intention: 1 } },
+        false,
+      ).promptDisabled,
+    ).toEqual({ forMeegy: false, stoic: false });
+  });
+
+  it("a flags-only echo carries the map back and never confirms the day", () => {
+    const echo = projectDaySetupSaveResult({
+      ok: true,
+      day_setup_confirmed: false,
+      prompt_disabled: { megan_nicety: true },
+      prompt_warnings: [],
+    });
+    expect(echo.promptDisabled).toEqual({ forMeegy: true, stoic: false });
+    expect(echo.daySetupConfirmed).toBe(false);
+  });
+
+  it("the payload is a full replace carrying both toggleable keys", () => {
+    expect(promptDisabledToWire({ forMeegy: true, stoic: false })).toEqual({
+      prompt_disabled: { megan_nicety: true, stoic_intention: false },
+    });
+    expect(promptDisabledToWire({ forMeegy: false, stoic: true })).toEqual({
+      prompt_disabled: { megan_nicety: false, stoic_intention: true },
+    });
+  });
+
+  it("the fixture replaces the whole map and omits the echo when nothing is disabled", async () => {
+    const adapter = new FixtureAdapter("fresh");
+    expect((await adapter.savePromptDisabled({ forMeegy: true, stoic: true })).promptDisabled)
+      .toEqual({ forMeegy: true, stoic: true });
+    // Full replace: an omitted-then-false key really re-enables the prompt.
+    expect((await adapter.savePromptDisabled({ forMeegy: false, stoic: true })).promptDisabled)
+      .toEqual({ forMeegy: false, stoic: true });
+    expect(await adapter.savePromptDisabled({ forMeegy: false, stoic: false })).toEqual({
       ok: true,
       daySetupConfirmed: false,
       promptWarnings: [],
