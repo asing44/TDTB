@@ -224,3 +224,138 @@ def test_prompt_content_never_in_error(client):
                     headers=_auth(client))
     assert r.status_code == 422
     assert secret not in r.text
+
+
+# ---------------------------------------------------------------------------
+# Day-scoped description-skip flags through the same Day Setup seam
+# ---------------------------------------------------------------------------
+
+SKIPS_OFF = {"intention": False, "megan_nicety": False, "stoic_intention": False}
+
+
+def _skips() -> dict:
+    return dict(
+        prompt_state.load_description_skips(_today().isoformat()).skips
+    )
+
+
+def test_description_skips_persist_and_echo(client):
+    r = client.post("/day-setup", json={
+        "description_skips": {"intention": False, "megan_nicety": True,
+                              "stoic_intention": False},
+    }, headers=_auth(client))
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["day_setup"]["description_skips"] == {
+        "intention": False, "megan_nicety": True, "stoic_intention": False,
+    }
+    assert _skips() == {
+        "intention": False, "megan_nicety": True, "stoic_intention": False,
+    }
+
+
+def test_description_skips_only_save_does_not_confirm_or_write_runstate(client):
+    runstate_path = runstate.runstate_read_path(_today())
+    assert runstate_path.is_file() is False
+
+    r = client.post("/day-setup", json={
+        "description_skips": {"stoic_intention": True},
+    }, headers=_auth(client))
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["day_setup_confirmed"] is False
+    assert runstate.is_day_setup_confirmed(_today()) is False
+    # No dated runstate note was materialized by a prompt-only save.
+    assert runstate_path.is_file() is False
+
+
+def test_description_skips_map_is_a_full_replace_per_save(client):
+    client.post("/day-setup", json={
+        "description_skips": {"megan_nicety": True, "stoic_intention": True},
+    }, headers=_auth(client))
+    r = client.post("/day-setup", json={
+        "description_skips": {"megan_nicety": True},
+    }, headers=_auth(client))
+    assert r.status_code == 200, r.text
+    assert _skips() == {
+        "intention": False, "megan_nicety": True, "stoic_intention": False,
+    }
+
+
+def test_description_skips_omitted_preserves_and_echoes_current_state(client):
+    client.post("/day-setup", json={
+        "description_skips": {"stoic_intention": True},
+    }, headers=_auth(client))
+    # A captures-only save omits the flag map: the stored flags are preserved
+    # and still echoed so the checkbox keeps its state.
+    r = client.post("/day-setup", json={"captures": {"intention": "synthetic"}},
+                    headers=_auth(client))
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["day_setup_confirmed"] is False
+    assert body["day_setup"]["description_skips"]["stoic_intention"] is True
+    assert _skips()["stoic_intention"] is True
+
+
+def test_description_skips_non_boolean_is_422(client):
+    r = client.post("/day-setup", json={
+        "description_skips": {"megan_nicety": 1},
+    }, headers=_auth(client))
+    assert r.status_code == 422
+    assert not prompt_state.description_skips_path(_today().isoformat()).exists()
+
+
+def test_description_skips_custom_prompt_key_is_422_content_free(client):
+    key = "custom-m1abcde-xy9"
+    r = client.post("/day-setup", json={
+        "description_skips": {key: True},
+    }, headers=_auth(client))
+    assert r.status_code == 422
+    assert r.json()["detail"]["code"] == "prompt_description_skips_invalid"
+    assert not prompt_state.description_skips_path(_today().isoformat()).exists()
+
+
+def test_description_skips_corrupt_store_is_409_and_preserved(client):
+    target = prompt_state.description_skips_path(_today().isoformat())
+    target.parent.mkdir(parents=True, exist_ok=True)
+    corrupt = '{"version": 1, "day": "2026-01-01", "skips": {"megan_nicety": true}, "skips": {}}'
+    target.write_text(corrupt, encoding="utf-8")
+
+    r = client.post("/day-setup", json={
+        "description_skips": {"megan_nicety": True},
+    }, headers=_auth(client))
+    assert r.status_code == 409
+    assert r.json()["detail"]["code"] == "prompt_description_skips_storage_error"
+    assert target.read_text(encoding="utf-8") == corrupt
+    assert runstate.is_day_setup_confirmed(_today()) is False
+
+
+def test_description_skips_corrupt_store_omits_the_echo(client):
+    target = prompt_state.description_skips_path(_today().isoformat())
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("{not json", encoding="utf-8")
+
+    r = client.post("/day-setup", json={"captures": {"intention": "synthetic"}},
+                    headers=_auth(client))
+    assert r.status_code == 200, r.text
+    body = r.json()
+    # Unreadable flags are never fabricated as all-false.
+    assert body["day_setup"]["description_skips"] is None
+    assert main_mod._PROMPT_DESCRIPTION_SKIPS_READ_WARNING in body.get(
+        "prompt_warnings", []
+    )
+    assert target.read_text(encoding="utf-8") == "{not json"
+
+
+def test_description_skips_all_false_leaves_the_echo_empty(client):
+    client.post("/day-setup", json={
+        "description_skips": {"stoic_intention": True},
+    }, headers=_auth(client))
+    r = client.post("/day-setup", json={
+        "description_skips": {"stoic_intention": False},
+    }, headers=_auth(client))
+    assert r.status_code == 200, r.text
+    # Nothing is skipped, so no flag map is echoed (the key is present only as
+    # the usual ``None`` default), and an empty Day Setup stays empty.
+    assert r.json()["day_setup"]["description_skips"] is None
+    assert _skips() == SKIPS_OFF

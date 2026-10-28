@@ -7,6 +7,17 @@ Todoist task, and only when an explicit live Commit dispatch calls it:
 * EVERY non-empty draft exports — ``intention``, ``megan_nicety``,
   ``stoic_intention``, and browser-defined custom prompts
   (``custom-<id>`` keys). Nothing is per-prompt opted into any more.
+* **Task shape**: a BUILT-IN prompt exports as a task whose TITLE is that
+  prompt's fixed label (:data:`BUILTIN_PROMPT_TITLES` — ``Reminder``,
+  ``For Meegy``, ``Stoic``) and whose DESCRIPTION is the prompt text. A
+  browser-defined custom prompt has no fixed label, so its text stays the
+  TITLE and no description is written.
+* **Description skips**: today's logical-day skip store
+  (``prompt_state.load_description_skips``) may clear a built-in prompt's
+  description. The task is STILL created with its fixed-label title; only the
+  description body is omitted. An absent/``False``/unreadable flag writes the
+  description. The flag never gates the export and never affects a custom
+  prompt.
 * Authorization is read from server state — the current logical-day draft
   store. Browser captures/opt-ins in a request body are never authorization,
   and the legacy per-prompt opt-in store is not consulted at all.
@@ -22,8 +33,9 @@ Todoist task, and only when an explicit live Commit dispatch calls it:
 
 The lane never raises for a provider or receipt failure: it returns bounded,
 content-free outcomes so the Commit result stays honest and the caller can
-surface review state. Prompt text is sent only to the provider; it is never
-placed in a receipt, a log, an error, or a response.
+surface review state. Prompt text is sent only to the provider (as the task
+TITLE for a custom prompt, or as its DESCRIPTION for a built-in one); it is
+never placed in a receipt, a log, an error, or a response.
 """
 from __future__ import annotations
 
@@ -41,6 +53,16 @@ PROMPT_EXPORT_KEYS: tuple[str, ...] = prompt_state.PROMPT_KEYS
 
 #: The single export action. Extending this set is a contract change.
 EXPORT_ACTION = export_receipts.ACTION_TODOIST_TASK
+
+#: The fixed task TITLE of each BUILT-IN prompt (user-approved labels). The
+#: prompt text becomes the task DESCRIPTION instead. A browser-defined custom
+#: prompt has no fixed label, so its text remains the title with no
+#: description (see :func:`plan_prompt_exports`).
+BUILTIN_PROMPT_TITLES: dict[str, str] = {
+    "intention": "Reminder",
+    "megan_nicety": "For Meegy",
+    "stoic_intention": "Stoic",
+}
 
 #: The routing the retired capture lane used: a project_id-less task lands in
 #: the user's Todoist Inbox. Kept explicit so no ad-hoc project is invented.
@@ -72,16 +94,22 @@ class TodoistExportLike(Protocol):
         content: str,
         project_id: str | None = ...,
         due_date: str | None = ...,
+        description: str | None = ...,
         **fields: Any,
     ) -> dict: ...
 
 
 @dataclass(frozen=True)
 class PromptExportPlan:
-    """One authorized export: a prompt key whose opt-in is on and draft is set.
+    """One authorized export: a prompt key with a non-empty draft.
 
-    ``content`` is the private prompt text. It is deliberately absent from
-    :meth:`as_preview` and from every outcome/receipt shape.
+    ``title`` is what the provider receives as the task TITLE: the fixed label
+    for a built-in prompt, or the prompt text for a custom prompt. ``content``
+    is the private prompt text and ``description`` the task body — the text for
+    a built-in prompt whose description is not skipped, else ``None`` (no
+    description is written at all). ``content``, ``description``, and a
+    custom prompt's ``title`` are deliberately absent from :meth:`as_preview`
+    and from every outcome/receipt shape.
     """
 
     day: str
@@ -89,6 +117,8 @@ class PromptExportPlan:
     prompt_key: str
     action: str
     content: str
+    title: str
+    description: str | None = None
 
     def as_preview(self) -> dict[str, Any]:
         return {
@@ -128,22 +158,51 @@ def plan_prompt_exports(
     day: str,
     civil_date: str,
     drafts: dict[str, str] | Any,
+    description_skips: Mapping[str, bool] | Any = None,
 ) -> list[PromptExportPlan]:
     """Every non-empty draft for ``day`` exports; no opt-in is consulted.
 
     Built-in keys plan in canonical order, then browser-defined custom keys
     (``custom-<id>``) in sorted order. A draft that is absent/blank/non-string,
-    or a key that is neither built-in nor custom, contributes nothing."""
+    or a key that is neither built-in nor custom, contributes nothing.
+
+    A built-in key plans its fixed label as ``title`` and its text as
+    ``description``, unless ``description_skips`` marks that key — then the
+    title stays and the description is ``None`` so the provider writes a task
+    with no description. A custom key has no fixed label: its text is the title
+    and it never carries a description."""
     plans: list[PromptExportPlan] = []
     for key in _planned_keys(drafts):
         text = drafts.get(key)
         if not isinstance(text, str) or not text.strip():
             continue
+        title, description = _task_shape(key, text.strip(), description_skips)
         plans.append(PromptExportPlan(
             day=day, civil_date=civil_date, prompt_key=key,
             action=EXPORT_ACTION, content=text.strip(),
+            title=title, description=description,
         ))
     return plans
+
+
+def _task_shape(
+    key: str, text: str, description_skips: Any
+) -> tuple[str, str | None]:
+    """The provider-facing ``(title, description)`` for one planned prompt."""
+    label = BUILTIN_PROMPT_TITLES.get(key)
+    if label is None:
+        # Custom prompt: the text stays the title, and no description is written.
+        return text, None
+    if _description_is_skipped(description_skips, key):
+        return label, None
+    return label, text
+
+
+def _description_is_skipped(description_skips: Any, key: str) -> bool:
+    """True only for an explicit boolean ``True``; absent/other -> write."""
+    if not isinstance(description_skips, Mapping):
+        return False
+    return description_skips.get(key) is True
 
 
 def _planned_keys(drafts: Any) -> list[str]:
@@ -178,6 +237,18 @@ def preview_prompt_exports(
 def _server_drafts(day: str) -> dict[str, str]:
     try:
         return dict(prompt_state.load_drafts(day).drafts)
+    except prompt_state.PromptStateError:
+        return {}
+
+
+def _server_description_skips(day: str) -> dict[str, bool]:
+    """Today's day-scoped description-skip flags (fail closed to all-False).
+
+    An unreadable/malformed skip store must never suppress a description, so a
+    read failure degrades to today's default behavior and preserves the
+    offending bytes. The legacy undated opt-in store is never consulted here."""
+    try:
+        return dict(prompt_state.load_description_skips(day).skips)
     except prompt_state.PromptStateError:
         return {}
 
@@ -223,7 +294,8 @@ def _run_one(plan: PromptExportPlan, todoist: TodoistExportLike) -> PromptExport
     # decision.action == BEGIN: this caller owns the only provider call.
     try:
         created = todoist.create_task(
-            plan.content, project_id=None, due_date=plan.civil_date,
+            plan.title, project_id=None, due_date=plan.civil_date,
+            description=plan.description,
         )
     except Exception:  # noqa: BLE001 — provider failure never crashes the commit
         _safe_fail(plan, _REASON_PROVIDER_ERROR)
@@ -280,16 +352,22 @@ def run_prompt_exports(
     civil_date: str,
     todoist: TodoistExportLike | None,
     drafts: dict[str, str] | None = None,
+    description_skips: dict[str, bool] | None = None,
 ) -> list[PromptExportOutcome]:
     """Run the Commit-only export lane for the current logical day.
 
-    Reads server drafts unless explicitly supplied. Every non-empty draft
-    exports (including ``intention`` and custom prompts). A missing client
-    blocks any planned export (nothing is created) without raising."""
+    Reads the server drafts and the day-scoped description-skip flags unless
+    explicitly supplied. Every non-empty draft exports (including
+    ``intention`` and custom prompts) — a skip flag changes only the task
+    shape, never whether it exports. A missing client blocks any planned export
+    (nothing is created) without raising."""
     if drafts is None:
         drafts = _server_drafts(day)
+    if description_skips is None:
+        description_skips = _server_description_skips(day)
     plans = plan_prompt_exports(
         day=day, civil_date=civil_date, drafts=drafts,
+        description_skips=description_skips,
     )
     if todoist is None:
         return [
@@ -321,6 +399,7 @@ def run_prompt_exports_for_report(
     civil_date: str,
     todoist: TodoistExportLike | None,
     drafts: dict[str, str] | None = None,
+    description_skips: dict[str, bool] | None = None,
 ) -> list[PromptExportOutcome]:
     """Fail-closed gate: export ONLY after the main commit landed ok.
 
@@ -333,6 +412,7 @@ def run_prompt_exports_for_report(
         return skipped_main_failure_outcomes(day=day)
     return run_prompt_exports(
         day=day, civil_date=civil_date, todoist=todoist, drafts=drafts,
+        description_skips=description_skips,
     )
 
 

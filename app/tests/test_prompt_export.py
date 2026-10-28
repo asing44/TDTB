@@ -56,7 +56,7 @@ CUSTOM_ANSWER = "SYNTHETIC-CUSTOM-ANSWER-9f0e"
 
 
 class RecordingTodoist:
-    """In-memory Todoist that records every create (content + due_date)."""
+    """In-memory Todoist that records every create (content/description/due)."""
 
     def __init__(self, *, raise_on_create: bool = False):
         self.tasks: dict[str, dict] = {}
@@ -71,7 +71,8 @@ class RecordingTodoist:
         return self.tasks[task_id]
 
     def create_task(self, content, project_id=None, due_string=None,
-                    due_date=None, duration=None, duration_unit=None, **_):
+                    due_date=None, duration=None, duration_unit=None,
+                    description=None, **_):
         if self.raise_on_create:
             raise RuntimeError("provider boom")
         self._seq += 1
@@ -83,9 +84,10 @@ class RecordingTodoist:
             hhmm = due_string.split("at ", 1)[1].strip()
             due = {"date": f"{DAY}T{hhmm}:00"}
         self.tasks[tid] = {"id": tid, "content": content, "due": due,
-                           "project_id": project_id}
+                           "project_id": project_id,
+                           "description": description}
         self.created.append({"content": content, "project_id": project_id,
-                             "due_date": due_date})
+                             "due_date": due_date, "description": description})
         return self.tasks[tid]
 
     def reschedule_task(self, task_id, due_string):
@@ -186,6 +188,72 @@ class TestPlan:
         assert INTENTION not in repr(preview)
         assert CUSTOM_ANSWER not in repr(preview)
 
+    def test_builtin_prompts_plan_fixed_label_titles_and_text_descriptions(self):
+        plans = pe.plan_prompt_exports(
+            day=DAY, civil_date=CIVIL,
+            drafts={"intention": INTENTION, "megan_nicety": SECRET,
+                    "stoic_intention": STOIC},
+        )
+        assert [(p.prompt_key, p.title, p.description) for p in plans] == [
+            ("intention", "Reminder", INTENTION),
+            ("megan_nicety", "For Meegy", SECRET),
+            ("stoic_intention", "Stoic", STOIC),
+        ]
+        # The private text stays on ``content`` (in memory only).
+        assert [p.content for p in plans] == [INTENTION, SECRET, STOIC]
+        # The label map is the pinned product contract.
+        assert pe.BUILTIN_PROMPT_TITLES == {
+            "intention": "Reminder",
+            "megan_nicety": "For Meegy",
+            "stoic_intention": "Stoic",
+        }
+
+    def test_custom_prompt_plans_text_as_title_without_a_description(self):
+        plans = pe.plan_prompt_exports(
+            day=DAY, civil_date=CIVIL, drafts={CUSTOM_KEY: "  custom answer  "},
+        )
+        [plan] = plans
+        assert plan.title == "custom answer"
+        assert plan.description is None
+        assert plan.content == "custom answer"
+
+    def test_skip_flag_drops_only_the_description(self):
+        plans = pe.plan_prompt_exports(
+            day=DAY, civil_date=CIVIL,
+            drafts={"megan_nicety": SECRET, "stoic_intention": STOIC},
+            description_skips={"megan_nicety": True, "stoic_intention": False},
+        )
+        assert [(p.prompt_key, p.title, p.description) for p in plans] == [
+            ("megan_nicety", "For Meegy", None),  # still planned, no body
+            ("stoic_intention", "Stoic", STOIC),  # explicit False writes it
+        ]
+        # Absent/omitted/non-boolean skip values default to writing.
+        for skips in (None, {}, {"megan_nicety": "yes"}, {"megan_nicety": 1}):
+            [plan] = pe.plan_prompt_exports(
+                day=DAY, civil_date=CIVIL, drafts={"megan_nicety": SECRET},
+                description_skips=skips,
+            )
+            assert plan.description == SECRET
+
+    def test_skip_flag_never_applies_to_custom_prompts(self):
+        [plan] = pe.plan_prompt_exports(
+            day=DAY, civil_date=CIVIL, drafts={CUSTOM_KEY: CUSTOM_ANSWER},
+            description_skips={CUSTOM_KEY: True},
+        )
+        assert plan.title == CUSTOM_ANSWER
+        assert plan.description is None
+
+    def test_preview_shape_is_unchanged_by_titles_and_descriptions(self):
+        preview = pe.preview_prompt_exports(
+            day=DAY, civil_date=CIVIL,
+            drafts={"intention": INTENTION, "megan_nicety": SECRET,
+                    CUSTOM_KEY: CUSTOM_ANSWER},
+        )
+        for entry in preview:
+            assert set(entry) == {"prompt_key", "action", "status"}
+        assert "Reminder" not in repr(preview)
+        assert "For Meegy" not in repr(preview)
+
 
 # ---------------------------------------------------------------------------
 # Execution
@@ -201,7 +269,8 @@ class TestRun:
         assert [o.status for o in outcomes] == [pe.OUTCOME_DONE]
         assert outcomes[0].task_id
         [created] = client.created
-        assert created["content"] == SECRET
+        assert created["content"] == "For Meegy"  # fixed label title
+        assert created["description"] == SECRET  # prompt text is the body
         assert created["due_date"] == CIVIL  # civil date, not DAY
         assert created["project_id"] is None  # Inbox continuity default
 
@@ -214,8 +283,9 @@ class TestRun:
         assert [o.prompt_key for o in outcomes] == ["intention", CUSTOM_KEY]
         assert all(o.status == pe.OUTCOME_DONE for o in outcomes)
         by_content = {c["content"]: c for c in client.created}
-        assert by_content[INTENTION]["project_id"] is None
-        assert by_content[INTENTION]["due_date"] == CIVIL
+        assert by_content["Reminder"]["project_id"] is None
+        assert by_content["Reminder"]["due_date"] == CIVIL
+        assert by_content["Reminder"]["description"] == INTENTION
         assert by_content[CUSTOM_ANSWER]["project_id"] is None
         assert by_content[CUSTOM_ANSWER]["due_date"] == CIVIL
 
@@ -238,7 +308,10 @@ class TestRun:
             "intention", "megan_nicety", CUSTOM_KEY,
         ]
         assert {c["content"] for c in client.created} == {
-            INTENTION, SECRET, CUSTOM_ANSWER,
+            "Reminder", "For Meegy", CUSTOM_ANSWER,
+        }
+        assert {c["description"] for c in client.created} == {
+            INTENTION, SECRET, None,
         }
 
     def test_optin_store_is_not_consulted(self):
@@ -253,6 +326,80 @@ class TestRun:
         client = RecordingTodoist()
         outcomes = pe.run_prompt_exports(day=DAY, civil_date=CIVIL, todoist=client)
         assert [o.prompt_key for o in outcomes] == ["intention", "megan_nicety"]
+
+    def test_custom_prompt_exports_text_as_title_without_a_description(self):
+        client = RecordingTodoist()
+        pe.run_prompt_exports(
+            day=DAY, civil_date=CIVIL, todoist=client,
+            drafts={CUSTOM_KEY: CUSTOM_ANSWER},
+        )
+        [created] = client.created
+        assert created["content"] == CUSTOM_ANSWER
+        assert created["description"] is None
+
+    def test_skip_flag_still_creates_the_task_without_a_description(self):
+        client = RecordingTodoist()
+        outcomes = pe.run_prompt_exports(
+            day=DAY, civil_date=CIVIL, todoist=client,
+            drafts={"megan_nicety": SECRET},
+            description_skips={"megan_nicety": True},
+        )
+        # The task is still created: a skip flag is not an export gate.
+        assert [o.status for o in outcomes] == [pe.OUTCOME_DONE]
+        [created] = client.created
+        assert created["content"] == "For Meegy"
+        assert created["description"] is None
+        assert created["due_date"] == CIVIL
+        assert er.load_receipts().get(
+            DAY, "megan_nicety", pe.EXPORT_ACTION).status == er.STATUS_DONE
+
+    def test_skip_flags_are_read_from_the_day_scoped_server_store(self):
+        ps.save_drafts(day=DAY, patch={"megan_nicety": SECRET,
+                                       "stoic_intention": STOIC})
+        ps.save_description_skips(day=DAY, patch={"stoic_intention": True})
+        client = RecordingTodoist()
+        outcomes = pe.run_prompt_exports(day=DAY, civil_date=CIVIL, todoist=client)
+        assert [o.status for o in outcomes] == [pe.OUTCOME_DONE, pe.OUTCOME_DONE]
+        by_title = {c["content"]: c for c in client.created}
+        assert by_title["For Meegy"]["description"] == SECRET
+        assert by_title["Stoic"]["description"] is None
+
+    def test_skip_flag_for_another_day_does_not_apply(self):
+        ps.save_drafts(day=DAY, patch={"megan_nicety": SECRET})
+        ps.save_description_skips(day="2026-07-11",
+                                  patch={"megan_nicety": True})
+        client = RecordingTodoist()
+        pe.run_prompt_exports(day=DAY, civil_date=CIVIL, todoist=client)
+        assert client.created[0]["description"] == SECRET
+
+    def test_corrupt_skip_store_preserves_bytes_and_writes_the_description(self):
+        target = ps.description_skips_path(DAY)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        raw = '{"version": 1, "day": "2026-07-12", "skips": {"megan_nicety": true}, "skips": {}}'
+        target.write_text(raw, encoding="utf-8")
+        client = RecordingTodoist()
+        outcomes = pe.run_prompt_exports(
+            day=DAY, civil_date=CIVIL, todoist=client,
+            drafts={"megan_nicety": SECRET},
+        )
+        # Fail closed to today's behavior: an unreadable skip store never
+        # suppresses the description and is never repaired.
+        assert [o.status for o in outcomes] == [pe.OUTCOME_DONE]
+        assert client.created[0]["description"] == SECRET
+        assert target.read_text(encoding="utf-8") == raw
+
+    def test_titles_and_descriptions_never_reach_receipts_or_outcomes(self):
+        client = RecordingTodoist()
+        outcomes = pe.run_prompt_exports(
+            day=DAY, civil_date=CIVIL, todoist=client,
+            drafts={"intention": INTENTION, "megan_nicety": SECRET,
+                    "stoic_intention": STOIC, CUSTOM_KEY: CUSTOM_ANSWER},
+        )
+        raw = er.receipts_path().read_text(encoding="utf-8")
+        rendered = repr([o.as_dict() for o in outcomes])
+        for secret in (SECRET, INTENTION, STOIC, CUSTOM_ANSWER):
+            assert secret not in raw
+            assert secret not in rendered
 
     def test_duplicate_done_skips_second_attempt(self):
         client = RecordingTodoist()
@@ -561,14 +708,45 @@ class TestPromptExportRoute:
             "status": pe.OUTCOME_DONE, "task_id": body["prompt_exports"][0]["task_id"],
             "reason": None,
         }]
-        export_tasks = [c for c in todoist.created if c["content"] == SECRET]
+        export_tasks = [c for c in todoist.created if c["content"] == "For Meegy"]
         assert len(export_tasks) == 1
+        assert export_tasks[0]["description"] == SECRET
         assert export_tasks[0]["due_date"] == datetime.now().date().isoformat()
         assert export_tasks[0]["project_id"] is None
         # Content-free response + durable done receipt.
         assert SECRET not in r.text
         receipt = er.load_receipts().get(DAY, "megan_nicety", pe.EXPORT_ACTION)
         assert receipt.status == er.STATUS_DONE
+
+    def test_day_scoped_skip_flag_exports_without_a_description(
+            self, client, vault, monkeypatch):
+        _freeze(monkeypatch)
+        monkeypatch.setattr(shadow, "gather_live_state", _live_state(garage_live=False))
+        ps.save_drafts(day=DAY, patch={"megan_nicety": SECRET})
+        todoist = RecordingTodoist()
+        client.app.state.build_commit_clients = lambda cfg: (todoist, None)
+        # The skip flag is set through the same browser seam as the drafts.
+        r = client.post("/day-setup", headers=_auth(client), json={
+            "description_skips": {"intention": False, "megan_nicety": True,
+                                  "stoic_intention": False},
+        })
+        assert r.status_code == 200, r.text
+        assert r.json()["day_setup_confirmed"] is False
+        assert r.json()["day_setup"]["description_skips"] == {
+            "intention": False, "megan_nicety": True, "stoic_intention": False,
+        }
+        self._confirm(client)
+
+        resp = client.post("/commit?mode=live", headers=_auth(client),
+                           json={"digest": DIGEST, "sequence": SEQUENCE,
+                                 "config": {}})
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["prompt_exports_ok"] is True
+        # The task still lands; only its description is skipped.
+        [exported] = [c for c in todoist.created if c["content"] == "For Meegy"]
+        assert exported["description"] is None
+        assert SECRET not in resp.text
 
     def test_intention_and_custom_prompts_export_at_commit(
             self, client, vault, monkeypatch):
@@ -589,9 +767,11 @@ class TestPromptExportRoute:
             "intention", CUSTOM_KEY,
         ]
         by_content = {c["content"]: c for c in todoist.created}
-        assert by_content[INTENTION]["project_id"] is None
-        assert by_content[INTENTION]["due_date"] == datetime.now().date().isoformat()
+        assert by_content["Reminder"]["project_id"] is None
+        assert by_content["Reminder"]["due_date"] == datetime.now().date().isoformat()
+        assert by_content["Reminder"]["description"] == INTENTION
         assert by_content[CUSTOM_ANSWER]["project_id"] is None
+        assert by_content[CUSTOM_ANSWER]["description"] is None
         assert SECRET not in r.text
         assert INTENTION not in r.text
         assert CUSTOM_ANSWER not in r.text
@@ -624,7 +804,8 @@ class TestPromptExportRoute:
         # stoic_intention's opt-in is explicitly False, yet its non-empty draft
         # still exports: the legacy value is ignored, never a gate.
         assert [e["prompt_key"] for e in body["prompt_exports"]] == ["stoic_intention"]
-        assert [c["content"] for c in todoist.created if c["content"] == STOIC]
+        assert [c["description"] for c in todoist.created
+                if c["content"] == "Stoic"]
         # The legacy GET metadata block still round-trips truthfully. Read it
         # AFTER the commit: GET /plan-inputs refreshes the digest cache, which
         # commit eligibility reads from, so it must not run before the commit.
@@ -646,7 +827,8 @@ class TestPromptExportRoute:
         second = client.post("/commit?mode=live", headers=_auth(client), json=payload)
         assert second.status_code == 200
         assert second.json()["prompt_exports_ok"] is True
-        assert len([c for c in todoist.created if c["content"] == SECRET]) == 1
+        assert len([c for c in todoist.created
+                    if c["content"] == "For Meegy"]) == 1
 
     def test_browser_captures_do_not_authorize_export(self, client, vault, monkeypatch):
         _freeze(monkeypatch)

@@ -534,3 +534,165 @@ def test_load_ioerror_is_typed_content_free_and_suppresses_cause(monkeypatch):
     assert caught.value.__cause__ is None
     assert "Permission" not in str(caught.value)
     assert str(target) not in str(caught.value)
+
+
+# ---------------------------------------------------------------------------
+# Day-scoped description-skip flags (export lane, sibling day file)
+# ---------------------------------------------------------------------------
+
+def _seed_description_skips(day: str, skips: dict[str, bool]) -> Path:
+    """Write a well-formed skip file directly (bypassing save/cleanup)."""
+    path = ps.description_skips_path(day)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps({"version": 1, "day": day, "skips": skips}), encoding="utf-8"
+    )
+    return path
+
+
+def test_description_skips_default_all_false_without_creating_the_file():
+    record = ps.load_description_skips(DAY)
+    assert record.day == DAY
+    # Every built-in key is present and False, so a caller never has to guess.
+    assert dict(record.skips) == ALL_FALSE
+    assert not ps.description_skips_path(DAY).exists()
+
+
+def test_description_skips_path_is_state_dir_and_day_scoped():
+    assert ps.description_skips_path(DAY) == (
+        app_config.state_dir() / f"prompt-description-skips-{DAY}.json"
+    )
+    assert ps.description_skips_lock_path() == (
+        app_config.state_dir() / "prompt-description-skips.lock"
+    )
+
+
+def test_description_skips_round_trip_survives_restart():
+    ps.save_description_skips(day=DAY, patch={"megan_nicety": True})
+
+    # A fresh read models a restart within the same logical day.
+    reread = ps.load_description_skips(DAY)
+    assert dict(reread.skips) == {
+        "intention": False,
+        "megan_nicety": True,
+        "stoic_intention": False,
+    }
+    # Persisted sparsely: only a set flag is stored.
+    stored = json.loads(
+        ps.description_skips_path(DAY).read_text(encoding="utf-8")
+    )
+    assert stored == {
+        "version": 1, "day": DAY, "skips": {"megan_nicety": True},
+    }
+
+
+def test_description_skips_are_day_scoped():
+    ps.save_description_skips(day=DAY, patch={"stoic_intention": True})
+
+    # The next logical day starts clear.
+    assert dict(ps.load_description_skips(NEXT_DAY).skips) == ALL_FALSE
+
+    # A file whose stored day disagrees with the requested day is refused.
+    mismatched = ps.description_skips_path(NEXT_DAY)
+    mismatched.parent.mkdir(parents=True, exist_ok=True)
+    mismatched.write_text(
+        json.dumps(
+            {"version": 1, "day": DAY, "skips": {"stoic_intention": True}}
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(ps.PromptFormatError):
+        ps.load_description_skips(NEXT_DAY)
+
+
+def test_description_skips_patch_preserves_omitted_and_false_clears():
+    ps.save_description_skips(
+        day=DAY, patch={"megan_nicety": True, "stoic_intention": True},
+    )
+
+    saved = ps.save_description_skips(day=DAY, patch={"intention": True})
+    assert dict(saved.skips) == {
+        "intention": True, "megan_nicety": True, "stoic_intention": True,
+    }
+
+    cleared = ps.save_description_skips(day=DAY, patch={"megan_nicety": False})
+    assert dict(cleared.skips) == {
+        "intention": True, "megan_nicety": False, "stoic_intention": True,
+    }
+    stored = json.loads(
+        ps.description_skips_path(DAY).read_text(encoding="utf-8")
+    )
+    assert stored["skips"] == {"intention": True, "stoic_intention": True}
+
+
+def test_description_skips_reject_custom_unknown_and_non_bool():
+    for bad_key in ("custom-m1abcde-xy9", "unknown_prompt"):
+        with pytest.raises(ps.PromptValidationError):
+            ps.save_description_skips(day=DAY, patch={bad_key: True})
+    for bad_value in (1, 0, "yes", None):
+        with pytest.raises(ps.PromptValidationError):
+            ps.save_description_skips(day=DAY, patch={"megan_nicety": bad_value})
+    with pytest.raises(ps.PromptValidationError):
+        ps.save_description_skips(day=DAY, patch=["megan_nicety"])
+    with pytest.raises(ps.PromptValidationError):
+        ps.save_description_skips(day="2026-10-9", patch={"megan_nicety": True})
+    assert not ps.description_skips_path(DAY).exists()
+
+
+def test_description_skips_malformed_storage_is_rejected_without_repair():
+    target = ps.description_skips_path(DAY)
+    target.parent.mkdir(parents=True, exist_ok=True)
+
+    cases = [
+        # duplicate key at the top level
+        '{"version": 1, "day": "2026-10-09", "skips": {"megan_nicety": true},'
+        ' "skips": {}}',
+        # duplicate key inside skips
+        '{"version": 1, "day": "2026-10-09",'
+        ' "skips": {"megan_nicety": true, "megan_nicety": false}}',
+        json.dumps({"version": 2, "day": DAY, "skips": {}}),
+        json.dumps({"version": 1, "day": DAY, "skips": {}, "extra": True}),
+        json.dumps({"version": 1, "day": DAY}),
+        json.dumps({"version": 1, "day": DAY, "skips": {"nope": True}}),
+        json.dumps({"version": 1, "day": DAY, "skips": {"megan_nicety": "yes"}}),
+        json.dumps({"version": 1, "day": DAY, "skips": []}),
+        "{not json",
+    ]
+    for raw in cases:
+        target.write_text(raw, encoding="utf-8")
+        with pytest.raises(ps.PromptFormatError):
+            ps.load_description_skips(DAY)
+        with pytest.raises(ps.PromptFormatError):
+            ps.save_description_skips(day=DAY, patch={"intention": True})
+        assert target.read_text(encoding="utf-8") == raw
+
+
+def test_older_description_skip_files_cleaned_up_on_successful_write_only():
+    older = _seed_description_skips(OLDER_DAY, {"megan_nicety": True})
+    prior = _seed_description_skips(PRIOR_DAY, {"megan_nicety": True})
+    newer = _seed_description_skips(NEWER_DAY, {"megan_nicety": True})
+    drafts = _seed_drafts(DAY, {"intention": "today"})
+    stray = app_config.state_dir() / "prompt-description-skips-not-a-day.json"
+    stray.write_text("{}", encoding="utf-8")
+
+    ps.save_description_skips(day=DAY, patch={"stoic_intention": True})
+
+    assert not older.exists()
+    assert not prior.exists()
+    assert newer.exists()
+    assert drafts.exists()  # the drafts store is untouched by a skip save
+    assert stray.exists()
+    assert ps.description_skips_path(DAY).exists()
+
+
+def test_failed_description_skip_write_does_not_clean_older_files():
+    older = _seed_description_skips(OLDER_DAY, {"megan_nicety": True})
+    current = ps.description_skips_path(DAY)
+    current.parent.mkdir(parents=True, exist_ok=True)
+    current.write_text("{bad json", encoding="utf-8")
+
+    with pytest.raises(ps.PromptFormatError):
+        ps.save_description_skips(day=DAY, patch={"intention": True})
+
+    assert older.exists()
+    assert current.read_text(encoding="utf-8") == "{bad json"
