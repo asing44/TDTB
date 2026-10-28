@@ -684,6 +684,232 @@ def test_native_mapping_rejects_future_out_of_horizon_and_closed_rows():
     assert result.warnings == []
 
 
+def _project_status_settings(**overrides):
+    base = dict(
+        active_statuses=frozenset({"In Progress", "active"}),
+        native_task_structures=frozenset({"RootTask", "custom-project"}),
+    )
+    base.update(overrides)
+    return AssignmentSettings(**base)
+
+
+def _status_object(object_id, structure_id, name, *, status_property="status"):
+    return _object(
+        object_id,
+        structure_id,
+        {
+            "title": _prop("title", "title", {"value": object_id}),
+            status_property: _prop(
+                "label", "label", [{"id": "option-id", "name": name}]
+            ),
+        },
+    )
+
+
+def test_native_active_status_outside_mapped_vocabulary_is_not_closed():
+    # The stored Project/Task mapping's open vocabulary is the source's own
+    # historical list (Idle/Active/On Hold, Todo/Started/...), while the live
+    # label is ``In Progress``. The user's ``active_statuses`` setting is the
+    # authority for "this status means open work", so the mapped vocabulary
+    # alone must not read a working object as closed.
+    provider = _native_provider(
+        [_status_object("system-improvements", "RootTask", "In Progress")]
+    )
+
+    result = _adapter(
+        provider,
+        mappings=(
+            _native_mapping(
+                open_status_values=frozenset(
+                    {"todo", "started", "active", "on hold"}
+                )
+            ),
+        ),
+        assignment_settings=_project_status_settings(),
+    ).items_for_day(TODAY)
+
+    assert [row["capacities_id"] for row in result.items] == ["system-improvements"]
+    assignment = result.items[0]["capacities_assignment"]
+    assert assignment["mode"] == "auto"
+    assert assignment["reasons"] == ["auto-status-active"]
+
+
+def test_project_type_active_status_outside_mapped_vocabulary_is_not_closed():
+    # Same seam for the project-type structure the user marks Active: the
+    # Project mapping's open vocabulary is Idle/Active/On Hold and the live
+    # label is ``In Progress``.
+    provider = _custom_provider(
+        [_status_object("garage-buildout", "custom-project", "In Progress", status_property="state")]
+    )
+
+    result = _adapter(
+        provider,
+        mappings=(
+            _native_mapping(deadline_property=None),
+            _native_mapping(
+                structure_id="custom-project",
+                open_status_property="state",
+                open_status_values=frozenset({"idle", "active", "on hold"}),
+                date_property=None,
+                deadline_property=None,
+                duration_property=None,
+            ),
+        ),
+        assignment_settings=_project_status_settings(),
+    ).items_for_day(TODAY)
+
+    assert [row["capacities_id"] for row in result.items] == ["garage-buildout"]
+    assignment = result.items[0]["capacities_assignment"]
+    assert assignment["mode"] == "auto"
+    assert assignment["reasons"] == ["auto-status-active"]
+
+
+def test_explicitly_closed_native_status_stays_closed():
+    # A readable completed/dropped status is evidence, not a gap: it must keep
+    # failing the safety gate even though the settings Active statuses are
+    # consulted for the open question above.
+    provider = _native_provider(
+        [
+            _status_object("done", "RootTask", "Done"),
+            _status_object("dropped", "RootTask", "Dropped"),
+        ]
+    )
+
+    result = _adapter(
+        provider,
+        mappings=(
+            _native_mapping(
+                open_status_values=frozenset(
+                    {"todo", "started", "active", "on hold"}
+                )
+            ),
+        ),
+        assignment_settings=_project_status_settings(),
+    ).items_for_day(TODAY)
+
+    assert result.items == []
+
+
+def test_native_absent_status_with_due_match_is_unknown_not_closed():
+    # A native task with no status value carries no closed evidence: a missing
+    # property, a present-but-empty label payload (the live ``Replan`` shape),
+    # and an unreadable value all mean "no status", never "closed". The due
+    # signal decides eligibility, and a readable non-open status still excludes.
+    provider = _native_provider(
+        [
+            _object(
+                "replan-missing",
+                "RootTask",
+                {
+                    "title": _prop("title", "title", {"value": "Replan"}),
+                    "due": _prop(
+                        "date",
+                        "date",
+                        {
+                            "dateResolution": "day",
+                            "start": f"{TODAY.isoformat()}T00:00:00.000Z",
+                        },
+                    ),
+                },
+            ),
+            _object(
+                "replan-empty",
+                "RootTask",
+                {
+                    "title": _prop("title", "title", {"value": "Replan"}),
+                    "status": _prop("label", "label", []),
+                    "due": _prop(
+                        "date",
+                        "date",
+                        {
+                            "dateResolution": "day",
+                            "start": f"{TODAY.isoformat()}T00:00:00.000Z",
+                        },
+                    ),
+                },
+            ),
+            _object(
+                "closed-with-due",
+                "RootTask",
+                {
+                    "title": _prop("title", "title", {"value": "Closed"}),
+                    "status": _prop(
+                        "label", "label", [{"id": "option-id", "name": "Done"}]
+                    ),
+                    "due": _prop(
+                        "date",
+                        "date",
+                        {
+                            "dateResolution": "day",
+                            "start": f"{TODAY.isoformat()}T00:00:00.000Z",
+                        },
+                    ),
+                },
+            ),
+        ]
+    )
+
+    result = _adapter(
+        provider,
+        mappings=(_native_mapping(),),
+        assignment_settings=_project_status_settings(),
+    ).items_for_day(TODAY)
+
+    assert [row["capacities_id"] for row in result.items] == [
+        "replan-empty",
+        "replan-missing",
+    ]
+    assert [row["capacities_assignment"]["reasons"] for row in result.items] == [
+        ["auto-due-today-or-overdue"],
+        ["auto-due-today-or-overdue"],
+    ]
+
+
+def test_non_native_absent_status_with_due_match_stays_closed():
+    # The absent-status relief is scoped to the native task/project structures
+    # the evaluator owns. A custom structure without any status evidence keeps
+    # the fail-closed gate.
+    provider = _custom_provider(
+        [
+            _object(
+                "custom-due",
+                "custom-project",
+                {
+                    "title": _prop("title", "title", {"value": "Custom"}),
+                    "date": _prop(
+                        "date",
+                        "date",
+                        {
+                            "dateResolution": "day",
+                            "start": f"{TODAY.isoformat()}T00:00:00.000Z",
+                        },
+                    ),
+                },
+            ),
+        ]
+    )
+
+    result = _adapter(
+        provider,
+        mappings=(
+            _native_mapping(deadline_property=None),
+            _native_mapping(
+                structure_id="custom-project",
+                open_status_property="state",
+                open_status_values=frozenset({"active"}),
+                date_property="date",
+                deadline_property=None,
+                duration_property=None,
+            ),
+        ),
+        assignment_settings=_project_status_settings(
+            native_task_structures=frozenset({"RootTask"})
+        ),
+    ).items_for_day(TODAY)
+
+    assert result.items == []
+
+
 def test_native_mapping_all_rules_disabled_projects_nothing():
     provider = _native_provider(
         [
@@ -3109,3 +3335,54 @@ def test_equal_record_and_declaration_values_do_not_warn():
     ).items_for_day(TODAY)
 
     assert result.warnings == []
+
+
+def test_assigned_on_today_admits_object_whose_own_date_is_tomorrow():
+    # An object the source explicitly places on today's board is today's work
+    # even when its own date property points at a later day: the Assigned On
+    # declaration is the stronger signal and must not be filtered away by the
+    # day-projection date filter.
+    provider = _assigned_on_provider([
+        _assigned_on_object(
+            "gardens-sake",
+            {
+                "state": _active_state(),
+                ASSIGNED_ON_PROPERTY: _date_value(TODAY.isoformat()),
+                "date": _date_value((TODAY + timedelta(days=1)).isoformat()),
+            },
+        ),
+    ])
+
+    result = _override_adapter(
+        provider,
+        _assigned_on_mapping(date_property="date"),
+        assignment_settings=_active_settings(),
+    ).items_for_day(TODAY)
+
+    assert [row["capacities_id"] for row in result.items] == ["gardens-sake"]
+    assignment = result.items[0]["capacities_assignment"]
+    assert assignment["mode"] == "assigned"
+    assert assignment["source_assigned"] is True
+    assert assignment["reasons"] == ["source-assigned"]
+
+
+def test_future_date_without_an_assigned_on_signal_is_still_dropped():
+    # No Assigned On value means no source placement: a future date keeps the
+    # existing day-projection drop.
+    provider = _assigned_on_provider([
+        _assigned_on_object(
+            "next-week",
+            {
+                "state": _active_state(),
+                "date": _date_value((TODAY + timedelta(days=7)).isoformat()),
+            },
+        ),
+    ])
+
+    result = _override_adapter(
+        provider,
+        _assigned_on_mapping(date_property="date"),
+        assignment_settings=_active_settings(),
+    ).items_for_day(TODAY)
+
+    assert result.items == []

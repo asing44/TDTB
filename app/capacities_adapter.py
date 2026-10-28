@@ -1625,6 +1625,24 @@ class CapacitiesAdapter:
             and bool(mapping.open_status_property)
             and mapping.completion_property == mapping.open_status_property
         )
+        # The settings Active statuses are the user's own statement of which
+        # source statuses mean open work. The stored per-structure mapping's
+        # open vocabulary is a snapshot of the structure's label set, so it can
+        # lag the labels actually in use (a Project mapping listing Idle/
+        # Active/On Hold while the live label is ``In Progress``). For a native
+        # task/project structure a readable status named by ``active_statuses``
+        # therefore counts as open: the gate stays a safety filter for
+        # completed/dropped evidence rather than a vocabulary membership test.
+        # The mapping's declared completed value still wins, and a non-native
+        # structure keeps failing closed.
+        active_status_values = {
+            _normalized(value)
+            for value in self.config.assignment_settings.active_statuses
+        }
+        native_status_structure = (
+            mapping.structure_id
+            in self.config.assignment_settings.native_task_structures
+        )
         if mapping.open_status_property:
             status_prop = properties.get(mapping.open_status_property)
             if active_rule is not None:
@@ -1634,7 +1652,11 @@ class CapacitiesAdapter:
                     mapping.open_status_values,
                 )
             elif status_prop is None:
-                status_is_open = False
+                # A missing mapped status value is an absent signal, not closed
+                # evidence. On a native structure it stays UNKNOWN so the
+                # evaluator can admit the row on its own due/deadline/source
+                # signal; a custom structure keeps the fail-closed gate.
+                status_is_open = None if native_status_structure else False
             elif shared_direct_field and (
                 _classify_open_status(
                     status_prop,
@@ -1657,11 +1679,21 @@ class CapacitiesAdapter:
                     status_prop, mapping.open_status_property
                 )
                 status = _status_token(display_tokens, self.config.assignment_settings)
-                status_is_open = bool(
-                    status_tokens.intersection(
-                        {_normalized(value) for value in mapping.open_status_values}
+                if native_status_structure and not status_tokens:
+                    # Present but empty payload: the same absent signal as a
+                    # missing property, so it stays UNKNOWN rather than closed.
+                    status_is_open = None
+                else:
+                    status_is_open = bool(
+                        status_tokens.intersection(
+                            {_normalized(value) for value in mapping.open_status_values}
+                        )
+                    ) or (
+                        native_status_structure
+                        and status is not None
+                        and status in active_status_values
+                        and status != _normalized(mapping.completion_value)
                     )
-                )
         elif active_rule is not None:
             status_state = "unavailable"
 
@@ -1700,13 +1732,18 @@ class CapacitiesAdapter:
 
         # ``date_property`` remains a day-projection filter: a future date means
         # the object is not part of today's candidate set. The evaluator owns
-        # the native deadline horizon from ``deadline_property``.
+        # the native deadline horizon from ``deadline_property``. An object the
+        # source explicitly places on today's board through its Assigned On
+        # declaration is today's work whatever its own date property says, so
+        # that declaration outranks the day filter; every other signal keeps the
+        # existing drop.
+        assigned_on_today = bool(mapping.assigned_on_property) and source_assigned is True
         due: date | None = None
         if mapping.date_property:
             date_prop = properties.get(mapping.date_property)
             if date_prop is not None:
                 due = _property_date(date_prop, mapping.date_property)
-                if due is not None and due > logical_day:
+                if due is not None and due > logical_day and not assigned_on_today:
                     return None
 
         deadline: date | None = None
