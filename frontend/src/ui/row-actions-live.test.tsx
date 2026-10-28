@@ -128,14 +128,21 @@ function spyHarness() {
 }
 
 describe("collapsed row: direct verbs", () => {
-  it("offers exactly Complete, Unassign in Todoist… and Expand — never source removal or Delete", () => {
+  it("offers the Mint toggle plus Complete, Unassign in Todoist… and Expand — never source removal or Delete", () => {
     const h = makeHarness("ready");
     const { container } = h.ui(<Queue />);
     const press = rowFor(container, "Press");
+    // The permanent May-overlap-Mint toggle leads the cluster (it applies at
+    // once); the three row verbs follow in their frozen order.
     const direct = Array.from(
       press.querySelectorAll<HTMLElement>(".trow__acts > button"),
     ).map((b) => b.getAttribute("aria-label"));
-    expect(direct).toEqual(["Complete", UNASSIGN_TRIGGER_LABEL, "Expand"]);
+    expect(direct).toEqual([
+      "May overlap Mint: Press",
+      "Complete",
+      UNASSIGN_TRIGGER_LABEL,
+      "Expand",
+    ]);
     // Source removal and Delete are not direct controls, and the transitional
     // More menu that used to hold them is gone.
     expect(press.querySelector('button[aria-label*="Remove from planning"]')).toBeNull();
@@ -148,14 +155,19 @@ describe("collapsed row: direct verbs", () => {
     expect(expanded.querySelector(".source-menu__trigger")).not.toBeNull();
   });
 
-  it("keeps DOM/focus order: Complete, Unassign in Todoist…, Expand", () => {
+  it("keeps DOM/focus order: Mint, Complete, Unassign in Todoist…, Expand", () => {
     const h = makeHarness("ready");
     const { container } = h.ui(<Queue />);
     const press = rowFor(container, "Press");
     const labels = Array.from(
       press.querySelectorAll<HTMLElement>(".trow__acts button"),
     ).map((b) => b.getAttribute("aria-label"));
-    expect(labels).toEqual(["Complete", UNASSIGN_TRIGGER_LABEL, "Expand"]);
+    expect(labels).toEqual([
+      "May overlap Mint: Press",
+      "Complete",
+      UNASSIGN_TRIGGER_LABEL,
+      "Expand",
+    ]);
   });
 });
 

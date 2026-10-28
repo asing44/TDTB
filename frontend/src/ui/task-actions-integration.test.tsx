@@ -132,13 +132,19 @@ describe("F7 integration: the row and its expanded panel", () => {
     const h = makeHarness("ready");
     const { container } = h.ui(<Queue />);
 
-    // Collapsed: three labelled controls, no menu of any kind.
+    // Collapsed: the permanent Mint toggle plus three labelled controls, no
+    // menu of any kind.
     const press = rowFor(container, "Press");
     expect(
       Array.from(press.querySelectorAll<HTMLElement>(".trow__acts > button")).map((b) =>
         b.getAttribute("aria-label"),
       ),
-    ).toEqual(["Complete", UNASSIGN_TRIGGER_LABEL, "Expand"]);
+    ).toEqual([
+      "May overlap Mint: Press",
+      "Complete",
+      UNASSIGN_TRIGGER_LABEL,
+      "Expand",
+    ]);
     expect(container.querySelector('button[aria-haspopup="menu"]')).toBeNull();
     expect(container.querySelector(".row-more")).toBeNull();
     expect(container.querySelector('button[aria-label^="Adjust time for"]')).toBeNull();
@@ -150,17 +156,19 @@ describe("F7 integration: the row and its expanded panel", () => {
     const line2 = panel.querySelector<HTMLElement>(".trow__l2")!;
     expect(line1).not.toBeNull();
     expect(line2).not.toBeNull();
-    // Line 1 shapes the row; nothing is committed there.
-    expect(line1.textContent).toContain("Time block");
+    // Line 1 shapes the row at once: an exact-minutes field, the All-day
+    // toggle and Start. The duration slider stays in the collapsed row, and
+    // May overlap Mint lives there too.
+    expect(line1.querySelector('input[aria-label="Exact minutes"]')).not.toBeNull();
     expect(line1.textContent).toContain("All-day");
-    expect(line1.querySelector('[role="radiogroup"][aria-label="Duration"]')).not.toBeNull();
-    expect(line1.textContent).toContain("May overlap Mint");
-    // Line 2: Save/Discard (only while staged) on the left, Source right.
+    expect(line1.textContent).toContain("Start");
+    expect(line1.querySelector('[role="radiogroup"][aria-label="Duration"]')).toBeNull();
+    expect(line1.textContent).not.toContain("May overlap Mint");
     expect(line2.querySelector(".source-menu__trigger")).not.toBeNull();
     expect(line2.lastElementChild?.classList.contains("source-menu")).toBe(true);
   });
 
-  it("puts Save and Discard on line 2, left of the Source menu, only while staged", () => {
+  it("keeps line 2 to the Source menu, because edits apply at once", () => {
     const h = makeHarness("ready");
     const { container } = h.ui(<Queue />);
     let row = expand(container, "Press");
@@ -168,18 +176,24 @@ describe("F7 integration: the row and its expanded panel", () => {
     expect(Array.from(line2.querySelectorAll("button")).map((b) => b.getAttribute("aria-label") ?? b.textContent?.trim()))
       .toEqual(["Source actions"]);
 
-    fireEvent.click(
-      row.querySelector('[role="radiogroup"][aria-label="Duration"] [data-minutes="120"]')!,
+    fireEvent.input(
+      row.querySelector<HTMLInputElement>('input[aria-label="Exact minutes"]')!,
+      { target: { value: "2h" } },
+    );
+    fireEvent.keyDown(
+      rowFor(container, "Press").querySelector('input[aria-label="Exact minutes"]')!,
+      { key: "Enter" },
     );
     row = rowFor(container, "Press");
     line2 = row.querySelector<HTMLElement>(".trow__l2")!;
+    // No Save/Discard appears: the edit already landed, and the row carries a
+    // single-step Undo instead.
     expect(Array.from(line2.querySelectorAll("button")).map((el) => el.getAttribute("aria-label") ?? el.textContent?.trim())).toEqual([
-      "Save",
-      "Discard",
       "Source actions",
     ]);
-    // Staged shaping is visible on the collapsed row too.
-    expect(row.querySelector(".trow__state")?.textContent).toBe("Staged");
+    expect(h.store.getState().overrides["Press"]?.blocks).toBe(4);
+    expect(row.querySelector(".trow__state")?.textContent).not.toContain("Staged");
+    expect(row.querySelector('button[aria-label="Undo last change to Press"]')).not.toBeNull();
   });
 });
 

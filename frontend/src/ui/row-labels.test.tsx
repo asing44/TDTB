@@ -190,7 +190,8 @@ describe("rendered rows carry the clearer labels", () => {
     expect(row().querySelector(".qrow__time-adjustment-note")).toBeNull();
     expect(row().textContent).not.toContain("Allow move");
     expect(container.querySelector('button[aria-haspopup="menu"]')).toBeNull();
-    // The permission is the expanded row's time-editor checkbox; Save commits it.
+    // The permission is the expanded row's time-editor checkbox; Apply
+    // commits it at once (there is no Save step).
     fireEvent.click(row().querySelector('button[aria-label="Expand"]')!);
     fireEvent.click(getByText("Set time"));
     const control = row().querySelector<HTMLInputElement>(
@@ -199,7 +200,6 @@ describe("rendered rows carry the clearer labels", () => {
     expect(control.checked).toBe(false);
     fireEvent.click(control);
     fireEvent.click(getByText("Apply"));
-    fireEvent.click(getByText("Save"));
     expect(h.store.getState().timeAdjustmentOptIns["M1.5"]).toBe(true);
   });
 });

@@ -1,5 +1,6 @@
 /* time-editor.test.tsx — task-actions F4b: the inline exact-start editor.
-   Fixture adapters only. */
+   The editor's Apply commits at once through controller.applyRowEdit (no Save
+   step); Clear drops the pin again. Fixture adapters only. */
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent } from "@testing-library/preact";
@@ -31,7 +32,7 @@ function setup(protect: boolean) {
 }
 
 describe("time editor", () => {
-  it("stages a validated pin on Apply", () => {
+  it("applies a validated pin on Apply", () => {
     const { h, row, btn } = setup(false);
     fireEvent.click(btn("Set time"));
     const input = row().querySelector<HTMLInputElement>('input[type="time"]')!;
@@ -40,7 +41,8 @@ describe("time editor", () => {
     fireEvent.input(input, { target: { value: "13:30" } });
     expect(btn("Apply").disabled).toBe(false);
     fireEvent.click(btn("Apply"));
-    expect(h.store.getState().drafts["Press"].pin).toBe("13:30");
+    expect(h.store.getState().placements["Press"]).toBe("13:30");
+    expect(h.store.getState().rowUndo["Press"]).toBeDefined();
     expect(row().querySelector(".trow__editor")).toBeNull();
     expect(btn("Clear")).toBeDefined();
   });
@@ -55,9 +57,8 @@ describe("time editor", () => {
     fireEvent.click(allow);
     expect(btn("Apply").disabled).toBe(false);
     fireEvent.click(btn("Apply"));
-    const d = h.store.getState().drafts["Press"];
-    expect(d.pin).toBe("09:00");
-    expect(d.allowSourceTime).toBe(true);
+    expect(h.store.getState().placements["Press"]).toBe("09:00");
+    expect(h.store.getState().timeAdjustmentOptIns["Press"]).toBe(true);
   });
 
   it.each(["", "9:00", "24:00", "12:60", "13:30:01"])("rejects non-HH:MM input %s", (time) => {
@@ -72,12 +73,14 @@ describe("time editor", () => {
     fireEvent.click(btn("Set time"));
     fireEvent.input(row().querySelector('input[type="time"]')!, { target: { value: "14:30" } });
     fireEvent.click(btn("Cancel"));
-    expect(h.store.getState().drafts["Press"].pin).toBeNull();
+    // Nothing was applied: the reader never pressed Apply.
+    expect(h.store.getState().placements["Press"] ?? null).toBeNull();
+    expect(h.store.getState().rowUndo["Press"]).toBeUndefined();
     expect(row().querySelector(".trow__editor")).toBeNull();
     expect(document.activeElement).toBe(btn("Set time"));
   });
 
-  it("saves and clears a protected pin without source actions or billed calls", () => {
+  it("applies and clears a protected pin without source actions or billed calls", () => {
     const { h, row, btn } = setup(true);
     const sourceAction = vi.spyOn(h.adapter, "runtimeAction");
     const commit = vi.spyOn(h.adapter, "liveCommit");
@@ -86,12 +89,10 @@ describe("time editor", () => {
     fireEvent.input(row().querySelector('input[type="time"]')!, { target: { value: "14:30" } });
     fireEvent.click(row().querySelector('.trow__editor input[type="checkbox"]')!);
     fireEvent.click(btn("Apply"));
-    fireEvent.click(btn("Save"));
     expect(h.store.getState().placements["Press"]).toBe("14:30");
     fireEvent.click(btn("Clear"));
-    expect(h.store.getState().drafts["Press"].pin).toBeNull();
-    expect(h.store.getState().drafts["Press"].allowSourceTime).toBe(false);
-    fireEvent.click(btn("Save"));
+    expect(h.store.getState().placements["Press"] ?? null).toBeNull();
+    expect(h.store.getState().timeAdjustmentOptIns["Press"] ?? false).toBe(false);
     expect(sourceAction).not.toHaveBeenCalled();
     expect(commit).not.toHaveBeenCalled();
     expect(sequence).not.toHaveBeenCalled();
