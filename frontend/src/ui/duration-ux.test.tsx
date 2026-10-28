@@ -109,7 +109,7 @@ describe("Remember", () => {
     const reset = vi.spyOn(h.adapter, "resetDurationMemory").mockResolvedValue({
       identity: PRESS_IDENTITY,
       minutes: 90,
-      source: "source",
+      source: "tag",
     });
     const { container } = h.ui(<Queue />);
     fireEvent.click(remember(expand(container, "Press")));

@@ -68,7 +68,7 @@ describe("Capacities all-day", () => {
     expect(allDay(after).getAttribute("aria-pressed")).toBe("true");
     expect(after.classList.contains("qrow--background")).toBe(true);
     expect(after.querySelector(".trow__state")?.textContent).toBe("All-day");
-    expect(after.querySelector(".dslider").getAttribute("title")).toBe("Duration All day");
+    expect(after.querySelector(".dslider")!.getAttribute("title")).toBe("Duration All day");
 
     // Local only: the Capacities source value is untouched and nothing is sent.
     const source = h.store.getState().inputs!.assigned.find((i) => i.id === CAPACITIES)!;
