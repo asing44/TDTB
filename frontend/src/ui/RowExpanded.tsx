@@ -1,28 +1,19 @@
-/* RowExpanded — task-actions F4b: the two-line expanded panel from the
-   approved prototype (design/task-actions r2).
+/* RowExpanded — the expanded row panel (row redesign).
 
-   Line 1 shapes the row (all staged on the row's draft, nothing committed):
-   Time block / All-day, duration (one-tap chips, exact-minutes field, save-state
-   chip, Remember for next time), Start (Auto + Set time, or the pinned time
-   + Clear), and "May overlap Mint" with a short inline reason only when it is
-   disabled. Line 2 holds Save and Discard on the left, rendered only while the draft
-   differs from the committed session, and the Source menu on the right.
-
-   Every transform goes through the pure rowDraft model (setMode, setPin,
-   clearPin, canApplyPin) via controller.updateDraft; the store owns the draft
-   lifecycle. Opening the panel opens a draft when none is kept; collapsing
-   keeps the draft (the store only drops it on Save/Discard), so a staged row
-   still reads "Staged" while collapsed. The Source menu (F4c) sits right on line 2;
-   the batch bar (F6) is not part of this panel. */
+   Every control here is LOCAL day state, applied the moment it changes through
+   controller.applyRowEdit (duration, All-day, start pin, source-time grant):
+   there is no Save/Discard step and no staged chip. The row's Undo (in the
+   collapsed header) reverses the last change. The duration is set by the
+   collapsed row's slider (15 min .. 4 h, All-day at the left end); this panel
+   adds only what the slider cannot say: an exact-minutes field (debounced,
+   also on blur/Enter), the All-day mode toggle, Remember (a durable override
+   of the source on every day), and the Start pin. May overlap Mint lives on
+   the collapsed row. Only Remember writes beyond the session (to the
+   duration-memory config), and it is its own explicit toggle. */
 
 import { useEffect, useRef, useState } from "preact/hooks";
 import { useApp } from "./context";
-import {
-  draftIsStaged,
-  draftSeedOf,
-  rowFactsOf,
-  type AppState,
-} from "../store/store";
+import { draftSeedOf, rowFactsOf, type AppState } from "../store/store";
 import {
   canApplyPin,
   clearPin,
@@ -36,10 +27,10 @@ import { minutesToBlocks, parseDuration } from "../model/parseDuration";
 import type { AssignedItem } from "../model/types";
 import { SourceMenu } from "./SourceMenu";
 import { TimeEditor } from "./TimeEditor";
-import { DurationChips } from "./DurationChips";
 import { DurationRemember } from "./DurationRemember";
-import { DurationStatus, saveDurationDraft } from "./DurationStatus";
 import { rowId } from "./TaskRow";
+
+const TYPE_DEBOUNCE_MS = 400;
 
 export function RowExpanded({ item, s }: { item: AssignedItem; s: AppState }) {
   const { controller } = useApp();
@@ -51,12 +42,10 @@ export function RowExpanded({ item, s }: { item: AssignedItem; s: AppState }) {
   const [customError, setCustomError] = useState<string | null>(null);
   const refocusStart = useRef(false);
 
-  // Opening the panel opens a draft unless the store kept one.
-  useEffect(() => {
-    if (!s.drafts[id]) controller.openDraft(id);
-  }, [id]);
+  const typed = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  useEffect(() => () => clearTimeout(typed.current), []);
 
-  // Return focus to the Start trigger after the editor closes or Save/Discard
+  // Return focus to the Start trigger after the editor closes or Clear
   // removes the focused button.
   useEffect(() => {
     if (!refocusStart.current) return;
@@ -65,41 +54,33 @@ export function RowExpanded({ item, s }: { item: AssignedItem; s: AppState }) {
   });
 
   const row = rowFactsOf(s, id);
-  const draft = s.drafts[id] ?? draftSeedOf(s, id);
+  const draft = draftSeedOf(s, id);
   if (!row || !draft) return null;
 
   const busy = s.runtimeBusy;
-  const staged = draftIsStaged(s, id);
   const allDay = draft.mode === "allday";
   const protectedSource = isProtectedNative(row);
 
-  const allDayWhy =
-    row.source === "capacities"
-      ? EXCLUSION_REASONS.allDayCapacities
-      : protectedSource
-        ? EXCLUSION_REASONS.protectedAllDay
-        : null;
-  const mintWhy = allDay
-    ? EXCLUSION_REASONS.mintAllDay
-    : row.isMintSession
-      ? EXCLUSION_REASONS.mintSession
-      : null;
+  // All-day is a local plan state for every row except a protected Todoist
+  // native time; a Capacities row may go all-day (blocks 0, no source write).
+  const allDayWhy = protectedSource ? EXCLUSION_REASONS.protectedAllDay : null;
 
-  // Typed duration: valid text stages exact minutes (blocks = minutes / 30);
-  // invalid text keeps the draft and surfaces an inline error. Empty text is
-  // a no-op so tabbing through the field never stages or errors.
-  const applyCustom = () => {
-    if (customText.trim() === "") {
+  // Typed duration: valid text applies exact minutes (blocks = minutes / 30)
+  // at once; invalid text changes nothing and surfaces an inline error. Empty
+  // text is a no-op so tabbing through the field never changes or errors.
+  const applyCustom = (text: string) => {
+    clearTimeout(typed.current);
+    if (text.trim() === "") {
       setCustomError(null);
       return;
     }
-    const parsed = parseDuration(customText);
+    const parsed = parseDuration(text);
     if (!parsed.ok) {
       setCustomError(parsed.error);
       return;
     }
     const blocks = minutesToBlocks(parsed.minutes);
-    controller.updateDraft(id, (d) => ({ ...d, blocks }));
+    controller.applyRowEdit(id, (d) => ({ ...setMode(d, "time"), blocks }));
     setCustomText("");
     setCustomError(null);
   };
@@ -136,7 +117,7 @@ export function RowExpanded({ item, s }: { item: AssignedItem; s: AppState }) {
             disabled={busy}
             onClick={() => {
               refocusStart.current = true;
-              controller.updateDraft(id, (d) => ({ ...clearPin(d), allowSourceTime: false }));
+              controller.applyRowEdit(id, (d) => ({ ...clearPin(d), allowSourceTime: false }));
             }}
           >
             Clear
@@ -159,108 +140,70 @@ export function RowExpanded({ item, s }: { item: AssignedItem; s: AppState }) {
   return (
     <div class="trow__panel">
       <div class="trow__l1">
-        <div class="trow__seg" role="radiogroup" aria-label="Scheduling">
-          <label>
-            <input
-              type="radio"
-              name={`mode-${base}`}
-              value="time"
-              checked={!allDay}
-              disabled={busy}
-              onChange={() => controller.updateDraft(id, (d) => setMode(d, "time"))}
-            />{" "}
-            Time block
-          </label>
-          <label title={allDayWhy ?? undefined}>
-            <input
-              type="radio"
-              name={`mode-${base}`}
-              value="allday"
-              checked={allDay}
-              disabled={busy || allDayWhy !== null}
-              aria-describedby={allDayWhy ? `why-allday-${base}` : undefined}
-              onChange={() => controller.updateDraft(id, (d) => setMode(d, "allday"))}
-            />{" "}
+        <span class="trow__grp" role="group" aria-label="Duration">
+          <input
+            class="trow__select dux-exact"
+            type="text"
+            inputMode="text"
+            placeholder="Exact, e.g. 25m"
+            aria-label="Exact minutes"
+            aria-invalid={customError ? "true" : undefined}
+            aria-describedby={customError ? `why-dur-${base}` : undefined}
+            title={allDay ? "All-day rows have no duration" : "Type an exact duration such as 25m or 1h10"}
+            disabled={busy || allDay}
+            value={customText}
+            onInput={(e) => {
+              const text = (e.target as HTMLInputElement).value;
+              setCustomText(text);
+              setCustomError(null);
+              clearTimeout(typed.current);
+              if (parseDuration(text).ok) {
+                typed.current = setTimeout(() => applyCustom(text), TYPE_DEBOUNCE_MS);
+              }
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                applyCustom(customText);
+              } else if (e.key === "Escape") {
+                clearTimeout(typed.current);
+                setCustomText("");
+                setCustomError(null);
+              }
+            }}
+            onBlur={() => {
+              if (customText.trim() !== "" && parseDuration(customText).ok) applyCustom(customText);
+            }}
+          />
+          <button
+            type="button"
+            class={`trow__tog${allDay ? " trow__tog--on" : ""}`}
+            aria-pressed={allDay}
+            disabled={busy || (allDayWhy !== null && !allDay)}
+            title={allDayWhy ?? (allDay ? "All-day: no start time. Click to give it a time block again." : "Make this an all-day item: no start time, no band capacity. Local to today's plan.")}
+            aria-describedby={allDayWhy ? `why-allday-${base}` : undefined}
+            onClick={() =>
+              controller.applyRowEdit(id, (d) => setMode(d, allDay ? "time" : "allday"))
+            }
+          >
             All-day
-          </label>
-        </div>
+          </button>
+          <DurationRemember item={item} s={s} blocks={draft.blocks} allDay={allDay} idBase={base} />
+        </span>
         {allDayWhy && (
           <span class="trow__why" id={`why-allday-${base}`}>
             {allDayWhy}
           </span>
         )}
-        <DurationChips
-          idBase={base}
-          blocks={draft.blocks}
-          allDay={allDay}
-          disabled={busy}
-          allDayWhy={allDayWhy}
-          allDayWhyId={`why-allday-${base}`}
-          onPickMinutes={(m) =>
-            controller.updateDraft(id, (d) => ({
-              ...setMode(d, "time"),
-              blocks: minutesToBlocks(m),
-            }))
-          }
-          onPickAllDay={() => controller.updateDraft(id, (d) => setMode(d, "allday"))}
-        />
-        <input
-          class="trow__select dux-exact"
-          type="text"
-          inputMode="text"
-          placeholder="e.g. 10m"
-          aria-label="Custom duration"
-          aria-invalid={customError ? "true" : undefined}
-          aria-describedby={customError ? `why-dur-${base}` : undefined}
-          title={allDay ? "All-day rows have no duration" : undefined}
-          disabled={busy || allDay}
-          value={customText}
-          onInput={(e) => {
-            setCustomText((e.target as HTMLInputElement).value);
-            setCustomError(null);
-          }}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") {
-              e.preventDefault();
-              applyCustom();
-            } else if (e.key === "Escape") {
-              setCustomText("");
-              setCustomError(null);
-            }
-          }}
-          onBlur={() => {
-            if (customText.trim() !== "" && parseDuration(customText).ok) applyCustom();
-          }}
-        />
         {customError && (
           <span class="trow__why" id={`why-dur-${base}`} role="alert">
             {customError}
           </span>
         )}
-        <DurationStatus s={s} item={item} />
-        <DurationRemember item={item} s={s} blocks={draft.blocks} allDay={allDay} idBase={base} />
         <span class="trow__start" role="group" aria-label="Start">
           <span class="trow__muted">Start</span>
           {startControl()}
         </span>
-        <label class="trow__ov" title={mintWhy ?? undefined}>
-          <input
-            type="checkbox"
-            checked={draft.mintOverlap && mintWhy === null}
-            disabled={busy || mintWhy !== null}
-            aria-describedby={mintWhy ? `why-ov-${base}` : undefined}
-            onChange={(e) => {
-              const on = (e.target as HTMLInputElement).checked;
-              controller.updateDraft(id, (d) => ({ ...d, mintOverlap: on }));
-            }}
-          />{" "}
-          May overlap Mint
-        </label>
-        {mintWhy && (
-          <span class="trow__why" id={`why-ov-${base}`}>
-            {mintWhy}
-          </span>
-        )}
       </div>
       {editing && !allDay && (
         <TimeEditor
@@ -271,7 +214,7 @@ export function RowExpanded({ item, s }: { item: AssignedItem; s: AppState }) {
           initialAllow={draft.allowSourceTime}
           onClose={closeEditor}
           onApply={(time, allow) => {
-            controller.updateDraft(id, (d, r) => {
+            controller.applyRowEdit(id, (d, r) => {
               const granted = protectedSource ? { ...d, allowSourceTime: allow } : d;
               return canApplyPin(granted, r) ? setPin(granted, r, time) : d;
             });
@@ -280,33 +223,6 @@ export function RowExpanded({ item, s }: { item: AssignedItem; s: AppState }) {
         />
       )}
       <div class="trow__l2">
-        {staged && (
-          <>
-            <button
-              type="button"
-              class="trow__btn trow__btn--primary"
-              disabled={busy}
-              onClick={() => {
-                refocusStart.current = true;
-                saveDurationDraft(controller, id);
-              }}
-            >
-              Save
-            </button>
-            <button
-              type="button"
-              class="trow__btn"
-              disabled={busy}
-              onClick={() => {
-                refocusStart.current = true;
-                setEditing(false);
-                controller.discardDraft(id);
-              }}
-            >
-              Discard
-            </button>
-          </>
-        )}
         <SourceMenu item={item} s={s} />
       </div>
     </div>

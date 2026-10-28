@@ -11162,18 +11162,20 @@ button.strip-cal {
   /* Stable slots: select | name+meta (flexible, takes the slack) | duration
      | actions. The actions cell is a fixed grid (switch, Complete, Skip
      today, Expand), so every row aligns whatever its source. */
-  grid-template-columns: 16px minmax(0, 1fr) 66px 152px;
+  grid-template-columns: 16px minmax(0, 1fr) 66px 236px;
   grid-template-rows: auto;
   grid-template-areas: none;
-  gap: 4px 10px;
+  gap: 6px 16px;
   align-items: center;
-  padding: 8px 10px;
+  /* Roomier rows: more height and air between the title block, the duration
+     control and the actions, so click and touch targets are generous. */
+  padding: 14px 14px;
 }
 .qrow.trow--skipped {
   grid-template-columns: minmax(0, 1fr) auto auto;
 }
 .qrow.trow--unassigned {
-  grid-template-columns: 16px minmax(0, 1fr) 66px 152px;
+  grid-template-columns: 16px minmax(0, 1fr) 66px 236px;
 }
 .trow__check-slot {
   width: 16px;
@@ -11205,7 +11207,7 @@ button.strip-cal {
 }
 .queue__band .qrow.trow--dslider,
 .qrow.trow--dslider {
-  grid-template-columns: 16px minmax(0, 1fr) var(--trow-dur-w) 152px;
+  grid-template-columns: 18px minmax(0, 1fr) var(--trow-dur-w) 236px;
 }
 .qrow.trow--dslider > .trow__dur--slider {
   width: var(--trow-dur-w);
@@ -11213,7 +11215,7 @@ button.strip-cal {
   text-align: initial;
 }
 .qrow.trow--dslider > .trow__acts {
-  min-width: 152px;
+  min-width: 236px;
   flex-wrap: nowrap;
 }
 .trow__state {
@@ -11246,13 +11248,74 @@ button.strip-cal {
 }
 .trow__acts {
   display: grid;
-  grid-template-columns: 44px 32px 32px 32px;
+  grid-template-columns: 52px 44px 36px 36px 36px;
   align-items: center;
-  gap: 4px;
+  gap: 6px;
+}
+/* Permanent May-overlap-Mint toggle on the collapsed row: a compact pressed
+   button, applied at once (local day state). */
+.trow__mint {
+  min-height: 32px;
+  padding: 3px 8px;
+  border: 1px solid var(--t-border, #d9d7cd);
+  border-radius: var(--radius-sm, 5px);
+  background: var(--t-surface, #fdfcf9);
+  color: var(--t-muted);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.trow__mint--on {
+  border-color: var(--t-accent, #1d9e75);
+  background: var(--t-accent-subtle);
+  color: var(--t-accent-strong, #0f6e56);
+  font-weight: 600;
+}
+.trow__mint:hover:not(:disabled) {
+  border-color: var(--t-muted);
+}
+.trow__mint:disabled {
+  cursor: not-allowed;
+  background: var(--t-surface-2, #f1efe8);
+  opacity: 0.7;
+}
+.trow__mint:focus-visible,
+.trow__tog:focus-visible {
+  outline: 2px solid var(--c-selected, #3b82f6);
+  outline-offset: 2px;
+}
+/* Expanded panel: the duration group (exact field, All-day, Remember) and its
+   pressed-state toggle. */
+.trow__grp {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.trow__tog {
+  min-height: 32px;
+  padding: 3px 12px;
+  border: 1px solid var(--t-border, #d9d7cd);
+  border-radius: var(--radius-sm, 5px);
+  background: var(--t-surface, #fdfcf9);
+  color: var(--t-text);
+  font: inherit;
+  cursor: pointer;
+}
+.trow__tog--on {
+  border-color: var(--t-accent, #1d9e75);
+  background: var(--t-accent-subtle);
+  color: var(--t-accent-strong, #0f6e56);
+  font-weight: 600;
+}
+.trow__tog:disabled {
+  cursor: not-allowed;
+  background: var(--t-surface-2, #f1efe8);
+  color: var(--t-muted);
 }
 .trow__btn {
-  min-height: 32px;
-  padding: 5px 10px;
+  min-height: 36px;
+  padding: 6px 10px;
   border: 1px solid var(--t-border, #d9d7cd);
   border-radius: var(--radius-sm, 5px);
   background: var(--t-surface, #fdfcf9);
@@ -11269,8 +11332,8 @@ button.strip-cal {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 32px;
-  min-width: 32px;
+  width: 36px;
+  min-width: 36px;
   padding: 0;
   justify-self: center;
 }
@@ -11312,7 +11375,7 @@ button.strip-cal {
 .trow__exp {
   grid-column: 1 / -1 !important;
   min-height: 0;
-  padding: 8px 12px 10px 26px;
+  padding: 12px 14px 4px 34px;
   border-top: 1px solid var(--t-border, #d9d7cd);
 }
 .trow__exp:empty {
@@ -11492,7 +11555,7 @@ button.strip-cal {
   }
   .qrow.trow > .trow__acts {
     grid-column: 1 / -1 !important;
-    grid-template-columns: 44px repeat(3, minmax(0, 1fr));
+    grid-template-columns: 56px 44px repeat(3, minmax(0, 1fr));
     flex-wrap: wrap;
   }
   .trow__btn {
@@ -11531,7 +11594,7 @@ button.strip-cal {
    grow to 34px on narrow screens, matching the prototype. */
 .trow__panel {
   display: grid;
-  gap: 8px;
+  gap: 12px;
 }
 .trow__l1,
 .trow__ctl {
@@ -11547,7 +11610,7 @@ button.strip-cal {
 }
 .trow__panel .trow__btn,
 .trow__panel .trow__select {
-  min-height: 28px;
+  min-height: 32px;
   padding: 2px 9px;
 }
 .trow__select,

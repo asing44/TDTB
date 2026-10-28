@@ -357,6 +357,8 @@ function shadowFailureKind(e: unknown): ShadowErrorKind {
   return "unknown";
 }
 
+const UNDO_BURST_MS = 900;
+
 export class Controller {
   // Monotonic request tokens: rapid edits fire overlapping revalidate/capacity
   // calls; a stale response landing after a newer one must never overwrite it.
@@ -1109,7 +1111,7 @@ so before Day Setup is confirmed no upstream case can reach the server's 409. */
       the draft. An all-day save persists the duration it captured on the
       override, so returning to a time block restores it (never the old pin)
       even after a reload. */
-  saveDraft(id: string): void {
+  saveDraft(id: string, opts: { defer?: boolean } = {}): void {
     const staged = stagedDraft(this.getState(), id);
     if (!staged) return;
     if (!staged.diff.staged) {
@@ -1124,6 +1126,7 @@ so before Day Setup is confirmed no upstream case can reach the server's 409. */
         case "setOverride":
           this.setOverride(operation.id, operation.included, operation.blocks, {
             blocksBeforeAllDay: captured,
+            defer: opts.defer,
           });
           break;
         case "placeRow":
@@ -1151,6 +1154,59 @@ so before Day Setup is confirmed no upstream case can reach the server's 409. */
     }
     this.discardDraft(id);
   }
+
+  /** Row redesign: apply a local row edit (duration, all-day, pin, Mint
+      overlap, source-time grant) the moment it is made. These are plan-only
+      session shaping, so there is no Save step; the committed session before
+      the edit is kept as the row's single-step Undo. A burst of edits (a
+      slider drag, typing) keeps the Undo from before the burst and defers the
+      capacity/revalidate effects until it settles. */
+  applyRowEdit(
+    id: string,
+    update: (draft: RowDraft, row: RowFacts) => RowDraft,
+    opts: { burst?: boolean } = {},
+  ): void {
+    const s = this.getState();
+    const row = rowFactsOf(s, id);
+    const before = draftSeedOf(s, id);
+    if (!row || !before) return;
+    const next = update(before, row);
+    if (next === before) return;
+    this.dispatch({ type: "DRAFT_SET", id, draft: next });
+    if (!draftIsStaged(this.getState(), id)) {
+      this.discardDraft(id);
+      return;
+    }
+    const now = Date.now();
+    const last = this.undoStamp.get(id) ?? 0;
+    const keepOlder = opts.burst === true && now - last < UNDO_BURST_MS && s.rowUndo[id];
+    this.undoStamp.set(id, now);
+    if (!keepOlder) {
+      this.dispatch({
+        type: "ROW_UNDO_SET",
+        id,
+        undo: { draft: before, hadOverride: s.overrides[id]?.blocks != null },
+      });
+    }
+    this.saveDraft(id, { defer: opts.burst === true });
+  }
+
+  /** Put the row back to the session it had before its last immediate edit. */
+  undoRowEdit(id: string): void {
+    const undo = this.getState().rowUndo[id];
+    if (!undo) return;
+    this.dispatch({ type: "ROW_UNDO_CLEARED", id });
+    this.undoStamp.delete(id);
+    this.dispatch({ type: "DRAFT_SET", id, draft: undo.draft });
+    this.saveDraft(id);
+    if (!undo.hadOverride && this.getState().overrides[id]) {
+      // The row came from its source: drop the today-override this undo wrote.
+      this.setOverride(id, true, null);
+    }
+    this.discardDraft(id);
+  }
+
+  private undoStamp = new Map<string, number>();
 
   /** Throw the staged shaping away: the row keeps its committed session. */
   discardDraft(id: string): void {

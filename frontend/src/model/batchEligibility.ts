@@ -8,7 +8,7 @@
 
    Rules ported from the approved prototype (design/task-actions/index.html,
    revision 2) and the production-plan decisions of 2026-10-16:
-   - Capacities rows cannot use the Todoist all-day due path.
+   - Capacities rows may go all-day: a local plan state, no source write.
    - Capacities rows cannot be Unassigned in source (omitted, with reason).
    - Recurring rows get Skip occurrence instead of Unassign — a UI label only;
      the wire verb is `unassign` and the backend advances recurrence.
@@ -99,7 +99,6 @@ export interface BatchEligibilityResult {
 /** Written refusal reasons. Exact strings: the review panel shows them and the
     tests assert them. */
 export const EXCLUSION_REASONS = {
-  allDayCapacities: "Capacities rows cannot use the Todoist all-day due path",
   unassignCapacities: "Capacities rows cannot be unassigned in source",
   protectedAllDay: "Protected source time; cannot go all-day from here",
   protectedAutomatic:
@@ -146,7 +145,6 @@ function reasonFor(
       return null;
     case "allDay":
       if (allDay) return EXCLUSION_REASONS.alreadyAllDay;
-      if (row.source === "capacities") return EXCLUSION_REASONS.allDayCapacities;
       if (isProtectedNative(row)) return EXCLUSION_REASONS.protectedAllDay;
       return null;
     case "timeBlock":

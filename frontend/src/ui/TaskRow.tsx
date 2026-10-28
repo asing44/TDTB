@@ -2,18 +2,17 @@
    prototype (design/task-actions r2). One row = an independent selection
    checkbox, the name with its source/type chips and a short state, the
    duration in mono, the plan-membership switch, and three labelled buttons: Complete,
-   Unassign in Todoist (Todoist rows only, double-confirmed source write), and
-   Expand/Collapse. Selection never depends on expansion; one row is expanded
+   Unassign in Todoist (Todoist rows only, double-confirmed source write), a permanent
+   May-overlap-Mint toggle, and Expand/Collapse. Selection never depends on expansion; one row is expanded
    at a time (store ui.expandedId). The expanded region mounts RowExpanded (F4b). */
 
 import { useApp } from "./context";
 import { SourceUnassign } from "./ConfirmUnassign";
 import { RowExpanded } from "./RowExpanded";
 import { DurationSlider } from "./DurationSlider";
-import { DurationSaveActions, DurationStatus } from "./DurationStatus";
+import { DurationStatus, DurationUndo } from "./DurationStatus";
 import { CheckIcon, ChevronIcon } from "./RowIcons";
 import {
-  draftIsStaged,
   effectiveBlocks,
   isRowSelected,
   queueState,
@@ -91,11 +90,10 @@ const PRIORITY_TITLE: Record<string, string> = {
 
 const NATIVE_TIME = /^(?:[01]\d|2[0-3]):[0-5]\d$/;
 
-/** The row's short scheduling state, in the prototype's words: Staged (an
-    unsaved draft), All-day (a date-only due), Source time (a native Todoist
-    wall time), Pinned (an exact start chosen here), else Automatic start. */
+/** The row's short scheduling state: All-day (a local plan state), Source
+    time (a native Todoist wall time), Pinned (an exact start chosen here),
+    else Automatic start. Edits apply at once, so there is no "Staged" state. */
 function shortState(s: AppState, item: AssignedItem): string {
-  if (draftIsStaged(s, item.id)) return "Staged";
   const blocks = s.overrides[item.id]?.blocks ?? item.blocks;
   if (blocks === 0) return "All-day";
   const pin = s.placements[item.id];
@@ -197,24 +195,21 @@ export function TaskRow({
   const blocks = effectiveBlocks(s, item.id);
   const selected = isRowSelected(s, item.id);
   const expanded = s.ui.expandedId === item.id;
-  // The duration cell stages on the row draft (the expanded panel's own
-  // path), so it shows the draft's live value and, for an all-day row, the
-  // inert "All day" readout. Opening the draft is implicit in updateDraft.
-  const draft = s.drafts[item.id];
-  const allDay = draft ? draft.mode === "allday" : blocks === 0;
-  const durBlocks = allDay ? 0 : (draft?.blocks ?? blocks);
-  const staged = draftIsStaged(s, item.id);
-  // The duration track's leftmost notch stages the all-day draft state, so only
-  // that notch is closed (the rest of the track still resizes) exactly where the expanded row's All-day radio is: a Capacities
-  // row cannot use the Todoist all-day path, and a protected source time may
-  // not go all-day from here. The written reason is the control's tooltip.
+  // The slider applies at once through the row's local edit path, so it shows
+  // the committed value (an all-day row reads the inert "All day" notch).
+  const allDay = blocks === 0;
+  const durBlocks = allDay ? 0 : blocks;
+  // The leftmost All-day notch is open for every row (a Capacities row's
+  // All-day is a local plan state) except a protected Todoist native time.
   const rowFacts = rowFactsOf(s, item.id);
   const allDayLock =
-    item.source === "capacities"
-      ? EXCLUSION_REASONS.allDayCapacities
-      : rowFacts && isProtectedNative(rowFacts)
-        ? EXCLUSION_REASONS.protectedAllDay
-        : null;
+    rowFacts && isProtectedNative(rowFacts) ? EXCLUSION_REASONS.protectedAllDay : null;
+  const mintOn = s.mintOverlapOptIns[item.id] === true;
+  const mintWhy = allDay
+    ? EXCLUSION_REASONS.mintAllDay
+    : rowFacts?.isMintSession
+      ? EXCLUSION_REASONS.mintSession
+      : null;
   const nameId = rowId(item, "name");
   const expId = rowId(item, "exp");
 
@@ -330,10 +325,8 @@ export function TaskRow({
               )}
             </ul>
           )}
-          <span class={`trow__state${staged ? " trow__state--staged" : ""}`}>
-            {shortState(s, item)}
-          </span>
-          <DurationSaveActions s={s} item={item} />
+          <span class="trow__state">{shortState(s, item)}</span>
+          <DurationUndo s={s} item={item} />
         </span>
         {rowOverlaps.map((n) => {
           const partner = assignedNames.get(n.partnerId) ?? n.partnerId;
@@ -361,15 +354,36 @@ export function TaskRow({
           title={allDayLock ?? undefined}
           status={<DurationStatus s={s} item={item} />}
           onChange={(next) =>
-            controller.updateDraft(item.id, (d) =>
-              // 0 is the All-day notch: the same setMode the radio fires. Off
-              // it, a timed duration wins over the captured one.
-              next === 0 ? setMode(d, "allday") : { ...setMode(d, "time"), blocks: next },
+            controller.applyRowEdit(
+              item.id,
+              (d) =>
+                // 0 is the All-day notch. Off it, a timed duration wins over
+                // the captured one.
+                next === 0 ? setMode(d, "allday") : { ...setMode(d, "time"), blocks: next },
+              { burst: true },
             )
           }
         />
       </span>
       <div class="trow__acts">
+        <button
+          type="button"
+          class={`trow__mint${mintOn && mintWhy === null ? " trow__mint--on" : ""}`}
+          aria-pressed={mintOn && mintWhy === null}
+          aria-label={`May overlap Mint: ${item.name}`}
+          disabled={s.runtimeBusy || mintWhy !== null}
+          title={
+            mintWhy ??
+            (mintOn
+              ? "May overlap Mint — on. This row may share time with a Mint session. Click to turn off."
+              : "May overlap Mint — off. Click to let this row share time with a Mint session.")
+          }
+          onClick={() =>
+            controller.applyRowEdit(item.id, (d) => ({ ...d, mintOverlap: !mintOn }))
+          }
+        >
+          Mint
+        </button>
         <AssignSwitch id={item.id} name={item.name} assigned={true} s={s} />
         <button
           type="button"

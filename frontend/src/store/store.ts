@@ -251,6 +251,11 @@ export const initialMicroPool: MicroPoolState = {
   items: null, load: "idle", loadError: null, save: "idle", saveError: null, shadowed: false,
 };
 
+export interface RowUndo {
+  draft: RowDraft;
+  hadOverride: boolean;
+}
+
 export interface AppState {
   loaded: boolean;
   loadError: string | null;
@@ -403,6 +408,11 @@ export interface AppState {
   /** Task-actions F3b: staged row-shaping drafts, keyed by row id. Session
       only by design — a reload discards unsaved shaping. */
   drafts: Record<string, RowDraft>;
+  /** Row redesign: the single-step Undo for the last immediate local edit on a
+      row (duration / all-day / pin / Mint overlap). `draft` is the committed
+      session before the edit; `hadOverride` says whether a today-override
+      existed, so Undo returns a "From source" row to the source value. */
+  rowUndo: Record<string, RowUndo>;
   /** Task-actions F3b: the one batch surface (review → applying → results). */
   batch: BatchState;
 }
@@ -467,6 +477,7 @@ export const initialState: AppState = {
   theme: "system",
   ui: { screen: "setup", settingsPanel: null, settingsSection: null, setupOpen: false, capacitiesSettingsOpen: false, tagExclusionSettingsOpen: false, approvalOpen: false, editorItem: null, editorIntent: null, editorAnchor: null, editorAnchorIntent: null, capacityDetail: false, trimUndo: null, expandedId: null, selection: [] },
   drafts: {},
+  rowUndo: {},
   batch: emptyBatch,
 };
 
@@ -524,6 +535,8 @@ export type Action =
   // undo), so the reducer never re-derives eligibility or server outcomes.
   | { type: "DRAFT_SET"; id: string; draft: RowDraft }
   | { type: "DRAFT_CLEARED"; id: string }
+  | { type: "ROW_UNDO_SET"; id: string; undo: RowUndo }
+  | { type: "ROW_UNDO_CLEARED"; id: string }
   // A legacy same-date `included=false` override converted (once) to durable
   // Skip today; the row's browser-only exclusion is gone for good.
   | { type: "OVERRIDES_DROPPED"; ids: string[] }
@@ -1007,6 +1020,14 @@ export function reducer(s: AppState, a: Action): AppState {
       const rest = { ...s.drafts };
       delete rest[a.id];
       return { ...s, drafts: rest };
+    }
+    case "ROW_UNDO_SET":
+      return { ...s, rowUndo: { ...s.rowUndo, [a.id]: a.undo } };
+    case "ROW_UNDO_CLEARED": {
+      if (!(a.id in s.rowUndo)) return s;
+      const rest = { ...s.rowUndo };
+      delete rest[a.id];
+      return { ...s, rowUndo: rest };
     }
     case "OVERRIDES_DROPPED": {
       if (a.ids.length === 0) return s;

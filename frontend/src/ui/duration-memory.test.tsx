@@ -207,23 +207,19 @@ describe("duration-memory MVP: per-item reset in the exact editor", () => {
   });
 });
 
-const CAPACITIES = "Note Processing"; // capacities row, no duration-memory key
+const CAPACITIES = "Note Processing"; // capacities row; the backend accepts its canonical identity
 
-describe("duration-memory MVP: source-owned durations never offer durable actions", () => {
-  it("a Capacities row hides Save/Reset and shows the ownership note", () => {
+describe("duration-memory MVP: Capacities rows remember like any other row", () => {
+  it("a Capacities row offers Save/Reset duration and no ownership note", () => {
     const h = memoryHarness();
     h.store.dispatch({
       type: "UI",
       patch: { editorItem: CAPACITIES, editorIntent: "duration" },
     });
-    const { getByText, queryByText, queryByRole } = h.ui(<BlockEditor />);
-    expect(queryByText("Save duration")).toBeNull();
-    expect(queryByText("Reset duration")).toBeNull();
-    expect(queryByRole("button", { name: "Save duration" })).toBeNull();
-    expect(queryByRole("button", { name: "Reset duration" })).toBeNull();
-    expect(
-      getByText("Duration is owned by Capacities; Apply changes today only."),
-    ).toBeTruthy();
+    const { getByRole, queryByText } = h.ui(<BlockEditor />);
+    expect(getByRole("button", { name: "Save duration" }).tagName).toBe("BUTTON");
+    expect(getByRole("button", { name: "Reset duration" }).tagName).toBe("BUTTON");
+    expect(queryByText(/Duration is owned by Capacities/)).toBeNull();
   });
 
   it("Apply still shapes a Capacities row today-only with no durable call", () => {
@@ -243,6 +239,22 @@ describe("duration-memory MVP: source-owned durations never offer durable action
     expect(save).not.toHaveBeenCalled();
     expect(reset).not.toHaveBeenCalled();
     expect(h.store.getState().ui.editorItem).toBeNull();
+  });
+
+  it("Save duration on a Capacities row calls saveDurationMemory with its identity", async () => {
+    const h = memoryHarness();
+    const save = vi.spyOn(h.adapter, "saveDurationMemory");
+    h.store.dispatch({
+      type: "UI",
+      patch: { editorItem: CAPACITIES, editorIntent: "duration" },
+    });
+    const { getByLabelText, getByRole } = h.ui(<BlockEditor />);
+    fireEvent.input(getByLabelText("Exact minutes (5-minute steps)"), {
+      target: { value: "90" },
+    });
+    fireEvent.click(getByRole("button", { name: "Save duration" }));
+    await waitFor(() => expect(save).toHaveBeenCalled());
+    expect(save.mock.calls[0]![1]).toBe(90);
   });
 
   it("a Todoist row keeps both durable actions", () => {

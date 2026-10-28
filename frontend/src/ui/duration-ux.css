@@ -184,9 +184,9 @@
   outline-offset: 2px;
 }
 .trow__panel .dux-exact {
-  width: 96px;
+  width: 132px;
   flex: 0 0 auto;
-  min-height: 28px;
+  min-height: 32px;
   font-size: 12px;
 }
 
@@ -195,13 +195,35 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  min-height: 28px;
+  min-height: 32px;
+  padding: 3px 12px;
+  border: 1px solid var(--t-border);
+  border-radius: var(--radius-sm);
+  background: var(--t-surface);
+  color: var(--t-text);
+  font: inherit;
+  cursor: pointer;
+}
+.dux-mem--on {
+  border-color: var(--state-remembered, var(--t-accent));
+  background: var(--t-accent-subtle);
+  color: var(--t-accent-strong);
+  font-weight: 600;
 }
 .dux-mem--off {
+  background: var(--t-surface-2);
   color: var(--t-muted);
   cursor: not-allowed;
 }
-.dux-mem input:focus-visible {
+.dux-undo {
+  width: auto;
+  gap: 4px;
+  padding: 0 8px;
+}
+.dux-undo__text {
+  font-size: 11px;
+}
+.dux-mem:focus-visible {
   outline: 2px solid var(--c-selected);
   outline-offset: 2px;
 }

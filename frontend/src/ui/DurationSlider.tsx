@@ -2,15 +2,15 @@
    compact [−] range [+] strip (restored from the earlier plan-row design:
    readout above the slider, 15-minute steppers flanking it, a steady track).
    It lives in the collapsed row's duration cell and stays there while the row
-   is expanded, so a row never carries two sliders. It stages through the same
-   row-draft path as the select and the typed custom duration: minutes ->
-   minutesToBlocks -> updateDraft. Nothing is committed here; Save/Discard stay
-   the only commit path. The cell is a size container (duration-slider.css):
+   is expanded, so a row never carries two sliders. It is the row's one
+   duration control: minutes -> minutesToBlocks -> onChange, which the caller
+   applies immediately as local day state. The cell is a size container (duration-slider.css):
    steppers hide first, then the track, leaving the readout with its tooltip.
 
-   The track is a quarter-hour grid whose leftmost notch is All-day (value 0),
-   the earlier plan-row design's bottom-of-track meaning: the thumb sits at 0
-   for an all-day row and moving right picks 15, 30, 45 … up to the max. */
+   The track is a quarter-hour grid whose leftmost notch is All-day (value 0)
+   and whose first timed notch, the real floor, is 15 minutes: the thumb sits
+   at 0 for an all-day row and moving right picks 15, 30, 45 … up to the max.
+   Every move applies at once (no Save step); the row's Undo reverses it. */
 
 import type { ComponentChildren } from "preact";
 import { minutesToBlocks } from "../model/parseDuration";
@@ -34,6 +34,9 @@ export const STEPPER_MINUTES = 15;
     the grid (a 10-minute tag estimate) keeps its exact readout while the thumb
     rests on the closest notch, so every drag starts from a real notch. */
 export function snapMinutes(minutes: number): number {
+  // A timed duration never snaps onto the All-day notch (a 5-minute estimate
+  // rests on 15): only an exact 0 reads All-day.
+  if (minutes > 0) minutes = Math.max(SLIDER_STEP_MINUTES, minutes);
   const clamped = Math.min(SLIDER_MAX_MINUTES, Math.max(SLIDER_MIN_MINUTES, minutes));
   return Math.round(clamped / SLIDER_STEP_MINUTES) * SLIDER_STEP_MINUTES;
 }
@@ -58,8 +61,8 @@ export function DurationSlider({
   blocks: number;
   /** Locked: the runtime is busy, or the row's all-day path is closed. */
   disabled: boolean;
-  /** The All-day notch is closed (Capacities / protected source time): the
-      track starts at the first timed notch and − stops there. */
+  /** The All-day notch is closed (a protected source time only): the track
+      starts at the first timed notch (15 minutes) and − stops there. */
   allDayLocked?: boolean;
   title?: string;
   idBase: string;
@@ -107,6 +110,14 @@ export function DurationSlider({
           list={listId}
           disabled={disabled}
           value={shown}
+          onKeyDown={(e) => {
+            // Home/End jump to the two ends deterministically: All-day (or 15
+            // minutes where All-day is closed) and the largest notch.
+            if (e.key === "Home" || e.key === "End") {
+              e.preventDefault();
+              onChange(minutesToBlocks(e.key === "Home" ? floor : SLIDER_MAX_MINUTES));
+            }
+          }}
           onInput={(e) => {
             const m = Number((e.target as HTMLInputElement).value);
             if (Number.isFinite(m)) onChange(minutesToBlocks(m));
