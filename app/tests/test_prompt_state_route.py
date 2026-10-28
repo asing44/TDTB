@@ -359,3 +359,138 @@ def test_description_skips_all_false_leaves_the_echo_empty(client):
     # the usual ``None`` default), and an empty Day Setup stays empty.
     assert r.json()["day_setup"]["description_skips"] is None
     assert _skips() == SKIPS_OFF
+
+
+# ---------------------------------------------------------------------------
+# Day-scoped disabled-prompt flags through the same Day Setup seam
+# ---------------------------------------------------------------------------
+
+DISABLED_OFF = {"intention": False, "megan_nicety": False,
+                "stoic_intention": False}
+
+
+def _disabled() -> dict:
+    return dict(prompt_state.load_prompt_disabled(_today().isoformat()).disabled)
+
+
+def test_prompt_disabled_persist_and_echo(client):
+    r = client.post("/day-setup", json={
+        "prompt_disabled": {"intention": False, "megan_nicety": True,
+                            "stoic_intention": False},
+    }, headers=_auth(client))
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["day_setup"]["prompt_disabled"] == {
+        "intention": False, "megan_nicety": True, "stoic_intention": False,
+    }
+    assert _disabled() == {
+        "intention": False, "megan_nicety": True, "stoic_intention": False,
+    }
+
+
+def test_prompt_disabled_only_save_does_not_confirm_or_write_runstate(client):
+    runstate_path = runstate.runstate_read_path(_today())
+    assert runstate_path.is_file() is False
+
+    r = client.post("/day-setup", json={
+        "prompt_disabled": {"megan_nicety": True},
+    }, headers=_auth(client))
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["day_setup_confirmed"] is False
+    assert runstate.is_day_setup_confirmed(_today()) is False
+    # A flags-only save is prompt-only: it never materializes a runstate note.
+    assert runstate_path.is_file() is False
+
+
+def test_prompt_disabled_all_enabled_echoes_nothing(client):
+    r = client.post("/day-setup", json={
+        "prompt_disabled": {"intention": False, "megan_nicety": False,
+                            "stoic_intention": False},
+    }, headers=_auth(client))
+    assert r.status_code == 200, r.text
+    # Nothing is disabled, so no flag map is echoed and an otherwise empty Day
+    # Setup stays empty.
+    assert r.json()["day_setup"]["prompt_disabled"] is None
+    assert _disabled() == DISABLED_OFF
+
+    read = client.get("/plan-inputs", headers=_auth(client))
+    assert read.status_code == 200, read.text
+    assert read.json()["day_setup"].get("prompt_disabled") is None
+
+
+def test_prompt_disabled_plan_inputs_echoes_set_flags(client):
+    client.post("/day-setup", json={
+        "prompt_disabled": {"megan_nicety": True, "stoic_intention": True},
+    }, headers=_auth(client))
+    read = client.get("/plan-inputs", headers=_auth(client))
+    assert read.status_code == 200, read.text
+    assert read.json()["day_setup"]["prompt_disabled"] == {
+        "intention": False, "megan_nicety": True, "stoic_intention": True,
+    }
+
+
+def test_prompt_disabled_map_is_a_full_replace_per_save(client):
+    client.post("/day-setup", json={
+        "prompt_disabled": {"megan_nicety": True, "stoic_intention": True},
+    }, headers=_auth(client))
+    r = client.post("/day-setup", json={
+        "prompt_disabled": {"megan_nicety": True},
+    }, headers=_auth(client))
+    assert r.status_code == 200, r.text
+    assert _disabled() == {
+        "intention": False, "megan_nicety": True, "stoic_intention": False,
+    }
+
+
+def test_prompt_disabled_omitted_preserves_and_echoes_current_state(client):
+    client.post("/day-setup", json={
+        "prompt_disabled": {"stoic_intention": True},
+    }, headers=_auth(client))
+    # A captures-only save omits the flag map: stored flags are preserved and
+    # still echoed so the toggle keeps its state.
+    r = client.post("/day-setup", json={"captures": {"intention": "synthetic"}},
+                    headers=_auth(client))
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["day_setup_confirmed"] is False
+    assert body["day_setup"]["prompt_disabled"]["stoic_intention"] is True
+    assert _disabled()["stoic_intention"] is True
+
+
+def test_prompt_disabled_non_boolean_is_422(client):
+    r = client.post("/day-setup", json={
+        "prompt_disabled": {"megan_nicety": 1},
+    }, headers=_auth(client))
+    assert r.status_code == 422
+    assert not prompt_state.prompt_disabled_path(
+        _today().isoformat()).exists()
+
+
+def test_prompt_disabled_unknown_prompt_key_is_422_content_free(client):
+    key = "custom-m1abcde-xy9"
+    r = client.post("/day-setup", json={
+        "prompt_disabled": {key: True},
+    }, headers=_auth(client))
+    assert r.status_code == 422
+    assert r.json()["detail"]["code"] == "prompt_disabled_invalid"
+    assert not prompt_state.prompt_disabled_path(
+        _today().isoformat()).exists()
+
+
+def test_prompt_disabled_corrupt_store_is_409_and_preserved(client):
+    target = prompt_state.prompt_disabled_path(_today().isoformat())
+    target.parent.mkdir(parents=True, exist_ok=True)
+    corrupt = (
+        '{"version": 1, "day": "2026-01-01", "disabled": {"megan_nicety": true},'
+        ' "disabled": {}}'
+    )
+    target.write_text(corrupt, encoding="utf-8")
+
+    r = client.post("/day-setup", json={
+        "prompt_disabled": {"megan_nicety": True},
+    }, headers=_auth(client))
+    assert r.status_code == 409
+    assert r.json()["detail"]["code"] == "prompt_disabled_storage_error"
+    assert target.read_text(encoding="utf-8") == corrupt
+    assert runstate.is_day_setup_confirmed(_today()) is False

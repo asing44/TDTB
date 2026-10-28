@@ -696,3 +696,177 @@ def test_failed_description_skip_write_does_not_clean_older_files():
 
     assert older.exists()
     assert current.read_text(encoding="utf-8") == "{bad json"
+
+
+# ---------------------------------------------------------------------------
+# Day-scoped disabled-prompt flags (export gate, sibling day file)
+# ---------------------------------------------------------------------------
+
+def _seed_disabled(day: str, disabled: dict[str, bool]) -> Path:
+    """Write a well-formed disabled file directly (bypassing save/cleanup)."""
+    path = ps.prompt_disabled_path(day)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps({"version": 1, "day": day, "disabled": disabled}),
+        encoding="utf-8",
+    )
+    return path
+
+
+def test_prompt_disabled_default_all_enabled_without_creating_the_file():
+    record = ps.load_prompt_disabled(DAY)
+    assert record.day == DAY
+    # Every built-in key is present and False (enabled), so a caller never has
+    # to guess and an absent store means "export everything".
+    assert dict(record.disabled) == ALL_FALSE
+    assert not ps.prompt_disabled_path(DAY).exists()
+
+
+def test_prompt_disabled_path_is_state_dir_and_day_scoped():
+    assert ps.prompt_disabled_path(DAY) == (
+        app_config.state_dir() / f"prompt-disabled-{DAY}.json"
+    )
+    assert ps.prompt_disabled_lock_path() == (
+        app_config.state_dir() / "prompt-disabled.lock"
+    )
+
+
+def test_prompt_disabled_round_trip_survives_restart():
+    ps.save_prompt_disabled(day=DAY, patch={"megan_nicety": True})
+
+    # A fresh read models a restart within the same logical day.
+    reread = ps.load_prompt_disabled(DAY)
+    assert dict(reread.disabled) == {
+        "intention": False,
+        "megan_nicety": True,
+        "stoic_intention": False,
+    }
+    # Persisted sparsely: only a disabled (True) flag is stored.
+    stored = json.loads(
+        ps.prompt_disabled_path(DAY).read_text(encoding="utf-8")
+    )
+    assert stored == {
+        "version": 1, "day": DAY, "disabled": {"megan_nicety": True},
+    }
+
+
+def test_prompt_disabled_is_day_scoped_and_rolls_over():
+    ps.save_prompt_disabled(day=DAY, patch={"stoic_intention": True})
+
+    # The next logical day starts fully enabled.
+    assert dict(ps.load_prompt_disabled(NEXT_DAY).disabled) == ALL_FALSE
+
+    # A file whose stored day disagrees with the requested day is refused.
+    mismatched = ps.prompt_disabled_path(NEXT_DAY)
+    mismatched.parent.mkdir(parents=True, exist_ok=True)
+    mismatched.write_text(
+        json.dumps({"version": 1, "day": DAY, "disabled": {"intention": True}}),
+        encoding="utf-8",
+    )
+    with pytest.raises(ps.PromptFormatError):
+        ps.load_prompt_disabled(NEXT_DAY)
+
+
+def test_prompt_disabled_patch_preserves_omitted_and_false_clears():
+    ps.save_prompt_disabled(
+        day=DAY, patch={"megan_nicety": True, "stoic_intention": True},
+    )
+
+    saved = ps.save_prompt_disabled(day=DAY, patch={"intention": True})
+    assert dict(saved.disabled) == {
+        "intention": True, "megan_nicety": True, "stoic_intention": True,
+    }
+
+    cleared = ps.save_prompt_disabled(day=DAY, patch={"megan_nicety": False})
+    assert dict(cleared.disabled) == {
+        "intention": True, "megan_nicety": False, "stoic_intention": True,
+    }
+    stored = json.loads(
+        ps.prompt_disabled_path(DAY).read_text(encoding="utf-8")
+    )
+    assert stored["disabled"] == {"intention": True, "stoic_intention": True}
+
+
+def test_prompt_disabled_keeps_the_drafts_file_schema_untouched():
+    drafts = _seed_drafts(DAY, {"intention": "synthetic intent"})
+    ps.save_prompt_disabled(day=DAY, patch={"intention": True})
+
+    # The disabled store is a SIBLING file: the strict drafts decoder still
+    # sees exactly its own key set and the draft text is preserved.
+    assert json.loads(drafts.read_text(encoding="utf-8")) == {
+        "version": 1, "day": DAY, "drafts": {"intention": "synthetic intent"},
+    }
+    assert dict(ps.load_drafts(DAY).drafts) == {"intention": "synthetic intent"}
+
+
+def test_prompt_disabled_rejects_custom_unknown_and_non_bool():
+    for bad_key in ("custom-m1abcde-xy9", "unknown_prompt"):
+        with pytest.raises(ps.PromptValidationError):
+            ps.save_prompt_disabled(day=DAY, patch={bad_key: True})
+    for bad_value in (1, 0, "yes", None):
+        with pytest.raises(ps.PromptValidationError):
+            ps.save_prompt_disabled(day=DAY, patch={"megan_nicety": bad_value})
+    with pytest.raises(ps.PromptValidationError):
+        ps.save_prompt_disabled(day=DAY, patch=["megan_nicety"])
+    with pytest.raises(ps.PromptValidationError):
+        ps.save_prompt_disabled(day="2026-10-9", patch={"megan_nicety": True})
+    assert not ps.prompt_disabled_path(DAY).exists()
+
+
+def test_prompt_disabled_malformed_storage_is_rejected_without_repair():
+    target = ps.prompt_disabled_path(DAY)
+    target.parent.mkdir(parents=True, exist_ok=True)
+
+    cases = [
+        # duplicate key at the top level
+        '{"version": 1, "day": "2026-10-09", "disabled": {"megan_nicety": true},'
+        ' "disabled": {}}',
+        # duplicate key inside disabled
+        '{"version": 1, "day": "2026-10-09",'
+        ' "disabled": {"megan_nicety": true, "megan_nicety": false}}',
+        json.dumps({"version": 2, "day": DAY, "disabled": {}}),
+        json.dumps({"version": 1, "day": DAY, "disabled": {}, "extra": True}),
+        json.dumps({"version": 1, "day": DAY}),
+        json.dumps({"version": 1, "day": DAY, "disabled": {"nope": True}}),
+        json.dumps({"version": 1, "day": DAY, "disabled": {"megan_nicety": "yes"}}),
+        json.dumps({"version": 1, "day": DAY, "disabled": []}),
+        "{not json",
+    ]
+    for raw in cases:
+        target.write_text(raw, encoding="utf-8")
+        with pytest.raises(ps.PromptFormatError):
+            ps.load_prompt_disabled(DAY)
+        with pytest.raises(ps.PromptFormatError):
+            ps.save_prompt_disabled(day=DAY, patch={"intention": True})
+        assert target.read_text(encoding="utf-8") == raw
+
+
+def test_older_disabled_files_cleaned_up_on_successful_write_only():
+    older = _seed_disabled(OLDER_DAY, {"megan_nicety": True})
+    prior = _seed_disabled(PRIOR_DAY, {"megan_nicety": True})
+    newer = _seed_disabled(NEWER_DAY, {"megan_nicety": True})
+    skips = _seed_description_skips(DAY, {"megan_nicety": True})
+    stray = app_config.state_dir() / "prompt-disabled-not-a-day.json"
+    stray.write_text("{}", encoding="utf-8")
+
+    ps.save_prompt_disabled(day=DAY, patch={"stoic_intention": True})
+
+    assert not older.exists()
+    assert not prior.exists()
+    assert newer.exists()
+    assert skips.exists()  # a sibling day store is untouched
+    assert stray.exists()
+    assert ps.prompt_disabled_path(DAY).exists()
+
+
+def test_failed_disabled_write_does_not_clean_older_files():
+    older = _seed_disabled(OLDER_DAY, {"megan_nicety": True})
+    current = ps.prompt_disabled_path(DAY)
+    current.parent.mkdir(parents=True, exist_ok=True)
+    current.write_text("{bad json", encoding="utf-8")
+
+    with pytest.raises(ps.PromptFormatError):
+        ps.save_prompt_disabled(day=DAY, patch={"intention": True})
+
+    assert older.exists()
+    assert current.read_text(encoding="utf-8") == "{bad json"

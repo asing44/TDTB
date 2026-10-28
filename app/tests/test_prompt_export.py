@@ -254,6 +254,49 @@ class TestPlan:
         assert "Reminder" not in repr(preview)
         assert "For Meegy" not in repr(preview)
 
+    def test_disabled_builtin_prompt_plans_nothing_even_with_text(self):
+        plans = pe.plan_prompt_exports(
+            day=DAY, civil_date=CIVIL,
+            drafts={"megan_nicety": SECRET, "stoic_intention": STOIC},
+            disabled={"megan_nicety": True},
+        )
+        # A disabled built-in prompt produces NO plan entry at all, so no
+        # provider call and no receipt can follow; the other still plans.
+        assert [(p.prompt_key, p.title) for p in plans] == [
+            ("stoic_intention", "Stoic"),
+        ]
+
+    def test_disabled_flag_defaults_to_enabled_and_ignores_untrue_values(self):
+        for disabled in (None, {}, {"megan_nicety": "yes"},
+                         {"megan_nicety": 1}, {"stoic_intention": True}):
+            plans = pe.plan_prompt_exports(
+                day=DAY, civil_date=CIVIL, drafts={"megan_nicety": SECRET},
+                disabled=disabled,
+            )
+            assert [p.prompt_key for p in plans] == ["megan_nicety"]
+            assert plans[0].description == SECRET
+
+    def test_disabled_flag_never_suppresses_a_custom_prompt(self):
+        plans = pe.plan_prompt_exports(
+            day=DAY, civil_date=CIVIL, drafts={CUSTOM_KEY: CUSTOM_ANSWER},
+            disabled={CUSTOM_KEY: True, "intention": True},
+        )
+        assert [p.prompt_key for p in plans] == [CUSTOM_KEY]
+        assert plans[0].title == CUSTOM_ANSWER
+
+    def test_preview_omits_a_disabled_prompt_and_stays_content_free(self):
+        preview = pe.preview_prompt_exports(
+            day=DAY, civil_date=CIVIL,
+            drafts={"intention": INTENTION, "megan_nicety": SECRET},
+            disabled={"megan_nicety": True},
+        )
+        assert preview == [{
+            "prompt_key": "intention", "action": pe.EXPORT_ACTION,
+            "status": "planned",
+        }]
+        assert SECRET not in repr(preview)
+        assert INTENTION not in repr(preview)
+
 
 # ---------------------------------------------------------------------------
 # Execution
@@ -352,6 +395,73 @@ class TestRun:
         assert created["due_date"] == CIVIL
         assert er.load_receipts().get(
             DAY, "megan_nicety", pe.EXPORT_ACTION).status == er.STATUS_DONE
+
+    def test_disabled_prompt_creates_no_task_and_no_receipt(self):
+        client = RecordingTodoist()
+        outcomes = pe.run_prompt_exports(
+            day=DAY, civil_date=CIVIL, todoist=client,
+            drafts={"megan_nicety": SECRET, "stoic_intention": STOIC},
+            disabled={"megan_nicety": True},
+        )
+        # Only the enabled prompt exports; the disabled one produces nothing at
+        # all, so the report stays honest and no receipt blocks a later retry.
+        assert [o.prompt_key for o in outcomes] == ["stoic_intention"]
+        assert [c["content"] for c in client.created] == ["Stoic"]
+        assert er.load_receipts().get(
+            DAY, "megan_nicety", pe.EXPORT_ACTION) is None
+        assert er.load_receipts().get(
+            DAY, "stoic_intention", pe.EXPORT_ACTION).status == er.STATUS_DONE
+        assert SECRET not in repr([o.as_dict() for o in outcomes])
+
+    def test_disabled_flags_are_read_from_the_day_scoped_server_store(self):
+        ps.save_drafts(day=DAY, patch={"megan_nicety": SECRET,
+                                       "stoic_intention": STOIC})
+        ps.save_prompt_disabled(day=DAY, patch={"stoic_intention": True})
+        client = RecordingTodoist()
+        outcomes = pe.run_prompt_exports(day=DAY, civil_date=CIVIL,
+                                         todoist=client)
+        assert [o.prompt_key for o in outcomes] == ["megan_nicety"]
+        assert [c["content"] for c in client.created] == ["For Meegy"]
+
+    def test_disabled_flag_for_another_day_does_not_apply(self):
+        ps.save_drafts(day=DAY, patch={"megan_nicety": SECRET})
+        ps.save_prompt_disabled(day="2026-07-11", patch={"megan_nicety": True})
+        client = RecordingTodoist()
+        outcomes = pe.run_prompt_exports(day=DAY, civil_date=CIVIL,
+                                         todoist=client)
+        assert [o.status for o in outcomes] == [pe.OUTCOME_DONE]
+        assert [c["content"] for c in client.created] == ["For Meegy"]
+
+    def test_reenabling_a_prompt_the_same_day_restores_the_export(self):
+        client = RecordingTodoist()
+        ps.save_drafts(day=DAY, patch={"megan_nicety": SECRET})
+        ps.save_prompt_disabled(day=DAY, patch={"megan_nicety": True})
+        assert pe.run_prompt_exports(day=DAY, civil_date=CIVIL,
+                                     todoist=client) == []
+        assert client.created == []
+
+        ps.save_prompt_disabled(day=DAY, patch={"megan_nicety": False})
+        outcomes = pe.run_prompt_exports(day=DAY, civil_date=CIVIL,
+                                         todoist=client)
+        assert [o.status for o in outcomes] == [pe.OUTCOME_DONE]
+        assert [c["content"] for c in client.created] == ["For Meegy"]
+
+    def test_corrupt_disabled_store_still_exports_and_preserves_bytes(self):
+        target = ps.prompt_disabled_path(DAY)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        raw = ('{"version": 1, "day": "2026-07-12", "disabled": '
+               '{"megan_nicety": true}, "disabled": {}}')
+        target.write_text(raw, encoding="utf-8")
+        client = RecordingTodoist()
+        outcomes = pe.run_prompt_exports(
+            day=DAY, civil_date=CIVIL, todoist=client,
+            drafts={"megan_nicety": SECRET},
+        )
+        # An unreadable store degrades to the enabled default and is never
+        # repaired: a corrupt file must never silently drop a prompt.
+        assert [o.status for o in outcomes] == [pe.OUTCOME_DONE]
+        assert [c["content"] for c in client.created] == ["For Meegy"]
+        assert target.read_text(encoding="utf-8") == raw
 
     def test_skip_flags_are_read_from_the_day_scoped_server_store(self):
         ps.save_drafts(day=DAY, patch={"megan_nicety": SECRET,
@@ -746,6 +856,37 @@ class TestPromptExportRoute:
         # The task still lands; only its description is skipped.
         [exported] = [c for c in todoist.created if c["content"] == "For Meegy"]
         assert exported["description"] is None
+        assert SECRET not in resp.text
+
+    def test_disabled_prompt_is_not_exported_at_commit(
+            self, client, vault, monkeypatch):
+        _freeze(monkeypatch)
+        monkeypatch.setattr(shadow, "gather_live_state", _live_state(garage_live=False))
+        ps.save_drafts(day=DAY, patch={"megan_nicety": SECRET, "stoic_intention": STOIC})
+        todoist = RecordingTodoist()
+        client.app.state.build_commit_clients = lambda cfg: (todoist, None)
+        # The disable flag is set through the same browser seam as drafts and
+        # is a prompt-only save (no Day Setup confirmation).
+        r = client.post("/day-setup", headers=_auth(client), json={
+            "prompt_disabled": {"megan_nicety": True},
+        })
+        assert r.status_code == 200, r.text
+        assert r.json()["day_setup_confirmed"] is False
+        assert r.json()["day_setup"]["prompt_disabled"]["megan_nicety"] is True
+        self._confirm(client)
+
+        resp = client.post("/commit?mode=live", headers=_auth(client),
+                           json={"digest": DIGEST, "sequence": SEQUENCE,
+                                 "config": {}})
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["prompt_exports_ok"] is True
+        assert [e["prompt_key"] for e in body["prompt_exports"]] == [
+            "stoic_intention",
+        ]
+        # No task at all for the disabled prompt, even though its text exists.
+        assert "For Meegy" not in [c["content"] for c in todoist.created]
+        assert "Stoic" in [c["content"] for c in todoist.created]
         assert SECRET not in resp.text
 
     def test_intention_and_custom_prompts_export_at_commit(

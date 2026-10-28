@@ -23,12 +23,20 @@ wiring (those are later U5/U6 slices).
    because the drafts decoder requires an exact top-level key set and an added
    key would make every existing stored drafts file fail closed.
 
-3. **Persistent opt-in store** — ``<app home>/state/prompt-optins.json``, an
+3. **Logical-day disabled-prompt store** —
+   ``<app home>/state/prompt-disabled-<day>.json``, one file per logical
+   planning day, keyed by built-in prompt key. A set flag means that prompt's
+   Commit export is turned OFF for that day: no task is created at all. Absent
+   flags (and an absent file) mean enabled, which is the default for
+   everything. A sibling file for the same reason as the skip store — the
+   drafts decoder pins its exact top-level key set.
+
+4. **Persistent opt-in store** — ``<app home>/state/prompt-optins.json``, an
    undated per-prompt boolean (default ``false``) with an optimistic
    ``revision``. The opt-in survives restarts and logical-day rollover. The
    export lane does NOT consult it.
 
-All three stores reuse the established machine-local storage primitives
+All four stores reuse the established machine-local storage primitives
 (:mod:`capacities_cache_io`): a strict duplicate-key-rejecting JSON decode, an
 atomic same-directory temp write, a per-key process lock paired with a POSIX
 advisory lock file. Existing storage is read strictly: malformed, unsupported,
@@ -72,6 +80,7 @@ _CUSTOM_PROMPT_KEY_RE = re.compile(r"custom-[A-Za-z0-9][A-Za-z0-9_-]{0,127}")
 DRAFTS_SCHEMA_VERSION = 1
 OPTINS_SCHEMA_VERSION = 1
 DESCRIPTION_SKIPS_SCHEMA_VERSION = 1
+PROMPT_DISABLED_SCHEMA_VERSION = 1
 
 DRAFTS_FILENAME_PREFIX = "prompt-drafts-"
 DRAFTS_FILENAME_SUFFIX = ".json"
@@ -88,9 +97,17 @@ DESCRIPTION_SKIPS_FILENAME_PREFIX = "prompt-description-skips-"
 DESCRIPTION_SKIPS_FILENAME_SUFFIX = ".json"
 DESCRIPTION_SKIPS_LOCK_FILENAME = "prompt-description-skips.lock"
 
+#: The day-scoped "do not export this prompt at all" flags. A disabled built-in
+#: prompt produces NO Todoist task on Commit, even when its draft text is
+#: non-empty. Sparse on disk (only ``True`` entries) and absent means enabled.
+PROMPT_DISABLED_FILENAME_PREFIX = "prompt-disabled-"
+PROMPT_DISABLED_FILENAME_SUFFIX = ".json"
+PROMPT_DISABLED_LOCK_FILENAME = "prompt-disabled.lock"
+
 _TOP_DRAFT_KEYS = frozenset({"version", "day", "drafts"})
 _TOP_OPTIN_KEYS = frozenset({"version", "revision", "optins"})
 _TOP_DESCRIPTION_SKIP_KEYS = frozenset({"version", "day", "skips"})
+_TOP_PROMPT_DISABLED_KEYS = frozenset({"version", "day", "disabled"})
 
 _DAY_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
@@ -259,6 +276,37 @@ def _normalize_description_skips(value: Any) -> dict[str, bool]:
     return result
 
 
+def _normalize_prompt_disabled_patch(value: Any) -> dict[str, bool]:
+    """Validate a disabled-prompt patch, keeping explicit ``False`` markers.
+
+    Only the built-in prompt keys are accepted: a browser-defined custom prompt
+    has no product toggle, so a flag for it is refused rather than stored."""
+    if not isinstance(value, Mapping):
+        raise ValueError("prompt disabled patch must be a JSON object")
+    result: dict[str, bool] = {}
+    for key, flag in value.items():
+        if key not in _KNOWN_PROMPT_KEYS:
+            raise ValueError("prompt disabled contains an unknown prompt key")
+        if type(flag) is not bool:
+            raise ValueError("prompt disabled value must be a boolean")
+        result[key] = flag
+    return result
+
+
+def _normalize_prompt_disabled(value: Any) -> dict[str, bool]:
+    """Validate a stored disabled map and fill missing keys with ``False``."""
+    if not isinstance(value, Mapping):
+        raise ValueError("prompt disabled must be a JSON object")
+    result: dict[str, bool] = {key: False for key in PROMPT_KEYS}
+    for key, flag in value.items():
+        if key not in _KNOWN_PROMPT_KEYS:
+            raise ValueError("prompt disabled contains an unknown prompt key")
+        if type(flag) is not bool:
+            raise ValueError("prompt disabled value must be a boolean")
+        result[key] = flag
+    return result
+
+
 # ---------------------------------------------------------------------------
 # Records
 # ---------------------------------------------------------------------------
@@ -338,6 +386,43 @@ class PromptDescriptionSkipsRecord:
         }
 
 
+@dataclass(frozen=True)
+class PromptDisabledRecord:
+    """One logical day's "do not export this prompt at all" flags for the
+    Commit export lane: every built-in prompt key, plus the owning ``day``.
+
+    A ``False`` flag is the enabled default, so an absent file and an explicit
+    clear are equivalent: that prompt exports."""
+
+    day: str
+    disabled: Mapping[str, bool] = field(default_factory=dict)
+    version: int = PROMPT_DISABLED_SCHEMA_VERSION
+
+    def __post_init__(self) -> None:
+        if (
+            type(self.version) is not int
+            or self.version != PROMPT_DISABLED_SCHEMA_VERSION
+        ):
+            raise ValueError("unsupported prompt disabled version")
+        object.__setattr__(self, "day", _parse_day(self.day))
+        object.__setattr__(
+            self,
+            "disabled",
+            MappingProxyType(_normalize_prompt_disabled(self.disabled)),
+        )
+
+    def as_dict(self) -> dict[str, Any]:
+        # Persisted sparsely: only a disabled (True) flag is stored, so a
+        # re-enabled prompt leaves no trace and the file stays tiny.
+        return {
+            "version": self.version,
+            "day": self.day,
+            "disabled": {
+                key: True for key, flag in self.disabled.items() if flag
+            },
+        }
+
+
 # ---------------------------------------------------------------------------
 # Paths
 # ---------------------------------------------------------------------------
@@ -387,6 +472,26 @@ def description_skips_path(day: str) -> Path:
 def description_skips_lock_path() -> Path:
     """The description-skip lock file, beside its day records."""
     return app_config.state_dir() / DESCRIPTION_SKIPS_LOCK_FILENAME
+
+
+def prompt_disabled_path(day: str) -> Path:
+    """``<app home>/state/prompt-disabled-<day>.json``.
+
+    An invalid day is refused before any path is built, so a caller-supplied
+    value can never escape the state directory."""
+    try:
+        valid = _parse_day(day)
+    except ValueError as exc:
+        raise PromptValidationError(str(exc)) from exc
+    return app_config.state_dir() / (
+        f"{PROMPT_DISABLED_FILENAME_PREFIX}{valid}"
+        f"{PROMPT_DISABLED_FILENAME_SUFFIX}"
+    )
+
+
+def prompt_disabled_lock_path() -> Path:
+    """The disabled-prompt lock file, beside its day records."""
+    return app_config.state_dir() / PROMPT_DISABLED_LOCK_FILENAME
 
 
 # ---------------------------------------------------------------------------
@@ -497,6 +602,39 @@ def _load_description_skips_strict(path: Path) -> PromptDescriptionSkipsRecord:
         ) from exc
 
 
+def _load_prompt_disabled_strict(path: Path) -> PromptDisabledRecord:
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except OSError:
+        raise PromptStateError("prompt disabled record is unreadable") from None
+    try:
+        data = json.loads(raw, object_pairs_hook=_reject_duplicate_keys)
+    except ValueError:
+        raise PromptFormatError(
+            "prompt disabled record file is malformed"
+        ) from None
+    if not isinstance(data, dict):
+        raise PromptFormatError("prompt disabled record must be a JSON object")
+    if set(data) != _TOP_PROMPT_DISABLED_KEYS:
+        raise PromptFormatError(
+            "prompt disabled record has unknown or missing keys"
+        )
+    version = data["version"]
+    if (
+        type(version) is not int
+        or version != PROMPT_DISABLED_SCHEMA_VERSION
+    ):
+        raise PromptFormatError(
+            "prompt disabled record version is unsupported"
+        )
+    try:
+        return PromptDisabledRecord(
+            day=data["day"], disabled=data["disabled"], version=version
+        )
+    except ValueError as exc:
+        raise PromptFormatError("prompt disabled record is malformed") from exc
+
+
 # ---------------------------------------------------------------------------
 # Drafts store
 # ---------------------------------------------------------------------------
@@ -594,6 +732,15 @@ def _cleanup_older_description_skips(day: str) -> None:
     previous logical day is removed only after a successful write, and no
     failure can fail the save."""
     _cleanup_older_day_files(DESCRIPTION_SKIPS_FILENAME_PREFIX, day)
+
+
+def _cleanup_older_prompt_disabled(day: str) -> None:
+    """Best-effort removal of disabled-prompt files for older days.
+
+    Same contract as :func:`_cleanup_older_drafts`: a previous logical day's
+    disables are removed only after a successful write, so they can never
+    leak into the next day."""
+    _cleanup_older_day_files(PROMPT_DISABLED_FILENAME_PREFIX, day)
 
 
 def _cleanup_older_day_files(prefix: str, day: str) -> None:
@@ -771,6 +918,87 @@ def save_description_skips(
             capacities_cache_io.release_lock_file(fh)
 
     _cleanup_older_description_skips(valid_day)
+    return saved
+
+
+# ---------------------------------------------------------------------------
+# Day-scoped disabled-prompt flags
+# ---------------------------------------------------------------------------
+
+def _read_current_prompt_disabled(
+    target: Path, day: str
+) -> PromptDisabledRecord:
+    """The stored disabled record for ``day`` (all-enabled default when absent).
+
+    A file whose stored day disagrees with the requested day is refused, so an
+    exact-day read can never surface another day's flags."""
+    try:
+        exists = target.is_file()
+    except OSError:
+        raise PromptStateError("prompt disabled record is unreadable") from None
+    if not exists:
+        return PromptDisabledRecord(day=day)
+    record = _load_prompt_disabled_strict(target)
+    if record.day != day:
+        raise PromptFormatError(
+            "prompt disabled record day does not match the requested day"
+        )
+    return record
+
+
+def load_prompt_disabled(
+    day: str, *, path: str | Path | None = None
+) -> PromptDisabledRecord:
+    """Read the disabled-prompt flags for the logical ``day``.
+
+    An absent file returns the all-enabled default WITHOUT creating anything.
+    Malformed/unsupported storage raises :class:`PromptFormatError`; an
+    unreadable file raises :class:`PromptStateError`. Reads never write and
+    never return another day's flags."""
+    try:
+        valid_day = _parse_day(day)
+    except ValueError as exc:
+        raise PromptValidationError(str(exc)) from exc
+    target = Path(path) if path is not None else prompt_disabled_path(valid_day)
+    return _read_current_prompt_disabled(target, valid_day)
+
+
+def save_prompt_disabled(
+    *, day: str, patch: Mapping[str, bool], path: str | Path | None = None
+) -> PromptDisabledRecord:
+    """Validate and persist a patch of ``day``'s disabled-prompt flags.
+
+    A PATCH, not a replacement: a key present in ``patch`` sets that flag and
+    an explicit ``False`` clears it (re-enabling the prompt for the day), while
+    an omitted key keeps its stored value. Only the built-in prompt keys are
+    accepted; an unknown/custom key or a non-boolean value raises
+    :class:`PromptValidationError` before any file access. A malformed existing
+    file raises :class:`PromptFormatError` and its bytes are preserved (the
+    write is refused, not repaired). Concurrent saves are serialized by the
+    path lock. On success, older disabled files are removed best-effort."""
+    try:
+        valid_day = _parse_day(day)
+    except ValueError as exc:
+        raise PromptValidationError(str(exc)) from exc
+    try:
+        normalized_patch = _normalize_prompt_disabled_patch(patch)
+    except ValueError as exc:
+        raise PromptValidationError(str(exc)) from exc
+
+    target = Path(path) if path is not None else prompt_disabled_path(valid_day)
+    lock = prompt_disabled_lock_path()
+    with capacities_cache_io.store_lock(lock):
+        fh = _acquire_store_lock(lock)
+        try:
+            current = _read_current_prompt_disabled(target, valid_day)
+            merged = dict(current.disabled)
+            merged.update(normalized_patch)
+            saved = PromptDisabledRecord(day=valid_day, disabled=merged)
+            _atomic_write(target, saved.as_dict())
+        finally:
+            capacities_cache_io.release_lock_file(fh)
+
+    _cleanup_older_prompt_disabled(valid_day)
     return saved
 
 
