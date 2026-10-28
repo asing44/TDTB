@@ -234,7 +234,7 @@ describe("collapsed row duration cell", () => {
     // and nothing is written back to Capacities.
     expect(range(row).disabled).toBe(false);
     expect(range(row).min).toBe("0");
-    expect(cellTitle(row)).not.toBe(EXCLUSION_REASONS.allDayCapacities);
+    expect(cellTitle(row)).toContain("Duration");
 
     fireEvent.input(range(row), { target: { value: "0" } });
     expect(effectiveBlocks(h.store.getState(), "Note Processing")).toBe(0);

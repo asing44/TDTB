@@ -136,7 +136,7 @@ describe("expanded row panel", () => {
     const toggle = allDayToggle(row);
     expect(toggle.disabled).toBe(false);
     expect(toggle.getAttribute("aria-pressed")).toBe("false");
-    expect(row.textContent).not.toContain(EXCLUSION_REASONS.allDayCapacities);
+    expect(toggle.getAttribute("title")).toContain("Local to today's plan");
 
     fireEvent.click(toggle);
     expect(effectiveBlocks(h.store.getState(), "Note Processing")).toBe(0);
