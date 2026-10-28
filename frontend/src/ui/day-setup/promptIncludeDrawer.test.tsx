@@ -25,26 +25,26 @@ function drawer(promptDisabled?: PromptDisabled) {
 describe("drawer Captures include-in-commit switches", () => {
   it("shows one switch on For Meegy and Stoic, and none on Reminder", () => {
     const { r } = drawer();
-    const meegy = r.getByLabelText("Include For Meegy in commit") as HTMLInputElement;
-    const stoic = r.getByLabelText("Include Stoic in commit") as HTMLInputElement;
+    const meegy = r.getByLabelText("Include For Meegy in commit") as HTMLElement;
+    const stoic = r.getByLabelText("Include Stoic in commit") as HTMLElement;
     expect(meegy.getAttribute("role")).toBe("switch");
     expect(meegy.getAttribute("aria-checked")).toBe("true");
-    expect(meegy.checked).toBe(true);
-    expect(stoic.checked).toBe(true);
+    expect(stoic.getAttribute("aria-checked")).toBe("true");
     expect(meegy.closest(".field")?.querySelector("#cap-meegy")).toBeTruthy();
     expect(stoic.closest(".field")?.querySelector("#cap-stoic")).toBeTruthy();
     const reminder = r.getByLabelText("Reminder").closest(".field") as HTMLElement;
     expect(reminder.querySelector('[role="switch"]')).toBeNull();
     expect(r.getAllByText("Include in commit")).toHaveLength(2);
+    // The drawer keeps its no-checkbox contract: these are switch buttons.
+    expect(r.baseElement.querySelectorAll('input[type="checkbox"]')).toHaveLength(0);
   });
 
   it("follows the day-setup echo", () => {
     const { r } = drawer({ forMeegy: true, stoic: false });
-    const meegy = r.getByLabelText("Include For Meegy in commit") as HTMLInputElement;
-    const stoic = r.getByLabelText("Include Stoic in commit") as HTMLInputElement;
-    expect(meegy.checked).toBe(false);
+    const meegy = r.getByLabelText("Include For Meegy in commit") as HTMLElement;
+    const stoic = r.getByLabelText("Include Stoic in commit") as HTMLElement;
     expect(meegy.getAttribute("aria-checked")).toBe("false");
-    expect(stoic.checked).toBe(true);
+    expect(stoic.getAttribute("aria-checked")).toBe("true");
   });
 
   it("toggles through the prompt-only path without confirming the day", async () => {

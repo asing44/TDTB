@@ -171,21 +171,24 @@ export function DaySetupPanel({
   const setPromptDisabled = (key: "forMeegy" | "stoic", disabled: boolean) => {
     void controller.savePromptDisabled({ ...promptDisabled, [key]: disabled });
   };
-  /** The switch for one built-in capture: off leaves the prompt out of Commit. */
+  /** The switch for one built-in capture: off leaves the prompt out of Commit.
+      Same markup as the habits drawer switches (a role="switch" button), so the
+      drawer still carries no checkbox inputs. */
   const includeSwitch = (key: "forMeegy" | "stoic", label: string) => (
-    <label class="dux-mem" title={promptDisabled[key]
+    <span class="dux-mem" title={promptDisabled[key]
       ? "Left out of the commit today. The text is kept."
       : "Added to your Todoist Inbox when you commit."}>
-      <input
-        type="checkbox"
+      <button
+        type="button"
         role="switch"
+        class="anchor-popover__switch all-blocks__switch"
         aria-checked={!promptDisabled[key]}
         aria-label={`Include ${label} in commit`}
-        checked={!promptDisabled[key]}
-        onChange={(e) => setPromptDisabled(key, !(e.currentTarget as HTMLInputElement).checked)}
-      />{" "}
+        onClick={() => setPromptDisabled(key, !promptDisabled[key])}
+      />
+      {" "}
       Include in commit
-    </label>
+    </span>
   );
 
   // U12 command refs, declared before any early return so the subscription
