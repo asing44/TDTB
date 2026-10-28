@@ -1700,6 +1700,11 @@ class DaySetupRequest(BaseModel):
     # revision for optimistic concurrency. Omitted -> no opt-in write.
     optins: dict[str, StrictBool] | None = None
     optins_revision: StrictInt | None = None
+    # Day-scoped export-shape flags: a bool map keyed by BUILT-IN prompt key.
+    # A set flag still exports that prompt (fixed-label title) but writes NO
+    # Todoist description. Local-only, today-only, and never a Todoist write by
+    # itself; omitted -> no store write.
+    description_skips: dict[str, StrictBool] | None = None
     day_preset: str | None = None        # dated preset override (T18b.2)
     work_allotment_minutes: StrictInt | None = None  # dated Mint allotment (T18b.2)
     micro_adventure: dict[str, Any] | None = None  # T19 dated Live override; null clears to auto
@@ -2309,7 +2314,8 @@ BILLED_CAP = judgment.MAX_CALLS_PER_RUN
 
 _DAY_SETUP_KEYS = ("anchor", "eod", "buffering", "schedulable", "anchored",
                    "re_included", "intention", "megan_nicety", "stoic_intention",
-                   "day_preset", "work_allotment_minutes", "habits")
+                   "day_preset", "work_allotment_minutes", "habits",
+                   "description_skips")
 
 
 def _read_today_runstate(today: date) -> dict[str, Any]:
@@ -2335,6 +2341,12 @@ _PROMPT_READ_WARNING = "Prompt drafts could not be read; showing empty prompts."
 _PROMPT_OPTINS_READ_WARNING = (
     "Prompt opt-ins could not be read; preferences are shown as unavailable."
 )
+# U5 export-shape flags: a failed read omits the echo block (rather than
+# fabricating an all-false map that would overwrite saved flags) and never
+# suppresses a description the export lane would otherwise write.
+_PROMPT_DESCRIPTION_SKIPS_READ_WARNING = (
+    "Prompt description skips could not be read; export flags are unavailable."
+)
 # Fields that make a /day-setup POST an explicit Day Setup confirmation. A
 # payload carrying ONLY prompt content (captures / opt-ins) updates the local
 # prompt stores without confirming the day.
@@ -2342,7 +2354,9 @@ _NON_PROMPT_SETUP_FIELDS = frozenset({
     "anchor", "eod", "buffering", "schedulable", "anchored",
     "day_preset", "work_allotment_minutes", "micro_adventure", "habits",
 })
-_PROMPT_ONLY_FIELDS = frozenset({"captures", "optins", "optins_revision"})
+_PROMPT_ONLY_FIELDS = frozenset({
+    "captures", "optins", "optins_revision", "description_skips",
+})
 
 
 def _read_prompt_drafts(today: date) -> tuple[dict[str, str], list[str]]:
@@ -2373,6 +2387,16 @@ def _day_setup_with_prompts(
     for key, text in drafts.items():
         if text:
             setup[key] = text
+    # The day-scoped description-skip flags are local state, exactly like the
+    # drafts: overlay them so the checkbox can render its current state. An
+    # unreadable store OMITS the block instead of fabricating all-False, and an
+    # all-False store omits it too (nothing is skipped) — so an otherwise empty
+    # Day Setup read stays empty.
+    skips, skip_warnings = _read_prompt_description_skips(today)
+    warnings.extend(skip_warnings)
+    setup.pop("description_skips", None)
+    if skips is not None and any(skips.values()):
+        setup["description_skips"] = skips
     return setup, warnings
 
 
@@ -2395,6 +2419,80 @@ def _read_prompt_optins_metadata() -> tuple[dict[str, Any] | None, list[str]]:
     except prompt_state.PromptStateError:
         return None, [_PROMPT_OPTINS_READ_WARNING]
     return {"optins": dict(record.optins), "revision": record.revision}, []
+
+
+def _read_prompt_description_skips(
+    today: date,
+) -> tuple[dict[str, bool] | None, list[str]]:
+    """Today's export-shape flags, or ``None`` when the store is unreadable.
+
+    A clean read (including an absent file, the all-False default) is exposed
+    truthfully. A malformed/unreadable store yields ``None`` so the echo omits
+    the block instead of reporting an all-False map that would overwrite saved
+    flags; the export lane independently fails closed to writing descriptions."""
+    try:
+        record = prompt_state.load_description_skips(today.isoformat())
+    except prompt_state.PromptStateError:
+        return None, [_PROMPT_DESCRIPTION_SKIPS_READ_WARNING]
+    return dict(record.skips), []
+
+
+def _save_prompt_description_skips(
+    today: date, skips: dict[str, Any] | None
+) -> None:
+    """Persist the export-shape flag map for today's logical day.
+
+    Full replace per POST (like ``habits``): every built-in key is written, so
+    an omitted key clears that flag. Local-only — this never writes Todoist.
+    Typed, content-free failures: 422 invalid input, 409 malformed existing
+    bytes (preserved), 500 unreadable/unwritable (preserved)."""
+    if skips is None:
+        return
+    unknown = set(skips) - set(prompt_state.PROMPT_KEYS)
+    if unknown:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "prompt_description_skips_invalid",
+                "message": "description_skips contains an unknown prompt key",
+            },
+        )
+    # A full replace expressed as the store's PATCH: absent keys become an
+    # explicit False (a clear), so an omitted checkbox is off for today.
+    patch: dict[str, bool] = {
+        key: bool(skips.get(key, False)) for key in prompt_state.PROMPT_KEYS
+    }
+    try:
+        prompt_state.save_description_skips(day=today.isoformat(), patch=patch)
+    except prompt_state.PromptValidationError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "prompt_description_skips_invalid",
+                    "message": str(exc)},
+        ) from exc
+    except prompt_state.PromptFormatError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "prompt_description_skips_storage_error",
+                "message": (
+                    "Prompt description-skip storage is malformed or "
+                    "unsupported; the existing file was preserved."
+                ),
+            },
+        ) from exc
+    except prompt_state.PromptStateError as exc:
+        print(f"prompt description skips save failed: {exc}", file=sys.stderr)
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "code": "prompt_description_skips_storage_error",
+                "message": (
+                    "Prompt description skips could not be saved; "
+                    "the existing file was preserved."
+                ),
+            },
+        ) from exc
 
 
 def _save_prompt_drafts(today: date, captures: dict[str, Any] | None) -> None:
@@ -5259,6 +5357,7 @@ def create_app() -> FastAPI:
         # Local prompt stores are the only prompt target; the legacy runstate
         # keys stay INERT and are never written here.
         _save_prompt_drafts(today, body.captures)
+        _save_prompt_description_skips(today, body.description_skips)
         optins_map, optins_revision, optins_warnings = _save_prompt_optins(body)
         normalization_overrides = dict(existing_setup)
         if "day_preset" in present:

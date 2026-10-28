@@ -1,8 +1,8 @@
-"""prompt_state.py — local logical-day prompt draft and persistent opt-in
-stores (U5 P1).
+"""prompt_state.py — local logical-day prompt draft, description-skip, and
+persistent opt-in stores (U5 P1).
 
 The morning prompts (Intention, For Meegy, Stoic) are private runtime state.
-This module owns the two machine-local stores that back them, and nothing
+This module owns the three machine-local stores that back them, and nothing
 else — no note path, no provider call, no credential, no manifest/route/UI
 wiring (those are later U5/U6 slices).
 
@@ -14,17 +14,27 @@ wiring (those are later U5/U6 slices).
    preserved. Drafts start empty and nothing is migrated from any legacy
    runstate or note prompt text.
 
-2. **Persistent opt-in store** — ``<app home>/state/prompt-optins.json``, an
-   undated per-prompt boolean (default ``false``) with an optimistic
-   ``revision``. The opt-in survives restarts and logical-day rollover.
+2. **Logical-day description-skip store** —
+   ``<app home>/state/prompt-description-skips-<day>.json``, one file per
+   logical planning day, keyed by built-in prompt key. A set flag means the
+   export lane still creates that prompt's Todoist task (with its fixed label
+   title) but writes NO description. Saves are PATCH merges; only a set flag
+   is persisted. It is a sibling file, not a key inside the drafts file,
+   because the drafts decoder requires an exact top-level key set and an added
+   key would make every existing stored drafts file fail closed.
 
-Both stores reuse the established machine-local storage primitives
+3. **Persistent opt-in store** — ``<app home>/state/prompt-optins.json``, an
+   undated per-prompt boolean (default ``false``) with an optimistic
+   ``revision``. The opt-in survives restarts and logical-day rollover. The
+   export lane does NOT consult it.
+
+All three stores reuse the established machine-local storage primitives
 (:mod:`capacities_cache_io`): a strict duplicate-key-rejecting JSON decode, an
 atomic same-directory temp write, a per-key process lock paired with a POSIX
 advisory lock file. Existing storage is read strictly: malformed, unsupported,
 or day-mismatched bytes raise and are never repaired or overwritten. On a
-successful draft write, older draft files are removed best-effort; a failed
-write cleans nothing.
+successful write, older files of that day-scoped store are removed
+best-effort; a failed write cleans nothing.
 
 Prompt content is private: no prompt string is ever included in an error
 message, exception cause, or diagnostic. Errors are typed and content-free.
@@ -61,6 +71,7 @@ _CUSTOM_PROMPT_KEY_RE = re.compile(r"custom-[A-Za-z0-9][A-Za-z0-9_-]{0,127}")
 
 DRAFTS_SCHEMA_VERSION = 1
 OPTINS_SCHEMA_VERSION = 1
+DESCRIPTION_SKIPS_SCHEMA_VERSION = 1
 
 DRAFTS_FILENAME_PREFIX = "prompt-drafts-"
 DRAFTS_FILENAME_SUFFIX = ".json"
@@ -68,8 +79,18 @@ OPTINS_FILENAME = "prompt-optins.json"
 DRAFTS_LOCK_FILENAME = "prompt-drafts.lock"
 OPTINS_LOCK_FILENAME = "prompt-optins.lock"
 
+#: The day-scoped "skip the Todoist description write" flags. A SIBLING file
+#: per logical day rather than a key inside the drafts file: the drafts decoder
+#: requires the top-level key set to equal :data:`_TOP_DRAFT_KEYS` exactly, so
+#: adding a key there would make every existing stored drafts file fail closed
+#: and strand in-progress prompt text.
+DESCRIPTION_SKIPS_FILENAME_PREFIX = "prompt-description-skips-"
+DESCRIPTION_SKIPS_FILENAME_SUFFIX = ".json"
+DESCRIPTION_SKIPS_LOCK_FILENAME = "prompt-description-skips.lock"
+
 _TOP_DRAFT_KEYS = frozenset({"version", "day", "drafts"})
 _TOP_OPTIN_KEYS = frozenset({"version", "revision", "optins"})
+_TOP_DESCRIPTION_SKIP_KEYS = frozenset({"version", "day", "skips"})
 
 _DAY_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
@@ -206,6 +227,38 @@ def _normalize_optins(value: Any) -> dict[str, bool]:
     return result
 
 
+def _normalize_description_skips_patch(value: Any) -> dict[str, bool]:
+    """Validate a description-skip patch, keeping explicit ``False`` markers.
+
+    Only the built-in prompt keys are accepted: a browser-defined custom prompt
+    has no fixed-label description, so a skip flag for it is meaningless and is
+    refused rather than silently stored."""
+    if not isinstance(value, Mapping):
+        raise ValueError("description skips patch must be a JSON object")
+    result: dict[str, bool] = {}
+    for key, flag in value.items():
+        if key not in _KNOWN_PROMPT_KEYS:
+            raise ValueError("description skips contain an unknown prompt key")
+        if type(flag) is not bool:
+            raise ValueError("description skip value must be a boolean")
+        result[key] = flag
+    return result
+
+
+def _normalize_description_skips(value: Any) -> dict[str, bool]:
+    """Validate a stored skip mapping and fill missing known keys with ``False``."""
+    if not isinstance(value, Mapping):
+        raise ValueError("description skips must be a JSON object")
+    result: dict[str, bool] = {key: False for key in PROMPT_KEYS}
+    for key, flag in value.items():
+        if key not in _KNOWN_PROMPT_KEYS:
+            raise ValueError("description skips contain an unknown prompt key")
+        if type(flag) is not bool:
+            raise ValueError("description skip value must be a boolean")
+        result[key] = flag
+    return result
+
+
 # ---------------------------------------------------------------------------
 # Records
 # ---------------------------------------------------------------------------
@@ -255,6 +308,36 @@ class PromptOptinsRecord:
         }
 
 
+@dataclass(frozen=True)
+class PromptDescriptionSkipsRecord:
+    """One logical day's "skip the description write" flags for the export
+    lane: every built-in prompt key, plus the owning ``day``."""
+
+    day: str
+    skips: Mapping[str, bool] = field(default_factory=dict)
+    version: int = DESCRIPTION_SKIPS_SCHEMA_VERSION
+
+    def __post_init__(self) -> None:
+        if (
+            type(self.version) is not int
+            or self.version != DESCRIPTION_SKIPS_SCHEMA_VERSION
+        ):
+            raise ValueError("unsupported prompt description skips version")
+        object.__setattr__(self, "day", _parse_day(self.day))
+        object.__setattr__(
+            self, "skips", MappingProxyType(_normalize_description_skips(self.skips))
+        )
+
+    def as_dict(self) -> dict[str, Any]:
+        # Persisted sparsely: only a set (True) flag is stored, so an explicit
+        # clear leaves no trace and the file stays as small as one boolean.
+        return {
+            "version": self.version,
+            "day": self.day,
+            "skips": {key: True for key, flag in self.skips.items() if flag},
+        }
+
+
 # ---------------------------------------------------------------------------
 # Paths
 # ---------------------------------------------------------------------------
@@ -284,6 +367,26 @@ def drafts_lock_path() -> Path:
 def optins_lock_path() -> Path:
     """The opt-ins lock file, beside the opt-in record in the app home."""
     return app_config.state_dir() / OPTINS_LOCK_FILENAME
+
+
+def description_skips_path(day: str) -> Path:
+    """``<app home>/state/prompt-description-skips-<day>.json``.
+
+    An invalid day is refused before any path is built, so a caller-supplied
+    value can never escape the state directory."""
+    try:
+        valid = _parse_day(day)
+    except ValueError as exc:
+        raise PromptValidationError(str(exc)) from exc
+    return app_config.state_dir() / (
+        f"{DESCRIPTION_SKIPS_FILENAME_PREFIX}{valid}"
+        f"{DESCRIPTION_SKIPS_FILENAME_SUFFIX}"
+    )
+
+
+def description_skips_lock_path() -> Path:
+    """The description-skip lock file, beside its day records."""
+    return app_config.state_dir() / DESCRIPTION_SKIPS_LOCK_FILENAME
 
 
 # ---------------------------------------------------------------------------
@@ -353,6 +456,45 @@ def _load_optins_strict(path: Path) -> PromptOptinsRecord:
         )
     except ValueError as exc:
         raise PromptFormatError("prompt opt-ins record is malformed") from exc
+
+
+def _load_description_skips_strict(path: Path) -> PromptDescriptionSkipsRecord:
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except OSError:
+        raise PromptStateError(
+            "prompt description skips record is unreadable"
+        ) from None
+    try:
+        data = json.loads(raw, object_pairs_hook=_reject_duplicate_keys)
+    except ValueError:
+        raise PromptFormatError(
+            "prompt description skips record file is malformed"
+        ) from None
+    if not isinstance(data, dict):
+        raise PromptFormatError(
+            "prompt description skips record must be a JSON object"
+        )
+    if set(data) != _TOP_DESCRIPTION_SKIP_KEYS:
+        raise PromptFormatError(
+            "prompt description skips record has unknown or missing keys"
+        )
+    version = data["version"]
+    if (
+        type(version) is not int
+        or version != DESCRIPTION_SKIPS_SCHEMA_VERSION
+    ):
+        raise PromptFormatError(
+            "prompt description skips record version is unsupported"
+        )
+    try:
+        return PromptDescriptionSkipsRecord(
+            day=data["day"], skips=data["skips"], version=version
+        )
+    except ValueError as exc:
+        raise PromptFormatError(
+            "prompt description skips record is malformed"
+        ) from exc
 
 
 # ---------------------------------------------------------------------------
@@ -442,18 +584,30 @@ def _cleanup_older_drafts(day: str) -> None:
     Runs only after a successful write. Every failure is swallowed: cleanup is
     opportunistic and must never fail a save. Unparseable filenames and
     non-draft files are left untouched."""
+    _cleanup_older_day_files(DRAFTS_FILENAME_PREFIX, day)
+
+
+def _cleanup_older_description_skips(day: str) -> None:
+    """Best-effort removal of description-skip files for older days.
+
+    Same contract as :func:`_cleanup_older_drafts`: day-scoped state from a
+    previous logical day is removed only after a successful write, and no
+    failure can fail the save."""
+    _cleanup_older_day_files(DESCRIPTION_SKIPS_FILENAME_PREFIX, day)
+
+
+def _cleanup_older_day_files(prefix: str, day: str) -> None:
+    """Remove ``<prefix><day>.json`` files for days strictly before ``day``."""
     try:
         directory = app_config.state_dir()
         current = _parse_day(day)
         candidates = list(
-            directory.glob(f"{DRAFTS_FILENAME_PREFIX}*{DRAFTS_FILENAME_SUFFIX}")
+            directory.glob(f"{prefix}*{DRAFTS_FILENAME_SUFFIX}")
         )
     except OSError:
         return
     for candidate in candidates:
-        stem = candidate.name[
-            len(DRAFTS_FILENAME_PREFIX) : -len(DRAFTS_FILENAME_SUFFIX)
-        ]
+        stem = candidate.name[len(prefix) : -len(DRAFTS_FILENAME_SUFFIX)]
         try:
             candidate_day = _parse_day(stem)
         except ValueError:
@@ -535,6 +689,89 @@ def _current_optins_revision(target: Path) -> int:
     if not exists:
         return 0
     return _load_optins_strict(target).revision
+
+
+# ---------------------------------------------------------------------------
+# Day-scoped description-skip flags
+# ---------------------------------------------------------------------------
+
+def _read_current_description_skips(
+    target: Path, day: str
+) -> PromptDescriptionSkipsRecord:
+    """The stored skip record for ``day`` (all-``False`` default when absent).
+
+    A file whose stored day disagrees with the requested day is refused, so an
+    exact-day read can never surface another day's flags."""
+    try:
+        exists = target.is_file()
+    except OSError:
+        raise PromptStateError(
+            "prompt description skips record is unreadable"
+        ) from None
+    if not exists:
+        return PromptDescriptionSkipsRecord(day=day)
+    record = _load_description_skips_strict(target)
+    if record.day != day:
+        raise PromptFormatError(
+            "prompt description skips record day does not match the requested day"
+        )
+    return record
+
+
+def load_description_skips(
+    day: str, *, path: str | Path | None = None
+) -> PromptDescriptionSkipsRecord:
+    """Read the description-skip flags for the logical ``day``.
+
+    An absent file returns the all-``False`` default WITHOUT creating anything.
+    Malformed/unsupported storage raises :class:`PromptFormatError`; an
+    unreadable file raises :class:`PromptStateError`. Reads never write and
+    never return another day's flags."""
+    try:
+        valid_day = _parse_day(day)
+    except ValueError as exc:
+        raise PromptValidationError(str(exc)) from exc
+    target = Path(path) if path is not None else description_skips_path(valid_day)
+    return _read_current_description_skips(target, valid_day)
+
+
+def save_description_skips(
+    *, day: str, patch: Mapping[str, bool], path: str | Path | None = None
+) -> PromptDescriptionSkipsRecord:
+    """Validate and persist a patch of ``day``'s description-skip flags.
+
+    A PATCH, not a replacement: a key present in ``patch`` sets that flag and
+    an explicit ``False`` clears it, while an omitted key keeps its stored
+    value. Only the built-in prompt keys are accepted; an unknown/custom key or
+    a non-boolean value raises :class:`PromptValidationError` before any file
+    access. A malformed existing file raises :class:`PromptFormatError` and its
+    bytes are preserved (the write is refused, not repaired). Concurrent saves
+    are serialized by the path lock. On success, older skip files are removed
+    best-effort."""
+    try:
+        valid_day = _parse_day(day)
+    except ValueError as exc:
+        raise PromptValidationError(str(exc)) from exc
+    try:
+        normalized_patch = _normalize_description_skips_patch(patch)
+    except ValueError as exc:
+        raise PromptValidationError(str(exc)) from exc
+
+    target = Path(path) if path is not None else description_skips_path(valid_day)
+    lock = description_skips_lock_path()
+    with capacities_cache_io.store_lock(lock):
+        fh = _acquire_store_lock(lock)
+        try:
+            current = _read_current_description_skips(target, valid_day)
+            merged = dict(current.skips)
+            merged.update(normalized_patch)
+            saved = PromptDescriptionSkipsRecord(day=valid_day, skips=merged)
+            _atomic_write(target, saved.as_dict())
+        finally:
+            capacities_cache_io.release_lock_file(fh)
+
+    _cleanup_older_description_skips(valid_day)
+    return saved
 
 
 # ---------------------------------------------------------------------------
