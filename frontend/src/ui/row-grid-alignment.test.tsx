@@ -60,16 +60,19 @@ describe("Plan task rows use fixed slots around a flexible name column", () => {
     expect(appCss).toMatch(/\.trow__acts\s*>\s*\.trow__btn\s*\{[^}]*width:\s*100%/);
   });
 
-  it("keeps the meta separators and truncates only the trailing state", () => {
+  it("keeps the meta separators and wraps the line instead of truncating", () => {
     const meta = topLevelBlocks("\\.qrow\\.trow \\.qrow__source").join("\n");
-    expect(meta).toMatch(/gap:\s*8px/);
+    expect(meta).toMatch(/gap:\s*2px 8px/);
+    expect(meta).toMatch(/flex-wrap:\s*wrap/);
+    expect(meta).toMatch(/text-overflow:\s*clip/);
     expect(topLevelBlocks("\\.qrow\\.trow \\.qrow__source\\s*>\\s*\\*").join("\n")).toMatch(
       /flex:\s*none/,
     );
     const state = topLevelBlocks(
       "\\.qrow\\.trow \\.qrow__source\\s*>\\s*\\.trow__state",
     ).join("\n");
-    expect(state).toMatch(/text-overflow:\s*ellipsis/);
+    expect(state).toMatch(/overflow-wrap:\s*anywhere/);
+    expect(state).not.toMatch(/ellipsis/);
     expect(state).toMatch(/min-width:\s*0/);
   });
 });
