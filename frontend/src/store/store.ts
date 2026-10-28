@@ -13,6 +13,7 @@
      auto-fires them. */
 
 import type {
+  MicroPoolItem,
   RuntimeAction,
   AssignedItem,
   CalendarDrift,
@@ -233,6 +234,23 @@ export const emptyBatch: BatchState = {
     deliberately all-in day) still loads with the meaning it was saved under. */
 export type MembershipDefault = "rule" | "in" | "out";
 
+/** The micro-adventure pool editor's slice: the config pool as last loaded or
+    saved (kept through a failed load/save), plus load and save status. Local
+    mutation state only — never written into the session blob. */
+export interface MicroPoolState {
+  items: MicroPoolItem[] | null;
+  load: "idle" | "loading" | "failed";
+  loadError: string | null;
+  save: "idle" | "saving" | "saved" | "failed";
+  saveError: string | null;
+  /** The 409 "machine-local config overrides the pool" refusal. */
+  shadowed: boolean;
+}
+
+export const initialMicroPool: MicroPoolState = {
+  items: null, load: "idle", loadError: null, save: "idle", saveError: null, shadowed: false,
+};
+
 export interface AppState {
   loaded: boolean;
   loadError: string | null;
@@ -328,6 +346,8 @@ export interface AppState {
       save and reset mutations. Purely local mutation state — never written
       into the session blob (durable memory is server-side). */
   durationMemory: Record<string, { pending: boolean; error: string | null }>;
+  /** Micro-adventure pool editor state (config pool, load + save status). */
+  microPool: MicroPoolState;
   /** A guaranteed-no-write server rejection (409 single-flight, 422 plan
       refused): the plan stays intact and retryable — distinct from a failed
       report, where writes may have partially landed. */
@@ -438,6 +458,7 @@ export const initialState: AppState = {
   lastRuntimeAction: null,
   runtimeError: null,
   durationMemory: {},
+  microPool: initialMicroPool,
   commitError: null,
   driftNotice: null,
   acceptedDefects: null,
@@ -484,6 +505,12 @@ export type Action =
   // T19: Live micro-adventure changed (shuffle / pick / custom / reset).
   // Free and unbilled, but it changes the commit's Live→Todoist content —
   // any current shadow preview goes stale and acceptance is revoked.
+  | { type: "MICRO_POOL_LOAD_START" }
+  | { type: "MICRO_POOL_LOADED"; items: MicroPoolItem[] }
+  | { type: "MICRO_POOL_LOAD_FAILED"; error: string }
+  | { type: "MICRO_POOL_SAVE_START" }
+  | { type: "MICRO_POOL_SAVED"; items: MicroPoolItem[] }
+  | { type: "MICRO_POOL_SAVE_FAILED"; error: string; shadowed: boolean }
   | { type: "MICRO_SET"; pick: MicroIdea | null; source: "auto" | "override" }
   // The Set up day banner answered the unconfirmed prior Live block.
   | { type: "LOOSE_END_RESOLVED" }
@@ -781,6 +808,24 @@ export function reducer(s: AppState, a: Action): AppState {
         },
       };
     }
+    case "MICRO_POOL_LOAD_START":
+      return { ...s, microPool: { ...s.microPool, load: "loading", loadError: null } };
+    case "MICRO_POOL_LOADED":
+      return { ...s, microPool: { ...s.microPool, items: a.items, load: "idle", loadError: null } };
+    case "MICRO_POOL_LOAD_FAILED":
+      return { ...s, microPool: { ...s.microPool, load: "failed", loadError: a.error } };
+    case "MICRO_POOL_SAVE_START":
+      return { ...s, microPool: { ...s.microPool, save: "saving", saveError: null, shadowed: false } };
+    case "MICRO_POOL_SAVED":
+      return {
+        ...s,
+        microPool: { ...s.microPool, items: a.items, save: "saved", saveError: null, shadowed: false },
+      };
+    case "MICRO_POOL_SAVE_FAILED":
+      return {
+        ...s,
+        microPool: { ...s.microPool, save: "failed", saveError: a.error, shadowed: a.shadowed },
+      };
     case "MICRO_SET": {
       if (!s.inputs) return s;
       return {

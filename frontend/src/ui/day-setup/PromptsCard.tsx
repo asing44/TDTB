@@ -9,16 +9,20 @@
    echo (`descriptionSkips`), so the card reads it from the app context rather
    than the panel's local draft — the draft is the prompt text, not the flag.
 
+   Both the skip toggle and the pool editor read the app context, so a render
+   without a store behind it shows neither control instead of crashing.
+
    There are no mono routing tags, no per-prompt export checkboxes, and no
    "Prompt exports" block any more: the backend exports every non-empty prompt
    to the Todoist Inbox at Commit. Custom prompt answers persist through the
    captures patch (`onPersistCustom`) rather than the retired opt-in store. */
 
-import { useState } from "preact/hooks";
+import { useContext, useEffect, useState } from "preact/hooks";
 
 import type { MicroAdventure } from "../../model/types";
-import { useApp, useAppState } from "../context";
 import { MicroPoolNote, poolOptionLabel } from "../microPool";
+import { Ctx, useApp, useAppState } from "../context";
+import { MicroPoolEditor } from "./MicroPoolEditor";
 import {
   CustomPromptAdd,
   CustomPromptList,
@@ -58,15 +62,59 @@ function categoryLabel(category: string): string {
   return category.charAt(0).toUpperCase() + category.slice(1);
 }
 
-export function PromptsCard(props: PromptsCardProps) {
-  const micro = props.micro;
-  const s = useAppState();
+/** Mounts the pool editor against the app store: loads the config pool on
+    open and hands the editor its slice. Rendered only inside the app context. */
+function MicroPoolEditorHost({ onClose }: { onClose: () => void }) {
   const { controller } = useApp();
+  const { microPool } = useAppState();
+  const load = () => void controller.loadMicroPool();
+  useEffect(load, []);
+  return (
+    <MicroPoolEditor
+      pool={microPool}
+      onLoad={load}
+      onSave={(items) => void controller.saveMicroPool(items)}
+      onClose={onClose}
+    />
+  );
+}
+
+/** The skip labels, in the order the cards appear. */
+const SKIP_LABELS = {
+  forMeegy: "Skip description for Meegy",
+  stoic: "Skip description for Stoic",
+} as const;
+
+/** The skip flag lives in the day-setup echo, so the toggle reads it from the
+    store. Mounted only inside the app context: without one, no toggle. */
+function SkipDescriptionToggle({ which }: { which: "forMeegy" | "stoic" }) {
+  const { controller } = useApp();
+  const s = useAppState();
   const skips = s.daySetup.descriptionSkips ?? NO_SKIPS;
   /** Full-replace save: the map always carries both toggleable keys. */
-  const setSkip = (key: "forMeegy" | "stoic", on: boolean) => {
-    void controller.savePromptSkips({ ...skips, [key]: on });
+  const setSkip = (on: boolean) => {
+    void controller.savePromptSkips({ ...skips, [which]: on });
   };
+  return (
+    <label class="capacities-setting-row">
+      <input
+        type="checkbox"
+        checked={skips[which]}
+        onChange={(e) => setSkip((e.currentTarget as HTMLInputElement).checked)}
+      />
+      <span>
+        <strong>{SKIP_LABELS[which]}</strong>
+      </span>
+    </label>
+  );
+}
+
+export function PromptsCard(props: PromptsCardProps) {
+  const micro = props.micro;
+  // The pool editor and the skip toggles both need the app store; without one
+  // (isolated renders) the card simply has neither control.
+  const inApp = useContext(Ctx) !== null;
+  const [poolOpen, setPoolOpen] = useState(false);
   // Edit prompts reveals rename and remove for the browser-defined prompts.
   const [editingPrompts, setEditingPrompts] = useState(false);
   const [customOpen, setCustomOpen] = useState(false);
@@ -131,6 +179,19 @@ export function PromptsCard(props: PromptsCardProps) {
               >
                 Use my own idea
               </button>
+              {inApp && (
+                <>
+                  {" · "}
+                  <button
+                    type="button"
+                    class="live-micro__custom-link"
+                    aria-haspopup="dialog"
+                    onClick={() => setPoolOpen(true)}
+                  >
+                    Edit pool
+                  </button>
+                </>
+              )}
             </p>
             {customOpen && (
               <div class="prompt-card__controls field__controls">
@@ -157,6 +218,7 @@ export function PromptsCard(props: PromptsCardProps) {
                 </button>
               </div>
             )}
+            {poolOpen && <MicroPoolEditorHost onClose={() => setPoolOpen(false)} />}
           </article>
 
           <article class="prompt-card">
@@ -186,18 +248,7 @@ export function PromptsCard(props: PromptsCardProps) {
               }
               onBlur={props.onAutosave}
             />
-            <label class="capacities-setting-row">
-              <input
-                type="checkbox"
-                checked={skips.forMeegy}
-                onChange={(e) =>
-                  setSkip("forMeegy", (e.currentTarget as HTMLInputElement).checked)
-                }
-              />
-              <span>
-                <strong>Skip description for Meegy</strong>
-              </span>
-            </label>
+            {inApp && <SkipDescriptionToggle which="forMeegy" />}
           </article>
           <article class="prompt-card">
             <div class="prompt-card__labelrow">
@@ -211,18 +262,7 @@ export function PromptsCard(props: PromptsCardProps) {
               }
               onBlur={props.onAutosave}
             />
-            <label class="capacities-setting-row">
-              <input
-                type="checkbox"
-                checked={skips.stoic}
-                onChange={(e) =>
-                  setSkip("stoic", (e.currentTarget as HTMLInputElement).checked)
-                }
-              />
-              <span>
-                <strong>Skip description for Stoic</strong>
-              </span>
-            </label>
+            {inApp && <SkipDescriptionToggle which="stoic" />}
           </article>
 
           {custom.list.length > 0 && (
@@ -237,9 +277,11 @@ export function PromptsCard(props: PromptsCardProps) {
           )}
         </div>
 
-        <p class="field__hint">
-          Skipping still creates the task — only the description is left out.
-        </p>
+        {inApp && (
+          <p class="field__hint">
+            Skipping still creates the task — only the description is left out.
+          </p>
+        )}
 
         {editingPrompts && (
           <p class="field__hint custom-prompt__edit-note" role="status">

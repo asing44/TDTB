@@ -1,11 +1,16 @@
 /* PromptsCard.test.tsx: the Day Setup Live micro-adventure card shows the same
    pool provenance note and Capacities option suffix as the settings drawer,
-   and the For Meegy and Stoic cards carry the skip-description toggles. */
+   and the For Meegy and Stoic cards carry the skip-description toggles.
+
+   Two mount helpers: `cardWithStore` renders inside the staged app harness (the
+   store-backed path, where the skip toggles and the Edit pool control exist),
+   and `cardWithoutStore` renders bare, with no store behind the card. */
 
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent } from "@testing-library/preact";
+import { cleanup, fireEvent, render, waitFor } from "@testing-library/preact";
 
 import type { DescriptionSkips, MicroAdventure } from "../../model/types";
+import { FixtureAdapter } from "../../adapters/fixture";
 import { makeHarness } from "../test-harness";
 import { PromptsCard } from "./PromptsCard";
 import { writeCustomPrompts } from "./customPrompts";
@@ -46,7 +51,7 @@ function micro(over: Partial<MicroAdventure> = {}): MicroAdventure {
 
 /** Mount the card over a staged harness. The skip toggles read the day-setup
     echo from the store, so the card renders inside the app context. */
-function card(
+function cardWithStore(
   m: MicroAdventure,
   storage: Storage = fakeStorage(),
   skips?: DescriptionSkips,
@@ -75,9 +80,32 @@ function card(
   return { r, h };
 }
 
+/** Mount the card bare, with no app store behind it. The store-backed controls
+    (skip toggles, Edit pool) must be absent, not fatal. */
+function cardWithoutStore(m: MicroAdventure) {
+  const storage = { getItem: () => null, setItem: noop, removeItem: noop } as unknown as Storage;
+  return render(
+    <PromptsCard
+      micro={m}
+      liveCustom=""
+      onLiveCustom={noop}
+      onPickPool={noop}
+      onSetCustom={noop}
+      onShuffle={noop}
+      onResetAuto={noop}
+      captures={{ intention: "", forMeegy: "", stoic: "" }}
+      onCapture={noop}
+      onAutosave={noop}
+      onPersistCustom={noop}
+      promptSave={{ phase: "idle", error: null, warnings: [] }}
+      customStorage={storage}
+    />,
+  );
+}
+
 describe("PromptsCard Reminder copy", () => {
   it("labels the one-thing prompt Reminder with the reminder placeholder", () => {
-    const { r } = card(micro());
+    const { r } = cardWithStore(micro());
     const field = r.getByLabelText("Reminder") as HTMLTextAreaElement;
     expect(field.closest(".prompt-card")).toBeTruthy();
     expect(field.getAttribute("placeholder")).toBe("One thing to remind myself today");
@@ -89,7 +117,7 @@ describe("PromptsCard Reminder copy", () => {
   });
 
   it("names Reminder in the built-in note when no custom prompts exist", () => {
-    const { r } = card(micro());
+    const { r } = cardWithStore(micro());
     fireEvent.click(r.getByRole("button", { name: "Edit prompts" }));
     expect(
       r.getByText(/Reminder, For Meegy and Stoic are built in and can't be renamed or removed/),
@@ -103,7 +131,7 @@ describe("PromptsCard Reminder copy", () => {
       [{ id: "custom-abc-1", question: "What am I grateful for?", answer: "" }],
       storage,
     );
-    const { r } = card(micro(), storage);
+    const { r } = cardWithStore(micro(), storage);
     fireEvent.click(r.getByRole("button", { name: "Edit prompts" }));
     expect(
       r.getByText(/Rename or remove your own prompts. Reminder, For Meegy and Stoic are built in/),
@@ -114,7 +142,7 @@ describe("PromptsCard Reminder copy", () => {
 
 describe("PromptsCard skip-description toggles", () => {
   it("renders one toggle on the For Meegy and Stoic cards, and none on Reminder", () => {
-    const { r } = card(micro());
+    const { r } = cardWithStore(micro());
     expect(r.getAllByRole("checkbox")).toHaveLength(2);
     const meegy = r.getByLabelText("Skip description for Meegy") as HTMLInputElement;
     const stoic = r.getByLabelText("Skip description for Stoic") as HTMLInputElement;
@@ -127,7 +155,7 @@ describe("PromptsCard skip-description toggles", () => {
   });
 
   it("follows the incoming server state", () => {
-    const { r } = card(micro(), fakeStorage(), { forMeegy: true, stoic: false });
+    const { r } = cardWithStore(micro(), fakeStorage(), { forMeegy: true, stoic: false });
     expect((r.getByLabelText("Skip description for Meegy") as HTMLInputElement).checked).toBe(
       true,
     );
@@ -137,7 +165,7 @@ describe("PromptsCard skip-description toggles", () => {
   });
 
   it("reads an absent skip map as unchecked", () => {
-    const { r } = card(micro());
+    const { r } = cardWithStore(micro());
     expect((r.getByLabelText("Skip description for Meegy") as HTMLInputElement).checked).toBe(
       false,
     );
@@ -147,7 +175,7 @@ describe("PromptsCard skip-description toggles", () => {
   });
 
   it("toggling a key saves the whole map and keeps the other key's value", async () => {
-    const { r, h } = card(micro(), fakeStorage(), { forMeegy: true, stoic: false }, "fresh");
+    const { r, h } = cardWithStore(micro(), fakeStorage(), { forMeegy: true, stoic: false }, "fresh");
     const save = vi.spyOn(h.controller, "savePromptSkips");
     const draftsBefore = h.store.getState().daySetup.captures;
     fireEvent.click(r.getByLabelText("Skip description for Stoic"));
@@ -165,7 +193,7 @@ describe("PromptsCard skip-description toggles", () => {
   });
 
   it("explains that a skipped prompt still creates the task", () => {
-    const { r } = card(micro());
+    const { r } = cardWithStore(micro());
     expect(
       r.getByText("Skipping still creates the task — only the description is left out."),
     ).toBeTruthy();
@@ -178,7 +206,7 @@ describe("PromptsCard skip-description toggles", () => {
 
 describe("PromptsCard pool note", () => {
   it("shows one note with the first warning and the full list in title/aria", () => {
-    const { r } = card(micro({ poolWarnings: ["First warning.", "Second warning."] }));
+    const { r } = cardWithStore(micro({ poolWarnings: ["First warning.", "Second warning."] }));
     const notes = r.container.querySelectorAll<HTMLElement>(".live-micro__pool-note");
     expect(notes).toHaveLength(1);
     expect(notes[0].getAttribute("role")).toBe("note");
@@ -189,15 +217,46 @@ describe("PromptsCard pool note", () => {
   });
 
   it("renders no note without warnings", () => {
-    const { r } = card(micro());
+    const { r } = cardWithStore(micro());
     expect(r.container.querySelector(".live-micro__pool-note")).toBeNull();
   });
 
   it("marks cap- options as Capacities", () => {
-    const { r } = card(micro());
+    const { r } = cardWithStore(micro());
     const opts = Array.from(r.container.querySelectorAll("#live-pick option")).map(
       (o) => o.textContent,
     );
     expect(opts).toEqual(["Watch sunset", "Try pottery · Capacities"]);
+  });
+});
+
+describe("PromptsCard pool editor entry", () => {
+  const storage = { getItem: () => null, setItem: noop, removeItem: noop } as unknown as Storage;
+  const props = {
+    liveCustom: "", onLiveCustom: noop, onPickPool: noop, onSetCustom: noop, onShuffle: noop,
+    onResetAuto: noop, captures: { intention: "", forMeegy: "", stoic: "" }, onCapture: noop,
+    onAutosave: noop, onPersistCustom: noop,
+    promptSave: { phase: "idle", error: null, warnings: [] }, customStorage: storage,
+  };
+
+  it("has no Edit pool control without the app store behind it", () => {
+    const r = cardWithoutStore(micro());
+    expect(r.queryByRole("button", { name: "Edit pool" })).toBeNull();
+  });
+
+  it("opens the pool editor from the card, loading the pool, and returns focus on close", async () => {
+    const h = makeHarness("ready");
+    const load = vi.spyOn(FixtureAdapter.prototype, "loadMicroPool");
+    const r = h.ui(<PromptsCard micro={micro()} {...props} />);
+    const open = r.getByRole("button", { name: "Edit pool" });
+    expect(open.getAttribute("aria-haspopup")).toBe("dialog");
+    open.focus();
+    fireEvent.click(open);
+    expect(r.getByRole("dialog", { name: "Micro-adventure ideas" })).toBeTruthy();
+    expect(load).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect((r.getByLabelText("Idea 1") as HTMLInputElement).value).not.toBe(""));
+    fireEvent.keyDown(r.getByRole("dialog"), { key: "Escape" });
+    expect(r.queryByRole("dialog")).toBeNull();
+    expect(document.activeElement).toBe(open);
   });
 });
