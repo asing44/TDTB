@@ -257,13 +257,14 @@ describe("FEEDBACK-10 secondary actions left the row (A13, rewritten for F7)", (
   });
 
   /* Regression guard for the F7 defect fixed in `store/controller.ts`:
-     Clear stages `pin: null`, and `rowDraft.toOverrides` projects that onto
-     `resetPlacement`. ROW_PIN_RESET alone only drops the pending pin and never
-     touches `placements`, and `placements[id]` IS the pin (`rowSessionOf`), so
-     Save after Clear used to leave the row "Pinned 11:00". Save now routes a
-     cleared existing pin through `controller.releasePlacement` (ROW_PIN_RESET +
-     ROW_UNPLACED, which deletes `placements[id]`). */
-  it("Clear unschedules a placed row (Save releases the placement)", () => {
+     Clear sets `pin: null` on the row's edit, and `rowDraft.toOverrides`
+     projects that onto `resetPlacement`. ROW_PIN_RESET alone only drops the
+     pending pin and never touches `placements`, and `placements[id]` IS the pin
+     (`rowSessionOf`), so a cleared existing pin used to leave the row
+     "Pinned 11:00". The edit path now routes a cleared existing pin through
+     `controller.releasePlacement` (ROW_PIN_RESET + ROW_UNPLACED, which deletes
+     `placements[id]`). Edits apply at once: there is no Save step. */
+  it("Clear unschedules a placed row (applied at once)", () => {
     const h = makeHarness("sequenced");
     const { row } = expandRow(h, "Magic Mirror");
     const btn = (t: string) =>
@@ -273,10 +274,8 @@ describe("FEEDBACK-10 secondary actions left the row (A13, rewritten for F7)", (
     fireEvent.click(btn("Set time"));
     fireEvent.input(row().querySelector('input[type="time"]')!, { target: { value: "11:00" } });
     fireEvent.click(btn("Apply"));
-    fireEvent.click(btn("Save"));
     expect(h.store.getState().placements["Magic Mirror"]).toBe("11:00");
     fireEvent.click(btn("Clear"));
-    fireEvent.click(btn("Save"));
     expect(h.store.getState().placements["Magic Mirror"]).toBeUndefined();
   });
 
