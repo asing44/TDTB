@@ -12,11 +12,14 @@ Frozen plan items 10-12 (``Plans Link/2026-08-09-tdtb-planning-ui-reliability.md
 - The resolver returns ``(value_minutes, source_label)`` where source_label is
   one of ``remembered`` / ``tag:<name>`` / ``native`` / ``preset`` / ``type`` /
   ``default``.
-- Memory is keyed by canonical source identity (Todoist task id via
-  ``todoist:<id>``), survives recurring occurrences,
-  uses atomic writes (tmp + ``os.replace`` when a path is supplied), and never
-  rewrites source duration fields. Name alone is not an
-  identity (item 12).
+- Memory is keyed by canonical source identity: ``todoist:<id>`` for Todoist
+  rows and the adapter's stable Capacities identity
+  ``capacities:<space>:<structure>:<object>`` for Capacities rows. It survives
+  recurring occurrences, uses atomic writes (tmp + ``os.replace`` when a path
+  is supplied), and never rewrites source duration fields. Name alone is not an
+  identity (item 12). A remembered Capacities duration beats the source
+  duration property on every day until it is reset, exactly like a remembered
+  Todoist one.
 
 The default store is in-memory so unit tests never touch disk; callers opt
 into persistence by passing ``path`` (under the existing TDTB cache
@@ -52,6 +55,7 @@ except ImportError:  # pragma: no cover — non-POSIX fallback
     _fcntl = None
 
 import app_config
+from capacities_assignment import parse_capacities_identity
 from duration_tags import recognize_duration_tag
 
 # Contract-defined per-type duration fields (press rows carry ``duration_min``
@@ -74,6 +78,13 @@ STATE_FILENAME = "duration-memory.json"
 STATE_LOCK_FILENAME = "duration-memory.lock"
 SCHEMA_VERSION = 1
 DURATION_STEP_MINUTES = 5
+
+#: Source tag that qualifies a Capacities stable identity.
+CAPACITIES_SOURCE = "capacities"
+#: Longest accepted identity key. Todoist ids are numeric; a Capacities
+#: identity is three provider ids, so this bound is generous while still
+#: refusing an unbounded client-supplied key.
+MAX_IDENTITY_LENGTH = 256
 
 
 class MemoryStoreError(Exception):
@@ -310,11 +321,60 @@ def apply_remembered_overlay(
 # Identity
 # ---------------------------------------------------------------------------
 
+def _unsafe_identity_component(component: str) -> bool:
+    """Whether one Capacities identity component could name a path.
+
+    Object/space/structure ids the provider mints are opaque tokens, so a
+    component carrying a separator, a NUL, dot-segments, or any whitespace is
+    not an id and must never become a stored key.
+    """
+    if component in ("", ".", ".."):
+        return True
+    return any(char in "/\\\x00" or char.isspace() for char in component)
+
+
+def _capacities_identity(text: str) -> str:
+    """Canonical ``capacities:{space}:{structure}:{object}`` or ``ValueError``.
+
+    Kept as strict as the Todoist id check and as
+    ``capacities_settings.canonical_exclusion_identity``: the value must
+    already be the canonical string the adapter mints (canonical source
+    casing, every component non-empty and whitespace-free), the whole key is
+    length-bounded, and no component may traverse a path.
+    """
+    if len(text) > MAX_IDENTITY_LENGTH:
+        raise ValueError(
+            f"Capacities identity exceeds {MAX_IDENTITY_LENGTH} characters"
+        )
+    parsed = parse_capacities_identity(text)
+    if parsed is None or parsed.qualified != text:
+        raise ValueError(
+            f"{text!r} is not a canonical Capacities identity "
+            "(expected capacities:<space>:<structure>:<object>)"
+        )
+    for component in (parsed.space_id, parsed.structure_id, parsed.object_id):
+        if _unsafe_identity_component(component):
+            raise ValueError(
+                f"{text!r} is not a canonical Capacities identity "
+                "(unsafe identity component)"
+            )
+    return parsed.qualified
+
+
+def _is_capacities_key(text: str) -> bool:
+    """Whether ``text`` claims to be a Capacities identity (valid or not)."""
+    return text.casefold().startswith(f"{CAPACITIES_SOURCE}:")
+
+
 def normalize_identity(identity: str, *, legacy_ok: bool = False) -> str:
     """Validate and normalize a canonical source identity.
 
-    The only identity that can be saved or looked up is ``todoist:<id>``. A bare
-    display name is not an identity and raises ``ValueError``.
+    Two identities can be saved or looked up: ``todoist:<id>`` and the stable
+    Capacities identity ``capacities:<space>:<structure>:<object>`` the adapter
+    mints. A bare display name is not an identity and raises ``ValueError``.
+
+    A malformed Capacities key raises ``ValueError`` — a remembered duration
+    that silently stopped applying would be worse than a visible rejection.
 
     ``legacy_ok`` is for reading a cache file only: it also passes a key left
     behind by the retired note source (a ``vault:`` prefix or any ``/`` path),
@@ -327,12 +387,10 @@ def normalize_identity(identity: str, *, legacy_ok: bool = False) -> str:
         tail = text[len("todoist:"):].strip()
         if tail:
             return f"todoist:{tail}"
+    if _is_capacities_key(text):
+        return _capacities_identity(text)
     if legacy_ok and text.startswith("vault:") and text[len("vault:"):].strip():
         return f"vault:{text[len('vault:'):].strip()}"
-    if text.startswith("capacities:") or text.casefold().startswith("capacities://"):
-        raise ValueError(
-            f"{identity!r} is a Capacities source identity, not a duration-memory key"
-        )
     if legacy_ok and "/" in text:
         return text
     raise ValueError(
@@ -341,17 +399,45 @@ def normalize_identity(identity: str, *, legacy_ok: bool = False) -> str:
     )
 
 
+def _capacities_item_identity(item: dict[str, Any]) -> str | None:
+    """Canonical Capacities identity for one row, or None.
+
+    The row's own ``identity`` wins; the canonical components are the
+    fallback for a row shape that carries them but no identity. A row the
+    producer minted without an object id or structure id
+    (``capacities:name:<title>``) has no stable identity and gets no key.
+    """
+    candidates = (item.get("identity"),)
+    space = str(item.get("capacities_space_id") or "").strip()
+    structure = str(item.get("capacities_structure_id") or "").strip()
+    object_id = str(item.get("capacities_id") or "").strip()
+    built = (
+        f"{CAPACITIES_SOURCE}:{space}:{structure}:{object_id}"
+        if space and structure and object_id else None
+    )
+    for candidate in (*candidates, built):
+        if candidate in (None, ""):
+            continue
+        try:
+            return _capacities_identity(str(candidate).strip())
+        except ValueError:
+            continue
+    return None
+
+
 def item_identity(item: dict[str, Any]) -> str | None:
     """Canonical duration-memory identity for a digest/assigned row.
 
-    Capacities owns its source duration and keeps its namespaced identity out of
-    the existing Todoist duration-memory cache until a separate mapping
-    contract authorizes that behavior.
+    Todoist rows key on ``todoist:<id>``. Capacities rows key on the stable
+    source-qualified identity the adapter/producer mint
+    (``capacities:<space>:<structure>:<object>``), so a remembered duration
+    beats the source duration property on every day until it is reset. A
+    Capacities row without that identity has none: nothing can be keyed on it.
     """
     source = str(item.get("source") or "").strip().casefold()
-    path = item.get("path")
-    if source == "capacities" or str(path or "").casefold().startswith("capacities://"):
-        return None
+    path = str(item.get("path") or "").strip()
+    if source == CAPACITIES_SOURCE or path.casefold().startswith("capacities://"):
+        return _capacities_item_identity(item)
     todoist_id = item.get("todoist_id")
     if todoist_id not in (None, ""):
         return f"todoist:{todoist_id}"

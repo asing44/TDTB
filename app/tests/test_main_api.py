@@ -2508,6 +2508,158 @@ class TestDurationMemoryReset:
         assert "duration_source" not in rows["Make"]
 
 
+# capacities-memory (2026-10-28): "Remember for next time" also covers
+# Capacities rows, keyed on the canonical stable identity the adapter mints.
+CAP_DM_IDENTITY = "capacities:space-1:RootTask:cap-dur-1"
+CAP_DM_NAME = "Cap duration task"
+
+
+class _DmCapacities:
+    """Read-only Capacities stand-in: one assigned row whose SOURCE duration
+    property carries ``minutes``."""
+
+    def __init__(self, minutes: int = 60) -> None:
+        self.minutes = minutes
+
+    def items_for_day(self, logical_day):
+        import types as _types
+
+        minutes = self.minutes
+        blocks = minutes / 30
+        return _types.SimpleNamespace(items=[{
+            "id": CAP_DM_NAME,
+            "name": CAP_DM_NAME,
+            "path": "capacities://space-1/cap-dur-1",
+            "identity": CAP_DM_IDENTITY,
+            "source": "capacities",
+            "types": ["RootTask"],
+            "assigned": True,
+            "duration": minutes,
+            "duration_minutes": minutes,
+            "blocks": int(blocks) if blocks.is_integer() else blocks,
+            "capacities_id": "cap-dur-1",
+            "capacities_space_id": "space-1",
+            "capacities_structure_id": "RootTask",
+        }], warnings=[])
+
+    def close(self) -> None:
+        pass
+
+
+def _seed_cap_dm(client, minutes: int = 60) -> None:
+    """Live source mode with one Capacities row whose source duration is
+    ``minutes`` (the value a remembered duration must beat)."""
+    install_config_markdown(_DM_CONFIG)
+    path = app_config.config_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"version": 1, "sources": {"mode": "live"}}),
+                    encoding="utf-8")
+    client.app.state.build_read_clients = lambda cfg: (_DmTodoist(), _DmStore())
+    client.app.state.build_capacities_adapter = (
+        lambda cfg: _DmCapacities(minutes)
+    )
+
+
+class TestCapacitiesDurationMemory:
+    """A remembered Capacities duration wins over the source duration property
+    on every day until it is cleared."""
+
+    def test_save_accepts_a_capacities_identity(self, client):
+        r = client.post("/duration-memory/save", json={
+            "identity": CAP_DM_IDENTITY, "minutes": 90,
+        }, headers=_auth(client))
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["identity"] == CAP_DM_IDENTITY
+        assert body["minutes"] == 90
+        assert dm.read_all_memory() == {CAP_DM_IDENTITY: 90}
+
+    def test_malformed_capacities_identity_is_422(self, client):
+        r = client.post("/duration-memory/save", json={
+            "identity": "capacities://space-1/cap-dur-1", "minutes": 90,
+        }, headers=_auth(client))
+        assert r.status_code == 422
+
+    def test_plan_inputs_shows_remembered_blocks_over_the_source_property(
+        self, client
+    ):
+        _seed_cap_dm(client, minutes=60)
+        save = client.post("/duration-memory/save", json={
+            "identity": CAP_DM_IDENTITY, "minutes": 90,
+        }, headers=_auth(client))
+        assert save.status_code == 200, save.text
+
+        body = client.get("/plan-inputs").json()
+        row = {i["name"]: i for i in body["digest"]["assigned"]}[CAP_DM_NAME]
+        assert row["blocks"] == 3
+        assert row["duration_source"] == "remembered"
+        assert row["duration_minutes"] == 90
+
+    def test_remembered_duration_survives_a_changed_source_value(self, client):
+        _seed_cap_dm(client, minutes=60)
+        client.post("/duration-memory/save", json={
+            "identity": CAP_DM_IDENTITY, "minutes": 90,
+        }, headers=_auth(client))
+
+        # The source property changes later; the remembered value still wins.
+        client.app.state.build_capacities_adapter = (
+            lambda cfg: _DmCapacities(45)
+        )
+        body = client.get("/plan-inputs").json()
+        row = {i["name"]: i for i in body["digest"]["assigned"]}[CAP_DM_NAME]
+        assert row["blocks"] == 3
+        assert row["duration_source"] == "remembered"
+        assert row["duration_minutes"] == 90
+
+    def test_reset_returns_the_source_value(self, client):
+        _seed_cap_dm(client, minutes=60)
+        client.post("/duration-memory/save", json={
+            "identity": CAP_DM_IDENTITY, "minutes": 90,
+        }, headers=_auth(client))
+
+        r = client.post("/duration-memory/reset", json={
+            "identity": CAP_DM_IDENTITY,
+        }, headers=_auth(client))
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["removed"] is True
+        assert body["duration_minutes"] == 60
+        assert body["duration_source"] == "native"
+        assert dm.read_all_memory() == {}
+
+        after = client.get("/plan-inputs").json()
+        row = {i["name"]: i for i in after["digest"]["assigned"]}[CAP_DM_NAME]
+        assert row["blocks"] == 2
+        assert "duration_source" not in row
+
+    def test_reset_absent_capacities_row_is_a_bounded_error(self, client):
+        _seed_cap_dm(client, minutes=60)
+        client.post("/duration-memory/save", json={
+            "identity": CAP_DM_IDENTITY, "minutes": 90,
+        }, headers=_auth(client))
+
+        # A different object id today: no source fallback, memory preserved.
+        r = client.post("/duration-memory/reset", json={
+            "identity": "capacities:space-1:RootTask:not-today",
+        }, headers=_auth(client))
+        assert r.status_code == 409, r.text
+        assert r.json()["detail"]["code"] == "duration_memory_no_fallback"
+        assert dm.read_all_memory() == {CAP_DM_IDENTITY: 90}
+
+    def test_todoist_remembered_duration_is_unchanged(self, client):
+        _seed_cap_dm(client, minutes=60)
+        client.post("/duration-memory/save", json={
+            "identity": DM_IDENTITY, "minutes": 90,
+        }, headers=_auth(client))
+        body = client.get("/plan-inputs").json()
+        rows = {i["name"]: i for i in body["digest"]["assigned"]}
+        assert rows["Make"]["blocks"] == 3
+        assert rows["Make"]["duration_source"] == "remembered"
+        # The Capacities row keeps its own source duration, unremembered.
+        assert rows[CAP_DM_NAME]["blocks"] == 2
+        assert "duration_source" not in rows[CAP_DM_NAME]
+
+
 class TestDurationMemoryErrorRedaction:
     """FT-05 F3: client-visible cache error details must never expose absolute
     vault/cache paths or raw internal diagnostics. Errors keep bounded,
