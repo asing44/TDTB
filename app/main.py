@@ -5124,12 +5124,45 @@ def create_app() -> FastAPI:
 
     # -- duration-memory (FT-01) ----------------------------------------------
 
+    def _capacities_source_rows(config: dict[str, Any], today: date) -> list[dict[str, Any]]:
+        """Today's Capacities rows for the reset route's source fallback.
+
+        Same precedence /plan-inputs applies: the published direct-intake
+        generation wins, then the artifact's Capacities rows, then the injected
+        live adapter seam. The first two are local reads; the adapter seam is
+        the same opt-in client /plan-inputs constructs. Any failure degrades to
+        no rows (the caller then reports no fallback and preserves the value)."""
+        try:
+            if app_config.capacities_intake() == app_config.CAPACITIES_INTAKE_DIRECT:
+                rows, _pool, _warnings, _coverage = capacities_intake.load_direct_rows(
+                    now=datetime.now()
+                )
+                return list(rows)
+            if app_config.sources_mode() == app_config.SOURCES_MODE_ARTIFACT:
+                loaded = artifact_source.load_artifact(datetime.now())
+                return [
+                    r for r in loaded.rows
+                    if str(r.get("source") or "").strip().casefold() == "capacities"
+                ]
+            build_capacities = app.state.build_capacities_adapter
+            if build_capacities is None:
+                return []
+            adapter = build_capacities(config)
+            rows, _warnings = external_sources.fetch_capacities_items(adapter, today)
+            return list(rows)
+        except Exception as exc:  # noqa: BLE001 — degrade to "no fallback"
+            print(
+                f"duration-memory reset: Capacities source read failed ({exc})",
+                file=sys.stderr,
+            )
+            return []
+
     def _source_resolved_fallback(today: date, identity: str):
         """Current source-resolved ``(minutes, label)`` for a canonical
         identity, resolved WITHOUT memory — the reset route's fallback.
-        Mirrors /plan-inputs' row assembly (external Todoist
-        via the injected read clients); read-only and deterministic. None
-        when the identity is not present today."""
+        Mirrors /plan-inputs' row assembly (external Todoist via the injected
+        read clients, Capacities via its own source seams); read-only and
+        deterministic. None when the identity is not present today."""
         result = config_reader.read_config()
         config: dict[str, Any] = (
             dict(result.config.sections) if result.config is not None else {}
@@ -5140,25 +5173,30 @@ def create_app() -> FastAPI:
         # never be resolved as a source row here either.
         mirror_excluded, _mirror_warnings = _mirror_intake_exclusions()
         rows: list[dict[str, Any]] = []
-        build_clients = app.state.build_read_clients or (lambda c: (None, None))
-        todoist_c, _store = build_clients(config)
-        try:
-            if todoist_c is not None:
-                ext_cfg: dict[str, Any] = {
-                    **dict(config.get("Defaults") or {}),
-                    "calendar_capacity_classes": config.get("Calendar Capacity Classes"),
-                }
-                t_assigned, t_pool, _w = external_sources.fetch_todoist_items(
-                    todoist_c, ext_cfg, exclude_ids=mirror_excluded
-                )
-                rows = rows + _drop_excluded_todoist_rows(
-                    list(t_assigned) + list(t_pool), mirror_excluded)
-        finally:
-            if todoist_c is not None and hasattr(todoist_c, "close"):
-                try:
-                    todoist_c.close()
-                except Exception:  # noqa: BLE001
-                    pass
+        if identity.casefold().startswith(f"{duration_memory.CAPACITIES_SOURCE}:"):
+            # Capacities rows are read from their own seams; constructing a
+            # Todoist client for them would be a billed read for nothing.
+            rows = _capacities_source_rows(config, today)
+        else:
+            build_clients = app.state.build_read_clients or (lambda c: (None, None))
+            todoist_c, _store = build_clients(config)
+            try:
+                if todoist_c is not None:
+                    ext_cfg: dict[str, Any] = {
+                        **dict(config.get("Defaults") or {}),
+                        "calendar_capacity_classes": config.get("Calendar Capacity Classes"),
+                    }
+                    t_assigned, t_pool, _w = external_sources.fetch_todoist_items(
+                        todoist_c, ext_cfg, exclude_ids=mirror_excluded
+                    )
+                    rows = rows + _drop_excluded_todoist_rows(
+                        list(t_assigned) + list(t_pool), mirror_excluded)
+            finally:
+                if todoist_c is not None and hasattr(todoist_c, "close"):
+                    try:
+                        todoist_c.close()
+                    except Exception:  # noqa: BLE001
+                        pass
         for row in rows:
             if duration_memory.item_identity(row) == identity:
                 return duration_memory.resolve_duration(

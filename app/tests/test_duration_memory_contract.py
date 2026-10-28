@@ -35,19 +35,119 @@ def test_memory_keyed_by_stable_identity_not_name():
         store_memory("Some Name", 90)  # name alone is not an identity
 
 
-def test_capacities_identity_is_not_accepted_as_duration_memory_key():
+# Reversed 2026-10-28 (capacities-memory): this test used to assert that a
+# Capacities identity is REJECTED as a duration-memory key. "Remember for next
+# time" now covers Capacities rows, so acceptance is the contract. Strict
+# validation still applies: only the canonical
+# ``capacities:<space>:<structure>:<object>`` string is a key, and the bare
+# ``capacities://`` path (no structure component) is still not an identity.
+CAP_IDENTITY = "capacities:space-1:RootTask:object-1"
+
+
+def test_capacities_identity_is_a_duration_memory_key():
     from duration_memory import item_identity, normalize_identity
 
     row = {
         "source": "capacities",
         "path": "capacities://space-1/object-1",
-        "identity": "capacities:space-1:RootTask:object-1",
+        "identity": CAP_IDENTITY,
     }
-    assert item_identity(row) is None
-    with pytest.raises(ValueError, match="Capacities source identity"):
-        normalize_identity(row["identity"])
-    with pytest.raises(ValueError, match="Capacities source identity"):
+    assert item_identity(row) == CAP_IDENTITY
+    assert normalize_identity(CAP_IDENTITY) == CAP_IDENTITY
+    with pytest.raises(ValueError, match="Capacities"):
         normalize_identity(row["path"])
+
+
+def test_capacities_item_identity_uses_canonical_fields_when_identity_missing():
+    from duration_memory import item_identity
+
+    row = {
+        "source": "capacities",
+        "path": "capacities://space-1/object-1",
+        "capacities_id": "object-1",
+        "capacities_space_id": "space-1",
+        "capacities_structure_id": "RootTask",
+    }
+    assert item_identity(row) == CAP_IDENTITY
+
+
+def test_capacities_row_without_canonical_identity_has_no_key():
+    from duration_memory import item_identity
+
+    # producer_rules mints these shapes when the object id or the structure id
+    # is absent; neither is a stable source identity, so neither is a key.
+    assert item_identity({
+        "source": "capacities",
+        "path": "capacities://space-1/object-1",
+        "identity": "capacities:name:Some Title",
+    }) is None
+    assert item_identity({
+        "source": "capacities",
+        "path": "capacities://space-1/object-1",
+        "capacities_id": "object-1",
+        "capacities_space_id": "space-1",
+        "capacities_structure_id": "",
+    }) is None
+
+
+@pytest.mark.parametrize("bad", [
+    "capacities:",
+    "capacities:space-1",
+    "capacities:space-1:RootTask",
+    "capacities::RootTask:object-1",
+    "capacities:space-1::object-1",
+    "capacities:space-1:RootTask:",
+    "capacities:space-1:Root\tTask:object-1",
+    "capacities:space-1:Root Task:object-1",
+    "Capacities:space-1:RootTask:object-1",
+    "capacities:space-1:RootTask:../etc/passwd",
+    "capacities:space-1:RootTask:object/1",
+    "capacities:space-1:RootTask:object\\1",
+    "capacities:" + "s" * 300 + ":RootTask:object-1",
+])
+def test_malformed_capacities_keys_are_rejected(bad):
+    from duration_memory import normalize_identity
+
+    with pytest.raises(ValueError, match="Capacities"):
+        normalize_identity(bad)
+
+
+def test_capacities_remembered_duration_beats_the_source_value():
+    from duration_memory import resolve_duration, store_memory
+
+    row = {
+        "source": "capacities",
+        "path": "capacities://space-1/object-1",
+        "identity": CAP_IDENTITY,
+        "name": "Ship project",
+        "duration": 45,
+        "duration_minutes": 45,
+        "blocks": 1.5,
+    }
+    assert resolve_duration(row, [], None, memory={}) == (45, "native")
+    store_memory(CAP_IDENTITY, 90)
+    assert resolve_duration(
+        row, [], None, memory={CAP_IDENTITY: 90}
+    ) == (90, "remembered")
+    # A later, different source value never overrides the remembered one.
+    row["duration"] = 15
+    assert resolve_duration(
+        row, [], None, memory={CAP_IDENTITY: 90}
+    ) == (90, "remembered")
+
+
+def test_capacities_remembered_duration_survives_a_deleted_source_value():
+    from duration_memory import resolve_duration
+
+    row = {
+        "source": "capacities",
+        "path": "capacities://space-1/object-1",
+        "identity": CAP_IDENTITY,
+        "name": "Ship project",
+    }
+    assert resolve_duration(
+        row, [], None, memory={CAP_IDENTITY: 90}
+    ) == (90, "remembered")
 
 
 def test_duration_precedence_memory_first_with_source_label():
@@ -616,3 +716,87 @@ class TestRememberedOverlay:
         memory = {"todoist:123": 90}
         dm.apply_remembered_overlay(row, memory)
         assert memory == {"todoist:123": 90}
+
+    # capacities-memory (2026-10-28): a Capacities row keys on the stable
+    # source identity, so the same overlay applies to it.
+    def test_overlay_applies_to_a_capacities_row(self):
+        row = {
+            "name": "Ship project",
+            "path": "capacities://space-1/object-1",
+            "identity": CAP_IDENTITY,
+            "source": "capacities",
+            "duration": 45,
+            "duration_minutes": 45,
+            "blocks": 1.5,
+        }
+        dm.apply_remembered_overlay(row, {CAP_IDENTITY: 90})
+        assert row["blocks"] == 3
+        assert isinstance(row["blocks"], int)
+        assert row["duration_source"] == "remembered"
+        assert row["duration_minutes"] == 90
+
+    def test_overlay_keeps_exact_minutes_on_a_capacities_row(self):
+        row = {
+            "name": "Ship project",
+            "path": "capacities://space-1/object-1",
+            "identity": CAP_IDENTITY,
+            "source": "capacities",
+            "duration": 30,
+        }
+        dm.apply_remembered_overlay(row, {CAP_IDENTITY: 75})
+        assert row["blocks"] == 2.5
+        assert row["duration_minutes"] == 75
+
+    def test_overlay_skips_a_capacities_row_without_identity(self):
+        row = {
+            "name": "Ship project",
+            "path": "capacities://space-1/object-1",
+            "source": "capacities",
+            "identity": "capacities:name:Some Title",
+        }
+        dm.apply_remembered_overlay(row, {CAP_IDENTITY: 90})
+        assert "duration_source" not in row
+
+
+def test_capacities_and_todoist_entries_share_the_same_file_format(tmp_path):
+    """No schema bump: a Capacities key sits beside Todoist keys in the same
+    version-1 cache, and the existing Todoist entries stay readable."""
+    import json
+
+    dm.save_memory("todoist:1", 60)
+    dm.save_memory(CAP_IDENTITY, 90)
+    on_disk = json.loads(dm.cache_path().read_text(encoding="utf-8"))
+    assert on_disk["version"] == dm.SCHEMA_VERSION == 1
+    assert on_disk["items"] == {"todoist:1": 60, CAP_IDENTITY: 90}
+    assert dm.read_all_memory() == {"todoist:1": 60, CAP_IDENTITY: 90}
+    # Clearing the Capacities entry leaves the Todoist one untouched.
+    assert dm.reset_memory(CAP_IDENTITY) is True
+    assert dm.read_all_memory() == {"todoist:1": 60}
+
+
+class TestCapacitiesProducerRowLosesToMemory:
+    """The producer_rules duration-property path must lose to a remembered
+    value, exactly as the live adapter's duration does."""
+
+    def test_producer_capacities_row_remembered_wins(self):
+        import producer_rules
+
+        row = producer_rules._to_artifact_row(
+            "capacities",
+            {
+                "id": "object-1",
+                "structureId": "RootTask",
+                "title": "Ship project",
+                "properties": {"Duration": {"type": "number", "number": {"value": 45}}},
+            },
+            True,
+            CAP_IDENTITY,
+            rule={"structure": "RootTask", "duration_prop": "Duration"},
+            space_id="space-1",
+        )
+        assert row["duration"] == 45 and row["blocks"] == 1.5
+        assert dm.item_identity(row) == CAP_IDENTITY
+        dm.apply_remembered_overlay(row, {CAP_IDENTITY: 90})
+        assert row["blocks"] == 3
+        assert row["duration_source"] == "remembered"
+        assert row["duration_minutes"] == 90
