@@ -388,6 +388,26 @@ export class ApiAdapter implements Adapter {
     }
   }
 
+  /** Token-guarded GET: the shared request helper plus the session token
+      header, exactly the header set post() sends. Some read routes are guarded
+      by the server's require_token dependency (GET /config/micro-adventure/pool),
+      so a tokenless read there is a 403. Same one-shot stale-token recovery as
+      post(): the server's token lives in app.state.token for the life of the
+      PROCESS, so a restart rotates it and an open page then 403s a read that
+      wrote nothing. */
+  private async getWithToken(path: string): Promise<Wire> {
+    const send = async () => this.request(path, { headers: await this.authHeaders() });
+    try {
+      return await send();
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 403) {
+        this.token = null;
+        return await send();
+      }
+      throw e;
+    }
+  }
+
   private rawOrThrow(): Wire {
     if (!this.raw) throw new Error("plan inputs not loaded yet");
     return this.raw;
@@ -585,10 +605,11 @@ export class ApiAdapter implements Adapter {
     );
   }
 
-  /** Read the config micro-adventure pool: one tokenless GET (like GET
-      /config), no billed or write endpoint. */
+  /** Read the config micro-adventure pool: one TOKEN-GUARDED GET. The server
+      guards this route with require_token exactly like the config POSTs, so
+      the read carries X-TDTB-Token; no billed or write endpoint. */
   async loadMicroPool(): Promise<MicroPoolItem[]> {
-    return projectMicroPool(await this.request("/config/micro-adventure/pool"));
+    return projectMicroPool(await this.getWithToken("/config/micro-adventure/pool"));
   }
 
   /** Replace the config micro-adventure pool in the tracked repo config:

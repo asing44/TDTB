@@ -43,11 +43,47 @@ describe("ApiAdapter micro-adventure pool", () => {
     return calls;
   }
 
-  it("GETs the config pool without a token", async () => {
-    const calls = stub({ "/config/micro-adventure/pool": { status: 200, body: { ok: true, pool: POOL } } });
+  it("GETs the config pool once WITH the session token", async () => {
+    const calls = stub({
+      "/session-token": { status: 200, body: { token: "tok-1" } },
+      "/config/micro-adventure/pool": { status: 200, body: { ok: true, pool: POOL } },
+    });
     expect(await new ApiAdapter().loadMicroPool()).toEqual(POOL);
-    expect(calls).toHaveLength(1);
-    expect(calls[0].init?.method).toBeUndefined();
+    const reads = calls.filter((c) => c.path === "/config/micro-adventure/pool");
+    expect(reads).toHaveLength(1);
+    // A GET, not a POST — but a TOKEN-BEARING one: the server guards this
+    // route with require_token, so a tokenless read 403s.
+    expect(reads[0].init?.method).toBeUndefined();
+    expect((reads[0].init!.headers as Record<string, string>)["X-TDTB-Token"]).toBe("tok-1");
+  });
+
+  it("re-fetches the token once after a 403 on the pool GET", async () => {
+    const calls: { path: string; init?: RequestInit }[] = [];
+    let tokenReads = 0;
+    let poolReads = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init?: RequestInit) => {
+        calls.push({ path: url, init });
+        if (url === "/session-token") {
+          tokenReads += 1;
+          return new Response(JSON.stringify({ token: `tok-${tokenReads}` }), { status: 200 });
+        }
+        poolReads += 1;
+        if (poolReads === 1) {
+          return new Response(
+            JSON.stringify({ detail: "missing or invalid X-TDTB-Token" }),
+            { status: 403 },
+          );
+        }
+        return new Response(JSON.stringify({ ok: true, pool: POOL }), { status: 200 });
+      }),
+    );
+    expect(await new ApiAdapter().loadMicroPool()).toEqual(POOL);
+    expect(tokenReads).toBe(2);
+    const reads = calls.filter((c) => c.path === "/config/micro-adventure/pool");
+    expect(reads).toHaveLength(2);
+    expect((reads[1].init!.headers as Record<string, string>)["X-TDTB-Token"]).toBe("tok-2");
   });
 
   it("POSTs the full pool once with the token and projects the saved pool", async () => {
