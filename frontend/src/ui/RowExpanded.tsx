@@ -43,7 +43,29 @@ export function RowExpanded({ item, s }: { item: AssignedItem; s: AppState }) {
   const refocusStart = useRef(false);
 
   const typed = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-  useEffect(() => () => clearTimeout(typed.current), []);
+  // Valid exact-minutes text still waiting on the debounce. Cleared the moment
+  // it is applied (debounce, Enter, blur) or abandoned (Escape), so the unmount
+  // flush below applies it at most once and never applies invalid text.
+  const pending = useRef<string | null>(null);
+  const flushRef = useRef<() => void>(() => {});
+  flushRef.current = () => {
+    const text = pending.current;
+    pending.current = null;
+    if (text === null) return;
+    const parsed = parseDuration(text);
+    if (!parsed.ok) return;
+    const blocks = minutesToBlocks(parsed.minutes);
+    controller.applyRowEdit(id, (d) => ({ ...setMode(d, "time"), blocks }));
+  };
+  // Collapse, navigation and day shortcuts all unmount the panel: flush a
+  // pending valid value through applyRowEdit instead of dropping it.
+  useEffect(
+    () => () => {
+      clearTimeout(typed.current);
+      flushRef.current();
+    },
+    [],
+  );
 
   // Return focus to the Start trigger after the editor closes or Clear
   // removes the focused button.
@@ -70,6 +92,7 @@ export function RowExpanded({ item, s }: { item: AssignedItem; s: AppState }) {
   // text is a no-op so tabbing through the field never changes or errors.
   const applyCustom = (text: string) => {
     clearTimeout(typed.current);
+    pending.current = null;
     if (text.trim() === "") {
       setCustomError(null);
       return;
@@ -157,7 +180,9 @@ export function RowExpanded({ item, s }: { item: AssignedItem; s: AppState }) {
               setCustomText(text);
               setCustomError(null);
               clearTimeout(typed.current);
+              pending.current = null;
               if (parseDuration(text).ok) {
+                pending.current = text;
                 typed.current = setTimeout(() => applyCustom(text), TYPE_DEBOUNCE_MS);
               }
             }}
@@ -167,6 +192,7 @@ export function RowExpanded({ item, s }: { item: AssignedItem; s: AppState }) {
                 applyCustom(customText);
               } else if (e.key === "Escape") {
                 clearTimeout(typed.current);
+                pending.current = null;
                 setCustomText("");
                 setCustomError(null);
               }

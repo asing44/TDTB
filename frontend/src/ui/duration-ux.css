@@ -147,42 +147,6 @@
   outline-offset: 2px;
 }
 
-/* One-tap duration chips (expanded row). */
-.dux-chips {
-  display: inline-flex;
-  flex-wrap: nowrap;
-  gap: 4px;
-}
-.dux-chip {
-  min-height: 28px;
-  padding: 2px 8px;
-  border: 1px solid var(--t-border);
-  border-radius: var(--radius-sm);
-  background: var(--t-surface);
-  color: var(--t-text);
-  font-family: var(--font-mono);
-  font-size: 12px;
-  white-space: nowrap;
-  cursor: pointer;
-}
-.dux-chip:hover:not(:disabled):not(.dux-chip--on) {
-  border-color: var(--t-muted);
-}
-.dux-chip--on {
-  border-color: var(--t-accent);
-  background: var(--t-accent-subtle);
-  color: var(--t-accent-strong);
-  font-weight: 600;
-}
-.dux-chip:disabled {
-  background: var(--t-surface-2);
-  color: var(--t-muted);
-  cursor: not-allowed;
-}
-.dux-chip:focus-visible {
-  outline: 2px solid var(--c-selected);
-  outline-offset: 2px;
-}
 .trow__panel .dux-exact {
   width: 132px;
   flex: 0 0 auto;
@@ -227,15 +191,6 @@
   outline: 2px solid var(--c-selected);
   outline-offset: 2px;
 }
-@media (max-width: 640px) {
-  .dux-chips {
-    flex-wrap: wrap;
-  }
-  .dux-chip {
-    min-height: 34px;
-  }
-}
-
 /* The typed exact-minutes field keeps a usable width: the chips row can wrap
    around it, but it must never squeeze to an unusable sliver. */
 .dux-exact {
