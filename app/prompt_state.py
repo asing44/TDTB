@@ -308,6 +308,47 @@ def _normalize_prompt_disabled(value: Any) -> dict[str, bool]:
 
 
 # ---------------------------------------------------------------------------
+# Pre-flight validation (no store access)
+# ---------------------------------------------------------------------------
+# One /day-setup request may write several prompt stores in sequence. Validating
+# every payload up front with the SAME rules the save applies is what lets a
+# rejected request write NOTHING, instead of leaving the earlier stores already
+# modified when a later store raises. These helpers touch no file, no lock, and
+# echo no prompt text.
+
+def validate_drafts_patch(patch: Any) -> None:
+    """Validate a draft PATCH exactly as :func:`save_drafts` would."""
+    try:
+        _normalize_patch(patch)
+    except ValueError as exc:
+        raise PromptValidationError(str(exc)) from exc
+
+
+def validate_description_skips_patch(patch: Any) -> None:
+    """Validate a description-skip PATCH as :func:`save_description_skips`."""
+    try:
+        _normalize_description_skips_patch(patch)
+    except ValueError as exc:
+        raise PromptValidationError(str(exc)) from exc
+
+
+def validate_prompt_disabled_patch(patch: Any) -> None:
+    """Validate a disabled-prompt PATCH as :func:`save_prompt_disabled`."""
+    try:
+        _normalize_prompt_disabled_patch(patch)
+    except ValueError as exc:
+        raise PromptValidationError(str(exc)) from exc
+
+
+def validate_optins(optins: Any) -> None:
+    """Validate an opt-in map exactly as :func:`save_optins` would."""
+    try:
+        _normalize_optins(optins)
+    except ValueError as exc:
+        raise PromptValidationError(str(exc)) from exc
+
+
+# ---------------------------------------------------------------------------
 # Records
 # ---------------------------------------------------------------------------
 

@@ -446,22 +446,88 @@ class TestRun:
         assert [o.status for o in outcomes] == [pe.OUTCOME_DONE]
         assert [c["content"] for c in client.created] == ["For Meegy"]
 
-    def test_corrupt_disabled_store_still_exports_and_preserves_bytes(self):
+    def _corrupt_disabled_store(self) -> tuple[Path, str]:
+        """Write a duplicate-key disabled store (unreadable) and return it."""
         target = ps.prompt_disabled_path(DAY)
         target.parent.mkdir(parents=True, exist_ok=True)
         raw = ('{"version": 1, "day": "2026-07-12", "disabled": '
                '{"megan_nicety": true}, "disabled": {}}')
         target.write_text(raw, encoding="utf-8")
+        return target, raw
+
+    def test_corrupt_disabled_store_fails_closed_and_warns(self):
+        # D1: suppression is reversible, an external Todoist create is not, so
+        # an unreadable gate store must block every BUILT-IN prompt instead of
+        # exporting one the user may have turned off.
+        target, raw = self._corrupt_disabled_store()
+        ps.save_drafts(day=DAY, patch={"intention": INTENTION,
+                                       "megan_nicety": SECRET})
+        drafts_raw = ps.drafts_path(DAY).read_text(encoding="utf-8")
         client = RecordingTodoist()
+
+        outcomes = pe.run_prompt_exports(day=DAY, civil_date=CIVIL,
+                                         todoist=client)
+
+        assert client.created == []
+        [warning] = outcomes
+        assert warning.prompt_key == pe.PROMPT_FLAGS_UNREADABLE_KEY
+        assert warning.status == pe.OUTCOME_BLOCKED
+        assert "prompt-flags" in warning.reason
+        assert "needs attention" in warning.reason
+        rendered = repr(warning.as_dict())
+        assert SECRET not in rendered and INTENTION not in rendered
+        # Nothing durable was written and the offending bytes are preserved.
+        assert er.load_receipts().get(
+            DAY, "megan_nicety", pe.EXPORT_ACTION) is None
+        assert er.load_receipts().get(
+            DAY, "intention", pe.EXPORT_ACTION) is None
+        assert target.read_text(encoding="utf-8") == raw
+        assert ps.drafts_path(DAY).read_text(encoding="utf-8") == drafts_raw
+
+    def test_corrupt_disabled_store_still_exports_custom_prompts(self):
+        self._corrupt_disabled_store()
+        client = RecordingTodoist()
+
         outcomes = pe.run_prompt_exports(
             day=DAY, civil_date=CIVIL, todoist=client,
-            drafts={"megan_nicety": SECRET},
+            drafts={"megan_nicety": SECRET, CUSTOM_KEY: CUSTOM_ANSWER},
         )
-        # An unreadable store degrades to the enabled default and is never
-        # repaired: a corrupt file must never silently drop a prompt.
+
+        # The gate is built-in only: a custom prompt has no server-side toggle,
+        # so the read failure cannot have suppressed it.
+        assert [o.prompt_key for o in outcomes] == [
+            pe.PROMPT_FLAGS_UNREADABLE_KEY, CUSTOM_KEY,
+        ]
+        assert [c["content"] for c in client.created] == [CUSTOM_ANSWER]
+
+    def test_repaired_disabled_store_exports_on_the_next_run(self):
+        target, _raw = self._corrupt_disabled_store()
+        ps.save_drafts(day=DAY, patch={"megan_nicety": SECRET})
+        client = RecordingTodoist()
+        blocked = pe.run_prompt_exports(day=DAY, civil_date=CIVIL,
+                                       todoist=client)
+        assert [o.status for o in blocked] == [pe.OUTCOME_BLOCKED]
+        assert client.created == []
+
+        # The operator repairs the file: the next run exports normally.
+        target.unlink()
+        outcomes = pe.run_prompt_exports(day=DAY, civil_date=CIVIL,
+                                         todoist=client)
         assert [o.status for o in outcomes] == [pe.OUTCOME_DONE]
         assert [c["content"] for c in client.created] == ["For Meegy"]
-        assert target.read_text(encoding="utf-8") == raw
+
+    def test_preview_agrees_with_a_fail_closed_run(self):
+        # The preview must never promise an export the blocked run will not make.
+        preview = pe.preview_prompt_exports(
+            day=DAY, civil_date=CIVIL,
+            drafts={"megan_nicety": SECRET, CUSTOM_KEY: CUSTOM_ANSWER},
+            prompt_flags_unreadable=True,
+        )
+        assert preview == [{
+            "prompt_key": CUSTOM_KEY, "action": pe.EXPORT_ACTION,
+            "status": "planned",
+        }]
+        assert SECRET not in repr(preview)
 
     def test_skip_flags_are_read_from_the_day_scoped_server_store(self):
         ps.save_drafts(day=DAY, patch={"megan_nicety": SECRET,
@@ -988,6 +1054,63 @@ class TestPromptExportRoute:
         assert all(c["content"] != spoof for c in todoist.created)
         assert spoof not in r.text
         assert not er.receipts_path().exists()
+
+    def test_corrupt_disabled_store_fails_closed_on_live_commit(
+            self, client, vault, monkeypatch):
+        _freeze(monkeypatch)
+        monkeypatch.setattr(shadow, "gather_live_state", _live_state(garage_live=False))
+        ps.save_drafts(day=DAY, patch={"megan_nicety": SECRET})
+        target = ps.prompt_disabled_path(DAY)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        raw = ('{"version": 1, "day": "2026-07-12", "disabled": '
+               '{"megan_nicety": true}, "disabled": {}}')
+        target.write_text(raw, encoding="utf-8")
+        todoist = RecordingTodoist()
+        client.app.state.build_commit_clients = lambda cfg: (todoist, None)
+        self._confirm(client)
+
+        r = client.post("/commit?mode=live", headers=_auth(client),
+                        json={"digest": DIGEST, "sequence": SEQUENCE,
+                              "config": {}})
+        assert r.status_code == 200, r.text
+        body = r.json()
+        # One bounded, content-free warning on the existing prompt-exports
+        # channel; the promise is not made, so no task is created.
+        assert body["prompt_exports_ok"] is False
+        [warning] = body["prompt_exports"]
+        assert warning["prompt_key"] == pe.PROMPT_FLAGS_UNREADABLE_KEY
+        assert warning["status"] == pe.OUTCOME_BLOCKED
+        assert "prompt-flags" in warning["reason"]
+        assert all(c["content"] != "For Meegy" for c in todoist.created)
+        assert SECRET not in r.text
+        assert target.read_text(encoding="utf-8") == raw
+
+    def test_shadow_preview_omits_builtins_when_gate_store_is_unreadable(
+            self, client, vault, monkeypatch):
+        _freeze(monkeypatch)
+        monkeypatch.setattr(shadow, "gather_live_state", _live_state(garage_live=False))
+        ps.save_drafts(day=DAY, patch={"megan_nicety": SECRET,
+                                       CUSTOM_KEY: CUSTOM_ANSWER})
+        target = ps.prompt_disabled_path(DAY)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(
+            '{"version": 1, "day": "2026-07-12", "disabled": '
+            '{"megan_nicety": true}, "disabled": {}}', encoding="utf-8",
+        )
+
+        def _boom(cfg):
+            raise AssertionError("shadow must not build a provider client")
+
+        client.app.state.build_commit_clients = _boom
+        r = client.post("/commit?mode=shadow", headers=_auth(client),
+                        json={"digest": DIGEST, "sequence": SEQUENCE,
+                              "config": {}})
+        assert r.status_code == 200, r.text
+        assert r.json()["prompt_exports"] == [{
+            "prompt_key": CUSTOM_KEY, "action": pe.EXPORT_ACTION,
+            "status": "planned",
+        }]
+        assert SECRET not in r.text
 
     def test_shadow_preview_is_content_free_and_writes_nothing(self, client, vault, monkeypatch):
         _freeze(monkeypatch)
