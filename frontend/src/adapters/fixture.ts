@@ -40,6 +40,7 @@ import type {
   DaySetup,
   DaySetupSaveResult,
   DescriptionSkips,
+  PromptDisabled,
   FixedInputs,
   Ledger,
   MicroIdea,
@@ -823,6 +824,9 @@ export class FixtureAdapter implements Adapter {
     if (this.descriptionSkips.forMeegy || this.descriptionSkips.stoic) {
       echo.descriptionSkips = { ...this.descriptionSkips };
     }
+    if (this.promptDisabled.forMeegy || this.promptDisabled.stoic) {
+      echo.promptDisabled = { ...this.promptDisabled };
+    }
     return echo;
   }
 
@@ -835,6 +839,19 @@ export class FixtureAdapter implements Adapter {
     this.descriptionSkips = {
       forMeegy: skips.forMeegy === true,
       stoic: skips.stoic === true,
+    };
+    return this.promptEcho();
+  }
+
+  /** Same full-replace behaviour for the include-in-commit flags: true means
+      that prompt is left out of the commit entirely. */
+  private promptDisabled: PromptDisabled = { forMeegy: false, stoic: false };
+
+  async savePromptDisabled(disabled: PromptDisabled): Promise<DaySetupSaveResult> {
+    await wait(LATENCY_MS);
+    this.promptDisabled = {
+      forMeegy: disabled.forMeegy === true,
+      stoic: disabled.stoic === true,
     };
     return this.promptEcho();
   }

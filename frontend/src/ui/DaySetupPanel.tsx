@@ -17,6 +17,7 @@
    shell. */
 
 import { useEffect, useRef, useState } from "preact/hooks";
+import "./duration-ux.css";
 import { useApp, useAppState } from "./context";
 import { display12h, display12hExact, formatBlockAmount, formatDurationMinutes, isValidHHMM, toHHMM, toMinutes } from "../model/time";
 import {
@@ -161,6 +162,31 @@ export function DaySetupPanel({
   const autosavePrompts = () => {
     if (promptDirty) savePrompts();
   };
+
+  // Include-in-commit flags live in the day-setup echo (absence = every prompt
+  // stays in). The save is prompt-only: it never confirms the day and never
+  // touches the draft text, so the same switch as the Morning prompts card
+  // works here in the drawer Captures section.
+  const promptDisabled = s.daySetup.promptDisabled ?? { forMeegy: false, stoic: false };
+  const setPromptDisabled = (key: "forMeegy" | "stoic", disabled: boolean) => {
+    void controller.savePromptDisabled({ ...promptDisabled, [key]: disabled });
+  };
+  /** The switch for one built-in capture: off leaves the prompt out of Commit. */
+  const includeSwitch = (key: "forMeegy" | "stoic", label: string) => (
+    <label class="dux-mem" title={promptDisabled[key]
+      ? "Left out of the commit today. The text is kept."
+      : "Added to your Todoist Inbox when you commit."}>
+      <input
+        type="checkbox"
+        role="switch"
+        aria-checked={!promptDisabled[key]}
+        aria-label={`Include ${label} in commit`}
+        checked={!promptDisabled[key]}
+        onChange={(e) => setPromptDisabled(key, !(e.currentTarget as HTMLInputElement).checked)}
+      />{" "}
+      Include in commit
+    </label>
+  );
 
   // U12 command refs, declared before any early return so the subscription
   // hooks keep a stable order; the callbacks below fill them in.
@@ -1376,6 +1402,7 @@ export function DaySetupPanel({
           <label for="cap-meegy">For Meegy</label>
           <textarea
             id="cap-meegy"
+            class={promptDisabled.forMeegy ? "trow__muted" : undefined}
             value={draft.captures.forMeegy}
             onInput={(e) => {
               setPromptDirty(true);
@@ -1386,11 +1413,13 @@ export function DaySetupPanel({
             }}
             onBlur={autosavePrompts}
           />
+          {includeSwitch("forMeegy", "For Meegy")}
         </div>
         <div class="field">
           <label for="cap-stoic">Stoic</label>
           <textarea
             id="cap-stoic"
+            class={promptDisabled.stoic ? "trow__muted" : undefined}
             value={draft.captures.stoic}
             onInput={(e) => {
               setPromptDirty(true);
@@ -1401,6 +1430,7 @@ export function DaySetupPanel({
             }}
             onBlur={autosavePrompts}
           />
+          {includeSwitch("stoic", "Stoic")}
         </div>
           </div>
         </section>

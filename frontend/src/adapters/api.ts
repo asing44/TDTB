@@ -46,6 +46,7 @@ import type {
   DaySetup,
   DaySetupSaveResult,
   DescriptionSkips,
+  PromptDisabled,
   FixedInputs,
   Ledger,
   MicroIdea,
@@ -65,6 +66,7 @@ import {
   projectDaySetupSaveResult,
   promptDraftsToWire,
   descriptionSkipsToWire,
+  promptDisabledToWire,
   capacitiesSourceToWire,
   capacitiesRuleSaveToWire,
   capacitiesRefreshStartToWire,
@@ -478,6 +480,15 @@ export class ApiAdapter implements Adapter {
   async savePromptSkips(skips: DescriptionSkips): Promise<DaySetupSaveResult> {
     return projectDaySetupSaveResult(
       await this.post("/day-setup", descriptionSkipsToWire(skips)),
+    );
+  }
+
+  /** Prompt-only include save: exactly one POST carrying ONLY
+      `prompt_disabled`. The map is a full replace, and a disabled prompt is
+      never exported on commit (a flags-only save never confirms the day). */
+  async savePromptDisabled(disabled: PromptDisabled): Promise<DaySetupSaveResult> {
+    return projectDaySetupSaveResult(
+      await this.post("/day-setup", promptDisabledToWire(disabled)),
     );
   }
 

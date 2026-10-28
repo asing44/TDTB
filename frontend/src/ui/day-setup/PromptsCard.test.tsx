@@ -9,7 +9,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, waitFor } from "@testing-library/preact";
 
-import type { DescriptionSkips, MicroAdventure } from "../../model/types";
+import type { DescriptionSkips, MicroAdventure, PromptDisabled } from "../../model/types";
 import { FixtureAdapter } from "../../adapters/fixture";
 import { makeHarness } from "../test-harness";
 import { PromptsCard } from "./PromptsCard";
@@ -56,9 +56,11 @@ function cardWithStore(
   storage: Storage = fakeStorage(),
   skips?: DescriptionSkips,
   scenario: "ready" | "fresh" = "ready",
+  disabled?: PromptDisabled,
 ) {
   const h = makeHarness(scenario, (sc) => {
     if (skips) sc.inputs.daySetup = { ...sc.inputs.daySetup, descriptionSkips: skips };
+    if (disabled) sc.inputs.daySetup = { ...sc.inputs.daySetup, promptDisabled: disabled };
   });
   const r = h.ui(
     <PromptsCard
@@ -227,6 +229,87 @@ describe("PromptsCard pool note", () => {
       (o) => o.textContent,
     );
     expect(opts).toEqual(["Watch sunset", "Try pottery · Capacities"]);
+  });
+});
+
+describe("PromptsCard include-in-commit switches", () => {
+  it("puts one switch on the For Meegy and Stoic cards, and none on Reminder", () => {
+    const { r } = cardWithStore(micro());
+    const meegy = r.getByLabelText("Include For Meegy in commit") as HTMLInputElement;
+    const stoic = r.getByLabelText("Include Stoic in commit") as HTMLInputElement;
+    expect(meegy.getAttribute("role")).toBe("switch");
+    expect(meegy.getAttribute("aria-checked")).toBe("true");
+    expect(meegy.checked).toBe(true);
+    expect(stoic.checked).toBe(true);
+    expect(meegy.closest(".prompt-card")?.querySelector("#cap-meegy")).toBeTruthy();
+    expect(stoic.closest(".prompt-card")?.querySelector("#cap-stoic")).toBeTruthy();
+    const reminder = r.getByLabelText("Reminder").closest(".prompt-card") as HTMLElement;
+    expect(reminder.querySelector('[role="switch"]')).toBeNull();
+    // Copy lock: the same short copy sits on both cards.
+    expect(r.getAllByText("Include in commit")).toHaveLength(2);
+  });
+
+  it("follows the day-setup echo", () => {
+    const { r } = cardWithStore(micro(), fakeStorage(), undefined, "ready", {
+      forMeegy: true,
+      stoic: false,
+    });
+    const meegy = r.getByLabelText("Include For Meegy in commit") as HTMLInputElement;
+    expect(meegy.checked).toBe(false);
+    expect(meegy.getAttribute("aria-checked")).toBe("false");
+    expect((r.getByLabelText("Include Stoic in commit") as HTMLInputElement).checked).toBe(true);
+  });
+
+  it("reads an absent map as both prompts included", () => {
+    const { r } = cardWithStore(micro());
+    expect((r.getByLabelText("Include For Meegy in commit") as HTMLInputElement).checked).toBe(
+      true,
+    );
+    expect((r.getByLabelText("Include Stoic in commit") as HTMLInputElement).checked).toBe(true);
+  });
+
+  it("toggling one off saves the whole map and keeps the other prompt's value", async () => {
+    const { r, h } = cardWithStore(micro(), fakeStorage(), undefined, "fresh");
+    const save = vi.spyOn(h.controller, "savePromptDisabled");
+    const draftsBefore = h.store.getState().daySetup.captures;
+    fireEvent.click(r.getByLabelText("Include For Meegy in commit"));
+    await vi.waitFor(() => {
+      expect(save).toHaveBeenLastCalledWith({ forMeegy: true, stoic: false });
+    });
+    // Prompt-only: no capture text moves and the day is never confirmed.
+    expect(h.store.getState().daySetup.captures).toEqual(draftsBefore);
+    expect(h.store.getState().daySetup.confirmed).toBe(false);
+    await vi.waitFor(() => {
+      expect(
+        (r.getByLabelText("Include For Meegy in commit") as HTMLInputElement).checked,
+      ).toBe(false);
+    });
+  });
+
+  it("mutes the textarea and disables the skip control while a prompt is off", () => {
+    const { r } = cardWithStore(micro(), fakeStorage(), undefined, "ready", {
+      forMeegy: true,
+      stoic: false,
+    });
+    const meegy = r.getByLabelText("For Meegy") as HTMLTextAreaElement;
+    const stoic = r.getByLabelText("Stoic") as HTMLTextAreaElement;
+    // Still editable: the draft survives, it is just de-emphasised.
+    expect(meegy.disabled).toBe(false);
+    expect(meegy.className).toContain("trow__muted");
+    expect(stoic.className).not.toContain("trow__muted");
+    // Nothing is exported, so the skip-description control is inert.
+    expect((r.getByLabelText("Skip description for Meegy") as HTMLInputElement).disabled).toBe(
+      true,
+    );
+    expect((r.getByLabelText("Skip description for Stoic") as HTMLInputElement).disabled).toBe(
+      false,
+    );
+  });
+
+  it("renders no switch without the app store behind it", () => {
+    const r = cardWithoutStore(micro());
+    expect(r.queryByLabelText("Include For Meegy in commit")).toBeNull();
+    expect(r.queryByLabelText("Include Stoic in commit")).toBeNull();
   });
 });
 

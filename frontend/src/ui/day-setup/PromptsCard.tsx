@@ -9,8 +9,14 @@
    echo (`descriptionSkips`), so the card reads it from the app context rather
    than the panel's local draft — the draft is the prompt text, not the flag.
 
-   Both the skip toggle and the pool editor read the app context, so a render
-   without a store behind it shows neither control instead of crashing.
+   Those two cards also carry an include-in-commit switch: off means the prompt
+   is left out of the Commit export entirely, the textarea keeps its draft text
+   (muted, still editable), and the skip toggle is inert because nothing is
+   written. Its flag is the day-setup echo's `promptDisabled`.
+
+   Every store-backed control (both flag switches, the pool editor) sits in a
+   child rendered only inside the app context, so a render without a store
+   behind it shows plain textareas instead of crashing.
 
    There are no mono routing tags, no per-prompt export checkboxes, and no
    "Prompt exports" block any more: the backend exports every non-empty prompt
@@ -19,9 +25,10 @@
 
 import { useContext, useEffect, useState } from "preact/hooks";
 
-import type { MicroAdventure } from "../../model/types";
+import type { MicroAdventure, PromptDisabled } from "../../model/types";
 import { MicroPoolNote, poolOptionLabel } from "../microPool";
 import { Ctx, useApp, useAppState } from "../context";
+import "../duration-ux.css";
 import { MicroPoolEditor } from "./MicroPoolEditor";
 import {
   CustomPromptAdd,
@@ -57,6 +64,26 @@ export interface PromptsCardProps {
 /** The echo omits the map when nothing is skipped, so absence is no skips. */
 const NO_SKIPS = { forMeegy: false, stoic: false };
 
+/** The echo omits the include map too: absence means every prompt stays in. */
+const ALL_INCLUDED: PromptDisabled = { forMeegy: false, stoic: false };
+
+/** Short copy for the include switch, shared by both cards and locked by tests. */
+const INCLUDE_COPY = "Include in commit";
+
+/** Per-prompt accessible names, so both switches are uniquely addressable. */
+const INCLUDE_LABELS = {
+  forMeegy: "Include For Meegy in commit",
+  stoic: "Include Stoic in commit",
+} as const;
+
+/** The two toggleable built-in prompts, in card order. */
+const BUILT_IN_PROMPTS = {
+  forMeegy: { id: "cap-meegy", label: "For Meegy" },
+  stoic: { id: "cap-stoic", label: "Stoic" },
+} as const;
+
+type BuiltInKey = keyof typeof BUILT_IN_PROMPTS;
+
 /** The mockup sentence-cases the category ("nature" → "Nature"). */
 function categoryLabel(category: string): string {
   return category.charAt(0).toUpperCase() + category.slice(1);
@@ -85,9 +112,112 @@ const SKIP_LABELS = {
   stoic: "Skip description for Stoic",
 } as const;
 
+/** Include-in-commit switch for one built-in prompt. Off means the prompt is
+    left out of the Commit export; its draft text is kept, so turning it back on
+    restores it. Store-backed, so it mounts only inside the app context. */
+function IncludeInCommit({ which }: { which: BuiltInKey }) {
+  const { controller } = useApp();
+  const s = useAppState();
+  const disabled = (s.daySetup.promptDisabled ?? ALL_INCLUDED)[which];
+  return (
+    <label
+      class="dux-mem"
+      title={
+        disabled
+          ? "Left out of the commit today. The text is kept."
+          : "Added to your Todoist Inbox when you commit."
+      }
+    >
+      <input
+        type="checkbox"
+        role="switch"
+        aria-checked={!disabled}
+        aria-label={INCLUDE_LABELS[which]}
+        checked={!disabled}
+        onChange={(e) =>
+          /* Full-replace save: the map always carries both toggleable prompts. */
+          void controller.savePromptDisabled({
+            ...(s.daySetup.promptDisabled ?? ALL_INCLUDED),
+            [which]: !(e.currentTarget as HTMLInputElement).checked,
+          })
+        }
+      />{" "}
+      {INCLUDE_COPY}
+    </label>
+  );
+}
+
+/** The store-backed body of one toggleable prompt card: the prompt textarea
+    (muted while the prompt is off) plus both flag switches. Rendered only
+    inside the app context. */
+function ToggleablePromptBody({
+  which,
+  value,
+  onInput,
+  onAutosave,
+}: {
+  which: BuiltInKey;
+  value: string;
+  onInput: (value: string) => void;
+  onAutosave: () => void;
+}) {
+  const s = useAppState();
+  const disabled = (s.daySetup.promptDisabled ?? ALL_INCLUDED)[which];
+  return (
+    <>
+      <textarea
+        id={BUILT_IN_PROMPTS[which].id}
+        class={disabled ? "trow__muted" : undefined}
+        value={value}
+        onInput={(e) => onInput((e.target as HTMLTextAreaElement).value)}
+        onBlur={onAutosave}
+      />
+      <IncludeInCommit which={which} />
+      <SkipDescriptionToggle which={which} disabled={disabled} />
+    </>
+  );
+}
+
+/** One built-in prompt card. Without the app store it degrades to a plain
+    textarea and shows no flag switches. */
+function BuiltInPromptCard(props: {
+  which: BuiltInKey;
+  value: string;
+  onInput: (value: string) => void;
+  onAutosave: () => void;
+}) {
+  const inApp = useContext(Ctx) !== null;
+  const { id, label } = BUILT_IN_PROMPTS[props.which];
+  return (
+    <article class="prompt-card">
+      <div class="prompt-card__labelrow">
+        <label for={id}>{label}</label>
+      </div>
+      {inApp ? (
+        <ToggleablePromptBody {...props} />
+      ) : (
+        <textarea
+          id={id}
+          value={props.value}
+          onInput={(e) => props.onInput((e.target as HTMLTextAreaElement).value)}
+          onBlur={props.onAutosave}
+        />
+      )}
+    </article>
+  );
+}
+
 /** The skip flag lives in the day-setup echo, so the toggle reads it from the
-    store. Mounted only inside the app context: without one, no toggle. */
-function SkipDescriptionToggle({ which }: { which: "forMeegy" | "stoic" }) {
+    store. Mounted only inside the app context: without one, no toggle. A
+    prompt that is left out of the commit writes no description, so the control
+    is inert while its prompt is off. */
+function SkipDescriptionToggle({
+  which,
+  disabled = false,
+}: {
+  which: BuiltInKey;
+  disabled?: boolean;
+}) {
   const { controller } = useApp();
   const s = useAppState();
   const skips = s.daySetup.descriptionSkips ?? NO_SKIPS;
@@ -100,6 +230,7 @@ function SkipDescriptionToggle({ which }: { which: "forMeegy" | "stoic" }) {
       <input
         type="checkbox"
         checked={skips[which]}
+        disabled={disabled}
         onChange={(e) => setSkip((e.currentTarget as HTMLInputElement).checked)}
       />
       <span>
@@ -236,34 +367,18 @@ export function PromptsCard(props: PromptsCardProps) {
               onBlur={props.onAutosave}
             />
           </article>
-          <article class="prompt-card">
-            <div class="prompt-card__labelrow">
-              <label for="cap-meegy">For Meegy</label>
-            </div>
-            <textarea
-              id="cap-meegy"
-              value={props.captures.forMeegy}
-              onInput={(e) =>
-                props.onCapture("forMeegy", (e.target as HTMLTextAreaElement).value)
-              }
-              onBlur={props.onAutosave}
-            />
-            {inApp && <SkipDescriptionToggle which="forMeegy" />}
-          </article>
-          <article class="prompt-card">
-            <div class="prompt-card__labelrow">
-              <label for="cap-stoic">Stoic</label>
-            </div>
-            <textarea
-              id="cap-stoic"
-              value={props.captures.stoic}
-              onInput={(e) =>
-                props.onCapture("stoic", (e.target as HTMLTextAreaElement).value)
-              }
-              onBlur={props.onAutosave}
-            />
-            {inApp && <SkipDescriptionToggle which="stoic" />}
-          </article>
+          <BuiltInPromptCard
+            which="forMeegy"
+            value={props.captures.forMeegy}
+            onInput={(value) => props.onCapture("forMeegy", value)}
+            onAutosave={props.onAutosave}
+          />
+          <BuiltInPromptCard
+            which="stoic"
+            value={props.captures.stoic}
+            onInput={(value) => props.onCapture("stoic", value)}
+            onAutosave={props.onAutosave}
+          />
 
           {custom.list.length > 0 && (
             <CustomPromptList

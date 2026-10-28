@@ -23,6 +23,7 @@ import type {
   CommitReport,
   DaySetup,
   DescriptionSkips,
+  PromptDisabled,
   Ledger,
   MicroIdea,
   OverlapGrant,
@@ -490,6 +491,13 @@ export type Action =
       descriptionSkips: DescriptionSkips;
       warnings: string[];
     }
+  // Include-in-commit flags: which built-in prompts are left out of the
+  // Todoist commit. Prompt-only, so it never confirms the day.
+  | {
+      type: "PROMPT_DISABLED_SAVED";
+      promptDisabled: PromptDisabled;
+      warnings: string[];
+    }
   | { type: "OVERRIDE_SET"; id: string; override: TodayOverride }
   // LOCAL plan membership (U1): take a row out of, or back into, today's plan
   // without any source/server call. Keyed by stable identity, so the decision
@@ -780,6 +788,18 @@ export function reducer(s: AppState, a: Action): AppState {
       return {
         ...s,
         daySetup: { ...s.daySetup, descriptionSkips: a.descriptionSkips },
+        promptSave: {
+          phase: "saved",
+          error: null,
+          warnings: a.warnings,
+        },
+      };
+    case "PROMPT_DISABLED_SAVED":
+      // Prompt-only save: swap the include map. The prompt drafts survive, so
+      // re-enabling a prompt restores its text, and the day never confirms.
+      return {
+        ...s,
+        daySetup: { ...s.daySetup, promptDisabled: a.promptDisabled },
         promptSave: {
           phase: "saved",
           error: null,

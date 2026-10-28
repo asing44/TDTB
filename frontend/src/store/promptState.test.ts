@@ -109,4 +109,71 @@ describe("U5 prompt state", () => {
     expect(s.promptSave.error).toContain("skips store unavailable");
     expect(s.daySetup.descriptionSkips).toBeUndefined();
   });
+
+  it("holds the include-in-commit map without touching drafts or the day flag", () => {
+    const h = makeHarness("fresh");
+    h.store.dispatch({
+      type: "PROMPT_DISABLED_SAVED",
+      promptDisabled: { forMeegy: true, stoic: false },
+      warnings: [],
+    });
+    const s = h.store.getState();
+    expect(s.daySetup.promptDisabled).toEqual({ forMeegy: true, stoic: false });
+    expect(s.daySetup.captures).toEqual({ intention: "", forMeegy: "", stoic: "" });
+    expect(s.daySetup.confirmed).toBe(false);
+    expect(s.promptSave.phase).toBe("saved");
+  });
+
+  it("a disable toggle sends the full map and keeps the other key's current value", async () => {
+    const h = makeHarness("fresh");
+    const adapter = new FixtureAdapter("fresh");
+    const spy = vi.spyOn(adapter, "savePromptDisabled");
+    const controller = new Controller(adapter, h.store.dispatch, h.store.getState);
+    const before = h.store.getState().daySetup.captures;
+    await controller.savePromptDisabled({ forMeegy: true, stoic: true });
+    await controller.savePromptDisabled({ forMeegy: true, stoic: false });
+    expect(spy).toHaveBeenLastCalledWith({ forMeegy: true, stoic: false });
+    const s = h.store.getState();
+    expect(s.daySetup.promptDisabled).toEqual({ forMeegy: true, stoic: false });
+    // Prompt-only: no capture text moves and the day is never confirmed.
+    expect(s.daySetup.captures).toEqual(before);
+    expect(s.daySetup.confirmed).toBe(false);
+  });
+
+  it("an echo without the map stores every prompt as included", async () => {
+    class SilentAdapter extends FixtureAdapter {
+      override async savePromptDisabled() {
+        return { ok: true, daySetupConfirmed: false, promptWarnings: [] };
+      }
+    }
+    const h = makeHarness("fresh");
+    const controller = new Controller(
+      new SilentAdapter("fresh"),
+      h.store.dispatch,
+      h.store.getState,
+    );
+    await controller.savePromptDisabled({ forMeegy: true, stoic: false });
+    const s = h.store.getState();
+    expect(s.daySetup.promptDisabled).toEqual({ forMeegy: false, stoic: false });
+    expect(s.daySetup.confirmed).toBe(false);
+  });
+
+  it("records a failed disable save as an error without throwing", async () => {
+    class FailingDisabledAdapter extends FixtureAdapter {
+      override async savePromptDisabled(): Promise<never> {
+        throw new Error("prompt flags unavailable");
+      }
+    }
+    const h = makeHarness("fresh");
+    const controller = new Controller(
+      new FailingDisabledAdapter("fresh"),
+      h.store.dispatch,
+      h.store.getState,
+    );
+    await controller.savePromptDisabled({ forMeegy: true, stoic: false });
+    const s = h.store.getState();
+    expect(s.promptSave.phase).toBe("error");
+    expect(s.promptSave.error).toContain("prompt flags unavailable");
+    expect(s.daySetup.promptDisabled).toBeUndefined();
+  });
 });
