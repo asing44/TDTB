@@ -1,5 +1,5 @@
 /* Morning prompts (Planning 2a). A header row with the "Edit prompts" link,
-   a four-column grid of prompt cards (Live micro-adventure + Intention + For
+   a four-column grid of prompt cards (Live micro-adventure + Reminder + For
    Meegy + Stoic, then browser-defined custom prompts), and a foot row with the
    export line and "+ Add prompt".
 
@@ -144,12 +144,12 @@ export function PromptsCard(props: PromptsCardProps) {
 
           <article class="prompt-card">
             <div class="prompt-card__labelrow">
-              <label for="cap-intention">Intention</label>
+              <label for="cap-intention">Reminder</label>
             </div>
             <textarea
               id="cap-intention"
               class="cap-intention"
-              placeholder="One thing to focus on today"
+              placeholder="One thing to remind myself today"
               value={props.captures.intention}
               onInput={(e) =>
                 props.onCapture("intention", (e.target as HTMLTextAreaElement).value)
@@ -199,8 +199,8 @@ export function PromptsCard(props: PromptsCardProps) {
         {editingPrompts && (
           <p class="field__hint custom-prompt__edit-note" role="status">
             {custom.list.length === 0
-              ? "Intention, For Meegy and Stoic are built in and can't be renamed or removed. Use + Add prompt to add your own."
-              : "Rename or remove your own prompts. Intention, For Meegy and Stoic are built in and stay as they are."}
+              ? "Reminder, For Meegy and Stoic are built in and can't be renamed or removed. Use + Add prompt to add your own."
+              : "Rename or remove your own prompts. Reminder, For Meegy and Stoic are built in and stay as they are."}
           </p>
         )}
 

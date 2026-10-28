@@ -1,6 +1,6 @@
 /* DaySetupPanel — editable day setup: anchor/EOD/buffering, anchored block
    on/skip/time overrides, the Mint selection, and the three captures
-   (Intention, For Meegy, Stoic — locked decision 10). Saves session/day-scoped
+   (Reminder, For Meegy, Stoic — locked decision 10). Saves session/day-scoped
    state only.
 
    U12 (KTD10/KTD13): the promoted Set up day screen renders the mockup's
@@ -1352,12 +1352,12 @@ export function DaySetupPanel({
             one-focus helper and a distinct, readable textarea treatment
             (surface/border/focus/spacing states defined in app.css). */}
         <div class="field">
-          <label for="cap-intention">Intention</label>
+          <label for="cap-intention">Reminder</label>
           <textarea
             id="cap-intention"
             class="cap-intention"
             aria-describedby="cap-intention-hint"
-            placeholder="One thing to focus on today"
+            placeholder="One thing to remind myself today"
             value={draft.captures.intention}
             onInput={(e) => {
               setPromptDirty(true);
@@ -1369,7 +1369,7 @@ export function DaySetupPanel({
             onBlur={autosavePrompts}
           />
           <p class="field__hint" id="cap-intention-hint">
-            One thing to focus on today.
+            One thing to remind myself today.
           </p>
         </div>
         <div class="field">

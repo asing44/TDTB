@@ -30,13 +30,14 @@ function openDrawer() {
   return { h, r };
 }
 
-describe("FEEDBACK-15 — Intention copy and textarea readability", () => {
-  it("shows the exact one-focus helper and a one-focus placeholder", () => {
+describe("FEEDBACK-15 — Reminder copy and textarea readability", () => {
+  it("shows the exact one-reminder helper and placeholder", () => {
     const { r } = openDrawer();
-    // One-focus copy: the helper names exactly one thing for today.
-    expect(r.getByText("One thing to focus on today.")).toBeTruthy();
-    // The empty state carries the same one-focus framing.
-    const ta = r.getByLabelText("Intention") as HTMLTextAreaElement;
+    // One-reminder copy: the helper names exactly one reminder for today.
+    expect(r.getByText("One thing to remind myself today.")).toBeTruthy();
+    // The empty state carries the same one-reminder framing.
+    const ta = r.getByLabelText("Reminder") as HTMLTextAreaElement;
+    expect(ta.getAttribute("placeholder")).toBe("One thing to remind myself today");
     expect(ta.getAttribute("placeholder")?.toLowerCase()).toContain("one thing");
     // FEEDBACK-13 aria wiring remains intact.
     expect(ta.getAttribute("aria-describedby")).toBe("cap-intention-hint");
@@ -65,7 +66,7 @@ describe("FEEDBACK-15 — Intention copy and textarea readability", () => {
   it("persists the typed intention unchanged on save", async () => {
     const { h, r } = openDrawer();
     const save = vi.spyOn(h.controller, "saveDaySetup").mockResolvedValue();
-    const ta = r.getByLabelText("Intention") as HTMLTextAreaElement;
+    const ta = r.getByLabelText("Reminder") as HTMLTextAreaElement;
     fireEvent.input(ta, { target: { value: "Close the FEEDBACK-15 loop" } });
     await act(async () => {
       fireEvent.click(r.getByText("Save day setup"));

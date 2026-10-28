@@ -116,7 +116,7 @@ describe("U12 Set up day composition", () => {
       expect(ta.closest('[data-settings-section="prompts"]')).toBe(prompts);
     }
     expect(r.queryByText(/copy prompt/i)).toBeNull();
-    expect(r.getByLabelText("Intention")).toBeTruthy();
+    expect(r.getByLabelText("Reminder")).toBeTruthy();
   });
 
   it("drags across Mint slots to select them and updates the summary", () => {
@@ -400,10 +400,15 @@ describe("Planning 2a Morning prompts", () => {
     const cards = Array.from(grid.querySelectorAll(".prompt-card"));
     expect(cards.length).toBe(4);
     expect(cards[0].textContent).toContain("Live micro-adventure");
-    for (const label of ["Intention", "For Meegy", "Stoic"]) {
+    for (const label of ["Reminder", "For Meegy", "Stoic"]) {
       const field = r.getByLabelText(label);
       expect(field.closest(".prompt-card")).toBeTruthy();
     }
+    // Planning 2a rename: Intention reads as Reminder in the live card.
+    expect(r.queryByLabelText("Intention")).toBeNull();
+    expect(
+      (r.getByLabelText("Reminder") as HTMLTextAreaElement).getAttribute("placeholder"),
+    ).toBe("One thing to remind myself today");
     // The old mono routing tags and per-prompt export UI are gone.
     expect(r.queryByText("text → daily note")).toBeNull();
     expect(r.queryByText("pool → Live block")).toBeNull();

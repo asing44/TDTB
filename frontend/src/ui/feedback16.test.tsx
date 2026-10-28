@@ -161,12 +161,12 @@ describe("FEEDBACK-16 — action hierarchy is preserved", () => {
 });
 
 describe("FEEDBACK-16 — FEEDBACK-15 copy and textarea treatment remain intact", () => {
-  it("keeps the one-focus helper, placeholder, aria wiring, and cap-intention class", () => {
+  it("keeps the one-reminder helper, placeholder, aria wiring, and cap-intention class", () => {
     const { r } = openDrawer();
-    expect(r.getByText("One thing to focus on today.")).toBeTruthy();
-    const ta = r.getByLabelText("Intention") as HTMLTextAreaElement;
+    expect(r.getByText("One thing to remind myself today.")).toBeTruthy();
+    const ta = r.getByLabelText("Reminder") as HTMLTextAreaElement;
     expect(ta.className).toContain("cap-intention");
-    expect(ta.getAttribute("placeholder")?.toLowerCase()).toContain("one thing");
+    expect(ta.getAttribute("placeholder")).toBe("One thing to remind myself today");
     expect(ta.getAttribute("aria-describedby")).toBe("cap-intention-hint");
   });
 

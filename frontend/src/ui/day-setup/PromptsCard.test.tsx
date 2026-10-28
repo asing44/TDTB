@@ -2,14 +2,30 @@
    pool provenance note and Capacities option suffix as the settings drawer. */
 
 import { afterEach, describe, expect, it } from "vitest";
-import { cleanup, render } from "@testing-library/preact";
+import { cleanup, fireEvent, render } from "@testing-library/preact";
 
 import type { MicroAdventure } from "../../model/types";
 import { PromptsCard } from "./PromptsCard";
+import { writeCustomPrompts } from "./customPrompts";
 
 afterEach(cleanup);
 
 const noop = () => {};
+
+/** A Map-backed Storage so a test can seed the browser-defined prompts. */
+function fakeStorage(): Storage {
+  const data = new Map<string, string>();
+  return {
+    getItem: (key: string) => data.get(key) ?? null,
+    setItem: (key: string, value: string) => void data.set(key, value),
+    removeItem: (key: string) => void data.delete(key),
+    clear: () => data.clear(),
+    key: (i: number) => Array.from(data.keys())[i] ?? null,
+    get length() {
+      return data.size;
+    },
+  } as Storage;
+}
 
 function micro(over: Partial<MicroAdventure> = {}): MicroAdventure {
   return {
@@ -26,8 +42,7 @@ function micro(over: Partial<MicroAdventure> = {}): MicroAdventure {
   } as MicroAdventure;
 }
 
-function card(m: MicroAdventure) {
-  const storage = { getItem: () => null, setItem: noop, removeItem: noop } as unknown as Storage;
+function card(m: MicroAdventure, storage: Storage = fakeStorage()) {
   return render(
     <PromptsCard
       micro={m}
@@ -46,6 +61,43 @@ function card(m: MicroAdventure) {
     />,
   );
 }
+
+describe("PromptsCard Reminder copy", () => {
+  it("labels the one-thing prompt Reminder with the reminder placeholder", () => {
+    const r = card(micro());
+    const field = r.getByLabelText("Reminder") as HTMLTextAreaElement;
+    expect(field.closest(".prompt-card")).toBeTruthy();
+    expect(field.getAttribute("placeholder")).toBe("One thing to remind myself today");
+    // The rename is a copy change only: the wire key and its CSS class stay.
+    expect(field.id).toBe("cap-intention");
+    expect(field.className).toContain("cap-intention");
+    expect(r.queryByLabelText("Intention")).toBeNull();
+    expect(r.queryByPlaceholderText("One thing to focus on today")).toBeNull();
+  });
+
+  it("names Reminder in the built-in note when no custom prompts exist", () => {
+    const r = card(micro());
+    fireEvent.click(r.getByRole("button", { name: "Edit prompts" }));
+    expect(
+      r.getByText(/Reminder, For Meegy and Stoic are built in and can't be renamed or removed/),
+    ).toBeTruthy();
+    expect(r.queryByText(/Intention, For Meegy and Stoic/)).toBeNull();
+  });
+
+  it("names Reminder in the built-in note when custom prompts exist", () => {
+    const storage = fakeStorage();
+    writeCustomPrompts(
+      [{ id: "custom-abc-1", question: "What am I grateful for?", answer: "" }],
+      storage,
+    );
+    const r = card(micro(), storage);
+    fireEvent.click(r.getByRole("button", { name: "Edit prompts" }));
+    expect(
+      r.getByText(/Rename or remove your own prompts. Reminder, For Meegy and Stoic are built in/),
+    ).toBeTruthy();
+    expect(r.queryByText(/Intention, For Meegy and Stoic/)).toBeNull();
+  });
+});
 
 describe("PromptsCard pool note", () => {
   it("shows one note with the first warning and the full list in title/aria", () => {
