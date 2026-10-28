@@ -1639,6 +1639,34 @@ class AnchoredStartSaveRequest(BaseModel):
     start: str
 
 
+class MicroAdventurePoolItemRequest(BaseModel):
+    """One item of the config-pool editor body.
+
+    ``StrictStr``/``StrictBool`` decide typing at the JSON boundary — a string
+    ``"true"``, ``0``/``1``, ``null`` or a non-string field is refused there and
+    never coerced. The remaining rules (non-blank id/idea, the id pattern,
+    unique ids, the item/character ceilings) live in
+    ``config_write.normalize_pool_items`` so the writer and the route share one
+    refusal vocabulary and one 422 code."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: StrictStr
+    idea: StrictStr
+    category: StrictStr
+    effort: StrictStr
+    active: StrictBool
+
+
+class MicroAdventurePoolSaveRequest(BaseModel):
+    """/config/micro-adventure/pool body: the FULL replacement pool for the
+    tracked repo config's ``micro_adventure_pool`` array."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    pool: list[MicroAdventurePoolItemRequest]
+
+
 class RuntimeActionRequest(BaseModel):
     """/runtime-actions body (T20): one verb against one committed plan item.
 
@@ -5087,6 +5115,107 @@ def create_app() -> FastAPI:
                     ),
                 },
             ) from exc
+
+    @app.get("/config/micro-adventure/pool", dependencies=[Depends(require_token)])
+    def get_micro_adventure_pool() -> dict:
+        """The tracked repo config's ``micro_adventure_pool`` — the source of
+        truth for the micro-adventure pool editor.
+
+        Deliberately NOT the merged live pool from /plan-inputs: no Capacities
+        ideas, no rotation/exclusion window and no 8-item live cap, so every
+        config entry (inactive ones included) is readable and editable. Token
+        required, like the config write route it pairs with."""
+        try:
+            return {"ok": True, "pool": config_write.read_micro_adventure_pool()}
+        except config_write.PoolNotFoundError as exc:
+            raise HTTPException(
+                status_code=404,
+                detail={
+                    "code": "micro_adventure_pool_not_found",
+                    "message": str(exc),
+                },
+            ) from exc
+        except config_write.NotEditableError as exc:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "micro_adventure_pool_not_editable",
+                    "message": str(exc),
+                },
+            ) from exc
+        except OSError as exc:
+            print(f"micro-adventure pool read failed: {exc}", file=sys.stderr)
+            raise HTTPException(
+                status_code=500,
+                detail={
+                    "code": "config_write_error",
+                    "message": "The config could not be read.",
+                },
+            ) from exc
+
+    @app.post("/config/micro-adventure/pool", dependencies=[Depends(require_token)])
+    def post_micro_adventure_pool(body: MicroAdventurePoolSaveRequest) -> dict:
+        """Replace the tracked repo config's ``micro_adventure_pool`` array.
+
+        A FULL replacement written as a surgical text edit of that one array
+        value, so the hand-formatted rest of ``config/tdtb.json`` (key order,
+        indentation, unicode, trailing newline) survives byte for byte. An
+        out-of-shape or over-limit pool is 422, a config with no pool key is
+        404, and a machine-local override that defines ``micro_adventure_pool``
+        is 409 because it would shadow the saved value. The config is re-read
+        from disk on every use, so the running app sees the change without a
+        restart."""
+        try:
+            saved = config_write.save_micro_adventure_pool(
+                [item.model_dump() for item in body.pool]
+            )
+        except config_write.InvalidPoolError as exc:
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "code": "micro_adventure_pool_invalid",
+                    "message": str(exc),
+                },
+            ) from exc
+        except config_write.PoolNotFoundError as exc:
+            raise HTTPException(
+                status_code=404,
+                detail={
+                    "code": "micro_adventure_pool_not_found",
+                    "message": str(exc),
+                },
+            ) from exc
+        except config_write.PoolShadowedByLocalConfigError as exc:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "micro_adventure_pool_shadowed",
+                    "message": str(exc),
+                },
+            ) from exc
+        except config_write.NotEditableError as exc:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "micro_adventure_pool_not_editable",
+                    "message": str(exc),
+                },
+            ) from exc
+        except OSError as exc:
+            # Never return raw internals (they carry absolute paths); the real
+            # cause stays server-side and the original file is untouched.
+            print(f"micro-adventure pool save failed: {exc}", file=sys.stderr)
+            raise HTTPException(
+                status_code=500,
+                detail={
+                    "code": "config_write_error",
+                    "message": (
+                        "The config could not be written; "
+                        "the existing file was preserved."
+                    ),
+                },
+            ) from exc
+        return {"ok": True, "pool": saved}
 
     @app.post("/duration-memory/save", dependencies=[Depends(require_token)])
     def post_duration_save(body: DurationSaveRequest) -> dict:

@@ -368,3 +368,162 @@ class TestPoolComesFromConfig:
         state = self._state(tmp_path)
         assert state["auto_pick"] is not None
         assert state["auto_pick"]["id"] in {p.id for p in micro_adventure.FALLBACK_POOL}
+
+
+class TestConfigPoolApi:
+    """The config-pool editor API: the TRACKED repo config's pool only.
+
+    GET is the editor's source of truth, so it must return every config entry
+    — uncapped (no 8-item live window), unfiltered by ``Active``/rotation, and
+    never merged with Capacities ideas. POST is a full replacement, written into
+    ``config/tdtb.json`` as a surgical array-span edit."""
+
+    @staticmethod
+    def _item(index: int, *, active: bool = True) -> dict:
+        return {
+            "id": f"ma{index:02d}",
+            "idea": f"Config idea {index}",
+            "category": "nature",
+            "effort": "low",
+            "active": active,
+        }
+
+    @pytest.fixture
+    def pool_cfg(self, tmp_path) -> Path:
+        import json
+        import app_config
+        path = app_config.repo_config_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "micro_adventure_pool": [
+                        {"ID": f"ma{i:02d}", "Idea": f"Config idea {i}",
+                         "Category": "nature", "Effort": "low",
+                         "Active": i <= 10}
+                        for i in range(1, 13)
+                    ],
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        return path
+
+    def _auth(self, client) -> dict:
+        return {"X-TDTB-Token": client.app_token}
+
+    def test_requires_token(self, client, pool_cfg):
+        assert client.get("/config/micro-adventure/pool").status_code == 403
+        assert client.post(
+            "/config/micro-adventure/pool", json={"pool": [self._item(1)]}
+        ).status_code == 403
+
+    def test_get_returns_every_config_entry_uncapped_and_unfiltered(self, client, pool_cfg):
+        r = client.get("/config/micro-adventure/pool", headers=self._auth(client))
+        assert r.status_code == 200
+        body = r.json()
+        assert body["ok"] is True
+        # 12 entries: a live-pool implementation would cap at 8 …
+        assert len(body["pool"]) == 12
+        # … and would hide the two Active=false entries.
+        assert [item["id"] for item in body["pool"]] == [f"ma{i:02d}" for i in range(1, 13)]
+        assert [item["active"] for item in body["pool"]][-2:] == [False, False]
+        assert set(body["pool"][0]) == {"id", "idea", "category", "effort", "active"}
+
+    def test_get_never_uses_the_merged_live_state(self, client, pool_cfg, monkeypatch):
+        def boom(*a, **k):
+            raise AssertionError("the config-pool route must not compute live state")
+
+        monkeypatch.setattr(main_mod, "_micro_adventure_state", boom)
+        assert client.get(
+            "/config/micro-adventure/pool", headers=self._auth(client)
+        ).status_code == 200
+
+    def test_post_replaces_the_pool_and_get_reflects_it(self, client, pool_cfg):
+        new_pool = [self._item(1), self._item(99, active=False)]
+        r = client.post(
+            "/config/micro-adventure/pool", headers=self._auth(client), json={"pool": new_pool}
+        )
+        assert r.status_code == 200
+        assert r.json() == {"ok": True, "pool": new_pool}
+        assert client.get(
+            "/config/micro-adventure/pool", headers=self._auth(client)
+        ).json()["pool"] == new_pool
+        # the app reads the saved pool straight from the layered config
+        import app_config
+        pool = app_config.load_sections()["Micro-Adventures"]["Pool"]
+        assert [row["ID"] for row in pool] == ["ma01", "ma99"]
+
+    def test_missing_pool_key_404(self, client):
+        r = client.get("/config/micro-adventure/pool", headers=self._auth(client))
+        assert r.status_code == 404
+        assert r.json()["detail"]["code"] == "micro_adventure_pool_not_found"
+        r = client.post(
+            "/config/micro-adventure/pool",
+            headers=self._auth(client),
+            json={"pool": [self._item(1)]},
+        )
+        assert r.status_code == 404
+        assert r.json()["detail"]["code"] == "micro_adventure_pool_not_found"
+
+    def test_invalid_pool_422(self, client, pool_cfg):
+        before = pool_cfg.read_bytes()
+        for bad in ([self._item(1), self._item(1)], [self._item(1) | {"idea": "  "}]):
+            r = client.post(
+                "/config/micro-adventure/pool", headers=self._auth(client), json={"pool": bad}
+            )
+            assert r.status_code == 422
+            detail = r.json()["detail"]
+            assert detail["code"] == "micro_adventure_pool_invalid"
+            assert "Config idea" not in detail["message"]
+        assert pool_cfg.read_bytes() == before
+
+    def test_non_boolean_active_422_at_the_boundary(self, client, pool_cfg):
+        before = pool_cfg.read_bytes()
+        r = client.post(
+            "/config/micro-adventure/pool",
+            headers=self._auth(client),
+            json={"pool": [self._item(1) | {"active": "true"}]},
+        )
+        assert r.status_code == 422
+        assert pool_cfg.read_bytes() == before
+
+    def test_shadowed_409(self, client, pool_cfg):
+        import json
+        import app_config
+        local = app_config.config_path()
+        local.parent.mkdir(parents=True, exist_ok=True)
+        local.write_text(
+            json.dumps({"version": 1, "micro_adventure_pool": []}), encoding="utf-8"
+        )
+        before = pool_cfg.read_bytes()
+        r = client.post(
+            "/config/micro-adventure/pool",
+            headers=self._auth(client),
+            json={"pool": [self._item(1)]},
+        )
+        assert r.status_code == 409
+        detail = r.json()["detail"]
+        assert detail["code"] == "micro_adventure_pool_shadowed"
+        assert "override" in detail["message"].lower()
+        assert pool_cfg.read_bytes() == before
+
+    def test_write_failure_500_bounded(self, client, pool_cfg, monkeypatch):
+        import config_write
+        before = pool_cfg.read_bytes()
+
+        def boom(src, dst):
+            raise OSError("/secret/path exploded")
+
+        monkeypatch.setattr(config_write.os, "replace", boom)
+        r = client.post(
+            "/config/micro-adventure/pool",
+            headers=self._auth(client),
+            json={"pool": [self._item(1)]},
+        )
+        assert r.status_code == 500
+        assert r.json()["detail"]["code"] == "config_write_error"
+        assert "/secret/path" not in r.text
+        assert pool_cfg.read_bytes() == before
