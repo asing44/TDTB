@@ -121,7 +121,7 @@ describe("batchEligibility scheduling actions", () => {
     ]);
   });
 
-  it("excludes Capacities and protected rows from All-day", () => {
+  it("allows a Capacities row to go All-day; excludes protected and all-day rows", () => {
     expect(
       reasons("allDay", [
         row({ id: "cap", source: "capacities" }),
@@ -129,22 +129,20 @@ describe("batchEligibility scheduling actions", () => {
         row({ id: "ad", blocks: 0 }),
       ]),
     ).toEqual([
-      EXCLUSION_REASONS.allDayCapacities,
       EXCLUSION_REASONS.protectedAllDay,
       EXCLUSION_REASONS.alreadyAllDay,
     ]);
   });
 
-  it("allows an ordinary time block to go All-day, not an already all-day row", () => {
+  it("allows an ordinary time block and a Capacities row to go All-day, not an already all-day row", () => {
     const rows = [
       row({ id: "plain" }),
       row({ id: "cap", source: "capacities" }),
       row({ id: "capAD", source: "capacities", blocks: 0 }),
     ];
     const result = batchEligibility("allDay", rows, CONFIRMED);
-    expect(result.eligible).toEqual(["plain"]);
+    expect(result.eligible).toEqual(["plain", "cap"]);
     expect(result.excluded.map((e) => e.reason)).toEqual([
-      EXCLUSION_REASONS.allDayCapacities,
       EXCLUSION_REASONS.alreadyAllDay,
     ]);
   });
@@ -196,14 +194,13 @@ describe("batchEligibility counts and action set", () => {
       row({ id: "e", name: "Last" }),
     ];
     const result = batchEligibility("allDay", rows, CONFIRMED);
-    expect(result.eligible).toEqual(["a", "e"]);
+    expect(result.eligible).toEqual(["a", "b", "e"]);
     expect(result.excluded.map((e) => e.name)).toEqual([
-      "Backpack",
       "Pick up prescription",
       "All day",
     ]);
-    expect(result.counts).toEqual({ eligible: 2, excluded: 3, total: 5 });
-    expect(result.label).toBe("2 of 5 eligible");
+    expect(result.counts).toEqual({ eligible: 3, excluded: 2, total: 5 });
+    expect(result.label).toBe("3 of 5 eligible");
   });
 
   it("never batches Delete or an exact start", () => {

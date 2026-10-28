@@ -1,15 +1,17 @@
-/* custom-duration.test.tsx — the expanded row's Duration can be typed.
-   The quick chips cover the common values; a "Custom duration" text input stages any
-   parseable duration (exact minutes, blocks = minutes / 30) on the same row
-   draft, and Save/Discard remain the only commit path. Fixture adapters only. */
+/* custom-duration.test.tsx — the expanded row's exact-minutes field.
+   Row redesign (2026-10-28): the duration chips and the Save/Discard footer are
+   gone. A typed duration APPLIES AT ONCE through controller.applyRowEdit (exact
+   minutes, blocks = minutes / 30), with one Undo step; typing is debounced
+   400ms and also applies on blur/Enter. Fixture adapters only. */
 
 import { afterEach, describe, expect, it } from "vitest";
-import { cleanup, fireEvent } from "@testing-library/preact";
+import { cleanup, fireEvent, waitFor } from "@testing-library/preact";
 
 afterEach(cleanup);
 
 import { Queue } from "./Queue";
 import { makeHarness } from "./test-harness";
+import { effectiveBlocks } from "../store/store";
 
 function rowFor(container: Element, name: string): HTMLElement {
   const row = Array.from(container.querySelectorAll<HTMLElement>(".qrow")).find(
@@ -24,15 +26,9 @@ function expand(container: Element, name: string): HTMLElement {
   return rowFor(container, name);
 }
 
+/** The expanded row's exact-minutes field. */
 const custom = (row: Element) =>
-  row.querySelector<HTMLInputElement>('input[aria-label="Custom duration"]')!;
-/** The quick duration chips that replaced the preset select. */
-const checkedChip = (row: Element) =>
-  row.querySelector<HTMLElement>('[role="radiogroup"][aria-label="Duration"] [aria-checked="true"]')!;
-const chip = (row: Element, minutes: number) =>
-  row.querySelector<HTMLButtonElement>(
-    `[role="radiogroup"][aria-label="Duration"] [role="radio"][data-minutes="${minutes}"]`,
-  )!;
+  row.querySelector<HTMLInputElement>('input[aria-label="Exact minutes"]')!;
 const btn = (row: Element, text: string) =>
   Array.from(row.querySelectorAll<HTMLButtonElement>("button")).find(
     (b) => b.textContent?.trim() === text,
@@ -42,38 +38,37 @@ function type(input: HTMLInputElement, value: string) {
   fireEvent.input(input, { target: { value } });
 }
 
-describe("typed custom duration on the expanded row", () => {
-  it("Enter stages exact minutes as fractional blocks and shows the label", () => {
+describe("typed exact duration on the expanded row", () => {
+  it("Enter applies exact minutes as fractional blocks at once, no Save step", () => {
     const h = makeHarness("ready");
     const { container } = h.ui(<Queue />);
     let row = expand(container, "Press");
     type(custom(row), "10m");
     fireEvent.keyDown(custom(row), { key: "Enter" });
 
-    expect(h.store.getState().drafts["Press"].blocks).toBeCloseTo(10 / 30, 10);
+    expect(h.store.getState().overrides["Press"]?.blocks).toBeCloseTo(10 / 30, 10);
+    expect(effectiveBlocks(h.store.getState(), "Press")).toBeCloseTo(10 / 30, 10);
     row = rowFor(container, "Press");
-    // 10 minutes is off the quick grid, so the group gains one Custom chip
-    // that reports exactly what the typed field staged.
-    expect(checkedChip(row).textContent).toBe("Custom: 10m");
-    expect(btn(row, "Save")).not.toBeNull();
+    // The old Save/Discard footer is gone; the value is already the row's.
+    expect(btn(row, "Save")).toBeNull();
+    expect(btn(row, "Discard")).toBeNull();
+    expect(row.querySelector(".dslider__label")?.textContent).toBe("10min");
+    // One Undo step is offered for the edit.
+    expect(row.querySelector(".dux-undo")).not.toBeNull();
   });
 
-  it("Save commits the typed duration through the override path; Discard drops it", () => {
+  it("a second typed value applies on top of the first (no Discard path)", () => {
     const h = makeHarness("ready");
     const { container } = h.ui(<Queue />);
     let row = expand(container, "Press");
     type(custom(row), "1h 15m");
     fireEvent.keyDown(custom(row), { key: "Enter" });
-    row = rowFor(container, "Press");
-    fireEvent.click(btn(row, "Save")!);
     expect(h.store.getState().overrides["Press"]?.blocks).toBeCloseTo(2.5, 10);
 
     row = rowFor(container, "Press");
     type(custom(row), "20");
     fireEvent.keyDown(custom(row), { key: "Enter" });
-    row = rowFor(container, "Press");
-    fireEvent.click(btn(row, "Discard")!);
-    expect(h.store.getState().overrides["Press"]?.blocks).toBeCloseTo(2.5, 10);
+    expect(h.store.getState().overrides["Press"]?.blocks).toBeCloseTo(20 / 30, 10);
   });
 
   it("blur applies a valid value", () => {
@@ -82,14 +77,26 @@ describe("typed custom duration on the expanded row", () => {
     const row = expand(container, "Press");
     type(custom(row), "45min");
     fireEvent.blur(custom(row));
-    expect(h.store.getState().drafts["Press"].blocks).toBe(1.5);
+    expect(h.store.getState().overrides["Press"]?.blocks).toBe(1.5);
   });
 
-  it("rejects invalid input inline with an aria-described error and stages nothing", () => {
+  it("debounces a typed value, applying it without Enter or blur", async () => {
+    const h = makeHarness("ready");
+    const { container } = h.ui(<Queue />);
+    const row = expand(container, "Press");
+    type(custom(row), "45m");
+    expect(h.store.getState().overrides["Press"]).toBeUndefined();
+    await waitFor(
+      () => expect(h.store.getState().overrides["Press"]?.blocks).toBe(1.5),
+      { timeout: 2000 },
+    );
+  });
+
+  it("rejects invalid input inline with an aria-described error and applies nothing", () => {
     const h = makeHarness("ready");
     const { container } = h.ui(<Queue />);
     let row = expand(container, "Press");
-    const before = h.store.getState().drafts["Press"].blocks;
+    const before = effectiveBlocks(h.store.getState(), "Press");
     for (const bad of ["0", "-5", "17h", "abc"]) {
       type(custom(row), bad);
       fireEvent.keyDown(custom(row), { key: "Enter" });
@@ -98,7 +105,8 @@ describe("typed custom duration on the expanded row", () => {
       expect(input.getAttribute("aria-invalid")).toBe("true");
       const msg = row.querySelector(`#${input.getAttribute("aria-describedby")}`);
       expect(msg?.textContent?.length).toBeGreaterThan(0);
-      expect(h.store.getState().drafts["Press"].blocks).toBe(before);
+      expect(effectiveBlocks(h.store.getState(), "Press")).toBe(before);
+      expect(h.store.getState().overrides["Press"]).toBeUndefined();
     }
   });
 
@@ -115,16 +123,19 @@ describe("typed custom duration on the expanded row", () => {
     expect(custom(row).getAttribute("aria-invalid")).not.toBe("true");
   });
 
-  it("a quick chip stages a duration in one click", () => {
+  it("applies an exact off-grid duration that the slider cannot express", () => {
     const h = makeHarness("ready");
     const { container } = h.ui(<Queue />);
-    const row = expand(container, "Press");
-    fireEvent.click(chip(row, 120));
-    expect(h.store.getState().drafts["Press"].blocks).toBe(4);
-    expect(checkedChip(rowFor(container, "Press")).getAttribute("aria-checked")).toBe("true");
+    let row = expand(container, "Press");
+    type(custom(row), "25m");
+    fireEvent.keyDown(custom(row), { key: "Enter" });
+    expect(h.store.getState().overrides["Press"]?.blocks).toBeCloseTo(25 / 30, 10);
+    row = rowFor(container, "Press");
+    // The readout keeps the exact minutes while the thumb rests on 30.
+    expect(row.querySelector(".dslider__label")?.textContent).toBe("25min");
   });
 
-  it("is disabled for an all-day draft", () => {
+  it("is disabled for an all-day row", () => {
     const h = makeHarness("ready");
     const { container } = h.ui(<Queue />);
     const row = expand(container, "Charge GoPro");

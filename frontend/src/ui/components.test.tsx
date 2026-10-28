@@ -393,12 +393,12 @@ describe("T13 retained exact-placement paths", () => {
     fireEvent.click(getByText("Set time"));
     const start = row().querySelector<HTMLInputElement>('input[type="time"]')!;
     fireEvent.input(start, { target: { value: "10:15" } });
-    fireEvent.click(getByText("Apply"));
+    // Edits apply at once: Apply places the row, there is no Save step.
     expect(store.getState().placements["Magic Mirror"]).toBeUndefined();
-    fireEvent.click(getByText("Save"));
+    fireEvent.click(getByText("Apply"));
+    expect(store.getState().placements["Magic Mirror"]).toBe("10:15");
     const placed = store.getState().sequence?.find((r) => r.id === "Magic Mirror");
     expect(placed?.start).toBe("10:15");
-    expect(store.getState().placements["Magic Mirror"]).toBe("10:15");
     expect(getByLabelText("Select Magic Mirror")).toBeTruthy();
   });
 
@@ -1162,7 +1162,8 @@ describe("T25 recurring duration shaping", () => {
 
   it("shows a protected-by-default time-movement opt-in per timed row", () => {
     // F7: the More menu's "Allow move" item is the permission checkbox in the
-    // expanded row's time editor; it stays off until granted and Save commits it.
+    // expanded row's time editor; it stays off until granted, and Apply (which
+    // applies at once) commits it.
     const h = makeHarness("ready");
     withRecurring(h);
     const { container, getByText } = h.ui(<Queue />);
@@ -1179,9 +1180,8 @@ describe("T25 recurring duration shaping", () => {
     expect(allow.checked).toBe(false);
     expect(allow.closest("label")?.textContent).toContain("Allow changing source time");
     fireEvent.click(allow);
-    fireEvent.click(getByText("Apply"));
     expect(h.store.getState().timeAdjustmentOptIns).toEqual({});
-    fireEvent.click(getByText("Save"));
+    fireEvent.click(getByText("Apply"));
     expect(h.store.getState().timeAdjustmentOptIns).toEqual({ LOOTS: true });
   });
 
