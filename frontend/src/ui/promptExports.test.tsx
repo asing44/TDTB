@@ -21,7 +21,7 @@ describe("U5 Set up day prompts", () => {
     const h = makeHarness("fresh");
     const spy = vi.spyOn(h.controller, "savePromptDrafts").mockResolvedValue(undefined);
     const r = h.ui(<DaySetupPanel active={true} />);
-    const intention = r.getByLabelText("Intention");
+    const intention = r.getByLabelText("Reminder");
     fireEvent.input(intention, { target: { value: "one focus" } });
     fireEvent.blur(intention);
     expect(spy).toHaveBeenCalledWith({

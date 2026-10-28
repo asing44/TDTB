@@ -21,6 +21,7 @@ import type {
   CommitReport,
   DaySetup,
   DaySetupSaveResult,
+  DescriptionSkips,
   FixedInputs,
   Ledger,
   PlanInputs,
@@ -169,6 +170,11 @@ export interface Adapter {
       Prompt-only: never confirms the day. Custom prompt keys (custom-<id>)
       ride the same captures patch. */
   savePromptDrafts(patch: Record<string, string>): Promise<DaySetupSaveResult>;
+  /** POST /day-setup {description_skips} — PATCH which built-in prompts omit
+      their Todoist description. Prompt-only (never confirms the day), a full
+      replace (an omitted built-in key means that flag is now off), and it never
+      changes WHETHER a prompt exports — only whether a description is written. */
+  savePromptSkips(skips: DescriptionSkips): Promise<DaySetupSaveResult>;
   /** POST /day-setup {micro_adventure} — T19 free Live override (shuffle /
       pick / custom); null clears the dated override back to the auto-pick.
       Never billed, never a history write. */

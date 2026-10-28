@@ -64,6 +64,7 @@ import type {
   HabitOverrides,
   HabitsInfo,
   DaySetupSaveResult,
+  DescriptionSkips,
   PromptExportOutcome,
   DurationSourceLabel,
   FixedInputs,
@@ -1442,6 +1443,9 @@ export function projectDaySetup(wire: Wire, confirmed: boolean): DaySetup {
   if (Object.prototype.hasOwnProperty.call(wire, "day_preset")) {
     result.dayPreset = wire.day_preset == null ? null : String(wire.day_preset);
   }
+  if (Object.prototype.hasOwnProperty.call(wire, "description_skips")) {
+    result.descriptionSkips = projectDescriptionSkips(wire.description_skips);
+  }
   if (Object.prototype.hasOwnProperty.call(wire, "work_allotment_minutes")) {
     result.workAllotmentMinutes = wire.work_allotment_minutes == null
       ? null
@@ -2696,12 +2700,45 @@ export function projectPromptExportOutcome(wire: Wire): PromptExportOutcome {
     server's explicit flag — a prompt-only save never confirms the day.
     Legacy `optins`/`optins_revision` fields are tolerated and ignored. */
 export function projectDaySetupSaveResult(wire: Wire): DaySetupSaveResult {
-  return {
+  const result: DaySetupSaveResult = {
     ok: wire.ok === true,
     daySetupConfirmed: wire.day_setup_confirmed === true,
     promptWarnings: Array.isArray(wire.prompt_warnings)
       ? wire.prompt_warnings.map(String)
       : [],
+  };
+  // The server omits the map when nothing is skipped (or the store is
+  // unreadable), so an absent key is left absent rather than fabricated.
+  if (Object.prototype.hasOwnProperty.call(wire, "description_skips")) {
+    result.descriptionSkips = projectDescriptionSkips(wire.description_skips);
+  }
+  return result;
+}
+
+/** `day_setup.description_skips` / the save echo's map → the frontend skip
+    flags. Wire keys are the captures key names; the Reminder `intention` key
+    has no checkbox here, so an unknown or malformed entry stays off instead of
+    throwing. An absent or unreadable map means no skips. */
+export function projectDescriptionSkips(raw: unknown): DescriptionSkips {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    return { forMeegy: false, stoic: false };
+  }
+  const wire = raw as Wire;
+  return {
+    forMeegy: wire.megan_nicety === true,
+    stoic: wire.stoic_intention === true,
+  };
+}
+
+/** Full-replace payload: both toggleable keys ride every save, so turning a
+    flag off is explicit and an omitted key can never resurrect a prior choice.
+    `intention` is left out — no UI sets it, and an omitted key means "off". */
+export function descriptionSkipsToWire(skips: DescriptionSkips): Wire {
+  return {
+    description_skips: {
+      megan_nicety: skips.forMeegy === true,
+      stoic_intention: skips.stoic === true,
+    },
   };
 }
 

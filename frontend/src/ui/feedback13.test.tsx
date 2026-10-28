@@ -31,12 +31,14 @@ describe("FEEDBACK-13 obs 1+2 — intention one-focus helper and readable textar
     h.store.dispatch({ type: "UI", patch: { setupOpen: true } });
     const r = h.ui(<SetupDrawer />);
 
-    // obs 1: the helper names the single focus for today.
-    expect(r.getByText("One thing to focus on today.")).toBeTruthy();
+    // obs 1: the helper names the single reminder for today.
+    expect(r.getByText("One thing to remind myself today.")).toBeTruthy();
 
-    // obs 2: the intention textarea carries the explicit treatment class and
-    // is wired to the helper via aria-describedby.
-    const ta = r.getByLabelText("Intention") as HTMLTextAreaElement;
+    // obs 2: the reminder textarea carries the explicit treatment class and
+    // is wired to the helper via aria-describedby. The class and hint ids are
+    // unchanged by the Intention → Reminder copy rename.
+    const ta = r.getByLabelText("Reminder") as HTMLTextAreaElement;
+    expect(ta.getAttribute("placeholder")).toBe("One thing to remind myself today");
     expect(ta.className).toContain("cap-intention");
     expect(ta.getAttribute("aria-describedby")).toBe("cap-intention-hint");
 

@@ -129,4 +129,38 @@ describe("U5 prompt wire projection", () => {
     const echo = await adapter.savePromptDrafts({ "custom-abc-1": "the rain" });
     expect(echo).toEqual({ ok: true, daySetupConfirmed: false, promptWarnings: [] });
   });
+
+  it("the save echo carries the skip map under the captures wire keys", () => {
+    const result = projectDaySetupSaveResult({
+      ok: true,
+      day_setup_confirmed: false,
+      description_skips: { megan_nicety: true, stoic_intention: false },
+      prompt_warnings: [],
+    });
+    expect(result.descriptionSkips).toEqual({ forMeegy: true, stoic: false });
+    expect(result.daySetupConfirmed).toBe(false);
+  });
+
+  it("an echo without the skip map means no skips, not an all-false map", () => {
+    const result = projectDaySetupSaveResult({
+      ok: true,
+      day_setup_confirmed: false,
+      prompt_warnings: [],
+    });
+    expect(result).not.toHaveProperty("descriptionSkips");
+  });
+
+  it("the fixture replaces the whole skip map and omits the echo when nothing is skipped", async () => {
+    const adapter = new FixtureAdapter("fresh");
+    expect((await adapter.savePromptSkips({ forMeegy: true, stoic: true })).descriptionSkips)
+      .toEqual({ forMeegy: true, stoic: true });
+    // Full replace: an omitted-then-false key really turns off.
+    expect((await adapter.savePromptSkips({ forMeegy: false, stoic: true })).descriptionSkips)
+      .toEqual({ forMeegy: false, stoic: true });
+    expect(await adapter.savePromptSkips({ forMeegy: false, stoic: false })).toEqual({
+      ok: true,
+      daySetupConfirmed: false,
+      promptWarnings: [],
+    });
+  });
 });

@@ -577,3 +577,20 @@ describe("S1 external scheduling handoff", () => {
     expect(p).toMatch(/unidentified[\s\S]*do not write/i);
   });
 });
+
+describe("prompt captures section copy", () => {
+  it("labels the first capture as Reminder in the copied plan text", () => {
+    const p = buildDayPrompt(
+      stateFor("ready", (store) =>
+        store.dispatch({
+          type: "PROMPT_DRAFTS_SAVED",
+          captures: { intention: "send the invoice", forMeegy: "", stoic: "" },
+          warnings: [],
+        }),
+      ),
+    );
+    expect(p).toContain("## Captures");
+    expect(p).toContain("- Reminder: send the invoice");
+    expect(p).not.toContain("- Intention:");
+  });
+});

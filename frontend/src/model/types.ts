@@ -431,6 +431,17 @@ export interface Captures {
   stoic: string; // stoic_intention on the wire
 }
 
+/** Which built-in prompts omit their Todoist description at Commit. The task is
+    still created (with its fixed-label title); only the description is skipped.
+    The wire carries the same map under `description_skips` with the captures
+    key names (`megan_nicety`, `stoic_intention`). The server OMITS the map when
+    nothing is skipped, so an absent value already means "no skips" — never
+    fabricate an all-false map because one is absent. */
+export interface DescriptionSkips {
+  forMeegy: boolean; // megan_nicety on the wire
+  stoic: boolean; // stoic_intention on the wire
+}
+
 export interface DaySetup {
   anchor: string | null; // HH:MM override
   eod: string | null;
@@ -439,6 +450,9 @@ export interface DaySetup {
   /** Today-only habit overrides. Absent preserves the dated override. */
   habits?: HabitOverrides;
   captures: Captures;
+  /** Today-only skip-description flags. Absent = the echo carried no map.
+      The Reminder wire key has no checkbox, so it never reaches the model. */
+  descriptionSkips?: DescriptionSkips;
   confirmed: boolean;
   /** Absent = preserve dated override; null = reset to config. */
   dayPreset?: string | null;
@@ -464,6 +478,9 @@ export interface DaySetupSaveResult {
   ok: boolean;
   daySetupConfirmed: boolean;
   promptWarnings: string[];
+  /** Absent when the echo carried no map (nothing skipped, or an unreadable
+      store): the caller must read that as "no skips". */
+  descriptionSkips?: DescriptionSkips;
 }
 
 export interface MintSession {
