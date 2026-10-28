@@ -45,6 +45,7 @@ import type {
   CommitReport,
   DaySetup,
   DaySetupSaveResult,
+  DescriptionSkips,
   FixedInputs,
   Ledger,
   MicroIdea,
@@ -62,6 +63,7 @@ import {
   capacitiesSettingsToWire,
   projectDaySetupSaveResult,
   promptDraftsToWire,
+  descriptionSkipsToWire,
   capacitiesSourceToWire,
   capacitiesRuleSaveToWire,
   capacitiesRefreshStartToWire,
@@ -445,6 +447,15 @@ export class ApiAdapter implements Adapter {
   async savePromptDrafts(patch: Record<string, string>): Promise<DaySetupSaveResult> {
     return projectDaySetupSaveResult(
       await this.post("/day-setup", promptDraftsToWire(patch)),
+    );
+  }
+
+  /** U5 prompt-only skip save: exactly one POST carrying ONLY
+      `description_skips`. The map is a full replace and the task is still
+      exported — only its description is omitted. */
+  async savePromptSkips(skips: DescriptionSkips): Promise<DaySetupSaveResult> {
+    return projectDaySetupSaveResult(
+      await this.post("/day-setup", descriptionSkipsToWire(skips)),
     );
   }
 

@@ -39,6 +39,7 @@ import type {
   CommitReport,
   DaySetup,
   DaySetupSaveResult,
+  DescriptionSkips,
   FixedInputs,
   Ledger,
   MicroIdea,
@@ -812,11 +813,29 @@ export class FixtureAdapter implements Adapter {
   }
 
   private promptEcho(): DaySetupSaveResult {
-    return {
+    const echo: DaySetupSaveResult = {
       ok: true,
       daySetupConfirmed: false,
       promptWarnings: [],
     };
+    // Mirror the server: the map is omitted entirely when nothing is skipped.
+    if (this.descriptionSkips.forMeegy || this.descriptionSkips.stoic) {
+      echo.descriptionSkips = { ...this.descriptionSkips };
+    }
+    return echo;
+  }
+
+  /** The fixture mirrors the server's full-replace skip map: the whole map is
+      replaced, so an omitted-then-false key really turns off. */
+  private descriptionSkips: DescriptionSkips = { forMeegy: false, stoic: false };
+
+  async savePromptSkips(skips: DescriptionSkips): Promise<DaySetupSaveResult> {
+    await wait(LATENCY_MS);
+    this.descriptionSkips = {
+      forMeegy: skips.forMeegy === true,
+      stoic: skips.stoic === true,
+    };
+    return this.promptEcho();
   }
 
   async loadCapacitiesSettings(): Promise<CapacitiesSettings> {

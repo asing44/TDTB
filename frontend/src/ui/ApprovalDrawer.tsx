@@ -62,7 +62,7 @@ function SurfaceTotals({ entries }: { entries: ShadowEntry[] }) {
     browser's localStorage, not the store), so it reads generically rather
     than leaking the raw handle. */
 const BUILT_IN_PROMPT_LABELS: Record<string, string> = {
-  intention: "Intention",
+  intention: "Reminder",
   megan_nicety: "For Meegy",
   stoic_intention: "Stoic",
 };

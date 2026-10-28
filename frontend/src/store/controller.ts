@@ -87,6 +87,7 @@ import type {
   CapacitiesSourceDraft,
   CapacitiesSourceRead,
   DaySetup,
+  DescriptionSkips,
   FixedInputs,
   MicroIdea,
   PlanInputs,
@@ -732,6 +733,29 @@ export class Controller {
       this.dispatch({
         type: "PROMPT_DRAFTS_SAVED",
         captures,
+        warnings: result.promptWarnings,
+      });
+    } catch (e) {
+      this.dispatch({
+        type: "PROMPT_SAVE_ERROR",
+        error: String(e instanceof Error ? e.message : e),
+      });
+    }
+  }
+
+  /** Persist which built-in prompts omit their Todoist description. The map is
+      a full replace (an omitted key turns that flag off) and the save is
+      prompt-only: it never changes the prompt text, never confirms the day,
+      and never affects WHETHER a prompt exports. The server omits the map when
+      nothing is skipped, so an absent echo is stored as no skips rather than
+      fabricating or persisting an all-false map. */
+  async savePromptSkips(skips: DescriptionSkips): Promise<void> {
+    this.dispatch({ type: "PROMPT_SAVE_START" });
+    try {
+      const result = await this.adapter.savePromptSkips(skips);
+      this.dispatch({
+        type: "PROMPT_SKIPS_SAVED",
+        descriptionSkips: result.descriptionSkips ?? { forMeegy: false, stoic: false },
         warnings: result.promptWarnings,
       });
     } catch (e) {

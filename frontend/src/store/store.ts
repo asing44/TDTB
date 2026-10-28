@@ -21,6 +21,7 @@ import type {
   Captures,
   CommitReport,
   DaySetup,
+  DescriptionSkips,
   Ledger,
   MicroIdea,
   OverlapGrant,
@@ -461,6 +462,13 @@ export type Action =
     }
   | { type: "PROMPT_SAVE_START" }
   | { type: "PROMPT_SAVE_ERROR"; error: string }
+  // Skip-description flags: which built-in prompts omit their Todoist
+  // description. Prompt-only, so it never confirms the day.
+  | {
+      type: "PROMPT_SKIPS_SAVED";
+      descriptionSkips: DescriptionSkips;
+      warnings: string[];
+    }
   | { type: "OVERRIDE_SET"; id: string; override: TodayOverride }
   // LOCAL plan membership (U1): take a row out of, or back into, today's plan
   // without any source/server call. Keyed by stable identity, so the decision
@@ -738,6 +746,18 @@ export function reducer(s: AppState, a: Action): AppState {
       return {
         ...s,
         promptSave: { ...s.promptSave, phase: "saving", error: null },
+      };
+    case "PROMPT_SKIPS_SAVED":
+      // Prompt-only save: swap the skip map, never the prompt text or the
+      // confirmation flag.
+      return {
+        ...s,
+        daySetup: { ...s.daySetup, descriptionSkips: a.descriptionSkips },
+        promptSave: {
+          phase: "saved",
+          error: null,
+          warnings: a.warnings,
+        },
       };
     case "PROMPT_SAVE_ERROR":
       return {

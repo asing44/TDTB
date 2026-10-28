@@ -3,6 +3,12 @@
    Meegy + Stoic, then browser-defined custom prompts), and a foot row with the
    export line and "+ Add prompt".
 
+   The For Meegy and Stoic cards carry a skip-description toggle: the prompt is
+   still exported at Commit (with its fixed-label title), only its description
+   is left out. The flag is prompt-only, day-scoped, and lives in the day-setup
+   echo (`descriptionSkips`), so the card reads it from the app context rather
+   than the panel's local draft — the draft is the prompt text, not the flag.
+
    There are no mono routing tags, no per-prompt export checkboxes, and no
    "Prompt exports" block any more: the backend exports every non-empty prompt
    to the Todoist Inbox at Commit. Custom prompt answers persist through the
@@ -11,6 +17,7 @@
 import { useState } from "preact/hooks";
 
 import type { MicroAdventure } from "../../model/types";
+import { useApp, useAppState } from "../context";
 import { MicroPoolNote, poolOptionLabel } from "../microPool";
 import {
   CustomPromptAdd,
@@ -43,6 +50,9 @@ export interface PromptsCardProps {
   customStorage?: Storage;
 }
 
+/** The echo omits the map when nothing is skipped, so absence is no skips. */
+const NO_SKIPS = { forMeegy: false, stoic: false };
+
 /** The mockup sentence-cases the category ("nature" → "Nature"). */
 function categoryLabel(category: string): string {
   return category.charAt(0).toUpperCase() + category.slice(1);
@@ -50,6 +60,13 @@ function categoryLabel(category: string): string {
 
 export function PromptsCard(props: PromptsCardProps) {
   const micro = props.micro;
+  const s = useAppState();
+  const { controller } = useApp();
+  const skips = s.daySetup.descriptionSkips ?? NO_SKIPS;
+  /** Full-replace save: the map always carries both toggleable keys. */
+  const setSkip = (key: "forMeegy" | "stoic", on: boolean) => {
+    void controller.savePromptSkips({ ...skips, [key]: on });
+  };
   // Edit prompts reveals rename and remove for the browser-defined prompts.
   const [editingPrompts, setEditingPrompts] = useState(false);
   const [customOpen, setCustomOpen] = useState(false);
@@ -169,6 +186,18 @@ export function PromptsCard(props: PromptsCardProps) {
               }
               onBlur={props.onAutosave}
             />
+            <label class="capacities-setting-row">
+              <input
+                type="checkbox"
+                checked={skips.forMeegy}
+                onChange={(e) =>
+                  setSkip("forMeegy", (e.currentTarget as HTMLInputElement).checked)
+                }
+              />
+              <span>
+                <strong>Skip description for Meegy</strong>
+              </span>
+            </label>
           </article>
           <article class="prompt-card">
             <div class="prompt-card__labelrow">
@@ -182,6 +211,18 @@ export function PromptsCard(props: PromptsCardProps) {
               }
               onBlur={props.onAutosave}
             />
+            <label class="capacities-setting-row">
+              <input
+                type="checkbox"
+                checked={skips.stoic}
+                onChange={(e) =>
+                  setSkip("stoic", (e.currentTarget as HTMLInputElement).checked)
+                }
+              />
+              <span>
+                <strong>Skip description for Stoic</strong>
+              </span>
+            </label>
           </article>
 
           {custom.list.length > 0 && (
@@ -195,6 +236,10 @@ export function PromptsCard(props: PromptsCardProps) {
             />
           )}
         </div>
+
+        <p class="field__hint">
+          Skipping still creates the task — only the description is left out.
+        </p>
 
         {editingPrompts && (
           <p class="field__hint custom-prompt__edit-note" role="status">

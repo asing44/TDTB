@@ -15,6 +15,7 @@ import {
   capacitiesSettingsToWire,
   capacitiesSourceToWire,
   daySetupToWire,
+  descriptionSkipsToWire,
   emptyTagCatalog,
   isCanonicalTagId,
   projectTagExclusionSettings,
@@ -2882,5 +2883,42 @@ describe("wire: unassigned_today (KTD2)", () => {
         minutes: 30,
       },
     ]);
+  });
+});
+
+describe("prompt description skips", () => {
+  it("projects the wire skip map onto the two toggleable prompts", () => {
+    const d = projectDaySetup(
+      { description_skips: { intention: true, megan_nicety: true, stoic_intention: false } },
+      false,
+    );
+    // The Reminder wire key has no checkbox, so it never reaches the model.
+    expect(d.descriptionSkips).toEqual({ forMeegy: true, stoic: false });
+  });
+
+  it("an absent skip map means no skips, never a fabricated map", () => {
+    expect(projectDaySetup({}, false).descriptionSkips).toBeUndefined();
+  });
+
+  it("malformed skip data degrades to no skips instead of throwing", () => {
+    expect(projectDaySetup({ description_skips: "nope" }, false).descriptionSkips).toEqual({
+      forMeegy: false,
+      stoic: false,
+    });
+    expect(
+      projectDaySetup(
+        { description_skips: { megan_nicety: "yes", stoic_intention: 1 } },
+        false,
+      ).descriptionSkips,
+    ).toEqual({ forMeegy: false, stoic: false });
+  });
+
+  it("the skip payload is a full replace carrying both toggleable keys", () => {
+    expect(descriptionSkipsToWire({ forMeegy: true, stoic: false })).toEqual({
+      description_skips: { megan_nicety: true, stoic_intention: false },
+    });
+    expect(descriptionSkipsToWire({ forMeegy: false, stoic: true })).toEqual({
+      description_skips: { megan_nicety: false, stoic_intention: true },
+    });
   });
 });

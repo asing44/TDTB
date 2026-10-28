@@ -268,7 +268,7 @@ export function buildDayPrompt(s: AppState): string {
   const captures = s.daySetup.captures;
   if (captures.intention || captures.forMeegy || captures.stoic) {
     out.push("## Captures");
-    if (captures.intention) out.push(`- Intention: ${captures.intention}`);
+    if (captures.intention) out.push(`- Reminder: ${captures.intention}`);
     if (captures.forMeegy) out.push(`- For Meegy: ${captures.forMeegy}`);
     if (captures.stoic) out.push(`- Stoic: ${captures.stoic}`);
     out.push("");

@@ -60,4 +60,53 @@ describe("U5 prompt state", () => {
     expect(s.promptSave.error).toContain("drafts store unavailable");
     expect(s.daySetup.confirmed).toBe(false);
   });
+
+  it("holds the skip map without touching the prompt drafts or the day flag", () => {
+    const h = makeHarness("fresh");
+    h.store.dispatch({
+      type: "PROMPT_SKIPS_SAVED",
+      descriptionSkips: { forMeegy: true, stoic: false },
+      warnings: [],
+    });
+    const s = h.store.getState();
+    expect(s.daySetup.descriptionSkips).toEqual({ forMeegy: true, stoic: false });
+    expect(s.daySetup.captures).toEqual({ intention: "", forMeegy: "", stoic: "" });
+    expect(s.daySetup.confirmed).toBe(false);
+    expect(s.promptSave.phase).toBe("saved");
+  });
+
+  it("a skip toggle sends the full map and keeps the other key's current value", async () => {
+    const h = makeHarness("fresh");
+    const adapter = new FixtureAdapter("fresh");
+    const spy = vi.spyOn(adapter, "savePromptSkips");
+    const controller = new Controller(adapter, h.store.dispatch, h.store.getState);
+    const before = h.store.getState().daySetup.captures;
+    await controller.savePromptSkips({ forMeegy: true, stoic: true });
+    await controller.savePromptSkips({ forMeegy: true, stoic: false });
+    expect(spy).toHaveBeenLastCalledWith({ forMeegy: true, stoic: false });
+    const s = h.store.getState();
+    expect(s.daySetup.descriptionSkips).toEqual({ forMeegy: true, stoic: false });
+    // Prompt-only: no capture text moves and the day is never confirmed.
+    expect(s.daySetup.captures).toEqual(before);
+    expect(s.daySetup.confirmed).toBe(false);
+  });
+
+  it("records a failed skip save as an error without throwing", async () => {
+    class FailingSkipsAdapter extends FixtureAdapter {
+      override async savePromptSkips(): Promise<never> {
+        throw new Error("skips store unavailable");
+      }
+    }
+    const h = makeHarness("fresh");
+    const controller = new Controller(
+      new FailingSkipsAdapter("fresh"),
+      h.store.dispatch,
+      h.store.getState,
+    );
+    await controller.savePromptSkips({ forMeegy: true, stoic: false });
+    const s = h.store.getState();
+    expect(s.promptSave.phase).toBe("error");
+    expect(s.promptSave.error).toContain("skips store unavailable");
+    expect(s.daySetup.descriptionSkips).toBeUndefined();
+  });
 });

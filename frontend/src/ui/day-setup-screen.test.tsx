@@ -413,7 +413,10 @@ describe("Planning 2a Morning prompts", () => {
     expect(r.queryByText("text → daily note")).toBeNull();
     expect(r.queryByText("pool → Live block")).toBeNull();
     expect(r.queryByText("Prompt exports")).toBeNull();
-    expect(r.queryByRole("checkbox")).toBeNull();
+    // The skip-description toggles live on the For Meegy and Stoic cards only.
+    expect(r.getAllByRole("checkbox")).toHaveLength(2);
+    expect(r.getByLabelText("Skip description for Meegy")).toBeTruthy();
+    expect(r.getByLabelText("Skip description for Stoic")).toBeTruthy();
   });
 
   it("shows the single export line and + Add prompt under the grid", () => {
