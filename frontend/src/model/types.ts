@@ -933,6 +933,17 @@ export interface MicroIdea {
   category: string;
 }
 
+/** One config pool entry as the editor reads and writes it. `id` is the stable
+    identity (streak/history are keyed by it) and never changes on edit;
+    `active: false` keeps the entry but drops it from the day's selection. */
+export interface MicroPoolItem {
+  id: string;
+  idea: string;
+  category: string;
+  effort: string;
+  active: boolean;
+}
+
 export interface MicroAdventure {
   /** Today's effective selection — dated override when present, else the
       server's deterministic LRU auto-pick. Null = Live renders plain. */

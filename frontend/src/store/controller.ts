@@ -89,6 +89,7 @@ import type {
   DaySetup,
   FixedInputs,
   MicroIdea,
+  MicroPoolItem,
   PlanInputs,
   SequenceRow,
   TagExclusionSettings,
@@ -755,6 +756,38 @@ export class Controller {
       pick: pick ?? pool[0] ?? null,
       source: pick === null ? "auto" : "override",
     });
+  }
+
+  /** Load the config micro-adventure pool for the editor. A failure keeps the
+      last good pool in state and records the error for a Retry. */
+  async loadMicroPool(): Promise<void> {
+    this.dispatch({ type: "MICRO_POOL_LOAD_START" });
+    try {
+      this.dispatch({ type: "MICRO_POOL_LOADED", items: await this.adapter.loadMicroPool() });
+    } catch (e) {
+      this.dispatch({ type: "MICRO_POOL_LOAD_FAILED", error: e instanceof Error ? e.message : String(e) });
+    }
+  }
+
+  /** Replace the config pool (tracked repo config write). The day's own
+      selection list refreshes on the next source refresh, not here. A refused
+      write keeps the last good pool; the 409 "shadowed" refusal is flagged so
+      the UI can say the edit would have no effect. */
+  async saveMicroPool(items: MicroPoolItem[]): Promise<void> {
+    this.dispatch({ type: "MICRO_POOL_SAVE_START" });
+    try {
+      this.dispatch({ type: "MICRO_POOL_SAVED", items: await this.adapter.saveMicroPool(items) });
+    } catch (e) {
+      const code =
+        e instanceof ApiError && e.detail && typeof e.detail === "object"
+          ? (e.detail as { code?: unknown }).code
+          : null;
+      this.dispatch({
+        type: "MICRO_POOL_SAVE_FAILED",
+        error: e instanceof Error ? e.message : String(e),
+        shadowed: e instanceof ApiError && e.status === 409 && code === "micro_adventure_pool_shadowed",
+      });
+    }
   }
 
   /** Set up day loose-end banner: Did it (done=true) or Dismiss (done=false)

@@ -48,6 +48,7 @@ import type {
   TagExclusionSettings,
   TagExclusionSettingsDraft,
   Validation,
+  MicroPoolItem,
 } from "../model/types";
 import { makeScenario, fixedInputsOf, type Scenario, type ScenarioName } from "../fixtures/scenarios";
 import { toMinutes } from "../model/time";
@@ -1119,6 +1120,35 @@ export class FixtureAdapter implements Adapter {
     const previousStart = row.start;
     row.start = start;
     return { block, start, previousStart };
+  }
+
+  /** Micro-adventure pool: the fixture "config" is an in-memory list seeded
+      from the scenario's pool, so an edit reads back on the next load. */
+  private microPool: MicroPoolItem[] | null = null;
+
+  private seedMicroPool(): MicroPoolItem[] {
+    if (!this.microPool) {
+      this.microPool = this.inputs.microAdventure.pool.map((idea) => ({
+        id: idea.id,
+        idea: idea.idea,
+        category: idea.category,
+        effort: "",
+        active: true,
+      }));
+    }
+    return this.microPool;
+  }
+
+  async loadMicroPool(): Promise<MicroPoolItem[]> {
+    await wait(LATENCY_MS);
+    return this.seedMicroPool().map((item) => ({ ...item }));
+  }
+
+  async saveMicroPool(pool: MicroPoolItem[]): Promise<MicroPoolItem[]> {
+    await wait(LATENCY_MS);
+    if (pool.length === 0) throw new Error("the micro-adventure pool cannot be empty");
+    this.microPool = pool.map((item) => ({ ...item }));
+    return this.microPool.map((item) => ({ ...item }));
   }
 
   async autoSequence(_ctx: SequenceContext): Promise<SequenceResult> {

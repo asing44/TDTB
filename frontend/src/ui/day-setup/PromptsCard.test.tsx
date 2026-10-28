@@ -1,10 +1,12 @@
 /* PromptsCard.test.tsx: the Day Setup Live micro-adventure card shows the same
    pool provenance note and Capacities option suffix as the settings drawer. */
 
-import { afterEach, describe, expect, it } from "vitest";
-import { cleanup, render } from "@testing-library/preact";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { cleanup, fireEvent, render, waitFor } from "@testing-library/preact";
 
 import type { MicroAdventure } from "../../model/types";
+import { FixtureAdapter } from "../../adapters/fixture";
+import { makeHarness } from "../test-harness";
 import { PromptsCard } from "./PromptsCard";
 
 afterEach(cleanup);
@@ -70,5 +72,36 @@ describe("PromptsCard pool note", () => {
       (o) => o.textContent,
     );
     expect(opts).toEqual(["Watch sunset", "Try pottery · Capacities"]);
+  });
+});
+
+describe("PromptsCard pool editor entry", () => {
+  const storage = { getItem: () => null, setItem: noop, removeItem: noop } as unknown as Storage;
+  const props = {
+    liveCustom: "", onLiveCustom: noop, onPickPool: noop, onSetCustom: noop, onShuffle: noop,
+    onResetAuto: noop, captures: { intention: "", forMeegy: "", stoic: "" }, onCapture: noop,
+    onAutosave: noop, onPersistCustom: noop,
+    promptSave: { phase: "idle", error: null, warnings: [] }, customStorage: storage,
+  };
+
+  it("has no Edit pool control without the app store behind it", () => {
+    const r = card(micro());
+    expect(r.queryByRole("button", { name: "Edit pool" })).toBeNull();
+  });
+
+  it("opens the pool editor from the card, loading the pool, and returns focus on close", async () => {
+    const h = makeHarness("ready");
+    const load = vi.spyOn(FixtureAdapter.prototype, "loadMicroPool");
+    const r = h.ui(<PromptsCard micro={micro()} {...props} />);
+    const open = r.getByRole("button", { name: "Edit pool" });
+    expect(open.getAttribute("aria-haspopup")).toBe("dialog");
+    open.focus();
+    fireEvent.click(open);
+    expect(r.getByRole("dialog", { name: "Micro-adventure ideas" })).toBeTruthy();
+    expect(load).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect((r.getByLabelText("Idea 1") as HTMLInputElement).value).not.toBe(""));
+    fireEvent.keyDown(r.getByRole("dialog"), { key: "Escape" });
+    expect(r.queryByRole("dialog")).toBeNull();
+    expect(document.activeElement).toBe(open);
   });
 });

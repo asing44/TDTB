@@ -8,10 +8,12 @@
    to the Todoist Inbox at Commit. Custom prompt answers persist through the
    captures patch (`onPersistCustom`) rather than the retired opt-in store. */
 
-import { useState } from "preact/hooks";
+import { useContext, useEffect, useState } from "preact/hooks";
 
 import type { MicroAdventure } from "../../model/types";
 import { MicroPoolNote, poolOptionLabel } from "../microPool";
+import { Ctx, useApp, useAppState } from "../context";
+import { MicroPoolEditor } from "./MicroPoolEditor";
 import {
   CustomPromptAdd,
   CustomPromptList,
@@ -48,8 +50,29 @@ function categoryLabel(category: string): string {
   return category.charAt(0).toUpperCase() + category.slice(1);
 }
 
+/** Mounts the pool editor against the app store: loads the config pool on
+    open and hands the editor its slice. Rendered only inside the app context. */
+function MicroPoolEditorHost({ onClose }: { onClose: () => void }) {
+  const { controller } = useApp();
+  const { microPool } = useAppState();
+  const load = () => void controller.loadMicroPool();
+  useEffect(load, []);
+  return (
+    <MicroPoolEditor
+      pool={microPool}
+      onLoad={load}
+      onSave={(items) => void controller.saveMicroPool(items)}
+      onClose={onClose}
+    />
+  );
+}
+
 export function PromptsCard(props: PromptsCardProps) {
   const micro = props.micro;
+  // The pool editor needs the app store; without one (isolated renders) the
+  // card simply has no Edit pool control.
+  const inApp = useContext(Ctx) !== null;
+  const [poolOpen, setPoolOpen] = useState(false);
   // Edit prompts reveals rename and remove for the browser-defined prompts.
   const [editingPrompts, setEditingPrompts] = useState(false);
   const [customOpen, setCustomOpen] = useState(false);
@@ -114,6 +137,19 @@ export function PromptsCard(props: PromptsCardProps) {
               >
                 Use my own idea
               </button>
+              {inApp && (
+                <>
+                  {" · "}
+                  <button
+                    type="button"
+                    class="live-micro__custom-link"
+                    aria-haspopup="dialog"
+                    onClick={() => setPoolOpen(true)}
+                  >
+                    Edit pool
+                  </button>
+                </>
+              )}
             </p>
             {customOpen && (
               <div class="prompt-card__controls field__controls">
@@ -140,6 +176,7 @@ export function PromptsCard(props: PromptsCardProps) {
                 </button>
               </div>
             )}
+            {poolOpen && <MicroPoolEditorHost onClose={() => setPoolOpen(false)} />}
           </article>
 
           <article class="prompt-card">

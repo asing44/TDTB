@@ -243,6 +243,16 @@ export interface Adapter {
       today's day setup. 404 unknown block, 409 shadowed by a local override,
       422 unparseable time surface as ApiError with the server message. */
   saveAnchoredStart(block: string, start: string): Promise<AnchoredStartSaveResult>;
+  /** GET /config/micro-adventure/pool — read-only, tokenless: the CONFIG pool
+      only (every entry, active or not, uncapped, no Capacities ideas). */
+  loadMicroPool(): Promise<import("../model/types").MicroPoolItem[]>;
+  /** POST /config/micro-adventure/pool — one token-guarded non-billed FULL
+      REPLACE of the config pool. 422 invalid, 404 not found, 409 shadowed by
+      the machine-local config / not editable, 500 write error surface as
+      ApiError. Resolves with the pool as saved. */
+  saveMicroPool(
+    pool: import("../model/types").MicroPoolItem[],
+  ): Promise<import("../model/types").MicroPoolItem[]>;
   /** POST /sequence — the ONE billed action. Never called automatically. */
   autoSequence(ctx: SequenceContext): Promise<SequenceResult>;
   /** POST /validate-sequence — deterministic, free. */

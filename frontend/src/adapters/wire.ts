@@ -89,6 +89,7 @@ import type {
   DaySemantics,
   MicroAdventure,
   MicroIdea,
+  MicroPoolItem,
   MintSession,
   OverlapGrant,
   SchedulableOverride,
@@ -1172,6 +1173,20 @@ export function projectAnchoredStartSave(wire: Wire): AnchoredStartSaveResult {
     start,
     previousStart: to24h(wire.previous_start),
   };
+}
+
+/** GET/POST /config/micro-adventure/pool response: the config pool exactly as
+    stored. Every field is required on the wire; a malformed body is a
+    protocol error, not an empty pool. */
+export function projectMicroPool(wire: Wire): MicroPoolItem[] {
+  if (!Array.isArray(wire.pool)) throw new Error("micro-adventure pool response had no pool array");
+  return wire.pool.map((row: Wire) => ({
+    id: String(row.id ?? ""),
+    idea: String(row.idea ?? ""),
+    category: String(row.category ?? ""),
+    effort: String(row.effort ?? ""),
+    active: row.active === true,
+  }));
 }
 
 // -- per-endpoint projections ------------------------------------------------

@@ -56,6 +56,7 @@ import type {
   TagExclusionSettings,
   TagExclusionSettingsDraft,
   Validation,
+  MicroPoolItem,
 } from "../model/types";
 import {
   daySetupToWire,
@@ -80,6 +81,7 @@ import {
   projectCapacity,
   projectCommitReport,
   projectAnchoredStartSave,
+  projectMicroPool,
   projectDurationMemoryReset,
   projectDurationMemorySave,
   projectFixedInputs,
@@ -581,6 +583,18 @@ export class ApiAdapter implements Adapter {
     return projectAnchoredStartSave(
       await this.post("/config/anchored-blocks/start", { block, start }),
     );
+  }
+
+  /** Read the config micro-adventure pool: one tokenless GET (like GET
+      /config), no billed or write endpoint. */
+  async loadMicroPool(): Promise<MicroPoolItem[]> {
+    return projectMicroPool(await this.request("/config/micro-adventure/pool"));
+  }
+
+  /** Replace the config micro-adventure pool in the tracked repo config:
+      exactly ONE token-guarded non-billed POST carrying the full pool. */
+  async saveMicroPool(pool: MicroPoolItem[]): Promise<MicroPoolItem[]> {
+    return projectMicroPool(await this.post("/config/micro-adventure/pool", { pool }));
   }
 
   async autoSequence(ctx: SequenceContext): Promise<SequenceResult> {

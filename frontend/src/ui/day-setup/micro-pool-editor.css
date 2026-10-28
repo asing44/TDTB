@@ -1,0 +1,111 @@
+/* micro-pool-editor.css — rows and fields for the micro-adventure pool editor.
+   The drawer frame, head, scroll area, list and footer are the Habits drawer's
+   (app.css .habits-drawer*); this file adds only the per-row field layout.
+   Existing tokens (tokens.css) only; both themes follow data-theme on <html>.
+   Focus is never removed: the global :focus-visible ring applies. */
+
+.pool-editor__list {
+  padding-block: 0;
+}
+
+.pool-editor__row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 8px;
+  padding: 10px 0;
+}
+
+.pool-editor__row--off .pool-editor__field input {
+  background: var(--t-surface-2);
+  color: var(--t-muted);
+}
+
+.pool-editor__field {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--t-muted);
+}
+
+.pool-editor__field--idea {
+  grid-column: 1 / -1;
+}
+
+.pool-editor__field input {
+  width: 100%;
+  min-width: 0;
+  height: 36px;
+  padding: 0 10px;
+  box-sizing: border-box;
+  border: 1px solid var(--t-border);
+  border-radius: var(--radius);
+  background: var(--t-surface);
+  color: var(--t-text);
+  font: inherit;
+  font-size: 14px;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.pool-editor__row-actions {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.pool-editor__switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.pool-editor__switch input {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  accent-color: var(--t-accent);
+}
+
+.pool-editor__problem {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.pool-editor__empty {
+  margin: 8px 0 0;
+  color: var(--t-muted);
+  font-size: 13px;
+}
+
+.pool-editor__hint {
+  margin: 8px 2px 0;
+}
+
+.pool-editor__add {
+  margin-top: 16px;
+}
+
+.pool-editor__add-fields {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 8px;
+  margin-top: 8px;
+  align-items: end;
+}
+
+.pool-editor__add-fields .btn {
+  justify-self: start;
+}
