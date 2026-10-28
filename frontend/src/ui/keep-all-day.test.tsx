@@ -1,14 +1,13 @@
 /* keep-all-day.test.tsx — GitHub issue asing44/TDTB#17: the per-row all-day
    path. It routes the row through the existing blocks == 0 all-day state (the
    shadow's date-only `schedule-all-day` due, no timed block) and offers the
-   reverse (time block) to restore the source estimate.
+   reverse (a time block) to restore the source estimate.
 
-   RE-HOMED 2026-10-16 (task-actions F7): the retired per-row More menu carried
-   "Keep all-day" / "Use a time block" as separate menu verbs. Both are now the
-   expanded row's scheduling radios (RowExpanded line 1) staged on the row
-   draft and committed by Save, so the same guarantees are asserted against
-   that control instead of the menu. See the retired-test ledger,
-   design/task-actions/retired-tests.md.
+   Row redesign (2026-10-28): the scheduling radios and the Save step are gone.
+   The expanded row's All-day control is an aria-pressed TOGGLE BUTTON that
+   applies at once (blocks == 0, one Undo step); pressing it again gives the row
+   a time block back. A Capacities row may now go all-day (a local plan state, no
+   source write); only a protected Todoist native time stays closed.
 
    Fixture adapters only: no live adapter, no billed call, no source write.
    The billed-path assertions spy the adapter's own /sequence and /commit
@@ -55,17 +54,19 @@ function expand(container: Element, name: string): HTMLElement {
   return rowFor(container, name);
 }
 
-const radio = (row: Element, value: string) =>
-  row.querySelector<HTMLInputElement>(`input[type="radio"][value="${value}"]`)!;
+/** The expanded panel's All-day toggle button. */
+const allDay = (row: Element) =>
+  Array.from(row.querySelectorAll<HTMLButtonElement>("button")).find(
+    (b) => b.textContent?.trim() === "All-day",
+  )!;
 const btn = (row: Element, text: string) =>
   Array.from(row.querySelectorAll<HTMLButtonElement>("button")).find(
     (b) => b.textContent?.trim() === text,
   ) ?? null;
 
-/** The written reason the all-day radio points at with aria-describedby. */
+/** The written reason the All-day toggle points at with aria-describedby. */
 function allDayReason(row: Element): string | null {
-  const input = radio(row, "allday");
-  const id = input.getAttribute("aria-describedby");
+  const id = allDay(row).getAttribute("aria-describedby");
   if (!id) return null;
   return row.querySelector(`#${id}`)?.textContent ?? null;
 }
@@ -114,13 +115,13 @@ function withNativeTime(sc: Scenario): void {
   press.scheduledStart = "19:00";
 }
 
-describe("Keep all-day: eligibility of the expanded row's all-day radio", () => {
+describe("Keep all-day: eligibility of the expanded row's All-day toggle", () => {
   it("is enabled for a date-only Todoist row", () => {
     const h = makeHarness("ready");
     const { container } = h.ui(<Queue />);
     const row = expand(container, "Press");
-    expect(radio(row, "time").checked).toBe(true);
-    expect(radio(row, "allday").disabled).toBe(false);
+    expect(allDay(row).getAttribute("aria-pressed")).toBe("false");
+    expect(allDay(row).disabled).toBe(false);
     expect(allDayReason(row)).toBeNull();
   });
 
@@ -128,50 +129,44 @@ describe("Keep all-day: eligibility of the expanded row's all-day radio", () => 
     const h = makeHarness("ready", withNativeTime);
     const { container } = h.ui(<Queue />);
     const row = expand(container, "Press");
-    expect(radio(row, "allday").disabled).toBe(true);
-    expect(radio(row, "time").disabled).toBe(false);
+    expect(allDay(row).disabled).toBe(true);
     expect(allDayReason(row)).toBe(EXCLUSION_REASONS.protectedAllDay);
   });
 
-  it("is disabled with the written reason for a Capacities row", () => {
+  it("is enabled for a Capacities row (local plan state, no source write)", () => {
     const h = makeHarness("ready");
     const { container } = h.ui(<Queue />);
     const row = expand(container, "Note Processing");
-    expect(radio(row, "allday").disabled).toBe(true);
-    expect(allDayReason(row)).toBe(EXCLUSION_REASONS.allDayCapacities);
+    expect(allDay(row).disabled).toBe(false);
+    expect(allDay(row).getAttribute("aria-pressed")).toBe("false");
+    expect(allDayReason(row)).toBeNull();
   });
 
-  it("reads as already all-day for a source zero-block row", () => {
+  it("reads as already all-day for a source zero-block row and reverses", () => {
     const h = makeHarness("ready");
     const { container } = h.ui(<Queue />);
     const row = expand(container, "Charge GoPro");
-    expect(radio(row, "allday").checked).toBe(true);
+    expect(allDay(row).getAttribute("aria-pressed")).toBe("true");
     // The reverse (a time block) stays available, so the row is not a dead end.
-    expect(radio(row, "time").disabled).toBe(false);
+    expect(allDay(row).disabled).toBe(false);
     expect(allDayReason(row)).toBeNull();
     expect(row.querySelector(".trow__dur .dslider__label")?.textContent).toBe("All day");
     expect(row.querySelector(".trow__state")?.textContent).toBe("All-day");
   });
 });
 
-describe("Keep all-day: Save commits the all-day state", () => {
+describe("Keep all-day: the toggle applies at once", () => {
   it("writes the blocks == 0 override exactly once and renders the row all-day", () => {
     const h = recordingHarness("ready");
     const { container } = h.ui(<Queue />);
     const before = h.actions.filter((a) => a.type === "OVERRIDE_SET").length;
 
     let row = expand(container, "Press");
-    fireEvent.click(radio(row, "allday"));
-    row = rowFor(container, "Press");
-    // Staging alone changes nothing: the draft is not the session yet.
-    expect(h.actions.filter((a) => a.type === "OVERRIDE_SET").length).toBe(before);
-    expect(btn(row, "Save")).not.toBeNull();
-
-    fireEvent.click(btn(row, "Save")!);
+    fireEvent.click(allDay(row));
 
     const overrides = h.actions.filter((a) => a.type === "OVERRIDE_SET");
     expect(overrides.length - before).toBe(1);
-    // The all-day save also persists the duration it captured, so switching
+    // The all-day edit also persists the duration it captured, so switching
     // back to a time block restores the real estimate rather than 0.
     expect(overrides[overrides.length - 1]).toEqual({
       type: "OVERRIDE_SET",
@@ -184,8 +179,9 @@ describe("Keep all-day: Save commits the all-day state", () => {
     expect(row.classList.contains("qrow--background")).toBe(true);
     expect(row.querySelector(".trow__dur .dslider__label")?.textContent).toBe("All day");
     expect(row.querySelector(".trow__state")?.textContent).toBe("All-day");
-    // Saving clears the draft, so the row is no longer staged.
+    // Applied, not staged: there is no Save step to clear.
     expect(btn(row, "Save")).toBeNull();
+    expect(allDay(row).getAttribute("aria-pressed")).toBe("true");
   });
 
   it("carries blocks 0 into the sequence payload (existing all-day wire)", async () => {
@@ -201,8 +197,7 @@ describe("Keep all-day: Save commits the all-day state", () => {
     const { container } = h.ui(<Queue />);
 
     const row = expand(container, "Press");
-    fireEvent.click(radio(row, "allday"));
-    fireEvent.click(btn(rowFor(container, "Press"), "Save")!);
+    fireEvent.click(allDay(row));
 
     await waitFor(() => expect(ctxs.length).toBeGreaterThan(0));
     const press = ctxs[ctxs.length - 1].included.find((i) => i.id === "Press");
@@ -220,8 +215,7 @@ describe("Keep all-day: Save commits the all-day state", () => {
     const { container } = h.ui(<Queue />);
 
     const row = expand(container, "Press");
-    fireEvent.click(radio(row, "allday"));
-    fireEvent.click(btn(rowFor(container, "Press"), "Save")!);
+    fireEvent.click(allDay(row));
     await new Promise((resolve) => setTimeout(resolve, 150));
 
     expect(sequence).not.toHaveBeenCalled();
@@ -231,18 +225,16 @@ describe("Keep all-day: Save commits the all-day state", () => {
 });
 
 describe("Keep all-day: reverse path", () => {
-  it("restores the source estimate through the time-block radio and Save", () => {
+  it("restores the source estimate by pressing All-day again", () => {
     const h = recordingHarness("ready");
     const { container } = h.ui(<Queue />);
 
     let row = expand(container, "Press");
-    fireEvent.click(radio(row, "allday"));
-    fireEvent.click(btn(rowFor(container, "Press"), "Save")!);
+    fireEvent.click(allDay(row));
     expect(effectiveBlocks(h.store.getState(), "Press")).toBe(0);
 
     row = rowFor(container, "Press");
-    fireEvent.click(radio(row, "time"));
-    fireEvent.click(btn(rowFor(container, "Press"), "Save")!);
+    fireEvent.click(allDay(row));
 
     expect(effectiveBlocks(h.store.getState(), "Press")).toBe(3);
     expect(
