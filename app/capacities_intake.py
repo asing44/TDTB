@@ -36,6 +36,7 @@ import tdtb_gather as gather  # noqa: E402  (path-shimmed import, see inventory.
 import capacities_builder  # noqa: E402
 import capacities_refresh  # noqa: E402
 import capacities_rules  # noqa: E402
+import capacities_tag_titles  # noqa: E402
 import exclusion_settings  # noqa: E402
 import tag_exclusions  # noqa: E402
 from capacities_adapter import (  # noqa: E402
@@ -192,6 +193,18 @@ def load_direct_rows(
                 rules=rules,
                 exclusion_policy=policy,
             ),
+        )
+        # Tag titles are display-only and were resolved by the refresh that
+        # published this generation. Seeding the adapter's memo from the
+        # machine-local cache fills them here WITHOUT the provider: the replay
+        # seam above refuses every listing, and a missing or unreadable cache
+        # simply leaves the titles blank. The read never raises and never
+        # creates the file.
+        adapter.seed_tag_titles(
+            capacities_tag_titles.read_titles(
+                read.space_id,
+                capacities_tag_titles.provider_base_url(),
+            )
         )
         result = adapter.items_for_day_from_objects(logical_day, list(read.objects))
     except CapacitiesContractError:

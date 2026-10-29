@@ -60,6 +60,7 @@ except ImportError:  # pragma: no cover — non-POSIX fallback
 import capacities_adapter
 import capacities_cache_io
 import capacities_refresh_state as refresh_state
+import capacities_tag_titles
 import tag_exclusions
 
 logger = logging.getLogger("tdtb.capacities_refresh")
@@ -474,6 +475,11 @@ class PacedProvider:
         self.pacer.observe(endpoint, headers)
 
     @property
+    def base_url(self) -> str | None:
+        """The wrapped transport's provider base URL, when it exposes one."""
+        return getattr(self.raw, "base_url", None)
+
+    @property
     def supports_object_listing(self) -> bool:
         """Whether the wrapped transport can enumerate objects.
 
@@ -684,6 +690,11 @@ class RefreshCoordinator:
                 exclusion_policy=exclusion_policy,
                 content_cache=None,
             ),
+            # Tag titles the catalog read resolves here are display metadata for
+            # the next OFFLINE replay: the digest route projects the cached
+            # generation and must never call the provider, so the map has to
+            # outlive this run. Advisory: a cache failure never fails a refresh.
+            tag_titles_sink=self._remember_tag_titles,
         )
         self._job_dir = self.root / JOB_DIRNAME
         self.job_lock_path = self._job_dir / JOB_LOCK_FILENAME
@@ -1234,6 +1245,24 @@ class RefreshCoordinator:
             object_id, type_key, content, content_read_at=self._wall_clock()
         )
         return content, True
+
+    def _remember_tag_titles(
+        self, titles: dict[str, str], complete: bool
+    ) -> None:
+        """Persist the resolved tag-title map for the next offline replay.
+
+        A complete catalog replaces this namespace's map, which is how a tag
+        renamed in Capacities reaches the next replay; a partial catalog merges
+        additively so a partial read never deletes a known id. ``remember_titles``
+        never raises and returns ``False`` on any failure, so a cache problem
+        cannot fail the run or add a second warning.
+        """
+        capacities_tag_titles.remember_titles(
+            self.space_id,
+            capacities_tag_titles.provider_base_url(self.provider),
+            titles,
+            merge=not complete,
+        )
 
 
 def _raise_cancelled() -> None:

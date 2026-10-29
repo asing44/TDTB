@@ -11,6 +11,7 @@ never writes it.
 """
 from __future__ import annotations
 
+from collections.abc import Mapping
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from datetime import date, datetime
@@ -1124,7 +1125,13 @@ def _is_provider_timeout(exc: BaseException) -> bool:
 
 
 class CapacitiesAdapter:
-    def __init__(self, provider: CapacitiesProvider, config: CapacitiesConfig) -> None:
+    def __init__(
+        self,
+        provider: CapacitiesProvider,
+        config: CapacitiesConfig,
+        *,
+        tag_titles_sink: Callable[[dict[str, str], bool], None] | None = None,
+    ) -> None:
         if not _text(config.space_id):
             raise CapacitiesContractError(
                 "Capacities space_id is required",
@@ -1179,6 +1186,14 @@ class CapacitiesAdapter:
         self._tag_catalog_incomplete = False
         #: Per-run guard: at most one tag-title warning per projection run.
         self._tag_title_warned = False
+        #: Optional machine-local sink for the resolved tag-title map, bound by
+        #: the refresh coordinator (the paced provider path). It receives
+        #: ``(titles, complete)`` and must never raise; ``None`` means this
+        #: adapter persists nothing, which is what every offline replay and
+        #: every test wants. Titles written here are disposable display
+        #: metadata — never identity, never a fingerprint, never in the
+        #: published generation or the object cache.
+        self._tag_titles_sink = tag_titles_sink
 
     def close(self) -> None:
         """Close an injected transport when it owns a closeable client."""
@@ -2020,7 +2035,15 @@ class CapacitiesAdapter:
         A provider that does not declare object enumeration — the offline
         intake replay seam is one — is never asked. Refusing to read there is
         the correct behaviour, not a degradation, so it stays silent and the
-        tag titles simply stay blank.
+        tag titles simply stay blank. An offline adapter is instead SEEDED from
+        the machine-local tag-title cache by its caller, which fills the same
+        memo this method populates and therefore never reaches the catalog.
+
+        When a sink is bound (the refresh coordinator), a successfully read
+        catalog is handed to it for the next offline replay: complete replaces
+        the stored map, partial merges additively so a partial read never
+        deletes a known id. Freshness is the next refresh — a tag renamed in
+        Capacities is rewritten then — and no sink failure is ever raised here.
         """
         if self._tag_titles is not None:
             return self._tag_titles
@@ -2030,11 +2053,13 @@ class CapacitiesAdapter:
             return self._tag_titles
         titles: dict[str, str] = {}
         incomplete = True
+        readable = False
         try:
             catalog = self.list_tags()
         except Exception:  # noqa: BLE001 — advisory display boundary degrades
             catalog = None
         if isinstance(catalog, dict):
+            readable = True
             incomplete = _text(catalog.get("status")) != "complete"
             for row in catalog.get("tags") or []:
                 if not isinstance(row, dict):
@@ -2046,7 +2071,33 @@ class CapacitiesAdapter:
                 titles.setdefault(_canonical_tag_id(tag_id), title)
         self._tag_titles = titles
         self._tag_catalog_incomplete = incomplete
+        if readable and self._tag_titles_sink is not None:
+            try:
+                self._tag_titles_sink(dict(titles), not incomplete)
+            except Exception:  # noqa: BLE001 — persistence is advisory only
+                pass
         return titles
+
+    def seed_tag_titles(self, titles: Any) -> None:
+        """Seed the display-title map before projection (offline replay).
+
+        The caller reads the machine-local tag-title cache and hands it here so
+        a projection over cached objects fills titles with no provider call at
+        all. An empty map is a real answer (\"nothing cached\") and is only
+        recorded when it is non-empty: a replay adapter then goes through the
+        ordinary capability gate and still never lists anything.
+        """
+        cleaned: dict[str, str] = {}
+        if isinstance(titles, Mapping):
+            for tag_id, title in titles.items():
+                clean_id = _text(tag_id)
+                clean_title = _text(title)
+                if not clean_id or not clean_title:
+                    continue
+                cleaned.setdefault(_canonical_tag_id(clean_id), clean_title)
+        if cleaned:
+            self._tag_titles = cleaned
+            self._tag_catalog_incomplete = False
 
     def _fill_tag_titles(
         self, refs: list[dict[str, str]]
@@ -2606,6 +2657,11 @@ class CapacitiesRestClient:
     #: from a published generation declares nothing and is therefore never
     #: asked — the adapter's safe default.
     supports_object_listing = True
+
+    @property
+    def base_url(self) -> str:
+        """The provider base URL this client was built for (no credentials)."""
+        return str(self._client.base_url)
 
     def __init__(
         self,
