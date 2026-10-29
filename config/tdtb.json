@@ -56,17 +56,8 @@
       "staleness",
       "summit"
     ],
-    "sequence_rank": [
-      "priority",
-      "overdue",
-      "started",
-      "alphabetical"
-    ],
-    "today_sort": [
-      "priority",
-      "due_date",
-      "alphabetical"
-    ]
+    "sequence_rank": ["priority", "overdue", "started", "alphabetical"],
+    "today_sort": ["priority", "due_date", "alphabetical"]
   },
   "schema_reference": {
     "todoist_projects": [
@@ -267,7 +258,7 @@
     {
       "Block": "Sudsing",
       "Type": "hard",
-      "Start": "5:45 PM",
+      "Start": "5:30 PM",
       "End": null,
       "Duration": "30m",
       "Days": "daily",

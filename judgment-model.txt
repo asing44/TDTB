@@ -1,10 +1,10 @@
-deepseek/deepseek-v4.1-flash
+z-ai/glm-5.3-flash
 
 # Optional judgment request parameters (uncomment and edit to tune).
 # They follow the ACTIVE model above (including a TDTB_JUDGMENT_MODEL env
 # override) and are read once at startup — a change needs tdtb-restart.
 # Unset keys mean no change from today's built-in payload.
-# reasoning_effort: low
+reasoning_effort: low
 # max_tokens: 8192
 # temperature: 0.2
 # top_p: 1
@@ -13,7 +13,7 @@ deepseek/deepseek-v4.1-flash
 
 # Optional OpenRouter PROVIDER ROUTING (the request's `provider` object).
 # require_parameters stays true always and is not editable here.
-# provider_order: together
+provider_order: together
 # provider_only: together
 # provider_ignore: deepinfra
 # provider_quantizations: fp8,int8
