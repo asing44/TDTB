@@ -1215,6 +1215,14 @@ function rowTagsOf(row: Wire): string[] {
   return tags;
 }
 
+/** A trimmed non-empty string (numbers allowed for ids), else null. */
+function nonBlank(value: unknown, allowNumber = false): string | null {
+  if (allowNumber && typeof value === "number" && Number.isFinite(value)) return String(value);
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
 export function projectAssigned(row: Wire): AssignedItem {
   const source =
     row.source === "todoist"
@@ -1271,6 +1279,16 @@ export function projectAssigned(row: Wire): AssignedItem {
     capacitiesReviewReasons: Array.isArray(row.capacities_review_reasons)
       ? row.capacities_review_reasons.map(String)
       : [],
+    capacitiesStructureId:
+      source === "capacities" && nonBlank(row.capacities_structure_id) !== null
+        ? nonBlank(row.capacities_structure_id)
+        : null,
+    // Origin chip: the Todoist project name and its colour NAME. Either may be
+    // absent (older payloads, fixtures); the chip degrades to the source label.
+    projectId: source === "todoist" ? nonBlank(row.project_id, true) : null,
+    projectName: source === "todoist" ? nonBlank(row.project_name) : null,
+    projectColor:
+      source === "todoist" ? (nonBlank(row.project_color)?.toLowerCase() ?? null) : null,
     isRecurring: source === "todoist" && row.is_recurring === true,
     scheduledStart: source === "todoist" ? to24h(row.scheduled_start) : null,
     labels: Array.isArray(row.labels) ? row.labels.map(String) : [],

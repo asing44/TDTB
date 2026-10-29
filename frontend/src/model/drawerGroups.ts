@@ -95,6 +95,9 @@ export interface DrawerFacts {
   urgency: string | null;
   scheduledStart: string | null;
   kind: string | null;
+  /** Todoist project name and colour name, when the wire carried them. */
+  projectName?: string | null;
+  projectColor?: string | null;
 }
 
 /** Facts for a row whose source item is not at hand: it has no date, no
@@ -113,6 +116,10 @@ export interface DrawerSourceGroup {
   source: DrawerSourceKey;
   label: string;
   kind: string | null;
+  /** Todoist group only: the project every row shares (else null), with its
+      colour name. The head chip names it; the key and label never change. */
+  projectName?: string | null;
+  projectColor?: string | null;
   rows: AssignmentRow[];
 }
 
@@ -147,6 +154,11 @@ export function drawerTierOf(facts: DrawerFacts, today: string): DrawerTierKey {
   const band = bandOf({ source: facts.source, urgency: facts.urgency } as AssignedItem);
   if (band === "crit" || band === "high") return "priority";
   return "no-date";
+}
+
+function nameOf(value: string | null | undefined): string | null {
+  const trimmed = (value ?? "").trim();
+  return trimmed.length > 0 ? trimmed : null;
 }
 
 function sourceKeyOf(source: string): DrawerSourceKey {
@@ -187,14 +199,26 @@ export function drawerTierGroups(
       sources = new Map();
       byTier.set(tier, sources);
     }
+    const projectName = group.source === "todoist" ? nameOf(facts.projectName) : null;
+    const projectColor = group.source === "todoist" ? nameOf(facts.projectColor) : null;
     const existing = sources.get(group.key);
-    if (existing) existing.rows.push(row);
-    else
+    if (existing) {
+      existing.rows.push(row);
+      if (group.source === "todoist") {
+        // One shared project names the head; any mix falls back to "Todoist".
+        if (existing.projectName !== projectName) existing.projectName = null;
+        existing.projectColor = existing.projectName
+          ? (existing.projectColor ?? projectColor)
+          : null;
+      }
+    } else
       sources.set(group.key, {
         key: group.key,
         source: group.source,
         label: group.label,
         kind: group.kind,
+        projectName,
+        projectColor: projectName ? projectColor : null,
         rows: [row],
       });
   }

@@ -28,6 +28,7 @@ import { rowTags, sourceContext } from "../model/sourceContext";
 import { mintOverlapNotes, overlapNotes } from "../model/findings";
 import { dueLabel, normalizeUrgency } from "../model/urgency";
 import type { AssignedItem } from "../model/types";
+import { OriginChip, originChipSpec } from "./sourceChip";
 
 /** What Complete does on a Capacities row, in the words the control carries.
     Capacities write-back is out of scope, so the row is skipped for today. */
@@ -231,7 +232,7 @@ export function TaskRow({
   const { controller } = useApp();
   const state = queueState(s, item.id);
   const chip = sourceChip(item);
-  const kind = kindLabel(item, structureTitles);
+  const origin = originChipSpec(item, structureTitles);
   const urgency = normalizeUrgency(item);
   const tags = rowTags(item);
   const due = dueLabel(item.deadline, s.inputs?.validDate ?? "");
@@ -324,14 +325,13 @@ export function TaskRow({
           <span class="qrow__relationship">child of {hierarchy.parentName}</span>
         ) : null}
         <span class="qrow__source" title={metaDetail || (item.path ?? undefined)}>
-          <span class={`qrow__swatch qrow__swatch--${chip.key}`} aria-hidden="true" />
-          <span class={`qrow__src qrow__src--${chip.key}`}>{chip.label}</span>
-          {kind && (
-            <span
-              class={`qrow__type qrow__type--${item.source === "capacities" ? "structure" : kind}`}
-            >
-              {kind}
-            </span>
+          {origin ? (
+            <OriginChip spec={origin} source={chip.key} />
+          ) : (
+            <>
+              <span class={`qrow__swatch qrow__swatch--${chip.key}`} aria-hidden="true" />
+              <span class={`qrow__src qrow__src--${chip.key}`}>{chip.label}</span>
+            </>
           )}
           {needsLook && (
             <span
