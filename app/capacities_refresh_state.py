@@ -35,6 +35,11 @@ Contract (KTD2/KTD3):
   written after its pointer, stamped with that generation. A reader serves it
   only while the stamp matches the installed generation; otherwise it reads as
   missing.
+* **Content-free schema-change sidecar.** The Refresh may leave one small
+  record at the root describing a detected Capacities schema change. It is
+  replaced whole (0600 file, 0700 directory), never records a diagnostic, and
+  reads as missing when it is absent, unusable, or written for another
+  namespace.
 
 Machine-local only: the caller owns the root (``app_config.state_dir()`` via
 ``capacities_builder.refresh_state_dir``), so raw content never enters a
@@ -45,9 +50,11 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import os
 import time
 from contextlib import contextmanager
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterator, Mapping
 from urllib.parse import urlsplit
@@ -59,6 +66,8 @@ REFRESH_STATE_SCHEMA_VERSION = 1
 OBJECT_SCHEMA_VERSION = 1
 RUN_MARKER_SCHEMA_VERSION = 1
 STRUCTURE_CONTRACT_SCHEMA_VERSION = 1
+#: The content-free schema-change sidecar's own document version.
+SCHEMA_CHANGE_SCHEMA_VERSION = 1
 #: The legacy ``_ContentCache`` document version this module can read for an
 #: optional, read-only import. It mirrors ``capacities_builder``'s constant
 #: without importing the builder back (that would be an import cycle).
@@ -69,6 +78,13 @@ SNAPSHOTS_DIRNAME = "snapshots"
 RUNS_DIRNAME = "runs"
 CONTRACTS_DIRNAME = "contracts"
 LOCK_FILENAME = "refresh-state.lock"
+#: The single content-free "the owner changed Capacities" record. It lives at
+#: the refresh-state root rather than beside one generation's contract: the
+#: notice outlives generations until a later surface acknowledges it.
+SCHEMA_CHANGE_FILENAME = "schema-change.json"
+
+#: The only severities a stored schema-change record may carry.
+SCHEMA_CHANGE_SEVERITIES = ("info", "warn")
 
 #: Storage bounds are ceilings, not eviction policies: exceeding one is a
 #: visible failure that preserves the previous complete result.
@@ -389,6 +405,58 @@ def _require_finite(value: Any, name: str) -> float:
     if not math.isfinite(number):
         raise ValueError(f"{name} must be a finite number")
     return number
+
+
+def _iso_utc(epoch: Any) -> str:
+    """ISO-8601 UTC timestamp for one epoch seconds value."""
+    return datetime.fromtimestamp(float(epoch), tz=timezone.utc).isoformat()
+
+
+def _ensure_private_dir(path: Path) -> None:
+    """Create ``path`` (mode 0700) when absent; never touch an existing one."""
+    if path.is_dir():
+        return
+    path.mkdir(parents=True, exist_ok=True)
+    try:
+        os.chmod(path, 0o700)
+    except OSError:
+        pass
+
+
+def _schema_change_document(
+    record: Any, *, namespace: str
+) -> dict[str, Any]:
+    """Whitelist one schema-change record into its stored document.
+
+    The key list is closed on purpose: the sidecar may carry ids, counts,
+    hashes, a generated sentence, and the acknowledgement flag, but a caller
+    cannot smuggle a title, name, or value into it.
+    """
+    if not isinstance(record, Mapping):
+        raise ValueError("schema change record must be a mapping")
+    severity = _require_text(record.get("severity"), "severity")
+    if severity not in SCHEMA_CHANGE_SEVERITIES:
+        raise ValueError("severity must be info or warn")
+    diff_document = record.get("diff")
+    if not isinstance(diff_document, Mapping):
+        raise ValueError("diff must be a mapping")
+    return {
+        "version": SCHEMA_CHANGE_SCHEMA_VERSION,
+        "schema_version": _require_int(
+            record.get("schema_version"), "schema_version"
+        ),
+        "namespace": namespace,
+        "scope_key": _norm(record.get("scope_key")),
+        "from_hash": _norm(record.get("from_hash")),
+        "to_hash": _require_text(record.get("to_hash"), "to_hash"),
+        "generation": _require_int(record.get("generation"), "generation"),
+        "detected_at": _require_text(record.get("detected_at"), "detected_at"),
+        "severity": severity,
+        "diff": dict(diff_document),
+        "summary": _norm(record.get("summary")),
+        "acknowledged": record.get("acknowledged") is True,
+        "acknowledged_at": _norm(record.get("acknowledged_at")) or None,
+    }
 
 
 def _is_finite(value: Any) -> bool:
@@ -802,6 +870,86 @@ class RefreshStateStore:
                 "for the published generation; contract missing until the next "
                 "Refresh.",
             )
+
+    # -- schema-change sidecar ------------------------------------------
+
+    def _schema_change_path(self) -> Path:
+        return self._root / SCHEMA_CHANGE_FILENAME
+
+    def write_schema_change(self, record: Mapping[str, Any]) -> dict[str, Any]:
+        """Atomically persist the content-free schema-change notice.
+
+        One small document at the refresh-state root, written through the same
+        atomic same-directory replace the store uses for every other document
+        and left readable only by the owner (0600 file, 0700 directory). A
+        stored notice is replaced whole, so a reader never sees a partial one.
+        The caller owns failure isolation: a write error propagates.
+        """
+        document = _schema_change_document(record, namespace=self._snapshot_namespace)
+        path = self._schema_change_path()
+        with self._locked():
+            _ensure_private_dir(path.parent)
+            capacities_cache_io.atomic_write_json(path, document)
+            try:
+                os.chmod(path, 0o600)
+            except OSError:
+                pass
+        return document
+
+    def load_schema_change(self) -> dict[str, Any] | None:
+        """The stored schema-change notice, or ``None`` when there is none.
+
+        Absent, unreadable, or untrustworthy bytes read as ``None`` without
+        recording a warning: this record is advisory, so a broken sidecar must
+        never surface as a refresh or intake diagnostic. A record written under
+        another namespace is not served.
+        """
+        with self._locked():
+            try:
+                text = self._schema_change_path().read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError):
+                return None
+        try:
+            raw = json.loads(text)
+        except ValueError:
+            return None
+        if not isinstance(raw, Mapping):
+            return None
+        if raw.get("version") != SCHEMA_CHANGE_SCHEMA_VERSION:
+            return None
+        if raw.get("namespace") not in (None, self._snapshot_namespace):
+            return None
+        try:
+            return _schema_change_document(raw, namespace=self._snapshot_namespace)
+        except ValueError:
+            return None
+
+    def acknowledge_schema_change(self, to_hash: Any) -> bool:
+        """Mark the stored notice acknowledged when it matches ``to_hash``.
+
+        ``True`` means *the notice with this ``to_hash`` is acknowledged*: a
+        repeat call on an already-acknowledged record changes nothing and still
+        answers True. A different hash, a missing record, or unusable bytes
+        answer False and write nothing. Never raises.
+        """
+        try:
+            current = self.load_schema_change()
+            if current is None:
+                return False
+            if current.get("to_hash") != _norm(to_hash):
+                return False
+            if current.get("acknowledged") is True:
+                return True
+            self.write_schema_change(
+                {
+                    **current,
+                    "acknowledged": True,
+                    "acknowledged_at": _iso_utc(self._epoch_clock()),
+                }
+            )
+            return True
+        except Exception:  # noqa: BLE001 — acknowledgement is advisory
+            return False
 
     def clear_unusable_snapshot(self, scope_key: str) -> bool:
         """Drop a present-but-unusable pointer; never touch a readable one.

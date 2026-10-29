@@ -48,7 +48,7 @@ import time
 from collections import deque
 from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterator, Mapping
 
@@ -60,6 +60,7 @@ except ImportError:  # pragma: no cover — non-POSIX fallback
 import capacities_adapter
 import capacities_cache_io
 import capacities_refresh_state as refresh_state
+import capacities_schema
 import capacities_tag_titles
 import tag_exclusions
 
@@ -569,6 +570,11 @@ def read_last_job(root: str | Path, space_id: str) -> dict[str, Any] | None:
 
 def _text(value: Any) -> str:
     return str(value).strip() if value is not None else ""
+
+
+def _iso_utc(epoch: float) -> str:
+    """ISO-8601 UTC timestamp for one wall-clock epoch seconds value."""
+    return datetime.fromtimestamp(float(epoch), tz=timezone.utc).isoformat()
 
 
 def _try_acquire_exclusive(path: Path) -> Any | None:
@@ -1179,6 +1185,17 @@ class RefreshCoordinator:
             retained_types=tuple(retained_types),
         )
         guard = self.config_guard() if callable(self.config_guard) else nullcontext()
+        # The baseline for the schema-change notice is the contract stamped with
+        # the currently installed generation, and it must be read before this
+        # run replaces it. An unreadable baseline is simply no baseline: the
+        # notice is advisory and must never influence the publication.
+        try:
+            previous_contract = self.store.load_structure_contract(self.scope_key)
+        except Exception:  # noqa: BLE001 — advisory baseline read
+            previous_contract = None
+        previous_structures = (
+            previous_contract.structures if previous_contract is not None else None
+        )
         with guard:
             current = self.revision_supplier()
             if type(current) is not int or current != evidence.revision:
@@ -1207,6 +1224,73 @@ class RefreshCoordinator:
                 "were retained with their original timestamps; not refreshed."
             )
         self._finish("complete", "published", warnings)
+        self._record_schema_change(
+            previous=previous_structures,
+            current=structures_payload,
+            generation=snapshot.generation,
+        )
+
+    def _record_schema_change(
+        self, *, previous: Any, current: Any, generation: int
+    ) -> None:
+        """Persist one content-free notice when the owner's schema changed.
+
+        Called only after a generation published successfully. A ``None``
+        ``previous`` is the first published contract (a silent baseline) and an
+        unchanged payload records nothing, so an existing notice survives
+        either case. A change that is already recorded (same target
+        fingerprint) keeps its acknowledgement instead of reopening it.
+
+        Failure isolation is the whole point of this seam: the notice is
+        advisory, so any failure here — a raising diff, an unwritable sidecar —
+        is swallowed and can never alter the outcome, warnings, published
+        generation, or stored state of the Refresh that produced it.
+        """
+        if previous is None:
+            return
+        try:
+            # Mapped structures and their recorded open status values are the
+            # coordinator's own mapping records, so the diff can distinguish a
+            # broken mapped structure from an unmapped one without a new read.
+            mapped_structure_ids = [m.structure_id for m in self.mappings]
+            open_status_values = {
+                m.structure_id: tuple(sorted(m.open_status_values))
+                for m in self.mappings
+                if m.open_status_values
+            }
+            result = capacities_schema.diff(
+                previous,
+                current,
+                mapped_structure_ids=mapped_structure_ids,
+                open_status_values=open_status_values or None,
+            )
+            if result.severity == capacities_schema.SEVERITY_NONE:
+                return
+            stored = self.store.load_schema_change()
+            if (
+                isinstance(stored, Mapping)
+                and stored.get("to_hash") == result.fingerprint_after
+            ):
+                return
+            self.store.write_schema_change(
+                {
+                    "schema_version": capacities_schema.SCHEMA_VERSION,
+                    "scope_key": self.scope_key,
+                    "from_hash": result.fingerprint_before,
+                    "to_hash": result.fingerprint_after,
+                    "generation": int(generation),
+                    "detected_at": _iso_utc(self._wall_clock()),
+                    "severity": result.severity,
+                    "diff": capacities_schema.to_dict(result),
+                    "summary": capacities_schema.summary_text(result),
+                    "acknowledged": False,
+                    "acknowledged_at": None,
+                }
+            )
+        except Exception:  # noqa: BLE001 — advisory notice, never the outcome
+            logger.debug(
+                "Capacities refresh: the schema-change notice was not recorded"
+            )
 
     def _needs_read(self, object_id: str, type_key: str, *, rescan: bool = False) -> bool:
         """Whether one listed object must be read from the provider.
