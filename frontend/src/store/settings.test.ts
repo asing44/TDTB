@@ -14,10 +14,10 @@ describe("canonical settings destination — legacy normalization", () => {
     expect(s.getState().ui.settingsPanel).toBe("day");
 
     s.dispatch({ type: "UI", patch: { capacitiesSettingsOpen: true } });
-    expect(s.getState().ui.settingsPanel).toBe("capacities");
+    expect(s.getState().ui.settingsPanel).toBe("repair");
 
     s.dispatch({ type: "UI", patch: { tagExclusionSettingsOpen: true } });
-    expect(s.getState().ui.settingsPanel).toBe("tags");
+    expect(s.getState().ui.settingsPanel).toBe("plan");
   });
 
   it("keeps the compatibility flags one-hot", () => {
@@ -48,7 +48,7 @@ describe("canonical settings destination — legacy normalization", () => {
     const s = createStore();
     s.dispatch({ type: "UI", patch: { setupOpen: true } });
     s.dispatch({ type: "UI", patch: { tagExclusionSettingsOpen: true } });
-    expect(s.getState().ui.settingsPanel).toBe("tags");
+    expect(s.getState().ui.settingsPanel).toBe("plan");
     expect(s.getState().ui.setupOpen).toBe(false);
   });
 
@@ -70,9 +70,9 @@ describe("canonical settings destination — legacy normalization", () => {
 
   it("canonical writes drive every facade flag", () => {
     const s = createStore();
-    s.dispatch({ type: "UI", patch: { settingsPanel: "capacities" } });
+    s.dispatch({ type: "UI", patch: { settingsPanel: "repair" } });
     expect(s.getState().ui).toMatchObject({
-      settingsPanel: "capacities",
+      settingsPanel: "repair",
       setupOpen: false,
       capacitiesSettingsOpen: true,
       tagExclusionSettingsOpen: false,
@@ -124,7 +124,7 @@ describe("canonical settings destination — sections", () => {
       type: "UI",
       patch: { settingsPanel: "day", settingsSection: "captures" },
     });
-    s.dispatch({ type: "UI", patch: { settingsPanel: "tags" } });
+    s.dispatch({ type: "UI", patch: { settingsPanel: "plan" } });
     expect(s.getState().ui.settingsSection).toBeNull();
 
     s.dispatch({
@@ -136,22 +136,44 @@ describe("canonical settings destination — sections", () => {
   });
 });
 
+describe("legacy settings panel ids", () => {
+  it("map capacities -> repair and tags -> plan on canonical writes", () => {
+    const s = createStore();
+    s.dispatch({ type: "UI", patch: { settingsPanel: "capacities" as never } });
+    expect(s.getState().ui.settingsPanel).toBe("repair");
+    s.dispatch({ type: "UI", patch: { settingsPanel: "tags" as never } });
+    expect(s.getState().ui.settingsPanel).toBe("plan");
+    s.dispatch({ type: "UI", patch: { settingsPanel: "day" } });
+    expect(s.getState().ui.settingsPanel).toBe("day");
+  });
+
+  it("accepts the five hub ids and opens nothing for unknown ones", () => {
+    const s = createStore();
+    for (const id of ["freshness", "plan", "missing", "day", "repair"] as const) {
+      s.dispatch({ type: "UI", patch: { settingsPanel: id } });
+      expect(s.getState().ui.settingsPanel).toBe(id);
+    }
+    s.dispatch({ type: "UI", patch: { settingsPanel: "bogus" as never } });
+    expect(s.getState().ui.settingsPanel).toBeNull();
+  });
+});
+
 describe("canonical settings destination — independence", () => {
   it("keeps approval and editor patches independent of settings", () => {
     const s = createStore();
     s.dispatch({
       type: "UI",
-      patch: { settingsPanel: "tags", approvalOpen: true, editorItem: "Magic Mirror" },
+      patch: { settingsPanel: "plan", approvalOpen: true, editorItem: "Magic Mirror" },
     });
     expect(s.getState().ui).toMatchObject({
-      settingsPanel: "tags",
+      settingsPanel: "plan",
       tagExclusionSettingsOpen: true,
       approvalOpen: true,
       editorItem: "Magic Mirror",
     });
 
     s.dispatch({ type: "UI", patch: { approvalOpen: false } });
-    expect(s.getState().ui.settingsPanel).toBe("tags");
+    expect(s.getState().ui.settingsPanel).toBe("plan");
 
     s.dispatch({ type: "UI", patch: { settingsPanel: null } });
     expect(s.getState().ui.approvalOpen).toBe(false);

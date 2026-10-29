@@ -38,11 +38,17 @@ describe("settings URL parsing", () => {
       panel: "day",
       section: "captures",
     });
+    for (const id of ["freshness", "plan", "missing", "repair"]) {
+      expect(parseSettingsSearch(`?settings=${id}`)).toEqual({ panel: id, section: null });
+    }
+  });
+
+  it("maps legacy ids: capacities -> repair, tags -> plan", () => {
     expect(parseSettingsSearch("?settings=capacities")).toEqual({
-      panel: "capacities",
+      panel: "repair",
       section: null,
     });
-    expect(parseSettingsSearch("?settings=tags")).toEqual({ panel: "tags", section: null });
+    expect(parseSettingsSearch("?settings=tags")).toEqual({ panel: "plan", section: null });
   });
 
   it("opens nothing for unknown values or orphan sections", () => {
@@ -51,10 +57,10 @@ describe("settings URL parsing", () => {
     expect(parseSettingsSearch("?settings=")).toEqual({ panel: null, section: null });
   });
 
-  it("drops the section for non-day panels", () => {
+  it("keeps the section on any panel (widened from day only)", () => {
     expect(parseSettingsSearch("?settings=capacities&section=captures")).toEqual({
-      panel: "capacities",
-      section: null,
+      panel: "repair",
+      section: "captures",
     });
   });
 });
@@ -63,18 +69,21 @@ describe("settings URL serialization", () => {
   it("preserves unrelated parameters and replaces only the settings keys", () => {
     expect(
       serializeSettingsSearch("?keep=1&settings=day&section=captures&other=2", {
-        panel: "tags",
+        panel: "plan",
         section: null,
       }),
-    ).toBe("?keep=1&other=2&settings=tags");
+    ).toBe("?keep=1&other=2&settings=plan");
   });
 
-  it("carries the day section only with the day panel", () => {
+  it("carries the section with any open panel", () => {
     expect(serializeSettingsSearch("", { panel: "day", section: "captures" })).toBe(
       "?settings=day&section=captures",
     );
-    expect(serializeSettingsSearch("", { panel: "capacities", section: "captures" })).toBe(
-      "?settings=capacities",
+    expect(serializeSettingsSearch("", { panel: "repair", section: "rules" })).toBe(
+      "?settings=repair&section=rules",
+    );
+    expect(serializeSettingsSearch("", { panel: "repair", section: null })).toBe(
+      "?settings=repair",
     );
   });
 
@@ -93,7 +102,7 @@ describe("settings URL sync", () => {
   it("opens the deep-linked panel on boot", () => {
     window.history.replaceState(null, "", "/?settings=tags");
     const h = mountRoot();
-    expect(h.store.getState().ui.settingsPanel).toBe("tags");
+    expect(h.store.getState().ui.settingsPanel).toBe("plan");
     expect(h.store.getState().ui.tagExclusionSettingsOpen).toBe(true);
   });
 
@@ -109,8 +118,8 @@ describe("settings URL sync", () => {
     h.store.dispatch({ type: "UI", patch: { settingsPanel: "day" } });
     expect(window.location.search).toBe("?settings=day");
 
-    h.store.dispatch({ type: "UI", patch: { settingsPanel: "tags" } });
-    expect(window.location.search).toBe("?settings=tags");
+    h.store.dispatch({ type: "UI", patch: { settingsPanel: "plan" } });
+    expect(window.location.search).toBe("?settings=plan");
 
     // Assert the navigation contract, not `window.history.length`. History is
     // global state shared with the other tests in this file, so a length delta
@@ -135,7 +144,7 @@ describe("settings URL sync", () => {
   it("cleans a deep-linked parameter without walking away from the app", async () => {
     window.history.replaceState(null, "", "/?settings=tags");
     const h = mountRoot();
-    expect(h.store.getState().ui.settingsPanel).toBe("tags");
+    expect(h.store.getState().ui.settingsPanel).toBe("plan");
     h.store.dispatch({ type: "UI", patch: { settingsPanel: null } });
     await waitFor(() => expect(window.location.search).toBe(""));
   });

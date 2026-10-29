@@ -73,7 +73,16 @@ function knownCapacitiesItems(items: AssignedItem[]): AssignedItem[] {
   });
 }
 
-export function CapacitiesSettingsPanel({ active }: { active: boolean }) {
+/** `hosted` means the Settings hub mounts the refresh, rules and unknown-review
+    sections itself, so this panel must not mount a second copy. The source
+    editor stays here: it needs this panel's structure titles. */
+export function CapacitiesSettingsPanel({
+  active,
+  hosted = false,
+}: {
+  active: boolean;
+  hosted?: boolean;
+}) {
   const s = useAppState();
   const { controller, store } = useApp();
   const [settings, setSettings] = useState<CapacitiesSettings | null>(null);
@@ -758,7 +767,7 @@ export function CapacitiesSettingsPanel({ active }: { active: boolean }) {
             headings exist. Each owns its own read/save route and lifecycle,
             and none runs a provider call on mount (only tokenless local
             status/rule/selection reads). */}
-        {phase !== "loading" && (
+        {phase !== "loading" && !hosted && (
           <>
             <CapacitiesRefreshPanel active={active} />
             <CapacitiesRulesEditor active={active} />

@@ -86,7 +86,7 @@ function statusWith(patch: {
 
 async function openRefresh() {
   const h = makeHarness("ready");
-  h.store.dispatch({ type: "UI", patch: { capacitiesSettingsOpen: true } });
+  h.store.dispatch({ type: "UI", patch: { settingsPanel: "freshness" } });
   const rendered = h.ui(<CapacitiesSettingsDrawer />);
   await waitFor(() => expect(rendered.getByRole("button", { name: "Refresh sources" })).toBeTruthy(), { timeout: 5000 });
   const section = rendered.container.querySelector('[data-settings-section="refresh"]') as HTMLElement;
@@ -221,7 +221,7 @@ describe("CapacitiesRefreshPanel", () => {
     const load = vi
       .spyOn(h.controller, "loadCapacitiesRefreshStatus")
       .mockResolvedValue(runningStatus());
-    h.store.dispatch({ type: "UI", patch: { capacitiesSettingsOpen: true } });
+    h.store.dispatch({ type: "UI", patch: { settingsPanel: "freshness" } });
     const rendered = h.ui(<CapacitiesSettingsDrawer />);
     await waitFor(() => expect(load.mock.calls.length).toBeGreaterThanOrEqual(1));
 
@@ -239,7 +239,7 @@ describe("CapacitiesRefreshPanel", () => {
     const h = makeHarness("ready");
     const terminal = statusWith({ phase: "complete", outcome: "published" });
     const load = vi.spyOn(h.controller, "loadCapacitiesRefreshStatus").mockResolvedValue(terminal);
-    h.store.dispatch({ type: "UI", patch: { capacitiesSettingsOpen: true } });
+    h.store.dispatch({ type: "UI", patch: { settingsPanel: "freshness" } });
     h.ui(<CapacitiesSettingsDrawer />);
     await waitFor(() => expect(load.mock.calls.length).toBeGreaterThanOrEqual(1));
     const count = load.mock.calls.length;

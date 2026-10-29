@@ -19,8 +19,10 @@ afterEach(() => {
 
 async function openRules() {
   const h = makeHarness("ready");
-  h.store.dispatch({ type: "UI", patch: { capacitiesSettingsOpen: true } });
+  h.store.dispatch({ type: "UI", patch: { settingsPanel: "plan" } });
   const rendered = h.ui(<CapacitiesSettingsDrawer />);
+  // Hub: the rules editor sits in the closed "Fine-tune by item type" fold.
+  fireEvent.click(rendered.getByRole("button", { name: /fine-tune by item type/i }));
   await waitFor(
     () => expect(rendered.container.querySelector('[data-structure="custom-project"]')).toBeTruthy(),
     { timeout: 5000 },

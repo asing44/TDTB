@@ -64,11 +64,34 @@ import type {
 
 export type SeqPhase = "none" | "sequencing" | "valid" | "dirty" | "failed";
 
-/** The three settings-like surfaces share one canonical destination. */
-export type SettingsPanel = "day" | "capacities" | "tags";
+/** The Settings hub's five entries share one canonical destination. */
+export type SettingsPanel = "freshness" | "plan" | "missing" | "day" | "repair";
+
+/** The hub entry that is open when Settings first appears. */
+export const DEFAULT_SETTINGS_PANEL: SettingsPanel = "freshness";
+
+/** Pre-hub panel ids stay valid everywhere a panel id is parsed. */
+const LEGACY_SETTINGS_PANELS: Readonly<Record<string, SettingsPanel>> = {
+  capacities: "repair",
+  tags: "plan",
+};
+
+/** Canonical panel for a current or legacy id; anything else opens nothing. */
+export function canonicalSettingsPanel(value: unknown): SettingsPanel | null {
+  if (typeof value !== "string") return null;
+  if (
+    value === "freshness" || value === "plan" || value === "missing" ||
+    value === "day" || value === "repair"
+  ) {
+    return value;
+  }
+  return Object.prototype.hasOwnProperty.call(LEGACY_SETTINGS_PANELS, value)
+    ? LEGACY_SETTINGS_PANELS[value]
+    : null;
+}
 
 export function isSettingsPanel(value: unknown): value is SettingsPanel {
-  return value === "day" || value === "capacities" || value === "tags";
+  return canonicalSettingsPanel(value) !== null;
 }
 
 /** B3 top-level screens. `settingsPanel` remains the contextual drawer path;
@@ -82,8 +105,8 @@ export function isScreen(value: unknown): value is Screen {
 /** Legacy drawer flags, in fixed precedence for a single normalizing write. */
 const LEGACY_SETTINGS_FLAGS: ReadonlyArray<readonly ["setupOpen" | "capacitiesSettingsOpen" | "tagExclusionSettingsOpen", SettingsPanel]> = [
   ["setupOpen", "day"],
-  ["capacitiesSettingsOpen", "capacities"],
-  ["tagExclusionSettingsOpen", "tags"],
+  ["capacitiesSettingsOpen", "repair"],
+  ["tagExclusionSettingsOpen", "plan"],
 ];
 
 /**
@@ -104,7 +127,7 @@ function normalizeSettingsUi(
   let section = current.settingsSection;
 
   if (has("settingsPanel")) {
-    panel = isSettingsPanel(patch.settingsPanel) ? patch.settingsPanel : null;
+    panel = canonicalSettingsPanel(patch.settingsPanel);
     if (panel === null) section = null;
     else if (has("settingsSection")) section = patch.settingsSection ?? null;
     else if (panel !== current.settingsPanel) section = null;
@@ -140,8 +163,8 @@ function normalizeSettingsUi(
     settingsPanel: panel,
     settingsSection: panel === null ? null : section,
     setupOpen: panel === "day",
-    capacitiesSettingsOpen: panel === "capacities",
-    tagExclusionSettingsOpen: panel === "tags",
+    capacitiesSettingsOpen: panel === "repair",
+    tagExclusionSettingsOpen: panel === "plan",
     screen: explicitScreen ?? derivedScreen ?? (closedPanel ? "plan" : next.screen),
   };
 }
