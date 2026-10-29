@@ -4778,9 +4778,12 @@ def create_app() -> FastAPI:
                 todoist_c, ext_cfg, today
             )
             if live_habits is None:
-                # Stale list, labelled loudly by the warning already collected
-                # above; the artifact's own warnings join it.
+                # Stale list. A failed read brings its own warning; when no
+                # live read was possible at all (no client / no token) the
+                # label is added here, so the cached list is never unlabelled.
                 habits, artifact_habit_warnings = artifact_source.load_habits()
+                if not w_hab:
+                    w_hab = [external_sources.HABITS_READ_FAILED_WARNING]
                 w_hab = [*w_hab, *artifact_habit_warnings]
             else:
                 habits = live_habits

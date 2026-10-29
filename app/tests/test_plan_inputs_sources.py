@@ -65,11 +65,21 @@ last_updated: 2026-07-01
 
 
 class FakeTodoist:
+    """Live Todoist double. The habit lookup is present and EMPTY so the live
+    habit read is a real zero rather than an unreadable source: a client that
+    cannot scope a habit read labels the cached artifact list instead."""
+
     def __init__(self, by_query):
         self.by_query = by_query
 
     def get_filter_tasks(self, query, limit=None):
         return self.by_query.get(query, [])
+
+    def get_projects(self):
+        return [{"id": "p-habits", "name": "\U0001F501 Habits"}]
+
+    def get_project_tasks(self, project_id, limit=None):
+        return []
 
 
 class FakeStore:

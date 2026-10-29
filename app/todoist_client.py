@@ -148,6 +148,35 @@ class TodoistClient:
                 break
         return results
 
+    def get_project_tasks(self, project_id: str, limit: int | None = None) -> list[dict]:
+        """GET /tasks scoped by ``project_id``; open tasks, auto-paginated.
+
+        Same v1 envelope as :meth:`get_filter_tasks`
+        (``{"results": [...], "next_cursor": str|null}``), same 429 handling
+        through :meth:`_request`, flattened to one list. Reading by project ID
+        avoids Todoist's filter grammar entirely: a project NAME carrying a
+        space or an emoji cannot be expressed as ``#Name``, and a filter that
+        matches nothing looks exactly like a project with no open task.
+        ``GET /tasks`` lists OPEN tasks only, which is the habit set.
+        """
+        params: dict[str, Any] = {"project_id": project_id}
+        if limit is not None:
+            params["limit"] = limit
+
+        results: list[dict] = []
+        cursor: str | None = None
+        while True:
+            page_params = dict(params)
+            if cursor is not None:
+                page_params["cursor"] = cursor
+            response = self._request("GET", "/tasks", params=page_params)
+            body = response.json()
+            results.extend(body.get("results", []))
+            cursor = body.get("next_cursor")
+            if not cursor:
+                break
+        return results
+
     def get_projects(self) -> list[dict]:
         """GET /projects, auto-paginated to a flat list of project dicts."""
         results: list[dict] = []

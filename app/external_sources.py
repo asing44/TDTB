@@ -23,6 +23,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from duration_tags import is_quick_task_tag
+import artifact_source
 
 # v1 /tasks/filter takes filter QUERY strings, not saved-filter IDs (the app's
 # existing live callers pass "today" — shadow.py). Saved-filter IDs from the
@@ -74,6 +75,13 @@ HABITS_READ_FAILED_WARNING = (
     "Todoist habits read failed — showing the last artifact habit list"
 )
 
+#: The live read SUCCEEDED but found no habit while the cached artifact list
+#: still carries some. A zero where habits are expected is a silent failure,
+#: so the cached list is shown instead — under its own content-free label.
+HABITS_EMPTY_LIVE_WARNING = (
+    "Todoist returned no habits — showing the last artifact habit list"
+)
+
 
 def _normalize_project_name(name: Any) -> str:
     """Lowercase letters/digits only, so "🔁 Habits" and "habits" compare equal."""
@@ -112,24 +120,50 @@ def _habit_project_ids(client: Any) -> set[str]:
     }
 
 
-def _habit_project_query(project: dict[str, Any]) -> str | None:
-    """The filter query that scopes a read to one habit project, or ``None``.
+def _artifact_habit_total() -> int:
+    """The cached artifact's habit ``total``, or ``0`` when it carries none."""
+    try:
+        block, _warnings = artifact_source.load_habits()
+    except Exception:  # noqa: BLE001 — a cache read never blocks a live answer
+        return 0
+    total = block.get("total") if isinstance(block, dict) else None
+    return total if type(total) is int and total > 0 else 0
 
-    Todoist scopes a filter to a project by NAME (``#Name``), matching open
-    tasks only. A name carrying filter-syntax characters would change the
-    query's meaning, so it yields ``None`` instead of a wrong read.
+
+def _bounded_habit_task(task: dict[str, Any]) -> dict[str, Any]:
+    """One live task, bounded to the artifact's published habit contract.
+
+    The live block must not carry anything the artifact contract would reject:
+    ``content`` is clipped to ``HABIT_TEXT_MAX`` characters and a duration is
+    kept only as minute-unit minutes, capped at ``HABIT_MINUTES_MAX``. Any
+    other duration unit falls away so the per-habit fallback applies — the
+    live adapter never invents a 24-hour habit from a ``day``-unit duration.
     """
-    name = str(project.get("name") or "").strip()
-    if not name or any(ch in name for ch in "&#@+*()|!,[]"):
-        return None
-    return f"#{name}"
+    bounded = dict(task)
+    content = bounded.get("content")
+    if isinstance(content, str) and len(content) > artifact_source.HABIT_TEXT_MAX:
+        bounded["content"] = content[: artifact_source.HABIT_TEXT_MAX]
+    duration = bounded.get("duration")
+    if not isinstance(duration, dict) or duration.get("unit") != "minute":
+        bounded.pop("duration", None)
+    else:
+        amount = duration.get("amount")
+        if not (type(amount) is int and amount > 0):
+            bounded.pop("duration", None)
+        elif amount > artifact_source.HABIT_MINUTES_MAX:
+            bounded["duration"] = {
+                "amount": artifact_source.HABIT_MINUTES_MAX, "unit": "minute",
+            }
+    return bounded
 
 
 def _is_habit_task(task: dict[str, Any], project_ids: set[str]) -> bool:
     """True when a fetched task belongs to a habit project.
 
-    A task with no ``project_id`` is kept: the scoped query already filtered
-    it, and dropping it would turn a real habit into a silent omission."""
+    The read is already scoped to those project IDs, so this only drops a task
+    a misbehaving source attached to another project. A task with no
+    ``project_id`` is kept: dropping it would turn a real habit into a silent
+    omission."""
     project_id = task.get("project_id")
     if project_id is None:
         return True
@@ -142,50 +176,59 @@ def fetch_habits_items(
     """Read the operator's OPEN habit tasks as the artifact's habits block.
 
     Habits are a manual toggle list: completion is tracked elsewhere, so every
-    open task in the habit project is one habit, ``done`` stays ``0``, and no
-    completed/completion read is ever issued. The block is computed by the
-    producer's own rule (:func:`producer_rules.compute_habit_summary`), so the
-    live read and an artifact refresh cannot disagree on the arithmetic:
-    minutes come from the Todoist duration (``fallback_minutes_per_habit``
-    where unset) and ``est_minutes`` rounds UP to the ``round_to_minutes``
-    grain.
+    open task in a habit project is one habit, ``done`` stays ``0``, and no
+    completed/completion read is ever issued. The tasks are read BY PROJECT ID
+    (``GET /tasks?project_id=…``), never through a filter query: Todoist's
+    filter grammar cannot express a project name carrying a space or an emoji,
+    so a name filter would match nothing and look exactly like a habit-free
+    day. The block is computed by the producer's own rule
+    (:func:`producer_rules.compute_habit_summary`), so the live read and an
+    artifact refresh cannot disagree on the arithmetic: minutes come from the
+    Todoist duration (``fallback_minutes_per_habit`` where unset) and
+    ``est_minutes`` rounds UP to the ``round_to_minutes`` grain. Items are
+    bounded to the artifact's published contract
+    (``HABIT_ITEMS_MAX``/``HABIT_MINUTES_MAX``/``HABIT_TEXT_MAX``).
 
     Returns ``(block, warnings)`` and never raises. ``block`` is ``None`` when
     the live read is unavailable or failed — the caller then falls back to the
-    artifact's cached list and surfaces ``warnings``. A successful read with NO
-    habit is a valid live answer: a zeroed block, no warning.
+    artifact's cached list and surfaces ``warnings``. A read that finds no
+    habit is a valid live zero ONLY when the cached list carries none either;
+    otherwise it is reported and the cached list wins, so a real zero and a
+    broken read can never look alike.
     """
     if client is None:
         return None, []
     projects, warnings = _habit_projects(client)
     if projects is None:
         return None, warnings
+    project_ids = {
+        str(p.get("id")) for p in projects if p.get("id") is not None
+    }
+    if not project_ids:
+        # Nothing to scope the read to: without a project the "zero" would be
+        # a silent failure, so report it and let the caller label the cache.
+        return None, [HABITS_READ_FAILED_WARNING]
+    getter = getattr(client, "get_project_tasks", None)
+    if not callable(getter):
+        return None, [HABITS_READ_FAILED_WARNING]
     # Local import: producer_rules imports THIS module, so a module-level
     # import would close the cycle.
     import producer_rules
 
-    project_ids = {
-        str(p.get("id")) for p in projects if p.get("id") is not None
-    }
-    if not projects:
-        # No habit project: the operator keeps no habit list, so zero is the
-        # live answer — never a fallback to a stale artifact list.
-        return producer_rules.compute_habit_summary({"tasks": []}), []
-    queries = [q for q in map(_habit_project_query, projects) if q]
-    if not queries:
-        return None, [HABITS_READ_FAILED_WARNING]
     try:
         fetched: list[dict[str, Any]] = []
-        for query in queries:
-            fetched.extend(client.get_filter_tasks(query))
+        for project_id in sorted(project_ids):
+            fetched.extend(getter(project_id))
     except Exception:  # noqa: BLE001 — degrade contract; the caller labels it
         return None, [HABITS_READ_FAILED_WARNING]
     tasks = [t for t in fetched if isinstance(t, dict)]
-    scoped = [t for t in tasks if _is_habit_task(t, project_ids)]
+    scoped = [_bounded_habit_task(t) for t in tasks if _is_habit_task(t, project_ids)]
     if tasks and not scoped:
-        # The scoped query matched only foreign tasks: the query is not doing
+        # The scoped read answered with foreign tasks only: it is not doing
         # what it claims, so report instead of publishing a false zero.
         return None, [HABITS_READ_FAILED_WARNING]
+    if len(scoped) > artifact_source.HABIT_ITEMS_MAX:
+        scoped = scoped[: artifact_source.HABIT_ITEMS_MAX]
     entry = {
         "tasks": scoped,
         "fallback_minutes_per_habit": config.get(
@@ -193,7 +236,12 @@ def fetch_habits_items(
         ),
         "round_to_minutes": config.get("habits.round_to_minutes"),
     }
-    return producer_rules.compute_habit_summary(entry, logical_day=logical_day), []
+    block = producer_rules.compute_habit_summary(entry, logical_day=logical_day)
+    if not block.get("total") and _artifact_habit_total():
+        # Live zero against a cached list that still carries habits: the read
+        # is broken, not the day. Hand the caller its cache back, labelled.
+        return None, [HABITS_EMPTY_LIVE_WARNING]
+    return block, []
 
 
 def _is_reminder(task: dict[str, Any]) -> bool:
