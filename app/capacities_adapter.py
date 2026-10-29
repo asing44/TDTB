@@ -1711,9 +1711,18 @@ class CapacitiesAdapter:
                     status_prop, mapping.open_status_property
                 )
                 status = _status_token(display_tokens, self.config.assignment_settings)
-                if native_status_structure and not status_tokens:
+                if (
+                    native_status_structure or source_assigned is True
+                ) and not status_tokens:
                     # Present but empty payload: the same absent signal as a
                     # missing property, so it stays UNKNOWN rather than closed.
+                    # A custom structure carries that absent signal too when the
+                    # source Assigned On declaration places the object on or
+                    # before the logical day: the status property is empty, not
+                    # closed evidence, and the source-assigned signal outranks
+                    # the day filter. A readable closed status never reaches
+                    # here (its tokens are non-empty), so the fail-closed gate
+                    # still drops completed/dropped rows.
                     status_is_open = None
                 else:
                     status_is_open = bool(

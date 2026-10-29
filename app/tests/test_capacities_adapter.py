@@ -2929,6 +2929,16 @@ def _active_state():
     return _prop("label", "label", [{"id": "active", "name": "Active"}])
 
 
+def _empty_state():
+    # Present but empty payload: a custom structure whose mapped status
+    # property carries no value yet.
+    return _prop("label", "label", [])
+
+
+def _completed_state():
+    return _prop("label", "label", [{"id": "done", "name": "Completed"}])
+
+
 def _date_value(value):
     return _prop("date", "date", {"start": value})
 
@@ -2978,6 +2988,91 @@ def test_assigned_on_equal_to_the_logical_day_is_source_assigned():
     assert _source_assigned_by_id(result) == {"project-1": True}
     assert result.items[0]["capacities_assignment"]["reasons"] == ["source-assigned"]
     assert result.warnings == []
+
+
+def test_assigned_on_today_admits_a_custom_object_with_an_empty_status():
+    # A custom structure (Event/Project/Continual shape) whose mapped status
+    # property is present but EMPTY carries no closed evidence. When the
+    # Assigned On declaration places it on or before the logical day, the
+    # source-assigned signal admits it instead of the fail-closed gate.
+    provider = _assigned_on_provider([
+        _assigned_on_object(
+            "event-1",
+            {
+                "state": _empty_state(),
+                ASSIGNED_ON_PROPERTY: _date_value(TODAY.isoformat()),
+            },
+        ),
+    ])
+
+    result = _override_adapter(
+        provider, _assigned_on_mapping(), assignment_settings=_active_settings()
+    ).items_for_day(TODAY)
+
+    assert [row["capacities_id"] for row in result.items] == ["event-1"]
+    assert result.items[0]["assigned"] is True
+    assert _source_assigned_by_id(result) == {"event-1": True}
+    assert result.items[0]["capacities_assignment"]["reasons"] == ["source-assigned"]
+    assert result.warnings == []
+
+
+def test_empty_status_with_a_future_assigned_on_stays_closed():
+    provider = _assigned_on_provider([
+        _assigned_on_object(
+            "event-1",
+            {
+                "state": _empty_state(),
+                ASSIGNED_ON_PROPERTY: _date_value(
+                    (TODAY + timedelta(days=1)).isoformat()
+                ),
+            },
+        ),
+    ])
+
+    result = _override_adapter(
+        provider, _assigned_on_mapping(), assignment_settings=_active_settings()
+    ).items_for_day(TODAY)
+
+    assert result.items == []
+
+
+def test_empty_status_without_assigned_on_stays_closed():
+    provider = _assigned_on_provider([
+        _assigned_on_object("event-1", {"state": _empty_state()}),
+        _assigned_on_object(
+            "event-empty-date",
+            {
+                "state": _empty_state(),
+                ASSIGNED_ON_PROPERTY: _prop("date", "date", {"start": ""}),
+            },
+        ),
+    ])
+
+    result = _override_adapter(
+        provider, _assigned_on_mapping(), assignment_settings=_active_settings()
+    ).items_for_day(TODAY)
+
+    assert result.items == []
+
+
+def test_readable_completed_status_with_assigned_on_today_stays_closed():
+    # The empty-payload relief must never open a readable completed status:
+    # a real Completed token outranks the same-day Assigned On declaration.
+    provider = _assigned_on_provider([
+        _assigned_on_object(
+            "event-1",
+            {
+                "state": _completed_state(),
+                ASSIGNED_ON_PROPERTY: _date_value(TODAY.isoformat()),
+            },
+        ),
+    ])
+
+    result = _override_adapter(
+        provider, _assigned_on_mapping(), assignment_settings=_active_settings()
+    ).items_for_day(TODAY)
+
+    assert result.items == []
 
 
 def test_assigned_on_past_is_assigned_and_future_is_a_negative():
