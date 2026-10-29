@@ -107,8 +107,10 @@ def _client(todoist=None, store=None) -> TestClient:
 def _write_habits_artifact(habits) -> None:
     """Write a minimal fresh artifact carrying a habits block.
 
-    Habit time now rides the artifact (agent-fetched), not Obsidian, in both
-    source modes."""
+    Artifact source mode reads this block. Live source mode reads the
+    operator's Todoist Habits project instead (``fetch_habits_items``) and
+    lands on this block only as the fallback for a failed live read, so every
+    test here that expects the artifact block must stay in artifact mode."""
     import artifact_source as art
 
     read_at = datetime.now().astimezone().isoformat(timespec="seconds")
@@ -441,7 +443,9 @@ def test_calendar_capacity_metadata_survives_the_plan_inputs_wire(vault, live_so
     assert body["capacity"]["fixed"] == 0
 
 
-def test_habits_summary_present(vault):
+def test_habits_summary_present_in_artifact_mode(vault):
+    # Artifact mode (the default): the published block is the habit source.
+    # The live-mode counterpart (Todoist wins) lives in test_habits_live.py.
     _write_habits_artifact({"total": 2, "done": 1, "outstanding": 1, "est_minutes": 30})
     body = _client(todoist=FakeTodoist({}), store=FakeStore([])).get("/plan-inputs").json()
     assert body["habits"]["total"] == 2

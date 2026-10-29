@@ -10,7 +10,9 @@ empty data + one human-readable warning the UI must surface loudly.
 
 Habits are a CAPACITY summary, not digest items — the skill SOT states habits
 are never placed on the timeline and never become tasks/events; only the
-outstanding-minutes total deducts from capacity (SKILL.md § Habits).
+outstanding-minutes total deducts from capacity (SKILL.md § Habits). The habit
+list itself is read LIVE from the operator's habit project in live source mode
+(:func:`fetch_habits_items`) and from the planning artifact in artifact mode.
 """
 from __future__ import annotations
 
@@ -65,27 +67,133 @@ def _duration_minutes(task: dict[str, Any]) -> int | None:
 #: reach the plan only as a capacity summary, so their tasks never become rows.
 _HABIT_PROJECT_NAMES = frozenset({"habits"})
 
+#: One loud, content-free warning when the live habit read fails: the caller
+#: then shows the artifact's cached habit list, labelled as stale. Never a
+#: silent zero, and never habit names, ids, or provider text.
+HABITS_READ_FAILED_WARNING = (
+    "Todoist habits read failed — showing the last artifact habit list"
+)
+
 
 def _normalize_project_name(name: Any) -> str:
     """Lowercase letters/digits only, so "🔁 Habits" and "habits" compare equal."""
     return "".join(ch for ch in str(name or "").lower() if ch.isalnum())
 
 
-def _habit_project_ids(client: Any) -> set[str]:
-    """IDs of the habit projects; empty when the lookup is unavailable."""
+def _habit_projects(client: Any) -> tuple[list[dict[str, Any]] | None, list[str]]:
+    """The habit projects as ``(projects, warnings)``.
+
+    ``None`` means the read cannot be project-scoped at all: the client has no
+    project lookup (a double, or an unconfigured runtime). The caller keeps its
+    existing source and adds no warning. A lookup that RAISES returns the same
+    ``None`` plus the loud stale-list warning, so a real failure is labelled.
+    """
     getter = getattr(client, "get_projects", None)
     if not callable(getter):
-        return set()
+        return None, []
     try:
         projects = getter()
-    except Exception:  # noqa: BLE001 — best effort; rows stay visible on failure
-        return set()
-    return {
-        str(p.get("id"))
-        for p in projects
+    except Exception:  # noqa: BLE001 — degrade contract; the caller labels it
+        return None, [HABITS_READ_FAILED_WARNING]
+    if not isinstance(projects, list):
+        return None, [HABITS_READ_FAILED_WARNING]
+    return [
+        p for p in projects
         if isinstance(p, dict)
         and _normalize_project_name(p.get("name")) in _HABIT_PROJECT_NAMES
+    ], []
+
+
+def _habit_project_ids(client: Any) -> set[str]:
+    """IDs of the habit projects; empty when the lookup is unavailable."""
+    projects, _warnings = _habit_projects(client)
+    return {
+        str(p.get("id")) for p in (projects or []) if p.get("id") is not None
     }
+
+
+def _habit_project_query(project: dict[str, Any]) -> str | None:
+    """The filter query that scopes a read to one habit project, or ``None``.
+
+    Todoist scopes a filter to a project by NAME (``#Name``), matching open
+    tasks only. A name carrying filter-syntax characters would change the
+    query's meaning, so it yields ``None`` instead of a wrong read.
+    """
+    name = str(project.get("name") or "").strip()
+    if not name or any(ch in name for ch in "&#@+*()|!,[]"):
+        return None
+    return f"#{name}"
+
+
+def _is_habit_task(task: dict[str, Any], project_ids: set[str]) -> bool:
+    """True when a fetched task belongs to a habit project.
+
+    A task with no ``project_id`` is kept: the scoped query already filtered
+    it, and dropping it would turn a real habit into a silent omission."""
+    project_id = task.get("project_id")
+    if project_id is None:
+        return True
+    return str(project_id) in project_ids
+
+
+def fetch_habits_items(
+    client: Any, config: dict[str, Any], logical_day: Any = None
+) -> tuple[dict[str, Any] | None, list[str]]:
+    """Read the operator's OPEN habit tasks as the artifact's habits block.
+
+    Habits are a manual toggle list: completion is tracked elsewhere, so every
+    open task in the habit project is one habit, ``done`` stays ``0``, and no
+    completed/completion read is ever issued. The block is computed by the
+    producer's own rule (:func:`producer_rules.compute_habit_summary`), so the
+    live read and an artifact refresh cannot disagree on the arithmetic:
+    minutes come from the Todoist duration (``fallback_minutes_per_habit``
+    where unset) and ``est_minutes`` rounds UP to the ``round_to_minutes``
+    grain.
+
+    Returns ``(block, warnings)`` and never raises. ``block`` is ``None`` when
+    the live read is unavailable or failed — the caller then falls back to the
+    artifact's cached list and surfaces ``warnings``. A successful read with NO
+    habit is a valid live answer: a zeroed block, no warning.
+    """
+    if client is None:
+        return None, []
+    projects, warnings = _habit_projects(client)
+    if projects is None:
+        return None, warnings
+    # Local import: producer_rules imports THIS module, so a module-level
+    # import would close the cycle.
+    import producer_rules
+
+    project_ids = {
+        str(p.get("id")) for p in projects if p.get("id") is not None
+    }
+    if not projects:
+        # No habit project: the operator keeps no habit list, so zero is the
+        # live answer — never a fallback to a stale artifact list.
+        return producer_rules.compute_habit_summary({"tasks": []}), []
+    queries = [q for q in map(_habit_project_query, projects) if q]
+    if not queries:
+        return None, [HABITS_READ_FAILED_WARNING]
+    try:
+        fetched: list[dict[str, Any]] = []
+        for query in queries:
+            fetched.extend(client.get_filter_tasks(query))
+    except Exception:  # noqa: BLE001 — degrade contract; the caller labels it
+        return None, [HABITS_READ_FAILED_WARNING]
+    tasks = [t for t in fetched if isinstance(t, dict)]
+    scoped = [t for t in tasks if _is_habit_task(t, project_ids)]
+    if tasks and not scoped:
+        # The scoped query matched only foreign tasks: the query is not doing
+        # what it claims, so report instead of publishing a false zero.
+        return None, [HABITS_READ_FAILED_WARNING]
+    entry = {
+        "tasks": scoped,
+        "fallback_minutes_per_habit": config.get(
+            "habits.fallback_minutes_per_habit"
+        ),
+        "round_to_minutes": config.get("habits.round_to_minutes"),
+    }
+    return producer_rules.compute_habit_summary(entry, logical_day=logical_day), []
 
 
 def _is_reminder(task: dict[str, Any]) -> bool:
