@@ -8,9 +8,15 @@ Improvements 17:30 with Sudsing 17:30``, and ``WALL-E-OS Capacities Buildout
 18:00 with Foods Dinner 18:00-19:00``.
 
 Operator decision (settled 2026-10-16): anchors are NOT shareable. Parked
-overflow rows fill FREE gaps and skip anchor spans; whatever still does not
-fit goes past end of day with a visible soft warning. Never-bump holds — every
+overflow rows fill FREE gaps and skip anchor spans. Never-bump holds — every
 item stays in the returned sequence, none dropped.
+
+Operator decision (2026-10-29): a row that fits NO free gap used to keep its
+at/after-EOD marker (``23:59``-``23:59``, the model's midnight overflow marker),
+which reads as that row's "today at" time in review and in the commit due
+string. It is now parked at 17:00 anyway — stacked in original order at full
+duration, deliberately sharing time with whatever already sits there — and
+still carries the visible soft ``overflow_past_eod`` warning.
 
 The day's shape reproduced here: anchors Sudsing 17:30-18:00, Foods Dinner
 18:00-19:00, Night Routine 22:00-22:45; four 30-minute midday calendar walls
@@ -163,11 +169,11 @@ class TestOverflowRespectsAnchors:
 
 
 class TestOverflowSpill:
-    """A row that fits no free gap goes past end of day, loudly."""
+    """A row that fits no free gap parks at 5:00 PM, loudly."""
 
     EXTRA = ("Admin Sweep", "Notes Cleanup", "Plan Tomorrow", "Backlog Triage")
 
-    def test_unfittable_rows_go_past_eod_with_a_visible_warning(self):
+    def test_unfittable_rows_park_at_five_pm_with_a_visible_warning(self):
         proposal, assigned = _overflow_shape(extra_parked=self.EXTRA)
         result = validate_sequence(
             proposal, assigned, list(ANCHORS), {}, time_frame=FRAME,
@@ -182,8 +188,14 @@ class TestOverflowSpill:
         assert {w["id"] for w in spilled} == set(self.EXTRA)
         for warning in spilled:
             assert "past end of day" in warning["detail"]
-            row = rows[warning["id"]]
-            assert (row["start"], row["end"]) == ("23:59", "23:59")
+            assert "5:00 PM" in warning["detail"]
+        # no free gap holds them, so they stack from 17:00 in original order
+        assert [(rows[i]["start"], rows[i]["end"]) for i in self.EXTRA] == [
+            ("17:00", "17:30"),
+            ("17:30", "18:00"),
+            ("18:00", "18:30"),
+            ("18:30", "19:00"),
+        ]
         # the rows that did fit still never touch an anchor
         for warning in _warnings_by_rule(result, "overflow_reseated"):
             row = rows[warning["id"]]
@@ -205,8 +217,111 @@ class TestOverflowSpill:
             proposal, assigned, list(ANCHORS), {}, time_frame=FRAME,
         )
         assert second.ok is True, second.hard_errors
-        assert not _warnings_by_rule(second, "overflow_reseated")
         assert {k: (v["start"], v["end"]) for k, v in _by_id(proposal).items()} == times_before
+        # the park owns these rows, so the same warnings come back unchanged
+        assert {w["id"] for w in _warnings_by_rule(second, "overflow_reseated")} \
+            == {w["id"] for w in _warnings_by_rule(first, "overflow_reseated")}
+        assert {w["id"] for w in _warnings_by_rule(second, "overflow_past_eod")} \
+            == {w["id"] for w in _warnings_by_rule(first, "overflow_past_eod")}
+
+
+class TestOverflowNoGapParksAtFive:
+    """Owner request 2026-10-29: a row that fits NOWHERE parks at 17:00.
+
+    Reproduced red first: such a row kept its at/after-EOD marker
+    (``23:59``-``23:59``), which review and the commit due string rendered as
+    that row's own "today at" time instead of a usable 5:00 PM placement.
+    """
+
+    def test_two_block_row_that_fits_nowhere_keeps_full_duration(self):
+        proposal, assigned = _overflow_shape(extra_parked=("Big Row",))
+        for item in assigned:
+            if item["id"] == "Big Row":
+                item["blocks"] = 2
+        result = validate_sequence(
+            proposal, assigned, list(ANCHORS), {}, time_frame=FRAME,
+        )
+        assert result.ok is True, result.hard_errors
+        row = _by_id(proposal)["Big Row"]
+        assert (row["start"], row["end"]) == ("17:00", "18:00")
+        assert (row["start"], row["end"]) != ("23:59", "23:59")
+        assert {w["id"] for w in _warnings_by_rule(result, "overflow_past_eod")} \
+            == {"Big Row"}
+
+    def test_now_after_five_pm_still_parks_at_five_pm(self):
+        late_frame = {"anchor": "18:30", "effective_eod": "23:59"}
+        extra = ("Admin Sweep", "Notes Cleanup", "Plan Tomorrow", "Backlog Triage")
+        proposal, assigned = _overflow_shape(extra_parked=extra)
+        result = validate_sequence(
+            proposal, assigned, list(ANCHORS), {}, time_frame=late_frame,
+        )
+        assert result.ok is True, result.hard_errors
+        rows = _by_id(proposal)
+        assert {w["id"] for w in _warnings_by_rule(result, "overflow_past_eod")} \
+            == set(extra)
+        # a start in the past is accepted: the park ignores 'now' entirely
+        assert [(rows[i]["start"], rows[i]["end"]) for i in extra] == [
+            ("17:00", "17:30"),
+            ("17:30", "18:00"),
+            ("18:00", "18:30"),
+            ("18:30", "19:00"),
+        ]
+
+    def test_anchors_and_calendar_rows_never_move(self):
+        extra = ("Admin Sweep", "Notes Cleanup", "Plan Tomorrow", "Backlog Triage")
+        proposal, assigned = _overflow_shape(extra_parked=extra)
+        result = validate_sequence(
+            proposal, assigned, list(ANCHORS), {}, time_frame=FRAME,
+        )
+        assert result.ok is True, result.hard_errors
+        rows = _by_id(proposal)
+        for block in ANCHORS:
+            name = block["Block"]
+            if name not in rows:
+                continue
+            assert (rows[name]["start"], rows[name]["end"]) == (
+                block["Start"], block["End"]), name
+
+    def test_all_day_row_is_not_parked(self):
+        proposal = {"sequence": [_row("Background", "23:59", "23:59")]}
+        validate_sequence(
+            proposal, [_item("Background", blocks=0)], [], {},
+            time_frame=FRAME,
+        )
+        row = _by_id(proposal)["Background"]
+        assert (row["start"], row["end"]) == ("23:59", "23:59")
+
+    def test_invalid_duration_keeps_protective_one_block_handling(self):
+        proposal = {"sequence": [_row("Junk", "23:59", "23:59")]}
+        result = validate_sequence(
+            proposal, [_item("Junk", blocks="junk")], [], {},
+            time_frame=FRAME,
+        )
+        assert result.ok is True, result.hard_errors
+        row = _by_id(proposal)["Junk"]
+        assert (row["start"], row["end"]) == ("17:00", "17:30")
+
+    def test_park_at_five_is_idempotent(self):
+        extra = ("Admin Sweep", "Notes Cleanup", "Plan Tomorrow", "Backlog Triage")
+        proposal, assigned = _overflow_shape(extra_parked=extra)
+        first = validate_sequence(
+            proposal, assigned, list(ANCHORS), {}, time_frame=FRAME,
+        )
+        assert first.ok is True, first.hard_errors
+        times_before = {
+            k: (v["start"], v["end"]) for k, v in _by_id(proposal).items()
+        }
+        second = validate_sequence(
+            proposal, assigned, list(ANCHORS), {}, time_frame=FRAME,
+        )
+        assert second.ok is True, second.hard_errors
+        assert {
+            k: (v["start"], v["end"]) for k, v in _by_id(proposal).items()
+        } == times_before
+        # a converged sequence still reports the park's rows, unchanged
+        for rule in ("overflow_reseated", "overflow_past_eod"):
+            assert {w["id"] for w in _warnings_by_rule(second, rule)} \
+                == {w["id"] for w in _warnings_by_rule(first, rule)}
 
 
 class TestOverflowParkKeepsDurationAndOrder:

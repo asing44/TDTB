@@ -915,13 +915,93 @@ _TAIL_END_MIN = 23 * 60 + 59  # 23:59 — the last representable same-day minute
 
 # G16 overflow park (user decision 2026-10-15): overflow-tail rows are parked
 # at this same-day time regardless of the current time or the anchor, packed
-# consecutively. Single source of truth — change this one line to re-time the
-# park.
+# consecutively. Rows that fit NO free gap park here too (2026-10-29). Single
+# source of truth — change this one line to re-time the park.
 OVERFLOW_PARK_TIME = "17:00"
+
+# Row key recording that the park OWNS this row's placement: ``gap`` (parked in
+# a free gap), ``spill`` (stacked at 5:00 PM), ``marker`` (no room even there,
+# so it kept its past-EOD marker) or ``user`` (released back to the owner, see
+# ``_release_owner_edited_park_rows``). The key travels with the row through the
+# client store and back into /validate-sequence, which is what makes the park a
+# fixed point (see the invariant in ``reseat_overflow_tail_rows``).
+OVERFLOW_PARK_KEY = "overflow_park"
+# Companion key recording the span the park SET, as ``"HH:MM-HH:MM"``. The
+# marker alone cannot tell a park-owned placement from one the owner edited
+# afterwards: it rides the row's wire dict through the frontend store, so a user
+# drag or resize keeps it (frontend store.ts ROW_MOVED spreads ``wire``). A
+# marker whose recorded span no longer matches the row is therefore STALE, and
+# the park hands the row back to the owner. A marker carrying no usable span
+# predates this key and keeps the pre-2026-10-30 ownership reading, so plans
+# already stored in that shape do not change.
+OVERFLOW_PARK_SPAN_KEY = "overflow_park_span"
+_PARK_GAP = "gap"
+_PARK_SPILL = "spill"
+_PARK_MARKER = "marker"
+_PARK_USER = "user"
+# Marker values that mean the park still owns the row.
+_PARK_KINDS = (_PARK_GAP, _PARK_SPILL, _PARK_MARKER)
 
 
 def _minutes_to_hhmm(minutes: int) -> str:
     return f"{minutes // 60:02d}:{minutes % 60:02d}"
+
+
+def _park_span_text(start: str, end: str) -> str:
+    """The recorded-span encoding: one JSON-safe ``"HH:MM-HH:MM"`` string."""
+    return f"{start}-{end}"
+
+
+def _recorded_park_span(row: dict[str, Any]) -> tuple[str, str] | None:
+    """The span the park recorded when it took ownership of ``row``.
+
+    ``None`` when no usable span is recorded — a marker written before
+    ``OVERFLOW_PARK_SPAN_KEY`` existed, or any malformed value. Those keep the
+    pre-2026-10-30 ownership reading instead of guessing.
+    """
+    raw = row.get(OVERFLOW_PARK_SPAN_KEY)
+    if not isinstance(raw, str):
+        return None
+    start_text, separator, end_text = raw.partition("-")
+    if not separator:
+        return None
+    start = placement_rules.canonical_time(start_text)
+    end = placement_rules.canonical_time(end_text)
+    if start is None or end is None:
+        return None
+    return (start, end)
+
+
+def _release_owner_edited_park_rows(sequence: list[Any]) -> None:
+    """Hand a park-owned row back to the owner when its placement changed.
+
+    The park owns a placement it chose, not the row forever. A user drag or
+    resize keeps the marker (it travels inside the row's wire dict), so the
+    marker is honoured only while the row still sits exactly on the span the
+    park recorded. Otherwise the row is released to ``_PARK_USER``: the marker
+    is no longer park-owned for warning reporting, the row stays out of the
+    re-seat candidate set (the owner's explicit edit wins, even at/after the
+    effective EOD), and validation no longer treats it as an overflow row that
+    may soft-exempt anchored/Mint overlap. Conservative by construction: a
+    missing, legacy, or malformed recorded span, or an unparsable row time,
+    leaves ownership untouched, so no stored plan changes.
+    """
+    for row in sequence:
+        if not isinstance(row, dict):
+            continue
+        if row.get(OVERFLOW_PARK_KEY) not in _PARK_KINDS:
+            continue
+        recorded = _recorded_park_span(row)
+        if recorded is None:
+            continue
+        start = placement_rules.canonical_time(row.get("start"))
+        end = placement_rules.canonical_time(row.get("end"))
+        if start is None or end is None:
+            continue
+        if (start, end) == recorded:
+            continue
+        row[OVERFLOW_PARK_KEY] = _PARK_USER
+        row.pop(OVERFLOW_PARK_SPAN_KEY, None)
 
 
 def _assigned_duration_minutes(item: dict[str, Any]) -> int | None:
@@ -1022,7 +1102,9 @@ def reseat_overflow_tail_rows(
     GAPS that begin at/after ``OVERFLOW_PARK_TIME`` (17:00) and skip every
     anchored block span plus every row the day already holds. The park ignores
     the anchor when choosing its first gap — the user wants 17:00 even when
-    that is before 'now' — but never shares a minute with an anchor.
+    that is before 'now' — but never shares a minute with an anchor. (A row
+    that fits no free gap is the sole exception; see the 2026-10-29 change
+    below.)
 
     REVERSAL (2026-10-16, GitHub asing44/TDTB#15). The pre-2026-10 park packed
     straight from 17:00 and was exempt from anchored-block overlap, so an
@@ -1035,19 +1117,61 @@ def reseat_overflow_tail_rows(
     anchor. Mint-wall and calendar-wall handling is unchanged; Mint per-row
     permeability is a later issue (#18).
 
-    A row that fits no free gap before 23:59 keeps its at/after-EOD placement
-    — the same-day past-end-of-day marker — and reports ``overflow_past_eod``
-    instead. It is never dropped (never-bump). That marker keeps ``start ==
-    end`` only for a tail row this pass could not fit, mirroring judgment.py's
-    narrow overflow-tail relaxation.
+    A row is never dropped (never-bump). The pathological case — even the
+    5:00 PM stack has no same-day room left — keeps the incoming at/after-EOD
+    placement, the same-day past-end-of-day marker (``start == end``, mirroring
+    judgment.py's narrow overflow-tail relaxation), and reports
+    ``overflow_past_eod``.
+
+    CHANGE (2026-10-29, owner request). That marker stays at whatever the model
+    emitted at/after the effective EOD (typically ``23:59``-``23:59``, its
+    midnight overflow marker), so review and the commit due string
+    (``commit._due_string`` → "today at HH:MM") presented an unplaceable row at
+    a midnight-ish time instead of a usable one. A row that fits NO free gap is
+    now parked at ``OVERFLOW_PARK_TIME`` (17:00) anyway: stacked after any
+    earlier unplaceable row, in original order, at full duration, and allowed
+    to share time with anchors/Mint/rows already there — a row with no free gap
+    has no overlap-free home, and 5:00 PM is legible where a past-EOD marker is
+    not. This lifts the no-overlap rule ONLY for rows that fit nowhere; rows
+    that DO fit a free gap keep parking into gaps with anchors respected. The
+    ``overflow_past_eod`` warning stays attached so the user still sees the row
+    did not truly fit. When even the 5:00 PM stack has no same-day room left
+    (pathological overcapacity), the row keeps its incoming marker and the
+    warning, as before.
 
     The proposal's sequence is re-sorted chronologically (stable) afterwards
     so downstream ordering holds. Mutates ``proposal`` rows and any matching
-    overlap grants in place; returns one warning descriptor per re-seated row.
+    overlap grants in place; returns one warning descriptor per row the park
+    currently owns.
+
+    INVARIANT (2026-10-29, review B1): the park is a FIXED POINT. The real flow
+    is /sequence -> client store -> /validate-sequence, and validation re-runs
+    on its own output after every timeline edit, so a second pass must move
+    nothing and must report the same warning rules. Candidates are therefore
+    UNPLACED rows only (at/after the effective EOD and not already carrying the
+    ``OVERFLOW_PARK_KEY`` marker), and the marker is what the park writes when
+    it places a row. Earlier this test was ``start >= effective_eod`` alone, so
+    a row the first pass had gap-parked past the EOD (or kept as a past-EOD
+    marker) became a candidate again — while its own slot had become an
+    obstacle — and was re-spilled onto the 17:00 stack, triple-booking the
+    park. A row that already holds a park slot never moves again; a marker row
+    left in place (no room in the 5:00 PM stack) stays a marker.
+
+    OWNERSHIP IS RELEASED WHEN THE OWNER EDITS (2026-10-30, review B2): the
+    marker rides the row's wire dict through the client store, so a user drag or
+    resize keeps it. Each pass therefore honours a marker only while the row
+    still sits on the span recorded beside it (``OVERFLOW_PARK_SPAN_KEY``); a
+    mismatch releases the row to the owner (``_PARK_USER``) so it is not
+    re-parked, reports no regenerated park warning, and no longer soft-exempts
+    anchored/Mint overlap. See ``_release_owner_edited_park_rows``.
     """
     sequence = proposal.get("sequence")
     if not isinstance(sequence, list):
         return []
+    # Release any row the owner has moved or resized since the park placed it
+    # BEFORE candidacy, obstacles, and reporting are derived, so a released row
+    # behaves exactly like any other user-placed row on this pass.
+    _release_owner_edited_park_rows(sequence)
     frame = time_frame or {}
     eod_norm = _normalize_time(frame.get("effective_eod"))
     eod_min = _to_minutes(eod_norm) if eod_norm else None
@@ -1078,14 +1202,18 @@ def reseat_overflow_tail_rows(
             continue
         start_min = _to_minutes(start)
         duration = durations.get(row_id)
-        # Only the overflow tail moves: an assigned row with a known duration
-        # starting at/after the effective EOD.
-        if duration is not None and start_min >= eod_min:
+        # Only an UNPLACED overflow tail moves: an assigned row with a known
+        # duration starting at/after the effective EOD that the park has not
+        # already placed (fixed-point invariant above). A released
+        # (``_PARK_USER``) or previously marked row is never a candidate: the
+        # owner's explicit edit always wins over a re-park.
+        if (duration is not None and start_min >= eod_min
+                and not row.get(OVERFLOW_PARK_KEY)):
             candidates.append((row, row_id, duration, start, end))
             continue
-        # Everything else holds its ground: the park fills the gaps around the
-        # day's existing placement (and around a previous pass's parked rows),
-        # which also keeps re-validation idempotent.
+        # Everything else holds its ground — including a row a previous pass
+        # already parked: the park fills the gaps around the day's existing
+        # placement (and around a previous pass's parked rows).
         end_min = _to_minutes(end)
         if end_min > start_min:
             obstacles.append((start_min, end_min))
@@ -1103,52 +1231,91 @@ def reseat_overflow_tail_rows(
                     progressed = True
         return start
 
-    reseated: list[dict[str, str]] = []
     cursor = park_min
+    moved = False
+    # Independent stack for rows that fit NO free gap: they park at 17:00 and
+    # advance by their own full duration, ignoring obstacles, so several of
+    # them land consecutively in original order (owner request 2026-10-29).
+    spill_cursor = park_min
     for row, row_id, duration, start, end in candidates:
         new_start = _free_start(cursor, duration)
         new_end = new_start + duration
-        if new_end > _TAIL_END_MIN:
-            # No free gap before the last representable minute: leave the row
+        spilled = new_end > _TAIL_END_MIN
+        if spilled and spill_cursor + duration > _TAIL_END_MIN:
+            # Even the 5:00 PM stack has no same-day room left: leave the row
             # at/after the effective EOD (its same-day past-end-of-day marker)
-            # and flag it softly. Never dropped.
-            reseated.append({
-                "id": row_id,
-                "rule": "overflow_past_eod",
-                "detail": (
-                    f"{row_id!r} exceeds the day's capacity — no free gap "
-                    f"before 23:59; left at {start}-{end} past end of day — "
-                    "defer or drop it"
-                ),
-                "start": start,
-                "end": end,
-            })
+            # and flag it softly. Never dropped. The marker records that this
+            # park owns the row, so no later pass re-tries it.
+            row[OVERFLOW_PARK_KEY] = _PARK_MARKER
+            row[OVERFLOW_PARK_SPAN_KEY] = _park_span_text(start, end)
             continue
+        if spilled:
+            # Park at 5:00 PM regardless of 'now' and regardless of what the
+            # row then overlaps: it fits nowhere else.
+            new_start, new_end = spill_cursor, spill_cursor + duration
+            spill_cursor = new_end
+        row[OVERFLOW_PARK_KEY] = _PARK_SPILL if spilled else _PARK_GAP
         new_start_str = _minutes_to_hhmm(new_start)
         new_end_str = _minutes_to_hhmm(new_end)
         old_interval = {"start": start, "end": end}
         row["start"], row["end"] = new_start_str, new_end_str
+        row[OVERFLOW_PARK_SPAN_KEY] = _park_span_text(new_start_str, new_end_str)
         _repair_reseated_grant_intervals(
             grants, row_id, old_interval,
             {"start": new_start_str, "end": new_end_str},
         )
-        cursor = new_end
-        reseated.append({
-            "id": row_id,
-            "rule": "overflow_reseated",
-            "detail": (
-                f"{row_id!r} exceeds the day's capacity — parked at "
-                f"{new_start_str}-{new_end_str}; defer or drop it"
-            ),
-            "start": new_start_str,
-            "end": new_end_str,
-        })
-    if reseated:
+        moved = True
+        if not spilled:
+            cursor = new_end
+    if moved:
         # The park moves rows earlier than the rest of the day; re-sort so the
         # returned sequence (and the structural chronological-order check) is
         # consistent. Python's sort is stable, preserving the original order
         # of same-start rows.
         sequence.sort(key=_row_start_sort_key)
+    # Report every row the park currently owns, in final sequence order, with
+    # the detail regenerated from its CURRENT placement. A converged sequence
+    # therefore returns the same warning rules on every pass even though it
+    # moves nothing (fixed-point invariant above).
+    reseated: list[dict[str, str]] = []
+    for row in sequence:
+        if not isinstance(row, dict):
+            continue
+        park = row.get(OVERFLOW_PARK_KEY)
+        if park not in _PARK_KINDS:
+            # ``_PARK_USER`` (a row the owner has moved since the park placed
+            # it) and unknown values are not park-owned: no park warning, and
+            # the caller keeps the row out of ``reseated_ids``.
+            continue
+        row_id = str(row.get("id"))
+        if durations.get(row_id) is None:
+            continue
+        start = placement_rules.canonical_time(row.get("start")) or ""
+        end = placement_rules.canonical_time(row.get("end")) or ""
+        if park == _PARK_GAP:
+            rule = "overflow_reseated"
+            detail = (
+                f"{row_id!r} exceeds the day's capacity — parked at "
+                f"{start}-{end}; defer or drop it"
+            )
+        elif park == _PARK_SPILL:
+            rule = "overflow_past_eod"
+            detail = (
+                f"{row_id!r} exceeds the day's capacity — no free gap "
+                f"before 23:59, parked at 5:00 PM "
+                f"({start}-{end}) but still past end of day — defer or drop it"
+            )
+        else:
+            rule = "overflow_past_eod"
+            detail = (
+                f"{row_id!r} exceeds the day's capacity — no free gap "
+                f"before 23:59 and no room left at the 5:00 PM park; "
+                f"left at {start}-{end} past end of day — defer or drop it"
+            )
+        reseated.append({
+            "id": row_id, "rule": rule, "detail": detail,
+            "start": start, "end": end,
+        })
     return reseated
 
 
@@ -1495,12 +1662,15 @@ def validate_sequence(
         normalized_row = {**row, "start": start, "end": end}
         if end_min <= start_min:
             if row_id in spill_ids:
-                # Overflow spill (asing44/TDTB#15): the park found no free gap
-                # before 23:59 for this assigned overflow-tail row, so it
-                # keeps the same-day past-end-of-day marker (start == end)
-                # exactly as judgment.py's narrow overflow-tail relaxation
-                # tolerates. The row stays in the sequence (never-bump) and
-                # carries the soft overflow_past_eod warning.
+                # Overflow park marker (asing44/TDTB#15 + 2026-10-29): this
+                # assigned overflow-tail row fits no free gap AND the 5:00 PM
+                # stack has no same-day room left, so it keeps its incoming
+                # at/after-EOD placement — the past-end-of-day marker
+                # (start == end) judgment.py's narrow overflow-tail relaxation
+                # tolerates. Every other overflow row now holds a real
+                # interval (a free gap, or stacked from 17:00), so this branch
+                # only ever covers markers. The row stays in the sequence
+                # (never-bump) and carries the soft overflow_past_eod warning.
                 pass
             else:
                 detail = f"{row_id!r}: end {end!r} not after start {start!r}"
