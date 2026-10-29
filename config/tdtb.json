@@ -263,7 +263,7 @@
       "Duration": "30m",
       "Days": "daily",
       "overlap_allowed": false,
-      "Notes": null
+      "Notes": "Negative Visualization as well"
     },
     {
       "Block": "Foods Breakfast",
@@ -298,7 +298,7 @@
     {
       "Block": "Night Routine",
       "Type": "hard",
-      "Start": "10:00 PM",
+      "Start": "11:00 PM",
       "End": null,
       "Duration": "45m",
       "Days": "daily",
