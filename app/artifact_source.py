@@ -556,10 +556,11 @@ def _habit_item_of(entry: Any) -> dict[str, Any] | None:
 def load_habits(*, path: str | Path | None = None) -> tuple[dict[str, Any], list[str]]:
     """Read ONLY the artifact's habit summary. Never raises.
 
-    Live source mode consumes the artifact for habits too: the REST Todoist
-    client exposes no completed-tasks endpoint, so done-state is agent-fetched
-    data either way. A missing/unreadable/malformed artifact degrades to the
-    zeroed block plus a loud warning — never a fallback to another source.
+    Artifact source mode consumes this block directly. Live source mode reads
+    the operator's Habits project instead (``external_sources.fetch_habits_items``)
+    and lands here only as the FALLBACK for a failed live read, which labels
+    the cached list loudly. A missing/unreadable/malformed artifact degrades to
+    the zeroed block plus a warning — never a fallback to another source.
     """
     target = Path(path) if path is not None else artifact_path()
     try:

@@ -1,10 +1,13 @@
-"""test_habit_capacity.py — habit time from the artifact, never the vault.
+"""test_habit_capacity.py — habit time from the live read or the artifact.
 
-Obsidian is retired: the habit done/total split and the outstanding-minutes
-estimate ride the planning artifact's top-level ``habits`` block, computed by
-the producer (``producer_rules.compute_habit_summary``). This file pins the
+Obsidian is retired. The habit done/total split and the outstanding-minutes
+estimate come from the operator's Todoist Habits project in live source mode
+(``external_sources.fetch_habits_items``) and from the planning artifact's
+top-level ``habits`` block in artifact mode (the default here), computed by the
+producer (``producer_rules.compute_habit_summary``). This file pins the
 producer arithmetic (grain rounding, per-habit fallback) and the end-to-end
-capacity effect through /plan-inputs.
+capacity effect through /plan-inputs; the live Todoist read is pinned in
+``test_habits_live.py``.
 
 Habit completion is NOT read: Adam tracks habits in Grit, so the Todoist
 Habits list is the active set and toggling happens in the app's per-day
@@ -531,6 +534,7 @@ class TestArtifactHabits:
 
 # ---------------------------------------------------------------------------
 # End to end — the allocator's habits segment tracks the artifact estimate
+# (artifact source mode, the default in these tests; live mode reads Todoist)
 # ---------------------------------------------------------------------------
 
 class TestCapacitySegment:

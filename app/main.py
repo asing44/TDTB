@@ -4711,10 +4711,13 @@ def create_app() -> FastAPI:
         # never collides with its own Capacities row. A store read failure
         # degrades visibly here; it never crashes plan-inputs.
         mirror_excluded, mirror_warnings = _mirror_intake_exclusions()
-        # Habits are agent-fetched data either way (the REST Todoist client
-        # exposes no completed-tasks read), so the summary rides the artifact
-        # in BOTH source modes. Never a note fallback; no data -> zeroed block
-        # plus a loud source_warnings entry.
+        # Habits are a CAPACITY summary: their time deducts from the day,
+        # they never become rows. In artifact mode the published artifact's
+        # block is the source; in live mode the operator's own Habits project
+        # is read live, so every open habit shows up. A failed live read falls
+        # back to the artifact's cached list with a loud source_warnings entry
+        # (never a silent zero); a live read that succeeds with no habit is a
+        # real zero and stays one.
         habits: dict[str, Any] = dict(artifact_source.HABITS_EMPTY)
         w_hab: list[str] = []
         if source_mode == app_config.SOURCES_MODE_ARTIFACT:
@@ -4769,8 +4772,18 @@ def create_app() -> FastAPI:
                     # A pool:true or UNKNOWN row stays on the pool.
                     capacities_items = [r for r in live_capacities if r.get("assigned") is True]
                     c_pool = [r for r in live_capacities if r.get("assigned") is not True]
-            # Live mode still sources the habit summary from the artifact.
-            habits, w_hab = artifact_source.load_habits()
+            # Live habits: read the operator's Habits project open tasks so
+            # the plan lists every habit, not the artifact's cached snapshot.
+            live_habits, w_hab = external_sources.fetch_habits_items(
+                todoist_c, ext_cfg, today
+            )
+            if live_habits is None:
+                # Stale list, labelled loudly by the warning already collected
+                # above; the artifact's own warnings join it.
+                habits, artifact_habit_warnings = artifact_source.load_habits()
+                w_hab = [*w_hab, *artifact_habit_warnings]
+            else:
+                habits = live_habits
         if direct_intake:
             # ONE generation read per request: the rows and the intake block
             # must describe the same generation (R-B F3, adjacent-generation
@@ -5229,8 +5242,16 @@ def create_app() -> FastAPI:
             busy_blocks, _schedulable_all_day_rows = (
                 external_sources.split_schedulable_all_day(busy_blocks)
             )
-            # Habits ride the artifact here too — no note read.
-            habits, _w_hab = artifact_source.load_habits()
+            # Same habit source as /plan-inputs so the two consumers agree on
+            # the capacity math: the live Habits project read when a Todoist
+            # client exists, the artifact's cached list otherwise.
+            live_habits, _w_hab = external_sources.fetch_habits_items(
+                todoist_c, ext_cfg, today
+            )
+            habits = (
+                live_habits if live_habits is not None
+                else artifact_source.load_habits()[0]
+            )
         finally:
             if todoist_c is not None and hasattr(todoist_c, "close"):
                 try:
