@@ -13,6 +13,7 @@
 
 import { useEffect, useMemo, useState } from "preact/hooks";
 import { useApp } from "./context";
+import { HiddenTasksSection } from "./HiddenTasksSection";
 import type {
   TagCatalog,
   TagExclusionIdentity,
@@ -58,7 +59,15 @@ interface Row {
   unresolved: boolean;
 }
 
-export function TagExclusionSettingsPanel({ active }: { active: boolean }) {
+export function TagExclusionSettingsPanel({
+  active,
+  onSettings,
+}: {
+  active: boolean;
+  /** Told the saved settings after every load and save, so a sibling preview
+      reads the same saved tags without a second request. */
+  onSettings?: (settings: TagExclusionSettings) => void;
+}) {
   const { controller } = useApp();
   const [settings, setSettings] = useState<TagExclusionSettings | null>(null);
   const [draft, setDraft] = useState<TagExclusionSettingsDraft | null>(null);
@@ -76,6 +85,7 @@ export function TagExclusionSettingsPanel({ active }: { active: boolean }) {
     try {
       const loaded = await controller.loadTagExclusionSettings();
       setSettings(loaded);
+      onSettings?.(loaded);
       setDraft(draftOf(loaded));
       setPhase("ready");
     } catch (e) {
@@ -157,6 +167,15 @@ export function TagExclusionSettingsPanel({ active }: { active: boolean }) {
     });
   };
 
+  /** Show again: drop the hidden task from the DRAFT only; Save writes the
+      full replacement (tags and hidden tasks together). */
+  const showTodoistAgain = (id: string) =>
+    setDraft((current) =>
+      current
+        ? { ...current, todoist: current.todoist.filter((entry) => entry.id !== id) }
+        : current,
+    );
+
   const save = async () => {
     if (!draft || phase === "saving" || reloadRequired) return;
     setPhase("saving");
@@ -166,6 +185,7 @@ export function TagExclusionSettingsPanel({ active }: { active: boolean }) {
       const { settings: saved, refreshError } =
         await controller.saveTagExclusionSettings(draft);
       setSettings(saved);
+      onSettings?.(saved);
       setDraft(draftOf(saved));
       setPhase("ready");
       setNotice(
@@ -290,6 +310,8 @@ export function TagExclusionSettingsPanel({ active }: { active: boolean }) {
                 )}
               </div>
             </section>
+
+            <HiddenTasksSection entries={draft.todoist} onShowAgain={showTodoistAgain} />
 
             {error !== null && (
               <section class="tag-exclusion-settings__error" role="alert">
