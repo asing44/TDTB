@@ -4982,6 +4982,9 @@ def create_app() -> FastAPI:
             # Live habits: read the operator's Habits project open tasks so
             # the plan lists every habit, not the artifact's cached snapshot.
             todoist_projects = external_sources.TodoistProjects(todoist_c)
+            # Run-scoped label catalogue: at most one paginated label read for
+            # this request (the row builder uses it, never once per row).
+            todoist_labels = external_sources.TodoistLabels(todoist_c)
             live_habits, w_hab = external_sources.fetch_habits_items(
                 todoist_c, ext_cfg, today, projects=todoist_projects
             )
@@ -5030,7 +5033,7 @@ def create_app() -> FastAPI:
             if source_mode != app_config.SOURCES_MODE_ARTIFACT:
                 t_assigned, t_pool, w_todo = external_sources.fetch_todoist_items(
                     todoist_c, ext_cfg, exclude_ids=mirror_excluded,
-                    projects=todoist_projects,
+                    projects=todoist_projects, labels=todoist_labels,
                 )
             if store is not None:
                 try:

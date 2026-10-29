@@ -111,6 +111,85 @@ def _project_color(project: dict[str, Any]) -> str | None:
     return color.strip() or None
 
 
+def _label_name(label: dict[str, Any]) -> str | None:
+    """A label's name, or ``None`` when it carries no usable one."""
+    name = label.get("name")
+    if isinstance(name, str) and name.strip():
+        return name
+    return None
+
+
+def _label_color(label: dict[str, Any]) -> str | None:
+    """A label's Todoist colour NAME (``berry_red``), or ``None``.
+
+    REST v1 sends ``color`` as a string name. Anything else (a number, a list,
+    an object) is not a colour name, so it degrades to null rather than
+    reaching the wire: mapping that name to hex is the frontend's job."""
+    color = label.get("color")
+    if not isinstance(color, str):
+        return None
+    return color.strip() or None
+
+
+class TodoistLabels:
+    """The Todoist label catalogue for ONE run: at most one paginated read.
+
+    A row's chips are tinted by their Todoist label colour, and one
+    ``/plan-inputs`` request builds many rows — so the label list is read once
+    and indexed by NAME (Todoist task labels are names, not ids) and passed to
+    the row builder. Nothing is persisted: a new run builds a new catalogue
+    and re-reads.
+
+    A failed, unavailable, or malformed lookup is SILENT here: rows degrade to
+    an empty colour map rather than blocking planning with a new warning.
+    """
+
+    def __init__(self, client: Any = None) -> None:
+        self._client = client
+        self._loaded = False
+        #: True only when a lookup EXISTS and failed — never for one that is
+        #: simply absent (an unconfigured runtime or a plain double).
+        self.failed = False
+        self._labels: list[dict[str, Any]] | None = None
+        self._index: dict[str, str | None] = {}
+
+    def load(self) -> list[dict[str, Any]] | None:
+        """The raw label list (dicts only), or ``None`` when unavailable."""
+        if self._loaded:
+            return self._labels
+        self._loaded = True
+        getter = getattr(self._client, "get_labels", None)
+        if not callable(getter):
+            return None
+        try:
+            fetched = getter()
+        except Exception:  # noqa: BLE001 — degrade: rows keep an empty map
+            self.failed = True
+            return None
+        if not isinstance(fetched, list):
+            self.failed = True
+            return None
+        self._labels = [label for label in fetched if isinstance(label, dict)]
+        index: dict[str, str | None] = {}
+        for label in self._labels:
+            name = _label_name(label)
+            if name is None:
+                continue
+            index[name] = _label_color(label)
+        self._index = index
+        return self._labels
+
+    def color_for(self, label_name: Any) -> str | None:
+        """The colour NAME for one label name; null when unknown.
+
+        Matching is EXACT and case-preserving: ``Half-hour`` and ``half-hour``
+        are different labels, and a near miss is never guessed at."""
+        self.load()
+        if not isinstance(label_name, str):
+            return None
+        return self._index.get(label_name)
+
+
 class TodoistProjects:
     """The Todoist project catalogue for ONE run: at most one paginated read.
 
@@ -371,10 +450,33 @@ def _project_fields(
     }
 
 
+def _label_colors(
+    task: dict[str, Any], labels: TodoistLabels | None
+) -> dict[str, str | None]:
+    """The row's label names mapped to their Todoist colour NAME.
+
+    Names are exactly the names the row already carries (the ``labels`` field
+    is unchanged, this is only the colour lookup beside it). Without a label
+    catalogue — or with one that is absent, failed, or malformed — the map is
+    empty, never a guess and never a warning."""
+    names = task.get("labels") or []
+    if not isinstance(names, list) or not names:
+        return {}
+    if labels is None or labels.load() is None:
+        # No lookup, or one that failed / answered with something unusable:
+        # the map is empty, never a null key per label.
+        return {}
+    return {
+        name if isinstance(name, str) else str(name): labels.color_for(name)
+        for name in names
+    }
+
+
 def _to_item(
     task: dict[str, Any],
     assigned: bool,
     projects: TodoistProjects | None = None,
+    labels: TodoistLabels | None = None,
 ) -> dict[str, Any]:
     tid = str(task.get("id"))
     # Todoist API priority: 4 = highest — same direction as the urgency scale.
@@ -395,6 +497,10 @@ def _to_item(
         **_project_fields(task, projects),
         "duration": _duration_minutes(task),
         "labels": task.get("labels") or [],
+        # The cockpit tints each label chip from Todoist, so the row maps its
+        # OWN label names to their colour NAME (null when the run's label
+        # catalogue cannot resolve one). No labels or no catalogue: {}.
+        "label_colors": _label_colors(task, labels),
         # recurring tasks are schedule-pinned (M1.0): surfaced so the UI can
         # suppress manual adjustment controls, mirroring shadow's no-op rule
         "is_recurring": bool((task.get("due") or {}).get("is_recurring")),
@@ -407,6 +513,7 @@ def fetch_todoist_items(
     config: dict[str, Any],
     exclude_ids: set[str] | None = None,
     projects: TodoistProjects | None = None,
+    labels: TodoistLabels | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[str]]:
     """Pull assigned (due today/overdue) + quick-pool tasks.
 
@@ -417,6 +524,10 @@ def fetch_todoist_items(
     ``projects`` (optional) is the run's project catalogue; without one this
     read builds its own, so the project list is still read once per call and
     never once per row.
+
+    ``labels`` (optional) is the run's label catalogue, read the same way: one
+    paginated label read per call at most, never one per row, and an absent or
+    failed lookup leaves every row's ``label_colors`` empty.
 
     Returns ``(assigned_items, pool_items, warnings)``; never raises.
     """
@@ -440,10 +551,14 @@ def fetch_todoist_items(
     except Exception as exc:  # noqa: BLE001 — degrade contract
         return [], [], [f"Todoist read failed ({exc}) — digest is missing Todoist items"]
 
-    assigned_items = [_to_item(t, assigned=True, projects=catalog) for t in assigned_tasks]
+    label_catalog = labels if labels is not None else TodoistLabels(client)
+    assigned_items = [
+        _to_item(t, assigned=True, projects=catalog, labels=label_catalog)
+        for t in assigned_tasks
+    ]
     assigned_ids = {i["todoist_id"] for i in assigned_items}
     pool_items = [
-        _to_item(t, assigned=False, projects=catalog)
+        _to_item(t, assigned=False, projects=catalog, labels=label_catalog)
         for t in quick_tasks
         if str(t.get("id")) not in assigned_ids
     ]
