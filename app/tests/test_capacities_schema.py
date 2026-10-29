@@ -494,7 +494,7 @@ def test_diff_reports_the_example_from_the_brief():
     assert result.severity == "warn"
     assert cs.summary_text(result) == (
         "Capacities changed since the last refresh: 1 status option removed, "
-        "1 new type. Review the mapping in Connections."
+        "1 new type. Open Settings to review the mapping."
     )
 
 
@@ -617,7 +617,7 @@ def test_open_values_partially_unresolved():
     assert result.severity == "warn"
     assert cs.summary_text(result) == (
         "Capacities changed since the last refresh: 2 open status values no longer "
-        "resolve. Review the mapping in Connections."
+        "resolve. Open Settings to review the mapping."
     )
 
 
@@ -872,11 +872,11 @@ def test_summary_text_pluralises_correctly():
 
     assert plural == (
         "Capacities changed since the last refresh: 2 status options removed. "
-        "Review the mapping in Connections."
+        "Open Settings to review the mapping."
     )
     assert singular == (
         "Capacities changed since the last refresh: 1 status option removed. "
-        "Review the mapping in Connections."
+        "Open Settings to review the mapping."
     )
     assert cs.summary_text(cs.diff(previous, previous)) == ""
 

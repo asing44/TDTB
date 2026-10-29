@@ -64,7 +64,7 @@ SEVERITY_WARN = "warn"
 _MAX_UNWRAP = 3
 
 _SUMMARY_PREFIX = "Capacities changed since the last refresh: "
-_SUMMARY_SUFFIX = ". Review the mapping in Connections."
+_SUMMARY_SUFFIX = ". Open Settings to review the mapping."
 
 
 # ---------------------------------------------------------------------------

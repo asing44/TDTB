@@ -43,7 +43,7 @@ TO_HASH = "b" * 64
 STALE_HASH = "c" * 64
 SUMMARY = (
     "Capacities changed since the last refresh: 1 status option removed. "
-    "Review the mapping in Connections."
+    "Open Settings to review the mapping."
 )
 DETECTED_AT = "2026-10-29T12:00:00+00:00"
 

@@ -1388,8 +1388,8 @@ class CapacitiesAdapter:
                 declaration_warnings.append(
                     "Legacy assignment property "
                     f"{mapping.assignment_property!r} for structure {sid!r} is "
-                    "no longer defined in Capacities; ignored. Map Assigned On "
-                    "in Connections to restore assignment."
+                    "no longer defined in Capacities; ignored. Open Settings > "
+                    "Repair connections to map Assigned To Me again."
                 )
                 mapping = replace(
                     mapping,

@@ -358,7 +358,7 @@ def test_vanished_legacy_assignment_property_is_dropped_fail_open_with_warning()
     assert vanished == [
         "Legacy assignment property 'ghost-assigned' for structure "
         "'custom-project' is no longer defined in Capacities; ignored. "
-        "Map Assigned On in Connections to restore assignment."
+        "Open Settings > Repair connections to map Assigned To Me again."
     ]
 
 

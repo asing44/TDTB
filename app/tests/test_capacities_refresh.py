@@ -946,13 +946,13 @@ def test_vanished_legacy_assignment_property_completes_when_assigned_on_mapped(
     assert len(warnings) == 2
     assert (
         "Legacy assignment property 'assigned' for structure 'RootTask' is no "
-        "longer defined in Capacities; ignored. Map Assigned On in Connections "
-        "to restore assignment." in warnings
+        "longer defined in Capacities; ignored. Open Settings > Repair "
+        "connections to map Assigned To Me again." in warnings
     )
     assert (
         "Legacy assignment property 'assigned' for structure 'T2' is no "
-        "longer defined in Capacities; ignored. Map Assigned On in Connections "
-        "to restore assignment." in warnings
+        "longer defined in Capacities; ignored. Open Settings > Repair "
+        "connections to map Assigned To Me again." in warnings
     )
 
 
@@ -979,8 +979,8 @@ def test_vanished_legacy_assignment_property_completes_without_assigned_on(
     assert len(warnings) == 2
     assert (
         "Legacy assignment property 'assigned' for structure 'RootTask' is no "
-        "longer defined in Capacities; ignored. Map Assigned On in Connections "
-        "to restore assignment." in warnings
+        "longer defined in Capacities; ignored. Open Settings > Repair "
+        "connections to map Assigned To Me again." in warnings
     )
 
 
@@ -1027,8 +1027,8 @@ def test_vanished_marker_without_status_or_rule_skips_structure_with_warning(
         if warning.startswith("Legacy assignment property")
     ] == [
         "Legacy assignment property 'assigned' for structure 'custom-project' "
-        "is no longer defined in Capacities; ignored. Map Assigned On in "
-        "Connections to restore assignment."
+        "is no longer defined in Capacities; ignored. Open Settings > Repair "
+        "connections to map Assigned To Me again."
     ]
 
 
