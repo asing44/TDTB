@@ -1266,6 +1266,11 @@ export function projectAssigned(row: Wire): AssignedItem {
       path: source === "capacities" || source === "calendar" ? (row.path ?? null) : null,
     }),
     durationSource: durationSourceOf(row.duration_source),
+    // Review reasons (warn-only) ride the indexed row, so a Capacities row
+    // already in the plan can say it still needs a look without a second read.
+    capacitiesReviewReasons: Array.isArray(row.capacities_review_reasons)
+      ? row.capacities_review_reasons.map(String)
+      : [],
     isRecurring: source === "todoist" && row.is_recurring === true,
     scheduledStart: source === "todoist" ? to24h(row.scheduled_start) : null,
     labels: Array.isArray(row.labels) ? row.labels.map(String) : [],

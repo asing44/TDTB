@@ -199,8 +199,8 @@ export function CapacitiesUnknownReview({ active }: { active: boolean }) {
       setDraft(initDraft(saved, candidates));
       setNotice(
         refreshError
-          ? `Acknowledged ${count} review rows; planning refresh failed: ${refreshError}`
-          : `Acknowledged ${count} review rows; plan inputs refreshed.`,
+          ? `Added ${count} review rows to today's plan; planning refresh failed: ${refreshError}`
+          : `Added ${count} review rows to today's plan; plan inputs refreshed.`,
       );
       setPhase("ready");
     } catch (e) {
@@ -309,7 +309,7 @@ export function CapacitiesUnknownReview({ active }: { active: boolean }) {
                   onClick={() => void okayToPlanAll()}
                 >
                   {ackBusy
-                    ? "Acknowledging…"
+                    ? "Planning…"
                     : `Okay to plan all (${unacknowledgedReviewRows.length})`}
                 </button>
               )}

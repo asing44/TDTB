@@ -289,6 +289,11 @@ export interface AssignedItem {
   capacitiesId?: string | null;
   capacitiesSpaceId?: string | null;
   capacitiesStructureId?: string | null;
+  /** Server review-reason keys for a Capacities row that still needs a look
+      (warn-only, owner decision 2026-10-29): the row plans and commits
+      normally, and the reason list only drives the row's "Needs a look" chip.
+      Empty for every unflagged row and for non-Capacities sources. */
+  capacitiesReviewReasons?: string[];
   /** Where the row's effective duration came from: "remembered" (durable
       server memory) or a deterministic source label. Absent for legacy
       payloads without duration-memory metadata = source-resolved behavior. */

@@ -177,12 +177,17 @@ export function TaskRow({
   s,
   hierarchy,
   structureTitles,
+  needsLook,
   onKeyDown,
 }: {
   item: AssignedItem;
   s: AppState;
   hierarchy?: HierarchyRow;
   structureTitles?: Record<string, string>;
+  /** Warn-only "Needs a look" chip: the row carries Capacities review
+      reasons. Advisory presentation only — it never disables a control or
+      changes plan membership. */
+  needsLook?: boolean;
   onKeyDown?: (e: KeyboardEvent) => void;
 }) {
   const { controller } = useApp();
@@ -294,6 +299,14 @@ export function TaskRow({
               class={`qrow__type qrow__type--${item.source === "capacities" ? "structure" : kind}`}
             >
               {kind}
+            </span>
+          )}
+          {needsLook && (
+            <span
+              class="chip chip--warn qrow__look"
+              title="Capacities flagged this row; it stays in the plan"
+            >
+              Needs a look
             </span>
           )}
           <span class="qrow__meta sr-only">{metaDetail}</span>

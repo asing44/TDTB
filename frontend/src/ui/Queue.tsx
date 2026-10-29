@@ -51,6 +51,7 @@ import { BatchBar, BatchPanel } from "./BatchActions";
 import { SkippedToday } from "./SkippedToday";
 import { UnassignedToday } from "./UnassignedToday";
 import { TaskRow } from "./TaskRow";
+import { NeedsALookBanner } from "./NeedsALookBanner";
 
 export { sourceChip, kindLabel } from "./TaskRow";
 
@@ -134,6 +135,9 @@ function Row({
       s={s}
       hierarchy={hierarchy}
       structureTitles={structureTitles}
+      // Warn-only: a Capacities row carrying review reasons keeps its visible
+      // "Needs a look" chip, and the chip never disables or gates the row.
+      needsLook={(item.capacitiesReviewReasons ?? []).length > 0}
       onKeyDown={(e) => rowKeydown(e, item, controller)}
     />
   );
@@ -228,6 +232,7 @@ export function Queue() {
           </div>
         </header>
         {/* Planning 2a: the timeline is the same card on a quiet day too. */}
+        <NeedsALookBanner />
         <AlreadyPlaced />
         <div class="plan-grid">
           <div class="plan-grid__groups">
@@ -277,6 +282,7 @@ export function Queue() {
           <p>Edits here affect today only. Mark complete writes back to the source.</p>
         </div>
       </header>
+      <NeedsALookBanner />
       <AlreadyPlaced />
       <BatchBar />
       <BatchPanel />

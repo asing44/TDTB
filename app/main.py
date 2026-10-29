@@ -1109,8 +1109,9 @@ def build_digest_index(digest: dict[str, Any]) -> list[dict[str, Any]]:
                 # on the indexed row so a later staleness guard can re-check
                 # the policy that produced this index without a provider read.
                 "capacities_tags",
-                # U4 S6: the commit boundary refuses an unacknowledged row by
-                # its indexed review reasons; the rule state rides with them.
+                # U4 S6: the row's review reasons are indexed so the commit
+                # gate can still refuse it when the row carries them and has
+                # no selection record; acknowledgement is audit metadata only.
                 "capacities_review_reasons", "capacities_rule",
             ):
                 if key in row and row.get(key) is not None:
@@ -4381,12 +4382,15 @@ def create_app() -> FastAPI:
         """Token-guarded merge of Capacities selections for the source space.
 
         The browser supplies identities and flags only. Each selected identity
-        must be a current direct candidate, not hard-excluded, of a mapped
-        structure, and acknowledged when it carries review reasons. The rules
-        revision is stamped from the server's current rules. The write goes
-        through the store's optimistic revision, so a stale ``expected_revision``
-        is a 409 carrying both revisions. Direct intake only; no provider call
-        and no Capacities write.
+        must be a current direct candidate, not hard-excluded, and of a mapped
+        structure. A row that carries review reasons needs only this selection
+        to commit — the selection is the confirmation; the ``acknowledge`` flag
+        is audit metadata and is never required (review reasons are warn-only,
+        owner decision 2026-10-29). The rules revision is stamped from the
+        server's current rules. The write goes through the store's optimistic
+        revision, so a stale ``expected_revision`` is a 409 carrying both
+        revisions. Direct intake only; no provider call and no Capacities
+        write.
         """
         if app_config.capacities_intake() != app_config.CAPACITIES_INTAKE_DIRECT:
             raise HTTPException(
@@ -6435,8 +6439,11 @@ def create_app() -> FastAPI:
 
         Capacities rows (U4 S6) are admitted only by canonical identity, and only
         while still selected (selection-basis rows; rule-assigned rows need no
-        selection record), acknowledged if they carry review reasons, and not
-        hard-excluded since indexing; see ``_capacities_commit_refusals``.
+        selection record) and not hard-excluded since indexing; see
+        ``_capacities_commit_refusals``. A rule-assigned row that carries review
+        reasons needs a SELECTION record to commit — the selection is the
+        confirmation. Acknowledgement is an audit flag only and is never
+        required: review reasons are warn-only (owner decision 2026-10-29).
 
         Returns the server-authoritative effective config plus a SANITIZED
         digest whose assigned rows carry only trusted server identity, source,

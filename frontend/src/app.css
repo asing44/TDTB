@@ -11820,3 +11820,59 @@ button.strip-cal {
   content: "!";
   font-weight: 800;
 }
+
+/* -- "Items need a look" banner (warn-only, above the plan) ----------------
+   Reuses the existing capacities-rule__notice block for the frame and the
+   .chip/.btn skins for the parts; only the list layout is new. Nothing here
+   changes a row's controls — the banner is advisory and never gates. */
+.capacities-look {
+  display: grid;
+  gap: 6px;
+  margin: 0 0 10px;
+}
+.capacities-look__head {
+  margin: 0;
+}
+.capacities-look__head strong {
+  font-size: 13px;
+}
+.capacities-look__list {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.capacities-look__list > li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+}
+.capacities-look__list .btn {
+  flex: none;
+  padding: 4px 10px;
+  font-size: 12px;
+}
+.capacities-look__name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.capacities-look__more,
+.capacities-look__note {
+  color: var(--t-muted);
+}
+.capacities-look__actions {
+  display: flex;
+  gap: 8px;
+}
+.capacities-look__note,
+.capacities-look__error {
+  margin: 0;
+}
+.capacities-look__error {
+  color: var(--state-danger);
+}

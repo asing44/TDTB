@@ -104,7 +104,7 @@ describe("Capacities unknown review — okay to plan all", () => {
     // Success re-reads the saved record exactly like the per-row save does, so
     // both rows read as acknowledged and the control clears.
     await waitFor(() =>
-      expect(within(section).getByText(/Acknowledged 2 review rows/)).toBeTruthy(),
+      expect(within(section).getByText(/Added 2 review rows to today's plan/)).toBeTruthy(),
     );
     expect(within(section).queryByText(/Okay to plan all/)).toBeNull();
     expect(
@@ -200,7 +200,7 @@ describe("Capacities unknown review — okay to plan all", () => {
     fireEvent.click(button);
 
     await waitFor(() => expect(button.disabled).toBe(true));
-    expect(button.textContent).toContain("Acknowledging");
+    expect(button.textContent).toContain("Planning");
 
     release({
       selections: {
@@ -216,7 +216,7 @@ describe("Capacities unknown review — okay to plan all", () => {
     });
 
     await waitFor(() =>
-      expect(within(section).getByText(/Acknowledged 2 review rows/)).toBeTruthy(),
+      expect(within(section).getByText(/Added 2 review rows to today's plan/)).toBeTruthy(),
     );
     expect(within(section).queryByText(/Okay to plan all/)).toBeNull();
   });
