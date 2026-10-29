@@ -1,9 +1,9 @@
-/* settings-shell.test.tsx — the consolidated settings host (approved variant
-   A). One dialog; tabs switch panels in place; every panel body stays mounted
-   for the life of the shell so drafts survive switches, and the shell
-   unmounting on close re-initializes each panel from current state on reopen.
-   The cockpit shortcuts (rail Settings/Captures chips, ActionDock) all land
-   in the same host. Keyboard semantics and focus destinations are stage 3. */
+/* settings-shell.test.tsx — the Settings dialog chrome around the hub. One
+   dialog; entries open their panels in place; every panel stays mounted for
+   the life of the shell so drafts survive switches, and the shell unmounting
+   on close re-initializes each panel from current state on reopen. The
+   cockpit shortcuts (rail Settings/Captures chips, ActionDock) all land in
+   the same host. Entry structure itself is covered in settings-hub.test.tsx. */
 
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -78,37 +78,36 @@ function tagFixture(
   };
 }
 
-// CSS guards read app.css off disk (the same convention the row-spacing and
-// a11y suites use) because jsdom does no real style resolution.
-const appCss = readFileSync(resolve(process.cwd(), "src/app.css"), "utf8");
+const hubCss = readFileSync(resolve(process.cwd(), "src/ui/settings-hub.css"), "utf8");
 
-function cssBlock(selector: string): string {
-  const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const m = appCss.match(new RegExp(`${escaped}\\s*\\{([^}]*)\\}`));
-  if (!m) throw new Error(`selector not found in app.css: ${selector}`);
-  return m[1];
+const FOCUSABLE =
+  'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
+const entry = (r: ReturnType<Harness["ui"]>, name: string) =>
+  r.getByRole("button", { name: new RegExp(name, "i") });
+
+/** Open Repair connections > Repair tools > Show technical details. */
+function openTechnical(r: ReturnType<Harness["ui"]>) {
+  const repair = entry(r, "Repair connections");
+  if (repair.getAttribute("aria-expanded") !== "true") fireEvent.click(repair);
+  fireEvent.click(r.getByRole("button", { name: /repair tools/i }));
+  fireEvent.click(r.getByRole("button", { name: /show technical details/i }));
 }
 
 describe("SettingsShell", () => {
   it("mounts exactly one dialog and switches panels in place", async () => {
     const h = makeHarness("ready");
-    vi.spyOn(h.controller, "loadCapacitiesSettings").mockResolvedValue(
-      capacitiesFixture(),
-    );
-    h.store.dispatch({ type: "UI", patch: { settingsPanel: "capacities" } });
+    vi.spyOn(h.controller, "loadTagExclusionSettings").mockResolvedValue(tagFixture());
+    h.store.dispatch({ type: "UI", patch: { settingsPanel: "freshness" } });
     const rendered = h.ui(<SettingsShell />);
 
     expect(rendered.container.querySelectorAll('[role="dialog"]').length).toBe(1);
-    await waitFor(() =>
-      expect(rendered.getByText("Native Task Auto rules")).toBeTruthy(),
-    );
     expect(rendered.queryByText("Frame")).toBeNull();
 
-    fireEvent.click(rendered.getByRole("tab", { name: "Tag exclusions" }));
+    fireEvent.click(entry(rendered, "What shows up in my plan"));
     await waitFor(() => expect(rendered.getByText("Excluded tags")).toBeTruthy());
-    expect(rendered.queryByText("Native Task Auto rules")).toBeNull();
 
-    fireEvent.click(rendered.getByRole("tab", { name: "Day setup" }));
+    fireEvent.click(entry(rendered, "Change my day setup"));
     await waitFor(() => expect(rendered.getByText("Frame")).toBeTruthy());
     expect(rendered.queryByText("Excluded tags")).toBeNull();
     expect(rendered.container.querySelectorAll('[role="dialog"]').length).toBe(1);
@@ -119,8 +118,9 @@ describe("SettingsShell", () => {
     const load = vi
       .spyOn(h.controller, "loadCapacitiesSettings")
       .mockResolvedValue(capacitiesFixture({ revision: 4 }));
-    h.store.dispatch({ type: "UI", patch: { settingsPanel: "capacities" } });
+    h.store.dispatch({ type: "UI", patch: { settingsPanel: "repair" } });
     const rendered = h.ui(<SettingsShell />);
+    openTechnical(rendered);
     await waitFor(() =>
       expect(rendered.getByText("Native Task Auto rules")).toBeTruthy(),
     );
@@ -133,8 +133,8 @@ describe("SettingsShell", () => {
     expect(horizon()).toBe("5");
 
     // Switching away and back keeps the shell mounted: the unsaved draft stays.
-    fireEvent.click(rendered.getByRole("tab", { name: "Tag exclusions" }));
-    fireEvent.click(rendered.getByRole("tab", { name: "Capacities" }));
+    fireEvent.click(entry(rendered, "Change my day setup"));
+    fireEvent.click(entry(rendered, "Repair connections"));
     expect(horizon()).toBe("5");
     expect(load).toHaveBeenCalledTimes(1);
 
@@ -143,7 +143,9 @@ describe("SettingsShell", () => {
     expect(rendered.container.querySelector('[role="dialog"]')).toBeNull();
     expect(h.store.getState().ui.settingsPanel).toBeNull();
 
-    h.store.dispatch({ type: "UI", patch: { settingsPanel: "capacities" } });
+    h.store.dispatch({ type: "UI", patch: { settingsPanel: "repair" } });
+    await waitFor(() => rendered.getByRole("dialog", { name: "Settings" }));
+    openTechnical(rendered);
     await waitFor(() => expect(horizon()).toBe("2"));
     expect(load).toHaveBeenCalledTimes(2);
   });
@@ -163,8 +165,9 @@ describe("SettingsShell", () => {
           },
         }),
       );
-    h.store.dispatch({ type: "UI", patch: { settingsPanel: "capacities" } });
+    h.store.dispatch({ type: "UI", patch: { settingsPanel: "repair" } });
     const rendered = h.ui(<SettingsShell />);
+    openTechnical(rendered);
     await waitFor(() =>
       expect(rendered.getByText("Native Task Auto rules")).toBeTruthy(),
     );
@@ -173,7 +176,9 @@ describe("SettingsShell", () => {
       target: { value: "5" },
     });
     fireEvent.click(rendered.getByRole("button", { name: "Close settings" }));
-    h.store.dispatch({ type: "UI", patch: { settingsPanel: "capacities" } });
+    h.store.dispatch({ type: "UI", patch: { settingsPanel: "repair" } });
+    await waitFor(() => rendered.getByRole("dialog", { name: "Settings" }));
+    openTechnical(rendered);
 
     await waitFor(() =>
       expect(
@@ -198,11 +203,8 @@ describe("SettingsShell", () => {
     expect(rendered.container.querySelectorAll('[role="dialog"]').length).toBe(1);
     expect(h.store.getState().ui.settingsPanel).toBe("day");
 
-    fireEvent.click(rendered.getByRole("tab", { name: "Capacities" }));
-    await waitFor(() =>
-      expect(rendered.getByText("Native Task Auto rules")).toBeTruthy(),
-    );
-    expect(h.store.getState().ui.capacitiesSettingsOpen).toBe(true);
+    fireEvent.click(entry(rendered, "Repair connections"));
+    expect(h.store.getState().ui.settingsPanel).toBe("repair");
 
     fireEvent.click(rendered.getByRole("button", { name: "Close settings" }));
     await waitFor(() => expect(h.store.getState().ui.settingsPanel).toBeNull());
@@ -233,93 +235,26 @@ describe("SettingsShell", () => {
   });
 });
 
-describe("SettingsShell accessibility (stage 3)", () => {
-  it("exposes the switcher as a named tablist with tab/panel relationships", () => {
+describe("SettingsShell accessibility", () => {
+  it("exposes the entries as buttons with aria-expanded/aria-controls and one open region", () => {
     const h = makeHarness("ready");
     h.store.dispatch({ type: "UI", patch: { settingsPanel: "day" } });
     const rendered = h.ui(<SettingsShell />);
 
-    expect(rendered.getByRole("tablist", { name: "Settings panels" })).toBeTruthy();
-    const tabs = rendered.getAllByRole("tab") as HTMLElement[];
-    expect(tabs.map((tab) => tab.textContent)).toEqual([
-      "Day setup",
-      "Capacities",
-      "Tag exclusions",
-    ]);
-    for (const tab of tabs) {
-      const selected = tab.getAttribute("aria-selected") === "true";
-      expect(tab.getAttribute("tabindex")).toBe(selected ? "0" : "-1");
-      const panel = rendered.container.querySelector(
-        `#${tab.getAttribute("aria-controls")}`,
+    const toggles = Array.from(
+      rendered.container.querySelectorAll<HTMLElement>(".settings-hub__toggle"),
+    );
+    expect(toggles.length).toBe(5);
+    for (const toggle of toggles) {
+      const expanded = toggle.getAttribute("aria-expanded") === "true";
+      expect(expanded).toBe(toggle.getAttribute("data-entry") === "day");
+      const region = rendered.container.querySelector(
+        `#${toggle.getAttribute("aria-controls")}`,
       ) as HTMLElement;
-      expect(panel).toBeTruthy();
-      expect(panel.getAttribute("role")).toBe("tabpanel");
-      expect(panel.getAttribute("aria-labelledby")).toBe(tab.id);
+      expect(region.getAttribute("role")).toBe("region");
+      expect(region.getAttribute("aria-labelledby")).toBe(toggle.id);
+      expect(region.hasAttribute("hidden")).toBe(!expanded);
     }
-
-    // One visible panel, named by the selected tab. The hidden wrappers are
-    // empty so no inactive control can enter the dialog's Tab wrap.
-    const activePanel = rendered.getByRole("tabpanel") as HTMLElement;
-    expect(activePanel.getAttribute("aria-labelledby")).toBe(tabs[0].id);
-    const hiddenPanels = Array.from(
-      rendered.container.querySelectorAll('[role="tabpanel"][hidden]'),
-    ) as HTMLElement[];
-    expect(hiddenPanels.length).toBe(2);
-    for (const hidden of hiddenPanels) {
-      expect(
-        hidden.querySelectorAll(
-          'button, input, select, textarea, a[href], [tabindex]:not([tabindex="-1"])',
-        ).length,
-      ).toBe(0);
-    }
-  });
-
-  it("moves selection with Arrow/Home/End across every panel, keeping focus on the tab", async () => {
-    const h = makeHarness("ready");
-    vi.spyOn(h.controller, "loadCapacitiesSettings").mockResolvedValue(capacitiesFixture());
-    vi.spyOn(h.controller, "loadTagExclusionSettings").mockResolvedValue(tagFixture());
-    h.store.dispatch({ type: "UI", patch: { settingsPanel: "day" } });
-    const rendered = h.ui(<SettingsShell />);
-    const tablist = rendered.getByRole("tablist", { name: "Settings panels" });
-    const tab = (name: string) => rendered.getByRole("tab", { name });
-
-    const expectSelected = async (name: string, panelText: string) => {
-      await waitFor(() =>
-        expect(tab(name).getAttribute("aria-selected")).toBe("true"),
-      );
-      expect(document.activeElement).toBe(tab(name));
-      expect(tab(name).getAttribute("tabindex")).toBe("0");
-      for (const other of ["Day setup", "Capacities", "Tag exclusions"]) {
-        if (other !== name) expect(tab(other).getAttribute("tabindex")).toBe("-1");
-      }
-      await waitFor(() => expect(rendered.getByText(panelText)).toBeTruthy());
-    };
-
-    tab("Day setup").focus();
-    await expectSelected("Day setup", "Frame");
-
-    fireEvent.keyDown(tablist, { key: "ArrowRight" });
-    await expectSelected("Capacities", "Native Task Auto rules");
-
-    fireEvent.keyDown(tablist, { key: "ArrowRight" });
-    await expectSelected("Tag exclusions", "Excluded tags");
-
-    // Wrap in both directions.
-    fireEvent.keyDown(tablist, { key: "ArrowRight" });
-    await expectSelected("Day setup", "Frame");
-
-    fireEvent.keyDown(tablist, { key: "ArrowLeft" });
-    await expectSelected("Tag exclusions", "Excluded tags");
-
-    fireEvent.keyDown(tablist, { key: "Home" });
-    await expectSelected("Day setup", "Frame");
-
-    fireEvent.keyDown(tablist, { key: "End" });
-    await expectSelected("Tag exclusions", "Excluded tags");
-
-    // A pointer switch keeps focus on the clicked tab as well.
-    fireEvent.click(tab("Capacities"));
-    await expectSelected("Capacities", "Native Task Auto rules");
   });
 
   it("lands programmatic navigation on the destination heading, including Captures", async () => {
@@ -353,31 +288,42 @@ describe("SettingsShell accessibility (stage 3)", () => {
     expect(h.store.getState().ui.settingsSection).toBe("captures");
   });
 
+  it("keeps focus on a pressed entry instead of jumping to the heading", async () => {
+    const h = makeHarness("ready");
+    h.store.dispatch({ type: "UI", patch: { settingsPanel: "day" } });
+    const rendered = h.ui(<SettingsShell />);
+    const plan = entry(rendered, "What shows up in my plan");
+    plan.focus();
+    fireEvent.click(plan);
+    await waitFor(() => expect(h.store.getState().ui.settingsPanel).toBe("plan"));
+    expect(document.activeElement).toBe(plan);
+    expect(plan.getAttribute("aria-expanded")).toBe("true");
+  });
+
   it("lands focus on an async panel's heading when its load resolves", async () => {
     const h = makeHarness("ready");
-    let resolveLoad: (value: CapacitiesSettings) => void = () => {};
-    vi.spyOn(h.controller, "loadCapacitiesSettings").mockImplementation(
+    let resolveLoad: (value: TagExclusionSettings) => void = () => {};
+    vi.spyOn(h.controller, "loadTagExclusionSettings").mockImplementation(
       () =>
-        new Promise<CapacitiesSettings>((resolve) => {
+        new Promise<TagExclusionSettings>((resolve) => {
           resolveLoad = resolve;
         }),
     );
-    h.store.dispatch({ type: "UI", patch: { settingsPanel: "capacities" } });
+    h.store.dispatch({ type: "UI", patch: { settingsPanel: "plan" } });
     const rendered = h.ui(<SettingsShell />);
 
     const activePanel = () =>
-      rendered.container.querySelector('[role="tabpanel"]:not([hidden])') as HTMLElement;
+      rendered.container.querySelector(".settings-hub__panel:not([hidden])") as HTMLElement;
     expect(document.activeElement).toBe(activePanel());
-    expect(rendered.getByRole("status").textContent).toContain("Loading local policy");
 
-    act(() => resolveLoad(capacitiesFixture()));
+    act(() => resolveLoad(tagFixture()));
     const heading = await waitFor(() =>
-      rendered.getByRole("heading", { name: "Native Task Auto rules" }),
+      rendered.getByRole("heading", { name: "Excluded tags" }),
     );
     await waitFor(() => expect(document.activeElement).toBe(heading));
   });
 
-  it("restores focus to the original opener when the shell closes", async () => {
+  it("closes on Escape and restores focus to the original opener", async () => {
     const h = makeHarness("ready");
     const rendered = h.ui(<App />);
     const opener = rendered.getByRole("button", { name: "Open settings" });
@@ -387,38 +333,35 @@ describe("SettingsShell accessibility (stage 3)", () => {
       rendered.getByRole("dialog", { name: "Settings" }),
     );
 
-    fireEvent.click(rendered.getByRole("tab", { name: "Tag exclusions" }));
-    await waitFor(() => expect(h.store.getState().ui.settingsPanel).toBe("tags"));
+    fireEvent.click(entry(rendered, "What shows up in my plan"));
+    await waitFor(() => expect(h.store.getState().ui.settingsPanel).toBe("plan"));
 
     fireEvent.keyDown(dialog, { key: "Escape" });
     await waitFor(() => expect(h.store.getState().ui.settingsPanel).toBeNull());
     await waitFor(() => expect(document.activeElement).toBe(opener));
   });
 
-  it("keeps the focus trap on the active panel's controls", () => {
-    const h = makeHarness("ready");
-    h.store.dispatch({ type: "UI", patch: { settingsPanel: "day" } });
-    const rendered = h.ui(<SettingsShell />);
-    const dialog = rendered.getByRole("dialog", { name: "Settings" }) as HTMLElement;
-    const focusables = Array.from(
-      dialog.querySelectorAll<HTMLElement>(
-        'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
-      ),
-    );
-    expect(focusables.length).toBeGreaterThan(1);
-    expect(
-      dialog.querySelectorAll(
-        '[role="tabpanel"][hidden] button, [role="tabpanel"][hidden] input, [role="tabpanel"][hidden] select, [role="tabpanel"][hidden] textarea',
-      ).length,
-    ).toBe(0);
+  it("keeps the focus trap off hidden controls, folds included", () => {
+    for (const panel of ["freshness", "plan", "repair", "day"] as const) {
+      const h = makeHarness("ready");
+      h.store.dispatch({ type: "UI", patch: { settingsPanel: panel } });
+      const rendered = h.ui(<SettingsShell />);
+      const dialog = rendered.getByRole("dialog", { name: "Settings" }) as HTMLElement;
+      const focusables = Array.from(dialog.querySelectorAll<HTMLElement>(FOCUSABLE));
+      expect(focusables.length, panel).toBeGreaterThan(1);
+      for (const el of focusables) {
+        expect(el.closest("[hidden]"), `${panel}: ${el.outerHTML.slice(0, 80)}`).toBeNull();
+      }
 
-    const first = focusables[0];
-    const last = focusables[focusables.length - 1];
-    last.focus();
-    fireEvent.keyDown(dialog, { key: "Tab" });
-    expect(document.activeElement).toBe(first);
-    fireEvent.keyDown(dialog, { key: "Tab", shiftKey: true });
-    expect(document.activeElement).toBe(last);
+      const first = focusables[0];
+      const last = focusables[focusables.length - 1];
+      last.focus();
+      fireEvent.keyDown(dialog, { key: "Tab" });
+      expect(document.activeElement).toBe(first);
+      fireEvent.keyDown(dialog, { key: "Tab", shiftKey: true });
+      expect(document.activeElement).toBe(last);
+      rendered.unmount();
+    }
   });
 
   it("isolates the cockpit behind the shell while it owns focus", async () => {
@@ -460,40 +403,24 @@ describe("SettingsShell accessibility (stage 3)", () => {
       const dialog = await waitFor(() =>
         rendered.getByRole("dialog", { name: "Settings" }),
       );
-      expect(dialog.querySelectorAll('[role="tab"]').length).toBe(3);
-      expect(rendered.getByRole("tablist", { name: "Settings panels" })).toBeTruthy();
+      expect(dialog.querySelectorAll(".settings-hub__toggle").length).toBe(5);
       rendered.unmount();
     }
   });
 });
 
-describe("settings shell styling guards", () => {
+describe("settings hub styling guards", () => {
   it("uses theme tokens only, so both themes apply", () => {
-    for (const selector of [
-      ".settings-tabs",
-      ".settings-tab",
-      ".settings-tab--active",
-      ".settings-tab:focus-visible",
-    ]) {
-      const block = cssBlock(selector);
-      expect(block, selector).not.toMatch(/#[0-9a-fA-F]{3,8}\b|\brgba?\(/);
-      expect(block, selector).toMatch(/var\(--t-/);
-    }
+    expect(hubCss).not.toMatch(/#[0-9a-fA-F]{3,8}\b|\brgba?\(/);
+    expect(hubCss).toMatch(/var\(--t-/);
   });
 
   it("adds no motion of its own under reduced motion", () => {
-    for (const selector of [
-      ".settings-tabs",
-      ".settings-tab",
-      ".settings-tab--active",
-    ]) {
-      expect(cssBlock(selector), selector).not.toMatch(/animation|transition/);
-    }
+    expect(hubCss).not.toMatch(/animation|transition/);
   });
 
-  it("wraps the switcher and caps the shell at narrow widths (no overlap)", () => {
-    expect(cssBlock(".settings-tabs")).toMatch(/flex-wrap:\s*wrap/);
-    expect(cssBlock(".settings-tab")).toMatch(/min-height:\s*44px/);
+  it("caps the shell at narrow widths (no overlap)", () => {
+    const appCss = readFileSync(resolve(process.cwd(), "src/app.css"), "utf8");
     expect(appCss).toMatch(/\.setup-drawer\s*\{[^}]*width:\s*min\(520px,\s*100vw\)/);
   });
 });

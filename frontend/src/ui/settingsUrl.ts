@@ -7,7 +7,7 @@
 
 import { useEffect } from "preact/hooks";
 import { useApp } from "./context";
-import { isSettingsPanel, type SettingsPanel } from "../store/store";
+import { canonicalSettingsPanel, type SettingsPanel } from "../store/store";
 
 export const SETTINGS_PARAM = "settings";
 export const SETTINGS_SECTION_PARAM = "section";
@@ -20,10 +20,11 @@ export interface SettingsUrlState {
 export function parseSettingsSearch(search: string): SettingsUrlState {
   const params = new URLSearchParams(search);
   const rawPanel = params.get(SETTINGS_PARAM);
-  const panel = isSettingsPanel(rawPanel) ? rawPanel : null;
+  // Legacy ids (capacities, tags) map to their hub entry; unknown opens nothing.
+  const panel = canonicalSettingsPanel(rawPanel);
   const rawSection = params.get(SETTINGS_SECTION_PARAM);
   const section =
-    panel === "day" && rawSection !== null && rawSection.trim() !== ""
+    panel !== null && rawSection !== null && rawSection.trim() !== ""
       ? rawSection
       : null;
   return { panel, section };
@@ -38,7 +39,7 @@ export function serializeSettingsSearch(
   params.delete(SETTINGS_SECTION_PARAM);
   if (state.panel !== null) {
     params.set(SETTINGS_PARAM, state.panel);
-    if (state.panel === "day" && state.section) {
+    if (state.section) {
       params.set(SETTINGS_SECTION_PARAM, state.section);
     }
   }

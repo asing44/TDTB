@@ -29,6 +29,9 @@ function openWithCapacityRow() {
   });
   h.store.dispatch({ type: "UI", patch: { capacitiesSettingsOpen: true } });
   const rendered = h.ui(<CapacitiesSettingsDrawer />);
+  // Hub: the policy sections sit behind "Repair tools" > "Show technical details".
+  fireEvent.click(rendered.getByRole("button", { name: /repair tools/i }));
+  fireEvent.click(rendered.getByRole("button", { name: /show technical details/i }));
   return { h, rendered };
 }
 
@@ -158,6 +161,9 @@ describe("CapacitiesSettingsDrawer", () => {
     });
     h.store.dispatch({ type: "UI", patch: { capacitiesSettingsOpen: true } });
     const rendered = h.ui(<CapacitiesSettingsDrawer />);
+    // Hub: the policy sections sit behind "Repair tools" > "Show technical details".
+    fireEvent.click(rendered.getByRole("button", { name: /repair tools/i }));
+    fireEvent.click(rendered.getByRole("button", { name: /show technical details/i }));
     await waitFor(() => expect(rendered.getByText("Native Task Auto rules")).toBeTruthy());
 
     // Toggle a native Task Auto control — the save path that, before the fix,
@@ -233,6 +239,9 @@ describe("CapacitiesSettingsDrawer", () => {
     });
     h.store.dispatch({ type: "UI", patch: { capacitiesSettingsOpen: true } });
     const rendered = h.ui(<CapacitiesSettingsDrawer />);
+    // Hub: the policy sections sit behind "Repair tools" > "Show technical details".
+    fireEvent.click(rendered.getByRole("button", { name: /repair tools/i }));
+    fireEvent.click(rendered.getByRole("button", { name: /show technical details/i }));
     await waitFor(() => expect(rendered.getByText("Active pull")).toBeTruthy());
 
     const custom = rendered.getByRole("checkbox", {
@@ -272,6 +281,9 @@ describe("CapacitiesSettingsDrawer", () => {
     });
     h.store.dispatch({ type: "UI", patch: { capacitiesSettingsOpen: true } });
     const rendered = h.ui(<CapacitiesSettingsDrawer />);
+    // Hub: the policy sections sit behind "Repair tools" > "Show technical details".
+    fireEvent.click(rendered.getByRole("button", { name: /repair tools/i }));
+    fireEvent.click(rendered.getByRole("button", { name: /show technical details/i }));
     await waitFor(() => expect(rendered.getByText("Active pull")).toBeTruthy());
 
     // The stale id is surfaced rather than hidden.
@@ -312,6 +324,9 @@ describe("CapacitiesSettingsDrawer", () => {
     });
     h.store.dispatch({ type: "UI", patch: { capacitiesSettingsOpen: true } });
     const rendered = h.ui(<CapacitiesSettingsDrawer />);
+    // Hub: the policy sections sit behind "Repair tools" > "Show technical details".
+    fireEvent.click(rendered.getByRole("button", { name: /repair tools/i }));
+    fireEvent.click(rendered.getByRole("button", { name: /show technical details/i }));
     await waitFor(() => expect(rendered.getByText("Active pull")).toBeTruthy());
 
     expect(rendered.getByText(/No Capacities structures are configured/)).toBeTruthy();
@@ -341,6 +356,9 @@ describe("CapacitiesSettingsDrawer", () => {
     });
     h.store.dispatch({ type: "UI", patch: { capacitiesSettingsOpen: true } });
     const rendered = h.ui(<CapacitiesSettingsDrawer />);
+    // Hub: the policy sections sit behind "Repair tools" > "Show technical details".
+    fireEvent.click(rendered.getByRole("button", { name: /repair tools/i }));
+    fireEvent.click(rendered.getByRole("button", { name: /show technical details/i }));
     await waitFor(() => expect(rendered.getByText("Admission vocabulary")).toBeTruthy());
 
     // The structure list is the same source mapping the Active
@@ -428,6 +446,9 @@ describe("CapacitiesSettingsDrawer", () => {
     });
     h.store.dispatch({ type: "UI", patch: { capacitiesSettingsOpen: true } });
     const rendered = h.ui(<CapacitiesSettingsDrawer />);
+    // Hub: the policy sections sit behind "Repair tools" > "Show technical details".
+    fireEvent.click(rendered.getByRole("button", { name: /repair tools/i }));
+    fireEvent.click(rendered.getByRole("button", { name: /show technical details/i }));
     await waitFor(() => expect(rendered.getByText("Assigned flag declarations")).toBeTruthy());
 
     const input = rendered.getByLabelText("Assigned property for custom-project") as HTMLInputElement;
@@ -466,6 +487,9 @@ describe("CapacitiesSettingsDrawer", () => {
     });
     h.store.dispatch({ type: "UI", patch: { capacitiesSettingsOpen: true } });
     const rendered = h.ui(<CapacitiesSettingsDrawer />);
+    // Hub: the policy sections sit behind "Repair tools" > "Show technical details".
+    fireEvent.click(rendered.getByRole("button", { name: /repair tools/i }));
+    fireEvent.click(rendered.getByRole("button", { name: /show technical details/i }));
     await waitFor(() => expect(rendered.getByText("Assigned flag declarations")).toBeTruthy());
 
     // Retained and surfaced, never silently dropped. (The native and active
@@ -521,6 +545,9 @@ describe("CapacitiesSettingsDrawer", () => {
     });
     h.store.dispatch({ type: "UI", patch: { capacitiesSettingsOpen: true } });
     const rendered = h.ui(<CapacitiesSettingsDrawer />);
+    // Hub: the policy sections sit behind "Repair tools" > "Show technical details".
+    fireEvent.click(rendered.getByRole("button", { name: /repair tools/i }));
+    fireEvent.click(rendered.getByRole("button", { name: /show technical details/i }));
     await waitFor(() => expect(rendered.getByText("Ignored declarations in the current read")).toBeTruthy());
 
     // The server's own wording, passed through unchanged — never paraphrased.
@@ -556,6 +583,9 @@ describe("CapacitiesSettingsDrawer", () => {
     });
     h.store.dispatch({ type: "UI", patch: { capacitiesSettingsOpen: true } });
     const rendered = h.ui(<CapacitiesSettingsDrawer />);
+    // Hub: the policy sections sit behind "Repair tools" > "Show technical details".
+    fireEvent.click(rendered.getByRole("button", { name: /repair tools/i }));
+    fireEvent.click(rendered.getByRole("button", { name: /show technical details/i }));
     await waitFor(() => expect(rendered.getByText("Admission vocabulary")).toBeTruthy());
 
     // Retained and surfaced, never silently dropped.
@@ -600,6 +630,9 @@ describe("CapacitiesSettingsDrawer", () => {
     );
     h.store.dispatch({ type: "UI", patch: { capacitiesSettingsOpen: true } });
     const rendered = h.ui(<CapacitiesSettingsDrawer />);
+    // Hub: the policy sections sit behind "Repair tools" > "Show technical details".
+    fireEvent.click(rendered.getByRole("button", { name: /repair tools/i }));
+    fireEvent.click(rendered.getByRole("button", { name: /show technical details/i }));
 
     await waitFor(() => expect(rendered.getByRole("alert")).toBeTruthy());
     expect(rendered.getByRole("alert").textContent).toContain("local settings unavailable");
@@ -681,6 +714,9 @@ describe("CapacitiesSettingsDrawer", () => {
     });
     h.store.dispatch({ type: "UI", patch: { capacitiesSettingsOpen: true } });
     const rendered = h.ui(<CapacitiesSettingsDrawer />);
+    // Hub: the policy sections sit behind "Repair tools" > "Show technical details".
+    fireEvent.click(rendered.getByRole("button", { name: /repair tools/i }));
+    fireEvent.click(rendered.getByRole("button", { name: /show technical details/i }));
     const group = () =>
       within(
         rendered.getByRole("group", {
@@ -716,6 +752,9 @@ describe("CapacitiesSettingsDrawer", () => {
     });
     h.store.dispatch({ type: "UI", patch: { capacitiesSettingsOpen: true } });
     const rendered = h.ui(<CapacitiesSettingsDrawer />);
+    // Hub: the policy sections sit behind "Repair tools" > "Show technical details".
+    fireEvent.click(rendered.getByRole("button", { name: /repair tools/i }));
+    fireEvent.click(rendered.getByRole("button", { name: /show technical details/i }));
     await waitFor(() =>
       expect(rendered.getByText(/Active structures outside the source mapping/)).toBeTruthy(),
     );

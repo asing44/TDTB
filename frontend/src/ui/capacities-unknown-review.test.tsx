@@ -26,7 +26,7 @@ async function openReview() {
   // Populate the typed direct-intake block (and its stable candidates) through
   // the real refresh path rather than hand-injecting store state.
   await h.controller.refreshSources();
-  h.store.dispatch({ type: "UI", patch: { capacitiesSettingsOpen: true } });
+  h.store.dispatch({ type: "UI", patch: { settingsPanel: "freshness" } });
   const rendered = h.ui(<CapacitiesSettingsDrawer />);
   await waitFor(() => expect(rendered.getByText("Renew domain")).toBeTruthy(), { timeout: 5000 });
   const section = rendered.container.querySelector('[data-settings-section="unknown"]') as HTMLElement;

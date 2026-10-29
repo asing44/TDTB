@@ -1,0 +1,40 @@
+/* Settings hub — status line, five entries, calm folds. Theme tokens only. */
+.settings-hub { display: grid; gap: 10px; }
+.settings-hub__summary {
+  display: flex; align-items: center; gap: 8px; margin: 0;
+  padding: 10px 12px; border: 1px solid var(--t-border); border-radius: 10px;
+  background: var(--t-surface-2); color: var(--t-text); font-size: 13px;
+}
+.settings-hub__dot { width: 9px; height: 9px; border-radius: 50%; background: var(--t-accent); flex: none; }
+.settings-hub__dot--warn { background: var(--t-muted); outline: 2px solid var(--t-text); outline-offset: 1px; }
+.settings-hub__entries { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.settings-hub__toggle {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  width: 100%; min-height: 44px; padding: 8px 14px; text-align: left;
+  border: 1px solid var(--t-border); border-radius: 10px;
+  background: var(--t-surface); color: var(--t-text); font-size: 14px; cursor: pointer;
+}
+.settings-hub__toggle > span:first-child { display: grid; gap: 2px; }
+.settings-hub__toggle:hover { border-color: color-mix(in srgb, var(--t-accent) 65%, var(--t-border)); }
+.settings-hub__toggle[aria-expanded="true"] { background: var(--t-surface-2); }
+.settings-hub__toggle:focus-visible,
+.settings-hub__link:focus-visible,
+.settings-fold__toggle:focus-visible { outline: 2px solid var(--t-accent); outline-offset: 2px; }
+.settings-hub__muted { color: var(--t-muted); font-size: 12px; font-weight: 400; }
+.settings-hub__panel { margin-top: 6px; padding: 12px; border: 1px solid var(--t-border); border-radius: 10px; background: var(--t-surface); display: grid; gap: 10px; }
+.settings-hub__panel[hidden] { display: none; }
+.settings-hub__sub { margin: 0; font-size: 14px; }
+.settings-hub__rows { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.settings-hub__rows li { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.settings-hub__missing ol { margin: 6px 0 0; padding-left: 20px; display: grid; gap: 8px; }
+.settings-hub__link { padding: 0; border: 0; background: none; color: var(--t-accent-strong); text-decoration: underline; cursor: pointer; font: inherit; }
+.settings-hub__tech[hidden] { display: none; }
+.settings-fold { border: 1px solid var(--t-border); border-radius: 8px; }
+.settings-fold__toggle {
+  display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px; width: 100%;
+  min-height: 44px; align-items: center; padding: 0 12px; text-align: left;
+  border: 0; background: none; color: var(--t-text); font: inherit; font-weight: 500; cursor: pointer;
+}
+.settings-fold__body[hidden] { display: none; }
+.settings-fold__note { color: var(--t-muted); font-size: 12px; font-weight: 400; }
+.settings-fold__body { padding: 8px 12px 12px; display: grid; gap: 10px; }

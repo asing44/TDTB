@@ -51,7 +51,7 @@ async function openReview(candidates: CapacitiesIntakeCandidate[]) {
     },
     ledger: h.store.getState().ledger!,
   });
-  h.store.dispatch({ type: "UI", patch: { capacitiesSettingsOpen: true } });
+  h.store.dispatch({ type: "UI", patch: { settingsPanel: "freshness" } });
   const rendered = h.ui(<CapacitiesSettingsDrawer />);
   await waitFor(() => expect(rendered.getByText(candidates[0].name)).toBeTruthy(), {
     timeout: 5000,
@@ -135,7 +135,7 @@ describe("Capacities unknown review — okay to plan all", () => {
       },
       ledger: h.store.getState().ledger!,
     });
-    h.store.dispatch({ type: "UI", patch: { capacitiesSettingsOpen: true } });
+    h.store.dispatch({ type: "UI", patch: { settingsPanel: "freshness" } });
     const rendered = h.ui(<CapacitiesSettingsDrawer />);
     await waitFor(() => expect(rendered.getByText("Draft launch brief")).toBeTruthy(), {
       timeout: 5000,

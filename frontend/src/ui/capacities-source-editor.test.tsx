@@ -112,6 +112,9 @@ async function openEditor(
     .mockResolvedValue(read);
   h.store.dispatch({ type: "UI", patch: { capacitiesSettingsOpen: true } });
   const rendered = h.ui(<CapacitiesSettingsDrawer />);
+  // Hub: the policy sections sit behind "Repair tools" > "Show technical details".
+  fireEvent.click(rendered.getByRole("button", { name: /repair tools/i }));
+  fireEvent.click(rendered.getByRole("button", { name: /show technical details/i }));
   await waitFor(() =>
     expect(
       rendered.getByRole("heading", { name: "Capacities source mapping" }),
