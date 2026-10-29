@@ -18,8 +18,12 @@ import { CapacitiesUnknownReview } from "./CapacitiesUnknownReview";
 import { CapacitiesRulesEditor } from "./CapacitiesRulesEditor";
 import { CapacitiesSettingsPanel } from "./CapacitiesSettingsPanel";
 import { TagExclusionSettingsPanel } from "./TagExclusionSettingsPanel";
-import { sourceHealthBySource } from "../adapters/wire";
+import { CapacitiesPlanPreview } from "./CapacitiesPlanPreview";
+import { CapacitiesStructureList } from "./CapacitiesStructureList";
+import { usePlanData, type PlanData } from "./planPreview";
+import { missingGenerationWarnings, sourceHealthBySource } from "../adapters/wire";
 import type { SettingsPanel } from "../store/store";
+import type { TagExclusionSettings } from "../model/types";
 import "./settings-hub.css";
 
 export const HUB_ENTRIES: ReadonlyArray<{
@@ -41,6 +45,7 @@ function Fold({
   title,
   note,
   live,
+  keepMounted = false,
   children,
 }: {
   title: string;
@@ -48,12 +53,19 @@ function Fold({
   /** The owning entry is open. A fold in a hidden entry renders no control,
       so the dialog's Tab wrap (which ignores visibility) cannot land there. */
   live: boolean;
+  /** Once opened, the children stay active (only hidden) when the fold closes
+      or the entry is left, so unsaved edits inside are not discarded. */
+  keepMounted?: boolean;
   /** Receives whether the fold is open; wrapped panels take it as `active`
       and render nothing (keeping their draft state) while the fold is closed. */
   children: (open: boolean) => ComponentChildren;
 }) {
   // Closed by default; the wrapped components stay mounted so drafts survive.
   const [open, setOpen] = useState(false);
+  const [seen, setSeen] = useState(false);
+  useEffect(() => {
+    if (live && open) setSeen(true);
+  }, [live, open]);
   const bodyId = useId();
   return (
     <div class="settings-fold">
@@ -70,9 +82,28 @@ function Fold({
         </button>
       )}
       <div class="settings-fold__body" id={bodyId} hidden={!(live && open)}>
-        {children(live && open)}
+        {children((live && open) || (keepMounted && seen))}
       </div>
     </div>
+  );
+}
+
+function PlanBody({ here }: { here: boolean }) {
+  const [savedTags, setSavedTags] = useState<TagExclusionSettings | null>(null);
+  const data: PlanData = usePlanData(here, savedTags);
+  return (
+    <>
+      <CapacitiesPlanPreview data={data} />
+      <TagExclusionSettingsPanel active={here} onSettings={setSavedTags} />
+      <Fold title="Fine-tune by item type" note="rarely needed" live={here} keepMounted>
+        {(foldOpen) => (
+          <>
+            {foldOpen && <CapacitiesStructureList data={data} />}
+            <CapacitiesRulesEditor active={foldOpen} />
+          </>
+        )}
+      </Fold>
+    </>
   );
 }
 
@@ -102,12 +133,29 @@ export function SettingsHub() {
     { name: "Calendar", ok: health.calendar === "ok", count: s.inputs?.sourceCounts.calendar ?? 0, noun: "events" },
   ];
 
+  const intakeState = s.inputs?.capacitiesIntake?.state;
+  const syncText =
+    intakeState === "ok"
+      ? "Capacities is up to date."
+      : intakeState === "degraded"
+        ? "Capacities had a problem. Your plan keeps using the last read."
+        : intakeState === "unavailable"
+          ? "Capacities is unavailable right now."
+          : "Capacities has not synced yet.";
+  const missingCount = missingGenerationWarnings(s.inputs?.sourceWarnings ?? []).length;
+  const missingNote =
+    missingCount > 0 ? `${missingCount} mapped types are not yet in the latest refresh` : null;
+
   const body = (id: SettingsPanel) => {
     const here = isOpen(id);
     switch (id) {
       case "freshness":
         return (
           <>
+            <p class="settings-hub__muted" role="status">
+              {syncText}
+              {missingNote && ` · ${missingNote}`}
+            </p>
             <CapacitiesRefreshPanel active={here} />
             <CapacitiesUnknownReview active={here} />
             <Fold title="Todoist and Calendar" note="status of each" live={here}>
@@ -128,12 +176,7 @@ export function SettingsHub() {
         );
       case "plan":
         return (
-          <>
-            <TagExclusionSettingsPanel active={here} />
-            <Fold title="Fine-tune by item type" note="rarely needed" live={here}>
-              {(foldOpen) => <CapacitiesRulesEditor active={foldOpen} />}
-            </Fold>
-          </>
+          <PlanBody here={here} />
         );
       case "missing":
         return here ? (
@@ -147,7 +190,11 @@ export function SettingsHub() {
                 </button>
               </li>
               <li>
-                <b>Did you hide it yourself?</b> Look under Hidden tasks on the Connections screen and choose Show again.
+                <b>Did you hide it yourself?</b> Look under Tasks I hid in{" "}
+                <button type="button" class="settings-hub__link" onClick={() => open("plan")}>
+                  What shows up in my plan?
+                </button>{" "}
+                and choose Show again.
               </li>
               <li>
                 <b>Is it new in Capacities?</b> Press Refresh now in{" "}

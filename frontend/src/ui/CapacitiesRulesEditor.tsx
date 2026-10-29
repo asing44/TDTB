@@ -329,7 +329,7 @@ function StructureRuleRow({
     (structure.fallbackMinutes ?? null) !== fallbackMinutes;
 
   return (
-    <div class="capacities-rule" data-structure={structure.structureId}>
+    <div class="capacities-rule" data-structure={structure.structureId} tabIndex={-1}>
       <div class="capacities-rule__head">
         <code>{structure.structureId}</code>
         <span class="capacities-rule__badges">
