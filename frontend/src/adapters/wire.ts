@@ -2715,6 +2715,29 @@ export function projectPromptExportOutcome(wire: Wire): PromptExportOutcome {
   };
 }
 
+/** The flag maps ride the same way `/plan-inputs` carries them: NESTED under
+    `day_setup` (the route always includes each key, as null when its store is
+    empty). Older payloads put them at the top level, so that stays a fallback.
+    `present` separates "no key in either location" (left absent, and the
+    controller maps that to nothing flagged) from a key that is null or
+    malformed (projected to the safe all-included default). */
+function saveEchoMap(
+  wire: Wire,
+  key: string,
+): { present: boolean; value: unknown } {
+  const nested = wire.day_setup;
+  if (nested && typeof nested === "object" && !Array.isArray(nested)) {
+    const setup = nested as Wire;
+    if (Object.prototype.hasOwnProperty.call(setup, key)) {
+      return { present: true, value: setup[key] };
+    }
+  }
+  if (Object.prototype.hasOwnProperty.call(wire, key)) {
+    return { present: true, value: wire[key] };
+  }
+  return { present: false, value: undefined };
+}
+
 /** U5: the prompt-only POST /day-setup echo. `daySetupConfirmed` is the
     server's explicit flag — a prompt-only save never confirms the day.
     Legacy `optins`/`optins_revision` fields are tolerated and ignored. */
@@ -2726,15 +2749,15 @@ export function projectDaySetupSaveResult(wire: Wire): DaySetupSaveResult {
       ? wire.prompt_warnings.map(String)
       : [],
   };
-  // The server omits the map when nothing is skipped (or the store is
-  // unreadable), so an absent key is left absent rather than fabricated.
-  if (Object.prototype.hasOwnProperty.call(wire, "description_skips")) {
-    result.descriptionSkips = projectDescriptionSkips(wire.description_skips);
+  // Nested-first: reading only the top level made the live echo look absent on
+  // every save, so the UI re-dispatched an all-included map and never redrew.
+  const skips = saveEchoMap(wire, "description_skips");
+  if (skips.present) {
+    result.descriptionSkips = projectDescriptionSkips(skips.value);
   }
-  // Same shape as the skip map: the server omits `prompt_disabled` when no
-  // prompt is disabled, so an absent key stays absent rather than fabricated.
-  if (Object.prototype.hasOwnProperty.call(wire, "prompt_disabled")) {
-    result.promptDisabled = projectPromptDisabled(wire.prompt_disabled);
+  const disabled = saveEchoMap(wire, "prompt_disabled");
+  if (disabled.present) {
+    result.promptDisabled = projectPromptDisabled(disabled.value);
   }
   return result;
 }
