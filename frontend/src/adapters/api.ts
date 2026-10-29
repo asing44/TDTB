@@ -70,6 +70,7 @@ import {
   capacitiesSourceToWire,
   capacitiesRuleSaveToWire,
   capacitiesRefreshStartToWire,
+  capacitiesSchemaChangeAckToWire,
   capacitiesSelectionsToWire,
   projectCapacitiesCatalog,
   projectCapacitiesRules,
@@ -169,6 +170,16 @@ export function capacitiesRefreshBusyOf(error: unknown): string | null {
     if (typeof record.message === "string") return record.message;
   }
   return "A Capacities refresh job is already running.";
+}
+
+/** True for the 409 that means "the notice you named is not the stored one":
+    a newer schema change replaced it, so the caller re-reads the status instead
+    of reporting a failure. Any other status or body is a real failure. */
+export function capacitiesSchemaChangeAckStaleOf(error: unknown): boolean {
+  if (!(error instanceof ApiError) || error.status !== 409) return false;
+  const detail = error.detail;
+  if (!detail || typeof detail !== "object" || Array.isArray(detail)) return false;
+  return (detail as Wire).error === "stale";
 }
 
 function detailMessage(status: number, detail: unknown): string {
@@ -566,6 +577,17 @@ export class ApiAdapter implements Adapter {
   async cancelCapacitiesRefresh(): Promise<CapacitiesRefreshStatus> {
     return projectCapacitiesRefreshStatus(
       await this.post("/capacities/refresh/cancel", {}),
+    );
+  }
+
+  /** Acknowledge ONE stored schema-change notice. The response body is
+      ``{ok, acknowledged}`` rather than a status, so the caller re-reads the
+      status instead of trusting an optimistic local flip: a 409 (``stale``)
+      means a newer notice already replaced the one being acknowledged. */
+  async acknowledgeCapacitiesSchemaChange(toHash: string): Promise<void> {
+    await this.post(
+      "/capacities/refresh/schema-change/ack",
+      capacitiesSchemaChangeAckToWire(toHash),
     );
   }
 

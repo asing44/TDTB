@@ -37,6 +37,7 @@ import type {
   CapacitiesRefreshSnapshot,
   CapacitiesRefreshStatus,
   CapacitiesRefreshWaiting,
+  CapacitiesSchemaChange,
   CapacitiesRuleCapabilities,
   CapacitiesRuleNode,
   CapacitiesRuleSaveResponse,
@@ -2106,6 +2107,46 @@ function projectCapacitiesRefreshSnapshot(raw: unknown): CapacitiesRefreshSnapsh
   };
 }
 
+/** Project the additive ``schema_change`` key. Advisory by construction: a
+    null, absent, malformed, unknown-severity, or unacknowledgeable block
+    projects as null instead of throwing, because the notice may never turn a
+    status read into a failure. ``summary`` is never reworded and the counts
+    keep tallies only — the sidecar holds no names or values to leak. */
+function projectCapacitiesSchemaChange(raw: unknown): CapacitiesSchemaChange | null {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const block = raw as Wire;
+  const severity = block.severity === "warn" || block.severity === "info" ? block.severity : null;
+  if (severity === null) return null;
+  const summary = typeof block.summary === "string" ? block.summary : "";
+  // A notice with no sentence has nothing to show, and one with no hash can
+  // never be acknowledged: both read as "no notice" rather than as a banner
+  // the operator cannot act on.
+  if (summary === "") return null;
+  const toHash = typeof block.to_hash === "string" ? block.to_hash : "";
+  if (toHash === "") return null;
+  const counts: Record<string, number> = {};
+  const diff = block.diff;
+  const rawCounts =
+    diff && typeof diff === "object" && !Array.isArray(diff) ? (diff as Wire).counts : null;
+  if (rawCounts && typeof rawCounts === "object" && !Array.isArray(rawCounts)) {
+    for (const [key, value] of Object.entries(rawCounts as Wire)) {
+      const count = nonNegativeIntegerOrNull(value);
+      if (count !== null) counts[String(key)] = count;
+    }
+  }
+  return {
+    severity,
+    summary,
+    detectedAt: typeof block.detected_at === "string" ? block.detected_at : null,
+    generation: nonNegativeIntegerOrNull(block.generation) ?? 0,
+    fromHash: typeof block.from_hash === "string" ? block.from_hash : null,
+    toHash,
+    acknowledged: block.acknowledged === true,
+    acknowledgedAt: typeof block.acknowledged_at === "string" ? block.acknowledged_at : null,
+    counts,
+  };
+}
+
 /** GET /capacities/refresh/status — truthful local status. An unconfigured
     source carries ``configured: false`` and no job; a present-but-unusable
     payload projects conservative empties rather than invented progress. */
@@ -2121,6 +2162,7 @@ export function projectCapacitiesRefreshStatus(raw: Wire): CapacitiesRefreshStat
     warnings: stringArrayOrEmpty(raw.warnings),
     coverage: projectCapacitiesRefreshCoverage(raw.coverage),
     snapshot: projectCapacitiesRefreshSnapshot(raw.snapshot),
+    schemaChange: projectCapacitiesSchemaChange(raw.schema_change),
   };
 }
 
@@ -2130,6 +2172,12 @@ export function capacitiesRefreshStartToWire(
   scope: string,
 ): Wire {
   return { mode, scope };
+}
+
+/** Body for POST /capacities/refresh/schema-change/ack — exactly the hash the
+    operator is acknowledging, so a stale notice is a server-side 409. */
+export function capacitiesSchemaChangeAckToWire(toHash: string): Wire {
+  return { to_hash: toHash };
 }
 
 // -- Capacities selections (GET/POST /capacities/selections) ---------------

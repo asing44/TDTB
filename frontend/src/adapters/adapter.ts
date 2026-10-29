@@ -230,6 +230,12 @@ export interface Adapter {
   /** POST /capacities/refresh/cancel — token-guarded cancellation of the
       running job; returns the current truthful status. */
   cancelCapacitiesRefresh(): Promise<CapacitiesRefreshStatus>;
+  /** POST /capacities/refresh/schema-change/ack — token-guarded
+      acknowledgement of ONE stored schema-change notice, named by its
+      ``toHash``. A different hash is a 409; a missing notice a 404. Optional
+      because an adapter with no provider-backed store (the fixture adapter)
+      has no notice to acknowledge at all. */
+  acknowledgeCapacitiesSchemaChange?(toHash: string): Promise<void>;
   /** GET /capacities/selections — tokenless local read of the durable
       per-identity selections for the source space. */
   loadCapacitiesSelections(): Promise<CapacitiesSelections>;

@@ -20,11 +20,18 @@
      wait is visible and is cleared the same way. Cancel is offered while a
      job runs, including while it waits.
    - A 409 from start (single-flight) is surfaced as "a job is already
-     running", never retried automatically. */
+     running", never retried automatically.
+   - A stored schema-change notice rides the SAME status read as ONE banner
+     above the job's own warnings: 'warn' is an alert, 'info' a quieter
+     notice. Its sentence is rendered verbatim (the panel adds no names or
+     counts), nothing is shown once it is acknowledged, and Acknowledge posts
+     the notice's own to_hash and then re-reads the status — a stale 409 means
+     a newer notice exists, so it re-reads without reporting a failure. */
 
 import { useEffect, useRef, useState } from "preact/hooks";
 import { useApp } from "./context";
 import { refreshProgressText, useCapacitiesRefreshTick } from "./useCapacitiesRefreshJob";
+import { capacitiesSchemaChangeAckStaleOf } from "../adapters/api";
 import type { CapacitiesRefreshMode, CapacitiesRefreshStatus } from "../model/types";
 
 const TERMINAL_PHASES = new Set(["complete", "failed", "cancelled", "interrupted"]);
@@ -73,6 +80,8 @@ export function CapacitiesRefreshPanel({ active }: { active: boolean }) {
   const [phase, setPhase] = useState<"loading" | "ready" | "error">("loading");
   const [error, setError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [ackError, setAckError] = useState<string | null>(null);
+  const [ackBusy, setAckBusy] = useState(false);
   const [busy, setBusy] = useState<"starting" | "cancelling" | null>(null);
   const mounted = useRef(true);
 
@@ -154,6 +163,32 @@ export function CapacitiesRefreshPanel({ active }: { active: boolean }) {
 
   const configured = status?.configured ?? false;
   const snapshot = status?.snapshot ?? null;
+  // ONE banner, only while the notice is unacknowledged. The sentence is the
+  // server's; this panel adds no names and no counts of its own.
+  const schemaChange = status?.schemaChange ?? null;
+  const schemaNotice = schemaChange && !schemaChange.acknowledged ? schemaChange : null;
+
+  const acknowledge = async (toHash: string) => {
+    setAckBusy(true);
+    setAckError(null);
+    try {
+      await controller.acknowledgeCapacitiesSchemaChange(toHash);
+      // The ack route answers no status, so the banner clears from a re-read
+      // of the server's own record rather than from an optimistic flip.
+      await load();
+    } catch (e) {
+      if (!mounted.current) return;
+      // A stale hash means a newer notice already replaced this one: read the
+      // current truth and say nothing about a failure.
+      if (capacitiesSchemaChangeAckStaleOf(e)) {
+        await load();
+        return;
+      }
+      setAckError(messageOf(e));
+    } finally {
+      if (mounted.current) setAckBusy(false);
+    }
+  };
 
   return (
     <section
@@ -238,6 +273,41 @@ export function CapacitiesRefreshPanel({ active }: { active: boolean }) {
                 <dd>{status.progress.listed} listed · {status.progress.read} read</dd>
               </div>
             </dl>
+
+            {schemaNotice && (
+              <>
+                {schemaNotice.severity === "warn" ? (
+                  <section class="capacities-settings__error" role="alert">
+                    <span>{schemaNotice.summary}</span>
+                    <button
+                      class="btn"
+                      disabled={ackBusy}
+                      aria-label="Acknowledge Capacities change"
+                      onClick={() => void acknowledge(schemaNotice.toHash)}
+                    >
+                      {ackBusy ? "Acknowledging…" : "Acknowledge"}
+                    </button>
+                  </section>
+                ) : (
+                  <div class="capacities-rule__notice" role="status">
+                    <span>{schemaNotice.summary}</span>{" "}
+                    <button
+                      class="btn"
+                      disabled={ackBusy}
+                      aria-label="Acknowledge Capacities change"
+                      onClick={() => void acknowledge(schemaNotice.toHash)}
+                    >
+                      {ackBusy ? "Acknowledging…" : "Acknowledge"}
+                    </button>
+                  </div>
+                )}
+                {ackError && (
+                  <div class="capacities-settings__save-error" role="alert">
+                    <span>{ackError}</span>
+                  </div>
+                )}
+              </>
+            )}
 
             {status.warnings.length > 0 && (
               <div class="capacities-exclusion-list">

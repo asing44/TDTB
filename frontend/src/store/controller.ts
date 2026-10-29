@@ -553,6 +553,19 @@ export class Controller {
     return this.adapter.cancelCapacitiesRefresh();
   }
 
+  /** Acknowledge ONE stored schema-change notice, named by the hash the status
+      read carried. The route answers no status, so callers re-read
+      ``loadCapacitiesRefreshStatus`` afterwards; a stale hash (409) means a
+      newer notice already replaced this one. An adapter without the route
+      (the fixture adapter) throws rather than pretending to have written. */
+  async acknowledgeCapacitiesSchemaChange(toHash: string): Promise<void> {
+    const acknowledge = this.adapter.acknowledgeCapacitiesSchemaChange;
+    if (!acknowledge) {
+      throw new Error("This build's data source cannot acknowledge a Capacities change.");
+    }
+    await acknowledge.call(this.adapter, toHash);
+  }
+
   /** Read the durable per-identity Capacities selections (local read). */
   async loadCapacitiesSelections(): Promise<CapacitiesSelections> {
     return this.adapter.loadCapacitiesSelections();

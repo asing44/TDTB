@@ -916,8 +916,29 @@ export interface CapacitiesRefreshSnapshot {
   typeCheckTimes: Record<string, number>;
 }
 
+/** The two severities a stored schema-change notice may carry. ``warn`` means
+    the change may have broken a mapped structure; ``info`` means it did not. */
+export type CapacitiesSchemaChangeSeverity = "info" | "warn";
+
+/** The advisory, content-free schema-change notice the last Refresh recorded.
+    ``summary`` is generated server-side and rendered verbatim; ``toHash`` is
+    the only thing an acknowledgement may name. ``counts`` are per-kind
+    tallies with no ids, names, or values in them. */
+export interface CapacitiesSchemaChange {
+  severity: CapacitiesSchemaChangeSeverity;
+  summary: string;
+  detectedAt: string | null;
+  generation: number;
+  fromHash: string | null;
+  toHash: string;
+  acknowledged: boolean;
+  acknowledgedAt: string | null;
+  counts: Record<string, number>;
+}
+
 /** GET /capacities/refresh/status — truthful local status. An unconfigured
-    source answers ``configured: false`` with no job. */
+    source answers ``configured: false`` with no job. ``schemaChange`` rides
+    the same read and is absent/null when no notice is stored. */
 export interface CapacitiesRefreshStatus {
   configured: boolean;
   phase: string | null;
@@ -929,6 +950,7 @@ export interface CapacitiesRefreshStatus {
   warnings: string[];
   coverage: Record<string, CapacitiesRefreshCoverage>;
   snapshot: CapacitiesRefreshSnapshot;
+  schemaChange?: CapacitiesSchemaChange | null;
 }
 
 /** One durable per-identity Capacities selection. ``acknowledged`` is the
