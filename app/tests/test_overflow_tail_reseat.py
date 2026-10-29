@@ -514,6 +514,187 @@ class TestOverflowParkFixedPoint:
 
 
 # ---------------------------------------------------------------------------
+# Owner-edited parked rows release park ownership (review B2, 2026-10-30)
+# ---------------------------------------------------------------------------
+# The park marker rides the wire dict through the frontend store, so a user DRAG
+# cannot remove it (frontend store.ts ROW_MOVED spreads ``...r, wire``). A
+# marked row the owner moved therefore stayed a park-owned obstacle: it kept
+# reporting REGENERATED park warnings at its new slot ("parked at 5:00 PM
+# (09:00-09:30) but still past end of day") and it stayed in ``reseated_ids``,
+# which downgrades an anchored/Mint overlap from hard to a soft overflow flag.
+# The park now records the span it SET next to the marker and honours the marker
+# only while the row still sits exactly there; otherwise the owner's edit wins.
+
+PARK_KEY = "overflow_park"
+# The wire key that records the span the park set (kept literal: it ships to the
+# client inside the row's wire dict, so it is a wire contract, not an internal).
+PARK_SPAN_KEY = "overflow_park_span"
+OWNED_KINDS = ("gap", "spill", "marker")
+
+
+class TestOwnerEditedParkedRowReleasesOwnership:
+    def test_the_span_key_is_exposed_by_the_sequence_module(self):
+        assert sequence_module.OVERFLOW_PARK_SPAN_KEY == PARK_SPAN_KEY
+
+    def _spill_once(self):
+        """Park a single tail row onto the 5:00 PM stack: 17:00-17:30."""
+        proposal, assigned = _wall_shape(
+            tail_ids=("Late",), tail_times=("23:59", "23:59"),
+            wall=("12:00", "23:45"))
+        first = validate_sequence(
+            proposal, assigned, [], {}, time_frame=FIXED_POINT_FRAME)
+        assert first.ok is True, first.hard_errors
+        row = next(r for r in proposal["sequence"] if r["id"] == "Late")
+        assert (row["start"], row["end"]) == ("17:00", "17:30")
+        assert row[PARK_KEY] == "spill"
+        assert row[PARK_SPAN_KEY] == "17:00-17:30"
+        return proposal, assigned, row
+
+    @staticmethod
+    def _park_owned(row):
+        return row.get(PARK_KEY) in OWNED_KINDS
+
+    def test_dragged_marked_row_is_released_and_loses_its_park_warning(self):
+        proposal, assigned, row = self._spill_once()
+        # The owner drags the row to 09:00-09:30; the client posts the stale
+        # marker back with the row.
+        row["start"], row["end"] = "09:00", "09:30"
+        second = validate_sequence(
+            proposal, assigned, [], {}, time_frame=FIXED_POINT_FRAME)
+        assert (row["start"], row["end"]) == ("09:00", "09:30")
+        assert self._park_owned(row) is False
+        assert not [
+            w for w in second.warnings
+            if isinstance(w, dict) and w.get("id") == "Late"
+            and w.get("rule") in PARK_RULES
+        ]
+        assert "parked at 5:00 PM" not in str(second.warnings)
+
+    def test_resized_marked_row_is_released(self):
+        proposal, assigned, row = self._spill_once()
+        # Same start, different end: the owner stretched the row.
+        row["end"] = "18:00"
+        second = validate_sequence(
+            proposal, assigned, [], {}, time_frame=FIXED_POINT_FRAME)
+        assert (row["start"], row["end"]) == ("17:00", "18:00")
+        assert second.ok is True, second.hard_errors
+        assert self._park_owned(row) is False
+        assert _park_rules(second) == {}
+
+    def test_released_row_is_not_in_reseated_ids_so_a_mint_overlap_is_hard(self):
+        # The stale marker used to keep the row in ``reseated_ids``, which
+        # downgrades a Mint-wall overlap to a soft ``overflow_overlap``. Once
+        # released, the row is an ordinary user-placed row: the Mint wall is
+        # hard again.
+        proposal, assigned, row = self._spill_once()
+        row["start"], row["end"] = "09:00", "09:30"
+        mint = {
+            "id": "Mint Morning · 08:30", "name": "Mint Morning · 08:30",
+            "zone": "work_hours", "source": "schedulable",
+            "mint_session": True, "mint_session_id": "mint:morning:08:30",
+            "placement_window": {"start": "08:30", "end": "09:30"},
+            "calendar_class": "mint",
+        }
+        second = validate_sequence(
+            proposal, assigned, [], {}, time_frame=FIXED_POINT_FRAME,
+            optional_items=[mint])
+        assert (row["start"], row["end"]) == ("09:00", "09:30")
+        assert second.ok is False
+        assert any("Mint" in error for error in second.hard_errors)
+        assert not [
+            w for w in second.warnings
+            if isinstance(w, dict) and w.get("rule") == "overflow_overlap"
+        ]
+
+    def test_a_user_edit_at_or_after_the_eod_is_never_re_parked(self):
+        # Dropping the marker outright would make the row a fresh candidate on
+        # the next pass (start >= effective_eod); the release must keep the
+        # owner's placement.
+        proposal, assigned, row = self._spill_once()
+        row["start"], row["end"] = "23:30", "23:59"
+        second = validate_sequence(
+            proposal, assigned, [], {}, time_frame=FIXED_POINT_FRAME)
+        assert (row["start"], row["end"]) == ("23:30", "23:59")
+        assert self._park_owned(row) is False
+        assert _park_rules(second) == {}
+        third = validate_sequence(
+            proposal, assigned, [], {}, time_frame=FIXED_POINT_FRAME)
+        assert (row["start"], row["end"]) == ("23:30", "23:59")
+        assert _park_rules(third) == {}
+
+    def test_unmoved_marked_rows_stay_owned_across_five_passes(self):
+        proposal, assigned = _wall_shape()
+        times, rules, oks = _replay(proposal, assigned, passes=5)
+        assert oks == [True] * 5
+        assert times[0] == times[1] == times[2] == times[3] == times[4]
+        assert rules[0] == rules[1] == rules[2] == rules[3] == rules[4]
+        owned = {
+            row["id"]: (row.get(PARK_KEY), row.get(PARK_SPAN_KEY))
+            for row in proposal["sequence"] if isinstance(row, dict)
+        }
+        assert owned[FIT_IDS[0]] == ("gap", "20:00-20:30")
+        assert owned[SPILL_IDS[0]] == ("spill", "17:00-17:30")
+        assert owned[MARKER_IDS[0]] == ("marker", "23:59-23:59")
+
+    def test_legacy_marker_without_a_recorded_span_keeps_the_old_ownership(self):
+        # A plan stored before the span key existed carries the marker only.
+        # That keeps the 7079a0b reading: still owned, still reported, never
+        # re-parked.
+        proposal, assigned, row = self._spill_once()
+        row.pop(PARK_SPAN_KEY)
+        row["start"], row["end"] = "17:15", "17:45"
+        second = validate_sequence(
+            proposal, assigned, [], {}, time_frame=FIXED_POINT_FRAME)
+        assert (row["start"], row["end"]) == ("17:15", "17:45")
+        assert row.get(PARK_KEY) == "spill"
+        assert _park_rules(second) == {"Late": "overflow_past_eod"}
+
+    @pytest.mark.parametrize("marker", [
+        "nonsense", 7, True, {"kind": "spill"}, ["spill"],
+    ])
+    def test_malformed_marker_values_never_raise(self, marker):
+        proposal, assigned, row = self._spill_once()
+        row[PARK_KEY] = marker
+        row["start"], row["end"] = "23:30", "23:59"
+        result = validate_sequence(
+            proposal, assigned, [], {}, time_frame=FIXED_POINT_FRAME)
+        assert result.ok is True, result.hard_errors
+        # An unknown marker value is never park-owned and never re-parked.
+        assert (row["start"], row["end"]) == ("23:30", "23:59")
+        assert _park_rules(result) == {}
+
+    @pytest.mark.parametrize("marker", ["nonsense", {"kind": "spill"}])
+    def test_malformed_marker_on_a_zero_length_tail_never_raises(self, marker):
+        # A past-EOD zero-length row with an unknown marker value keeps the
+        # pre-existing reading (it is still a hard zero-length tail row: the
+        # marker is simply not park-owned). The guarantee here is that no
+        # malformed value makes the park itself raise.
+        proposal, assigned = _wall_shape(
+            tail_ids=("Late",), tail_times=("23:59", "23:59"),
+            wall=("12:00", "23:45"))
+        row = next(r for r in proposal["sequence"] if r["id"] == "Late")
+        row[PARK_KEY] = marker
+        result = validate_sequence(
+            proposal, assigned, [], {}, time_frame=FIXED_POINT_FRAME)
+        assert _park_rules(result) == {}
+        assert (row["start"], row["end"]) == ("23:59", "23:59")
+
+    @pytest.mark.parametrize("span", [
+        "garbage", "17:00", "17:00-", "-17:30", "99:99-17:30", "",
+        42, {"start": "17:00", "end": "17:30"}, ["17:00-17:30"], None,
+    ])
+    def test_malformed_recorded_span_falls_back_to_the_legacy_reading(self, span):
+        proposal, assigned, row = self._spill_once()
+        row[PARK_SPAN_KEY] = span
+        row["start"], row["end"] = "17:15", "17:45"
+        result = validate_sequence(
+            proposal, assigned, [], {}, time_frame=FIXED_POINT_FRAME)
+        # No recorded span to compare against: owned as before, never moved.
+        assert (row["start"], row["end"]) == ("17:15", "17:45")
+        assert _park_rules(result) == {"Late": "overflow_past_eod"}
+
+
+# ---------------------------------------------------------------------------
 # HTTP routes
 # ---------------------------------------------------------------------------
 

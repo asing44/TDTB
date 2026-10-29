@@ -920,19 +920,88 @@ _TAIL_END_MIN = 23 * 60 + 59  # 23:59 — the last representable same-day minute
 OVERFLOW_PARK_TIME = "17:00"
 
 # Row key recording that the park OWNS this row's placement: ``gap`` (parked in
-# a free gap), ``spill`` (stacked at 5:00 PM) or ``marker`` (no room even there,
-# so it kept its past-EOD marker). The key travels with the row through the
+# a free gap), ``spill`` (stacked at 5:00 PM), ``marker`` (no room even there,
+# so it kept its past-EOD marker) or ``user`` (released back to the owner, see
+# ``_release_owner_edited_park_rows``). The key travels with the row through the
 # client store and back into /validate-sequence, which is what makes the park a
 # fixed point (see the invariant in ``reseat_overflow_tail_rows``).
 OVERFLOW_PARK_KEY = "overflow_park"
+# Companion key recording the span the park SET, as ``"HH:MM-HH:MM"``. The
+# marker alone cannot tell a park-owned placement from one the owner edited
+# afterwards: it rides the row's wire dict through the frontend store, so a user
+# drag or resize keeps it (frontend store.ts ROW_MOVED spreads ``wire``). A
+# marker whose recorded span no longer matches the row is therefore STALE, and
+# the park hands the row back to the owner. A marker carrying no usable span
+# predates this key and keeps the pre-2026-10-30 ownership reading, so plans
+# already stored in that shape do not change.
+OVERFLOW_PARK_SPAN_KEY = "overflow_park_span"
 _PARK_GAP = "gap"
 _PARK_SPILL = "spill"
 _PARK_MARKER = "marker"
+_PARK_USER = "user"
+# Marker values that mean the park still owns the row.
 _PARK_KINDS = (_PARK_GAP, _PARK_SPILL, _PARK_MARKER)
 
 
 def _minutes_to_hhmm(minutes: int) -> str:
     return f"{minutes // 60:02d}:{minutes % 60:02d}"
+
+
+def _park_span_text(start: str, end: str) -> str:
+    """The recorded-span encoding: one JSON-safe ``"HH:MM-HH:MM"`` string."""
+    return f"{start}-{end}"
+
+
+def _recorded_park_span(row: dict[str, Any]) -> tuple[str, str] | None:
+    """The span the park recorded when it took ownership of ``row``.
+
+    ``None`` when no usable span is recorded — a marker written before
+    ``OVERFLOW_PARK_SPAN_KEY`` existed, or any malformed value. Those keep the
+    pre-2026-10-30 ownership reading instead of guessing.
+    """
+    raw = row.get(OVERFLOW_PARK_SPAN_KEY)
+    if not isinstance(raw, str):
+        return None
+    start_text, separator, end_text = raw.partition("-")
+    if not separator:
+        return None
+    start = placement_rules.canonical_time(start_text)
+    end = placement_rules.canonical_time(end_text)
+    if start is None or end is None:
+        return None
+    return (start, end)
+
+
+def _release_owner_edited_park_rows(sequence: list[Any]) -> None:
+    """Hand a park-owned row back to the owner when its placement changed.
+
+    The park owns a placement it chose, not the row forever. A user drag or
+    resize keeps the marker (it travels inside the row's wire dict), so the
+    marker is honoured only while the row still sits exactly on the span the
+    park recorded. Otherwise the row is released to ``_PARK_USER``: the marker
+    is no longer park-owned for warning reporting, the row stays out of the
+    re-seat candidate set (the owner's explicit edit wins, even at/after the
+    effective EOD), and validation no longer treats it as an overflow row that
+    may soft-exempt anchored/Mint overlap. Conservative by construction: a
+    missing, legacy, or malformed recorded span, or an unparsable row time,
+    leaves ownership untouched, so no stored plan changes.
+    """
+    for row in sequence:
+        if not isinstance(row, dict):
+            continue
+        if row.get(OVERFLOW_PARK_KEY) not in _PARK_KINDS:
+            continue
+        recorded = _recorded_park_span(row)
+        if recorded is None:
+            continue
+        start = placement_rules.canonical_time(row.get("start"))
+        end = placement_rules.canonical_time(row.get("end"))
+        if start is None or end is None:
+            continue
+        if (start, end) == recorded:
+            continue
+        row[OVERFLOW_PARK_KEY] = _PARK_USER
+        row.pop(OVERFLOW_PARK_SPAN_KEY, None)
 
 
 def _assigned_duration_minutes(item: dict[str, Any]) -> int | None:
@@ -1087,10 +1156,22 @@ def reseat_overflow_tail_rows(
     obstacle — and was re-spilled onto the 17:00 stack, triple-booking the
     park. A row that already holds a park slot never moves again; a marker row
     left in place (no room in the 5:00 PM stack) stays a marker.
+
+    OWNERSHIP IS RELEASED WHEN THE OWNER EDITS (2026-10-30, review B2): the
+    marker rides the row's wire dict through the client store, so a user drag or
+    resize keeps it. Each pass therefore honours a marker only while the row
+    still sits on the span recorded beside it (``OVERFLOW_PARK_SPAN_KEY``); a
+    mismatch releases the row to the owner (``_PARK_USER``) so it is not
+    re-parked, reports no regenerated park warning, and no longer soft-exempts
+    anchored/Mint overlap. See ``_release_owner_edited_park_rows``.
     """
     sequence = proposal.get("sequence")
     if not isinstance(sequence, list):
         return []
+    # Release any row the owner has moved or resized since the park placed it
+    # BEFORE candidacy, obstacles, and reporting are derived, so a released row
+    # behaves exactly like any other user-placed row on this pass.
+    _release_owner_edited_park_rows(sequence)
     frame = time_frame or {}
     eod_norm = _normalize_time(frame.get("effective_eod"))
     eod_min = _to_minutes(eod_norm) if eod_norm else None
@@ -1123,7 +1204,9 @@ def reseat_overflow_tail_rows(
         duration = durations.get(row_id)
         # Only an UNPLACED overflow tail moves: an assigned row with a known
         # duration starting at/after the effective EOD that the park has not
-        # already placed (fixed-point invariant above).
+        # already placed (fixed-point invariant above). A released
+        # (``_PARK_USER``) or previously marked row is never a candidate: the
+        # owner's explicit edit always wins over a re-park.
         if (duration is not None and start_min >= eod_min
                 and not row.get(OVERFLOW_PARK_KEY)):
             candidates.append((row, row_id, duration, start, end))
@@ -1164,6 +1247,7 @@ def reseat_overflow_tail_rows(
             # and flag it softly. Never dropped. The marker records that this
             # park owns the row, so no later pass re-tries it.
             row[OVERFLOW_PARK_KEY] = _PARK_MARKER
+            row[OVERFLOW_PARK_SPAN_KEY] = _park_span_text(start, end)
             continue
         if spilled:
             # Park at 5:00 PM regardless of 'now' and regardless of what the
@@ -1175,6 +1259,7 @@ def reseat_overflow_tail_rows(
         new_end_str = _minutes_to_hhmm(new_end)
         old_interval = {"start": start, "end": end}
         row["start"], row["end"] = new_start_str, new_end_str
+        row[OVERFLOW_PARK_SPAN_KEY] = _park_span_text(new_start_str, new_end_str)
         _repair_reseated_grant_intervals(
             grants, row_id, old_interval,
             {"start": new_start_str, "end": new_end_str},
@@ -1198,6 +1283,9 @@ def reseat_overflow_tail_rows(
             continue
         park = row.get(OVERFLOW_PARK_KEY)
         if park not in _PARK_KINDS:
+            # ``_PARK_USER`` (a row the owner has moved since the park placed
+            # it) and unknown values are not park-owned: no park warning, and
+            # the caller keeps the row out of ``reseated_ids``.
             continue
         row_id = str(row.get("id"))
         if durations.get(row_id) is None:
