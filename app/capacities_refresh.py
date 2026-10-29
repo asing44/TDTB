@@ -473,6 +473,16 @@ class PacedProvider:
     def observe_headers(self, endpoint: str, headers: Any) -> None:
         self.pacer.observe(endpoint, headers)
 
+    @property
+    def supports_object_listing(self) -> bool:
+        """Whether the wrapped transport can enumerate objects.
+
+        Delegated, never assumed: the paced seam is only as capable as the raw
+        transport behind it, so a replay transport wrapped in pacing still
+        refuses the adapter's RootTag catalog read.
+        """
+        return getattr(self.raw, "supports_object_listing", False) is True
+
     def fetch_structures(self):
         payload = self.pacer.call(ENDPOINT_STRUCTURES, self.raw.fetch_structures)
         # The adapter resolves its contract from this exact payload. Keeping it

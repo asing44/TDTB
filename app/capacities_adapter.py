@@ -746,6 +746,28 @@ TAGS_PROPERTY = "tags"
 #: contributes candidate rows.
 ROOT_TAG_STRUCTURE = "RootTag"
 
+#: One bounded, content-free warning when the tag-title catalog could not be
+#: read in full. It names no tag id and no tag title, and it is emitted at most
+#: once per projection run — never once per row.
+TAG_TITLE_WARNING = (
+    "Capacities tag titles are incomplete — some tag references have no "
+    "display title. Refresh sources to retry the tag catalog."
+)
+
+
+def _canonical_tag_id(tag_id: str) -> str:
+    """The canonical identity form of one provider tag id.
+
+    A UUID id is lowercased (the exclusion store holds lowercase canonical
+    ids); any other id is kept exactly as received. Identity normalization
+    only — a value is never guessed, truncated, or substituted.
+    """
+    try:
+        uuid.UUID(tag_id)
+    except ValueError:
+        return tag_id
+    return tag_id.lower()
+
 
 def _capacities_tag_refs(
     prop: Any, flat_tags: Any, space_id: str
@@ -783,12 +805,7 @@ def _capacities_tag_refs(
             return None, "tags property contains a reference without an id"
         # Exclusions hold lowercase canonical ids and match exactly. Hex case
         # never changes a UUID's identity, so lowercasing can only add matches.
-        try:
-            uuid.UUID(tag_id)
-        except ValueError:
-            pass
-        else:
-            tag_id = tag_id.lower()
+        tag_id = _canonical_tag_id(tag_id)
         if tag_id in seen:
             continue
         seen.add(tag_id)
@@ -1149,6 +1166,19 @@ class CapacitiesAdapter:
         #: Structures whose marker read as assigned this projection
         #: (bookkeeping only; no warning is derived from it).
         self._assigned_on_matched: set[str] = set()
+        #: Tag display titles (canonical tag id -> title) resolved from the
+        #: space's RootTag catalog. ``None`` means "not read yet": the read is
+        #: lazy and happens at most once per adapter instance, so a projection
+        #: whose tag references already carry titles never lists the catalog.
+        #: Display metadata only; it is never identity and never a fingerprint
+        #: input.
+        self._tag_titles: dict[str, str] | None = None
+        #: Whether the resolved catalog was partial or unreadable. Kept so the
+        #: one bounded warning can be emitted per projection run without
+        #: re-reading the catalog.
+        self._tag_catalog_incomplete = False
+        #: Per-run guard: at most one tag-title warning per projection run.
+        self._tag_title_warned = False
 
     def close(self) -> None:
         """Close an injected transport when it owns a closeable client."""
@@ -1913,6 +1943,12 @@ class CapacitiesAdapter:
         tag_refs, tag_error = _capacities_tag_refs(
             properties.get(TAGS_PROPERTY), obj.get("tags"), self.config.space_id
         )
+        if tag_refs:
+            # Display fill only: an id the payload already carries a title for
+            # wins, and a blank title is filled from the space's RootTag
+            # catalog. Identity (space_id, tag_id) is decided above and never
+            # changes here.
+            tag_refs = self._fill_tag_titles(tag_refs)
         row = {
             "id": title,
             "name": title,
@@ -1972,6 +2008,63 @@ class CapacitiesAdapter:
             row["capacities_tags_error"] = tag_error
         return row
 
+    def _tag_catalog_titles(self) -> dict[str, str]:
+        """Canonical tag id -> display title, from the space's RootTag catalog.
+
+        Read at most once per adapter instance, and only when a projection
+        actually needs it (a tag reference that carries no title of its own).
+        The catalog is advisory display metadata: every failure mode degrades
+        to an empty or partial mapping plus one bounded warning, never to a
+        failed or differently-admitted projection.
+
+        A provider that does not declare object enumeration — the offline
+        intake replay seam is one — is never asked. Refusing to read there is
+        the correct behaviour, not a degradation, so it stays silent and the
+        tag titles simply stay blank.
+        """
+        if self._tag_titles is not None:
+            return self._tag_titles
+        if getattr(self.provider, "supports_object_listing", False) is not True:
+            self._tag_titles = {}
+            self._tag_catalog_incomplete = False
+            return self._tag_titles
+        titles: dict[str, str] = {}
+        incomplete = True
+        try:
+            catalog = self.list_tags()
+        except Exception:  # noqa: BLE001 — advisory display boundary degrades
+            catalog = None
+        if isinstance(catalog, dict):
+            incomplete = _text(catalog.get("status")) != "complete"
+            for row in catalog.get("tags") or []:
+                if not isinstance(row, dict):
+                    continue
+                tag_id = _text(row.get("id"))
+                title = _text(row.get("title"))
+                if not tag_id or not title:
+                    continue
+                titles.setdefault(_canonical_tag_id(tag_id), title)
+        self._tag_titles = titles
+        self._tag_catalog_incomplete = incomplete
+        return titles
+
+    def _fill_tag_titles(
+        self, refs: list[dict[str, str]]
+    ) -> list[dict[str, str]]:
+        """Fill blank tag titles in place from the catalog; carried titles win."""
+        titles: dict[str, str] | None = None
+        for ref in refs:
+            if ref.get("title"):
+                continue
+            if titles is None:
+                titles = self._tag_catalog_titles()
+                if not titles:
+                    break
+            title = titles.get(ref["tag_id"])
+            if title:
+                ref["title"] = title
+        return refs
+
     def _project_objects(
         self, logical_day: date, objects: Sequence[dict[str, Any]]
     ) -> tuple[list[dict[str, Any]], list[str], set[str], set[str], list[SkippedObject]]:
@@ -1990,6 +2083,8 @@ class CapacitiesAdapter:
         """
         self._ensure_contract()
         assert self._mappings is not None
+        # One bounded tag-title warning per projection run, never one per row.
+        self._tag_title_warned = False
         items: list[dict[str, Any]] = []
         warnings: list[str] = []
         evaluated: set[str] = set()
@@ -2047,6 +2142,12 @@ class CapacitiesAdapter:
                 evaluated.add(identity)
             if row is not None:
                 items.append(row)
+        if self._tag_catalog_incomplete and not self._tag_title_warned:
+            # Exactly one content-free warning for the run: no tag id, no tag
+            # title, and no row identity. A partial catalog still filled every
+            # title it could read.
+            self._tag_title_warned = True
+            warnings.append(TAG_TITLE_WARNING)
         policy = self.config.exclusion_policy
         if policy is not None:
             # The shared matcher is the single decision authority; the adapter
@@ -2499,6 +2600,12 @@ class CapacitiesAdapter:
 
 class CapacitiesRestClient:
     """Thin current-API transport; the adapter owns all business filtering."""
+
+    #: This transport really can enumerate objects, so the adapter may read the
+    #: advisory RootTag title catalog through it. A replay seam that answers
+    #: from a published generation declares nothing and is therefore never
+    #: asked — the adapter's safe default.
+    supports_object_listing = True
 
     def __init__(
         self,

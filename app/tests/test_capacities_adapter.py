@@ -3637,3 +3637,276 @@ def test_future_date_without_an_assigned_on_signal_is_still_dropped():
     ).items_for_day(TODAY)
 
     assert result.items == []
+
+
+# ---------------------------------------------------------------------------
+# Tag titles from the RootTag catalog.
+#
+# The live objects Capacities returns carry tag references with only an ``id``
+# and the cached generation replays exactly that. A blank title is filled from
+# the space's RootTag catalog, read at most once per adapter instance and only
+# when a projection actually needs it. Titles are display-only: identity,
+# admission, exclusions and fingerprints are unchanged.
+# ---------------------------------------------------------------------------
+
+import capacities_adapter as ca  # noqa: E402
+
+TAG_C = "3257d9ad-2c11-4fce-9675-a53b36a8c662"
+
+
+class _CatalogProvider(FakeProvider):
+    """FakeProvider that can enumerate the RootTag catalog like the live seam."""
+
+    supports_object_listing = True
+
+    def __init__(self, structures, pages, *, catalog=None, catalog_error=None):
+        super().__init__(structures, pages)
+        self.catalog = catalog
+        self.catalog_error = catalog_error
+        self.catalog_calls = []
+
+    def list_objects(self, structure_id, cursor=None):
+        if structure_id == "RootTag":
+            self.catalog_calls.append(cursor)
+            if self.catalog_error is not None:
+                raise self.catalog_error
+            if cursor is None:
+                return self.catalog or {"objects": [], "next_cursor": None}
+            return {"objects": [], "next_cursor": None}
+        return super().list_objects(structure_id, cursor)
+
+
+class _ReplayProvider(FakeProvider):
+    """The offline-intake seam: it refuses every listing by design."""
+
+    def list_objects(self, structure_id, cursor=None):  # pragma: no cover - guard
+        raise AssertionError("offline replay must not list objects")
+
+
+def _catalog_provider(objects, *, catalog=None, catalog_error=None):
+    return _CatalogProvider(
+        _native_structures(),
+        {("RootTask", None): {"objects": list(objects), "next_cursor": None}},
+        catalog=catalog,
+        catalog_error=catalog_error,
+    )
+
+
+def _catalog(*pairs):
+    return {"objects": [{"id": tag_id, "title": title} for tag_id, title in pairs],
+            "next_cursor": None}
+
+
+def test_blank_tag_title_is_filled_from_the_root_tag_catalog():
+    provider = _catalog_provider(
+        [_tagged_native_object("task-1", tags=[{"id": TAG_C}], flat_tags=["home"])],
+        catalog=_catalog((TAG_C, "home")),
+    )
+
+    row = _adapter(provider, mappings=(_native_mapping(),)).items_for_day(TODAY).items[0]
+
+    assert row["capacities_tags"] == [
+        {"space_id": SPACE, "tag_id": TAG_C, "title": "home"},
+    ]
+    assert "capacities_tags_error" not in row
+    assert provider.catalog_calls == [None]
+
+
+def test_a_payload_tag_title_wins_over_the_catalog():
+    provider = _catalog_provider(
+        [_tagged_native_object("task-1", tags=[{"id": TAG_C, "title": "from payload"}])],
+        catalog=_catalog((TAG_C, "from catalog")),
+    )
+
+    row = _adapter(provider, mappings=(_native_mapping(),)).items_for_day(TODAY).items[0]
+
+    assert row["capacities_tags"] == [
+        {"space_id": SPACE, "tag_id": TAG_C, "title": "from payload"},
+    ]
+
+
+def test_one_catalog_listing_covers_many_rows_and_many_tags():
+    provider = _catalog_provider(
+        [
+            _tagged_native_object(
+                "task-1", tags=[{"id": TAG_A}, {"id": TAG_B}]
+            ),
+            _tagged_native_object(
+                "task-2", due=TODAY, tags=[{"id": TAG_B}, {"id": TAG_C}]
+            ),
+        ],
+        catalog=_catalog((TAG_A, "home"), (TAG_B, "errands"), (TAG_C, "work")),
+    )
+
+    result = _adapter(provider, mappings=(_native_mapping(),)).items_for_day(TODAY)
+
+    titles = {
+        row["capacities_id"]: [tag["title"] for tag in row["capacities_tags"]]
+        for row in result.items
+    }
+    assert titles == {"task-1": ["home", "errands"], "task-2": ["errands", "work"]}
+    assert len(provider.catalog_calls) == 1
+
+
+def test_the_catalog_is_read_once_even_across_repeated_projections():
+    provider = _catalog_provider(
+        [_tagged_native_object("task-1", tags=[{"id": TAG_A}])],
+        catalog=_catalog((TAG_A, "home")),
+    )
+    adapter = _adapter(provider, mappings=(_native_mapping(),))
+
+    first = adapter.items_for_day(TODAY)
+    second = adapter.items_for_day(TODAY)
+
+    assert first.items[0]["capacities_tags"][0]["title"] == "home"
+    assert second.items[0]["capacities_tags"][0]["title"] == "home"
+    assert len(provider.catalog_calls) == 1
+
+
+def test_an_unreadable_catalog_keeps_blank_titles_and_warns_once_without_content():
+    object_row = _tagged_native_object(
+        "task-1", tags=[{"id": TAG_C}], flat_tags=["home"]
+    )
+    provider = _catalog_provider(
+        [object_row], catalog_error=RuntimeError("boom")
+    )
+    # Same objects, served by a seam that cannot enumerate: the pre-change
+    # admission surface.
+    baseline = FakeProvider(
+        _native_structures(),
+        {("RootTask", None): {"objects": [object_row], "next_cursor": None}},
+    )
+
+    result = _adapter(provider, mappings=(_native_mapping(),)).items_for_day(TODAY)
+    expected = _adapter(baseline, mappings=(_native_mapping(),)).items_for_day(TODAY)
+
+    def admission(read):
+        return [
+            (row["identity"], row["assigned"], row["duration"], row["blocks"])
+            for row in read.items
+        ]
+
+    assert admission(result) == admission(expected)
+    assert result.items[0]["capacities_tags"] == [
+        {"space_id": SPACE, "tag_id": TAG_C, "title": ""},
+    ]
+    assert result.warnings == [ca.TAG_TITLE_WARNING]
+    assert len(provider.catalog_calls) == 1
+    text = result.warnings[0]
+    assert TAG_C not in text and "home" not in text
+
+
+def test_a_rate_limited_catalog_fills_nothing_and_warns_once():
+    provider = _catalog_provider(
+        [_tagged_native_object("task-1", tags=[{"id": TAG_A}])],
+        catalog_error=CapacitiesRateLimited("slow down"),
+    )
+
+    result = _adapter(provider, mappings=(_native_mapping(),)).items_for_day(TODAY)
+
+    assert result.items[0]["capacities_tags"] == [
+        {"space_id": SPACE, "tag_id": TAG_A, "title": ""},
+    ]
+    assert result.warnings == [ca.TAG_TITLE_WARNING]
+
+
+def test_a_partial_catalog_fills_what_it_has_and_warns_once():
+    provider = _catalog_provider(
+        [
+            _tagged_native_object("task-1", tags=[{"id": TAG_A}, {"id": TAG_B}]),
+            _tagged_native_object("task-2", due=TODAY, tags=[{"id": TAG_A}]),
+        ],
+        catalog={"objects": [{"id": TAG_A, "title": "home"}, {"id": TAG_B}],
+                 "next_cursor": None},
+    )
+
+    result = _adapter(provider, mappings=(_native_mapping(),)).items_for_day(TODAY)
+
+    by_id = {row["capacities_id"]: row["capacities_tags"] for row in result.items}
+    assert by_id["task-1"] == [
+        {"space_id": SPACE, "tag_id": TAG_A, "title": "home"},
+        {"space_id": SPACE, "tag_id": TAG_B, "title": ""},
+    ]
+    assert by_id["task-2"] == [
+        {"space_id": SPACE, "tag_id": TAG_A, "title": "home"},
+    ]
+    assert result.warnings == [ca.TAG_TITLE_WARNING]
+
+
+def test_catalog_filled_titles_do_not_change_tag_exclusion_matching():
+    provider = _catalog_provider(
+        [_tagged_native_object("task-1", tags=[{"id": TAG_A}], flat_tags=["home"])],
+        catalog=_catalog((TAG_A, "home")),
+    )
+
+    result = _adapter(
+        provider,
+        mappings=(_native_mapping(),),
+        exclusion_policy=_exclusion_policy(TAG_A),
+    ).items_for_day(TODAY)
+
+    assert result.items == []
+    assert any(w.startswith("Capacities tag exclusions") for w in result.warnings)
+
+
+def test_an_object_without_tags_never_reads_the_catalog():
+    provider = _catalog_provider(
+        [_native_object("task-1", status="active")], catalog=_catalog((TAG_A, "home"))
+    )
+
+    result = _adapter(provider, mappings=(_native_mapping(),)).items_for_day(TODAY)
+
+    assert result.items[0]["capacities_tags"] == []
+    assert provider.catalog_calls == []
+    assert result.warnings == []
+
+
+def test_a_row_whose_titles_are_all_carried_never_reads_the_catalog():
+    provider = _catalog_provider(
+        [_tagged_native_object("task-1", tags=[{"id": TAG_A, "title": "home"}])],
+        catalog=_catalog((TAG_A, "renamed")),
+    )
+
+    result = _adapter(provider, mappings=(_native_mapping(),)).items_for_day(TODAY)
+
+    assert result.items[0]["capacities_tags"][0]["title"] == "home"
+    assert provider.catalog_calls == []
+
+
+def test_a_replay_seam_is_never_asked_for_the_catalog():
+    """Offline intake replays the published generation: no provider call."""
+    provider = _ReplayProvider(_native_structures(), {})
+
+    result = _adapter(provider, mappings=(_native_mapping(),)).items_for_day_from_objects(
+        TODAY, [_tagged_native_object("task-1", tags=[{"id": TAG_A}])]
+    )
+
+    assert result.items[0]["capacities_tags"] == [
+        {"space_id": SPACE, "tag_id": TAG_A, "title": ""},
+    ]
+    assert result.warnings == []
+
+
+def test_the_live_transport_declares_object_enumeration():
+    client = CapacitiesRestClient(
+        "token-value", space_id=SPACE, transport=httpx.MockTransport(
+            lambda request: httpx.Response(200, json={"objects": [], "nextCursor": None})
+        )
+    )
+    try:
+        assert client.supports_object_listing is True
+    finally:
+        client.close()
+
+
+def test_tag_titles_never_feed_the_source_fingerprint():
+    objects = [_tagged_native_object("task-1", tags=[{"id": TAG_A}])]
+    renamed = _catalog_provider(objects, catalog=_catalog((TAG_A, "home")))
+    original = _catalog_provider(objects, catalog=_catalog((TAG_A, "renamed later")))
+
+    first = _adapter(renamed, mappings=(_native_mapping(),)).items_for_day(TODAY).items[0]
+    second = _adapter(original, mappings=(_native_mapping(),)).items_for_day(TODAY).items[0]
+
+    assert first["capacities_tags"][0]["title"] == "home"
+    assert second["capacities_tags"][0]["title"] == "renamed later"
+    assert first["source_fingerprint"] == second["source_fingerprint"]
