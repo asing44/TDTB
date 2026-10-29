@@ -81,6 +81,60 @@ def test_get_filter_tasks_auto_paginates_to_exhaustion():
 
 
 # ---------------------------------------------------------------------------
+# get_project_tasks
+# ---------------------------------------------------------------------------
+
+def test_get_project_tasks_scopes_by_project_id_and_paginates():
+    calls = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/api/v1/tasks"
+        params = dict(request.url.params)
+        calls.append(params)
+        if "cursor" not in params:
+            return httpx.Response(
+                200, json={"results": [{"id": "1"}], "next_cursor": "cursor-2"}
+            )
+        return httpx.Response(200, json={"results": [{"id": "2"}], "next_cursor": None})
+
+    client = make_client(handler)
+    result = client.get_project_tasks("6hc482XrFwF3RJ6Q", limit=200)
+
+    assert calls[0] == {"project_id": "6hc482XrFwF3RJ6Q", "limit": "200"}
+    assert calls[1]["cursor"] == "cursor-2"
+    assert all(c["project_id"] == "6hc482XrFwF3RJ6Q" for c in calls)
+    assert all("query" not in c for c in calls)
+    assert result == [{"id": "1"}, {"id": "2"}]
+
+
+def test_get_project_tasks_without_limit_omits_param():
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["params"] = dict(request.url.params)
+        return httpx.Response(200, json={"results": [], "next_cursor": None})
+
+    client = make_client(handler)
+    client.get_project_tasks("p-habits")
+
+    assert captured["params"] == {"project_id": "p-habits"}
+
+
+def test_get_project_tasks_retries_429_then_returns_results():
+    calls = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        if len(calls) == 1:
+            return httpx.Response(429, headers={"Retry-After": "0"}, text="rate limited")
+        return httpx.Response(200, json={"results": [{"id": "1"}], "next_cursor": None})
+
+    client = make_client(handler)
+    assert client.get_project_tasks("p-habits") == [{"id": "1"}]
+    assert len(calls) == 2
+
+
+# ---------------------------------------------------------------------------
 # get_task
 # ---------------------------------------------------------------------------
 

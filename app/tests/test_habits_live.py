@@ -3,17 +3,20 @@
 The operator's Todoist habit project (``🔁 Habits``) IS the active habit set:
 completion is tracked elsewhere, so every OPEN task in that project is one
 habit and ``done`` is always 0. In ``sources.mode = live`` the app reads those
-tasks through the same filter read the row fetch uses, so every habit the
-operator keeps reaches the plan. ``sources.mode = artifact`` keeps the
-published artifact's cached ``habits`` block.
+tasks BY PROJECT ID (``GET /tasks?project_id=…``), never through a filter
+query: Todoist's filter grammar cannot express a project name carrying a space
+or an emoji, and a query that matches nothing is indistinguishable from a day
+without habits. ``sources.mode = artifact`` keeps the published artifact's
+cached ``habits`` block.
 
 Contract pinned here: the live block has the artifact's shape
 (``{total, done, outstanding, est_minutes, items}``), minutes come from the
 Todoist duration with the per-habit fallback, ``est_minutes`` rounds UP to the
 producer grain, a failed live read falls back to the cached artifact list with
-one loud content-free warning, a successful read with zero habits is a real
-zero (no warning), and the Day Setup per-habit overrides work on habits that
-only the live read can see.
+one loud content-free warning, a live zero falls back to the cached list when
+that list still carries habits (never a silent zero), a zero from both is a
+real zero (no warning), and the Day Setup per-habit overrides work on habits
+that only the live read can see.
 """
 from __future__ import annotations
 
@@ -50,8 +53,6 @@ last_updated: 2026-10-28
 
 HABITS_PROJECT = {"id": "6hc482XrFwF3RJ6Q", "name": "\U0001F501 Habits"}
 WORK_PROJECT = {"id": "p-work", "name": "Work"}
-#: The filter query the live habit read must use: project-scoped by name.
-HABITS_QUERY = "#\U0001F501 Habits"
 
 #: ``(id, content, minutes)`` — the 14 habits the operator keeps, mixed
 #: durations plus one without a duration (the per-habit fallback applies).
@@ -95,10 +96,13 @@ def _habit_tasks() -> list[dict]:
 
 
 class FakeHabitsTodoist:
-    """Live Todoist double: projects plus a query-keyed task read.
+    """Live Todoist double: project lookup plus ID-scoped task reads.
 
-    ``fail`` makes every read raise, which is the unreachable-Todoist case.
-    ``tasks`` overrides the habit list (``[]`` is a valid live zero)."""
+    ``get_project_tasks`` is the ONLY read the live habit adapter may use, so
+    ``get_filter_tasks`` records every ROW query and fails loudly on a habit
+    query — a filter string can never silently match nothing again.
+    ``fail`` makes every provider read raise, which is the unreachable-Todoist
+    case. ``tasks`` overrides the habit list (``[]`` is a valid live zero)."""
 
     def __init__(self, *, tasks=None, projects=(HABITS_PROJECT, WORK_PROJECT),
                  fail=False, projects_fail=False):
@@ -107,18 +111,25 @@ class FakeHabitsTodoist:
         self._fail = fail
         self._projects_fail = projects_fail
         self.queries: list[str] = []
+        self.project_reads: list[str] = []
 
     def get_projects(self):
         if self._projects_fail:
             raise RuntimeError("projects unavailable")
         return [dict(p) for p in self._projects]
 
-    def get_filter_tasks(self, query, limit=None):
+    def get_project_tasks(self, project_id, limit=None):
         if self._fail:
             raise RuntimeError("todoist unreachable")
+        self.project_reads.append(str(project_id))
+        if str(project_id) != HABITS_PROJECT["id"]:
+            return []
+        return [dict(t) for t in self._tasks]
+
+    def get_filter_tasks(self, query, limit=None):
+        if "Habits" in query:
+            raise AssertionError(f"habits read used a filter query: {query!r}")
         self.queries.append(query)
-        if query == HABITS_QUERY:
-            return [dict(t) for t in self._tasks]
         return []
 
 
@@ -207,9 +218,12 @@ class TestFetchHabitsItems:
     def test_read_is_scoped_to_the_habits_project(self):
         foreign = {"id": "foreign", "content": "Ship it", "project_id": "p-work"}
         todoist = FakeHabitsTodoist(tasks=_habit_tasks() + [foreign])
-        block, _warnings = ext.fetch_habits_items(todoist, {}, TODAY)
+        block, warnings = ext.fetch_habits_items(todoist, {}, TODAY)
 
-        assert HABITS_QUERY in todoist.queries
+        # Project ID is the only scope: no filter query is issued for habits.
+        assert todoist.project_reads == [HABITS_PROJECT["id"]]
+        assert todoist.queries == []
+        assert warnings == []
         assert "Ship it" not in dict(_names_minutes(block))
         assert block["total"] == 14
 
@@ -219,7 +233,16 @@ class TestFetchHabitsItems:
             FakeHabitsTodoist(tasks=foreign), {}, TODAY
         )
 
-        # Never a false zero: the scoped query is not doing its job.
+        # Never a false zero: the scoped read is not doing its job.
+        assert block is None
+        assert warnings == [ext.HABITS_READ_FAILED_WARNING]
+
+    def test_no_habits_project_is_a_read_failure(self):
+        block, warnings = ext.fetch_habits_items(
+            FakeHabitsTodoist(projects=(WORK_PROJECT,)), {}, TODAY
+        )
+
+        # Nothing to scope the read to: fall back to the labelled stale list.
         assert block is None
         assert warnings == [ext.HABITS_READ_FAILED_WARNING]
 
@@ -247,13 +270,75 @@ class TestFetchHabitsItems:
         assert not any(name in warnings[0] for _i, name, _m in HABITS)
 
     def test_zero_live_habits_is_a_valid_zero_block(self):
+        _write_artifact({"total": 0, "done": 0, "outstanding": 0, "est_minutes": 0})
         block, warnings = ext.fetch_habits_items(
             FakeHabitsTodoist(tasks=[]), {}, TODAY
         )
 
+        # Nothing live AND nothing cached: a real zero, with no warning.
         assert warnings == []
         assert block == {"total": 0, "done": 0, "outstanding": 0,
                          "est_minutes": 0}
+
+    def test_zero_live_habits_with_a_cached_artifact_falls_back(self):
+        _write_artifact(STALE_BLOCK)
+        block, warnings = ext.fetch_habits_items(
+            FakeHabitsTodoist(tasks=[]), {}, TODAY
+        )
+
+        # A zero where the cached list still carries habits is a silent
+        # failure, not an answer: fall back and label it distinctly.
+        assert block is None
+        assert warnings == [ext.HABITS_EMPTY_LIVE_WARNING]
+        assert ext.HABITS_EMPTY_LIVE_WARNING != ext.HABITS_READ_FAILED_WARNING
+
+    def test_a_day_unit_duration_uses_the_fallback_minutes(self):
+        tasks = [{"id": "h-day", "content": "Read",
+                  "project_id": HABITS_PROJECT["id"],
+                  "duration": {"amount": 1, "unit": "day"}}]
+        block, _warnings = ext.fetch_habits_items(
+            FakeHabitsTodoist(tasks=tasks), {}, TODAY
+        )
+
+        # Never amount * 1440: a non-minute unit costs the fallback instead.
+        assert dict(_names_minutes(block))["Read"] == 4
+        assert block["est_minutes"] == 15
+
+    def test_live_items_are_bounded_to_the_artifact_contract(self):
+        tasks = [{"id": f"h{i}", "content": "x" * 300,
+                  "project_id": HABITS_PROJECT["id"],
+                  "duration": {"amount": 1440, "unit": "minute"}}
+                 for i in range(250)]
+        block, _warnings = ext.fetch_habits_items(
+            FakeHabitsTodoist(tasks=tasks), {}, TODAY
+        )
+
+        assert block["total"] == art.HABIT_ITEMS_MAX
+        assert len(block["items"]) == art.HABIT_ITEMS_MAX
+        assert all(i["minutes"] == art.HABIT_MINUTES_MAX for i in block["items"])
+        assert all(len(i["content"]) == art.HABIT_TEXT_MAX for i in block["items"])
+        # The published block already satisfies the artifact's own validator.
+        items, item_warnings = art._habit_items_of(block["items"])
+        assert item_warnings == []
+        assert len(items) == art.HABIT_ITEMS_MAX
+
+    def test_real_habit_durations_produce_the_documented_totals(self):
+        # The operator's live durations. NOTE: this list sums to 120, not the
+        # 130 the review reported (130 rounds to 135 at the 15-min grain); the
+        # arithmetic below is asserted as it actually is.
+        durations = [5, 5, 5, 10, 5, 10, 10, 10, 5, 10, 25, 10, 5, 5]
+        tasks = [{"id": f"h{i}", "content": f"Habit {i}",
+                  "project_id": HABITS_PROJECT["id"],
+                  "duration": {"amount": minutes, "unit": "minute"}}
+                 for i, minutes in enumerate(durations)]
+        block, warnings = ext.fetch_habits_items(
+            FakeHabitsTodoist(tasks=tasks), {}, TODAY
+        )
+
+        assert warnings == []
+        assert block["total"] == 14
+        assert sum(i["minutes"] for i in block["items"]) == 120
+        assert block["est_minutes"] == 120
 
     def test_no_client_is_not_an_error(self):
         assert ext.fetch_habits_items(None, {}, TODAY) == (None, [])
@@ -289,7 +374,7 @@ class TestPlanInputsHabitsSource:
     def test_zero_live_habits_zeroes_the_block_without_a_warning(
         self, client, live_sources_mode
     ):
-        _write_artifact(STALE_BLOCK)
+        _write_artifact({"total": 0, "done": 0, "outstanding": 0, "est_minutes": 0})
         _inject(client, FakeHabitsTodoist(tasks=[]))
 
         body = _body(client)
@@ -297,6 +382,32 @@ class TestPlanInputsHabitsSource:
         assert body["habits"] == {"total": 0, "done": 0, "outstanding": 0,
                                   "est_minutes": 0}
         assert ext.HABITS_READ_FAILED_WARNING not in body["source_warnings"]
+        assert ext.HABITS_EMPTY_LIVE_WARNING not in body["source_warnings"]
+
+    def test_zero_live_habits_keeps_the_cached_list_and_labels_it(
+        self, client, live_sources_mode
+    ):
+        _write_artifact(STALE_BLOCK)
+        _inject(client, FakeHabitsTodoist(tasks=[]))
+
+        body = _body(client)
+
+        # A live zero against a non-empty cached list is reported, not shown
+        # as a real zero.
+        assert body["habits"]["total"] == 5
+        assert ext.HABITS_EMPTY_LIVE_WARNING in body["source_warnings"]
+
+    def test_no_todoist_client_labels_the_cached_list(
+        self, client, live_sources_mode
+    ):
+        _write_artifact(STALE_BLOCK)
+        client.app.state.build_read_clients = lambda cfg: (None, None)
+
+        body = _body(client)
+
+        # No live habit read at all: the stale list is still labelled.
+        assert body["habits"]["total"] == 5
+        assert ext.HABITS_READ_FAILED_WARNING in body["source_warnings"]
 
     def test_artifact_mode_keeps_the_artifact_list(self, client):
         _write_artifact(STALE_BLOCK)
