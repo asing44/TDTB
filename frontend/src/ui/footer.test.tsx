@@ -97,13 +97,13 @@ describe("U7 footer", () => {
 
   it("omits the back link away from Plan tasks", () => {
     const h = makeHarness("ready");
-    h.store.dispatch({ type: "UI", patch: { screen: "connections" } });
+    h.store.dispatch({ type: "UI", patch: { screen: "setup" } });
     const r = h.ui(<Footer />);
     expect(r.queryByRole("button", { name: "← Day setup" })).toBeNull();
   });
 
-  it("keeps the Plan-only Copy prompt off the Set up day and Connections footers", () => {
-    for (const screen of ["setup", "connections"] as const) {
+  it("keeps the Plan-only Copy prompt off the Set up day footer", () => {
+    for (const screen of ["setup"] as const) {
       const h = makeHarness("ready");
       h.store.dispatch({ type: "UI", patch: { screen } });
       const r = h.ui(<Footer />);
@@ -134,13 +134,6 @@ describe("Day budget allowance", () => {
   it("shows the allowance on the Set up day footer", () => {
     const h = makeHarness("ready");
     h.store.dispatch({ type: "UI", patch: { screen: "setup" } });
-    const r = h.ui(<Footer />);
-    expect(r.getByText("Day budget: 4/4 calls left")).toBeTruthy();
-  });
-
-  it("shows the allowance on the Connections footer", () => {
-    const h = makeHarness("ready");
-    h.store.dispatch({ type: "UI", patch: { screen: "connections" } });
     const r = h.ui(<Footer />);
     expect(r.getByText("Day budget: 4/4 calls left")).toBeTruthy();
   });

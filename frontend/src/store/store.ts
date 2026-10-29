@@ -96,10 +96,10 @@ export function isSettingsPanel(value: unknown): value is SettingsPanel {
 
 /** B3 top-level screens. `settingsPanel` remains the contextual drawer path;
     `screen` is the promoted full-screen destination. */
-export type Screen = "plan" | "setup" | "connections";
+export type Screen = "plan" | "setup";
 
 export function isScreen(value: unknown): value is Screen {
-  return value === "plan" || value === "setup" || value === "connections";
+  return value === "plan" || value === "setup";
 }
 
 /** Legacy drawer flags, in fixed precedence for a single normalizing write. */
@@ -153,7 +153,7 @@ function normalizeSettingsUi(
   // current screen untouched.
   const explicitScreen = has("screen") && isScreen(patch.screen) ? patch.screen : null;
   const derivedScreen: Screen | null =
-    panel === "day" ? "setup" : panel === null ? null : "connections";
+    panel === "day" ? "setup" : panel === null ? null : "plan";
   // Closing a contextual drawer returns to planning; a promoted screen the
   // user selected directly is left untouched (no panel transition).
   const closedPanel = current.settingsPanel !== null && panel === null;
@@ -394,7 +394,7 @@ export interface AppState {
   ledger: Ledger | null;
   theme: Theme;
   ui: {
-    /** B3 promoted top-level screen (plan / set up day / connections). The
+    /** B3 promoted top-level screen (plan / set up day). The
         starting step is Set up day: a fresh boot lands here, and only boot
         (the initial state) applies it — INPUTS_LOADED and same-date refreshes
         preserve whatever screen the user is on. */

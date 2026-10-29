@@ -1,7 +1,7 @@
 /* App — U7 page frame. One bounded, centered column: the stepper header owns
-   the date, step state, source health, and the Connections link; the body
-   swaps the Plan tasks / Set up day / Connections screen; and one footer owns
-   the back link, the blocked reason, and the primary action. The retired left
+   the date, step state, source health, and the Settings pill; the body swaps
+   the Plan tasks / Set up day screens; and one footer owns the back link, the
+   blocked reason, and the primary action. The retired left
    rail is no longer a column — it lives temporarily inside the Plan tasks
    body as a collapsible "Day summary" region (U7a home; U9–U13 replace it).
    Drawers overlay the shell. */
@@ -17,7 +17,6 @@ import { BlockEditor } from "./BlockEditor";
 import { AnchoredEditor } from "./AnchoredEditor";
 import { ExecutionView } from "./ExecutionView";
 import { DaySetupPanel } from "./DaySetupPanel";
-import { ConnectionsScreen } from "./connections/ConnectionsScreen";
 import "./plan-dark-contrast.css";
 
 const THEME_KEY = "tdtb-cockpit-theme";
@@ -55,10 +54,9 @@ export function App() {
   // `display: contents`, so the header, main, and footer stay the column's
   // layout children.
   const settingsOpen = s.ui.settingsPanel !== null;
-  const screen = s.ui.screen;
   // The promoted screen body is used only when no contextual drawer owns the
   // viewport, so exactly one surface renders at a time.
-  const promotedScreen = !settingsOpen && screen !== "plan";
+  const setupScreen = !settingsOpen && s.ui.screen === "setup";
 
   return (
     <div class="cockpit">
@@ -68,16 +66,9 @@ export function App() {
         aria-hidden={settingsOpen ? "true" : undefined}
       >
         <Header />
-        {promotedScreen ? (
-          <main
-            class="cockpit__main cockpit__screen"
-            aria-label={screen === "setup" ? "Set up day" : "Connections"}
-          >
-            {screen === "setup" ? (
-              <DaySetupPanel active={true} variant="screen" />
-            ) : (
-              <ConnectionsScreen />
-            )}
+        {setupScreen ? (
+          <main class="cockpit__main cockpit__screen" aria-label="Set up day">
+            <DaySetupPanel active={true} variant="screen" />
           </main>
         ) : (
           <main class="cockpit__main" aria-label="Today's planning evidence">

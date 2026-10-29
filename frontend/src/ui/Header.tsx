@@ -71,15 +71,8 @@ export function Header() {
   const commitFlow = s.ui.approvalOpen || s.commitPhase !== "idle";
   // Step 3 is derived from the approval/commit phase, never a screen of its
   // own. Settings is a header control, not a step.
-  const selectedStep: StepId | null =
-    screen === "setup"
-      ? "setup"
-      : screen === "connections"
-        ? null
-        : commitFlow
-          ? "commit"
-          : "plan";
-  const focusStep: StepId = selectedStep ?? "plan";
+  const selectedStep: StepId =
+    screen === "setup" ? "setup" : commitFlow ? "commit" : "plan";
 
   const done: Record<StepId, boolean> = {
     setup: s.daySetup.confirmed,
@@ -106,8 +99,7 @@ export function Header() {
   };
 
   const onKeyDown = (e: KeyboardEvent) => {
-    const index = STEPS.findIndex((step) => step.id === selectedStep);
-    const base = index < 0 ? STEPS.findIndex((step) => step.id === focusStep) : index;
+    const base = STEPS.findIndex((step) => step.id === selectedStep);
     let next = base;
     if (e.key === "ArrowRight") next = (base + 1) % STEPS.length;
     else if (e.key === "ArrowLeft") next = (base + STEPS.length - 1) % STEPS.length;
@@ -205,7 +197,7 @@ export function Header() {
                 aria-selected={selected}
                 aria-disabled={step.id === "commit" && commitBlockedReason !== null ? true : undefined}
                 title={step.id === "commit" && commitBlockedReason !== null ? commitBlockedReason : undefined}
-                tabIndex={focusStep === step.id ? 0 : -1}
+                tabIndex={selectedStep === step.id ? 0 : -1}
                 onClick={(e) => activate(step.id, e.currentTarget as HTMLElement)}
               >
                 <span class="app-stepper__mark" aria-hidden="true">

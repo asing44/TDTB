@@ -183,6 +183,29 @@ describe("hub · Tasks I hid", () => {
       within(section).getByText("Nothing hidden. Use ⋯ > Always exclude on a task to hide it every day."),
     ).toBeTruthy();
     expect(within(section).queryByRole("button", { name: /Show again/ })).toBeNull();
+    expect(within(section).getByText("None")).toBeTruthy();
+  });
+
+  it("counts the hidden tasks and tells the operator which save applies them", async () => {
+    const { rendered } = openPlan({ tag: tagSettings({ todoist: [HIDDEN_ONE, HIDDEN_TWO] }) });
+    const heading = await waitFor(() => rendered.getByRole("heading", { name: "Tasks I hid" }));
+    const section = heading.closest("section") as HTMLElement;
+    expect(within(section).getByText("2 hidden")).toBeTruthy();
+    expect(within(section).getByText("Press Save tag exclusions to apply.")).toBeTruthy();
+  });
+
+  it("a tag edit preserves the hidden-task list in the saved body", async () => {
+    const { h, rendered } = openPlan({ tag: tagSettings({ todoist: [HIDDEN_ONE] }) });
+    await waitFor(() => rendered.getByRole("heading", { name: "Tasks I hid" }));
+
+    fireEvent.click(rendered.getByRole("checkbox", { name: /Exclude #habituals/ }));
+    fireEvent.click(rendered.getByRole("button", { name: "Save tag exclusions" }));
+    await waitFor(() => expect(h.controller.saveTagExclusionSettings).toHaveBeenCalledTimes(1));
+    expect(h.controller.saveTagExclusionSettings).toHaveBeenCalledWith({
+      expectedRevision: 0,
+      tags: [],
+      todoist: [HIDDEN_ONE],
+    });
   });
 
   it("Show again edits the draft and Save posts the tags unchanged plus the reduced list", async () => {
