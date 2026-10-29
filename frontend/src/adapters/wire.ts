@@ -1193,6 +1193,27 @@ export function projectMicroPool(wire: Wire): MicroPoolItem[] {
 
 // -- per-endpoint projections ------------------------------------------------
 
+/** A plan row's display tags. Todoist rows carry `tags` directly, so an
+    explicit array always wins exactly as received. A Capacities row carries
+    only `capacities_tags` ([{space_id, tag_id, title}] — structured tag
+    identities whose title is current display metadata), so its titles become
+    the row's tags. Malformed references drop quietly: this wire layer degrades
+    bad payloads rather than throwing, and nothing valid yields no tags. */
+function rowTagsOf(row: Wire): string[] {
+  if (Array.isArray(row.tags)) return row.tags.map(String);
+  if (!Array.isArray(row.capacities_tags)) return [];
+  const tags: string[] = [];
+  for (const ref of row.capacities_tags) {
+    if (!ref || typeof ref !== "object" || Array.isArray(ref)) continue;
+    const title = (ref as Wire).title;
+    if (typeof title !== "string") continue;
+    const tag = title.trim();
+    if (!tag || tags.includes(tag)) continue;
+    tags.push(tag);
+  }
+  return tags;
+}
+
 export function projectAssigned(row: Wire): AssignedItem {
   const source =
     row.source === "todoist"
@@ -1247,7 +1268,7 @@ export function projectAssigned(row: Wire): AssignedItem {
     isRecurring: source === "todoist" && row.is_recurring === true,
     scheduledStart: source === "todoist" ? to24h(row.scheduled_start) : null,
     labels: Array.isArray(row.labels) ? row.labels.map(String) : [],
-    tags: Array.isArray(row.tags) ? row.tags.map(String) : [],
+    tags: rowTagsOf(row),
     relatesTo: row.relates_to == null ? null : String(row.relates_to),
   };
 }
